@@ -36,7 +36,9 @@ where
 /// `keys`, takes a token `delegation:<did>` as that DID's delegation and a
 /// token `request:<did>|<command>` ([`request_token`]) as that DID's
 /// delegation bound to one command, lets only an object's owner change its
-/// relationships, and rejects any other change with a receipt.
+/// relationships, and rejects any other change with a receipt. It proves
+/// its decisions, as vera.rs does: only an owner or a `writer` updates or
+/// deletes an object, and a `reader` also holds every other permission.
 pub(super) struct Remote {
     policies: Map<String, String>,
     pub(super) owners: Map<String, String>,
@@ -49,6 +51,9 @@ pub(super) struct Remote {
     /// How many access decisions the provider was asked to record.
     pub(super) decisions: std::sync::atomic::AtomicU64,
     pub(super) down: AtomicBool,
+    /// Its newest verified state is past the freshness limit: every decision
+    /// fails as the vera.rs light client's does.
+    pub(super) stale: AtomicBool,
     /// The provider gives the node nothing to check a delegation against,
     /// as the Cosmos provider does: it is passed its caller's token as it
     /// is.
@@ -102,6 +107,7 @@ impl Remote {
             lapsed: AtomicBool::new(false),
             decisions: std::sync::atomic::AtomicU64::new(0),
             down: AtomicBool::new(false),
+            stale: AtomicBool::new(false),
             unverifying: AtomicBool::new(false),
             stalled: AtomicBool::new(false),
             released: regolith::sync::Event::new(),
@@ -125,8 +131,27 @@ impl Remote {
     }
 
     pub(super) fn holds(&self, object: &str, subject: &str) -> bool {
+        self.holds_as(object, "reader", subject)
+    }
+
+    fn holds_as(&self, object: &str, relation: &str, subject: &str) -> bool {
         self.tuples
-            .contains_key(&(object.into(), "reader".into(), subject.into()))
+            .contains_key(&(object.into(), relation.into(), subject.into()))
+    }
+
+    /// The owner of `object` gives `subject` the relation `relation` on it,
+    /// or takes it back, and the provider finalizes that.
+    pub(super) fn finalize(&self, object: &str, relation: &str, subject: &str, held: bool) {
+        let key = (
+            object.to_string(),
+            relation.to_string(),
+            subject.to_string(),
+        );
+        if held {
+            self.tuples.insert(key, ());
+        } else {
+            self.tuples.remove(&key);
+        }
     }
 
     pub(super) fn take_writes(&self) -> Vec<(bool, String, String)> {
@@ -212,6 +237,10 @@ impl VeraProvider for Remote {
     }
 
     fn takes_subject_commands(&self) -> bool {
+        true
+    }
+
+    fn proves_decisions(&self) -> bool {
         true
     }
 
@@ -406,13 +435,22 @@ impl VeraProvider for Remote {
         _policy_id: &str,
         _resource: &str,
         object_id: &str,
-        _permission: &str,
+        permission: &str,
         actor_did: &str,
     ) -> Result<bool, ProviderError> {
         self.reachable()?;
-        Ok(self.owners.get(object_id).as_deref() == Some(actor_did)
-            || self.holds(object_id, actor_did)
-            || self.holds(object_id, "*"))
+        if self.stale.load(Ordering::SeqCst) {
+            return Err(ProviderError::Unavailable(
+                "verified permission: verified revision is stale; wait for a fresh finalized revision"
+                    .into(),
+            ));
+        }
+        let writes = self.owners.get(object_id).as_deref() == Some(actor_did)
+            || self.holds_as(object_id, "writer", actor_did);
+        Ok(match permission {
+            "update" | "delete" => writes,
+            _ => writes || self.holds(object_id, actor_did) || self.holds(object_id, "*"),
+        })
     }
 }
 

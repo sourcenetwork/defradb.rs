@@ -1,103 +1,26 @@
-//! The bytes of a policy command and the digest a request-bound delegation
-//! names it by.
+//! The digest a request-bound delegation names a policy command by.
 //!
 //! vera.rs binds a delegation to one request through the digest of the typed
 //! command: SHA-256 of `vera/acp-operation/v1\0` and the compact JSON of
 //! `{"PolicyCommand":[policy ID, command]}`, the policy ID as 64 lowercase
 //! hexadecimal digits and the command as vera.rs decodes the bytes it is
-//! sent. The digest is computed here from the very bytes the provider
-//! submits, so a token that passes the node's check is one vera.rs accepts
-//! for that submission, and an actor inside the command is in the spelling
-//! the node sends.
+//! sent. The digest is computed here from the very value the provider
+//! serializes and submits, so a token that passes the node's check is one
+//! vera.rs accepts for that submission, and an actor inside the command is in
+//! the spelling the node sends.
 
 use vera_modules::acp::delegated_operation::DelegatedOperation;
-use vera_modules::acp::types::PolicyCmd;
 
-use super::did_spelling;
-use super::provider_commands::{
-    encode_delete_relationship_cmd, encode_register_object_cmd, encode_set_relationship_cmd,
-};
-use crate::policy_command::{PolicyAction, PolicyCommand, PolicySubject};
+use super::policy_cmd;
+use crate::policy_command::PolicyCommand;
 use crate::provider::ProviderError;
-
-/// A relationship subject as vera.rs is sent it: an actor in the spelling
-/// vera.rs takes, which is the one an access check for it is sent in.
-pub(super) fn vera_subject(
-    kind: u8,
-    resource: &str,
-    object_id: &str,
-    relation: &str,
-) -> Result<zanzibar::Subject, ProviderError> {
-    let object_id = if kind == 0 {
-        did_spelling::wire(object_id)
-    } else {
-        object_id.into()
-    };
-    zanzibar::decode_subject(kind, resource, &object_id, relation)
-        .map_err(|e| ProviderError::Config(format!("relationship subject: {e}")))
-}
-
-/// The command that adds (`set`) or deletes a relationship whose subject is
-/// a userset or another object.
-pub(super) fn encode_subject_relationship_cmd(
-    set: bool,
-    resource: &str,
-    object_id: &str,
-    relation: &str,
-    subject: &zanzibar::Subject,
-) -> Result<Vec<u8>, ProviderError> {
-    let body = serde_json::json!({
-        "resource": resource, "object_id": object_id, "relation": relation, "subject": subject
-    });
-    let command = if set {
-        serde_json::json!({ "SetRelationship": body })
-    } else {
-        serde_json::json!({ "DeleteRelationship": body })
-    };
-    serde_json::to_vec(&command).map_err(|e| ProviderError::Config(e.to_string()))
-}
-
-/// The bytes `command` is submitted as.
-fn encode(command: &PolicyCommand<'_>) -> Result<Vec<u8>, ProviderError> {
-    let (resource, object_id) = (command.resource, command.object_id);
-    let relationship = |set: bool, relation: &str, subject: &PolicySubject<'_>| match subject {
-        PolicySubject::Actor(subject) if set => Ok(encode_set_relationship_cmd(
-            resource, object_id, relation, subject,
-        )),
-        PolicySubject::Actor(subject) => Ok(encode_delete_relationship_cmd(
-            resource, object_id, relation, subject,
-        )),
-        PolicySubject::Structured {
-            kind,
-            resource: subject_resource,
-            object_id: subject_object,
-            relation: subject_relation,
-        } => encode_subject_relationship_cmd(
-            set,
-            resource,
-            object_id,
-            relation,
-            &vera_subject(*kind, subject_resource, subject_object, subject_relation)?,
-        ),
-    };
-    match &command.action {
-        PolicyAction::RegisterObject => Ok(encode_register_object_cmd(resource, object_id)),
-        PolicyAction::SetRelationship { relation, subject } => {
-            relationship(true, relation, subject)
-        }
-        PolicyAction::DeleteRelationship { relation, subject } => {
-            relationship(false, relation, subject)
-        }
-    }
-}
 
 /// The digest a delegation bound to one request names `command` by: what its
 /// signer puts in the token's `request` claim.
 pub fn request_digest(command: &PolicyCommand<'_>) -> Result<[u8; 32], ProviderError> {
     let policy = vera_client::parse_policy_id(command.policy_id)
         .map_err(|e| ProviderError::Query(e.to_string()))?;
-    let typed: PolicyCmd = serde_json::from_slice(&encode(command)?)
-        .map_err(|e| ProviderError::Config(format!("policy command: {e}")))?;
+    let typed = policy_cmd::typed(command)?;
     DelegatedOperation::PolicyCommand(&hex::encode(policy.as_slice()), &typed)
         .digest()
         .map_err(|e| ProviderError::Config(format!("policy command digest: {e}")))
@@ -108,6 +31,7 @@ mod tests {
     use sha2::{Digest as _, Sha256};
 
     use super::*;
+    use crate::policy_command::{PolicyAction, PolicySubject};
     use crate::provider::SubjectRef;
 
     const POLICY: &str = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";

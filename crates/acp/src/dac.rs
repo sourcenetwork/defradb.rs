@@ -302,6 +302,17 @@ pub trait DocumentACP: MaybeSendSync {
         true
     }
 
+    /// Whether every access decision this provider gives is proven against
+    /// its finalized state at a revision within a freshness limit, and fails
+    /// when no such revision can be read: no decision comes from a cache
+    /// that outlives that limit, and none from an unproven answer. A
+    /// verified update or delete on such a provider needs no credential
+    /// beside the permission it decides (see
+    /// `query::runner::remote_authority`).
+    fn proves_decisions(&self) -> bool {
+        false
+    }
+
     /// Register a document with creator as owner.
     ///
     /// This is called when a document is created with an identity.
