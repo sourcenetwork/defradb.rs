@@ -194,7 +194,9 @@ where
     ) -> Result<()> {
         let reason = error.to_string();
         let (state, counted) = match error {
-            Error::OwedAuthorityUnavailable { .. } => (Some(OwedState::AwaitingAuthority), false),
+            Error::OwedAuthorityUnavailable { .. } | Error::DelegationOutsideWindow { .. } => {
+                (Some(OwedState::AwaitingAuthority), false)
+            }
             Error::ProviderUnavailable(_) => (None, false),
             Error::NotOwner { .. }
             | Error::NotManager { .. }

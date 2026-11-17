@@ -28,6 +28,7 @@
 mod auth_error;
 mod dac;
 mod delegation_audience;
+mod delegation_window;
 pub mod error;
 mod external;
 mod identity;
@@ -58,6 +59,7 @@ pub use dac::{
     ObjectChangeListener,
 };
 pub use delegation_audience::DelegationAudience;
+pub use delegation_window::{DelegationWindow, CLOCK_SKEW_ALLOWANCE};
 pub use error::{Error, Result};
 pub use external::{
     ExternalDocumentAcp, OwedScope, OwedSettlement, RedriveReport, MAX_FAILED_SUBMISSIONS,

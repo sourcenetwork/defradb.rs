@@ -11,7 +11,10 @@ mod transport;
 mod worker;
 
 pub use acp_light_client::{AcpTransport, HeaderStream, TransportError};
-pub use bearer::{caller_delegation, request_delegation, BearerError, RequestBinding};
+pub use bearer::{
+    caller_delegation, request_delegation, request_delegation_at, BearerError, RequestBinding,
+    MAX_REQUEST_LIFETIME,
+};
 pub use client::{ClientError, VeraRsClient};
 pub use command_digest::request_digest;
 pub use provider::VeraRsProvider;

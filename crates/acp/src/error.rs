@@ -77,6 +77,16 @@ pub enum Error {
     #[error("no authority to submit ACP changes as {actor}: {reason}")]
     OwedAuthorityUnavailable { actor: String, reason: String },
 
+    /// The delegation the request carries for `actor` does not hold at the
+    /// provider's time, so nothing is sent under it. The request may be made
+    /// again with a delegation issued at
+    /// [`DelegationWindow::provider_time`](crate::DelegationWindow::provider_time).
+    #[error("the delegation for {actor} is refused: {window}")]
+    DelegationOutsideWindow {
+        actor: String,
+        window: crate::DelegationWindow,
+    },
+
     /// An external provider could not be reached or did not answer in time.
     /// Nothing is known about what was asked; the same call may be made
     /// again.

@@ -25,6 +25,14 @@ use crate::vera_rs::signer::{admission, DelegationSigner};
 use crate::vera_rs::{did_spelling, request_digest};
 use crate::PolicyCommand;
 
+/// The longest a delegation bound to one request lasts: as long as vera.rs
+/// keeps a request open, less the [`acp::CLOCK_SKEW_ALLOWANCE`]. vera.rs
+/// refuses an operation identity that expires more than
+/// [`MAX_OPERATION_TTL`] after the block that executes it, so a longer one
+/// from a signer whose clock is ahead would be refused.
+pub const MAX_REQUEST_LIFETIME: Duration =
+    Duration::from_secs(MAX_OPERATION_TTL - acp::CLOCK_SKEW_ALLOWANCE.as_secs());
+
 /// The one request a delegation is bound to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RequestBinding {
@@ -61,8 +69,9 @@ impl RequestBinding {
 }
 
 /// The delegation `signer` gives `audience.worker` for the one request
-/// `binding` names, on `audience.deployment`, for `lifetime`: at most 600
-/// seconds, which is as long as vera.rs keeps a request open.
+/// `binding` names, on `audience.deployment`, for `lifetime`: at most
+/// [`MAX_REQUEST_LIFETIME`]. It is issued at the signer's clock; a signer that
+/// knows the provider's time issues it there with [`request_delegation_at`].
 pub async fn request_delegation(
     signer: &dyn DelegationSigner,
     audience: &acp::DelegationAudience,
@@ -76,6 +85,22 @@ pub async fn request_delegation(
     issue_request_at(signer, audience, binding, lifetime.as_secs(), now).await
 }
 
+/// [`request_delegation`], issued at `issued_at` in seconds since the epoch:
+/// the provider's time a node reports
+/// ([`LightClientStatus::chain_time`](acp::LightClientStatus::chain_time)), or
+/// the one a refusal names
+/// ([`DelegationWindow::provider_time`](acp::DelegationWindow::provider_time)),
+/// so that the signer's own clock does not decide whether it holds.
+pub async fn request_delegation_at(
+    signer: &dyn DelegationSigner,
+    audience: &acp::DelegationAudience,
+    binding: &RequestBinding,
+    lifetime: Duration,
+    issued_at: u64,
+) -> Result<String, BearerError> {
+    issue_request_at(signer, audience, binding, lifetime.as_secs(), issued_at).await
+}
+
 /// The request-bound delegation as it is issued at `now`, in seconds since
 /// the epoch.
 pub(in crate::vera_rs) async fn issue_request_at(
@@ -86,7 +111,7 @@ pub(in crate::vera_rs) async fn issue_request_at(
     now: u64,
 ) -> Result<String, BearerError> {
     let key = admission::actor_key(signer)?;
-    if lifetime_secs == 0 || lifetime_secs > MAX_OPERATION_TTL {
+    if lifetime_secs == 0 || lifetime_secs > MAX_REQUEST_LIFETIME.as_secs() {
         return Err(BearerError::RequestLifetime);
     }
     if binding.nonce == [0; 24] || binding.genesis_id == [0; 32] {
@@ -106,8 +131,10 @@ pub(in crate::vera_rs) async fn issue_request_at(
         exp: expiry,
         aud: format!("vera:{}", audience.deployment),
         scope: DelegationScope::PolicyCommands,
-        iat: now,
-        nbf: now,
+        // vera.rs's own builder writes an operation token with `nbf = iat`,
+        // and checks its operation identity at `iat`: both are set back.
+        iat: super::not_before(now),
+        nbf: super::not_before(now),
         relay: None,
         request: Some(OperationClaim {
             id: OperationId(id),
@@ -162,7 +189,7 @@ where
     if claims.relay.is_some() || claims.scope != DelegationScope::PolicyCommands {
         return Err(CallerDelegationError::Kind);
     }
-    claims.authorize(&audience.worker, audience.deployment, now)?;
+    super::authorize_at(claims, &audience.worker, audience.deployment, now)?;
     request.id.validate(now)?;
     if audience
         .genesis_id
@@ -236,11 +263,13 @@ mod tests {
         // At its deadline the operation identity is closed.
         assert!(matches!(
             caller_at(&token, 1, NOW + 60),
-            Err(CallerDelegationError::Token(_))
+            Err(CallerDelegationError::Window(_))
         ));
+        // It holds from the clock skew allowance before it was issued.
+        assert_eq!(caller_at(&token, 1, NOW - 30).unwrap(), signer.did());
         assert!(matches!(
-            caller_at(&token, 1, NOW - 1),
-            Err(CallerDelegationError::Token(_))
+            caller_at(&token, 1, NOW - 31),
+            Err(CallerDelegationError::Window(_))
         ));
 
         let claims = vera_crypto::jwt::verify_bearer_token(&token).unwrap();
@@ -369,16 +398,21 @@ mod tests {
     #[nuclei::test]
     async fn a_request_delegation_lasts_no_longer_than_vera_rs_keeps_a_request_open() {
         let signer = Ed25519Signer::from_slice(&[9; 32]).expect("key");
-        for lifetime in [0, MAX_OPERATION_TTL + 1] {
+        let longest_secs = MAX_REQUEST_LIFETIME.as_secs();
+        assert_eq!(longest_secs, MAX_OPERATION_TTL - 30);
+        for lifetime in [0, longest_secs + 1, MAX_OPERATION_TTL] {
             assert!(matches!(
                 issue_request_at(&signer, &audience(), &binding(1), lifetime, NOW).await,
                 Err(BearerError::RequestLifetime)
             ));
         }
-        let longest = issue_request_at(&signer, &audience(), &binding(1), MAX_OPERATION_TTL, NOW)
+        let longest = issue_request_at(&signer, &audience(), &binding(1), longest_secs, NOW)
             .await
             .expect("delegation");
         assert_eq!(caller_at(&longest, 1, NOW).unwrap(), signer.did());
+        // The longest is still open to vera.rs when its signer's clock is a
+        // whole allowance ahead.
+        assert_eq!(caller_at(&longest, 1, NOW - 30).unwrap(), signer.did());
         for unbound in [
             RequestBinding {
                 nonce: [0; 24],
@@ -394,6 +428,87 @@ mod tests {
                 Err(BearerError::Claims(_))
             ));
         }
+    }
+
+    #[nuclei::test]
+    async fn a_request_delegation_holds_from_the_clock_skew_allowance_before_it_was_issued() {
+        let signer = Ed25519Signer::from_slice(&[9; 32]).expect("key");
+        let token = issue_request_at(&signer, &audience(), &binding(1), 60, NOW)
+            .await
+            .expect("delegation");
+        let claims = vera_crypto::jwt::verify_bearer_token(&token).unwrap();
+        assert_eq!(claims.iat, NOW - acp::CLOCK_SKEW_ALLOWANCE.as_secs());
+        assert_eq!(claims.nbf, claims.iat);
+        assert_eq!(claims.exp, NOW + 60);
+
+        // A signer up to the allowance ahead of the node is taken.
+        for ahead in [1, 5, 30] {
+            let token = issue_request_at(&signer, &audience(), &binding(1), 60, NOW + ahead)
+                .await
+                .expect("delegation");
+            assert_eq!(caller_at(&token, 1, NOW).unwrap(), signer.did());
+        }
+    }
+
+    #[nuclei::test]
+    async fn a_request_delegation_outside_its_window_names_the_window_and_the_provider_time() {
+        let signer = Ed25519Signer::from_slice(&[9; 32]).expect("key");
+        let window = |issued_at: u64, lifetime: u64, now: u64| {
+            let signer = &signer;
+            async move {
+                let token = issue_request_at(signer, &audience(), &binding(1), lifetime, issued_at)
+                    .await
+                    .expect("delegation");
+                match caller_at(&token, 1, now) {
+                    Err(CallerDelegationError::Window(window)) => window,
+                    other => panic!("not refused for its window: {other:?}"),
+                }
+            }
+        };
+
+        // Ahead by a minute: it has not started, and the clock is off.
+        let ahead = window(NOW + 60, 120, NOW).await;
+        assert_eq!(
+            ahead,
+            acp::DelegationWindow {
+                issued_at: NOW + 60,
+                not_before: NOW + 30,
+                expires_at: NOW + 180,
+                provider_time: NOW,
+            }
+        );
+        assert_eq!(ahead.clock_offset(), 60);
+        assert!(ahead.clock_is_off());
+        // Behind by eleven minutes: over before it arrived, and the clock is off.
+        let behind = window(NOW - 660, 570, NOW).await;
+        assert_eq!(behind.clock_offset(), -660);
+        assert!(behind.clock_is_off());
+        // Held past its end by a signer whose clock is right: expired.
+        let held = window(NOW - 20, 10, NOW).await;
+        assert!(!held.clock_is_off());
+
+        // A delegation for another worker is refused as such, whatever its times.
+        let token = issue_request_at(&signer, &audience(), &binding(1), 60, NOW + 600)
+            .await
+            .expect("delegation");
+        let claims = vera_crypto::jwt::verify_bearer_token(&token).unwrap();
+        let request = claims.request.clone().unwrap();
+        assert!(matches!(
+            bound_caller(
+                &claims,
+                &request,
+                &elsewhere(signer.did(), 9),
+                || Ok([1; 32]),
+                NOW
+            ),
+            Err(CallerDelegationError::Token(_))
+        ));
+
+        // Issued again at the provider time the refusal names, it is taken.
+        let again = issue_request_at(&signer, &audience(), &binding(1), 120, ahead.provider_time)
+            .await
+            .expect("delegation");
+        assert_eq!(caller_at(&again, 1, NOW).unwrap(), signer.did());
     }
 
     #[nuclei::test]
