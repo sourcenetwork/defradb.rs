@@ -59,9 +59,13 @@ fn chunk(collection: &Collection, parent: &DocID, text: &str, hash: &str) -> Doc
 }
 
 async fn parent_article(node: &Node) -> DocID {
+    parent_article_titled(node, "t").await
+}
+
+async fn parent_article_titled(node: &Node, title: &str) -> DocID {
     let collection = node.db.get_collection("Article").unwrap().unwrap();
     let mut doc = Document::new(collection.schema_arc());
-    doc.set("title", NormalValue::String("t".into())).unwrap();
+    doc.set("title", NormalValue::String(title.into())).unwrap();
     doc.set("body", NormalValue::String("short".into()))
         .unwrap();
     db::AutoCommitMutator::new(Arc::clone(&node.db))
@@ -150,6 +154,41 @@ async fn assert_refused_again(
     assert_rejected(&again, why);
 }
 
+/// The CID of an update of a stored chunk to `doc`'s `fields`, written on `author`.
+async fn write_update(
+    author: &Node,
+    collection: &Collection,
+    short_id: u64,
+    doc: &Document,
+    fields: &[&str],
+) -> cid::Cid {
+    let modified: rapidhash::RapidHashSet<String> =
+        fields.iter().copied().map(String::from).collect();
+    let txn = author.db.new_txn(false).await.unwrap();
+    let update = db::block::builder::write_document_blocks(
+        &txn.blockstore().unwrap(),
+        &txn.headstore().unwrap(),
+        doc,
+        collection.schema(),
+        db::block::builder::DocRef::new(collection.resolved_root_id(), short_id),
+        Some(&modified),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    db::docid::map::set_block_doc_id_mapping(
+        &txn.systemstore().unwrap(),
+        &update.cid.to_string(),
+        &doc.id().unwrap().to_string(),
+    )
+    .await
+    .unwrap();
+    txn.force_commit().await.unwrap();
+    update.cid
+}
+
 #[test]
 fn a_chunk_with_the_wrong_hash_is_refused_for_good() {
     workers::block_on(async {
@@ -225,32 +264,10 @@ fn a_chunk_cannot_be_rewritten_after_it_merged() {
         rewrite
             .set("hash", NormalValue::String(text_hash("replaced")))
             .unwrap();
-        let modified: rapidhash::RapidHashSet<String> =
-            ["text", "hash"].into_iter().map(String::from).collect();
-        let txn = author.db.new_txn(false).await.unwrap();
-        let update = db::block::builder::write_document_blocks(
-            &txn.blockstore().unwrap(),
-            &txn.headstore().unwrap(),
-            &rewrite,
-            collection.schema(),
-            db::block::builder::DocRef::new(collection.resolved_root_id(), short_id),
-            Some(&modified),
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-        db::docid::map::set_block_doc_id_mapping(
-            &txn.systemstore().unwrap(),
-            &update.cid.to_string(),
-            &chunk_id_str,
-        )
-        .await
-        .unwrap();
-        txn.force_commit().await.unwrap();
+        let update =
+            write_update(&author, &collection, short_id, &rewrite, &["text", "hash"]).await;
 
-        let outcome = merge(&author, &peer, &collection, &update.cid, &chunk_id_str)
+        let outcome = merge(&author, &peer, &collection, &update, &chunk_id_str)
             .await
             .unwrap();
         assert_rejected(&outcome, "cannot change after it is created");
@@ -258,7 +275,7 @@ fn a_chunk_cannot_be_rewritten_after_it_merged() {
             &author,
             &peer,
             &collection,
-            &update.cid,
+            &update,
             &chunk_id_str,
             "cannot change after it is created",
         )
@@ -266,6 +283,44 @@ fn a_chunk_cannot_be_rewritten_after_it_merged() {
 
         assert_eq!(stored(&peer, &peer_chunks, &chunk_id).await.unwrap(), kept);
         assert_eq!(list_of(&peer, &parent).await, before);
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_chunk_cannot_move_to_another_parent_after_it_merged() {
+    workers::block_on(async {
+        let author = node().await;
+        let peer = node().await;
+        let parent = parent_article(&peer).await;
+        let other = parent_article_titled(&peer, "other").await;
+
+        let collection = chunks_of(&author);
+        let text = "original text";
+        let mut genuine = chunk(&collection, &parent, text, &text_hash(text));
+        let (chunk_id, short_id, created) = super::merge_handler_tests::create_doc_locally(
+            &author.handler,
+            &collection,
+            &mut genuine,
+        )
+        .await;
+        let chunk_id_str = chunk_id.to_string();
+        let merged = merge(&author, &peer, &collection, &created.cid, &chunk_id_str)
+            .await
+            .expect("the genuine chunk merges");
+        assert!(merged.is_merged(), "{merged:?}");
+        let peer_chunks = chunks_of(&peer);
+        let kept = stored(&peer, &peer_chunks, &chunk_id).await.unwrap();
+
+        let mut moved = chunk(&collection, &other, text, &text_hash(text));
+        moved.set_id(chunk_id.clone());
+        let update = write_update(&author, &collection, short_id, &moved, &["_sourceID"]).await;
+
+        let outcome = merge(&author, &peer, &collection, &update, &chunk_id_str)
+            .await
+            .unwrap();
+        assert_rejected(&outcome, "cannot change after it is created");
+        assert_eq!(stored(&peer, &peer_chunks, &chunk_id).await.unwrap(), kept);
     })
     .unwrap()
 }
