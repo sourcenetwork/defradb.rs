@@ -14,9 +14,10 @@ entry (`forget`); the governance sweep can queue a composite directly
 
 The index is bounded: at most `capacity` composites in all, at most
 `perKey` composites under one key, and at most `perComposite` keys per
-composite. A composite past a bound is simply not indexed (or not under the
-full key): it stays unmerged, and the node's slower retry paths try it
-again.
+composite. A composite past a bound is simply not indexed (or, deferred by
+governance, not under the full key): it stays unmerged, and the node's
+slower retry paths try it again. A parked composite whose document is full
+is not indexed at all, since its document is what releases it.
 
 What must never happen: a bound exceeded; a key naming a composite the
 index no longer holds, or a held composite missing from a key it is filed
@@ -30,7 +31,7 @@ The model is sequential: one operation at a time. The Rust is lock-free and
 its operations are atomic per map, not across maps; a race costs only a
 composite's fast path, never its bound (see the Rust type's comment).
 Rust owner: crates/db/src/merge/governance/deferred.rs DeferredMerges
-(defer, release, release_parked, enqueue_ready, take_ready, forget,
+(defer, park, release, release_parked, enqueue_ready, take_ready, forget,
 take_entry, unindex; MAX_DEFERRED_COMPOSITES, MAX_WAITERS_PER_DEPENDENCY,
 MAX_AWAITED_PER_COMPOSITE), over crates/db/src/merge/governance/awaited.rs
 WaitKey; parking by crates/db/src/merge/merge_handler/composite.rs
@@ -191,11 +192,19 @@ def defer (L : Limits) (c : Cid) (awaiting : List Key) (s : State) : State :=
     else { s with entries := s.entries ++ [⟨c, r.1⟩], waiters := r.2 }
 
 /-- Park composite `c`, whose frame `refused` the provider refused, under
-its document `doc` and under the refused composite (`prepare_composite_merge`
-returning `Deferred` for a `Refusal::Parked`). -/
+its document `doc` and under the refused composite (`park`, called by
+`prepare_composite_merge` returning `Deferral::Parked` for a
+`Refusal::Parked`). Its document is what releases it, so it is indexed only
+when its document has room: past that bound it is not indexed at all, not
+even under the refused composite, and its old entry, if any, is gone. -/
 def park (L : Limits) (c : Cid) (doc : Nat) (refused : Cid) (s : State) : State :=
-  -- The two keys a parked composite waits for.
-  defer L c [.acpObject doc, .composite refused] s
+  -- The index once `c`'s old entry, if any, is gone.
+  let t := (takeEntry c s).2
+  -- Its document has room: filed as a defer under the two keys it waits for.
+  if (t.waiters (.acpObject doc)).length < L.perKey then
+    defer L c [.acpObject doc, .composite refused] s
+  -- Its document is full: not indexed.
+  else t
 
 /-- Hand back one composite a released key held (the inner loop of
 `release`): whoever takes its entry queues it, once. -/

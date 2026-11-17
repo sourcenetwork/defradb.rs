@@ -4,15 +4,19 @@ import DeferredMerges.Release
 
 The story: governance defers a composite under the keys it awaits, and the
 ACP gate parks a refused composite under its document and under the refused
-composite. The index files it where there is room.
+composite. The index files it where there is room. A parked composite is
+filed only if its document has room, since its document is what releases
+it.
 
 What must never happen: filing past a bound; filing one composite dropping
 another one, or another one's place under a key; a parked composite, with
 room for it, missing from either of its two keys; a parked composite that
-was released by one of its keys still sitting under the other.
-Rust owner: crates/db/src/merge/governance/deferred.rs DeferredMerges::defer;
-crates/db/src/merge/merge_handler/composite.rs prepare_composite_merge,
-which parks under `WaitKey::acp_object` and `WaitKey::Composite`. -/
+was released by one of its keys still sitting under the other; a parked
+composite its document has no room for holding a place in the index.
+Rust owner: crates/db/src/merge/governance/deferred.rs DeferredMerges::defer,
+DeferredMerges::park; crates/db/src/merge/merge_handler/composite.rs
+prepare_composite_merge, which parks under `WaitKey::acp_object` and
+`WaitKey::Composite` (`Deferral::Parked`). -/
 namespace DeferredMerges
 
 /-- Taking the entry of a composite that has none changes nothing. -/
@@ -87,6 +91,23 @@ theorem defer_keeps_other_waiters {L : Limits} {s : State} (h : Inv L s) (c : Ci
   · simp [hne]
   · rfl
 
+/-- A composite not yet indexed, parked under a document with room, is
+parked as a defer under its two keys. -/
+theorem park_of_room {L : Limits} {s : State} {c : Cid} {doc : Nat} {r : Cid}
+    (hc : c ∉ cids s) (hd : (s.waiters (.acpObject doc)).length < L.perKey) :
+    park L c doc r s = defer L c [.acpObject doc, .composite r] s := by
+  -- Nothing to take, so the document's room is read in `s`: it has some.
+  unfold park; dsimp only; rw [takeEntry_of_not_mem hc]; dsimp only; rw [if_pos hd]
+
+/-- A composite not yet indexed, parked under a full document, leaves the
+index as it was. -/
+theorem park_of_full {L : Limits} {s : State} {c : Cid} {doc : Nat} {r : Cid}
+    (hc : c ∉ cids s) (hd : L.perKey ≤ (s.waiters (.acpObject doc)).length) :
+    park L c doc r s = s := by
+  -- Nothing to take, so the document's room is read in `s`: it has none.
+  unfold park; dsimp only; rw [takeEntry_of_not_mem hc]; dsimp only
+  rw [if_neg (Nat.not_lt.mpr hd)]
+
 /-- A parked composite, with room for it, is indexed under its document and
 under the refused composite. -/
 theorem park_files_under_both {L : Limits} {s : State} (h : Inv L s) {c : Cid} {doc : Nat}
@@ -106,42 +127,28 @@ theorem park_files_under_both {L : Limits} {s : State} (h : Inv L s) {c : Cid} {
   have hfr := file_takes_room L c [.acpObject doc, .composite r] s.waiters (.composite r)
     (by simp) hr (not_waiting_of_not_mem h hc _)
   obtain ⟨hw, _, _⟩ := file_spec L c [.acpObject doc, .composite r] s.waiters
+  -- The document has room, so parking is a defer.
+  rw [park_of_room hc hd]
   -- Follow `defer`: nothing to take, keys given, room in the index, filed.
-  unfold park defer; dsimp only; rw [takeEntry_of_not_mem hc]; dsimp only
+  unfold defer; dsimp only; rw [takeEntry_of_not_mem hc]; dsimp only
   rw [if_neg (by simp), if_neg (Nat.not_le.mpr hcap), ht, if_neg (List.ne_nil_of_mem hfd)]
   refine ⟨⟨⟨c, _⟩, List.mem_append_right _ (List.mem_singleton.mpr rfl), rfl, hfd, hfr⟩, ?_, ?_⟩
   · dsimp only; rw [hw, if_pos hfd]; simp
   · dsimp only; rw [hw, if_pos hfr]; simp
 
-/-- Past its document's bound, a parked composite is still indexed, under the
-refused composite alone: it takes a slot of the index, is not handed back by
-a change of its document nor by the sweep, and leaves on the refused
-composite's merge (its own, when it is the refused one), on a direct queue,
-or when it is deferred again. -/
+/-- Past its document's bound, a parked composite is not indexed at all:
+the index is exactly as it was, so the composite takes no place in it and
+sits under no key, the refused composite's included (its own CID, when it
+is the refused one). It stays unmerged, and the replication layer's own
+retry tries it again. -/
 theorem park_past_document_bound {L : Limits} {s : State} (h : Inv L s) {c : Cid} {doc : Nat}
-    {r : Cid} (hc : c ∉ cids s) (hcap : s.entries.length < L.capacity)
-    (hper : 2 ≤ L.perComposite) (hd : L.perKey ≤ (s.waiters (.acpObject doc)).length)
-    (hr : (s.waiters (.composite r)).length < L.perKey) :
-    (∃ e ∈ (park L c doc r s).entries, e.cid = c ∧ Key.acpObject doc ∉ e.keys ∧
-        Key.composite r ∈ e.keys) ∧
-      c ∉ (park L c doc r s).waiters (.acpObject doc) ∧
-      c ∈ (park L c doc r s).waiters (.composite r) := by
-  -- Both keys fit within the keys a composite may have.
-  have ht : List.take L.perComposite [Key.acpObject doc, .composite r] =
-      [.acpObject doc, .composite r] := List.take_of_length_le (by simp; omega)
-  -- The refused composite's key has room and does not hold `c`: filed there.
-  have hfr := file_takes_room L c [.acpObject doc, .composite r] s.waiters (.composite r)
-    (by simp) hr (not_waiting_of_not_mem h hc _)
-  obtain ⟨hw, hroom, _⟩ := file_spec L c [.acpObject doc, .composite r] s.waiters
-  -- The document's key has no room: not filed there.
-  have hfd : Key.acpObject doc ∉ (file L c [.acpObject doc, .composite r] s.waiters).1 :=
-    fun hm => absurd (hroom _ hm).2 (Nat.not_lt.mpr hd)
-  -- Follow `defer`: nothing to take, keys given, room in the index, filed.
-  unfold park defer; dsimp only; rw [takeEntry_of_not_mem hc]; dsimp only
-  rw [if_neg (by simp), if_neg (Nat.not_le.mpr hcap), ht, if_neg (List.ne_nil_of_mem hfr)]
-  refine ⟨⟨⟨c, _⟩, List.mem_append_right _ (List.mem_singleton.mpr rfl), rfl, hfd, hfr⟩, ?_, ?_⟩
-  · dsimp only; rw [hw, if_neg hfd]; exact not_waiting_of_not_mem h hc _
-  · dsimp only; rw [hw, if_pos hfr]; simp
+    {r : Cid} (hc : c ∉ cids s) (hd : L.perKey ≤ (s.waiters (.acpObject doc)).length) :
+    park L c doc r s = s ∧ c ∉ cids (park L c doc r s) ∧
+      ∀ k, c ∉ (park L c doc r s).waiters k := by
+  -- Parking changed nothing.
+  rw [park_of_full hc hd]
+  -- `c` has no entry, so, the index being consistent, it is under no key.
+  exact ⟨rfl, hc, not_waiting_of_not_mem h hc⟩
 
 /-- A parked composite released by either of its keys, its document's change
 or the refused composite's merge, leaves the index and both keys. -/

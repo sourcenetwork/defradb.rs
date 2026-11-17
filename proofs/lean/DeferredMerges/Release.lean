@@ -214,7 +214,13 @@ theorem wf_run (L : Limits) (ops : List Op) : (run L empty ops).waiters.WF := by
     intro s h; apply ih
     cases op with
     | defer c ks => exact wf_defer L c ks h
-    | park c doc r => exact wf_defer L c _ h
+    | park c doc r =>
+      -- A defer, or only taking `c`'s old entry.
+      show (park L c doc r s).waiters.WF
+      unfold park; dsimp only
+      split
+      · exact wf_defer L c _ h
+      · exact wf_takeEntry c h
     | release ks => exact wf_release h ks
     | releaseParked n => exact wf_release h _
     | enqueueReady c =>

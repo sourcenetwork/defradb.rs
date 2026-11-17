@@ -17,8 +17,10 @@ pub trait CompositePostCommitAction: MaybeSend {
 pub struct CompositeFrame<'a> {
     pub is_genesis: bool,
     pub status: u8,
-    /// DID verified from this composite's own signature; `None` when unsigned.
-    pub signer: Option<&'a str>,
+    /// The DID this composite's own signature names. `None` when it is
+    /// unsigned, its signature does not verify, or what the signature names
+    /// is not a DID: then it names nobody a grant could cover.
+    pub signer: Option<&'a identity::Did>,
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
