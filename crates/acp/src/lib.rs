@@ -59,7 +59,7 @@ pub use dac::{
     ObjectChangeListener,
 };
 pub use delegation_audience::DelegationAudience;
-pub use delegation_window::{DelegationWindow, CLOCK_SKEW_ALLOWANCE};
+pub use delegation_window::{DelegationWindow, WindowRefusal, CLOCK_SKEW_ALLOWANCE};
 pub use error::{Error, Result};
 pub use external::{
     ExternalDocumentAcp, OwedScope, OwedSettlement, RedriveReport, MAX_FAILED_SUBMISSIONS,

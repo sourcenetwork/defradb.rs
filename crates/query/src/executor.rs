@@ -1121,10 +1121,12 @@ mod tests {
     #[test]
     fn a_delegation_outside_its_window_names_the_providers_time() {
         let window = acp::DelegationWindow {
-            issued_at: 1_060,
             not_before: 1_030,
             expires_at: 1_180,
             provider_time: 1_000,
+            refusal: acp::WindowRefusal::NotYetValid {
+                ahead_by_at_least: 30,
+            },
         };
         let refused = QueryResponseError::from_query_error(
             crate::error::QueryError::DelegationOutsideWindow {

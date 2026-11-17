@@ -23,14 +23,17 @@ What must never happen:
   allowance writes a delegation the provider refuses;
 - a delegation written at the provider's time is refused at any block time
   within its lifetime;
-- the node calls a clock off when the signer's clock is within the allowance,
-  or fails to call it off when it is not.
+- the node claims more about the signer's clock than the delegation's own
+  times prove: a delegation that is not valid yet proves the clock ahead by
+  at least the gap to its start, and one that has ended proves nothing, since
+  a delegation held past its lifetime by a signer whose clock is right ends
+  the same way.
 
 Rust owners: `issue_request_at` in `crates/vera/src/vera_rs/bearer/request.rs`
 and `issue_at` in `crates/vera/src/vera_rs/bearer.rs` write the times;
 `within_window` in `crates/vera/src/vera_rs/bearer/window.rs` is the node's
-check; `DelegationWindow::clock_is_off` in `crates/acp/src/delegation_window.rs`
-names the clock. The verifier mirrored is `verify_bearer_token`,
+check and names the refusal, a `WindowRefusal` of
+`crates/acp/src/delegation_window.rs`. The verifier mirrored is `verify_bearer_token`,
 `JwtClaims::authorize` and `OperationId::validate` in vera.rs `vera-crypto`.
 
 Times are natural numbers, as Unix seconds are; a subtraction that would go
@@ -189,55 +192,84 @@ theorem without_allowance_one_second_ahead_refused (t lifetime : Nat) :
   simp only [requestHolds, plainHolds, issueWithoutAllowance]
   omega
 
-/-- The signer's clock when it wrote `claims`: the allowance after the start,
-or the issue time where that is later (`signer_clock`). -/
-def signerClock (claims : Claims) : Nat :=
-  -- Both kinds of delegation start the allowance before the signer's clock.
-  max claims.iat (claims.nbf + allowance)
+/-- Why the node refuses a request-bound delegation at time `t`, mirroring
+`WindowRefusal`. Only a delegation that is not valid yet carries a number. -/
+inductive Refusal where
+  /-- It starts after `t`; the signer's clock is ahead by at least this much. -/
+  | notYetValid (aheadByAtLeast : Nat)
+  /-- It has ended: nothing is claimed about the clock. -/
+  | expired
+  /-- It stays open longer past `t` than vera.rs keeps a request open. -/
+  | outlastsRequest
+  deriving DecidableEq
 
-/-- Either kind of delegation names its signer's clock exactly. -/
-theorem signer_clock_is_the_clock (c lifetime : Nat) (sane : allowance ≤ c) :
-    signerClock (issue c lifetime) = c ∧ signerClock (issuePlain c lifetime) = c := by
-  -- `max (c - 30) c = c` and `max c c = c`.
-  simp only [signerClock, issue, issuePlain, allowance] at *
-  omega
+/-- The node's classification of a refused delegation (`within_window`):
+first whether it has started, then whether it has ended. -/
+def classify (claims : Claims) (t : Nat) : Refusal :=
+  -- A start after `t`: the gap, and nothing added for a set-back start.
+  if t < claims.nbf then .notYetValid (claims.nbf - t)
+  -- An end at or before `t` (the operation identity closes at `exp`).
+  else if claims.exp ≤ t then .expired
+  -- Otherwise it reaches too far.
+  else .outlastsRequest
 
-/-- How far the signer's clock was from the provider's, in signed seconds:
-positive when the signer was ahead. -/
-def offset (claims : Claims) (t : Nat) : Int :=
-  -- The signer's clock against the provider's time.
-  (signerClock claims : Int) - (t : Int)
+/-- A signer whose clock read `c` cannot have written a start later than `c`.
+Whatever it did with its start (set it back, as DefraDB does, or not), the
+lead the node reports never exceeds the signer's true lead `c - t`. -/
+theorem reported_lead_is_a_lower_bound (claims : Claims) (c t : Nat)
+    (honest : claims.nbf ≤ c) (early : t < claims.nbf) :
+    ∃ lead, classify claims t = .notYetValid lead ∧ lead ≤ c - t := by
+  -- The reported lead is the gap to the start, which lies at or before `c`.
+  refine ⟨claims.nbf - t, ?_, ?_⟩
+  · simp [classify, early]
+  · omega
 
-/-- The node's word on a refused delegation: its signer's clock is off when it
-issued more than the allowance away from the provider's time. -/
-def clockIsOff (claims : Claims) (t : Nat) : Prop :=
-  -- Either way, by more than the allowance.
-  allowance < (offset claims t).natAbs
+/-- A signer that does not set its start back, writing at `c` ahead of `t`,
+is reported exactly `c - t` ahead: the allowance is never added. -/
+theorem unset_start_is_reported_exactly (c lifetime t : Nat) (early : t < c) :
+    classify (issueWithoutAllowance c lifetime) t = .notYetValid (c - t) := by
+  -- Its start is `c` itself.
+  simp [classify, issueWithoutAllowance, early]
 
-/-- A signer whose clock is within the allowance of the provider's is never told
-its clock is off about a delegation it just wrote. -/
-theorem within_allowance_is_not_off (t lifetime : Nat) (skew : Int)
-    (small : skew.natAbs ≤ allowance) (sane : (allowance : Int) ≤ (t : Int) + skew) :
-    ¬ clockIsOff (issue ((t : Int) + skew).toNat lifetime) t := by
-  -- The offset is the skew itself.
-  simp only [clockIsOff, offset, signerClock, issue, allowance] at *
-  omega
+/-- DefraDB's delegation from a signer more than the allowance ahead is
+reported the true lead less the allowance: true, if not all of it. -/
+theorem set_back_start_is_reported_less_the_allowance (c lifetime t : Nat)
+    (early : t + allowance < c) :
+    classify (issue c lifetime) t = .notYetValid (c - allowance - t) := by
+  -- Its start is `c - 30`, still after `t`.
+  have : t < c - allowance := by simp only [allowance] at *; omega
+  simp [classify, issue, this]
 
-/-- A signer whose clock is more than the allowance away is told its clock is
-off about a delegation it just wrote. -/
-theorem beyond_allowance_is_off (t lifetime : Nat) (skew : Int)
-    (large : allowance < skew.natAbs) (sane : (allowance : Int) ≤ (t : Int) + skew) :
-    clockIsOff (issue ((t : Int) + skew).toNat lifetime) t := by
-  -- The offset is the skew itself.
-  simp only [clockIsOff, offset, signerClock, issue, allowance] at *
-  omega
+/-- A delegation that has ended is reported expired, with no number, whatever
+the clock that wrote it: the same report for a right clock whose delegation
+was held past its lifetime as for a clock that was behind. -/
+theorem expired_claims_nothing_about_the_clock (c lifetime t : Nat)
+    (started : c - allowance ≤ t) (late : c + lifetime ≤ t) :
+    classify (issue c lifetime) t = .expired := by
+  -- It has started and it has ended.
+  have h1 : ¬ t < c - allowance := by omega
+  simp [classify, issue, h1, late]
 
-/-- A refusal the node calls a clock that is off is cured by writing the
-delegation again at the provider's time it reports: written there, it is
-honoured at every block time of its lifetime. -/
-theorem rewritten_at_reported_time_holds (claims : Claims) (p lifetime t : Nat)
-    (_off : clockIsOff claims p) (positive : 0 < lifetime) (bounded : lifetime ≤ maxTtl)
-    (started : p ≤ t) (within : t < p + lifetime) : requestHolds (issue p lifetime) t :=
+/-- The refusal that reaches too far is a delegation open more than an open
+request past `t`, among those vera.rs refuses. -/
+theorem outlasting_reaches_too_far (claims : Claims) (t : Nat)
+    (refused : ¬ requestHolds claims t) (shaped : wellFormed claims)
+    (kind : classify claims t = .outlastsRequest) : t + maxTtl < claims.exp := by
+  -- Neither early nor ended, so only the open-request bound can have failed.
+  unfold classify at kind
+  by_cases early : t < claims.nbf
+  · simp [early] at kind
+  · by_cases ended : claims.exp ≤ t
+    · simp [early, ended] at kind
+    · simp only [requestHolds, plainHolds, wellFormed, maxTtl] at refused shaped ⊢
+      omega
+
+/-- Whatever the refusal, writing the delegation again at the provider's time
+it reports cures it: written there, it is honoured at every block time of its
+lifetime. -/
+theorem rewritten_at_reported_time_holds (p lifetime t : Nat) (positive : 0 < lifetime)
+    (bounded : lifetime ≤ maxTtl) (started : p ≤ t) (within : t < p + lifetime) :
+    requestHolds (issue p lifetime) t :=
   -- What was refused does not matter: the new one is written at `p`.
   written_at_provider_time_holds p lifetime t positive bounded started within
 

@@ -491,12 +491,14 @@ mod caller_tests {
         assert!(matches!(
             authorize_at(&early, WORKER, 9, NOW),
             Err(CallerDelegationError::Window(window))
-                if window.provider_time == NOW && window.clock_offset() == 31
+                if window.provider_time == NOW
+                    && window.refusal == acp::WindowRefusal::NotYetValid { ahead_by_at_least: 1 }
         ));
         let late = at(NOW - 61).await;
         assert!(matches!(
             authorize_at(&late, WORKER, 9, NOW),
-            Err(CallerDelegationError::Window(window)) if window.clock_is_off()
+            Err(CallerDelegationError::Window(window))
+                if window.refusal == acp::WindowRefusal::Expired
         ));
         assert!(matches!(
             authorize_at(&early, WORKER, 10, NOW),

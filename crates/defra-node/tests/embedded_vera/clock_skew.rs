@@ -90,8 +90,9 @@ async fn taken(on: &Deployed, user: &User, attempt: Attempt) {
 }
 
 /// The attempt was refused for its delegation's window, nothing reached the
-/// chain, and the refusal names the provider's time.
-async fn refused_for_its_window(on: &Deployed, attempt: Attempt) -> u64 {
+/// chain, and the refusal names the provider's time and says `says`, and
+/// nothing about the signer's clock unless `says` does.
+async fn refused_for_its_window(on: &Deployed, attempt: Attempt, says: &str) -> u64 {
     let Attempt { doc, txn, response } = attempt;
     let error = response.errors.first().expect("refused");
     assert_eq!(
@@ -100,9 +101,11 @@ async fn refused_for_its_window(on: &Deployed, attempt: Attempt) -> u64 {
         "{:?}",
         response.errors
     );
-    assert!(
+    assert!(error.message.contains(says), "{}", error.message);
+    assert_eq!(
         error.message.contains("clock"),
-        "the refusal says the clock is off: {}",
+        says.contains("clock"),
+        "{}",
         error.message
     );
     let provider_time = error.provider_time().expect("the provider's time");
@@ -144,25 +147,52 @@ fn a_clock_a_little_off_is_taken() {
 /// A clock a minute ahead, nine minutes behind under a delegation of two
 /// minutes, or eleven minutes behind under the longest delegation is refused
 /// before anything is written, with the provider's time. Issued again at that
-/// time, the same create is taken.
+/// time, the same create is taken. Only the clock ahead is said to be off: a
+/// delegation that has ended says nothing about its signer's clock, since one
+/// held past its lifetime by a signer whose clock is right ends the same way.
 #[test]
 fn a_clock_far_off_is_refused_with_the_providers_time_and_taken_at_it() {
     workers::block_on(async {
         let on = Deployed::start(9422).await;
         let user = User::new();
+        let ahead = "the signer's clock is at least";
+        let ended = "it has expired";
         let cases = [
-            (MINUTE, LIFETIME),
-            (-9 * MINUTE, LIFETIME),
-            (-11 * MINUTE, MAX_REQUEST_LIFETIME),
+            (MINUTE, LIFETIME, ahead),
+            (-9 * MINUTE, LIFETIME, ended),
+            (-11 * MINUTE, MAX_REQUEST_LIFETIME, ended),
         ];
-        for (index, (offset, lifetime)) in cases.into_iter().enumerate() {
+        for (index, (offset, lifetime, says)) in cases.into_iter().enumerate() {
             let name = format!("off by {offset}");
             let nonce = 2 * index as u8 + 1;
             let attempt = create_at(&on, &user, &name, nonce, clock(offset), lifetime);
-            let provider_time = refused_for_its_window(&on, attempt.await).await;
+            let provider_time = refused_for_its_window(&on, attempt.await, says).await;
             let again = create_at(&on, &user, &name, nonce + 1, provider_time, lifetime);
             taken(&on, &user, again.await).await;
         }
+
+        // A right clock, its delegation held past its two seconds: the same
+        // refusal as the clock eleven minutes behind.
+        let attempt = on
+            .create(&user, "held", |doc| {
+                let (on, user) = (&on, &user);
+                async move {
+                    let token = bound_at(
+                        on,
+                        user,
+                        &doc,
+                        PolicyAction::RegisterObject,
+                        9,
+                        clock(0),
+                        Duration::from_secs(2),
+                    )
+                    .await;
+                    edge::testing::edge().sleep(Duration::from_secs(4)).await;
+                    SignerCredential::RequestBound(token)
+                }
+            })
+            .await;
+        refused_for_its_window(&on, attempt, ended).await;
         on.node.shutdown().await.expect("shutdown");
     })
     .unwrap();
@@ -220,8 +250,16 @@ fn a_delegation_issued_at_the_reported_chain_time_is_taken() {
         let early = bound_at(&on, &user, &doc, grant(), 2, clock(MINUTE), LIFETIME).await;
         match stage(early).await {
             Err(defra_node::Error::Acp(acp::Error::DelegationOutsideWindow { window, .. })) => {
-                assert!(window.clock_is_off(), "{window}");
-                assert!(window.clock_offset() >= MINUTE - 5, "{window}");
+                // Set back by the allowance, the start proves at least the
+                // lead less the allowance.
+                assert!(
+                    matches!(
+                        window.refusal,
+                        acp::WindowRefusal::NotYetValid { ahead_by_at_least }
+                            if (25..=30).contains(&ahead_by_at_least)
+                    ),
+                    "{window}"
+                );
             }
             other => panic!("not refused for its window: {other:?}"),
         }

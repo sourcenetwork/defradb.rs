@@ -450,6 +450,12 @@ mod tests {
         }
     }
 
+    async fn ahead_token(signer: &Ed25519Signer) -> String {
+        issue_request_at(signer, &audience(), &binding(1), 60, NOW + 1)
+            .await
+            .expect("delegation")
+    }
+
     #[nuclei::test]
     async fn a_request_delegation_outside_its_window_names_the_window_and_the_provider_time() {
         let signer = Ed25519Signer::from_slice(&[9; 32]).expect("key");
@@ -466,26 +472,57 @@ mod tests {
             }
         };
 
-        // Ahead by a minute: it has not started, and the clock is off.
+        // Ahead by a minute: not valid yet. Set back by the allowance, its
+        // start proves the signer at least 30 seconds ahead, no more.
         let ahead = window(NOW + 60, 120, NOW).await;
         assert_eq!(
             ahead,
             acp::DelegationWindow {
-                issued_at: NOW + 60,
                 not_before: NOW + 30,
                 expires_at: NOW + 180,
                 provider_time: NOW,
+                refusal: acp::WindowRefusal::NotYetValid {
+                    ahead_by_at_least: 30
+                },
             }
         );
-        assert_eq!(ahead.clock_offset(), 60);
-        assert!(ahead.clock_is_off());
-        // Behind by eleven minutes: over before it arrived, and the clock is off.
+        // Behind by eleven minutes, or held past its end by a signer whose
+        // clock is right: both expired, and nothing is said of the clock.
         let behind = window(NOW - 660, 570, NOW).await;
-        assert_eq!(behind.clock_offset(), -660);
-        assert!(behind.clock_is_off());
-        // Held past its end by a signer whose clock is right: expired.
         let held = window(NOW - 20, 10, NOW).await;
-        assert!(!held.clock_is_off());
+        for expired in [behind, held] {
+            assert_eq!(expired.refusal, acp::WindowRefusal::Expired);
+            assert!(!expired.to_string().contains("clock"), "{expired}");
+        }
+
+        // From a signer that does not set its start back, one second ahead
+        // is one second ahead: the allowance is not added.
+        let mut unset = vera_crypto::jwt::verify_bearer_token(&ahead_token(&signer).await).unwrap();
+        unset.iat = NOW + 1;
+        unset.nbf = NOW + 1;
+        assert_eq!(
+            super::super::window::within_window(&unset, NOW)
+                .unwrap_err()
+                .refusal,
+            acp::WindowRefusal::NotYetValid {
+                ahead_by_at_least: 1
+            }
+        );
+        // Started, but open longer past the node's time than vera.rs keeps a
+        // request open.
+        let mut long = unset.clone();
+        long.nbf = NOW - 10;
+        long.iat = NOW - 10;
+        long.exp = NOW + MAX_OPERATION_TTL + 1;
+        let mut id = [5; 32];
+        id[..8].copy_from_slice(&long.exp.to_be_bytes());
+        long.request.as_mut().unwrap().id = OperationId(id);
+        assert_eq!(
+            super::super::window::within_window(&long, NOW)
+                .unwrap_err()
+                .refusal,
+            acp::WindowRefusal::OutlastsRequest
+        );
 
         // A delegation for another worker is refused as such, whatever its times.
         let token = issue_request_at(&signer, &audience(), &binding(1), 60, NOW + 600)
