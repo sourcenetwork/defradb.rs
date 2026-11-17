@@ -250,13 +250,30 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/db/tests/merge/parked_refusals.rs a_revoked_writers_change_is_parked_and_merges_once_the_node_grants_it_again, a_change_built_on_a_parked_one_waits_with_it_and_one_on_another_branch_merges, the_sweep_re_drives_a_change_a_grant_made_elsewhere_lets_in, an_unsigned_change_is_still_rejected; crates/db/src/merge/governance/deferred.rs the_sweep_releases_parked_composites_only",
     },
     Property {
+        // The provider gate after the conversion to parking: the hook's
+        // judgement (on_protected_update, parks_refusals) is executed over
+        // every combination of its inputs against the Rust hook; the one
+        // match in check_protected_update that turns a signed refusal into a
+        // parked one is bound by the merge tests below.
         family: "Verified client graph transaction",
-        name: "owed_registration_rejects_nobody / creator_waits_for_its_grants / creator_waits_for_the_owners_grants / rejected_only_on_refusal / merged_only_when_allowed / nothing_owed_the_provider_decides / other_signers_ignore_creator_grants",
+        name: "hook_never_parks / signed_never_rejected_under_remote / signed_refusal_parks_under_remote / unsigned_refusal_is_rejected / unsigned_is_rejected / parked_only_from_signed_refusal / allowed_merges / merged_only_when_allowed / rejected_only_on_refusal / owed_registration_rejects_nobody / creator_waits_for_its_grants / creator_waits_for_the_owners_grants / nothing_owed_the_provider_decides / other_signers_ignore_creator_grants / local_provider_unchanged / lax_access_unchanged / local_rejected_only_on_refusal / local_never_parks / local_reads_nothing_owed: under strict access with a remote provider a signed refusal is parked and only an unsigned one is rejected; a local provider or lax access decides as before",
         axis: Lean,
-        anchor: "crates/db/src/merge/acp_merge_handler.rs AcpCompositeMergeHook::on_protected_update; crates/acp/src/replica.rs ReplicaOwed",
-        model_ref: "ReplicaGate (lake build)",
-        tiers: &[Boundary],
-        bound_by: "",
+        anchor: "crates/db/src/merge/acp_merge_handler.rs AcpCompositeMergeHook::on_protected_update, AcpCompositeMergeHook::parks_refusals, AcpCompositeMergeHook::replicas_for; crates/db/src/merge/merge_handler/protected_update.rs Refusal, check_protected_update; crates/acp/src/replica.rs ReplicaOwed",
+        model_ref: "ReplicaGate (lake build; lake env lean --run ReplicaGate.lean)",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/db/src/merge/gate_conformance_tests.rs the_acp_hook_matches_the_executed_gate_model; crates/db/tests/merge/parked_refusals.rs a_revoked_writers_change_is_parked_and_merges_once_the_node_grants_it_again, an_unsigned_change_is_still_rejected",
+    },
+    Property {
+        // The index the parked refusals are filed in, a data structure with
+        // its invariants proven over any sequence of operations and its
+        // observable results executed against the Rust type.
+        family: "Verified client graph transaction",
+        name: "inv_run / bounded_after_any_run / no_dangling_after_any_run / present_iff / has_waiters_iff / release_takes / release_leaves_no_trace / release_keeps / release_keeps_waiting / release_hands_back / release_idempotent / wf_run / releaseParked_count / picked_are_documents / release_parked_hands_back_only_parked / release_parked_keeps_governance / release_parked_drains / release_parked_twice_finds_nothing / defer_when_full_changes_nothing / defer_full_key_unchanged / defer_keeps_others / defer_keeps_other_waiters / park_files_under_both / park_past_document_bound / parked_released_by_either: the deferred-composite index keeps its per-key and per-node bounds and has no dangling entry after any operations, filing never drops another composite, a parked composite is filed under its document and the refused composite and leaves both when either releases it, a release is idempotent, and the sweep hands back only composites parked under a document",
+        axis: Lean,
+        anchor: "crates/db/src/merge/governance/deferred.rs DeferredMerges::defer, DeferredMerges::release, DeferredMerges::release_parked, DeferredMerges::enqueue_ready, DeferredMerges::take_ready, DeferredMerges::forget, DeferredMerges::take_entry, DeferredMerges::unindex, MAX_DEFERRED_COMPOSITES, MAX_WAITERS_PER_DEPENDENCY, MAX_AWAITED_PER_COMPOSITE; crates/db/src/merge/governance/awaited.rs WaitKey::AcpObject; crates/db/src/merge/merge_handler/composite.rs prepare_composite_merge",
+        model_ref: "DeferredMerges (lake build; lake env lean --run DeferredMerges/Conformance.lean)",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/db/src/merge/governance/deferred_conformance_tests.rs the_index_matches_the_executed_model; crates/db/src/merge/governance/deferred.rs the_sweep_releases_parked_composites_only",
     },
     Property {
         family: "Verified client graph transaction",
