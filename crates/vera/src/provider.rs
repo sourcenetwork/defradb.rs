@@ -319,6 +319,13 @@ pub trait VeraProvider: MaybeSendSync {
         None
     }
 
+    /// Whether [`Self::verify_access`] proves every decision against the
+    /// provider's finalized state at a revision within its freshness limit,
+    /// and fails when it cannot: the vera.rs light client does.
+    fn proves_decisions(&self) -> bool {
+        false
+    }
+
     fn acp_light_client_status(&self) -> Result<AcpLightClientStatus, ProviderError> {
         Err(ProviderError::Unavailable(
             "ACP light client status is not available for this provider".into(),

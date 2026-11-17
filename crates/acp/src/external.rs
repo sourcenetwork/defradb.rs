@@ -257,6 +257,10 @@ where
         self.provider.unregistered_documents_are_public()
     }
 
+    fn proves_decisions(&self) -> bool {
+        self.provider.proves_decisions()
+    }
+
     fn settles_owed_registrations(&self) -> bool {
         true
     }
