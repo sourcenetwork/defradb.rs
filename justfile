@@ -714,10 +714,12 @@ lint-wasm:
     cargo clippy -p defra-wasm --target wasm32-unknown-unknown --no-default-features --all-targets -- -D warnings
 
 # Docs must build without warnings; a broken intra-doc link fails CI.
+# Nightly and -Zunstable-options are to allow for --enable-index-page, until
+# https://github.com/rust-lang/cargo/issues/8229#issuecomment-633153513 fixed
 [doc("Build docs with warnings denied (broken links fail CI).")]
 [group('check')]
 doc:
-    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --keep-going
+    RUSTDOCFLAGS="-D warnings --enable-index-page -Zunstable-options" cargo +nightly doc --workspace --no-deps --keep-going
 
 # What to make green before asking for a review.
 [group('check')]
