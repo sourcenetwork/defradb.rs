@@ -8,7 +8,7 @@ use storage::corekv::Store;
 
 use super::keys::OwedTupleState;
 use super::ops;
-use super::record::{NewOwedChange, OwedChange, OwedState, OwedTuple};
+use super::record::{NewOwedChange, OwedAuthority, OwedChange, OwedState, OwedTuple};
 use crate::error::{Error, Result};
 
 /// The most changes one transaction may stage.
@@ -162,6 +162,36 @@ impl OwedChanges {
         error: Option<String>,
     ) -> Result<bool> {
         ops::mark(&self.active_view()?, seq, state, attempts, error).await
+    }
+
+    /// Record, in this transaction, a fresh authority with the change at
+    /// `seq` and make it owed again: staged, with nothing counted against
+    /// it. `false` when no such change is owed.
+    pub async fn reauthorize(&self, seq: u64, authority: OwedAuthority) -> Result<bool> {
+        ops::reauthorize(&self.active_view()?, seq, authority).await
+    }
+
+    /// Delete the record of the change at `seq` in this transaction without
+    /// the provider holding it, and keep a note of it and of `reason` for
+    /// its actor. `false` when no such change is owed.
+    pub async fn discard(&self, seq: u64, reason: &str) -> Result<bool> {
+        ops::discard(&self.active_view()?, seq, reason).await
+    }
+
+    /// The note kept of the discarded change at `seq`, if any.
+    pub async fn discarded(&self, seq: u64) -> Result<Option<OwedChange>> {
+        ops::discarded(&self.active_view()?, seq).await
+    }
+
+    /// Every note of a discarded change, in sequence order.
+    pub async fn discards(&self) -> Result<Vec<OwedChange>> {
+        ops::discards(&self.active_view()?).await
+    }
+
+    /// Delete, in this transaction, the note of the discarded change at
+    /// `seq`: its actor was told.
+    pub async fn acknowledge(&self, seq: u64) -> Result<()> {
+        ops::acknowledge(&self.active_view()?, seq).await
     }
 
     /// How many changes `actor` has unsettled on the node.

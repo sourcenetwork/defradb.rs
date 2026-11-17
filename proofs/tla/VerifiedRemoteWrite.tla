@@ -23,13 +23,26 @@
 \* command. A credential can expire at any moment. The same token can be shown
 \* to the Node's HTTP door as if it were a login.
 \*
+\* After the commit a submission can fail: the provider cannot be reached, or
+\* the credential recorded for the command has run out. The commit stands. The
+\* command stays owed, or is parked when no credential lets the Node send it,
+\* and its record says why. The embedder then hands the Node a fresh credential
+\* for that one command. The Node checks it as it checked the first one, with
+\* the same rule, records it with the command and sends the command under it.
+\*
 \* What must never happen:
 \*   - a write is recorded although the Node could not act for the User;
 \*   - a refused write leaves a row or an owed record behind;
 \*   - a request-bound delegation is used for any command but the one it names;
 \*   - a request-bound delegation logs a caller in at the HTTP door;
 \*   - a command is sent under a credential that has expired;
-\*   - a grant reaches the provider before its document's registration.
+\*   - a grant reaches the provider before its document's registration;
+\*   - a command is sent with anything but the credential recorded for it,
+\*     such as a token the process happens to hold for the User;
+\*   - a parked command is owed again on a fresh credential that would not
+\*     have admitted it;
+\*   - a submission fails after the commit and the record of what is owed
+\*     does not say so.
 \*
 \* The provider's own checks (vera.rs `authorize_delegation`) are not modelled:
 \* this is what the Node does before it sends anything. A provider that gives
@@ -46,7 +59,13 @@
 \* crates/vera/src/vera_rs/bearer.rs caller_of_delegation (the HTTP door);
 \* crates/vera/src/cosmos/dac/owed.rs token, lapsed;
 \* crates/acp/src/outbox/staging.rs TransactionOutbox::stage;
-\* crates/acp/src/external/settle.rs register_first.
+\* crates/acp/src/external/settle.rs register_first;
+\* crates/acp/src/pending.rs PendingRegistration (authority, state, last_error);
+\* crates/acp/src/external/registration.rs settle_with, registrar,
+\* note_failure;
+\* crates/acp/src/external/owed.rs reauthorize, entries;
+\* crates/db/src/write/autocommit/helpers.rs register_created_doc;
+\* crates/defra-node/src/owed.rs Node::reauthorize_owed_acp_as, Node::owed_acp_as.
 EXTENDS Naturals, FiniteSets
 
 \* Each RED configuration plants exactly one bug by naming it here.
@@ -77,11 +96,26 @@ VARIABLES
   parked,      \* the commands waiting for a new credential
   misused,     \* TRUE once a request-bound token was sent with another command
   stale,       \* TRUE once a command was sent under an expired credential
-  http         \* the HTTP door: "idle", "in" or "out"
+  http,        \* the HTTP door: "idle", "in" or "out"
+  fresh,       \* per command: the credential handed in for it after it was parked
+  freshLive,   \* per command: TRUE while that fresh credential has not expired
+  failed,      \* the owed or parked commands whose last submission failed
+  noted,       \* the commands whose record says why their last submission failed
+  unbacked     \* TRUE once a command was sent though nothing recorded for it allowed it
+
+\* What is recorded after the commit about each command.
+after == <<fresh, freshLive, failed, noted, unbacked>>
 
 \* Every variable, so a step can say which ones it leaves alone.
 vars == <<kind, holdsKey, writeForm, writeNames, grantForm, grantNames, bySigner,
-          forNode, current, phase, rows, owed, sent, parked, misused, stale, http>>
+          forNode, current, phase, rows, owed, sent, parked, misused, stale, http,
+          after>>
+
+\* No fresh credential was handed in for a command.
+NoCred == [form |-> "none", names |-> "other", mine |-> FALSE]
+\* The fresh credentials an embedder may hand in: either kind of delegation,
+\* naming any command, signed by the User for this Node (mine) or not.
+FreshCreds == [form : {"delegation", "request"}, names : Named, mine : BOOLEAN]
 
 \* The facts about one run are chosen freely at the start; nothing is recorded.
 Init ==
@@ -102,6 +136,11 @@ Init ==
   /\ misused = FALSE                          \* no token was misused
   /\ stale = FALSE                            \* nothing was sent after expiry
   /\ http = "idle"                            \* nobody knocked at the HTTP door
+  /\ fresh = [c \in Commands |-> NoCred]      \* no fresh credential was handed in
+  /\ freshLive = [c \in Commands |-> FALSE]   \* so none is live
+  /\ failed = {}                              \* no submission failed
+  /\ noted = {}                               \* no record carries a reason
+  /\ unbacked = FALSE                         \* nothing was sent without authority
 
 \* A delegation is good when the User signed it, for this Node, and it has not
 \* expired. Each planted bug drops one of the three checks.
@@ -117,16 +156,42 @@ TrulyGood == bySigner /\ forNode /\ current
 \* form naming this command. A key needs no credential. A general delegation
 \* covers any policy command. A request-bound one covers only the command it
 \* names; the planted bug forgets to compare.
-MaySend(c, form, names) ==
+\* `good` says whether the credential passed the three checks. This one rule
+\* answers at admission, when the command is sent, and when a fresh credential
+\* is handed in for a parked command.
+MaySendWith(c, form, names, good) ==
   \/ holdsKey                                                   \* the Node signs itself
-  \/ form = "delegation" /\ Good                                \* a general delegation
-  \/ form = "request" /\ Good /\ (names = c \/ Bug = "anyCommand") \* bound to c
+  \/ form = "delegation" /\ good                                \* a general delegation
+  \/ form = "request" /\ good /\ (names = c \/ Bug = "anyCommand") \* bound to c
+\* The rule for the credential that came with the write or the grant.
+MaySend(c, form, names) == MaySendWith(c, form, names, Good)
 
 \* The same question answered from the facts, with no bug.
-TrulyMaySend(c, form, names) ==
+TrulyMaySendWith(c, form, names, good) ==
   \/ holdsKey
-  \/ form = "delegation" /\ TrulyGood
-  \/ form = "request" /\ TrulyGood /\ names = c
+  \/ form = "delegation" /\ good
+  \/ form = "request" /\ good /\ names = c
+TrulyMaySend(c, form, names) == TrulyMaySendWith(c, form, names, TrulyGood)
+
+\* The credential recorded for command c now: the fresh one handed in for it
+\* after it was parked, else the one its write or grant came with.
+Renewed(c) == fresh[c] # NoCred
+FormOf(c) == IF Renewed(c) THEN fresh[c].form
+             ELSE IF c = "register" THEN writeForm ELSE grantForm
+NamesOf(c) == IF Renewed(c) THEN fresh[c].names
+              ELSE IF c = "register" THEN writeNames ELSE grantNames
+\* Whether that credential is unexpired, in fact.
+LiveOf(c) == IF Renewed(c) THEN freshLive[c] ELSE current
+\* Whether it passes the three checks, as the Node checks them and in fact.
+GoodOf(c) ==
+  IF Renewed(c)
+    THEN /\ (fresh[c].mine \/ Bug \in {"anyIssuer", "anyNode"})
+         /\ (freshLive[c] \/ Bug = "expiredAccepted")
+    ELSE Good
+TrulyGoodOf(c) == IF Renewed(c) THEN fresh[c].mine /\ freshLive[c] ELSE TrulyGood
+\* Whether the Node may send c now with what is recorded for it.
+Sendable(c) == MaySendWith(c, FormOf(c), NamesOf(c), GoodOf(c))
+TrulySendable(c) == TrulyMaySendWith(c, FormOf(c), NamesOf(c), TrulyGoodOf(c))
 
 \* Whether the Node may act for the User at all, for a write that sends no
 \* command. An update sends none, so a request-bound token has nothing to name.
@@ -162,6 +227,7 @@ Stage ==
                          THEN {"register"} ELSE {}              \* nothing is owed
   /\ UNCHANGED <<kind, holdsKey, writeForm, writeNames, grantForm, grantNames,
                  bySigner, forNode, current, sent, parked, misused, stale, http>>
+  /\ UNCHANGED after                                            \* nothing is recorded here
 
 \* The embedder grants access in the same transaction, on the document the
 \* create made. The grant is owed only when the Node may send it; a refused
@@ -175,6 +241,7 @@ StageGrant ==
   /\ UNCHANGED <<kind, holdsKey, writeForm, writeNames, grantForm, grantNames,
                  bySigner, forNode, current, phase, rows, sent, parked, misused,
                  stale, http>>
+  /\ UNCHANGED after                                            \* nothing is recorded here
 
 \* The Node's owner commits the transaction: what is owed is now due.
 Commit ==
@@ -183,6 +250,7 @@ Commit ==
   /\ UNCHANGED <<kind, holdsKey, writeForm, writeNames, grantForm, grantNames,
                  bySigner, forNode, current, rows, owed, sent, parked, misused,
                  stale, http>>
+  /\ UNCHANGED after                                            \* nothing is recorded here
 
 \* Time passes and the credentials expire. This can happen at any moment.
 Expire ==
@@ -191,48 +259,122 @@ Expire ==
   /\ UNCHANGED <<kind, holdsKey, writeForm, writeNames, grantForm, grantNames,
                  bySigner, forNode, phase, rows, owed, sent, parked, misused,
                  stale, http>>
+  /\ UNCHANGED after                                            \* nothing is recorded here
 
 \* Whether sending c now would use a request-bound token for another command.
-Misuse(c, form, names) == ~holdsKey /\ form = "request" /\ names # c
+Misuse(c) == ~holdsKey /\ FormOf(c) = "request" /\ NamesOf(c) # c
 \* Whether sending c now would use a credential that has expired.
-Stale(form) == ~holdsKey /\ form # "none" /\ ~current
+Stale(c) == ~holdsKey /\ FormOf(c) # "none" /\ ~LiveOf(c)
+\* What a sent command leaves of its record: nothing failed, nothing to say.
+Settled(c) ==
+  /\ failed' = failed \ {c}
+  /\ noted' = noted \ {c}
+  /\ unbacked' = (unbacked \/ ~TrulySendable(c))               \* remember an unbacked send
+  /\ UNCHANGED <<fresh, freshLive>>
+\* What a failed submission of c leaves: the failure, and its reason in the
+\* record. The planted bug records no reason.
+Failed(c) ==
+  /\ failed' = failed \cup {c}
+  /\ noted' = IF Bug = "silentFailure" THEN noted ELSE noted \cup {c}
+  /\ UNCHANGED <<fresh, freshLive, unbacked>>
+\* The registration is out of the way: sent, neither owed nor parked.
+Registered == "register" \notin owed \cup parked
 
-\* After the commit the Node sends the registration, with the credential the
-\* write came with, checked again. One it may no longer send stays owed.
+\* After the commit the Node sends the registration, with the credential
+\* recorded for it, checked again: at the commit, at a later start, whenever
+\* it is tried. The planted bugs skip the check, or send it with a token the
+\* process happens to hold for the User.
 SendRegistration ==
   /\ phase = "committed"                                        \* after the commit
   /\ "register" \in owed                                        \* still owed
-  /\ (MaySend("register", writeForm, writeNames) \/ Bug = "sentExpired") \* checked again
+  /\ (Sendable("register") \/ Bug \in {"sentExpired", "ambientRetry"}) \* checked again
   /\ owed' = owed \ {"register"}                                \* owed no more
   /\ sent' = sent \cup {"register"}                             \* the provider has it
-  /\ misused' = (misused \/ Misuse("register", writeForm, writeNames)) \* remember a misuse
-  /\ stale' = (stale \/ Stale(writeForm))                       \* remember a stale send
+  /\ misused' = (misused \/ Misuse("register"))                 \* remember a misuse
+  /\ stale' = (stale \/ Stale("register"))                      \* remember a stale send
+  /\ Settled("register")                                        \* nothing left to report
   /\ UNCHANGED <<kind, holdsKey, writeForm, writeNames, grantForm, grantNames,
                  bySigner, forNode, current, phase, rows, parked, http>>
+
+\* A registration whose credential no longer lets the Node send it is parked:
+\* it waits for a fresh credential, is not sent, and says why.
+ParkRegistration ==
+  /\ phase = "committed"                                        \* after the commit
+  /\ "register" \in owed                                        \* still owed
+  /\ ~Sendable("register")                                      \* no usable credential
+  /\ Bug # "ambientRetry"                                       \* (the bug sends it instead)
+  /\ owed' = owed \ {"register"}                                \* out of the queue
+  /\ parked' = parked \cup {"register"}                         \* waiting for authority
+  /\ Failed("register")                                         \* and saying so
+  /\ UNCHANGED <<kind, holdsKey, writeForm, writeNames, grantForm, grantNames,
+                 bySigner, forNode, current, phase, rows, sent, misused, stale, http>>
+
+\* A submission fails though the Node may send the command: the provider
+\* cannot be reached. The command stays owed and its record says why.
+SendFails(c) ==
+  /\ phase = "committed"                                        \* after the commit
+  /\ c \in owed /\ c \notin failed                              \* owed, and this is news
+  /\ (c = "grant" => Registered)                                \* its turn has come
+  /\ Sendable(c)                                                \* the Node tried
+  /\ Failed(c)                                                  \* and it failed
+  /\ UNCHANGED <<kind, holdsKey, writeForm, writeNames, grantForm, grantNames,
+                 bySigner, forNode, current, phase, rows, owed, sent, parked,
+                 misused, stale, http>>
+
+\* The embedder hands the Node a fresh credential for one parked command.
+\* The Node admits it with the rule that admitted the write, asked about this
+\* command, and records it: the command is owed again. A credential the rule
+\* refuses changes nothing. The planted bug records whatever it is handed.
+Reauthorize(c, cred) ==
+  /\ phase = "committed"                                        \* after the commit
+  /\ c \in parked                                               \* it waits for authority
+  /\ \/ MaySendWith(c, cred.form, cred.names,
+                     cred.mine \/ Bug \in {"anyIssuer", "anyNode"}) \* the same rule
+     \/ Bug = "reauthUnchecked"                                 \* (bug: nothing is asked)
+  /\ fresh' = [fresh EXCEPT ![c] = cred]                        \* recorded with the command
+  /\ freshLive' = [freshLive EXCEPT ![c] = TRUE]                \* and not expired yet
+  /\ parked' = parked \ {c}                                     \* no longer parked
+  /\ owed' = owed \cup {c}                                      \* owed again
+  /\ failed' = failed \ {c} /\ noted' = noted \ {c}             \* nothing to report
+  /\ UNCHANGED <<kind, holdsKey, writeForm, writeNames, grantForm, grantNames,
+                 bySigner, forNode, current, phase, rows, sent, misused, stale,
+                 http, unbacked>>
+
+\* A fresh credential expires too.
+ExpireFresh(c) ==
+  /\ freshLive[c]                                               \* not expired yet
+  /\ freshLive' = [freshLive EXCEPT ![c] = FALSE]               \* now it is
+  /\ UNCHANGED <<kind, holdsKey, writeForm, writeNames, grantForm, grantNames,
+                 bySigner, forNode, current, phase, rows, owed, sent, parked,
+                 misused, stale, http, fresh, failed, noted, unbacked>>
 
 \* After the registration the Node sends the grant, its credential checked
 \* again. The planted bug sends it while the registration is still owed.
 SendGrant ==
   /\ phase = "committed"                                        \* after the commit
   /\ "grant" \in owed                                           \* still owed
-  /\ ("register" \notin owed \/ Bug = "grantFirst")             \* registration first
-  /\ (MaySend("grant", grantForm, grantNames) \/ Bug = "sentExpired") \* checked again
+  /\ (Registered \/ Bug = "grantFirst")                         \* registration first
+  /\ (Sendable("grant") \/ Bug = "sentExpired")                 \* checked again
   /\ owed' = owed \ {"grant"}                                   \* owed no more
   /\ sent' = sent \cup {"grant"}                                \* the provider has it
-  /\ misused' = (misused \/ Misuse("grant", grantForm, grantNames)) \* remember a misuse
-  /\ stale' = (stale \/ Stale(grantForm))                       \* remember a stale send
+  /\ misused' = (misused \/ Misuse("grant"))                    \* remember a misuse
+  /\ stale' = (stale \/ Stale("grant"))                         \* remember a stale send
+  /\ Settled("grant")                                           \* nothing left to report
   /\ UNCHANGED <<kind, holdsKey, writeForm, writeNames, grantForm, grantNames,
                  bySigner, forNode, current, phase, rows, parked, http>>
 
 \* A grant whose credential no longer lets the Node send it is parked: it
-\* waits for a new credential and is not sent.
+\* waits for a new credential and is not sent. While the registration is owed
+\* or parked the grant waits behind it, neither sent nor parked; once the
+\* registration is with the provider the grant goes under its own credential.
 ParkGrant ==
   /\ phase = "committed"                                        \* after the commit
   /\ "grant" \in owed                                           \* still owed
-  /\ "register" \notin owed                                     \* its turn has come
-  /\ ~MaySend("grant", grantForm, grantNames)                   \* no usable credential
+  /\ Registered                                                 \* its turn has come
+  /\ ~Sendable("grant")                                         \* no usable credential
   /\ owed' = owed \ {"grant"}                                   \* out of the queue
   /\ parked' = parked \cup {"grant"}                            \* waiting for authority
+  /\ Failed("grant")                                            \* and saying so
   /\ UNCHANGED <<kind, holdsKey, writeForm, writeNames, grantForm, grantNames,
                  bySigner, forNode, current, phase, rows, sent, misused, stale, http>>
 
@@ -248,10 +390,13 @@ Knock ==
   /\ UNCHANGED <<kind, holdsKey, writeForm, writeNames, grantForm, grantNames,
                  bySigner, forNode, current, phase, rows, owed, sent, parked,
                  misused, stale>>
+  /\ UNCHANGED after                                            \* nothing is recorded here
 
 \* Any of the steps above may come next.
 Next == Stage \/ StageGrant \/ Commit \/ Expire \/ SendRegistration \/ SendGrant
-        \/ ParkGrant \/ Knock
+        \/ ParkRegistration \/ ParkGrant \/ Knock
+        \/ (\E c \in Commands : SendFails(c) \/ ExpireFresh(c))
+        \/ (\E c \in Commands, cred \in FreshCreds : Reauthorize(c, cred))
 
 \* The run: start in Init, then take steps or wait.
 Spec == Init /\ [][Next]_vars
@@ -267,6 +412,10 @@ TypeOK ==
   /\ phase \in {"ready", "staged", "refused", "committed"}
   /\ owed \subseteq Commands /\ sent \subseteq Commands /\ parked \subseteq Commands
   /\ http \in {"idle", "in", "out"}
+  /\ fresh \in [Commands -> FreshCreds \cup {NoCred}]
+  /\ freshLive \in [Commands -> BOOLEAN]
+  /\ failed \subseteq Commands /\ noted \subseteq Commands
+  /\ unbacked \in BOOLEAN
 
 \* A write is staged only when the Node could really act for the User at that
 \* moment. Checked on the step that stages it, since a credential may expire
@@ -288,10 +437,25 @@ INV_NothingSentStale == ~stale
 
 \* A grant is never with the provider while its document's registration is
 \* still owed.
-INV_RegistrationFirst == ("grant" \in sent) => ("register" \notin owed)
+INV_RegistrationFirst == ("grant" \in sent) => Registered
+
+\* A command is sent only when what is recorded for it lets the Node send it:
+\* never with a token the process holds for the User and nobody presented for
+\* this command.
+INV_SentUnderRecordedAuthority == ~unbacked
+
+\* A parked command is owed again only on a fresh credential that really lets
+\* the Node send that command: the rule of admission, asked again.
+INV_ReauthorizedWithAuthority ==
+  [][\A c \in Commands :
+       (c \in parked /\ c \notin parked') => TrulySendable(c)']_vars
+
+\* A command whose submission failed says so in its record for as long as it
+\* is owed or parked.
+INV_FailureReported == failed \subseteq noted
 
 \* A grant is owed only when the Node could really send it when it was staged.
 INV_GrantAuthority ==
-  [][("grant" \notin owed /\ "grant" \in owed') =>
+  [][("grant" \notin owed \cup parked /\ "grant" \in owed') =>
        TrulyMaySend("grant", grantForm, grantNames)]_vars
 =============================================================================

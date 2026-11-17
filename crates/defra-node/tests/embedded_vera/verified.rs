@@ -200,6 +200,18 @@ impl Deployed {
 
     /// `user`'s delegation bound to the one command `action` on `doc`.
     async fn bound(&self, user: &User, doc: &str, action: PolicyAction<'_>, nonce: u8) -> String {
+        self.bound_for(user, doc, action, nonce, LIFETIME).await
+    }
+
+    /// [`Self::bound`], lasting `lifetime`.
+    async fn bound_for(
+        &self,
+        user: &User,
+        doc: &str,
+        action: PolicyAction<'_>,
+        nonce: u8,
+        lifetime: Duration,
+    ) -> String {
         let digest = request_digest(&PolicyCommand {
             policy_id: &self.policy,
             resource: "users",
@@ -215,7 +227,7 @@ impl Deployed {
                 genesis_id: self.genesis().await,
                 nonce: [nonce; 24],
             },
-            LIFETIME,
+            lifetime,
         )
         .await
         .expect("delegation")
@@ -508,6 +520,155 @@ fn a_grant_staged_in_a_verified_transaction_lands_after_the_registration() {
             .await
             .expect("relation check"));
         drop(vera);
+        on.node.shutdown().await.expect("shutdown");
+    })
+    .unwrap();
+}
+
+/// A client that holds only delegations bound to one request each: those it
+/// wrote with run out before the commit sends anything. The commit stands,
+/// the node says what it still owes and why, and each owed command takes a
+/// fresh delegation bound to it, the registration first.
+#[test]
+fn owed_commands_take_fresh_delegations_bound_to_them() {
+    workers::block_on(async {
+        let on = Deployed::start(9414).await;
+        let user = User::new();
+        let reader = identity::Did::new(STRANGER).unwrap();
+        let subject = SubjectRef::Actor(reader.to_string());
+        let grant = || PolicyAction::SetRelationship {
+            relation: "reader",
+            subject: PolicySubject::Actor(&subject),
+        };
+        let brief = Duration::from_secs(2);
+        let caller =
+            defra_core::RequestContext::default().with_identity(Some(user.did.to_string()));
+
+        let Attempt { doc, txn, response } = on
+            .create(&user, "owed", |doc| {
+                let (on, user) = (&on, &user);
+                async move {
+                    SignerCredential::RequestBound(
+                        on.bound_for(user, &doc, PolicyAction::RegisterObject, 1, brief)
+                            .await,
+                    )
+                }
+            })
+            .await;
+        assert!(!response.has_errors(), "{:?}", response.errors);
+        let granting = on.bound_for(&user, &doc, grant(), 2, brief).await;
+        let staged = on
+            .node
+            .add_dac_actor_relationship_change_for_in_txn(
+                &txn,
+                &caller
+                    .clone()
+                    .with_request_delegation(user.did.to_string(), granting),
+                "Users",
+                &doc,
+                "reader",
+                reader.as_str(),
+            )
+            .await;
+        assert!(
+            matches!(staged, Ok(RelationshipChange::Staged { .. })),
+            "{staged:?}"
+        );
+        edge::testing::edge().sleep(Duration::from_secs(4)).await;
+        on.node.commit_transaction(&txn).await.expect("commit");
+        assert_eq!(on.owner_on_chain(&doc).await, None);
+
+        let owed = on
+            .node
+            .owed_acp_as(&caller, user.did.as_str())
+            .await
+            .expect("report");
+        assert_eq!(owed.len(), 2, "{owed:?}");
+        assert_eq!(owed[0].what, acp::OwedWhat::Registration);
+        assert_eq!(owed[0].state, acp::OwedState::AwaitingAuthority);
+        assert!(owed[0].reason.is_some(), "{owed:?}");
+        assert_eq!(owed[1].state, acp::OwedState::Staged);
+        assert_eq!(owed[1].held_by, Some(acp::OwedHold::Registration));
+        assert!(matches!(
+            on.node
+                .await_owed_acp_as(&caller, &txn, Duration::from_secs(30))
+                .await
+                .expect("wait"),
+            acp::OwedWait::Parked(entries) if entries.len() == 2
+        ));
+        let stranger =
+            defra_core::RequestContext::default().with_identity(Some(STRANGER.to_string()));
+        assert!(on
+            .node
+            .owed_acp_as(&stranger, user.did.as_str())
+            .await
+            .is_err());
+
+        // A fresh delegation bound to the grant does not register the
+        // document, and one bound to the registration does.
+        let registration = owed[0].reference();
+        let misfiled = on.bound(&user, &doc, grant(), 3).await;
+        assert!(matches!(
+            on.node
+                .reauthorize_owed_acp_as(
+                    &caller,
+                    &registration,
+                    SignerCredential::RequestBound(misfiled)
+                )
+                .await,
+            Err(defra_node::Error::Acp(
+                acp::Error::OwedAuthorityUnavailable { .. }
+            ))
+        ));
+        assert_eq!(on.owner_on_chain(&doc).await, None);
+        let fresh = on.bound(&user, &doc, PolicyAction::RegisterObject, 4).await;
+        assert_eq!(
+            on.node
+                .reauthorize_owed_acp_as(
+                    &caller,
+                    &registration,
+                    SignerCredential::RequestBound(fresh)
+                )
+                .await
+                .expect("registration"),
+            acp::OwedOutcome::Settled
+        );
+        assert_eq!(
+            on.owner_on_chain(&doc).await.as_deref(),
+            Some(user.did.as_str())
+        );
+
+        // The grant behind it was sent with its own delegation, which had
+        // run out, and now waits on its own account.
+        let owed = on
+            .node
+            .owed_acp_as(&caller, user.did.as_str())
+            .await
+            .expect("report");
+        assert_eq!(owed.len(), 1, "{owed:?}");
+        assert_eq!(owed[0].state, acp::OwedState::AwaitingAuthority);
+        assert_eq!(owed[0].held_by, None);
+        assert!(!chain_reads(&on.node, &reader, &on.policy, &doc).await);
+        let fresh = on.bound(&user, &doc, grant(), 5).await;
+        assert_eq!(
+            on.node
+                .reauthorize_owed_acp_as(
+                    &caller,
+                    &owed[0].reference(),
+                    SignerCredential::RequestBound(fresh)
+                )
+                .await
+                .expect("grant"),
+            acp::OwedOutcome::Settled
+        );
+        assert!(chain_reads(&on.node, &reader, &on.policy, &doc).await);
+        assert_eq!(
+            on.node
+                .await_owed_acp_as(&caller, &txn, Duration::from_secs(30))
+                .await
+                .expect("wait"),
+            acp::OwedWait::Settled
+        );
         on.node.shutdown().await.expect("shutdown");
     })
     .unwrap();

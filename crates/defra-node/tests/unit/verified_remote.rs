@@ -17,7 +17,7 @@ use super::staged_relationship_tests::{
 };
 use super::{Node, RelationshipChange, SignerCredential};
 
-const STRANGER: &str = "did:key:z6MkiTBz1ymuepAQ4HEHYSF1H8quG5GLVVQR3djdX3mDooWp";
+pub(super) const STRANGER: &str = "did:key:z6MkiTBz1ymuepAQ4HEHYSF1H8quG5GLVVQR3djdX3mDooWp";
 
 /// A user whose key the node does not hold, and what signs its blocks.
 fn user() -> (String, SigningConfig) {
@@ -40,23 +40,23 @@ fn user() -> (String, SigningConfig) {
 }
 
 /// A node on the stub remote provider and one user writing through it.
-struct Verified {
-    remote: Arc<Remote>,
-    node: Node,
-    user: String,
+pub(super) struct Verified {
+    pub(super) remote: Arc<Remote>,
+    pub(super) node: Node,
+    pub(super) user: String,
     signing: SigningConfig,
-    policy: String,
+    pub(super) policy: String,
 }
 
 /// One verified create handed to the node.
-struct Attempt {
-    doc: String,
-    txn: query::TransactionHandle,
-    response: query::QueryResponse,
+pub(super) struct Attempt {
+    pub(super) doc: String,
+    pub(super) txn: query::TransactionHandle,
+    pub(super) response: query::QueryResponse,
 }
 
 impl Verified {
-    async fn new() -> Self {
+    pub(super) async fn new() -> Self {
         let remote = Remote::new();
         let node = start(&node_identity(), Some(&remote), None).await;
         provision(&node).await;
@@ -74,7 +74,7 @@ impl Verified {
 
     /// The user's verified create of a record called `name`, with the
     /// credential `credential` makes for the document it creates.
-    async fn create(
+    pub(super) async fn create(
         &self,
         name: &str,
         credential: impl FnOnce(&str) -> SignerCredential,
@@ -110,11 +110,11 @@ impl Verified {
         Attempt { doc, txn, response }
     }
 
-    fn delegation(&self) -> SignerCredential {
+    pub(super) fn delegation(&self) -> SignerCredential {
         SignerCredential::Delegation(format!("delegation:{}", self.user))
     }
 
-    fn registration(&self, doc: &str) -> SignerCredential {
+    pub(super) fn registration(&self, doc: &str) -> SignerCredential {
         SignerCredential::RequestBound(request_token(&self.user, &format!("register {doc}")))
     }
 
@@ -142,7 +142,7 @@ impl Verified {
     }
 
     /// The attempt was staged; its commit registers the user as the owner.
-    async fn committed(&self, attempt: Attempt) -> String {
+    pub(super) async fn committed(&self, attempt: Attempt) -> String {
         let Attempt { doc, txn, response } = attempt;
         assert!(!response.has_errors(), "{:?}", response.errors);
         assert!(
@@ -158,7 +158,7 @@ impl Verified {
     }
 
     /// The names of the records the user reads.
-    async fn records(&self) -> Vec<String> {
+    pub(super) async fn records(&self) -> Vec<String> {
         let response = self
             .node
             .execute_request(
@@ -176,7 +176,7 @@ impl Verified {
     }
 
     /// The relationship changes the node owes the provider, as committed.
-    async fn owed(&self) -> Vec<acp::OwedChange> {
+    pub(super) async fn owed(&self) -> Vec<acp::OwedChange> {
         let database = self.node.database();
         let txn = database.new_txn(true).await.unwrap();
         let store: Arc<dyn storage::corekv::Store> = database.store().clone();
@@ -189,11 +189,11 @@ impl Verified {
     }
 
     /// The user acting with `token` as its delegation bound to one request.
-    fn bound(&self, token: String) -> defra_core::RequestContext {
+    pub(super) fn bound(&self, token: String) -> defra_core::RequestContext {
         actor(&self.user).with_request_delegation(self.user.clone(), token)
     }
 
-    async fn grant(
+    pub(super) async fn grant(
         &self,
         txn: &query::TransactionHandle,
         context: &defra_core::RequestContext,

@@ -83,6 +83,7 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
                 report_slow_phase("begin", "execute", started);
                 let mut txn = result?;
                 txn.make_explicit();
+                txn.name_handle(id.get());
                 OwnedTxn::new(id, txn, db, broadcaster)
             })
             .await

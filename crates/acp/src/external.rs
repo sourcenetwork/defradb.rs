@@ -20,12 +20,21 @@
 //! ([`ExternalDocumentAcp::settle_owed_changes_once`]). A relationship change
 //! made through the gate outside a transaction goes to the provider at once,
 //! after what is owed on its tuple.
+//!
+//! A registration is sent with what its record holds
+//! ([`PendingRegistration::authority`]) and with nothing a process keeps
+//! beside its requests (see `registration.rs`). One with nothing usable is
+//! parked as waiting for authority, and every failed submission leaves its
+//! reason in the record. What is owed is reported, given a fresh credential and abandoned through
+//! [`ExternalDocumentAcp::owed_entries`],
+//! [`ExternalDocumentAcp::reauthorize`] and
+//! [`ExternalDocumentAcp::abandon_change`].
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use identity::Did;
-use storage::corekv::{IterOptions, Reader, Store, Writer};
+use storage::corekv::{IterOptions, Reader, Store};
 use storage::namespace::{Namespace, NamespacedStore};
 use zanzibar::types::Subject;
 
@@ -37,6 +46,8 @@ use crate::outbox::{OwedChanges, StagedCount, TransactionOutbox};
 use crate::pending::{pending_key, PendingRegistration, PENDING_PREFIX};
 use crate::permission::DocumentPermission;
 
+mod owed;
+mod registration;
 mod settle;
 
 pub use settle::{OwedScope, OwedSettlement, MAX_FAILED_SUBMISSIONS};
@@ -64,6 +75,14 @@ where
     /// Held by the one pass that submits owed changes: a second pass waits,
     /// so no change is submitted by two at once.
     settling: Arc<regolith::sync::Mutex<()>>,
+    /// Told every time a record of something owed is written or deleted.
+    changed: Arc<regolith::sync::Notify>,
+    /// The request `provider` serves and carries the credentials of, when
+    /// this gate serves one.
+    serving: Option<defra_core::RequestContext>,
+    /// The provider bound to no request: what a submission that serves no
+    /// request is bound from, so it never inherits another's credentials.
+    root: Arc<dyn DocumentACP>,
 }
 
 fn storage_error(error: storage::corekv::Error) -> Error {
@@ -77,9 +96,12 @@ where
     /// Gate `provider` with the registrations owed in `store`'s ACP namespace.
     pub fn new(provider: Arc<dyn DocumentACP>, store: Arc<S>) -> Self {
         Self {
+            root: Arc::clone(&provider),
             provider,
             store: NamespacedStore::new(store, Namespace::Acpstore),
             settling: Arc::default(),
+            changed: Arc::new(regolith::sync::Notify::new()),
+            serving: None,
         }
     }
 
@@ -161,78 +183,6 @@ where
             )));
         }
         Ok(())
-    }
-
-    /// Register the owed creator, then clear the record. A provider that
-    /// already holds the object keeps its owner: the record is cleared and the
-    /// provider decides from then on.
-    async fn settle(&self, owed: &PendingRegistration) -> Result<()> {
-        let registered = self
-            .provider
-            .is_doc_registered(&owed.policy_id, &owed.resource_name, &owed.doc_id)
-            .await?;
-        self.register_and_clear(&self.provider, owed, registered)
-            .await
-    }
-
-    /// [`Self::settle`] once the provider said whether it holds the object,
-    /// registering through `provider`.
-    async fn register_and_clear(
-        &self,
-        provider: &Arc<dyn DocumentACP>,
-        owed: &PendingRegistration,
-        registered: bool,
-    ) -> Result<()> {
-        if !registered {
-            match provider
-                .register_doc_object(
-                    &owed.creator,
-                    &owed.policy_id,
-                    &owed.resource_name,
-                    &owed.doc_id,
-                )
-                .await
-            {
-                Ok(()) | Err(Error::DocumentAlreadyRegistered(_)) => {}
-                Err(error) => return Err(error),
-            }
-        }
-        self.clear(owed).await
-    }
-
-    /// Clear `owed` unless its record changed since it was read: a record
-    /// written again for a re-created document is not this one to clear.
-    async fn clear(&self, owed: &PendingRegistration) -> Result<()> {
-        let key = owed.key();
-        let mut txn = self.store.new_txn(false).await.map_err(storage_error)?;
-        let current = txn.get(&key).await.map_err(storage_error)?;
-        let unchanged = match current {
-            Some(bytes) => PendingRegistration::decode(&bytes)? == *owed,
-            None => false,
-        };
-        if !unchanged {
-            txn.discard();
-            return Ok(());
-        }
-        txn.delete(&key).await.map_err(storage_error)?;
-        match txn.commit().await {
-            Ok(()) => Ok(()),
-            // A transaction that changed the record first owns what it says now.
-            Err(error) if error.is_txn_conflict() => Ok(()),
-            Err(error) => Err(storage_error(error)),
-        }
-    }
-
-    async fn settle_if_owed(
-        &self,
-        policy_id: &str,
-        resource_name: &str,
-        doc_id: &str,
-    ) -> Result<()> {
-        match self.owed(policy_id, resource_name, doc_id).await? {
-            Some(owed) => self.settle(&owed).await,
-            None => Ok(()),
-        }
     }
 
     /// Settle every owed registration once, a page at a time. A registration
@@ -317,6 +267,9 @@ where
             provider,
             store: NamespacedStore::new(Arc::clone(self.store.inner()), self.store.namespace()),
             settling: Arc::clone(&self.settling),
+            changed: Arc::clone(&self.changed),
+            serving: Some(context.clone()),
+            root: Arc::clone(&self.root),
         }))
     }
 
@@ -362,6 +315,33 @@ where
 
     async fn settle_owed_changes(&self, scope: OwedScope) -> Result<OwedSettlement> {
         self.settle_owed_changes_once(scope).await
+    }
+
+    async fn owed_entries(
+        &self,
+        filter: crate::outbox::OwedFilter<'_>,
+    ) -> Result<Vec<crate::outbox::OwedEntry>> {
+        self.entries(filter).await
+    }
+
+    async fn await_owed(&self, txn: u64, only: Option<&Did>) -> Result<crate::outbox::OwedWait> {
+        self.await_transaction(txn, only).await
+    }
+
+    fn owed_changed(&self) {
+        self.changed.notify_waiters();
+    }
+
+    async fn reauthorize_owed(
+        &self,
+        actor: &Did,
+        entry: &crate::outbox::OwedRef,
+    ) -> Result<crate::outbox::OwedOutcome> {
+        self.reauthorize(actor, entry).await
+    }
+
+    async fn abandon_owed_change(&self, actor: &Did, seq: u64) -> Result<()> {
+        self.abandon_change(actor, seq).await
     }
 
     fn bearer_token_for(&self, did: &str) -> Option<String> {

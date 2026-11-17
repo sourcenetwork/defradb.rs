@@ -883,19 +883,20 @@ mod tests {
     {
         let did = "did:key:zRemoteVeraRsToken";
         let token = "device.jwt.token".to_string();
-        defra_core::signing::clear_request_bearer_token(did);
-
         store_remote_secp256r1_identity(did);
-        defra_core::signing::set_request_bearer_token(did, token.clone());
+        let request = defra_core::RequestContext::default()
+            .with_bearer(Some(did.to_string()), Some(token.clone()));
 
-        let resolved =
-            resolve_registered_or_passthrough_bearer_token(did, "did:key:submitter", 9001)
-                .await
-                .expect("resolution should succeed")
-                .expect("token should resolve");
+        let resolved = resolve_registered_or_passthrough_bearer_token_as(
+            &request,
+            did,
+            "did:key:submitter",
+            9001,
+        )
+        .await
+        .expect("resolution should succeed")
+        .expect("token should resolve");
         assert_eq!(resolved, token);
-
-        defra_core::signing::clear_request_bearer_token(did);
     }
 
     #[nuclei::test]
@@ -912,14 +913,18 @@ mod tests {
 
         for compressed in [true, false] {
             let carried = token(&bearer::did_from_signing_key(&key, compressed));
-            defra_core::signing::set_request_bearer_token(&did, carried.clone());
-            let passed = resolve_registered_or_passthrough_bearer_token(&did, "did:key:w", 9001)
-                .await
-                .expect("resolution should succeed");
+            let request = defra_core::RequestContext::default()
+                .with_bearer(Some(did.clone()), Some(carried.clone()));
+            let passed = resolve_registered_or_passthrough_bearer_token_as(
+                &request,
+                &did,
+                "did:key:w",
+                9001,
+            )
+            .await
+            .expect("resolution should succeed");
             assert_eq!(passed, Some(carried));
         }
-
-        defra_core::signing::clear_request_bearer_token(&did);
     }
 
     #[nuclei::test]

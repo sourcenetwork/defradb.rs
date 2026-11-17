@@ -62,7 +62,10 @@ its rows, and the provider is sent the change after the commit.
 Staging is for embedders that call the node directly. The HTTP relationship route with
 `x-defradb-tx` serves only a provider that joins the transaction; on an external one it
 answers 501, `transaction-bound document relationships are unavailable`, and records
-nothing, until a caller can abandon a staged change and a drainer settles them.
+nothing, until a drainer settles staged changes. The calls that report what is owed, wait
+for it, take a fresh credential and abandon a refused change
+([What is owed after the commit](#what-is-owed-after-the-commit)) are node calls too,
+with no HTTP route.
 
 - **What staging returns.** `RelationshipChange::Staged { seq, authority_checked }`: the
   change's place in the node's queue and whether its acting DID's authority was checked.
@@ -143,9 +146,10 @@ nothing, until a caller can abandon a staged change and a drainer settles them.
   not counted towards a refusal, so nothing parks it, and a direct change of the tuple
   fails with `OwedChangesPending` meanwhile. A change staged unchecked holds nothing
   (above): one the node could not send is deleted, like one waiting for authority, when
-  a later change of its tuple comes up. Every record deleted without the provider holding the change is
-  counted in the pass's report (`OwedSettlement::discarded`) and logged with its
-  sequence, actor, document and relation.
+  a later change of its tuple comes up. Every record deleted without the provider
+  holding the change is counted in the pass's report (`OwedSettlement::discarded`),
+  logged with its sequence, actor, document and relation, and leaves a note for its
+  actor ([What is owed after the commit](#what-is-owed-after-the-commit)).
 - **When a pass runs.**
   - After the commit of a request that staged a change, over the documents that
     transaction staged on (its own changes and what was owed on them before). The commit
@@ -169,8 +173,9 @@ nothing, until a caller can abandon a staged change and a drainer settles them.
 
   There is no background drainer, timer or back-off yet. **A change left staged (the
   provider was down, or the deadline passed) is submitted by the next commit that stages
-  on the same document, by a direct change of its tuple, or at the next start**; until
-  then an owed add stays ungranted and an owed delete keeps denying.
+  on the same document, by a direct change of its tuple, by a call that waits for its
+  transaction, hands in a credential or abandons a change on its document, or at the
+  next start**; until then an owed add stays ungranted and an owed delete keeps denying.
 - **A change made outside a transaction.** It goes to the provider at once, as before.
   When changes are owed on its tuple a pass over the document runs first. If a *staged*
   change is still owed on the tuple afterwards (the provider was not reached, or the
@@ -191,8 +196,10 @@ nothing, until a caller can abandon a staged change and a drainer settles them.
   changed the same relationship on the provider in between, the second submission applies
   the change again over theirs.
 - **Limits of this step.**
-  - A parked change stays parked: nothing here retries, abandons or reauthorizes one, so
-    the changes behind it on its tuple wait, and a parked delete keeps denying.
+  - Nothing submits a parked change by itself. Its actor hands in a fresh credential for
+    it, or abandons it when the provider refused it
+    ([What is owed after the commit](#what-is-owed-after-the-commit)); until then the
+    changes behind it on its tuple wait, and a parked delete keeps denying.
   - The denial of an owed delete is scoped to its document. A staged delete of a
     membership tuple (a member removed from a group object) denies that subject on the
     group object only. Documents that grant access through a userset naming that group
@@ -203,9 +210,6 @@ nothing, until a caller can abandon a staged change and a drainer settles them.
     through another client after the provider registered it and before this node
     cleared its record, this node goes on letting the creator read it until the record
     is cleared (`AssumeNoTransferWhileOwed` in `proofs/tla/AcpOutbox.tla`).
-  - A create that requires transaction-bound authority
-    (`with_transactional_authority_required`, used by verified creates) is refused on an
-    external provider as before.
 
 - **The record.** A change is written in the transaction that stages it, under the ACP
   namespace, and commits or rolls back with its rows: `/acp-owed/q/<seq>` holds the
@@ -291,36 +295,190 @@ A provider that gives the node nothing to check a delegation against (the Cosmos
 provider, which is passed its caller's token as it is) admits a verified write with a key
 the node holds and with nothing else: `Delegation(token)` is refused there.
 
-What is recorded and what is not. The staged relationship change keeps its token in its
-record and is submitted with it. The owed registration keeps no token: the commit's own
-hook submits it with the token the write carried. Either way the credential is checked
-again as the command is sent, with the checks made at admission, so a delegation that
-expired between the write and the commit sends nothing.
+What is recorded. The staged relationship change keeps its token in its record and is
+submitted with it. The owed registration keeps its authority in its record too
+(`PendingRegistration::authority`): `node_key`, the delegation the create carried, or
+nothing. Either way the credential is checked again as the command is sent, with the
+checks made at admission, so a delegation that expired between the write and the commit
+sends nothing.
 
-**What a failed submission leaves, as this step stands.** These are limits, not a
-recovery path. The outbox epic (#2954: report, await, reauthorize) removes them.
+### What is owed after the commit
 
-- A registration the hook could not submit stays owed. The failure is logged; the commit
-  has already returned success. The document is readable by its creator only, on this
-  node, and the provider does not hold it.
-- No node call takes a fresh credential for an owed registration. It is submitted again
-  only as a side effect: when a later call on that document runs through the gate with a
-  credential the provider takes for the creator (an access decision, a relationship
-  change), when an owed change by the creator that carries a plain delegation is
-  settled, or when the node starts. A call that carries a delegation bound to that
-  registration settles it and then fails its own command, which the token does not name.
-- The pass at start and the settlement of an owed change serve no request. They register
-  with a key the node holds for the creator, or with the token the process holds for
-  that DID (`defra_core::signing::set_request_bearer_token`) where an embedder set one.
-  An owed registration does not record that it came from a verified write, so these two
-  paths treat it as any other.
-- A relationship change staged beside the registration waits behind it. It is not sent
-  and not parked while the registration is owed, whatever becomes of its own token. Once
-  the registration is settled, a change whose token has expired is parked as awaiting
-  authority.
+A commit on an external provider returns before the provider holds what the transaction
+owes it, and stands whatever the submission comes to. Four node calls say what it came
+to and act on it. Each takes the context of an authenticated caller.
 
-The model is `proofs/tla/VerifiedRemoteWrite.tla`, with `VerifiedRemoteAuthority.lean`
-for the rule itself.
+| Call | What it does | Who may call |
+|---|---|---|
+| `Node::owed_acp_as(context, actor)` | lists what `actor` owes: the registrations of documents it created and the changes it staged | `actor`, and the node's principal (`Node::node_context`) |
+| `Node::await_owed_acp_as(context, handle, deadline)` | waits until what one committed transaction owes is settled or has come to rest, and says which | anyone authenticated; the node's principal waits for every entry of the transaction, an actor for its own, and another actor's entries neither show in its wait nor keep it |
+| `Node::reauthorize_owed_acp_as(context, entry, credential)` | records a fresh credential with one owed registration or change and submits it | the entry's actor, and the node's principal |
+| `Node::abandon_owed_acp_change_as(context, seq)` | deletes the record of a change the provider refused | the actor that staged it, and nobody else; the node's principal for the changes it staged itself |
+
+To a caller who may not see an entry it does not exist (`OwedEntryNotFound`). No call
+returns a recorded credential.
+
+- **The report.** An entry (`acp::OwedEntry`) names what is owed (a registration, or an
+  add or delete of one relationship with its place in the queue), its actor, the
+  transaction that recorded it, and where it stands:
+  - `staged`: still to be sent. `reason` holds why its last submission failed, when one
+    did: the provider could not be reached, or it answered with an error;
+  - `awaiting_authority`: nothing recorded with it lets the node send it. `reason` says
+    what is wrong with the credential;
+  - `refused`: the provider said no, in the words kept as the reason.
+
+  `held_by` says what an entry waits behind: its document's owed registration, or an
+  earlier change of its relationship. That change's place in the queue is given only
+  when the same actor staged it; an entry says nothing of another actor's. `sendable`
+  says whether a submission by the node could still move the entry: a staged change
+  whose holder can move; a staged registration; or a registration awaiting authority
+  that the node now has, by its own record again or by the delegation of a change its
+  creator owes on the same document. `authority` says whether a key or a delegation is
+  recorded, never the token. **A submission that failed after its commit is found
+  here**; the commit returned success.
+
+  **A change the provider never took is not reported as settled.** A record is also
+  deleted without the provider holding the change: the provider refused a change
+  nobody had checked, cannot take one of its kind, a later change of the relationship
+  passed an unchecked one, or its actor abandoned it. Each leaves a note
+  (`/acp-owed/x/<seq>`: the change and the reason, no credential), shown as an entry
+  with `discarded` set. A note is deleted when its actor is told: by the wait for its
+  transaction that returns it, or by the answer to a fresh credential for it
+  (`OwedOutcome::Discarded`). A wait by the node's principal tells the node, and deletes
+  the notes of every actor of that transaction. A node keeps at most 1,000 notes
+  (`MAX_DISCARD_NOTES`) and drops the oldest past that; a change staged outside an
+  explicit transaction has no wait, so its note stays until then.
+- **The wait.** `OwedWait::Settled` when the provider holds everything the transaction
+  owed; `Parked(entries)` when nothing left is sendable, discarded entries included;
+  `Pending { entries,
+  provider_unavailable }` when the deadline passed, or the provider could not be
+  reached, with entries still to send. The call first submits once what can be sent
+  (the registrations the transaction owes, then the changes on the documents it staged
+  on), then sleeps until a record changes. It does not poll. A deadline that passes
+  drops the wait with whatever it was submitting still in flight, as a commit that stops
+  waiting does. The transaction is named by its handle. Handle numbers start again when
+  the node restarts, so a record that names its transaction also names the run of the
+  process that made it (`acp::outbox::run_epoch`), and a wait, like the pass after a
+  commit, matches only records of the running node: an entry an earlier run left under
+  the same number is neither returned nor waited for. Its actor finds it in the report.
+  Every record written wakes every wait, which then reads all that is owed again. An
+  actor's wait submits what is owed on the documents of its own entries, in order with
+  whatever else is owed there, and makes no submission on another actor's document;
+  the node's principal's wait submits for the whole transaction. A wait has no bound of
+  its own: the caller's deadline ends it, submission included.
+- **A fresh credential.** `credential` is a `SignerCredential`, the entry's actor's own:
+  a plain delegation, one bound to exactly the owed command, or `None` where the node
+  holds a key for the actor. It is asked about the owed command by the function that
+  admits a write (`DocumentACP::command_authority`); there is no second check. A
+  credential that would not have admitted the command (expired, signed by somebody
+  else, made for another node, bound to another command, a plain one presented as
+  bound) fails with `OwedAuthorityUnavailable` and records nothing. An admitted one is
+  recorded with the entry, which is staged again with no failure counted, and what is
+  owed on the entry's document is submitted once, in order. The answer is
+  `OwedOutcome::Settled`, the entry as it stands (`Owed(entry)`: parked again when
+  the provider refused it once more, staged when the provider could not be reached), or
+  `Discarded(entry)` when its record was deleted without the provider holding it.
+
+  Every fresh credential is checked as a verified write's is, whatever write the entry
+  came from: it will be used when no request is there to vouch for it. A provider that
+  gives the node nothing to check a delegation against (the Cosmos provider) therefore
+  takes no delegation here. An entry there is sent again with a key the node holds
+  (`SignerCredential::None`), or by a later request that itself carries the actor's
+  bearer.
+
+  A delegation bound to a registration settles the registration and answers `Settled`:
+  it is used for that one command. The changes staged beside the registration then go,
+  each with the authority recorded with it. One whose own delegation has run out is
+  parked as awaiting authority and takes its own credential by another call. A client
+  that holds only request-bound delegations therefore presents one per owed entry, the
+  registration first.
+
+  A refused change takes a fresh credential too, and is submitted again.
+- **Abandoning.** Only a change in state `refused` is abandoned: the provider answered
+  it, so no request for it is still on the way. A change that is staged or awaits
+  authority may have an earlier request in flight (a commit that stopped waiting leaves
+  one), and deleting its record would not stop that request; it fails with
+  `OwedChangeNotRefused` and is given a fresh credential instead. The record is deleted
+  without the provider holding the change, the changes behind it on its relationship are
+  submitted, and the deletion is logged with the change. The call has succeeded once the
+  record is deleted, whatever that submission comes to. When a transaction that
+  committed meanwhile changed what is owed on the relationship, nothing is written and
+  the call fails with `OwedEntryConflict`, to be made again; a fresh credential for a
+  change or a registration that loses the same way fails the same way.
+
+  **An abandoned delete stops denying.** Its subject is answered by the provider again,
+  which refused the delete and so still holds the relationship; other nodes never
+  stopped honouring it. That is correct only because the actor that staged the delete
+  takes its own revocation back: the delete then counts for nothing, as if it had not
+  been made. Nobody else may lift it, not the document's owner, not the subject it
+  names, and not the node's principal unless the node staged the delete itself (`INV_RevokedAtCommit` with `AbandonBy` in
+  `proofs/tla/AcpOutbox.tla`). The provider may hold a change it refused on a second
+  submission (see *A change submitted twice*); abandoning changes nothing on the
+  provider either way.
+- **A registration and its authority.** The create records what lets the node register
+  the document as its creator once the request is gone: `node_key` when the node holds
+  a key for the creator, else the delegation the request **itself carries** for the
+  creator, asked about that registration and kept as it was presented (plain, or bound
+  to that registration). With neither the registration is recorded as awaiting
+  authority, with the reason; the create itself is not refused (a verified create is,
+  before it writes, as above). The fields are added to the `/acp-pending/` record only
+  when they say something, so a record written before them keeps its bytes and reads as
+  owed with nothing recorded.
+
+  Every submission of it, at the commit, at start, before a change on its document, or
+  through one of the calls above, sends it one of three ways, each checked again: with
+  the bearer the request being served carries for the creator, when that admits the
+  registration (the commit's own submission goes as its request did, and a request
+  that carries none sends none); else with what
+  the record holds; else with the first delegation, in queue order, recorded with a
+  change the same creator still owes on the document that admits it. The report's
+  `sendable` and a pass decide by the same selection, so what is reported as sendable
+  is what a pass sends. These are the three ways `INV_PresentedAuthority` allows.
+
+  **Nothing a process keeps beside its requests is read.** A registration, an
+  unregistration and every other command sent to the provider for an actor go under a
+  bearer the request carries for that actor, or a key the node holds
+  (`RequestContext::bearer_token_for` returns the carried bearer and nothing else). A
+  token bound to a DID in the process (`defra_core::signing::set_request_bearer_token`)
+  is presented by no request:
+  - a create whose request carries no bearer for its creator, by a creator whose key
+    the node does not hold, commits, sends nothing at its commit and records no
+    authority. Its registration is `awaiting_authority` in the report and takes a
+    credential through `reauthorize_owed_acp_as`, or settles when a later request
+    carries the creator's bearer;
+  - no later submission finds one either: not the pass at start, not the settlement of
+    an owed change, not a wait, and not another request that touches the document;
+  - a relationship change, an access decision and the unregistration of a deleted
+    document made by a request that carries no bearer are refused by the provider for
+    want of a credential, where they used to go under the process token.
+
+  **A carried delegation is written to disk.** A create on an external provider by a
+  caller whose key the node does not hold writes the delegation its request carried,
+  in the clear, into the document's `/acp-pending/` record, as a staged change always
+  has. It stays there until the registration settles, is given another credential, or
+  the document is deleted. No API returns it.
+
+  A registration nothing lets the node send is not sent: it stays `awaiting_authority`
+  in the report until its creator hands in a credential. One the provider refuses
+  outright is kept as `refused` and tried again at start. A provider that already holds
+  the document needs no authority: the record is cleared.
+- **Limits.**
+  - Nothing retries by itself between these calls: there is no drainer yet.
+  - No event is published when an entry settles or is parked. A caller learns it from
+    the wait or the report.
+  - The report reads the whole queue and every owed registration to find one actor's
+    entries, and so does every wait each time a record is written.
+  - An owed registration cannot be abandoned, parked or not. Its document exists, and
+    without the record it would be unregistered on the provider. Deleting the document
+    clears it.
+  - Registrations are not submitted one at a time. A failure is noted only on the
+    record the submission was made for, so one that fails late does not park a
+    registration that was given a fresh credential meanwhile.
+
+The models are `proofs/tla/VerifiedRemoteWrite.tla` (admission, a submission that fails
+after the commit and a fresh credential for it) and `proofs/tla/AcpOutbox.tla` (the
+registration's recorded authority, the report of a failure, abandoning), with
+`VerifiedRemoteAuthority.lean` for the rule itself.
 
 ## The query engine's side
 

@@ -287,17 +287,16 @@ impl RequestContext {
         self
     }
 
-    /// The bearer token `did` presents in this request, the credential a
+    /// The bearer token this request carries for `did`, the credential a
     /// remote ACP provider acts on its behalf with: the request's own token
     /// when `did` presented it, and none for any other DID. A request that
-    /// carries no bearer at all presents the token the process binds to `did`
-    /// ([`set_request_bearer_token`](crate::signing::set_request_bearer_token)).
+    /// carries no bearer presents none. Nothing a process keeps beside its
+    /// requests is read: what is sent to a provider for an actor goes under
+    /// a bearer a request carried for that actor, or a key the node holds.
     pub fn bearer_token_for(&self, did: &str) -> Option<String> {
         match &self.0.bearer {
-            Some((presenter, token)) => (presenter.as_deref() == Some(did))
-                .then(|| token.clone())
-                .flatten(),
-            None => crate::signing::stored_bearer_token(did),
+            Some((presenter, token)) if presenter.as_deref() == Some(did) => token.clone(),
+            _ => None,
         }
     }
 
@@ -560,7 +559,11 @@ mod tests {
         );
 
         let unscoped = RequestContext::default();
-        assert_eq!(unscoped.bearer_token_for(did).as_deref(), Some("stored"));
+        assert_eq!(
+            unscoped.bearer_token_for(did),
+            None,
+            "a request that carries no bearer read the process store"
+        );
 
         crate::signing::clear_request_bearer_token(did);
         crate::signing::clear_request_bearer_token(other);

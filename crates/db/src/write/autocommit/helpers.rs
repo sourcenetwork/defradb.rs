@@ -140,9 +140,16 @@ pub(crate) async fn load_update_heads(
 /// short-ID <-> DocID mapping, register `creator` as the document's ACP owner,
 /// and record block ownership for the genesis composite, field, and
 /// encryption blocks. Returns the parsed DocID.
+///
+/// A provider that cannot join the transaction is owed the registration.
+/// Its record keeps what lets the node send it as the creator once the
+/// request `context` serves is gone: the node's key for the creator, or the
+/// delegation the request itself carries, asked about this registration as
+/// a verified create is asked when it is admitted. With neither, the record
+/// says the registration waits for authority.
 pub(crate) async fn register_created_doc(
     acp: Option<&Arc<dyn acp::DocumentACP>>,
-    creator: Option<&str>,
+    context: &defra_core::RequestContext,
     systemstore: &NamespaceView,
     datastore: &NamespaceView,
     collection: &Collection,
@@ -191,7 +198,7 @@ pub(crate) async fn register_created_doc(
     // registers in this transaction; an external one cannot join it, so the
     // registration it is owed is recorded here and settled after the commit.
     if let (Some(provider), Some(policy), Some(creator)) =
-        (acp, collection.schema().policy.as_ref(), creator)
+        (acp, collection.schema().policy.as_ref(), context.creator())
     {
         let creator = identity::Did::new(creator)
             .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
@@ -201,15 +208,32 @@ pub(crate) async fn register_created_doc(
                 .register_doc_object(&creator, &policy.id, &policy.resource_name, doc_id_str)
                 .await
                 .map_err(|e| query::error::QueryError::execution(e.to_string()))?,
-            None => acp::PendingRegistrations::new(&acpstore)
-                .record(&acp::PendingRegistration::new(
-                    creator,
-                    &policy.id,
-                    &policy.resource_name,
-                    doc_id_str,
-                ))
-                .await
-                .map_err(|e| query::error::QueryError::execution(e.to_string()))?,
+            None => {
+                // What is recorded is used when no request is there: a
+                // bearer this request carries for the creator, or a key the
+                // node holds. A request that carries none records none.
+                let authority = acp::bound_to_request(provider, context).command_authority(
+                    &creator,
+                    acp::ProviderCommand::RegisterObject {
+                        policy_id: &policy.id,
+                        resource: &policy.resource_name,
+                        object: doc_id_str,
+                    },
+                );
+                acp::PendingRegistrations::new(&acpstore)
+                    .record(
+                        &acp::PendingRegistration::new(
+                            creator,
+                            &policy.id,
+                            &policy.resource_name,
+                            doc_id_str,
+                        )
+                        .with_authority(authority, context.bearer_names_request())
+                        .in_transaction(context.txn().map(|txn| txn.0)),
+                    )
+                    .await
+                    .map_err(|e| query::error::QueryError::execution(e.to_string()))?
+            }
         }
     }
 
@@ -555,10 +579,20 @@ pub(crate) async fn unregister_deleted_doc(
                 .await
                 .map_err(|error| query::error::QueryError::execution(error.to_string()))?,
             // A registration still owed for a deleted document is owed no more.
-            None => acp::PendingRegistrations::new(&acpstore)
-                .clear(&policy.id, &policy.resource_name, &doc_id.to_string())
-                .await
-                .map_err(|error| query::error::QueryError::execution(error.to_string()))?,
+            None => {
+                acp::PendingRegistrations::new(&acpstore)
+                    .clear(&policy.id, &policy.resource_name, &doc_id.to_string())
+                    .await
+                    .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+                // Whoever waits for what is owed looks again once this commits.
+                let provider = Arc::clone(provider);
+                systemstore
+                    .on_commit(storage::corekv::OnCommit::Async(Box::new(move || {
+                        Box::pin(async move { provider.owed_changed() })
+                    })))
+                    .await
+                    .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+            }
         }
     }
     Ok(())

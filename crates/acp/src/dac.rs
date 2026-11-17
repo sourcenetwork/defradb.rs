@@ -133,6 +133,66 @@ pub trait DocumentACP: MaybeSendSync {
         Ok(crate::OwedSettlement::default())
     }
 
+    /// What is owed to this provider that `filter` names: the registrations
+    /// creates owe it and the relationship changes transactions staged, each
+    /// with its state and the reason of its last failed submission. The
+    /// credential recorded with an entry is never part of it. Nothing is
+    /// owed to a provider that keeps no outbox.
+    ///
+    /// This reads for whoever calls it: the caller decides who may see
+    /// which actor's entries.
+    async fn owed_entries(
+        &self,
+        filter: crate::outbox::OwedFilter<'_>,
+    ) -> Result<Vec<crate::outbox::OwedEntry>> {
+        let _ = filter;
+        Ok(Vec::new())
+    }
+
+    /// Wait until what the explicit transaction `txn` of this run owes
+    /// this provider is settled or has come to rest, and say which: for the
+    /// entries of `only`, or for all of them. What can still be sent is
+    /// submitted once first. The notes of discarded changes the answer
+    /// holds are deleted: whoever is given it has been told. The wait has
+    /// no end of its own; its caller bounds it.
+    async fn await_owed(&self, txn: u64, only: Option<&Did>) -> Result<crate::outbox::OwedWait> {
+        let _ = (txn, only);
+        Ok(crate::outbox::OwedWait::Settled)
+    }
+
+    /// A record of something owed to this provider was written or deleted
+    /// by a transaction that has now committed: whoever waits for what is
+    /// owed looks again.
+    fn owed_changed(&self) {}
+
+    /// Take the credential of the request this provider serves
+    /// ([`bind_request`](Self::bind_request)) as the fresh authority of one
+    /// entry `actor` owes, and submit that entry. The credential is asked
+    /// about the owed command by [`command_authority`](Self::command_authority),
+    /// as at admission; one it refuses records nothing. An entry that is
+    /// not owed, or is owed by another actor, is
+    /// [`Error::OwedEntryNotFound`].
+    async fn reauthorize_owed(
+        &self,
+        actor: &Did,
+        entry: &crate::outbox::OwedRef,
+    ) -> Result<crate::outbox::OwedOutcome> {
+        Err(Error::OwedEntryNotFound {
+            entry: entry.to_string(),
+            actor: actor.to_string(),
+        })
+    }
+
+    /// Delete the record of the refused relationship change at `seq`, which
+    /// `actor` staged, without this provider holding the change. A change
+    /// in any other state is [`Error::OwedChangeNotRefused`].
+    async fn abandon_owed_change(&self, actor: &Did, seq: u64) -> Result<()> {
+        Err(Error::OwedEntryNotFound {
+            entry: crate::outbox::OwedRef::Change { seq }.to_string(),
+            actor: actor.to_string(),
+        })
+    }
+
     /// This provider serving the request `context` serves: one that acts on
     /// its callers' behalf with the credentials the request carries (see
     /// [`RequestContext::bearer_token_for`]). Providers that present no
@@ -152,9 +212,9 @@ pub trait DocumentACP: MaybeSendSync {
         None
     }
 
-    /// The bearer token `did` presents to this provider: the one of the
-    /// request it is bound to, or of [`RequestContext::ambient`] when it is
-    /// bound to none.
+    /// The bearer token `did` presents to this provider: the one the
+    /// request it is bound to carries for `did`, and none when it is bound
+    /// to no request.
     fn bearer_token_for(&self, did: &str) -> Option<String> {
         RequestContext::ambient().bearer_token_for(did)
     }

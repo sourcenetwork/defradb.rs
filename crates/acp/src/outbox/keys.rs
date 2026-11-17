@@ -8,6 +8,8 @@
 //!   on one object.
 //! - `/acp-owed/a/<actor>`: how many changes are unsettled that one acting
 //!   DID staged.
+//! - `/acp-owed/x/<seq>`: what is kept of a change whose record was deleted
+//!   without the provider holding it, until its actor was told.
 //! - `/acp-owed/n`: how many changes are unsettled on the node.
 //! - `/acp-owed/seq`: the counter sequences are allocated from.
 //!
@@ -26,6 +28,7 @@ const QUEUE_PREFIX: &[u8] = b"/acp-owed/q/";
 const TUPLE_PREFIX: &[u8] = b"/acp-owed/t/";
 const OBJECT_PREFIX: &[u8] = b"/acp-owed/o/";
 const ACTOR_PREFIX: &[u8] = b"/acp-owed/a/";
+const DISCARD_PREFIX: &[u8] = b"/acp-owed/x/";
 pub(super) const UNSETTLED_KEY: &[u8] = b"/acp-owed/n";
 pub(super) const SEQUENCE_KEY: &[u8] = b"/acp-owed/seq";
 
@@ -104,6 +107,14 @@ pub(super) fn queue_prefix() -> Vec<u8> {
 
 pub(super) fn queue_key(seq: u64) -> Vec<u8> {
     [QUEUE_PREFIX, &seq.to_be_bytes()].concat()
+}
+
+pub(super) fn discard_prefix() -> Vec<u8> {
+    DISCARD_PREFIX.to_vec()
+}
+
+pub(super) fn discard_key(seq: u64) -> Vec<u8> {
+    [DISCARD_PREFIX, &seq.to_be_bytes()].concat()
 }
 
 /// Every key of the tuples of one object starts with this.

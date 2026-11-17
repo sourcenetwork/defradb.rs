@@ -62,6 +62,7 @@ mod node_query_identity_tests;
 #[cfg(test)]
 mod on_pool_tests;
 mod ops;
+mod owed;
 pub use ops::{EncryptedIndexListing, IndexListing};
 #[cfg(any(feature = "p2p", feature = "libp2p"))]
 mod p2p_runtime;
@@ -1752,6 +1753,10 @@ mod verified_create_tests;
 #[cfg(all(test, feature = "vera", not(target_arch = "wasm32")))]
 #[path = "../tests/unit/verified_remote.rs"]
 mod verified_remote_tests;
+
+#[cfg(all(test, feature = "vera", not(target_arch = "wasm32")))]
+#[path = "../tests/unit/owed_report.rs"]
+mod owed_report_tests;
 
 #[cfg(all(test, feature = "http"))]
 mod http_signing_tests;

@@ -29,26 +29,26 @@
 //! the unchecked one is deleted, so it cannot be submitted after the change
 //! that passed it.
 //!
-//! Nothing here retries, waits or runs by itself: a pass runs after the
-//! commit of a request that staged a change (over that transaction's
-//! objects), once at start, and before a change made outside a transaction
-//! on a tuple that has changes owed. A crash between the provider applying a
-//! change and its record being deleted leaves the change staged, and the
-//! next pass submits it again.
-
-use std::sync::Arc;
+//! Nothing here retries or runs by itself: a pass runs after the commit of a
+//! request that staged a change (over that transaction's objects), once at
+//! start, before a change made outside a transaction on a tuple that has
+//! changes owed, and when a caller waits for a transaction's changes, hands
+//! in a fresh credential or abandons a change (see `owed.rs`). A crash
+//! between the provider applying a change and its record being deleted
+//! leaves the change staged, and the next pass submits it again.
 
 use datastore::BasicTxn;
-use defra_core::RequestContext;
 use rapidhash::{HashSetExt, RapidHashSet};
 use storage::corekv::Store;
 use zanzibar::types::Subject;
 
 use super::{storage_error, ExternalDocumentAcp};
 use crate::error::{Error, Result};
+use crate::outbox::record::of_this_run;
 use crate::outbox::{
     OwedAuthority, OwedChange, OwedState, OwedSubject, OwedTuple, StagedCount, Submission,
 };
+use crate::pending::PendingRegistration;
 
 /// How many submissions in a row the provider may answer with an
 /// unclassified error before the change is taken as refused. Only the
@@ -116,15 +116,28 @@ enum Registration {
     Unavailable,
 }
 
+/// Why a change a later one passed was deleted.
+const PASSED: &str = "a later change of its relationship passed it";
+/// Why an abandoned change was deleted.
+const ABANDONED: &str = "its actor abandoned it";
+
 /// A write to one owed change's record.
-enum Write {
+pub(super) enum Write {
     Settle,
     Mark(OwedState, u32, String),
+    /// Record a fresh authority and make the change owed again.
+    Reauthorize(OwedAuthority),
+    /// Delete the record if the change is still refused, and keep a note
+    /// that its actor gave it up.
+    Abandon,
+    /// Delete the record without the provider holding the change, and keep
+    /// a note of why.
+    Discard(String),
 }
 
-type ObjectKey = (String, String, String);
+pub(super) type ObjectKey = (String, String, String);
 
-fn object_of(tuple: &OwedTuple) -> ObjectKey {
+pub(super) fn object_of(tuple: &OwedTuple) -> ObjectKey {
     (
         tuple.policy_id.clone(),
         tuple.resource.clone(),
@@ -166,7 +179,7 @@ where
             after = Some(last.seq);
             objects.extend(
                 page.iter()
-                    .filter(|change| change.txn == Some(txn))
+                    .filter(|change| of_this_run(change.txn, change.epoch, txn))
                     .map(|change| object_of(&change.tuple)),
             );
         }
@@ -174,7 +187,10 @@ where
 
     /// One pass over the changes on `objects`, or over all of them. The
     /// caller holds the pass lock.
-    async fn pass(&self, objects: Option<&RapidHashSet<ObjectKey>>) -> Result<OwedSettlement> {
+    pub(super) async fn pass(
+        &self,
+        objects: Option<&RapidHashSet<ObjectKey>>,
+    ) -> Result<OwedSettlement> {
         let mut report = OwedSettlement::default();
         let mut held = RapidHashSet::new();
         let mut after = None;
@@ -266,7 +282,7 @@ where
     }
 
     /// The oldest unsettled change of `tuple`, as committed now.
-    async fn oldest_on(&self, tuple: &OwedTuple) -> Result<Option<OwedChange>> {
+    pub(super) async fn oldest_on(&self, tuple: &OwedTuple) -> Result<Option<OwedChange>> {
         let txn = self.begin(true).await?;
         let changes = self.owed_changes(&txn.acpstore(), StagedCount::new());
         let oldest = match changes.tuple(tuple).await {
@@ -280,13 +296,13 @@ where
         oldest
     }
 
-    async fn begin(&self, readonly: bool) -> Result<BasicTxn> {
+    pub(super) async fn begin(&self, readonly: bool) -> Result<BasicTxn> {
         BasicTxn::new(&**self.store.inner(), 0, readonly)
             .await
             .map_err(storage_error)
     }
 
-    async fn owed_changes_after(&self, after: Option<u64>) -> Result<Vec<OwedChange>> {
+    pub(super) async fn owed_changes_after(&self, after: Option<u64>) -> Result<Vec<OwedChange>> {
         let txn = self.begin(true).await?;
         let changes = self.owed_changes(&txn.acpstore(), StagedCount::new());
         let page = changes.page(after).await;
@@ -318,10 +334,14 @@ where
                     OwedState::Staged => oldest.last_error.is_some(),
                     OwedState::Refused { .. } => false,
                 };
-            if !yields || !self.write(oldest.seq, Write::Settle).await? {
+            if !yields
+                || !self
+                    .write(oldest.seq, Write::Discard(PASSED.to_owned()))
+                    .await?
+            {
                 break;
             }
-            discarded(&oldest, "a later change of its tuple passed it");
+            discarded(&oldest, PASSED);
             passed += 1;
         }
         Ok(passed)
@@ -381,7 +401,7 @@ where
             ),
             Submission::Unsupported { reason } => {
                 discarded(&change, &reason);
-                (Write::Settle, Step::Discarded)
+                (Write::Discard(reason), Step::Discarded)
             }
             // The node's own error: kept with the record so the change is
             // seen not to have gone, and never counted against it.
@@ -423,9 +443,45 @@ where
         })
     }
 
-    /// Settle the registration `change`'s object still owes, if any. The
-    /// provider is asked as the creator; when the creator is the change's
-    /// acting DID, with the delegation recorded with the change.
+    /// The delegation that lets the node send the registration `owed` when
+    /// its own record no longer does: the first, in queue order, of those
+    /// recorded with the changes its creator still owes on the same object
+    /// that admits the registration. `None` when the record serves, or
+    /// nothing does. A pass and the report both decide by this, so what is
+    /// reported as sendable is what a pass sends.
+    pub(super) async fn creators_delegation(
+        &self,
+        owed: &PendingRegistration,
+    ) -> Result<Option<String>> {
+        if self.recorded_registrar(owed, None).is_ok() {
+            return Ok(None);
+        }
+        let creator = self.provider.canonical_actor(&owed.creator);
+        let mut after = None;
+        loop {
+            let page = self.owed_changes_after(after).await?;
+            let Some(last) = page.last() else {
+                return Ok(None);
+            };
+            after = Some(last.seq);
+            for change in page {
+                let on_object = change.tuple.policy_id == owed.policy_id
+                    && change.tuple.resource == owed.resource_name
+                    && change.tuple.object == owed.doc_id;
+                if let (true, OwedAuthority::Delegation { token }) =
+                    (on_object && change.actor == creator, change.authority)
+                {
+                    if self.recorded_registrar(owed, Some(&token)).is_ok() {
+                        return Ok(Some(token));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Settle the registration `change`'s object still owes, if any, with
+    /// what its record holds, or with a delegation recorded with a change
+    /// its creator owes on the object ([`Self::creators_delegation`]).
     async fn register_first(&self, change: &OwedChange) -> Result<Registration> {
         let tuple = &change.tuple;
         let Some(owed) = self
@@ -434,43 +490,27 @@ where
         else {
             return Ok(Registration::Done);
         };
-        let registered = match self
-            .provider
-            .is_doc_registered(&owed.policy_id, &owed.resource_name, &owed.doc_id)
-            .await
-        {
-            Ok(registered) => registered,
+        let also = self.creators_delegation(&owed).await?;
+        match self.settle_with(&owed, also.as_deref()).await {
+            Ok(()) => {}
+            Err(Error::ProviderUnavailable(reason)) => {
+                tracing::debug!(
+                    target: "acp::audit",
+                    doc_id = %owed.doc_id,
+                    reason,
+                    "ACP provider unavailable; owed changes stay staged"
+                );
+                return Ok(Registration::Unavailable);
+            }
             Err(error) => {
                 tracing::debug!(
                     target: "acp::audit",
                     doc_id = %owed.doc_id,
                     %error,
-                    "ACP provider unavailable; owed changes stay staged"
+                    "Owed ACP registration not settled; its document's changes wait"
                 );
-                return Ok(Registration::Unavailable);
+                return Ok(Registration::Held);
             }
-        };
-        let provider = match &change.authority {
-            OwedAuthority::Delegation { token }
-                if self.provider.canonical_actor(&owed.creator) == change.actor =>
-            {
-                self.provider
-                    .bind_request(
-                        &RequestContext::default()
-                            .with_bearer(Some(owed.creator.to_string()), Some(token.clone())),
-                    )
-                    .unwrap_or_else(|| Arc::clone(&self.provider))
-            }
-            _ => Arc::clone(&self.provider),
-        };
-        if let Err(error) = self.register_and_clear(&provider, &owed, registered).await {
-            tracing::debug!(
-                target: "acp::audit",
-                doc_id = %owed.doc_id,
-                %error,
-                "Owed ACP registration not settled; its document's changes wait"
-            );
-            return Ok(Registration::Held);
         }
         // A record written again meanwhile is another registration to settle.
         Ok(
@@ -487,7 +527,7 @@ where
     /// Write to the record of change `seq` in a transaction of its own, its
     /// scans validated. `false` when the change is gone or a transaction that
     /// committed meanwhile won: the next pass finds the change as it is then.
-    async fn write(&self, seq: u64, write: Write) -> Result<bool> {
+    pub(super) async fn write(&self, seq: u64, write: Write) -> Result<bool> {
         let txn = self.begin(false).await?;
         let view = txn.acpstore();
         view.set_scans_validated(true);
@@ -497,12 +537,24 @@ where
             Write::Mark(state, attempts, reason) => {
                 changes.mark(seq, state, attempts, Some(reason)).await
             }
+            Write::Reauthorize(authority) => changes.reauthorize(seq, authority).await,
+            Write::Discard(reason) => changes.discard(seq, &reason).await,
+            Write::Abandon => match changes.get(seq).await {
+                Ok(Some(change)) if matches!(change.state, OwedState::Refused { .. }) => {
+                    changes.discard(seq, ABANDONED).await
+                }
+                Ok(_) => Ok(false),
+                Err(error) => Err(error),
+            },
         };
         drop(changes);
         drop(view);
         match written {
             Ok(true) => match txn.commit().await {
-                Ok(()) => Ok(true),
+                Ok(()) => {
+                    self.changed.notify_waiters();
+                    Ok(true)
+                }
                 Err(datastore::Error::Storage(error)) if error.is_txn_conflict() => Ok(false),
                 Err(error) => Err(Error::Storage(error.to_string())),
             },
@@ -533,7 +585,7 @@ fn refusal(change: &OwedChange, attempts: u32, reason: String) -> (Write, Step) 
         )
     } else {
         discarded(change, &reason);
-        (Write::Settle, Step::Discarded)
+        (Write::Discard(reason), Step::Discarded)
     }
 }
 

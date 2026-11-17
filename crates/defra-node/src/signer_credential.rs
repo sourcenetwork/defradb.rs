@@ -30,7 +30,6 @@ impl SignerCredential {
         signer: &str,
     ) -> defra_core::RequestContext {
         match self {
-            // Naming the presenter keeps a process-wide token out of reach.
             Self::None => context.with_bearer(Some(signer.to_owned()), None),
             Self::Delegation(token) => context.with_bearer(Some(signer.to_owned()), Some(token)),
             Self::RequestBound(token) => context.with_request_delegation(signer.to_owned(), token),

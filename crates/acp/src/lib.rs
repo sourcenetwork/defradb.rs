@@ -61,9 +61,10 @@ pub use external::{
 pub use identity::Identity;
 pub use local::{LocalDocumentACP, MemoryAcpStore};
 pub use outbox::{
-    NewOwedChange, OwedAuthority, OwedChange, OwedChanges, OwedDenial, OwedDenials, OwedOp,
-    OwedState, OwedSubject, OwedTuple, OwedTupleState, StageRelationship, Staged, StagedCount,
-    Submission, TransactionOutbox,
+    NewOwedChange, OwedAuthority, OwedAuthorityKind, OwedChange, OwedChanges, OwedDenial,
+    OwedDenials, OwedEntry, OwedFilter, OwedHold, OwedOp, OwedOutcome, OwedRef, OwedState,
+    OwedSubject, OwedTuple, OwedTupleState, OwedWait, OwedWhat, StageRelationship, Staged,
+    StagedCount, Submission, TransactionOutbox,
 };
 pub use pending::{PendingRegistration, PendingRegistrations};
 pub use permission::DocumentPermission;
