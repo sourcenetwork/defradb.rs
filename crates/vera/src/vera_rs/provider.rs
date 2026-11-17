@@ -18,14 +18,13 @@ use vera_modules::acp::types::PolicyRecord;
 use super::abi::{IAcp, ACP_ADDRESS};
 use super::bearer;
 use super::client::{HttpTransport, VeraRsClient};
-use super::command_digest::{encode_subject_relationship_cmd, request_digest, vera_subject};
+use super::command_digest::request_digest;
 use super::did_spelling;
+use super::policy_cmd;
 #[cfg(test)]
 use super::provider_commands::resolve_registered_or_passthrough_bearer_token;
 use super::provider_commands::{
-    encode_archive_object_cmd, encode_delete_relationship_cmd, encode_register_object_cmd,
-    encode_set_relationship_cmd, holds_registered_key,
-    resolve_registered_or_passthrough_bearer_token_as,
+    holds_registered_key, resolve_registered_or_passthrough_bearer_token_as,
 };
 use super::signer::{admission, DelegationSigner, Secp256k1Signer};
 use super::transport::RpcTransport;
@@ -538,16 +537,14 @@ impl VeraProvider for VeraRsProvider {
         resource: &str,
         object_id: &str,
     ) -> Result<(), ProviderError> {
-        let pid = Self::policy_id_to_bytes32(policy_id)?;
-        let cmd = encode_register_object_cmd(resource, object_id);
-        let call = IAcp::bearerPolicyCmdCall {
-            bearerToken: bearer_token.to_string(),
-            policyId: pid,
-            cmd: Bytes::from(cmd),
+        let command = crate::PolicyCommand {
+            policy_id,
+            resource,
+            object_id,
+            action: crate::PolicyAction::RegisterObject,
         };
-        let calldata = Bytes::from(call.abi_encode());
         let send_tx_start = Instant::now();
-        self.send_tx(calldata).await?;
+        self.send_command(bearer_token, &command).await?;
         tracing::info!(
             doc_id = %object_id,
             elapsed = ?send_tx_start.elapsed(),
@@ -564,17 +561,9 @@ impl VeraProvider for VeraRsProvider {
         resource: &str,
         object_id: &str,
     ) -> Result<(), ProviderError> {
-        let pid = Self::policy_id_to_bytes32(policy_id)?;
-        let cmd = encode_archive_object_cmd(resource, object_id);
-        let call = IAcp::bearerPolicyCmdCall {
-            bearerToken: bearer_token.to_string(),
-            policyId: pid,
-            cmd: Bytes::from(cmd),
-        };
-        let calldata = Bytes::from(call.abi_encode());
-        self.send_tx(calldata).await?;
-
-        Ok(())
+        let command = policy_cmd::archive_object(resource, object_id);
+        self.send_policy_cmd(bearer_token, policy_id, &command)
+            .await
     }
 
     async fn set_relationship(
@@ -586,16 +575,16 @@ impl VeraProvider for VeraRsProvider {
         relation: &str,
         subject: &SubjectRef,
     ) -> Result<bool, ProviderError> {
-        let pid = Self::policy_id_to_bytes32(policy_id)?;
-        let cmd = encode_set_relationship_cmd(resource, object_id, relation, subject);
-        let call = IAcp::bearerPolicyCmdCall {
-            bearerToken: bearer_token.to_string(),
-            policyId: pid,
-            cmd: Bytes::from(cmd),
+        let command = crate::PolicyCommand {
+            policy_id,
+            resource,
+            object_id,
+            action: crate::PolicyAction::SetRelationship {
+                relation,
+                subject: crate::PolicySubject::Actor(subject),
+            },
         };
-        let calldata = Bytes::from(call.abi_encode());
-        self.send_tx(calldata).await?;
-
+        self.send_command(bearer_token, &command).await?;
         Ok(true)
     }
 
@@ -608,16 +597,16 @@ impl VeraProvider for VeraRsProvider {
         relation: &str,
         subject: &SubjectRef,
     ) -> Result<bool, ProviderError> {
-        let pid = Self::policy_id_to_bytes32(policy_id)?;
-        let cmd = encode_delete_relationship_cmd(resource, object_id, relation, subject);
-        let call = IAcp::bearerPolicyCmdCall {
-            bearerToken: bearer_token.to_string(),
-            policyId: pid,
-            cmd: Bytes::from(cmd),
+        let command = crate::PolicyCommand {
+            policy_id,
+            resource,
+            object_id,
+            action: crate::PolicyAction::DeleteRelationship {
+                relation,
+                subject: crate::PolicySubject::Actor(subject),
+            },
         };
-        let calldata = Bytes::from(call.abi_encode());
-        self.send_tx(calldata).await?;
-
+        self.send_command(bearer_token, &command).await?;
         Ok(true)
     }
 
@@ -685,14 +674,19 @@ impl VeraProvider for VeraRsProvider {
         subject_object_id: &str,
         subject_relation: &str,
     ) -> Result<bool, ProviderError> {
-        let subject = vera_subject(kind, subject_resource, subject_object_id, subject_relation)?;
-        let cmd = encode_subject_relationship_cmd(true, resource, object_id, relation, &subject)?;
-        let call = IAcp::bearerPolicyCmdCall {
-            bearerToken: bearer_token.to_string(),
-            policyId: Self::policy_id_to_bytes32(policy_id)?,
-            cmd: cmd.into(),
+        let subject = crate::PolicySubject::Structured {
+            kind,
+            resource: subject_resource,
+            object_id: subject_object_id,
+            relation: subject_relation,
         };
-        self.send_tx(call.abi_encode().into()).await?;
+        let command = crate::PolicyCommand {
+            policy_id,
+            resource,
+            object_id,
+            action: crate::PolicyAction::SetRelationship { relation, subject },
+        };
+        self.send_command(bearer_token, &command).await?;
         Ok(true)
     }
 
@@ -708,14 +702,19 @@ impl VeraProvider for VeraRsProvider {
         subject_object_id: &str,
         subject_relation: &str,
     ) -> Result<bool, ProviderError> {
-        let subject = vera_subject(kind, subject_resource, subject_object_id, subject_relation)?;
-        let cmd = encode_subject_relationship_cmd(false, resource, object_id, relation, &subject)?;
-        let call = IAcp::bearerPolicyCmdCall {
-            bearerToken: bearer_token.to_string(),
-            policyId: Self::policy_id_to_bytes32(policy_id)?,
-            cmd: cmd.into(),
+        let subject = crate::PolicySubject::Structured {
+            kind,
+            resource: subject_resource,
+            object_id: subject_object_id,
+            relation: subject_relation,
         };
-        self.send_tx(call.abi_encode().into()).await?;
+        let command = crate::PolicyCommand {
+            policy_id,
+            resource,
+            object_id,
+            action: crate::PolicyAction::DeleteRelationship { relation, subject },
+        };
+        self.send_command(bearer_token, &command).await?;
         Ok(true)
     }
 
@@ -808,6 +807,12 @@ impl VeraProvider for VeraRsProvider {
             .await
             .map_err(|e| ProviderError::Query(format!("verified access decision: {e}")))?;
         Ok(Some(decision.id))
+    }
+
+    /// Every decision is a permission proof the light client verifies at a
+    /// revision no older than `FreshnessPolicy::default().max_age`.
+    fn proves_decisions(&self) -> bool {
+        true
     }
 
     /// The state decisions are remembered under, while it is fresh. Once the

@@ -24,29 +24,29 @@ use vera::{PolicyAction, PolicyCommand, PolicySubject, SubjectRef};
 
 use super::{chain_reads, now, users, ACCOUNT_KEY, POLICY, STRANGER};
 
-const LIFETIME: Duration = Duration::from_secs(120);
+pub(super) const LIFETIME: Duration = Duration::from_secs(120);
 
 /// A node on its own Vera deployment, its HTTP API served on loopback and,
 /// unless the test says otherwise, the deployment's JSON-RPC methods too.
-struct Deployed {
-    node: Node,
-    http: SocketAddr,
-    rpc: Option<SocketAddr>,
-    policy: String,
-    audience: acp::DelegationAudience,
-    _directory: tempfile::TempDir,
+pub(super) struct Deployed {
+    pub(super) node: Node,
+    pub(super) http: SocketAddr,
+    pub(super) rpc: Option<SocketAddr>,
+    pub(super) policy: String,
+    pub(super) audience: acp::DelegationAudience,
+    pub(super) _directory: tempfile::TempDir,
 }
 
 /// A user who signs its own blocks and delegations, and whose key the node
 /// never sees.
-struct User {
-    did: identity::Did,
-    blocks: SigningConfig,
-    delegations: Ed25519Signer,
+pub(super) struct User {
+    pub(super) did: identity::Did,
+    pub(super) blocks: SigningConfig,
+    pub(super) delegations: Ed25519Signer,
 }
 
 impl User {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let private = crypto::generate_ed25519().unwrap();
         let public = private.public_key();
         let delegations = Ed25519Signer::from_slice(private.raw()).expect("key");
@@ -66,14 +66,14 @@ impl User {
 }
 
 /// One verified create handed to the node.
-struct Attempt {
-    doc: String,
-    txn: defra_node::TransactionHandle,
-    response: QueryResponse,
+pub(super) struct Attempt {
+    pub(super) doc: String,
+    pub(super) txn: defra_node::TransactionHandle,
+    pub(super) response: QueryResponse,
 }
 
 impl Deployed {
-    async fn start(chain_id: u64) -> Self {
+    pub(super) async fn start(chain_id: u64) -> Self {
         Self::start_serving(chain_id, true).await
     }
 
@@ -169,7 +169,7 @@ impl Deployed {
 
     /// `user`'s verified create of a document called `name`, with the
     /// credential `credential` makes for the document it creates.
-    async fn create<C, F>(&self, user: &User, name: &str, credential: C) -> Attempt
+    pub(super) async fn create<C, F>(&self, user: &User, name: &str, credential: C) -> Attempt
     where
         C: FnOnce(String) -> F,
         F: std::future::Future<Output = SignerCredential>,
@@ -223,7 +223,13 @@ impl Deployed {
     }
 
     /// `user`'s delegation bound to the one command `action` on `doc`.
-    async fn bound(&self, user: &User, doc: &str, action: PolicyAction<'_>, nonce: u8) -> String {
+    pub(super) async fn bound(
+        &self,
+        user: &User,
+        doc: &str,
+        action: PolicyAction<'_>,
+        nonce: u8,
+    ) -> String {
         self.bound_for(user, doc, action, nonce, LIFETIME).await
     }
 
@@ -265,7 +271,7 @@ impl Deployed {
     }
 
     /// The owner the chain itself records for `doc`.
-    async fn owner_on_chain(&self, doc: &str) -> Option<String> {
+    pub(super) async fn owner_on_chain(&self, doc: &str) -> Option<String> {
         self.node
             .vera_acp()
             .expect("vera.rs document ACP")

@@ -13693,6 +13693,7 @@ dependencies = [
  "tonic",
  "tonic-prost",
  "tracing",
+ "vera-acp",
  "vera-client",
  "vera-crypto",
  "vera-domain",

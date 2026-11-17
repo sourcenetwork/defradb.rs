@@ -491,6 +491,12 @@ impl DocumentACP for VeraDocumentACP {
         self.provider.unregistered_documents_are_public()
     }
 
+    /// Only without the access cache: a cached decision may outlive the
+    /// freshness limit its provider proves it within.
+    fn proves_decisions(&self) -> bool {
+        self.access_cache.is_none() && self.provider.proves_decisions()
+    }
+
     async fn register_doc_object(
         &self,
         identity: &Did,

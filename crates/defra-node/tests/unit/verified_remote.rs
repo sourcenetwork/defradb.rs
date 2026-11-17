@@ -20,7 +20,7 @@ use super::{Node, RelationshipChange, SignerCredential};
 pub(super) const STRANGER: &str = "did:key:z6MkiTBz1ymuepAQ4HEHYSF1H8quG5GLVVQR3djdX3mDooWp";
 
 /// A user whose key the node does not hold, and what signs its blocks.
-fn user() -> (String, SigningConfig) {
+pub(super) fn user() -> (String, SigningConfig) {
     let private = crypto::generate_ed25519().unwrap();
     let public = private.public_key();
     let config = SigningConfig {
@@ -44,7 +44,7 @@ pub(super) struct Verified {
     pub(super) remote: Arc<Remote>,
     pub(super) node: Node,
     pub(super) user: String,
-    signing: SigningConfig,
+    pub(super) signing: SigningConfig,
     pub(super) policy: String,
 }
 
@@ -404,88 +404,6 @@ fn a_request_bound_delegation_that_expires_before_submission_parks_its_change() 
         let owed = on.owed().await;
         assert_eq!(owed.len(), 1, "{owed:?}");
         assert_eq!(owed[0].state, acp::OwedState::AwaitingAuthority);
-        on.node.shutdown().await.unwrap();
-    })
-    .unwrap();
-}
-
-#[test]
-fn a_verified_update_needs_the_signers_general_authority() {
-    use db::block::builder::{
-        ClientUpdateSignatures, ClientUpdateSnapshot, VerifiedClientMutation,
-    };
-
-    workers::block_on(async {
-        let _serial = super::tests::SIGNING_STORE_GUARD.lock().await;
-        let on = Verified::new().await;
-        let doc = on
-            .committed(on.create("before", |_| on.delegation()).await)
-            .await;
-        let user = Did::new(&on.user).unwrap();
-        let history = on
-            .node
-            .execute_request(
-                query::QueryRequest::new("query($docID:[String!]!) { _commits(docID:$docID) { cid docID fieldName height delta collectionVersionId links { cid fieldName } heads { cid } signature { type identity value } } }")
-                    .with_variables(json!({ "docID": [doc] }))
-                    .with_identity(Some(user.clone())),
-            )
-            .await;
-        assert!(!history.has_errors(), "{:?}", history.errors);
-        let snapshot = ClientUpdateSnapshot::from_commits(
-            &doc,
-            history.data.unwrap()["_commits"].as_array().unwrap(),
-        )
-        .unwrap();
-        let schema = on.node.get_collection("Record").unwrap().unwrap();
-        let crdts = storage::Crdts::default();
-        let patch = json!({ "name": "after" });
-        let update = |credential: SignerCredential| {
-            let (on, schema, crdts, patch, snapshot, doc, user) =
-                (&on, &schema, &crdts, &patch, &snapshot, &doc, &user);
-            async move {
-                let signed = ClientUpdateSignatures::from_input(
-                    crdts, schema, doc, patch, snapshot, &on.signing,
-                )
-                .unwrap();
-                let graph = VerifiedClientMutation::verify_update(
-                    crdts,
-                    schema,
-                    doc,
-                    patch,
-                    snapshot,
-                    signed.evidence(),
-                )
-                .unwrap();
-                let request = query::QueryRequest::new("mutation($id:ID!, $input:RecordMutationInputArg!) { update_Record(docID:$id,input:$input) {_docID} }")
-                    .with_variables(json!({ "id": doc, "input": patch }))
-                    .with_identity(Some(user.clone()));
-                let txn = on.node.begin_transaction(false).await.unwrap();
-                let response = on
-                    .node
-                    .execute_verified_mutation_in_txn(request, &txn, &graph, credential)
-                    .await;
-                (txn, response)
-            }
-        };
-
-        // An update sends the provider no command for a delegation bound to
-        // one request to name, and nothing lets the node act without one.
-        for credential in [SignerCredential::None, on.registration(&doc)] {
-            let (txn, response) = update(credential).await;
-            assert_eq!(
-                response.errors.first().and_then(|error| error.code()),
-                Some(WRITE_AUTHORITY_UNAVAILABLE_ERROR_CODE),
-                "{:?}",
-                response.errors
-            );
-            assert!(on.node.commit_transaction(&txn).await.is_err());
-            assert_eq!(on.records().await, ["before"]);
-        }
-
-        let (txn, response) = update(on.delegation()).await;
-        assert!(!response.has_errors(), "{:?}", response.errors);
-        on.node.commit_transaction(&txn).await.unwrap();
-        assert_eq!(on.records().await, ["after"]);
         on.node.shutdown().await.unwrap();
     })
     .unwrap();
