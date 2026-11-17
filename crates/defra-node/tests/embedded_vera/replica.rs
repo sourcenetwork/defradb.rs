@@ -167,8 +167,16 @@ fn a_foreign_creators_row_is_registered_by_the_receiving_node_and_its_changes_fo
             .await
             .expect("the unit lands on the Vera node");
         // The light client sees the registration once its block is verified.
+        // A read the chain answers with its retryable evidence deadline under
+        // load is asked again.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-        while vera.get_doc_owner(&policy, "users", &doc_id).await.unwrap() != Some(actor.clone()) {
+        while vera
+            .get_doc_owner(&policy, "users", &doc_id)
+            .await
+            .ok()
+            .flatten()
+            != Some(actor.clone())
+        {
             assert!(
                 std::time::Instant::now() < deadline,
                 "the node did not register the document as its own actor"
@@ -189,7 +197,7 @@ fn a_foreign_creators_row_is_registered_by_the_receiving_node_and_its_changes_fo
                     doc_id,
                 )
                 .await
-                .unwrap()
+                .unwrap_or(false)
             }
         };
         while !creator_may(DocumentPermission::Update).await {
@@ -201,7 +209,15 @@ fn a_foreign_creators_row_is_registered_by_the_receiving_node_and_its_changes_fo
                 .sleep(std::time::Duration::from_millis(200))
                 .await;
         }
-        assert!(creator_may(DocumentPermission::Delete).await);
+        while !creator_may(DocumentPermission::Delete).await {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the creator cannot delete"
+            );
+            edge::testing::edge()
+                .sleep(std::time::Duration::from_millis(200))
+                .await;
+        }
 
         let version = users.schema().version_id.clone();
         let mut update = composite(vec![genesis.0], 2, 1);
@@ -219,8 +235,19 @@ fn a_foreign_creators_row_is_registered_by_the_receiving_node_and_its_changes_fo
         }
         let delete = signed(&key, delete, &*blocks).await;
         assert_eq!(merge(delete, doc_id.clone()).await, MergeOutcome::Merged);
+        let owner = loop {
+            match vera.get_doc_owner(&policy, "users", &doc_id).await {
+                Ok(owner) => break owner,
+                Err(_) if std::time::Instant::now() < deadline => {
+                    edge::testing::edge()
+                        .sleep(std::time::Duration::from_millis(200))
+                        .await
+                }
+                Err(error) => panic!("owner read: {error}"),
+            }
+        };
         assert_eq!(
-            vera.get_doc_owner(&policy, "users", &doc_id).await.unwrap(),
+            owner,
             Some(actor),
             "a merged delete leaves the object registered"
         );
