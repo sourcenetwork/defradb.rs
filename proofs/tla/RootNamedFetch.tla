@@ -17,15 +17,17 @@
 \*
 \* The fix: a document's fetch names the root and asks with no cut, once,
 \* when the provider can leave out all the receiver holds: the receiver names
-\* a have, or holds nothing below the root. A receiver holding blocks below
-\* the root with no have, and a branchable collection's blocks (which name no
-\* haves), keep asking for the missing frontier with a cut that doubles.
+\* a have, names the blocks it holds without their history as present (the
+\* provider walks through those and never sends them), or holds nothing below
+\* the root. A branchable collection's blocks (which name no haves) keep
+\* asking for the missing frontier with a cut that doubles.
 \*
 \* Four receivers:
 \*   "steady": holds the history C1..C5 and names C5 as its have;
 \*   "empty":  holds only C6, so names no have;
 \*   "partial": was pushed C6's update and C5 but merged none of it, so
-\*             holds blocks below C6 and names no have;
+\*             holds blocks below C6, names no have, and names all it holds
+\*             present;
 \*   "branch": the same DAG standing for a branchable collection's blocks:
 \*             holds C1..C5, names no have.
 \*
@@ -36,7 +38,9 @@
 \*   - a branchable fetch is sent more of its held history than one cut;
 \*   - an honest fetch stops before the whole DAG is held.
 \*
-\* Rust: crates/p2p/src/sync/coordinator/rooted_request.rs rooted_request
+\* Rust: crates/p2p/src/sync/coordinator/dag_fetcher.rs held_below_root
+\* (the present blocks); crates/p2p/src/sync/coordinator/rooted_request.rs
+\* rooted_request
 \* (a document whose root is a composite, or not yet held, names the root
 \* with ClosureDepth::whole; an empty doc_id, a branchable collection, keeps
 \* the missing CIDs and the current cut); crates/p2p/src/sync/coordinator/
@@ -56,8 +60,8 @@ EXTENDS Naturals, FiniteSets
 \*   "window"   a document with no haves asks with a doubling cut instead of
 \*              once with none                        -> INV_HeldNotResent
 \*   "whole"    a branchable fetch asks with no cut too -> INV_BranchCut
-\*   "rootany"  a document names its root even when it holds blocks below it
-\*              and names no have                     -> INV_HeldNotResent
+\*   "nopresent" a document holding blocks below its root, with no have,
+\*              names its root but no present block   -> INV_HeldNotResent
 CONSTANTS Bug
 
 \* The composites, the spine.
@@ -118,23 +122,30 @@ Haves(w) == IF w = "steady" THEN {"C5"} ELSE {}
 \* Whether the receiver is fetching a document (not a branchable collection).
 IsDoc(w) == w # "branch"
 
-\* Whether a document's fetch may name its root: it names a have, or holds
-\* nothing below the root ("rootany" names it regardless).
+\* The blocks each receiver names present: the partial receiver holds its
+\* blocks without their history ("nopresent" names none).
+Present(w) == IF w = "partial" /\ Bug # "nopresent" THEN Start(w) ELSE {}
+
+\* Whether a document's fetch may name its root: it names a have or a
+\* present block, or holds nothing below the root ("nopresent" names the
+\* root as if it still named its present blocks).
 NamesRoot(w) ==
-  IsDoc(w) /\ (Haves(w) # {} \/ Links(Root) \cap Start(w) = {} \/ Bug = "rootany")
+  IsDoc(w) /\ (Haves(w) # {} \/ Present(w) # {} \/ Links(Root) \cap Start(w) = {}
+               \/ (Bug = "nopresent" /\ w = "partial"))
 
 \* The missing blocks a held block links: what a frontier request names.
 Frontier(r) ==
   IF Root \notin r THEN {Root}
   ELSE {b \in Closure({Root}) \ r : \E a \in Closure({Root}) \cap r : b \in Links(a)}
 
-\* What the provider sends for `wants` at cut `cut`, given the haves. With a
-\* have and only composites asked, the spine walk: what is asked, and every
-\* block below it outside the haves' closures. Otherwise the depth cut.
-Serve(wants, cut, haves) ==
-  IF haves # {} /\ wants \subseteq Spine
-  THEN wants \cup (Closure(wants) \ Closure(haves))
-  ELSE Reach(wants, cut)
+\* What the provider sends for `wants` at cut `cut`, given the haves and
+\* the present blocks. With a have or a present block and only composites
+\* asked, the spine walk: what is asked, and every block below it outside
+\* the haves' closures. Otherwise the depth cut. Present blocks are never sent.
+Serve(wants, cut, haves, present) ==
+  (IF (haves # {} \/ present # {}) /\ wants \subseteq Spine
+   THEN wants \cup (Closure(wants) \ Closure(haves))
+   ELSE Reach(wants, cut)) \ present
 
 \* rhas: what the receiver holds. round: the request it is on. cut: the cut
 \* of the next frontier request. sentHeld: held blocks sent back, the root
@@ -175,7 +186,7 @@ Ask ==
          \* The cut it carries: the first request's, later the doubling one.
          c     == IF round = 0 THEN FirstCut(world) ELSE cut
          \* What the provider sends back.
-         got   == Serve(wants, c, Haves(world))
+         got   == Serve(wants, c, Haves(world), IF round = 0 THEN Present(world) ELSE {})
          \* What the receiver holds once the response is stored.
          r     == rhas \cup got
          \* Held blocks sent back are counted, the root named by name left out.

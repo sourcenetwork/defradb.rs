@@ -13,7 +13,7 @@ use cid::Cid;
 use crate::error::Result;
 use crate::message::{
     BranchableSyncReply, BranchableSyncRequest, CarFetchRequest, DocSyncReply, DocSyncRequest,
-    ManageQueryReply, ManageQueryRequest, ManageReply, ManageRequest, PushLogBroadcast,
+    HeldCids, ManageQueryReply, ManageQueryRequest, ManageReply, ManageRequest, PushLogBroadcast,
     PushLogReply, PushLogRequest, PushSEArtifactsRequest, QuerySEArtifactsReply,
     QuerySEArtifactsRequest,
 };
@@ -535,14 +535,16 @@ pub trait P2PTransport: Clone + Send + Sync + 'static {
 
     async fn send_car_request(&self, peer_id: &PeerId, root_cid: Cid) -> Result<()>;
 
-    /// [`send_car_request`](Self::send_car_request) naming merged blocks held
-    /// here, so the provider leaves their closures out. Transports that cannot
-    /// carry them keep the default and ask for the whole DAG.
+    /// [`send_car_request`](Self::send_car_request) naming what is held here:
+    /// blocks with their closures (haves), whose closures the provider leaves
+    /// out, and blocks without them (present), which it does not send but
+    /// walks through. Transports that cannot carry them keep the default and
+    /// ask for the whole DAG.
     async fn send_car_request_with_haves(
         &self,
         peer_id: &PeerId,
         root_cid: Cid,
-        _haves: Vec<Cid>,
+        _held: HeldCids,
     ) -> Result<()> {
         self.send_car_request(peer_id, root_cid).await
     }
@@ -645,15 +647,16 @@ pub trait P2PTransport: Clone + Send + Sync + 'static {
 
     /// [`sync_blocks`](Self::sync_blocks) with descendant closures cut
     /// `max_depth` links below each missing CID, leaving out the closures of
-    /// `haves` (merged blocks held here) where the provider holds one of them.
-    /// Exact-CID transports keep the default.
+    /// `held.haves` (blocks held here with their closures) where the provider
+    /// holds one of them, and never sending `held.present` (blocks held here
+    /// without their closures). Exact-CID transports keep the default.
     async fn sync_blocks_within(
         &self,
         root: Cid,
         providers: Vec<PeerId>,
         missing: Vec<Cid>,
         _max_depth: u32,
-        _haves: Vec<Cid>,
+        _held: HeldCids,
     ) -> Result<QueryId> {
         self.sync_blocks(root, providers, missing).await
     }

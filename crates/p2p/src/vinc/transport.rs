@@ -17,7 +17,7 @@ use crate::error::{Error, Result};
 use crate::explicit_replay::ExplicitReplayCapabilityCache;
 use crate::message::{
     BranchableSyncReply, BranchableSyncRequest, CarFetchRequest, DocSyncReply, DocSyncRequest,
-    ManageQueryReply, ManageQueryRequest, ManageReply, ManageRequest, PushLogBroadcast,
+    HeldCids, ManageQueryReply, ManageQueryRequest, ManageReply, ManageRequest, PushLogBroadcast,
     PushLogReply, PushLogRequest, PushSEArtifactsRequest, QuerySEArtifactsReply,
     QuerySEArtifactsRequest,
 };
@@ -478,7 +478,7 @@ impl P2PTransport for VincTransport {
     }
 
     async fn send_car_request(&self, peer_id: &PeerId, root_cid: Cid) -> Result<()> {
-        self.send_car_request_with_haves(peer_id, root_cid, Vec::new())
+        self.send_car_request_with_haves(peer_id, root_cid, HeldCids::default())
             .await
     }
 
@@ -486,12 +486,11 @@ impl P2PTransport for VincTransport {
         &self,
         peer_id: &PeerId,
         root_cid: Cid,
-        haves: Vec<Cid>,
+        held: HeldCids,
     ) -> Result<()> {
         self.send_command(|reply| Command::SendCarRequest {
             peer_id: peer_id.clone(),
-            root_cid,
-            haves,
+            request: CarFetchRequest::full_dag(root_cid).with_held(held),
             reply,
         })
         .await
@@ -645,8 +644,11 @@ impl P2PTransport for VincTransport {
         providers: Vec<PeerId>,
         missing: Vec<Cid>,
     ) -> Result<QueryId> {
-        self.sync(car_request(root, missing, None, Vec::new()), providers)
-            .await
+        self.sync(
+            car_request(root, missing, None, HeldCids::default()),
+            providers,
+        )
+        .await
     }
 
     async fn sync_blocks_within(
@@ -655,13 +657,10 @@ impl P2PTransport for VincTransport {
         providers: Vec<PeerId>,
         missing: Vec<Cid>,
         max_depth: u32,
-        haves: Vec<Cid>,
+        held: HeldCids,
     ) -> Result<QueryId> {
-        self.sync(
-            car_request(root, missing, Some(max_depth), haves),
-            providers,
-        )
-        .await
+        self.sync(car_request(root, missing, Some(max_depth), held), providers)
+            .await
     }
 
     fn supports_cancellable_rooted_sync(&self) -> bool {
@@ -743,7 +742,7 @@ fn car_request(
     root: Cid,
     missing: Vec<Cid>,
     max_depth: Option<u32>,
-    haves: Vec<Cid>,
+    held: HeldCids,
 ) -> CarFetchRequest {
     if missing.is_empty() {
         CarFetchRequest::full_dag(root)
@@ -752,7 +751,7 @@ fn car_request(
             max_depth,
             ..CarFetchRequest::selective_dag(root, missing)
         }
-        .with_haves(haves)
+        .with_held(held)
     }
 }
 

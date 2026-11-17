@@ -542,6 +542,21 @@ impl P2PTransport for PollFetchTransport {
         _providers: Vec<PeerId>,
         missing: Vec<Cid>,
     ) -> P2PResult<QueryId> {
+        self.sync_blocks_within(root, Vec::new(), missing, 0, Default::default())
+            .await
+    }
+
+    /// Serves a block sync as a rooted provider does: the blocks the
+    /// receiver names present are walked through, never sent.
+    async fn sync_blocks_within(
+        &self,
+        root: Cid,
+        _providers: Vec<PeerId>,
+        missing: Vec<Cid>,
+        _max_depth: u32,
+        held: crate::message::HeldCids,
+    ) -> P2PResult<QueryId> {
+        let present = &held.present;
         self.sync_blocks_calls.fetch_add(1, Ordering::SeqCst);
         self.sync_requested_cids
             .fetch_add(missing.len(), Ordering::SeqCst);
@@ -558,6 +573,9 @@ impl P2PTransport for PollFetchTransport {
                     crate::sync::car::collect_dag_blocks_from_roots(source.as_ref(), &[root])
                         .await?;
                 for (cid, data) in collected.blocks {
+                    if present.contains(&cid) {
+                        continue;
+                    }
                     self.sync_present_blocks.fetch_add(1, Ordering::SeqCst);
                     self.blockstore
                         .put(&cid, &data)

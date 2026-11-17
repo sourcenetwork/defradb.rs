@@ -25,7 +25,7 @@ mod size_notice_tests;
 mod depth_tests;
 
 mod region;
-pub use region::{collect_missing_region, MAX_HAVE_CIDS};
+pub use region::{collect_missing_region, MAX_HAVE_CIDS, MAX_PRESENT_CIDS};
 
 #[cfg(test)]
 #[path = "../../tests/unit/doc_dag.rs"]

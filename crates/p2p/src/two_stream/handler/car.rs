@@ -6,7 +6,8 @@ use libp2p::PeerId;
 use libp2p::Stream;
 
 use crate::error::{Error, Result};
-use crate::sync::car::MAX_HAVE_CIDS;
+use crate::message::HeldCids;
+use crate::sync::car::{MAX_HAVE_CIDS, MAX_PRESENT_CIDS};
 use crate::two_stream::event::TwoStreamEvent;
 
 use super::TwoStreamHandler;
@@ -25,31 +26,59 @@ async fn read_stream(
     Ok(buf)
 }
 
-/// A CAR request: the root CID's bytes, then each have CID's bytes. A CID is
-/// self-delimiting, and a responder that predates haves reads the root alone,
-/// so the request it sees is unchanged.
-pub(crate) fn encode_car_request(root_cid: &Cid, haves: &[Cid]) -> Vec<u8> {
+/// Separates the haves from the present CIDs. A CID starts with its version
+/// (1) or, for CIDv0, its multihash code (0x12), never with 0.
+const PRESENT_MARKER: u8 = 0;
+
+/// A CAR request: the root CID's bytes, then each have CID's bytes, then,
+/// when any are named, [`PRESENT_MARKER`] and each present CID's bytes. A CID
+/// is self-delimiting, and a responder that predates haves reads the root
+/// alone, so the request it sees is unchanged.
+pub(crate) fn encode_car_request(root_cid: &Cid, held: &HeldCids) -> Vec<u8> {
     let mut out = root_cid.to_bytes();
-    for have in haves.iter().take(MAX_HAVE_CIDS) {
+    for have in held.haves.iter().take(MAX_HAVE_CIDS) {
         out.extend_from_slice(&have.to_bytes());
+    }
+    if !held.present.is_empty() {
+        out.push(PRESENT_MARKER);
+        for present in held.present.iter().take(MAX_PRESENT_CIDS) {
+            out.extend_from_slice(&present.to_bytes());
+        }
     }
     out
 }
 
-/// The root and the haves of a CAR request: at most [`MAX_HAVE_CIDS`] haves,
-/// ignoring any bytes after the last whole CID.
-pub(crate) fn decode_car_request(buf: &[u8]) -> Result<(Cid, Vec<Cid>)> {
-    let mut cursor = std::io::Cursor::new(buf);
-    let root_cid = Cid::read_bytes(&mut cursor)
-        .map_err(|e| Error::InvalidCid(format!("invalid CID in CAR request: {}", e)))?;
-    let mut haves = Vec::new();
-    while (cursor.position() as usize) < buf.len() && haves.len() < MAX_HAVE_CIDS {
-        match Cid::read_bytes(&mut cursor) {
-            Ok(have) => haves.push(have),
+/// Reads whole CIDs from `cursor` up to `limit` or [`PRESENT_MARKER`],
+/// stopping at the first torn one.
+fn read_cids(cursor: &mut std::io::Cursor<&[u8]>, limit: usize) -> Vec<Cid> {
+    let mut cids = Vec::new();
+    while cids.len() < limit {
+        let rest = &cursor.get_ref()[cursor.position() as usize..];
+        if rest.first().is_none_or(|byte| *byte == PRESENT_MARKER) {
+            break;
+        }
+        match Cid::read_bytes(&mut *cursor) {
+            Ok(cid) => cids.push(cid),
             Err(_) => break,
         }
     }
-    Ok((root_cid, haves))
+    cids
+}
+
+/// The root and what a CAR request names as held: at most [`MAX_HAVE_CIDS`]
+/// haves and [`MAX_PRESENT_CIDS`] present CIDs, ignoring any bytes after the
+/// last whole CID.
+pub(crate) fn decode_car_request(buf: &[u8]) -> Result<(Cid, HeldCids)> {
+    let mut cursor = std::io::Cursor::new(buf);
+    let root_cid = Cid::read_bytes(&mut cursor)
+        .map_err(|e| Error::InvalidCid(format!("invalid CID in CAR request: {}", e)))?;
+    let haves = read_cids(&mut cursor, MAX_HAVE_CIDS);
+    let mut present = Vec::new();
+    if buf.get(cursor.position() as usize) == Some(&PRESENT_MARKER) {
+        cursor.set_position(cursor.position() + 1);
+        present = read_cids(&mut cursor, MAX_PRESENT_CIDS);
+    }
+    Ok((root_cid, HeldCids { haves, present }))
 }
 
 #[cfg(test)]
@@ -70,12 +99,12 @@ impl TwoStreamHandler {
             .await
             .map_err(|e| Error::Transport(format!("failed to read CAR request: {}", e)))?;
 
-        let (root_cid, haves) = decode_car_request(&buf)?;
+        let (root_cid, held) = decode_car_request(&buf)?;
 
         Ok(TwoStreamEvent::CarFetchRequest {
             peer_id,
             root_cid,
-            haves,
+            held,
         })
     }
 
@@ -112,7 +141,7 @@ impl TwoStreamHandler {
         &mut self,
         peer_id: PeerId,
         root_cid: Cid,
-        haves: Vec<Cid>,
+        held: HeldCids,
     ) -> Result<()> {
         use futures::AsyncWriteExt;
 
@@ -123,7 +152,7 @@ impl TwoStreamHandler {
             .map_err(|e| Error::Transport(format!("failed to open CAR request stream: {}", e)))?;
 
         stream
-            .write_all(&encode_car_request(&root_cid, &haves))
+            .write_all(&encode_car_request(&root_cid, &held))
             .await
             .map_err(|e| Error::Transport(format!("failed to write CAR request: {}", e)))?;
         stream

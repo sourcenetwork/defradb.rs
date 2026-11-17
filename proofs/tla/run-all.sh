@@ -304,6 +304,12 @@ RUNS=(
   "MC_DepthCutFetch_Red_NoWiden.cfg DepthCutFetch.tla RED" # the receiver never widens the cut (INV_RoundsLogarithmic)
   "MC_ExactDagFetch_Green.cfg ExactDagFetch.tla GREEN" # a fetch naming its haves is sent only what it lacks, in one request, and merges
   "MC_ExactDagFetch_Green_Liar.cfg ExactDagFetch.tla GREEN" # a lying provider gets no forgery stored and no incomplete DAG merged
+  "MC_ExactDagFetch_Red_NoPresent.cfg ExactDagFetch.tla RED" # the provider ignores the present list (INV_HeldNotResent)
+  "MC_DocFetchClaim_Green.cfg DocFetchClaim.tla GREEN" # a burst of one document's heads fetches one at a time, each woken at once, nothing held sent again
+  "MC_DocFetchClaim_Red_NoGuard.cfg DocFetchClaim.tla RED" # fetches never claim the document (INV_OneFetchPerDoc)
+  "MC_DocFetchClaim_Red_NoMemory.cfg DocFetchClaim.tla RED" # completed heads are not remembered (INV_HeldNotResent)
+  "MC_DocFetchClaim_Red_RecordLate.cfg DocFetchClaim.tla RED" # the head is recorded after the claim is freed (INV_HeldNotResent)
+  "MC_DocFetchClaim_Red_NoWake.cfg DocFetchClaim.tla RED" # a finished fetch never sets its signal (INV_NoLostWakeup)
   "MC_ExactDagFetch_Red_NoHaves.cfg ExactDagFetch.tla RED" # the provider ignores the haves (INV_HeldNotResent)
   "MC_ExactDagFetch_Red_Fifo.cfg ExactDagFetch.tla RED" # the walk pops out of priority order (INV_HeldNotResent)
   "MC_ExactDagFetch_Red_FlipWant.cfg ExactDagFetch.tla RED" # held overrides a block asked for by name (INV_RoundsBounded)
@@ -313,7 +319,7 @@ RUNS=(
   "MC_RootNamedFetch_Red_Frontier.cfg RootNamedFetch.tla RED" # a document asks for its field frontier at a cut (INV_HeldNotResent)
   "MC_RootNamedFetch_Red_Window.cfg RootNamedFetch.tla RED" # a document with no haves asks with a doubling cut (INV_HeldNotResent)
   "MC_RootNamedFetch_Red_Whole.cfg RootNamedFetch.tla RED" # a branchable fetch asks uncut (INV_BranchCut)
-  "MC_RootNamedFetch_Red_RootAny.cfg RootNamedFetch.tla RED" # a document holding unmerged blocks below its root, with no have, names the root (INV_HeldNotResent)
+  "MC_RootNamedFetch_Red_NoPresent.cfg RootNamedFetch.tla RED" # a document holding unmerged blocks below its root, with no have, names the root but no present block (INV_HeldNotResent)
   "MC_MissedTopicResync_Green.cfg MissedTopicResync.tla GREEN" # a hub's missed report on a followed topic is pulled again, and the receiver ends at the latest head
   "MC_MissedTopicResync_Red_NoPull.cfg MissedTopicResync.tla RED" # a missed report is only logged (INV_Converges)
   "MC_MissedTopicResync_Red_WrongKind.cfg MissedTopicResync.tla RED" # a document topic is pulled with BranchableSync (INV_Converges)

@@ -292,3 +292,10 @@ Two nodes share 20 updates of a document, then lose touch. One makes 40 more upd
 - **Scenarios:** ["net::sync::exact_fetch::a_receiver_holding_nothing_still_gets_the_whole_document"]
 
 A node that holds none of a document with 31 updates, told of its next head, fetches the whole DAG and converges on it. It is sent no block it holds besides the head it asked for (`car_received_already_held` zero), however many of the writer's heads gossip delivered before the fetch.
+
+# `defra.net.sync.exact_fetch.burst`: A burst of heads for one document is fetched without overlap
+
+- **Parents:** ["defra.net.sync.exact_fetch"]
+- **Scenarios:** ["net::sync::exact_fetch::a_burst_of_heads_for_one_document_is_fetched_without_overlap"]
+
+A node holding none of a document with 31 updates hears of five new heads of it back to back, while its first fetch is still bringing the history. It fetches them one at a time, each fetch naming the heads the fetch before it completed, and names blocks it holds without their history as present, so it is sent no block it already holds (`car_received_already_held` zero).

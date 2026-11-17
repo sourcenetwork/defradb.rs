@@ -67,6 +67,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             recursive = request.recursive,
             max_depth = ?request.max_depth,
             have_count = request.have_cids.len(),
+            present_count = request.present_cids.len(),
             requested_count = request.wanted_cids.len(),
             has_token = token.is_some(),
             "CAR handler: collecting blocks"
@@ -77,6 +78,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 self.manager.blockstore().as_ref(),
                 &response_roots,
                 &request.have_cids,
+                &request.present_cids,
                 request.max_depth,
             )
             .await?

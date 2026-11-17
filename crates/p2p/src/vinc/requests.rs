@@ -3,7 +3,6 @@
 use std::rc::Rc;
 use std::time::Duration;
 
-use cid::Cid;
 use futures::FutureExt;
 use tracing::{debug, warn};
 use vinc::{Connection, Hosted, RecvStream, SendStream};
@@ -156,15 +155,14 @@ impl<H: Hosted + 'static> Node<H> {
         }
     }
 
-    /// Fetch the whole DAG below `root_cid` from `peer_id` and hand the CAR
+    /// Send `request` (the DAG below its root) to `peer_id` and hand the CAR
     /// to the engine as a response with no query.
     pub(super) async fn car_request(
         self: &Rc<Self>,
         peer_id: &PeerId,
-        root_cid: Cid,
-        haves: Vec<Cid>,
+        request: CarFetchRequest,
     ) -> Result<()> {
-        let request = CarFetchRequest::full_dag(root_cid).with_haves(haves);
+        let root_cid = request.root_cid;
         let car = self.fetch_car(peer_id, &request).await?;
         if self
             .events

@@ -593,7 +593,7 @@ pub(super) async fn handle_command(
             providers,
             missing,
             max_depth,
-            haves,
+            held,
             reply,
         } => {
             let query_id = QueryId(*next_query_id);
@@ -610,7 +610,7 @@ pub(super) async fn handle_command(
             );
             let task = spawn_task(spawned_tasks, async move {
                 handle_block_sync(
-                    resources, query_id, root, providers, missing, max_depth, haves,
+                    resources, query_id, root, providers, missing, max_depth, held,
                 )
                 .await;
             });

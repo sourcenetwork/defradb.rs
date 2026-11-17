@@ -221,7 +221,7 @@ impl<S: Store> P2PHost<S> {
             TwoStreamEvent::CarFetchRequest {
                 peer_id,
                 root_cid,
-                haves,
+                held,
             } => {
                 debug!(
                     peer_id = %peer_id,
@@ -232,7 +232,7 @@ impl<S: Store> P2PHost<S> {
                     .forward_event(HostEvent::CarFetchRequest {
                         peer_id,
                         root_cid,
-                        haves,
+                        held,
                     })
                     .await
                 {

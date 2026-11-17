@@ -40,9 +40,12 @@ pub(crate) struct DagFetchContext {
     block_sync_completions: Option<crate::sync::manager::BlockSyncCompletionTracker>,
     rooted_car_completions: Option<crate::sync::manager::RootedCarCompletionTracker>,
     rooted_provider_discovery: bool,
-    /// Merged blocks of this document held here, named to providers so
-    /// they leave out history this node already holds.
+    /// Blocks of this document held here with their whole closures, named to
+    /// providers so they leave out history this node already holds.
     haves: Vec<Cid>,
+    /// Blocks of this document held here without their whole closures,
+    /// named so providers walk through them without sending them.
+    present: Vec<Cid>,
 }
 
 impl DagFetchContext {
@@ -67,6 +70,7 @@ impl DagFetchContext {
             rooted_car_completions: None,
             rooted_provider_discovery: false,
             haves: Vec::new(),
+            present: Vec::new(),
         }
     }
 
@@ -77,6 +81,23 @@ impl DagFetchContext {
 
     pub(crate) fn haves(&self) -> &[Cid] {
         &self.haves
+    }
+
+    pub(crate) fn with_held(mut self, held: crate::message::HeldCids) -> Self {
+        self.haves = held.haves;
+        self.present = held.present;
+        self
+    }
+
+    pub(crate) fn present(&self) -> &[Cid] {
+        &self.present
+    }
+
+    pub(crate) fn held(&self) -> crate::message::HeldCids {
+        crate::message::HeldCids {
+            haves: self.haves.clone(),
+            present: self.present.clone(),
+        }
     }
 
     pub(crate) fn with_alternate_providers(mut self, providers: Vec<PeerId>) -> Self {

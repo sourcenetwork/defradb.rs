@@ -50,6 +50,7 @@ mod constructor;
 pub(crate) mod dag_context;
 pub(crate) mod dag_fetcher;
 pub(crate) mod dag_retry;
+mod doc_claim;
 mod event_handler;
 mod fetch_failures;
 mod fetch_logs;
@@ -229,6 +230,12 @@ pub struct SyncStatus {
     /// Due roots deferred because none of their qualified providers is
     /// currently connected. The existing per-root clock owns the next try.
     pub pending_dag_fetch_deferred_unavailable: u64,
+    /// Fetches that waited for another fetch of their document to end.
+    pub dag_fetch_doc_waits: u64,
+    /// Fetches that ran unguarded because the document claim table was full.
+    pub dag_fetch_doc_claims_full: u64,
+    /// Times the memory of completed roots per document was full and cleared.
+    pub dag_fetch_doc_completed_cleared: u64,
     /// Useful CAR responses coalesced behind an existing local storage owner.
     /// These release the fetch lease without consuming provider-failure attempts.
     pub pending_dag_fetch_deferred_contention: u64,
@@ -376,6 +383,9 @@ pub(crate) struct DagFetchLimiter {
     peer_limit: usize,
     /// Roots a reply-driven fetch is running for, with the trust it merges under.
     roots: Arc<HopscotchMap<RootKey, (), rapidhash::fast::RandomState>>,
+    /// Documents a fetch is running for. Model: proofs/tla/DocFetchClaim.tla.
+    docs: Arc<doc_claim::DocClaims>,
+    doc_completed: Arc<doc_claim::DocCompleted>,
     provider_health: Arc<provider_health::ProviderHealth>,
 }
 
@@ -413,6 +423,12 @@ impl DagFetchLimiter {
             closed: Arc::default(),
             peer_limit: global_limit.saturating_sub(1).max(1),
             roots: Arc::new(HopscotchMap::with_hasher(
+                rapidhash::fast::RandomState::default(),
+            )),
+            docs: Arc::new(HopscotchMap::with_hasher(
+                rapidhash::fast::RandomState::default(),
+            )),
+            doc_completed: Arc::new(HopscotchMap::with_hasher(
                 rapidhash::fast::RandomState::default(),
             )),
             provider_health: Arc::default(),
@@ -1206,6 +1222,9 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             pending_dag_retry_suppressed: diagnostics.pending_dag_retry_suppressed,
             pending_dag_fetch_deferred_unavailable: diagnostics
                 .pending_dag_fetch_deferred_unavailable,
+            dag_fetch_doc_waits: diagnostics.dag_fetch_doc_waits,
+            dag_fetch_doc_claims_full: diagnostics.dag_fetch_doc_claims_full,
+            dag_fetch_doc_completed_cleared: diagnostics.dag_fetch_doc_completed_cleared,
             pending_dag_fetch_deferred_contention: diagnostics
                 .pending_dag_fetch_deferred_contention,
             pending_dag_fetch_deferred_busy: diagnostics.pending_dag_fetch_deferred_busy,

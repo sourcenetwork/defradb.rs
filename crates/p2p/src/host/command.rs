@@ -279,7 +279,7 @@ pub enum HostCommand {
     SendCarRequest {
         peer_id: PeerId,
         root_cid: Cid,
-        haves: Vec<Cid>,
+        held: crate::message::HeldCids,
         response: oneshot::Sender<Result<()>>,
     },
 

@@ -28,8 +28,9 @@ use super::fetch_logs::{log_exhausted, log_no_progress_batch, log_retry};
 use super::provider_health::ProviderHealth;
 use super::rooted_request::rooted_request;
 use super::DagFetchLimiter;
+use crate::message::HeldCids;
 use crate::sync::arbitration::AttemptSample;
-use crate::sync::car::MAX_HAVE_CIDS;
+use crate::sync::car::{extract_links, MAX_HAVE_CIDS, MAX_PRESENT_CIDS};
 use crate::sync::manager::links::find_all_missing_links;
 use crate::sync::manager::SyncEvent;
 use crate::sync::manager::{FetchCompletion, SyncDiagnostics};
@@ -144,7 +145,11 @@ pub(crate) enum FetchTaskEnd {
 /// only for a global one. Every issued transport query is reaped via
 /// `cancel_sync` at the end of its poll window, so releasing the permit never
 /// leaves stalled fetch work running in the transport.
-pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
+///
+/// A document's fetches run one at a time (see `doc_claim`): a root waits,
+/// without its peer permit, for the running fetch of its document, then
+/// names the roots that fetch completed as haves.
+pub async fn poll_fetch_dag<B, T>(
     transport: T,
     blockstore: Arc<B>,
     event_tx: mpsc::Sender<SyncEvent>,
@@ -152,7 +157,71 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
     mut context: DagFetchContext,
     limiter: DagFetchLimiter,
     diagnostics: Arc<SyncDiagnostics>,
-) -> (FetchTaskEnd, AttemptSample) {
+) -> (FetchTaskEnd, AttemptSample)
+where
+    B: Blockstore + 'static,
+    T: P2PTransport,
+{
+    if context.doc_id.is_empty() {
+        return poll_fetch_dag_claimed(
+            transport,
+            blockstore,
+            event_tx,
+            root_cid,
+            context,
+            limiter,
+            diagnostics,
+        )
+        .await;
+    }
+    if limiter.doc_busy(&context.collection_id, &context.doc_id) {
+        drop(context.take_peer_permit());
+    }
+    let Some(mut claim) = limiter
+        .claim_doc(&context.collection_id, &context.doc_id, &diagnostics)
+        .await
+    else {
+        return (FetchTaskEnd::Settled, AttemptSample::Skipped);
+    };
+    if !claim.handed().is_empty() {
+        let mut haves = claim.handed().to_vec();
+        for have in context.haves() {
+            if !haves.contains(have) {
+                haves.push(*have);
+            }
+        }
+        haves.truncate(MAX_HAVE_CIDS);
+        context = context.with_haves(haves);
+    }
+    let end = poll_fetch_dag_claimed(
+        transport,
+        blockstore,
+        event_tx,
+        root_cid,
+        context,
+        limiter,
+        diagnostics,
+    )
+    .await;
+    if matches!(end.1, AttemptSample::Complete) {
+        claim.completed(root_cid);
+    }
+    end
+}
+
+async fn poll_fetch_dag_claimed<B, T>(
+    transport: T,
+    blockstore: Arc<B>,
+    event_tx: mpsc::Sender<SyncEvent>,
+    root_cid: Cid,
+    mut context: DagFetchContext,
+    limiter: DagFetchLimiter,
+    diagnostics: Arc<SyncDiagnostics>,
+) -> (FetchTaskEnd, AttemptSample)
+where
+    B: Blockstore + 'static,
+    T: P2PTransport,
+{
     // libp2p keeps the context's order: its rooted CAR goes to the announcing
     // publisher, whose reply is what lets the dead-Bitswap repair fire.
     let health = transport
@@ -189,8 +258,9 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
             emit_dag_ready(&event_tx, root_cid, &context, &root_data).await;
             return (FetchTaskEnd::Settled, AttemptSample::Complete);
         }
-        let haves = root_haves(blockstore.as_ref(), &root_data, context.haves()).await;
-        context = context.with_haves(haves);
+        let held =
+            held_below_root(blockstore.as_ref(), root_cid, &root_data, context.haves()).await;
+        context = context.with_held(held);
     }
 
     // A durable provider identity is reconnectable, not continuously
@@ -810,32 +880,79 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
     }
 }
 
-/// The haves for a root this node already holds: the root's merged heads
-/// first, then `haves`, up to [`MAX_HAVE_CIDS`]. The root's heads are where
-/// its missing history meets what is held here, so naming them keeps a
-/// provider from re-sending history below a fork deeper than `haves` reach.
-async fn root_haves<B>(blockstore: &B, root_data: &[u8], haves: &[Cid]) -> Vec<Cid>
+/// What this node names as held for a root it holds without its whole
+/// history. Walking the spine down from the root, a merged composite or one
+/// of `haves` is a have, where the missing history meets what is held here;
+/// every other held composite, the root first, is present, with the held
+/// blocks of its own update. A provider then walks through the present
+/// blocks without sending them, and leaves out the haves' closures.
+// ponytail: stops at MAX_PRESENT_CIDS; a longer held, unmerged chain is sent
+// again below the cap. Raise the cap or name complete held composites as haves
+// if that shows up in `car_received_already_held`.
+async fn held_below_root<B>(
+    blockstore: &B,
+    root_cid: Cid,
+    root_data: &[u8],
+    haves: &[Cid],
+) -> HeldCids
 where
     B: Blockstore,
 {
-    let mut named = Vec::with_capacity(MAX_HAVE_CIDS);
-    if let Ok(block) = defra_core::Block::from_dag_cbor(root_data) {
-        for head in block.heads.unwrap_or_default() {
-            if named.len() >= MAX_HAVE_CIDS {
-                break;
+    let mut held = HeldCids::default();
+    let mut seen: rapidhash::RapidHashSet<Cid> = haves.iter().copied().collect();
+    seen.insert(root_cid);
+    let mut spine = vec![(root_cid, root_data.to_vec())];
+    while let Some((cid, data)) = spine.pop() {
+        let Ok(block) = defra_core::Block::from_dag_cbor(&data) else {
+            continue;
+        };
+        if !matches!(block.delta, defra_core::CrdtDelta::Composite(_)) {
+            continue;
+        }
+        held.present.push(cid);
+        let heads = block.heads.unwrap_or_default();
+        let mut update: Vec<Cid> = extract_links(&data)
+            .into_iter()
+            .filter(|link| !heads.contains(link))
+            .collect();
+        while let Some(link) = update.pop() {
+            if held.present.len() >= MAX_PRESENT_CIDS || !seen.insert(link) {
+                continue;
+            }
+            if let Ok(Some(data)) = blockstore.get(&link).await {
+                held.present.push(link);
+                let link_heads = defra_core::Block::from_dag_cbor(&data)
+                    .ok()
+                    .and_then(|block| block.heads)
+                    .unwrap_or_default();
+                update.extend(
+                    extract_links(&data)
+                        .into_iter()
+                        .filter(|cid| !link_heads.contains(cid)),
+                );
+            }
+        }
+        for head in heads {
+            if !seen.insert(head) {
+                continue;
             }
             if matches!(blockstore.is_merged(&head).await, Ok(true)) {
-                named.push(head);
+                held.haves.push(head);
+            } else if held.present.len() < MAX_PRESENT_CIDS {
+                if let Ok(Some(data)) = blockstore.get(&head).await {
+                    spine.push((head, data.to_vec()));
+                }
             }
         }
     }
     for have in haves {
-        if !named.contains(have) {
-            named.push(*have);
+        if !held.haves.contains(have) {
+            held.haves.push(*have);
         }
     }
-    named.truncate(MAX_HAVE_CIDS);
-    named
+    held.haves.truncate(MAX_HAVE_CIDS);
+    held.present.truncate(MAX_PRESENT_CIDS);
+    held
 }
 
 /// A shed attempt with no delivery proves saturation, not an unfetchable DAG:
@@ -905,7 +1022,7 @@ async fn poll_fetch_rooted_car<B: Blockstore, T: P2PTransport>(
 
     match crate::rt::time::timeout(
         Duration::from_secs(10),
-        transport.send_car_request_with_haves(source_peer, *root_cid, context.haves().to_vec()),
+        transport.send_car_request_with_haves(source_peer, *root_cid, context.held()),
     )
     .await
     {
@@ -1026,7 +1143,7 @@ async fn poll_fetch_rooted_provider<B: Blockstore, T: P2PTransport>(
             vec![source_peer.clone()],
             wants,
             depth.get(),
-            context.haves().to_vec(),
+            context.held(),
         )
         .await
     {
@@ -1362,7 +1479,7 @@ async fn poll_fetch_blocks<B: Blockstore, T: P2PTransport>(
             vec![source_peer.clone()],
             wants,
             depth.get(),
-            context.haves().to_vec(),
+            context.held(),
         )
         .await
     {

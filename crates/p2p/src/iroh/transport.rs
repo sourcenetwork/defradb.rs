@@ -700,7 +700,7 @@ impl P2PTransport for IrohTransport {
             providers,
             missing,
             max_depth: None,
-            haves: Vec::new(),
+            held: crate::message::HeldCids::default(),
             reply,
         })
         .await
@@ -712,14 +712,14 @@ impl P2PTransport for IrohTransport {
         providers: Vec<PeerId>,
         missing: Vec<Cid>,
         max_depth: u32,
-        haves: Vec<Cid>,
+        held: crate::message::HeldCids,
     ) -> Result<QueryId> {
         self.send_command(|reply| IrohCommand::SyncBlocks {
             root,
             providers,
             missing,
             max_depth: Some(max_depth),
-            haves,
+            held,
             reply,
         })
         .await
