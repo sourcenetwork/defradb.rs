@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-47524beb.js";
+            window.path_to_searchindex_js = "searchindex-2fe98efb.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-8198d451.js"></script>
@@ -2509,6 +2509,71 @@ sent: one that expired since the write sends nothing.</li>
 </ul>
 <p>A command made as the write’s signer is signed by the node’s worker; the token is the
 signer’s authority for it, and the chain records the signer, not the node, as owner.</p>
+<h2 id="replicated-documents"><a class="header" href="#replicated-documents">Replicated documents</a></h2>
+<p>A replicated change merges on a node only if its verified signer holds the permission
+on that node’s provider when it merges: <code>delete</code> for a deletion, <code>update</code> otherwise.
+The document’s creator gets no exception. A refusal is final for that block on that
+node (it is quarantined). Under a remote provider every frame, the genesis included,
+is put back to be tried again (a retryable skip) until the provider holds the document
+and the node can read it. The node counts as able to read when its identity or its
+provider’s own actor (<code>DocumentACP::own_actor</code>) can; both are the same node.</p>
+<p><strong>A creator on another deployment.</strong> Such a creator cannot write on this node’s
+provider, so nobody would register the document here and it would never merge. An
+embedder can list collections whose replicated documents the receiving node registers
+itself:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>let replicas = defra_node::ReplicaRegistration::new(["Note"], Arc::new(MyOwnership));
+let node = Node::builder().with_replica_registration(replicas) /* ... */;
+<span class="boring">}</span></code></pre>
+<p><code>ReplicaOwnership::is_own_actor</code> says whether a DID is one of this deployment’s own
+actors, and <code>creator_grants</code> names the relationships to grant on a document the node
+registers. They must give the creator <code>update</code> and <code>delete</code> under the collection’s
+policy (for example <code>writer</code> for the creator), and read for the deployment’s other
+nodes if they are to merge the document too. The setting is off by default, and has no
+effect on an unlisted collection or under a local provider.</p>
+<p>For a listed collection, a genesis whose verified signer is not one of the
+deployment’s own actors, of a document the provider does not hold, merges and records
+in the same transaction:</p>
+<ul>
+<li>an owed registration of the document as the provider’s own actor, sent with the
+node’s key;</li>
+<li>the embedder’s grants, staged as owed relationship changes made by that actor;</li>
+<li>a marker that ties them together as one unit.</li>
+</ul>
+<p>They are submitted after the commit, registration first, and again whenever a change to
+the document is put back while something is still owed. A genesis signed by one of the
+deployment’s own actors is never registered by a receiver: it waits for its creator’s
+own registration, as before.</p>
+<p>While the unit is owed:</p>
+<ul>
+<li>a change by anyone but the registering actor is put back while the registration
+itself is owed, because the provider has not seen it;</li>
+<li>a change by the creator is also put back while a grant of the unit is still owed.</li>
+</ul>
+<p>A grant the provider refuses is not “owed”: from then on the provider decides the
+creator.</p>
+<p><strong>Two receivers of one deployment.</strong> The provider takes the first registration. The
+second receiver is told the document is already registered. Its grants, which only the
+owner can give, are discarded with a note that the actor’s report shows. It then waits
+for the owner’s grants: the creator’s changes are put back there until the provider
+lets the creator update, and the marker is then dropped. A receiver that first sees the
+genesis after another registered it, while the creator cannot write yet, waits the same
+way. The creator is never refused on either node while the owner’s unit is owed. If the
+owner never grants it, the creator’s changes keep being put back on the other node and
+nothing is quarantined.</p>
+<p><strong>Deletes.</strong> A remote provider keeps the object when its document is deleted: a merged
+delete never unregisters, and a local delete leaves a registration that is still owed
+in place, so it lands. Otherwise the delete and the changes before it would wait for
+ever on every node that waits for the provider to hold the document. A document whose
+creator lost its last grant stays registered and refuses that creator.</p>
+<p><strong>Limits.</strong> A commit by a signer the provider refuses is final on that node. Commits
+that descend from it are blocked too. Every merged change asks the provider for the
+document’s registration, the node’s read and the signer’s permission. These decisions
+are cached against the light client’s verified state, so a new chain revision misses
+the cache.</p>
+<p>The model is <code>proofs/tla/ReplicaRegistration.tla</code>; the gate’s classification is proved
+in <code>proofs/lean/ReplicaGate.lean</code>.</p>
 <h2 id="why-it-exists"><a class="header" href="#why-it-exists">Why it exists</a></h2>
 <p>Some deployments need authorization decisions that no single database node can make or
 forge: multi-party deployments where the policy is shared infrastructure, audits that
