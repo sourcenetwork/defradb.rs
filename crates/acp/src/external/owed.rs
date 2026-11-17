@@ -417,6 +417,15 @@ where
     /// registration that settles lets the changes behind it go, each with
     /// its own authority. An entry of another actor is not found.
     pub async fn reauthorize(&self, actor: &Did, entry: &OwedRef) -> Result<OwedOutcome> {
+        // The credential is the one the request itself carries for the
+        // actor. A request that carries none hands in nothing but a key the
+        // node may hold: it is not asked as it is, or the provider would
+        // take the token the process holds for that DID.
+        let asked = if self.carries_bearer_for(actor) {
+            std::sync::Arc::clone(&self.provider)
+        } else {
+            self.presenting(actor, None, false)
+        };
         let object = match entry {
             OwedRef::Registration {
                 policy_id,
@@ -428,7 +437,7 @@ where
                     .await?
                     .filter(|owed| self.same_actor(&owed.creator, actor))
                     .ok_or_else(|| Self::not_found(entry, actor))?;
-                let authority = self.provider.command_authority(
+                let authority = asked.command_authority(
                     actor,
                     ProviderCommand::RegisterObject {
                         policy_id,
@@ -472,7 +481,7 @@ where
                     .await?
                     .filter(|change| change.actor == self.provider.canonical_actor(actor))
                     .ok_or_else(|| Self::not_found(entry, actor))?;
-                let authority = self.provider.command_authority(
+                let authority = asked.command_authority(
                     actor,
                     ProviderCommand::Relationship {
                         tuple: &change.tuple,

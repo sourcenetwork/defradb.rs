@@ -378,6 +378,22 @@ fn a_retry_of_an_owed_registration_never_reads_the_token_the_process_holds() {
             )
             .await;
         assert!(decided.is_err(), "{decided:?}");
+        // And it is no fresh credential: one is handed in by a request that
+        // carries it.
+        let user = Did::new(&on.user).unwrap();
+        let registration = on.report().await[0].reference();
+        for gate in [
+            on.node.document_acp(),
+            on.node
+                .document_acp()
+                .bind_request(&actor(&on.user))
+                .unwrap(),
+        ] {
+            assert!(matches!(
+                gate.reauthorize_owed(&user, &registration).await,
+                Err(acp::Error::OwedAuthorityUnavailable { .. })
+            ));
+        }
         defra_core::signing::clear_request_bearer_token(&on.user);
 
         assert!(on.remote.owners.get(&doc).is_none());

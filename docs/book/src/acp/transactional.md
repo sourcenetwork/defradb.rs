@@ -419,10 +419,12 @@ returns a recorded credential.
   neither the registration is recorded as awaiting authority, with the reason; the
   create itself is not refused (a verified create is, before it writes, as above).
   Every submission of it, at the commit, at start, before a change on its document, or
-  through one of the calls above, sends it with what the record holds, checked again.
-  When that no longer serves, the delegation recorded with an owed change of the same
-  creator is tried, then the bearer the request being served itself carries for the
-  creator. A request that carries none for the creator lends nothing, whoever makes it.
+  through one of the calls above, sends it one of three ways, each checked again: with
+  the bearer the request being served itself carries for the creator, when that admits
+  the registration (the commit's own submission goes as its request did); else with
+  what the record holds; else with the delegation recorded with an owed change of the
+  same creator. A request that carries no bearer for the creator lends nothing, whoever
+  makes it.
   These are the three ways `INV_PresentedAuthority` allows. **No submission
   reads the token a process holds for a DID**
   (`defra_core::signing::set_request_bearer_token`): a request that carries no bearer

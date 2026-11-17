@@ -629,9 +629,10 @@ ByChange ==
 \*   record   what its record holds;
 \*   change   the delegation recorded with a change the creator still owes,
 \*            when the record's own no longer serves;
-\*   request  the credential a request of the creator carries for the
-\*            creator, checked as at admission. The creator may make such a
-\*            request at any time, so this way is always open;
+\*   request  the credential a request of the creator itself carries for
+\*            the creator, checked as at admission: the commit's own
+\*            submission goes this way. The creator may make such a request
+\*            at any time, so this way is always open;
 \*   ambient  a token the process happens to hold for the creator, which no
 \*            request carried and no record holds: the bug.
 \* In every way but the last the creator presented the credential.
@@ -639,7 +640,7 @@ Ways == {"record", "change", "request", "ambient"}
 MaySendBy(via) ==
   CASE via = "record" -> RegValid
     [] via = "change" -> ~RegValid /\ ByChange
-    [] via = "request" -> ~RegValid
+    [] via = "request" -> TRUE
     [] OTHER -> ~RegValid /\ RegRetry = "ambient"
 
 \* The provider registers the owner. A provider that cannot be reached does

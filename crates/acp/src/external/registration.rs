@@ -4,9 +4,10 @@
 //! node's key for that DID, or the delegation the create carried, presented
 //! as it was then. The provider it is sent through is asked first, as a
 //! create is asked when it is admitted, whether that lets the node send it
-//! ([`DocumentACP::command_authority`]). When it does not, a delegation of
-//! the creator kept with something else it owes is tried, then the bearer
-//! the request being served itself carries for the creator. Nothing a
+//! ([`DocumentACP::command_authority`]). The bearer the request being
+//! served itself carries for the creator is used when it admits the
+//! registration; else what the record holds; else a delegation of the
+//! creator kept with something else it owes. Nothing a
 //! process keeps beside its requests is read: not at start, not for an owed
 //! change, and not on behalf of a request that carries no bearer. A registration nothing lets the node send is not
 //! sent: its record says it waits for authority, and every failed
@@ -105,32 +106,24 @@ where
 
     /// The provider `owed` is registered through: the first that may send
     /// the registration as its creator, asked as a create is asked when it
-    /// is admitted ([`DocumentACP::command_authority`]). What the record
-    /// holds comes first, then `also`, then the bearer the request this
-    /// gate serves itself carries for the creator. A request that carries
-    /// none for the creator lends nothing: asked all the same, a provider
-    /// would fall back on the token the process holds for that DID. With
-    /// none, the refusal of what the record holds.
+    /// is admitted ([`DocumentACP::command_authority`]). The bearer the
+    /// request this gate serves itself carries for the creator comes first,
+    /// when it admits the registration: the commit's own submission is sent
+    /// as its request was. Then what the record holds, then `also`. A
+    /// request that carries no bearer for the creator lends nothing: asked
+    /// all the same, a provider would fall back on the token the process
+    /// holds for that DID. With none, the refusal of what the record holds.
     fn registrar(
         &self,
         owed: &PendingRegistration,
         also: Option<&str>,
     ) -> Result<Arc<dyn DocumentACP>> {
-        let refusal = match self.recorded_registrar(owed, also) {
-            Ok(provider) => return Ok(provider),
-            Err(refusal) => refusal,
-        };
         let command = ProviderCommand::RegisterObject {
             policy_id: &owed.policy_id,
             resource: &owed.resource_name,
             object: &owed.doc_id,
         };
-        let carried = self.serving.as_ref().is_some_and(|serving| {
-            let canonical = self.provider.canonical_actor(&owed.creator);
-            serving.carried_bearer_for(owed.creator.as_str()).is_some()
-                || serving.carried_bearer_for(canonical.as_str()).is_some()
-        });
-        if carried
+        if self.carries_bearer_for(&owed.creator)
             && self
                 .provider
                 .command_authority(&owed.creator, command)
@@ -138,7 +131,18 @@ where
         {
             return Ok(Arc::clone(&self.provider));
         }
-        Err(refusal)
+        self.recorded_registrar(owed, also)
+    }
+
+    /// Whether the request this gate serves itself carries a bearer for
+    /// `actor`, under either spelling: one that is the request's own, and
+    /// not what the process holds for that DID.
+    pub(super) fn carries_bearer_for(&self, actor: &Did) -> bool {
+        self.serving.as_ref().is_some_and(|serving| {
+            let canonical = self.provider.canonical_actor(actor);
+            serving.carried_bearer_for(actor.as_str()).is_some()
+                || serving.carried_bearer_for(canonical.as_str()).is_some()
+        })
     }
 
     /// The provider `owed` is registered through with what is recorded
