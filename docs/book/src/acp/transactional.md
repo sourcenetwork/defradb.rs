@@ -361,7 +361,11 @@ returns a recorded credential.
   process that made it (`acp::outbox::run_epoch`), and a wait, like the pass after a
   commit, matches only records of the running node: an entry an earlier run left under
   the same number is neither returned nor waited for. Its actor finds it in the report.
-  Every record written wakes every wait, which then reads all that is owed again.
+  Every record written wakes every wait, which then reads all that is owed again. An
+  actor's wait submits what is owed on the documents of its own entries, in order with
+  whatever else is owed there, and makes no submission on another actor's document;
+  the node's principal's wait submits for the whole transaction. A wait has no bound of
+  its own: the caller's deadline ends it, submission included.
 - **A fresh credential.** `credential` is a `SignerCredential`, the entry's actor's own:
   a plain delegation, one bound to exactly the owed command, or `None` where the node
   holds a key for the actor. It is asked about the owed command by the function that
@@ -399,7 +403,8 @@ returns a recorded credential.
   submitted, and the deletion is logged with the change. The call has succeeded once the
   record is deleted, whatever that submission comes to. When a transaction that
   committed meanwhile changed what is owed on the relationship, nothing is written and
-  the call fails with `OwedEntryConflict`, to be made again.
+  the call fails with `OwedEntryConflict`, to be made again; a fresh credential for a
+  change or a registration that loses the same way fails the same way.
 
   **An abandoned delete stops denying.** Its subject is answered by the provider again,
   which refused the delete and so still holds the relationship; other nodes never
@@ -411,37 +416,50 @@ returns a recorded credential.
   submission (see *A change submitted twice*); abandoning changes nothing on the
   provider either way.
 - **A registration and its authority.** The create records what lets the node register
-  the document as its creator: `node_key` when the node holds a key for the creator,
-  else the delegation the request carried for it, asked about that registration and
-  kept as it was presented (plain, or bound to that registration). The fields are added
-  to the `/acp-pending/` record only when they say something, so a record written before
-  them keeps its bytes and reads as owed with nothing recorded. With
-  neither the registration is recorded as awaiting authority, with the reason; the
-  create itself is not refused (a verified create is, before it writes, as above).
+  the document as its creator once the request is gone: `node_key` when the node holds
+  a key for the creator, else the delegation the request **itself carries** for the
+  creator, asked about that registration and kept as it was presented (plain, or bound
+  to that registration). With neither the registration is recorded as awaiting
+  authority, with the reason; the create itself is not refused (a verified create is,
+  before it writes, as above). The fields are added to the `/acp-pending/` record only
+  when they say something, so a record written before them keeps its bytes and reads as
+  owed with nothing recorded.
+
   Every submission of it, at the commit, at start, before a change on its document, or
   through one of the calls above, sends it one of three ways, each checked again: with
-  the bearer the request being served itself carries for the creator, when that admits
-  the registration (the commit's own submission goes as its request did); else with
-  what the record holds; else with the delegation recorded with an owed change of the
-  same creator. A request that carries no bearer for the creator lends nothing, whoever
-  makes it.
-  These are the three ways `INV_PresentedAuthority` allows. **No submission
-  reads the token a process holds for a DID**
-  (`defra_core::signing::set_request_bearer_token`): a request that carries no bearer
-  still presents that token for its own calls, and a create made by such a request
-  records it as the registration's delegation, but the pass at start, the settlement
-  of an owed change and a bearer-less request that touches the document are given the
-  record and nothing else.
+  the bearer the request being served presents for the creator, when that admits the
+  registration (the commit's own submission goes as its request did); else with what
+  the record holds; else with the first delegation, in queue order, recorded with a
+  change the same creator still owes on the document that admits it. The report's
+  `sendable` and a pass decide by the same selection, so what is reported as sendable
+  is what a pass sends. These are the three ways `INV_PresentedAuthority` allows.
 
-  **The delegation is written to disk.** A create on an external provider by a caller
-  whose key the node does not hold now writes the request's delegation, in the clear,
-  into the document's `/acp-pending/` record, as a staged change always has. It stays
-  there until the registration settles, is given another credential, or the document is
-  deleted. No API returns it. A registration nothing lets
-  the node send is not sent: it stays `awaiting_authority` in the report until its
-  creator hands in a credential. One the provider refuses outright is kept as `refused`
-  and tried again at start. A provider that already holds the document needs no
-  authority: the record is cleared.
+  **The token a process holds for a DID**
+  (`defra_core::signing::set_request_bearer_token`) is what a request that carries no
+  bearer of its own presents in its calls to the provider. For a registration that
+  means exactly this:
+  - the submission made by the commit of such a request presents it, as that request's
+    other calls do, so a create by an embedder that binds a process token still
+    registers at its commit when the provider answers, as before;
+  - it is never written into the record. When that submission fails, the registration
+    is recorded with no authority and reported as `awaiting_authority`, and takes a
+    credential through `reauthorize_owed_acp_as`;
+  - no later submission reads it: not the pass at start, not the settlement of an owed
+    change, not a wait, and not another request that touches the document, whoever
+    makes it and whether or not it carries a bearer of its own for somebody else. A
+    later request lends a registration only a bearer it itself carries for the creator;
+  - it is no fresh credential: one is handed in by a request that carries it.
+
+  **A carried delegation is written to disk.** A create on an external provider by a
+  caller whose key the node does not hold writes the delegation its request carried,
+  in the clear, into the document's `/acp-pending/` record, as a staged change always
+  has. It stays there until the registration settles, is given another credential, or
+  the document is deleted. No API returns it.
+
+  A registration nothing lets the node send is not sent: it stays `awaiting_authority`
+  in the report until its creator hands in a credential. One the provider refuses
+  outright is kept as `refused` and tried again at start. A provider that already holds
+  the document needs no authority: the record is cleared.
 - **Limits.**
   - Nothing retries by itself between these calls: there is no drainer yet.
   - No event is published when an entry settles or is parked. A caller learns it from

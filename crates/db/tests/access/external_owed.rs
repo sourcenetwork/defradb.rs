@@ -631,3 +631,50 @@ fn a_wait_ends_when_the_document_that_owed_a_registration_is_deleted() {
     })
     .unwrap()
 }
+
+#[test]
+fn an_actors_wait_submits_what_is_owed_on_its_own_objects_only() {
+    workers::block_on(async {
+        let staging = Staging::new().await;
+        let hers = staging.create(alice(), "hers", None).await;
+        let theirs = staging.create(mallory(), "theirs", None).await;
+        let handle = staging.begin().await;
+        let id: u64 = handle.as_str().parse().unwrap();
+        for (owner, doc) in [(alice(), &hers), (mallory(), &theirs)] {
+            let mut grant = Change::new(owner, doc, OwedOp::Add, bob());
+            grant.txn = Some(id);
+            staging.stage(&handle, grant).await.unwrap();
+        }
+        staging.commit(&handle).await;
+
+        // Alice's wait makes no submission on Mallory's document, and does
+        // not wait for one.
+        assert_eq!(
+            staging
+                .gate
+                .await_transaction(id, Some(&alice()))
+                .await
+                .unwrap(),
+            OwedWait::Settled
+        );
+        assert_eq!(
+            staging.remote.take_writes(),
+            [(true, hers.clone(), bob().to_string())]
+        );
+        let left = staging.queue().await;
+        assert_eq!(left.len(), 1, "{left:?}");
+        assert_eq!(left[0].actor, mallory());
+        assert_eq!(left[0].state, OwedState::Staged);
+
+        // A wait for the whole transaction submits the rest.
+        assert_eq!(
+            staging.gate.await_transaction(id, None).await.unwrap(),
+            OwedWait::Settled
+        );
+        assert_eq!(
+            staging.remote.take_writes(),
+            [(true, theirs.clone(), bob().to_string())]
+        );
+    })
+    .unwrap()
+}

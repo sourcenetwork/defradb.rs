@@ -48,6 +48,7 @@ use crate::outbox::record::of_this_run;
 use crate::outbox::{
     OwedAuthority, OwedChange, OwedState, OwedSubject, OwedTuple, StagedCount, Submission,
 };
+use crate::pending::PendingRegistration;
 
 /// How many submissions in a row the provider may answer with an
 /// unclassified error before the change is taken as refused. Only the
@@ -442,9 +443,45 @@ where
         })
     }
 
+    /// The delegation that lets the node send the registration `owed` when
+    /// its own record no longer does: the first, in queue order, of those
+    /// recorded with the changes its creator still owes on the same object
+    /// that admits the registration. `None` when the record serves, or
+    /// nothing does. A pass and the report both decide by this, so what is
+    /// reported as sendable is what a pass sends.
+    pub(super) async fn creators_delegation(
+        &self,
+        owed: &PendingRegistration,
+    ) -> Result<Option<String>> {
+        if self.recorded_registrar(owed, None).is_ok() {
+            return Ok(None);
+        }
+        let creator = self.provider.canonical_actor(&owed.creator);
+        let mut after = None;
+        loop {
+            let page = self.owed_changes_after(after).await?;
+            let Some(last) = page.last() else {
+                return Ok(None);
+            };
+            after = Some(last.seq);
+            for change in page {
+                let on_object = change.tuple.policy_id == owed.policy_id
+                    && change.tuple.resource == owed.resource_name
+                    && change.tuple.object == owed.doc_id;
+                if let (true, OwedAuthority::Delegation { token }) =
+                    (on_object && change.actor == creator, change.authority)
+                {
+                    if self.recorded_registrar(owed, Some(&token)).is_ok() {
+                        return Ok(Some(token));
+                    }
+                }
+            }
+        }
+    }
+
     /// Settle the registration `change`'s object still owes, if any, with
-    /// what its record holds. When the creator is the change's acting DID,
-    /// the delegation recorded with the change is tried too.
+    /// what its record holds, or with a delegation recorded with a change
+    /// its creator owes on the object ([`Self::creators_delegation`]).
     async fn register_first(&self, change: &OwedChange) -> Result<Registration> {
         let tuple = &change.tuple;
         let Some(owed) = self
@@ -453,15 +490,8 @@ where
         else {
             return Ok(Registration::Done);
         };
-        let also = match &change.authority {
-            OwedAuthority::Delegation { token }
-                if self.provider.canonical_actor(&owed.creator) == change.actor =>
-            {
-                Some(token.as_str())
-            }
-            _ => None,
-        };
-        match self.settle_with(&owed, also).await {
+        let also = self.creators_delegation(&owed).await?;
+        match self.settle_with(&owed, also.as_deref()).await {
             Ok(()) => {}
             Err(Error::ProviderUnavailable(reason)) => {
                 tracing::debug!(

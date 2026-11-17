@@ -651,3 +651,131 @@ fn a_wait_sends_a_parked_registration_that_its_changes_delegation_serves() {
     })
     .unwrap();
 }
+
+#[test]
+fn a_create_records_no_token_the_process_holds_for_its_creator() {
+    workers::block_on(async {
+        let _serial = super::tests::SIGNING_STORE_GUARD.lock().await;
+        let on = Verified::new().await;
+        let create = |name: &str| {
+            query::QueryRequest::new(format!(
+                "mutation {{ add_Record(input: {{name: \"{name}\"}}) {{ _docID }} }}"
+            ))
+            .with_identity(Some(Did::new(&on.user).unwrap()))
+        };
+        let created = |response: query::QueryResponse| {
+            assert!(!response.has_errors(), "{:?}", response.errors);
+            response.data.unwrap()["add_Record"][0]["_docID"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        };
+        // An embedder binds a delegation to the user for requests that carry
+        // no bearer of their own.
+        defra_core::signing::set_request_bearer_token(&on.user, format!("delegation:{}", on.user));
+
+        // Such a request's own submission at its commit presents it, as its
+        // other calls to the provider do.
+        let sent = created(on.node.execute_request(create("sent")).await);
+        assert_eq!(
+            on.remote.owners.get(&sent).as_deref(),
+            Some(on.user.as_str())
+        );
+
+        // When that submission fails, nothing of the process token is left
+        // in the record: the registration waits for a credential, and no
+        // retry sends it.
+        on.remote.down.store(true, Ordering::SeqCst);
+        let owed_doc = created(on.node.execute_request(create("owed")).await);
+        on.remote.down.store(false, Ordering::SeqCst);
+        let owed = on.report().await;
+        assert_eq!(owed.len(), 1, "{owed:?}");
+        assert_eq!(owed[0].authority, None, "{owed:?}");
+        assert_eq!(owed[0].state, OwedState::AwaitingAuthority);
+        let unbound = on.node.document_acp();
+        let _ = unbound
+            .redrive_registration(&on.policy, "rows", &owed_doc)
+            .await;
+        assert!(on.remote.owners.get(&owed_doc).is_none());
+        defra_core::signing::clear_request_bearer_token(&on.user);
+
+        // A credential handed in for it settles it.
+        assert_eq!(
+            on.node
+                .reauthorize_owed_acp_as(&on.caller(), &owed[0].reference(), on.delegation())
+                .await
+                .unwrap(),
+            OwedOutcome::Settled
+        );
+        on.node.shutdown().await.unwrap();
+    })
+    .unwrap();
+}
+
+#[test]
+fn a_pass_sends_a_registration_with_whichever_owed_delegation_the_report_found() {
+    workers::block_on(async {
+        let _serial = super::tests::SIGNING_STORE_GUARD.lock().await;
+        let on = Verified::new().await;
+        let Attempt { doc, txn, response } = on.create("shared", |doc| on.registration(doc)).await;
+        assert!(!response.has_errors(), "{:?}", response.errors);
+        // The first grant carries a delegation bound to it, the second, of
+        // another relationship, the user's plain one.
+        let granting = request_token(&on.user, &format!("set {doc} reader {READER}"));
+        assert!(matches!(
+            on.grant(&txn, &on.bound(granting), &doc).await,
+            Ok(RelationshipChange::Staged { .. })
+        ));
+        assert!(matches!(
+            on.node
+                .add_dac_actor_relationship_change_for_in_txn(
+                    &txn,
+                    &on.delegating(),
+                    "Record",
+                    &doc,
+                    "reader",
+                    STRANGER
+                )
+                .await,
+            Ok(RelationshipChange::Staged { .. })
+        ));
+        on.remote.down.store(true, Ordering::SeqCst);
+        on.node.commit_transaction(&txn).await.unwrap();
+        on.remote.down.store(false, Ordering::SeqCst);
+
+        // Both bound delegations run out: the registration's and the first
+        // grant's. Only the second grant's delegation still serves.
+        on.remote.lapsed.store(true, Ordering::SeqCst);
+        let _ = on
+            .node
+            .document_acp()
+            .redrive_registration(&on.policy, "rows", &doc)
+            .await;
+        let owed = on.report().await;
+        assert_eq!(owed.len(), 3, "{owed:?}");
+        assert_eq!(owed[0].state, OwedState::AwaitingAuthority);
+        assert!(owed[0].sendable, "{owed:?}");
+
+        // What the report calls sendable a pass sends: the registration
+        // goes with the second grant's delegation, that grant follows, and
+        // the first is parked on its own account.
+        let waited = on
+            .node
+            .await_owed_acp_as(&on.caller(), &txn, Duration::from_secs(3))
+            .await
+            .unwrap();
+        assert_eq!(
+            on.remote.owners.get(&doc).as_deref(),
+            Some(on.user.as_str())
+        );
+        assert!(on.remote.holds(&doc, STRANGER));
+        assert!(!on.remote.holds(&doc, READER));
+        assert!(
+            matches!(&waited, OwedWait::Parked(entries)
+                if entries.len() == 1 && entries[0].state == OwedState::AwaitingAuthority),
+            "{waited:?}"
+        );
+        on.node.shutdown().await.unwrap();
+    })
+    .unwrap();
+}

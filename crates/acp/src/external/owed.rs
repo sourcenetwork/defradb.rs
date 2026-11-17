@@ -193,30 +193,8 @@ where
             OwedState::Refused { .. } => return Ok(false),
             OwedState::AwaitingAuthority => {}
         }
-        if self.recorded_registrar(owed, None).is_ok() {
-            return Ok(true);
-        }
-        let creator = self.provider.canonical_actor(&owed.creator);
-        let mut after = None;
-        loop {
-            let page = self.owed_changes_after(after).await?;
-            let Some(last) = page.last() else {
-                return Ok(false);
-            };
-            after = Some(last.seq);
-            for change in &page {
-                let on_object = change.tuple.policy_id == owed.policy_id
-                    && change.tuple.resource == owed.resource_name
-                    && change.tuple.object == owed.doc_id;
-                if let (true, OwedAuthority::Delegation { token }) =
-                    (on_object && change.actor == creator, &change.authority)
-                {
-                    if self.recorded_registrar(owed, Some(token)).is_ok() {
-                        return Ok(true);
-                    }
-                }
-            }
-        }
+        Ok(self.recorded_registrar(owed, None).is_ok()
+            || self.creators_delegation(owed).await?.is_some())
     }
 
     /// The notes of discarded changes: the one of `seq`, or all of them.
@@ -374,7 +352,10 @@ where
                 continue;
             }
             submitted = true;
-            if self.submit_transaction(txn, &entries).await? {
+            if self
+                .submit_transaction(txn, &entries, only.is_some())
+                .await?
+            {
                 let entries = self.of_transaction(txn, only).await?;
                 self.acknowledge(&entries).await?;
                 return Ok(OwedWait::of(entries, true));
@@ -382,10 +363,18 @@ where
         }
     }
 
-    /// Submit once what transaction `txn` owes: its registrations, then the
-    /// changes on the objects it staged on. `true` when the provider could
-    /// not be reached.
-    async fn submit_transaction(&self, txn: u64, entries: &[OwedEntry]) -> Result<bool> {
+    /// Submit once what transaction `txn` owes: the registrations among
+    /// `entries`, then the changes on the objects it staged on. For a wait
+    /// that sees one actor's entries (`theirs`) the changes are those on
+    /// the objects of `entries` alone, in order with whatever else is owed
+    /// there: a submission on another actor's object is not this wait's to
+    /// make or to wait for. `true` when the provider could not be reached.
+    async fn submit_transaction(
+        &self,
+        txn: u64,
+        entries: &[OwedEntry],
+        theirs: bool,
+    ) -> Result<bool> {
         for entry in entries {
             if entry.what != OwedWhat::Registration {
                 continue;
@@ -400,10 +389,27 @@ where
                 Err(_) => {}
             }
         }
-        Ok(self
-            .settle_owed_changes_once(OwedScope::Transaction(txn))
-            .await?
-            .provider_unavailable)
+        if !theirs {
+            return Ok(self
+                .settle_owed_changes_once(OwedScope::Transaction(txn))
+                .await?
+                .provider_unavailable);
+        }
+        let mut objects = RapidHashSet::new();
+        objects.extend(
+            entries
+                .iter()
+                .filter(|entry| !entry.discarded)
+                .map(|entry| {
+                    (
+                        entry.policy_id.clone(),
+                        entry.resource.clone(),
+                        entry.object.clone(),
+                    )
+                }),
+        );
+        let _pass = self.settling.lock().await;
+        Ok(self.pass(Some(&objects)).await?.provider_unavailable)
     }
 
     /// Take the credential of the request this gate serves as the fresh
@@ -469,8 +475,19 @@ where
                         record.attempts = 0;
                         record.last_error = None;
                     })
-                    .await?
-                    .ok_or_else(|| Self::not_found(entry, actor))?;
+                    .await?;
+                let owed = match owed {
+                    Some(owed) => owed,
+                    // The record is gone, or a transaction that committed
+                    // meanwhile wrote it first.
+                    None => {
+                        let still_owed = self
+                            .owed(policy_id, resource, object)
+                            .await?
+                            .is_some_and(|owed| self.same_actor(&owed.creator, actor));
+                        return Err(unwritten(entry, actor, still_owed));
+                    }
+                };
                 // What the submission came to is in the record.
                 let _ = self.settle(&owed).await;
                 (policy_id.clone(), resource.clone(), object.clone())
