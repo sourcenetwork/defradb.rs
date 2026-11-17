@@ -124,6 +124,14 @@ RUNS=(
   "MC_ReplicaRegistration_Red_StaleDecision.cfg ReplicaRegistration.tla RED" # a decision remembered from before a revocation admits the revoked writer (INV_RevokedWriterDenied)
   "MC_ReplicaRegistration_Red_ArchiveOnDelete.cfg ReplicaRegistration.tla RED" # merging a delete archives the object on the provider (INV_RegisteredStays)
   "MC_ReplicaRegistration_Red_DeleteClears.cfg ReplicaRegistration.tla RED" # a local delete drops the creator's owed registration and replicas wait for ever (LIVE_RowMerges)
+  "MC_ParkedMerge_Green.cfg ParkedMerge.tla GREEN" # a refused replicated change is parked by document, never rejected for good, never merged before its history or without its signer's write, within the index bound
+  "MC_ParkedMerge_Green_Live.cfg ParkedMerge.tla GREEN" # a parked change and its descendant merge once the signer holds write, and a change on another branch always merges
+  "MC_ParkedMerge_Red_Quarantine.cfg ParkedMerge.tla RED" # a refused change is rejected for good (INV_NeverQuarantined)
+  "MC_ParkedMerge_Red_MergeOverParked.cfg ParkedMerge.tla RED" # a descendant merges over its parked ancestor (INV_HistoryFirst)
+  "MC_ParkedMerge_Red_RedriveAdmits.cfg ParkedMerge.tla RED" # a re-driven change merges without a fresh decision (INV_MergeAuthorized)
+  "MC_ParkedMerge_Red_Unbounded.cfg ParkedMerge.tla RED" # the parked index grows past its bound (INV_Bounded)
+  "MC_ParkedMerge_Red_NoRelease.cfg ParkedMerge.tla RED" # neither a relationship change nor the sweep re-drives a parked change (LIVE_RedrivenOnGrant)
+  "MC_ParkedMerge_Red_ParkBlocksObject.cfg ParkedMerge.tla RED" # a parked change holds every change of its document (LIVE_OtherBranchMerges)
   "MC_SourceScopedNac_Green.cfg SourceScopedNac.tla GREEN"
   "MC_SourceScopedNac_Red_Authority.cfg SourceScopedNac.tla RED"
   "MC_SourceScopedNac_Red_Owner.cfg SourceScopedNac.tla RED"
