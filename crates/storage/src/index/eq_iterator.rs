@@ -8,6 +8,7 @@ use document::NormalValue;
 use schema::IndexDescription;
 
 use super::iterator::{IndexEntry, IndexIterator};
+use super::range_iterator::RangeIterator;
 use crate::corekv::{IterOptions, Iterator, MaybeSend, Reader, Result};
 use crate::keys::datastore::IndexedField;
 use crate::keys::doc_id_index::decode_doc_short_id;
@@ -34,6 +35,8 @@ pub struct ExactMatchIterator {
     cached_unique_result: Option<IndexEntry>,
     /// Whether the iterator has been exhausted
     exhausted: bool,
+    /// Set when the values bind only the leading fields of a composite key.
+    leading: Option<RangeIterator>,
 }
 
 impl ExactMatchIterator {
@@ -46,6 +49,9 @@ impl ExactMatchIterator {
         desc: &IndexDescription,
         values: &[NormalValue],
     ) -> Result<Self> {
+        if values.len() < desc.fields.len() {
+            return Self::new_leading(txn, collection_short_id, desc, false, values).await;
+        }
         let fields = build_indexed_fields(values, desc);
         let key_prefix =
             IndexDataStoreKey::new(collection_short_id, desc.id, fields).try_bytes()?;
@@ -60,6 +66,7 @@ impl ExactMatchIterator {
             unique_result: None,
             cached_unique_result: None,
             exhausted: false,
+            leading: None,
         })
     }
 
@@ -73,6 +80,9 @@ impl ExactMatchIterator {
         desc: &IndexDescription,
         values: &[NormalValue],
     ) -> Result<Self> {
+        if values.len() < desc.fields.len() {
+            return Self::new_leading(txn, collection_short_id, desc, true, values).await;
+        }
         let fields = build_indexed_fields(values, desc);
         let key_prefix =
             IndexDataStoreKey::new(collection_short_id, desc.id, fields).try_bytes()?;
@@ -92,6 +102,7 @@ impl ExactMatchIterator {
                 unique_result: None,
                 cached_unique_result: None,
                 exhausted: false,
+                leading: None,
             })
         } else {
             // Non-NULL values: direct lookup, doc short ID stored in the value
@@ -109,8 +120,32 @@ impl ExactMatchIterator {
                 cached_unique_result: unique_result.clone(),
                 unique_result,
                 exhausted: false,
+                leading: None,
             })
         }
+    }
+
+    /// The rest of the key follows the bound fields, so entries are decoded
+    /// as whole composite keys, not read as a doc short ID right after them.
+    async fn new_leading<R: Reader + MaybeSend + ?Sized>(
+        txn: &R,
+        collection_short_id: u32,
+        desc: &IndexDescription,
+        is_unique: bool,
+        values: &[NormalValue],
+    ) -> Result<Self> {
+        let leading =
+            RangeIterator::new_prefix(txn, collection_short_id, desc, is_unique, values, false)
+                .await?;
+        Ok(Self {
+            inner: None,
+            key_prefix: Vec::new(),
+            values: values.to_vec(),
+            unique_result: None,
+            cached_unique_result: None,
+            exhausted: false,
+            leading: Some(leading),
+        })
     }
 
     /// Extract the doc short ID from an index key.
@@ -134,6 +169,12 @@ impl IndexIterator for ExactMatchIterator {
     async fn next(&mut self) -> Result<Option<IndexEntry>> {
         if self.exhausted {
             return Ok(None);
+        }
+
+        if let Some(leading) = self.leading.as_mut() {
+            let entry = leading.next().await?;
+            self.exhausted = entry.is_none();
+            return Ok(entry);
         }
 
         // Check for single unique result first
@@ -161,6 +202,9 @@ impl IndexIterator for ExactMatchIterator {
         if let Some(ref mut iter) = self.inner {
             iter.close().await?;
         }
+        if let Some(leading) = self.leading.as_mut() {
+            leading.close().await?;
+        }
         self.inner = None;
         self.exhausted = true;
         Ok(())
@@ -169,6 +213,9 @@ impl IndexIterator for ExactMatchIterator {
     async fn reset(&mut self) -> Result<()> {
         if let Some(ref mut iter) = self.inner {
             iter.reset().await?;
+        }
+        if let Some(leading) = self.leading.as_mut() {
+            leading.reset().await?;
         }
         // Restore unique_result from cache for unique index direct lookups
         if self.cached_unique_result.is_some() && self.unique_result.is_none() {
@@ -184,6 +231,9 @@ impl IndexIterator for ExactMatchIterator {
         }
         if let Some(ref mut iter) = self.inner {
             return iter.seek(key).await;
+        }
+        if let Some(leading) = self.leading.as_mut() {
+            return leading.seek(key).await;
         }
         Ok(false)
     }
@@ -387,6 +437,79 @@ mod tests {
 
             let entries = iter.collect_all().await.unwrap();
             assert_eq!(entries.len(), 2);
+        })
+        .unwrap()
+    }
+
+    fn composite_description(unique: bool, descending: bool) -> IndexDescription {
+        let field = |name: &str| IndexedFieldDescription {
+            name: name.to_string(),
+            descending,
+        };
+        IndexDescription {
+            id: 1,
+            name: "author_title".to_string(),
+            unique,
+            kind: None,
+            auto_generated: false,
+            fields: vec![field("author"), field("title")],
+        }
+    }
+
+    fn pair(author: &str, title: &str) -> [NormalValue; 2] {
+        [
+            NormalValue::String(author.to_string()),
+            NormalValue::String(title.to_string()),
+        ]
+    }
+
+    async fn leading_lookup(unique: bool, descending: bool) -> Vec<u64> {
+        let store = RegolithStore::in_memory().unwrap();
+        let mut txn = store.new_txn(false).await.unwrap();
+        let desc = composite_description(unique, descending);
+        let rows = [
+            (1, pair("a", "x")),
+            (2, pair("b", "y")),
+            (3, pair("a", "w")),
+        ];
+        for (short_id, values) in &rows {
+            if unique {
+                UniqueIndex::new(1, desc.clone())
+                    .save(&mut txn, *short_id, values)
+                    .await
+                    .unwrap();
+            } else {
+                SimpleIndex::new(1, desc.clone())
+                    .save(&mut txn, *short_id, values)
+                    .await
+                    .unwrap();
+            }
+        }
+        txn.commit().await.unwrap();
+
+        let txn = store.new_txn(true).await.unwrap();
+        let lead = [NormalValue::String("a".to_string())];
+        let mut iter = if unique {
+            ExactMatchIterator::new_unique(txn.as_ref(), 1, &desc, &lead).await
+        } else {
+            ExactMatchIterator::new_simple(txn.as_ref(), 1, &desc, &lead).await
+        }
+        .unwrap();
+        let entries = iter.collect_all().await.unwrap();
+        assert!(entries.iter().all(|entry| entry.values.len() == 2));
+        entries
+            .into_iter()
+            .map(|entry| entry.doc_short_id)
+            .collect()
+    }
+
+    #[test]
+    fn a_leading_value_of_a_composite_index_finds_its_documents_in_key_order() {
+        workers::block_on(async {
+            assert_eq!(leading_lookup(false, false).await, [3, 1]);
+            assert_eq!(leading_lookup(false, true).await, [1, 3]);
+            assert_eq!(leading_lookup(true, false).await, [3, 1]);
+            assert_eq!(leading_lookup(true, true).await, [1, 3]);
         })
         .unwrap()
     }

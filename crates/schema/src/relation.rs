@@ -19,6 +19,19 @@ impl CollectionVersion {
         format!("_{}ID", field_name)
     }
 
+    /// The field an index stores for `name`, as Go keeps it: a relation's ID field.
+    pub fn index_field_name(fields: &[FieldDescription], name: &str) -> String {
+        let id_field_name = Self::relation_id_field_name(name);
+        let is_relation = fields
+            .iter()
+            .any(|field| field.name == name && field.kind.is_relation() && !field.kind.is_array());
+        if is_relation && fields.iter().any(|field| field.name == id_field_name) {
+            id_field_name
+        } else {
+            name.to_string()
+        }
+    }
+
     /// Check if an `_id` field exists for a given relation field name
     pub fn has_relation_id_field(&self, relation_field_name: &str) -> bool {
         let id_field_name = Self::relation_id_field_name(relation_field_name);

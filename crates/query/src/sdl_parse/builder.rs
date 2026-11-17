@@ -376,6 +376,20 @@ impl<'a> SdlParser<'a> {
             CType::None,
         ));
 
+        // Go indexes a relation by its ID field (`checkExistingFieldsAndAdjustRelFieldNames`).
+        let index_field_name = |name: &str| -> String {
+            let is_relation = type_def.fields.iter().any(|field| {
+                field.name == name
+                    && !field.field_type.is_list
+                    && self.type_defs.contains_key(&field.field_type.base_type)
+            });
+            if is_relation {
+                CollectionVersion::relation_id_field_name(name)
+            } else {
+                name.to_string()
+            }
+        };
+
         // Process user-defined fields
         for parsed_field in &type_def.fields {
             let kind = self.resolve_field_kind(
@@ -587,16 +601,9 @@ impl<'a> SdlParser<'a> {
                     idx_config
                         .includes
                         .iter()
-                        .map(|(name, descending)| {
-                            let final_name = if *name == parsed_field.name && is_relation_field {
-                                format!("_{}ID", parsed_field.name)
-                            } else {
-                                name.clone()
-                            };
-                            IndexedFieldDescription {
-                                name: final_name,
-                                descending: *descending,
-                            }
+                        .map(|(name, descending)| IndexedFieldDescription {
+                            name: index_field_name(name),
+                            descending: *descending,
                         })
                         .collect()
                 } else if idx_config.includes.is_empty() {
@@ -613,7 +620,7 @@ impl<'a> SdlParser<'a> {
                     }];
                     for (name, descending) in &idx_config.includes {
                         fields.push(IndexedFieldDescription {
-                            name: name.clone(),
+                            name: index_field_name(name),
                             descending: *descending,
                         });
                     }
@@ -661,24 +668,23 @@ impl<'a> SdlParser<'a> {
                 }
             }
 
-            let idx_name = composite_idx.name.clone().unwrap_or_else(|| {
-                let first_field = composite_idx
-                    .fields
-                    .first()
-                    .map(|(n, _)| n.as_str())
-                    .unwrap_or("unknown");
-                generate_index_name(&type_def.name, first_field, &existing_index_names)
-            });
-            existing_index_names.push(idx_name.clone());
-
             let indexed_fields: Vec<IndexedFieldDescription> = composite_idx
                 .fields
                 .iter()
                 .map(|(name, descending)| IndexedFieldDescription {
-                    name: name.clone(),
+                    name: index_field_name(name),
                     descending: *descending,
                 })
                 .collect();
+
+            let idx_name = composite_idx.name.clone().unwrap_or_else(|| {
+                let first_field = indexed_fields
+                    .first()
+                    .map(|field| field.name.as_str())
+                    .unwrap_or("unknown");
+                generate_index_name(&type_def.name, first_field, &existing_index_names)
+            });
+            existing_index_names.push(idx_name.clone());
 
             index_id_counter += 1;
             indexes.push(IndexDescription {

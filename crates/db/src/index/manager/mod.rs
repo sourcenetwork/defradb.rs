@@ -327,6 +327,13 @@ impl IndexManager {
         kind: IndexKind,
         schema_fields: &[FieldDescription],
     ) -> Result<IndexDescription> {
+        let fields: Vec<IndexedFieldDescription> = fields
+            .into_iter()
+            .map(|field| IndexedFieldDescription {
+                name: CollectionVersion::index_field_name(schema_fields, &field.name),
+                ..field
+            })
+            .collect();
         let name = if name.is_empty() {
             let first_field = fields.first().map(|f| f.name.as_str()).unwrap_or("unknown");
             let existing: Vec<String> = self.indexes.keys().cloned().collect();
