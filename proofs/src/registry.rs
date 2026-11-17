@@ -264,6 +264,18 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/db/src/merge/gate_conformance_tests.rs the_acp_hook_matches_the_executed_gate_model; crates/db/tests/merge/parked_refusals.rs a_revoked_writers_change_is_parked_and_merges_once_the_node_grants_it_again, an_unsigned_change_is_still_rejected",
     },
     Property {
+        // The index the parked refusals are filed in, a data structure with
+        // its invariants proven over any sequence of operations and its
+        // observable results executed against the Rust type.
+        family: "Verified client graph transaction",
+        name: "inv_run / bounded_after_any_run / no_dangling_after_any_run / present_iff / has_waiters_iff / release_takes / release_leaves_no_trace / release_keeps / release_keeps_waiting / release_hands_back / release_idempotent / wf_run / releaseParked_count / picked_are_documents / release_parked_hands_back_only_parked / release_parked_keeps_governance / release_parked_drains / release_parked_twice_finds_nothing / defer_when_full_changes_nothing / defer_full_key_unchanged / defer_keeps_others / defer_keeps_other_waiters / park_files_under_both / park_past_document_bound / parked_released_by_either: the deferred-composite index keeps its per-key and per-node bounds and has no dangling entry after any operations, filing never drops another composite, a parked composite is filed under its document and the refused composite and leaves both when either releases it, a release is idempotent, and the sweep hands back only composites parked under a document",
+        axis: Lean,
+        anchor: "crates/db/src/merge/governance/deferred.rs DeferredMerges::defer, DeferredMerges::release, DeferredMerges::release_parked, DeferredMerges::enqueue_ready, DeferredMerges::take_ready, DeferredMerges::forget, DeferredMerges::take_entry, DeferredMerges::unindex, MAX_DEFERRED_COMPOSITES, MAX_WAITERS_PER_DEPENDENCY, MAX_AWAITED_PER_COMPOSITE; crates/db/src/merge/governance/awaited.rs WaitKey::AcpObject; crates/db/src/merge/merge_handler/composite.rs prepare_composite_merge",
+        model_ref: "DeferredMerges (lake build; lake env lean --run DeferredMerges/Conformance.lean)",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/db/src/merge/governance/deferred_conformance_tests.rs the_index_matches_the_executed_model; crates/db/src/merge/governance/deferred.rs the_sweep_releases_parked_composites_only",
+    },
+    Property {
         family: "Verified client graph transaction",
         name: "nothing_without_authority / a_held_key_is_enough / a_foreign_signature_sends_nothing / another_nodes_delegation_sends_nothing / an_expired_credential_sends_nothing / a_request_sends_only_its_command / a_sent_request_names_its_command / a_request_is_no_general_authority / general_authority_covers_every_command / a_fresh_credential_is_taken_as_at_admission / a_fresh_request_for_another_command_is_refused / a_fresh_credential_of_another_signer_is_refused / a_fresh_request_releases_one_command / one_rule_for_every_form / an_edit_needs_the_permission / an_edit_is_admitted_on_fresh_evidence_only / stale_evidence_admits_nothing / an_unreachable_provider_admits_nothing / a_revocation_in_the_verified_revision_refuses / an_owed_revocation_refuses / an_owed_registration_admits_only_its_creator / a_request_never_admits_an_edit / no_credential_on_an_unproven_provider_needs_the_key / no_credential_is_admitted_on_the_permission / a_bad_delegation_admits_no_edit",
         axis: Lean,
