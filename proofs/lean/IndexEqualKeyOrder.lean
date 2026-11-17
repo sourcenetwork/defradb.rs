@@ -307,4 +307,209 @@ theorem resolveUpTo_same_page (lookup : Nat → Option Nat) (ids : List Nat)
   -- `limit` of the rest, and taking `limit` of that changes nothing.
   simp [page, resolveUpTo, List.drop_take, Nat.add_sub_cancel_left, List.take_take]
 
+/-!
+## A lookup on the leading field of a composite key
+
+The story, in plain words. A composite index key holds the leading field's
+value, then the later fields' values, then the document's short ID. A join or
+a filter through a relation knows only the leading value: the related
+document's ID. The lookup takes every entry whose key starts with that value.
+
+What must hold: each entry's short ID is read from the end of its key, after
+all of the index's fields, so the lookup returns exactly the short IDs of the
+entries with that leading value, in key order. Go does the same with a prefix
+iterator (`newPrefixBasedMatchIteratorFromConditions`).
+
+What must never happen: reading the part right after the leading value as the
+short ID. On a composite key that part is the next field's value
+(`afterLead_reads_a_field`), so the old reading lost every row or failed.
+
+Rust anchors: `crates/storage/src/index/eq_iterator.rs`
+`ExactMatchIterator::new_leading`; `crates/storage/src/index/range_iterator.rs`
+`RangeIterator::new_prefix`.
+-/
+
+-- One composite entry: the leading value, the later values, the short ID.
+structure CEntry where
+  -- the leading field's value (the related document's ID, for a join)
+  lead : Nat
+  -- the values of the index's later fields, in field order
+  rest : List Nat
+  -- the document's short ID, the key's last part
+  shortId : Nat
+deriving DecidableEq, Repr
+
+-- The stored key: the leading value, the later values, then the short ID.
+def CEntry.key (e : CEntry) : List Nat := e.lead :: e.rest ++ [e.shortId]
+
+-- Read the short ID after skipping `fields` values of the key.
+def readShortId (fields : Nat) (key : List Nat) : Option Nat :=
+  -- what follows the skipped values, if anything does.
+  (key.drop fields).head?
+
+-- Promise: skipping all of the index's fields reads the entry's short ID.
+theorem readShortId_after_all_fields (e : CEntry) :
+    readShortId (e.rest.length + 1) e.key = some e.shortId := by
+  -- the leading value and the later values drop away, leaving the short ID.
+  simp [readShortId, CEntry.key, List.drop_append]
+
+-- Promise (the bug): skipping only the leading value reads the next field's
+-- value instead, whenever the index has a later field.
+theorem afterLead_reads_a_field (e : CEntry) (h : e.rest ≠ []) :
+    readShortId 1 e.key = e.rest.head? := by
+  -- what follows the leading value is the later values, which are not empty.
+  cases hr : e.rest with
+  | nil => exact absurd hr h
+  | cons r rs => simp [readShortId, CEntry.key, hr]
+
+-- Promise, on one entry: book 9 by author 5 titled 7 reads as 7, not 9.
+theorem afterLead_example :
+    readShortId 1 (CEntry.key ⟨5, [7], 9⟩) ≠ some 9 := by
+  -- the part after the leading value is the title.
+  decide
+
+-- The lookup: the entries with leading value `v`, in scan order, each read
+-- after all of its fields.
+def leadingLookup (scan : List CEntry) (v : Nat) : List Nat :=
+  -- an entry with another leading value adds nothing.
+  scan.filterMap (fun e => if e.lead = v then readShortId (e.rest.length + 1) e.key else none)
+
+-- Promise: the lookup is the matching entries' short IDs, in scan order.
+theorem leadingLookup_eq (scan : List CEntry) (v : Nat) :
+    leadingLookup scan v = (scan.filter (fun e => e.lead = v)).map CEntry.shortId := by
+  induction scan with
+  -- an empty scan finds nothing;
+  | nil => rfl
+  -- each entry is either read correctly or skipped, as the filter does.
+  | cons e rest ih =>
+    by_cases he : e.lead = v
+    · simp [leadingLookup, List.filterMap_cons, he, readShortId_after_all_fields] at ih ⊢
+      exact ih
+    · simp [leadingLookup, List.filterMap_cons, he] at ih ⊢
+      exact ih
+
+-- Promise: every entry with the leading value is found, and nothing else is.
+theorem leadingLookup_exact (scan : List CEntry) (v x : Nat) :
+    x ∈ leadingLookup scan v ↔ ∃ e ∈ scan, e.lead = v ∧ e.shortId = x := by
+  -- membership of a filtered map: some kept entry carries `x`.
+  rw [leadingLookup_eq]
+  simp [List.mem_map, List.mem_filter, and_assoc]
+
+-- Promise: the lookup keeps the scan's key order and only leaves entries out.
+theorem leadingLookup_keeps_key_order (scan : List CEntry) (v : Nat) :
+    (leadingLookup scan v).Sublist (scan.map CEntry.shortId) := by
+  -- a filter is a sublist, and mapping keeps that.
+  rw [leadingLookup_eq]
+  exact (List.filter_sublist scan).map CEntry.shortId
+
+/-!
+## A relation in an index is its ID field
+
+The story, in plain words. A document stores a relation as its ID field: a
+book keeps `_authorID`, and has no stored `author` value. An index declared on
+`author` must therefore index `_authorID`, as Go does
+(`checkExistingFieldsAndAdjustRelFieldNames`).
+
+What must never happen: an index that reads `author` itself. Every book then
+indexes a missing value, and a lookup by any author's ID finds nothing
+(`raw_relation_index_finds_nothing`).
+
+Rust anchors: `crates/schema/src/relation.rs` `CollectionVersion::index_field_name`;
+`crates/query/src/sdl_parse/builder.rs` `build_collection`;
+`crates/db/src/index/manager/mod.rs` `IndexManager::create_index_of_kind`.
+-/
+
+-- A field of a collection: its name, and whether it is a single relation.
+structure Field where
+  -- the field's name
+  name : String
+  -- true for a relation such as `author` (not a list of related documents)
+  relation : Bool
+deriving DecidableEq, Repr
+
+-- The ID field a relation is stored under: `author` becomes `_authorID`.
+def idFieldName (name : String) : String := "_" ++ name ++ "ID"
+
+-- The field an index reads for `name`: a relation's ID field, else `name`.
+def indexFieldName (fields : List Field) (name : String) : String :=
+  -- only a declared single relation is renamed.
+  if fields.any (fun f => f.name == name && f.relation) then idFieldName name else name
+
+-- A stored document: the value under each stored field, if any.
+abbrev Doc := String → Option Nat
+
+-- The documents an index on `field` finds for value `v`.
+def lookup (docs : List Doc) (field : String) (v : Nat) : List Doc :=
+  -- a document matches when its stored value under `field` is `v`.
+  docs.filter (fun d => d field == some v)
+
+-- Promise: a relation is indexed by its ID field.
+theorem relation_indexed_by_id (fields : List Field) (name : String)
+    (h : fields.any (fun f => f.name == name && f.relation)) :
+    indexFieldName fields name = idFieldName name := by
+  -- the relation branch is taken.
+  simp [indexFieldName, h]
+
+-- Promise: a book that stores author 5 under `_authorID` is found by an index
+-- on `author`, and an index that read `author` itself would find nothing.
+theorem raw_relation_index_finds_nothing :
+    let book : Doc := fun f => if f = "_authorID" then some 5 else none
+    let fields := [Field.mk "author" true, Field.mk "_authorID" false]
+    (lookup [book] (indexFieldName fields "author") 5).length = 1 ∧
+      (lookup [book] "author" 5).length = 0 := by
+  -- run the definitions on the one book.
+  simp [lookup, indexFieldName, idFieldName]
+
+/-!
+## A join through a relation orders by that relation only
+
+The story, in plain words. To answer `order: [{author: {name: ASC}}, {title:
+ASC}]`, the planner may walk authors in name order and look each author's
+books up in an index. The books of one author come back in index key order,
+which may be by `pages`, not by `title`.
+
+What must hold: the planner skips the final sort only when every order
+condition goes through the relation; otherwise the later conditions are
+sorted after the join (`join_orders_fully` in `assemble_type_join_one`).
+
+What must never happen: trusting the join for `title` too. Rows in author
+order can still be out of title order (`author_order_is_not_title_order`).
+
+Rust anchor: `crates/query/src/planner/joins/join_one.rs` `assemble_type_join_one`.
+-/
+
+-- A joined row: the author's name and the book's title, as order keys.
+structure Row where
+  -- the author's name, the relation's order key
+  author : Nat
+  -- the book's title, a later order key
+  title : Nat
+deriving DecidableEq, Repr
+
+-- Rows in order by author only.
+def ByAuthor (rows : List Row) : Prop := rows.Pairwise (fun a b => a.author ≤ b.author)
+
+-- Rows in order by author, then title.
+def ByAuthorTitle (rows : List Row) : Prop :=
+  -- an earlier row has a smaller author, or the same author and a title no larger.
+  rows.Pairwise (fun a b => a.author < b.author ∨ (a.author = b.author ∧ a.title ≤ b.title))
+
+-- Whether the join's order is the whole requested order: the conditions
+-- through the relation are all the conditions.
+def joinOrdersFully (relationConditions allConditions : Nat) : Bool :=
+  -- the same count means no condition is left outside the relation.
+  relationConditions == allConditions
+
+-- Promise: the join is trusted only when nothing is left to sort.
+theorem joinOrdersFully_iff (r a : Nat) : joinOrdersFully r a = true ↔ r = a := by
+  -- the comparison is plain equality.
+  simp [joinOrdersFully]
+
+-- Promise (the bug): rows in author order need not be in title order, so a
+-- query that also orders by title still needs its sort.
+theorem author_order_is_not_title_order :
+    ByAuthor [⟨1, 9⟩, ⟨1, 3⟩] ∧ ¬ ByAuthorTitle [⟨1, 9⟩, ⟨1, 3⟩] := by
+  -- the same author, with the larger title first.
+  simp [ByAuthor, ByAuthorTitle]
+
 end IndexEqualKeyOrder
