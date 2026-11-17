@@ -720,6 +720,49 @@ mod tests {
         .unwrap()
     }
 
+    /// Go's `truncate_<Collection>` takes `docID: [ID!]` and `filter`, so
+    /// introspection lists both, with Go's description for `docID`.
+    #[test]
+    fn truncate_lists_go_doc_id_argument() {
+        workers::block_on(async {
+            let collection = CollectionVersion::new("Users", "v1", "users", vec![]);
+            let result = execute_introspection(
+                &[Arc::new(collection)],
+                r#"{
+                __type(name: "Mutation") {
+                    fields {
+                        name
+                        args {
+                            name
+                            description
+                            type { kind name ofType { kind name ofType { kind name } } }
+                        }
+                    }
+                }
+            }"#,
+            )
+            .await
+            .expect("introspection execution should succeed");
+
+            let truncate = result["__type"]["fields"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|field| field["name"] == "truncate_Users")
+                .expect("truncate_Users is a mutation");
+            let args = truncate["args"].as_array().unwrap();
+            let names: Vec<_> = args.iter().map(|arg| arg["name"].clone()).collect();
+            assert_eq!(names, ["docID", "filter"]);
+
+            let doc_id = &args[0];
+            assert_eq!(doc_id["description"], d::TRUNCATE_IDS_ARG);
+            assert_eq!(doc_id["type"]["kind"], "LIST");
+            assert_eq!(doc_id["type"]["ofType"]["kind"], "NON_NULL");
+            assert_eq!(doc_id["type"]["ofType"]["ofType"]["name"], "ID");
+        })
+        .unwrap()
+    }
+
     #[test]
     fn mutation_input_is_safe_for_concurrent_first_use() {
         workers::block_on(async {

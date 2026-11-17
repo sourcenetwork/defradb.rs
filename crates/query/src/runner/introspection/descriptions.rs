@@ -65,6 +65,7 @@ pub(super) const DELETE_IDS_ARG: &str = "\nAn optional set of docID values that 
 pub(super) const DELETE_FILTER_ARG: &str = "\nAn optional filter for this delete that will limit the delete to documents\n matching the given criteria. If no matching documents are found, the operation\n will succeed, but no documents will be deleted.\n";
 pub(super) const TRUNCATE_DOCUMENTS: &str =
     "\nRemove all or matching documents from this node. Returns true when complete.\n";
+pub(super) const TRUNCATE_IDS_ARG: &str = "\nAn optional set of docID values that will limit the truncate to documents with\n a matching docID. If no matching documents are found, the operation will\n succeed, but no documents will be removed. If an empty set is provided, no\n documents will be removed.\n";
 pub(super) const TRUNCATE_FILTER_ARG: &str = "\nAn optional filter for this truncate that will limit the truncate to documents\n matching the given criteria. If no matching documents are found, the operation\n will succeed, but no documents will be removed.\n";
 pub(super) const ORDER_ASC: &str =
     "\nSort the results in ascending order, e.g. null,1,2,3,a,b,c.\n";
