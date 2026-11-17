@@ -106,6 +106,18 @@ RUNS=(
   "MC_VerifiedRemoteWrite_Red_AmbientRetry.cfg VerifiedRemoteWrite.tla RED" # a registration is sent with a token the process holds and nobody presented for it (INV_SentUnderRecordedAuthority)
   "MC_VerifiedRemoteWrite_Red_ReauthUnchecked.cfg VerifiedRemoteWrite.tla RED" # a parked command is owed again on a fresh credential the rule of admission refuses (INV_ReauthorizedWithAuthority)
   "MC_VerifiedRemoteWrite_Red_SilentFailure.cfg VerifiedRemoteWrite.tla RED" # a submission fails after the commit and the record does not say so (INV_FailureReported)
+  "MC_ReplicaRegistration_Green.cfg ReplicaRegistration.tla GREEN" # a foreign replica is registered by a receiver with its creator's grants as one owed unit, an own creator is never pre-empted, nobody is rejected while a unit is owed, and every change merges only while its signer may write
+  "MC_ReplicaRegistration_Green_Live.cfg ReplicaRegistration.tla GREEN" # with everyone working, the creator's genesis, update and delete merge on every receiver, own or foreign, with two receivers racing
+  "MC_ReplicaRegistration_Red_RegisterOwn.cfg ReplicaRegistration.tla RED" # a receiver registers an own creator's document (INV_OwnCreatorNotPreempted)
+  "MC_ReplicaRegistration_Red_RegisterAfterMerge.cfg ReplicaRegistration.tla RED" # a foreign genesis merges with its registration left to after the commit (INV_GenesisWithRegistration)
+  "MC_ReplicaRegistration_Red_RejectWhileOwed.cfg ReplicaRegistration.tla RED" # the creator's change is rejected while the receiver's registration is owed (INV_CreatorNotRejectedWhileOwed)
+  "MC_ReplicaRegistration_Red_GrantsSeparate.cfg ReplicaRegistration.tla RED" # the gate counts the registration alone as owed, not its grants (INV_CreatorNotRejectedWhileOwed)
+  "MC_ReplicaRegistration_Red_AdoptDrops.cfg ReplicaRegistration.tla RED" # a receiver told the document is already registered forgets the owner's grants are owed (INV_CreatorNotRejectedWhileOwed)
+  "MC_ReplicaRegistration_Red_NoAdoptOnArrival.cfg ReplicaRegistration.tla RED" # a receiver that sees the genesis after another registered it forgets the owner's grants are owed (INV_CreatorNotRejectedWhileOwed)
+  "MC_ReplicaRegistration_Red_OwnedDenies.cfg ReplicaRegistration.tla RED" # the node's stand-in for an owed registration rejects a granted writer (INV_DeniedOnlyByProvider)
+  "MC_ReplicaRegistration_Red_StaleDecision.cfg ReplicaRegistration.tla RED" # a decision remembered from before a revocation admits the revoked writer (INV_RevokedWriterDenied)
+  "MC_ReplicaRegistration_Red_ArchiveOnDelete.cfg ReplicaRegistration.tla RED" # merging a delete archives the object on the provider (INV_RegisteredStays)
+  "MC_ReplicaRegistration_Red_DeleteClears.cfg ReplicaRegistration.tla RED" # a local delete drops the creator's owed registration and replicas wait for ever (LIVE_RowMerges)
   "MC_SourceScopedNac_Green.cfg SourceScopedNac.tla GREEN"
   "MC_SourceScopedNac_Red_Authority.cfg SourceScopedNac.tla RED"
   "MC_SourceScopedNac_Red_Owner.cfg SourceScopedNac.tla RED"
