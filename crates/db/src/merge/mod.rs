@@ -2,6 +2,8 @@
 
 pub mod acp_merge_handler;
 pub mod broadcast_mutator;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod gate_conformance_tests;
 pub mod governance;
 pub mod head_provider;
 pub mod merge_handler;
