@@ -107,6 +107,14 @@ fn nac_add_relationship_still_requires_identity_even_if_all_identities_given_acc
                 ..Default::default()
             }
             .into(),
+            // The identity is checked first, even when the target is missing too.
+            AddNACActorRelationship {
+                relation: "admin".into(),
+                target_actor: Some("".into()),
+                expected_error: Some("node acp relationship operation requires identity".into()),
+                ..Default::default()
+            }
+            .into(),
         ],
         ..Default::default()
     }
@@ -261,9 +269,32 @@ fn nac_add_relationship_when_nac_is_enabled_with_invalid_identities_error() {
             AddNACActorRelationship {
                 relation: "admin".into(),
                 target_actor: Some("".into()),
-                expected_error: Some("actor must be a valid did".into()),
+                expected_error: Some("acp relationship target actor must not be empty".into()),
                 common: Common {
                     identity_seed: Some(1),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            // A delegated admin hears the same missing-target error as the owner.
+            AddNACActorRelationship {
+                relation: "admin".into(),
+                target_identity_seed: Some(2),
+                expected_data: json!({ "existedAlready": false }),
+                common: Common {
+                    identity_seed: Some(1),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            AddNACActorRelationship {
+                relation: "admin".into(),
+                target_actor: Some("".into()),
+                expected_error: Some("acp relationship target actor must not be empty".into()),
+                common: Common {
+                    identity_seed: Some(2),
                     ..Default::default()
                 },
                 ..Default::default()

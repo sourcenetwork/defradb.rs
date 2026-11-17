@@ -32,6 +32,10 @@ pub enum Error {
     #[error("node acp relationship operation requires identity")]
     RequiresIdentity,
 
+    /// No target actor was given: Go's `ErrRelationshipTargetActorEmpty`.
+    #[error("acp relationship target actor must not be empty")]
+    TargetActorEmpty,
+
     /// The relation is not one the node's policy has.
     #[error("relation not in resource")]
     RelationNotInResource,

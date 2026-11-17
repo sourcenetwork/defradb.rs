@@ -178,10 +178,15 @@ pub async fn go_add_relationships(
     Ok(Json(results))
 }
 
-/// Validate one add-relationship entry as the single route's core does: the
-/// relation must be a NAC relation other than "owner", and the target a DID
-/// or `*`.
+/// Validate one add-relationship entry as the single route's core does, in
+/// its order: a target given, the relation a NAC relation other than
+/// "owner", then the target a DID or `*`.
 fn validate_add_relationship(body: &GoNacRelationshipRequest) -> Result<(), HttpError> {
+    if body.target_actor.is_empty() {
+        return Err(HttpError::BadRequest(
+            "acp relationship target actor must not be empty".to_string(),
+        ));
+    }
     if !acp::is_valid_nac_relation(&body.relation) || body.relation == "owner" {
         return Err(HttpError::BadRequest(
             "relation not in resource".to_string(),

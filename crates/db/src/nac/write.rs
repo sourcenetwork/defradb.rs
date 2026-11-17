@@ -39,13 +39,35 @@ impl NacChange {
     }
 }
 
+/// The target actor of a relationship change, as given.
+#[derive(Debug, Clone)]
+pub enum NacTarget {
+    /// The empty string: no target at all.
+    Empty,
+    /// A DID, or `*` for everyone.
+    Actor(Did),
+    /// Something given that is neither a DID nor `*`.
+    NotADid,
+}
+
+impl NacTarget {
+    /// `target`, as a relationship change reads it.
+    pub fn parse(target: &str) -> Self {
+        match target {
+            "" => NacTarget::Empty,
+            "*" => NacTarget::Actor(Did::wildcard()),
+            did => Did::new(did).map_or(NacTarget::NotADid, NacTarget::Actor),
+        }
+    }
+}
+
 /// A relationship change as asked, parsed but not yet checked: the relation
-/// and the target are `None` when they named nothing the policy has.
+/// is `None` when it named nothing the policy has.
 #[derive(Debug, Clone)]
 pub struct NacRelationshipRequest {
     pub change: NacChange,
     pub relation: Option<NacRelation>,
-    pub target: Option<Did>,
+    pub target: NacTarget,
 }
 
 /// The winning try's value with the status and owner it committed.
@@ -162,10 +184,12 @@ where
     }
 
     /// Go's checks in Go's order on this manager's store: NAC set up, the
-    /// caller's permission for the change, NAC on, an identity acting, the
-    /// relation, the target; then the change, which checks that the identity
-    /// manages the relation. A removal for a target that is no DID finds
-    /// nothing to take.
+    /// caller's permission for the change, NAC on, an identity acting, a
+    /// target given, the relation, the target; then the change, which checks
+    /// that the identity manages the relation. A removal for a target that
+    /// is no DID finds nothing to take, but an empty target is refused, so it
+    /// never reaches the wildcard (`proofs/tla/NodeAcpOps.tla`,
+    /// `proofs/lean/NacRelationship.lean`).
     async fn decide_relationship(
         &self,
         caller: &NacCaller,
@@ -180,11 +204,14 @@ where
             return Err(Error::NotEnabled);
         }
         let requestor = caller.identity.as_ref().ok_or(Error::RequiresIdentity)?;
+        if matches!(request.target, NacTarget::Empty) {
+            return Err(Error::TargetActorEmpty);
+        }
         let relation = request.relation.ok_or(Error::RelationNotInResource)?;
         let target = match (&request.target, change) {
-            (Some(target), _) => target,
-            (None, NacChange::Add) => return Err(Error::InvalidActor),
-            (None, NacChange::Remove) => return Ok(false),
+            (NacTarget::Actor(target), _) => target,
+            (_, NacChange::Add) => return Err(Error::InvalidActor),
+            (_, NacChange::Remove) => return Ok(false),
         };
         match (change, relation) {
             (NacChange::Add, NacRelation::Admin) => self

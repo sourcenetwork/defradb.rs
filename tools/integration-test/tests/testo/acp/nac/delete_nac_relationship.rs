@@ -61,6 +61,23 @@ fn nac_delete_relationship_for_all_identities_all_implicit_identities_access_rev
                 ..Default::default()
             }
             .into(),
+            // An empty target must not revoke the wildcard relationship.
+            DeleteNACActorRelationship {
+                relation: "admin".into(),
+                target_actor: Some("".into()),
+                expected_error: Some("acp relationship target actor must not be empty".into()),
+                common: Common {
+                    identity_seed: Some(1),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            GetNACStatus {
+                expected_data: json!({ "status": "enabled" }),
+                ..Default::default()
+            }
+            .into(),
             DeleteNACActorRelationship {
                 relation: "admin".into(),
                 target_actor: Some("*".into()),
@@ -169,6 +186,14 @@ fn nac_delete_relationship_still_requires_identity_even_if_all_identities_given_
             DeleteNACActorRelationship {
                 relation: "admin".into(),
                 target_identity_seed: Some(3),
+                expected_error: Some("node acp relationship operation requires identity".into()),
+                ..Default::default()
+            }
+            .into(),
+            // The identity is checked first, even when the target is missing too.
+            DeleteNACActorRelationship {
+                relation: "admin".into(),
+                target_actor: Some("".into()),
                 expected_error: Some("node acp relationship operation requires identity".into()),
                 ..Default::default()
             }
@@ -338,9 +363,32 @@ fn nac_delete_relationship_when_nac_is_enabled_with_invalid_identities_error() {
             DeleteNACActorRelationship {
                 relation: "admin".into(),
                 target_actor: Some("".into()),
-                expected_data: json!({ "recordFound": false }),
+                expected_error: Some("acp relationship target actor must not be empty".into()),
                 common: Common {
                     identity_seed: Some(1),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            // A delegated admin hears the same missing-target error as the owner.
+            AddNACActorRelationship {
+                relation: "admin".into(),
+                target_identity_seed: Some(2),
+                expected_data: json!({ "existedAlready": false }),
+                common: Common {
+                    identity_seed: Some(1),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            DeleteNACActorRelationship {
+                relation: "admin".into(),
+                target_actor: Some("".into()),
+                expected_error: Some("acp relationship target actor must not be empty".into()),
+                common: Common {
+                    identity_seed: Some(2),
                     ..Default::default()
                 },
                 ..Default::default()
