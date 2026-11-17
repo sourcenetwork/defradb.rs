@@ -1,4 +1,6 @@
-//! Generated from the conformance scenarios of tests/integration/acp/nac/add_nac_relationship_test.go at defradb 137dc624052b.
+//! Port of Go `tests/integration/acp/nac/add_nac_relationship_test.go`, generated at defradb 137dc624052b and
+//! kept by hand (`HAND_PORTED` in gen_scenarios) with Go #5342's changes: an empty target actor is
+//! refused with `acp relationship target actor must not be empty`. Generated again once the Go pin includes #5342.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{AddNACActorRelationship, Close, DisableNAC, GetNACStatus, Start};

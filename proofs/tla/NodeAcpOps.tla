@@ -78,8 +78,10 @@
 \*                                          NAC on, identity, a target given, the
 \*                                          relation, the target, then the change,
 \*                                          all in one try's scope
-\*   crates/http/src/handlers/nac.rs
-\*     validate_add_relationship            the same target checks, ahead of the core
+\*   (not modelled) crates/http/src/handlers/nac.rs validate_add_relationship:
+\*     the batch route, which Go does not have, checks each entry's target and
+\*     relation before any write, so ahead of the identity; every
+\*     single-relationship route keeps the order above
 \*   crates/acp/src/zanzibar/store/persistent.rs
 \*     PersistentZanzibarStore::transact    the tries, through datastore::transact
 \*                                          (native only: no wasm client runs NAC)

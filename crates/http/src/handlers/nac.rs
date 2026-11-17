@@ -178,9 +178,12 @@ pub async fn go_add_relationships(
     Ok(Json(results))
 }
 
-/// Validate one add-relationship entry as the single route's core does, in
-/// its order: a target given, the relation a NAC relation other than
-/// "owner", then the target a DID or `*`.
+/// Validate one add-relationship entry before any of the batch is written: a
+/// target given, the relation a NAC relation other than "owner", then the
+/// target a DID or `*`. These checks run ahead of everything the core checks
+/// first (NAC set up, the caller's permission, NAC on, an identity), so the
+/// batch route, which Go does not have, reports an entry's own error first;
+/// the single routes keep Go's order.
 fn validate_add_relationship(body: &GoNacRelationshipRequest) -> Result<(), HttpError> {
     if body.target_actor.is_empty() {
         return Err(HttpError::BadRequest(
@@ -299,6 +302,41 @@ mod tests {
                 .map(|result| result.existed_already)
                 .collect::<Vec<_>>(),
             vec![false, true]
+        );
+    }
+
+    /// An empty target in a batch is refused with Go's empty-target error
+    /// before anything is written, even with no identity acting: the batch
+    /// checks its entries first.
+    #[nuclei::test]
+    async fn add_relationships_refuses_an_empty_target_before_writing() {
+        let target = identity::Did::new("did:key:target").unwrap();
+        let executor = Arc::new(MockQueryExecutor::new());
+        let state = AppStateBuilder::new(
+            Arc::clone(&executor) as Arc<dyn QueryExecutor>,
+            edge::testing::edge(),
+        )
+        .build();
+
+        let result = go_add_relationships(
+            State(state),
+            ExtractIdentity::from_did(None),
+            Json(vec![
+                relationship("admin", target.as_str()),
+                relationship("admin", ""),
+            ]),
+        )
+        .await;
+
+        match result {
+            Err(HttpError::BadRequest(message)) => {
+                assert_eq!(message, "acp relationship target actor must not be empty")
+            }
+            other => panic!("expected a bad request, got {:?}", other.map(|_| ())),
+        }
+        assert!(
+            executor.nac_relationships().is_empty(),
+            "nothing is written"
         );
     }
 }

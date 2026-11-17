@@ -15,7 +15,12 @@ identity told about the target instead of "requires identity".
 Rust owners:
   crates/db/src/nac/write.rs        NacManager::decide_relationship (decide)
   crates/db/src/access/nac_ops/mod.rs DB::change_nac_relationship (parses the target)
-  crates/http/src/handlers/nac.rs   validate_add_relationship (the same target checks)
+
+Every route that changes one relationship (HTTP, the CLI, FFI, the embedded
+node) reaches `decide`, so this order holds for all of them. The one exception
+is the batch HTTP route, which Go does not have: crates/http/src/handlers/nac.rs
+validate_add_relationship checks each entry's target and relation before any
+of the batch is written, and so before the identity.
 -/
 
 namespace NacRelationship
@@ -115,7 +120,8 @@ theorem empty_target_is_refused_as_go (c : Change) (k : Checks)
   simp [decide, hc, hp, he, hi]
 
 -- A caller with no identity hears "requires identity", even when the target
--- is empty too: the identity is checked first.
+-- is empty too: the identity is checked first (on every single-relationship
+-- route; the batch route checks its entries before anything else).
 theorem identity_is_checked_before_the_target (c : Change) (k : Checks) (t : Target)
     (hc : k.configured = true) (hp : k.permitted = true) (he : k.enabled = true)
     (hi : k.identity = false) :
