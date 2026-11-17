@@ -24,6 +24,12 @@ fn chunked(splitter_version: u32) -> ChunkedField {
     }
 }
 
+fn parents_with(chunked: ChunkedField) -> CollectionVersion {
+    let mut parents = collection(PARENTS, &["body", "_body_chunks"]);
+    parents.chunked_fields = vec![chunked];
+    parents
+}
+
 fn collection(name: &str, fields: &[&str]) -> CollectionVersion {
     fields
         .iter()
@@ -43,9 +49,7 @@ fn collection(name: &str, fields: &[&str]) -> CollectionVersion {
 }
 
 fn parents(splitter_version: u32) -> CollectionVersion {
-    let mut parents = collection(PARENTS, &["body", "_body_chunks"]);
-    parents.chunked_fields = vec![chunked(splitter_version)];
-    parents
+    parents_with(chunked(splitter_version))
 }
 
 fn chunks() -> CollectionVersion {
@@ -102,11 +106,15 @@ impl Store {
     }
 
     fn gate(&self, splitter_version: u32) -> ChunkGate {
+        self.gate_for(chunked(splitter_version))
+    }
+
+    fn gate_for(&self, chunked: ChunkedField) -> ChunkGate {
         let fetcher: Arc<dyn DocFetcher> = self.fetcher.clone();
         ChunkGate::new(
             Some(fetcher),
             &chunks(),
-            Some(&parents(splitter_version)),
+            Some(&parents_with(chunked)),
             None,
             None,
         )
@@ -228,6 +236,28 @@ fn a_gate_without_a_fetcher_or_parent_shows_no_chunk() {
         );
         assert!(!no_parent.allows(&chunk, None).await.unwrap());
         assert!(!no_fetcher.allows(&chunk, None).await.unwrap());
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_later_chunk_of_a_long_text_split_with_overlap_shows() {
+    workers::block_on(async {
+        // The repeat is capped at a share of maxChars, so the sentences stay short.
+        let body = "Aa a. Bb b. Cc c. Dd d. Ee ee e.";
+        let version = defra_core::DEFAULT_SPLITTER_VERSION;
+        let pieces = split(body, &ChunkConfig::new(version, 24, 1).unwrap());
+        let unshared = split(body, &ChunkConfig::new(version, 24, 0).unwrap());
+        assert!(pieces.len() > 1 && pieces[1].hash != unshared[1].hash);
+        let store = Store::new(Some(body), Vec::new());
+        let later = store.chunk(&pieces[1].text, &pieces[1].hash);
+        let settings = ChunkedField {
+            max_chars: 24,
+            overlap: 1,
+            ..chunked(version)
+        };
+
+        assert!(store.gate_for(settings).allows(&later, None).await.unwrap());
     })
     .unwrap()
 }

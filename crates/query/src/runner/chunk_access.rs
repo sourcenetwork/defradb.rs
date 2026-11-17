@@ -136,3 +136,7 @@ where
         Ok(Some(hashes))
     }
 }
+
+#[cfg(test)]
+#[path = "chunk_access_tests.rs"]
+mod tests;
