@@ -123,6 +123,13 @@ LIVE_CASES = (
     ("in-process-archived-record", "in_process::in_process_archived_owner_record_does_not_authorize_access"),
     ("in-process-permission-rules", "in_process::in_process_permissions_are_proven_and_end_with_the_node"),
     ("in-process-provider-recovery", "in_process::in_process_provider_recovers_pending_before_concurrent_requests"),
+    ("in-process-command-kinds", "command_kinds::in_process_every_command_and_subject_kind_is_taken"),
+    ("in-process-request-bound", "request_bound::the_chain_executes_a_request_bound_delegation_for_its_command_only"),
+    ("in-process-owed-order", "owed_order::a_grant_still_in_flight_cannot_land_after_the_revocation_that_follows_it"),
+    ("smoke", "smoke::rust_verars_smoke"),
+    ("policy-administration", "policy_lifecycle::rust_verars_policy_lifecycle"),
+    ("compartments", "compartments::rust_verars_compartments"),
+    ("p2p-replication", "p2p_acp::rust_verars_p2p_acp"),
 )
 CARGO = ["cargo", "+1.99.1"]
 BUILD = ["--release", "--frozen", "-j", "2"]

@@ -268,6 +268,9 @@ lean_lib VerifiedRemoteAuthority where
 lean_lib ReplicaGate where
 
 @[default_target]
+lean_lib DeferredMerges where
+
+@[default_target]
 lean_lib AdministrativeRelationship where
 
 @[default_target]
