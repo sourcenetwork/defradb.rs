@@ -36,10 +36,19 @@
 \* appends each broken one to the log again, and truncates its plan as usual.
 \* The broken document stays owed at the tail and drains once someone fixes
 \* the lens. A deleted broken document needs no migration, so it drains. A
-\* drain whose every planned entry would be appended again writes nothing.
-\* The model takes the plan's cap to hold more entries than there are broken
-\* documents; past that, the code moves a full plan of them to the tail so
-\* the entries behind come forward.
+\* drain whose every planned entry would be appended again writes nothing,
+\* unless its plan is full: then the entries behind it may be healthy, so it
+\* still moves its broken ones to the tail and the entries behind come forward.
+\*
+\* How many entries a plan takes is its cap, which each drain's caller keeps.
+\* The cap starts small. A full plan means a backlog, so the next plan's cap
+\* doubles, up to the largest cap. A plan that is not full and writes something
+\* means the backlog is gone, so the cap goes back to the smallest. A plan that
+\* writes nothing keeps the cap, so a tail of broken documents does not swing
+\* the cap up and down and get carried again and again. A crash forgets the
+\* caps. The apply yields to other tasks between slices of documents, but its
+\* reads all come from the snapshot its transaction began at, so the model
+\* reads them in one step.
 \*
 \* Who acts: plain increments and deletes (one transaction each), one
 \* explicit transaction that increments and reads, two drains, a reindex, a
@@ -51,7 +60,7 @@
 \* the position record does not name; work is left in the log forever; a
 \* drain aborts the explicit transaction; a drop truncates more than a page
 \* of positions in one transaction; a broken document holds the others in
-\* the log.
+\* the log; a plan takes more entries than the largest cap.
 \*
 \* When a drain runs (requests, the sweep, a failing index) is modelled in
 \* DeferredDrainTask.tla; here a drain may start whenever something is owed.
@@ -61,9 +70,14 @@
 \*                                            IndexManager::place (a create),
 \*                                            IndexManager::replace (the walk's record read
 \*                                            and the record put it relies on)
-\*   crates/db/src/index/deferred/drain.rs    plan (snapshot), apply (live value,
+\*   crates/db/src/index/deferred/drain.rs    plan (snapshot, up to the cap),
+\*                                            Plan::only_renumbers (a full plan
+\*                                            still carries), apply (live value,
 \*                                            then position record; a failed
-\*                                            document appended again), truncate
+\*                                            document appended again; a yield
+\*                                            per slice), truncate,
+\*                                            PlanSize::after (the next cap)
+\*   crates/db/src/index/deferred/task.rs     drain_turn (the cap kept per index)
 \*   crates/db/src/index/manager/read.rs      IndexManager::read_index (owed docs,
 \*                                            own appends included, records read
 \*                                            unvalidated)
@@ -94,7 +108,12 @@ CONSTANTS
   Poisoned,    \* the documents whose migration fails at the start
   Carry,       \* "Tail": a drain appends a broken document again and drains the rest |
                \* "Abort": a broken document aborts the whole drain | "Drop": it is truncated and forgotten
-  Fixed        \* "Eventually": the operator fixes every broken document | "Never": nobody does
+  Fixed,       \* "Eventually": the operator fixes every broken document | "Never": nobody does
+  MinPlan,     \* the smallest cap: the most entries a drain's first plan takes
+  MaxPlan,     \* the largest cap a plan may grow to
+  Growth,      \* "Capped": a full plan doubles the cap up to MaxPlan | "Uncapped": it doubles with no limit
+  FullCarry    \* "Carry": a full plan of broken documents still moves them to the tail |
+               \* "Skip": any plan whose every entry would be carried writes nothing
 
 \* Each switch takes one of its values.
 ASSUME Overlay \in {"On", "Off"}
@@ -109,6 +128,10 @@ ASSUME Drop \in {"On", "Off"}
 ASSUME Cleanup \in {"Paged", "Whole", "FromOne"}
 ASSUME Carry \in {"Tail", "Abort", "Drop"}
 ASSUME Fixed \in {"Eventually", "Never"}
+ASSUME Growth \in {"Capped", "Uncapped"}
+ASSUME FullCarry \in {"Carry", "Skip"}
+\* A plan takes at least one entry, and the largest cap is no smaller than the smallest.
+ASSUME MinPlan \in Nat \ {0} /\ MaxPlan \in Nat /\ MinPlan <= MaxPlan
 \* Only documents can be broken.
 ASSUME Poisoned \subseteq Docs
 \* At least one write, or nothing happens.
@@ -133,6 +156,7 @@ VARIABLES
   dLive,    \* the live values each drain read (None for a deleted document)
   dFirst,   \* each drain's first planned position
   dFail,    \* the planned documents each drain could not migrate
+  dCap,     \* each drain's cap: the most entries its next plan takes
   txOpen,   \* whether the explicit transaction is open
   txd,      \* the increments the open transaction made, per document
   txApp,    \* the documents the open transaction appended to the log
@@ -153,7 +177,7 @@ VARIABLES
   biggest,  \* the most log positions one drop page truncated
   broken    \* the documents whose migration fails now
 
-vars == <<value, alive, index, rec, log, trunc, dpc, dP, dDocs, dRec, dLive, dFirst, dFail,
+vars == <<value, alive, index, rec, log, trunc, dpc, dP, dDocs, dRec, dLive, dFirst, dFail, dCap,
           txOpen, txd, txApp, sValue, sAlive, sIndex, sOwed, sRec, txAborted, steps, crashed,
           rx, walked, wpc, wRec, wLive, dropped, biggest, broken>>
 
@@ -197,6 +221,7 @@ TypeOK ==
   /\ rec \in [Docs -> Values \cup {None}]             \* position records
   /\ trunc \in 0..Len(log)                            \* truncation stays inside the log
   /\ dpc \in [Drains -> {"Idle", "Planned", "Read"}]  \* drain steps
+  /\ dCap \in [Drains -> MinPlan..MaxPlan]           \* caps stay between the smallest and the largest
   /\ txOpen \in BOOLEAN                               \* the transaction is open or not
   /\ txAborted \in BOOLEAN                            \* a drain aborted it or not
   /\ steps \in 0..MaxSteps                            \* bounded exploration
@@ -222,6 +247,7 @@ Init ==
   /\ dLive = [r \in Drains |-> [d \in Docs |-> None]]  \* nothing read
   /\ dFirst = [r \in Drains |-> 0]             \* no plan
   /\ dFail = [r \in Drains |-> {}]             \* nothing failed
+  /\ dCap = [r \in Drains |-> MinPlan]         \* every drain starts at the smallest cap
   /\ txOpen = FALSE                            \* no transaction open
   /\ txd = [d \in Docs |-> 0]                  \* no own increments
   /\ txApp = <<>>                              \* no own appends
@@ -242,7 +268,7 @@ Init ==
 \* The transaction state, left as is.
 txVars == <<txOpen, txd, txApp, sValue, sAlive, sIndex, sOwed, sRec, txAborted>>
 \* The drains' state, left as is.
-drainVars == <<dpc, dP, dDocs, dRec, dLive, dFirst, dFail>>
+drainVars == <<dpc, dP, dDocs, dRec, dLive, dFirst, dFail, dCap>>
 \* The reindex and drop state, left as is.
 lifeVars == <<rx, walked, wpc, wRec, wLive, dropped, biggest, broken>>
 
@@ -308,17 +334,17 @@ TxCommit ==
   /\ UNCHANGED <<sValue, sAlive, sIndex, sOwed, sRec, alive, index, rec, trunc, steps, crashed>>
   /\ UNCHANGED drainVars /\ UNCHANGED lifeVars
 
-\* A drain plans on a snapshot: a head P (any, as a cap may stop short) and the docs up to it.
+\* A drain plans on a snapshot: the head P is as far as its cap reaches, or the log's end
+\* if that comes first, and the docs up to it.
 Plan(r) ==
   /\ dpc[r] = "Idle"                           \* not already draining
   /\ Owed /= {}                                \* something is owed, so a drain was asked for (DeferredDrainTask.tla)
-  /\ \E p \in (trunc + 1)..Len(log) :          \* the planned head
-       /\ dP' = [dP EXCEPT ![r] = p]
-       /\ dDocs' = [dDocs EXCEPT ![r] = {log[i] : i \in (trunc + 1)..p}]
-       /\ p = Len(log) \/ p - trunc > Cardinality(Poisoned)   \* the cap holds more entries than there are broken docs
+  /\ LET p == Min(trunc + dCap[r], Len(log))    \* the planned head: at most the cap's worth of entries
+     IN /\ dP' = [dP EXCEPT ![r] = p]
+        /\ dDocs' = [dDocs EXCEPT ![r] = {log[i] : i \in (trunc + 1)..p}]   \* the docs it plans
   /\ dFirst' = [dFirst EXCEPT ![r] = trunc + 1]   \* where the plan starts
   /\ dpc' = [dpc EXCEPT ![r] = "Planned"]      \* the apply is next
-  /\ UNCHANGED <<dRec, dLive, dFail, value, alive, index, rec, log, trunc, steps, crashed>> /\ UNCHANGED txVars
+  /\ UNCHANGED <<dRec, dLive, dFail, dCap, value, alive, index, rec, log, trunc, steps, crashed>> /\ UNCHANGED txVars
   /\ UNCHANGED lifeVars
 
 \* The drain's apply transaction reads each planned doc's record and live value.
@@ -328,8 +354,16 @@ Read(r) ==
   /\ dLive' = [dLive EXCEPT ![r] = [d \in Docs |-> IF alive[d] THEN value[d] ELSE None]]   \* live values, unvalidated
   /\ dFail' = [dFail EXCEPT ![r] = {d \in dDocs[r] : alive[d] /\ d \in broken}]   \* a live broken doc fails to migrate
   /\ dpc' = [dpc EXCEPT ![r] = "Read"]         \* the commit is next
-  /\ UNCHANGED <<dP, dDocs, dFirst, value, alive, index, rec, log, trunc, steps, crashed>> /\ UNCHANGED txVars
+  /\ UNCHANGED <<dP, dDocs, dFirst, dCap, value, alive, index, rec, log, trunc, steps, crashed>> /\ UNCHANGED txVars
   /\ UNCHANGED lifeVars
+
+\* The cap a drain's next plan takes, after a plan of `taken` entries under `cap`.
+\* A full plan doubles it (a backlog); one that wrote something and was not full
+\* goes back to the smallest (the backlog is gone); one that wrote nothing keeps it.
+NextCap(cap, taken, wrote) ==
+  IF taken = cap                                \* the plan was full
+  THEN IF Growth = "Capped" THEN Min(2 * cap, MaxPlan) ELSE 2 * cap   \* double, up to the largest cap
+  ELSE IF wrote THEN MinPlan ELSE cap           \* short: shrink if it wrote, keep if not
 
 \* The drain's apply transaction commits, or aborts and runs again on a changed record.
 \* Only the records of documents it could migrate are read, so only they are checked.
@@ -338,18 +372,22 @@ Commit(r) ==
   /\ LET ok == dDocs[r] \ dFail[r]              \* the planned documents it can move
          carried == IF Carry = "Tail" THEN dFail[r] ELSE {}   \* those it appends again
          taken == dP[r] - dFirst[r] + 1          \* how many entries its plan took
+         full == taken = dCap[r]                 \* the plan stopped at its cap, so more may lie behind
      IN
      IF RecordRead = "Validated" /\ \E d \in ok : rec[d] /= dRec[r][d]
      THEN /\ dpc' = [dpc EXCEPT ![r] = "Planned"]   \* another drain moved a record: run the apply again
-          /\ UNCHANGED <<index, rec, trunc, log>>
+          /\ UNCHANGED <<index, rec, trunc, log, dCap>>   \* the same plan, the same cap
      ELSE IF dropped                            \* the index is gone: only the truncate is left
      THEN /\ trunc' = LET upto == IF Truncate = "Planned" THEN dP[r] ELSE Len(log)    \* how far it truncates
                       IN Max(upto, trunc)
           /\ dpc' = [dpc EXCEPT ![r] = "Idle"]      \* done
+          /\ dCap' = [dCap EXCEPT ![r] = NextCap(dCap[r], taken, TRUE)]   \* it wrote the truncate
           /\ UNCHANGED <<index, rec, log>>
      ELSE IF \/ Carry = "Abort" /\ dFail[r] /= {}              \* the bug: one broken doc aborts it all
-             \/ ok = {} /\ Cardinality(carried) = taken        \* carrying all it took only renumbers
+             \/ /\ ok = {} /\ Cardinality(carried) = taken     \* carrying all it took only renumbers,
+                /\ (FullCarry = "Skip" \/ ~full)              \* unless the plan is full
      THEN /\ dpc' = [dpc EXCEPT ![r] = "Idle"]      \* nothing changes; the task tries again later
+          /\ dCap' = [dCap EXCEPT ![r] = NextCap(dCap[r], taken, FALSE)]   \* it wrote nothing
           /\ UNCHANGED <<index, rec, trunc, log>>
      ELSE /\ index' = (index \ {<<d, dRec[r][d]>> : d \in ok})          \* old entries out
                       \cup {<<d, dLive[r][d]>> : d \in {e \in ok : dLive[r][e] /= None}}   \* live entries in
@@ -358,6 +396,8 @@ Commit(r) ==
           /\ trunc' = LET upto == IF Truncate = "Planned" THEN dP[r] ELSE Len(log)    \* how far it truncates
                       IN Max(upto, trunc)
           /\ dpc' = [dpc EXCEPT ![r] = "Idle"]      \* done
+          /\ dCap' = [dCap EXCEPT ![r] =             \* it wrote, but a full carry of broken docs frees nothing
+                        NextCap(dCap[r], taken, ok /= {} \/ Cardinality(carried) < taken)]
   /\ UNCHANGED <<dP, dDocs, dRec, dLive, dFirst, dFail, value, alive, steps, crashed>> /\ UNCHANGED txVars
   /\ UNCHANGED lifeVars
 
@@ -375,6 +415,7 @@ Crash ==
   /\ ~crashed                                  \* one crash is enough to explore
   /\ crashed' = TRUE                           \* it happened
   /\ dpc' = [r \in Drains |-> "Idle"]          \* drains in flight are gone
+  /\ dCap' = [r \in Drains |-> MinPlan]         \* the caps lived in memory: back to the smallest
   /\ txOpen' = FALSE /\ txd' = [d \in Docs |-> 0] /\ txApp' = <<>>   \* the open transaction is gone
   /\ wpc' = [d \in Docs |-> "Idle"]            \* a walk in flight is gone; the reindex resumes from what it wrote
   /\ UNCHANGED <<dP, dDocs, dRec, dLive, dFirst, dFail, sValue, sAlive, sIndex, sOwed, sRec, txAborted, value, alive, index, rec, log, trunc, steps>>
@@ -491,6 +532,9 @@ INV_SettledIndexExact ==
 
 \* No drop page truncates more than a page of positions in its one transaction.
 INV_CleanupBounded == biggest <= Page
+
+\* No plan takes more entries than the largest cap, so a drain's transaction stays bounded.
+INV_PlanBounded == \A r \in Drains : dpc[r] /= "Idle" => dP[r] - dFirst[r] + 1 <= MaxPlan
 
 \* Every owed document is eventually drained.
 PROP_Drains == <>[](Owed = {})

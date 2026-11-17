@@ -29,9 +29,16 @@
 \* failed index is here. Requests still drain the index's other documents and
 \* skip that one; each sweep tries it again.
 \*
+\* The task also keeps, per index, how many entries its next plan takes
+\* (DeferredIndex.tla, the cap): it grows while plans come back full and
+\* shrinks once the backlog is gone or a turn fails. That changes how much
+\* work one turn does, not who asks for it, so here a turn is still one unit
+\* of work, and a turn that leaves work asks again as before.
+\*
 \* Code it models:
 \*   crates/db/src/index/deferred/task.rs     drain_pass (turns, kept failures,
-\*                                            documents left to the sweep),
+\*                                            documents left to the sweep, the
+\*                                            plan size kept per index),
 \*                                            next_wake (the fixed sweep deadline,
 \*                                            a due sweep first), the settle at open
 \*   crates/db/src/index/deferred/requests.rs DrainRequests::request, defer, take
