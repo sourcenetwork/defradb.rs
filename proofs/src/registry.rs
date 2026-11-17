@@ -2924,6 +2924,18 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // A filter, count, order or ID through a relation reads the related
+        // row through the same read gate as selecting it, so a revoked or
+        // deleted related row is null to every query shape.
+        family: "ACP soundness + revocation + dual-path commits",
+        name: "INV_AnswerSeesOnlyVisible: no answer through a relation depends on a related row the reader may not read",
+        axis: Tla,
+        anchor: "crates/query/src/planner/builder/gate.rs Planner::gate_child, GatedChild; crates/query/src/planner/builder/mod.rs maybe_wrap_with_acp_filter; crates/query/src/planner/joins/filter_only.rs apply_filter_only_joins; crates/query/src/planner/joins/child_plan.rs build_relation_child_plan; crates/query/src/planner/joins/secondary_id.rs apply_secondary_id_joins; crates/query/src/planner/joins/sub_joins.rs apply_relation_sub_joins",
+        model_ref: "MC_RelationRead_{Green,Red_NoFilterGate}.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/acp/dac/relation_filter/revoke.rs relation_filter_on_a_revoked_policy_document",
+    },
+    Property {
         family: "Relation-filtered mutation",
         name: "INV_DecisionHoldsAtCommit / INV_AbortOnlyOnRangeWrite",
         axis: Tla,

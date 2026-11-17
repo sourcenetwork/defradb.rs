@@ -454,6 +454,8 @@ RUNS=(
   "MC_NacDacBypass_Red_Live.cfg NacDacBypass.tla RED" # grant read outside the read's transaction: a revoke after the snapshot is missed (INV_BypassOnlyWhenGranted)
   "MC_RelationFilterScan_Green.cfg RelationFilterScan.tla GREEN" # #2099: a relation-filtered delete or update scans validated, so a concurrent change to a related document aborts it
   "MC_RelationFilterScan_Red_Unvalidated.cfg RelationFilterScan.tla RED" # scans left unvalidated: the delete commits on a stale related match (INV_DecisionHoldsAtCommit)
+  "MC_RelationRead_Green.cfg RelationRead.tla GREEN" # every join child passes the read gate, so no filter, count, order or ID through a relation sees a row the reader may not read
+  "MC_RelationRead_Red_NoFilterGate.cfg RelationRead.tla RED" # joins built only for a filter skip the gate: a revoked pin still matches (INV_AnswerSeesOnlyVisible)
   "MC_DacPolicyAdd_Green.cfg DacPolicyAdd.tla GREEN" # #2321: add DAC policy checks nac, acp, creator, data, valid in Go's order; a remote ACP's policy is kept locally before its ID goes back
   "MC_DacPolicyAdd_Red_Nac.cfg DacPolicyAdd.tla RED" # permission check left out (INV_NoPolicyWithoutPermission)
   "MC_DacPolicyAdd_Red_Acp.cfg DacPolicyAdd.tla RED" # ACP check left out: no ACP, no error (INV_NoSilentFailure)
