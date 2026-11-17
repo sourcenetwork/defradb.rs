@@ -22,8 +22,8 @@ fn a_chunk_query_shows_chunks_only_while_the_reader_may_read_the_live_parent() {
         let query = format!("{{ {CHUNKS} {{ _docID }} }}");
 
         let shown = peer.run(&query, Some(owner())).await;
-        assert_eq!(shown[CHUNKS][0]["_docID"], chunk_id.as_str());
-        assert_eq!(shown[CHUNKS].as_array().unwrap().len(), 1);
+        // The gate's fields are scanned for it but never returned.
+        assert_eq!(shown[CHUNKS], serde_json::json!([{ "_docID": chunk_id }]));
         for reader in [None, Some(stranger())] {
             let hidden = peer.run(&query, reader).await;
             assert!(hidden[CHUNKS].as_array().unwrap().is_empty());

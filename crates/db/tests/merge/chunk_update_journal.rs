@@ -42,11 +42,15 @@ pub(super) struct Node {
 }
 
 pub(super) async fn node() -> Node {
+    node_with_policy(true).await
+}
+
+pub(super) async fn node_with_policy(policy: bool) -> Node {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let db = Arc::new(DB::from_arc(store.clone()).unwrap());
     let mut collections = query::parse_sdl(SDL).unwrap();
     for collection in &mut collections {
-        if collection.chunk_of.is_none() {
+        if policy && collection.chunk_of.is_none() {
             collection.policy = Some(PolicyDescription::new("chunk-policy", "articles"));
         }
     }

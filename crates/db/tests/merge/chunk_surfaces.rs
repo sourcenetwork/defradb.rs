@@ -19,11 +19,15 @@ use super::chunk_update_journal::{
 
 const NEW_BODY: &str = "A new short story.";
 
-async fn add_article(node: &Node) -> String {
+pub(super) async fn add_article(node: &Node) -> String {
+    add_article_with(node, owner(), BODY).await
+}
+
+pub(super) async fn add_article_with(node: &Node, author: Did, body: &str) -> String {
     let created = node
         .run(
-            &format!(r#"mutation {{ add_Article(input: {{body: "{BODY}"}}) {{ _docID }} }}"#),
-            Some(owner()),
+            &format!(r#"mutation {{ add_Article(input: {{body: "{body}"}}) {{ _docID }} }}"#),
+            Some(author),
         )
         .await;
     created["add_Article"][0]["_docID"]
@@ -32,7 +36,7 @@ async fn add_article(node: &Node) -> String {
         .to_string()
 }
 
-async fn delete_article(node: &Node, parent: &str) {
+pub(super) async fn delete_article(node: &Node, parent: &str) {
     node.run(
         &format!(r#"mutation {{ delete_Article(docID: "{parent}") {{ _docID }} }}"#),
         Some(owner()),
@@ -40,7 +44,7 @@ async fn delete_article(node: &Node, parent: &str) {
     .await;
 }
 
-fn readers() -> [Option<Did>; 2] {
+pub(super) fn readers() -> [Option<Did>; 2] {
     [None, Some(stranger())]
 }
 
@@ -57,7 +61,7 @@ fn signing() -> SigningConfig {
     }
 }
 
-fn doc_ids(rows: &Value) -> Vec<String> {
+pub(super) fn doc_ids(rows: &Value) -> Vec<String> {
     rows.as_array()
         .unwrap()
         .iter()
@@ -65,14 +69,14 @@ fn doc_ids(rows: &Value) -> Vec<String> {
         .collect()
 }
 
-async fn chunks(node: &Node, reader: Option<Did>) -> Vec<String> {
+pub(super) async fn chunks(node: &Node, reader: Option<Did>) -> Vec<String> {
     let data = node
         .run(&format!("{{ {CHUNKS} {{ _docID }} }}"), reader)
         .await;
     doc_ids(&data[CHUNKS])
 }
 
-async fn commits(node: &Node, chunk_id: &str, reader: Option<Did>) -> usize {
+pub(super) async fn commits(node: &Node, chunk_id: &str, reader: Option<Did>) -> usize {
     let data = node
         .run(
             &format!(r#"{{ _commits(docID: "{chunk_id}") {{ cid }} }}"#),
@@ -92,7 +96,7 @@ async fn version(node: &Node, cid: &cid::Cid, reader: Option<Did>) -> Vec<String
     doc_ids(&data[CHUNKS])
 }
 
-async fn arrivals(node: &Node, reader: Option<Did>) -> Vec<String> {
+pub(super) async fn arrivals(node: &Node, reader: Option<Did>) -> Vec<String> {
     let data = node
         .run(
             &format!(
