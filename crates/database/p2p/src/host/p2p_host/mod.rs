@@ -821,7 +821,11 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
     /// or in flight, so a repeated connect cannot stack a second connection
     /// (#1449). Like Go's `Connect`, which returns nil once connected, a
     /// skipped dial is success rather than an error.
+    ///
+    /// Every caller names the peer explicitly (ConnectPeers, a replicator), so
+    /// this lifts a `DisconnectPeers` that kept Kademlia from dialing it (#2992).
     pub(super) fn dial_peer(&mut self, peer_id: PeerId, addrs: Vec<Multiaddr>) -> Result<()> {
+        self.swarm.behaviour_mut().kademlia.unquiet(&peer_id);
         let dial_addrs: Vec<Multiaddr> = addrs
             .into_iter()
             .map(|addr| {
