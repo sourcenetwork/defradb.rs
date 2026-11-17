@@ -14,7 +14,7 @@ use crate::mapper::{Filter, OrderDirection};
 use crate::plan::IndexScanNode;
 use crate::plan::OrphanNode;
 use crate::planner::index_selection::{IndexScanParams, IndexScanType};
-use crate::planner::{Doc, ExecInfo, PlanNode};
+use crate::planner::{Doc, ExecInfo, GatedChild, PlanNode};
 
 use super::{JoinChildMetrics, JoinDirection, JoinSide};
 
@@ -206,7 +206,7 @@ impl TypeJoinOne {
     /// Create a new TypeJoinOne node.
     pub fn new(
         parent_plan: Box<dyn PlanNode>,
-        child_plan: Box<dyn PlanNode>,
+        child_plan: GatedChild,
         parent_side: JoinSide,
         child_side: JoinSide,
         document_mapping: DocumentMapping,
@@ -223,7 +223,7 @@ impl TypeJoinOne {
             parent_side,
             child_side,
             parent_plan,
-            child_plan,
+            child_plan: child_plan.into_plan(),
             document_mapping,
             current_doc: Doc::default(),
             direction,

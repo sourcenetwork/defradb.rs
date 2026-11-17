@@ -8,7 +8,7 @@ use crate::document::DocumentMapping;
 use crate::error::{QueryError, Result};
 use crate::mapper::{Filter, OrderBy, OrderCondition, Requestable, Select};
 use crate::plan::{IndexScanNode, ScanNode};
-use crate::planner::PlanNode;
+use crate::planner::{GatedChild, PlanNode};
 
 use super::super::builder::Planner;
 
@@ -17,8 +17,10 @@ use super::super::builder::Planner;
 /// Plan nodes are stored as `Option` so later stages can `take()` ownership
 /// without inventing placeholder trait objects.
 pub(super) struct RelationChildPlan {
+    /// The child plan while sub-joins are still added to it.
     pub child_plan: Option<Box<dyn PlanNode>>,
-    pub filter_child_plan: Option<Box<dyn PlanNode>>,
+    pub gated_child: Option<GatedChild>,
+    pub filter_child_plan: Option<GatedChild>,
     pub child_scan_mapping: DocumentMapping,
     pub combined_filter: Option<Filter>,
     pub nested_limit: Option<u64>,
@@ -323,7 +325,7 @@ impl Planner {
         // that uses an index for efficient filter evaluation. The main child_plan handles
         // display (ALL children), while filter_child_plan handles filter evaluation only.
         // This matches Go's inverted index join behavior.
-        let filter_child_plan: Option<Box<dyn PlanNode>> = if relation_field.kind.is_array() {
+        let filter_child_plan: Option<GatedChild> = if relation_field.kind.is_array() {
             parent_relation_filter_for_child
                 .as_ref()
                 .and_then(|rel_filter| {
@@ -384,7 +386,7 @@ impl Planner {
                         if let Some(ref fetcher) = self.fetcher {
                             index_scan = index_scan.with_fetcher(fetcher.clone());
                         }
-                        Some(Box::new(index_scan) as Box<dyn PlanNode>)
+                        Some(self.gate_child(Box::new(index_scan), &target_collection))
                     } else {
                         None // No index for filter, use in-memory evaluation
                     }
@@ -457,6 +459,7 @@ impl Planner {
 
         Ok(RelationChildPlan {
             child_plan: Some(child_plan),
+            gated_child: None,
             filter_child_plan,
             child_scan_mapping,
             combined_filter,

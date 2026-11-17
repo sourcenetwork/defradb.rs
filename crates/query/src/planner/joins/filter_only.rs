@@ -134,6 +134,8 @@ impl Planner {
                 }
                 Box::new(child_scan)
             };
+            // A filter must not match a related row the reader may not read.
+            let child_plan = self.gate_child(child_plan, &target_collection);
 
             // Get field indices
             let relation_field_index =

@@ -119,7 +119,7 @@ impl Planner {
                 if let Some(ref fetcher) = self.fetcher {
                     child_scan = child_scan.with_fetcher(fetcher.clone());
                 }
-                let child_plan: Box<dyn PlanNode> = Box::new(child_scan);
+                let child_plan = self.gate_child(Box::new(child_scan), &target_collection);
 
                 // Get child relation field index
                 let child_relation_index = target_relation_field

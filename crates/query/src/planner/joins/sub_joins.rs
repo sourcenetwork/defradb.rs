@@ -353,14 +353,11 @@ impl Planner {
             );
         }
 
-        // Insert ACP permission filter for the child collection (if ACP-protected).
-        child_plan = self.maybe_wrap_with_acp_filter(child_plan, &target_collection);
-
         // Update parent mapping with the final child mapping (after sub-joins)
         // This ensures the nested relation mappings are included
         mapping.set_child_at(relation_field_index, child_scan_mapping.clone());
 
-        child.child_plan = Some(child_plan);
+        child.gated_child = Some(self.gate_child(child_plan, &target_collection));
         child.child_scan_mapping = child_scan_mapping;
 
         Ok(child_plan_provides_ordering)

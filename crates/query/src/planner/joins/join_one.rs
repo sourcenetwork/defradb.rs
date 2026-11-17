@@ -36,9 +36,10 @@ impl Planner {
         ancestor_exhaustive: bool,
     ) -> Result<(Box<dyn PlanNode>, Option<bool>)> {
         let child_plan = child
-            .child_plan
+            .gated_child
             .take()
             .expect("child_plan present before TypeJoinOne");
+        let child_open = child_plan.is_open();
         let target_collection = &child.target_collection;
         let relation_field = &child.relation_field;
         let relation_field_name = child.relation_field_name.as_str();
@@ -343,8 +344,7 @@ impl Planner {
                     && fetcher.supports_index_queries()
                     && can_use_direct_indexed_child_cache(nested_select)
                     && multi_level_paths_for_relation.is_empty()
-                    && target_collection.policy.is_none()
-                    && !self.app_gates_reads(target_collection)
+                    && child_open
                     && !select.show_deleted
                 {
                     let child_fk_field_name = schema::CollectionVersion::relation_id_field_name(

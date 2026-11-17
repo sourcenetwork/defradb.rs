@@ -28,9 +28,10 @@ impl Planner {
         ancestor_exhaustive: bool,
     ) -> Result<Box<dyn PlanNode>> {
         let child_plan = child
-            .child_plan
+            .gated_child
             .take()
             .expect("child_plan present before TypeJoinMany");
+        let child_open = child_plan.is_open();
         let filter_child_plan = child.filter_child_plan.take();
         let target_collection = &child.target_collection;
         let relation_field = &child.relation_field;
@@ -202,8 +203,7 @@ impl Planner {
             if can_use_direct_indexed_child_cache(nested_select)
                 && !has_filter_child_plan
                 && multi_level_paths_for_relation.is_empty()
-                && target_collection.policy.is_none()
-                && !self.app_gates_reads(target_collection)
+                && child_open
                 && !select.show_deleted
             {
                 join_many = join_many.with_indexed_child_fetch(

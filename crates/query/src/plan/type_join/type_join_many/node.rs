@@ -5,7 +5,7 @@ use crate::document::DocumentMapping;
 use crate::error::{QueryError, Result};
 use crate::fetcher::DocFetcher;
 use crate::mapper::{GroupBy, OrderBy};
-use crate::planner::{Doc, ExecInfo, PlanNode};
+use crate::planner::{Doc, ExecInfo, GatedChild, PlanNode};
 
 use super::super::{JoinChildMetrics, JoinSide, RelationFilter};
 
@@ -144,7 +144,7 @@ impl TypeJoinMany {
     /// One-to-many joins require the child to have an FK field pointing to the parent.
     pub fn new(
         parent_plan: Box<dyn PlanNode>,
-        child_plan: Box<dyn PlanNode>,
+        child_plan: GatedChild,
         parent_side: JoinSide,
         child_side: JoinSide,
         document_mapping: DocumentMapping,
@@ -169,7 +169,7 @@ impl TypeJoinMany {
             parent_side,
             child_side,
             parent_plan,
-            child_plan,
+            child_plan: child_plan.into_plan(),
             document_mapping,
             current_doc: Doc::default(),
             child_fk_index,
@@ -294,7 +294,8 @@ impl TypeJoinMany {
     /// When set, this plan uses an index to find children matching the relation
     /// filter. The main child_plan still provides ALL children for display.
     /// This avoids narrowing the display scan while still getting indexed filter evaluation.
-    pub fn with_filter_child_plan(mut self, plan: Box<dyn PlanNode>) -> Self {
+    pub fn with_filter_child_plan(mut self, plan: GatedChild) -> Self {
+        let plan = plan.into_plan();
         // Determine the FK field index in the filter plan's mapping
         let fk_name = schema::CollectionVersion::relation_id_field_name(
             self.child_side.relation_field().name.as_str(),

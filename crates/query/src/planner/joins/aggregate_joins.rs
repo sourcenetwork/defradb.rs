@@ -497,8 +497,7 @@ impl Planner {
                         }
                     }
 
-                    // Insert ACP permission filter for the aggregate child collection (if ACP-protected).
-                    child_plan = self.maybe_wrap_with_acp_filter(child_plan, &target_collection);
+                    let child_plan = self.gate_child(child_plan, &target_collection);
 
                     // Set up child mapping in parent for TypeJoin (after sub-join modifications)
                     mapping.set_child_at(effective_relation_index, child_scan_mapping.clone());

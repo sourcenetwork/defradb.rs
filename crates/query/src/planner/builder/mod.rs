@@ -4,6 +4,7 @@
 
 mod cursor;
 mod filter_prep;
+mod gate;
 mod groupby;
 mod index_methods;
 mod ordering_only;
@@ -14,6 +15,8 @@ pub(in crate::planner) use cursor::expand_cursor_plan;
 
 #[cfg(test)]
 mod tests;
+
+pub use gate::GatedChild;
 
 use rapidhash::{HashMapExt, RapidHashMap};
 use std::sync::Arc;
@@ -230,6 +233,24 @@ impl Planner {
         plan: Box<dyn PlanNode>,
         collection: &CollectionVersion,
     ) -> Box<dyn PlanNode> {
+        let (acp, app) = self.read_checks(collection);
+        PermissionFilterNode::wrap_with_projection_and_inputs(
+            plan,
+            acp,
+            app,
+            self.acp_registration_projection.clone(),
+            self.retry_inputs.clone(),
+        )
+    }
+
+    /// The ACP and app checks a read of `collection` must pass.
+    fn read_checks(
+        &self,
+        collection: &CollectionVersion,
+    ) -> (
+        Option<crate::plan::AcpRead>,
+        Option<crate::access_hooks::AppReadCheck>,
+    ) {
         let acp = match (&self.acp, &collection.policy) {
             (Some(acp), Some(policy)) => Some(crate::plan::AcpRead {
                 acp: acp.clone(),
@@ -246,13 +267,7 @@ impl Planner {
             collection,
         )
         .map(|check| check.with_retry_inputs(self.retry_inputs.clone()));
-        PermissionFilterNode::wrap_with_projection_and_inputs(
-            plan,
-            acp,
-            app,
-            self.acp_registration_projection.clone(),
-            self.retry_inputs.clone(),
-        )
+        (acp, app)
     }
 
     /// Get a collection by name or CollectionID.

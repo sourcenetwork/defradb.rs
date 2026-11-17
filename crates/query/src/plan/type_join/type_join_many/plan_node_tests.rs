@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crate::document::DocumentMapping;
 use crate::error::Result;
 use crate::fetcher::{DocFetcher, FetchByIdsResult, IndexScanResult};
-use crate::planner::{Doc, IndexScanParams, IndexScanType, PlanNode};
+use crate::planner::{Doc, GatedChild, IndexScanParams, IndexScanType, PlanNode};
 
 use super::super::JoinSide;
 use super::node::TypeJoinMany;
@@ -328,7 +328,7 @@ async fn build_join(parent_scoped: bool) -> TypeJoinMany {
 
     let join = TypeJoinMany::new(
         parent_plan,
-        child_plan,
+        GatedChild::ungated(child_plan),
         parent_side,
         child_side,
         join_mapping,
@@ -446,7 +446,7 @@ fn init_builds_child_cache_from_indexed_fetch() {
 
         let mut join = TypeJoinMany::new(
             parent_plan,
-            child_plan,
+            GatedChild::ungated(child_plan),
             parent_side,
             child_side,
             join_mapping,
