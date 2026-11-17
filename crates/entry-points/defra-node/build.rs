@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::PathBuf;
 use std::process::Command;
 
 fn main() {
@@ -87,12 +88,35 @@ fn main() {
     println!("cargo:rustc-env=DEFRA_NODE_RUSTC={}", rustc.trim());
 
     // Rebuild on git branch / index changes so version metadata tracks commits.
-    let git_head = "../../../.git/HEAD";
-    println!("cargo:rerun-if-changed={git_head}");
-    if let Ok(head_contents) = fs::read_to_string(git_head) {
-        if let Some(reference) = head_contents.strip_prefix("ref: ") {
-            println!("cargo:rerun-if-changed=../../../.git/{}", reference.trim());
+    // Paths come from git, since in a worktree `.git` is a file and the
+    // branch refs live in the common dir. A watched path that does not exist
+    // counts as changed on every build, so only existing paths are emitted.
+    let git_dir = git_path("--git-dir");
+    let common_dir = git_path("--git-common-dir");
+    let mut watched = Vec::new();
+    if let Some(dir) = &git_dir {
+        watched.push(dir.join("HEAD"));
+        watched.push(dir.join("index"));
+        if let Ok(head) = fs::read_to_string(dir.join("HEAD")) {
+            if let (Some(reference), Some(common)) = (head.strip_prefix("ref: "), &common_dir) {
+                watched.push(common.join(reference.trim()));
+            }
         }
     }
-    println!("cargo:rerun-if-changed=../../../.git/index");
+    if let Some(common) = &common_dir {
+        watched.push(common.join("packed-refs"));
+    }
+    for path in watched.iter().filter(|path| path.exists()) {
+        println!("cargo:rerun-if-changed={}", path.display());
+    }
+}
+
+fn git_path(flag: &str) -> Option<PathBuf> {
+    Command::new("git")
+        .args(["rev-parse", "--path-format=absolute", flag])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|path| PathBuf::from(path.trim()))
 }
