@@ -277,7 +277,7 @@ ASSUME Preexisting => AssumeUncontested                     \* an existing one i
 ASSUME DenyRule \in {"AnyOwedDelete", "LatestOp", "None"}   \* a known deny rule
 ASSUME OwedAdds \in {"CreatorExplicit", "CreatorAny", "Any"}  \* a known grant rule
 ASSUME UncheckedYields \in {"drop", "pass", "hold"}       \* a known yielding rule
-ASSUME RegAuths \subseteq {"node", "deleg", "none"} /\ RegAuths # {}  \* known authorities
+ASSUME RegAuths \subseteq {"node", "deleg", "none", "ambient"} /\ RegAuths # {}  \* known authorities
 ASSUME RegRetry \in {"recorded", "ambient"}                \* a known retry rule
 ASSUME AbandonStates \in {"refused", "any"}                \* a known abandon rule
 ASSUME AbandonBy \in {"actor", "anyone"}                   \* a known abandon rule
@@ -348,7 +348,7 @@ TypeOK ==
   /\ delegOk \in BOOLEAN                                  \* a flag
   /\ crashes \in 0..MaxCrashes                            \* a small count
   /\ expiries \in 0..MaxExpiries                          \* a small count
-  /\ regAuth \in {"-", "node", "deleg", "none"}            \* a known authority
+  /\ regAuth \in {"-", "node", "deleg", "none", "ambient"} \* a known authority
   /\ regOk \in BOOLEAN /\ regPark \in BOOLEAN              \* flags
   /\ regNote \in BOOLEAN /\ regFail \in BOOLEAN            \* flags
   /\ regBy \in Presenters                                 \* a known signer
@@ -541,7 +541,10 @@ StageChange(s, c) ==
 \* The open transaction commits: the document, its owed registration and the
 \* staged changes become durable together. The registration records what it
 \* is to be sent with: the node's key for the creator, the delegation the
-\* create carried, or nothing. With nothing it is parked at once and says so.
+\* create's request itself carried, or nothing. With nothing it is parked at
+\* once and says so. A request that carries no bearer records nothing: the
+\* bug ("ambient" in RegAuths) records the token the process holds for the
+\* creator, which every later retry would then send.
 Commit ==
   /\ OpenTxn                                              \* something is open
   /\ doc' = (IF doc = "open" THEN "exists" ELSE doc)      \* the document is there
@@ -616,7 +619,7 @@ Crash ==
 
 \* The registration can be sent with what its record holds: the node's key
 \* for the creator, or a delegation that is still valid.
-RegValid == regAuth = "node" \/ (regAuth = "deleg" /\ regOk)
+RegValid == regAuth \in {"node", "ambient"} \/ (regAuth = "deleg" /\ regOk)
 \* Whom the provider registers: the signer of the credential it is sent.
 RegOwner == IF regAuth = "deleg" THEN regBy ELSE "c"
 \* The creator staged a change of its own that is still owed and carries a
@@ -629,12 +632,17 @@ ByChange ==
 \*   record   what its record holds;
 \*   change   the delegation recorded with a change the creator still owes,
 \*            when the record's own no longer serves;
-\*   request  the credential a request of the creator itself carries for
-\*            the creator, checked as at admission: the commit's own
-\*            submission goes this way. The creator may make such a request
-\*            at any time, so this way is always open;
-\*   ambient  a token the process happens to hold for the creator, which no
-\*            request carried and no record holds: the bug.
+\*   request  the credential a request of the creator presents for the
+\*            creator while that request runs, checked as at admission: the
+\*            bearer it carries or, in the submission its own commit makes,
+\*            what a request with no bearer presents in every call (the token
+\*            its embedder bound to the creator for such requests). The
+\*            creator may make such a request at any time, so this way is
+\*            always open;
+\*   ambient  a token the process happens to hold for the creator, sent
+\*            when no request of the creator is running, or on another
+\*            caller's request, or written into the record at the create and
+\*            sent from there: the bug.
 \* In every way but the last the creator presented the credential.
 Ways == {"record", "change", "request", "ambient"}
 MaySendBy(via) ==
@@ -650,7 +658,8 @@ RegisterOnChain(via) ==
   /\ chainOwner = "none"                                  \* it holds no owner yet
   /\ MaySendBy(via)                                       \* a way that is open
   /\ chainOwner' = (IF via = "record" THEN RegOwner ELSE "c")  \* the credential's signer owns it
-  /\ regVia' = via                                        \* remembered, for the properties
+  /\ regVia' = (IF via = "record" /\ regAuth = "ambient"
+                THEN "ambient" ELSE via)                  \* remembered, for the properties
   /\ UNCHANGED <<regAuth, regOk, regBy, regPark, regNote, regFail, gone, late,
                  tomb, acked>>
   /\ UNCHANGED <<doc, owedReg, st, chg, receipt, effects, checked, rolled,
