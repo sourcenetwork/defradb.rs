@@ -2377,9 +2377,20 @@ pub const PROPERTIES: &[Property] = &[
         name: "PROP_HealthyDrains — a document that cannot be migrated never holds the others in a deferred index's log",
         axis: Tla,
         anchor: "crates/db/src/index/deferred/drain.rs apply",
-        model_ref: "MC_DeferredIndex_{Green_Poison,Green_PoisonFixed,Red_PoisonAborts,Red_PoisonDropped}.cfg",
+        model_ref: "MC_DeferredIndex_{Green_Poison,Green_PoisonFixed,Red_PoisonAborts,Red_PoisonDropped,Red_FullPlanStuck}.cfg",
         tiers: &[Boundary],
         bound_by: "",
+    },
+    Property {
+        // A plan's cap doubles while plans come back full, so a backlog drains
+        // in fewer commits, and stops at the largest cap.
+        family: "Index-maintenance consistency",
+        name: "INV_PlanBounded — no drain plan takes more log entries than the largest cap",
+        axis: Tla,
+        anchor: "crates/db/src/index/deferred/drain.rs PlanSize::after; crates/db/src/index/deferred/task.rs drain_turn",
+        model_ref: "MC_DeferredIndex_{Green,Green_Deep,Green_Poison,Red_UncappedPlan}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/db/tests/index/deferred/plan_size.rs",
     },
     Property {
         // Whether an index is deferred follows the types a start registers,
