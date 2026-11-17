@@ -29,6 +29,7 @@ mod merge_keys;
 mod parked;
 mod protected_update;
 mod recovery;
+mod replica_plan;
 pub mod se_merge;
 mod signature;
 mod stale_version;

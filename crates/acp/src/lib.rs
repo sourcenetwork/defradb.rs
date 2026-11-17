@@ -38,6 +38,7 @@ mod permission;
 mod policy_cache;
 mod policy_lookup;
 mod provider_command;
+pub mod replica;
 // Both persistent stores require `S: Store + Send + Sync`, which the wasm
 // LevelDB store cannot satisfy, so they are native-only.
 #[cfg(not(target_arch = "wasm32"))]
@@ -78,6 +79,7 @@ pub use read_access::{check_doc_read_access, DirectChecker, DocAccess, ObjectAcc
 pub use relation::{
     RelationTuple, DELETER_RELATION, OWNER_RELATION, READER_RELATION, UPDATER_RELATION,
 };
+pub use replica::{ReplicaGrant, ReplicaOwed, ReplicaUnit};
 pub use store::AcpStore;
 pub use target_subject::parse_target_subject;
 pub use validation::{validate_resource_interface, REQUIRED_DOCUMENT_PERMISSIONS};

@@ -564,7 +564,10 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
     }
 }
 
-/// Local ownership disappears in the same commit as the deletion marker.
+/// Local ownership disappears in the same commit as the deletion marker. A
+/// remote provider keeps the object: its registration, owed or held, stays,
+/// so the delete and every earlier change replicate to nodes that wait for
+/// the provider to hold the document.
 pub(crate) async fn unregister_deleted_doc(
     provider: Option<&Arc<dyn acp::DocumentACP>>,
     systemstore: &NamespaceView,
@@ -573,26 +576,11 @@ pub(crate) async fn unregister_deleted_doc(
 ) -> query::error::Result<()> {
     if let (Some(provider), Some(policy)) = (provider, collection.schema().policy.as_ref()) {
         let acpstore = systemstore.sibling(storage::namespace::Namespace::Acpstore);
-        match provider.bind_transaction(acpstore.clone()) {
-            Some(scoped) => scoped
+        if let Some(scoped) = provider.bind_transaction(acpstore) {
+            scoped
                 .unregister_doc_object(&policy.id, &policy.resource_name, &doc_id.to_string())
                 .await
-                .map_err(|error| query::error::QueryError::execution(error.to_string()))?,
-            // A registration still owed for a deleted document is owed no more.
-            None => {
-                acp::PendingRegistrations::new(&acpstore)
-                    .clear(&policy.id, &policy.resource_name, &doc_id.to_string())
-                    .await
-                    .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
-                // Whoever waits for what is owed looks again once this commits.
-                let provider = Arc::clone(provider);
-                systemstore
-                    .on_commit(storage::corekv::OnCommit::Async(Box::new(move || {
-                        Box::pin(async move { provider.owed_changed() })
-                    })))
-                    .await
-                    .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
-            }
+                .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
         }
     }
     Ok(())

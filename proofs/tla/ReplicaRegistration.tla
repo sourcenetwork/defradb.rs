@@ -28,8 +28,8 @@
 \* stand-in lets only the receiver in), so every change waits.
 \*
 \* Two receivers may both register the same foreign document. The provider
-\* takes the first; the second is told "already registered". If the owner is
-\* one of the deployment's own actors, the second receiver drops its own
+\* takes the first; the second is told "already registered". The second
+\* receiver drops its own
 \* grants (it cannot give them: it does not own the document) and keeps a
 \* note that c's grants come from the owner; until the provider shows c may
 \* write, c's changes stay retryable there too. A receiver that first sees
@@ -69,15 +69,16 @@
 \*     delete do not all end merged on every receiver - LIVE_RowMerges.
 \*
 \* Rust owners: crates/db/src/merge/replica.rs ReplicaRegistration,
-\* ReplicaOwnership; crates/db/src/merge/merge_handler/composite.rs
-\* prepare_composite_merge; crates/db/src/merge/merge_handler/
-\* composite_persist.rs persist_merged_document; crates/db/src/merge/
-\* acp_merge_handler.rs AcpCompositeMergeHook (on_protected_composite,
-\* on_protected_update, plan_replica); crates/acp/src/replica.rs
-\* ReplicaUnit, record_replica_unit; crates/acp/src/external.rs
-\* ExternalDocumentAcp::replica_grant_owed; crates/acp/src/external/
-\* registration.rs register_and_clear; crates/db/src/write/autocommit/
-\* helpers.rs unregister_deleted_doc.
+\* ReplicaOwnership, ReplicaStep; crates/db/src/merge/merge_handler/
+\* replica_plan.rs plan_replica_frame; crates/db/src/merge/merge_handler/
+\* composite_persist.rs record_replica; crates/db/src/merge/
+\* acp_merge_handler.rs AcpCompositeMergeHook (plan_replica,
+\* on_protected_update, node_reads); crates/acp/src/replica.rs ReplicaMarker,
+\* ReplicaOwed; crates/acp/src/external/replica.rs record_replica_unit,
+\* record_adopted_replica, owed_on_replica, yield_replica_if_held_elsewhere,
+\* settle_replica_unit; crates/acp/src/external/registration.rs
+\* register_and_clear; crates/db/src/write/autocommit/helpers.rs
+\* unregister_deleted_doc.
 EXTENDS Naturals, FiniteSets
 
 \* Each RED configuration plants exactly one bug by naming it here.
@@ -188,11 +189,12 @@ CreatorDeletesLocally ==
                  memo, merged, rejected>>
 
 \* Whether r, merging a foreign genesis the provider already holds for
-\* another receiver, must note that c's grants come from that owner: c does
+\* another actor, must note that c's grants come from that owner: c does
 \* not write yet, so the owner's unit is still owed somewhere r cannot see.
+\* (Here the only other actors that can hold it are the other receivers.)
 Adopts(r) ==
   /\ ~own
-  /\ owner \in Receivers \ {r}
+  /\ owner \notin {"none", "c", r}
   /\ ~HoldsWrite("c")
   /\ marker[r] = "none"
   /\ Bug # "noAdoptOnArrival"
@@ -245,9 +247,8 @@ Decide(r, k) ==
 
 \* r sends its owed registration. The provider takes it when it holds
 \* nothing; otherwise r is told it is already registered. Then r's grants
-\* cannot be given by r: they are discarded, and when the owner is one of the
-\* deployment's own actors (another receiver) r notes that c's grants come
-\* from the owner.
+\* cannot be given by r: they are discarded with a note, and r notes that
+\* c's grants come from the owner.
 SettleRegistration(r) ==
   /\ reg[r] = "owed"
   /\ reg' = [reg EXCEPT ![r] = "done"]
@@ -256,8 +257,7 @@ SettleRegistration(r) ==
             /\ UNCHANGED <<grants, marker>>
        ELSE /\ grants' = [grants EXCEPT ![r] = {}]
             /\ marker' = [marker EXCEPT ![r] =
-                            IF owner \in Receivers /\ Bug # "adoptDrops"
-                              THEN "adopted" ELSE "none"]
+                            IF Bug # "adoptDrops" THEN "adopted" ELSE "none"]
             /\ owner' = owner
   /\ UNCHANGED <<own, cReg, writers, nodesRead, wState, memo, merged, rejected>>
 

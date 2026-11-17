@@ -586,47 +586,46 @@ fn a_wait_is_for_a_transaction_of_this_run_and_for_its_callers_entries() {
     .unwrap()
 }
 
+/// A remote provider keeps a deleted document's object: a registration still
+/// owed when the document is deleted stays owed and lands, so the delete and
+/// the changes before it replicate to nodes that wait for the provider to
+/// hold the document.
 #[test]
-fn a_wait_ends_when_the_document_that_owed_a_registration_is_deleted() {
+fn a_document_deleted_before_its_registration_settles_is_still_registered() {
     workers::block_on(async {
         let staging = Staging::new().await;
         // The provider answers the registration with an error that is not
-        // final, so it stays staged and a wait has something to wait for.
+        // final, so it stays owed past the create.
         staging
             .remote
             .garble_registration
             .store(true, Ordering::SeqCst);
-        let handle = staging.begin().await;
-        let id: u64 = handle.as_str().parse().unwrap();
-        let doc = staging.create(alice(), "doomed", Some(&handle)).await;
-        let _ = staging.node.runner.commit_txn(&handle).await;
-        let owed = staging.owed_by(&alice()).await;
-        assert_eq!(owed.len(), 1, "{owed:?}");
-        assert!(owed[0].sendable);
-        let attempts = owed[0].attempts;
+        let doc = staging.create(alice(), "doomed", None).await;
+        assert_eq!(staging.owed_by(&alice()).await.len(), 1);
 
-        let wait = staging.gate.await_transaction(id, None);
-        let delete = async {
-            // Once the wait has made its own submission it sleeps.
-            while staging.owed_by(&alice()).await[0].attempts == attempts {
-                futures_lite::future::yield_now().await;
-            }
-            let deleted = staging
-                .node
-                .runner
-                .execute(super::external_registration::request(
-                    &format!(r#"mutation {{ delete_Users(docID: "{doc}") {{ _docID }} }}"#),
-                    Some(alice()),
-                ))
-                .await;
-            assert!(!deleted.has_errors(), "{:?}", deleted.errors);
-        };
-        let waited = workers::timeout(std::time::Duration::from_secs(20), async {
-            futures::join!(wait, delete).0
-        })
-        .await
-        .expect("the delete wakes the wait");
-        assert_eq!(waited.unwrap(), OwedWait::Settled);
+        let deleted = staging
+            .node
+            .runner
+            .execute(super::external_registration::request(
+                &format!(r#"mutation {{ delete_Users(docID: "{doc}") {{ _docID }} }}"#),
+                Some(alice()),
+            ))
+            .await;
+        assert!(!deleted.has_errors(), "{:?}", deleted.errors);
+        let owed = staging.owed_by(&alice()).await;
+        assert_eq!(
+            owed.len(),
+            1,
+            "the delete dropped the owed registration: {owed:?}"
+        );
+
+        staging
+            .remote
+            .garble_registration
+            .store(false, Ordering::SeqCst);
+        let report = staging.gate.redrive_owed().await.unwrap();
+        assert_eq!((report.settled, report.failed), (1, 0));
+        assert_eq!(staging.remote.owner(&doc), Some(alice()));
         assert!(staging.owed_by(&alice()).await.is_empty());
     })
     .unwrap()

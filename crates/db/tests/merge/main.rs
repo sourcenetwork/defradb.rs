@@ -38,6 +38,7 @@ mod push_docs_selected_isolation;
 mod push_docs_selected_stop;
 mod push_docs_selection;
 mod receive_gate;
+mod replica_registration;
 mod replicated;
 mod replication;
 mod replication_filter;
