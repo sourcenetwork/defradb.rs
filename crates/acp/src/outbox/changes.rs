@@ -171,6 +171,29 @@ impl OwedChanges {
         ops::reauthorize(&self.active_view()?, seq, authority).await
     }
 
+    /// Delete the record of the change at `seq` in this transaction without
+    /// the provider holding it, and keep a note of it and of `reason` for
+    /// its actor. `false` when no such change is owed.
+    pub async fn discard(&self, seq: u64, reason: &str) -> Result<bool> {
+        ops::discard(&self.active_view()?, seq, reason).await
+    }
+
+    /// The note kept of the discarded change at `seq`, if any.
+    pub async fn discarded(&self, seq: u64) -> Result<Option<OwedChange>> {
+        ops::discarded(&self.active_view()?, seq).await
+    }
+
+    /// Every note of a discarded change, in sequence order.
+    pub async fn discards(&self) -> Result<Vec<OwedChange>> {
+        ops::discards(&self.active_view()?).await
+    }
+
+    /// Delete, in this transaction, the note of the discarded change at
+    /// `seq`: its actor was told.
+    pub async fn acknowledge(&self, seq: u64) -> Result<()> {
+        ops::acknowledge(&self.active_view()?, seq).await
+    }
+
     /// How many changes `actor` has unsettled on the node.
     pub async fn unsettled_by(&self, actor: &identity::Did) -> Result<u64> {
         ops::unsettled_by(&self.active_view()?, actor).await

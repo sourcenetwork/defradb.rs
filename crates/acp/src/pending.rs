@@ -67,6 +67,10 @@ pub struct PendingRegistration {
     /// The explicit transaction that made the create, where there was one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub txn: Option<u64>,
+    /// The run of the process `txn` is a transaction of
+    /// ([`crate::outbox::run_epoch`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epoch: Option<u64>,
     /// Where the registration stands. It is submitted in every state; the
     /// state says what the last submission came to.
     #[serde(default = "staged", skip_serializing_if = "is_staged")]
@@ -89,6 +93,7 @@ impl PendingRegistration {
             authority: None,
             request_bound: false,
             txn: None,
+            epoch: None,
             state: OwedState::Staged,
             attempts: 0,
             last_error: None,
@@ -115,6 +120,7 @@ impl PendingRegistration {
     #[must_use]
     pub fn in_transaction(mut self, txn: Option<u64>) -> Self {
         self.txn = txn;
+        self.epoch = txn.map(|_| crate::outbox::run_epoch());
         self
     }
 
@@ -146,6 +152,7 @@ impl PendingRegistration {
             && self.resource_name == other.resource_name
             && self.doc_id == other.doc_id
             && self.txn == other.txn
+            && self.epoch == other.epoch
     }
 
     /// The key this registration is recorded under.

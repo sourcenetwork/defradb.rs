@@ -149,14 +149,21 @@ pub trait DocumentACP: MaybeSendSync {
         Ok(Vec::new())
     }
 
-    /// Wait until what the explicit transaction `txn` owes this provider is
-    /// settled or has come to rest, and say which. What can still be sent is
-    /// submitted once first. The wait has no end of its own; its caller
-    /// bounds it.
-    async fn await_owed(&self, txn: u64) -> Result<crate::outbox::OwedWait> {
-        let _ = txn;
+    /// Wait until what the explicit transaction `txn` of this run owes
+    /// this provider is settled or has come to rest, and say which: for the
+    /// entries of `only`, or for all of them. What can still be sent is
+    /// submitted once first. The notes of discarded changes the answer
+    /// holds are deleted: whoever is given it has been told. The wait has
+    /// no end of its own; its caller bounds it.
+    async fn await_owed(&self, txn: u64, only: Option<&Did>) -> Result<crate::outbox::OwedWait> {
+        let _ = (txn, only);
         Ok(crate::outbox::OwedWait::Settled)
     }
+
+    /// A record of something owed to this provider was written or deleted
+    /// by a transaction that has now committed: whoever waits for what is
+    /// owed looks again.
+    fn owed_changed(&self) {}
 
     /// Take the credential of the request this provider serves
     /// ([`bind_request`](Self::bind_request)) as the fresh authority of one

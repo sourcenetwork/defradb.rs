@@ -49,6 +49,10 @@ pub(super) struct Remote {
     /// How many access decisions the provider was asked to record.
     pub(super) decisions: std::sync::atomic::AtomicU64,
     pub(super) down: AtomicBool,
+    /// The provider gives the node nothing to check a delegation against,
+    /// as the Cosmos provider does: it is passed its caller's token as it
+    /// is.
+    pub(super) unverifying: AtomicBool,
     /// A relationship write does not answer until `released`, and then
     /// fails as not delivered.
     stalled: AtomicBool,
@@ -98,6 +102,7 @@ impl Remote {
             lapsed: AtomicBool::new(false),
             decisions: std::sync::atomic::AtomicU64::new(0),
             down: AtomicBool::new(false),
+            unverifying: AtomicBool::new(false),
             stalled: AtomicBool::new(false),
             released: regolith::sync::Event::new(),
         })
@@ -211,6 +216,9 @@ impl VeraProvider for Remote {
     }
 
     fn delegation_audience(&self) -> Option<acp::DelegationAudience> {
+        if self.unverifying.load(Ordering::SeqCst) {
+            return None;
+        }
         Some(acp::DelegationAudience {
             worker: "did:key:stub-worker".into(),
             deployment: 1,
@@ -221,6 +229,9 @@ impl VeraProvider for Remote {
         &self,
         token: &str,
     ) -> Option<Result<acp::AuthenticatedCaller, ProviderError>> {
+        if self.unverifying.load(Ordering::SeqCst) {
+            return None;
+        }
         let did = token.strip_prefix("delegation:")?;
         Some(Ok(acp::AuthenticatedCaller {
             did: identity::Did::new(did).expect("fixture DID"),

@@ -138,6 +138,8 @@
 \*                                          acp/src/external/registration.rs), which
 \*                                          also keep the reason of a failure
 \*                                          (note_failure);
+\*   the note of a discarded change         crates/acp/src/outbox/ops.rs discard,
+\*                                          acknowledge;
 \*   the report, a fresh credential and     crates/acp/src/external/owed.rs
 \*   abandoning                             entries, reauthorize,
 \*                                          abandon_change, over
@@ -151,7 +153,9 @@
 \* RefusedDeleteDenies), and the rules RegFirst, InOrder, ParkedBlocks,
 \* DropUnchecked and UncheckedYields = "drop", the registration's record
 \* (RegAuths, RegValid, RegistrationFails, ReauthorizeReg with ReauthChecked,
-\* RegRetry = "recorded") and Abandon with AbandonStates = "refused" and
+\* RegRetry = "recorded", the three ways of MaySendBy), the notes of
+\* discarded changes (Noted, Acknowledge) and Abandon with
+\* AbandonStates = "refused" and
 \* AbandonBy = "actor". A pass that submits a change and reads the provider's
 \* answer is Mark, Land and Lookup taken together with nothing stored in
 \* between, which is the model with Marker = FALSE:

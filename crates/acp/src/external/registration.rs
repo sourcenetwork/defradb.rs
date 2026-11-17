@@ -116,6 +116,39 @@ where
         owed: &PendingRegistration,
         also: Option<&str>,
     ) -> Result<Arc<dyn DocumentACP>> {
+        let refusal = match self.recorded_registrar(owed, also) {
+            Ok(provider) => return Ok(provider),
+            Err(refusal) => refusal,
+        };
+        let command = ProviderCommand::RegisterObject {
+            policy_id: &owed.policy_id,
+            resource: &owed.resource_name,
+            object: &owed.doc_id,
+        };
+        let carried = self.serving.as_ref().is_some_and(|serving| {
+            let canonical = self.provider.canonical_actor(&owed.creator);
+            serving.carried_bearer_for(owed.creator.as_str()).is_some()
+                || serving.carried_bearer_for(canonical.as_str()).is_some()
+        });
+        if carried
+            && self
+                .provider
+                .command_authority(&owed.creator, command)
+                .is_ok()
+        {
+            return Ok(Arc::clone(&self.provider));
+        }
+        Err(refusal)
+    }
+
+    /// The provider `owed` is registered through with what is recorded
+    /// alone: with its own record, or with `also`. This is what a
+    /// submission that serves no request has.
+    pub(super) fn recorded_registrar(
+        &self,
+        owed: &PendingRegistration,
+        also: Option<&str>,
+    ) -> Result<Arc<dyn DocumentACP>> {
         let command = ProviderCommand::RegisterObject {
             policy_id: &owed.policy_id,
             resource: &owed.resource_name,
@@ -136,19 +169,6 @@ where
                 return Ok(by_other);
             }
         }
-        let carried = self.serving.as_ref().is_some_and(|serving| {
-            let canonical = self.provider.canonical_actor(&owed.creator);
-            serving.carried_bearer_for(owed.creator.as_str()).is_some()
-                || serving.carried_bearer_for(canonical.as_str()).is_some()
-        });
-        if carried
-            && self
-                .provider
-                .command_authority(&owed.creator, command)
-                .is_ok()
-        {
-            return Ok(Arc::clone(&self.provider));
-        }
         Err(refusal)
     }
 
@@ -156,7 +176,16 @@ where
     /// waiting for authority when nothing lets the node send it, as refused
     /// when the provider said no, and still staged otherwise. An unreachable
     /// provider says nothing about a registration already parked.
-    async fn note_failure(&self, owed: &PendingRegistration, error: &Error) -> Result<()> {
+    ///
+    /// The note is written only while the record is still the one the
+    /// submission was made for. Registrations are not submitted one at a
+    /// time, so a submission that fails late would otherwise park again a
+    /// registration that was given a fresh credential meanwhile.
+    pub(super) async fn note_failure(
+        &self,
+        owed: &PendingRegistration,
+        error: &Error,
+    ) -> Result<()> {
         let reason = error.to_string();
         let (state, counted) = match error {
             Error::OwedAuthorityUnavailable { .. } => (Some(OwedState::AwaitingAuthority), false),
@@ -173,6 +202,9 @@ where
             _ => (Some(OwedState::Staged), true),
         };
         self.rewrite(owed, |record| {
+            if record != owed {
+                return;
+            }
             let state = match state {
                 Some(state) => state,
                 None if record.state == OwedState::Staged => OwedState::Staged,
@@ -263,5 +295,130 @@ where
             Some(owed) => self.settle(&owed).await,
             None => Ok(()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use async_trait::async_trait;
+    use storage::RegolithStore;
+
+    use super::*;
+    use crate::identity::Identity;
+    use crate::permission::DocumentPermission;
+
+    /// A provider nothing in these tests reaches.
+    struct Unreached;
+
+    #[async_trait]
+    impl DocumentACP for Unreached {
+        async fn register_doc_object(&self, _: &Did, _: &str, _: &str, _: &str) -> Result<()> {
+            Ok(())
+        }
+
+        async fn is_doc_registered(&self, _: &str, _: &str, _: &str) -> Result<bool> {
+            Ok(false)
+        }
+
+        async fn check_doc_access(
+            &self,
+            _: &Identity,
+            _: DocumentPermission,
+            _: &str,
+            _: &str,
+            _: &str,
+        ) -> Result<bool> {
+            Ok(false)
+        }
+
+        async fn add_actor_relationship(
+            &self,
+            _: &Did,
+            _: &Did,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &[String],
+        ) -> Result<bool> {
+            Ok(false)
+        }
+
+        async fn delete_actor_relationship(
+            &self,
+            _: &Did,
+            _: &Did,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &[String],
+        ) -> Result<bool> {
+            Ok(false)
+        }
+
+        async fn unregister_doc_object(&self, _: &str, _: &str, _: &str) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    fn delegation(token: &str) -> Option<OwedAuthority> {
+        Some(OwedAuthority::Delegation {
+            token: token.into(),
+        })
+    }
+
+    #[test]
+    fn a_failure_noted_late_does_not_park_a_registration_given_a_fresh_credential() {
+        workers::block_on(async {
+            let gate = ExternalDocumentAcp::new(
+                Arc::new(Unreached),
+                Arc::new(RegolithStore::in_memory().unwrap()),
+            );
+            let mut submitted = PendingRegistration::new(
+                Did::new("did:key:creator").unwrap(),
+                "policy",
+                "users",
+                "bae-1",
+            );
+            submitted.authority = delegation("old");
+            let mut txn = gate.store.new_txn(false).await.unwrap();
+            txn.set(&submitted.key(), &submitted.encode().unwrap())
+                .await
+                .unwrap();
+            txn.commit().await.unwrap();
+
+            // While a submission under the old delegation is on its way the
+            // creator hands in a fresh one. The old submission then fails.
+            let fresh = gate
+                .rewrite(&submitted, |record| record.authority = delegation("fresh"))
+                .await
+                .unwrap()
+                .unwrap();
+            let lapsed = Error::OwedAuthorityUnavailable {
+                actor: "did:key:creator".into(),
+                reason: "expired".into(),
+            };
+            gate.note_failure(&submitted, &lapsed).await.unwrap();
+            let kept = gate
+                .owed("policy", "users", "bae-1")
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(kept, fresh);
+            assert_eq!(kept.state, OwedState::Staged);
+
+            // A failure of the submission made for the record as it is now
+            // is noted.
+            gate.note_failure(&fresh, &lapsed).await.unwrap();
+            let parked = gate
+                .owed("policy", "users", "bae-1")
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(parked.state, OwedState::AwaitingAuthority);
+            assert_eq!(parked.authority, delegation("fresh"));
+        })
+        .unwrap()
     }
 }

@@ -22,9 +22,10 @@ use storage::corekv::Store;
 use super::settle::{object_of, ObjectKey, Write};
 use super::{ExternalDocumentAcp, OwedScope};
 use crate::error::{Error, Result};
+use crate::outbox::record::of_this_run;
 use crate::outbox::{
-    OwedAuthority, OwedChange, OwedEntry, OwedFilter, OwedOutcome, OwedRef, OwedState, OwedWait,
-    OwedWhat, StagedCount,
+    OwedAuthority, OwedChange, OwedEntry, OwedFilter, OwedHold, OwedOutcome, OwedRef, OwedState,
+    OwedWait, OwedWhat, StagedCount,
 };
 use crate::pending::{PendingRegistration, PENDING_PREFIX};
 use crate::provider_command::ProviderCommand;
@@ -37,15 +38,7 @@ fn state_name(state: &OwedState) -> &'static str {
     }
 }
 
-fn registration_ref(owed: &PendingRegistration) -> OwedRef {
-    OwedRef::Registration {
-        policy_id: owed.policy_id.clone(),
-        resource: owed.resource_name.clone(),
-        object: owed.doc_id.clone(),
-    }
-}
-
-fn registration_entry(owed: PendingRegistration) -> OwedEntry {
+fn registration_entry(owed: PendingRegistration, sendable: bool) -> OwedEntry {
     OwedEntry {
         what: OwedWhat::Registration,
         actor: owed.creator,
@@ -53,12 +46,53 @@ fn registration_entry(owed: PendingRegistration) -> OwedEntry {
         resource: owed.resource_name,
         object: owed.doc_id,
         txn: owed.txn,
-        sendable: owed.state == OwedState::Staged,
+        sendable,
         state: owed.state,
         reason: owed.last_error,
         attempts: owed.attempts,
         held_by: None,
         authority: owed.authority.as_ref().map(Into::into),
+        discarded: false,
+    }
+}
+
+/// The note of a change whose record was deleted without the provider
+/// holding it, as an entry.
+fn discarded_entry(note: OwedChange) -> OwedEntry {
+    OwedEntry {
+        what: OwedWhat::Change {
+            seq: note.seq,
+            op: note.op,
+            relation: note.tuple.relation,
+            subject: note.tuple.subject,
+        },
+        actor: note.actor,
+        policy_id: note.tuple.policy_id,
+        resource: note.tuple.resource,
+        object: note.tuple.object,
+        txn: note.txn,
+        state: note.state,
+        reason: note.last_error,
+        attempts: note.attempts,
+        held_by: None,
+        authority: None,
+        sendable: false,
+        discarded: true,
+    }
+}
+
+/// What a write to the record of a change that did not go through means:
+/// the change is gone, or a transaction that committed meanwhile won.
+fn unwritten(entry: &OwedRef, actor: &Did, still_owed: bool) -> Error {
+    if still_owed {
+        Error::OwedEntryConflict {
+            entry: entry.to_string(),
+        }
+    } else {
+        Error::OwedEntryNotFound {
+            entry: entry.to_string(),
+            actor: actor.to_string(),
+        }
     }
 }
 
@@ -67,10 +101,7 @@ where
     S: Store + 'static,
 {
     fn not_found(entry: &OwedRef, actor: &Did) -> Error {
-        Error::OwedEntryNotFound {
-            entry: entry.to_string(),
-            actor: actor.to_string(),
-        }
+        unwritten(entry, actor, false)
     }
 
     fn same_actor(&self, left: &Did, right: &Did) -> bool {
@@ -78,21 +109,21 @@ where
     }
 
     /// What is owed to the provider that `filter` names: registrations
-    /// first, then changes in queue order.
+    /// first, then changes in queue order, then the notes of changes whose
+    /// records were deleted without the provider holding them. Every entry
+    /// of one actor or one transaction is found by reading all that is
+    /// owed, a page at a time.
     pub async fn entries(&self, filter: OwedFilter<'_>) -> Result<Vec<OwedEntry>> {
         let mut entries = Vec::new();
         let mut registrations = RapidHashMap::new();
+        let mut owed = Vec::new();
         match filter {
             OwedFilter::Entry(OwedRef::Change { .. }) => {}
             OwedFilter::Entry(OwedRef::Registration {
                 policy_id,
                 resource,
                 object,
-            }) => entries.extend(
-                self.owed(policy_id, resource, object)
-                    .await?
-                    .map(registration_entry),
-            ),
+            }) => owed.extend(self.owed(policy_id, resource, object).await?),
             OwedFilter::Actor(_) | OwedFilter::Transaction(_) => {
                 let mut start = PENDING_PREFIX.to_vec();
                 loop {
@@ -102,21 +133,21 @@ where
                     };
                     start = last.key();
                     start.push(0);
-                    entries.extend(
-                        page.into_iter()
-                            .filter(|owed| match filter {
-                                OwedFilter::Actor(actor) => self.same_actor(&owed.creator, actor),
-                                OwedFilter::Transaction(txn) => owed.txn == Some(txn),
-                                OwedFilter::Entry(_) => false,
-                            })
-                            .map(registration_entry),
-                    );
+                    owed.extend(page.into_iter().filter(|owed| match filter {
+                        OwedFilter::Actor(actor) => self.same_actor(&owed.creator, actor),
+                        OwedFilter::Transaction(txn) => of_this_run(owed.txn, owed.epoch, txn),
+                        OwedFilter::Entry(_) => false,
+                    }));
                 }
             }
         }
+        for owed in owed {
+            let sendable = self.registration_sendable(&owed).await?;
+            entries.push(registration_entry(owed, sendable));
+        }
         let wanted = |change: &OwedChange| match filter {
             OwedFilter::Actor(actor) => change.actor == self.provider.canonical_actor(actor),
-            OwedFilter::Transaction(txn) => change.txn == Some(txn),
+            OwedFilter::Transaction(txn) => of_this_run(change.txn, change.epoch, txn),
             OwedFilter::Entry(OwedRef::Change { seq }) => change.seq == *seq,
             OwedFilter::Entry(OwedRef::Registration { .. }) => false,
         };
@@ -138,31 +169,135 @@ where
                 break;
             }
         }
+        entries.extend(
+            self.discard_notes(match filter {
+                OwedFilter::Entry(OwedRef::Change { seq }) => Some(*seq),
+                _ => None,
+            })
+            .await?
+            .into_iter()
+            .filter(|note| wanted(note))
+            .map(discarded_entry),
+        );
         Ok(entries)
+    }
+
+    /// Whether a submission could still move the registration `owed`: it is
+    /// staged, or it waits for authority the node now has, by its own
+    /// record or by the delegation of a change its creator owes on the same
+    /// object. One the provider refused is not sent again before the next
+    /// start.
+    async fn registration_sendable(&self, owed: &PendingRegistration) -> Result<bool> {
+        match owed.state {
+            OwedState::Staged => return Ok(true),
+            OwedState::Refused { .. } => return Ok(false),
+            OwedState::AwaitingAuthority => {}
+        }
+        if self.recorded_registrar(owed, None).is_ok() {
+            return Ok(true);
+        }
+        let creator = self.provider.canonical_actor(&owed.creator);
+        let mut after = None;
+        loop {
+            let page = self.owed_changes_after(after).await?;
+            let Some(last) = page.last() else {
+                return Ok(false);
+            };
+            after = Some(last.seq);
+            for change in &page {
+                let on_object = change.tuple.policy_id == owed.policy_id
+                    && change.tuple.resource == owed.resource_name
+                    && change.tuple.object == owed.doc_id;
+                if let (true, OwedAuthority::Delegation { token }) =
+                    (on_object && change.actor == creator, &change.authority)
+                {
+                    if self.recorded_registrar(owed, Some(token)).is_ok() {
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+    }
+
+    /// The notes of discarded changes: the one of `seq`, or all of them.
+    async fn discard_notes(&self, seq: Option<u64>) -> Result<Vec<OwedChange>> {
+        let txn = self.begin(true).await?;
+        let changes = self.owed_changes(&txn.acpstore(), StagedCount::new());
+        let notes = match seq {
+            Some(seq) => changes
+                .discarded(seq)
+                .await
+                .map(|note| note.into_iter().collect()),
+            None => changes.discards().await,
+        };
+        drop(changes);
+        txn.discard()
+            .map_err(|error| Error::Storage(error.to_string()))?;
+        notes
+    }
+
+    /// Delete the notes of the discarded changes among `entries`: whoever
+    /// is given these entries has been told.
+    async fn acknowledge(&self, entries: &[OwedEntry]) -> Result<()> {
+        let told: Vec<u64> = entries
+            .iter()
+            .filter(|entry| entry.discarded)
+            .filter_map(|entry| match entry.what {
+                OwedWhat::Change { seq, .. } => Some(seq),
+                OwedWhat::Registration => None,
+            })
+            .collect();
+        if told.is_empty() {
+            return Ok(());
+        }
+        let txn = self.begin(false).await?;
+        let changes = self.owed_changes(&txn.acpstore(), StagedCount::new());
+        let mut deleted = Ok(());
+        for seq in told {
+            deleted = changes.acknowledge(seq).await;
+            if deleted.is_err() {
+                break;
+            }
+        }
+        drop(changes);
+        match deleted {
+            Ok(()) => match txn.commit().await {
+                Ok(()) => Ok(()),
+                // A note another caller deleted first was told to that one.
+                Err(datastore::Error::Storage(error)) if error.is_txn_conflict() => Ok(()),
+                Err(error) => Err(Error::Storage(error.to_string())),
+            },
+            Err(error) => {
+                txn.discard()
+                    .map_err(|error| Error::Storage(error.to_string()))?;
+                Err(error)
+            }
+        }
     }
 
     /// `change` as it is reported: with what it waits behind, and whether
     /// the node can still send it. `registrations` remembers what each
-    /// object owes.
+    /// object owes and whether that can be sent.
     async fn change_entry(
         &self,
         change: OwedChange,
-        registrations: &mut RapidHashMap<ObjectKey, Option<PendingRegistration>>,
+        registrations: &mut RapidHashMap<ObjectKey, Option<bool>>,
     ) -> Result<OwedEntry> {
         let tuple = &change.tuple;
         let object = object_of(tuple);
         if !registrations.contains_key(&object) {
-            let owed = self
+            let sendable = match self
                 .owed(&tuple.policy_id, &tuple.resource, &tuple.object)
-                .await?;
-            registrations.insert(object.clone(), owed);
+                .await?
+            {
+                Some(owed) => Some(self.registration_sendable(&owed).await?),
+                None => None,
+            };
+            registrations.insert(object.clone(), sendable);
         }
         let staged = change.state == OwedState::Staged;
-        let (held_by, sendable) = match registrations.get(&object).and_then(Option::as_ref) {
-            Some(owed) => (
-                Some(registration_ref(owed)),
-                staged && owed.state == OwedState::Staged,
-            ),
+        let (held_by, sendable) = match registrations.get(&object).copied().flatten() {
+            Some(registration) => (Some(OwedHold::Registration), staged && registration),
             None => match self.oldest_on(tuple).await? {
                 // An unchecked change that is parked holds nothing: a later
                 // change of its tuple passes it.
@@ -171,7 +306,9 @@ where
                         && (oldest.authority_checked || oldest.state == OwedState::Staged) =>
                 {
                     (
-                        Some(OwedRef::Change { seq: oldest.seq }),
+                        Some(OwedHold::Change {
+                            seq: (oldest.actor == change.actor).then_some(oldest.seq),
+                        }),
                         staged && oldest.state == OwedState::Staged,
                     )
                 }
@@ -196,23 +333,40 @@ where
             held_by,
             authority: Some((&change.authority).into()),
             sendable,
+            discarded: false,
         })
     }
 
-    /// Wait until what transaction `txn` owes the provider is settled or
-    /// has come to rest, and say which. The first look submits what the
-    /// node can still send, once; after that the wait ends when a record
-    /// changes so that nothing is left to send. It returns early, with what
-    /// is still pending, when the provider could not be reached: nothing on
-    /// this node sends again by itself. The caller bounds the wait.
-    pub async fn await_transaction(&self, txn: u64) -> Result<OwedWait> {
+    /// What transaction `txn` of this run still owes, as `only` sees it:
+    /// everything, or the entries of one actor.
+    async fn of_transaction(&self, txn: u64, only: Option<&Did>) -> Result<Vec<OwedEntry>> {
+        let mut entries = self.entries(OwedFilter::Transaction(txn)).await?;
+        if let Some(actor) = only {
+            entries.retain(|entry| self.same_actor(&entry.actor, actor));
+        }
+        Ok(entries)
+    }
+
+    /// Wait until what transaction `txn` of this run owes the provider is
+    /// settled or has come to rest, and say which, for the entries of
+    /// `only` or for all of them. Another actor's entries neither show nor
+    /// keep the wait. The first look submits what the node can still send,
+    /// once; after that the wait ends when a record changes so that nothing
+    /// is left to send. It returns early, with what is still pending, when
+    /// the provider could not be reached: nothing on this node sends again
+    /// by itself. The caller bounds the wait.
+    ///
+    /// Every record written wakes every wait, which then reads all that is
+    /// owed again.
+    pub async fn await_transaction(&self, txn: u64, only: Option<&Did>) -> Result<OwedWait> {
         let mut submitted = false;
         loop {
             // Asked for before the read, so a record that changes after it
             // is not missed.
             let changed = self.changed.notified();
-            let entries = self.entries(OwedFilter::Transaction(txn)).await?;
+            let entries = self.of_transaction(txn, only).await?;
             if !entries.iter().any(|entry| entry.sendable) {
+                self.acknowledge(&entries).await?;
                 return Ok(OwedWait::of(entries, false));
             }
             if submitted {
@@ -221,7 +375,8 @@ where
             }
             submitted = true;
             if self.submit_transaction(txn, &entries).await? {
-                let entries = self.entries(OwedFilter::Transaction(txn)).await?;
+                let entries = self.of_transaction(txn, only).await?;
+                self.acknowledge(&entries).await?;
                 return Ok(OwedWait::of(entries, true));
             }
         }
@@ -326,14 +481,19 @@ where
                 )?;
                 let _pass = self.settling.lock().await;
                 if !self.write(*seq, Write::Reauthorize(authority)).await? {
-                    return Err(Self::not_found(entry, actor));
+                    let still_owed = self.change(*seq).await?.is_some();
+                    return Err(unwritten(entry, actor, still_owed));
                 }
                 object_of(&change.tuple)
             }
         };
         self.submit_object(object).await?;
         Ok(match self.entries(OwedFilter::Entry(entry)).await?.pop() {
-            Some(entry) => OwedOutcome::Owed(Box::new(entry)),
+            Some(left) if left.discarded => {
+                self.acknowledge(std::slice::from_ref(&left)).await?;
+                OwedOutcome::Discarded(Box::new(left))
+            }
+            Some(left) => OwedOutcome::Owed(Box::new(left)),
             None => OwedOutcome::Settled,
         })
     }
@@ -342,7 +502,13 @@ where
     /// staged, without the provider holding it. The change stops holding
     /// the later changes of its tuple, which are submitted once, and a
     /// delete stops denying its subject. A change in any other state is
-    /// [`Error::OwedChangeNotRefused`]; one of another actor is not found.
+    /// [`Error::OwedChangeNotRefused`]; one of another actor is not found;
+    /// and when a transaction that committed meanwhile changed what is owed
+    /// on the relationship, nothing is written and the call fails with
+    /// [`Error::OwedEntryConflict`], to be made again.
+    ///
+    /// Once the record is deleted the call has succeeded. Whatever the
+    /// submission of the changes behind it comes to is in their records.
     pub async fn abandon_change(&self, actor: &Did, seq: u64) -> Result<()> {
         let entry = OwedRef::Change { seq };
         let change = {
@@ -359,7 +525,8 @@ where
                 });
             }
             if !self.write(seq, Write::Abandon).await? {
-                return Err(Self::not_found(&entry, actor));
+                let still_owed = self.change(seq).await?.is_some();
+                return Err(unwritten(&entry, actor, still_owed));
             }
             change
         };
@@ -372,8 +539,18 @@ where
             relation = %change.tuple.relation,
             "Owed ACP change abandoned by its actor; the provider does not hold it"
         );
-        if self.oldest_on(&change.tuple).await?.is_some() {
-            self.submit_object(object_of(&change.tuple)).await?;
+        let behind = match self.oldest_on(&change.tuple).await {
+            Ok(Some(_)) => self.submit_object(object_of(&change.tuple)).await,
+            Ok(None) => Ok(()),
+            Err(error) => Err(error),
+        };
+        if let Err(error) = behind {
+            tracing::warn!(
+                target: "acp::audit",
+                seq,
+                %error,
+                "Could not submit the changes behind an abandoned ACP change; they stay owed"
+            );
         }
         Ok(())
     }
@@ -396,5 +573,24 @@ where
         objects.insert(object);
         self.pass(Some(&objects)).await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_write_that_lost_to_a_commit_is_a_conflict_and_not_a_missing_entry() {
+        let actor = Did::new("did:key:actor").unwrap();
+        let entry = OwedRef::Change { seq: 7 };
+        assert!(matches!(
+            unwritten(&entry, &actor, true),
+            Error::OwedEntryConflict { entry } if entry == "change 7"
+        ));
+        assert!(matches!(
+            unwritten(&entry, &actor, false),
+            Error::OwedEntryNotFound { .. }
+        ));
     }
 }

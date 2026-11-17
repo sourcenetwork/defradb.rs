@@ -26,7 +26,7 @@ mod changes;
 pub(crate) mod deny;
 mod keys;
 mod ops;
-mod record;
+pub(crate) mod record;
 mod report;
 mod staging;
 mod submission;
@@ -37,12 +37,13 @@ pub use changes::{
 };
 pub use deny::{OwedDenial, OwedDenials};
 pub use keys::OwedTupleState;
+pub use ops::MAX_DISCARD_NOTES;
 pub use record::{
-    NewOwedChange, OwedAuthority, OwedChange, OwedOp, OwedState, OwedSubject, OwedTuple,
+    run_epoch, NewOwedChange, OwedAuthority, OwedChange, OwedOp, OwedState, OwedSubject, OwedTuple,
     MAX_OWED_CHANGE_BYTES, RESERVED_REASON_BYTES,
 };
 pub use report::{
-    OwedAuthorityKind, OwedEntry, OwedFilter, OwedOutcome, OwedRef, OwedWait, OwedWhat,
+    OwedAuthorityKind, OwedEntry, OwedFilter, OwedHold, OwedOutcome, OwedRef, OwedWait, OwedWhat,
 };
 pub use staging::{StageRelationship, Staged, TransactionOutbox};
 pub use submission::{submit_relationship, Submission};

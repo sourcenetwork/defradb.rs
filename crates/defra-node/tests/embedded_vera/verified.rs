@@ -588,7 +588,7 @@ fn owed_commands_take_fresh_delegations_bound_to_them() {
         assert_eq!(owed[0].state, acp::OwedState::AwaitingAuthority);
         assert!(owed[0].reason.is_some(), "{owed:?}");
         assert_eq!(owed[1].state, acp::OwedState::Staged);
-        assert_eq!(owed[1].held_by, Some(owed[0].reference()));
+        assert_eq!(owed[1].held_by, Some(acp::OwedHold::Registration));
         assert!(matches!(
             on.node
                 .await_owed_acp_as(&caller, &txn, Duration::from_secs(30))

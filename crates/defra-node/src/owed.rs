@@ -114,12 +114,19 @@ impl Node {
             .map_err(|_| query::QueryError::execution("transaction ID must be numeric"))?;
         let acp = self.ops().document_acp;
         self.on_acp(move || async move {
-            let wait = match workers::timeout(deadline, acp.await_owed(txn)).await {
+            // An actor's wait is for its own entries: another's neither
+            // show in it nor keep it.
+            let only = match &reader {
+                Reader::Node => None,
+                Reader::Actor(actor) => Some(actor),
+            };
+            let wait = match workers::timeout(deadline, acp.await_owed(txn, only)).await {
                 Ok(wait) => wait?,
                 // The wait is dropped with whatever it was submitting still
                 // in flight, as a commit that stops waiting leaves it.
                 Err(workers::Error::TimedOut) => {
-                    let left = acp.owed_entries(acp::OwedFilter::Transaction(txn)).await?;
+                    let mut left = acp.owed_entries(acp::OwedFilter::Transaction(txn)).await?;
+                    left.retain(|entry| reader.reads(acp.as_ref(), &entry.actor));
                     match left.is_empty() {
                         true => acp::OwedWait::Settled,
                         false if left.iter().any(|entry| entry.sendable) => {
@@ -138,7 +145,7 @@ impl Node {
                     .into())
                 }
             };
-            Ok(wait.only(|entry| reader.reads(acp.as_ref(), &entry.actor)))
+            Ok(wait)
         })
         .await
     }
@@ -161,7 +168,14 @@ impl Node {
     /// recorded with it; one whose own authority has run out is then parked
     /// and reported, and is given its own credential by another call. The
     /// answer is [`acp::OwedOutcome::Settled`] once the provider holds the
-    /// entry, else the entry as it now stands.
+    /// entry, [`acp::OwedOutcome::Owed`] with the entry as it now stands,
+    /// or [`acp::OwedOutcome::Discarded`] when its record was deleted
+    /// without the provider holding it, with the reason.
+    ///
+    /// Every fresh credential is checked as a verified write's is: a
+    /// provider that gives the node nothing to verify a delegation against
+    /// takes none here, and an entry there is sent again only with a key
+    /// the node holds or by a request that carries the actor's bearer.
     ///
     /// Only the entry's actor and the node's principal may call; to anyone
     /// else the entry is `acp::Error::OwedEntryNotFound`.
@@ -187,8 +201,14 @@ impl Node {
                 .filter(|owed| reader.reads(acp.as_ref(), &owed.actor))
                 .ok_or_else(unknown)?;
             // The credential is carried for the entry's actor and no one
-            // else, under the spelling the entry keeps it in.
-            let carried = credential.carried_by(RequestContext::default(), owed.actor.as_str());
+            // else, under the spelling the entry keeps it in. It is to be
+            // recorded and used when no request is there to vouch for it,
+            // so it counts only where the provider gives the node something
+            // to check it against: the requirement a verified write makes.
+            let carried = credential.carried_by(
+                RequestContext::default().with_transactional_authority_required(),
+                owed.actor.as_str(),
+            );
             Ok(acp::bound_to_request(&acp, &carried)
                 .reauthorize_owed(&owed.actor, &entry)
                 .await?)
@@ -204,8 +224,12 @@ impl Node {
     /// An abandoned delete stops denying its subject on this node: the
     /// provider, which refused the delete and so still holds the
     /// relationship, decides again. That is why only the actor that staged
-    /// the change may abandon it, and not the node's principal or the
-    /// subject the delete names. A change that is staged or waits for
+    /// the change may abandon it, and not the subject the delete names. The
+    /// node's principal abandons the changes it staged itself and no
+    /// others; to anyone else the change is `acp::Error::OwedEntryNotFound`.
+    /// When a transaction that committed meanwhile changed what is owed on
+    /// the relationship the call fails with `acp::Error::OwedEntryConflict`
+    /// and may be made again. A change that is staged or waits for
     /// authority is `acp::Error::OwedChangeNotRefused`: a request sent for it
     /// earlier may still land, so it is given a fresh credential instead
     /// ([`Self::reauthorize_owed_acp_as`]).
@@ -214,8 +238,13 @@ impl Node {
         context: &RequestContext,
         seq: u64,
     ) -> Result<()> {
-        let Reader::Actor(actor) = self.owed_reader(context)? else {
-            return Err(denied("only the actor that staged a change abandons it"));
+        let actor = match self.owed_reader(context)? {
+            Reader::Actor(actor) => actor,
+            // The node abandons what it staged itself, like any actor.
+            Reader::Node => {
+                let own = self.node_principal().unwrap_or_default();
+                Did::new(own).map_err(Error::InvalidIdentityDid)?
+            }
         };
         let acp = self.ops().document_acp;
         self.on_acp(move || async move { Ok(acp.abandon_owed_change(&actor, seq).await?) })

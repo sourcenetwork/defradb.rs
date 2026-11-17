@@ -576,10 +576,20 @@ pub(crate) async fn unregister_deleted_doc(
                 .await
                 .map_err(|error| query::error::QueryError::execution(error.to_string()))?,
             // A registration still owed for a deleted document is owed no more.
-            None => acp::PendingRegistrations::new(&acpstore)
-                .clear(&policy.id, &policy.resource_name, &doc_id.to_string())
-                .await
-                .map_err(|error| query::error::QueryError::execution(error.to_string()))?,
+            None => {
+                acp::PendingRegistrations::new(&acpstore)
+                    .clear(&policy.id, &policy.resource_name, &doc_id.to_string())
+                    .await
+                    .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+                // Whoever waits for what is owed looks again once this commits.
+                let provider = Arc::clone(provider);
+                systemstore
+                    .on_commit(storage::corekv::OnCommit::Async(Box::new(move || {
+                        Box::pin(async move { provider.owed_changed() })
+                    })))
+                    .await
+                    .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+            }
         }
     }
     Ok(())

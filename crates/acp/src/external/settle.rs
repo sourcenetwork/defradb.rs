@@ -44,6 +44,7 @@ use zanzibar::types::Subject;
 
 use super::{storage_error, ExternalDocumentAcp};
 use crate::error::{Error, Result};
+use crate::outbox::record::of_this_run;
 use crate::outbox::{
     OwedAuthority, OwedChange, OwedState, OwedSubject, OwedTuple, StagedCount, Submission,
 };
@@ -114,14 +115,23 @@ enum Registration {
     Unavailable,
 }
 
+/// Why a change a later one passed was deleted.
+const PASSED: &str = "a later change of its relationship passed it";
+/// Why an abandoned change was deleted.
+const ABANDONED: &str = "its actor abandoned it";
+
 /// A write to one owed change's record.
 pub(super) enum Write {
     Settle,
     Mark(OwedState, u32, String),
     /// Record a fresh authority and make the change owed again.
     Reauthorize(OwedAuthority),
-    /// Delete the record if the change is still refused.
+    /// Delete the record if the change is still refused, and keep a note
+    /// that its actor gave it up.
     Abandon,
+    /// Delete the record without the provider holding the change, and keep
+    /// a note of why.
+    Discard(String),
 }
 
 pub(super) type ObjectKey = (String, String, String);
@@ -168,7 +178,7 @@ where
             after = Some(last.seq);
             objects.extend(
                 page.iter()
-                    .filter(|change| change.txn == Some(txn))
+                    .filter(|change| of_this_run(change.txn, change.epoch, txn))
                     .map(|change| object_of(&change.tuple)),
             );
         }
@@ -323,10 +333,14 @@ where
                     OwedState::Staged => oldest.last_error.is_some(),
                     OwedState::Refused { .. } => false,
                 };
-            if !yields || !self.write(oldest.seq, Write::Settle).await? {
+            if !yields
+                || !self
+                    .write(oldest.seq, Write::Discard(PASSED.to_owned()))
+                    .await?
+            {
                 break;
             }
-            discarded(&oldest, "a later change of its tuple passed it");
+            discarded(&oldest, PASSED);
             passed += 1;
         }
         Ok(passed)
@@ -386,7 +400,7 @@ where
             ),
             Submission::Unsupported { reason } => {
                 discarded(&change, &reason);
-                (Write::Settle, Step::Discarded)
+                (Write::Discard(reason), Step::Discarded)
             }
             // The node's own error: kept with the record so the change is
             // seen not to have gone, and never counted against it.
@@ -494,9 +508,10 @@ where
                 changes.mark(seq, state, attempts, Some(reason)).await
             }
             Write::Reauthorize(authority) => changes.reauthorize(seq, authority).await,
+            Write::Discard(reason) => changes.discard(seq, &reason).await,
             Write::Abandon => match changes.get(seq).await {
                 Ok(Some(change)) if matches!(change.state, OwedState::Refused { .. }) => {
-                    changes.settle(seq).await
+                    changes.discard(seq, ABANDONED).await
                 }
                 Ok(_) => Ok(false),
                 Err(error) => Err(error),
@@ -540,7 +555,7 @@ fn refusal(change: &OwedChange, attempts: u32, reason: String) -> (Write, Step) 
         )
     } else {
         discarded(change, &reason);
-        (Write::Settle, Step::Discarded)
+        (Write::Discard(reason), Step::Discarded)
     }
 }
 

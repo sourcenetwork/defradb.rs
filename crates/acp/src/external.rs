@@ -324,8 +324,12 @@ where
         self.entries(filter).await
     }
 
-    async fn await_owed(&self, txn: u64) -> Result<crate::outbox::OwedWait> {
-        self.await_transaction(txn).await
+    async fn await_owed(&self, txn: u64, only: Option<&Did>) -> Result<crate::outbox::OwedWait> {
+        self.await_transaction(txn, only).await
+    }
+
+    fn owed_changed(&self) {
+        self.changed.notify_waiters();
     }
 
     async fn reauthorize_owed(

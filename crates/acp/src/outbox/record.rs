@@ -27,6 +27,26 @@ const RECORD_VERSION: u8 = 1;
 /// what the record has left.
 pub const RESERVED_REASON_BYTES: usize = 128;
 
+/// What tells this run of the process from every other. A transaction is
+/// known by the number of its handle, and those numbers start again when the
+/// node does: a record that names its transaction names the run too, so a
+/// later run's transaction of the same number is not taken for it.
+pub fn run_epoch() -> u64 {
+    static EPOCH: regolith::sync::OnceCell<u64> = regolith::sync::OnceCell::new();
+    *EPOCH.get_or_init_racy(|| {
+        let since_epoch = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_nanos() as u64);
+        since_epoch ^ (u64::from(std::process::id()) << 32)
+    })
+}
+
+/// Whether a record that names `txn` in run `epoch` was made by the
+/// transaction `wanted` of this run.
+pub(crate) fn of_this_run(txn: Option<u64>, epoch: Option<u64>, wanted: u64) -> bool {
+    txn == Some(wanted) && epoch == Some(run_epoch())
+}
+
 /// What the change does to its tuple.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -183,6 +203,11 @@ pub struct OwedChange {
     /// provider refuses it.
     #[serde(default = "checked", skip_serializing_if = "is_checked")]
     pub authority_checked: bool,
+    /// The run of the process `txn` is a transaction of ([`run_epoch`]);
+    /// `None` where no transaction is named, and in a record written before
+    /// runs were told apart, whose transaction no later run can name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epoch: Option<u64>,
 }
 
 impl OwedChange {
@@ -198,7 +223,19 @@ impl OwedChange {
             attempts: 0,
             last_error: None,
             authority_checked: new.authority_checked,
+            epoch: new.txn.map(|_| run_epoch()),
         }
+    }
+
+    /// What is kept of this change once its record is deleted without the
+    /// provider holding it: the change, why it went, and no credential.
+    pub(crate) fn discarded(mut self, reason: String) -> Self {
+        self.authority = OwedAuthority::NodeKey;
+        self.state = OwedState::Refused {
+            reason: reason.clone(),
+        };
+        self.last_error = Some(reason);
+        self
     }
 
     /// The record's bytes as it is first written, refused unless the record
@@ -300,6 +337,7 @@ mod tests {
             attempts: 3,
             last_error: Some("provider unreachable".into()),
             authority_checked: true,
+            epoch: None,
         }
     }
 

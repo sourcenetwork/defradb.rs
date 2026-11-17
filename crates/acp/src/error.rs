@@ -153,6 +153,12 @@ pub enum Error {
     #[error("no owed ACP entry {entry} for {actor}")]
     OwedEntryNotFound { entry: String, actor: String },
 
+    /// A transaction that committed meanwhile changed what is owed on the
+    /// entry's relationship; nothing was written. The same call may be made
+    /// again.
+    #[error("owed ACP {entry} was changed by a transaction that committed meanwhile; try again")]
+    OwedEntryConflict { entry: String },
+
     /// Only a change the provider refused may be abandoned.
     #[error("owed ACP change {seq} is {state}, and only a refused change may be abandoned; present a fresh credential for it instead")]
     OwedChangeNotRefused { seq: u64, state: &'static str },

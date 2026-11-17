@@ -352,6 +352,7 @@ fn change(actor: &str, authority: OwedAuthority, op: OwedOp) -> OwedChange {
         attempts: 0,
         last_error: None,
         authority_checked: true,
+        epoch: None,
     }
 }
 

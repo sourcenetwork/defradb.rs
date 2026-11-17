@@ -6,8 +6,8 @@
 use std::sync::atomic::Ordering;
 
 use acp::{
-    DocumentACP, OwedAuthorityKind, OwedEntry, OwedFilter, OwedOp, OwedOutcome, OwedRef, OwedScope,
-    OwedState, OwedWait, OwedWhat,
+    DocumentACP, OwedAuthorityKind, OwedEntry, OwedFilter, OwedHold, OwedOp, OwedOutcome, OwedRef,
+    OwedScope, OwedState, OwedWait, OwedWhat,
 };
 use identity::Did;
 use query::QueryExecutor;
@@ -202,7 +202,7 @@ fn changes_behind_a_parked_registration_go_once_it_is_given_a_credential() {
         assert_eq!(
             staging
                 .gate
-                .await_transaction(id)
+                .await_transaction(id, None)
                 .await
                 .unwrap()
                 .entries()
@@ -218,10 +218,10 @@ fn changes_behind_a_parked_registration_go_once_it_is_given_a_credential() {
         assert_eq!(owed[0].what, OwedWhat::Registration);
         assert_eq!(owed[0].state, OwedState::AwaitingAuthority);
         assert_eq!(owed[1].state, OwedState::Staged);
-        assert_eq!(owed[1].held_by, Some(registration(&doc)));
+        assert_eq!(owed[1].held_by, Some(OwedHold::Registration));
         assert!(!owed[1].sendable, "it waits behind a parked registration");
         assert!(matches!(
-            staging.gate.await_transaction(id).await.unwrap(),
+            staging.gate.await_transaction(id, None).await.unwrap(),
             OwedWait::Parked(entries) if entries.len() == 2
         ));
         assert!(staging.remote.take_writes().is_empty());
@@ -256,7 +256,7 @@ fn changes_behind_a_parked_registration_go_once_it_is_given_a_credential() {
         );
         assert!(staging.remote.holds(&doc, &bob()));
         assert_eq!(
-            staging.gate.await_transaction(id).await.unwrap(),
+            staging.gate.await_transaction(id, None).await.unwrap(),
             OwedWait::Settled
         );
     })
@@ -277,7 +277,7 @@ fn a_wait_says_pending_while_the_provider_is_away_and_ends_when_a_record_changes
 
         staging.remote.down.store(true, Ordering::SeqCst);
         assert!(matches!(
-            staging.gate.await_transaction(id).await.unwrap(),
+            staging.gate.await_transaction(id, None).await.unwrap(),
             OwedWait::Pending { entries, provider_unavailable: true } if entries.len() == 1
         ));
         staging.remote.down.store(false, Ordering::SeqCst);
@@ -285,7 +285,7 @@ fn a_wait_says_pending_while_the_provider_is_away_and_ends_when_a_record_changes
         // The node cannot make the request now: the wait submits once, then
         // sleeps until another pass settles the change.
         staging.remote.unsendable.store(true, Ordering::SeqCst);
-        let wait = staging.gate.await_transaction(id);
+        let wait = staging.gate.await_transaction(id, None);
         let settle = async {
             while staging.queue().await[0].last_error.is_none() {
                 futures_lite::future::yield_now().await;
@@ -303,7 +303,11 @@ fn a_wait_says_pending_while_the_provider_is_away_and_ends_when_a_record_changes
         assert!(staging.remote.holds(&doc, &bob()));
         // Nothing is owed by a transaction that staged nothing.
         assert_eq!(
-            staging.gate.await_transaction(id + 1000).await.unwrap(),
+            staging
+                .gate
+                .await_transaction(id + 1000, None)
+                .await
+                .unwrap(),
             OwedWait::Settled
         );
     })
@@ -344,7 +348,11 @@ fn only_the_actor_that_staged_a_refused_delete_lifts_its_denial_by_abandoning_it
 
         staging.gate.abandon_change(&mallory(), seq).await.unwrap();
         assert!(staging.queue().await.is_empty());
-        assert!(staging.owed_by(&mallory()).await.is_empty());
+        // What is left is a note that says the provider does not hold it.
+        let left = staging.owed_by(&mallory()).await;
+        assert_eq!(left.len(), 1, "{left:?}");
+        assert!(left[0].discarded && !left[0].sendable);
+        assert_eq!(left[0].reason.as_deref(), Some("its actor abandoned it"));
         // The provider, which refused the delete, decides again.
         assert!(staging.allowed(&bob(), &doc).await);
         assert!(staging.remote.holds(&doc, &bob()));
@@ -372,7 +380,8 @@ fn an_abandoned_change_lets_the_changes_behind_it_go_and_only_a_refused_one_is_a
             .commit_change(Change::new(alice(), &doc, OwedOp::Delete, bob()))
             .await;
         let waiting = staging.owed_by(&alice()).await;
-        assert_eq!(waiting[0].held_by, Some(OwedRef::Change { seq: refused }));
+        // It waits behind another actor's change, and is not told which.
+        assert_eq!(waiting[0].held_by, Some(OwedHold::Change { seq: None }));
         assert!(!waiting[0].sendable);
         // A change that is only staged is not abandoned.
         assert!(matches!(
@@ -419,6 +428,206 @@ fn a_refused_change_is_submitted_again_under_a_fresh_credential() {
             OwedOutcome::Settled
         );
         assert!(staging.remote.holds(&doc, &bob()));
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_change_the_provider_never_took_is_reported_as_discarded_and_not_as_settled() {
+    workers::block_on(async {
+        let staging = Staging::new().await;
+        let doc = staging.create(alice(), "shared", None).await;
+
+        // Mallory manages nothing. Her add is staged while nobody can check
+        // that, and the provider refuses it: its record is deleted.
+        let handle = staging.begin().await;
+        let id: u64 = handle.as_str().parse().unwrap();
+        let mut unchecked = Change::new(mallory(), &doc, OwedOp::Add, bob());
+        unchecked.txn = Some(id);
+        staging.remote.down.store(true, Ordering::SeqCst);
+        let staged = staging.stage(&handle, unchecked).await.unwrap();
+        assert!(!staged.authority_checked);
+        staging.commit(&handle).await;
+        staging.remote.down.store(false, Ordering::SeqCst);
+        let pass = staging
+            .gate
+            .settle_owed_changes_once(OwedScope::All)
+            .await
+            .unwrap();
+        assert_eq!(pass.discarded, 1, "{pass:?}");
+        assert!(staging.queue().await.is_empty());
+        assert!(!staging.remote.holds(&doc, &bob()));
+
+        // Nothing is owed any more, and that is not "the provider holds it".
+        let told = staging.gate.await_transaction(id, None).await.unwrap();
+        let OwedWait::Parked(entries) = &told else {
+            panic!("{told:?}");
+        };
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].discarded && !entries[0].sendable);
+        assert_eq!(entries[0].actor, mallory());
+        assert!(
+            entries[0]
+                .reason
+                .as_deref()
+                .is_some_and(|reason| !reason.is_empty()),
+            "{entries:?}"
+        );
+        assert_eq!(entries[0].authority, None, "a note keeps no credential");
+        // Its actor was told: the note is gone.
+        assert_eq!(
+            staging.gate.await_transaction(id, None).await.unwrap(),
+            OwedWait::Settled
+        );
+        assert!(staging.owed_by(&mallory()).await.is_empty());
+
+        // The answer to a fresh credential says so too.
+        staging.remote.credentials.store(true, Ordering::SeqCst);
+        staging.remote.hold_key(&alice());
+        staging.remote.carry_delegation(&mallory(), "short");
+        staging.remote.down.store(true, Ordering::SeqCst);
+        let again = staging
+            .commit_change(Change::new(mallory(), &doc, OwedOp::Add, bob()))
+            .await;
+        staging.remote.down.store(false, Ordering::SeqCst);
+        staging.remote.expire("short");
+        staging
+            .gate
+            .settle_owed_changes_once(OwedScope::All)
+            .await
+            .unwrap();
+        assert_eq!(
+            staging.owed_by(&mallory()).await[0].state,
+            OwedState::AwaitingAuthority
+        );
+        staging.remote.carry_delegation(&mallory(), "fresh");
+        let outcome = staging
+            .gate
+            .reauthorize(&mallory(), &OwedRef::Change { seq: again.seq })
+            .await
+            .unwrap();
+        assert!(
+            matches!(&outcome, OwedOutcome::Discarded(entry) if entry.discarded && entry.reason.is_some()),
+            "{outcome:?}"
+        );
+        assert!(staging.owed_by(&mallory()).await.is_empty());
+        assert!(!staging.remote.holds(&doc, &bob()));
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_wait_is_for_a_transaction_of_this_run_and_for_its_callers_entries() {
+    workers::block_on(async {
+        let staging = Staging::new().await;
+        let doc = staging.create(alice(), "shared", None).await;
+        let handle = staging.begin().await;
+        let id: u64 = handle.as_str().parse().unwrap();
+        let mut grant = Change::new(alice(), &doc, OwedOp::Add, bob());
+        grant.txn = Some(id);
+        let staged = staging.stage(&handle, grant).await.unwrap();
+        staging.commit(&handle).await;
+
+        // Another actor's wait on the same transaction sees nothing of it
+        // and is not kept by it.
+        staging.remote.unsendable.store(true, Ordering::SeqCst);
+        assert_eq!(
+            staging
+                .gate
+                .await_transaction(id, Some(&mallory()))
+                .await
+                .unwrap(),
+            OwedWait::Settled
+        );
+        staging.remote.unsendable.store(false, Ordering::SeqCst);
+        assert!(staging.remote.take_writes().is_empty());
+
+        // The record as an earlier run of the node left it: the same
+        // transaction number, another run.
+        let mut stale = staging.queue().await.remove(0);
+        assert_eq!(stale.epoch, Some(acp::outbox::run_epoch()));
+        stale.epoch = Some(acp::outbox::run_epoch().wrapping_add(1));
+        let txn = datastore::BasicTxn::new(staging.store.as_ref(), 0, false)
+            .await
+            .unwrap();
+        txn.acpstore()
+            .set(
+                &[b"/acp-owed/q/".as_slice(), &staged.seq.to_be_bytes()].concat(),
+                &stale.encode().unwrap(),
+            )
+            .await
+            .unwrap();
+        txn.commit().await.unwrap();
+
+        // This run's transaction of that number owes nothing, and neither
+        // waits for the stale change nor submits it.
+        assert_eq!(
+            staging.gate.await_transaction(id, None).await.unwrap(),
+            OwedWait::Settled
+        );
+        assert_eq!(
+            staging
+                .gate
+                .settle_owed_changes_once(OwedScope::Transaction(id))
+                .await
+                .unwrap(),
+            acp::OwedSettlement::default()
+        );
+        assert!(staging.remote.take_writes().is_empty());
+        // Its actor still finds it, and a pass over everything sends it.
+        assert_eq!(staging.owed_by(&alice()).await.len(), 1);
+        let pass = staging
+            .gate
+            .settle_owed_changes_once(OwedScope::All)
+            .await
+            .unwrap();
+        assert_eq!(pass.settled, 1);
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_wait_ends_when_the_document_that_owed_a_registration_is_deleted() {
+    workers::block_on(async {
+        let staging = Staging::new().await;
+        // The provider answers the registration with an error that is not
+        // final, so it stays staged and a wait has something to wait for.
+        staging
+            .remote
+            .garble_registration
+            .store(true, Ordering::SeqCst);
+        let handle = staging.begin().await;
+        let id: u64 = handle.as_str().parse().unwrap();
+        let doc = staging.create(alice(), "doomed", Some(&handle)).await;
+        let _ = staging.node.runner.commit_txn(&handle).await;
+        let owed = staging.owed_by(&alice()).await;
+        assert_eq!(owed.len(), 1, "{owed:?}");
+        assert!(owed[0].sendable);
+        let attempts = owed[0].attempts;
+
+        let wait = staging.gate.await_transaction(id, None);
+        let delete = async {
+            // Once the wait has made its own submission it sleeps.
+            while staging.owed_by(&alice()).await[0].attempts == attempts {
+                futures_lite::future::yield_now().await;
+            }
+            let deleted = staging
+                .node
+                .runner
+                .execute(super::external_registration::request(
+                    &format!(r#"mutation {{ delete_Users(docID: "{doc}") {{ _docID }} }}"#),
+                    Some(alice()),
+                ))
+                .await;
+            assert!(!deleted.has_errors(), "{:?}", deleted.errors);
+        };
+        let waited = workers::timeout(std::time::Duration::from_secs(20), async {
+            futures::join!(wait, delete).0
+        })
+        .await
+        .expect("the delete wakes the wait");
+        assert_eq!(waited.unwrap(), OwedWait::Settled);
+        assert!(staging.owed_by(&alice()).await.is_empty());
     })
     .unwrap()
 }

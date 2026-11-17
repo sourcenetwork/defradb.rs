@@ -55,6 +55,9 @@ pub(super) struct RemoteAcp {
     pub(super) lose_answer: AtomicBool,
     /// A registration is refused: its creator's credentials are missing.
     pub(super) refuse_registration: AtomicBool,
+    /// A registration is answered with an error that does not say whether
+    /// it is final.
+    pub(super) garble_registration: AtomicBool,
     /// A relationship write is answered with this error, which does not say
     /// whether it is final, and is not applied.
     garbled: HopscotchMap<(), String, rapidhash::fast::RandomState>,
@@ -90,6 +93,7 @@ impl RemoteAcp {
             strict: AtomicBool::new(false),
             lose_answer: AtomicBool::new(false),
             refuse_registration: AtomicBool::new(false),
+            garble_registration: AtomicBool::new(false),
             garbled: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
             malformed_owner: AtomicBool::new(false),
             unsendable: AtomicBool::new(false),
@@ -234,6 +238,9 @@ impl DocumentACP for RemoteAcp {
             return Err(acp::Error::PermissionDenied(
                 "no credentials for the creator".into(),
             ));
+        }
+        if self.garble_registration.load(Ordering::SeqCst) {
+            return Err(acp::Error::Storage("code 13".into()));
         }
         if let Some(owner) = self.owners.get(doc_id) {
             if owner != *identity {

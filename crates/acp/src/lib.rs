@@ -62,9 +62,9 @@ pub use identity::Identity;
 pub use local::{LocalDocumentACP, MemoryAcpStore};
 pub use outbox::{
     NewOwedChange, OwedAuthority, OwedAuthorityKind, OwedChange, OwedChanges, OwedDenial,
-    OwedDenials, OwedEntry, OwedFilter, OwedOp, OwedOutcome, OwedRef, OwedState, OwedSubject,
-    OwedTuple, OwedTupleState, OwedWait, OwedWhat, StageRelationship, Staged, StagedCount,
-    Submission, TransactionOutbox,
+    OwedDenials, OwedEntry, OwedFilter, OwedHold, OwedOp, OwedOutcome, OwedRef, OwedState,
+    OwedSubject, OwedTuple, OwedTupleState, OwedWait, OwedWhat, StageRelationship, Staged,
+    StagedCount, Submission, TransactionOutbox,
 };
 pub use pending::{PendingRegistration, PendingRegistrations};
 pub use permission::DocumentPermission;

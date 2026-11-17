@@ -25,8 +25,13 @@ impl std::fmt::Display for OwedRef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Registration {
-                resource, object, ..
-            } => write!(f, "registration of {resource} {object}"),
+                policy_id,
+                resource,
+                object,
+            } => write!(
+                f,
+                "registration of {resource} {object} under policy {policy_id}"
+            ),
             Self::Change { seq } => write!(f, "change {seq}"),
         }
     }
@@ -44,6 +49,17 @@ pub enum OwedWhat {
         relation: String,
         subject: OwedSubject,
     },
+}
+
+/// What an entry waits behind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OwedHold {
+    /// The registration its object still owes.
+    Registration,
+    /// An earlier change of its relationship. `seq` is that change's place
+    /// in the queue when the same actor staged it, and `None` when another
+    /// actor did: an entry tells its reader nothing of another's.
+    Change { seq: Option<u64> },
 }
 
 /// The kind of authority recorded with an entry. The credential itself is
@@ -87,14 +103,24 @@ pub struct OwedEntry {
     pub attempts: u32,
     /// What it waits behind: its object's owed registration, or an earlier
     /// change of its tuple.
-    pub held_by: Option<OwedRef>,
+    pub held_by: Option<OwedHold>,
     /// What is recorded to send it with; `None` when nothing is.
     pub authority: Option<OwedAuthorityKind>,
-    /// Whether the node can still send it as things stand: it is staged and
-    /// waits behind nothing that is parked. An entry that is not sendable
-    /// stays as it is until its actor hands in a fresh credential for it or
-    /// for what it waits behind, or abandons it.
+    /// Whether a submission by the node could still move it as things
+    /// stand. A change is sendable when it is staged and what it waits
+    /// behind is. A registration is when it is staged, or waits for
+    /// authority that the node now has: its own record's again, or the
+    /// delegation of a change its creator owes on the same object. An entry
+    /// that is not sendable stays as it is until its actor hands in a fresh
+    /// credential for it or for what it waits behind, or abandons it.
     pub sendable: bool,
+    /// The provider does not hold this change and never will through this
+    /// record, which is gone: the provider refused a change nobody had
+    /// checked, cannot take one of its kind, a later change of its
+    /// relationship passed it, or its actor abandoned it. `reason` says
+    /// which. Such an entry is a note: it is shown until its actor was told
+    /// by a wait or by the answer to a fresh credential.
+    pub discarded: bool,
 }
 
 impl OwedEntry {
@@ -130,6 +156,9 @@ pub enum OwedOutcome {
     Settled,
     /// It is still owed, as the entry says.
     Owed(Box<OwedEntry>),
+    /// Its record was deleted without the provider holding it, for the
+    /// reason the entry gives.
+    Discarded(Box<OwedEntry>),
 }
 
 /// Where what one transaction owes the provider has come to rest.
@@ -138,7 +167,9 @@ pub enum OwedWait {
     /// The provider holds everything the transaction owed it.
     Settled,
     /// Nothing more will be sent as things stand: every entry left is
-    /// parked, or waits behind one that is.
+    /// parked, waits behind one that is, or was discarded
+    /// ([`OwedEntry::discarded`]). A discarded entry is told once: the wait
+    /// that returns it deletes its note.
     Parked(Vec<OwedEntry>),
     /// Entries the node can still send are left: the wait ended first, or
     /// the provider could not be reached.
@@ -154,30 +185,6 @@ impl OwedWait {
         match self {
             Self::Settled => &[],
             Self::Parked(entries) | Self::Pending { entries, .. } => entries,
-        }
-    }
-
-    /// What is left of this once only `keep` entries may be seen.
-    #[must_use]
-    pub fn only(self, keep: impl Fn(&OwedEntry) -> bool) -> Self {
-        let (pending, unavailable, entries) = match self {
-            Self::Settled => return Self::Settled,
-            Self::Parked(entries) => (false, false, entries),
-            Self::Pending {
-                entries,
-                provider_unavailable,
-            } => (true, provider_unavailable, entries),
-        };
-        let entries: Vec<_> = entries.into_iter().filter(|entry| keep(entry)).collect();
-        if entries.is_empty() {
-            Self::Settled
-        } else if pending && entries.iter().any(|entry| entry.sendable) {
-            Self::Pending {
-                entries,
-                provider_unavailable: unavailable,
-            }
-        } else {
-            Self::Parked(entries)
         }
     }
 
@@ -222,6 +229,7 @@ mod tests {
             held_by: None,
             authority: Some(OwedAuthorityKind::Delegation),
             sendable,
+            discarded: false,
         }
     }
 
@@ -239,22 +247,6 @@ mod tests {
     }
 
     #[test]
-    fn a_wait_seen_by_one_actor_holds_only_its_entries() {
-        let wait = OwedWait::of(vec![entry(1, "a", false), entry(2, "b", true)], false);
-        let own =
-            |name: &'static str| move |entry: &OwedEntry| entry.actor.as_str().ends_with(name);
-        assert!(matches!(
-            wait.clone().only(own("a")),
-            OwedWait::Parked(entries) if entries.len() == 1
-        ));
-        assert!(matches!(
-            wait.clone().only(own("b")),
-            OwedWait::Pending { entries, .. } if entries.len() == 1
-        ));
-        assert_eq!(wait.only(own("c")), OwedWait::Settled);
-    }
-
-    #[test]
     fn an_entry_names_itself() {
         assert_eq!(entry(7, "a", true).reference(), OwedRef::Change { seq: 7 });
         let registration = OwedEntry {
@@ -269,5 +261,19 @@ mod tests {
                 object: "bae-1".into(),
             }
         );
+        assert_eq!(
+            registration.reference().to_string(),
+            "registration of users bae-1 under policy policy"
+        );
+
+        // A discarded change is at rest, and is not what "settled" means.
+        let gone = OwedEntry {
+            discarded: true,
+            ..entry(3, "a", false)
+        };
+        assert!(matches!(
+            OwedWait::of(vec![gone], false),
+            OwedWait::Parked(entries) if entries[0].discarded
+        ));
     }
 }

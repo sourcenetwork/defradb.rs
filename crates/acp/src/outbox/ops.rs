@@ -347,3 +347,81 @@ where
     put(txn, &keys::queue_key(seq), &owed.encode_admitted()?).await?;
     Ok(true)
 }
+
+/// The most notes of discarded changes a node keeps. A note is deleted when
+/// its change's actor is told; past this bound the oldest goes first.
+pub const MAX_DISCARD_NOTES: usize = 1_000;
+
+/// Delete the record of change `seq` without the provider holding it, as
+/// [`settle`] does, and keep a note of it and of `reason` for its actor. The
+/// note holds the change and no credential. `false` when no such change is
+/// owed.
+pub(super) async fn discard<T>(txn: &T, seq: u64, reason: &str) -> Result<bool>
+where
+    T: Reader + Writer + ?Sized,
+{
+    let Some(owed) = change(txn, seq).await? else {
+        return Ok(false);
+    };
+    if !settle(txn, seq).await? {
+        return Ok(false);
+    }
+    let mut note = owed.discarded(reason.to_owned());
+    let record = loop {
+        match note.encode() {
+            Ok(record) => break record,
+            Err(Error::OwedChangeTooLarge { .. }) if note.shorten_reason() => {}
+            Err(error) => return Err(error),
+        }
+    };
+    let options = IterOptions::new().with_prefix(keys::discard_prefix());
+    let mut iter = txn.iterator(options).await.map_err(storage_error)?;
+    let mut oldest = None;
+    let mut kept = 0;
+    while let Some(entry) = iter.next().await.map_err(storage_error)? {
+        oldest.get_or_insert(entry.key);
+        kept += 1;
+    }
+    drop(iter);
+    if let (Some(oldest), true) = (oldest, kept >= MAX_DISCARD_NOTES) {
+        remove(txn, &oldest).await?;
+    }
+    put(txn, &keys::discard_key(seq), &record).await?;
+    Ok(true)
+}
+
+/// The note of the discarded change `seq`, if one is kept.
+pub(super) async fn discarded<R>(reader: &R, seq: u64) -> Result<Option<OwedChange>>
+where
+    R: Reader + ?Sized,
+{
+    reader
+        .get(&keys::discard_key(seq))
+        .await
+        .map_err(storage_error)?
+        .map(|bytes| OwedChange::decode(&bytes))
+        .transpose()
+}
+
+/// Every note of a discarded change, in sequence order. There are at most
+/// [`MAX_DISCARD_NOTES`].
+pub(super) async fn discards<R>(reader: &R) -> Result<Vec<OwedChange>>
+where
+    R: Reader + ?Sized,
+{
+    let options = IterOptions::new().with_prefix(keys::discard_prefix());
+    let mut iter = reader.iterator(options).await.map_err(storage_error)?;
+    let mut notes = Vec::new();
+    while let Some(entry) = iter.next().await.map_err(storage_error)? {
+        notes.push(OwedChange::decode(&entry.value)?);
+    }
+    Ok(notes)
+}
+
+/// Delete the note of the discarded change `seq`: its actor was told.
+pub(super) async fn acknowledge<T>(txn: &T, seq: u64) -> Result<()>
+where
+    T: Writer + ?Sized,
+{
+    remove(txn, &keys::discard_key(seq)).await
+}
