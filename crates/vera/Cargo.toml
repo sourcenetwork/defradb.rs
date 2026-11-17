@@ -47,6 +47,8 @@ tempfile = "3"
 vera-client = "0.1.2"
 vera-domain = "0.1.2"
 vera-modules = "0.1.2"
+# The relationship and subject types inside vera.rs's policy commands.
+vera-acp = "0.1.2"
 # vera.rs's own token verifier: for a caller's delegation, and for the tokens built here in tests.
 vera-crypto = "0.1.2"
 commonware-codec = "=2026.10.0"
