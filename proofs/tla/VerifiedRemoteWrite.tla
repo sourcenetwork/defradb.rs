@@ -1,7 +1,7 @@
 -------------------------- MODULE VerifiedRemoteWrite --------------------------
 \* The story, in plain words.
 \*
-\* A User signs one create or one update. An embedder checks that signature and
+\* A User signs one create, update or delete. An embedder checks that signature and
 \* hands the write to a Node, to run in a transaction the Node owns. The Node's
 \* document ACP is a remote provider: it cannot join the transaction, so what
 \* the write needs from it is written into the transaction as "owed" and sent
@@ -30,8 +30,33 @@
 \* for that one command. The Node checks it as it checked the first one, with
 \* the same rule, records it with the command and sends the command under it.
 \*
+\* An update or a delete (both called "update" below) sends the provider no
+\* command and owes it nothing. The User's signature on its blocks already says
+\* who wrote it. What decides it is the provider's own answer to "may this User
+\* update (or delete) this document?", read and verified by the Node against
+\* the provider's finalized state at a revision recent enough to trust (the
+\* evidence is "fresh"). Evidence can grow "stale" (older than the freshness
+\* limit) or be "unreachable" (the provider does not answer). The owner can
+\* revoke the User's permission at any moment, before or after the write is
+\* admitted. On this Node a registration of the document can still be owed
+\* (the provider does not know the document yet: only its recorded creator may
+\* touch it), and a revocation can still be owed (it denies the User whatever
+\* the provider says). With an update the credential only says who is asking:
+\*   - none: the signature on the blocks is enough, when the provider proves its
+\*     decisions (vera.rs); a provider that does not (Cosmos) still needs the key;
+\*   - a delegation: it must be good, as for any command;
+\*   - a request-bound delegation: it names a command, an update sends none, so
+\*     it is refused.
+\* A revocation that lands after admission does not undo the write: the write
+\* commits. That is the rule, not a race the model hides.
+\*
 \* What must never happen:
 \*   - a write is recorded although the Node could not act for the User;
+\*   - an update is admitted without a verified permission for the User at
+\*     admission, or on stale or missing evidence, or past a revocation or a
+\*     registration still owed on this Node;
+\*   - an update is admitted with a request-bound delegation;
+\*   - an update leaves something owed to the provider;
 \*   - a refused write leaves a row or an owed record behind;
 \*   - a request-bound delegation is used for any command but the one it names;
 \*   - a request-bound delegation logs a caller in at the HTTP door;
@@ -49,10 +74,21 @@
 \* the Node nothing to check a delegation against (it takes no delegation of
 \* this kind) is the case where bySigner and forNode can never be found TRUE:
 \* there a verified write is staged with a key the Node holds, or not at all.
+\* Such a provider proves none of its decisions either (proven is FALSE), so an
+\* update there still needs the key.
 \*
 \* Rust owners: crates/defra-node/src/lib.rs execute_verified_graph_in_txn;
 \* crates/defra-node/src/signer_credential.rs SignerCredential::carried_by;
-\* crates/query/src/runner/remote_authority.rs remote_write_authority;
+\* crates/query/src/runner/remote_authority.rs remote_write_authority,
+\* edit_credential;
+\* crates/query/src/runner/mutation.rs QueryRunner::authorize_mutation (the
+\* permission, for every credential form);
+\* crates/query/src/txn/context.rs check_doc_access_with_prepared_inputs;
+\* crates/acp/src/external.rs ExternalDocumentAcp::check_doc_access (owed
+\* registration and owed revocation);
+\* crates/vera/src/cosmos/dac.rs VeraDocumentACP::check_doc_access,
+\* proves_decisions;
+\* crates/vera/src/vera_rs/provider.rs verify_access, decision_state;
 \* crates/vera/src/cosmos/dac.rs authority;
 \* crates/vera/src/cosmos/dac/request_bound.rs request_bound, admit_for;
 \* crates/vera/src/vera_rs/bearer/request.rs caller_of_request_delegation;
@@ -101,15 +137,24 @@ VARIABLES
   freshLive,   \* per command: TRUE while that fresh credential has not expired
   failed,      \* the owed or parked commands whose last submission failed
   noted,       \* the commands whose record says why their last submission failed
-  unbacked     \* TRUE once a command was sent though nothing recorded for it allowed it
+  unbacked,    \* TRUE once a command was sent though nothing recorded for it allowed it
+  proven,      \* TRUE when the provider proves its decisions (vera.rs), FALSE for Cosmos
+  permitted,   \* TRUE while the provider's finalized state gives the User the permission
+  remembered,  \* the permission as an older state gave it: what stale evidence answers
+  evidence,    \* what the Node can read now: "fresh", "stale" or "unreachable"
+  owedReg,     \* a registration of the document owed on this Node: "none", "signer", "other"
+  owedRevoke   \* TRUE when a revocation owed on this Node names the User on the document
 
 \* What is recorded after the commit about each command.
 after == <<fresh, freshLive, failed, noted, unbacked>>
 
+\* What decides an update: the provider, the evidence, and what this Node owes.
+edit == <<proven, permitted, remembered, evidence, owedReg, owedRevoke>>
+
 \* Every variable, so a step can say which ones it leaves alone.
 vars == <<kind, holdsKey, writeForm, writeNames, grantForm, grantNames, bySigner,
           forNode, current, phase, rows, owed, sent, parked, misused, stale, http,
-          after>>
+          after, edit>>
 
 \* No fresh credential was handed in for a command.
 NoCred == [form |-> "none", names |-> "other", mine |-> FALSE]
@@ -118,13 +163,31 @@ NoCred == [form |-> "none", names |-> "other", mine |-> FALSE]
 FreshCreds == [form : {"delegation", "request"}, names : Named, mine : BOOLEAN]
 
 \* The facts about one run are chosen freely at the start; nothing is recorded.
+\* An update stages no grant and a create reads no permission, so each kind
+\* chooses only the facts that matter to it: this keeps the run small without
+\* hiding a case.
 Init ==
   /\ kind \in {"create", "update"}            \* the User signed either kind
   /\ holdsKey \in BOOLEAN                     \* the Node may or may not hold the key
   /\ writeForm \in Forms                      \* any form may come with the write
   /\ writeNames \in Named                     \* and may name any command
-  /\ grantForm \in Forms                      \* any form may come with the grant
-  /\ grantNames \in Named                     \* and may name any command
+  /\ IF kind = "create"
+       THEN /\ grantForm \in Forms             \* any form may come with the grant
+            /\ grantNames \in Named            \* and may name any command
+            /\ proven = TRUE                   \* a create is decided by its credential
+            /\ permitted = FALSE               \* and reads no permission
+            /\ remembered = FALSE
+            /\ evidence = "fresh"
+            /\ owedReg = "none"
+            /\ owedRevoke = FALSE
+       ELSE /\ grantForm = "none"              \* an update stages no grant here
+            /\ grantNames = "other"
+            /\ proven \in BOOLEAN              \* vera.rs, or a provider that proves nothing
+            /\ permitted \in BOOLEAN           \* the User may or may not hold the permission
+            /\ remembered \in BOOLEAN          \* an older state may have said otherwise
+            /\ evidence \in {"fresh", "stale", "unreachable"} \* any evidence to start with
+            /\ owedReg \in {"none", "signer", "other"} \* a registration may still be owed
+            /\ owedRevoke \in BOOLEAN          \* a revocation may still be owed
   /\ bySigner \in BOOLEAN                     \* signed by the User, or by another
   /\ forNode \in BOOLEAN                      \* made for this Node, or for another
   /\ current = TRUE                           \* nothing has expired yet
@@ -193,24 +256,58 @@ TrulyGoodOf(c) == IF Renewed(c) THEN fresh[c].mine /\ freshLive[c] ELSE TrulyGoo
 Sendable(c) == MaySendWith(c, FormOf(c), NamesOf(c), GoodOf(c))
 TrulySendable(c) == TrulyMaySendWith(c, FormOf(c), NamesOf(c), TrulyGoodOf(c))
 
-\* Whether the Node may act for the User at all, for a write that sends no
-\* command. An update sends none, so a request-bound token has nothing to name.
-MayAct(form) == holdsKey \/ (form = "delegation" /\ Good)
+\* What the credential of an update must be. It only says who is asking:
+\* nothing, when the provider proves its decisions (the blocks' signature says
+\* who wrote them) or the Node holds the key; a delegation, when it is good (a
+\* held key answers for it, as for any command). A request-bound delegation
+\* names a command and an update sends none: refused, key or no key. The
+\* planted bug takes it.
+EditCredential(form) ==
+  \/ form = "none" /\ (proven \/ holdsKey)                      \* the signature is enough
+  \/ form = "delegation" /\ (holdsKey \/ Good)                  \* a delegation must be good
+  \/ form = "request" /\ Bug = "requestEdit"                    \* (bug: a bound one is taken)
 
 \* The same question answered from the facts, with no bug.
-TrulyMayAct(form) == holdsKey \/ (form = "delegation" /\ TrulyGood)
+TrulyEditCredential(form) ==
+  \/ form = "none" /\ (proven \/ holdsKey)
+  \/ form = "delegation" /\ (holdsKey \/ TrulyGood)
+
+\* What the provider answers the Node. Fresh evidence gives the permission as
+\* the finalized state has it now. Stale or missing evidence answers nothing;
+\* the planted bug takes stale evidence, which tells what an older state said.
+Decision ==
+  \/ evidence = "fresh" /\ permitted                            \* verified and current
+  \/ evidence = "stale" /\ remembered /\ Bug = "staleEvidence"  \* (bug: an old answer)
+
+\* The gate on this Node, as for a read: a registration still owed lets only
+\* its creator in, a revocation still owed shuts the User out, and otherwise
+\* the provider's decision stands. The planted bugs skip the whole check, or
+\* forget what this Node owes.
+Permit ==
+  \/ Bug = "noPermission"                                       \* (bug: nothing is asked)
+  \/ Bug # "owedIgnored" /\ owedReg = "signer"                  \* the owed creator
+  \/ (owedReg = "none" \/ Bug = "owedIgnored")                 \* nothing owed on it
+       /\ (~owedRevoke \/ Bug = "owedIgnored")                 \* no revocation owed
+       /\ Decision                                            \* and the provider says yes
+
+\* The same question answered from the facts, with no bug: a verified permission.
+TrulyPermit ==
+  IF owedReg # "none"
+    THEN owedReg = "signer"
+    ELSE ~owedRevoke /\ evidence = "fresh" /\ permitted
 
 \* Whether the write is admitted: a create needs authority for its
-\* registration, an update authority to act for the User.
+\* registration; an update a credential that says who asks, and the
+\* permission. One rule for every credential form.
 WriteAdmitted ==
   \/ Bug = "noAuthority"                                        \* bug: nothing is asked
   \/ kind = "create" /\ MaySend("register", writeForm, writeNames)
-  \/ kind = "update" /\ MayAct(writeForm)
+  \/ kind = "update" /\ EditCredential(writeForm) /\ Permit
 
 \* The same question answered from the facts, with no bug.
 WriteTrulyAdmitted ==
   \/ kind = "create" /\ TrulyMaySend("register", writeForm, writeNames)
-  \/ kind = "update" /\ TrulyMayAct(writeForm)
+  \/ kind = "update" /\ TrulyEditCredential(writeForm) /\ TrulyPermit
 
 \* The embedder hands in the write. An admitted write puts its row and, for a
 \* create, the owed registration into the transaction. A refused write records
@@ -220,7 +317,8 @@ Stage ==
   /\ IF WriteAdmitted
        THEN /\ phase' = "staged"                                \* the write is in
             /\ rows' = TRUE                                     \* its row is written
-            /\ owed' = IF kind = "create" THEN {"register"} ELSE {} \* a create owes one command
+            /\ owed' = IF kind = "create" \/ Bug = "editOwes"
+                         THEN {"register"} ELSE {}              \* a create owes one command
        ELSE /\ phase' = "refused"                               \* the write is refused
             /\ rows' = (Bug = "recordedFirst")                  \* nothing is written
             /\ owed' = IF Bug = "recordedFirst" /\ kind = "create"
@@ -228,6 +326,7 @@ Stage ==
   /\ UNCHANGED <<kind, holdsKey, writeForm, writeNames, grantForm, grantNames,
                  bySigner, forNode, current, sent, parked, misused, stale, http>>
   /\ UNCHANGED after                                            \* nothing is recorded here
+  /\ UNCHANGED edit                                             \* nor is the permission
 
 \* The embedder grants access in the same transaction, on the document the
 \* create made. The grant is owed only when the Node may send it; a refused
@@ -242,6 +341,7 @@ StageGrant ==
                  bySigner, forNode, current, phase, rows, sent, parked, misused,
                  stale, http>>
   /\ UNCHANGED after                                            \* nothing is recorded here
+  /\ UNCHANGED edit                                             \* nor is the permission
 
 \* The Node's owner commits the transaction: what is owed is now due.
 Commit ==
@@ -251,6 +351,7 @@ Commit ==
                  bySigner, forNode, current, rows, owed, sent, parked, misused,
                  stale, http>>
   /\ UNCHANGED after                                            \* nothing is recorded here
+  /\ UNCHANGED edit                                             \* nor is the permission
 
 \* Time passes and the credentials expire. This can happen at any moment.
 Expire ==
@@ -260,6 +361,7 @@ Expire ==
                  bySigner, forNode, phase, rows, owed, sent, parked, misused,
                  stale, http>>
   /\ UNCHANGED after                                            \* nothing is recorded here
+  /\ UNCHANGED edit                                             \* nor is the permission
 
 \* Whether sending c now would use a request-bound token for another command.
 Misuse(c) == ~holdsKey /\ FormOf(c) = "request" /\ NamesOf(c) # c
@@ -295,6 +397,7 @@ SendRegistration ==
   /\ Settled("register")                                        \* nothing left to report
   /\ UNCHANGED <<kind, holdsKey, writeForm, writeNames, grantForm, grantNames,
                  bySigner, forNode, current, phase, rows, parked, http>>
+  /\ UNCHANGED edit                                             \* the permission is not touched
 
 \* A registration whose credential no longer lets the Node send it is parked:
 \* it waits for a fresh credential, is not sent, and says why.
@@ -308,6 +411,7 @@ ParkRegistration ==
   /\ Failed("register")                                         \* and saying so
   /\ UNCHANGED <<kind, holdsKey, writeForm, writeNames, grantForm, grantNames,
                  bySigner, forNode, current, phase, rows, sent, misused, stale, http>>
+  /\ UNCHANGED edit                                             \* the permission is not touched
 
 \* A submission fails though the Node may send the command: the provider
 \* cannot be reached. The command stays owed and its record says why.
@@ -320,6 +424,7 @@ SendFails(c) ==
   /\ UNCHANGED <<kind, holdsKey, writeForm, writeNames, grantForm, grantNames,
                  bySigner, forNode, current, phase, rows, owed, sent, parked,
                  misused, stale, http>>
+  /\ UNCHANGED edit                                             \* the permission is not touched
 
 \* The embedder hands the Node a fresh credential for one parked command.
 \* The Node admits it with the rule that admitted the write, asked about this
@@ -339,6 +444,7 @@ Reauthorize(c, cred) ==
   /\ UNCHANGED <<kind, holdsKey, writeForm, writeNames, grantForm, grantNames,
                  bySigner, forNode, current, phase, rows, sent, misused, stale,
                  http, unbacked>>
+  /\ UNCHANGED edit                                             \* the permission is not touched
 
 \* A fresh credential expires too.
 ExpireFresh(c) ==
@@ -347,6 +453,7 @@ ExpireFresh(c) ==
   /\ UNCHANGED <<kind, holdsKey, writeForm, writeNames, grantForm, grantNames,
                  bySigner, forNode, current, phase, rows, owed, sent, parked,
                  misused, stale, http, fresh, failed, noted, unbacked>>
+  /\ UNCHANGED edit                                             \* the permission is not touched
 
 \* After the registration the Node sends the grant, its credential checked
 \* again. The planted bug sends it while the registration is still owed.
@@ -362,6 +469,7 @@ SendGrant ==
   /\ Settled("grant")                                           \* nothing left to report
   /\ UNCHANGED <<kind, holdsKey, writeForm, writeNames, grantForm, grantNames,
                  bySigner, forNode, current, phase, rows, parked, http>>
+  /\ UNCHANGED edit                                             \* the permission is not touched
 
 \* A grant whose credential no longer lets the Node send it is parked: it
 \* waits for a new credential and is not sent. While the registration is owed
@@ -377,6 +485,7 @@ ParkGrant ==
   /\ Failed("grant")                                            \* and saying so
   /\ UNCHANGED <<kind, holdsKey, writeForm, writeNames, grantForm, grantNames,
                  bySigner, forNode, current, phase, rows, sent, misused, stale, http>>
+  /\ UNCHANGED edit                                             \* the permission is not touched
 
 \* Somebody shows the write's token at the HTTP door as a login. Only a
 \* general delegation that is good logs its signer in. The planted bug lets a
@@ -391,10 +500,35 @@ Knock ==
                  bySigner, forNode, current, phase, rows, owed, sent, parked,
                  misused, stale>>
   /\ UNCHANGED after                                            \* nothing is recorded here
+  /\ UNCHANGED edit                                             \* nor is the permission
+
+\* The owner revokes the User's permission and the provider finalizes it. This
+\* can happen at any moment, also after the update was admitted: the update
+\* then still commits. Fresh evidence read afterwards says no; an older state
+\* still remembers the permission.
+Revoke ==
+  /\ permitted                                                  \* the User holds it now
+  /\ permitted' = FALSE                                         \* and no longer does
+  /\ UNCHANGED <<kind, holdsKey, writeForm, writeNames, grantForm, grantNames,
+                 bySigner, forNode, current, phase, rows, owed, sent, parked,
+                 misused, stale, http>>
+  /\ UNCHANGED after                                            \* nothing is recorded here
+  /\ UNCHANGED <<proven, remembered, evidence, owedReg, owedRevoke>>
+
+\* The newest verified state grows older than the freshness limit: the
+\* evidence goes stale. Or the provider stops answering.
+Age ==
+  /\ evidence = "fresh"                                         \* fresh until now
+  /\ evidence' \in {"stale", "unreachable"}                     \* now stale, or gone
+  /\ UNCHANGED <<kind, holdsKey, writeForm, writeNames, grantForm, grantNames,
+                 bySigner, forNode, current, phase, rows, owed, sent, parked,
+                 misused, stale, http>>
+  /\ UNCHANGED after                                            \* nothing is recorded here
+  /\ UNCHANGED <<proven, permitted, remembered, owedReg, owedRevoke>>
 
 \* Any of the steps above may come next.
 Next == Stage \/ StageGrant \/ Commit \/ Expire \/ SendRegistration \/ SendGrant
-        \/ ParkRegistration \/ ParkGrant \/ Knock
+        \/ ParkRegistration \/ ParkGrant \/ Knock \/ Revoke \/ Age
         \/ (\E c \in Commands : SendFails(c) \/ ExpireFresh(c))
         \/ (\E c \in Commands, cred \in FreshCreds : Reauthorize(c, cred))
 
@@ -416,6 +550,9 @@ TypeOK ==
   /\ freshLive \in [Commands -> BOOLEAN]
   /\ failed \subseteq Commands /\ noted \subseteq Commands
   /\ unbacked \in BOOLEAN
+  /\ proven \in BOOLEAN /\ permitted \in BOOLEAN /\ remembered \in BOOLEAN
+  /\ evidence \in {"fresh", "stale", "unreachable"}
+  /\ owedReg \in {"none", "signer", "other"} /\ owedRevoke \in BOOLEAN
 
 \* A write is staged only when the Node could really act for the User at that
 \* moment. Checked on the step that stages it, since a credential may expire
@@ -458,4 +595,21 @@ INV_FailureReported == failed \subseteq noted
 INV_GrantAuthority ==
   [][("grant" \notin owed \cup parked /\ "grant" \in owed') =>
        TrulyMaySend("grant", grantForm, grantNames)]_vars
+
+\* An update or a delete is admitted only on a verified permission for the
+\* User at that moment: fresh evidence that the provider's finalized state
+\* grants it, with no revocation owed against the User on this Node; or, while
+\* the document's registration is still owed here, only for its creator.
+\* Checked on the step that admits it, since a revocation may land later.
+INV_EditOnVerifiedPermission ==
+  [][(phase = "ready" /\ phase' = "staged" /\ kind = "update") => TrulyPermit]_vars
+
+\* An update or a delete is never admitted with a request-bound delegation:
+\* it names a command, and these writes send none.
+INV_RequestBoundNoEdit ==
+  [][(phase = "ready" /\ phase' = "staged" /\ kind = "update") =>
+       writeForm # "request"]_vars
+
+\* An update or a delete leaves nothing owed to the provider.
+INV_EditOwesNothing == kind = "update" => owed = {}
 =============================================================================
