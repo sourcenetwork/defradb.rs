@@ -345,6 +345,31 @@ fn a_retry_of_an_owed_registration_never_reads_the_token_the_process_holds() {
             .settle_owed_changes(acp::OwedScope::All)
             .await
             .unwrap();
+        // Nor is a request that carries no bearer of its own, whoever makes
+        // it: it does not lend the creator's process token to the creator's
+        // parked registration.
+        for caller in [on.user.as_str(), STRANGER] {
+            let touched = on
+                .node
+                .add_dac_actor_relationship(caller, "Record", &doc, "reader", READER)
+                .await;
+            assert!(touched.is_err(), "{touched:?}");
+            assert!(on.remote.owners.get(&doc).is_none(), "as {caller}");
+        }
+        let decided = on
+            .node
+            .document_acp()
+            .bind_request(&actor(&on.user))
+            .expect("the gate serves a request")
+            .create_access_decision(
+                &acp::Identity::Authenticated(Did::new(&on.user).unwrap()),
+                &on.policy,
+                "rows",
+                &doc,
+                "read",
+            )
+            .await;
+        assert!(decided.is_err(), "{decided:?}");
         defra_core::signing::clear_request_bearer_token(&on.user);
 
         assert!(on.remote.owners.get(&doc).is_none());

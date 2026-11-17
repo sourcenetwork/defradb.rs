@@ -62,10 +62,11 @@ async fn token(acp: &VeraDocumentACP, change: &OwedChange) -> Result<String, Sub
                 });
             }
             let did = actor.to_owned();
+            // Naming the presenter with no token keeps the one the process
+            // holds for the DID out of reach, should the key be gone by now.
+            let signing = RequestContext::default().with_bearer(Some(did.clone()), None);
             acp.remote(move |provider| async move {
-                provider
-                    .create_bearer_token_as(&RequestContext::default(), &did)
-                    .await
+                provider.create_bearer_token_as(&signing, &did).await
             })
             .await
             .map_err(|error| match error {

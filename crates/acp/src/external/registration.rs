@@ -5,9 +5,10 @@
 //! as it was then. The provider it is sent through is asked first, as a
 //! create is asked when it is admitted, whether that lets the node send it
 //! ([`DocumentACP::command_authority`]). When it does not, a delegation of
-//! the creator kept with something else it owes is tried, then the
-//! credentials of the request being served. Nothing a process keeps beside
-//! its requests is read. A registration nothing lets the node send is not
+//! the creator kept with something else it owes is tried, then the bearer
+//! the request being served itself carries for the creator. Nothing a
+//! process keeps beside its requests is read: not at start, not for an owed
+//! change, and not on behalf of a request that carries no bearer. A registration nothing lets the node send is not
 //! sent: its record says it waits for authority, and every failed
 //! submission leaves its reason there.
 
@@ -94,16 +95,22 @@ where
             }
             token => context.with_bearer(Some(actor.to_string()), token.map(str::to_owned)),
         };
-        self.provider
+        // A provider that binds to no request takes no credentials at all:
+        // the one bound to none stands for it, never the one this gate
+        // serves a request through.
+        self.root
             .bind_request(&context)
-            .unwrap_or_else(|| Arc::clone(&self.provider))
+            .unwrap_or_else(|| Arc::clone(&self.root))
     }
 
     /// The provider `owed` is registered through: the first that may send
     /// the registration as its creator, asked as a create is asked when it
     /// is admitted ([`DocumentACP::command_authority`]). What the record
-    /// holds comes first, then `also`, then the credentials of the request
-    /// this gate serves. With none, the refusal of what the record holds.
+    /// holds comes first, then `also`, then the bearer the request this
+    /// gate serves itself carries for the creator. A request that carries
+    /// none for the creator lends nothing: asked all the same, a provider
+    /// would fall back on the token the process holds for that DID. With
+    /// none, the refusal of what the record holds.
     fn registrar(
         &self,
         owed: &PendingRegistration,
@@ -129,7 +136,12 @@ where
                 return Ok(by_other);
             }
         }
-        if self.bound
+        let carried = self.serving.as_ref().is_some_and(|serving| {
+            let canonical = self.provider.canonical_actor(&owed.creator);
+            serving.carried_bearer_for(owed.creator.as_str()).is_some()
+                || serving.carried_bearer_for(canonical.as_str()).is_some()
+        });
+        if carried
             && self
                 .provider
                 .command_authority(&owed.creator, command)

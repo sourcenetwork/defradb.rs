@@ -77,8 +77,12 @@ where
     settling: Arc<regolith::sync::Mutex<()>>,
     /// Told every time a record of something owed is written or deleted.
     changed: Arc<regolith::sync::Notify>,
-    /// Whether `provider` serves one request and carries its credentials.
-    bound: bool,
+    /// The request `provider` serves and carries the credentials of, when
+    /// this gate serves one.
+    serving: Option<defra_core::RequestContext>,
+    /// The provider bound to no request: what a submission that serves no
+    /// request is bound from, so it never inherits another's credentials.
+    root: Arc<dyn DocumentACP>,
 }
 
 fn storage_error(error: storage::corekv::Error) -> Error {
@@ -92,11 +96,12 @@ where
     /// Gate `provider` with the registrations owed in `store`'s ACP namespace.
     pub fn new(provider: Arc<dyn DocumentACP>, store: Arc<S>) -> Self {
         Self {
+            root: Arc::clone(&provider),
             provider,
             store: NamespacedStore::new(store, Namespace::Acpstore),
             settling: Arc::default(),
             changed: Arc::new(regolith::sync::Notify::new()),
-            bound: false,
+            serving: None,
         }
     }
 
@@ -263,7 +268,8 @@ where
             store: NamespacedStore::new(Arc::clone(self.store.inner()), self.store.namespace()),
             settling: Arc::clone(&self.settling),
             changed: Arc::clone(&self.changed),
-            bound: true,
+            serving: Some(context.clone()),
+            root: Arc::clone(&self.root),
         }))
     }
 

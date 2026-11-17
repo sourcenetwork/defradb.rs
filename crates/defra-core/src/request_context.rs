@@ -301,6 +301,17 @@ impl RequestContext {
         }
     }
 
+    /// The bearer token this request itself carries for `did`: never one
+    /// the process binds to it. A retry that serves no request, and any
+    /// code that acts for `did` on another caller's request, asks this and
+    /// not [`bearer_token_for`](Self::bearer_token_for).
+    pub fn carried_bearer_for(&self, did: &str) -> Option<String> {
+        match &self.0.bearer {
+            Some((presenter, token)) if presenter.as_deref() == Some(did) => token.clone(),
+            _ => None,
+        }
+    }
+
     /// The explicit transaction this request runs in; `None` for a request
     /// that commits on its own.
     pub fn txn(&self) -> Option<TxnId> {

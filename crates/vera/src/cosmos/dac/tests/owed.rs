@@ -29,6 +29,8 @@ struct OwedProvider {
     /// Whether a failed transaction is a verified rejection.
     classifies: AtomicBool,
     key_held: AtomicBool,
+    /// The key is gone the moment after the node was told it holds it.
+    key_vanishes: AtomicBool,
     expired: AtomicBool,
     /// Expire the delegation while the write is on its way.
     expires_in_flight: AtomicBool,
@@ -43,6 +45,7 @@ impl OwedProvider {
             takes_delegations,
             classifies: AtomicBool::new(true),
             key_held: AtomicBool::new(true),
+            key_vanishes: AtomicBool::new(false),
             expired: AtomicBool::new(false),
             expires_in_flight: AtomicBool::new(false),
             tokens: SegQueue::new(),
@@ -108,7 +111,11 @@ impl VeraProvider for OwedProvider {
     }
 
     fn holds_key_for(&self, did: &str) -> bool {
-        did == HELD && self.key_held.load(Ordering::Relaxed)
+        let held = did == HELD && self.key_held.load(Ordering::Relaxed);
+        if held && self.key_vanishes.load(Ordering::Relaxed) {
+            self.key_held.store(false, Ordering::Relaxed);
+        }
+        held
     }
 
     fn write_refused(&self, error: &ProviderError) -> bool {
@@ -521,6 +528,26 @@ async fn a_change_whose_authority_is_gone_is_not_sent_and_awaits_it() {
             .await,
         Submission::AwaitingAuthority { reason } if reason.contains("no longer holds")
     ));
+    assert!(provider.sent().is_empty());
+}
+
+/// A key that is gone between the node being told it holds it and the token
+/// being signed leaves the change waiting for authority. The token the
+/// process holds for the DID is not sent in its place.
+#[nuclei::test]
+async fn a_key_that_vanishes_before_signing_is_not_replaced_by_the_process_token() {
+    let provider = OwedProvider::new(true);
+    let acp = VeraDocumentACP::without_access_cache(provider.clone());
+    defra_core::signing::set_request_bearer_token(HELD, format!("delegation:{HELD}"));
+    provider.key_vanishes.store(true, Ordering::Relaxed);
+    let submitted = acp
+        .submit_owed_change(&change(HELD, OwedAuthority::NodeKey, OwedOp::Add))
+        .await;
+    defra_core::signing::clear_request_bearer_token(HELD);
+    assert!(
+        matches!(submitted, Submission::AwaitingAuthority { .. }),
+        "{submitted:?}"
+    );
     assert!(provider.sent().is_empty());
 }
 
