@@ -9,11 +9,14 @@ use libp2p::{
     identity::PublicKey,
     kad::{self, store::MemoryStore},
     swarm::{
-        ConnectionDenied, ConnectionId, FromSwarm, NetworkBehaviour, THandler, THandlerInEvent,
-        THandlerOutEvent, ToSwarm,
+        behaviour::DialFailure, ConnectionDenied, ConnectionId, FromSwarm, NetworkBehaviour,
+        THandler, THandlerInEvent, THandlerOutEvent, ToSwarm,
     },
     Multiaddr, PeerId, StreamProtocol,
 };
+use rapidhash::{HashSetExt, RapidHashSet};
+
+use crate::quiet_peers::QuietPeers;
 
 /// Kademlia query parallelism. Matches Go's `dht.Concurrency(10)`
 /// (`go-p2p/host.go:44`). rust-libp2p defaults to `ALPHA_VALUE` = 3.
@@ -78,6 +81,11 @@ impl DefraKademliaEvent {
 pub struct DefraKademlia {
     network: KademliaNetwork,
     inner: kad::Behaviour<MemoryStore>,
+    /// Peers this node disconnected on purpose: Kademlia never dials them.
+    quiet: QuietPeers<PeerId>,
+    /// Kademlia's own dials the swarm has not started or failed yet, the only
+    /// dials `quiet` refuses: an explicit dial of a quiet peer goes through.
+    dials: RapidHashSet<ConnectionId>,
 }
 
 impl DefraKademlia {
@@ -103,7 +111,12 @@ impl DefraKademlia {
             KademliaNetwork::Wan => inner.set_mode(None),
         }
 
-        Self { network, inner }
+        Self {
+            network,
+            inner,
+            quiet: QuietPeers::default(),
+            dials: RapidHashSet::new(),
+        }
     }
 }
 
@@ -159,6 +172,10 @@ impl NetworkBehaviour for DefraKademlia {
         addresses: &[Multiaddr],
         effective_role: Endpoint,
     ) -> Result<Vec<Multiaddr>, ConnectionDenied> {
+        let ours = self.dials.remove(&connection_id);
+        if let Some(peer) = maybe_peer.filter(|peer| ours && self.quiet.contains(peer)) {
+            return Err(ConnectionDenied::new(QuietPeerDial(peer)));
+        }
         self.inner.handle_pending_outbound_connection(
             connection_id,
             maybe_peer,
@@ -185,6 +202,9 @@ impl NetworkBehaviour for DefraKademlia {
     }
 
     fn on_swarm_event(&mut self, event: FromSwarm) {
+        if let FromSwarm::DialFailure(DialFailure { connection_id, .. }) = &event {
+            self.dials.remove(connection_id);
+        }
         self.inner.on_swarm_event(event);
     }
 
@@ -203,6 +223,9 @@ impl NetworkBehaviour for DefraKademlia {
         cx: &mut Context<'_>,
     ) -> Poll<ToSwarm<Self::ToSwarm, THandlerInEvent<Self>>> {
         self.inner.poll(cx).map(|event| {
+            if let ToSwarm::Dial { opts } = &event {
+                self.dials.insert(opts.connection_id());
+            }
             event.map_out(|event| match self.network {
                 KademliaNetwork::Lan => DefraKademliaEvent::Lan(event),
                 KademliaNetwork::Wan => DefraKademliaEvent::Wan(event),
@@ -210,6 +233,11 @@ impl NetworkBehaviour for DefraKademlia {
         })
     }
 }
+
+/// Why one of Kademlia's dials was refused.
+#[derive(Debug, thiserror::Error)]
+#[error("peer {0} was disconnected on purpose; only an explicit dial reaches it")]
+pub struct QuietPeerDial(PeerId);
 
 /// Separate LAN and WAN Kademlia routing tables.
 ///
@@ -253,6 +281,18 @@ impl DualKademlia {
     pub fn remove_peer(&mut self, peer: &PeerId) {
         self.lan.remove_peer(peer);
         self.wan.remove_peer(peer);
+    }
+
+    /// Never let Kademlia dial `peer`: this node disconnected it on purpose.
+    pub fn quiet(&mut self, peer: PeerId) {
+        self.lan.quiet.insert(peer);
+        self.wan.quiet.insert(peer);
+    }
+
+    /// Let Kademlia dial `peer` again: something explicit named it.
+    pub fn unquiet(&mut self, peer: &PeerId) {
+        self.lan.quiet.remove(peer);
+        self.wan.quiet.remove(peer);
     }
 
     pub fn bootstrap(&mut self) -> [(KademliaNetwork, Result<kad::QueryId, kad::NoKnownPeers>); 2] {
@@ -322,4 +362,45 @@ pub fn validate_pk_namespaced_record(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dial(kademlia: &mut DefraKademlia, id: usize, peer: PeerId) -> bool {
+        kademlia
+            .handle_pending_outbound_connection(
+                ConnectionId::new_unchecked(id),
+                Some(peer),
+                &[],
+                Endpoint::Dialer,
+            )
+            .is_ok()
+    }
+
+    /// #2992: once this node disconnected a peer on purpose, Kademlia's own
+    /// dials of it are refused, while an explicit dial still reaches it.
+    #[test]
+    fn kademlia_never_dials_a_quiet_peer_but_an_explicit_dial_does() {
+        let mut kademlia = DefraKademlia::new(PeerId::random(), KademliaNetwork::Lan);
+        let peer = PeerId::random();
+        kademlia.quiet.insert(peer);
+
+        kademlia.dials.insert(ConnectionId::new_unchecked(1));
+        assert!(
+            !dial(&mut kademlia, 1, peer),
+            "Kademlia dialed a quiet peer"
+        );
+        assert!(kademlia.dials.is_empty(), "a refused dial is forgotten");
+
+        assert!(dial(&mut kademlia, 2, peer), "an explicit dial was refused");
+
+        kademlia.quiet.remove(&peer);
+        kademlia.dials.insert(ConnectionId::new_unchecked(3));
+        assert!(
+            dial(&mut kademlia, 3, peer),
+            "an unquieted peer stayed refused"
+        );
+    }
 }

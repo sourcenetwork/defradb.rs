@@ -218,6 +218,19 @@ Setting `_authorID` or `author` on a `Book` links it, visible as `Author { publi
 
 Disconnecting from one or several connected peers leaves the active peer list empty; disconnecting an empty list fails with `addresses cannot be empty`.
 
+# `defra.net.peers.disconnect_sticks`: An explicit disconnect sticks
+
+- **Parents:** ["defra"]
+
+After `DisconnectPeers` names a peer, the node's discovery (Kademlia, peer exchange) never dials that peer again until `ConnectPeers` or `AddReplicator` names it. A dropped connection or a restarted peer is not a disconnect: discovery reconnects it as before.
+
+# `defra.net.peers.disconnect_sticks.explicit_connect`: `ConnectPeers` undoes a disconnect
+
+- **Parents:** ["defra.net.peers.disconnect_sticks"]
+- **Scenarios:** ["net::sticky_disconnect::an_explicit_connect_undoes_a_disconnect"]
+
+`ConnectPeers` to a peer the node disconnected reaches it again: `ActivePeers` lists it next to the peers the node stayed connected to.
+
 # `go.net.subscribe.collection_list`: Listing collection subscriptions
 
 - **Parents:** ["go.net.subscribe"]

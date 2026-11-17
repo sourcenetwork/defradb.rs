@@ -67,7 +67,11 @@ impl<S: Store> P2PHost<S> {
         response: crate::rt::oneshot::Sender<Result<()>>,
     ) {
         self.peer_addrs.remove(&peer_id);
-        self.swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
+        let kademlia = &mut self.swarm.behaviour_mut().kademlia;
+        kademlia.remove_peer(&peer_id);
+        // Kademlia relearns the peer from other peers' answers; this keeps its
+        // queries from dialing it until an explicit dial (#2992).
+        kademlia.quiet(peer_id);
         // `disconnect_peer_id` returns `Err(())` when the peer is not connected.
         // Disconnect is idempotent: hanging up on an absent peer is success.
         if self.swarm.disconnect_peer_id(peer_id).is_ok() {
