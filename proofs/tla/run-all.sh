@@ -107,10 +107,11 @@ RUNS=(
   "MC_VerifiedRemoteWrite_Red_ReauthUnchecked.cfg VerifiedRemoteWrite.tla RED" # a parked command is owed again on a fresh credential the rule of admission refuses (INV_ReauthorizedWithAuthority)
   "MC_VerifiedRemoteWrite_Red_SilentFailure.cfg VerifiedRemoteWrite.tla RED" # a submission fails after the commit and the record does not say so (INV_FailureReported)
   "MC_VerifiedRemoteWrite_Red_NoPermission.cfg VerifiedRemoteWrite.tla RED" # a verified update or delete is admitted without the signer's verified permission (INV_EditOnVerifiedPermission)
-  "MC_VerifiedRemoteWrite_Red_StaleEvidence.cfg VerifiedRemoteWrite.tla RED" # a verified update or delete is admitted on evidence older than the freshness limit (INV_EditOnVerifiedPermission)
+  "MC_VerifiedRemoteWrite_Red_StaleEvidence.cfg VerifiedRemoteWrite.tla RED" # a verified update or delete is admitted on a proof of a revision older than the freshness limit (INV_EditOnVerifiedPermission)
   "MC_VerifiedRemoteWrite_Red_OwedIgnored.cfg VerifiedRemoteWrite.tla RED" # an owed revocation or an owed registration is ignored for a verified update (INV_EditOnVerifiedPermission)
   "MC_VerifiedRemoteWrite_Red_RequestEdit.cfg VerifiedRemoteWrite.tla RED" # a request-bound delegation admits a verified update (INV_RequestBoundNoEdit)
   "MC_VerifiedRemoteWrite_Red_EditOwes.cfg VerifiedRemoteWrite.tla RED" # a verified update records a command as owed (INV_EditOwesNothing)
+  "MC_VerifiedRemoteWrite_Red_WindowWitness.cfg VerifiedRemoteWrite.tla RED" # witness, no bug: an update is admitted on a fresh proof that predates a finalized revocation, as the code allows within the freshness limit (NotPastRevocation)
   "MC_SourceScopedNac_Green.cfg SourceScopedNac.tla GREEN"
   "MC_SourceScopedNac_Red_Authority.cfg SourceScopedNac.tla RED"
   "MC_SourceScopedNac_Red_Owner.cfg SourceScopedNac.tla RED"

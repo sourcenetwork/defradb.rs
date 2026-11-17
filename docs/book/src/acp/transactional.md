@@ -289,8 +289,9 @@ name there and is refused, even where the node holds the key.
 **Updates and deletes: admitted on the signer's permission.** The blocks of a verified
 update or delete are signed by its signer, so who wrote it is proven; nothing is owed to
 the provider, and nothing is recorded as owed for the write. The credential only says who
-is asking. What admits the write is that the signer holds the `update` (or `delete`)
-permission on that document at admission, decided by the one check every update and
+is asking. What admits the write is that the signer held the `update` (or `delete`)
+permission on that document at a verified revision no older than the freshness limit
+(below), decided at admission by the one check every update and
 delete makes (`QueryRunner::authorize_mutation`), for every credential form alike: a
 delegation proves who asks, and the permission still decides; a key the node holds
 decides nothing either. The check runs before the statement writes anything, in this
@@ -317,7 +318,8 @@ delete gets (the document is not found, or not authorized), or the provider's
 unavailability, not `WRITE_AUTHORITY_UNAVAILABLE`. On the Cosmos provider, which proves no
 decisions and keeps an access cache, `None` still needs a key the node holds.
 
-**Freshness and revocations.** A decision is read at the light client's newest verified
+**Freshness and revocations.** The guarantee is the permission at the proof's revision,
+not at the moment of admission. A decision is read at the light client's newest verified
 revision and kept, for the same request and for later ones, under that revision's state
 root while that revision stays fresh: a new revision is a new key, and one past the
 freshness limit is none. So a revocation is honoured from the first verified revision

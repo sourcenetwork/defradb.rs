@@ -10,9 +10,11 @@ counts for no other.
 
 An update or a delete sends the provider no command. The User's signature on
 the blocks says who wrote it; the credential only says who is asking, and the
-write is admitted on the provider's verified permission for the User: evidence
-read against the provider's finalized state at a revision within the freshness
-limit. Stale or missing evidence admits nothing. On this node a registration
+write is admitted when the User held the permission at a verified revision no
+older than the freshness limit: a proof of the provider's finalized state at
+that revision. It says nothing of a change finalized after that revision, so a
+revocation finalized since can still be passed until a newer revision is
+verified or the proof ages out. Stale or missing evidence admits nothing. On this node a registration
 still owed lets only its creator in, and a revocation still owed shuts the
 User out, as for a read. One rule decides for every credential form.
 
@@ -160,7 +162,8 @@ theorem a_fresh_request_releases_one_command (fresh : Credential)
 in. -/
 inductive Evidence where
   /-- Verified against the provider's finalized state at a revision within
-  the freshness limit; `allowed` is what that state says. -/
+  the freshness limit; `allowed` is the permission at that revision, which a
+  change finalized later does not alter. -/
   | fresh (allowed : Bool)
   /-- The newest verified state is older than the freshness limit. -/
   | stale
@@ -219,7 +222,7 @@ theorem an_edit_needs_the_permission (proven holdsKey : Bool) (c : Credential)
   exact h.2
 
 /-- With nothing owed on the document, an admitted update or delete was
-admitted on fresh evidence that allowed it: never on a guess. -/
+admitted on fresh evidence whose revision allowed it: never on a guess. -/
 theorem an_edit_is_admitted_on_fresh_evidence_only (proven holdsKey : Bool)
     (c : Credential) (owed : OwedOnDocument) (e : Evidence)
     (hr : owed.registration = none)
@@ -244,9 +247,9 @@ theorem an_unreachable_provider_admits_nothing (proven holdsKey : Bool)
     editAdmitted proven holdsKey c owed .unreachable = false := by
   simp [editAdmitted, verifiedPermit, hr]
 
-/-- A revocation the provider has finalized, read in fresh evidence, refuses
+/-- A revocation contained in the verified revision of fresh evidence refuses
 the update. -/
-theorem a_finalized_revocation_refuses (proven holdsKey : Bool) (c : Credential)
+theorem a_revocation_in_the_verified_revision_refuses (proven holdsKey : Bool) (c : Credential)
     (owed : OwedOnDocument) (hr : owed.registration = none) :
     editAdmitted proven holdsKey c owed (.fresh false) = false := by
   simp [editAdmitted, verifiedPermit, hr]

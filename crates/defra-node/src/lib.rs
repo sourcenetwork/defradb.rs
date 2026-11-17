@@ -453,8 +453,11 @@ impl Node {
     /// document's creator, a revocation still owed refuses its subject, and
     /// otherwise the provider's decision, which vera.rs proves against its
     /// finalized state at a revision within the light client's freshness
-    /// limit, and which fails closed when no such revision can be read. A
-    /// revocation finalized after that decision does not undo the write.
+    /// limit, and which fails closed when no such revision can be read. The
+    /// guarantee is the permission at that revision: a revocation finalized
+    /// after it can be passed until a newer revision is verified or the
+    /// proof ages out, and one finalized after admission does not undo the
+    /// write.
     ///
     /// `credential` only says who is asking, and the permission decides for
     /// every form: [`SignerCredential::None`] where the provider proves its

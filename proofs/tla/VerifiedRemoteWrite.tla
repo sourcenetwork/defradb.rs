@@ -34,11 +34,17 @@
 \* command and owes it nothing. The User's signature on its blocks already says
 \* who wrote it. What decides it is the provider's own answer to "may this User
 \* update (or delete) this document?", read and verified by the Node against
-\* the provider's finalized state at a revision recent enough to trust (the
-\* evidence is "fresh"). Evidence can grow "stale" (older than the freshness
-\* limit) or be "unreachable" (the provider does not answer). The owner can
-\* revoke the User's permission at any moment, before or after the write is
-\* admitted. On this Node a registration of the document can still be owed
+\* the provider's finalized state at one revision: the newest revision the
+\* Node has verified. That proof is "fresh" while its revision is younger than
+\* the freshness limit (30 seconds for vera.rs), and it says what the
+\* permission was AT THAT REVISION, not what it is now. Evidence can grow
+\* "stale" (older than the freshness limit) or be "unreachable" (the provider
+\* does not answer). The owner can revoke the User's permission at any moment,
+\* before or after the write is admitted. A revocation finalized after the
+\* revision the Node last verified is not in its proof: until the Node verifies
+\* a newer revision, or the proof ages past the limit, an update can still be
+\* admitted on the proof that shows the permission. That window is the
+\* freshness bound, and the model lets it happen. On this Node a registration of the document can still be owed
 \* (the provider does not know the document yet: only its recorded creator may
 \* touch it), and a revocation can still be owed (it denies the User whatever
 \* the provider says). With an update the credential only says who is asking:
@@ -52,9 +58,10 @@
 \*
 \* What must never happen:
 \*   - a write is recorded although the Node could not act for the User;
-\*   - an update is admitted without a verified permission for the User at
-\*     admission, or on stale or missing evidence, or past a revocation or a
-\*     registration still owed on this Node;
+\*   - an update is admitted unless the User held the permission at a
+\*     verified revision no older than the freshness limit, or it is admitted
+\*     on stale or missing evidence, or past a revocation or a registration
+\*     still owed on this Node;
 \*   - an update is admitted with a request-bound delegation;
 \*   - an update leaves something owed to the provider;
 \*   - a refused write leaves a row or an owed record behind;
@@ -139,9 +146,9 @@ VARIABLES
   noted,       \* the commands whose record says why their last submission failed
   unbacked,    \* TRUE once a command was sent though nothing recorded for it allowed it
   proven,      \* TRUE when the provider proves its decisions (vera.rs), FALSE for Cosmos
-  permitted,   \* TRUE while the provider's finalized state gives the User the permission
-  remembered,  \* the permission as an older state gave it: what stale evidence answers
-  evidence,    \* what the Node can read now: "fresh", "stale" or "unreachable"
+  permitted,   \* TRUE while the provider's newest finalized state gives the User the permission
+  seen,        \* the permission at the revision the Node last verified: what its proof shows
+  evidence,    \* the age of that proof: "fresh", "stale", or "unreachable" (no answer)
   owedReg,     \* a registration of the document owed on this Node: "none", "signer", "other"
   owedRevoke   \* TRUE when a revocation owed on this Node names the User on the document
 
@@ -149,7 +156,7 @@ VARIABLES
 after == <<fresh, freshLive, failed, noted, unbacked>>
 
 \* What decides an update: the provider, the evidence, and what this Node owes.
-edit == <<proven, permitted, remembered, evidence, owedReg, owedRevoke>>
+edit == <<proven, permitted, seen, evidence, owedReg, owedRevoke>>
 
 \* Every variable, so a step can say which ones it leaves alone.
 vars == <<kind, holdsKey, writeForm, writeNames, grantForm, grantNames, bySigner,
@@ -176,7 +183,7 @@ Init ==
             /\ grantNames \in Named            \* and may name any command
             /\ proven = TRUE                   \* a create is decided by its credential
             /\ permitted = FALSE               \* and reads no permission
-            /\ remembered = FALSE
+            /\ seen = FALSE
             /\ evidence = "fresh"
             /\ owedReg = "none"
             /\ owedRevoke = FALSE
@@ -184,7 +191,7 @@ Init ==
             /\ grantNames = "other"
             /\ proven \in BOOLEAN              \* vera.rs, or a provider that proves nothing
             /\ permitted \in BOOLEAN           \* the User may or may not hold the permission
-            /\ remembered \in BOOLEAN          \* an older state may have said otherwise
+            /\ seen \in BOOLEAN                \* the verified revision may predate a change
             /\ evidence \in {"fresh", "stale", "unreachable"} \* any evidence to start with
             /\ owedReg \in {"none", "signer", "other"} \* a registration may still be owed
             /\ owedRevoke \in BOOLEAN          \* a revocation may still be owed
@@ -272,12 +279,13 @@ TrulyEditCredential(form) ==
   \/ form = "none" /\ (proven \/ holdsKey)
   \/ form = "delegation" /\ (holdsKey \/ TrulyGood)
 
-\* What the provider answers the Node. Fresh evidence gives the permission as
-\* the finalized state has it now. Stale or missing evidence answers nothing;
-\* the planted bug takes stale evidence, which tells what an older state said.
+\* What the provider answers the Node: the permission its proof shows, at the
+\* revision it verified, while that revision is within the freshness limit.
+\* That may be older than a revocation finalized since. Stale or missing
+\* evidence answers nothing; the planted bug takes a proof past the limit.
 Decision ==
-  \/ evidence = "fresh" /\ permitted                            \* verified and current
-  \/ evidence = "stale" /\ remembered /\ Bug = "staleEvidence"  \* (bug: an old answer)
+  \/ evidence = "fresh" /\ seen                                 \* verified, within the limit
+  \/ evidence = "stale" /\ seen /\ Bug = "staleEvidence"        \* (bug: past the limit)
 
 \* The gate on this Node, as for a read: a registration still owed lets only
 \* its creator in, a revocation still owed shuts the User out, and otherwise
@@ -290,11 +298,12 @@ Permit ==
        /\ (~owedRevoke \/ Bug = "owedIgnored")                 \* no revocation owed
        /\ Decision                                            \* and the provider says yes
 
-\* The same question answered from the facts, with no bug: a verified permission.
+\* The same question answered from the facts, with no bug: the User held the
+\* permission at a verified revision no older than the freshness limit.
 TrulyPermit ==
   IF owedReg # "none"
     THEN owedReg = "signer"
-    ELSE ~owedRevoke /\ evidence = "fresh" /\ permitted
+    ELSE ~owedRevoke /\ evidence = "fresh" /\ seen
 
 \* Whether the write is admitted: a create needs authority for its
 \* registration; an update a credential that says who asks, and the
@@ -504,8 +513,9 @@ Knock ==
 
 \* The owner revokes the User's permission and the provider finalizes it. This
 \* can happen at any moment, also after the update was admitted: the update
-\* then still commits. Fresh evidence read afterwards says no; an older state
-\* still remembers the permission.
+\* then still commits. The Node's proof is of an earlier revision and still
+\* shows the permission until the Node verifies a newer one (Observe) or the
+\* proof ages past the limit (Age).
 Revoke ==
   /\ permitted                                                  \* the User holds it now
   /\ permitted' = FALSE                                         \* and no longer does
@@ -513,7 +523,18 @@ Revoke ==
                  bySigner, forNode, current, phase, rows, owed, sent, parked,
                  misused, stale, http>>
   /\ UNCHANGED after                                            \* nothing is recorded here
-  /\ UNCHANGED <<proven, remembered, evidence, owedReg, owedRevoke>>
+  /\ UNCHANGED <<proven, seen, evidence, owedReg, owedRevoke>>
+
+\* The Node verifies the provider's newest finalized revision: its proof is
+\* fresh again and shows the permission as that revision has it.
+Observe ==
+  /\ evidence' = "fresh"                                        \* a new verified revision
+  /\ seen' = permitted                                          \* showing the state as it is
+  /\ UNCHANGED <<kind, holdsKey, writeForm, writeNames, grantForm, grantNames,
+                 bySigner, forNode, current, phase, rows, owed, sent, parked,
+                 misused, stale, http>>
+  /\ UNCHANGED after                                            \* nothing is recorded here
+  /\ UNCHANGED <<proven, permitted, owedReg, owedRevoke>>
 
 \* The newest verified state grows older than the freshness limit: the
 \* evidence goes stale. Or the provider stops answering.
@@ -524,11 +545,11 @@ Age ==
                  bySigner, forNode, current, phase, rows, owed, sent, parked,
                  misused, stale, http>>
   /\ UNCHANGED after                                            \* nothing is recorded here
-  /\ UNCHANGED <<proven, permitted, remembered, owedReg, owedRevoke>>
+  /\ UNCHANGED <<proven, permitted, seen, owedReg, owedRevoke>>
 
 \* Any of the steps above may come next.
 Next == Stage \/ StageGrant \/ Commit \/ Expire \/ SendRegistration \/ SendGrant
-        \/ ParkRegistration \/ ParkGrant \/ Knock \/ Revoke \/ Age
+        \/ ParkRegistration \/ ParkGrant \/ Knock \/ Revoke \/ Observe \/ Age
         \/ (\E c \in Commands : SendFails(c) \/ ExpireFresh(c))
         \/ (\E c \in Commands, cred \in FreshCreds : Reauthorize(c, cred))
 
@@ -550,7 +571,7 @@ TypeOK ==
   /\ freshLive \in [Commands -> BOOLEAN]
   /\ failed \subseteq Commands /\ noted \subseteq Commands
   /\ unbacked \in BOOLEAN
-  /\ proven \in BOOLEAN /\ permitted \in BOOLEAN /\ remembered \in BOOLEAN
+  /\ proven \in BOOLEAN /\ permitted \in BOOLEAN /\ seen \in BOOLEAN
   /\ evidence \in {"fresh", "stale", "unreachable"}
   /\ owedReg \in {"none", "signer", "other"} /\ owedRevoke \in BOOLEAN
 
@@ -596,11 +617,11 @@ INV_GrantAuthority ==
   [][("grant" \notin owed \cup parked /\ "grant" \in owed') =>
        TrulyMaySend("grant", grantForm, grantNames)]_vars
 
-\* An update or a delete is admitted only on a verified permission for the
-\* User at that moment: fresh evidence that the provider's finalized state
-\* grants it, with no revocation owed against the User on this Node; or, while
-\* the document's registration is still owed here, only for its creator.
-\* Checked on the step that admits it, since a revocation may land later.
+\* An update or a delete is admitted only when the User held the permission
+\* at a verified revision no older than the freshness limit, with no
+\* revocation owed against the User on this Node; or, while the document's
+\* registration is still owed here, only for its creator. Checked on the step
+\* that admits it. A revocation finalized after that revision is not promised.
 INV_EditOnVerifiedPermission ==
   [][(phase = "ready" /\ phase' = "staged" /\ kind = "update") => TrulyPermit]_vars
 
@@ -609,6 +630,14 @@ INV_EditOnVerifiedPermission ==
 INV_RequestBoundNoEdit ==
   [][(phase = "ready" /\ phase' = "staged" /\ kind = "update") =>
        writeForm # "request"]_vars
+
+\* Not a promise: what the freshness window allows. An update is never admitted
+\* while the User's permission is already revoked on the provider. The model
+\* must break this (MC_VerifiedRemoteWrite_Red_WindowWitness), or it could not
+\* show the admission the code makes on a proof that predates a revocation.
+NotPastRevocation ==
+  [][(phase = "ready" /\ phase' = "staged" /\ kind = "update" /\ owedReg = "none")
+       => permitted]_vars
 
 \* An update or a delete leaves nothing owed to the provider.
 INV_EditOwesNothing == kind = "update" => owed = {}
