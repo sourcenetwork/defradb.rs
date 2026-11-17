@@ -89,6 +89,69 @@ pub trait DocumentACP: MaybeSendSync {
         did.clone()
     }
 
+    /// The DID this provider signs its own commands as, when it has one. A
+    /// node registers a replicated document as this actor
+    /// ([`crate::replica`]), and counts it, beside its identity, as itself
+    /// when it asks whether it can read a replicated document.
+    fn own_actor(&self) -> Option<Did> {
+        None
+    }
+
+    /// What this node still owes, or waits for, on a replicated document,
+    /// from committed state alone: the merge gate's input
+    /// ([`crate::ReplicaOwed`]). Nothing for a provider that keeps no outbox.
+    async fn replica_owed(
+        &self,
+        _policy_id: &str,
+        _resource_name: &str,
+        _doc_id: &str,
+    ) -> Result<crate::ReplicaOwed> {
+        Ok(crate::ReplicaOwed::default())
+    }
+
+    /// Record, in the transaction whose ACP namespace `view` is, the unit a
+    /// receiving node owes for a replicated document it registers as itself:
+    /// the registration and the embedder's grants for its creator. Nothing
+    /// is recorded when a registration of the document is already owed.
+    async fn stage_replica_unit(
+        &self,
+        _view: &datastore::NamespaceView,
+        unit: &crate::ReplicaUnit<'_>,
+    ) -> Result<()> {
+        Err(Error::ProviderUnavailable(format!(
+            "this provider keeps no outbox to register replicated document {}",
+            unit.doc_id
+        )))
+    }
+
+    /// Record, in the transaction whose ACP namespace `view` is, that the
+    /// owner of a replicated document owes `creator`'s grants and this node
+    /// waits for them.
+    async fn adopt_replica(
+        &self,
+        _view: &datastore::NamespaceView,
+        _policy_id: &str,
+        _resource_name: &str,
+        doc_id: &str,
+        _creator: &Did,
+    ) -> Result<()> {
+        Err(Error::ProviderUnavailable(format!(
+            "this provider keeps no outbox to adopt replicated document {doc_id}"
+        )))
+    }
+
+    /// Submit what this node owes on a replicated document, and drop its
+    /// marker once nothing is owed or waited for any more. Nothing for a
+    /// provider that keeps no outbox.
+    async fn settle_replica(
+        &self,
+        _policy_id: &str,
+        _resource_name: &str,
+        _doc_id: &str,
+    ) -> Result<()> {
+        Ok(())
+    }
+
     /// Whether this provider can be sent a relationship change with this
     /// kind of subject. A change it cannot take is not staged. The default
     /// is what the default relationship calls take: one actor, or all.

@@ -14,6 +14,9 @@ use defra_node::{
 #[path = "embedded_vera/verified.rs"]
 mod verified;
 
+#[path = "embedded_vera/replica.rs"]
+mod replica;
+
 #[cfg(feature = "http")]
 #[path = "embedded_vera/verified_edit.rs"]
 mod verified_edit;
@@ -74,10 +77,21 @@ async fn starting(
     policies: Vec<EmbeddedVeraPolicy>,
     rpc_listen: Option<std::net::SocketAddr>,
 ) -> defra_node::Result<Node> {
+    starting_with(directory, actor, policies, rpc_listen, |builder| builder).await
+}
+
+/// [`starting`], with the builder changed by `customize` before it builds.
+async fn starting_with(
+    directory: &Path,
+    actor: EmbeddedVeraActor,
+    policies: Vec<EmbeddedVeraPolicy>,
+    rpc_listen: Option<std::net::SocketAddr>,
+    customize: impl FnOnce(defra_node::NodeBuilder) -> defra_node::NodeBuilder,
+) -> defra_node::Result<Node> {
     let keyring: Arc<dyn keyring::Keyring> = Arc::new(
         keyring::FileKeyring::open(directory.join("keys"), b"test-password").expect("keyring"),
     );
-    Node::builder()
+    customize(Node::builder())
         .with_embedded_vera(EmbeddedVeraConfig {
             data_dir: directory.join("vera"),
             deployment: EmbeddedVeraDeployment {

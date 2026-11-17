@@ -48,6 +48,7 @@ use crate::permission::DocumentPermission;
 
 mod owed;
 mod registration;
+mod replica;
 mod settle;
 
 pub use settle::{OwedScope, OwedSettlement, MAX_FAILED_SUBMISSIONS};
@@ -91,7 +92,7 @@ fn storage_error(error: storage::corekv::Error) -> Error {
 
 impl<S> ExternalDocumentAcp<S>
 where
-    S: Store,
+    S: Store + 'static,
 {
     /// Gate `provider` with the registrations owed in `store`'s ACP namespace.
     pub fn new(provider: Arc<dyn DocumentACP>, store: Arc<S>) -> Self {
@@ -292,6 +293,49 @@ where
 
     fn canonical_actor(&self, did: &Did) -> Did {
         self.provider.canonical_actor(did)
+    }
+
+    fn own_actor(&self) -> Option<Did> {
+        self.provider.own_actor()
+    }
+
+    async fn replica_owed(
+        &self,
+        policy_id: &str,
+        resource_name: &str,
+        doc_id: &str,
+    ) -> Result<crate::ReplicaOwed> {
+        self.owed_on_replica(policy_id, resource_name, doc_id).await
+    }
+
+    async fn stage_replica_unit(
+        &self,
+        view: &datastore::NamespaceView,
+        unit: &crate::ReplicaUnit<'_>,
+    ) -> Result<()> {
+        self.record_replica_unit(view, unit).await
+    }
+
+    async fn adopt_replica(
+        &self,
+        view: &datastore::NamespaceView,
+        policy_id: &str,
+        resource_name: &str,
+        doc_id: &str,
+        creator: &Did,
+    ) -> Result<()> {
+        self.record_adopted_replica(view, policy_id, resource_name, doc_id, creator)
+            .await
+    }
+
+    async fn settle_replica(
+        &self,
+        policy_id: &str,
+        resource_name: &str,
+        doc_id: &str,
+    ) -> Result<()> {
+        self.settle_replica_unit(policy_id, resource_name, doc_id)
+            .await
     }
 
     fn submits_subject(&self, subject: &Subject) -> bool {

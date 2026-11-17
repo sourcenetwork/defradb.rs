@@ -87,6 +87,7 @@ pub use access_hooks::AccessHooks;
 /// Re-exported so callers can name `Arc<dyn DocumentACP>` (the type
 /// [`Node::document_acp`] returns) without depending on `acp` directly.
 pub use acp::nac::NodePermission;
+pub use acp::ReplicaGrant;
 pub use acp::{DocumentACP, DocumentPermission, Identity as AcpIdentity};
 pub use acp_ops::transactional::RelationshipChange;
 #[cfg(feature = "vera")]
@@ -113,6 +114,7 @@ pub use config::{
 pub use config::{P2PConfig, PeerKeySource};
 /// The hook [`NodeBuilder::with_index_build_gate`] takes.
 pub use db::index::build_gate::{GateWait, IndexBuildGate};
+pub use db::merge::{ReplicaOwnership, ReplicaRegistration};
 #[cfg(feature = "managed-p2p")]
 pub use defra_p2p_adapter::{
     ReplicationFilter, ReplicationFilters, ReplicatorPushOptions, ReplicatorPushOptionsState,

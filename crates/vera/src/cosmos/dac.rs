@@ -439,6 +439,12 @@ impl DocumentACP for VeraDocumentACP {
         Did::new_unchecked(self.provider.canonical_actor(did.as_str()))
     }
 
+    fn own_actor(&self) -> Option<Did> {
+        self.provider
+            .self_did()
+            .map(|did| Did::new_unchecked(self.provider.canonical_actor(&did)))
+    }
+
     fn submits_subject(&self, subject: &Subject) -> bool {
         match subject {
             Subject::Entity(_) | Subject::Wildcard => true,
