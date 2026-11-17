@@ -158,6 +158,27 @@ fn a_chunks_key_owner_is_its_parent() {
 }
 
 #[test]
+fn a_deleted_parent_still_owns_its_old_chunks_keys() {
+    workers::block_on(async {
+        let db = chunked_db().await;
+        let parent = create(&db, "Article", r#"{"body": "x"}"#).await;
+        let block = plant_chunk(&db, &parent).await;
+        AutoCommitMutator::new(Arc::clone(&db))
+            .delete("Article", &DocID::from_string(&parent).unwrap())
+            .await
+            .unwrap();
+
+        let owners = DbBlockDocIDResolver::new(Arc::clone(&db))
+            .doc_ids_for_block(&block)
+            .await
+            .unwrap();
+
+        assert_eq!(owners, vec![parent]);
+    })
+    .unwrap()
+}
+
+#[test]
 fn a_chunk_whose_parent_has_not_arrived_has_no_history_parent() {
     workers::block_on(async {
         let db = chunked_db().await;

@@ -42,6 +42,15 @@ fn a_chunk_collections_parent_must_chunk_the_named_field() {
             source.field_name = "title".into();
         }
         assert!(parent_collection(&db, &unchunked_field).unwrap().is_none());
+
+        let mut missing_parent = chunks_col.clone();
+        if let Some(source) = missing_parent.chunk_of.as_mut() {
+            source.collection = "Gone".into();
+        }
+        assert!(parent_collection(&db, &missing_parent).unwrap().is_none());
+
+        let articles = db.get_collection("Article").unwrap().unwrap();
+        assert!(parent_collection(&db, articles.schema()).unwrap().is_none());
     })
     .unwrap()
 }
