@@ -45,6 +45,22 @@
 \*   |                   | peer is quiet                                            |
 \*   | Drop(x, y)        | a connection error or a restart: nothing quiets          |
 \*
+\* On vinc (crates/p2p/src/vinc), where both halves hold:
+\*
+\*   | Model             | Rust                                                     |
+\*   |-------------------|----------------------------------------------------------|
+\*   | quiet[x]          | endpoint.rs Node::quiet, read by Node::is_quiet          |
+\*   | Connect(x, y)     | endpoint.rs Command::Dial and Node::allow lift it        |
+\*   | Disconnect(x, y)  | endpoint.rs Node::hang_up: quiets y, closes each link    |
+\*   |                   | with CLOSE_DISCONNECTED (RED LocalQuiet = FALSE skips    |
+\*   |                   | the quiet)                                               |
+\*   | DeliverClose(m)   | serve.rs serve_connection ends and hung_up_on reads the  |
+\*   |                   | code: quiets x. is_quiet also reads a closed link not    |
+\*   |                   | yet forgotten, so the close and its reason are one step  |
+\*   | DeliverList(m)    | exchange.rs learn_peers: known_or_barred skips a quiet   |
+\*   |                   | peer                                                     |
+\*   | Drop(x, y)        | a timeout, a restart or any other close code: not quiet  |
+\*
 \* Gaps, explained:
 \*   * A discovery dial is one step: it is decided and lands at once. A list
 \*     names a peer only when the reader has no link to it, and a node never

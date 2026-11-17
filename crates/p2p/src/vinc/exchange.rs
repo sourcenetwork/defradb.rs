@@ -82,6 +82,9 @@ impl<H: Hosted + 'static> Node<H> {
     }
 
     fn known_or_barred(&self, node: &NodeId) -> bool {
-        *node == self.ep.id() || self.link(node).is_some() || self.ep.is_revoked(node)
+        *node == self.ep.id()
+            || self.link(node).is_some()
+            || self.ep.is_revoked(node)
+            || self.is_quiet(node)
     }
 }

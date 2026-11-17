@@ -305,3 +305,10 @@ Two nodes share 20 updates of a document, then lose touch. One makes 40 more upd
 - **Scenarios:** ["net::sync::exact_fetch::a_receiver_holding_nothing_still_gets_the_whole_document"]
 
 A node that holds none of a document with 31 updates, told of its next head, fetches the whole DAG and converges on it. It is sent no block it holds besides the head it asked for (`car_received_already_held` zero), however many of the writer's heads gossip delivered before the fetch.
+
+# `defra.net.peers.disconnect_sticks.discovery`: Neither side of a disconnect redials
+
+- **Parents:** ["defra.net.peers.disconnect_sticks"]
+- **Scenarios:** ["net::sticky_disconnect::a_disconnected_peer_is_not_dialed_back_by_discovery", "net::sticky_disconnect::a_fresh_list_does_not_redial_a_disconnected_peer"]
+
+On vinc, `DisconnectPeers` closes the connection with a code the peer reads as deliberate. Neither the node nor the peer it disconnected dials the other through peer exchange afterwards; either can still connect explicitly. libp2p's close carries no reason, so there only the node that disconnected stays quiet.
