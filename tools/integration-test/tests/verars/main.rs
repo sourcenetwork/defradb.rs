@@ -1,4 +1,5 @@
 mod actor_spelling;
+mod command_kinds;
 mod compartments;
 mod embedded;
 mod helpers;

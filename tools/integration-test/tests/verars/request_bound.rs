@@ -3,7 +3,9 @@
 //! DefraDB checks the binding before it sends anything. Here the provider is
 //! handed the token directly, behind that check, so the answer is the
 //! chain's own: it executes exactly the command the token names, for the
-//! deployment it names, and a second submission of it changes nothing.
+//! deployment it names, and a second submission of it changes nothing. The
+//! deployment's genesis identity comes from the provider's reported audience,
+//! and the chain's own answer agrees with it.
 
 use std::time::Duration;
 
@@ -32,8 +34,9 @@ resources:
           - actor
 ";
 
-/// The deployment's genesis identity: the parent of its first block.
-async fn genesis(rpc_url: &str) -> [u8; 32] {
+/// The deployment's genesis identity as the chain's JSON-RPC answers it,
+/// unverified: the parent of its first block.
+async fn genesis_on_chain(rpc_url: &str) -> [u8; 32] {
     let answer: serde_json::Value = net::http::Client::builder(edge::testing::edge())
         .no_proxy()
         .timeout(Duration::from_secs(30))
@@ -70,7 +73,10 @@ async fn the_chain_executes_a_request_bound_delegation_for_its_command_only() {
             .expect("provider");
         let policy = provider.create_policy(POLICY).await.expect("policy");
         let audience = provider.delegation_audience().expect("audience");
-        let genesis = genesis(&node.rpc_url()).await;
+        let genesis = audience
+            .genesis_id
+            .expect("the provider knows its genesis identity");
+        assert_eq!(genesis, genesis_on_chain(&node.rpc_url()).await);
         let user = Ed25519Signer::from_slice(&[9; 32]).expect("key");
         let reader = SubjectRef::Actor(READER.to_string());
         let on = |object_id, action| PolicyCommand {
@@ -141,9 +147,16 @@ async fn the_chain_executes_a_request_bound_delegation_for_its_command_only() {
             user.did()
         );
 
-        // Bound to the right command on another deployment's genesis: only
-        // the chain knows its genesis identity, and it refuses.
+        // Bound to the right command on another deployment's genesis: the
+        // node's own check refuses it, and so does the chain.
         let elsewhere = bound(on("first", PolicyAction::RegisterObject), [7; 32], 2).await;
+        assert!(matches!(
+            provider.caller_of_request_delegation(
+                &elsewhere,
+                &on("first", PolicyAction::RegisterObject)
+            ),
+            Some(Err(_))
+        ));
         assert!(matches!(
             provider
                 .register_object(&elsewhere, &policy, "users", "first")

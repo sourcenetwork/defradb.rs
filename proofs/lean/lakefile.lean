@@ -265,6 +265,12 @@ lean_lib VerifiedMutationHandoff where
 lean_lib VerifiedRemoteAuthority where
 
 @[default_target]
+lean_lib ReplicaGate where
+
+@[default_target]
+lean_lib DeferredMerges where
+
+@[default_target]
 lean_lib AdministrativeRelationship where
 
 @[default_target]

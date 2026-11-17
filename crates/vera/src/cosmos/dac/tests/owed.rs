@@ -130,6 +130,7 @@ impl VeraProvider for OwedProvider {
         self.takes_delegations.then(|| acp::DelegationAudience {
             worker: "did:key:worker".into(),
             deployment: 1,
+            genesis_id: None,
         })
     }
 

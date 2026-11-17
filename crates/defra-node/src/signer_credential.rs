@@ -8,17 +8,20 @@
 /// The credential is the signer's own and is used for the signer only.
 #[derive(Clone, PartialEq, Eq)]
 pub enum SignerCredential {
-    /// Nothing: the write is admitted when the node holds a key for the
-    /// signer.
+    /// Nothing. A create is admitted when the node holds a key for the
+    /// signer. An update or a delete owes the provider nothing and is
+    /// admitted on the signer's permission alone, where the provider proves
+    /// its decisions (vera.rs); elsewhere it too needs the key.
     None,
     /// The signer's delegation to this node for its policy commands, as a
     /// caller presents one over HTTP. It covers whatever the write owes the
-    /// provider until it expires.
+    /// provider until it expires. Beside an update or a delete it proves who
+    /// is asking, and the signer's permission still decides.
     Delegation(String),
     /// The signer's delegation bound to the one command the write sends the
     /// provider: the registration of the document a create makes. It covers
     /// that command and nothing else, so an update or a delete, which send
-    /// none, are refused with it.
+    /// none, are refused with it, even where the node holds the key.
     RequestBound(String),
 }
 

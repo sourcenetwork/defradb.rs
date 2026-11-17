@@ -81,6 +81,10 @@ pub struct PendingRegistration {
     /// Why the last submission failed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
+    /// The creator of a replicated document this node registers as itself
+    /// (see [`crate::replica`]): `creator` is then the node's own actor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replica_of: Option<Did>,
 }
 
 impl PendingRegistration {
@@ -97,7 +101,16 @@ impl PendingRegistration {
             state: OwedState::Staged,
             attempts: 0,
             last_error: None,
+            replica_of: None,
         }
+    }
+
+    /// This registration made by the receiving node for a replicated
+    /// document whose genesis `creator` signed.
+    #[must_use]
+    pub fn for_replica_of(mut self, creator: Did) -> Self {
+        self.replica_of = Some(creator);
+        self
     }
 
     /// This registration sent with `authority`, a delegation presented as
@@ -290,6 +303,7 @@ mod tests {
         assert_eq!(pending.state, OwedState::Staged);
         assert_eq!(pending.attempts, 0);
         assert_eq!(pending.last_error, None);
+        assert_eq!(pending.replica_of, None);
         assert_eq!(pending.encode().unwrap(), old.as_bytes());
     }
 

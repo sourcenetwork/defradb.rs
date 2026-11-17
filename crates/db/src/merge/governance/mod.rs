@@ -3,6 +3,8 @@
 
 mod awaited;
 mod deferred;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod deferred_conformance_tests;
 mod judge;
 mod local_commit;
 mod redriven;

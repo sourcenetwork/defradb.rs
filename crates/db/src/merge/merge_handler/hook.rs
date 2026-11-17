@@ -50,6 +50,36 @@ pub trait CompositeMergeHook: MaybeSendSync {
         Ok(None)
     }
 
+    /// Whether a change to `collection` whose verified signer
+    /// `on_protected_update` refuses is parked by its document and tried
+    /// again when the document's relationships change, rather than
+    /// rejected for good: the refusal depends on a remote provider's state,
+    /// which a later grant changes.
+    fn parks_refusals(&self, _collection: &CollectionVersion) -> bool {
+        false
+    }
+
+    /// Whether frames of `collection` are planned by
+    /// [`plan_replica`](Self::plan_replica): the node registers replicated
+    /// documents of it with a remote provider.
+    fn plans_replicas(&self, _collection: &CollectionVersion) -> bool {
+        false
+    }
+
+    /// What the merge does about one frame of a collection
+    /// [`plans_replicas`](Self::plans_replicas) names, before its
+    /// transaction opens. `signer` is the DID verified from a genesis
+    /// frame's own signature, and `None` for any other frame.
+    async fn plan_replica(
+        &self,
+        _doc_id: &str,
+        _collection: &CollectionVersion,
+        _is_genesis: bool,
+        _signer: Option<&str>,
+    ) -> Result<crate::merge::replica::ReplicaStep, MergeError> {
+        Ok(crate::merge::replica::ReplicaStep::Gate)
+    }
+
     async fn on_protected_composite(
         &self,
         _doc_id: &str,

@@ -3,6 +3,7 @@ mod bearer;
 mod client;
 mod command_digest;
 mod did_spelling;
+mod policy_cmd;
 mod provider;
 mod provider_commands;
 mod signer;

@@ -27,6 +27,7 @@
 
 mod auth_error;
 mod dac;
+mod delegation_audience;
 pub mod error;
 mod external;
 mod identity;
@@ -38,6 +39,7 @@ mod permission;
 mod policy_cache;
 mod policy_lookup;
 mod provider_command;
+pub mod replica;
 // Both persistent stores require `S: Store + Send + Sync`, which the wasm
 // LevelDB store cannot satisfy, so they are native-only.
 #[cfg(not(target_arch = "wasm32"))]
@@ -53,7 +55,9 @@ pub mod zanzibar;
 pub use auth_error::normalize_auth_error;
 pub use dac::{
     bound_to_request, with_request_bearer, AuthenticatedCaller, DocumentACP, DocumentRelationship,
+    ObjectChangeListener,
 };
+pub use delegation_audience::DelegationAudience;
 pub use error::{Error, Result};
 pub use external::{
     ExternalDocumentAcp, OwedScope, OwedSettlement, RedriveReport, MAX_FAILED_SUBMISSIONS,
@@ -70,14 +74,13 @@ pub use pending::{PendingRegistration, PendingRegistrations};
 pub use permission::DocumentPermission;
 #[cfg(not(target_arch = "wasm32"))]
 pub use persistent::PersistentAcpStore;
-pub use policy_lookup::{
-    DelegationAudience, LightClientStatus, PolicyLookup, RemotePolicies, StorePolicies,
-};
+pub use policy_lookup::{LightClientStatus, PolicyLookup, RemotePolicies, StorePolicies};
 pub use provider_command::ProviderCommand;
 pub use read_access::{check_doc_read_access, DirectChecker, DocAccess, ObjectAccessChecker};
 pub use relation::{
     RelationTuple, DELETER_RELATION, OWNER_RELATION, READER_RELATION, UPDATER_RELATION,
 };
+pub use replica::{ReplicaGrant, ReplicaOwed, ReplicaUnit};
 pub use store::AcpStore;
 pub use target_subject::parse_target_subject;
 pub use validation::{validate_resource_interface, REQUIRED_DOCUMENT_PERMISSIONS};

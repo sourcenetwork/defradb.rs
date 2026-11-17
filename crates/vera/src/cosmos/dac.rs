@@ -439,6 +439,12 @@ impl DocumentACP for VeraDocumentACP {
         Did::new_unchecked(self.provider.canonical_actor(did.as_str()))
     }
 
+    fn own_actor(&self) -> Option<Did> {
+        self.provider
+            .self_did()
+            .map(|did| Did::new_unchecked(self.provider.canonical_actor(&did)))
+    }
+
     fn submits_subject(&self, subject: &Subject) -> bool {
         match subject {
             Subject::Entity(_) | Subject::Wildcard => true,
@@ -489,6 +495,12 @@ impl DocumentACP for VeraDocumentACP {
 
     fn unregistered_documents_are_public(&self) -> bool {
         self.provider.unregistered_documents_are_public()
+    }
+
+    /// Only without the access cache: a cached decision may outlive the
+    /// freshness limit its provider proves it within.
+    fn proves_decisions(&self) -> bool {
+        self.access_cache.is_none() && self.provider.proves_decisions()
     }
 
     async fn register_doc_object(

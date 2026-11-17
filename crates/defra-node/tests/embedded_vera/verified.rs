@@ -1,6 +1,8 @@
 //! Verified writes against a real chain: the node acts for a signer whose
 //! key it does not hold under the signer's delegation, plain or bound to the
 //! one command the write sends, and the chain records the signer as owner.
+//! A delegation bound to one command is made from what the node reports
+//! alone: its delegation audience names the deployment's genesis identity.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -16,36 +18,35 @@ use defra_node::{
 use query::executor::WRITE_AUTHORITY_UNAVAILABLE_ERROR_CODE;
 use serde_json::json;
 use vera::vera_rs::{
-    caller_delegation, request_delegation, request_digest, DelegationSigner, Ed25519Signer,
-    RequestBinding,
+    caller_delegation, request_delegation, DelegationSigner, Ed25519Signer, RequestBinding,
 };
 use vera::{PolicyAction, PolicyCommand, PolicySubject, SubjectRef};
 
 use super::{chain_reads, now, users, ACCOUNT_KEY, POLICY, STRANGER};
 
-const LIFETIME: Duration = Duration::from_secs(120);
+pub(super) const LIFETIME: Duration = Duration::from_secs(120);
 
-/// A node on its own Vera deployment, its HTTP API and the deployment's
-/// JSON-RPC methods both served on loopback.
-struct Deployed {
-    node: Node,
-    http: SocketAddr,
-    rpc: SocketAddr,
-    policy: String,
-    audience: acp::DelegationAudience,
-    _directory: tempfile::TempDir,
+/// A node on its own Vera deployment, its HTTP API served on loopback and,
+/// unless the test says otherwise, the deployment's JSON-RPC methods too.
+pub(super) struct Deployed {
+    pub(super) node: Node,
+    pub(super) http: SocketAddr,
+    pub(super) rpc: Option<SocketAddr>,
+    pub(super) policy: String,
+    pub(super) audience: acp::DelegationAudience,
+    pub(super) _directory: tempfile::TempDir,
 }
 
 /// A user who signs its own blocks and delegations, and whose key the node
 /// never sees.
-struct User {
-    did: identity::Did,
-    blocks: SigningConfig,
-    delegations: Ed25519Signer,
+pub(super) struct User {
+    pub(super) did: identity::Did,
+    pub(super) blocks: SigningConfig,
+    pub(super) delegations: Ed25519Signer,
 }
 
 impl User {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let private = crypto::generate_ed25519().unwrap();
         let public = private.public_key();
         let delegations = Ed25519Signer::from_slice(private.raw()).expect("key");
@@ -65,14 +66,18 @@ impl User {
 }
 
 /// One verified create handed to the node.
-struct Attempt {
-    doc: String,
-    txn: defra_node::TransactionHandle,
-    response: QueryResponse,
+pub(super) struct Attempt {
+    pub(super) doc: String,
+    pub(super) txn: defra_node::TransactionHandle,
+    pub(super) response: QueryResponse,
 }
 
 impl Deployed {
-    async fn start(chain_id: u64) -> Self {
+    pub(super) async fn start(chain_id: u64) -> Self {
+        Self::start_serving(chain_id, true).await
+    }
+
+    async fn start_serving(chain_id: u64, serve_rpc: bool) -> Self {
         let directory = tempfile::tempdir().unwrap();
         let keyring: Arc<dyn keyring::Keyring> = Arc::new(
             keyring::FileKeyring::open(directory.path().join("keys"), b"test-password")
@@ -80,9 +85,11 @@ impl Deployed {
         );
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let http = listener.local_addr().unwrap();
-        let rpc = std::net::TcpListener::bind("127.0.0.1:0")
-            .and_then(|listener| listener.local_addr())
-            .unwrap();
+        let rpc = serve_rpc.then(|| {
+            std::net::TcpListener::bind("127.0.0.1:0")
+                .and_then(|listener| listener.local_addr())
+                .unwrap()
+        });
         let node = Node::builder()
             .enable_signing()
             .with_http(defra_node::HttpConfig::with_listener(listener).unwrap())
@@ -99,7 +106,7 @@ impl Deployed {
                 start_deadline: Duration::from_secs(60),
                 stop_deadline: Duration::from_secs(30),
                 actor: EmbeddedVeraActor::Secp256k1Key(vec![42; 32]),
-                rpc_listen: Some(rpc),
+                rpc_listen: rpc,
                 worker_dir: directory.path().join("worker"),
                 keyring,
                 tuning: vera::AcpTuning::default(),
@@ -136,10 +143,12 @@ impl Deployed {
             .unwrap()
     }
 
-    /// The deployment's genesis identity: the parent of its first block.
-    async fn genesis(&self) -> [u8; 32] {
+    /// The deployment's genesis identity as the chain's own JSON-RPC
+    /// answers it, unverified: the parent of its first block.
+    async fn genesis_on_chain(&self) -> [u8; 32] {
+        let rpc = self.rpc.expect("the deployment serves JSON-RPC");
         let answer: serde_json::Value = Self::client()
-            .post(format!("http://{}", self.rpc))
+            .post(format!("http://{rpc}"))
             .json(&json!({
                 "jsonrpc": "2.0", "id": 1, "method": "vera_getLightBlock", "params": ["0x1"]
             }))
@@ -160,7 +169,7 @@ impl Deployed {
 
     /// `user`'s verified create of a document called `name`, with the
     /// credential `credential` makes for the document it creates.
-    async fn create<C, F>(&self, user: &User, name: &str, credential: C) -> Attempt
+    pub(super) async fn create<C, F>(&self, user: &User, name: &str, credential: C) -> Attempt
     where
         C: FnOnce(String) -> F,
         F: std::future::Future<Output = SignerCredential>,
@@ -198,9 +207,54 @@ impl Deployed {
         Attempt { doc, txn, response }
     }
 
+    /// The delegation audience the node reports over its HTTP API.
+    async fn reported_audience(&self) -> acp::DelegationAudience {
+        let status: acp::LightClientStatus = Self::client()
+            .get(format!("http://{}/api/v0/acp/status", self.http))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        status
+            .delegation
+            .expect("a vera.rs node names its delegation audience")
+    }
+
     /// `user`'s delegation bound to the one command `action` on `doc`.
-    async fn bound(&self, user: &User, doc: &str, action: PolicyAction<'_>, nonce: u8) -> String {
+    pub(super) async fn bound(
+        &self,
+        user: &User,
+        doc: &str,
+        action: PolicyAction<'_>,
+        nonce: u8,
+    ) -> String {
         self.bound_for(user, doc, action, nonce, LIFETIME).await
+    }
+
+    /// `user`'s delegation bound to `action` on `doc` on the deployment
+    /// `audience` names, made from `audience` and the command alone.
+    async fn bound_to(
+        &self,
+        audience: &acp::DelegationAudience,
+        user: &User,
+        doc: &str,
+        action: PolicyAction<'_>,
+        nonce: u8,
+        lifetime: Duration,
+    ) -> String {
+        let command = PolicyCommand {
+            policy_id: &self.policy,
+            resource: "users",
+            object_id: doc,
+            action,
+        };
+        let binding = RequestBinding::for_command(audience, &command, [nonce; 24])
+            .expect("the node reports its genesis identity");
+        request_delegation(&user.delegations, audience, &binding, lifetime)
+            .await
+            .expect("delegation")
     }
 
     /// [`Self::bound`], lasting `lifetime`.
@@ -212,29 +266,12 @@ impl Deployed {
         nonce: u8,
         lifetime: Duration,
     ) -> String {
-        let digest = request_digest(&PolicyCommand {
-            policy_id: &self.policy,
-            resource: "users",
-            object_id: doc,
-            action,
-        })
-        .expect("digest");
-        request_delegation(
-            &user.delegations,
-            &self.audience,
-            &RequestBinding {
-                digest,
-                genesis_id: self.genesis().await,
-                nonce: [nonce; 24],
-            },
-            lifetime,
-        )
-        .await
-        .expect("delegation")
+        self.bound_to(&self.audience, user, doc, action, nonce, lifetime)
+            .await
     }
 
     /// The owner the chain itself records for `doc`.
-    async fn owner_on_chain(&self, doc: &str) -> Option<String> {
+    pub(super) async fn owner_on_chain(&self, doc: &str) -> Option<String> {
         self.node
             .vera_acp()
             .expect("vera.rs document ACP")
@@ -277,7 +314,7 @@ fn a_verified_create_under_the_signers_delegation_registers_the_signer() {
             &user.delegations,
             &acp::DelegationAudience {
                 worker: user.did.to_string(),
-                deployment: on.audience.deployment,
+                ..on.audience.clone()
             },
             LIFETIME,
         )
@@ -341,6 +378,8 @@ fn a_verified_create_under_a_request_bound_delegation_registers_the_signer() {
     workers::block_on(async {
         let on = Deployed::start(9412).await;
         let user = User::new();
+        // The genesis identity the node reports is the chain's.
+        assert_eq!(on.audience.genesis_id, Some(on.genesis_on_chain().await));
 
         // Bound to the registration of another document: refused here,
         // before anything reaches the chain.
@@ -669,6 +708,76 @@ fn owed_commands_take_fresh_delegations_bound_to_them() {
                 .expect("wait"),
             acp::OwedWait::Settled
         );
+        on.node.shutdown().await.expect("shutdown");
+    })
+    .unwrap();
+}
+
+/// A client of a deployment that serves no JSON-RPC learns what to bind its
+/// delegation to from the node's reported audience alone. One naming another
+/// deployment's genesis identity is refused before anything is written; one
+/// made from the audience registers the signer.
+#[test]
+fn a_client_binds_its_delegation_to_the_audience_the_node_reports() {
+    workers::block_on(async {
+        let on = Deployed::start_serving(9415, false).await;
+        let user = User::new();
+        let audience = on.reported_audience().await;
+        assert_eq!(audience, on.audience);
+        let genesis = audience
+            .genesis_id
+            .expect("the node knows its genesis identity");
+
+        let elsewhere = acp::DelegationAudience {
+            genesis_id: Some(genesis.map(|byte| byte ^ 0xff)),
+            ..audience.clone()
+        };
+        on.refused(
+            on.create(&user, "elsewhere", |doc| {
+                let (on, user, elsewhere) = (&on, &user, &elsewhere);
+                async move {
+                    SignerCredential::RequestBound(
+                        on.bound_to(
+                            elsewhere,
+                            user,
+                            &doc,
+                            PolicyAction::RegisterObject,
+                            1,
+                            LIFETIME,
+                        )
+                        .await,
+                    )
+                }
+            })
+            .await,
+        )
+        .await;
+
+        let Attempt { doc, txn, response } = on
+            .create(&user, "bound", |doc| {
+                let (on, user, audience) = (&on, &user, &audience);
+                async move {
+                    SignerCredential::RequestBound(
+                        on.bound_to(
+                            audience,
+                            user,
+                            &doc,
+                            PolicyAction::RegisterObject,
+                            2,
+                            LIFETIME,
+                        )
+                        .await,
+                    )
+                }
+            })
+            .await;
+        assert!(!response.has_errors(), "{:?}", response.errors);
+        on.node.commit_transaction(&txn).await.expect("commit");
+        assert_eq!(
+            on.owner_on_chain(&doc).await.as_deref(),
+            Some(user.did.as_str())
+        );
+        assert!(chain_reads(&on.node, &user.did, &on.policy, &doc).await);
         on.node.shutdown().await.expect("shutdown");
     })
     .unwrap();

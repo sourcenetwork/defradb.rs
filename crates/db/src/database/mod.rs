@@ -276,6 +276,9 @@ pub struct DB<S: Store> {
     /// `?Send`, so wrapping it in an `Arc` would be an `Arc` over a value that
     /// is neither `Send` nor `Sync`.
     merge_governance: regolith::sync::OnceCell<crate::merge::governance::MergeGovernance>,
+    /// Which replicated documents this node registers with a remote ACP
+    /// provider. Set once, before replication starts.
+    replica_registration: regolith::sync::OnceCell<Arc<crate::merge::ReplicaRegistration>>,
     /// Told about each composite a local write commits, so composites deferred
     /// awaiting what the write created are released.
     local_commit_release:
@@ -337,6 +340,7 @@ impl<S: Store> DB<S> {
             node_access_writes: regolith::sync::OnceCell::new(),
             dac_policies: regolith::sync::OnceCell::new(),
             merge_governance: regolith::sync::OnceCell::new(),
+            replica_registration: regolith::sync::OnceCell::new(),
             local_commit_release: regolith::sync::OnceCell::new(),
             active_actions: Arc::new(crate::database::action::ActionRegistry::default()),
             replication_runtime: Arc::default(),
@@ -412,6 +416,7 @@ impl<S: Store> DB<S> {
             node_access_writes: regolith::sync::OnceCell::new(),
             dac_policies: regolith::sync::OnceCell::new(),
             merge_governance: regolith::sync::OnceCell::new(),
+            replica_registration: regolith::sync::OnceCell::new(),
             local_commit_release: regolith::sync::OnceCell::new(),
             active_actions: Arc::new(crate::database::action::ActionRegistry::default()),
             replication_runtime: Arc::default(),
@@ -636,6 +641,17 @@ impl<S: Store> DB<S> {
 
     pub fn merge_governance(&self) -> Option<&crate::merge::governance::MergeGovernance> {
         self.merge_governance.get()
+    }
+
+    /// Register replicated documents of the listed collections with a remote
+    /// ACP provider ([`crate::merge::replica`]). First call wins; set it
+    /// before the merge handler is built.
+    pub fn set_replica_registration(&self, registration: crate::merge::ReplicaRegistration) {
+        let _ = self.replica_registration.set(Arc::new(registration));
+    }
+
+    pub fn replica_registration(&self) -> Option<&Arc<crate::merge::ReplicaRegistration>> {
+        self.replica_registration.get()
     }
 
     /// Install the hook that releases deferred composites awaiting what a

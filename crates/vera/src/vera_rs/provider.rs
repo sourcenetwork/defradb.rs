@@ -18,19 +18,21 @@ use vera_modules::acp::types::PolicyRecord;
 use super::abi::{IAcp, ACP_ADDRESS};
 use super::bearer;
 use super::client::{HttpTransport, VeraRsClient};
-use super::command_digest::{encode_subject_relationship_cmd, request_digest, vera_subject};
+use super::command_digest::request_digest;
 use super::did_spelling;
+use super::policy_cmd;
 #[cfg(test)]
 use super::provider_commands::resolve_registered_or_passthrough_bearer_token;
 use super::provider_commands::{
-    encode_archive_object_cmd, encode_delete_relationship_cmd, encode_register_object_cmd,
-    encode_set_relationship_cmd, holds_registered_key,
-    resolve_registered_or_passthrough_bearer_token_as,
+    holds_registered_key, resolve_registered_or_passthrough_bearer_token_as,
 };
 use super::signer::{admission, DelegationSigner, Secp256k1Signer};
 use super::transport::RpcTransport;
 use super::worker::NativeWorker;
 
+#[cfg(test)]
+mod audience_tests;
+mod genesis;
 mod reach;
 #[cfg(test)]
 mod signer_tests;
@@ -48,6 +50,9 @@ pub struct VeraRsProvider {
     worker_did: String,
     actor_did: String,
     deployment: u64,
+    /// The deployment's genesis identity, once the light client has proven
+    /// the first block.
+    genesis_id: Arc<regolith::sync::OnceCell<[u8; 32]>>,
     trusted: ConsensusPublicKey,
     signer: Arc<dyn DelegationSigner>,
     sync_timeout: Duration,
@@ -214,6 +219,7 @@ impl VeraRsProvider {
         edge: &edge::Edge,
     ) -> Result<Self, ProviderError> {
         let trusted = trusted_key(trusted_consensus_key)?;
+        let genesis_id = Arc::new(regolith::sync::OnceCell::new());
         let light_client = edge::compat(async {
             let light_client = Arc::new(
                 AcpLightClient::with_transport(
@@ -228,6 +234,9 @@ impl VeraRsProvider {
                 .wait_for_height(1, tuning.receipt_timeout)
                 .await
                 .map_err(|e| ProviderError::Config(format!("initial verified state: {e}")))?;
+            if let Err(error) = learn_genesis(&light_client, &trusted, &genesis_id).await {
+                tracing::warn!(error = %error, "vera.rs genesis identity not proven at start");
+            }
             Ok::<_, ProviderError>(light_client)
         })
         .await?;
@@ -245,6 +254,10 @@ impl VeraRsProvider {
             light_client.clone(),
             light_client_observability.clone(),
             event_bus,
+            Genesis {
+                trusted,
+                id: genesis_id.clone(),
+            },
         )));
 
         let provider = Self {
@@ -254,6 +267,7 @@ impl VeraRsProvider {
             worker_did,
             actor_did,
             deployment,
+            genesis_id,
             trusted,
             signer,
             sync_timeout: tuning.receipt_timeout,
@@ -295,10 +309,33 @@ fn format_root(root: alloy_primitives::B256) -> String {
     format!("0x{}", hex::encode(root))
 }
 
+/// Where the provider keeps the deployment's genesis identity, and the key
+/// that proves it.
+struct Genesis {
+    trusted: ConsensusPublicKey,
+    id: Arc<regolith::sync::OnceCell<[u8; 32]>>,
+}
+
+/// Reads the deployment's genesis identity into `known` unless it is there.
+/// A read that fails leaves it unknown: request-bound delegations are then
+/// checked without it, as by a provider that has none, and the light client
+/// observer asks again at each new height.
+async fn learn_genesis(
+    light_client: &AcpLightClient,
+    trusted: &ConsensusPublicKey,
+    known: &regolith::sync::OnceCell<[u8; 32]>,
+) -> Result<(), ProviderError> {
+    if known.get().is_none() {
+        let _ = known.set(genesis::read(light_client, trusted).await?);
+    }
+    Ok(())
+}
+
 async fn run_light_client_observer(
     light_client: Arc<AcpLightClient>,
     last_invalidation_height: Arc<AtomicU64>,
     event_bus: Option<Arc<dyn Bus>>,
+    genesis: Genesis,
 ) {
     let mut next_height = 1u64;
     let mut previous_root = None;
@@ -319,6 +356,9 @@ async fn run_light_client_observer(
             }
         };
 
+        if let Err(error) = learn_genesis(&light_client, &genesis.trusted, &genesis.id).await {
+            tracing::debug!(error = %error, "vera.rs genesis identity not yet proven");
+        }
         let module_state_root = format_root(sync.module_state_root);
         if let Some(ref bus) = event_bus {
             bus.publish(Message::acp_height_advanced(AcpHeightAdvancedData {
@@ -497,16 +537,14 @@ impl VeraProvider for VeraRsProvider {
         resource: &str,
         object_id: &str,
     ) -> Result<(), ProviderError> {
-        let pid = Self::policy_id_to_bytes32(policy_id)?;
-        let cmd = encode_register_object_cmd(resource, object_id);
-        let call = IAcp::bearerPolicyCmdCall {
-            bearerToken: bearer_token.to_string(),
-            policyId: pid,
-            cmd: Bytes::from(cmd),
+        let command = crate::PolicyCommand {
+            policy_id,
+            resource,
+            object_id,
+            action: crate::PolicyAction::RegisterObject,
         };
-        let calldata = Bytes::from(call.abi_encode());
         let send_tx_start = Instant::now();
-        self.send_tx(calldata).await?;
+        self.send_command(bearer_token, &command).await?;
         tracing::info!(
             doc_id = %object_id,
             elapsed = ?send_tx_start.elapsed(),
@@ -523,17 +561,9 @@ impl VeraProvider for VeraRsProvider {
         resource: &str,
         object_id: &str,
     ) -> Result<(), ProviderError> {
-        let pid = Self::policy_id_to_bytes32(policy_id)?;
-        let cmd = encode_archive_object_cmd(resource, object_id);
-        let call = IAcp::bearerPolicyCmdCall {
-            bearerToken: bearer_token.to_string(),
-            policyId: pid,
-            cmd: Bytes::from(cmd),
-        };
-        let calldata = Bytes::from(call.abi_encode());
-        self.send_tx(calldata).await?;
-
-        Ok(())
+        let command = policy_cmd::archive_object(resource, object_id);
+        self.send_policy_cmd(bearer_token, policy_id, &command)
+            .await
     }
 
     async fn set_relationship(
@@ -545,16 +575,16 @@ impl VeraProvider for VeraRsProvider {
         relation: &str,
         subject: &SubjectRef,
     ) -> Result<bool, ProviderError> {
-        let pid = Self::policy_id_to_bytes32(policy_id)?;
-        let cmd = encode_set_relationship_cmd(resource, object_id, relation, subject);
-        let call = IAcp::bearerPolicyCmdCall {
-            bearerToken: bearer_token.to_string(),
-            policyId: pid,
-            cmd: Bytes::from(cmd),
+        let command = crate::PolicyCommand {
+            policy_id,
+            resource,
+            object_id,
+            action: crate::PolicyAction::SetRelationship {
+                relation,
+                subject: crate::PolicySubject::Actor(subject),
+            },
         };
-        let calldata = Bytes::from(call.abi_encode());
-        self.send_tx(calldata).await?;
-
+        self.send_command(bearer_token, &command).await?;
         Ok(true)
     }
 
@@ -567,16 +597,16 @@ impl VeraProvider for VeraRsProvider {
         relation: &str,
         subject: &SubjectRef,
     ) -> Result<bool, ProviderError> {
-        let pid = Self::policy_id_to_bytes32(policy_id)?;
-        let cmd = encode_delete_relationship_cmd(resource, object_id, relation, subject);
-        let call = IAcp::bearerPolicyCmdCall {
-            bearerToken: bearer_token.to_string(),
-            policyId: pid,
-            cmd: Bytes::from(cmd),
+        let command = crate::PolicyCommand {
+            policy_id,
+            resource,
+            object_id,
+            action: crate::PolicyAction::DeleteRelationship {
+                relation,
+                subject: crate::PolicySubject::Actor(subject),
+            },
         };
-        let calldata = Bytes::from(call.abi_encode());
-        self.send_tx(calldata).await?;
-
+        self.send_command(bearer_token, &command).await?;
         Ok(true)
     }
 
@@ -644,14 +674,19 @@ impl VeraProvider for VeraRsProvider {
         subject_object_id: &str,
         subject_relation: &str,
     ) -> Result<bool, ProviderError> {
-        let subject = vera_subject(kind, subject_resource, subject_object_id, subject_relation)?;
-        let cmd = encode_subject_relationship_cmd(true, resource, object_id, relation, &subject)?;
-        let call = IAcp::bearerPolicyCmdCall {
-            bearerToken: bearer_token.to_string(),
-            policyId: Self::policy_id_to_bytes32(policy_id)?,
-            cmd: cmd.into(),
+        let subject = crate::PolicySubject::Structured {
+            kind,
+            resource: subject_resource,
+            object_id: subject_object_id,
+            relation: subject_relation,
         };
-        self.send_tx(call.abi_encode().into()).await?;
+        let command = crate::PolicyCommand {
+            policy_id,
+            resource,
+            object_id,
+            action: crate::PolicyAction::SetRelationship { relation, subject },
+        };
+        self.send_command(bearer_token, &command).await?;
         Ok(true)
     }
 
@@ -667,14 +702,19 @@ impl VeraProvider for VeraRsProvider {
         subject_object_id: &str,
         subject_relation: &str,
     ) -> Result<bool, ProviderError> {
-        let subject = vera_subject(kind, subject_resource, subject_object_id, subject_relation)?;
-        let cmd = encode_subject_relationship_cmd(false, resource, object_id, relation, &subject)?;
-        let call = IAcp::bearerPolicyCmdCall {
-            bearerToken: bearer_token.to_string(),
-            policyId: Self::policy_id_to_bytes32(policy_id)?,
-            cmd: cmd.into(),
+        let subject = crate::PolicySubject::Structured {
+            kind,
+            resource: subject_resource,
+            object_id: subject_object_id,
+            relation: subject_relation,
         };
-        self.send_tx(call.abi_encode().into()).await?;
+        let command = crate::PolicyCommand {
+            policy_id,
+            resource,
+            object_id,
+            action: crate::PolicyAction::DeleteRelationship { relation, subject },
+        };
+        self.send_command(bearer_token, &command).await?;
         Ok(true)
     }
 
@@ -769,6 +809,12 @@ impl VeraProvider for VeraRsProvider {
         Ok(Some(decision.id))
     }
 
+    /// Every decision is a permission proof the light client verifies at a
+    /// revision no older than `FreshnessPolicy::default().max_age`.
+    fn proves_decisions(&self) -> bool {
+        true
+    }
+
     /// The state decisions are remembered under, while it is fresh. Once the
     /// light client's newest state is older than its freshness limit there
     /// is none, so no decision made at it is given again: the check goes to
@@ -800,6 +846,7 @@ impl VeraProvider for VeraRsProvider {
         Some(acp::DelegationAudience {
             worker: self.worker_did.clone(),
             deployment: self.deployment,
+            genesis_id: self.genesis_id.get().copied(),
         })
     }
 
@@ -818,12 +865,13 @@ impl VeraProvider for VeraRsProvider {
         token: &str,
         command: &crate::PolicyCommand<'_>,
     ) -> Option<Result<String, ProviderError>> {
-        bearer::caller_of_request_delegation(token, &self.worker_did, self.deployment, || {
-            request_digest(command)
-        })
-        .map(|caller| {
-            caller.map_err(|error| ProviderError::Config(format!("request delegation: {error}")))
-        })
+        let audience = self.delegation_audience()?;
+        bearer::caller_of_request_delegation(token, &audience, || request_digest(command)).map(
+            |caller| {
+                caller
+                    .map_err(|error| ProviderError::Config(format!("request delegation: {error}")))
+            },
+        )
     }
 }
 

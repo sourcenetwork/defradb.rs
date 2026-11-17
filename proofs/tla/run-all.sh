@@ -92,7 +92,7 @@ RUNS=(
   "MC_VerifiedClientGraph_Red_RevokeNac.cfg VerifiedClientGraph.tla RED" # NAC revocation is not validated at commit (INV_NacRevocation)
   "MC_VerifiedClientGraph_Red_RevokeDac.cfg VerifiedClientGraph.tla RED" # DAC revocation is not validated at commit (INV_DacRevocation)
   "MC_VerifiedClientGraph_Red_Rollback.cfg VerifiedClientGraph.tla RED" # a rejected graph publishes the Agent effect (INV_Atomic)
-  "MC_VerifiedRemoteWrite_Green.cfg VerifiedRemoteWrite.tla GREEN" # a verified write on a remote provider needs authority for its signer, a request-bound delegation covers its own command only, and a failed submission is reported and takes a fresh credential by the same rule
+  "MC_VerifiedRemoteWrite_Green.cfg VerifiedRemoteWrite.tla GREEN" # a verified write on a remote provider needs authority for its signer, an update or delete is admitted on the signer's verified permission and owes nothing, a request-bound delegation covers its own command only, and a failed submission is reported and takes a fresh credential by the same rule
   "MC_VerifiedRemoteWrite_Red_NoAuthority.cfg VerifiedRemoteWrite.tla RED" # the write is staged with no key and no delegation (INV_AuthorityAtAdmission)
   "MC_VerifiedRemoteWrite_Red_AnyIssuer.cfg VerifiedRemoteWrite.tla RED" # a delegation somebody else signed is taken (INV_AuthorityAtAdmission)
   "MC_VerifiedRemoteWrite_Red_AnyNode.cfg VerifiedRemoteWrite.tla RED" # a delegation given to another node is taken (INV_AuthorityAtAdmission)
@@ -106,6 +106,32 @@ RUNS=(
   "MC_VerifiedRemoteWrite_Red_AmbientRetry.cfg VerifiedRemoteWrite.tla RED" # a registration is sent with a token the process holds and nobody presented for it (INV_SentUnderRecordedAuthority)
   "MC_VerifiedRemoteWrite_Red_ReauthUnchecked.cfg VerifiedRemoteWrite.tla RED" # a parked command is owed again on a fresh credential the rule of admission refuses (INV_ReauthorizedWithAuthority)
   "MC_VerifiedRemoteWrite_Red_SilentFailure.cfg VerifiedRemoteWrite.tla RED" # a submission fails after the commit and the record does not say so (INV_FailureReported)
+  "MC_VerifiedRemoteWrite_Red_NoPermission.cfg VerifiedRemoteWrite.tla RED" # a verified update or delete is admitted without the signer's verified permission (INV_EditOnVerifiedPermission)
+  "MC_VerifiedRemoteWrite_Red_StaleEvidence.cfg VerifiedRemoteWrite.tla RED" # a verified update or delete is admitted on a proof of a revision older than the freshness limit (INV_EditOnVerifiedPermission)
+  "MC_VerifiedRemoteWrite_Red_OwedIgnored.cfg VerifiedRemoteWrite.tla RED" # an owed revocation or an owed registration is ignored for a verified update (INV_EditOnVerifiedPermission)
+  "MC_VerifiedRemoteWrite_Red_RequestEdit.cfg VerifiedRemoteWrite.tla RED" # a request-bound delegation admits a verified update (INV_RequestBoundNoEdit)
+  "MC_VerifiedRemoteWrite_Red_EditOwes.cfg VerifiedRemoteWrite.tla RED" # a verified update records a command as owed (INV_EditOwesNothing)
+  "MC_VerifiedRemoteWrite_Red_WindowWitness.cfg VerifiedRemoteWrite.tla RED" # witness, no bug: an update is admitted on a fresh proof that predates a finalized revocation, as the code allows within the freshness limit (NotPastRevocation)
+  "MC_ReplicaRegistration_Green.cfg ReplicaRegistration.tla GREEN" # a foreign replica is registered by a receiver with its creator's grants as one owed unit, an own creator is never pre-empted, nobody is rejected while a unit is owed, and every change merges only while its signer may write
+  "MC_ReplicaRegistration_Green_Live.cfg ReplicaRegistration.tla GREEN" # with everyone working, the creator's genesis, update and delete merge on every receiver, own or foreign, with two receivers racing
+  "MC_ReplicaRegistration_Red_RegisterOwn.cfg ReplicaRegistration.tla RED" # a receiver registers an own creator's document (INV_OwnCreatorNotPreempted)
+  "MC_ReplicaRegistration_Red_RegisterAfterMerge.cfg ReplicaRegistration.tla RED" # a foreign genesis merges with its registration left to after the commit (INV_GenesisWithRegistration)
+  "MC_ReplicaRegistration_Red_RejectWhileOwed.cfg ReplicaRegistration.tla RED" # the creator's change is rejected while the receiver's registration is owed (INV_CreatorNotRejectedWhileOwed)
+  "MC_ReplicaRegistration_Red_GrantsSeparate.cfg ReplicaRegistration.tla RED" # the gate counts the registration alone as owed, not its grants (INV_CreatorNotRejectedWhileOwed)
+  "MC_ReplicaRegistration_Red_AdoptDrops.cfg ReplicaRegistration.tla RED" # a receiver told the document is already registered forgets the owner's grants are owed (INV_CreatorNotRejectedWhileOwed)
+  "MC_ReplicaRegistration_Red_NoAdoptOnArrival.cfg ReplicaRegistration.tla RED" # a receiver that sees the genesis after another registered it forgets the owner's grants are owed (INV_CreatorNotRejectedWhileOwed)
+  "MC_ReplicaRegistration_Red_OwnedDenies.cfg ReplicaRegistration.tla RED" # the node's stand-in for an owed registration rejects a granted writer (INV_DeniedOnlyByProvider)
+  "MC_ReplicaRegistration_Red_StaleDecision.cfg ReplicaRegistration.tla RED" # a decision remembered from before a revocation admits the revoked writer (INV_RevokedWriterDenied)
+  "MC_ReplicaRegistration_Red_ArchiveOnDelete.cfg ReplicaRegistration.tla RED" # merging a delete archives the object on the provider (INV_RegisteredStays)
+  "MC_ReplicaRegistration_Red_DeleteClears.cfg ReplicaRegistration.tla RED" # a local delete drops the creator's owed registration and replicas wait for ever (LIVE_RowMerges)
+  "MC_ParkedMerge_Green.cfg ParkedMerge.tla GREEN" # a refused replicated change is parked by document, never rejected for good, never merged before its history or without its signer's write, within the index bound
+  "MC_ParkedMerge_Green_Live.cfg ParkedMerge.tla GREEN" # a parked change and its descendant merge once the signer holds write, and a change on another branch always merges
+  "MC_ParkedMerge_Red_Quarantine.cfg ParkedMerge.tla RED" # a refused change is rejected for good (INV_NeverQuarantined)
+  "MC_ParkedMerge_Red_MergeOverParked.cfg ParkedMerge.tla RED" # a descendant merges over its parked ancestor (INV_HistoryFirst)
+  "MC_ParkedMerge_Red_RedriveAdmits.cfg ParkedMerge.tla RED" # a re-driven change merges without a fresh decision (INV_MergeAuthorized)
+  "MC_ParkedMerge_Red_Unbounded.cfg ParkedMerge.tla RED" # the parked index grows past its bound (INV_Bounded)
+  "MC_ParkedMerge_Red_NoRelease.cfg ParkedMerge.tla RED" # neither a relationship change nor the sweep re-drives a parked change (LIVE_RedrivenOnGrant)
+  "MC_ParkedMerge_Red_ParkBlocksObject.cfg ParkedMerge.tla RED" # a parked change holds every change of its document (LIVE_OtherBranchMerges)
   "MC_SourceScopedNac_Green.cfg SourceScopedNac.tla GREEN"
   "MC_SourceScopedNac_Red_Authority.cfg SourceScopedNac.tla RED"
   "MC_SourceScopedNac_Red_Owner.cfg SourceScopedNac.tla RED"

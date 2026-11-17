@@ -24,7 +24,7 @@ use crate::vera_rs::signer::admission;
 use crate::vera_rs::signer::tests::{Recording, Returns};
 use crate::vera_rs::signer::DelegationSigner as _;
 
-async fn provider(
+pub(super) async fn provider(
     signer: Arc<Recording>,
     rpc: Arc<Recorded>,
     workers: &mut Workers,
@@ -47,6 +47,7 @@ async fn provider(
         client: VeraRsClient::with_transport(rpc),
         worker_did: worker.did().to_owned(),
         deployment: worker.deployment_id(),
+        genesis_id: Arc::new(regolith::sync::OnceCell::new()),
         worker: Arc::new(regolith::sync::Mutex::new(worker)),
         actor_did: did_spelling::defra(signer.did()).into_owned(),
         trusted: trusted_key(TRUSTED_KEY).expect("trusted key"),

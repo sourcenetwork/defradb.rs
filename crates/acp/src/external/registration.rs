@@ -27,7 +27,7 @@ use crate::provider_command::ProviderCommand;
 
 impl<S> ExternalDocumentAcp<S>
 where
-    S: Store,
+    S: Store + 'static,
 {
     /// Register the owed creator, then clear the record. A provider that
     /// already holds the object keeps its owner: the record is cleared and the
@@ -61,8 +61,8 @@ where
             .provider
             .is_doc_registered(&owed.policy_id, &owed.resource_name, &owed.doc_id)
             .await?;
-        if !registered {
-            match self
+        let held = registered
+            || match self
                 .registrar(owed, also)?
                 .register_doc_object(
                     &owed.creator,
@@ -72,11 +72,16 @@ where
                 )
                 .await
             {
-                Ok(()) | Err(Error::DocumentAlreadyRegistered(_)) => {}
+                Ok(()) => false,
+                Err(Error::DocumentAlreadyRegistered(_)) => true,
                 Err(error) => return Err(error),
-            }
+            };
+        if held {
+            self.yield_replica_if_held_elsewhere(owed).await?;
         }
-        self.clear(owed).await
+        self.clear(owed).await?;
+        self.object_changed(&owed.policy_id, &owed.resource_name, &owed.doc_id);
+        Ok(())
     }
 
     /// The provider serving a request that presents `token` for `actor`,

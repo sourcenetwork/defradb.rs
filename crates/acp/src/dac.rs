@@ -12,6 +12,13 @@ use crate::error::{Error, Result};
 use crate::identity::Identity;
 use crate::permission::DocumentPermission;
 
+/// Told when this node changes an object's relationships on its provider
+/// ([`DocumentACP::watch_object_changes`]). Called after the change, on the
+/// task that made it, which it must not hold up.
+pub trait ObjectChangeListener: MaybeSendSync {
+    fn changed(&self, policy_id: &str, resource_name: &str, object_id: &str);
+}
+
 /// A caller and expiration established by a credential's verification owner.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthenticatedCaller {
@@ -87,6 +94,75 @@ pub trait DocumentACP: MaybeSendSync {
     /// stored about it is compared under this spelling.
     fn canonical_actor(&self, did: &Did) -> Did {
         did.clone()
+    }
+
+    /// The DID this provider signs its own commands as, when it has one. A
+    /// node registers a replicated document as this actor
+    /// ([`crate::replica`]), and counts it, beside its identity, as itself
+    /// when it asks whether it can read a replicated document.
+    fn own_actor(&self) -> Option<Did> {
+        None
+    }
+
+    /// Tell `listener` whenever this node changes an object's relationships
+    /// on the provider: a relationship set or deleted through it, an owed
+    /// change or registration it settled. A provider that keeps no such
+    /// record tells nothing. The first listener stays.
+    fn watch_object_changes(&self, _listener: std::sync::Arc<dyn ObjectChangeListener>) {}
+
+    /// What this node still owes, or waits for, on a replicated document,
+    /// from committed state alone: the merge gate's input
+    /// ([`crate::ReplicaOwed`]). Nothing for a provider that keeps no outbox.
+    async fn replica_owed(
+        &self,
+        _policy_id: &str,
+        _resource_name: &str,
+        _doc_id: &str,
+    ) -> Result<crate::ReplicaOwed> {
+        Ok(crate::ReplicaOwed::default())
+    }
+
+    /// Record, in the transaction whose ACP namespace `view` is, the unit a
+    /// receiving node owes for a replicated document it registers as itself:
+    /// the registration and the embedder's grants for its creator. Nothing
+    /// is recorded when a registration of the document is already owed.
+    async fn stage_replica_unit(
+        &self,
+        _view: &datastore::NamespaceView,
+        unit: &crate::ReplicaUnit<'_>,
+    ) -> Result<()> {
+        Err(Error::ProviderUnavailable(format!(
+            "this provider keeps no outbox to register replicated document {}",
+            unit.doc_id
+        )))
+    }
+
+    /// Record, in the transaction whose ACP namespace `view` is, that the
+    /// owner of a replicated document owes `creator`'s grants and this node
+    /// waits for them.
+    async fn adopt_replica(
+        &self,
+        _view: &datastore::NamespaceView,
+        _policy_id: &str,
+        _resource_name: &str,
+        doc_id: &str,
+        _creator: &Did,
+    ) -> Result<()> {
+        Err(Error::ProviderUnavailable(format!(
+            "this provider keeps no outbox to adopt replicated document {doc_id}"
+        )))
+    }
+
+    /// Submit what this node owes on a replicated document, and drop its
+    /// marker once nothing is owed or waited for any more. Nothing for a
+    /// provider that keeps no outbox.
+    async fn settle_replica(
+        &self,
+        _policy_id: &str,
+        _resource_name: &str,
+        _doc_id: &str,
+    ) -> Result<()> {
+        Ok(())
     }
 
     /// Whether this provider can be sent a relationship change with this
@@ -237,6 +313,17 @@ pub trait DocumentACP: MaybeSendSync {
     /// Remote backends may deny absence, including retired policies and archived objects.
     fn unregistered_documents_are_public(&self) -> bool {
         true
+    }
+
+    /// Whether every access decision this provider gives is proven against
+    /// its finalized state at a revision within a freshness limit, and fails
+    /// when no such revision can be read: no decision comes from a cache
+    /// that outlives that limit, and none from an unproven answer. A
+    /// verified update or delete on such a provider needs no credential
+    /// beside the permission it decides (see
+    /// `query::runner::remote_authority`).
+    fn proves_decisions(&self) -> bool {
+        false
     }
 
     /// Register a document with creator as owner.

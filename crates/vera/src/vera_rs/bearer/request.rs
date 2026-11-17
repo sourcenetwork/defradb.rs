@@ -9,8 +9,9 @@
 //! time changes nothing.
 //!
 //! The node checks the same binding before it sends anything, against the
-//! digest of the command it is about to send. It does not know the
-//! deployment's genesis identity, which vera.rs checks.
+//! digest of the command it is about to send and, when its provider knows
+//! it, the deployment's genesis identity. A provider that does not know it
+//! leaves that check to vera.rs.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -20,8 +21,9 @@ use vera_crypto::operation::{OperationClaim, OperationId, MAX_OPERATION_TTL};
 
 use super::{base64url_encode, header, BearerError, CallerDelegationError};
 use crate::provider::ProviderError;
-use crate::vera_rs::did_spelling;
 use crate::vera_rs::signer::{admission, DelegationSigner};
+use crate::vera_rs::{did_spelling, request_digest};
+use crate::PolicyCommand;
 
 /// The one request a delegation is bound to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,12 +31,33 @@ pub struct RequestBinding {
     /// The command's digest
     /// ([`request_digest`](crate::vera_rs::request_digest)).
     pub digest: [u8; 32],
-    /// The genesis identity of the deployment the command is for.
+    /// The genesis identity of the deployment the command is for, as the
+    /// node reports it (`DelegationAudience::genesis_id`).
     pub genesis_id: [u8; 32],
     /// Bytes the signer chooses once for this request, not all zero. With
     /// the expiry they are the operation identity vera.rs keeps the
     /// request's outcome under.
     pub nonce: [u8; 24],
+}
+
+impl RequestBinding {
+    /// The binding to `command` on the deployment `audience` names, the
+    /// audience a node reports (`LightClientStatus::delegation`), under
+    /// `nonce`. Refused when the node does not know its deployment's
+    /// genesis identity.
+    pub fn for_command(
+        audience: &acp::DelegationAudience,
+        command: &PolicyCommand<'_>,
+        nonce: [u8; 24],
+    ) -> Result<Self, BearerError> {
+        let genesis_id = audience.genesis_id.ok_or(BearerError::NoGenesisIdentity)?;
+        let digest = request_digest(command).map_err(|e| BearerError::Command(e.to_string()))?;
+        Ok(Self {
+            digest,
+            genesis_id,
+            nonce,
+        })
+    }
 }
 
 /// The delegation `signer` gives `audience.worker` for the one request
@@ -105,12 +128,12 @@ pub(in crate::vera_rs) async fn issue_request_at(
 
 /// The DID that signed `token`, in DefraDB's spelling, when `token` is bound
 /// to one request and vera.rs would execute the command with `digest` under
-/// it now for `worker` on `deployment_id`. `None` when `token` does not
-/// verify or is bound to no request.
+/// it now for `audience`: its worker, its deployment and, when `audience`
+/// knows it, its genesis identity. `None` when `token` does not verify or is
+/// bound to no request.
 pub(in crate::vera_rs) fn caller_of_request_delegation<D>(
     token: &str,
-    worker: &str,
-    deployment_id: u64,
+    audience: &acp::DelegationAudience,
     digest: D,
 ) -> Option<Result<String, CallerDelegationError>>
 where
@@ -122,15 +145,14 @@ where
         .duration_since(UNIX_EPOCH)
         .map_err(|_| CallerDelegationError::Clock)
         .map(|now| now.as_secs());
-    Some(now.and_then(|now| bound_caller(&claims, &request, worker, deployment_id, digest, now)))
+    Some(now.and_then(|now| bound_caller(&claims, &request, audience, digest, now)))
 }
 
 /// [`caller_of_request_delegation`] for verified claims, at `now`.
 fn bound_caller<D>(
     claims: &JwtClaims,
     request: &OperationClaim,
-    worker: &str,
-    deployment_id: u64,
+    audience: &acp::DelegationAudience,
     digest: D,
     now: u64,
 ) -> Result<String, CallerDelegationError>
@@ -140,8 +162,14 @@ where
     if claims.relay.is_some() || claims.scope != DelegationScope::PolicyCommands {
         return Err(CallerDelegationError::Kind);
     }
-    claims.authorize(worker, deployment_id, now)?;
+    claims.authorize(&audience.worker, audience.deployment, now)?;
     request.id.validate(now)?;
+    if audience
+        .genesis_id
+        .is_some_and(|genesis_id| genesis_id != request.genesis_id)
+    {
+        return Err(CallerDelegationError::OtherGenesis);
+    }
     let digest = digest().map_err(|error| CallerDelegationError::Command(error.to_string()))?;
     if request.genesis_id == [0; 32]
         || claims.exp > request.id.expires_at()
@@ -161,17 +189,28 @@ mod tests {
     const WORKER: &str = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
     const NOW: u64 = 1_900_000_000;
 
+    const GENESIS: [u8; 32] = [3; 32];
+
     fn audience() -> acp::DelegationAudience {
         acp::DelegationAudience {
             worker: WORKER.into(),
             deployment: 9,
+            genesis_id: Some(GENESIS),
+        }
+    }
+
+    fn elsewhere(worker: &str, deployment: u64) -> acp::DelegationAudience {
+        acp::DelegationAudience {
+            worker: worker.into(),
+            deployment,
+            ..audience()
         }
     }
 
     fn binding(digest: u8) -> RequestBinding {
         RequestBinding {
             digest: [digest; 32],
-            genesis_id: [3; 32],
+            genesis_id: GENESIS,
             nonce: [5; 24],
         }
     }
@@ -179,7 +218,7 @@ mod tests {
     fn caller_at(token: &str, digest: u8, now: u64) -> Result<String, CallerDelegationError> {
         let claims = vera_crypto::jwt::verify_bearer_token(token).expect("token verifies");
         let request = claims.request.clone().expect("request claim");
-        bound_caller(&claims, &request, WORKER, 9, || Ok([digest; 32]), now)
+        bound_caller(&claims, &request, &audience(), || Ok([digest; 32]), now)
     }
 
     #[nuclei::test]
@@ -207,16 +246,14 @@ mod tests {
         let claims = vera_crypto::jwt::verify_bearer_token(&token).unwrap();
         let request = claims.request.clone().unwrap();
         for (worker, deployment) in [(signer.did(), 9), (WORKER, 10)] {
-            assert!(
-                bound_caller(&claims, &request, worker, deployment, || Ok([1; 32]), NOW).is_err()
-            );
+            let other = elsewhere(worker, deployment);
+            assert!(bound_caller(&claims, &request, &other, || Ok([1; 32]), NOW).is_err());
         }
         assert!(matches!(
             bound_caller(
                 &claims,
                 &request,
-                WORKER,
-                9,
+                &audience(),
                 || Err(ProviderError::Config("no such command".into())),
                 NOW
             ),
@@ -236,7 +273,7 @@ mod tests {
             Err(CallerDelegationError::Kind)
         ));
         assert_eq!(
-            caller_of_request_delegation(&bound, WORKER, 9, || Ok([1; 32]))
+            caller_of_request_delegation(&bound, &audience(), || Ok([1; 32]))
                 .expect("bound to a request")
                 .unwrap(),
             signer.did()
@@ -245,10 +282,88 @@ mod tests {
         let plain = caller_delegation(&signer, &audience(), Duration::from_secs(60))
             .await
             .expect("delegation");
-        assert!(caller_of_request_delegation(&plain, WORKER, 9, || Ok([1; 32])).is_none());
+        assert!(caller_of_request_delegation(&plain, &audience(), || Ok([1; 32])).is_none());
         let mut forged = bound.clone();
         forged.push('A');
-        assert!(caller_of_request_delegation(&forged, WORKER, 9, || Ok([1; 32])).is_none());
+        assert!(caller_of_request_delegation(&forged, &audience(), || Ok([1; 32])).is_none());
+    }
+
+    #[nuclei::test]
+    async fn a_request_delegation_for_another_genesis_is_refused_where_the_genesis_is_known() {
+        let signer = Ed25519Signer::from_slice(&[9; 32]).expect("key");
+        let other = RequestBinding {
+            genesis_id: [7; 32],
+            ..binding(1)
+        };
+        let token = issue_request_at(&signer, &audience(), &other, 60, NOW)
+            .await
+            .expect("delegation");
+        assert!(matches!(
+            caller_at(&token, 1, NOW),
+            Err(CallerDelegationError::OtherGenesis)
+        ));
+
+        // A provider that does not know its genesis identity leaves the
+        // check to the chain, as before.
+        let claims = vera_crypto::jwt::verify_bearer_token(&token).unwrap();
+        let request = claims.request.clone().unwrap();
+        let unknown = acp::DelegationAudience {
+            genesis_id: None,
+            ..audience()
+        };
+        assert_eq!(
+            bound_caller(&claims, &request, &unknown, || Ok([1; 32]), NOW).unwrap(),
+            signer.did()
+        );
+    }
+
+    #[nuclei::test]
+    async fn a_binding_made_from_the_reported_audience_is_taken_for_its_command() {
+        let command = PolicyCommand {
+            policy_id: "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+            resource: "users",
+            object_id: "bae-first",
+            action: crate::PolicyAction::RegisterObject,
+        };
+        let binding = RequestBinding::for_command(&audience(), &command, [5; 24]).expect("binding");
+        assert_eq!(binding.genesis_id, GENESIS);
+        assert_eq!(binding.digest, request_digest(&command).unwrap());
+        assert_eq!(binding.nonce, [5; 24]);
+
+        let signer = Ed25519Signer::from_slice(&[9; 32]).expect("key");
+        let token = issue_request_at(&signer, &audience(), &binding, 60, NOW)
+            .await
+            .expect("delegation");
+        let claims = vera_crypto::jwt::verify_bearer_token(&token).unwrap();
+        let request = claims.request.clone().unwrap();
+        assert_eq!(
+            bound_caller(
+                &claims,
+                &request,
+                &audience(),
+                || request_digest(&command),
+                NOW
+            )
+            .unwrap(),
+            signer.did()
+        );
+
+        let unknown = acp::DelegationAudience {
+            genesis_id: None,
+            ..audience()
+        };
+        assert!(matches!(
+            RequestBinding::for_command(&unknown, &command, [5; 24]),
+            Err(BearerError::NoGenesisIdentity)
+        ));
+        let unparsable = PolicyCommand {
+            policy_id: "not a policy",
+            ..command
+        };
+        assert!(matches!(
+            RequestBinding::for_command(&audience(), &unparsable, [5; 24]),
+            Err(BearerError::Command(_))
+        ));
     }
 
     #[nuclei::test]

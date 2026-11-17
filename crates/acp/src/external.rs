@@ -48,6 +48,7 @@ use crate::permission::DocumentPermission;
 
 mod owed;
 mod registration;
+mod replica;
 mod settle;
 
 pub use settle::{OwedScope, OwedSettlement, MAX_FAILED_SUBMISSIONS};
@@ -83,6 +84,8 @@ where
     /// The provider bound to no request: what a submission that serves no
     /// request is bound from, so it never inherits another's credentials.
     root: Arc<dyn DocumentACP>,
+    /// Told when this gate changes an object's relationships.
+    watcher: Arc<regolith::sync::OnceCell<Arc<dyn crate::ObjectChangeListener>>>,
 }
 
 fn storage_error(error: storage::corekv::Error) -> Error {
@@ -91,7 +94,7 @@ fn storage_error(error: storage::corekv::Error) -> Error {
 
 impl<S> ExternalDocumentAcp<S>
 where
-    S: Store,
+    S: Store + 'static,
 {
     /// Gate `provider` with the registrations owed in `store`'s ACP namespace.
     pub fn new(provider: Arc<dyn DocumentACP>, store: Arc<S>) -> Self {
@@ -102,6 +105,15 @@ where
             settling: Arc::default(),
             changed: Arc::new(regolith::sync::Notify::new()),
             serving: None,
+            watcher: Arc::default(),
+        }
+    }
+
+    /// Tell the watcher, if any, that this gate changed an object's
+    /// relationships.
+    pub(crate) fn object_changed(&self, policy_id: &str, resource_name: &str, object_id: &str) {
+        if let Some(watcher) = self.watcher.get() {
+            watcher.changed(policy_id, resource_name, object_id);
         }
     }
 
@@ -257,6 +269,10 @@ where
         self.provider.unregistered_documents_are_public()
     }
 
+    fn proves_decisions(&self) -> bool {
+        self.provider.proves_decisions()
+    }
+
     fn settles_owed_registrations(&self) -> bool {
         true
     }
@@ -270,6 +286,7 @@ where
             changed: Arc::clone(&self.changed),
             serving: Some(context.clone()),
             root: Arc::clone(&self.root),
+            watcher: Arc::clone(&self.watcher),
         }))
     }
 
@@ -288,6 +305,53 @@ where
 
     fn canonical_actor(&self, did: &Did) -> Did {
         self.provider.canonical_actor(did)
+    }
+
+    fn own_actor(&self) -> Option<Did> {
+        self.provider.own_actor()
+    }
+
+    fn watch_object_changes(&self, listener: Arc<dyn crate::ObjectChangeListener>) {
+        let _ = self.watcher.set(listener);
+    }
+
+    async fn replica_owed(
+        &self,
+        policy_id: &str,
+        resource_name: &str,
+        doc_id: &str,
+    ) -> Result<crate::ReplicaOwed> {
+        self.owed_on_replica(policy_id, resource_name, doc_id).await
+    }
+
+    async fn stage_replica_unit(
+        &self,
+        view: &datastore::NamespaceView,
+        unit: &crate::ReplicaUnit<'_>,
+    ) -> Result<()> {
+        self.record_replica_unit(view, unit).await
+    }
+
+    async fn adopt_replica(
+        &self,
+        view: &datastore::NamespaceView,
+        policy_id: &str,
+        resource_name: &str,
+        doc_id: &str,
+        creator: &Did,
+    ) -> Result<()> {
+        self.record_adopted_replica(view, policy_id, resource_name, doc_id, creator)
+            .await
+    }
+
+    async fn settle_replica(
+        &self,
+        policy_id: &str,
+        resource_name: &str,
+        doc_id: &str,
+    ) -> Result<()> {
+        self.settle_replica_unit(policy_id, resource_name, doc_id)
+            .await
     }
 
     fn submits_subject(&self, subject: &Subject) -> bool {
@@ -508,7 +572,8 @@ where
             .await?;
         self.refuse_revoked(requestor, policy_id, collection_id, doc_id)
             .await?;
-        self.provider
+        let changed = self
+            .provider
             .add_actor_relationship(
                 requestor,
                 target,
@@ -518,7 +583,9 @@ where
                 relation,
                 managing_relations,
             )
-            .await
+            .await?;
+        self.object_changed(policy_id, collection_id, doc_id);
+        Ok(changed)
     }
 
     async fn add_relationship(
@@ -537,7 +604,8 @@ where
             .await?;
         self.refuse_revoked(requestor, policy_id, collection_id, doc_id)
             .await?;
-        self.provider
+        let changed = self
+            .provider
             .add_relationship(
                 requestor,
                 target,
@@ -547,7 +615,9 @@ where
                 relation,
                 managing_relations,
             )
-            .await
+            .await?;
+        self.object_changed(policy_id, collection_id, doc_id);
+        Ok(changed)
     }
 
     async fn delete_actor_relationship(
@@ -567,7 +637,8 @@ where
             .await?;
         self.refuse_revoked(requestor, policy_id, collection_id, doc_id)
             .await?;
-        self.provider
+        let changed = self
+            .provider
             .delete_actor_relationship(
                 requestor,
                 target,
@@ -577,7 +648,9 @@ where
                 relation,
                 managing_relations,
             )
-            .await
+            .await?;
+        self.object_changed(policy_id, collection_id, doc_id);
+        Ok(changed)
     }
 
     async fn delete_relationship(
@@ -596,7 +669,8 @@ where
             .await?;
         self.refuse_revoked(requestor, policy_id, collection_id, doc_id)
             .await?;
-        self.provider
+        let changed = self
+            .provider
             .delete_relationship(
                 requestor,
                 target,
@@ -606,7 +680,9 @@ where
                 relation,
                 managing_relations,
             )
-            .await
+            .await?;
+        self.object_changed(policy_id, collection_id, doc_id);
+        Ok(changed)
     }
 
     async fn unregister_doc_object(
