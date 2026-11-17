@@ -90,25 +90,6 @@ fn assert_waits(outcome: &MergeOutcome, why: &str) {
 }
 
 #[test]
-fn a_peer_cannot_delete_a_chunk_its_live_parent_lists() {
-    workers::block_on(async {
-        let author = node().await;
-        let peer = node().await;
-        let parent = add_article(&peer).await;
-        let chunk_id = merge_updated_chunk(&author, &peer, &parent).await;
-        let delete = write_chunk_delete(&author, &chunk_id).await;
-
-        let outcome = merge_outcome(&author, &peer, &delete, &chunk_id)
-            .await
-            .unwrap();
-
-        assert_waits(&outcome, "parent is live");
-        assert_eq!(shown(&peer).await, [chunk_id]);
-    })
-    .unwrap()
-}
-
-#[test]
 fn a_peer_cannot_delete_a_chunk_its_live_parent_does_not_list_now() {
     workers::block_on(async {
         let author = node().await;
@@ -139,6 +120,7 @@ fn a_chunk_delete_that_arrives_before_its_parents_merges_after_it() {
             .await
             .unwrap();
         assert_waits(&early, "parent is live");
+        assert_eq!(shown(&peer).await, std::slice::from_ref(&chunk_id));
 
         peer.run(
             &format!(r#"mutation {{ delete_Article(docID: "{parent}") {{ _docID }} }}"#),

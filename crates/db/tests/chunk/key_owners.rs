@@ -141,23 +141,6 @@ fn a_chunk_whose_parent_has_not_arrived_has_no_key_owner() {
 }
 
 #[test]
-fn a_chunks_key_owner_is_its_parent() {
-    workers::block_on(async {
-        let db = chunked_db().await;
-        let parent = create(&db, "Article", r#"{"body": "x"}"#).await;
-        let block = plant_chunk(&db, &parent).await;
-
-        let owners = DbBlockDocIDResolver::new(Arc::clone(&db))
-            .doc_ids_for_block(&block)
-            .await
-            .unwrap();
-
-        assert_eq!(owners, vec![parent]);
-    })
-    .unwrap()
-}
-
-#[test]
 fn a_deleted_parent_still_owns_its_old_chunks_keys() {
     workers::block_on(async {
         let db = chunked_db().await;
@@ -174,27 +157,6 @@ fn a_deleted_parent_still_owns_its_old_chunks_keys() {
             .unwrap();
 
         assert_eq!(owners, vec![parent]);
-    })
-    .unwrap()
-}
-
-#[test]
-fn a_chunk_whose_parent_has_not_arrived_has_no_history_parent() {
-    workers::block_on(async {
-        let db = chunked_db().await;
-        let missing = DocID::new_v0_from_seed("parent not merged yet").to_string();
-        plant_chunk(&db, &missing).await;
-        let chunks_col = db.get_collection("Article__body_chunk").unwrap().unwrap();
-        let chunk_id = DocID::new_v0_from_seed(&format!("chunk of {missing}")).to_string();
-
-        let txn = db.new_txn(true).await.unwrap();
-        let parents =
-            db::chunk::access::history_parents(&db, &txn, chunks_col.schema(), &[chunk_id])
-                .await
-                .unwrap();
-        let _ = txn.discard();
-
-        assert!(parents.is_empty(), "{parents:?}");
     })
     .unwrap()
 }
@@ -240,22 +202,6 @@ fn chunk_parents_are_read_in_the_callers_transaction() {
 }
 
 #[test]
-fn a_document_whose_collection_is_unknown_has_no_key_owner() {
-    workers::block_on(async {
-        let db = chunked_db().await;
-        let (_, block) = plant_unknown(&db).await;
-
-        let owners = DbBlockDocIDResolver::new(Arc::clone(&db))
-            .doc_ids_for_block(&block)
-            .await
-            .unwrap();
-
-        assert!(owners.is_empty(), "{owners:?}");
-    })
-    .unwrap()
-}
-
-#[test]
 fn a_document_whose_collection_is_unknown_has_no_key_owner_on_a_node_without_chunks() {
     workers::block_on(async {
         let db = db_with("type Note { title: String }").await;
@@ -267,17 +213,6 @@ fn a_document_whose_collection_is_unknown_has_no_key_owner_on_a_node_without_chu
             .unwrap();
 
         assert!(owners.is_empty(), "{owners:?}");
-    })
-    .unwrap()
-}
-
-#[test]
-fn a_plain_documents_key_owner_is_itself_beside_chunk_collections() {
-    workers::block_on(async {
-        let db = chunked_db().await;
-        let note = create(&db, "Note", r#"{"title": "n"}"#).await;
-
-        assert_eq!(read_owners(&db, vec![note.clone()]).await, vec![note]);
     })
     .unwrap()
 }

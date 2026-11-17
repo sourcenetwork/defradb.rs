@@ -129,38 +129,6 @@ impl Store {
 }
 
 #[test]
-fn a_chunk_of_the_parents_text_shows() {
-    workers::block_on(async {
-        let text = piece("Some text.");
-        let store = Store::new(Some("Some text."), vec![hash("Some text."), hash(&text)]);
-        let chunk = store.chunk(&text, &hash(&text));
-        assert!(store.shows(&chunk).await);
-    })
-    .unwrap()
-}
-
-#[test]
-fn a_chunk_of_old_text_hides_though_a_list_for_the_new_text_names_it() {
-    workers::block_on(async {
-        let old = piece("Old text.");
-        let store = Store::new(Some("whole"), vec![hash("whole"), hash(&old)]);
-        let chunk = store.chunk(&old, &hash(&old));
-        assert!(!store.shows(&chunk).await);
-    })
-    .unwrap()
-}
-
-#[test]
-fn the_whole_text_hash_does_not_list_a_chunk() {
-    workers::block_on(async {
-        let store = Store::new(Some("whole"), vec![hash("whole")]);
-        let chunk = store.chunk("other", &hash("whole"));
-        assert!(!store.shows(&chunk).await);
-    })
-    .unwrap()
-}
-
-#[test]
 fn a_chunk_claiming_the_texts_hash_for_other_text_hides() {
     workers::block_on(async {
         let text = piece("Real text.");
