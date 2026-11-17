@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-2fe98efb.js";
+            window.path_to_searchindex_js = "../searchindex-b74d698d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -276,9 +276,11 @@ one for each grant;</li>
 must not have expired and may expire at most <strong>600 seconds</strong> after the chain’s clock
 at execution, and the token may not outlive it. A request-bound delegation is therefore
 usable for at most ten minutes, and <code>request_delegation</code> issues none that lasts longer;</li>
-<li>the <strong>genesis identity</strong> of the deployment, which only the chain knows. The node
-checks everything else before it sends, and refuses a token bound to another command
-without sending it.</li>
+<li>the <strong>genesis identity</strong> of the deployment: the ID of its genesis block, which its
+first block names as its parent. The node checks all of this before it sends, and
+refuses a token bound to another command, or naming another genesis identity, without
+sending it. A provider that does not know the genesis identity leaves that one check to
+the chain.</li>
 </ul>
 <p>vera.rs keeps the outcome of an executed request under the actor and the operation
 identity until that identity expires. The same token sent again is answered with the
@@ -289,9 +291,21 @@ once, even when the relationship was changed in between.</p>
 gives the digest from the same bytes the node submits, so an actor inside the command is
 in the spelling the node sends. A document ID comes from the document’s content: the
 client that signs a create’s blocks (<code>ClientCreateSignatures::from_input</code>) has it before
-the node sees the write. The policy ID and the resource are the collection’s. The worker
-and the deployment are in the node’s light client status (<code>delegation</code>); the genesis
-identity is provisioned out of band, and is the parent of the deployment’s first block.</p>
+the node sees the write. The policy ID and the resource are the collection’s. The worker,
+the deployment and the genesis identity are the node’s delegation audience, in its light
+client status (<code>delegation</code>: <code>worker</code>, <code>deployment</code> and <code>genesis_id</code>, <code>0x</code> and 64
+hexadecimal digits), from <code>RemotePolicies::light_client_status</code> in process or
+<code>GET /api/v0/acp/status</code>. <code>RequestBinding::for_command</code> builds the binding from that
+audience, a command and a nonce, and <code>request_delegation</code> signs it.</p>
+<p>The vera.rs provider learns the genesis identity from its light client: it reads the
+deployment’s first block and checks its finality against the trusted consensus key, the
+trust every other read rests on, and takes that block’s parent. An embedded deployment
+is read the same way through its in-process transport, so a client of a node that serves
+no JSON-RPC learns it from the node all the same. Until the first block is proven (the
+node does not serve it, or did not answer yet) the audience has no <code>genesis_id</code>: the
+provider asks again at each new height, a request-bound delegation cannot be built from
+the audience, and one built otherwise is checked without it, by the chain only. A
+provider that is not vera.rs reports none.</p>
 <p>Where a one-request delegation is taken, and where not:</p>
 <ul>
 <li><strong>Taken</strong> beside a verified write
