@@ -81,6 +81,35 @@ pub trait VeraProvider: MaybeSendSync {
 
     fn self_did(&self) -> Option<String>;
 
+    /// `did` in the one spelling this provider keeps and returns an actor
+    /// under, for a provider whose actors can be written in several.
+    fn canonical_actor(&self, did: &str) -> String {
+        did.to_owned()
+    }
+
+    /// Whether [`Self::create_bearer_token`] signs for `did` with a key the
+    /// node holds, so it needs nothing from a request to act as `did`. The
+    /// answer is the same for every spelling [`Self::canonical_actor`]
+    /// brings to one: a staged change keeps the canonical one only.
+    fn holds_key_for(&self, _did: &str) -> bool {
+        false
+    }
+
+    /// Whether a relationship whose subject is a userset or another object
+    /// can be submitted to this provider
+    /// ([`Self::set_relationship_subject_as`]).
+    fn takes_subject_commands(&self) -> bool {
+        false
+    }
+
+    /// Whether `error`, returned by a relationship write, is the provider's
+    /// own final answer to that request (a verified rejection) and not a
+    /// failure to reach it or to learn the outcome. The default knows no
+    /// such error, so a failed write is taken as possibly not delivered.
+    fn write_refused(&self, _error: &ProviderError) -> bool {
+        false
+    }
+
     async fn create_policy(&self, policy_yaml: &str) -> Result<String, ProviderError>;
 
     async fn register_object(
@@ -184,6 +213,70 @@ pub trait VeraProvider: MaybeSendSync {
         ))
     }
 
+    /// [`set_relationship_subject`](Self::set_relationship_subject) under
+    /// `bearer_token`: the command carries its caller's authority, as an
+    /// actor subject's does, and the backend decides on it. The default
+    /// rejects with [`ProviderError::Unsupported`].
+    #[allow(clippy::too_many_arguments)]
+    async fn set_relationship_subject_as(
+        &self,
+        bearer_token: &str,
+        policy_id: &str,
+        resource: &str,
+        object_id: &str,
+        relation: &str,
+        kind: u8,
+        subject_resource: &str,
+        subject_object_id: &str,
+        subject_relation: &str,
+    ) -> Result<bool, ProviderError> {
+        let _ = (
+            bearer_token,
+            policy_id,
+            resource,
+            object_id,
+            relation,
+            kind,
+            subject_resource,
+            subject_object_id,
+            subject_relation,
+        );
+        Err(ProviderError::Unsupported(
+            "structured cross-object/userset subjects are not supported by this provider".into(),
+        ))
+    }
+
+    /// Revoke mirror of
+    /// [`set_relationship_subject_as`](Self::set_relationship_subject_as).
+    #[allow(clippy::too_many_arguments)]
+    async fn delete_relationship_subject_as(
+        &self,
+        bearer_token: &str,
+        policy_id: &str,
+        resource: &str,
+        object_id: &str,
+        relation: &str,
+        kind: u8,
+        subject_resource: &str,
+        subject_object_id: &str,
+        subject_relation: &str,
+    ) -> Result<bool, ProviderError> {
+        let _ = (
+            bearer_token,
+            policy_id,
+            resource,
+            object_id,
+            relation,
+            kind,
+            subject_resource,
+            subject_object_id,
+            subject_relation,
+        );
+        Err(ProviderError::Unsupported(
+            "structured cross-object/userset subjects are not supported by this provider".into(),
+        ))
+    }
+
     async fn query_policy(
         &self,
         policy_id: &str,
@@ -242,7 +335,25 @@ pub trait VeraProvider: MaybeSendSync {
     /// provider may act under now: signed by its issuer, current, and naming
     /// this provider's worker and deployment. `None` when `token` is not a
     /// delegation at all, so the caller is authenticated some other way.
-    fn caller_of_delegation(&self, _token: &str) -> Option<Result<String, ProviderError>> {
+    fn caller_of_delegation(
+        &self,
+        _token: &str,
+    ) -> Option<Result<acp::AuthenticatedCaller, ProviderError>> {
+        None
+    }
+
+    /// The DID that signed `token`, when `token` is a delegation bound to
+    /// one request and this provider may send `command` under it now: signed
+    /// by its issuer, current, naming this provider's worker and deployment,
+    /// and bound to exactly `command`. An error when it is bound to another
+    /// command. `None` when `token` is bound to no request, or this provider
+    /// takes no such delegation: [`Self::caller_of_delegation`] then says
+    /// who signed it.
+    fn caller_of_request_delegation(
+        &self,
+        _token: &str,
+        _command: &crate::PolicyCommand<'_>,
+    ) -> Option<Result<String, ProviderError>> {
         None
     }
 }

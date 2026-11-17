@@ -131,7 +131,7 @@ pub(crate) async fn build_node_state(
         se_encryption_key: searchable_encryption_key
             .map_or_else(AtomOption::none, AtomOption::some),
         options_json,
-        _node: node,
+        node: Arc::new(node),
     };
     // The node holds the key now; the handle's state may go.
     drop(identity);
@@ -152,7 +152,7 @@ pub(crate) async fn build_node_state(
 /// store is process-wide and other nodes still use it, so the node gives back
 /// only its own hold on its identity's key.
 async fn shut_down(state: &NodeState) -> Result<(), String> {
-    let closed = state._node.shutdown().await;
+    let closed = state.node.shutdown().await;
     state.event_bus.close();
     if let Some(identity) = &*state.node_identity.swap(None) {
         identity.release();

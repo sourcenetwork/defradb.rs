@@ -708,7 +708,14 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
 
         if matches!(mutation.mutation_type, MutationType::Add) {
             match context.signing().cloned() {
-                Some(mut config) if config.remote_signer.is_some() => {
+                Some(mut config)
+                    if config.remote_signer.as_ref().is_some_and(|signer| {
+                        signer.takes_authorization()
+                            && !caller_identity
+                                .as_ref()
+                                .is_some_and(|caller| signer.uses_caller_key(caller.as_str()))
+                    }) =>
+                {
                     tracing::info!(
                         collection = %mutation.collection_name,
                         caller_identity = ?caller_identity.as_ref().map(|d| d.to_string()),
@@ -818,7 +825,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
                 Some(_) => {
                     tracing::info!(
                         collection = %mutation.collection_name,
-                        "create mutation using local signer; remote signer authorization skipped"
+                        "create mutation's signer takes no authorization; remote signer authorization skipped"
                     );
                 }
                 None => {

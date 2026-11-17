@@ -49,6 +49,9 @@ lean_lib HttpOwnerRegistration where
 lean_lib SseDelivery where
 
 @[default_target]
+lean_lib ClientSigningCredential where
+
+@[default_target]
 lean_lib ClientSigningAdmission where
 
 @[default_target]
@@ -257,6 +260,9 @@ lean_lib VerifiedCreateHandoff where
 
 @[default_target]
 lean_lib VerifiedMutationHandoff where
+
+@[default_target]
+lean_lib VerifiedRemoteAuthority where
 
 @[default_target]
 lean_lib AdministrativeRelationship where

@@ -9,7 +9,7 @@ use crate::{ffi_async, ffi_entry, try_ffi};
 
 /// Answers with the encrypted indexes of collection `collection_name` as a
 /// JSON array, or, for null or empty, every collection's as a JSON object
-/// keyed by collection name.
+/// keyed by collection name, leaving out collections without any.
 ///
 /// # Safety
 ///
@@ -21,58 +21,35 @@ pub unsafe extern "C" fn defra_encrypted_index_list(
     identity_ptr: usize,
 ) -> DefraResult {
     ffi_entry! {
-        let permission = match non_empty(collection_name) {
+        let collection_name = non_empty(collection_name);
+        let permission = match collection_name {
             Some(_) => NodePermission::EncryptedIndexList,
             None => NodePermission::EncryptedIndexListAll,
         };
         let request = try_ffi!(Request::begin(node_ptr, identity_ptr, permission));
-        try_ffi!(request.require_node("encrypted index list"));
-        let database = try_ffi!(request.database());
+        let node = try_ffi!(request.node_handle());
+        let context = request.context();
 
-        match non_empty(collection_name) {
-            Some(collection_name_str) => ffi_async!(caller, {
-            let collection = database
-                .get_collection(&collection_name_str)
-                .map_err(|e| format!("failed to get collection: {}", e))?
-                .ok_or_else(|| format!("collection '{}' not found", collection_name_str))?;
-
-            let encrypted_indexes = &collection.schema().encrypted_indexes;
-
-            let json = serde_json::to_string(encrypted_indexes)
-                .map_err(|e| format!("failed to serialize result: {}", e))?;
-
-            Ok(json)
-            }),
-            None => ffi_async!(caller, {
-            let names = database
-                .list_collections()
-                .map_err(|e| format!("failed to list collections: {}", e))?;
-
-            let mut all_encrypted_indexes: rapidhash::RapidHashMap<
-                String,
-                Vec<schema::EncryptedIndexDescription>,
-            > = rapidhash::RapidHashMap::default();
-
-            for name in names {
-                match database.get_collection(&name) {
-                    Ok(Some(collection)) => {
-                        let encrypted_indexes = collection.schema().encrypted_indexes.clone();
-                        if !encrypted_indexes.is_empty() {
-                            all_encrypted_indexes.insert(name, encrypted_indexes);
-                        }
-                    }
-                    Ok(None) => continue,
-                    Err(e) => {
-                        return Err(format!("failed to get collection '{}': {}", name, e));
-                    }
+        ffi_async!(caller, {
+            let json = match collection_name {
+                Some(name) => {
+                    let indexes = node
+                        .list_encrypted_indexes_as(&context, &name)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    serde_json::to_string(&indexes)
                 }
-            }
-
-            let json = serde_json::to_string(&all_encrypted_indexes)
-                .map_err(|e| format!("failed to serialize result: {}", e))?;
-
-            Ok(json)
-            }),
-        }
+                None => {
+                    let all: rapidhash::RapidHashMap<_, _> = node
+                        .list_all_encrypted_indexes_as(&context)
+                        .await
+                        .map_err(|e| e.to_string())?
+                        .into_iter()
+                        .collect();
+                    serde_json::to_string(&all)
+                }
+            };
+            json.map_err(|e| format!("failed to serialize result: {}", e))
+        })
     }
 }

@@ -92,6 +92,20 @@ RUNS=(
   "MC_VerifiedClientGraph_Red_RevokeNac.cfg VerifiedClientGraph.tla RED" # NAC revocation is not validated at commit (INV_NacRevocation)
   "MC_VerifiedClientGraph_Red_RevokeDac.cfg VerifiedClientGraph.tla RED" # DAC revocation is not validated at commit (INV_DacRevocation)
   "MC_VerifiedClientGraph_Red_Rollback.cfg VerifiedClientGraph.tla RED" # a rejected graph publishes the Agent effect (INV_Atomic)
+  "MC_VerifiedRemoteWrite_Green.cfg VerifiedRemoteWrite.tla GREEN" # a verified write on a remote provider needs authority for its signer, a request-bound delegation covers its own command only, and a failed submission is reported and takes a fresh credential by the same rule
+  "MC_VerifiedRemoteWrite_Red_NoAuthority.cfg VerifiedRemoteWrite.tla RED" # the write is staged with no key and no delegation (INV_AuthorityAtAdmission)
+  "MC_VerifiedRemoteWrite_Red_AnyIssuer.cfg VerifiedRemoteWrite.tla RED" # a delegation somebody else signed is taken (INV_AuthorityAtAdmission)
+  "MC_VerifiedRemoteWrite_Red_AnyNode.cfg VerifiedRemoteWrite.tla RED" # a delegation given to another node is taken (INV_AuthorityAtAdmission)
+  "MC_VerifiedRemoteWrite_Red_ExpiredAccepted.cfg VerifiedRemoteWrite.tla RED" # an expired delegation admits the write (INV_AuthorityAtAdmission)
+  "MC_VerifiedRemoteWrite_Red_AnyCommand.cfg VerifiedRemoteWrite.tla RED" # a request-bound delegation is sent with another command (INV_RequestOnlyItsRequest)
+  "MC_VerifiedRemoteWrite_Red_RequestLogsIn.cfg VerifiedRemoteWrite.tla RED" # a request-bound delegation authenticates an HTTP caller (INV_RequestIsNoLogin)
+  "MC_VerifiedRemoteWrite_Red_RecordedFirst.cfg VerifiedRemoteWrite.tla RED" # a refused write leaves its row and owed registration (INV_RefusalRecordsNothing)
+  "MC_VerifiedRemoteWrite_Red_SentExpired.cfg VerifiedRemoteWrite.tla RED" # an owed command is sent under an expired credential (INV_NothingSentStale)
+  "MC_VerifiedRemoteWrite_Red_GrantFirst.cfg VerifiedRemoteWrite.tla RED" # a grant is sent before its document's registration (INV_RegistrationFirst)
+  "MC_VerifiedRemoteWrite_Red_GrantUnchecked.cfg VerifiedRemoteWrite.tla RED" # a grant is staged with nothing that lets the node send it (INV_GrantAuthority)
+  "MC_VerifiedRemoteWrite_Red_AmbientRetry.cfg VerifiedRemoteWrite.tla RED" # a registration is sent with a token the process holds and nobody presented for it (INV_SentUnderRecordedAuthority)
+  "MC_VerifiedRemoteWrite_Red_ReauthUnchecked.cfg VerifiedRemoteWrite.tla RED" # a parked command is owed again on a fresh credential the rule of admission refuses (INV_ReauthorizedWithAuthority)
+  "MC_VerifiedRemoteWrite_Red_SilentFailure.cfg VerifiedRemoteWrite.tla RED" # a submission fails after the commit and the record does not say so (INV_FailureReported)
   "MC_SourceScopedNac_Green.cfg SourceScopedNac.tla GREEN"
   "MC_SourceScopedNac_Red_Authority.cfg SourceScopedNac.tla RED"
   "MC_SourceScopedNac_Red_Owner.cfg SourceScopedNac.tla RED"
@@ -115,6 +129,9 @@ RUNS=(
   "MC_EmbeddedSigner_Red_Owner.cfg EmbeddedSigner.tla RED"
   "MC_EmbeddedSigner_Red_Acp.cfg EmbeddedSigner.tla RED"
   "MC_EmbeddedSigner_Red_Bypass.cfg EmbeddedSigner.tla RED"
+  "MC_SigningCredential_Green.cfg SigningCredential.tla GREEN"
+  "MC_SigningCredential_Red_Format.cfg SigningCredential.tla RED"
+  "MC_SigningCredential_Red_Expiry.cfg SigningCredential.tla RED"
   "MC_SigningAdmission_Green.cfg SigningAdmission.tla GREEN" # bounded connections release expired slots
   "MC_SigningAdmission_Red_Capacity.cfg SigningAdmission.tla RED" # admission without a cap (INV_Capacity)
   "MC_SigningAdmission_Red_Cleanup.cfg SigningAdmission.tla RED" # expiration leaks a slot (LIVE_Reaped)
@@ -561,6 +578,39 @@ RUNS=(
   "MC_PendingSubmission_Red_GivesUpEarly.cfg PendingSubmission.tla RED" # a failure that may pass ends the loop before its deadline
   "MC_PendingSubmission_Red_ForgetsOnTimeout.cfg PendingSubmission.tla RED" # the journal drops the request when the deadline passes
   "MC_PendingSubmission_Red_Recalled_Forgets.cfg PendingSubmission.tla RED" # with the journal emptied at a deadline, a later call has nothing to send again
+  "MC_AcpOutbox_Green.cfg AcpOutbox.tla GREEN" # a new document: owed registration and two owed changes never widen access, across crashes
+  "MC_AcpOutbox_Green_Registered.cfg AcpOutbox.tla GREEN" # a registered document: deletes of tuples the provider holds deny from the commit on
+  "MC_AcpOutbox_Green_Three.cfg AcpOutbox.tla GREEN" # three changes on one tuple in every order, with an actor the provider refuses
+  "MC_AcpOutbox_Green_Three_Registered.cfg AcpOutbox.tla GREEN" # a change awaiting authority holds the later changes on its tuple
+  "MC_AcpOutbox_Green_Live.cfg AcpOutbox.tla GREEN" # every committed change ends settled, refused or awaiting authority
+  "MC_AcpOutbox_Green_NoMarker.cfg AcpOutbox.tla GREEN" # without the in-flight mark every property but at-most-one-effect still holds
+  "MC_AcpOutbox_Green_OwnerChanges.cfg AcpOutbox.tla GREEN" # the provider's owner may change: a checked change is then refused and parked, and nothing widens
+  "MC_AcpOutbox_Green_Live_OwnerChanges.cfg AcpOutbox.tla GREEN" # with the owner able to change every change still ends settled, parked or held behind a parked one
+  "MC_AcpOutbox_Red_OwedOutsideTxn.cfg AcpOutbox.tla RED" # owed records written beside the transaction survive its rollback (INV_RollbackLeavesNothing)
+  "MC_AcpOutbox_Red_NoDenyOverlay.cfg AcpOutbox.tla RED" # a committed delete counts only once it lands (INV_RevokedAtCommit)
+  "MC_AcpOutbox_Red_LatestOpOverlay.cfg AcpOutbox.tla RED" # a later owed add that the provider refuses lifts an owed delete's denial (INV_NoWidening)
+  "MC_AcpOutbox_Red_RefusedDeleteForgotten.cfg AcpOutbox.tla RED" # a refused delete stops denying (INV_RevokedAtCommit)
+  "MC_AcpOutbox_Red_OwedAddGrants.cfg AcpOutbox.tla RED" # every owed add grants at once (INV_NoWidening)
+  "MC_AcpOutbox_Red_WildcardGrant.cfg AcpOutbox.tla RED" # a creator's owed grant to everyone opens an owed document (INV_OwedDocumentNarrow)
+  "MC_AcpOutbox_Red_ChangeBeforeRegistration.cfg AcpOutbox.tla RED" # a change is sent while the registration is owed (INV_RegistrationFirst)
+  "MC_AcpOutbox_Red_OutOfOrder.cfg AcpOutbox.tla RED" # a delete lands before the add it follows (INV_RevokedAtCommit)
+  "MC_AcpOutbox_Red_DrainPastAwaiting.cfg AcpOutbox.tla RED" # an add reauthorized after a later delete landed restores the tuple (INV_RevokedAtCommit)
+  "MC_AcpOutbox_Red_NoInFlightMarker.cfg AcpOutbox.tla RED" # without a durable mark a landed change is sent again after a crash (INV_AtMostOneEffect)
+  "MC_AcpOutbox_Red_ReceiptLost.cfg AcpOutbox.tla RED" # with no receipt to read a landed change is sent again (INV_AtMostOneEffect)
+  "MC_AcpOutbox_Red_ContestedRegistration.cfg AcpOutbox.tla RED" # the provider holds another owner while the creator still reads (INV_NoWidening)
+  "MC_AcpOutbox_Red_RefusedBlocksDrain.cfg AcpOutbox.tla RED" # a refused change holds every later one for ever (LIVE_Drains)
+  "MC_AcpOutbox_Red_UncheckedDelete.cfg AcpOutbox.tla RED" # a delete staged while nobody could check its actor denies at once (INV_DenialsChecked)
+  "MC_AcpOutbox_Red_UncheckedRefusedKept.cfg AcpOutbox.tla RED" # an unchecked change the provider refuses is parked and holds its tuple (INV_RefusedChecked)
+  "MC_AcpOutbox_Red_UncheckedHolds.cfg AcpOutbox.tla RED" # an unchecked change awaiting authority holds the owner's later change of its tuple (INV_UncheckedYields)
+  "MC_AcpOutbox_Red_UncheckedPassedKept.cfg AcpOutbox.tla RED" # an unchecked change passed by a later one is kept, reauthorized and lands after it (INV_RevokedAtCommit)
+  "MC_AcpOutbox_Red_TransferWhileOwed.cfg AcpOutbox.tla RED" # the owner changes on the provider while the node still holds the owed registration (INV_NoWidening)
+  "MC_AcpOutbox_Red_AbandonByAnyone.cfg AcpOutbox.tla RED" # the subject of a refused delete abandons it and reads again (INV_RevokedAtCommit)
+  "MC_AcpOutbox_Red_AbandonInFlight.cfg AcpOutbox.tla RED" # a change abandoned while it is being sent lands afterwards (INV_AbandonIsFinal)
+  "MC_AcpOutbox_Red_SilentFailure.cfg AcpOutbox.tla RED" # a registration whose submission failed stays owed with no reason recorded (INV_FailureReported)
+  "MC_AcpOutbox_Red_AmbientRegistration.cfg AcpOutbox.tla RED" # a retry sends the registration with a token the process holds (INV_PresentedAuthority)
+  "MC_AcpOutbox_Red_AmbientRecorded.cfg AcpOutbox.tla RED" # a bearer-less create records the token the process holds, and a retry sends it (INV_PresentedAuthority)
+  "MC_AcpOutbox_Red_SilentDiscard.cfg AcpOutbox.tla RED" # a change deleted without the provider holding it leaves no note for its actor (INV_FailureReported)
+  "MC_AcpOutbox_Red_ReauthorizeUnchecked.cfg AcpOutbox.tla RED" # a fresh credential for the registration is taken from anyone and its signer becomes the owner (INV_NoWidening)
   "MC_RegisterDocOnce_Green.cfg RegisterDocOnce.tla GREEN" # racing registrations of one document: one owner, the winner owns it, one wins
   "MC_RegisterDocOnce_Red_NoValidation.cfg RegisterDocOnce.tla RED" # deciding scan not validated: two owners (INV_OneOwner)
   "MC_RegisterDocOnce_Red_Sentinel.cfg RegisterDocOnce.tla RED" # main before the fix: the identical sentinel write commits, two owners (INV_OneOwner)
@@ -601,6 +651,9 @@ RUNS=(
   "MC_Nac_Red_NoPersist.cfg        MC_Nac_Red_NoPersist.tla        RED"   # NAC: disabled-flag not persisted across restart
   "MC_Nac_Red_ReEnableLive.cfg     MC_Nac_Red_ReEnableLive.tla     RED"   # NAC: re-enable from stale live admin (escalation)
   "MC_Nac_Red_WriteWhileDisabled.cfg MC_Nac_Red_WriteWhileDisabled.tla RED" # NAC: admin write accepted while disabled
+  "MC_Nac_Red_EnableReEnables.cfg  MC_Nac_Red_EnableReEnables.tla  RED"   # NAC: enable() turns a disabled NAC back on (INV_ReEnableNeedsPersistedAdmin)
+  "MC_Nac_Red_EnableAddsOwner.cfg  MC_Nac_Red_EnableReEnables.tla  RED"   # NAC: enable() on a disabled NAC makes the caller an owner (INV_NoNonAdminMutatesAdminSet)
+  "MC_Nac_Red_StartReEnables.cfg   MC_Nac_Red_StartReEnables.tla   RED"   # NAC: start with the enable option re-enables a disabled NAC (INV_ReEnableNeedsPersistedAdmin)
   "MC_TxnRegistry_Green.cfg        MC_TxnRegistry_Green.tla        GREEN" # txn cleanup never evicts a live transaction
   "MC_TxnRegistry_Red_NaiveSweep.cfg MC_TxnRegistry_Red_NaiveSweep.tla RED" # naive sweep evicts a still-live txn
   "MC_TxnContext_Green.cfg TxnContext.tla GREEN" # a transaction in the request context: only its opener runs in it, read-only writes nothing, finished runs nothing, discard leaves nothing, clashing commit fails

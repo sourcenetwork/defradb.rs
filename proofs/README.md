@@ -24,7 +24,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Family | Tool | Crates it covers |
 |---|---|---|
 | Explicit embedded signing | TLA+ / Lean | defra-node, query, db |
-| Verified client graph transaction | TLA+ / Lean | defra-node, query, db |
+| Verified client graph transaction | TLA+ / Lean | defra-node, query, db, acp, vera |
 | HTTP client-signed create | TLA+ / Lean | http, query, db |
 | HTTP client-signed update | TLA+ / Lean | http, query, db |
 | HTTP client-signed conditional update | Lean | http, query |
@@ -57,6 +57,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | JWT issuer / algorithm binding | TLA+ | identity |
 | CID content-addressing determinism + Block canonicalization | Lean | defra-core |
 | Deferred-ACP overlay consistency | TLA+ | query |
+| ACP outbox and owed registrations | TLA+ | acp, db, query, defra-node (owed relationship changes specified before the code, #2954) |
 | Order-preserving key encoding | Lean | storage |
 | vera.rs actor spelling | Lean | vera |
 | vera.rs delegation signing | Lean | vera |

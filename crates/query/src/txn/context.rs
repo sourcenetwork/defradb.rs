@@ -21,9 +21,15 @@ use crate::mutator::DocMutator;
 /// that owns the document writes. Remote ACP updates are not atomic with
 /// storage; the records only keep each owed document readable by its creator
 /// alone until the provider confirms.
+///
+/// The same view shows the relationship deletes the transaction has staged
+/// for the provider (see [`acp::outbox`]): whoever one of them names is
+/// denied through this transaction from the statement that staged it, before
+/// its commit. An add it has staged grants nothing.
 #[derive(Clone, Default)]
 pub struct AcpRegistrationProjection {
     pending: Option<acp::PendingRegistrations>,
+    denials: Option<acp::OwedDenials>,
 }
 
 impl AcpRegistrationProjection {
@@ -31,6 +37,36 @@ impl AcpRegistrationProjection {
     pub fn new(pending: acp::PendingRegistrations) -> Self {
         Self {
             pending: Some(pending),
+            denials: None,
+        }
+    }
+
+    /// Deny whoever a relationship delete owed through `denials`'
+    /// transaction names.
+    #[must_use]
+    pub fn with_owed_denials(mut self, denials: acp::OwedDenials) -> Self {
+        self.denials = Some(denials);
+        self
+    }
+
+    /// The denial the relationship deletes this transaction sees unsettled,
+    /// its own included, put on `identity` on one object, compared in
+    /// `acp`'s spelling of it.
+    pub async fn owed_denial(
+        &self,
+        acp: &dyn DocumentACP,
+        identity: &Identity,
+        policy_id: &str,
+        resource_name: &str,
+        doc_id: &str,
+    ) -> AcpResult<acp::OwedDenial> {
+        match &self.denials {
+            Some(denials) => {
+                denials
+                    .on(acp, identity, policy_id, resource_name, doc_id)
+                    .await
+            }
+            None => Ok(acp::OwedDenial::None),
         }
     }
 
@@ -80,6 +116,91 @@ async fn owed_creator(
         }
         _ => Ok(None),
     }
+}
+
+/// What the relationship deletes a transaction sees unsettled say about
+/// `identity`. Only an external provider is owed changes.
+async fn owed_denial(
+    acp: &dyn DocumentACP,
+    projection: Option<&AcpRegistrationProjection>,
+    identity: &Identity,
+    policy_id: &str,
+    resource_name: &str,
+    doc_id: &str,
+) -> AcpResult<acp::OwedDenial> {
+    match projection {
+        Some(projection) if !acp.supports_transactions() => {
+            projection
+                .owed_denial(acp, identity, policy_id, resource_name, doc_id)
+                .await
+        }
+        _ => Ok(acp::OwedDenial::None),
+    }
+}
+
+/// Whether a relationship delete the transaction sees unsettled, its own
+/// staged ones included, denies `identity` on a document. The owner is
+/// spared, as the provider names it.
+async fn denied_by_owed_delete(
+    acp: &dyn DocumentACP,
+    projection: Option<&AcpRegistrationProjection>,
+    identity: &Identity,
+    policy_id: &str,
+    resource_name: &str,
+    doc_id: &str,
+) -> AcpResult<bool> {
+    let denial = owed_denial(acp, projection, identity, policy_id, resource_name, doc_id).await?;
+    Ok(match (denial, identity.did()) {
+        (acp::OwedDenial::None, _) => false,
+        (acp::OwedDenial::Always, _) | (acp::OwedDenial::UnlessOwner, None) => true,
+        (acp::OwedDenial::UnlessOwner, Some(actor)) => {
+            let owner = acp
+                .get_doc_owner(policy_id, resource_name, doc_id)
+                .await?
+                .map(|owner| acp.canonical_actor(&owner));
+            owner != Some(acp.canonical_actor(actor))
+        }
+    })
+}
+
+/// [`denied_by_owed_delete`] inside an engine retry attempt: the owner comes
+/// from the request memo, and a miss exits the attempt to ask the provider.
+async fn denied_by_owed_delete_with_inputs(
+    acp: &dyn DocumentACP,
+    projection: Option<&AcpRegistrationProjection>,
+    identity: &Identity,
+    policy_id: &str,
+    resource_name: &str,
+    doc_id: &str,
+    inputs: &crate::prepared::PreparedInputMemo,
+) -> crate::error::Result<bool> {
+    let acp_error = |error: acp::Error| crate::error::QueryError::execution(error.to_string());
+    let denial = owed_denial(acp, projection, identity, policy_id, resource_name, doc_id)
+        .await
+        .map_err(acp_error)?;
+    let actor = match (denial, identity.did()) {
+        (acp::OwedDenial::None, _) => return Ok(false),
+        (acp::OwedDenial::Always, _) | (acp::OwedDenial::UnlessOwner, None) => return Ok(true),
+        (acp::OwedDenial::UnlessOwner, Some(actor)) => actor,
+    };
+    let requester = identity.did().map(Did::as_str).unwrap_or("anonymous");
+    let bearer = identity
+        .did()
+        .and_then(|did| acp.bearer_token_for(did.as_str()));
+    let exact_request =
+        serde_json::to_vec(&(requester, "owner", policy_id, resource_name, doc_id, bearer))
+            .map_err(|error| crate::error::QueryError::execution(error.to_string()))?;
+    let request = crate::prepared::PreparedInputRequest::new(
+        crate::prepared::PreparedInputKind::AcpDecision,
+        exact_request,
+    );
+    let Some(response) = inputs.get(&request) else {
+        return Err(crate::error::QueryError::NeedsInput(request));
+    };
+    let owner: Option<Did> = serde_json::from_slice(&response).map_err(|error| {
+        crate::error::QueryError::execution(format!("cached ACP response is invalid: {error}"))
+    })?;
+    Ok(owner.map(|owner| acp.canonical_actor(&owner)) != Some(acp.canonical_actor(actor)))
 }
 
 fn is_creator(identity: &Identity, creator: &Did) -> bool {
@@ -170,6 +291,9 @@ pub async fn check_doc_access_with_projection(
     if let Some(creator) = owed_creator(acp, projection, policy_id, resource_name, doc_id).await? {
         return Ok(is_creator(identity, &creator));
     }
+    if denied_by_owed_delete(acp, projection, identity, policy_id, resource_name, doc_id).await? {
+        return Ok(false);
+    }
     acp.check_doc_access(identity, permission, policy_id, resource_name, doc_id)
         .await
 }
@@ -209,6 +333,19 @@ pub async fn check_doc_access_with_prepared_inputs(
         .await
         .map_err(|error| crate::error::QueryError::execution(error.to_string()));
     };
+    if denied_by_owed_delete_with_inputs(
+        acp,
+        projection,
+        identity,
+        policy_id,
+        resource_name,
+        doc_id,
+        inputs,
+    )
+    .await?
+    {
+        return Ok(false);
+    }
     let bearer = identity
         .did()
         .and_then(|did| acp.bearer_token_for(did.as_str()));

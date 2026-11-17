@@ -937,6 +937,12 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                     .await
                     .map_err(|error| crate::error::QueryError::execution(error.to_string()))?;
                 serde_json::to_vec(&registered)
+            } else if field(1)? == "owner" {
+                let owner = acp
+                    .get_doc_owner(field(2)?, field(3)?, field(4)?)
+                    .await
+                    .map_err(|error| crate::error::QueryError::execution(error.to_string()))?;
+                serde_json::to_vec(&owner)
             } else if field(4)? == "writer" {
                 let decision = acp
                     .create_access_decision(

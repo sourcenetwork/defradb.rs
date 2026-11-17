@@ -62,6 +62,7 @@ mod node_query_identity_tests;
 #[cfg(test)]
 mod on_pool_tests;
 mod ops;
+mod owed;
 pub use ops::{EncryptedIndexListing, IndexListing};
 #[cfg(any(feature = "p2p", feature = "libp2p"))]
 mod p2p_runtime;
@@ -69,6 +70,7 @@ mod p2p_runtime;
 mod peer_key;
 mod peer_keyring;
 mod signed_query;
+mod signer_credential;
 mod start_peer_key;
 mod transaction;
 #[cfg(feature = "vera")]
@@ -86,6 +88,7 @@ pub use access_hooks::AccessHooks;
 /// [`Node::document_acp`] returns) without depending on `acp` directly.
 pub use acp::nac::NodePermission;
 pub use acp::{DocumentACP, DocumentPermission, Identity as AcpIdentity};
+pub use acp_ops::transactional::RelationshipChange;
 #[cfg(feature = "vera")]
 pub use acp_provider::DocumentAcpProvider;
 #[cfg(not(target_arch = "wasm32"))]
@@ -134,6 +137,7 @@ pub use query::owners::{DocumentAccessDecision, DocumentAccessMode};
 pub use query::QueryLimits;
 pub use query::{QueryExecutor, QueryRequest, QueryResponse, TransactionHandle};
 pub use schema::CollectionVersion;
+pub use signer_credential::SignerCredential;
 pub use start_peer_key::StartPeerKey;
 pub use telemetry::{ConflictMetricsSnapshot, RetryLayerSnapshot};
 #[cfg(feature = "otel")]
@@ -418,26 +422,44 @@ impl Node {
     /// Stage one verified client create in a node-owned transaction. Native ACP
     /// still authorizes the graph's signer as the request actor; signature
     /// evidence is not an authorization grant.
+    ///
+    /// A document ACP provider that cannot join the transaction is owed the
+    /// document's registration, which the node sends after the commit as the
+    /// signer. `credential` is what lets it: without a key the node holds
+    /// for the signer and without a credential the provider takes for that
+    /// registration, the create is refused with
+    /// [`WRITE_AUTHORITY_UNAVAILABLE_ERROR_CODE`](query::executor::WRITE_AUTHORITY_UNAVAILABLE_ERROR_CODE)
+    /// before anything is written. A local document ACP reads no credential.
     pub async fn execute_verified_create_in_txn(
         &self,
         request: QueryRequest,
         handle: &TransactionHandle,
         graph: &db::block::builder::VerifiedClientCreate,
+        credential: SignerCredential,
     ) -> QueryResponse {
-        self.execute_verified_graph_in_txn(request, handle, graph)
+        self.execute_verified_graph_in_txn(request, handle, graph, credential)
             .await
     }
 
     /// Stage one verified client update or delete under native ACP in the
     /// node-owned transaction. A changed state requires an unapproved wave and
     /// causes the transaction to be discarded.
+    ///
+    /// A document ACP provider that cannot join the transaction decides the
+    /// signer's permission at the network edge and is owed nothing by an
+    /// update or a delete. The node still stages one only when it may act
+    /// for the signer there: with a key it holds or a
+    /// [`SignerCredential::Delegation`]. A
+    /// [`SignerCredential::RequestBound`] names a command, and these writes
+    /// send none.
     pub async fn execute_verified_mutation_in_txn(
         &self,
         request: QueryRequest,
         handle: &TransactionHandle,
         graph: &db::block::builder::VerifiedClientMutation,
+        credential: SignerCredential,
     ) -> QueryResponse {
-        self.execute_verified_graph_in_txn(request, handle, graph)
+        self.execute_verified_graph_in_txn(request, handle, graph, credential)
             .await
     }
 
@@ -446,6 +468,7 @@ impl Node {
         mut request: QueryRequest,
         handle: &TransactionHandle,
         graph: &G,
+        credential: SignerCredential,
     ) -> QueryResponse
     where
         G: VerifiedClientGraph,
@@ -494,9 +517,15 @@ impl Node {
         }
         let key = mutations[0].output_name();
         // The graph supplies signatures only; no caller context may carry a
-        // separate actor, encryption, bearer, or transaction authority.
-        request.context =
-            defra_core::RequestContext::default().with_transactional_authority_required();
+        // separate actor, encryption, bearer, or transaction authority. The
+        // one credential is the signer's own, for the document the graph
+        // names (proofs/tla/VerifiedRemoteWrite.tla).
+        request.context = credential.carried_by(
+            defra_core::RequestContext::default()
+                .with_transactional_authority_required()
+                .with_verified_document(Some(graph.doc_id().to_owned())),
+            graph.signer_did(),
+        );
         let Some(node_did) = self.node_identity_did.as_deref() else {
             let _ = self.discard_transaction(handle).await;
             return QueryResponse::error("verified create requires a configured node identity");
@@ -1713,9 +1742,21 @@ mod administrative_relationship_tests;
 #[path = "../tests/unit/delegated_relationship.rs"]
 mod delegated_relationship_tests;
 
+#[cfg(all(test, feature = "vera", not(target_arch = "wasm32")))]
+#[path = "../tests/unit/staged_relationship.rs"]
+mod staged_relationship_tests;
+
 #[cfg(all(test, not(target_arch = "wasm32")))]
 #[path = "../tests/unit/verified_create.rs"]
 mod verified_create_tests;
+
+#[cfg(all(test, feature = "vera", not(target_arch = "wasm32")))]
+#[path = "../tests/unit/verified_remote.rs"]
+mod verified_remote_tests;
+
+#[cfg(all(test, feature = "vera", not(target_arch = "wasm32")))]
+#[path = "../tests/unit/owed_report.rs"]
+mod owed_report_tests;
 
 #[cfg(all(test, feature = "http"))]
 mod http_signing_tests;

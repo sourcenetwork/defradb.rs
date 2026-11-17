@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use super::client::ClientError;
 use cosmrs::crypto::secp256k1::SigningKey;
 use cosmrs::tx::{Body, Fee, SignDoc, SignerInfo};
 use cosmrs::{AccountId, Any, Coin};
@@ -180,7 +181,7 @@ impl TxSigner {
                 }
                 Err(e) => {
                     state.next_sequence = None;
-                    return Err(TxSignerError::Broadcast(e.to_string()));
+                    return Err(broadcast_error(e));
                 }
             };
 
@@ -201,7 +202,7 @@ impl TxSigner {
                 }
                 Err(e) => {
                     state.next_sequence = None;
-                    return Err(TxSignerError::Broadcast(e.to_string()));
+                    return Err(broadcast_error(e));
                 }
             };
 
@@ -216,10 +217,16 @@ impl TxSigner {
         client: &VeraClient,
         state: &mut SequenceState,
     ) -> Result<(u64, u64), TxSignerError> {
-        let (account_number, sequence) = client
-            .query_account(&self.address())
-            .await
-            .map_err(|e| TxSignerError::Broadcast(format!("account query: {}", e)))?;
+        let (account_number, sequence) =
+            client
+                .query_account(&self.address())
+                .await
+                .map_err(|e| match e {
+                    ClientError::Timeout(_) | ClientError::Http(_) => {
+                        TxSignerError::Unreachable(format!("account query: {e}"))
+                    }
+                    e => TxSignerError::Broadcast(format!("account query: {e}")),
+                })?;
         state.account_number = Some(account_number);
         state.next_sequence = Some(sequence);
         Ok((account_number, sequence))
@@ -604,6 +611,23 @@ pub(crate) enum TxSignerError {
 
     #[error("broadcast error: {0}")]
     Broadcast(String),
+
+    /// The chain was not reached, or did not say what became of the
+    /// transaction in time: nothing is known about it.
+    #[error("broadcast error: {0}")]
+    Unreachable(String),
+}
+
+/// A failed broadcast or inclusion wait: a transport failure or a timeout
+/// leaves the transaction's fate unknown, anything else is the chain's
+/// answer.
+fn broadcast_error(error: ClientError) -> TxSignerError {
+    match error {
+        ClientError::Timeout(_) | ClientError::TxTimeout(_) | ClientError::Http(_) => {
+            TxSignerError::Unreachable(error.to_string())
+        }
+        error => TxSignerError::Broadcast(error.to_string()),
+    }
 }
 
 #[cfg(test)]

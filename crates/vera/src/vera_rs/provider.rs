@@ -18,17 +18,20 @@ use vera_modules::acp::types::PolicyRecord;
 use super::abi::{IAcp, ACP_ADDRESS};
 use super::bearer;
 use super::client::{HttpTransport, VeraRsClient};
+use super::command_digest::{encode_subject_relationship_cmd, request_digest, vera_subject};
 use super::did_spelling;
 #[cfg(test)]
 use super::provider_commands::resolve_registered_or_passthrough_bearer_token;
 use super::provider_commands::{
     encode_archive_object_cmd, encode_delete_relationship_cmd, encode_register_object_cmd,
-    encode_set_relationship_cmd, resolve_registered_or_passthrough_bearer_token_as,
+    encode_set_relationship_cmd, holds_registered_key,
+    resolve_registered_or_passthrough_bearer_token_as,
 };
 use super::signer::{admission, DelegationSigner, Secp256k1Signer};
 use super::transport::RpcTransport;
 use super::worker::NativeWorker;
 
+mod reach;
 #[cfg(test)]
 mod signer_tests;
 mod submission;
@@ -267,23 +270,6 @@ impl VeraRsProvider {
     }
 }
 
-/// A relationship subject as vera.rs is sent it: an actor in the spelling
-/// vera.rs takes, which is the one an access check for it is sent in.
-fn vera_subject(
-    kind: u8,
-    resource: &str,
-    object_id: &str,
-    relation: &str,
-) -> Result<zanzibar::Subject, ProviderError> {
-    let object_id = if kind == 0 {
-        did_spelling::wire(object_id)
-    } else {
-        object_id.into()
-    };
-    zanzibar::decode_subject(kind, resource, &object_id, relation)
-        .map_err(|e| ProviderError::Config(format!("relationship subject: {e}")))
-}
-
 fn access_request(
     resource: &str,
     object_id: &str,
@@ -425,6 +411,24 @@ impl VeraProvider for VeraRsProvider {
 
     fn self_did(&self) -> Option<String> {
         Some(self.actor_did.clone())
+    }
+
+    fn canonical_actor(&self, did: &str) -> String {
+        did_spelling::defra(did).into_owned()
+    }
+
+    fn holds_key_for(&self, did: &str) -> bool {
+        did_spelling::defra(did) == self.actor_did || holds_registered_key(did)
+    }
+
+    fn takes_subject_commands(&self) -> bool {
+        true
+    }
+
+    /// A submission is confirmed by its verified receipt, so a rejected one
+    /// was executed and refused.
+    fn write_refused(&self, error: &ProviderError) -> bool {
+        matches!(error, ProviderError::Transaction(_))
     }
 
     async fn create_policy(&self, policy_yaml: &str) -> Result<String, ProviderError> {
@@ -587,17 +591,19 @@ impl VeraProvider for VeraRsProvider {
         subject_object_id: &str,
         subject_relation: &str,
     ) -> Result<bool, ProviderError> {
-        let subject = vera_subject(kind, subject_resource, subject_object_id, subject_relation)?;
-        let cmd = serde_json::to_vec(&serde_json::json!({
-            "SetRelationship": { "resource": resource, "object_id": object_id, "relation": relation, "subject": subject }
-        })).map_err(|e| ProviderError::Config(e.to_string()))?;
-        let call = IAcp::bearerPolicyCmdCall {
-            bearerToken: self.create_bearer_token(&self.actor_did).await?,
-            policyId: Self::policy_id_to_bytes32(policy_id)?,
-            cmd: cmd.into(),
-        };
-        self.send_tx(call.abi_encode().into()).await?;
-        Ok(true)
+        let token = self.create_bearer_token(&self.actor_did).await?;
+        self.set_relationship_subject_as(
+            &token,
+            policy_id,
+            resource,
+            object_id,
+            relation,
+            kind,
+            subject_resource,
+            subject_object_id,
+            subject_relation,
+        )
+        .await
     }
 
     async fn delete_relationship_subject(
@@ -611,12 +617,60 @@ impl VeraProvider for VeraRsProvider {
         subject_object_id: &str,
         subject_relation: &str,
     ) -> Result<bool, ProviderError> {
+        let token = self.create_bearer_token(&self.actor_did).await?;
+        self.delete_relationship_subject_as(
+            &token,
+            policy_id,
+            resource,
+            object_id,
+            relation,
+            kind,
+            subject_resource,
+            subject_object_id,
+            subject_relation,
+        )
+        .await
+    }
+
+    async fn set_relationship_subject_as(
+        &self,
+        bearer_token: &str,
+        policy_id: &str,
+        resource: &str,
+        object_id: &str,
+        relation: &str,
+        kind: u8,
+        subject_resource: &str,
+        subject_object_id: &str,
+        subject_relation: &str,
+    ) -> Result<bool, ProviderError> {
         let subject = vera_subject(kind, subject_resource, subject_object_id, subject_relation)?;
-        let cmd = serde_json::to_vec(&serde_json::json!({
-            "DeleteRelationship": { "resource": resource, "object_id": object_id, "relation": relation, "subject": subject }
-        })).map_err(|e| ProviderError::Config(e.to_string()))?;
+        let cmd = encode_subject_relationship_cmd(true, resource, object_id, relation, &subject)?;
         let call = IAcp::bearerPolicyCmdCall {
-            bearerToken: self.create_bearer_token(&self.actor_did).await?,
+            bearerToken: bearer_token.to_string(),
+            policyId: Self::policy_id_to_bytes32(policy_id)?,
+            cmd: cmd.into(),
+        };
+        self.send_tx(call.abi_encode().into()).await?;
+        Ok(true)
+    }
+
+    async fn delete_relationship_subject_as(
+        &self,
+        bearer_token: &str,
+        policy_id: &str,
+        resource: &str,
+        object_id: &str,
+        relation: &str,
+        kind: u8,
+        subject_resource: &str,
+        subject_object_id: &str,
+        subject_relation: &str,
+    ) -> Result<bool, ProviderError> {
+        let subject = vera_subject(kind, subject_resource, subject_object_id, subject_relation)?;
+        let cmd = encode_subject_relationship_cmd(false, resource, object_id, relation, &subject)?;
+        let call = IAcp::bearerPolicyCmdCall {
+            bearerToken: bearer_token.to_string(),
             policyId: Self::policy_id_to_bytes32(policy_id)?,
             cmd: cmd.into(),
         };
@@ -662,7 +716,7 @@ impl VeraProvider for VeraRsProvider {
         };
         let owner = verified(|| self.light_client.read_object_owner(&policy, &object))
             .await
-            .map_err(|e| ProviderError::Query(format!("owner proof: {e}")))?;
+            .map_err(|e| reach::read_error(&self.light_client, "owner proof", e))?;
         Ok(match owner {
             Some(owner) => (true, did_spelling::defra(owner.0.as_str()).into_owned()),
             None => (false, String::new()),
@@ -680,7 +734,7 @@ impl VeraProvider for VeraRsProvider {
         let request = access_request(resource, object_id, permission, actor_did)?;
         verified(|| self.light_client.verify_access(policy_id, &request))
             .await
-            .map_err(|e| ProviderError::Query(format!("verified permission: {e}")))
+            .map_err(|e| reach::read_error(&self.light_client, "verified permission", e))
     }
 
     async fn create_access_decision(
@@ -749,10 +803,26 @@ impl VeraProvider for VeraRsProvider {
         })
     }
 
-    fn caller_of_delegation(&self, token: &str) -> Option<Result<String, ProviderError>> {
+    fn caller_of_delegation(
+        &self,
+        token: &str,
+    ) -> Option<Result<acp::AuthenticatedCaller, ProviderError>> {
         bearer::is_delegation(token).then(|| {
             bearer::caller_of_delegation(token, &self.worker_did, self.deployment)
                 .map_err(|error| ProviderError::Config(format!("caller delegation: {error}")))
+        })
+    }
+
+    fn caller_of_request_delegation(
+        &self,
+        token: &str,
+        command: &crate::PolicyCommand<'_>,
+    ) -> Option<Result<String, ProviderError>> {
+        bearer::caller_of_request_delegation(token, &self.worker_did, self.deployment, || {
+            request_digest(command)
+        })
+        .map(|caller| {
+            caller.map_err(|error| ProviderError::Config(format!("request delegation: {error}")))
         })
     }
 }
@@ -813,19 +883,20 @@ mod tests {
     {
         let did = "did:key:zRemoteVeraRsToken";
         let token = "device.jwt.token".to_string();
-        defra_core::signing::clear_request_bearer_token(did);
-
         store_remote_secp256r1_identity(did);
-        defra_core::signing::set_request_bearer_token(did, token.clone());
+        let request = defra_core::RequestContext::default()
+            .with_bearer(Some(did.to_string()), Some(token.clone()));
 
-        let resolved =
-            resolve_registered_or_passthrough_bearer_token(did, "did:key:submitter", 9001)
-                .await
-                .expect("resolution should succeed")
-                .expect("token should resolve");
+        let resolved = resolve_registered_or_passthrough_bearer_token_as(
+            &request,
+            did,
+            "did:key:submitter",
+            9001,
+        )
+        .await
+        .expect("resolution should succeed")
+        .expect("token should resolve");
         assert_eq!(resolved, token);
-
-        defra_core::signing::clear_request_bearer_token(did);
     }
 
     #[nuclei::test]
@@ -842,14 +913,18 @@ mod tests {
 
         for compressed in [true, false] {
             let carried = token(&bearer::did_from_signing_key(&key, compressed));
-            defra_core::signing::set_request_bearer_token(&did, carried.clone());
-            let passed = resolve_registered_or_passthrough_bearer_token(&did, "did:key:w", 9001)
-                .await
-                .expect("resolution should succeed");
+            let request = defra_core::RequestContext::default()
+                .with_bearer(Some(did.clone()), Some(carried.clone()));
+            let passed = resolve_registered_or_passthrough_bearer_token_as(
+                &request,
+                &did,
+                "did:key:w",
+                9001,
+            )
+            .await
+            .expect("resolution should succeed");
             assert_eq!(passed, Some(carried));
         }
-
-        defra_core::signing::clear_request_bearer_token(&did);
     }
 
     #[nuclei::test]

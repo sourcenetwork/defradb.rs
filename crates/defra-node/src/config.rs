@@ -55,6 +55,7 @@ pub struct HttpConfig {
     pub(crate) transaction_idle_timeout: Duration,
     pub(crate) transaction_cleanup_interval: Duration,
     pub(crate) extra_routes: Option<axum::Router>,
+    pub(crate) authenticated_routes: Option<axum::Router>,
     pub(crate) router_transform: Option<defra_http::RouterTransform>,
     pub(crate) listener: Option<std::net::TcpListener>,
     pub(crate) dev_mode: bool,
@@ -76,6 +77,7 @@ impl HttpConfig {
             transaction_idle_timeout: DEFAULT_TRANSACTION_IDLE_TIMEOUT,
             transaction_cleanup_interval: DEFAULT_TRANSACTION_CLEANUP_INTERVAL,
             extra_routes: None,
+            authenticated_routes: None,
             router_transform: None,
             listener: None,
             dev_mode: false,
@@ -117,6 +119,13 @@ impl HttpConfig {
     /// Must be non-zero when transaction idle cleanup is enabled.
     pub fn with_transaction_cleanup_interval(mut self, interval: Duration) -> Self {
         self.transaction_cleanup_interval = interval;
+        self
+    }
+
+    /// Application routes authenticated by the node without inventing an
+    /// application permission. Their owning handlers still decide access.
+    pub fn with_authenticated_routes(mut self, routes: axum::Router) -> Self {
+        self.authenticated_routes = Some(routes);
         self
     }
 
