@@ -437,6 +437,10 @@ RUNS=(
   "MC_Truncate_Red_Txn.cfg Truncate.tla RED" # transaction check left out, as before: a filter on the txn view removes an uncommitted match (INV_FilteredRemovesOnlyCommittedMatches)
   "MC_Truncate_Red_Shape.cfg Truncate.tla RED" # filter shape check left out: a non-filter removes everything (INV_BadFilterRemovesNothing)
   "MC_Truncate_Red_ViewCache.cfg Truncate.tla RED" # #2703: view cache clear left out: a truncated view still shows its rows (INV_UnfilteredEmptiesView)
+  "MC_TruncateUnderWrites_Green.cfg TruncateUnderWrites.tla GREEN" # truncate under writes: one validated attempt per listed document and no prefix wipe, so listed documents go, fresh ones stay, and retries do not run out
+  "MC_TruncateUnderWrites_Red_WholeChunk.cfg TruncateUnderWrites.tla RED" # one attempt over every listed document, as before: a write to any one of them makes it lose until retries run out (INV_NoExhaustion)
+  "MC_TruncateUnderWrites_Red_PrefixWipe.cfg TruncateUnderWrites.tla RED" # the collection step wipes document keys, as before: a document created after the truncate began loses its data (INV_FreshIntact)
+  "MC_TruncateUnderWrites_Red_Blind.cfg TruncateUnderWrites.tla RED" # blind deletes: an update the delete never read leaves its blocks and heads behind (INV_NoOrphans)
   "MC_NacOrder_Green.cfg NacOrder.tla GREEN" # #2680/#2700: a document write checks get-collection then its own permission, in its transaction, and a call with no identity acts as no one
   "MC_NacOrder_Red_SkipGet.cfg NacOrder.tla RED" # get-collection left out: a caller without it writes (INV_NoEffectWithoutPermission)
   "MC_NacOrder_Red_OwnFirst.cfg NacOrder.tla RED" # the write's own permission checked first: the refusal names it, not get-collection (INV_RefusalNamesGoFirst)

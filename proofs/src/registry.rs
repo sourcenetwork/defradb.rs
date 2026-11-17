@@ -2924,6 +2924,15 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        family: "Collection truncate under writes",
+        name: "INV_ListedGone / INV_FreshIntact / INV_NoOrphans / INV_NoExhaustion",
+        axis: Tla,
+        anchor: "crates/db/src/collection/ops/truncate/all.rs DB::truncate_all, DB::collect_doc_short_ids, DB::truncate_doc, DB::truncate_doc_in, DB::truncate_metadata_in; crates/db/src/collection/ops/truncate/filtered.rs DB::truncate_filtered_chunk; crates/db/src/txn/attempt.rs DB::transact_db",
+        model_ref: "MC_TruncateUnderWrites_{Green,Red_WholeChunk,Red_PrefixWipe,Red_Blind}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/db/tests/collection/truncate_under_load.rs truncate_succeeds_while_writers_create_and_update",
+    },
+    Property {
         family: "Relation-filtered mutation",
         name: "INV_DecisionHoldsAtCommit / INV_AbortOnlyOnRangeWrite",
         axis: Tla,
