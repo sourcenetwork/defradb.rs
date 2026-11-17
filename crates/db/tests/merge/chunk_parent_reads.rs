@@ -35,7 +35,10 @@ fn the_parents_app_validator_hides_its_chunks() {
         let peer = node().await;
         let parent = add_article(&peer).await;
         let (chunk_id, _) = merge_chunk(&author, &peer, &parent, BODY, None).await;
-        assert_eq!(chunks(&peer, Some(owner())).await, [chunk_id.clone()]);
+        assert_eq!(
+            chunks(&peer, Some(owner())).await,
+            std::slice::from_ref(&chunk_id)
+        );
         let refuse: Arc<dyn ReadValidator> = Arc::new(RefuseArticles);
         let run = |query: String| {
             let refuse = Arc::clone(&refuse);
@@ -60,7 +63,10 @@ fn a_chunk_of_a_parent_without_a_policy_shows_to_every_reader() {
         let (chunk_id, _) = merge_chunk(&author, &peer, &parent, BODY, None).await;
 
         for reader in readers() {
-            assert_eq!(chunks(&peer, reader.clone()).await, [chunk_id.clone()]);
+            assert_eq!(
+                chunks(&peer, reader.clone()).await,
+                std::slice::from_ref(&chunk_id)
+            );
             assert!(commits(&peer, &chunk_id, reader).await > 0);
         }
     })
@@ -82,7 +88,10 @@ fn chunks_of_two_parents_are_decided_per_parent() {
         let (their_chunk, _) = merge_chunk(&author, &peer, &theirs, &theirs_body, None).await;
 
         for (reader, chunk) in [(owner(), my_chunk), (stranger(), their_chunk)] {
-            assert_eq!(chunks(&peer, Some(reader.clone())).await, [chunk.clone()]);
+            assert_eq!(
+                chunks(&peer, Some(reader.clone())).await,
+                std::slice::from_ref(&chunk)
+            );
             assert_eq!(arrivals(&peer, Some(reader)).await, [chunk]);
         }
         // Both first chunks are the shared sentence, so only the parent tells them apart.
