@@ -542,9 +542,10 @@ StageChange(s, c) ==
 \* staged changes become durable together. The registration records what it
 \* is to be sent with: the node's key for the creator, the delegation the
 \* create's request itself carried, or nothing. With nothing it is parked at
-\* once and says so. A request that carries no bearer records nothing: the
-\* bug ("ambient" in RegAuths) records the token the process holds for the
-\* creator, which every later retry would then send.
+\* once and says so. A request that carries no bearer records nothing and
+\* its commit sends nothing: the bug ("ambient" in RegAuths) records the
+\* token the process holds for the creator, which every later retry would
+\* then send.
 Commit ==
   /\ OpenTxn                                              \* something is open
   /\ doc' = (IF doc = "open" THEN "exists" ELSE doc)      \* the document is there
@@ -632,17 +633,16 @@ ByChange ==
 \*   record   what its record holds;
 \*   change   the delegation recorded with a change the creator still owes,
 \*            when the record's own no longer serves;
-\*   request  the credential a request of the creator presents for the
-\*            creator while that request runs, checked as at admission: the
-\*            bearer it carries or, in the submission its own commit makes,
-\*            what a request with no bearer presents in every call (the token
-\*            its embedder bound to the creator for such requests). The
-\*            creator may make such a request at any time, so this way is
-\*            always open;
-\*   ambient  a token the process happens to hold for the creator, sent
-\*            when no request of the creator is running, or on another
-\*            caller's request, or written into the record at the create and
-\*            sent from there: the bug.
+\*   request  the bearer a request carries for the creator, checked as at
+\*            admission: the submission a commit makes goes this way when
+\*            its request carried one. The creator may make such a request
+\*            at any time, so this way is always open;
+\*   ambient  a token the process happens to hold for the creator, which no
+\*            request carried: sent by the commit of a request that carries
+\*            no bearer, by a retry that serves no request, on another
+\*            caller's request, or from the record a create wrote it into.
+\*            The bug. No way of sending reads anything a process keeps
+\*            beside its requests.
 \* In every way but the last the creator presented the credential.
 Ways == {"record", "change", "request", "ambient"}
 MaySendBy(via) ==
