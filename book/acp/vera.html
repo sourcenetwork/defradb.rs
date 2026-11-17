@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-6add2556.js";
+            window.path_to_searchindex_js = "../searchindex-10cbb045.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -210,7 +210,13 @@ transaction: it is sent under its requestor’s token, never under the node’s 
 (its own actor, or a registered identity with a local secp256k1, Ed25519 or P-256 key);
 otherwise it stores the delegation the request presented and submits with it. A
 delegation that expired before the change could be submitted parks the change as
-awaiting authority.</li>
+awaiting authority. The registration a create owes records its authority the same
+way, and a retry of it reads nothing else.</li>
+<li><strong>After a failed submission.</strong> The node reports what an actor still owes, waits for
+one transaction’s entries, takes a fresh delegation for one owed registration or
+change, and lets the actor that staged a refused change abandon it
+(<a href="transactional.html#what-is-owed-after-the-commit">What is owed after the commit</a>). A
+fresh delegation is verified against the owed command as the first one was.</li>
 <li><strong>What the grantee and the revoked subject see.</strong> A grantee reads once the chain holds
 the grant, normally when the committing request returns; with the chain unreachable,
 not before a later commit on the same document, a direct change of the tuple or a
@@ -290,9 +296,10 @@ identity is provisioned out of band, and is the parent of the deployment’s fir
 <ul>
 <li><strong>Taken</strong> beside a verified write
 (<a href="transactional.html#verified-writes-on-an-external-provider">Verified writes on an external provider</a>),
-as <code>SignerCredential::RequestBound</code> for the registration a create owes, and in the
+as <code>SignerCredential::RequestBound</code> for the registration a create owes, in the
 context of a relationship call (<code>RequestContext::with_request_delegation</code>) for that one
-change.</li>
+change, and as the fresh credential of one owed registration or change
+(<code>Node::reauthorize_owed_acp_as</code>), whose command it must name.</li>
 <li><strong>Not taken</strong> as a caller’s credential. <code>caller_of_delegation</code> refuses it, so an HTTP
 request that presents one is not authenticated. Presented as a plain bearer it admits
 no verified write and stages no change.</li>
