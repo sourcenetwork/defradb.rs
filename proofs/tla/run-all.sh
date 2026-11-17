@@ -385,6 +385,10 @@ RUNS=(
   "MC_ConnectionAdoption_Red_AdoptAnnounces.cfg ConnectionAdoption.tla RED"
   "MC_PeerDisconnect_Green.cfg PeerDisconnect.tla GREEN" # Disconnect answers only once the peer's last connection closed
   "MC_PeerDisconnect_Red_EarlyAck.cfg PeerDisconnect.tla RED" # answering before the closes (INV_AnsweredMeansClosed)
+  "MC_StickyDisconnect_Green_Libp2p.cfg StickyDisconnect.tla GREEN" # #2992 libp2p: lists in flight around a DisconnectPeers, the node that hung up never discovery-dials the peer back
+  "MC_StickyDisconnect_Red_LocalLoud.cfg StickyDisconnect.tla RED" # a hang-up quiets nothing: a late list has the node dial the peer back (NoLocalRedial)
+  "MC_StickyDisconnect_Red_Libp2pRemote.cfg StickyDisconnect.tla RED" # libp2p's close carries no reason: the peer hung up on dials back from a late list (NoRedialAfterDeliberateClose)
+  "MC_StickyDisconnect_Red_DropRedials.cfg StickyDisconnect.tla RED" # witness: discovery still mends a real drop (NoRedialAfterDrop)
   "MC_SchemaPublication_Green.cfg SchemaPublication.tla GREEN"
   "MC_SchemaPublication_Red_EarlyReply.cfg SchemaPublication.tla RED"
   "MC_ChunkSettingsSync_Green.cfg ChunkSettingsSync.tla GREEN"
