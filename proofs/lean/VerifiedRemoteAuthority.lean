@@ -8,9 +8,20 @@ delegation for this node, or the User signed a delegation bound to exactly
 that command. Nothing else counts, and a delegation bound to one command
 counts for no other.
 
+An update or a delete sends the provider no command. The User's signature on
+the blocks says who wrote it; the credential only says who is asking, and the
+write is admitted when the User held the permission at a verified revision no
+older than the freshness limit: a proof of the provider's finalized state at
+that revision. It says nothing of a change finalized after that revision, so a
+revocation finalized since can still be passed until a newer revision is
+verified or the proof ages out. Stale or missing evidence admits nothing. On this node a registration
+still owed lets only its creator in, and a revocation still owed shuts the
+User out, as for a read. One rule decides for every credential form.
+
 The provider's own verification of a token (vera.rs `authorize_delegation`)
 and the signature check are outside this file: `signedBySigner`, `forThisNode`
-and `current` are what those checks found. -/
+and `current` are what those checks found, and `Evidence.fresh allowed` is what
+the light client verified. -/
 namespace VerifiedRemoteAuthority
 
 /-- The form a credential comes in. -/
@@ -144,5 +155,148 @@ theorem a_fresh_request_releases_one_command (fresh : Credential)
   have a := a_sent_request_names_its_command fresh names first hf h1
   have b := a_sent_request_names_its_command fresh names second hf h2
   omega
+
+/-! ## Updates and deletes -/
+
+/-- What the node could read about the User's permission when the write came
+in. -/
+inductive Evidence where
+  /-- Verified against the provider's finalized state at a revision within
+  the freshness limit; `allowed` is the permission at that revision, which a
+  change finalized later does not alter. -/
+  | fresh (allowed : Bool)
+  /-- The newest verified state is older than the freshness limit. -/
+  | stale
+  /-- The provider did not answer. -/
+  | unreachable
+  deriving DecidableEq
+
+/-- What this node still owes the provider about the document. -/
+structure OwedOnDocument where
+  /-- A registration is owed: `some true` when its recorded creator is the
+  User, `some false` when it is somebody else, `none` when none is owed. -/
+  registration : Option Bool
+  /-- A revocation owed on this node names the User on the document. -/
+  revocation : Bool
+
+/-- The credential of an update only says who is asking. Nothing, when the
+provider proves its decisions or the node holds the key; a good delegation (a
+held key answers for it, as for any command). A request-bound delegation names
+a command, an update sends none: refused, key or no key. -/
+def editCredential (proven holdsKey : Bool) (c : Credential) : Bool :=
+  match c.form with
+  | .none => proven || holdsKey
+  | .delegation => holdsKey || good c
+  | .request _ => false
+
+/-- The permission, as the gate decides it for a read: an owed registration
+lets only its creator in, an owed revocation shuts the User out, and
+otherwise only fresh evidence that allows it counts. -/
+def verifiedPermit (owed : OwedOnDocument) (e : Evidence) : Bool :=
+  match owed.registration with
+  | some creator => creator
+  | none =>
+    !owed.revocation &&
+      match e with
+      | .fresh allowed => allowed
+      | _ => false
+
+/-- Whether a verified update or delete is admitted: its credential, and the
+permission. The same rule for every credential form. -/
+def editAdmitted (proven holdsKey : Bool) (c : Credential) (owed : OwedOnDocument)
+    (e : Evidence) : Bool :=
+  editCredential proven holdsKey c && verifiedPermit owed e
+
+/-- One rule: the credential and the permission, for every form. -/
+theorem one_rule_for_every_form (proven holdsKey : Bool) (c : Credential)
+    (owed : OwedOnDocument) (e : Evidence) :
+    editAdmitted proven holdsKey c owed e =
+      (editCredential proven holdsKey c && verifiedPermit owed e) := rfl
+
+/-- An admitted update or delete had the permission. -/
+theorem an_edit_needs_the_permission (proven holdsKey : Bool) (c : Credential)
+    (owed : OwedOnDocument) (e : Evidence)
+    (h : editAdmitted proven holdsKey c owed e = true) :
+    verifiedPermit owed e = true := by
+  simp [editAdmitted] at h
+  exact h.2
+
+/-- With nothing owed on the document, an admitted update or delete was
+admitted on fresh evidence whose revision allowed it: never on a guess. -/
+theorem an_edit_is_admitted_on_fresh_evidence_only (proven holdsKey : Bool)
+    (c : Credential) (owed : OwedOnDocument) (e : Evidence)
+    (hr : owed.registration = none)
+    (h : editAdmitted proven holdsKey c owed e = true) :
+    e = .fresh true := by
+  simp [editAdmitted, verifiedPermit, hr] at h
+  obtain ⟨_, _, he⟩ := h
+  cases e with
+  | fresh allowed => simp_all
+  | stale => simp at he
+  | unreachable => simp at he
+
+/-- Stale evidence admits no update or delete of a registered document. -/
+theorem stale_evidence_admits_nothing (proven holdsKey : Bool) (c : Credential)
+    (owed : OwedOnDocument) (hr : owed.registration = none) :
+    editAdmitted proven holdsKey c owed .stale = false := by
+  simp [editAdmitted, verifiedPermit, hr]
+
+/-- A provider that does not answer admits nothing either: fail closed. -/
+theorem an_unreachable_provider_admits_nothing (proven holdsKey : Bool)
+    (c : Credential) (owed : OwedOnDocument) (hr : owed.registration = none) :
+    editAdmitted proven holdsKey c owed .unreachable = false := by
+  simp [editAdmitted, verifiedPermit, hr]
+
+/-- A revocation contained in the verified revision of fresh evidence refuses
+the update. -/
+theorem a_revocation_in_the_verified_revision_refuses (proven holdsKey : Bool) (c : Credential)
+    (owed : OwedOnDocument) (hr : owed.registration = none) :
+    editAdmitted proven holdsKey c owed (.fresh false) = false := by
+  simp [editAdmitted, verifiedPermit, hr]
+
+/-- A revocation still owed on this node refuses the update whatever the
+provider says. -/
+theorem an_owed_revocation_refuses (proven holdsKey : Bool) (c : Credential)
+    (owed : OwedOnDocument) (e : Evidence) (hr : owed.registration = none)
+    (hv : owed.revocation = true) :
+    editAdmitted proven holdsKey c owed e = false := by
+  simp [editAdmitted, verifiedPermit, hr, hv]
+
+/-- While its registration is owed, only the document's creator may update
+or delete it. -/
+theorem an_owed_registration_admits_only_its_creator (proven holdsKey : Bool)
+    (c : Credential) (owed : OwedOnDocument) (e : Evidence)
+    (hr : owed.registration = some false) :
+    editAdmitted proven holdsKey c owed e = false := by
+  simp [editAdmitted, verifiedPermit, hr]
+
+/-- A request-bound delegation never admits an update or a delete, even
+where the node holds the key. -/
+theorem a_request_never_admits_an_edit (proven holdsKey : Bool) (c : Credential)
+    (names : Nat) (owed : OwedOnDocument) (e : Evidence)
+    (hf : c.form = .request names) :
+    editAdmitted proven holdsKey c owed e = false := by
+  simp [editAdmitted, editCredential, hf]
+
+/-- With no credential, a provider that proves nothing still needs the key. -/
+theorem no_credential_on_an_unproven_provider_needs_the_key (c : Credential)
+    (owed : OwedOnDocument) (e : Evidence) (hf : c.form = .none) :
+    editAdmitted false false c owed e = false := by
+  simp [editAdmitted, editCredential, hf]
+
+/-- With no credential on a provider that proves its decisions, the verified
+permission alone admits the write. -/
+theorem no_credential_is_admitted_on_the_permission (holdsKey : Bool)
+    (c : Credential) (owed : OwedOnDocument) (e : Evidence) (hf : c.form = .none) :
+    editAdmitted true holdsKey c owed e = verifiedPermit owed e := by
+  simp [editAdmitted, editCredential, hf]
+
+/-- A delegation without the key must be good: one somebody else signed, one
+made for another node, or one that expired admits nothing. -/
+theorem a_bad_delegation_admits_no_edit (proven : Bool) (c : Credential)
+    (owed : OwedOnDocument) (e : Evidence) (hf : c.form = .delegation)
+    (hg : good c = false) :
+    editAdmitted proven false c owed e = false := by
+  simp [editAdmitted, editCredential, hf, hg]
 
 end VerifiedRemoteAuthority

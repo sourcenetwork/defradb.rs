@@ -265,18 +265,18 @@ authority to send it as the signer**:
   ordinary create records it;
 - a relationship change made in the same transaction is staged as above, and is sent
   after the registration;
-- an **update** or a **delete** owes nothing. The provider decides the signer's
-  permission at the network edge, as for any write on an external provider.
+- an **update** or a **delete** owes nothing. It is admitted on the signer's
+  permission, as the next part states.
 
 The embedder hands the node what lets it act for the signer, as an argument beside the
 write (`SignerCredential`), and the node carries it for that signer only. Nothing is read
 from process-wide state:
 
-| Credential | The write is staged when |
-|---|---|
-| `None` | the node holds a key for the signer |
-| `Delegation(token)` | the provider takes `token` now as the signer's delegation to this node for its policy commands |
-| `RequestBound(token)` | `token` is the signer's delegation bound to exactly the command the write sends: the registration of the document a create makes |
+| Credential | A create is staged when | An update or a delete is staged when |
+|---|---|---|
+| `None` | the node holds a key for the signer | the signer holds the permission, on a provider that proves its decisions (vera.rs); elsewhere the node must also hold the key |
+| `Delegation(token)` | the provider takes `token` now as the signer's delegation to this node for its policy commands | the same, and the signer holds the permission |
+| `RequestBound(token)` | `token` is the signer's delegation bound to exactly the command the write sends: the registration of the document a create makes | never |
 
 Anything else is refused before the statement writes a row or an owed record, with the
 error code `WRITE_AUTHORITY_UNAVAILABLE`, and the node discards the transaction: no
@@ -284,7 +284,49 @@ credential and no key, a delegation signed by somebody else, made for another no
 expired, a plain delegation presented as request-bound, a request-bound one presented as
 plain, and a request-bound one that names another document or another command. An update
 or a delete sends the provider no command, so a request-bound delegation has nothing to
-name there and is refused; those writes need the key or a plain delegation.
+name there and is refused, even where the node holds the key.
+
+**Updates and deletes: admitted on the signer's permission.** The blocks of a verified
+update or delete are signed by its signer, so who wrote it is proven; nothing is owed to
+the provider, and nothing is recorded as owed for the write. The credential only says who
+is asking. What admits the write is that the signer held the `update` (or `delete`)
+permission on that document at a verified revision no older than the freshness limit
+(below), decided at admission by the one check every update and
+delete makes (`QueryRunner::authorize_mutation`), for every credential form alike: a
+delegation proves who asks, and the permission still decides; a key the node holds
+decides nothing either. The check runs before the statement writes anything, in this
+order:
+
+1. a registration of the document still owed on this node admits only its recorded
+   creator, whatever the provider says (it does not know the document yet);
+2. a revocation still owed on this node refuses the subject it names, on every
+   permission;
+3. otherwise the provider decides. On vera.rs the decision is a permission proof the
+   light client verifies against the chain's finalized state, at a revision whose header
+   is younger than the light client's freshness limit
+   (`acp_light_client::FreshnessPolicy::default().max_age`, 30 seconds, with 15 seconds
+   of allowed clock skew; set in `VeraRsProvider::connect`). It is never a local guess:
+   the read path, the replicated-merge path and this one ask the same
+   `VeraDocumentACP::check_doc_access`, and the node's access cache is off for vera.rs
+   (`DocumentACP::proves_decisions`). A provider that cannot be reached, or whose newest
+   verified revision is older than that limit, gives no decision and the write is
+   refused: it fails closed.
+
+A user without the permission, a reader who may read but not update, and a revoked
+writer are refused, and nothing is written; the refusal is the one an ordinary update or
+delete gets (the document is not found, or not authorized), or the provider's
+unavailability, not `WRITE_AUTHORITY_UNAVAILABLE`. On the Cosmos provider, which proves no
+decisions and keeps an access cache, `None` still needs a key the node holds.
+
+**Freshness and revocations.** The guarantee is the permission at the proof's revision,
+not at the moment of admission. A decision is read at the light client's newest verified
+revision and kept, for the same request and for later ones, under that revision's state
+root while that revision stays fresh: a new revision is a new key, and one past the
+freshness limit is none. So a revocation is honoured from the first verified revision
+that contains it, and at the latest once the revision before it has aged past the limit:
+an update decided on evidence up to 30 seconds old can still pass a revocation finalized
+inside that window. A revocation finalized after admission does not undo the write: the
+write that was admitted commits. That is the rule, not a race.
 
 A relationship change in the same transaction carries its own credential in the context
 of its call: `RequestContext::with_bearer` for a plain delegation, or

@@ -769,6 +769,12 @@ impl VeraProvider for VeraRsProvider {
         Ok(Some(decision.id))
     }
 
+    /// Every decision is a permission proof the light client verifies at a
+    /// revision no older than `FreshnessPolicy::default().max_age`.
+    fn proves_decisions(&self) -> bool {
+        true
+    }
+
     /// The state decisions are remembered under, while it is fresh. Once the
     /// light client's newest state is older than its freshness limit there
     /// is none, so no decision made at it is given again: the check goes to

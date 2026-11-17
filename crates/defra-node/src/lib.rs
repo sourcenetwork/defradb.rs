@@ -445,13 +445,27 @@ impl Node {
     /// node-owned transaction. A changed state requires an unapproved wave and
     /// causes the transaction to be discarded.
     ///
-    /// A document ACP provider that cannot join the transaction decides the
-    /// signer's permission at the network edge and is owed nothing by an
-    /// update or a delete. The node still stages one only when it may act
-    /// for the signer there: with a key it holds or a
-    /// [`SignerCredential::Delegation`]. A
-    /// [`SignerCredential::RequestBound`] names a command, and these writes
-    /// send none.
+    /// A document ACP provider that cannot join the transaction is owed
+    /// nothing by an update or a delete. The write is staged when the
+    /// signer holds the `update` (or `delete`) permission on the document,
+    /// decided before anything is written as every update and delete
+    /// decides it: a registration still owed on this node admits only the
+    /// document's creator, a revocation still owed refuses its subject, and
+    /// otherwise the provider's decision, which vera.rs proves against its
+    /// finalized state at a revision within the light client's freshness
+    /// limit, and which fails closed when no such revision can be read. The
+    /// guarantee is the permission at that revision: a revocation finalized
+    /// after it can be passed until a newer revision is verified or the
+    /// proof ages out, and one finalized after admission does not undo the
+    /// write.
+    ///
+    /// `credential` only says who is asking, and the permission decides for
+    /// every form: [`SignerCredential::None`] where the provider proves its
+    /// decisions (elsewhere the node must hold the signer's key), or a
+    /// [`SignerCredential::Delegation`] the provider takes as the signer's.
+    /// A [`SignerCredential::RequestBound`] names a command, and these
+    /// writes send none: it is refused with
+    /// [`WRITE_AUTHORITY_UNAVAILABLE_ERROR_CODE`](query::executor::WRITE_AUTHORITY_UNAVAILABLE_ERROR_CODE).
     pub async fn execute_verified_mutation_in_txn(
         &self,
         request: QueryRequest,
@@ -1753,6 +1767,10 @@ mod verified_create_tests;
 #[cfg(all(test, feature = "vera", not(target_arch = "wasm32")))]
 #[path = "../tests/unit/verified_remote.rs"]
 mod verified_remote_tests;
+
+#[cfg(all(test, feature = "vera", not(target_arch = "wasm32")))]
+#[path = "../tests/unit/verified_edit.rs"]
+mod verified_edit_tests;
 
 #[cfg(all(test, feature = "vera", not(target_arch = "wasm32")))]
 #[path = "../tests/unit/owed_report.rs"]
