@@ -32,13 +32,22 @@ struct Fields {
     identity: Option<String>,
     dac_bypass: bool,
     require_transactional_authority: bool,
+    /// The document a verified write creates or changes, where the request
+    /// stages one.
+    verified_document: Option<String>,
     encryption: Option<EncryptionConfig>,
     signing: Option<SigningConfig>,
+    /// Go's per-operation `EnableSigning`: `Some(false)` writes this
+    /// request's blocks unsigned whatever key it carries.
+    signing_override: Option<bool>,
     batch_session: Option<String>,
     creator: Option<String>,
     /// The DID that presented a bearer token and the token, when the request
     /// carries a bearer at all.
     bearer: Option<(Option<String>, Option<String>)>,
+    /// Whether the bearer is a delegation its presenter bound to the one
+    /// command this request sends a remote ACP provider.
+    bearer_names_request: bool,
     txn: Option<TxnId>,
     authorization_expiration: Option<u64>,
     /// The collection version the request works through, when it names one
@@ -57,6 +66,22 @@ impl RequestContext {
     pub fn transactional_authority_required(&self) -> bool {
         self.0.require_transactional_authority
     }
+
+    /// This context staging a verified write of the document `doc_id`: the
+    /// one object a document ACP that cannot join the transaction is owed a
+    /// registration for when the write creates it.
+    #[must_use]
+    pub fn with_verified_document(mut self, doc_id: Option<String>) -> Self {
+        Arc::make_mut(&mut self.0).verified_document = doc_id;
+        self
+    }
+
+    /// The document the verified write this request stages creates or
+    /// changes; `None` for any other request.
+    pub fn verified_document(&self) -> Option<&str> {
+        self.0.verified_document.as_deref()
+    }
+
     /// The context a call that arrives without one runs in: the default
     /// anonymous context. Built for tests with the `ambient` feature, it
     /// carries what the test set through the thread-local API instead (see
@@ -111,7 +136,10 @@ impl RequestContext {
                 .take()
                 .or_else(|| ambient.0.batch_session.clone());
             fields.creator = fields.creator.take().or_else(|| ambient.0.creator.clone());
-            fields.bearer = fields.bearer.take().or_else(|| ambient.0.bearer.clone());
+            if fields.bearer.is_none() {
+                fields.bearer = ambient.0.bearer.clone();
+                fields.bearer_names_request = ambient.0.bearer_names_request;
+            }
             context
         }
         #[cfg(not(any(test, feature = "ambient")))]
@@ -131,6 +159,10 @@ impl RequestContext {
     pub fn with_authorization_expiration(mut self, expiration: Option<u64>) -> Self {
         Arc::make_mut(&mut self.0).authorization_expiration = expiration;
         self
+    }
+
+    pub fn authorization_expiration(&self) -> Option<u64> {
+        self.0.authorization_expiration
     }
 
     /// Whether a new database attempt may be dispatched now.
@@ -199,7 +231,25 @@ impl RequestContext {
     /// The key this request signs the blocks it writes with; unsigned blocks
     /// without one.
     pub fn signing(&self) -> Option<&SigningConfig> {
-        self.0.signing.as_ref()
+        match self.0.signing_override {
+            Some(false) => None,
+            _ => self.0.signing.as_ref(),
+        }
+    }
+
+    /// The caller's per-operation signing choice, if it made one.
+    pub fn signing_override(&self) -> Option<bool> {
+        self.0.signing_override
+    }
+
+    /// This context with the per-operation signing choice `signing_override`.
+    /// The edge that resolves the request's key reads the choice first, so
+    /// `Some(true)` resolves one on a node configured not to sign, as Go
+    /// does; here `Some(false)` hides whatever key the request carries.
+    #[must_use]
+    pub fn with_signing_override(mut self, signing_override: Option<bool>) -> Self {
+        Arc::make_mut(&mut self.0).signing_override = signing_override;
+        self
     }
 
     /// This context with the signing set to `signing`.
@@ -237,17 +287,16 @@ impl RequestContext {
         self
     }
 
-    /// The bearer token `did` presents in this request, the credential a
+    /// The bearer token this request carries for `did`, the credential a
     /// remote ACP provider acts on its behalf with: the request's own token
     /// when `did` presented it, and none for any other DID. A request that
-    /// carries no bearer at all presents the token the process binds to `did`
-    /// ([`set_request_bearer_token`](crate::signing::set_request_bearer_token)).
+    /// carries no bearer presents none. Nothing a process keeps beside its
+    /// requests is read: what is sent to a provider for an actor goes under
+    /// a bearer a request carried for that actor, or a key the node holds.
     pub fn bearer_token_for(&self, did: &str) -> Option<String> {
         match &self.0.bearer {
-            Some((presenter, token)) => (presenter.as_deref() == Some(did))
-                .then(|| token.clone())
-                .flatten(),
-            None => crate::signing::stored_bearer_token(did),
+            Some((presenter, token)) if presenter.as_deref() == Some(did) => token.clone(),
+            _ => None,
         }
     }
 
@@ -289,8 +338,30 @@ impl RequestContext {
     /// request with, `None` when it presented none.
     #[must_use]
     pub fn with_bearer(mut self, did: Option<String>, token: Option<String>) -> Self {
-        Arc::make_mut(&mut self.0).bearer = Some((did, token));
+        let fields = Arc::make_mut(&mut self.0);
+        fields.bearer = Some((did, token));
+        fields.bearer_names_request = false;
         self
+    }
+
+    /// This context carrying `token` as the delegation `did` bound to the
+    /// one command this request sends a remote ACP provider. A provider
+    /// that knows such delegations takes it for that command and for
+    /// nothing else, and takes no plain delegation in its place, when the
+    /// command is admitted and again when it is sent.
+    #[must_use]
+    pub fn with_request_delegation(mut self, did: String, token: String) -> Self {
+        let fields = Arc::make_mut(&mut self.0);
+        fields.bearer = Some((Some(did), Some(token)));
+        fields.bearer_names_request = true;
+        self
+    }
+
+    /// Whether the bearer this request carries was presented as bound to the
+    /// one command the request sends
+    /// ([`with_request_delegation`](Self::with_request_delegation)).
+    pub fn bearer_names_request(&self) -> bool {
+        self.0.bearer_names_request
     }
 }
 
@@ -343,6 +414,29 @@ mod tests {
         let shown = format!("{context:?}");
         assert!(shown.contains("Ed25519"));
         assert!(!shown.contains("171"), "{shown}");
+    }
+
+    #[test]
+    fn signing_override_false_hides_the_key_and_others_keep_it() {
+        let signed = RequestContext::default().with_signing(Some(SigningConfig {
+            key_type: crate::signing::SigningKeyType::Ed25519,
+            private_key_bytes: vec![0xAB; 32],
+            public_key_bytes: Vec::new(),
+            public_key_hex: "public".to_string(),
+            remote_signer: None,
+            signing_authorization: None,
+        }));
+        assert!(signed
+            .clone()
+            .with_signing_override(Some(false))
+            .signing()
+            .is_none());
+        assert!(signed
+            .clone()
+            .with_signing_override(Some(true))
+            .signing()
+            .is_some());
+        assert!(signed.with_signing_override(None).signing().is_some());
     }
 
     #[test]
@@ -465,7 +559,11 @@ mod tests {
         );
 
         let unscoped = RequestContext::default();
-        assert_eq!(unscoped.bearer_token_for(did).as_deref(), Some("stored"));
+        assert_eq!(
+            unscoped.bearer_token_for(did),
+            None,
+            "a request that carries no bearer read the process store"
+        );
 
         crate::signing::clear_request_bearer_token(did);
         crate::signing::clear_request_bearer_token(other);

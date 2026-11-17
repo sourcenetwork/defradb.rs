@@ -402,7 +402,7 @@ pub struct DocRelationshipsQuery {
 
 /// List a document's ACP relationships.
 ///
-/// GET /api/v0/acp/document/relationships?collection=<name>&docID=<id>
+/// `GET /api/v0/acp/document/relationships?collection=<name>&docID=<id>`
 ///
 /// The core allows the document's owner or a holder of a relation that
 /// manages one on its resource, as the embedded

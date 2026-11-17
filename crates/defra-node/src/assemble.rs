@@ -28,6 +28,7 @@ pub(crate) struct Extras {
     pub embedding_api_key: Option<String>,
     pub txn_ownership: db::TxnOwnership,
     pub document_projector: Option<Arc<dyn db::DocumentMutationProjector>>,
+    pub replica_registration: Option<db::merge::ReplicaRegistration>,
     #[cfg(not(target_arch = "wasm32"))]
     pub transaction_cleanup: Option<TransactionCleanupConfig>,
     #[cfg(feature = "http")]
@@ -191,6 +192,9 @@ where
     #[cfg(feature = "p2p")]
     if let Some(hooks) = &extras.access_hooks {
         hooks.install(&database);
+    }
+    if let Some(registration) = extras.replica_registration.clone() {
+        database.set_replica_registration(registration);
     }
     let database = Arc::new(database);
 
@@ -521,6 +525,15 @@ where
     #[cfg(all(feature = "vera", not(target_arch = "wasm32")))]
     let redrive = acp_setup.redrive;
     #[cfg(feature = "embedded-vera")]
+    let embedded_vera_trust =
+        acp_setup
+            .embedded_vera
+            .as_ref()
+            .map(|vera| crate::EmbeddedVeraTrust {
+                chain_id: vera.chain_id(),
+                consensus_key: vera.consensus_key().to_owned(),
+            });
+    #[cfg(feature = "embedded-vera")]
     let embedded_vera = crate::single_slot(acp_setup.embedded_vera);
     database.set_dac_policies(acp_setup.dac_policies);
     let schema_ops: Arc<dyn SchemaOps> = Arc::new(db_impls::DbSchemaOps::new(
@@ -608,6 +621,8 @@ where
         pool,
         #[cfg(feature = "embedded-vera")]
         embedded_vera,
+        #[cfg(feature = "embedded-vera")]
+        embedded_vera_trust,
         remote_acp,
         #[cfg(not(target_arch = "wasm32"))]
         transaction_stats,

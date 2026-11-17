@@ -30,6 +30,10 @@ impl SessionSigner {
 }
 
 impl RemoteSigner for SessionSigner {
+    fn uses_caller_key(&self, caller: &str) -> bool {
+        self.public.did().is_ok_and(|did| did == caller)
+    }
+
     fn sign_sync(&self, _: &[u8], _: Option<&SigningAuthorization>) -> Result<Vec<u8>, String> {
         Err("connection signing requires asynchronous preparation".to_owned())
     }

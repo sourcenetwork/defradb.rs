@@ -455,6 +455,10 @@ impl P2PTransport for IrohTransport {
             .await
     }
 
+    fn max_raw_publish(&self) -> Option<usize> {
+        Some(super::gossip::raw_origin::MAX_RAW_PAYLOAD)
+    }
+
     async fn register_pubsub_rpc_topic(&self, topic: String) -> Result<()> {
         self.send_command(|reply| IrohCommand::RegisterRawTopic { topic, reply })
             .await

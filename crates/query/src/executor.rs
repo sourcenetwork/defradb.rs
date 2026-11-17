@@ -31,6 +31,10 @@ pub const TXN_RETRY_EXHAUSTED_ERROR_CODE: &str = "TXN_RETRY_EXHAUSTED";
 /// An explicit authorization refusal, distinct from an empty filtered read.
 pub const PERMISSION_DENIED_ERROR_CODE: &str = "PERMISSION_DENIED";
 
+/// A verified write was refused before anything was written: the node cannot
+/// act for the write's signer on the document ACP provider.
+pub const WRITE_AUTHORITY_UNAVAILABLE_ERROR_CODE: &str = "WRITE_AUTHORITY_UNAVAILABLE";
+
 /// The storage operation failed with a typed disk-full cause. Commit outcome
 /// remains unknown; clients must not infer that replaying a mutation is safe.
 pub const STORAGE_FULL_ERROR_CODE: &str = "STORAGE_FULL";
@@ -342,6 +346,10 @@ impl QueryResponseError {
             crate::error::QueryError::TransactionRetryExhausted(_)
         );
         let is_permission_denied = matches!(&error, crate::error::QueryError::PermissionDenied(_));
+        let lacks_write_authority = matches!(
+            &error,
+            crate::error::QueryError::WriteAuthorityUnavailable(_)
+        );
         let is_storage_full = matches!(
             &error,
             crate::error::QueryError::Storage(cause) if cause.is_storage_full()
@@ -362,6 +370,8 @@ impl QueryResponseError {
             response_error.with_code(STORAGE_FULL_ERROR_CODE)
         } else if is_permission_denied {
             response_error.with_code(PERMISSION_DENIED_ERROR_CODE)
+        } else if lacks_write_authority {
+            response_error.with_code(WRITE_AUTHORITY_UNAVAILABLE_ERROR_CODE)
         } else if is_secondary_relation {
             response_error.with_code(SECONDARY_RELATION_ERROR_CODE)
         } else if needs_sse {

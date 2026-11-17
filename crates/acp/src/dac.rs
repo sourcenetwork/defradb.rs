@@ -12,6 +12,20 @@ use crate::error::{Error, Result};
 use crate::identity::Identity;
 use crate::permission::DocumentPermission;
 
+/// Told when this node changes an object's relationships on its provider
+/// ([`DocumentACP::watch_object_changes`]). Called after the change, on the
+/// task that made it, which it must not hold up.
+pub trait ObjectChangeListener: MaybeSendSync {
+    fn changed(&self, policy_id: &str, resource_name: &str, object_id: &str);
+}
+
+/// A caller and expiration established by a credential's verification owner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthenticatedCaller {
+    pub did: identity::Did,
+    pub expires_at: u64,
+}
+
 /// One relationship stored on a document: its relation and its subject, as
 /// a DID, `*`, or `resource:object#relation`.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -61,6 +75,200 @@ pub trait DocumentACP: MaybeSendSync {
         None
     }
 
+    /// Where a transaction stages the relationship changes it owes this
+    /// provider, for a provider that cannot join a transaction
+    /// ([`bind_transaction`](Self::bind_transaction) is `None`) but keeps
+    /// what is owed to it (see [`crate::outbox`]). `view` is the transaction's
+    /// ACP namespace and `staged` its count of staged changes. `None` for a
+    /// provider that joins the transaction, and for one that keeps nothing.
+    fn transaction_outbox(
+        &self,
+        _view: &datastore::NamespaceView,
+        _staged: crate::outbox::StagedCount,
+    ) -> Option<crate::outbox::TransactionOutbox> {
+        None
+    }
+
+    /// `did` in the one spelling this provider keeps an actor under. A key
+    /// that can be written in several ways names one actor, and what is
+    /// stored about it is compared under this spelling.
+    fn canonical_actor(&self, did: &Did) -> Did {
+        did.clone()
+    }
+
+    /// The DID this provider signs its own commands as, when it has one. A
+    /// node registers a replicated document as this actor
+    /// ([`crate::replica`]), and counts it, beside its identity, as itself
+    /// when it asks whether it can read a replicated document.
+    fn own_actor(&self) -> Option<Did> {
+        None
+    }
+
+    /// Tell `listener` whenever this node changes an object's relationships
+    /// on the provider: a relationship set or deleted through it, an owed
+    /// change or registration it settled. A provider that keeps no such
+    /// record tells nothing. The first listener stays.
+    fn watch_object_changes(&self, _listener: std::sync::Arc<dyn ObjectChangeListener>) {}
+
+    /// What this node still owes, or waits for, on a replicated document,
+    /// from committed state alone: the merge gate's input
+    /// ([`crate::ReplicaOwed`]). Nothing for a provider that keeps no outbox.
+    async fn replica_owed(
+        &self,
+        _policy_id: &str,
+        _resource_name: &str,
+        _doc_id: &str,
+    ) -> Result<crate::ReplicaOwed> {
+        Ok(crate::ReplicaOwed::default())
+    }
+
+    /// Record, in the transaction whose ACP namespace `view` is, the unit a
+    /// receiving node owes for a replicated document it registers as itself:
+    /// the registration and the embedder's grants for its creator. Nothing
+    /// is recorded when a registration of the document is already owed.
+    async fn stage_replica_unit(
+        &self,
+        _view: &datastore::NamespaceView,
+        unit: &crate::ReplicaUnit<'_>,
+    ) -> Result<()> {
+        Err(Error::ProviderUnavailable(format!(
+            "this provider keeps no outbox to register replicated document {}",
+            unit.doc_id
+        )))
+    }
+
+    /// Record, in the transaction whose ACP namespace `view` is, that the
+    /// owner of a replicated document owes `creator`'s grants and this node
+    /// waits for them.
+    async fn adopt_replica(
+        &self,
+        _view: &datastore::NamespaceView,
+        _policy_id: &str,
+        _resource_name: &str,
+        doc_id: &str,
+        _creator: &Did,
+    ) -> Result<()> {
+        Err(Error::ProviderUnavailable(format!(
+            "this provider keeps no outbox to adopt replicated document {doc_id}"
+        )))
+    }
+
+    /// Submit what this node owes on a replicated document, and drop its
+    /// marker once nothing is owed or waited for any more. Nothing for a
+    /// provider that keeps no outbox.
+    async fn settle_replica(
+        &self,
+        _policy_id: &str,
+        _resource_name: &str,
+        _doc_id: &str,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    /// Whether this provider can be sent a relationship change with this
+    /// kind of subject. A change it cannot take is not staged. The default
+    /// is what the default relationship calls take: one actor, or all.
+    fn submits_subject(&self, subject: &Subject) -> bool {
+        matches!(subject, Subject::Entity(_) | Subject::Wildcard)
+    }
+
+    /// What lets the node submit a relationship change as `actor` after the
+    /// request that made it is gone: the node's own key for `actor`, or the
+    /// delegation the request this provider serves carries for it. With
+    /// neither, [`Error::OwedAuthorityUnavailable`]. A provider that takes
+    /// no credentials submits as any DID.
+    fn owed_authority(&self, _actor: &Did) -> Result<crate::outbox::OwedAuthority> {
+        Ok(crate::outbox::OwedAuthority::NodeKey)
+    }
+
+    /// Submit one owed relationship change as its acting DID, with the
+    /// authority recorded with it and none of the request this provider may
+    /// be bound to. Submitting a change the provider already holds is
+    /// [`Submission::Applied`](crate::outbox::Submission::Applied) wherever
+    /// the provider can tell.
+    ///
+    /// The caller may stop waiting for the answer, and submits the later
+    /// changes of the tuple afterwards. A submission must therefore never
+    /// take effect after one made later through this provider: what is
+    /// still in flight when the next is made has to execute before it or
+    /// not at all. vera.rs holds one journaled request per worker and
+    /// prepares the next only once that one has a verified receipt; Cosmos
+    /// orders one signer's transactions by account sequence.
+    async fn submit_owed_change(
+        &self,
+        change: &crate::outbox::OwedChange,
+    ) -> crate::outbox::Submission {
+        crate::outbox::submit_relationship(self, change).await
+    }
+
+    /// Submit the relationship changes owed to this provider that `scope`
+    /// names, once, in order. Nothing is owed to a provider that keeps no
+    /// outbox.
+    async fn settle_owed_changes(&self, scope: crate::OwedScope) -> Result<crate::OwedSettlement> {
+        let _ = scope;
+        Ok(crate::OwedSettlement::default())
+    }
+
+    /// What is owed to this provider that `filter` names: the registrations
+    /// creates owe it and the relationship changes transactions staged, each
+    /// with its state and the reason of its last failed submission. The
+    /// credential recorded with an entry is never part of it. Nothing is
+    /// owed to a provider that keeps no outbox.
+    ///
+    /// This reads for whoever calls it: the caller decides who may see
+    /// which actor's entries.
+    async fn owed_entries(
+        &self,
+        filter: crate::outbox::OwedFilter<'_>,
+    ) -> Result<Vec<crate::outbox::OwedEntry>> {
+        let _ = filter;
+        Ok(Vec::new())
+    }
+
+    /// Wait until what the explicit transaction `txn` of this run owes
+    /// this provider is settled or has come to rest, and say which: for the
+    /// entries of `only`, or for all of them. What can still be sent is
+    /// submitted once first. The notes of discarded changes the answer
+    /// holds are deleted: whoever is given it has been told. The wait has
+    /// no end of its own; its caller bounds it.
+    async fn await_owed(&self, txn: u64, only: Option<&Did>) -> Result<crate::outbox::OwedWait> {
+        let _ = (txn, only);
+        Ok(crate::outbox::OwedWait::Settled)
+    }
+
+    /// A record of something owed to this provider was written or deleted
+    /// by a transaction that has now committed: whoever waits for what is
+    /// owed looks again.
+    fn owed_changed(&self) {}
+
+    /// Take the credential of the request this provider serves
+    /// ([`bind_request`](Self::bind_request)) as the fresh authority of one
+    /// entry `actor` owes, and submit that entry. The credential is asked
+    /// about the owed command by [`command_authority`](Self::command_authority),
+    /// as at admission; one it refuses records nothing. An entry that is
+    /// not owed, or is owed by another actor, is
+    /// [`Error::OwedEntryNotFound`].
+    async fn reauthorize_owed(
+        &self,
+        actor: &Did,
+        entry: &crate::outbox::OwedRef,
+    ) -> Result<crate::outbox::OwedOutcome> {
+        Err(Error::OwedEntryNotFound {
+            entry: entry.to_string(),
+            actor: actor.to_string(),
+        })
+    }
+
+    /// Delete the record of the refused relationship change at `seq`, which
+    /// `actor` staged, without this provider holding the change. A change
+    /// in any other state is [`Error::OwedChangeNotRefused`].
+    async fn abandon_owed_change(&self, actor: &Did, seq: u64) -> Result<()> {
+        Err(Error::OwedEntryNotFound {
+            entry: crate::outbox::OwedRef::Change { seq }.to_string(),
+            actor: actor.to_string(),
+        })
+    }
+
     /// This provider serving the request `context` serves: one that acts on
     /// its callers' behalf with the credentials the request carries (see
     /// [`RequestContext::bearer_token_for`]). Providers that present no
@@ -69,17 +277,53 @@ pub trait DocumentACP: MaybeSendSync {
         None
     }
 
-    /// The bearer token `did` presents to this provider: the one of the
-    /// request it is bound to, or of [`RequestContext::ambient`] when it is
-    /// bound to none.
+    /// The DID that signed `token`, when `token` is a delegation this ACP may
+    /// act under now for that DID through this node. `None` when `token` is
+    /// not a delegation, or this ACP takes none: the caller is then
+    /// authenticated by its identity token.
+    fn caller_of_delegation(
+        &self,
+        _token: &str,
+    ) -> Option<std::result::Result<AuthenticatedCaller, String>> {
+        None
+    }
+
+    /// The bearer token `did` presents to this provider: the one the
+    /// request it is bound to carries for `did`, and none when it is bound
+    /// to no request.
     fn bearer_token_for(&self, did: &str) -> Option<String> {
         RequestContext::ambient().bearer_token_for(did)
+    }
+
+    /// What lets the node send one command as `actor`: what
+    /// [`owed_authority`](Self::owed_authority) gives for any command, or a
+    /// delegation the request this provider serves carries for `actor` that
+    /// is bound to exactly that command. A delegation bound to another
+    /// command is [`Error::OwedAuthorityUnavailable`], as no authority at
+    /// all is.
+    fn command_authority(
+        &self,
+        actor: &Did,
+        _command: crate::ProviderCommand<'_>,
+    ) -> Result<crate::outbox::OwedAuthority> {
+        self.owed_authority(actor)
     }
 
     /// Whether missing registrations allow public access or require a collection grant.
     /// Remote backends may deny absence, including retired policies and archived objects.
     fn unregistered_documents_are_public(&self) -> bool {
         true
+    }
+
+    /// Whether every access decision this provider gives is proven against
+    /// its finalized state at a revision within a freshness limit, and fails
+    /// when no such revision can be read: no decision comes from a cache
+    /// that outlives that limit, and none from an unproven answer. A
+    /// verified update or delete on such a provider needs no credential
+    /// beside the permission it decides (see
+    /// `query::runner::remote_authority`).
+    fn proves_decisions(&self) -> bool {
+        false
     }
 
     /// Register a document with creator as owner.

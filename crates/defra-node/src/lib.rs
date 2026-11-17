@@ -11,7 +11,7 @@
 //! - `native` — native host (event channel). Default-on.
 //! - `vera` — on-chain document ACP. Default-on. Omit for local-only ACP.
 //! - `wasmtime-runtime` — Lens WASM execution. Default-on. Without it,
-//!   [`Node::set_migration`] returns an explicit error.
+//!   [`Node::set_migration_as`] returns an explicit error.
 //! - `p2p` — Iroh/QUIC replication. Implies `native`. Does **not** compile libp2p.
 //!   `iroh` is the same feature under its former name.
 //! - `libp2p` — libp2p replication. Implies `native`. Off by default, so the
@@ -62,6 +62,7 @@ mod node_query_identity_tests;
 #[cfg(test)]
 mod on_pool_tests;
 mod ops;
+mod owed;
 pub use ops::{EncryptedIndexListing, IndexListing};
 #[cfg(any(feature = "p2p", feature = "libp2p"))]
 mod p2p_runtime;
@@ -69,6 +70,7 @@ mod p2p_runtime;
 mod peer_key;
 mod peer_keyring;
 mod signed_query;
+mod signer_credential;
 mod start_peer_key;
 mod transaction;
 #[cfg(feature = "vera")]
@@ -85,7 +87,9 @@ pub use access_hooks::AccessHooks;
 /// Re-exported so callers can name `Arc<dyn DocumentACP>` (the type
 /// [`Node::document_acp`] returns) without depending on `acp` directly.
 pub use acp::nac::NodePermission;
+pub use acp::ReplicaGrant;
 pub use acp::{DocumentACP, DocumentPermission, Identity as AcpIdentity};
+pub use acp_ops::transactional::RelationshipChange;
 #[cfg(feature = "vera")]
 pub use acp_provider::DocumentAcpProvider;
 #[cfg(not(target_arch = "wasm32"))]
@@ -110,6 +114,7 @@ pub use config::{
 pub use config::{P2PConfig, PeerKeySource};
 /// The hook [`NodeBuilder::with_index_build_gate`] takes.
 pub use db::index::build_gate::{GateWait, IndexBuildGate};
+pub use db::merge::{ReplicaOwnership, ReplicaRegistration};
 #[cfg(feature = "managed-p2p")]
 pub use defra_p2p_adapter::{
     ReplicationFilter, ReplicationFilters, ReplicatorPushOptions, ReplicatorPushOptionsState,
@@ -117,7 +122,10 @@ pub use defra_p2p_adapter::{
 pub use dense_search::{DenseHybridSearchHit, DenseHybridSearchRequest, DenseHybridSearchResponse};
 pub use embedded_signer::{EmbeddedSigner, EmbeddedSignerError};
 #[cfg(feature = "embedded-vera")]
-pub use embedded_vera_config::{EmbeddedVeraConfig, EmbeddedVeraDeployment};
+pub use embedded_vera_config::{
+    EmbeddedVeraActor, EmbeddedVeraConfig, EmbeddedVeraDeployment, EmbeddedVeraPolicy,
+    EmbeddedVeraTrust,
+};
 pub use error::{Error, Result};
 pub use events::EventName;
 pub use keyring;
@@ -131,20 +139,21 @@ pub use query::owners::{DocumentAccessDecision, DocumentAccessMode};
 pub use query::QueryLimits;
 pub use query::{QueryExecutor, QueryRequest, QueryResponse, TransactionHandle};
 pub use schema::CollectionVersion;
+pub use signer_credential::SignerCredential;
 pub use start_peer_key::StartPeerKey;
 pub use telemetry::{ConflictMetricsSnapshot, RetryLayerSnapshot};
 #[cfg(feature = "otel")]
 pub use telemetry::{TelemetryConfig, TelemetryHandle};
 pub use transaction::NodeTransaction;
 #[cfg(feature = "vera")]
-pub use vera_rs_config::VeraRsConfig;
+pub use vera_rs_config::{VeraRsActor, VeraRsConfig};
 pub use zeroize::Zeroizing;
 
 use network::NodeEdge;
 #[cfg(not(target_arch = "wasm32"))]
 use signed_query::{execute_with_signing_context, unavailable_node_signer_response};
 
-/// Type-erased schema operations so we can store DB<S> without leaking the Store generic.
+/// Type-erased schema operations so we can store `DB<S>` without leaking the `Store` generic.
 #[async_trait::async_trait]
 trait SchemaOps: Send + Sync {
     async fn add_collection(
@@ -269,6 +278,8 @@ pub struct Node {
     /// tells it to stop and waits for nothing.
     #[cfg(feature = "embedded-vera")]
     embedded_vera: kovan_queue::seg_queue::SegQueue<vera_embedded::HostedNode>,
+    #[cfg(feature = "embedded-vera")]
+    embedded_vera_trust: Option<EmbeddedVeraTrust>,
     /// Document ACP is a remote provider: its calls reach the network, so
     /// they stay where they are made.
     remote_acp: bool,
@@ -413,26 +424,58 @@ impl Node {
     /// Stage one verified client create in a node-owned transaction. Native ACP
     /// still authorizes the graph's signer as the request actor; signature
     /// evidence is not an authorization grant.
+    ///
+    /// A document ACP provider that cannot join the transaction is owed the
+    /// document's registration, which the node sends after the commit as the
+    /// signer. `credential` is what lets it: without a key the node holds
+    /// for the signer and without a credential the provider takes for that
+    /// registration, the create is refused with
+    /// [`WRITE_AUTHORITY_UNAVAILABLE_ERROR_CODE`](query::executor::WRITE_AUTHORITY_UNAVAILABLE_ERROR_CODE)
+    /// before anything is written. A local document ACP reads no credential.
     pub async fn execute_verified_create_in_txn(
         &self,
         request: QueryRequest,
         handle: &TransactionHandle,
         graph: &db::block::builder::VerifiedClientCreate,
+        credential: SignerCredential,
     ) -> QueryResponse {
-        self.execute_verified_graph_in_txn(request, handle, graph)
+        self.execute_verified_graph_in_txn(request, handle, graph, credential)
             .await
     }
 
     /// Stage one verified client update or delete under native ACP in the
     /// node-owned transaction. A changed state requires an unapproved wave and
     /// causes the transaction to be discarded.
+    ///
+    /// A document ACP provider that cannot join the transaction is owed
+    /// nothing by an update or a delete. The write is staged when the
+    /// signer holds the `update` (or `delete`) permission on the document,
+    /// decided before anything is written as every update and delete
+    /// decides it: a registration still owed on this node admits only the
+    /// document's creator, a revocation still owed refuses its subject, and
+    /// otherwise the provider's decision, which vera.rs proves against its
+    /// finalized state at a revision within the light client's freshness
+    /// limit, and which fails closed when no such revision can be read. The
+    /// guarantee is the permission at that revision: a revocation finalized
+    /// after it can be passed until a newer revision is verified or the
+    /// proof ages out, and one finalized after admission does not undo the
+    /// write.
+    ///
+    /// `credential` only says who is asking, and the permission decides for
+    /// every form: [`SignerCredential::None`] where the provider proves its
+    /// decisions (elsewhere the node must hold the signer's key), or a
+    /// [`SignerCredential::Delegation`] the provider takes as the signer's.
+    /// A [`SignerCredential::RequestBound`] names a command, and these
+    /// writes send none: it is refused with
+    /// [`WRITE_AUTHORITY_UNAVAILABLE_ERROR_CODE`](query::executor::WRITE_AUTHORITY_UNAVAILABLE_ERROR_CODE).
     pub async fn execute_verified_mutation_in_txn(
         &self,
         request: QueryRequest,
         handle: &TransactionHandle,
         graph: &db::block::builder::VerifiedClientMutation,
+        credential: SignerCredential,
     ) -> QueryResponse {
-        self.execute_verified_graph_in_txn(request, handle, graph)
+        self.execute_verified_graph_in_txn(request, handle, graph, credential)
             .await
     }
 
@@ -441,6 +484,7 @@ impl Node {
         mut request: QueryRequest,
         handle: &TransactionHandle,
         graph: &G,
+        credential: SignerCredential,
     ) -> QueryResponse
     where
         G: VerifiedClientGraph,
@@ -489,9 +533,15 @@ impl Node {
         }
         let key = mutations[0].output_name();
         // The graph supplies signatures only; no caller context may carry a
-        // separate actor, encryption, bearer, or transaction authority.
-        request.context =
-            defra_core::RequestContext::default().with_transactional_authority_required();
+        // separate actor, encryption, bearer, or transaction authority. The
+        // one credential is the signer's own, for the document the graph
+        // names (proofs/tla/VerifiedRemoteWrite.tla).
+        request.context = credential.carried_by(
+            defra_core::RequestContext::default()
+                .with_transactional_authority_required()
+                .with_verified_document(Some(graph.doc_id().to_owned())),
+            graph.signer_did(),
+        );
         let Some(node_did) = self.node_identity_did.as_deref() else {
             let _ = self.discard_transaction(handle).await;
             return QueryResponse::error("verified create requires a configured node identity");
@@ -557,15 +607,17 @@ impl Node {
             Err(error) => return QueryResponse::error(error.to_string()),
         };
         let request = self.with_default_query_identity(request);
-        // A request is signed when the node signs with its identity, or when
-        // the caller brings its own key. Otherwise an identity-only node runs
-        // it unsigned, as its caller, as Go's `NodeIdentity` without
-        // `EnableSigning` does. Either way it runs under the node's principal
-        // (`node_principal`), the owner of the transactions the node begins.
-        let signing_identity = self
-            .node_identity_did
-            .as_deref()
-            .filter(|_| self.node_signs || caller_signer.is_some());
+        // A request is signed when the node signs with its identity, when the
+        // caller brings its own key, or when the write asks for signing with
+        // `enableSigning: true`, as Go's `EnableSigning` does on a node that
+        // does not sign. Otherwise an identity-only node runs it unsigned, as
+        // its caller, as Go's `NodeIdentity` without `EnableSigning` does.
+        // Either way it runs under the node's principal (`node_principal`),
+        // the owner of the transactions the node begins.
+        let signs = self.node_signs
+            || caller_signer.is_some()
+            || request.context.signing_override() == Some(true);
+        let signing_identity = self.node_identity_did.as_deref().filter(|_| signs);
         let Some(node_identity_did) = signing_identity else {
             if caller_signer.is_some() {
                 return QueryResponse::error(
@@ -669,13 +721,16 @@ impl Node {
     }
 
     /// The context the node's own operations run in, and the owner of the
-    /// transactions it begins: the node's principal ([`Self::node_principal`])
+    /// transactions it begins: the node's principal (`node_principal`)
     /// acts in it. On a node that acts as its identity, DB-layer NAC checks
     /// resolve to the node itself (which holds full access). Without a node
     /// identity, or on an identity-only node, it is [`RequestContext::ambient`]
     /// and NAC checks the node's own operations as anonymous, as Go's node
     /// checks a call that names no identity.
-    fn node_context(&self) -> RequestContext {
+    ///
+    /// An embedder reads node-ACP-gated P2P information as the node with
+    /// `node.p2p_system()?.ops_for(&node.node_context())`.
+    pub fn node_context(&self) -> RequestContext {
         let context = RequestContext::ambient();
         match self.node_principal() {
             Some(did) => context.with_identity(Some(did)),
@@ -817,7 +872,7 @@ impl Node {
     /// List the names of every active collection known to the node.
     ///
     /// Useful for idempotent schema-bootstrap flows that need to decide whether
-    /// to call [`Self::add_collection`] (create) or [`Self::patch_collection`] (evolve).
+    /// to call [`Self::add_collection`] (create) or [`Self::patch_collection_as`] (evolve).
     pub fn list_collections(&self) -> Result<Vec<String>> {
         self.schema_ops.list_collections()
     }
@@ -1072,6 +1127,12 @@ impl Node {
     }
 
     /// The node access control manager: off until enabled.
+    ///
+    /// The embedded HTTP server decides when the node is built whether its
+    /// edge routes check node ACP, as `defradb start` does at startup: they do
+    /// once node ACP was enabled through the builder or by an earlier run on
+    /// the same store. Enabling it here on a node built without it guards the
+    /// database now and the edge routes from the next build.
     pub fn nac_manager(&self) -> &Arc<dyn db::NacManagerApi> {
         &self.nac_manager
     }
@@ -1085,6 +1146,13 @@ impl Node {
     #[cfg(feature = "vera")]
     pub fn vera_acp(&self) -> Option<&Arc<vera::VeraDocumentACP>> {
         self.vera_acp.as_ref()
+    }
+
+    /// What another node of the same account needs to verify against the
+    /// Vera deployment this node runs; `None` when it runs none.
+    #[cfg(feature = "embedded-vera")]
+    pub fn embedded_vera_trust(&self) -> Option<&EmbeddedVeraTrust> {
+        self.embedded_vera_trust.as_ref()
     }
 
     /// The limits queries on this node run under.
@@ -1690,9 +1758,25 @@ mod administrative_relationship_tests;
 #[path = "../tests/unit/delegated_relationship.rs"]
 mod delegated_relationship_tests;
 
+#[cfg(all(test, feature = "vera", not(target_arch = "wasm32")))]
+#[path = "../tests/unit/staged_relationship.rs"]
+mod staged_relationship_tests;
+
 #[cfg(all(test, not(target_arch = "wasm32")))]
 #[path = "../tests/unit/verified_create.rs"]
 mod verified_create_tests;
+
+#[cfg(all(test, feature = "vera", not(target_arch = "wasm32")))]
+#[path = "../tests/unit/verified_remote.rs"]
+mod verified_remote_tests;
+
+#[cfg(all(test, feature = "vera", not(target_arch = "wasm32")))]
+#[path = "../tests/unit/verified_edit.rs"]
+mod verified_edit_tests;
+
+#[cfg(all(test, feature = "vera", not(target_arch = "wasm32")))]
+#[path = "../tests/unit/owed_report.rs"]
+mod owed_report_tests;
 
 #[cfg(all(test, feature = "http"))]
 mod http_signing_tests;

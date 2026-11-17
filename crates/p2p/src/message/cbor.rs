@@ -21,7 +21,7 @@
 //! Use for fields like pubkey where Go sends CBOR null for unset values.
 //! WARNING: On round-trip, empty bytes become CBOR null which becomes empty bytes.
 
-/// Custom serialization for Option<Vec<u8>> as CBOR byte strings.
+/// Custom serialization for `Option<Vec<u8>>` as CBOR byte strings.
 ///
 /// Use this for optional byte fields like signatures that may or may not be present.
 /// - `None` serializes to CBOR null
@@ -48,7 +48,7 @@ pub mod optional_bytes {
     }
 }
 
-/// Custom serialization for Vec<u8> that treats empty as CBOR null.
+/// Custom serialization for `Vec<u8>` that treats empty as CBOR null.
 ///
 /// Go's fxamacker/cbor sends `nil []byte` as CBOR null instead of empty byte string.
 /// This serializer matches that behavior:
@@ -103,7 +103,7 @@ pub mod bytes_as_cbor {
     }
 }
 
-/// Custom serialization for Vec<Vec<u8>> as CBOR byte strings.
+/// Custom serialization for `Vec<Vec<u8>>` as CBOR byte strings.
 ///
 /// Use this for arrays of byte fields like CID heads in DocSync.
 pub mod vec_of_bytes {

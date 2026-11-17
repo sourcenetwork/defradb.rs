@@ -36,6 +36,13 @@ pub use crate::ambient::{
 /// completion form the write path uses: one call per wave of signatures,
 /// completing without holding a thread while the service works.
 pub trait RemoteSigner: Send + Sync {
+    /// Only a connection signer verifying every signature against the
+    /// authenticated caller's key returns true. Signing services retain the
+    /// ACP decision that authorizes their signature ceremony.
+    fn uses_caller_key(&self, _caller: &str) -> bool {
+        false
+    }
+
     fn sign_sync(
         &self,
         data: &[u8],
@@ -60,6 +67,14 @@ pub trait RemoteSigner: Send + Sync {
             })
             .collect();
         Box::pin(std::future::ready(signatures))
+    }
+
+    /// Whether this signer signs under an access decision
+    /// ([`SigningAuthorization::Decision`]) that a create obtains from
+    /// document ACP for it first. A signer that takes none says so, and the
+    /// create asks for no decision.
+    fn takes_authorization(&self) -> bool {
+        true
     }
 
     /// The host context this signer calls, if it calls one. Two signers with
@@ -417,26 +432,21 @@ pub fn resolve_signing_config_with_flag(
 // Request Bearer Token — keyed by DID for ACP registration passthrough
 // ---------------------------------------------------------------------------
 
-/// The bearer tokens bound to DIDs for requests that carry none of their own
-/// (see [`RequestContext::bearer_token_for`](crate::RequestContext::bearer_token_for)).
-/// A request authenticated over HTTP carries its own token, so concurrent
-/// requests for the same DID never replace each other's JWT.
+/// Bearer tokens a process binds to DIDs. No request reads them: a request
+/// presents to a provider only the bearer it carries itself
+/// ([`RequestContext::bearer_token_for`](crate::RequestContext::bearer_token_for)).
 fn request_token_store() -> &'static HopscotchMap<String, String, RandomState> {
     static STORE: OnceCell<HopscotchMap<String, String, RandomState>> = OnceCell::new();
     STORE.get_or_init_racy(|| HopscotchMap::with_hasher(RandomState::default()))
 }
 
-/// Bind `token` to `did` for requests that carry no bearer of their own.
-///
-/// When a user authenticates via JWT, the node doesn't have their private key
-/// and can't create new bearer tokens for them. Instead, we pass through the
-/// original JWT (which IS signed by the user's key) to vera.rs/Vera
-/// for ACP operations like register_object.
+/// Bind `token` to `did` in the process. The binding is kept and read back
+/// by [`stored_bearer_token`]; no request presents it.
 pub fn set_request_bearer_token(did: &str, token: impl Into<String>) {
     request_token_store().insert(did.to_string(), token.into());
 }
 
-/// The bearer token bound to `did` for requests that carry none of their own.
+/// The bearer token the process binds to `did`.
 pub fn stored_bearer_token(did: &str) -> Option<String> {
     request_token_store().get(did)
 }
@@ -451,7 +461,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn request_bearer_scope_isolated_across_same_did_and_restores_global_fallback() {
+    fn request_bearer_scope_isolated_across_same_did_and_never_reads_the_process_store() {
         workers::block_on(async {
             let did = "did:key:bearer-scope-test";
             let other_did = "did:key:bearer-scope-other";
@@ -496,10 +506,10 @@ mod tests {
             })
             .await;
 
-            assert_eq!(
-                get_request_bearer_token(did).as_deref(),
-                Some("legacy-global")
-            );
+            // Outside a request nothing is presented, whatever the process
+            // binds to the DID.
+            assert_eq!(get_request_bearer_token(did), None);
+            assert_eq!(stored_bearer_token(did).as_deref(), Some("legacy-global"));
             clear_request_bearer_token(did);
             clear_request_bearer_token(other_did);
         })

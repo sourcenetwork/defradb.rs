@@ -44,7 +44,9 @@ macro_rules! scalar_operator_block {
                 )
         }
     };
-    ($fn_name:ident, $type_name:literal, $scalar:literal, equality) => {
+    // `$list` is `named_nn_list` for `IDOperatorBlock`, whose `_in`/`_nin` take
+    // non-null elements in Go, and `named_list` for `BooleanOperatorBlock`.
+    ($fn_name:ident, $type_name:literal, $scalar:literal, equality, $list:ident) => {
         pub(super) fn $fn_name() -> InputObject {
             InputObject::new($type_name)
                 .description(concat!(
@@ -57,7 +59,7 @@ macro_rules! scalar_operator_block {
                         .description(super::descriptions::EQ_OPERATOR),
                 )
                 .field(
-                    InputValue::new("_in", TypeRef::named_list($scalar))
+                    InputValue::new("_in", TypeRef::$list($scalar))
                         .description(super::descriptions::IN_OPERATOR),
                 )
                 .field(
@@ -65,7 +67,7 @@ macro_rules! scalar_operator_block {
                         .description(super::descriptions::NEQ_OPERATOR),
                 )
                 .field(
-                    InputValue::new("_nin", TypeRef::named_list($scalar))
+                    InputValue::new("_nin", TypeRef::$list($scalar))
                         .description(super::descriptions::NIN_OPERATOR),
                 )
         }
@@ -193,7 +195,13 @@ macro_rules! list_operator_block {
 
 // --- Scalar operator blocks ---
 
-scalar_operator_block!(build_id_operator_block, "IDOperatorBlock", "ID", equality);
+scalar_operator_block!(
+    build_id_operator_block,
+    "IDOperatorBlock",
+    "ID",
+    equality,
+    named_nn_list
+);
 scalar_operator_block!(
     build_string_operator_block,
     "StringOperatorBlock",
@@ -228,7 +236,8 @@ scalar_operator_block!(
     build_bool_operator_block,
     "BooleanOperatorBlock",
     "Boolean",
-    equality
+    equality,
+    named_list
 );
 scalar_operator_block!(
     build_datetime_operator_block,

@@ -12,7 +12,7 @@ use identity::Did;
 
 use crate::error::{Result, TransactionError};
 use crate::executor::{GqlWarning, QueryExecutor, QueryRequest, QueryResponse, QueryResponseError};
-use crate::query_parse::{validate_parsed_operation, ParsedOperation};
+use crate::query_parse::{validate_operation, ParsedOperation};
 use crate::txn::{TransactionHandle, TransactionRegistry};
 
 use super::turn::answered;
@@ -654,7 +654,9 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         }
 
         // Validate that all referenced collections exist before execution
-        if let Err(e) = validate_parsed_operation(&parsed, self.effective_provider().as_ref()).await
+        let graphql_text = request.parsed.is_none();
+        if let Err(e) =
+            validate_operation(&parsed, self.effective_provider().as_ref(), graphql_text).await
         {
             return QueryResponse {
                 data: None,
@@ -703,6 +705,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                                 identity,
                                 explain_type,
                                 variables.as_ref(),
+                                &mut warnings,
                             )
                             .await
                     } else {
@@ -934,6 +937,12 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                     .await
                     .map_err(|error| crate::error::QueryError::execution(error.to_string()))?;
                 serde_json::to_vec(&registered)
+            } else if field(1)? == "owner" {
+                let owner = acp
+                    .get_doc_owner(field(2)?, field(3)?, field(4)?)
+                    .await
+                    .map_err(|error| crate::error::QueryError::execution(error.to_string()))?;
+                serde_json::to_vec(&owner)
             } else if field(4)? == "writer" {
                 let decision = acp
                     .create_access_decision(

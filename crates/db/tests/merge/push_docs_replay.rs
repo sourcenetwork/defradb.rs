@@ -768,6 +768,7 @@ pub(super) struct ConnectedPeerTransport {
     retry_after_ms: Option<u64>,
     script: Option<ReplyScript>,
     arrivals: Arc<kovan::Atom<Vec<Instant>>>,
+    publishes: Arc<AtomicUsize>,
 }
 
 impl ConnectedPeerTransport {
@@ -782,7 +783,14 @@ impl ConnectedPeerTransport {
             retry_after_ms: None,
             script: None,
             arrivals: Arc::new(kovan::Atom::new(Vec::new())),
+            publishes: Arc::new(AtomicUsize::new(0)),
         }
+    }
+
+    /// How many gossip publishes reached this transport. The remote peer is
+    /// connected but never subscribed, so each one finds no subscriber.
+    pub(super) fn publishes(&self) -> usize {
+        self.publishes.load(Ordering::SeqCst)
     }
 
     pub(super) fn with_reply_script(mut self, script: ReplyScript) -> Self {
@@ -899,7 +907,10 @@ impl p2p::P2PTransport for ConnectedPeerTransport {
         _topic: p2p::DefraTopic,
         _msg: p2p::PushLogBroadcast,
     ) -> p2p::Result<p2p::transport::MessageId> {
-        Err(unreachable_transport())
+        self.publishes.fetch_add(1, Ordering::SeqCst);
+        Err(p2p::Error::GossipSubPublish(
+            "gossipsub publish error: InsufficientPeers".to_string(),
+        ))
     }
 
     async fn topic_peers(&self, _topic: p2p::DefraTopic) -> p2p::Result<Vec<PeerId>> {

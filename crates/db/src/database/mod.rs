@@ -246,6 +246,9 @@ pub struct DB<S: Store> {
     /// [`DB::set_nac_manager`]. When unset, all `check_node_access` calls are
     /// no-ops (NAC not configured).
     nac_manager: regolith::sync::OnceCell<std::sync::Arc<dyn NacManagerApi>>,
+    /// What every transaction owes once it writes NAC tuples, built when the
+    /// NAC manager is set.
+    node_access_writes: regolith::sync::OnceCell<Arc<dyn datastore::NodeAccessWrites>>,
     /// The node's DAC policies, where `@policy` directives are checked when a
     /// collection is added. Unset, the node runs without document ACP.
     pub(crate) dac_policies: regolith::sync::OnceCell<Arc<crate::access::dac::DacPolicies>>,
@@ -256,6 +259,9 @@ pub struct DB<S: Store> {
     /// `?Send`, so wrapping it in an `Arc` would be an `Arc` over a value that
     /// is neither `Send` nor `Sync`.
     merge_governance: regolith::sync::OnceCell<crate::merge::governance::MergeGovernance>,
+    /// Which replicated documents this node registers with a remote ACP
+    /// provider. Set once, before replication starts.
+    replica_registration: regolith::sync::OnceCell<Arc<crate::merge::ReplicaRegistration>>,
     /// Told about each composite a local write commits, so composites deferred
     /// awaiting what the write created are released.
     local_commit_release:
@@ -313,8 +319,10 @@ impl<S: Store> DB<S> {
             network: regolith::sync::OnceCell::new(),
             kms_blockstore: regolith::sync::OnceCell::new(),
             nac_manager: regolith::sync::OnceCell::new(),
+            node_access_writes: regolith::sync::OnceCell::new(),
             dac_policies: regolith::sync::OnceCell::new(),
             merge_governance: regolith::sync::OnceCell::new(),
+            replica_registration: regolith::sync::OnceCell::new(),
             local_commit_release: regolith::sync::OnceCell::new(),
             active_actions: Arc::new(crate::database::action::ActionRegistry::default()),
             replication_runtime: Arc::default(),
@@ -386,8 +394,10 @@ impl<S: Store> DB<S> {
             network: regolith::sync::OnceCell::new(),
             kms_blockstore: regolith::sync::OnceCell::new(),
             nac_manager: regolith::sync::OnceCell::new(),
+            node_access_writes: regolith::sync::OnceCell::new(),
             dac_policies: regolith::sync::OnceCell::new(),
             merge_governance: regolith::sync::OnceCell::new(),
+            replica_registration: regolith::sync::OnceCell::new(),
             local_commit_release: regolith::sync::OnceCell::new(),
             active_actions: Arc::new(crate::database::action::ActionRegistry::default()),
             replication_runtime: Arc::default(),
@@ -592,8 +602,13 @@ impl<S: Store> DB<S> {
     /// Install the NAC manager. First call wins (OnceCell); subsequent calls
     /// are silently discarded. Called once at node startup. When unset, all
     /// `check_node_access` calls are no-ops (NAC not configured).
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     pub fn set_nac_manager(&self, nac: std::sync::Arc<dyn NacManagerApi>) {
-        let _ = self.nac_manager.set(nac);
+        if self.nac_manager.set(Arc::clone(&nac)).is_ok() {
+            let _ = self
+                .node_access_writes
+                .set(Arc::new(crate::nac::EdgeRefreshOwed(nac)));
+        }
     }
 
     /// Install app merge governance. First call wins; install it before any
@@ -605,6 +620,17 @@ impl<S: Store> DB<S> {
 
     pub fn merge_governance(&self) -> Option<&crate::merge::governance::MergeGovernance> {
         self.merge_governance.get()
+    }
+
+    /// Register replicated documents of the listed collections with a remote
+    /// ACP provider ([`crate::merge::replica`]). First call wins; set it
+    /// before the merge handler is built.
+    pub fn set_replica_registration(&self, registration: crate::merge::ReplicaRegistration) {
+        let _ = self.replica_registration.set(Arc::new(registration));
+    }
+
+    pub fn replica_registration(&self) -> Option<&Arc<crate::merge::ReplicaRegistration>> {
+        self.replica_registration.get()
     }
 
     /// Install the hook that releases deferred composites awaiting what a
@@ -697,6 +723,9 @@ impl<S: Store> DB<S> {
     pub(crate) fn new_db_txn(&self, mut basic_txn: BasicTxn) -> DbTxn<S> {
         if let Some(projector) = self.document_projector.get() {
             basic_txn.set_document_projector(Arc::clone(projector));
+        }
+        if let Some(writes) = self.node_access_writes.get() {
+            basic_txn.set_node_access_writes(Arc::clone(writes));
         }
         DbTxn::of_database(basic_txn, self.vector_codes.clone())
             .with_shared_collections(Arc::clone(&self.collections))

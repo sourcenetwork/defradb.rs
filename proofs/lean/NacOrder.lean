@@ -19,9 +19,13 @@ Rust owner: crates/acp/src/nac/permission.rs `NodePermission::go_order`
 (the list) and crates/db/src/access/nac.rs `DB::check_node_access_as`,
 `DB::check_node_access_in_txn` (the check, first missing first), and, for a
 write in an explicit transaction, crates/query/src/runner/turn.rs
-`QueryRunner::lent` with `lent_node_permission`. The Rust
-checks are the testo scenarios `acp::nac::{add,update,delete}_document`,
-`update_document_with_filter` and `truncate_collection`.
+`QueryRunner::lent` with `lent_node_permission`. A permission checked alone
+includes the P2P adapters' gates, crates/p2p-adapter/src/libp2p.rs
+`P2PAdapter::check_nac` and crates/p2p-adapter/src/iroh.rs
+`IrohP2PAdapter::check_nac`, which run that check for every peer operation,
+the `get-p2p-peer-info` reads among them. The Rust checks are the testo
+scenarios `acp::nac::{add,update,delete}_document`,
+`update_document_with_filter`, `truncate_collection` and `get_p2p_peer_info`.
 -/
 
 namespace NacOrder

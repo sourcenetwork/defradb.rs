@@ -133,13 +133,39 @@ fn extract_host_header(headers: &axum::http::HeaderMap) -> HostHeaderResult {
 #[derive(Clone, Debug)]
 pub(crate) struct MiddlewareIdentity(pub Option<Did>);
 
+/// The caller a request's headers authenticate, for a node whose document
+/// ACP may take a caller's own delegation as its credential.
+///
+/// A delegation names the node's worker and deployment and is verified by
+/// the ACP that will act under it, so it needs no `Host` audience. Any other
+/// bearer is an identity token, checked as [`parse_identity_from_headers`]
+/// checks it.
+pub(crate) fn caller_from_headers(
+    headers: &axum::http::HeaderMap,
+    delegations: Option<&dyn crate::router::DocumentAcpOperations>,
+) -> Result<Option<acp::AuthenticatedCaller>, IdentityExtractionError> {
+    let delegated = delegations.and_then(|acp| {
+        let token = headers.get(AUTHORIZATION)?.to_str().ok()?;
+        let token = token
+            .strip_prefix("Bearer ")
+            .or_else(|| token.strip_prefix("bearer "))?
+            .trim();
+        acp.caller_of_delegation(token)
+    });
+    match delegated {
+        Some(Ok(caller)) => Ok(Some(caller)),
+        Some(Err(error)) => Err(IdentityExtractionError::TokenVerificationFailed(error)),
+        None => parse_identity_from_headers(headers),
+    }
+}
+
 /// Parse identity from HTTP headers (shared between middleware and extractors).
 ///
 /// Extracts the Authorization header, validates the Host header for
-/// authenticated requests, and returns the parsed DID.
+/// authenticated requests, and returns the verified caller and expiration.
 pub(crate) fn parse_identity_from_headers(
     headers: &axum::http::HeaderMap,
-) -> Result<Option<Did>, IdentityExtractionError> {
+) -> Result<Option<acp::AuthenticatedCaller>, IdentityExtractionError> {
     let auth_value = match headers.get(AUTHORIZATION) {
         Some(value) => match value.to_str() {
             Ok(s) => Some(s.to_string()),
@@ -216,7 +242,7 @@ impl IntoResponse for IdentityExtractionError {
 /// Behavior matches Go DefraDB:
 /// - No Authorization header → anonymous
 /// - "Bearer " with empty token → anonymous
-/// - "Bearer <token>" → parse and verify token, 403 on failure
+/// - `"Bearer <token>"` → parse and verify token, 403 on failure
 /// - Non-Bearer auth → 403 Forbidden (treated as invalid token)
 ///
 /// Token verification includes:
@@ -226,7 +252,7 @@ impl IntoResponse for IdentityExtractionError {
 fn extract_identity_from_auth_header(
     auth_value: Option<&str>,
     expected_audience: &str,
-) -> Result<Option<Did>, IdentityExtractionError> {
+) -> Result<Option<acp::AuthenticatedCaller>, IdentityExtractionError> {
     let Some(auth_value) = auth_value else {
         // No Authorization header = anonymous request
         return Ok(None);
@@ -265,7 +291,10 @@ fn extract_identity_from_auth_header(
         .did()
         .map_err(|e| IdentityExtractionError::InvalidToken(e.to_string()))?;
 
-    Ok(Some(did))
+    Ok(Some(acp::AuthenticatedCaller {
+        did,
+        expires_at: token_identity.claims.exp,
+    }))
 }
 
 impl<S> FromRequestParts<S> for ExtractIdentity
@@ -285,8 +314,14 @@ where
         }
 
         // Fallback: parse from headers (for routes/tests without the middleware).
-        let did = parse_identity_from_headers(&parts.headers)?;
-        Ok(ExtractIdentity { did, context })
+        let caller = parse_identity_from_headers(&parts.headers)?;
+        let context = context
+            .unwrap_or_default()
+            .with_authorization_expiration(caller.as_ref().map(|caller| caller.expires_at));
+        Ok(ExtractIdentity {
+            did: caller.map(|caller| caller.did),
+            context: Some(context),
+        })
     }
 }
 

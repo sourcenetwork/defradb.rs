@@ -30,11 +30,11 @@ pub(super) fn build_commits_filter_arg() -> InputObject {
     InputObject::new("CommitsFilterArg")
         .description(d::COMMITS_FILTER)
         .field(
-            InputValue::new("_and", TypeRef::named_list("CommitsFilterArg"))
+            InputValue::new("_and", TypeRef::named_nn_list("CommitsFilterArg"))
                 .description(d::AND_OPERATOR),
         )
         .field(
-            InputValue::new("_or", TypeRef::named_list("CommitsFilterArg"))
+            InputValue::new("_or", TypeRef::named_nn_list("CommitsFilterArg"))
                 .description(d::OR_OPERATOR),
         )
         .field(

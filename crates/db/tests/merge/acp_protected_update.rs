@@ -49,6 +49,7 @@ fn signer() -> Signer {
 
 struct Fixture {
     handler: AcpMergeHandler<RegolithStore, Blocks>,
+    strict: bool,
     blockstore: Arc<Blocks>,
     doc_id: String,
     genesis: Cid,
@@ -122,6 +123,7 @@ impl Fixture {
 
         Self {
             handler,
+            strict,
             blockstore,
             doc_id: genesis.doc_id,
             genesis: genesis.cid,
@@ -186,10 +188,20 @@ impl Fixture {
     }
 
     fn denied(&self, signer: &Signer) -> MergeOutcome {
-        MergeOutcome::rejected(format!(
+        self.refused(format!(
             "signer {} lacks update permission on protected document {}",
             signer.did, self.doc_id
         ))
+    }
+
+    /// A signed refusal: rejected under local ACP, parked under strict
+    /// (remote) ACP, whose refusals a later grant can lift.
+    fn refused(&self, reason: String) -> MergeOutcome {
+        if self.strict {
+            MergeOutcome::retryable_skip(format!("parked: {reason}"))
+        } else {
+            MergeOutcome::rejected(reason)
+        }
     }
 }
 
@@ -396,7 +408,7 @@ fn strict_signed_delete_checks_delete_permission() {
             .await;
         assert_eq!(
             fixture.merge(&denied, &owner.did, true).await,
-            MergeOutcome::rejected(format!(
+            fixture.refused(format!(
                 "signer {} lacks delete permission on protected document {}",
                 attacker.did, fixture.doc_id,
             ))

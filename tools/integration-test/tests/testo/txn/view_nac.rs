@@ -1,6 +1,6 @@
 //! AddView and RefreshViews in a transaction need what they need outside
-//! one (AddView only `add-view`, as in Go), and an embedded caller that names no identity acts as the node in a
-//! transaction, as the other definition changes do.
+//! one (AddView only `add-view`, as in Go), and a call that names no identity
+//! is refused, as Go's `checkNodeAccess` refuses one outside a transaction.
 
 use integration_test::actions::{
     Actions, AddCollection, AddNACActorRelationship, AddView, Close, RefreshViews, Start, TxnBegin,
@@ -158,11 +158,12 @@ fn txn_view_ops_without_their_permission_are_refused() {
     .execute();
 }
 
-// An embedded call that names no identity: only the in-process client makes
-// one, and runs as the node in the node's transaction.
+// Go's TestNAC_GatesAddView_NoIdentity_NotAuthorizedError and its
+// RefreshView twin, in a transaction: the node has an identity but does not
+// sign, so a call that names none runs as no one and NAC refuses it.
 #[test]
 #[mantra_macros::req_test("go.acp.nac.gates.views")]
-fn txn_view_ops_without_identity_act_as_the_node() {
+fn txn_view_ops_without_identity_are_refused() {
     let mut actions = nac_node();
     let more: Vec<Actions> = vec![
         TxnBegin {
@@ -173,16 +174,17 @@ fn txn_view_ops_without_identity_act_as_the_node() {
             txn: Some(0),
             query: QUERY.into(),
             sdl: SDL.into(),
+            expected_error: Some(
+                "not authorized to perform operation. Permission: add-view".into(),
+            ),
             ..Default::default()
         }
         .into(),
         RefreshViews {
             txn: Some(0),
-            ..Default::default()
-        }
-        .into(),
-        TxnCommit {
-            txn: 0,
+            expected_error: Some(
+                "not authorized to perform operation. Permission: refresh-view".into(),
+            ),
             ..Default::default()
         }
         .into(),
@@ -191,7 +193,7 @@ fn txn_view_ops_without_identity_act_as_the_node() {
     TestCase {
         id: integration_test::scenario_id!(),
         actions: actions.into_iter().map(Into::into).collect(),
-        client_types: Some(&[ClientType::InProcess]),
+        client_types: Some(&[ClientType::InProcess, ClientType::RustHttp, ClientType::Cli]),
         ..Default::default()
     }
     .execute();

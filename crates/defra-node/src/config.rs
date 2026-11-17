@@ -55,9 +55,11 @@ pub struct HttpConfig {
     pub(crate) transaction_idle_timeout: Duration,
     pub(crate) transaction_cleanup_interval: Duration,
     pub(crate) extra_routes: Option<axum::Router>,
+    pub(crate) authenticated_routes: Option<axum::Router>,
     pub(crate) router_transform: Option<defra_http::RouterTransform>,
     pub(crate) listener: Option<std::net::TcpListener>,
     pub(crate) dev_mode: bool,
+    pub(crate) collection_management: bool,
 }
 
 #[cfg(feature = "http")]
@@ -75,9 +77,11 @@ impl HttpConfig {
             transaction_idle_timeout: DEFAULT_TRANSACTION_IDLE_TIMEOUT,
             transaction_cleanup_interval: DEFAULT_TRANSACTION_CLEANUP_INTERVAL,
             extra_routes: None,
+            authenticated_routes: None,
             router_transform: None,
             listener: None,
             dev_mode: false,
+            collection_management: false,
         }
     }
 
@@ -118,6 +122,13 @@ impl HttpConfig {
         self
     }
 
+    /// Application routes authenticated by the node without inventing an
+    /// application permission. Their owning handlers still decide access.
+    pub fn with_authenticated_routes(mut self, routes: axum::Router) -> Self {
+        self.authenticated_routes = Some(routes);
+        self
+    }
+
     pub fn with_extra_routes(mut self, extra: axum::Router) -> Self {
         self.extra_routes = Some(extra);
         self
@@ -134,6 +145,16 @@ impl HttpConfig {
     /// the CLI's `--development` does.
     pub fn with_dev_mode(mut self, dev_mode: bool) -> Self {
         self.dev_mode = dev_mode;
+        self
+    }
+
+    /// Serve collection management (`/actions`, deleting collections and
+    /// versions, purge), as `defradb start` and Go's server do. Off by
+    /// default: an application embedding a node exposes collection
+    /// observation only, unless it opts in. `/purge` also needs
+    /// [`Self::with_dev_mode`]; without it the route answers 403.
+    pub fn with_collection_management(mut self, enabled: bool) -> Self {
+        self.collection_management = enabled;
         self
     }
 }

@@ -87,6 +87,9 @@ pub struct DbTxn<S: Store> {
     txn: Option<BasicTxn>,
     /// Whether this is an explicit transaction.
     explicit: bool,
+    /// The ID of the handle an explicit transaction is known to its callers
+    /// by, once its registry named it.
+    handle_id: Option<u64>,
     /// The collections this transaction loaded, changed and created, and the
     /// branchable collection ACP registrations that must succeed before the
     /// storage commit, otherwise a protected collection could be persisted
@@ -97,13 +100,24 @@ pub struct DbTxn<S: Store> {
     /// The database's committed collections, so a collection this transaction
     /// loads with the same definition reuses the cached handle's decoded state.
     shared_collections: Option<Arc<crate::collection::epoch::EpochedCollections>>,
-    statement_savepoint: Option<catalog::Snapshot>,
+    statement_savepoint: Option<StatementSavepoint>,
+    /// How many relationship changes owed to an external ACP provider this
+    /// transaction has staged (see [`acp::outbox`]). Made when the first one
+    /// is staged: a transaction that stages none carries nothing for it.
+    owed_staged: regolith::sync::OnceCell<acp::StagedCount>,
     /// The CRDT types of the node whose store the transaction runs on, kept
     /// past the commit for the collections it hands out.
     crdts: crdt::Crdts,
     /// The store `DB::new_txn` began this transaction on, for a later
     /// snapshot of it. `None` for a transaction begun any other way.
     store: Option<Arc<S>>,
+}
+
+/// What a statement's rollback puts back beside the engine's own savepoint.
+struct StatementSavepoint {
+    catalog: catalog::Snapshot,
+    /// The owed changes staged before the statement.
+    owed_staged: u32,
 }
 
 /// A transaction lent to the handles of one request (its fetcher, mutator and
@@ -153,10 +167,12 @@ impl<S: Store> DbTxn<S> {
             crdts: txn.crdts().clone(),
             txn: Some(txn),
             explicit,
+            handle_id: None,
             catalog: Catalog::new(),
             vector_codes,
             shared_collections: None,
             statement_savepoint: None,
+            owed_staged: regolith::sync::OnceCell::new(),
             store: None,
         }
     }
@@ -240,6 +256,17 @@ impl<S: Store> DbTxn<S> {
         self.explicit = true;
     }
 
+    /// Name the handle this explicit transaction is known to its callers by.
+    pub(crate) fn name_handle(&mut self, id: u64) {
+        self.handle_id = Some(id);
+    }
+
+    /// The ID of the handle this transaction is known to its callers by;
+    /// `None` for a transaction that commits on its own.
+    pub fn handle_id(&self) -> Option<u64> {
+        self.handle_id
+    }
+
     pub(crate) fn set_statement_savepoint(&mut self) -> Result<()> {
         if !self.explicit || self.statement_savepoint.is_some() {
             return Err(Error::Other(
@@ -251,12 +278,15 @@ impl<S: Store> DbTxn<S> {
             .as_mut()
             .ok_or(Error::TxnNotActive)?
             .set_savepoint()?;
-        self.statement_savepoint = Some(self.catalog.snapshot());
+        self.statement_savepoint = Some(StatementSavepoint {
+            catalog: self.catalog.snapshot(),
+            owed_staged: self.owed_staged.get().map_or(0, acp::StagedCount::get),
+        });
         Ok(())
     }
 
     pub(crate) fn rollback_statement_savepoint(&mut self) -> Result<()> {
-        let Some(snapshot) = self.statement_savepoint.take() else {
+        let Some(savepoint) = self.statement_savepoint.take() else {
             return Err(Error::Other("no statement savepoint is active".into()));
         };
         if let Err(error) = self
@@ -265,10 +295,13 @@ impl<S: Store> DbTxn<S> {
             .ok_or(Error::TxnNotActive)
             .and_then(|txn| txn.rollback_to_savepoint().map_err(Error::from))
         {
-            self.statement_savepoint = Some(snapshot);
+            self.statement_savepoint = Some(savepoint);
             return Err(error);
         }
-        self.catalog.restore(snapshot);
+        self.catalog.restore(savepoint.catalog);
+        if let Some(staged) = self.owed_staged.get() {
+            staged.restore(savepoint.owed_staged);
+        }
         Ok(())
     }
 
@@ -377,16 +410,27 @@ impl<S: Store> DbTxn<S> {
     }
 
     /// The registrations this transaction's creates owe an external ACP
-    /// provider, read through its own writes. A transaction no longer active
-    /// shows none.
+    /// provider and the denials of the relationship deletes it has staged,
+    /// read through its own writes. A transaction no longer active shows
+    /// none.
     #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     pub fn acp_registration_projection(&self) -> Arc<query::txn::AcpRegistrationProjection> {
         Arc::new(match self.acpstore() {
             Ok(view) => {
                 query::txn::AcpRegistrationProjection::new(acp::PendingRegistrations::new(&view))
+                    .with_owed_denials(acp::OwedDenials::new(&view))
             }
             Err(_) => query::txn::AcpRegistrationProjection::detached(),
         })
+    }
+
+    /// This transaction's count of the relationship changes it has staged
+    /// for an external ACP provider, for every handle that stages through
+    /// it. A statement rolled back to its savepoint puts the count back.
+    pub fn owed_staged(&self) -> acp::StagedCount {
+        self.owed_staged
+            .get_or_init_racy(acp::StagedCount::new)
+            .clone()
     }
 
     /// Get the rootstore.

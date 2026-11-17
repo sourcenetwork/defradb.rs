@@ -1,7 +1,7 @@
 //! Wire message types for DefraDB P2P protocol.
 //!
 //! Messages are CBOR encoded for wire compatibility with the Go implementation.
-//! CBOR byte strings (major type 2) require serde_bytes annotations for Vec<u8>.
+//! CBOR byte strings (major type 2) require serde_bytes annotations for `Vec<u8>`.
 //!
 //! # CBOR Serialization Guide
 //!

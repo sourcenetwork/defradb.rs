@@ -6,7 +6,6 @@
 pub(crate) mod backup_adapter;
 pub(crate) mod block_adapter;
 pub mod cli;
-pub(crate) mod collection_mgmt_adapter;
 pub mod commands;
 pub mod config;
 pub(crate) mod doc_acp_adapter;
@@ -14,8 +13,9 @@ pub(crate) mod dump_adapter;
 pub(crate) mod encrypted_index_adapter;
 pub mod error;
 pub mod logging;
-#[allow(dead_code)]
-pub(crate) mod nac_adapter;
+#[cfg(test)]
+#[path = "nac_adapter_tests.rs"]
+mod nac_adapter_tests;
 #[allow(dead_code)]
 pub(crate) mod p2p_adapter;
 #[allow(dead_code)]

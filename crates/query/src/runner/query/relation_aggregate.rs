@@ -1,11 +1,13 @@
 //! Relation-based aggregate computation.
 
-use rapidhash::{HashSetExt, RapidHashMap, RapidHashSet};
-use schema::CollectionVersion;
+use std::sync::Arc;
+
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
+use schema::{CollectionVersion, FieldKind, ScalarKind};
 use serde_json::Value as JsonValue;
 
 use crate::error::Result;
-use crate::mapper::{Requestable, Select};
+use crate::mapper::{AggregateTarget, Requestable, Select};
 use crate::txn::TransactionRegistry;
 
 use super::super::{DocFetcher, QueryRunner};
@@ -22,6 +24,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         mut results: Vec<JsonValue>,
         select: &Select,
         aggregate_internal_keys: &RapidHashMap<String, (String, String)>,
+        float32_targets: &RapidHashMap<String, Float32Sum>,
     ) -> Result<Vec<JsonValue>> {
         use crate::mapper::AggregateType;
 
@@ -275,10 +278,36 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                                         };
                                     }
                                     AggregateType::Sum | AggregateType::Average => {
-                                        for item in &final_items {
-                                            if let Some(n) = extract_numeric(item, field_name) {
-                                                total_value += n;
-                                                total_count += 1;
+                                        let float32 = if *agg_type == AggregateType::Sum
+                                            && !float32_targets.is_empty()
+                                        {
+                                            float32_targets.get(&float32_target_key(target))
+                                        } else {
+                                            None
+                                        };
+                                        let values = final_items
+                                            .iter()
+                                            .filter_map(|item| extract_numeric(item, field_name));
+                                        match float32 {
+                                            Some(Float32Sum::InFloat32) => {
+                                                let mut sum = 0f32;
+                                                for n in values {
+                                                    sum += n as f32;
+                                                    total_count += 1;
+                                                }
+                                                total_value += f64::from(sum);
+                                            }
+                                            Some(Float32Sum::Widened) => {
+                                                for n in values {
+                                                    total_value += f64::from(n as f32);
+                                                    total_count += 1;
+                                                }
+                                            }
+                                            None => {
+                                                for n in values {
+                                                    total_value += n;
+                                                    total_count += 1;
+                                                }
                                             }
                                         }
                                     }
@@ -608,4 +637,145 @@ fn extract_numeric(item: &JsonValue, field_name: Option<&str>) -> Option<f64> {
         }
     };
     val.as_f64().or_else(|| val.as_i64().map(|n| n as f64))
+}
+
+/// The key [`float32_relation_targets`] records a target under.
+fn float32_target_key(target: &AggregateTarget) -> String {
+    format!(
+        "{}.{}",
+        target.host_name,
+        target.field_name.as_deref().unwrap_or_default()
+    )
+}
+
+/// How Go sums a Float32 aggregate target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Float32Sum {
+    /// A field of a related collection: Go widens each value and adds in
+    /// `f64`, so `4.9 + 4.5` is `9.400000095367432`.
+    Widened,
+    /// An inline `[Float32]` array: Go adds the `f32` values in `f32` and
+    /// widens only the total, so `4.9 + 4.5` is `9.399999618530273`.
+    InFloat32,
+}
+
+/// The aggregate targets of `select` whose values are Float32, and how Go
+/// sums each. Their values render as the shortest decimal of their `f32`, so a
+/// sum narrows each back first.
+pub(crate) fn float32_relation_targets(
+    select: &Select,
+    collection: &CollectionVersion,
+    collections: &RapidHashMap<String, Arc<CollectionVersion>>,
+) -> RapidHashMap<String, Float32Sum> {
+    let by_id = |id: &str| {
+        collections
+            .values()
+            .find(|c| c.collection_id == id || c.version_id == id)
+    };
+    let mut targets = RapidHashMap::new();
+    for field in &select.fields {
+        let Requestable::Aggregate(agg) = field else {
+            continue;
+        };
+        for target in &agg.targets {
+            let Some(host) = collection.field_by_name(&target.host_name) else {
+                continue;
+            };
+            let sum = match (&host.kind, target.field_name.as_deref()) {
+                (FieldKind::ScalarArray(array), None) => matches!(
+                    array.element_kind(),
+                    ScalarKind::NillableFloat32 | ScalarKind::Float32
+                )
+                .then_some(Float32Sum::InFloat32),
+                (kind, Some(name)) if kind.is_relation() => {
+                    // An empty target id is a self-reference, as in the join planner.
+                    let related = match kind.relation_collection_id() {
+                        Some("") => Some(collection),
+                        Some(id) => by_id(id).or_else(|| collections.get(id)).map(Arc::as_ref),
+                        None => None,
+                    };
+                    related
+                        .and_then(|related| related.field_by_name(name))
+                        .is_some_and(|f| {
+                            matches!(
+                                f.kind,
+                                FieldKind::Scalar(
+                                    ScalarKind::Float32 | ScalarKind::NillableFloat32
+                                )
+                            )
+                        })
+                        .then_some(Float32Sum::Widened)
+                }
+                _ => None,
+            };
+            if let Some(sum) = sum {
+                targets.insert(float32_target_key(target), sum);
+            }
+        }
+    }
+    targets
+}
+
+#[cfg(test)]
+mod float32_tests {
+    use std::sync::Arc;
+
+    use rapidhash::{HashMapExt, RapidHashMap};
+    use schema::{
+        CType, CollectionVersion, FieldDescription, FieldKind, ScalarArrayKind, ScalarKind,
+    };
+
+    use super::{float32_relation_targets, Float32Sum};
+    use crate::mapper::{Aggregate, AggregateTarget, AggregateType, Requestable, Select};
+
+    fn field(name: &str, kind: FieldKind) -> FieldDescription {
+        FieldDescription::new(name, name, kind, CType::LwwRegister)
+    }
+
+    #[test]
+    fn float32_targets_pick_go_sum_for_relations_self_refs_and_arrays() {
+        let books = CollectionVersion::new(
+            "Book",
+            "book-v1",
+            "book",
+            vec![field(
+                "rating",
+                FieldKind::Scalar(ScalarKind::NillableFloat32),
+            )],
+        );
+        let users = CollectionVersion::new(
+            "User",
+            "user-v1",
+            "user",
+            vec![
+                field("rating", FieldKind::Scalar(ScalarKind::NillableFloat32)),
+                field("books", FieldKind::relation("book", true)),
+                field("children", FieldKind::self_ref("", true)),
+                field(
+                    "scores",
+                    FieldKind::ScalarArray(ScalarArrayKind::NillableFloat32Array),
+                ),
+            ],
+        );
+        let mut collections = RapidHashMap::new();
+        collections.insert("Book".to_string(), Arc::new(books));
+        let mut select = Select::new("User");
+        select.fields.push(Requestable::Aggregate(Aggregate {
+            aggregate_type: AggregateType::Sum,
+            targets: vec![
+                AggregateTarget::with_field("books", "rating"),
+                AggregateTarget::with_field("children", "rating"),
+                AggregateTarget::new("scores"),
+            ],
+            filter: None,
+            alias: None,
+        }));
+
+        let targets = float32_relation_targets(&select, &users, &collections);
+
+        assert_eq!(targets.get("books.rating"), Some(&Float32Sum::Widened));
+        assert_eq!(targets.get("children.rating"), Some(&Float32Sum::Widened));
+        assert_eq!(targets.get("scores."), Some(&Float32Sum::InFloat32));
+        assert_eq!(targets.len(), 3);
+    }
 }

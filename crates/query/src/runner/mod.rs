@@ -50,6 +50,7 @@ mod prepare_fetcher;
 #[cfg(test)]
 mod prepare_parse_tests;
 mod query;
+mod remote_authority;
 mod se_transport;
 #[cfg(test)]
 mod similarity_validation_tests;

@@ -3,7 +3,7 @@
 //!
 //! This format is separate from the canonical CBOR used for blocks and DocIDs.
 //! What a part's bytes mean, and how two parts merge, is up to the
-//! [`FieldCrdt`](crate::FieldCrdt) that stores its kind ([`PartCrdts`](crate::PartCrdts)).
+//! [`FieldCrdt`](crate::FieldCrdt) that stores its kind ([`PartCrdts`]).
 use std::collections::BTreeMap;
 use std::sync::Arc;
 

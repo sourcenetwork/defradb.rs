@@ -144,7 +144,7 @@ async fn native_worker_recovers_pending_and_rejected_submissions() {
 async fn native_provider_recovers_pending_before_concurrent_requests() {
     edge::compat(async {
         use commonware_codec::Encode as _;
-        use vera::{AcpTuning, VeraProvider, VeraRsProvider};
+        use vera::{AcpTuning, VeraRsProvider};
 
         let hub = super::helpers::start_hub_cluster().await;
         let trusted = *vera_harness::cluster::KeySet::builder()
@@ -157,79 +157,92 @@ async fn native_provider_recovers_pending_before_concurrent_requests() {
             .public()
             .public();
         let consensus_key = format!("0x{}", hex::encode(trusted.encode()));
-        let root = tempfile::tempdir().unwrap();
-        let keys = FileKeyring::open(root.path().join("keys"), b"test-password").unwrap();
-        let directory = root.path().join("worker");
-        let mut worker = NativeWorker::open(&directory, &keys, 9001).unwrap();
-        let did = worker.did().to_owned();
-        let rejected = worker
-            .prepare(ACP_ADDRESS, vec![1, 2, 3, 4].into())
-            .unwrap()
-            .to_vec();
-        let client = VeraClient::new(hub.node(0).rpc_url());
-        client.send_native_tx(&rejected).await.unwrap();
-        drop(worker);
-
         let actor = super::helpers::funded_identity();
         let private_key = hex::decode(actor.private_key_hex).unwrap();
-        let provider = VeraRsProvider::new(
-            hub.node(0).rpc_url(),
-            &consensus_key,
-            &private_key,
-            NativeWorker::open(&directory, &keys, 9001).unwrap(),
-            &AcpTuning::default(),
-            None,
-            &edge::testing::edge(),
-        )
-        .await
-        .expect("startup resolves the pending rejected request");
-        assert_eq!(provider.authorized_account(), did);
-        assert_ne!(provider.self_did().unwrap(), did);
-        let (first, second) = nuclei::join!(
-            provider.create_policy(integration_test::USER_ACP_POLICY),
-            provider.create_policy(integration_test::USER_ACP_POLICY),
-        );
-        let first = first.unwrap();
-        assert_ne!(first, second.unwrap());
-        drop(provider);
-
-        let worker = NativeWorker::open(&directory, &keys, 9001).unwrap();
-        assert_eq!(worker.did(), did);
-        assert_eq!(worker.next_sequence(), 3);
-        assert!(worker.pending().is_none());
-        let provider = VeraRsProvider::new(
-            hub.node(0).rpc_url(),
-            &consensus_key,
-            &private_key,
-            worker,
-            &AcpTuning::default(),
-            None,
-            &edge::testing::edge(),
-        )
-        .await
-        .unwrap();
-        let token = provider
-            .create_bearer_token(&provider.self_did().unwrap())
-            .await
-            .unwrap();
-        provider
-            .register_object(&token, &first, "users", "after-reopen")
-            .await
-            .unwrap();
-        assert!(provider
-            .verify_access(
-                &first,
-                "users",
-                "after-reopen",
-                "owner",
-                &provider.self_did().unwrap()
-            )
-            .await
-            .unwrap());
-        drop(provider);
-        let worker = NativeWorker::open(&directory, &keys, 9001).unwrap();
-        assert_eq!(worker.next_sequence(), 4);
-        assert!(worker.pending().is_none());
+        let rpc_url = hub.node(0).rpc_url();
+        provider_recovers_pending(&rpc_url, |worker| {
+            let (rpc_url, consensus_key, private_key) =
+                (rpc_url.clone(), consensus_key.clone(), private_key.clone());
+            async move {
+                VeraRsProvider::new(
+                    rpc_url,
+                    &consensus_key,
+                    &private_key,
+                    worker,
+                    &AcpTuning::default(),
+                    None,
+                    &edge::testing::edge(),
+                )
+                .await
+            }
+        })
+        .await;
     })
     .await;
+}
+
+/// A provider opened over a worker with a pending rejected request settles
+/// it before it serves, and its worker's sequence survives a reopen. The
+/// rejected request is sent to the node at `rpc_url` behind the provider's
+/// back; `connect` builds the provider under test over a worker.
+pub(super) async fn provider_recovers_pending<C, P>(rpc_url: &str, connect: C)
+where
+    C: Fn(NativeWorker) -> P,
+    P: std::future::Future<Output = Result<vera::VeraRsProvider, vera::ProviderError>>,
+{
+    use vera::VeraProvider;
+
+    let root = tempfile::tempdir().unwrap();
+    let keys = FileKeyring::open(root.path().join("keys"), b"test-password").unwrap();
+    let directory = root.path().join("worker");
+    let mut worker = NativeWorker::open(&directory, &keys, 9001).unwrap();
+    let did = worker.did().to_owned();
+    let rejected = worker
+        .prepare(ACP_ADDRESS, vec![1, 2, 3, 4].into())
+        .unwrap()
+        .to_vec();
+    let client = VeraClient::new(rpc_url.to_owned());
+    client.send_native_tx(&rejected).await.unwrap();
+    drop(worker);
+
+    let provider = connect(NativeWorker::open(&directory, &keys, 9001).unwrap())
+        .await
+        .expect("startup resolves the pending rejected request");
+    assert_eq!(provider.authorized_account(), did);
+    assert_ne!(provider.self_did().unwrap(), did);
+    let (first, second) = nuclei::join!(
+        provider.create_policy(integration_test::USER_ACP_POLICY),
+        provider.create_policy(integration_test::USER_ACP_POLICY),
+    );
+    let first = first.unwrap();
+    assert_ne!(first, second.unwrap());
+    drop(provider);
+
+    let worker = NativeWorker::open(&directory, &keys, 9001).unwrap();
+    assert_eq!(worker.did(), did);
+    assert_eq!(worker.next_sequence(), 3);
+    assert!(worker.pending().is_none());
+    let provider = connect(worker).await.unwrap();
+    let token = provider
+        .create_bearer_token(&provider.self_did().unwrap())
+        .await
+        .unwrap();
+    provider
+        .register_object(&token, &first, "users", "after-reopen")
+        .await
+        .unwrap();
+    assert!(provider
+        .verify_access(
+            &first,
+            "users",
+            "after-reopen",
+            "owner",
+            &provider.self_did().unwrap()
+        )
+        .await
+        .unwrap());
+    drop(provider);
+    let worker = NativeWorker::open(&directory, &keys, 9001).unwrap();
+    assert_eq!(worker.next_sequence(), 4);
+    assert!(worker.pending().is_none());
 }

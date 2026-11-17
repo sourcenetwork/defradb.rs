@@ -24,7 +24,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Family | Tool | Crates it covers |
 |---|---|---|
 | Explicit embedded signing | TLA+ / Lean | defra-node, query, db |
-| Verified client graph transaction | TLA+ / Lean | defra-node, query, db |
+| Verified client graph transaction | TLA+ / Lean | defra-node, query, db, acp, vera |
 | HTTP client-signed create | TLA+ / Lean | http, query, db |
 | HTTP client-signed update | TLA+ / Lean | http, query, db |
 | HTTP client-signed conditional update | Lean | http, query |
@@ -57,6 +57,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | JWT issuer / algorithm binding | TLA+ | identity |
 | CID content-addressing determinism + Block canonicalization | Lean | defra-core |
 | Deferred-ACP overlay consistency | TLA+ | query |
+| ACP outbox and owed registrations | TLA+ | acp, db, query, defra-node (owed relationship changes specified before the code, #2954) |
 | Order-preserving key encoding | Lean | storage |
 | vera.rs actor spelling | Lean | vera |
 | vera.rs delegation signing | Lean | vera |
@@ -119,6 +120,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Add collection | TLA+ | db |
 | Index changes in a transaction | TLA+ | db, defra-node, http, cli |
 | Encrypted index changes outside a transaction | TLA+ | db, defra-node, cli |
+| Gossip announcement audience | TLA+ | p2p |
 | Collection truncate | TLA+ | db |
 | Relation-filtered mutation | TLA+ | query, datastore, db |
 | Add DAC policy | TLA+ | db, acp, vera, http, cli, ffi, defra-node |
@@ -137,6 +139,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | FFI transaction turns | TLA+ / Lean | ffi |
 | Vector index defaults | Lean | schema |
 | Selected collection version | TLA+ / Lean | db, query, ffi |
+| Per-operation signing choice | Lean | defra-core, http, ffi, cli |
 
 ### Backlog — current retry-era gaps
 This inventory includes legacy models and does not mean every current mechanism is
@@ -247,6 +250,7 @@ headstore); go↔go vs rust↔rust parity (`parity.rs`) localized it to Rust.
 | DiskANN resident code table | Boundary | in-memory search cache, not observable on the wire; `DiskAnnCodes`; unit tests in `crates/db/tests/vector/diskann_resident.rs` |
 | P2P delivery liveness | Behavioral (trace) + Boundary | `model_trace.rs` replays recorded runs through `Trace_P2PDelivery.tla`; eventual connectivity, the bounded instance and the restart scenarios stay Boundary |
 | Cursor tokens | Boundary | `CursorToken`; tokens pinned by `crates/cursor/tests/go_fixtures.rs` |
+| Per-operation signing choice | Boundary | `SigningOverride`; unit tests on each edge and `signature::per_op_signing` (testo) |
 
 ```bash
 proofs/verify-all.sh                 # TLA + Lean + conformance (behavioral if binary present)

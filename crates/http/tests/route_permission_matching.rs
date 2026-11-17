@@ -121,19 +121,19 @@ fn parameterized_routes_use_their_registered_permissions() {
                     "/api/v0/collections/Users/encrypted-indexes",
                     Method::GET,
                     "/api/v0/collections/{name}/encrypted-indexes",
-                    RoutePermission::Required(NodePermission::EncryptedIndexList),
+                    RoutePermission::IdentityOnly,
                 ),
                 (
                     "/api/v0/collections/Users/encrypted-indexes",
                     Method::POST,
                     "/api/v0/collections/{name}/encrypted-indexes",
-                    RoutePermission::Required(NodePermission::EncryptedIndexAdd),
+                    RoutePermission::IdentityOnly,
                 ),
                 (
                     "/api/v0/collections/Users/encrypted-indexes/email",
                     Method::DELETE,
                     "/api/v0/collections/{name}/encrypted-indexes/{field}",
-                    RoutePermission::Required(NodePermission::EncryptedIndexDelete),
+                    RoutePermission::IdentityOnly,
                 ),
                 (
                     "/api/v0/acp/policy/test",

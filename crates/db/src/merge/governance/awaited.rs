@@ -46,9 +46,24 @@ pub(crate) enum WaitKey {
         field: String,
         value: Vec<u8>,
     },
+    /// The relationships of one object on a remote ACP provider: a change
+    /// whose signer the provider refused waits for them to change.
+    AcpObject {
+        policy: String,
+        resource: String,
+        object: String,
+    },
 }
 
 impl WaitKey {
+    pub(crate) fn acp_object(policy: &str, resource: &str, object: &str) -> Self {
+        Self::AcpObject {
+            policy: policy.to_owned(),
+            resource: resource.to_owned(),
+            object: object.to_owned(),
+        }
+    }
+
     pub(crate) fn immutable_field(
         collection: &str,
         field: &str,

@@ -231,6 +231,17 @@ pub trait DocFetcher: MaybeSendSync {
         Ok(None)
     }
 
+    /// Where this fetcher's transaction stages the relationship changes it
+    /// owes `provider`, for a provider that cannot join the transaction but
+    /// keeps what is owed to it. The handle is dropped before the statement
+    /// ends: a savepoint needs every view of the transaction gone.
+    async fn transaction_outbox(
+        &self,
+        _provider: std::sync::Arc<dyn acp::DocumentACP>,
+    ) -> Result<Option<acp::TransactionOutbox>> {
+        Ok(None)
+    }
+
     /// Read a DAC policy through the same transaction as its relationships.
     async fn transaction_dac_policy(&self, _id: &str) -> Result<Option<acp::Policy>> {
         Ok(None)

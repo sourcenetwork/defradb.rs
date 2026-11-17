@@ -47,8 +47,10 @@ pub unsafe extern "C" fn defra_document_add(
             let options = query::documents::AddOptions {
                 encrypt_doc: encrypt,
                 encrypted_fields: encrypt_fields,
+                // The call's signer already holds `opts.enable_signing` (DocumentCall::begin).
+                enable_signing: None,
             };
-            let ids = query::documents::add(|m| call.respond(m), &name, &docs, &options)
+            let ids = query::documents::add(|request| call.execute(request), &name, &docs, &options)
                 .await
                 .map_err(|e| e.to_string())?;
             serde_json::to_string(&ids).map_err(|e| e.to_string())

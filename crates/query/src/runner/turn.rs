@@ -18,10 +18,11 @@ use crate::error::{QueryError, TransactionError};
 use crate::executor::{GqlWarning, QueryRequest, QueryResponse, QueryResponseError};
 use crate::mutator::DocMutator;
 use crate::prepared::{PreparedInputMemo, PreparedInputRequest};
-use crate::query_parse::{validate_parsed_operation, ParsedOperation};
+use crate::query_parse::{validate_operation, ParsedOperation};
 use crate::txn::{txn_job, TransactionRegistry, TxnJob, TxnTurn};
 
 use super::executor::{check_nac, convert_variables, permission_for_operation};
+use super::remote_authority::remote_write_authority;
 use super::{DocFetcher, QueryRunner};
 
 /// How one run of a request on a transaction ended.
@@ -281,7 +282,8 @@ where
         };
 
         // Validate that all referenced collections exist before execution.
-        if let Err(error) = validate_parsed_operation(&parsed, txn_provider.as_ref()).await {
+        let graphql_text = request.parsed.is_none();
+        if let Err(error) = validate_operation(&parsed, txn_provider.as_ref(), graphql_text).await {
             return Ok(Turned::Done(parse_error(error.to_string())));
         }
 
@@ -356,10 +358,28 @@ where
             if enforcing {
                 match fetcher.transaction_acp(self.acp.clone()).await {
                     Ok(Some(acp)) => Some(acp),
+                    // A provider that cannot join the transaction is owed
+                    // what the write needs from it, with authority to send it.
                     Ok(None) => {
-                        return Ok(Turned::Done(QueryResponse::error(
-                            "transaction-bound document authorization is unavailable",
-                        )))
+                        let ParsedOperation::Mutation { mutations, .. } = &parsed else {
+                            return Ok(Turned::Done(QueryResponse::error(
+                                "transaction-bound document authorization is unavailable",
+                            )));
+                        };
+                        if let Err(error) = remote_write_authority(
+                            fetcher.as_ref(),
+                            &self.acp,
+                            txn_provider.as_ref(),
+                            &request,
+                            mutations,
+                        )
+                        .await
+                        {
+                            return Ok(Turned::Done(QueryResponse::error(
+                                QueryResponseError::from_query_error(error),
+                            )));
+                        }
+                        bound_acp
                     }
                     Err(error) => return Ok(Turned::Done(QueryResponse::error(error.to_string()))),
                 }
@@ -430,6 +450,7 @@ where
                                 identity,
                                 explain_type,
                                 variables.as_ref(),
+                                &mut warnings,
                             )
                             .await
                     } else {

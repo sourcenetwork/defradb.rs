@@ -28,6 +28,8 @@ pub(crate) struct AcpFilter {
     pub policy_id: String,
     pub resource_name: String,
     pub retry_inputs: Option<crate::prepared::PreparedInputMemo>,
+    /// What the transaction the plan reads in owes an external provider.
+    pub projection: Option<Arc<crate::txn::AcpRegistrationProjection>>,
 }
 
 /// Build the document mapping for a select operation.
@@ -325,7 +327,10 @@ pub(crate) fn build_plan(
     let retry_inputs = acp_filter
         .as_ref()
         .and_then(|filter| filter.retry_inputs.clone());
-    plan = PermissionFilterNode::wrap(
+    let projection = acp_filter
+        .as_ref()
+        .and_then(|filter| filter.projection.clone());
+    plan = PermissionFilterNode::wrap_with_projection_and_inputs(
         plan,
         acp_filter.map(|acf| AcpRead {
             acp: acf.acp,
@@ -335,6 +340,7 @@ pub(crate) fn build_plan(
             resource_name: acf.resource_name,
         }),
         app_read,
+        projection,
         retry_inputs,
     );
 

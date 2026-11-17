@@ -21,7 +21,7 @@ impl Node {
         options: &AddOptions,
     ) -> Result<Vec<String>> {
         let identity = acting_identity(context)?;
-        let run = |mutation| self.run_as_identity(context, identity, QueryRequest::new(mutation));
+        let run = |request| self.run_as_identity(context, identity, request);
         Ok(documents::add(run, collection, docs, options).await?)
     }
 
@@ -54,9 +54,7 @@ impl Node {
         let save = |context: RequestContext| {
             let identity = identity.clone();
             async move {
-                let run = |request| {
-                    self.run_as_identity(&context, identity.clone(), QueryRequest::new(request))
-                };
+                let run = |request| self.run_as_identity(&context, identity.clone(), request);
                 documents::save(run, collection, doc_id, doc, options).await
             }
         };

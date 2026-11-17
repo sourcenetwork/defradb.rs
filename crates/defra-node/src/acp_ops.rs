@@ -30,11 +30,23 @@ pub(crate) trait AcpOps: Send + Sync {
         _actor_context: &RequestContext,
         _relationship: transactional::Relationship<'_>,
         _delete: bool,
-    ) -> Result<bool> {
+    ) -> Result<transactional::RelationshipChange> {
         Err(query::QueryError::execution(
             "transaction-bound relationship delegation is unavailable",
         )
         .into())
+    }
+    /// A relationship change as the authenticated caller, in the transaction
+    /// `context` names when it names one, saying whether it was applied or
+    /// staged.
+    async fn change_dac_actor_relationship(
+        &self,
+        context: &RequestContext,
+        identity: &str,
+        relationship: transactional::Relationship<'_>,
+        delete: bool,
+    ) -> Result<transactional::RelationshipChange> {
+        applied(self, context, identity, relationship, delete).await
     }
 
     #[cfg(feature = "http")]
@@ -76,6 +88,34 @@ pub(crate) trait AcpOps: Send + Sync {
     ) -> Result<Vec<acp::DocumentRelationship>> {
         Err(Error::Acp(acp::Error::UnsupportedRelationshipListing))
     }
+}
+
+/// A relationship change through the calls that answer a boolean, which
+/// apply it before they return.
+async fn applied<A>(
+    ops: &A,
+    context: &RequestContext,
+    identity: &str,
+    relationship: transactional::Relationship<'_>,
+    delete: bool,
+) -> Result<transactional::RelationshipChange>
+where
+    A: AcpOps + ?Sized,
+{
+    let transactional::Relationship {
+        collection,
+        doc_id,
+        relation,
+        target,
+    } = relationship;
+    let existed = if delete {
+        ops.delete_dac_actor_relationship(context, identity, collection, doc_id, relation, target)
+            .await?
+    } else {
+        ops.add_dac_actor_relationship(context, identity, collection, doc_id, relation, target)
+            .await?
+    };
+    Ok(transactional::RelationshipChange::Applied { existed })
 }
 
 pub(crate) struct DbAcpOps<S: storage::corekv::Store + 'static> {
@@ -138,7 +178,8 @@ impl<S: storage::corekv::Store + 'static> DbAcpOps<S> {
                 delete,
                 transactional::NodeAdmin::Refused,
             )
-            .await?;
+            .await?
+            .reported(delete);
         guard.commit().await?;
         Ok(changed)
     }
@@ -153,7 +194,7 @@ impl<S: storage::corekv::Store + 'static> DbAcpOps<S> {
     /// the owner.
     async fn relationship_requestor(
         &self,
-        change: RelationshipChange,
+        change: ChangeKind,
         identity: &str,
         collection: &str,
         required: [&str; 3],
@@ -288,12 +329,12 @@ impl<S: storage::corekv::Store + 'static> DbAcpOps<S> {
 
 /// Whether a relationship change adds or deletes.
 #[derive(Clone, Copy)]
-enum RelationshipChange {
+enum ChangeKind {
     Add,
     Delete,
 }
 
-impl RelationshipChange {
+impl ChangeKind {
     fn verb(self) -> &'static str {
         match self {
             Self::Add => "add",
@@ -392,7 +433,7 @@ impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
         actor_context: &RequestContext,
         relationship: transactional::Relationship<'_>,
         delete: bool,
-    ) -> Result<bool> {
+    ) -> Result<transactional::RelationshipChange> {
         let identity = actor_context.identity().ok_or_else(|| {
             query::QueryError::permission_denied("an authenticated relationship actor is required")
         })?;
@@ -412,6 +453,28 @@ impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
             transactional::NodeAdmin::Admitted,
         )
         .await
+    }
+
+    async fn change_dac_actor_relationship(
+        &self,
+        context: &RequestContext,
+        identity: &str,
+        relationship: transactional::Relationship<'_>,
+        delete: bool,
+    ) -> Result<transactional::RelationshipChange> {
+        if context.txn().is_some() {
+            return self
+                .relationship_in_txn(
+                    context,
+                    context,
+                    identity,
+                    relationship,
+                    delete,
+                    transactional::NodeAdmin::Refused,
+                )
+                .await;
+        }
+        applied(self, context, identity, relationship, delete).await
     }
 
     #[cfg(feature = "http")]
@@ -463,17 +526,18 @@ impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
                     false,
                     transactional::NodeAdmin::Refused,
                 )
-                .await;
+                .await
+                .map(transactional::RelationshipChange::existed_already);
         }
         let (requestor, resolved) = self
             .relationship_requestor(
-                RelationshipChange::Add,
+                ChangeKind::Add,
                 identity,
                 collection,
                 [doc_id, relation, target],
             )
             .await?;
-        let wrap = RelationshipChange::Add.wrap();
+        let wrap = ChangeKind::Add.wrap();
 
         if self.document_acp.supports_transactions() {
             return self
@@ -543,17 +607,18 @@ impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
                     true,
                     transactional::NodeAdmin::Refused,
                 )
-                .await;
+                .await
+                .map(transactional::RelationshipChange::record_found);
         }
         let (requestor, resolved) = self
             .relationship_requestor(
-                RelationshipChange::Delete,
+                ChangeKind::Delete,
                 identity,
                 collection,
                 [doc_id, relation, target],
             )
             .await?;
-        let wrap = RelationshipChange::Delete.wrap();
+        let wrap = ChangeKind::Delete.wrap();
 
         if self.document_acp.supports_transactions() {
             return self

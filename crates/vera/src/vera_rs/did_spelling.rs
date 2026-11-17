@@ -54,6 +54,18 @@ fn respelled(did: &str, compress_secp256k1: bool, compress_p256: bool) -> Cow<'_
     }
 }
 
+/// Every spelling this module knows for the key `did` names, `did` itself
+/// first: a key the node holds may be registered under any of them.
+pub(crate) fn spellings(did: &str) -> Vec<Cow<'_, str>> {
+    let mut all = vec![Cow::Borrowed(did)];
+    for other in [respelled(did, false, false), respelled(did, true, true)] {
+        if !all.contains(&other) {
+            all.push(other);
+        }
+    }
+    all
+}
+
 /// Whether `a` and `b` name one actor, whichever spelling each uses.
 pub(crate) fn same_actor(a: &str, b: &str) -> bool {
     defra(a) == defra(b)
@@ -114,6 +126,21 @@ mod tests {
         assert_eq!(wire(&uncompressed), compressed);
         assert!(matches!(wire(compressed), Cow::Borrowed(_)));
         assert!(same_actor(compressed, &uncompressed));
+    }
+
+    #[test]
+    fn every_spelling_of_a_key_is_listed_once_and_the_given_one_first() {
+        let (compressed, uncompressed) = spellings();
+        assert_eq!(
+            super::spellings(&compressed),
+            [compressed.as_str(), uncompressed.as_str()]
+        );
+        assert_eq!(
+            super::spellings(&uncompressed),
+            [uncompressed.as_str(), compressed.as_str()]
+        );
+        let ed25519 = "did:key:z6MkiTBz1ymuepAQ4HEHYSF1H8quG5GLVVQR3djdX3mDooWp";
+        assert_eq!(super::spellings(ed25519), [ed25519]);
     }
 
     #[test]

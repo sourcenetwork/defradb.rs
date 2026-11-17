@@ -26,5 +26,5 @@ pub use traits::{
     BackupOperations, BlockOperations, CollectionManagementOperations, CollectionOperations,
     DocumentAcpOperations, DumpOperations, EncryptedIndexInfo, EncryptedIndexOperations,
     ImportResult, IndexFieldInfo, IndexInfo, IndexOperations, NacStatus, NodeAcpOperations,
-    NodePermission, ViewOperations,
+    NodePermission, PermissionCheck, ViewOperations,
 };

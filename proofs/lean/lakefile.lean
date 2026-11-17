@@ -49,6 +49,9 @@ lean_lib HttpOwnerRegistration where
 lean_lib SseDelivery where
 
 @[default_target]
+lean_lib ClientSigningCredential where
+
+@[default_target]
 lean_lib ClientSigningAdmission where
 
 @[default_target]
@@ -214,6 +217,9 @@ lean_lib LensListing where
 lean_lib LensId where
 
 @[default_target]
+lean_lib DocStoreTarget where
+
+@[default_target]
 lean_lib JsonSubPathCut where
 
 @[default_target]
@@ -251,6 +257,12 @@ lean_lib VerifiedCreateHandoff where
 
 @[default_target]
 lean_lib VerifiedMutationHandoff where
+
+@[default_target]
+lean_lib VerifiedRemoteAuthority where
+
+@[default_target]
+lean_lib ReplicaGate where
 
 @[default_target]
 lean_lib AdministrativeRelationship where
@@ -296,3 +308,9 @@ lean_lib CatalogPin where
 
 @[default_target]
 lean_lib IndexEqualKeyOrder where
+
+@[default_target]
+lean_lib KmsChunks where
+
+@[default_target]
+lean_lib SigningOverride where

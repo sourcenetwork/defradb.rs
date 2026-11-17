@@ -31,6 +31,15 @@ pub trait DocumentMutationProjector: storage::corekv::MaybeSendSync {
     }
 }
 
+/// What a transaction owes once it has written node access control tuples
+/// (a grant or a revocation in the node's policy, by any writer). The
+/// database installs one per transaction; a transaction that writes no such
+/// tuple never calls it, and pays nothing.
+pub trait NodeAccessWrites: storage::corekv::MaybeSendSync {
+    /// Called on each such write. Returns the commit work to register.
+    fn written(&self) -> OnCommit;
+}
+
 /// One transaction shared by its namespace views.
 ///
 /// Reads and writes take `&self` and go straight to the transaction, which
@@ -50,6 +59,7 @@ pub struct SharedTxn {
     /// The CRDT types of the node whose store the transaction runs on.
     crdts: storage::Crdts,
     projector: Option<Arc<dyn DocumentMutationProjector>>,
+    node_access_writes: Option<Arc<dyn NodeAccessWrites>>,
     /// Whether the scans opened now validate their range at commit.
     scans_validated: AtomicBool,
 }
@@ -150,12 +160,17 @@ impl SharedTxn {
             txn: Some(txn),
             crdts,
             projector: None,
+            node_access_writes: None,
             scans_validated: AtomicBool::new(false),
         })
     }
 
     pub(crate) fn set_document_projector(&mut self, projector: Arc<dyn DocumentMutationProjector>) {
         self.projector = Some(projector);
+    }
+
+    pub(crate) fn set_node_access_writes(&mut self, writes: Arc<dyn NodeAccessWrites>) {
+        self.node_access_writes = Some(writes);
     }
 
     /// The CRDT types of the node whose store the transaction runs on.
@@ -317,6 +332,15 @@ impl NamespaceView {
     pub fn projection_actor(&self) -> Option<&str> {
         self.projection_actor.as_deref()
     }
+    /// This view's transaction wrote a node access control tuple: register
+    /// what its [`NodeAccessWrites`] owes at commit, if it has one.
+    pub fn node_access_written(&self) -> Result<()> {
+        match &self.txn.node_access_writes {
+            Some(writes) => self.txn.queued.on_commit(writes.written()),
+            None => Ok(()),
+        }
+    }
+
     pub fn has_document_projector(&self) -> bool {
         self.txn.projector.is_some()
     }

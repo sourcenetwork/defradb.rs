@@ -1,5 +1,6 @@
 use super::composite::{CompositeMergeContext, CompositeMergeState};
 use super::*;
+use crate::merge::replica::ReplicaStep;
 
 /// Marker byte indicating a document is deleted (matches Go's DeletedObjectMarker).
 const DELETED_MARKER: u8 = 0x01;
@@ -10,6 +11,62 @@ fn build_deleted_key(collection_id: &str, doc_short_id: u64) -> Vec<u8> {
 }
 
 impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
+    /// Record, in the genesis merge's transaction, what the node owes or
+    /// waits for on a replicated document it was planned to register or
+    /// adopt ([`ReplicaStep`]). A remote provider only: a local one has just
+    /// registered the signer above.
+    async fn record_replica(
+        &self,
+        systemstore: &NamespaceView,
+        context: &CompositeMergeContext<'_, '_>,
+        collection: &CollectionVersion,
+    ) -> std::result::Result<(), MergeError> {
+        let (Some(provider), Some(policy)) = (self.db.document_acp(), collection.policy.as_ref())
+        else {
+            return Ok(());
+        };
+        if provider.supports_transactions() {
+            return Ok(());
+        }
+        let acpstore = systemstore.sibling(storage::namespace::Namespace::Acpstore);
+        let recorded = match &context.replica {
+            ReplicaStep::Register {
+                creator,
+                registrant,
+                grants,
+            } => {
+                provider
+                    .stage_replica_unit(
+                        &acpstore,
+                        &acp::ReplicaUnit {
+                            policy_id: &policy.id,
+                            resource: &policy.resource_name,
+                            doc_id: context.doc_id_str,
+                            creator,
+                            registrant,
+                            grants,
+                        },
+                    )
+                    .await
+            }
+            ReplicaStep::Adopt { creator } => {
+                provider
+                    .adopt_replica(
+                        &acpstore,
+                        &policy.id,
+                        &policy.resource_name,
+                        context.doc_id_str,
+                        creator,
+                    )
+                    .await
+            }
+            ReplicaStep::Gate | ReplicaStep::AfterGenesis => Ok(()),
+        };
+        recorded.map_err(|error| {
+            MergeError::MergeFailed(format!("replicated document registration: {error}"))
+        })
+    }
+
     pub(crate) async fn persist_merged_document(
         &self,
         datastore: &mut NamespaceView,
@@ -43,7 +100,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 )
                 .await?
             {
-                return Ok(Some(outcome));
+                return Ok(Some(outcome.into_outcome()));
             }
         }
         state.is_branchable = collection.schema().is_branchable;
@@ -174,6 +231,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             .map_err(|error| MergeError::MergeFailed(error.to_string()))?;
                     }
                 }
+                self.record_replica(systemstore, context, collection.schema())
+                    .await?;
             }
 
             crate::event::arrivals::record(

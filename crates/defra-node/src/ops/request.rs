@@ -141,8 +141,9 @@ fn request_in(
     identity: Option<Did>,
     request: QueryRequest,
 ) -> QueryRequest {
+    let signing_override = request.context.signing_override();
     request
-        .with_context(context.clone())
+        .with_context(context.clone().with_signing_override(signing_override))
         .with_identity(identity)
 }
 

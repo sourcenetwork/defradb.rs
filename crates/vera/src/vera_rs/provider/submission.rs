@@ -2,8 +2,9 @@ use crate::vera_rs::client::ClientError;
 use alloy_primitives::Bytes;
 use regolith::sync::OwnedMutexGuard;
 use vera_domain::{ExecutionReceipt, NativeTx};
+use vera_modules::acp::types::PolicyCmd;
 
-use super::{NativeWorker, ProviderError, VeraRsProvider, ACP_ADDRESS};
+use super::{policy_cmd, NativeWorker, ProviderError, VeraRsProvider, ACP_ADDRESS};
 
 pub(super) struct ConfirmedSubmission {
     pub receipt: ExecutionReceipt,
@@ -34,6 +35,28 @@ impl VeraRsProvider {
             tracing::info!(submission = %confirmed.receipt.tx_hash, success = confirmed.receipt.success(), "Recovered native submission");
         }
         Ok(())
+    }
+
+    /// Submit `command` under `bearer_token`.
+    pub(super) async fn send_command(
+        &self,
+        bearer_token: &str,
+        command: &crate::PolicyCommand<'_>,
+    ) -> Result<(), ProviderError> {
+        let typed = policy_cmd::typed(command)?;
+        self.send_policy_cmd(bearer_token, command.policy_id, &typed)
+            .await
+    }
+
+    /// Submit `command` on `policy_id` under `bearer_token`.
+    pub(super) async fn send_policy_cmd(
+        &self,
+        bearer_token: &str,
+        policy_id: &str,
+        command: &PolicyCmd,
+    ) -> Result<(), ProviderError> {
+        let calldata = policy_cmd::calldata(bearer_token, policy_id, command)?;
+        self.send_tx(calldata).await.map(drop)
     }
 
     pub(super) async fn send_tx(&self, data: Bytes) -> Result<ExecutionReceipt, ProviderError> {

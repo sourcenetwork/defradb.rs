@@ -110,19 +110,33 @@ where
                 .map_err(Error::EdgeRuntime)?
                 .map_err(Error::VeraProvider)?
             };
-            let provider = Arc::new(
-                vera::VeraRsProvider::new(
-                    config.rpc_address.clone(),
-                    &config.consensus_key,
-                    &config.actor_key,
-                    worker,
-                    &config.tuning,
-                    event_bus,
-                    &edge,
-                )
-                .await
-                .map_err(Error::VeraProvider)?,
-            );
+            let provider = match &config.actor {
+                crate::VeraRsActor::Secp256k1Key(key) => {
+                    vera::VeraRsProvider::new(
+                        config.rpc_address.clone(),
+                        &config.consensus_key,
+                        key,
+                        worker,
+                        &config.tuning,
+                        event_bus,
+                        &edge,
+                    )
+                    .await
+                }
+                crate::VeraRsActor::Signer(signer) => {
+                    vera::VeraRsProvider::new_with_signer(
+                        config.rpc_address.clone(),
+                        &config.consensus_key,
+                        Arc::clone(signer),
+                        worker,
+                        &config.tuning,
+                        event_bus,
+                        &edge,
+                    )
+                    .await
+                }
+            };
+            let provider = Arc::new(provider.map_err(Error::VeraProvider)?);
             Ok(verified_acp_setup(
                 provider,
                 &edge,
@@ -203,8 +217,9 @@ where
 /// Gate a Vera provider with the registrations creates still owe it, and
 /// settle in the background any a previous run left owed (a crash, or a
 /// provider call that failed). Until settled, such a document is readable only
-/// by its creator. The redrive's storage runs on the pool it is started on;
-/// the provider sends its own calls to the network edge.
+/// by its creator. The relationship changes a previous run left owed are
+/// submitted after them, once. The redrive's storage runs on the pool it is
+/// started on; the provider sends its own calls to the network edge.
 #[cfg(feature = "vera")]
 fn gate_external_acp<S>(
     provider: Arc<dyn acp::DocumentACP>,
@@ -227,6 +242,23 @@ where
                 Err(error) => tracing::warn!(
                     %error,
                     "Could not read owed ACP registrations; their documents stay readable only by their creators"
+                ),
+            }
+            match redrive.settle_owed_changes_once(acp::OwedScope::All).await {
+                Ok(settlement) if settlement != acp::OwedSettlement::default() => tracing::info!(
+                    settled = settlement.settled,
+                    refused = settlement.refused,
+                    discarded = settlement.discarded,
+                    failed = settlement.failed,
+                    awaiting_authority = settlement.awaiting_authority,
+                    left = settlement.left,
+                    provider_unavailable = settlement.provider_unavailable,
+                    "Submitted ACP relationship changes owed from a previous run"
+                ),
+                Ok(_) => {}
+                Err(error) => tracing::warn!(
+                    %error,
+                    "Could not read owed ACP relationship changes; they stay owed"
                 ),
             }
         })
@@ -303,7 +335,7 @@ mod tests {
                     rpc_address: "http://127.0.0.1:1".into(),
                     consensus_key: "not-a-key".into(),
                     deployment_id: 9001,
-                    actor_key: vec![7; 32],
+                    actor: crate::VeraRsActor::Secp256k1Key(vec![7; 32]),
                     worker_dir: worker_dir.clone(),
                     keyring,
                     tuning: vera::AcpTuning::default(),

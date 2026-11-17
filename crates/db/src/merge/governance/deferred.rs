@@ -174,6 +174,22 @@ impl DeferredMerges {
         }
     }
 
+    /// Release every composite parked under up to `objects` ACP objects, as
+    /// a change of their relationships would: the bounded sweep's entry for
+    /// refusals nothing on this node releases, such as a grant another node
+    /// made. Returns how many objects were released.
+    pub(crate) fn release_parked(&self, objects: usize) -> usize {
+        let keys: Vec<WaitKey> = self
+            .waiters
+            .keys()
+            .filter(|key| matches!(key, WaitKey::AcpObject { .. }))
+            .take(objects)
+            .collect();
+        let released = keys.len();
+        self.release(keys);
+        released
+    }
+
     pub(crate) fn take_ready(&self) -> Option<MergeBlock> {
         let block = self.ready.pop()?;
         self.queued.remove(&block.cid);
@@ -292,6 +308,28 @@ mod tests {
             assert!(seen.insert(block.cid), "{} was queued twice", block.cid);
         }
         assert_eq!(index.held.load(Ordering::Acquire), index.len());
+    }
+
+    /// The sweep releases what is parked under ACP objects, and nothing
+    /// that awaits a composite.
+    #[test]
+    fn the_sweep_releases_parked_composites_only() {
+        let index = DeferredMerges::default();
+        index.defer(block(1), vec![WaitKey::acp_object("p", "r", "doc-1")]);
+        index.defer(block(2), vec![WaitKey::acp_object("p", "r", "doc-2")]);
+        index.defer(block(3), vec![key(3)]);
+        assert_eq!(index.release_parked(1), 1);
+        assert_eq!(index.release_parked(8), 1);
+        assert_eq!(index.release_parked(8), 0);
+        let mut ready = Vec::new();
+        while let Some(block) = index.take_ready() {
+            ready.push(block.cid);
+        }
+        ready.sort();
+        let mut expected = vec![cid(1), cid(2)];
+        expected.sort();
+        assert_eq!(ready, expected);
+        assert_eq!(index.len(), 1);
     }
 
     /// A composite that merged while its own entry was being filed would

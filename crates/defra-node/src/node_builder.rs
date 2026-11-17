@@ -69,6 +69,7 @@ pub struct NodeBuilder {
     crdts: Vec<crdt::Registration>,
     txn_ownership: db::TxnOwnership,
     document_projector: Option<Arc<dyn db::DocumentMutationProjector>>,
+    replica_registration: Option<db::merge::ReplicaRegistration>,
     /// How long an idle explicit transaction lives, and how often the sweep
     /// looks; when set, it takes precedence over an HTTP config's setting.
     #[cfg(not(target_arch = "wasm32"))]
@@ -112,6 +113,20 @@ impl NodeBuilder {
         projector: Arc<dyn db::DocumentMutationProjector>,
     ) -> Self {
         self.document_projector = Some(projector);
+        self
+    }
+
+    /// Register replicated documents of the listed collections with the
+    /// node's remote ACP provider (Vera): a document whose creator is not one
+    /// of the deployment's own actors is registered by this node as its
+    /// provider's actor, with the grants `registration` asks for its creator,
+    /// before its genesis merges. Off by default; a local provider and an
+    /// unlisted collection are not affected.
+    pub fn with_replica_registration(
+        mut self,
+        registration: db::merge::ReplicaRegistration,
+    ) -> Self {
+        self.replica_registration = Some(registration);
         self
     }
 
@@ -571,6 +586,7 @@ impl NodeBuilder {
             embedding_api_key: self.embedding_api_key.take(),
             txn_ownership: self.txn_ownership,
             document_projector: self.document_projector.take(),
+            replica_registration: self.replica_registration.take(),
             #[cfg(not(target_arch = "wasm32"))]
             transaction_cleanup,
             #[cfg(feature = "http")]
@@ -592,6 +608,8 @@ impl NodeBuilder {
         let query_limits = config.query_limits;
         #[cfg(feature = "http")]
         let identity_only = config.identity_only;
+        #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
+        let node_acp_enabled = config.node_acp_enabled;
         query_limits.check_fragment_nesting()?;
         let workers = self.workers.take();
         let node = assemble(|pool| self.open_store(pool, crdts), config, workers, extras).await?;
@@ -632,6 +650,34 @@ impl NodeBuilder {
             let server = server.with_index_arc(defra_http::index_adapter::IndexAdapter::new_arc(
                 Arc::clone(node.database()),
             ));
+            #[cfg(not(target_arch = "wasm32"))]
+            let server = match http_cfg.collection_management {
+                true => server.with_collection_mgmt_arc(
+                    defra_http::collection_mgmt_adapter::CollectionManagementAdapter::new_arc(
+                        Arc::clone(node.database()),
+                    ),
+                ),
+                false => server,
+            };
+            // With node ACP configured, the routes that check permissions at
+            // the edge (events, P2P, `/node/*`) check them, as `defradb
+            // start` does. Configured covers a store a previous run enabled
+            // node ACP in: the adapter then follows its status, disabled and
+            // re-enabled included. A node never configured gets no adapter,
+            // so `/acp/node/enable` cannot hand an open node to its first
+            // caller.
+            #[cfg(not(target_arch = "wasm32"))]
+            let nac_configured = node_acp_enabled
+                || db::NacManagerApi::status(&**node.nac_manager()).await
+                    != acp::nac::NacStatus::NotConfigured;
+            #[cfg(not(target_arch = "wasm32"))]
+            let server = match nac_configured {
+                true => server.with_nac_arc(Arc::new(
+                    defra_http::nac_adapter::NacAdapter::new(Arc::clone(node.nac_manager()))
+                        .placed_on(node.pool.as_ref()),
+                )),
+                false => server,
+            };
 
             // A local document ACP is the node's own store: its routes run on
             // the pool, as the node's own calls do.
@@ -655,6 +701,10 @@ impl NodeBuilder {
                 server
             };
 
+            let server = match http_cfg.authenticated_routes {
+                Some(routes) => server.with_authenticated_routes(routes),
+                None => server,
+            };
             let server = match http_cfg.extra_routes {
                 Some(extra) => server.with_extra_routes(extra),
                 None => server,

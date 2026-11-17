@@ -15,7 +15,7 @@ use p2p::transport::P2PTransport;
 use regolith::sync::{Atom, Event};
 
 use crate::merge::broadcast_mutator::broadcast::{
-    broadcast_with_retry_with_creator, log_broadcast_failure, spawn_gossip_or_report,
+    broadcast_with_creator, log_broadcast_failure, spawn_gossip_or_report,
 };
 
 /// `TxnBroadcaster` that fans committed transactional writes out to peers via
@@ -219,7 +219,7 @@ async fn broadcast<B, T>(
                 encryption_cids: vec![],
             };
             log_broadcast_failure(
-                &broadcast_with_retry_with_creator(
+                &broadcast_with_creator(
                     &gossip,
                     bus.as_ref(),
                     &doc_block_result,
@@ -239,7 +239,7 @@ async fn broadcast<B, T>(
                     encryption_cids: vec![],
                 };
                 log_broadcast_failure(
-                    &broadcast_with_retry_with_creator(
+                    &broadcast_with_creator(
                         &gossip,
                         bus.as_ref(),
                         &col_block_result,

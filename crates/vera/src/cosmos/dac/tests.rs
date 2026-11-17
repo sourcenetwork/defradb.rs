@@ -8,6 +8,7 @@ use super::*;
 mod cache_mutations;
 #[path = "../../../tests/unit/access_cache_race.rs"]
 mod cache_race;
+mod owed;
 
 /// Which relationship-emitting provider method a routing test drove, plus
 /// the structured-subject codec tuple for the EntitySet path. Each field
@@ -29,6 +30,8 @@ struct MockProvider {
     delete_relationship_called: AtomicBool,
     set_subject_call: AtomOption<(u8, String, String, String)>,
     delete_subject_call: AtomOption<(u8, String, String, String)>,
+    /// The token the last structured-subject command was sent under.
+    subject_token: AtomOption<String>,
 }
 
 impl MockProvider {
@@ -53,6 +56,7 @@ impl MockProvider {
             delete_relationship_called: AtomicBool::new(false),
             set_subject_call: AtomOption::none(),
             delete_subject_call: AtomOption::none(),
+            subject_token: AtomOption::none(),
         }
     }
 
@@ -87,8 +91,8 @@ impl VeraProvider for MockProvider {
         "0x0".to_string()
     }
 
-    async fn create_bearer_token(&self, _did: &str) -> std::result::Result<String, ProviderError> {
-        Ok("mock.bearer.token".to_string())
+    async fn create_bearer_token(&self, did: &str) -> std::result::Result<String, ProviderError> {
+        Ok(format!("mock.bearer.token.{did}"))
     }
 
     fn self_did(&self) -> Option<String> {
@@ -153,8 +157,9 @@ impl VeraProvider for MockProvider {
         Ok(true)
     }
 
-    async fn set_relationship_subject(
+    async fn set_relationship_subject_as(
         &self,
+        bearer_token: &str,
         _policy_id: &str,
         _resource: &str,
         _object_id: &str,
@@ -164,6 +169,7 @@ impl VeraProvider for MockProvider {
         subject_object_id: &str,
         subject_relation: &str,
     ) -> std::result::Result<bool, ProviderError> {
+        self.subject_token.store_some(bearer_token.to_string());
         self.set_subject_call.store_some((
             kind,
             subject_resource.to_string(),
@@ -173,8 +179,9 @@ impl VeraProvider for MockProvider {
         Ok(true)
     }
 
-    async fn delete_relationship_subject(
+    async fn delete_relationship_subject_as(
         &self,
+        bearer_token: &str,
         _policy_id: &str,
         _resource: &str,
         _object_id: &str,
@@ -184,6 +191,7 @@ impl VeraProvider for MockProvider {
         subject_object_id: &str,
         subject_relation: &str,
     ) -> std::result::Result<bool, ProviderError> {
+        self.subject_token.store_some(bearer_token.to_string());
         self.delete_subject_call.store_some((
             kind,
             subject_resource.to_string(),
@@ -428,7 +436,7 @@ async fn add_relationship_routes_object_edge_to_subject_kind_2() {
             &[],
         )
         .await
-        .expect("object edge should route to set_relationship_subject");
+        .expect("object edge should route to set_relationship_subject_as");
     assert!(result);
 
     assert!(
@@ -457,7 +465,12 @@ async fn add_relationship_routes_userset_to_subject_kind_3() {
         &[],
     )
     .await
-    .expect("userset should route to set_relationship_subject");
+    .expect("userset should route to set_relationship_subject_as");
+    assert_eq!(
+        provider.subject_token.load().map(|g| (*g).clone()),
+        Some(format!("mock.bearer.token.{}", requestor())),
+        "the command carries the requestor's token"
+    );
 
     assert_eq!(
         provider.set_subject_call.load().map(|g| (*g).clone()),
@@ -486,7 +499,12 @@ async fn delete_relationship_routes_object_edge_to_subject_kind_2() {
         &[],
     )
     .await
-    .expect("object edge delete should route to delete_relationship_subject");
+    .expect("object edge delete should route to delete_relationship_subject_as");
+    assert_eq!(
+        provider.subject_token.load().map(|g| (*g).clone()),
+        Some(format!("mock.bearer.token.{}", requestor())),
+        "the command carries the requestor's token"
+    );
 
     assert!(!provider.delete_relationship_called.load(Ordering::Relaxed));
     assert_eq!(
