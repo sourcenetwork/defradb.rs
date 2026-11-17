@@ -319,7 +319,7 @@ fn a_verified_update_is_refused_when_the_chain_cannot_be_reached() {
         let on = Deployed {
             node,
             http,
-            rpc,
+            rpc: Some(rpc),
             policy,
             audience,
             _directory: home,

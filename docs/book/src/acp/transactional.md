@@ -282,7 +282,9 @@ Anything else is refused before the statement writes a row or an owed record, wi
 error code `WRITE_AUTHORITY_UNAVAILABLE`, and the node discards the transaction: no
 credential and no key, a delegation signed by somebody else, made for another node or
 expired, a plain delegation presented as request-bound, a request-bound one presented as
-plain, and a request-bound one that names another document or another command. An update
+plain, and a request-bound one that names another document, another command or, where
+the provider knows the deployment's genesis identity (it is in the node's delegation
+audience, [Vera](vera.md)), another genesis identity. An update
 or a delete sends the provider no command, so a request-bound delegation has nothing to
 name there and is refused, even where the node holds the key.
 

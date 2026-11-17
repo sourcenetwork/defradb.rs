@@ -333,7 +333,8 @@ pub trait VeraProvider: MaybeSendSync {
     }
 
     /// What a caller's own delegation must name for this provider to act
-    /// under it; `None` when the provider takes none.
+    /// under it, with the deployment's genesis identity when the provider
+    /// knows it; `None` when the provider takes none.
     fn delegation_audience(&self) -> Option<acp::DelegationAudience> {
         None
     }
@@ -351,9 +352,10 @@ pub trait VeraProvider: MaybeSendSync {
 
     /// The DID that signed `token`, when `token` is a delegation bound to
     /// one request and this provider may send `command` under it now: signed
-    /// by its issuer, current, naming this provider's worker and deployment,
+    /// by its issuer, current, naming this provider's worker and deployment
+    /// and, when the provider knows it, the deployment's genesis identity,
     /// and bound to exactly `command`. An error when it is bound to another
-    /// command. `None` when `token` is bound to no request, or this provider
+    /// command or names another genesis identity. `None` when `token` is bound to no request, or this provider
     /// takes no such delegation: [`Self::caller_of_delegation`] then says
     /// who signed it.
     fn caller_of_request_delegation(

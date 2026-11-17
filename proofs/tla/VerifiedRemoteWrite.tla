@@ -131,6 +131,7 @@ VARIABLES
   grantNames,  \* the command that credential names, when it is request-bound
   bySigner,    \* TRUE when the credentials were signed by the User
   forNode,     \* TRUE when the credentials name this Node and its deployment
+               \* (and, for a request-bound one, its genesis identity when known)
   current,     \* TRUE while the credentials have not expired
   phase,       \* "ready", "staged", "refused" or "committed"
   rows,        \* TRUE once the document row is written in the transaction

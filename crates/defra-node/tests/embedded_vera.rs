@@ -504,7 +504,7 @@ fn a_caller_that_keeps_its_key_writes_through_its_own_delegation() {
             &caller,
             &acp::DelegationAudience {
                 worker: caller.did().to_owned(),
-                deployment: audience.deployment,
+                ..audience.clone()
             },
             lifetime,
         )

@@ -158,6 +158,12 @@ pub enum BearerError {
 
     #[error("a delegation bound to one request lasts between 1 and 600 seconds")]
     RequestLifetime,
+
+    #[error("the node does not report its deployment's genesis identity")]
+    NoGenesisIdentity,
+
+    #[error("the command has no digest: {0}")]
+    Command(String),
 }
 
 #[cfg(test)]
@@ -364,6 +370,8 @@ pub(super) enum CallerDelegationError {
     Clock,
     #[error("the delegation is bound to another request")]
     OtherRequest,
+    #[error("the delegation names another deployment's genesis identity")]
+    OtherGenesis,
     #[error("the command the delegation is presented for has no digest: {0}")]
     Command(String),
 }
@@ -379,6 +387,7 @@ mod caller_tests {
         acp::DelegationAudience {
             worker: WORKER.into(),
             deployment,
+            genesis_id: None,
         }
     }
 
