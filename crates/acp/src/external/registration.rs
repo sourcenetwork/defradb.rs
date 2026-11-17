@@ -81,8 +81,7 @@ where
 
     /// The provider serving a request that presents `token` for `actor`,
     /// as a delegation bound to one request when `request_bound`, and
-    /// nothing else: naming the presenter keeps a token the process holds
-    /// for that DID out of reach.
+    /// nothing else.
     pub(super) fn presenting(
         &self,
         actor: &Did,
@@ -110,9 +109,8 @@ where
     /// request this gate serves itself carries for the creator comes first,
     /// when it admits the registration: the commit's own submission is sent
     /// as its request was. Then what the record holds, then `also`. A
-    /// request that carries no bearer for the creator lends nothing: asked
-    /// all the same, a provider would fall back on the token the process
-    /// holds for that DID. With none, the refusal of what the record holds.
+    /// request that carries no bearer for the creator lends nothing. With
+    /// none, the refusal of what the record holds.
     fn registrar(
         &self,
         owed: &PendingRegistration,
@@ -134,14 +132,13 @@ where
         self.recorded_registrar(owed, also)
     }
 
-    /// Whether the request this gate serves itself carries a bearer for
-    /// `actor`, under either spelling: one that is the request's own, and
-    /// not what the process holds for that DID.
+    /// Whether the request this gate serves carries a bearer for `actor`,
+    /// under either spelling.
     pub(super) fn carries_bearer_for(&self, actor: &Did) -> bool {
         self.serving.as_ref().is_some_and(|serving| {
             let canonical = self.provider.canonical_actor(actor);
-            serving.carried_bearer_for(actor.as_str()).is_some()
-                || serving.carried_bearer_for(canonical.as_str()).is_some()
+            serving.bearer_token_for(actor.as_str()).is_some()
+                || serving.bearer_token_for(canonical.as_str()).is_some()
         })
     }
 

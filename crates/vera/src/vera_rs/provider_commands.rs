@@ -274,7 +274,10 @@ mod request_bearer_tests {
         defra_core::signing::clear_request_bearer_token(did);
 
         assert_eq!(own.as_deref(), Some("request"));
-        assert_eq!(unscoped.as_deref(), Some("stored"));
+        assert_eq!(
+            unscoped, None,
+            "a request that carries no bearer presents none"
+        );
     }
 
     #[test]

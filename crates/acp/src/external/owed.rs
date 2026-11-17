@@ -423,10 +423,9 @@ where
     /// registration that settles lets the changes behind it go, each with
     /// its own authority. An entry of another actor is not found.
     pub async fn reauthorize(&self, actor: &Did, entry: &OwedRef) -> Result<OwedOutcome> {
-        // The credential is the one the request itself carries for the
-        // actor. A request that carries none hands in nothing but a key the
-        // node may hold: it is not asked as it is, or the provider would
-        // take the token the process holds for that DID.
+        // The credential is the one the request carries for the actor. A
+        // gate that serves no request, or a request that carries none for
+        // the actor, hands in nothing but a key the node may hold.
         let asked = if self.carries_bearer_for(actor) {
             std::sync::Arc::clone(&self.provider)
         } else {

@@ -146,8 +146,7 @@ pub(crate) async fn load_update_heads(
 /// request `context` serves is gone: the node's key for the creator, or the
 /// delegation the request itself carries, asked about this registration as
 /// a verified create is asked when it is admitted. With neither, the record
-/// says the registration waits for authority. The token a process holds for
-/// the creator is neither.
+/// says the registration waits for authority.
 pub(crate) async fn register_created_doc(
     acp: Option<&Arc<dyn acp::DocumentACP>>,
     context: &defra_core::RequestContext,
@@ -210,19 +209,10 @@ pub(crate) async fn register_created_doc(
                 .await
                 .map_err(|e| query::error::QueryError::execution(e.to_string()))?,
             None => {
-                // What is recorded is used when no request is there: only a
-                // bearer this request itself carries for the creator counts,
-                // or a key the node holds. A request that carries none is
-                // asked as one that presents none, so the token the process
-                // holds for the DID is never written into the record.
-                let canonical = provider.canonical_actor(&creator);
-                let carries = context.carried_bearer_for(creator.as_str()).is_some()
-                    || context.carried_bearer_for(canonical.as_str()).is_some();
-                let asked = match carries {
-                    true => context.clone(),
-                    false => context.clone().with_bearer(Some(creator.to_string()), None),
-                };
-                let authority = acp::bound_to_request(provider, &asked).command_authority(
+                // What is recorded is used when no request is there: a
+                // bearer this request carries for the creator, or a key the
+                // node holds. A request that carries none records none.
+                let authority = acp::bound_to_request(provider, context).command_authority(
                     &creator,
                     acp::ProviderCommand::RegisterObject {
                         policy_id: &policy.id,
@@ -238,7 +228,7 @@ pub(crate) async fn register_created_doc(
                             &policy.resource_name,
                             doc_id_str,
                         )
-                        .with_authority(authority, asked.bearer_names_request())
+                        .with_authority(authority, context.bearer_names_request())
                         .in_transaction(context.txn().map(|txn| txn.0)),
                     )
                     .await

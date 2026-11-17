@@ -653,50 +653,52 @@ fn a_wait_sends_a_parked_registration_that_its_changes_delegation_serves() {
 }
 
 #[test]
-fn a_create_records_no_token_the_process_holds_for_its_creator() {
+fn a_request_that_carries_no_bearer_registers_nothing_under_a_token_the_process_holds() {
     workers::block_on(async {
         let _serial = super::tests::SIGNING_STORE_GUARD.lock().await;
         let on = Verified::new().await;
-        let create = |name: &str| {
-            query::QueryRequest::new(format!(
-                "mutation {{ add_Record(input: {{name: \"{name}\"}}) {{ _docID }} }}"
-            ))
-            .with_identity(Some(Did::new(&on.user).unwrap()))
-        };
-        let created = |response: query::QueryResponse| {
-            assert!(!response.has_errors(), "{:?}", response.errors);
-            response.data.unwrap()["add_Record"][0]["_docID"]
-                .as_str()
-                .unwrap()
-                .to_owned()
-        };
-        // An embedder binds a delegation to the user for requests that carry
-        // no bearer of their own.
+        // An embedder binds a delegation to the user in the process. No
+        // request presents it.
         defra_core::signing::set_request_bearer_token(&on.user, format!("delegation:{}", on.user));
 
-        // Such a request's own submission at its commit presents it, as its
-        // other calls to the provider do.
-        let sent = created(on.node.execute_request(create("sent")).await);
-        assert_eq!(
-            on.remote.owners.get(&sent).as_deref(),
-            Some(on.user.as_str())
-        );
-
-        // When that submission fails, nothing of the process token is left
-        // in the record: the registration waits for a credential, and no
-        // retry sends it.
-        on.remote.down.store(true, Ordering::SeqCst);
-        let owed_doc = created(on.node.execute_request(create("owed")).await);
-        on.remote.down.store(false, Ordering::SeqCst);
+        // A create that carries no bearer commits, and its registration is
+        // neither sent at the commit nor recorded with any authority: it
+        // waits for a credential and is reported.
+        let created = on
+            .node
+            .execute_request(
+                query::QueryRequest::new(
+                    "mutation { add_Record(input: {name: \"owed\"}) { _docID } }",
+                )
+                .with_identity(Some(Did::new(&on.user).unwrap())),
+            )
+            .await;
+        assert!(!created.has_errors(), "{:?}", created.errors);
+        let doc = created.data.unwrap()["add_Record"][0]["_docID"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert!(on.remote.owners.get(&doc).is_none());
         let owed = on.report().await;
         assert_eq!(owed.len(), 1, "{owed:?}");
         assert_eq!(owed[0].authority, None, "{owed:?}");
         assert_eq!(owed[0].state, OwedState::AwaitingAuthority);
-        let unbound = on.node.document_acp();
-        let _ = unbound
-            .redrive_registration(&on.policy, "rows", &owed_doc)
+        assert_eq!(on.records().await, ["owed"]);
+
+        // No retry sends it either, and a relationship call that carries no
+        // bearer is refused the same way.
+        let _ = on
+            .node
+            .document_acp()
+            .redrive_registration(&on.policy, "rows", &doc)
             .await;
-        assert!(on.remote.owners.get(&owed_doc).is_none());
+        let granted = on
+            .node
+            .add_dac_actor_relationship(&on.user, "Record", &doc, "reader", READER)
+            .await;
+        assert!(granted.is_err(), "{granted:?}");
+        assert!(on.remote.owners.get(&doc).is_none());
+        assert!(on.remote.take_writes().is_empty());
         defra_core::signing::clear_request_bearer_token(&on.user);
 
         // A credential handed in for it settles it.
@@ -706,6 +708,10 @@ fn a_create_records_no_token_the_process_holds_for_its_creator() {
                 .await
                 .unwrap(),
             OwedOutcome::Settled
+        );
+        assert_eq!(
+            on.remote.owners.get(&doc).as_deref(),
+            Some(on.user.as_str())
         );
         on.node.shutdown().await.unwrap();
     })

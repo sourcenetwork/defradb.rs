@@ -212,9 +212,9 @@ pub trait DocumentACP: MaybeSendSync {
         None
     }
 
-    /// The bearer token `did` presents to this provider: the one of the
-    /// request it is bound to, or of [`RequestContext::ambient`] when it is
-    /// bound to none.
+    /// The bearer token `did` presents to this provider: the one the
+    /// request it is bound to carries for `did`, and none when it is bound
+    /// to no request.
     fn bearer_token_for(&self, did: &str) -> Option<String> {
         RequestContext::ambient().bearer_token_for(did)
     }

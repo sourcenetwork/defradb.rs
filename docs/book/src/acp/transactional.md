@@ -427,28 +427,30 @@ returns a recorded credential.
 
   Every submission of it, at the commit, at start, before a change on its document, or
   through one of the calls above, sends it one of three ways, each checked again: with
-  the bearer the request being served presents for the creator, when that admits the
-  registration (the commit's own submission goes as its request did); else with what
+  the bearer the request being served carries for the creator, when that admits the
+  registration (the commit's own submission goes as its request did, and a request
+  that carries none sends none); else with what
   the record holds; else with the first delegation, in queue order, recorded with a
   change the same creator still owes on the document that admits it. The report's
   `sendable` and a pass decide by the same selection, so what is reported as sendable
   is what a pass sends. These are the three ways `INV_PresentedAuthority` allows.
 
-  **The token a process holds for a DID**
-  (`defra_core::signing::set_request_bearer_token`) is what a request that carries no
-  bearer of its own presents in its calls to the provider. For a registration that
-  means exactly this:
-  - the submission made by the commit of such a request presents it, as that request's
-    other calls do, so a create by an embedder that binds a process token still
-    registers at its commit when the provider answers, as before;
-  - it is never written into the record. When that submission fails, the registration
-    is recorded with no authority and reported as `awaiting_authority`, and takes a
-    credential through `reauthorize_owed_acp_as`;
-  - no later submission reads it: not the pass at start, not the settlement of an owed
-    change, not a wait, and not another request that touches the document, whoever
-    makes it and whether or not it carries a bearer of its own for somebody else. A
-    later request lends a registration only a bearer it itself carries for the creator;
-  - it is no fresh credential: one is handed in by a request that carries it.
+  **Nothing a process keeps beside its requests is read.** A registration, an
+  unregistration and every other command sent to the provider for an actor go under a
+  bearer the request carries for that actor, or a key the node holds
+  (`RequestContext::bearer_token_for` returns the carried bearer and nothing else). A
+  token bound to a DID in the process (`defra_core::signing::set_request_bearer_token`)
+  is presented by no request:
+  - a create whose request carries no bearer for its creator, by a creator whose key
+    the node does not hold, commits, sends nothing at its commit and records no
+    authority. Its registration is `awaiting_authority` in the report and takes a
+    credential through `reauthorize_owed_acp_as`, or settles when a later request
+    carries the creator's bearer;
+  - no later submission finds one either: not the pass at start, not the settlement of
+    an owed change, not a wait, and not another request that touches the document;
+  - a relationship change, an access decision and the unregistration of a deleted
+    document made by a request that carries no bearer are refused by the provider for
+    want of a credential, where they used to go under the process token.
 
   **A carried delegation is written to disk.** A create on an external provider by a
   caller whose key the node does not hold writes the delegation its request carried,

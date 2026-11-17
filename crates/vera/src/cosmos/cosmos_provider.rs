@@ -450,18 +450,15 @@ mod tests {
     fn resolve_cosmos_bearer_token_uses_request_token_for_remote_identity() {
         let did = "did:key:zRemoteCosmosToken";
         let token = "delegated.jwt.token".to_string();
-        defra_core::signing::clear_request_bearer_token(did);
-
         store_remote_secp256r1_identity(did);
-        defra_core::signing::set_request_bearer_token(did, token.clone());
+        let request = defra_core::RequestContext::default()
+            .with_bearer(Some(did.to_string()), Some(token.clone()));
 
-        let resolved = resolve_cosmos_bearer_token(did, "cosmos1delegated")
+        let resolved = resolve_cosmos_bearer_token_as(&request, did, "cosmos1delegated")
             .expect("resolution should succeed")
             .expect("token should resolve");
         assert_eq!(resolved, token);
         assert!(!holds_local_key(did), "a remote identity's key is not held");
-
-        defra_core::signing::clear_request_bearer_token(did);
     }
 
     #[test]
