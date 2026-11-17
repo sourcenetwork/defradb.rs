@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-10cbb045.js";
+            window.path_to_searchindex_js = "searchindex-47524beb.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-8198d451.js"></script>
@@ -2099,8 +2099,8 @@ authority to send it as the signer</strong>:</p>
 ordinary create records it;</li>
 <li>a relationship change made in the same transaction is staged as above, and is sent
 after the registration;</li>
-<li>an <strong>update</strong> or a <strong>delete</strong> owes nothing. The provider decides the signer’s
-permission at the network edge, as for any write on an external provider.</li>
+<li>an <strong>update</strong> or a <strong>delete</strong> owes nothing. It is admitted on the signer’s
+permission, as the next part states.</li>
 </ul>
 <p>The embedder hands the node what lets it act for the signer, as an argument beside the
 write (<code>SignerCredential</code>), and the node carries it for that signer only. Nothing is read
@@ -2108,12 +2108,12 @@ from process-wide state:</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Credential</th><th>The write is staged when</th></tr>
+<tr><th>Credential</th><th>A create is staged when</th><th>An update or a delete is staged when</th></tr>
 </thead>
 <tbody>
-<tr><td><code>None</code></td><td>the node holds a key for the signer</td></tr>
-<tr><td><code>Delegation(token)</code></td><td>the provider takes <code>token</code> now as the signer’s delegation to this node for its policy commands</td></tr>
-<tr><td><code>RequestBound(token)</code></td><td><code>token</code> is the signer’s delegation bound to exactly the command the write sends: the registration of the document a create makes</td></tr>
+<tr><td><code>None</code></td><td>the node holds a key for the signer</td><td>the signer holds the permission, on a provider that proves its decisions (vera.rs); elsewhere the node must also hold the key</td></tr>
+<tr><td><code>Delegation(token)</code></td><td>the provider takes <code>token</code> now as the signer’s delegation to this node for its policy commands</td><td>the same, and the signer holds the permission</td></tr>
+<tr><td><code>RequestBound(token)</code></td><td><code>token</code> is the signer’s delegation bound to exactly the command the write sends: the registration of the document a create makes</td><td>never</td></tr>
 </tbody>
 </table>
 </div>
@@ -2123,7 +2123,47 @@ credential and no key, a delegation signed by somebody else, made for another no
 expired, a plain delegation presented as request-bound, a request-bound one presented as
 plain, and a request-bound one that names another document or another command. An update
 or a delete sends the provider no command, so a request-bound delegation has nothing to
-name there and is refused; those writes need the key or a plain delegation.</p>
+name there and is refused, even where the node holds the key.</p>
+<p><strong>Updates and deletes: admitted on the signer’s permission.</strong> The blocks of a verified
+update or delete are signed by its signer, so who wrote it is proven; nothing is owed to
+the provider, and nothing is recorded as owed for the write. The credential only says who
+is asking. What admits the write is that the signer held the <code>update</code> (or <code>delete</code>)
+permission on that document at a verified revision no older than the freshness limit
+(below), decided at admission by the one check every update and
+delete makes (<code>QueryRunner::authorize_mutation</code>), for every credential form alike: a
+delegation proves who asks, and the permission still decides; a key the node holds
+decides nothing either. The check runs before the statement writes anything, in this
+order:</p>
+<ol>
+<li>a registration of the document still owed on this node admits only its recorded
+creator, whatever the provider says (it does not know the document yet);</li>
+<li>a revocation still owed on this node refuses the subject it names, on every
+permission;</li>
+<li>otherwise the provider decides. On vera.rs the decision is a permission proof the
+light client verifies against the chain’s finalized state, at a revision whose header
+is younger than the light client’s freshness limit
+(<code>acp_light_client::FreshnessPolicy::default().max_age</code>, 30 seconds, with 15 seconds
+of allowed clock skew; set in <code>VeraRsProvider::connect</code>). It is never a local guess:
+the read path, the replicated-merge path and this one ask the same
+<code>VeraDocumentACP::check_doc_access</code>, and the node’s access cache is off for vera.rs
+(<code>DocumentACP::proves_decisions</code>). A provider that cannot be reached, or whose newest
+verified revision is older than that limit, gives no decision and the write is
+refused: it fails closed.</li>
+</ol>
+<p>A user without the permission, a reader who may read but not update, and a revoked
+writer are refused, and nothing is written; the refusal is the one an ordinary update or
+delete gets (the document is not found, or not authorized), or the provider’s
+unavailability, not <code>WRITE_AUTHORITY_UNAVAILABLE</code>. On the Cosmos provider, which proves no
+decisions and keeps an access cache, <code>None</code> still needs a key the node holds.</p>
+<p><strong>Freshness and revocations.</strong> The guarantee is the permission at the proof’s revision,
+not at the moment of admission. A decision is read at the light client’s newest verified
+revision and kept, for the same request and for later ones, under that revision’s state
+root while that revision stays fresh: a new revision is a new key, and one past the
+freshness limit is none. So a revocation is honoured from the first verified revision
+that contains it, and at the latest once the revision before it has aged past the limit:
+an update decided on evidence up to 30 seconds old can still pass a revocation finalized
+inside that window. A revocation finalized after admission does not undo the write: the
+write that was admitted commits. That is the rule, not a race.</p>
 <p>A relationship change in the same transaction carries its own credential in the context
 of its call: <code>RequestContext::with_bearer</code> for a plain delegation, or
 <code>RequestContext::with_request_delegation</code> for one bound to that one change. A
