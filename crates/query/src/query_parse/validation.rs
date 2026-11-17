@@ -185,7 +185,7 @@ async fn validate_mutation_collection(
         if let Some(suggested) = suggestion {
             msg.push_str(&format!(" Did you mean \"{}\"?", suggested));
         }
-        return Err(QueryError::parse(msg));
+        return Err(QueryError::UnknownMutationCollection(msg));
     };
 
     if graphql_text {

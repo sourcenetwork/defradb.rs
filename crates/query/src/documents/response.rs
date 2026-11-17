@@ -1,7 +1,10 @@
 use super::{Error, Result};
 use serde_json::Value;
 
-use crate::executor::{QueryResponse, SECONDARY_RELATION_ERROR_CODE, TXN_CONFLICT_ERROR_CODE};
+use crate::executor::{
+    QueryResponse, SECONDARY_RELATION_ERROR_CODE, TXN_CONFLICT_ERROR_CODE,
+    UNKNOWN_MUTATION_COLLECTION_ERROR_CODE,
+};
 
 /// The `_docID` of each document mutation `op` on `collection` returned, or
 /// the request's first error with its text unchanged.
@@ -53,6 +56,7 @@ fn refused(response: &QueryResponse) -> Result<()> {
             Some(SECONDARY_RELATION_ERROR_CODE) => {
                 Error::SecondaryRelation(quoted_field(&error.message))
             }
+            Some(UNKNOWN_MUTATION_COLLECTION_ERROR_CODE) => Error::CollectionNotFound,
             _ => Error::Request(error.message.clone()),
         }),
     }
