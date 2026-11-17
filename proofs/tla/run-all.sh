@@ -607,7 +607,8 @@ RUNS=(
   "MC_AcpOutbox_Red_AbandonByAnyone.cfg AcpOutbox.tla RED" # the subject of a refused delete abandons it and reads again (INV_RevokedAtCommit)
   "MC_AcpOutbox_Red_AbandonInFlight.cfg AcpOutbox.tla RED" # a change abandoned while it is being sent lands afterwards (INV_AbandonIsFinal)
   "MC_AcpOutbox_Red_SilentFailure.cfg AcpOutbox.tla RED" # a registration whose submission failed stays owed with no reason recorded (INV_FailureReported)
-  "MC_AcpOutbox_Red_AmbientRegistration.cfg AcpOutbox.tla RED" # a retry sends the registration with a token the process holds (INV_RecordedAuthority)
+  "MC_AcpOutbox_Red_AmbientRegistration.cfg AcpOutbox.tla RED" # a retry sends the registration with a token the process holds (INV_PresentedAuthority)
+  "MC_AcpOutbox_Red_SilentDiscard.cfg AcpOutbox.tla RED" # a change deleted without the provider holding it leaves no note for its actor (INV_FailureReported)
   "MC_AcpOutbox_Red_ReauthorizeUnchecked.cfg AcpOutbox.tla RED" # a fresh credential for the registration is taken from anyone and its signer becomes the owner (INV_NoWidening)
   "MC_RegisterDocOnce_Green.cfg RegisterDocOnce.tla GREEN" # racing registrations of one document: one owner, the winner owns it, one wins
   "MC_RegisterDocOnce_Red_NoValidation.cfg RegisterDocOnce.tla RED" # deciding scan not validated: two owners (INV_OneOwner)
