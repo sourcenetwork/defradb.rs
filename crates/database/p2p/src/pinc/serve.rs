@@ -50,6 +50,9 @@ impl<H: Hosted + 'static> Node<H> {
             }
         }
         debug!(peer_id = %node_to_peer_id(&peer), serial, "pinc connection ended");
+        if super::endpoint::hung_up_on(&connection) {
+            self.quiet.borrow_mut().insert(peer);
+        }
         self.disconnected(&peer, serial).await;
     }
 

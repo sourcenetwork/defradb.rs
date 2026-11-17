@@ -354,3 +354,10 @@ A node holding none of a document with 11 updates, told of its next head, fetche
 - **Scenarios:** ["net::simple::replicator::with_offline_push::a_push_to_a_stopped_peer_is_parked_until_it_restarts"]
 
 A replicator pushes a document to a stopped target without treating the offline target as a failed job: before the target starts again, the source's `push_backlog.failed_total` is no more than zero and `push_backlog.parked_total` is at least one. When the target restarts with its data, it receives the document.
+
+# `defra.net.peers.disconnect_sticks.discovery`: Neither side of a disconnect redials
+
+- **Parents:** ["defra.net.peers.disconnect_sticks"]
+- **Scenarios:** ["net::sticky_disconnect::a_disconnected_peer_is_not_dialed_back_by_discovery", "net::sticky_disconnect::a_fresh_list_does_not_redial_a_disconnected_peer"]
+
+On pinc, `DisconnectPeers` closes the connection with a code the peer reads as deliberate. Neither the node nor the peer it disconnected dials the other through peer exchange afterwards; either can still connect explicitly. libp2p's close carries no reason, so there only the node that disconnected stays quiet.
