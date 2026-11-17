@@ -265,7 +265,7 @@ impl CompositeMergeHook for AcpCompositeMergeHook {
         } else {
             DocumentPermission::Update
         };
-        let signer = frame.signer.and_then(|s| identity::Did::new(s).ok());
+        let signer = frame.signer;
         let owed = if self.replicas_for(collection).is_some() {
             acp.replica_owed(&policy.id, &policy.resource_name, doc_id)
                 .await
@@ -273,7 +273,7 @@ impl CompositeMergeHook for AcpCompositeMergeHook {
         } else {
             acp::ReplicaOwed::default()
         };
-        let canonical = signer.as_ref().map(|signer| acp.canonical_actor(signer));
+        let canonical = signer.map(|signer| acp.canonical_actor(signer));
         // The provider has not seen a registration this node still owes, so
         // its answer about anybody but the DID it names is not the
         // provider's: the change waits.
@@ -287,7 +287,7 @@ impl CompositeMergeHook for AcpCompositeMergeHook {
         }
         let allowed = match signer {
             Some(signer) => {
-                self.signer_may(acp.as_ref(), signer, permission, policy, doc_id)
+                self.signer_may(acp.as_ref(), signer.clone(), permission, policy, doc_id)
                     .await?
             }
             None => false,
@@ -304,7 +304,7 @@ impl CompositeMergeHook for AcpCompositeMergeHook {
         }
         Ok(Some(MergeOutcome::rejected(format!(
             "signer {} lacks {} permission on protected document {}",
-            frame.signer.unwrap_or("unsigned"),
+            signer.map_or("unsigned", identity::Did::as_str),
             permission.as_str(),
             doc_id
         ))))

@@ -402,9 +402,12 @@ theorem inv_defer {L : Limits} {s : State} (h : Inv L s) (c : Cid) (ks : List Ke
 
 /-- Park keeps everything that stays true. -/
 theorem inv_park {L : Limits} {s : State} (h : Inv L s) (c : Cid) (doc : Nat) (r : Cid) :
-    Inv L (park L c doc r s) :=
-  -- Parking is a defer.
-  inv_defer h c _
+    Inv L (park L c doc r s) := by
+  -- Parking is a defer, or only taking `c`'s old entry.
+  unfold park; dsimp only
+  split
+  · exact inv_defer h c _
+  · exact inv_takeEntry h c
 
 /-- Handing back one composite changes the index exactly as taking its entry. -/
 theorem releaseOne_entries (s : State) (c : Cid) :

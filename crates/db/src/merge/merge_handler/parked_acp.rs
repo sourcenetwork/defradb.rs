@@ -10,8 +10,10 @@
 //! relationships, and on the bounded sweep, which covers a grant made
 //! elsewhere. The index holds at most `MAX_WAITERS_PER_DEPENDENCY` changes
 //! per document and `MAX_DEFERRED_COMPOSITES` per node; a change past either
-//! bound, or parked before a restart, is not indexed and is tried again on
-//! the replication layer's own retry clock, as every retryable skip is.
+//! bound, or parked before a restart, is not indexed, not even under the
+//! refused composite, and is tried again on the replication layer's own
+//! retry clock, as every retryable skip is
+//! ([`DeferredMerges::park`](crate::merge::governance::DeferredMerges::park)).
 
 use std::sync::{Arc, Weak};
 
@@ -19,6 +21,8 @@ use defra_core::thread_bounds::MaybeSendSync;
 use storage::corekv::Store;
 
 use crate::database::spawn::spawn_task;
+#[cfg(doc)]
+use crate::merge::governance::DeferredMerges;
 use crate::merge::governance::{WaitKey, SWEEP_BUDGET};
 use crate::merge::merge_handler::DbMergeHandler;
 

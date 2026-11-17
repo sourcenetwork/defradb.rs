@@ -117,27 +117,65 @@ impl DeferredMerges {
     pub(crate) fn defer(&self, block: MergeBlock, awaiting: Vec<WaitKey>) {
         let cid = block.cid;
         self.take_entry(&cid);
-        if awaiting.is_empty() {
+        if awaiting.is_empty() || !self.reserve() {
             return;
         }
-        // Reserve the slot before filing anything, so the bound holds under
-        // concurrent defers.
-        if self.held.fetch_add(1, Ordering::AcqRel) >= self.capacity() {
+        let indexed: Vec<WaitKey> = awaiting
+            .into_iter()
+            .take(MAX_AWAITED_PER_COMPOSITE)
+            .filter(|dependency| self.file(cid, dependency))
+            .collect();
+        self.hold(block, indexed);
+    }
+
+    /// Park a composite the ACP gate refused under its document's `object`
+    /// and the `refused` composite, re-driven when either changes. Its
+    /// document is what releases it, so it is indexed only when filed there:
+    /// past that document's bound, or the node's, it is not indexed and takes
+    /// no slot, and the replication layer tries it again on its own retry
+    /// clock, as every retryable skip. Filed under the refused composite
+    /// alone, it would hold a slot no change of the document and no sweep
+    /// releases; when the refused composite is the parked one, only its own
+    /// merge would.
+    pub(crate) fn park(&self, block: MergeBlock, object: WaitKey, refused: Cid) {
+        let cid = block.cid;
+        self.take_entry(&cid);
+        if !self.reserve() {
+            return;
+        }
+        if !self.file(cid, &object) {
             self.held.fetch_sub(1, Ordering::AcqRel);
             return;
         }
-        let mut indexed = Vec::with_capacity(awaiting.len());
-        for dependency in awaiting.into_iter().take(MAX_AWAITED_PER_COMPOSITE) {
-            let waiters = self.waiters.get_or_insert(
-                dependency.clone(),
-                Arc::new(CidSet::with_hasher(RandomState::default())),
-            );
-            if waiters.len() < MAX_WAITERS_PER_DEPENDENCY
-                && waiters.insert_if_absent(cid, ()).is_none()
-            {
-                indexed.push(dependency);
-            }
+        let refused = WaitKey::Composite(refused);
+        let behind = self.file(cid, &refused).then_some(refused);
+        self.hold(block, std::iter::once(object).chain(behind).collect());
+    }
+
+    /// Reserve a slot before filing anything, so the bound holds under
+    /// concurrent defers. False when the index is full.
+    fn reserve(&self) -> bool {
+        if self.held.fetch_add(1, Ordering::AcqRel) >= self.capacity() {
+            self.held.fetch_sub(1, Ordering::AcqRel);
+            return false;
         }
+        true
+    }
+
+    /// File `cid` under `dependency` if the key has room and does not hold
+    /// it already. Returns whether it was filed.
+    fn file(&self, cid: Cid, dependency: &WaitKey) -> bool {
+        let waiters = self.waiters.get_or_insert(
+            dependency.clone(),
+            Arc::new(CidSet::with_hasher(RandomState::default())),
+        );
+        waiters.len() < MAX_WAITERS_PER_DEPENDENCY && waiters.insert_if_absent(cid, ()).is_none()
+    }
+
+    /// Record the entry of a composite filed under `indexed`, in the slot
+    /// [`Self::reserve`] took; filed under nothing, the slot is released.
+    fn hold(&self, block: MergeBlock, indexed: Vec<WaitKey>) {
+        let cid = block.cid;
         if indexed.is_empty() {
             self.held.fetch_sub(1, Ordering::AcqRel);
             return;
@@ -315,8 +353,8 @@ mod tests {
     #[test]
     fn the_sweep_releases_parked_composites_only() {
         let index = DeferredMerges::default();
-        index.defer(block(1), vec![WaitKey::acp_object("p", "r", "doc-1")]);
-        index.defer(block(2), vec![WaitKey::acp_object("p", "r", "doc-2")]);
+        index.park(block(1), WaitKey::acp_object("p", "r", "doc-1"), cid(1));
+        index.park(block(2), WaitKey::acp_object("p", "r", "doc-2"), cid(2));
         index.defer(block(3), vec![key(3)]);
         assert_eq!(index.release_parked(1), 1);
         assert_eq!(index.release_parked(8), 1);
@@ -330,6 +368,45 @@ mod tests {
         expected.sort();
         assert_eq!(ready, expected);
         assert_eq!(index.len(), 1);
+    }
+
+    /// Past its document's bound, a parked composite is not indexed: it takes
+    /// no slot and sits under no key, its own CID included, so nothing that
+    /// can never release it holds it.
+    #[test]
+    fn a_change_parked_past_its_documents_bound_is_not_indexed() {
+        let index = DeferredMerges::default();
+        let document = WaitKey::acp_object("p", "r", "doc-1");
+        for n in 0..MAX_WAITERS_PER_DEPENDENCY as u64 {
+            index.park(block(n), document.clone(), cid(n));
+        }
+        assert_eq!(index.len(), MAX_WAITERS_PER_DEPENDENCY);
+        let past = MAX_WAITERS_PER_DEPENDENCY as u64;
+        index.park(block(past), document.clone(), cid(past));
+        assert_eq!(index.len(), MAX_WAITERS_PER_DEPENDENCY);
+        assert!(!index.forget(&cid(past)));
+        assert!(index.waiters.get(&WaitKey::Composite(cid(past))).is_none());
+        assert_eq!(index.held.load(Ordering::Acquire), index.len());
+
+        // A parked change with room is filed under its document and the
+        // refused composite, and either releases it.
+        let refused = cid(past + 100);
+        index.park(
+            block(past + 1),
+            WaitKey::acp_object("p", "r", "doc-2"),
+            refused,
+        );
+        assert_eq!(index.len(), MAX_WAITERS_PER_DEPENDENCY + 1);
+        index.release([WaitKey::Composite(refused)]);
+        assert_eq!(
+            index.take_ready().map(|block| block.cid),
+            Some(cid(past + 1))
+        );
+        assert!(index
+            .waiters
+            .get(&WaitKey::acp_object("p", "r", "doc-2"))
+            .is_none());
+        assert_eq!(index.held.load(Ordering::Acquire), index.len());
     }
 
     /// A composite that merged while its own entry was being filed would
