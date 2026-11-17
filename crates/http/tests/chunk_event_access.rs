@@ -84,11 +84,15 @@ fn collections() -> Vec<schema::CollectionVersion> {
         "type Users { body: String @chunk }",
         "type Notes { body: String @chunk }",
         "type Plain { body: String }",
+        "type Owned { body: String }",
     ] {
         all.extend(query::parse_sdl(sdl).unwrap());
     }
     for (index, collection) in all.iter_mut().enumerate() {
         collection.collection_id = format!("collection-{index}");
+        if collection.name == "Owned" {
+            collection.policy = Some(schema::PolicyDescription::new("policy", "owned"));
+        }
     }
     all
 }
@@ -339,6 +343,19 @@ async fn an_ungated_collection_event_needs_no_read_check() {
             "plain"
         );
     }
+}
+
+#[nuclei::test]
+async fn a_policy_collection_event_is_gated_only_with_acp_on() {
+    // No such document is stored, so a read check would hide it.
+    assert_eq!(
+        first_delivered(false, update("Owned", "owned")).await,
+        "owned"
+    );
+    assert_eq!(
+        first_delivered(true, update("Owned", "owned")).await,
+        SENTINEL
+    );
 }
 
 #[nuclei::test]
