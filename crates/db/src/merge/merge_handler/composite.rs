@@ -1,7 +1,8 @@
 use super::batch::{PendingFieldBlockFinalization, PendingMergeEvent, PendingPostCommitAction};
 use super::frame_source::FrameSource;
+use super::protected_update::Refusal;
 use super::*;
-use crate::merge::governance::{GovernedFrame, Judgement};
+use crate::merge::governance::{GovernedFrame, Judgement, WaitKey};
 use crate::merge::replica::ReplicaStep;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -298,7 +299,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     }
 
                     if gated {
-                        if let Some(outcome) = self
+                        match self
                             .check_protected_update(
                                 cid,
                                 block,
@@ -309,7 +310,32 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             )
                             .await?
                         {
-                            return Ok(CompositeMergePreparation::Complete(outcome));
+                            None => {}
+                            Some(Refusal::Outcome(outcome)) => {
+                                return Ok(CompositeMergePreparation::Complete(outcome));
+                            }
+                            Some(Refusal::Parked(outcome)) => {
+                                let policy =
+                                    collection.schema().policy.as_ref().ok_or_else(|| {
+                                        MergeError::MergeFailed(
+                                            "a parked refusal names a collection without a policy"
+                                                .into(),
+                                        )
+                                    })?;
+                                return Ok(CompositeMergePreparation::Deferred {
+                                    outcome,
+                                    // A refused ancestor's own merge releases
+                                    // what waits behind it, too.
+                                    awaiting: vec![
+                                        WaitKey::acp_object(
+                                            &policy.id,
+                                            &policy.resource_name,
+                                            doc_id,
+                                        ),
+                                        WaitKey::Composite(*cid),
+                                    ],
+                                });
+                            }
                         }
                     }
                 }

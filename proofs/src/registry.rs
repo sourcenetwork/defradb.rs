@@ -238,7 +238,16 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/merge/replica.rs ReplicaRegistration, ReplicaOwnership, ReplicaStep; crates/db/src/merge/merge_handler/replica_plan.rs plan_replica_frame; crates/db/src/merge/merge_handler/composite_persist.rs record_replica; crates/db/src/merge/acp_merge_handler.rs AcpCompositeMergeHook::plan_replica, AcpCompositeMergeHook::on_protected_update, AcpCompositeMergeHook::node_reads; crates/acp/src/replica.rs ReplicaMarker, ReplicaOwed; crates/acp/src/external/replica.rs record_replica_unit, record_adopted_replica, owed_on_replica, yield_replica_if_held_elsewhere, settle_replica_unit; crates/acp/src/external/registration.rs register_and_clear; crates/db/src/write/autocommit/helpers.rs unregister_deleted_doc",
         model_ref: "MC_ReplicaRegistration_{Green,Green_Live,Red_RegisterOwn,Red_RegisterAfterMerge,Red_RejectWhileOwed,Red_GrantsSeparate,Red_AdoptDrops,Red_NoAdoptOnArrival,Red_OwnedDenies,Red_StaleDecision,Red_ArchiveOnDelete,Red_DeleteClears}.cfg",
         tiers: &[Boundary, Contract],
-        bound_by: "crates/db/tests/merge/replica_registration.rs a_foreign_creators_row_merges_once_the_receiver_registers_it_and_its_changes_follow, the_creators_update_while_the_unit_is_owed_is_put_back_and_then_merges, another_signers_change_waits_while_the_receivers_registration_is_owed, a_same_deployment_creators_row_is_never_registered_by_the_receiver, an_unlisted_collection_waits_for_a_registration_as_before, an_update_reaching_the_receiver_before_its_genesis_registers_through_the_genesis, a_revoked_writers_later_update_is_refused, a_second_receiver_waits_for_the_owners_grants_and_never_refuses_the_creator, a_receiver_that_sees_the_genesis_after_another_registered_it_waits_for_the_owners_grant, a_local_provider_registers_the_genesis_signer_as_before; crates/db/tests/access/external_owed.rs a_document_deleted_before_its_registration_settles_is_still_registered",
+        bound_by: "crates/db/tests/merge/replica_registration.rs a_foreign_creators_row_merges_once_the_receiver_registers_it_and_its_changes_follow, the_creators_update_while_the_unit_is_owed_is_put_back_and_then_merges, another_signers_change_waits_while_the_receivers_registration_is_owed, a_same_deployment_creators_row_is_never_registered_by_the_receiver, an_unlisted_collection_waits_for_a_registration_as_before, an_update_reaching_the_receiver_before_its_genesis_registers_through_the_genesis, a_revoked_writers_later_update_is_parked, a_second_receiver_waits_for_the_owners_grants_and_never_refuses_the_creator, a_receiver_that_sees_the_genesis_after_another_registered_it_waits_for_the_owners_grant, a_local_provider_registers_the_genesis_signer_as_before; crates/db/tests/access/external_owed.rs a_document_deleted_before_its_registration_settles_is_still_registered",
+    },
+    Property {
+        family: "Verified client graph transaction",
+        name: "INV_NeverQuarantined / INV_MergeAuthorized / INV_HistoryFirst / INV_Bounded / LIVE_RedrivenOnGrant / LIVE_OtherBranchMerges: a replicated change whose signer a remote provider refuses is parked by its document, never rejected for good, re-driven with a fresh decision when this node changes the document's relationships or by the bounded sweep, never merged before its history, within the index bound, and a change on another branch is not held behind it",
+        axis: Tla,
+        anchor: "crates/db/src/merge/merge_handler/composite.rs prepare_composite_merge; crates/db/src/merge/merge_handler/protected_update.rs Refusal, check_protected_update; crates/db/src/merge/governance/awaited.rs WaitKey::AcpObject; crates/db/src/merge/governance/deferred.rs DeferredMerges::release_parked, MAX_WAITERS_PER_DEPENDENCY, MAX_DEFERRED_COMPOSITES; crates/db/src/merge/merge_handler/parked_acp.rs ParkedRelease, watch_parked_acp, sweep_parked_acp; crates/db/src/merge/acp_merge_handler.rs AcpCompositeMergeHook::parks_refusals; crates/acp/src/dac.rs ObjectChangeListener; crates/acp/src/external.rs ExternalDocumentAcp::object_changed",
+        model_ref: "MC_ParkedMerge_{Green,Green_Live,Red_Quarantine,Red_MergeOverParked,Red_RedriveAdmits,Red_Unbounded,Red_NoRelease,Red_ParkBlocksObject}.cfg",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/db/tests/merge/parked_refusals.rs a_revoked_writers_change_is_parked_and_merges_once_the_node_grants_it_again, a_change_built_on_a_parked_one_waits_with_it_and_one_on_another_branch_merges, the_sweep_re_drives_a_change_a_grant_made_elsewhere_lets_in, an_unsigned_change_is_still_rejected; crates/db/src/merge/governance/deferred.rs the_sweep_releases_parked_composites_only",
     },
     Property {
         family: "Verified client graph transaction",
@@ -1503,9 +1512,10 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         // Rejected is assumed content-determined. Under strict (Vera) ACP a
-        // denial depends on the local relationship view, so an update whose
-        // grant has not arrived yet is quarantined for good, after its
-        // sender's marker was discharged. Local ACP cannot reach this.
+        // signed update the provider refuses is no longer Rejected: it is
+        // parked by its document and re-driven (ParkedMerge.tla), so it never
+        // reaches the quarantine. An unsigned update's refusal stays
+        // Rejected, and is content-determined: no grant can cover it.
         family: "Sync ownership transfer (head hint / receiver pull)",
         name: "INV_NoSilentDrop / LIVE_SoundEventuallyMerged / LIVE_PoisonQuiesces assume a rejection is content-determined",
         axis: Tla,

@@ -437,6 +437,10 @@ where
             }
         };
         Ok(if self.write(change.seq, write).await? {
+            if matches!(step, Step::Settled) {
+                let tuple = &change.tuple;
+                self.object_changed(&tuple.policy_id, &tuple.resource, &tuple.object);
+            }
             step
         } else {
             Step::Left

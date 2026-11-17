@@ -79,7 +79,9 @@ where
         if held {
             self.yield_replica_if_held_elsewhere(owed).await?;
         }
-        self.clear(owed).await
+        self.clear(owed).await?;
+        self.object_changed(&owed.policy_id, &owed.resource_name, &owed.doc_id);
+        Ok(())
     }
 
     /// The provider serving a request that presents `token` for `actor`,
