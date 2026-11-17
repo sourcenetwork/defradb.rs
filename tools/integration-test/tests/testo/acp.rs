@@ -79,6 +79,13 @@ mod dac {
     mod register_and_delete;
     mod register_and_read;
     mod register_and_update;
+    mod relation_filter {
+        mod indexed;
+        mod revoke;
+        mod shapes;
+        mod support;
+        mod unindexed;
+    }
     mod relation_objects;
     mod relationship {
         mod doc_actor {
