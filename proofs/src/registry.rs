@@ -1959,6 +1959,18 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "proofs/tests/behavioral/nac_lifecycle.rs nac_lifecycle_no_escalation",
     },
     Property {
+        // Enabling sets NAC up only the first time: neither starting the node
+        // with the enable option nor an enable call turns a temporarily
+        // disabled NAC back on, so only an authorized re-enable does, as in Go.
+        family: "NAC lifecycle privilege-escalation",
+        name: "INV_ReEnableNeedsPersistedAdmin through enable and startup: a disabled NAC stays disabled until an authorized re-enable",
+        axis: Tla,
+        anchor: "crates/acp/src/nac/node_acp/lifecycle.rs NodeACP::enable; crates/db/src/nac/mod.rs NacManager::initialize",
+        model_ref: "MC_Nac_{Green,Red_EnableReEnables,Red_EnableAddsOwner,Red_StartReEnables}.cfg",
+        tiers: &[Contract],
+        bound_by: "crates/acp/tests/nac_tests.rs enabling_a_disabled_nac_is_refused; crates/db/tests/nac/tests.rs a_disabled_nac_stays_disabled_when_restarted_with_the_enable_option, enabling_a_disabled_nac_is_refused; crates/defra-node/tests/unit/http_acp.rs a_stranger_cannot_enable_a_disabled_nac_over_http",
+    },
+    Property {
         // No-loss / no-double-apply under concurrent same-document mutation is now
         // BEHAVIORAL: `partition::convergence_concurrent_same_doc_merge_storm`
         // storms one PCounter doc from a 3-node mesh and asserts the exact sum
@@ -3039,9 +3051,9 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Node access control operations",
-        name: "disable_turns_off / re_enable_turns_on / re_enable_undoes_disable / toggles_keep_grants / writes_only_when_allowed / writes_only_when_configured / disable_writes_only_from_on / re_enable_writes_only_from_off / re_enable_checks_the_caller_first / rerun_after_a_win_hears_already",
+        name: "disable_turns_off / re_enable_turns_on / re_enable_undoes_disable / toggles_keep_grants / writes_only_when_allowed / writes_only_when_configured / disable_writes_only_from_on / re_enable_writes_only_from_off / re_enable_checks_the_caller_first / rerun_after_a_win_hears_already / enable_writes_only_when_not_configured / enable_refuses_a_disabled_nac / enable_leaves_a_disabled_store / startup_keeps_a_disabled_nac_off",
         axis: Lean,
-        anchor: "crates/acp/src/nac/node_acp/mod.rs NodeACP::load; crates/acp/src/nac/node_acp/lifecycle.rs NodeACP::disable, NodeACP::re_enable; crates/db/src/nac/toggle.rs NacManager::decide_toggle",
+        anchor: "crates/acp/src/nac/node_acp/mod.rs NodeACP::load; crates/acp/src/nac/node_acp/lifecycle.rs NodeACP::disable, NodeACP::re_enable, NodeACP::enable; crates/db/src/nac/toggle.rs NacManager::decide_toggle; crates/db/src/nac/mod.rs NacManager::initialize",
         model_ref: "NacToggle (lake build)",
         tiers: &[Boundary],
         bound_by: "",

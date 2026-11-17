@@ -112,6 +112,11 @@ pub enum Error {
     #[error("invalid policy: {0}")]
     InvalidPolicy(String),
 
+    /// Enabling NAC that is temporarily disabled: only an authorized
+    /// re-enable turns it back on.
+    #[error("node acp is temporarily disabled; re-enable it instead")]
+    NacTemporarilyDisabled,
+
     /// Storage operation failed (generic)
     #[error("storage error: {0}")]
     Storage(String),

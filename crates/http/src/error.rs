@@ -158,6 +158,9 @@ fn classify_backend_message(message: &str) -> Option<ErrorStatus> {
         &[
             "already exists",
             "already registered",
+            // enabling NAC that is temporarily disabled: the node's state, not
+            // the request, is what stands in the way
+            "re-enable it instead",
             "multiple active collection versions",
             "transaction conflict",
             "unique constraint",
@@ -400,6 +403,13 @@ mod tests {
             ),
             (
                 DbError::CollectionAlreadyExists("Users".into()),
+                StatusCode::CONFLICT,
+            ),
+            (
+                DbError::Acp(format!(
+                    "failed to enable NAC: {}",
+                    acp::error::Error::NacTemporarilyDisabled
+                )),
                 StatusCode::CONFLICT,
             ),
             (

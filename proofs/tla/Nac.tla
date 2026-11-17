@@ -43,6 +43,14 @@
 \*                is_admin is true for everyone, so re_enable MUST use the
 \*                persisted check or any actor could re-enable then escalate.
 \*   crates/db/src/nac/mod.rs NacManager::purge(): requires dev_mode && is_admin.
+\*   crates/acp/src/nac/node_acp/lifecycle.rs NodeACP::enable(): sets NAC up
+\*             only from NotConfigured; a no-op when Enabled; REFUSES when
+\*             DisabledTemporarily. Reached by node startup with the enable
+\*             option (NacManager::initialize) and by POST /api/v0/acp/node/enable
+\*             for any caller naming itself as OwnerDID (== the Enable(a) action).
+\*   crates/db/src/nac/mod.rs NacManager::initialize(): on startup with the
+\*             enable option, enables only a NotConfigured NAC; a stored
+\*             DisabledTemporarily stays disabled (== the Restart action).
 \*
 \* SOURCE ANCHORS (Go, origin/develop -- the live upstream, not the checkout)
 \*   internal/db/acp/nac.go :44-61  NodeACP kept Start()ed even while disabled,
@@ -96,6 +104,17 @@
 \*          persist the flag; a restart recovers Enabled instead of Disabled,
 \*          and the actor that disabled never had to be re-authorized to come
 \*          back -> INV_DisabledPersistsAcrossRestart breaks.
+\*   RED    MC_Nac_Red_EnableReEnables   Mode=BugEnableReEnables: enable() does
+\*          not refuse a disabled NAC; any caller enables it, turning NAC back
+\*          on with no re-enable permission -> INV_ReEnableNeedsPersistedAdmin
+\*          breaks.
+\*   RED    MC_Nac_Red_EnableAddsOwner   the same bug, checked against the admin
+\*          set alone: the caller becomes an owner ->
+\*          INV_NoNonAdminMutatesAdminSet breaks.
+\*   RED    MC_Nac_Red_StartReEnables    Mode=BugStartReEnables: starting the
+\*          node with the enable option re-enables a stored disabled NAC, with
+\*          no one authorizing it -> INV_ReEnableNeedsPersistedAdmin breaks.
+\*          The code already keeps it off; this guards against a regression.
 \*
 \* RUN
 \*   cd proofs/tla
@@ -103,6 +122,8 @@
 \*   ./tools/tlc -metadir states/b_nac_wd    -config MC_Nac_Red_WriteWhileDisabled.cfg MC_Nac_Red_WriteWhileDisabled.tla
 \*   ./tools/tlc -metadir states/b_nac_rel   -config MC_Nac_Red_ReEnableLive.cfg MC_Nac_Red_ReEnableLive.tla
 \*   ./tools/tlc -metadir states/b_nac_np    -config MC_Nac_Red_NoPersist.cfg MC_Nac_Red_NoPersist.tla
+\*   ./tools/tlc -metadir states/b_nac_ere   -config MC_Nac_Red_EnableReEnables.cfg MC_Nac_Red_EnableReEnables.tla
+\*   ./tools/tlc -metadir states/b_nac_sre   -config MC_Nac_Red_StartReEnables.cfg MC_Nac_Red_StartReEnables.tla
 \* ===========================================================================
 EXTENDS FiniteSets, Naturals
 
@@ -111,10 +132,12 @@ CONSTANTS
   Admins0,        \* set of non-owner DIDs that start as persisted admins
   NonAdmins,      \* set of DIDs that are never legitimately admin
   MaxMutations,   \* bound on admin-set mutations (keeps state finite)
-  Mode            \* "Correct" | "BugWriteNotBlocked" | "BugReEnableLive" | "BugNoPersist"
+  Mode            \* "Correct" or one of the Bug* variants in Modes
 
 Actors == {Owner} \cup Admins0 \cup NonAdmins
-Modes  == {"Correct", "BugWriteNotBlocked", "BugReEnableLive", "BugNoPersist"}
+\* The correct code, and one planted bug per guard.
+Modes  == {"Correct", "BugWriteNotBlocked", "BugReEnableLive", "BugNoPersist",
+           "BugEnableReEnables", "BugStartReEnables"}
 Statuses == {"NotConfigured", "Enabled", "DisabledTemporarily"}
 
 ASSUME Owner \notin Admins0
@@ -172,15 +195,36 @@ Init ==
 \* --------------------------------------------------------------------------
 \* Lifecycle transitions.
 
-\* enable(): NotConfigured -> Enabled. Owner is bootstrapped (already in GT via
-\* IsAdminGT). Idempotent in code; here we only allow the meaningful transition.
-Enable ==
-  /\ status = "NotConfigured"
-  /\ status' = "Enabled"
-  /\ configured' = TRUE
-  /\ disk_disabled' = FALSE
+\* enable(), first time: NotConfigured -> Enabled. The Owner is bootstrapped
+\* (already in GT via IsAdminGT).
+EnableFirst ==
+  /\ status = "NotConfigured"             \* nothing set up yet
+  /\ status' = "Enabled"                  \* NAC now enforces
+  /\ configured' = TRUE                   \* set up, so restarts recover it
+  /\ disk_disabled' = FALSE               \* nothing disabled on disk
   /\ UNCHANGED <<admins_persisted, mutations, dirty_by_nonadmin, bad_reenable,
                  wrote_while_disabled>>
+
+\* enable() called by actor `a` on a temporarily disabled NAC: startup with the
+\* enable option or POST /acp/node/enable, for any caller naming itself owner.
+\* The correct code refuses it, so this step exists only in BugEnableReEnables,
+\* where enable() turned NAC back on and made `a` an owner, leaving the stored
+\* disabled flag behind.
+EnableDisabled(a) ==
+  /\ Mode = "BugEnableReEnables"          \* only the planted bug gets here
+  /\ status = "DisabledTemporarily"       \* NAC is paused
+  /\ status' = "Enabled"                  \* ...and enable switches it back on
+  /\ admins_persisted' =                  \* the caller becomes an owner
+       IF a = Owner THEN admins_persisted ELSE admins_persisted \cup {a}
+  /\ dirty_by_nonadmin' =                 \* the admin set changed by a non-admin?
+       (dirty_by_nonadmin \/ (a # Owner /\ ~IsAdminGT(a)))
+  /\ bad_reenable' = (bad_reenable \/ ~IsAdminGT(a)) \* re-enabled unauthorized?
+  /\ wrote_while_disabled' =              \* the admin set changed while disabled?
+       (wrote_while_disabled \/ (a # Owner /\ a \notin admins_persisted))
+  /\ UNCHANGED <<disk_disabled, configured, mutations>>
+
+\* Any actor may call enable(); only the meaningful transitions exist.
+Enable(a) == EnableFirst \/ EnableDisabled(a)
 
 \* disable(): Enabled -> DisabledTemporarily. Persists the disabled flag UNLESS
 \* the BugNoPersist variant drops the persistence. Auth is via LIVE is_admin
@@ -208,14 +252,22 @@ ReEnable(a) ==
   /\ UNCHANGED <<admins_persisted, configured, mutations, dirty_by_nonadmin,
                  wrote_while_disabled>>
 
-\* Restart: in-memory status is recovered from the persisted flag (mod.rs load,
-\* :96-143; Go fetchNodeACPDesc). Models a node bounce. configured nodes only.
+\* Restart, with or without the enable option: in-memory status is recovered
+\* from the persisted flag (mod.rs load, :96-143; Go fetchNodeACPDesc), and the
+\* option changes nothing on a node already set up (NacManager::initialize).
+\* In BugStartReEnables the option re-enables a stored disabled NAC, clearing
+\* the flag, with no actor authorizing it.
+StartReEnables == Mode = "BugStartReEnables" /\ disk_disabled
+
 Restart ==
-  /\ configured
+  /\ configured                                  \* a node that was set up
   /\ status \in {"Enabled", "DisabledTemporarily"}
-  /\ status' = IF disk_disabled THEN "DisabledTemporarily" ELSE "Enabled"
-  /\ UNCHANGED <<disk_disabled, admins_persisted, configured,
-                 mutations, dirty_by_nonadmin, bad_reenable, wrote_while_disabled>>
+  /\ status' = IF disk_disabled /\ ~StartReEnables \* the stored status comes back
+                 THEN "DisabledTemporarily" ELSE "Enabled"
+  /\ disk_disabled' = (disk_disabled /\ ~StartReEnables) \* the bug clears the flag
+  /\ bad_reenable' = (bad_reenable \/ StartReEnables)  \* nobody authorized it
+  /\ UNCHANGED <<admins_persisted, configured,
+                 mutations, dirty_by_nonadmin, wrote_while_disabled>>
 
 \* --------------------------------------------------------------------------
 \* The protected admin-set mutations (add_admin / remove_admin).
@@ -251,7 +303,7 @@ RemoveAdmin(req, tgt) ==
   /\ UNCHANGED <<status, disk_disabled, configured, bad_reenable>>
 
 Next ==
-  \/ Enable
+  \/ \E a \in Actors : Enable(a)
   \/ \E a \in Actors : Disable(a)
   \/ \E a \in Actors : ReEnable(a)
   \/ Restart

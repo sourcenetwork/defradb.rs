@@ -9,16 +9,24 @@ caller's permission before "already on"), and writes the change, all in one
 transaction. When two callers race, the loser's transaction fails and its
 decision runs again on what the winner committed.
 
+Enabling is different: it sets NAC up the first time, for the owner it names,
+and it is what a node started with the enable option, or any caller of the
+enable route naming itself owner, asks for. It needs no permission, so it must
+never do a re-enable's job.
+
 What must never happen: a change written for a caller without the
 permission, or on a node where NAC was never set up; a change that leaves the
 status where it was; a status change that touches any other relationship; a
-loser of the race told anything but Go's "already".
+loser of the race told anything but Go's "already"; an enable, or a start with
+the enable option, that turns temporarily-off NAC back on.
 
 Rust owners:
   crates/acp/src/nac/node_acp/mod.rs        NodeACP::load (decode)
-  crates/acp/src/nac/node_acp/lifecycle.rs  NodeACP::disable, NodeACP::re_enable (the writes)
+  crates/acp/src/nac/node_acp/lifecycle.rs  NodeACP::disable, NodeACP::re_enable (the writes),
+                                            NodeACP::enable (decideEnable)
   crates/db/src/nac/toggle.rs               NacManager::decide_toggle (decide),
                                             NacManager::toggle_as (the re-run)
+  crates/db/src/nac/mod.rs                  NacManager::initialize (startup)
 -/
 
 namespace NacToggle
@@ -200,5 +208,67 @@ theorem rerun_after_a_win_hears_already (t : Toggle) (s : Stored) (allowed : Boo
   -- the winning cases leave the other status stored; the rest contradict `won`
   cases t <;> cases policy <;> cases owner <;> cases mark <;> cases allowed <;>
     simp_all [decideToggle, decode, apply, already, writeDisable, writeReEnable]
+
+-- How an enable ends.
+inductive EnableOutcome where
+  -- already on: nothing to do
+  | noop
+  -- temporarily off: refused, "re-enable it instead"
+  | refused
+  -- never set up: the policy and owner are written
+  | write
+  deriving DecidableEq, Repr
+
+-- `NodeACP::enable`'s decision, on the status it reads.
+def decideEnable : Status → EnableOutcome
+  -- never set up: set it up
+  | .notConfigured => .write
+  -- already on: idempotent
+  | .enabled => .noop
+  -- temporarily off: only a re-enable turns it back on
+  | .disabled => .refused
+
+-- An enable is written only on a node where NAC was never set up.
+theorem enable_writes_only_when_not_configured (st : Status)
+    (w : decideEnable st = .write) : st = .notConfigured := by
+  -- the other two statuses do not write
+  cases st <;> simp_all [decideEnable]
+
+-- An enable never turns temporarily-off NAC back on: it is refused.
+theorem enable_refuses_a_disabled_nac : decideEnable .disabled = .refused := by
+  -- read straight off the decision
+  rfl
+
+-- `NodeACP::enable`'s write, for the owner `o`: the policy and the owner
+-- relationship; the `_disabled` mark and the other relationships are left.
+def writeEnable (o : Nat) (s : Stored) : Stored :=
+  -- store the policy and name the owner
+  { s with policy := true, owner := some o }
+
+-- What enabling does to the store: the write when the decision is to write,
+-- nothing otherwise.
+def enable (o : Nat) (s : Stored) : Stored :=
+  -- the decision is made on the status the store reads as
+  if decideEnable (decode s) = .write then writeEnable o s else s
+
+-- `NacManager::initialize`: a start with the enable option enables; without
+-- it, nothing is written. Either way the status is then read back.
+def startup (option : Bool) (o : Nat) (s : Stored) : Stored :=
+  -- only the option asks for an enable
+  if option then enable o s else s
+
+-- Enabling a temporarily-off node, for any caller, leaves the store as it
+-- was: no new owner, the mark kept.
+theorem enable_leaves_a_disabled_store (o : Nat) (s : Stored)
+    (off : decode s = .disabled) : enable o s = s := by
+  -- the decision on an off node is a refusal, so nothing is written
+  simp [enable, off, decideEnable]
+
+-- A node that was temporarily off is still off after a start, with or without
+-- the enable option: only a re-enable turns it back on.
+theorem startup_keeps_a_disabled_nac_off (option : Bool) (o : Nat) (s : Stored)
+    (off : decode s = .disabled) : decode (startup option o s) = .disabled := by
+  -- with the option the enable writes nothing; without it nothing runs
+  cases option <;> simp [startup, enable_leaves_a_disabled_store o s off, off]
 
 end NacToggle
