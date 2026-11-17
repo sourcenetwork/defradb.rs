@@ -17,6 +17,7 @@ mod selector;
 mod snapshot;
 mod stream;
 mod truncate;
+mod truncate_under_load;
 mod validation;
 
 mod series;
