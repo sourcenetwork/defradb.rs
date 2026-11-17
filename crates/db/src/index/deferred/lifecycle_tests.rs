@@ -7,8 +7,8 @@ use storage::corekv::IterOptions;
 use storage::keys::{index_pending_log, index_position_prefix, IndexDataStoreKey, IndexedField};
 use storage::RegolithStore;
 
-use super::drain::drain_index;
 use super::drain::tests::{create, increment, indexed, NAME};
+use super::drain::{drain_index, PlanSize};
 use crate::database::DB;
 use crate::index::IndexManager;
 
@@ -42,10 +42,16 @@ fn at(short_id: u32, index_id: u32, value: i64) -> Vec<u8> {
 }
 
 async fn drain(db: &DB<RegolithStore>, index_id: u32) {
-    while drain_index(db, NAME, index_id, &RapidHashSet::new())
-        .await
-        .unwrap()
-        .is_some_and(|drained| drained.progressed)
+    while drain_index(
+        db,
+        NAME,
+        index_id,
+        &RapidHashSet::new(),
+        PlanSize::default(),
+    )
+    .await
+    .unwrap()
+    .is_some_and(|drained| drained.progressed)
     {}
 }
 

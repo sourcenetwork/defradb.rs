@@ -12,12 +12,45 @@ use crate::index::error::{Error, Result};
 use crate::index::manager::{IndexType, LiveDocs};
 use crate::index::IndexManager;
 
-/// The most log entries one drain transaction takes, so a backlog commits in
-/// bounded transactions.
-const MAX_PLAN: usize = 256;
+/// How many documents the apply reads before it lets the core's other tasks run.
+const YIELD_EVERY: u32 = 256;
+
+/// The most log entries a drain's plan takes. It doubles while plans come
+/// back full, so a backlog drains in fewer commits, each still bounded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PlanSize(usize);
+
+impl PlanSize {
+    pub(crate) const SMALLEST: usize = 256;
+    pub(crate) const LARGEST: usize = 8192;
+
+    pub(crate) fn entries(self) -> usize {
+        self.0
+    }
+
+    /// The size of the plan after `drained`, a plan of this size. One that
+    /// wrote nothing keeps it, so broken documents at the tail are not carried
+    /// again each time the size would swing back.
+    pub(crate) fn after(self, drained: &Drained) -> Self {
+        if drained.full {
+            Self((self.0 * 2).min(Self::LARGEST))
+        } else if drained.progressed {
+            Self::default()
+        } else {
+            self
+        }
+    }
+}
+
+impl Default for PlanSize {
+    fn default() -> Self {
+        Self(Self::SMALLEST)
+    }
+}
 
 /// What one drain will apply, read from a snapshot.
 struct Plan {
+    size: PlanSize,
     first: u64,
     through: u64,
     docs: Vec<u64>,
@@ -29,10 +62,15 @@ impl Plan {
         usize::try_from(self.through - self.first + 1).unwrap_or(usize::MAX)
     }
 
+    /// Whether the plan stopped at its size, so more may be owed behind it.
+    fn full(&self) -> bool {
+        self.entries() >= self.size.entries()
+    }
+
     /// Whether carrying all of `carried` would only renumber the plan's
     /// entries. A full plan is still carried, so the entries behind it come forward.
     fn only_renumbers(&self, carried: usize) -> bool {
-        carried == self.entries() && self.entries() < MAX_PLAN
+        carried == self.entries() && !self.full()
     }
 }
 
@@ -47,16 +85,19 @@ pub(crate) struct Drained {
     pub(crate) carried: bool,
     /// Whether the log shrank, so another plan may find more to do.
     pub(crate) progressed: bool,
+    /// Whether the plan stopped at its size, so more may be owed behind it.
+    pub(crate) full: bool,
 }
 
-/// Drains up to [`MAX_PLAN`] entries of the index `index_id` of the
-/// collection `name`, or `None` when nothing is owed. A document in `skip`,
+/// Drains up to `size` entries of the index `index_id` of the collection
+/// `name`, or `None` when nothing is owed. A document in `skip`,
 /// or one that fails, is owed again at the log's tail, so the rest still drain.
 pub(crate) async fn drain_index<S>(
     db: &DB<S>,
     name: &str,
     index_id: u32,
     skip: &RapidHashSet<u64>,
+    size: PlanSize,
 ) -> Result<Option<Drained>>
 where
     S: Store + 'static,
@@ -68,7 +109,7 @@ where
         return Ok(None);
     };
     let short_id = collection.resolved_root_id();
-    let Some(plan) = plan(db, short_id, index_id).await? else {
+    let Some(plan) = plan(db, short_id, index_id, size).await? else {
         return Ok(None);
     };
     if plan.only_renumbers(plan.docs.len()) && plan.docs.iter().all(|doc| skip.contains(doc)) {
@@ -77,9 +118,10 @@ where
             ..Drained::default()
         }));
     }
+    let full = plan.full();
     let (name, plan, skip) = (name.to_string(), Arc::new(plan), Arc::new(skip.clone()));
     let lens_store = Arc::clone(db.lens_store());
-    let drained = datastore::transact(
+    let mut drained: Drained = datastore::transact(
         db.store().as_ref(),
         db.options().retry_options(),
         move |txn| {
@@ -98,12 +140,13 @@ where
         Ok(error) => error,
         Err(error) => Error::Storage(error.into_storage()),
     })?;
+    drained.full = full;
     Ok(Some(drained))
 }
 
 /// The oldest entries of the log, read on a snapshot. Entries committed after
 /// it take later positions, so they stay owed.
-async fn plan<S>(db: &DB<S>, short_id: u32, index_id: u32) -> Result<Option<Plan>>
+async fn plan<S>(db: &DB<S>, short_id: u32, index_id: u32, size: PlanSize) -> Result<Option<Plan>>
 where
     S: Store + 'static,
 {
@@ -121,7 +164,7 @@ where
             .await
             .map_err(Error::Storage)?;
         let mut entries = Vec::new();
-        while entries.len() < MAX_PLAN {
+        while entries.len() < size.entries() {
             let Some(pair) = iter.next().await.map_err(Error::Storage)? else {
                 break;
             };
@@ -141,6 +184,7 @@ where
     docs.sort_unstable();
     docs.dedup();
     Ok(Some(Plan {
+        size,
         first,
         through,
         docs,
@@ -200,7 +244,9 @@ async fn apply(
     let mut live_docs = LiveDocs::new(&collection, &datastore, &systemstore, Some(lens_store));
     let mut drained = Drained::default();
     let mut carry = Vec::new();
+    let mut budget = workers::Budget::new(YIELD_EVERY);
     for &doc in &plan.docs {
+        budget.spend(1).await;
         if skip.contains(&doc) {
             carry.push(doc);
             continue;
@@ -431,12 +477,17 @@ pub(super) mod tests {
             let (db, short_id, index_id) = indexed().await;
             let id = create(&db, 1).await;
             increment(&db, &id).await;
-            let planned = plan(&db, short_id, index_id).await.unwrap().unwrap();
+            let planned = plan(&db, short_id, index_id, PlanSize::default())
+                .await
+                .unwrap()
+                .unwrap();
             increment(&db, &id).await;
 
             apply_committed(&db, short_id, index_id, planned).await;
 
-            let left = plan(&db, short_id, index_id).await.unwrap();
+            let left = plan(&db, short_id, index_id, PlanSize::default())
+                .await
+                .unwrap();
             assert_eq!(left.map(|plan| plan.docs.len()), Some(1));
         })
         .unwrap();
@@ -450,7 +501,10 @@ pub(super) mod tests {
             let (db, short_id, index_id) = indexed().await;
             let id = create(&db, 1).await;
             increment(&db, &id).await;
-            let planned = plan(&db, short_id, index_id).await.unwrap().unwrap();
+            let planned = plan(&db, short_id, index_id, PlanSize::default())
+                .await
+                .unwrap()
+                .unwrap();
             let mut first = datastore::BasicTxn::new(db.store().as_ref(), 0, false)
                 .await
                 .unwrap();
@@ -467,10 +521,16 @@ pub(super) mod tests {
             .unwrap();
             increment(&db, &id).await;
 
-            while drain_index(&db, NAME, index_id, &RapidHashSet::new())
-                .await
-                .unwrap()
-                .is_some_and(|drained| drained.progressed)
+            while drain_index(
+                &db,
+                NAME,
+                index_id,
+                &RapidHashSet::new(),
+                PlanSize::default(),
+            )
+            .await
+            .unwrap()
+            .is_some_and(|drained| drained.progressed)
             {}
 
             assert!(first.commit().await.is_err());
@@ -485,7 +545,11 @@ pub(super) mod tests {
             let (db, short_id, index_id) = indexed().await;
             let id = create(&db, 1).await;
             increment(&db, &id).await;
-            let doc = plan(&db, short_id, index_id).await.unwrap().unwrap().docs[0];
+            let doc = plan(&db, short_id, index_id, PlanSize::default())
+                .await
+                .unwrap()
+                .unwrap()
+                .docs[0];
             let txn = datastore::BasicTxn::new(db.store().as_ref(), 0, false)
                 .await
                 .unwrap();
@@ -521,7 +585,7 @@ pub(super) mod tests {
             )
             .await
             .unwrap();
-            let planned = plan(&db, short_id, index_id).await.unwrap().unwrap();
+            let planned = plan(&db, short_id, index_id, PlanSize::default()).await.unwrap().unwrap();
             let doc_short_id = planned.docs[0];
             let mut first = datastore::BasicTxn::new(db.store().as_ref(), 0, false)
                 .await
@@ -562,5 +626,53 @@ pub(super) mod tests {
                 .expect("the drain decided nothing on the document's value");
         })
         .unwrap();
+    }
+
+    fn drained(full: bool, progressed: bool) -> Drained {
+        Drained {
+            full,
+            progressed,
+            ..Drained::default()
+        }
+    }
+
+    /// The size doubles while plans come back full, stops at the largest,
+    /// and goes back to the smallest once a plan that wrote is short.
+    #[test]
+    fn the_plan_size_follows_the_backlog() {
+        let mut size = PlanSize::default();
+        let mut sizes = Vec::new();
+        for _ in 0..7 {
+            size = size.after(&drained(true, true));
+            sizes.push(size.entries());
+        }
+        assert_eq!(sizes, [512, 1024, 2048, 4096, 8192, 8192, 8192]);
+        assert_eq!(
+            size.after(&drained(false, false)),
+            size,
+            "a plan that wrote nothing keeps it"
+        );
+        assert_eq!(size.after(&drained(false, true)), PlanSize::default());
+        assert_eq!(
+            size.after(&drained(true, false)).entries(),
+            PlanSize::LARGEST,
+            "a full carry of broken documents still grows"
+        );
+    }
+
+    /// A full plan of documents that all fail is carried at any size, so
+    /// the entries behind it come forward; a short one writes nothing.
+    #[test]
+    fn only_a_short_plan_only_renumbers() {
+        let plan = |size: usize, entries: u64| Plan {
+            size: PlanSize(size),
+            first: 1,
+            through: entries,
+            docs: (1..=entries).collect(),
+        };
+        assert!(plan(8192, 300).only_renumbers(300));
+        assert!(!plan(256, 256).only_renumbers(256));
+        assert!(!plan(8192, 8192).only_renumbers(8192));
+        assert!(!plan(8192, 300).only_renumbers(1));
     }
 }

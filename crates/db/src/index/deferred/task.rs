@@ -11,7 +11,7 @@ use futures::future::{select, Either};
 use rapidhash::{HashSetExt, RapidHashMap, RapidHashSet};
 use storage::corekv::Store;
 
-use super::drain::drain_index;
+use super::drain::{drain_index, PlanSize};
 use super::{DrainRequests, IndexRef};
 use crate::database::DB;
 use crate::index::error::{Error, Result};
@@ -38,19 +38,35 @@ struct TurnReport {
     moved: Vec<u64>,
     failed: Vec<(u64, Error)>,
     carried: bool,
+    /// The size the index's next plan takes.
+    size: PlanSize,
 }
 
 /// Failed drains in a row per index, and per document a drain carried
-/// forward, kept by the drain task.
+/// forward, kept by the drain task with each index's next plan size.
 #[derive(Default)]
 struct Failures {
     indexes: RapidHashMap<IndexRef, u32>,
     docs: RapidHashMap<IndexRef, RapidHashMap<u64, u32>>,
+    sizes: RapidHashMap<IndexRef, PlanSize>,
 }
 
 impl Failures {
     fn has(&self, target: IndexRef) -> bool {
         self.indexes.contains_key(&target)
+    }
+
+    fn size(&self, target: IndexRef) -> PlanSize {
+        self.sizes.get(&target).copied().unwrap_or_default()
+    }
+
+    /// Only a grown size is kept, so the map holds the indexes with a backlog.
+    fn sized(&mut self, target: IndexRef, size: PlanSize) {
+        if size == PlanSize::default() {
+            self.sizes.remove(&target);
+        } else {
+            self.sizes.insert(target, size);
+        }
     }
 
     /// Warns on the first failure and then each time the count doubles, so
@@ -146,7 +162,13 @@ where
         let mut failure = None;
         for (name, target) in self.deferred_indexes()? {
             match self
-                .drain_turn(&name, target, usize::MAX, RapidHashSet::new())
+                .drain_turn(
+                    &name,
+                    target,
+                    usize::MAX,
+                    RapidHashSet::new(),
+                    PlanSize::default(),
+                )
                 .await
             {
                 Ok(report) => {
@@ -189,24 +211,27 @@ where
         Ok(indexes)
     }
 
-    /// Drains up to `plans` plans of one index, carrying forward the
-    /// documents in `skip` and those that fail. It stops at a plan that frees
-    /// nothing, so a document that keeps failing waits for the next sweep.
+    /// Drains up to `plans` plans of one index, the first of `size` entries,
+    /// carrying forward the documents in `skip` and those that fail. It stops
+    /// at a plan that frees nothing, so a document that keeps failing waits
+    /// for the next sweep.
     async fn drain_turn(
         &self,
         name: &str,
         target: IndexRef,
         plans: usize,
         mut skip: RapidHashSet<u64>,
+        size: PlanSize,
     ) -> Result<TurnReport> {
         let mut report = TurnReport {
             turn: Turn::Idle,
             moved: Vec::new(),
             failed: Vec::new(),
             carried: false,
+            size,
         };
         for _ in 0..plans {
-            let drained = drain_index(self, name, target.1, &skip)
+            let drained = drain_index(self, name, target.1, &skip, report.size)
                 .await
                 .map_err(|source| Error::DeferredDrain {
                     collection: name.to_string(),
@@ -214,8 +239,10 @@ where
                     source: Box::new(source),
                 })?;
             let Some(drained) = drained else {
+                report.size = PlanSize::default();
                 return Ok(report);
             };
+            report.size = report.size.after(&drained);
             report.carried |= drained.carried;
             skip.extend(drained.failed.iter().map(|(doc, _)| *doc));
             report.moved.extend(drained.moved);
@@ -254,9 +281,13 @@ where
                 continue;
             }
             let stuck = failures.stuck(target, sweep);
-            match self.drain_turn(&name, target, TURN, stuck).await {
+            match self
+                .drain_turn(&name, target, TURN, stuck, failures.size(target))
+                .await
+            {
                 Ok(report) => {
                     failures.drained(&name, target);
+                    failures.sized(target, report.size);
                     failures.turned(&name, target, &report);
                     match report.turn {
                         Turn::Idle => {}
@@ -273,6 +304,7 @@ where
                 }
                 Err(error) => {
                     failures.failed(&name, target, &error);
+                    failures.sized(target, PlanSize::default());
                     self.deferred_drains.defer(target);
                 }
             }
