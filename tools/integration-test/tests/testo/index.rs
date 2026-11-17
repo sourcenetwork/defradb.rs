@@ -8,6 +8,7 @@ mod backfill_large;
 mod backfill_txn;
 mod backfill_unique;
 mod backfill_unique_txn;
+mod composite_relation_prefix;
 mod crdt;
 mod delete;
 mod get;
