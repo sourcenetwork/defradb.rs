@@ -16,6 +16,7 @@ dependencies = [
  "bytes",
  "datastore",
  "defra-core",
+ "hex",
  "identity",
  "kovan",
  "rapidhash",

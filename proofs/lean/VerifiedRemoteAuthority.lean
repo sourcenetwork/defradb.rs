@@ -29,7 +29,8 @@ structure Credential where
   form : Form
   /-- The User signed it. -/
   signedBySigner : Bool
-  /-- It names this node and its deployment. -/
+  /-- It names this node and its deployment and, when the node knows it,
+  the deployment's genesis identity. -/
   forThisNode : Bool
   /-- It has not expired. -/
   current : Bool

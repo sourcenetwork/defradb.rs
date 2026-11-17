@@ -222,6 +222,7 @@ impl VeraProvider for Remote {
         Some(acp::DelegationAudience {
             worker: "did:key:stub-worker".into(),
             deployment: 1,
+            genesis_id: None,
         })
     }
 

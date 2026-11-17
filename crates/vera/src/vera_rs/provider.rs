@@ -31,6 +31,9 @@ use super::signer::{admission, DelegationSigner, Secp256k1Signer};
 use super::transport::RpcTransport;
 use super::worker::NativeWorker;
 
+#[cfg(test)]
+mod audience_tests;
+mod genesis;
 mod reach;
 #[cfg(test)]
 mod signer_tests;
@@ -48,6 +51,9 @@ pub struct VeraRsProvider {
     worker_did: String,
     actor_did: String,
     deployment: u64,
+    /// The deployment's genesis identity, once the light client has proven
+    /// the first block.
+    genesis_id: Arc<regolith::sync::OnceCell<[u8; 32]>>,
     trusted: ConsensusPublicKey,
     signer: Arc<dyn DelegationSigner>,
     sync_timeout: Duration,
@@ -214,6 +220,7 @@ impl VeraRsProvider {
         edge: &edge::Edge,
     ) -> Result<Self, ProviderError> {
         let trusted = trusted_key(trusted_consensus_key)?;
+        let genesis_id = Arc::new(regolith::sync::OnceCell::new());
         let light_client = edge::compat(async {
             let light_client = Arc::new(
                 AcpLightClient::with_transport(
@@ -228,6 +235,9 @@ impl VeraRsProvider {
                 .wait_for_height(1, tuning.receipt_timeout)
                 .await
                 .map_err(|e| ProviderError::Config(format!("initial verified state: {e}")))?;
+            if let Err(error) = learn_genesis(&light_client, &trusted, &genesis_id).await {
+                tracing::warn!(error = %error, "vera.rs genesis identity not proven at start");
+            }
             Ok::<_, ProviderError>(light_client)
         })
         .await?;
@@ -245,6 +255,10 @@ impl VeraRsProvider {
             light_client.clone(),
             light_client_observability.clone(),
             event_bus,
+            Genesis {
+                trusted,
+                id: genesis_id.clone(),
+            },
         )));
 
         let provider = Self {
@@ -254,6 +268,7 @@ impl VeraRsProvider {
             worker_did,
             actor_did,
             deployment,
+            genesis_id,
             trusted,
             signer,
             sync_timeout: tuning.receipt_timeout,
@@ -295,10 +310,33 @@ fn format_root(root: alloy_primitives::B256) -> String {
     format!("0x{}", hex::encode(root))
 }
 
+/// Where the provider keeps the deployment's genesis identity, and the key
+/// that proves it.
+struct Genesis {
+    trusted: ConsensusPublicKey,
+    id: Arc<regolith::sync::OnceCell<[u8; 32]>>,
+}
+
+/// Reads the deployment's genesis identity into `known` unless it is there.
+/// A read that fails leaves it unknown: request-bound delegations are then
+/// checked without it, as by a provider that has none, and the light client
+/// observer asks again at each new height.
+async fn learn_genesis(
+    light_client: &AcpLightClient,
+    trusted: &ConsensusPublicKey,
+    known: &regolith::sync::OnceCell<[u8; 32]>,
+) -> Result<(), ProviderError> {
+    if known.get().is_none() {
+        let _ = known.set(genesis::read(light_client, trusted).await?);
+    }
+    Ok(())
+}
+
 async fn run_light_client_observer(
     light_client: Arc<AcpLightClient>,
     last_invalidation_height: Arc<AtomicU64>,
     event_bus: Option<Arc<dyn Bus>>,
+    genesis: Genesis,
 ) {
     let mut next_height = 1u64;
     let mut previous_root = None;
@@ -319,6 +357,9 @@ async fn run_light_client_observer(
             }
         };
 
+        if let Err(error) = learn_genesis(&light_client, &genesis.trusted, &genesis.id).await {
+            tracing::debug!(error = %error, "vera.rs genesis identity not yet proven");
+        }
         let module_state_root = format_root(sync.module_state_root);
         if let Some(ref bus) = event_bus {
             bus.publish(Message::acp_height_advanced(AcpHeightAdvancedData {
@@ -800,6 +841,7 @@ impl VeraProvider for VeraRsProvider {
         Some(acp::DelegationAudience {
             worker: self.worker_did.clone(),
             deployment: self.deployment,
+            genesis_id: self.genesis_id.get().copied(),
         })
     }
 
@@ -818,12 +860,13 @@ impl VeraProvider for VeraRsProvider {
         token: &str,
         command: &crate::PolicyCommand<'_>,
     ) -> Option<Result<String, ProviderError>> {
-        bearer::caller_of_request_delegation(token, &self.worker_did, self.deployment, || {
-            request_digest(command)
-        })
-        .map(|caller| {
-            caller.map_err(|error| ProviderError::Config(format!("request delegation: {error}")))
-        })
+        let audience = self.delegation_audience()?;
+        bearer::caller_of_request_delegation(token, &audience, || request_digest(command)).map(
+            |caller| {
+                caller
+                    .map_err(|error| ProviderError::Config(format!("request delegation: {error}")))
+            },
+        )
     }
 }
 
