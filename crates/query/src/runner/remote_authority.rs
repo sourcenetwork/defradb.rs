@@ -89,9 +89,21 @@ pub(super) async fn remote_write_authority(
             }
             MutationType::Truncate => provider.owed_authority(signer).map(drop),
         };
-        authority.map_err(|error| QueryError::WriteAuthorityUnavailable(error.to_string()))?;
+        authority.map_err(refused)?;
     }
     Ok(())
+}
+
+/// The query error for a refused authority: a delegation that does not hold
+/// at the provider's time keeps its window, so the caller can issue it again.
+fn refused(error: acp::Error) -> QueryError {
+    match error {
+        acp::Error::DelegationOutsideWindow { window, .. } => QueryError::DelegationOutsideWindow {
+            reason: error.to_string(),
+            window,
+        },
+        other => QueryError::WriteAuthorityUnavailable(other.to_string()),
+    }
 }
 
 /// Whether the credential of a verified update or delete by `signer` may

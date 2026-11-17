@@ -178,6 +178,15 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        family: "vera.rs delegation window",
+        name: "issued_is_well_formed / issued_is_what_veras_builder_writes / request_holds_iff / written_at_provider_time_holds / ahead_within_allowance_holds / ahead_beyond_allowance_refused / behind_by_the_lifetime_refused / longer_than_the_longest_lifetime_refused_ahead / plain_ahead_within_allowance_holds / without_allowance_one_second_ahead_refused / reported_lead_is_a_lower_bound / unset_start_is_reported_exactly / set_back_start_is_reported_less_the_allowance / expired_claims_nothing_about_the_clock / outlasting_reaches_too_far / rewritten_at_reported_time_holds",
+        axis: Lean,
+        anchor: "crates/vera/src/vera_rs/bearer/request.rs issue_request_at, MAX_REQUEST_LIFETIME; crates/vera/src/vera_rs/bearer.rs not_before, authorize_at; crates/vera/src/vera_rs/bearer/window.rs within_window; crates/acp/src/delegation_window.rs CLOCK_SKEW_ALLOWANCE, WindowRefusal",
+        model_ref: "VeraDelegationWindow (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         family: "vera.rs embedded transport",
         name: "within_iff / network_accepted_is_accepted / longer_is_refused / answer_in_time_is_kept / silent_node_ends_the_wait / late_answer_is_not_waited_for / node_error_keeps_its_code / busy_node_is_asked_again / slow_node_is_asked_again / stopped_node_is_not_asked_again / asked_again_iff / asked_again_as_over_http / client_errors_stay_distinct / transport_errors_stay_distinct",
         axis: Lean,

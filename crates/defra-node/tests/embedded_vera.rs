@@ -14,6 +14,10 @@ use defra_node::{
 #[path = "embedded_vera/verified.rs"]
 mod verified;
 
+#[cfg(feature = "http")]
+#[path = "embedded_vera/clock_skew.rs"]
+mod clock_skew;
+
 #[path = "embedded_vera/replica.rs"]
 mod replica;
 

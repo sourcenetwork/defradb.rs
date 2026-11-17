@@ -160,7 +160,9 @@ impl Node {
     /// for the actor). It is checked against that command as the credential
     /// of a write is checked when the write is admitted, and a credential
     /// that would not have admitted it fails the call with
-    /// `acp::Error::OwedAuthorityUnavailable` and changes nothing.
+    /// `acp::Error::OwedAuthorityUnavailable`, or with
+    /// `acp::Error::DelegationOutsideWindow` when it does not hold at the
+    /// provider's time, and changes nothing.
     ///
     /// Admitted, it is recorded with the entry and what is owed on the
     /// entry's document is submitted once, in order. A registration that

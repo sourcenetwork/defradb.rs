@@ -833,6 +833,7 @@ impl VeraProvider for VeraRsProvider {
 
         Ok(AcpLightClientStatus {
             height: sync.as_ref().map_or(0, |state| state.height),
+            chain_time: sync.as_ref().map(|state| state.timestamp),
             module_state_root: sync
                 .as_ref()
                 .map_or_else(String::new, |state| format_root(state.module_state_root)),
@@ -856,7 +857,7 @@ impl VeraProvider for VeraRsProvider {
     ) -> Option<Result<acp::AuthenticatedCaller, ProviderError>> {
         bearer::is_delegation(token).then(|| {
             bearer::caller_of_delegation(token, &self.worker_did, self.deployment)
-                .map_err(|error| ProviderError::Config(format!("caller delegation: {error}")))
+                .map_err(|error| refused("caller delegation", error))
         })
     }
 
@@ -866,12 +867,19 @@ impl VeraProvider for VeraRsProvider {
         command: &crate::PolicyCommand<'_>,
     ) -> Option<Result<String, ProviderError>> {
         let audience = self.delegation_audience()?;
-        bearer::caller_of_request_delegation(token, &audience, || request_digest(command)).map(
-            |caller| {
-                caller
-                    .map_err(|error| ProviderError::Config(format!("request delegation: {error}")))
-            },
-        )
+        bearer::caller_of_request_delegation(token, &audience, || request_digest(command))
+            .map(|caller| caller.map_err(|error| refused("request delegation", error)))
+    }
+}
+
+/// A delegation refused as `what`: one that does not hold at the node's
+/// time keeps its window, so its signer can issue it again at that time.
+fn refused(what: &str, error: bearer::CallerDelegationError) -> ProviderError {
+    match error {
+        bearer::CallerDelegationError::Window(window) => {
+            ProviderError::DelegationOutsideWindow(window)
+        }
+        other => ProviderError::Config(format!("{what}: {other}")),
     }
 }
 
