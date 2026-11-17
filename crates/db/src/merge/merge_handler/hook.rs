@@ -50,6 +50,15 @@ pub trait CompositeMergeHook: MaybeSendSync {
         Ok(None)
     }
 
+    /// Whether a change to `collection` whose verified signer
+    /// `on_protected_update` refuses is parked by its document and tried
+    /// again when the document's relationships change, rather than
+    /// rejected for good: the refusal depends on a remote provider's state,
+    /// which a later grant changes.
+    fn parks_refusals(&self, _collection: &CollectionVersion) -> bool {
+        false
+    }
+
     /// Whether frames of `collection` are planned by
     /// [`plan_replica`](Self::plan_replica): the node registers replicated
     /// documents of it with a remote provider.

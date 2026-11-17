@@ -100,7 +100,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 )
                 .await?
             {
-                return Ok(Some(outcome));
+                return Ok(Some(outcome.into_outcome()));
             }
         }
         state.is_branchable = collection.schema().is_branchable;

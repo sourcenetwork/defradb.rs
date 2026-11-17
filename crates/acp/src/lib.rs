@@ -54,6 +54,7 @@ pub mod zanzibar;
 pub use auth_error::normalize_auth_error;
 pub use dac::{
     bound_to_request, with_request_bearer, AuthenticatedCaller, DocumentACP, DocumentRelationship,
+    ObjectChangeListener,
 };
 pub use error::{Error, Result};
 pub use external::{

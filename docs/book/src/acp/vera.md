@@ -139,8 +139,9 @@ signer's authority for it, and the chain records the signer, not the node, as ow
 
 A replicated change merges on a node only if its verified signer holds the permission
 on that node's provider when it merges: `delete` for a deletion, `update` otherwise.
-The document's creator gets no exception. A refusal is final for that block on that
-node (it is quarantined). Under a remote provider every frame, the genesis included,
+The document's creator gets no exception. A refused change is parked rather than
+rejected for good (see "Parked refusals" below); only an unsigned change's refusal is
+final. Under a remote provider every frame, the genesis included,
 is put back to be tried again (a retryable skip) until the provider holds the document
 and the node can read it. The node counts as able to read when its identity or its
 provider's own actor (`DocumentACP::own_actor`) can; both are the same node.
@@ -201,14 +202,33 @@ in place, so it lands. Otherwise the delete and the changes before it would wait
 ever on every node that waits for the provider to hold the document. A document whose
 creator lost its last grant stays registered and refuses that creator.
 
-**Limits.** A commit by a signer the provider refuses is final on that node. Commits
-that descend from it are blocked too. Every merged change asks the provider for the
-document's registration, the node's read and the signer's permission. These decisions
-are cached against the light client's verified state, so a new chain revision misses
-the cache.
+**Parked refusals.** Under a remote provider, a signed change whose signer the
+provider refuses is parked by its document, because a later grant can change the
+answer. A change whose history holds a parked one is parked with it: it cannot merge
+before the change it builds on. A change on another branch is not held up.
 
-The model is `proofs/tla/ReplicaRegistration.tla`; the gate's classification is proved
-in `proofs/lean/ReplicaGate.lean`.
+A parked change is tried again through the normal merge path, with a fresh decision:
+
+- when this node changes the document's relationships on the provider (a relationship
+  set or deleted through the node, or an owed change or registration it settles);
+- when the refused change itself merges, for what waits behind it;
+- on the sweep, every 60 seconds and for at most 256 documents a pass. The sweep covers
+  a grant made by another node of the deployment, which this node is not told about.
+
+The index holds at most 1,024 parked changes per document and 16,384 per node. It is
+in memory. A change past either bound, or parked before a restart, is not indexed: it
+stays unmerged and the replication layer tries it again on its own retry clock, as
+every retryable skip is. A revoked writer's later change is refused and parked. It
+merges only if the writer is granted again.
+
+**Limits.** Every merged change asks the provider for the document's registration, the
+node's read and the signer's permission. These decisions are cached against the light
+client's verified state, so a new chain revision misses the cache. A change parked on
+a grant that never comes is tried again by every sweep until a restart drops it from
+the index.
+
+The models are `proofs/tla/ReplicaRegistration.tla` and `proofs/tla/ParkedMerge.tla`;
+the gate's classification is proved in `proofs/lean/ReplicaGate.lean`.
 
 ## Why it exists
 

@@ -12,6 +12,13 @@ use crate::error::{Error, Result};
 use crate::identity::Identity;
 use crate::permission::DocumentPermission;
 
+/// Told when this node changes an object's relationships on its provider
+/// ([`DocumentACP::watch_object_changes`]). Called after the change, on the
+/// task that made it, which it must not hold up.
+pub trait ObjectChangeListener: MaybeSendSync {
+    fn changed(&self, policy_id: &str, resource_name: &str, object_id: &str);
+}
+
 /// A caller and expiration established by a credential's verification owner.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthenticatedCaller {
@@ -96,6 +103,12 @@ pub trait DocumentACP: MaybeSendSync {
     fn own_actor(&self) -> Option<Did> {
         None
     }
+
+    /// Tell `listener` whenever this node changes an object's relationships
+    /// on the provider: a relationship set or deleted through it, an owed
+    /// change or registration it settled. A provider that keeps no such
+    /// record tells nothing. The first listener stays.
+    fn watch_object_changes(&self, _listener: std::sync::Arc<dyn ObjectChangeListener>) {}
 
     /// What this node still owes, or waits for, on a replicated document,
     /// from committed state alone: the merge gate's input

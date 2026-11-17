@@ -310,6 +310,14 @@ impl CompositeMergeHook for AcpCompositeMergeHook {
         ))))
     }
 
+    fn parks_refusals(&self, collection: &CollectionVersion) -> bool {
+        self.strict()
+            && collection.policy.is_some()
+            && self
+                .document_acp()
+                .is_some_and(|acp| !acp.supports_transactions())
+    }
+
     fn plans_replicas(&self, collection: &CollectionVersion) -> bool {
         self.replicas_for(collection).is_some()
     }
@@ -571,21 +579,26 @@ impl<S: Store, B: blockstore::Blockstore> AcpMergeHandler<S, B> {
     pub fn with_document_acp(self, acp: Arc<dyn DocumentACP>) -> Self
     where
         S: 'static,
+        B: 'static,
     {
         self.set_document_acp(acp);
         self
     }
 
     /// The hook decides with the provider as the database installed it, so an
-    /// external provider is gated by the registrations creates owe it.
+    /// external provider is gated by the registrations creates owe it, and
+    /// changes parked on its refusals are re-driven when this node changes
+    /// their document's relationships.
     pub fn set_document_acp(&self, acp: Arc<dyn DocumentACP>)
     where
         S: 'static,
+        B: 'static,
     {
         self.inner.db.set_document_acp(acp);
         if let Some(installed) = self.inner.db.document_acp() {
             self.hook.set_document_acp(installed.clone());
         }
+        self.inner.watch_parked_acp();
     }
 
     pub fn set_strict_replicated_doc_access(&self, strict: bool) {

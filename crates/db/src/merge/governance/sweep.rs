@@ -160,6 +160,10 @@ pub async fn run_governance_sweep<S, B>(
         if swept > 0 {
             tracing::debug!(swept, "Governance sweep re-drove unmerged composites");
         }
+        let parked = handler.sweep_parked_acp().await;
+        if parked > 0 {
+            tracing::debug!(parked, "Sweep re-drove changes parked on ACP refusals");
+        }
         let pause = match workers::delay(interval) {
             Ok(pause) => pause,
             Err(error) => {

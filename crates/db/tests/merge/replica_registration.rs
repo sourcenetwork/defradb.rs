@@ -3,13 +3,11 @@
 //! deployment, whose document nobody would register, and the creator's later
 //! changes, merged through the full ACP merge handler under strict access.
 
-mod support;
-
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
+use crate::replica_support::{is_retry, key, Chain, Embedder, Receiver, Source, POLICY, RESOURCE};
 use defra_core::merge::MergeOutcome;
-use support::{is_retry, key, Chain, Embedder, Receiver, Source, POLICY, RESOURCE};
 
 fn embedder(own: Vec<identity::Did>, nodes: Vec<identity::Did>) -> Arc<Embedder> {
     Arc::new(Embedder { own, nodes })
@@ -235,8 +233,10 @@ fn an_update_reaching_the_receiver_before_its_genesis_registers_through_the_gene
     .unwrap()
 }
 
+/// The refusal parks the change rather than rejecting it for good
+/// (`proofs/tla/ParkedMerge.tla`; `parked_refusals.rs` covers the re-drive).
 #[test]
-fn a_revoked_writers_later_update_is_refused() {
+fn a_revoked_writers_later_update_is_parked() {
     workers::block_on(async {
         let chain = Chain::new();
         let node = key().did;
@@ -259,7 +259,8 @@ fn a_revoked_writers_later_update_is_refused() {
 
         chain.revoke(&doc, "writer", &writer.did);
         let second = source.update(&writer, &doc, "Bobby").await;
-        assert!(receiver.receive(&source, &doc, &second).await.is_rejected());
+        let outcome = receiver.receive(&source, &doc, &second).await;
+        assert!(crate::replica_support::is_parked(&outcome), "{outcome:?}");
     })
     .unwrap()
 }

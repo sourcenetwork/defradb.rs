@@ -15,7 +15,9 @@ use db::merge::acp_merge_handler::AcpMergeHandler;
 use db::merge::merge_handler::DbMergeHandler;
 use db::merge::{ReplicaOwnership, ReplicaRegistration};
 use db::AutoCommitMutator;
-use defra_core::block::Block;
+use defra_core::block::{
+    Block, CompositeDeltaPayload, CrdtDelta, Signature, SignatureHeader, SignatureType,
+};
 use defra_core::merge::{BlockMetadata, MergeHandler, MergeOutcome};
 use defra_core::signing::{set_signing_config, SigningConfig, SigningKeyType};
 use document::{DocID, Document, NormalValue};
@@ -27,13 +29,13 @@ use schema::{CType, CollectionVersion, FieldDescription, FieldKind, PolicyDescri
 use storage::RegolithStore;
 use zanzibar::types::Subject;
 
-pub(super) const POLICY: &str = "replica-policy";
-pub(super) const RESOURCE: &str = "users";
-pub(super) const COLLECTION_ID: &str = "col-users";
+pub(crate) const POLICY: &str = "replica-policy";
+pub(crate) const RESOURCE: &str = "users";
+pub(crate) const COLLECTION_ID: &str = "col-users";
 
 type Map<K, V> = HopscotchMap<K, V, rapidhash::fast::RandomState>;
 type Blocks = DefraBlockstore<RegolithStore>;
-pub(super) type Composite = (Cid, Bytes);
+pub(crate) type Composite = (Cid, Bytes);
 
 fn map<K, V>() -> Map<K, V>
 where
@@ -46,16 +48,16 @@ where
 /// One Vera deployment, as far as these tests need one: owners, relations,
 /// and switches that hold registrations or the adds of a relation, as an
 /// unreachable provider would.
-pub(super) struct Chain {
+pub(crate) struct Chain {
     owners: Map<String, Did>,
     relations: Map<(String, String, String), ()>,
     held_relations: Map<String, ()>,
-    pub(super) hold_registrations: AtomicBool,
-    pub(super) reads: AtomicUsize,
+    pub(crate) hold_registrations: AtomicBool,
+    pub(crate) reads: AtomicUsize,
 }
 
 impl Chain {
-    pub(super) fn new() -> Arc<Self> {
+    pub(crate) fn new() -> Arc<Self> {
         Arc::new(Self {
             owners: map(),
             relations: map(),
@@ -65,36 +67,36 @@ impl Chain {
         })
     }
 
-    pub(super) fn owner(&self, doc: &str) -> Option<Did> {
+    pub(crate) fn owner(&self, doc: &str) -> Option<Did> {
         self.owners.get(doc)
     }
 
-    pub(super) fn holds(&self, doc: &str, relation: &str, did: &Did) -> bool {
+    pub(crate) fn holds(&self, doc: &str, relation: &str, did: &Did) -> bool {
         self.relations
             .contains_key(&(doc.to_owned(), relation.to_owned(), did.to_string()))
     }
 
-    pub(super) fn grant(&self, doc: &str, relation: &str, did: &Did) {
+    pub(crate) fn grant(&self, doc: &str, relation: &str, did: &Did) {
         self.relations
             .insert((doc.to_owned(), relation.to_owned(), did.to_string()), ());
     }
 
-    pub(super) fn revoke(&self, doc: &str, relation: &str, did: &Did) {
+    pub(crate) fn revoke(&self, doc: &str, relation: &str, did: &Did) {
         self.relations
             .remove(&(doc.to_owned(), relation.to_owned(), did.to_string()));
     }
 
     /// Adds of `relation` fail as unreachable until released.
-    pub(super) fn hold(&self, relation: &str) {
+    pub(crate) fn hold(&self, relation: &str) {
         self.held_relations.insert(relation.to_owned(), ());
     }
 
-    pub(super) fn release(&self, relation: &str) {
+    pub(crate) fn release(&self, relation: &str) {
         self.held_relations.remove(relation);
     }
 
     /// The deployment as one node sees it: it signs as `actor`.
-    pub(super) fn as_node(self: &Arc<Self>, actor: &Did) -> Arc<dyn DocumentACP> {
+    pub(crate) fn as_node(self: &Arc<Self>, actor: &Did) -> Arc<dyn DocumentACP> {
         Arc::new(ChainView {
             chain: Arc::clone(self),
             actor: actor.clone(),
@@ -235,9 +237,9 @@ impl DocumentACP for ChainView {
 /// The embedder: which actors are this deployment's own, and what a receiver
 /// grants on a document it registers: read for the deployment's nodes, then
 /// write for the creator.
-pub(super) struct Embedder {
-    pub(super) own: Vec<Did>,
-    pub(super) nodes: Vec<Did>,
+pub(crate) struct Embedder {
+    pub(crate) own: Vec<Did>,
+    pub(crate) nodes: Vec<Did>,
 }
 
 impl ReplicaOwnership for Embedder {
@@ -257,7 +259,7 @@ impl ReplicaOwnership for Embedder {
     }
 }
 
-pub(super) fn users() -> CollectionVersion {
+pub(crate) fn users() -> CollectionVersion {
     CollectionVersion::new(
         "Users",
         "v1",
@@ -272,15 +274,17 @@ pub(super) fn users() -> CollectionVersion {
 
 /// A key that signs blocks, and its DID.
 #[derive(Clone)]
-pub(super) struct Key {
+pub(crate) struct Key {
     signing: SigningConfig,
-    pub(super) did: Did,
+    private: Arc<crypto::Ed25519PrivateKey>,
+    pub(crate) did: Did,
 }
 
-pub(super) fn key() -> Key {
+pub(crate) fn key() -> Key {
     let key = crypto::generate_ed25519().unwrap();
     let public_key = key.public_key();
     Key {
+        private: Arc::new(key.clone()),
         did: Did::new(public_key.did().unwrap()).unwrap(),
         signing: SigningConfig {
             key_type: SigningKeyType::Ed25519,
@@ -295,13 +299,13 @@ pub(super) fn key() -> Key {
 
 /// The creator's node, on its own deployment: no ACP, every block signed by
 /// the key that writes it.
-pub(super) struct Source {
+pub(crate) struct Source {
     db: Arc<DB<RegolithStore>>,
-    pub(super) blocks: Arc<Blocks>,
+    pub(crate) blocks: Arc<Blocks>,
 }
 
 impl Source {
-    pub(super) async fn open() -> Self {
+    pub(crate) async fn open() -> Self {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let db = Arc::new(DB::from_arc(store.clone()).unwrap());
         db.create_collection(users()).await.unwrap();
@@ -321,7 +325,7 @@ impl Source {
         )
     }
 
-    pub(super) async fn create(&self, by: &Key, name: &str) -> (String, Composite) {
+    pub(crate) async fn create(&self, by: &Key, name: &str) -> (String, Composite) {
         let mut doc = self.document();
         doc.set("name", NormalValue::String(name.into())).unwrap();
         set_signing_config(Some(by.signing.clone()));
@@ -336,7 +340,7 @@ impl Source {
         )
     }
 
-    pub(super) async fn update(&self, by: &Key, doc_id: &str, name: &str) -> Composite {
+    pub(crate) async fn update(&self, by: &Key, doc_id: &str, name: &str) -> Composite {
         let mut doc = self.document();
         doc.set_id(DocID::from_string(doc_id).unwrap());
         doc.set("name", NormalValue::String(name.into())).unwrap();
@@ -353,7 +357,62 @@ impl Source {
         (updated.commit_cid.unwrap(), updated.commit_block.unwrap())
     }
 
-    pub(super) async fn delete(&self, by: &Key, doc_id: &str) -> Composite {
+    /// A composite with no field changes on top of `heads`, signed by `by`:
+    /// a change on whichever branch `heads` names.
+    pub(crate) async fn composite(
+        &self,
+        by: &Key,
+        heads: Vec<Cid>,
+        priority: u64,
+        status: u8,
+    ) -> Composite {
+        let mut block = Block::new(
+            CrdtDelta::Composite(CompositeDeltaPayload {
+                collection_version_id: "v1".to_string(),
+                priority,
+                status,
+            }),
+            heads,
+            vec![],
+        );
+        let value = by.private.sign(&block.to_dag_cbor().unwrap()).unwrap();
+        let signature = Signature::new(
+            SignatureHeader::new(
+                SignatureType::EdDSA,
+                hex::encode(by.private.public_key().raw()).into_bytes(),
+            ),
+            value,
+        );
+        let signature_cid = signature.generate_cid().unwrap();
+        self.blocks
+            .put(&signature_cid, &signature.to_dag_cbor().unwrap())
+            .await
+            .unwrap();
+        block.signature = Some(signature_cid);
+        let cid = block.generate_cid().unwrap();
+        let bytes = Bytes::from(block.to_dag_cbor().unwrap());
+        self.blocks.put(&cid, &bytes).await.unwrap();
+        (cid, bytes)
+    }
+
+    /// An unsigned composite on top of `heads`.
+    pub(crate) async fn unsigned(&self, heads: Vec<Cid>, priority: u64) -> Composite {
+        let block = Block::new(
+            CrdtDelta::Composite(CompositeDeltaPayload {
+                collection_version_id: "v1".to_string(),
+                priority,
+                status: 1,
+            }),
+            heads,
+            vec![],
+        );
+        let cid = block.generate_cid().unwrap();
+        let bytes = Bytes::from(block.to_dag_cbor().unwrap());
+        self.blocks.put(&cid, &bytes).await.unwrap();
+        (cid, bytes)
+    }
+
+    pub(crate) async fn delete(&self, by: &Key, doc_id: &str) -> Composite {
         set_signing_config(Some(by.signing.clone()));
         let deleted = AutoCommitMutator::new(self.db.clone())
             .delete("Users", &DocID::from_string(doc_id).unwrap())
@@ -366,15 +425,15 @@ impl Source {
 
 /// A receiving node of the shared deployment, signing as `actor`, under an
 /// identity of its own.
-pub(super) struct Receiver {
+pub(crate) struct Receiver {
     handler: AcpMergeHandler<RegolithStore, Blocks>,
     blocks: Arc<Blocks>,
-    pub(super) db: Arc<DB<RegolithStore>>,
-    pub(super) identity: Did,
+    pub(crate) db: Arc<DB<RegolithStore>>,
+    pub(crate) identity: Did,
 }
 
 impl Receiver {
-    pub(super) async fn open(
+    pub(crate) async fn open(
         chain: &Arc<Chain>,
         actor: &Did,
         replicas: Option<Arc<dyn ReplicaOwnership>>,
@@ -385,7 +444,7 @@ impl Receiver {
 
     /// A node whose document ACP `acp` builds over its store; `strict` is
     /// the access a remote provider runs under.
-    pub(super) async fn open_with(
+    pub(crate) async fn open_with(
         acp: impl FnOnce(Arc<RegolithStore>) -> Arc<dyn DocumentACP>,
         replicas: Option<Arc<dyn ReplicaOwnership>>,
         strict: bool,
@@ -417,7 +476,7 @@ impl Receiver {
     }
 
     /// Copy `composite` and everything it reaches from `from`, then merge it.
-    pub(super) async fn receive(
+    pub(crate) async fn receive(
         &self,
         from: &Source,
         doc_id: &str,
@@ -454,16 +513,26 @@ impl Receiver {
             .unwrap()
     }
 
-    pub(super) fn acp(&self) -> Arc<dyn DocumentACP> {
+    /// Re-drive what is ready to be tried again.
+    pub(crate) async fn redrive(&self) {
+        self.handler.inner().redrive_deferred().await;
+    }
+
+    /// One pass of the bounded sweep over parked changes.
+    pub(crate) async fn sweep_parked(&self) -> usize {
+        self.handler.inner().sweep_parked_acp().await
+    }
+
+    pub(crate) fn acp(&self) -> Arc<dyn DocumentACP> {
         self.db.document_acp().unwrap().clone()
     }
 
     /// Submit what this node owes on `doc` as a replica.
-    pub(super) async fn settle(&self, doc: &str) -> acp::Result<()> {
+    pub(crate) async fn settle(&self, doc: &str) -> acp::Result<()> {
         self.acp().settle_replica(POLICY, RESOURCE, doc).await
     }
 
-    pub(super) async fn owed(&self, doc: &str) -> acp::ReplicaOwed {
+    pub(crate) async fn owed(&self, doc: &str) -> acp::ReplicaOwed {
         self.acp()
             .replica_owed(POLICY, RESOURCE, doc)
             .await
@@ -471,7 +540,11 @@ impl Receiver {
     }
 }
 
-pub(super) fn is_retry(outcome: &MergeOutcome) -> bool {
+pub(crate) fn is_parked(outcome: &MergeOutcome) -> bool {
+    matches!(outcome, MergeOutcome::Skipped { terminal: false, reason } if reason.starts_with("parked: "))
+}
+
+pub(crate) fn is_retry(outcome: &MergeOutcome) -> bool {
     matches!(
         outcome,
         MergeOutcome::Skipped {
