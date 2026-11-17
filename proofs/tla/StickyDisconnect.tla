@@ -78,11 +78,13 @@
 \*   * The quiet table is bounded (MAX_QUIET_PEERS, oldest evicted first).
 \*     Three nodes never fill it; eviction is checked by the Rust test
 \*     a_full_table_forgets_its_oldest_peer_and_counts_it.
-\*   * libp2p's Kademlia bootstraps (the first-connect one and the periodic
-\*     one) are more lists a node hands itself: a bootstrap's answers name
-\*     peers, and its dials pass the same quiet check. On libp2p the peer
-\*     hung up on keeps bootstrapping, which is the remoteRedial that
-\*     Red_Libp2pRemote shows.
+\*   * libp2p's Kademlia bootstraps (the refresh Go's kad-dht runs when a
+\*     new peer joins a small routing table, DualKademlia::refresh_if_low,
+\*     and the periodic one) are more lists a node hands itself: a
+\*     bootstrap's answers name peers, and its dials pass the same quiet
+\*     check. On libp2p the peer hung up on can still bootstrap later (a new
+\*     routing-table peer, the periodic tick), which is the remoteRedial
+\*     that Red_Libp2pRemote shows.
 
 EXTENDS Naturals, FiniteSets, TLC
 

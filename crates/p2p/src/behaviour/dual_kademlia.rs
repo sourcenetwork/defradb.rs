@@ -16,6 +16,7 @@ use libp2p::{
 };
 use rapidhash::{HashSetExt, RapidHashSet};
 
+use super::public_addr::is_public;
 use crate::quiet_peers::QuietPeers;
 
 /// Kademlia query parallelism. Matches Go's `dht.Concurrency(10)`
@@ -24,6 +25,10 @@ const KAD_PARALLELISM: NonZeroUsize = match NonZeroUsize::new(10) {
     Some(n) => n,
     None => unreachable!(),
 };
+
+/// Go's `minRTRefreshThreshold` (go-libp2p-kad-dht v0.38 `dht_bootstrap.go:17`):
+/// a routing table this small refreshes on every new peer.
+pub const LOW_PEERS: usize = 10;
 
 /// Go dualdht LAN protocol ID (`ProtocolExtension("/lan")`).
 pub const LAN_KAD_PROTOCOL: &str = "/ipfs/lan/kad/1.0.0";
@@ -259,19 +264,22 @@ impl DualKademlia {
         }
     }
 
-    /// Insert an address into both routing tables.
-    ///
-    /// go-libp2p dualdht classifies public/private addresses before routing
-    /// them to WAN/LAN tables. rust-libp2p 0.53 does not expose those filters,
-    /// so this emulation stores every address in both tables and accepts the
-    /// resulting query-routing divergence.
+    /// Insert an address into the LAN routing table, and into the WAN one
+    /// only when it is public, as Go's dual DHT filters its WAN side
+    /// (go-libp2p-kad-dht v0.38 `dual/dual.go:103-107`). A WAN table of
+    /// private peers ran its own refreshes, which redialed a peer after a
+    /// `DisconnectPeers` (#2992).
     pub fn add_address(
         &mut self,
         peer: &PeerId,
         address: Multiaddr,
     ) -> (kad::RoutingUpdate, kad::RoutingUpdate) {
-        let lan = self.lan.add_address(peer, address.clone());
-        let wan = self.wan.add_address(peer, address);
+        let wan = if is_public(&address) {
+            self.wan.add_address(peer, address.clone())
+        } else {
+            kad::RoutingUpdate::Failed
+        };
+        let lan = self.lan.add_address(peer, address);
         (lan, wan)
     }
 
@@ -297,6 +305,25 @@ impl DualKademlia {
             (KademliaNetwork::Lan, self.lan.bootstrap()),
             (KademliaNetwork::Wan, self.wan.bootstrap()),
         ]
+    }
+
+    /// Refresh `network`'s routing table now if it holds at most
+    /// [`LOW_PEERS`] peers, as Go's kad-dht does on every new routing-table
+    /// peer (`fixLowPeers`, go-libp2p-kad-dht v0.38 `dht.go:498-553`). This
+    /// links a node to the peers of its peers at once. Starting a bootstrap
+    /// also cancels the one rust-libp2p schedules 500 ms after each insert,
+    /// which our config cannot turn off and which redialed peers after a
+    /// `DisconnectPeers` (#2992).
+    pub fn refresh_if_low(
+        &mut self,
+        network: KademliaNetwork,
+    ) -> Option<Result<kad::QueryId, kad::NoKnownPeers>> {
+        let kad = match network {
+            KademliaNetwork::Lan => &mut self.lan,
+            KademliaNetwork::Wan => &mut self.wan,
+        };
+        let peers: usize = kad.kbuckets().map(|bucket| bucket.num_entries()).sum();
+        (peers <= LOW_PEERS).then(|| kad.bootstrap())
     }
 
     pub fn store_mut(&mut self, network: KademliaNetwork) -> &mut MemoryStore {
