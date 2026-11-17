@@ -1,27 +1,33 @@
 use std::sync::Arc;
 
+use futures::StreamExt;
+
 use super::*;
 
-const CHUNK_SIZE: usize = 1000;
+/// Documents deleted at once, each in its own attempt.
+const IN_FLIGHT: usize = 64;
 
 impl<S: Store> crate::database::DB<S> {
-    /// Delete every document of `collection`, with its heads, blocks and
-    /// index entries, keeping the collection; the number of documents.
+    /// Delete every document of `collection` committed before the truncate
+    /// began, with its heads, blocks and index entries, keeping the
+    /// collection; the number of documents.
     ///
-    /// Deletes run in chunks, so no one transaction holds the whole write set.
+    /// Each document goes in its own attempt, so a write to one document
+    /// re-runs only that document's delete.
     pub(super) async fn truncate_all(self: &Arc<Self>, collection: &Collection) -> Result<usize>
     where
         S: 'static,
     {
         let doc_ids = self.collect_doc_short_ids(collection).await?;
-        for chunk in doc_ids.chunks(CHUNK_SIZE) {
-            self.truncate_chunk(collection, chunk).await?;
+        let mut deletes = futures::stream::iter(doc_ids.iter().copied())
+            .map(|doc_short_id| self.truncate_doc(collection, doc_short_id))
+            .buffer_unordered(IN_FLIGHT);
+        while let Some(deleted) = deletes.next().await {
+            deleted?;
         }
-        self.truncate_collection_metadata(
-            collection.collection_id(),
-            collection.resolved_root_id(),
-        )
-        .await?;
+        drop(deletes);
+        self.truncate_collection_metadata(collection.resolved_root_id())
+            .await?;
         Ok(doc_ids.len())
     }
 
@@ -50,30 +56,31 @@ impl<S: Store> crate::database::DB<S> {
         Ok(doc_ids)
     }
 
-    /// Delete data for a chunk of doc short IDs in one engine-retried write
-    /// transaction: a conflict on an owner scan runs the chunk again.
-    async fn truncate_chunk(
+    /// Delete one document in an engine-retried write transaction: a
+    /// conflict with a write to it runs the delete again on fresh reads.
+    async fn truncate_doc(
         self: &Arc<Self>,
         collection: &Collection,
-        doc_short_ids: &[u64],
+        doc_short_id: u64,
     ) -> Result<()>
     where
         S: 'static,
     {
+        let db = Arc::clone(self);
         let collection = collection.clone();
-        let doc_short_ids = doc_short_ids.to_vec();
         self.transact_db(move |txn| {
+            let db = Arc::clone(&db);
             let collection = collection.clone();
-            let doc_short_ids = doc_short_ids.clone();
-            Box::pin(async move { Self::truncate_chunk_in(txn, &collection, &doc_short_ids).await })
+            Box::pin(async move { db.truncate_doc_in(txn, &collection, doc_short_id).await })
         })
         .await
     }
 
-    async fn truncate_chunk_in(
+    async fn truncate_doc_in(
+        &self,
         txn: &DbTxn<S>,
         collection: &Collection,
-        doc_short_ids: &[u64],
+        doc_short_id: u64,
     ) -> Result<()> {
         use storage::keys::HeadstorePriorityKey;
 
@@ -81,87 +88,82 @@ impl<S: Store> crate::database::DB<S> {
         let headstore = txn.headstore()?;
         let blockstore = txn.blockstore()?;
         let systemstore = txn.systemstore()?;
-        for &doc_short_id in doc_short_ids {
-            for key in [
-                collection.doc_key(doc_short_id),
-                collection.deleted_key(doc_short_id),
-                collection.version_key(doc_short_id),
-            ] {
-                datastore.delete(&key).await.map_err(Error::Storage)?;
-            }
 
-            let heads = crate::block::heads::document::load(&headstore, doc_short_id)
-                .await
-                .map_err(Error::Storage)?;
-            let block_cids = crate::block::heads::document::live_cids(&heads);
-            headstore
-                .delete(&crate::block::heads::document::set_key(doc_short_id))
-                .await
-                .map_err(Error::Storage)?;
-            delete_prefix(
-                &headstore,
-                HeadstorePriorityKey::document_prefix(doc_short_id),
-            )
+        let Some(doc_id) = crate::docid::map::get_doc_id(&systemstore, doc_short_id).await? else {
+            // A delete that won a race with this one already removed it.
+            return Ok(());
+        };
+        let canonical = document::DocID::from_string(&doc_id)?;
+        // Index entries are keyed by the field values, so they go before
+        // the values do.
+        if let Some((doc, _)) = collection
+            .get_with_datastore_include_deleted(&datastore, doc_short_id, &canonical, true)
+            .await?
+        {
+            crate::IndexManager::from_indexes(
+                collection.resolved_root_id(),
+                collection.schema(),
+                collection.write_indexes(),
+            )?
+            .with_vector_caches(self.vector_codes())
+            .on_document_delete(&datastore, &doc, doc_short_id, collection.schema())
             .await?;
-
-            let doc_id = crate::docid::map::get_doc_id(&systemstore, doc_short_id)
-                .await?
-                .ok_or_else(|| {
-                    Error::InvalidDocument(format!(
-                        "document short ID {doc_short_id} has no canonical DocID"
-                    ))
-                })?;
-            datastore
-                .project_document(collection.name(), &doc_id)
-                .await
-                .map_err(Error::Storage)?;
-            crate::block::cleanup::delete_owned_dag(
-                &blockstore,
-                &systemstore,
-                &block_cids,
-                &doc_id,
-            )
-            .await?;
-
-            // Clear the identity mappings so recreating identical content
-            // does not trip the create duplicate check.
-            crate::docid::map::delete_doc_id_mappings(&systemstore, doc_short_id).await?;
         }
-        Ok(())
+        for key in [
+            collection.doc_key(doc_short_id),
+            collection.deleted_key(doc_short_id),
+            collection.version_key(doc_short_id),
+        ] {
+            datastore.delete(&key).await.map_err(Error::Storage)?;
+        }
+
+        let heads = crate::block::heads::document::load(&headstore, doc_short_id)
+            .await
+            .map_err(Error::Storage)?;
+        let block_cids = crate::block::heads::document::live_cids(&heads);
+        headstore
+            .delete(&crate::block::heads::document::set_key(doc_short_id))
+            .await
+            .map_err(Error::Storage)?;
+        delete_prefix(
+            &headstore,
+            HeadstorePriorityKey::document_prefix(doc_short_id),
+        )
+        .await?;
+
+        datastore
+            .project_document(collection.name(), &doc_id)
+            .await
+            .map_err(Error::Storage)?;
+        crate::block::cleanup::delete_owned_dag(&blockstore, &systemstore, &block_cids, &doc_id)
+            .await?;
+
+        // Clear the identity mappings so recreating identical content
+        // does not trip the create duplicate check.
+        crate::docid::map::delete_doc_id_mappings(&systemstore, doc_short_id).await
     }
 
-    /// Delete collection-level metadata (index entries, collection heads and
-    /// the collection DAG) in one engine-retried write transaction.
-    async fn truncate_collection_metadata(
-        self: &Arc<Self>,
-        collection_id: &str,
-        short_id: u32,
-    ) -> Result<()>
+    /// Delete collection-level metadata (a view's cache, collection heads and
+    /// the collection DAG) in one engine-retried write transaction. Document
+    /// keys and index entries are left to the per-document deletes, since a
+    /// prefix wipe would also take documents created after the truncate began.
+    async fn truncate_collection_metadata(self: &Arc<Self>, short_id: u32) -> Result<()>
     where
         S: 'static,
     {
-        let collection_id = collection_id.to_owned();
-        self.transact_db(move |txn| {
-            let collection_id = collection_id.clone();
-            Box::pin(async move { Self::truncate_metadata_in(txn, &collection_id, short_id).await })
-        })
-        .await
+        self.transact_db(move |txn| Box::pin(Self::truncate_metadata_in(txn, short_id)))
+            .await
     }
 
-    async fn truncate_metadata_in(
-        txn: &DbTxn<S>,
-        collection_id: &str,
-        short_id: u32,
-    ) -> Result<()> {
+    async fn truncate_metadata_in(txn: &DbTxn<S>, short_id: u32) -> Result<()> {
         use storage::keys::datastore::ViewCacheKey;
-        use storage::keys::{HeadstoreColPublishedKey, HeadstoreColSetKey, IndexDataStoreKey};
+        use storage::keys::{HeadstoreColPublishedKey, HeadstoreColSetKey};
 
         let datastore = txn.datastore()?;
         let headstore = txn.headstore()?;
         let blockstore = txn.blockstore()?;
         let systemstore = txn.systemstore()?;
 
-        delete_prefix(&datastore, IndexDataStoreKey::collection_prefix(short_id)).await?;
         // A materialized view's rows live in its cache, not as documents.
         delete_prefix(&datastore, ViewCacheKey::collection_prefix(short_id)).await?;
 
@@ -182,10 +184,6 @@ impl<S: Store> crate::database::DB<S> {
         .await?;
 
         crate::block::cleanup::delete_owned_dag(&blockstore, &systemstore, &block_cids, "").await?;
-
-        for prefix in ["/d/", "/del/", "/v/"] {
-            delete_prefix(&datastore, format!("{prefix}{collection_id}/").into_bytes()).await?;
-        }
         Ok(())
     }
 }
