@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c00c9c9b.js";
+            window.path_to_searchindex_js = "searchindex-f4fb5a6b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-8198d451.js"></script>
@@ -2607,7 +2607,9 @@ client’s verified state, so a new chain revision misses the cache. A change pa
 a grant that never comes is tried again by every sweep until a restart drops it from
 the index.</p>
 <p>The models are <code>proofs/tla/ReplicaRegistration.tla</code> and <code>proofs/tla/ParkedMerge.tla</code>;
-the gate’s classification is proved in <code>proofs/lean/ReplicaGate.lean</code>.</p>
+the gate’s classification, parked refusals included, is proved in
+<code>proofs/lean/ReplicaGate.lean</code>, and the bounded index parked changes wait in in
+<code>proofs/lean/DeferredMerges.lean</code>.</p>
 <h2 id="why-it-exists"><a class="header" href="#why-it-exists">Why it exists</a></h2>
 <p>Some deployments need authorization decisions that no single database node can make or
 forge: multi-party deployments where the policy is shared infrastructure, audits that
