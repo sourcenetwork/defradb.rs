@@ -1,5 +1,6 @@
 mod array;
 mod array_composite;
+mod array_int_filter;
 mod array_unique;
 mod array_unique_composite;
 mod async_backfill;
