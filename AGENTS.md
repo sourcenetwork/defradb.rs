@@ -102,13 +102,14 @@ tools/
 ├── hf_embedding_server.py  # Local HuggingFace embedding server for embedding benchmarks
 ├── integration-test/       # Rust-native integration tests (primary validation)
 ├── lens-host/              # Standalone WASM Lens transform runner (JSON stdin → stdout)
+├── lenses/                 # WASM lens modules the integration tests load (own workspace, `just build-lenses`)
 ├── otel-smoke/             # OTLP exporter smoke tests against a Compose-run collector
 ├── pg-compat-harness/      # Drizzle ORM harness for the Postgres wire protocol
 └── vector-bench/           # Corpus, warm-up, memory-cap and usearch tools for vector_disk_cost
 ```
 
 Only `ffi-test`, `integration-test`, and `lens-host` are workspace members; the
-rest are scripts and non-Rust harnesses.
+rest are scripts, non-Rust harnesses, and `lenses`, a wasm32 workspace of its own.
 
 ### File Size Guidelines
 
@@ -549,12 +550,9 @@ The rustffi client `ffi-test` runs is the commit `GO_FFI_CLIENT_COMMIT` in
 `crates/defra-version/src/lib.rs` names on `origin`.
 
 `DEFRADB_GO_REPO` covers the shell commands above and `ffi-test`, which also
-accepts `--go-path <PATH>` to override it. Integration tests that consume Go
-build artifacts resolve them at compile time under
-`$HOME/go/src/github.com/sourcenetwork/defradb` — see `COPY_WASM_PATH` in
-`tools/integration-test/tests/legacy/p2p_iroh/sync/version.rs`. A checkout elsewhere
-needs a symlink at that path, or the `p2p_iroh` lens tests fail on a missing
-WASM binary.
+accepts `--go-path <PATH>` to override it. The WASM lens modules the
+integration tests load live in `tools/lenses`; `just build-lenses` builds them
+(`just integration` and `just integration-suite` do so first).
 
 ### Git Worktrees
 
