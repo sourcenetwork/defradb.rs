@@ -91,6 +91,11 @@ pub struct DefraKademlia {
     /// Kademlia's own dials the swarm has not started or failed yet, the only
     /// dials `quiet` refuses: an explicit dial of a quiet peer goes through.
     dials: RapidHashSet<ConnectionId>,
+    /// A low-peer refresh was asked for while a bootstrap ran: run one more
+    /// when it ends, as Go queues at most one (`fixLowPeersChan`, capacity 1).
+    rerun: bool,
+    /// Peers the WAN table refused for having no public address.
+    private_refused: u64,
 }
 
 impl DefraKademlia {
@@ -121,7 +126,68 @@ impl DefraKademlia {
             inner,
             quiet: QuietPeers::default(),
             dials: RapidHashSet::new(),
+            rerun: false,
+            private_refused: 0,
         }
+    }
+
+    /// How many peers the WAN table refused for having no public address.
+    #[cfg(test)]
+    pub(crate) fn private_refused(&self) -> u64 {
+        self.private_refused
+    }
+
+    fn peers(&mut self) -> usize {
+        self.inner
+            .kbuckets()
+            .map(|bucket| bucket.num_entries())
+            .sum()
+    }
+
+    fn bootstrapping(&self) -> bool {
+        self.inner
+            .iter_queries()
+            .any(|query| matches!(query.info(), kad::QueryInfo::Bootstrap { .. }))
+    }
+
+    /// Refresh the table now if it holds at most `LOW_PEERS` peers. Go runs
+    /// one refresh at a time and queues at most one more (`fixLowPeers`,
+    /// go-libp2p-kad-dht v0.38 `dht.go:473-553`, `RefreshNoWait`), so while
+    /// a bootstrap runs this only marks a re-run, started when it ends.
+    fn refresh_if_low(&mut self) -> Option<Result<kad::QueryId, kad::NoKnownPeers>> {
+        if self.peers() > LOW_PEERS {
+            return None;
+        }
+        if self.bootstrapping() {
+            self.rerun = true;
+            return None;
+        }
+        Some(self.inner.bootstrap())
+    }
+
+    /// Keep only `peer`'s public addresses in the WAN table, as Go's WAN
+    /// routing-table and address filters do (go-libp2p-kad-dht v0.38
+    /// `dual/dual.go:103-107`). Kademlia inserts a peer it dialed at the
+    /// dialed address without asking `add_address`, so the check runs on
+    /// every insert. Returns false when nothing public was left and the peer
+    /// is gone.
+    fn keep_public(&mut self, peer: &PeerId, addresses: &kad::Addresses) -> bool {
+        let (_, private): (Vec<&Multiaddr>, Vec<&Multiaddr>) =
+            addresses.iter().partition(|address| is_public(address));
+        if private.len() == addresses.len() {
+            self.inner.remove_peer(peer);
+            self.private_refused += 1;
+            tracing::debug!(
+                peer_id = %peer,
+                refused = self.private_refused,
+                "WAN routing table refused a peer with no public address"
+            );
+            return false;
+        }
+        for address in private {
+            self.inner.remove_address(peer, address);
+        }
+        true
     }
 }
 
@@ -227,15 +293,40 @@ impl NetworkBehaviour for DefraKademlia {
         &mut self,
         cx: &mut Context<'_>,
     ) -> Poll<ToSwarm<Self::ToSwarm, THandlerInEvent<Self>>> {
-        self.inner.poll(cx).map(|event| {
-            if let ToSwarm::Dial { opts } = &event {
-                self.dials.insert(opts.connection_id());
+        loop {
+            let event = std::task::ready!(self.inner.poll(cx));
+            match &event {
+                ToSwarm::Dial { opts } => {
+                    self.dials.insert(opts.connection_id());
+                }
+                ToSwarm::GenerateEvent(kad::Event::RoutingUpdated {
+                    peer, addresses, ..
+                }) if self.network == KademliaNetwork::Wan => {
+                    if !self.keep_public(peer, addresses) {
+                        continue;
+                    }
+                }
+                ToSwarm::GenerateEvent(kad::Event::OutboundQueryProgressed {
+                    result: kad::QueryResult::Bootstrap(_),
+                    step,
+                    ..
+                }) if step.last && self.rerun => {
+                    self.rerun = false;
+                    if let Some(result) = self.refresh_if_low() {
+                        tracing::debug!(
+                            ?result,
+                            dht = self.network.as_str(),
+                            "Kademlia low-peer refresh re-run"
+                        );
+                    }
+                }
+                _ => {}
             }
-            event.map_out(|event| match self.network {
+            return Poll::Ready(event.map_out(|event| match self.network {
                 KademliaNetwork::Lan => DefraKademliaEvent::Lan(event),
                 KademliaNetwork::Wan => DefraKademliaEvent::Wan(event),
-            })
-        })
+            }));
+        }
     }
 }
 
@@ -247,11 +338,10 @@ pub struct QuietPeerDial(PeerId);
 /// Separate LAN and WAN Kademlia routing tables.
 ///
 /// This emulates go-libp2p's `dualdht.DHT` shape with two concrete DHTs.
-/// rust-libp2p does not expose Go's public/private routing-table or
-/// query filters, so this split is limited to independent routing tables and
-/// protocol IDs. Addresses are inserted into both tables, which means the LAN
-/// table can contain WAN-only peers and the WAN table can contain LAN/private
-/// peers.
+/// The WAN table holds only peers with a public address, and only those
+/// addresses, as Go's WAN filters do. The LAN table takes every peer: Go's
+/// LAN filters (private peers only, loopback addresses stripped) have no
+/// counterpart here, so the LAN table can hold public peers Go's would not.
 #[derive(NetworkBehaviour)]
 #[behaviour(to_swarm = "DefraKademliaEvent")]
 pub struct DualKademlia {
@@ -271,7 +361,8 @@ impl DualKademlia {
     /// only when it is public, as Go's dual DHT filters its WAN side
     /// (go-libp2p-kad-dht v0.38 `dual/dual.go:103-107`). A WAN table of
     /// private peers ran its own refreshes, which redialed a peer after a
-    /// `DisconnectPeers` (#2992).
+    /// `DisconnectPeers` (#2992). Kademlia's own inserts pass the same test
+    /// in `DefraKademlia::poll`.
     pub fn add_address(
         &mut self,
         peer: &PeerId,
@@ -310,23 +401,35 @@ impl DualKademlia {
         ]
     }
 
-    /// Refresh `network`'s routing table now if it holds at most
-    /// `LOW_PEERS` peers, as Go's kad-dht does on every new routing-table
-    /// peer (`fixLowPeers`, go-libp2p-kad-dht v0.38 `dht.go:498-553`). This
-    /// links a node to the peers of its peers at once. Starting a bootstrap
-    /// also cancels the one rust-libp2p schedules 500 ms after each insert,
-    /// which our config cannot turn off and which redialed peers after a
-    /// `DisconnectPeers` (#2992).
+    /// Refresh `network`'s routing table if it holds at most `LOW_PEERS`
+    /// peers, as Go's kad-dht does on every new routing-table peer
+    /// (`fixLowPeers`, go-libp2p-kad-dht v0.38 `dht.go:498-553`). This links
+    /// a node to the peers of its peers at once. At most one bootstrap runs
+    /// per table: a request while one runs is folded into a single re-run
+    /// when it ends. Starting a bootstrap also cancels the one rust-libp2p
+    /// schedules 500 ms after each insert into a table of fewer than 20
+    /// peers, which our config cannot turn off; between 11 and 19 peers that
+    /// one still runs, and the quiet check covers its dials (#2992).
     pub fn refresh_if_low(
         &mut self,
         network: KademliaNetwork,
     ) -> Option<Result<kad::QueryId, kad::NoKnownPeers>> {
-        let kad = match network {
-            KademliaNetwork::Lan => &mut self.lan,
-            KademliaNetwork::Wan => &mut self.wan,
-        };
-        let peers: usize = kad.kbuckets().map(|bucket| bucket.num_entries()).sum();
-        (peers <= LOW_PEERS).then(|| kad.bootstrap())
+        match network {
+            KademliaNetwork::Lan => self.lan.refresh_if_low(),
+            KademliaNetwork::Wan => self.wan.refresh_if_low(),
+        }
+    }
+
+    /// Whether Kademlia's own dial of `peer` would be refused.
+    #[cfg(test)]
+    pub(crate) fn refuses_kademlia_dial(&mut self, peer: PeerId) -> bool {
+        [&mut self.lan, &mut self.wan].into_iter().any(|kademlia| {
+            let id = ConnectionId::new_unchecked(usize::MAX);
+            kademlia.dials.insert(id);
+            kademlia
+                .handle_pending_outbound_connection(id, Some(peer), &[], Endpoint::Dialer)
+                .is_err()
+        })
     }
 
     pub fn store_mut(&mut self, network: KademliaNetwork) -> &mut MemoryStore {
