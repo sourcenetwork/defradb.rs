@@ -18,9 +18,10 @@
 \* on top of a parked one is parked under the same document: its history
 \* holds the parked change. A change on another branch is not held up.
 \*
-\* The index is bounded. A change that does not fit is not indexed: it stays
-\* unmerged and the replication layer tries it again on its own retry clock,
-\* as every retryable skip is tried again.
+\* The index is bounded. A change that does not fit, in its document or in
+\* the node, is not indexed at all: it stays unmerged and the replication
+\* layer tries it again on its own retry clock, as every retryable skip is
+\* tried again.
 \*
 \* What must never happen:
 \*   - a change is rejected for good because its signer was refused
@@ -36,8 +37,8 @@
 \* Rust owners: crates/db/src/merge/merge_handler/composite.rs
 \* prepare_composite_merge (park); crates/db/src/merge/governance/
 \* awaited.rs WaitKey::AcpObject; crates/db/src/merge/governance/
-\* deferred.rs DeferredMerges (defer, release, MAX_WAITERS_PER_DEPENDENCY,
-\* MAX_DEFERRED_COMPOSITES); crates/db/src/merge/merge_handler/parked_acp.rs
+\* deferred.rs DeferredMerges (defer, park, release,
+\* MAX_WAITERS_PER_DEPENDENCY, MAX_DEFERRED_COMPOSITES); crates/db/src/merge/merge_handler/parked_acp.rs
 \* ParkedRelease, sweep_parked_acp; crates/acp/src/external.rs
 \* ExternalDocumentAcp::watch_object_changes.
 EXTENDS Naturals, FiniteSets

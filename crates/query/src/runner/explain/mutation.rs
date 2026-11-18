@@ -33,7 +33,10 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                     operation_children.push(mutation_explain);
                 }
                 Err(e) => {
-                    if matches!(&e, QueryError::Parse(_)) {
+                    if matches!(
+                        &e,
+                        QueryError::Parse(_) | QueryError::UnknownMutationCollection(_)
+                    ) {
                         return Err(e);
                     }
                     execution_success = false;

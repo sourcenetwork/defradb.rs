@@ -61,6 +61,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Order-preserving key encoding | Lean | storage |
 | vera.rs actor spelling | Lean | vera |
 | vera.rs delegation signing | Lean | vera |
+| vera.rs delegation window | Lean | vera, acp |
 | vera.rs embedded transport | Lean | vera-embedded |
 | DiskANN resident code table | Lean | db-index |
 | DiskANN walk cutoff | Lean | db-index (vector) |
@@ -246,6 +247,7 @@ headstore); go↔go vs rust↔rust parity (`parity.rs`) localized it to Rust.
 | Order-preserving key encoding | Boundary | ordered query may sort in memory; consts `pub(crate)` |
 | vera.rs actor spelling | Boundary | over an abstract key of a secp256k1 or P-256 curve; that distinct keys have distinct spellings is the `did:key` encoding's injectivity, and which spellings vera.rs takes is vera.rs's property; unit tests in `crates/vera/src/vera_rs/did_spelling.rs`, live case `actor_spelling`, in-process node test `crates/vera-embedded/tests/actor_keys.rs` |
 | vera.rs delegation signing | Boundary | over what the tests observe of a signature, per key kind (ECDSA or Ed25519); that ECDSA and Ed25519 verification are sound is assumed; unit tests in `crates/vera/src/vera_rs/signer/tests.rs`, `crates/vera/src/vera_rs/signer/key_type_tests.rs` and `crates/vera/src/vera_rs/provider/signer_tests.rs`, tokens checked by vera.rs's verifier in `crates/vera/src/vera_rs/bearer/key_types.rs`, token bytes pinned in `crates/vera/src/vera_rs/bearer/pinned.rs` |
+| vera.rs delegation window | Boundary | over the three times a delegation names and the block time, in whole seconds; that the node's clock stays near the provider's is the light client's freshness bound; unit tests in `crates/vera/src/vera_rs/bearer/request.rs` and `crates/vera/src/vera_rs/bearer.rs`, the refusal's wording in `crates/acp/src/delegation_window.rs`, embedded node tests in `crates/defra-node/tests/embedded_vera/clock_skew.rs` |
 | vera.rs embedded transport | Boundary | over the outcome of a call and the moment its answer comes; that the node's method table answers as its network server does is vera.rs's property; unit tests in `crates/vera-embedded/src`, in-process node tests in `crates/vera-embedded/tests/embedded_node.rs` |
 | DiskANN resident code table | Boundary | in-memory search cache, not observable on the wire; `DiskAnnCodes`; unit tests in `crates/db/tests/vector/diskann_resident.rs` |
 | P2P delivery liveness | Behavioral (trace) + Boundary | `model_trace.rs` replays recorded runs through `Trace_P2PDelivery.tla`; eventual connectivity, the bounded instance and the restart scenarios stay Boundary |

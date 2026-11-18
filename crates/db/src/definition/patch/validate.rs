@@ -1,227 +1,260 @@
-use super::*;
+//! Errors in a patch's operations themselves, as Go reports them, before the
+//! patch is applied. What the patched collections may look like is checked
+//! afterwards by `schema::definition_validation`.
 
-impl<S: Store> crate::database::DB<S> {
-    /// Validate the patched schema JSON and return a CollectionVersion.
-    ///
-    /// Deserializes the modified JSON, validates VersionID, checks field
-    /// mutations/kinds/names, auto-generates relation ID fields, and
-    /// validates self-referential relation completeness.
-    pub(crate) fn validate_patched_schema(
-        &self,
-        schema_json: serde_json::Value,
-        old_schema: &CollectionVersion,
-        actual_name: &str,
-    ) -> Result<CollectionVersion> {
-        // Field movement and duplicate checks are handled by the definition validators
-        // (validate_field_not_moved, validate_field_not_duplicated) which run post-deserialization.
-        // This matches Go's approach of collecting ALL validation errors at once.
+use crate::error::{Error, Result};
+use crate::txn::DbTxn;
+use rapidhash::RapidHashMap;
+use schema::{CollectionVersion, FieldKind, ScalarKind};
+use serde_json::Value;
+use storage::corekv::Store;
 
-        // Deserialize back to CollectionVersion
-        let mut new_schema: CollectionVersion = serde_json::from_value(schema_json)
-            .map_err(|e| Error::InvalidPatch(format!("invalid resulting schema: {}", e)))?;
+const VERSION_ID: &str = "VersionID";
+const FIELDS: &str = "Fields";
+const KIND: &str = "Kind";
+const APPEND: &str = "-";
 
-        // Go compatibility: check for removed/empty required fields after deserialization.
-        // Go's JSON unmarshaling uses zero values for missing fields; our serde defaults
-        // replicate this. Now check for invalid empty values that indicate patch corruption.
-        if new_schema.version_id.is_empty() {
-            return Err(Error::InvalidPatch(
-                "invalid cid: cid too short. VersionID: ".to_string(),
-            ));
-        }
-
-        // Go compatibility: validate field Kind and Name after patching.
-        // Existing fields (matched by FieldID) that were modified are "mutations"
-        // which is not supported. New fields with Kind:0 or empty Name are separate errors.
-        {
-            let old_field_ids: rapidhash::RapidHashSet<&str> =
-                old_schema.fields.iter().map(|f| f.id.as_str()).collect();
-            let old_field_map: rapidhash::RapidHashMap<&str, &schema::FieldDescription> =
-                old_schema
-                    .fields
-                    .iter()
-                    .map(|f| (f.id.as_str(), f))
-                    .collect();
-            let mut field_errors = Vec::new();
-
-            for field in &new_schema.fields {
-                let is_old_field =
-                    !field.id.is_empty() && old_field_ids.contains(field.id.as_str());
-
-                if is_old_field {
-                    // Check if an existing field was mutated (Kind changed, Name removed, etc.)
-                    if let Some(old_field) = old_field_map.get(field.id.as_str()) {
-                        let kind_changed = field.kind != old_field.kind;
-                        let name_empty = field.name.is_empty();
-                        if kind_changed || name_empty {
-                            field_errors.push(
-                                "mutating an existing field is not supported. ProposedName: "
-                                    .to_string(),
-                            );
-                        }
-                    }
-                } else {
-                    // Check if this is a relational ID field (_<name>ID pattern)
-                    // A field is a relational ID if:
-                    // 1. Its name matches _<base>ID where <base> is another field name
-                    // 2. That base field has a relation-like Kind (Named, Relation, or SelfRef)
-                    // Note: we use is_relation() which checks the Kind variant directly
-                    let is_relational_id = field
-                        .name
-                        .strip_prefix('_')
-                        .and_then(|s| s.strip_suffix("ID"))
-                        .map(|base_name| {
-                            new_schema.fields.iter().any(|f| {
-                                f.name == base_name
-                                    && matches!(
-                                        f.kind,
-                                        schema::FieldKind::Named { .. }
-                                            | schema::FieldKind::Relation { .. }
-                                            | schema::FieldKind::SelfRef { .. }
-                                    )
-                            })
-                        })
-                        .unwrap_or(false);
-
-                    if is_relational_id {
-                        // Relational ID fields must have Kind = DocID (1)
-                        if !matches!(
-                            field.kind,
-                            schema::FieldKind::Scalar(schema::ScalarKind::DocID)
-                        ) {
-                            let kind_display = match &field.kind {
-                                schema::FieldKind::Scalar(k) => match k {
-                                    schema::ScalarKind::None => "0".to_string(),
-                                    schema::ScalarKind::DocID => "ID".to_string(),
-                                    schema::ScalarKind::NillableBool => "Boolean".to_string(),
-                                    schema::ScalarKind::Bool => "Boolean!".to_string(),
-                                    schema::ScalarKind::NillableInt => "Integer".to_string(),
-                                    schema::ScalarKind::Int => "Integer!".to_string(),
-                                    schema::ScalarKind::NillableFloat64 => "Float".to_string(),
-                                    schema::ScalarKind::Float64 => "Float!".to_string(),
-                                    schema::ScalarKind::NillableFloat32 => "Float32".to_string(),
-                                    schema::ScalarKind::Float32 => "Float32!".to_string(),
-                                    schema::ScalarKind::NillableDateTime => "DateTime".to_string(),
-                                    schema::ScalarKind::DateTime => "DateTime!".to_string(),
-                                    schema::ScalarKind::NillableString => "String".to_string(),
-                                    schema::ScalarKind::String => "String!".to_string(),
-                                    schema::ScalarKind::NillableBlob => "Blob".to_string(),
-                                    schema::ScalarKind::Blob => "Blob!".to_string(),
-                                    schema::ScalarKind::NillableJson => "JSON".to_string(),
-                                    schema::ScalarKind::Json => "JSON!".to_string(),
-                                    _ => String::new(),
-                                },
-                                other => format!("{:?}", other),
-                            };
-                            field_errors.push(format!(
-                                "relational id field of invalid kind. Field: {}, Expected: ID, Actual: {}",
-                                field.name, kind_display
-                            ));
-                        }
-                    } else {
-                        // Standard new field validations
-                        if !field.kind.is_nillable() {
-                            field_errors.push(
-                                "adding a non-nillable field to an existing collection is not supported"
-                                    .to_string(),
-                            );
-                        }
-                        if matches!(
-                            field.kind,
-                            schema::FieldKind::Scalar(schema::ScalarKind::None)
-                        ) && field.name != "_docID"
-                        {
-                            field_errors.push(format!(
-                                "no type found for given name. Type: {}",
-                                schema::ScalarKind::None as u8
-                            ));
-                        }
-                        if field.name.is_empty() {
-                            field_errors.push(
-                                "Names must match /^[_a-zA-Z][_a-zA-Z0-9]*$/ but \"\" does not."
-                                    .to_string(),
-                            );
-                        }
-                    }
-                }
-            }
-
-            if !field_errors.is_empty() {
-                return Err(Error::InvalidPatch(field_errors.join("\n")));
-            }
-        }
-
-        // Go compatibility: auto-generate _fieldID for foreign object fields added via patch.
-        // This matches Go's collection_define.go behavior for fields with Kind.IsObject() && !Kind.IsArray().
-        {
-            let max_field_id: u64 = new_schema
-                .fields
-                .iter()
-                .filter_map(|f| f.id.parse::<u64>().ok())
-                .max()
-                .unwrap_or(0);
-            let mut next_id = max_field_id + 1;
-            new_schema
-                .add_relation_id_fields(|| {
-                    let id = next_id.to_string();
-                    next_id += 1;
-                    id
-                })
-                .map_err(|e| {
-                    Error::InvalidPatch(format!("failed to add relation id fields: {}", e))
-                })?;
-        }
-
-        // Go compatibility: validate self-referential relation field completeness.
-        // For self-references (where field.Kind references the same collection), the schema
-        // must have another field with the same RelationName (the other side of the relation).
-        // This only applies to self-references; cross-collection relations are validated
-        // at a later stage after all patches have been applied.
-        {
-            let mut rel_errors = Vec::new();
-            for field in &new_schema.fields {
-                if !field.kind.is_relation() {
-                    continue;
-                }
-                let relation_name = match &field.relation_name {
-                    Some(rn) => rn.clone(),
-                    None => continue,
-                };
-
-                // Get the referenced collection name from the Kind
-                let ref_name = match &field.kind {
-                    schema::FieldKind::Named { name, .. } => name.clone(),
-                    schema::FieldKind::Relation { collection_id, .. } => collection_id.clone(),
-                    schema::FieldKind::SelfRef { .. } => new_schema.name.clone(),
-                    _ => continue,
-                };
-
-                // Only check self-references (where the Kind references this same collection)
-                let is_self_ref = ref_name == new_schema.name || ref_name == actual_name;
-                if !is_self_ref {
-                    continue;
-                }
-
-                // Check if there's another field with the same relation name
-                let has_counterpart = new_schema.fields.iter().any(|f| {
-                    f.name != field.name
-                        && f.relation_name.as_deref() == Some(relation_name.as_str())
-                });
-
-                if !has_counterpart {
-                    rel_errors.push(format!(
-                        "relation missing field. Object: {}, RelationName: {}",
-                        ref_name, relation_name
-                    ));
-                }
-            }
-
-            if !rel_errors.is_empty() {
-                return Err(Error::InvalidPatch(rel_errors.join("\n")));
-            }
-        }
-
-        Collection::validate_default_values(&new_schema)?;
-
-        Ok(new_schema)
+/// The operations of a patch: a non-empty JSON array.
+pub(super) fn operations(patch: &str) -> Result<Vec<Value>> {
+    let patch: Value = serde_json::from_str(patch).map_err(|e| invalid(e.to_string()))?;
+    let Value::Array(ops) = patch else {
+        return Err(invalid("patch must be a JSON array"));
+    };
+    if ops.is_empty() {
+        return Err(invalid("patch array is empty"));
     }
+    Ok(ops)
+}
+
+/// Check an operation, as given (`raw`) and after substitution (`op`),
+/// against the versions the operations before it left.
+pub(super) fn check_operation(
+    raw: &Value,
+    op: &Value,
+    versions: &RapidHashMap<String, CollectionVersion>,
+) -> Result<()> {
+    let kind = op.get("op").and_then(Value::as_str).unwrap_or_default();
+    let path = op
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| invalid("patch op missing 'path' field"))?;
+    let tokens = tokens(path);
+    check_known_collection(kind, &tokens, versions)?;
+    check_version_id(kind, &tokens, op.get("value"), versions)?;
+    check_added_field_name(kind, raw, &tokens, op.get("value"))?;
+    check_append_target(kind, &tokens, versions)?;
+    check_field_kinds(kind, &tokens, op.get("value"))
+}
+
+/// Go's `validateVersionID` and `validateCollectionID`: a version's IDs
+/// are the CIDs of blocks already in the blockstore, so a version the
+/// patch adds under an ID it made up is refused. Stored versions always
+/// pass, so only added ones are checked; placeholders have no block.
+pub(super) async fn check_added_ids<S>(txn: &DbTxn<S>, version: &CollectionVersion) -> Result<()>
+where
+    S: Store,
+{
+    if version.is_placeholder {
+        return Ok(());
+    }
+    let blockstore = txn.blockstore()?;
+    for (name, value) in [
+        ("VersionID", &version.version_id),
+        ("CollectionID", &version.collection_id),
+    ] {
+        let cid = cid::Cid::try_from(value.as_str())
+            .map_err(|e| invalid(format!("invalid cid: {e}. {name}: {value}")))?;
+        if !blockstore
+            .has(&cid.to_bytes())
+            .await
+            .map_err(Error::Storage)?
+        {
+            return Err(invalid(format!(
+                "unknown CID, collection ids cannot be manually defined. {name}: {value}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn invalid<M>(message: M) -> Error
+where
+    M: Into<String>,
+{
+    Error::InvalidPatch(message.into())
+}
+
+/// A pointer's unescaped tokens; `""` is the root.
+fn tokens(pointer: &str) -> Vec<String> {
+    pointer
+        .split('/')
+        .skip(1)
+        .map(|t| t.replace("~1", "/").replace("~0", "~"))
+        .collect()
+}
+
+/// Go's patch library refuses to add inside a collection that does not
+/// exist, in the versions as the operations before this one left them.
+fn check_known_collection(
+    kind: &str,
+    tokens: &[String],
+    versions: &RapidHashMap<String, CollectionVersion>,
+) -> Result<()> {
+    match tokens {
+        [collection, _, ..] if kind == "add" && !versions.contains_key(collection) => {
+            Err(invalid("add operation does not apply: doc is missing path"))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// A version's ID is its content's CID, so a patch never sets or removes it.
+fn check_version_id(
+    kind: &str,
+    tokens: &[String],
+    value: Option<&Value>,
+    versions: &RapidHashMap<String, CollectionVersion>,
+) -> Result<()> {
+    let [collection, member] = tokens else {
+        return Ok(());
+    };
+    // A key that is no version's ID is a collection the patch is adding.
+    let Some(host) = versions
+        .get(collection)
+        .filter(|v| v.version_id == *collection)
+    else {
+        return Ok(());
+    };
+    if member != VERSION_ID {
+        return Ok(());
+    }
+    match kind {
+        "remove" => Err(invalid("invalid cid: cid too short. VersionID: ")),
+        "add" | "replace" => {
+            let version_id = value.and_then(Value::as_str).unwrap_or_default();
+            if version_id.is_empty() {
+                return Err(invalid("collection ID cannot be empty"));
+            }
+            if cid::Cid::try_from(version_id).is_err() {
+                return Err(invalid(format!(
+                    "invalid cid: selected encoding not supported. VersionID: {version_id}"
+                )));
+            }
+            Err(invalid(match versions.get(version_id) {
+                None => "unknown CID, collection ids cannot be manually defined",
+                Some(other) if other.collection_id == host.collection_id => {
+                    "collection sources cannot be added or removed."
+                }
+                Some(_) => "collection source must belong to host collection.",
+            }))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// `add /<Collection>/Fields/<name>` appends a field of that name, so the
+/// field it adds must not name itself otherwise.
+fn check_added_field_name(
+    kind: &str,
+    raw: &Value,
+    tokens: &[String],
+    value: Option<&Value>,
+) -> Result<()> {
+    let appends = matches!(tokens, [_, fields, end] if fields == FIELDS && end == APPEND);
+    if kind != "add" || !appends {
+        return Ok(());
+    }
+    let raw_path = raw.get("path").and_then(Value::as_str).unwrap_or_default();
+    let Some(index) = raw_path.rsplit('/').next() else {
+        return Ok(());
+    };
+    if index == APPEND {
+        return Ok(());
+    }
+    match value.and_then(|v| v.get("Name")).and_then(Value::as_str) {
+        Some(name) if !name.is_empty() && name != index => Err(invalid(format!(
+            "the index used does not match the given name. index: {index}, name: {name}"
+        ))),
+        _ => Ok(()),
+    }
+}
+
+/// `-` appends only to an array. Inside a version, on an object, it names a
+/// key `-`, which Go refuses as it decodes the patched version.
+fn check_append_target(
+    kind: &str,
+    tokens: &[String],
+    versions: &RapidHashMap<String, CollectionVersion>,
+) -> Result<()> {
+    let Some((last, parent)) = tokens.split_last() else {
+        return Ok(());
+    };
+    if kind != "add" || last != APPEND || parent.is_empty() {
+        return Ok(());
+    }
+    let Some(version) = versions.get(&parent[0]) else {
+        return Ok(());
+    };
+    let json = serde_json::to_value(version)
+        .map_err(|e| Error::collection_schema_json("failed to serialize schema to JSON", e))?;
+    let target = parent[1..]
+        .iter()
+        .try_fold(&json, |node, token| match node {
+            Value::Object(map) => map.get(token),
+            Value::Array(items) => token.parse::<usize>().ok().and_then(|i| items.get(i)),
+            _ => None,
+        });
+    if matches!(target, Some(Value::Object(_))) {
+        return Err(invalid("json: unknown field \"-\""));
+    }
+    Ok(())
+}
+
+/// A numeric `Kind` the patch writes must name a kind. Go refuses an unknown
+/// number as it decodes the patched version; Rust's decoding reads any
+/// unknown number as kind 0, so the number is checked here, where the patch
+/// still has it.
+fn check_field_kinds(kind: &str, tokens: &[String], value: Option<&Value>) -> Result<()> {
+    if !matches!(kind, "add" | "replace") {
+        return Ok(());
+    }
+    let Some(value) = value else {
+        return Ok(());
+    };
+    let kinds: Vec<&Value> = match tokens {
+        [_, fields, _, leaf] if fields == FIELDS && leaf == KIND => vec![value],
+        [_, fields, _] if fields == FIELDS => value.get(KIND).into_iter().collect(),
+        [_, fields] if fields == FIELDS => field_kinds(value),
+        [_] => value.get(FIELDS).map(field_kinds).unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    match kinds
+        .into_iter()
+        .filter_map(Value::as_u64)
+        .find(|number| !is_known_kind(*number))
+    {
+        Some(number) => Err(invalid(format!(
+            "no type found for given name. Type: {number}"
+        ))),
+        None => Ok(()),
+    }
+}
+
+/// The `Kind` of each field in a JSON array of fields.
+fn field_kinds(fields: &Value) -> Vec<&Value> {
+    fields
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|field| field.get(KIND))
+        .collect()
+}
+
+/// Whether `number` is a kind: 0, the unset kind, or a number
+/// `FieldKind::from_numeric_kind` maps to something other than unset.
+fn is_known_kind(number: u64) -> bool {
+    number == 0
+        || u8::try_from(number).is_ok_and(|number| {
+            FieldKind::from_numeric_kind(number) != FieldKind::Scalar(ScalarKind::None)
+        })
 }

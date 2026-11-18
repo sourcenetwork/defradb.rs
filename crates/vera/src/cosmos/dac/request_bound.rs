@@ -12,18 +12,24 @@ use acp::{OwedOp, OwedSubject, ProviderCommand};
 
 use super::VeraDocumentACP;
 use crate::policy_command::{PolicyAction, PolicyCommand, PolicySubject};
-use crate::provider::SubjectRef;
+use crate::provider::{ProviderError, SubjectRef};
 
 impl VeraDocumentACP {
     /// Whether `token`, bound to one request, lets the node send `command`
-    /// as `actor` now, or why not. `None` when `token` is bound to no
-    /// request.
+    /// as `actor` now, or why not: [`acp::Error::DelegationOutsideWindow`]
+    /// when it does not hold at the node's time, else
+    /// [`acp::Error::OwedAuthorityUnavailable`]. `None` when `token` is bound
+    /// to no request.
     pub(super) fn request_bound(
         &self,
         actor: &str,
         token: &str,
         command: &PolicyCommand<'_>,
-    ) -> Option<Result<(), String>> {
+    ) -> Option<acp::Result<()>> {
+        let refused = |reason: String| acp::Error::OwedAuthorityUnavailable {
+            actor: actor.to_owned(),
+            reason,
+        };
         Some(
             match self.provider.caller_of_request_delegation(token, command)? {
                 Ok(caller)
@@ -32,8 +38,10 @@ impl VeraDocumentACP {
                 {
                     Ok(())
                 }
-                Ok(caller) => Err(format!("the request's delegation is signed by {caller}")),
-                Err(error) => Err(error.to_string()),
+                Ok(caller) => Err(refused(format!(
+                    "the request's delegation is signed by {caller}"
+                ))),
+                Err(error) => Err(delegation_refused(actor, error)),
             },
         )
     }
@@ -60,7 +68,7 @@ impl VeraDocumentACP {
             reason,
         };
         match self.request_bound(actor, token, command) {
-            Some(bound) => return bound.map_err(refused),
+            Some(bound) => return bound,
             None if defra_core::RequestContext::bound_or_ambient(self.context.as_ref())
                 .bearer_names_request() =>
             {
@@ -78,12 +86,27 @@ impl VeraDocumentACP {
                 "the request's delegation is signed by {}",
                 caller.did
             ))),
-            Some(Err(error)) => Err(refused(error.to_string())),
+            Some(Err(error)) => Err(delegation_refused(actor, error)),
             None if self.provider.delegation_audience().is_some() => Err(refused(
                 "the request's token is not a delegation to this node".into(),
             )),
             None => Ok(()),
         }
+    }
+}
+
+/// The refusal of `actor`'s delegation for `error`: one that does not hold
+/// at the provider's time keeps its window, so the caller can issue it again.
+pub(super) fn delegation_refused(actor: &str, error: ProviderError) -> acp::Error {
+    match error {
+        ProviderError::DelegationOutsideWindow(window) => acp::Error::DelegationOutsideWindow {
+            actor: actor.to_owned(),
+            window,
+        },
+        other => acp::Error::OwedAuthorityUnavailable {
+            actor: actor.to_owned(),
+            reason: other.to_string(),
+        },
     }
 }
 

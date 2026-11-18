@@ -243,7 +243,9 @@ a grant that never comes is tried again by every sweep until a restart drops it 
 the index.
 
 The models are `proofs/tla/ReplicaRegistration.tla` and `proofs/tla/ParkedMerge.tla`;
-the gate's classification is proved in `proofs/lean/ReplicaGate.lean`.
+the gate's classification, parked refusals included, is proved in
+`proofs/lean/ReplicaGate.lean`, and the bounded index parked changes wait in in
+`proofs/lean/DeferredMerges.lean`.
 
 ## Why it exists
 

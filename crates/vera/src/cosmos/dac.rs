@@ -304,7 +304,7 @@ impl VeraDocumentACP {
                 command.and_then(|command| self.request_bound(actor.as_str(), &token, command));
             return match bound {
                 Some(Ok(())) => Ok(acp::OwedAuthority::Delegation { token }),
-                Some(Err(reason)) => Err(unavailable(reason)),
+                Some(Err(refusal)) => Err(refusal),
                 None if command.is_some() => Err(unavailable(
                     "the delegation presented as bound to one request is bound to none".into(),
                 )),
@@ -321,7 +321,7 @@ impl VeraDocumentACP {
                 "the request's delegation is signed by {}",
                 caller.did
             ))),
-            Some(Err(error)) => Err(unavailable(error.to_string())),
+            Some(Err(error)) => Err(request_bound::delegation_refused(actor.as_str(), error)),
             None if self.provider.delegation_audience().is_some() => Err(unavailable(
                 "the request's token is not a delegation to this node".into(),
             )),
@@ -397,6 +397,7 @@ impl acp::RemotePolicies for VeraDocumentACP {
         let status = self.acp_light_client_status().map_err(|e| e.to_string())?;
         Ok(acp::LightClientStatus {
             height: status.height,
+            chain_time: status.chain_time,
             module_state_root: status.module_state_root,
             cache_entries: status.cache_entries,
             last_invalidation_height: status.last_invalidation_height,

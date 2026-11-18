@@ -101,6 +101,7 @@ mod updates {
             mod with_introspection;
             mod with_relation;
         }
+        mod inactive_version;
         mod simple;
     }
     mod copy {
@@ -143,9 +144,11 @@ mod updates {
         }
         mod fields;
         mod id;
+        mod inactive_version_transform;
         mod indexes;
         mod is_active;
         mod is_active_txn;
+        mod is_active_with_transform;
         mod materialized;
         mod name;
         mod name_one_many;
