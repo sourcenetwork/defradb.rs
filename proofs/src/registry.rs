@@ -3235,10 +3235,10 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Text chunking",
-        name: "INV_ShownIsLiveAndReadable / INV_ShownIsTheText / INV_ShownPassesOwnApp / INV_ServedIsReadable",
+        name: "INV_ShownIsLiveAndReadable / INV_ShownIsTheText / INV_ShownPassesOwnApp / INV_ServedIsReadable / INV_DelegatedKeyInScope",
         axis: Tla,
-        anchor: "crates/query/src/plan/chunk_parent.rs parent_hashes, verified_hash; crates/query/src/plan/chunk_gate.rs ChunkGate::allows, ChunkGate::decide; crates/query/src/plan/permission_filter.rs permission_check; crates/db/src/chunk/access.rs history_parents, read_owners, parent_collection; crates/query/src/runner/chunk_access.rs chunk_readable, ChunkReads; crates/query/src/planner/builder/mod.rs maybe_wrap_with_acp_filter; crates/p2p-adapter/src/read_gate.rs DbBlockReadGate::may_read, DbBlockClassifier::classify; crates/db/src/block/verify.rs load_authorized_block_signature; crates/http/src/handlers/events.rs can_observe_document_event",
-        model_ref: "MC_ChunkRead_Green.cfg / MC_ChunkRead_Red_NoDeletedCheck.cfg / MC_ChunkRead_Red_NoHashCheck.cfg / MC_ChunkRead_Red_SharedMemo.cfg / MC_ChunkRead_Red_NoMergedCheck.cfg / MC_ChunkRead_Red_NoGrantCheck.cfg / MC_ChunkRead_Red_NoListCheck.cfg / MC_ChunkRead_Red_NoResolveCheck.cfg / MC_ChunkRead_Red_TrustList.cfg / MC_ChunkRead_Red_NoOwnAppCheck.cfg",
+        anchor: "crates/query/src/plan/chunk_parent.rs parent_hashes, verified_hash; crates/query/src/plan/chunk_gate.rs ChunkGate::allows, ChunkGate::decide; crates/query/src/plan/permission_filter.rs permission_check; crates/db/src/chunk/access.rs history_parents, read_owners, parent_collection; crates/query/src/runner/chunk_access.rs chunk_readable, ChunkReads; crates/query/src/planner/builder/mod.rs maybe_wrap_with_acp_filter; crates/p2p-adapter/src/read_gate.rs DbBlockReadGate::may_read, DbBlockClassifier::classify; crates/db/src/block/verify.rs load_authorized_block_signature; crates/http/src/handlers/events.rs can_observe_document_event; crates/kms/src/defra_kms.rs DefraKms::local_release_decision; crates/kms/src/nac_dac_policy.rs Delegation::covers",
+        model_ref: "MC_ChunkRead_Green.cfg / MC_ChunkRead_Red_NoDeletedCheck.cfg / MC_ChunkRead_Red_NoHashCheck.cfg / MC_ChunkRead_Red_SharedMemo.cfg / MC_ChunkRead_Red_NoMergedCheck.cfg / MC_ChunkRead_Red_NoGrantCheck.cfg / MC_ChunkRead_Red_NoListCheck.cfg / MC_ChunkRead_Red_NoResolveCheck.cfg / MC_ChunkRead_Red_TrustList.cfg / MC_ChunkRead_Red_NoOwnAppCheck.cfg / MC_ChunkRead_Red_DelegationScope.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },

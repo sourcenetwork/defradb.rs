@@ -30,6 +30,13 @@
 \* until it finds them. Releasing a chunk's key and pushing a chunk's event
 \* follow the same rule as serving its block.
 \*
+\* A peer may also ask for a key while replaying for the reader, under a
+\* delegation bound to one collection: the article's, or its chunk
+\* collection's. A key belongs to a block of one of the two. A delegation on
+\* the article covers its chunks too, but one on the chunk collection covers
+\* only the chunks. The node knows which collection a block is in, so it
+\* checks the delegation against that collection, not just against the article.
+\*
 \* What must never happen:
 \*   - a query shows a chunk of a deleted article, or of one the reader may not
 \*     read at the query's snapshot (INV_ShownIsLiveAndReadable);
@@ -38,7 +45,9 @@
 \*   - a query shows a chunk the chunk collection's own app check refuses at
 \*     the query's snapshot (INV_ShownPassesOwnApp);
 \*   - a peer gets a chunk's block while the article hasn't arrived, or while
-\*     the peer may not read it (INV_ServedIsReadable).
+\*     the peer may not read it (INV_ServedIsReadable);
+\*   - a peer replaying under a delegation on the chunk collection gets the key
+\*     of one of the article's own blocks (INV_DelegatedKeyInScope).
 \*
 \* Code it models:
 \*   crates/query/src/plan/chunk_parent.rs  parent_hashes (deleted parent, the text cut again), ChunkFields::verified_hash
@@ -52,6 +61,9 @@
 \*   crates/query/src/planner/builder/mod.rs maybe_wrap_with_acp_filter (the chunk collection's own app check)
 \*   crates/db/src/chunk/access.rs         history_parents, read_owners, merged (an unarrived parent owns nothing)
 \*   crates/db/src/chunk/access.rs         parent_collection, read_owners (an unknown collection owns nothing)
+\*   crates/db/src/chunk/access.rs         read_owners (each owner keeps its block's collection)
+\*   crates/kms/src/defra_kms.rs           DefraKms::local_release_decision (a delegated key release)
+\*   crates/kms/src/nac_dac_policy.rs      Delegation::covers (the delegation's collection against the block's)
 \*   crates/p2p-adapter/src/read_gate.rs    DbBlockReadGate::may_read, DbBlockClassifier::classify (chunk block serving)
 \*   crates/db/src/block/verify.rs          load_authorized_block_signature (the chunk branch)
 \*   crates/http/src/handlers/events.rs     can_observe_document_event (an unknown collection's event)
@@ -68,7 +80,8 @@ CONSTANTS
   CheckListed,   \* TRUE: a chunk shows only if the article's current list names it (the guard)
   CheckResolved, \* TRUE: nothing is served while the chunk's collections are unknown here (the guard)
   CutText,       \* TRUE: the decision cuts the text, never trusting the stored list (the guard)
-  CheckOwnApp    \* TRUE: the chunk collection's own app check runs too (the guard)
+  CheckOwnApp,   \* TRUE: the chunk collection's own app check runs too (the guard)
+  CheckDelegationScope \* TRUE: a delegation is checked against the collection of the block (the guard)
 
 \* Writers edit at least once.
 ASSUME MaxEdits \in Nat \ {0}
@@ -83,6 +96,15 @@ ASSUME CheckResolved \in BOOLEAN
 ASSUME CutText \in BOOLEAN
 \* And the own app check switch.
 ASSUME CheckOwnApp \in BOOLEAN
+\* And the delegation scope switch.
+ASSUME CheckDelegationScope \in BOOLEAN
+
+\* The collections a block can be in, and a delegation bound to: the article's or its chunk collection.
+Collections == {"parent", "chunk"}
+
+\* Whether a delegation on collection d covers a block in collection b: one on
+\* the article covers every block, one on the chunk collection only its own.
+DelegationCovers(d, b) == d = "parent" \/ d = b
 
 \* The texts an edit may write.
 Texts == {"t1", "t2"}
@@ -117,10 +139,11 @@ VARIABLES
   leaked,   \* whether a peer was ever served a block it may not have
   resolved, \* whether this node knows the chunk collection and the article collection that chunks it
   padded,   \* whether the stored list also names every old chunk, its first entry still right
-  ownApp    \* whether the chunk collection's own app check lets the reader read its chunks
+  ownApp,   \* whether the chunk collection's own app check lets the reader read its chunks
+  scopeLeaked \* whether a delegated peer ever got a key its delegation doesn't cover
 
 \* All the variables, for stuttering steps.
-vars == <<text, merged, deleted, granted, stored, edits, phase, snap, memo, result, leaked, resolved, padded, ownApp>>
+vars == <<text, merged, deleted, granted, stored, edits, phase, snap, memo, result, leaked, resolved, padded, ownApp, scopeLeaked>>
 
 \* The chunks an honest write of text t stores.
 HonestChunks(t) == {[hash |-> h, honest |-> TRUE] : h \in ChunksOf(t)}
@@ -168,6 +191,7 @@ TypeOK ==
   /\ resolved \in BOOLEAN                             \* collections known or not
   /\ padded \in BOOLEAN                               \* list padded or not
   /\ ownApp \in BOOLEAN                               \* own app check passes or not
+  /\ scopeLeaked \in BOOLEAN                          \* an out of scope key went out
 
 \* At the start the chunks of t1 are here but the article hasn't arrived yet,
 \* and the reader may read the article.
@@ -186,6 +210,7 @@ Init ==
   /\ result = {}                           \* nothing shown
   /\ leaked = FALSE                        \* nothing served yet
   /\ resolved = FALSE                      \* the collections haven't arrived either
+  /\ scopeLeaked = FALSE                   \* no delegated key went out yet
 
 \* A writer edits the live article to text t, storing t's chunks with it.
 Edit(t) ==
@@ -194,38 +219,38 @@ Edit(t) ==
   /\ stored' = stored \cup HonestChunks(t)          \* and its chunks
   /\ edits' = edits + 1                             \* one more edit
   /\ padded' = FALSE                                \* with an honest list
-  /\ UNCHANGED <<merged, deleted, granted, phase, snap, memo, result, leaked, resolved, ownApp>>
+  /\ UNCHANGED <<scopeLeaked, merged, deleted, granted, phase, snap, memo, result, leaked, resolved, ownApp>>
 
 \* A writer deletes the article. Its chunks stay stored.
 Delete ==
   /\ ~deleted                                       \* not yet deleted
   /\ deleted' = TRUE                                \* now deleted
-  /\ UNCHANGED <<merged, text, granted, stored, edits, phase, snap, memo, result, leaked, resolved, padded, ownApp>>
+  /\ UNCHANGED <<scopeLeaked, merged, text, granted, stored, edits, phase, snap, memo, result, leaked, resolved, padded, ownApp>>
 
 \* The owner revokes the reader's access.
 Revoke ==
   /\ granted                                        \* still granted
   /\ granted' = FALSE                               \* now revoked
-  /\ UNCHANGED <<merged, text, deleted, stored, edits, phase, snap, memo, result, leaked, resolved, padded, ownApp>>
+  /\ UNCHANGED <<scopeLeaked, merged, text, deleted, stored, edits, phase, snap, memo, result, leaked, resolved, padded, ownApp>>
 
 \* A chunk that claims hash h but holds other text reaches the store by some
 \* route that skipped the write guard.
 Plant(h) ==
   /\ stored' = stored \cup {[hash |-> h, honest |-> FALSE]}  \* the forged chunk
-  /\ UNCHANGED <<merged, text, deleted, granted, edits, phase, snap, memo, result, leaked, resolved, padded, ownApp>>
+  /\ UNCHANGED <<scopeLeaked, merged, text, deleted, granted, edits, phase, snap, memo, result, leaked, resolved, padded, ownApp>>
 
 \* The article's writer stores a list that names every old chunk too, its
 \* first entry still the current text's hash.
 Pad ==
   /\ ~padded                                        \* not padded yet
   /\ padded' = TRUE                                 \* padded now
-  /\ UNCHANGED <<text, merged, deleted, granted, stored, edits, phase, snap, memo, result, leaked, resolved, ownApp>>
+  /\ UNCHANGED <<scopeLeaked, text, merged, deleted, granted, stored, edits, phase, snap, memo, result, leaked, resolved, ownApp>>
 
 \* The chunk collection's own app check starts refusing the reader.
 AppRefuse ==
   /\ ownApp                                        \* still passing
   /\ ownApp' = FALSE                               \* refusing now
-  /\ UNCHANGED <<text, merged, deleted, granted, stored, edits, phase, snap, memo, result, leaked, resolved, padded>>
+  /\ UNCHANGED <<scopeLeaked, text, merged, deleted, granted, stored, edits, phase, snap, memo, result, leaked, resolved, padded>>
 
 \* A query starts: it takes its snapshot, and with the guard forgets old decisions.
 Start ==
@@ -234,7 +259,7 @@ Start ==
   /\ snap' = Now                                    \* reading this moment
   /\ memo' = IF MemoPerQuery THEN NoDecision ELSE memo  \* the guard: a fresh gate
   /\ result' = {}                                   \* nothing shown yet
-  /\ UNCHANGED <<text, merged, deleted, granted, stored, edits, leaked, resolved, padded, ownApp>>
+  /\ UNCHANGED <<scopeLeaked, text, merged, deleted, granted, stored, edits, leaked, resolved, padded, ownApp>>
 
 \* The query shows the chunks the decision allows, deciding first if needed.
 Answer ==
@@ -245,19 +270,19 @@ Answer ==
              HashOK(c) /\ d.ok /\ ListedOK(c, d)   \* pass every check on the article
              /\ (CheckOwnApp => snap.ownApp)}       \* and, with the guard, the own app check
   /\ phase' = "done"                                \* the query has answered
-  /\ UNCHANGED <<text, merged, deleted, granted, stored, edits, snap, leaked, resolved, padded, ownApp>>
+  /\ UNCHANGED <<scopeLeaked, text, merged, deleted, granted, stored, edits, snap, leaked, resolved, padded, ownApp>>
 
 \* The article arrives on this node, with its access rules.
 Arrive ==
   /\ ~merged                                        \* not here yet
   /\ merged' = TRUE                                 \* here now
-  /\ UNCHANGED <<text, deleted, granted, stored, edits, phase, snap, memo, result, leaked, resolved, padded, ownApp>>
+  /\ UNCHANGED <<scopeLeaked, text, deleted, granted, stored, edits, phase, snap, memo, result, leaked, resolved, padded, ownApp>>
 
 \* The chunk collection and the article collection that chunks it become known here.
 Resolve ==
   /\ ~resolved                                      \* not known yet
   /\ resolved' = TRUE                               \* known now
-  /\ UNCHANGED <<text, merged, deleted, granted, stored, edits, phase, snap, memo, result, leaked, padded, ownApp>>
+  /\ UNCHANGED <<scopeLeaked, text, merged, deleted, granted, stored, edits, phase, snap, memo, result, leaked, padded, ownApp>>
 
 \* A peer that may read only what the reader may asks for a stored chunk's block.
 \* It is served when allowed; a serve the peer may not have is a leak.
@@ -265,7 +290,17 @@ Serve ==
   /\ stored # {}                                    \* there is a block to ask for
   /\ ServeAllowed                                   \* this node hands it over
   /\ leaked' = (leaked \/ ~(merged /\ granted))     \* bad if the article is unknown or unreadable
-  /\ UNCHANGED <<text, merged, deleted, granted, stored, edits, phase, snap, memo, result, resolved, padded, ownApp>>
+  /\ UNCHANGED <<scopeLeaked, text, merged, deleted, granted, stored, edits, phase, snap, memo, result, resolved, padded, ownApp>>
+
+\* A peer replaying for the reader under a delegation on collection d asks for
+\* the key of a block in collection b. The key follows the article's rules, as
+\* serving a block does. Without the guard, any of the article's collections
+\* counts as covering every block of the article.
+DelegatedKey(d, b) ==
+  /\ ServeAllowed                                    \* the article's rules let the key go
+  /\ CheckDelegationScope => DelegationCovers(d, b)  \* the guard: the delegation covers the block
+  /\ scopeLeaked' = (scopeLeaked \/ ~DelegationCovers(d, b))  \* bad if it doesn't
+  /\ UNCHANGED <<text, merged, deleted, granted, stored, edits, phase, snap, memo, result, leaked, resolved, padded, ownApp>>
 
 \* Every step anyone can take.
 Next ==
@@ -278,6 +313,7 @@ Next ==
   \/ Pad                         \* the list is padded,
   \/ AppRefuse                   \* the own app check refuses,
   \/ Serve                       \* a peer is served a block,
+  \/ \E d, b \in Collections : DelegatedKey(d, b)  \* a delegated peer asks for a key,
   \/ Start                       \* a query starts,
   \/ Answer                      \* or answers
 
@@ -296,4 +332,7 @@ INV_ShownPassesOwnApp == (phase = "done" /\ result # {}) => snap.ownApp
 
 \* A peer is served a chunk's block only for an article that has arrived and that it may read.
 INV_ServedIsReadable == ~leaked
+
+\* A peer replaying under a delegation gets only keys of blocks its delegation covers.
+INV_DelegatedKeyInScope == ~scopeLeaked
 ====

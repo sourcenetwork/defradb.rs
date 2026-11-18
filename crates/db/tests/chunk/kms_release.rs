@@ -5,10 +5,12 @@ use std::sync::Arc;
 use acp::{DocumentACP, LocalDocumentACP, MemoryAcpStore};
 use db::{AutoCommitMutator, DbBlockDocIDResolver, DbDocCollectionLookup, DB};
 use defra_core::encryption::{set_encryption_config, EncryptionConfig};
+use defra_core::merge::ExplicitReplayAuthorization;
 use document::Document;
 use identity::Did;
 use kms::{
-    DefraKms, EncryptionCid, Error, KmsService, MemoryKeyStore, NacDacPolicy, RequestContext,
+    DefraKms, EncryptionCid, Error, FetchEncryptionKeyRequest, KmsService, MemoryKeyStore,
+    NacDacPolicy, PeerIdentity, RequestContext,
 };
 use query::mutator::{CreateResult, DocMutator};
 use storage::RegolithStore;
@@ -58,7 +60,7 @@ async fn node() -> Node {
     .unwrap();
     set_encryption_config(Some(EncryptionConfig {
         encrypt_doc: false,
-        encrypt_fields: vec!["body".to_string()],
+        encrypt_fields: vec!["title".to_string(), "body".to_string()],
     }));
     let created = AutoCommitMutator::new(Arc::clone(&db))
         .create("Article", doc)
@@ -74,30 +76,80 @@ async fn node() -> Node {
 }
 
 async fn chunk_key_cids(node: &Node) -> Vec<EncryptionCid> {
-    let txn = node.db.new_txn(true).await.unwrap();
-    let blockstore = txn.blockstore().unwrap();
     let mut cids = Vec::new();
     for chunk in &node.created.derived {
-        let composite = defra_core::Block::from_dag_cbor(&chunk.commit_block).unwrap();
-        let text = composite
-            .links
-            .unwrap()
-            .into_iter()
-            .find(|link| link.name == "text")
-            .expect("the text field block");
-        let bytes = blockstore
-            .get(&text.link.to_bytes())
-            .await
-            .unwrap()
-            .unwrap();
-        cids.push(
-            defra_core::Block::from_dag_cbor(&bytes)
-                .unwrap()
-                .encryption
-                .expect("the chunk text's key"),
-        );
+        cids.push(field_key_cid(node, &chunk.commit_block, "text").await);
     }
     cids
+}
+
+async fn title_key_cid(node: &Node) -> EncryptionCid {
+    let composite = node
+        .created
+        .commit_block
+        .as_ref()
+        .expect("the article's block");
+    field_key_cid(node, composite, "title").await
+}
+
+/// The key CID of `field`'s block under the composite block `composite`.
+async fn field_key_cid(node: &Node, composite: &[u8], field: &str) -> EncryptionCid {
+    let link = defra_core::Block::from_dag_cbor(composite)
+        .unwrap()
+        .links
+        .unwrap()
+        .into_iter()
+        .find(|link| link.name == field)
+        .expect("the field block");
+    let txn = node.db.new_txn(true).await.unwrap();
+    let bytes = txn
+        .blockstore()
+        .unwrap()
+        .get(&link.link.to_bytes())
+        .await
+        .unwrap()
+        .unwrap();
+    let _ = txn.discard();
+    defra_core::Block::from_dag_cbor(&bytes)
+        .unwrap()
+        .encryption
+        .expect("the field's key")
+}
+
+fn collection_id(node: &Node, name: &str) -> String {
+    node.db
+        .get_collection(name)
+        .unwrap()
+        .unwrap()
+        .collection_id()
+        .to_string()
+}
+
+/// Whether a peer replaying for `OWNER` under a delegation on `collection_id` gets `cid`.
+async fn delegate_gets(node: &Node, collection_id: &str, cid: EncryptionCid) -> bool {
+    // The x25519 base point: any valid public key will do.
+    let mut ephemeral_public_key = vec![0u8; 32];
+    ephemeral_public_key[0] = 9;
+    let request = FetchEncryptionKeyRequest {
+        identity: STRANGER.as_bytes().to_vec(),
+        links: vec![cid.to_bytes()],
+        ephemeral_public_key,
+        explicit_replay_capability: Some("capability".into()),
+    };
+    let from = PeerIdentity {
+        peer_id: "target-peer".into(),
+        authenticated_did: Some(did(STRANGER)),
+        explicit_replay_authorization: Some(ExplicitReplayAuthorization {
+            source_peer_id: "source-peer".into(),
+            target_peer_id: "target-peer".into(),
+            collection_id: collection_id.into(),
+            authorizer_did: OWNER.into(),
+            expires_at: u64::MAX,
+            capability: Some("capability".into()),
+        }),
+    };
+    let reply = node.kms.serve_request(from, request).await.unwrap();
+    reply.links == vec![cid.to_bytes()]
 }
 
 async fn release(node: &Node, actor: Option<&str>, cid: EncryptionCid) -> Result<[u8; 32], Error> {
@@ -136,6 +188,35 @@ fn a_deleted_parents_chunk_keys_stay_behind_the_same_gate() {
             release(&node, Some(OWNER), cid).await.unwrap();
             let error = release(&node, Some(STRANGER), cid).await.unwrap_err();
             assert!(matches!(error, Error::AccessDenied { .. }), "{error:?}");
+        }
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_delegation_on_the_chunk_collection_gets_chunk_keys_only() {
+    workers::block_on(async {
+        let node = node().await;
+        let chunks = collection_id(&node, "Article__body_chunk");
+        for cid in chunk_key_cids(&node).await {
+            assert!(delegate_gets(&node, &chunks, cid).await, "a chunk key");
+        }
+        assert!(
+            !delegate_gets(&node, &chunks, title_key_cid(&node).await).await,
+            "the article's title key is outside a chunk delegation"
+        );
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_delegation_on_the_parent_gets_its_own_and_its_chunks_keys() {
+    workers::block_on(async {
+        let node = node().await;
+        let article = collection_id(&node, "Article");
+        assert!(delegate_gets(&node, &article, title_key_cid(&node).await).await);
+        for cid in chunk_key_cids(&node).await {
+            assert!(delegate_gets(&node, &article, cid).await, "a chunk key");
         }
     })
     .unwrap()
