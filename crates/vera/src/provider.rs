@@ -1,11 +1,7 @@
 use async_trait::async_trait;
 use defra_core::thread_bounds::MaybeSendSync;
 
-#[non_exhaustive]
-pub enum SubjectRef {
-    Actor(String),
-    AllActors,
-}
+pub use vera_delegation::SubjectRef;
 
 pub struct ProviderPolicyInfo {
     pub id: String,
@@ -50,6 +46,18 @@ pub enum ProviderError {
     /// that time is taken.
     #[error("delegation refused: {0}")]
     DelegationOutsideWindow(acp::DelegationWindow),
+}
+
+/// A command that cannot be typed, encoded or digested, with the text the
+/// provider always gave it: a policy identifier that names no policy is a
+/// query error, anything else a configuration error.
+impl From<vera_delegation::CommandError> for ProviderError {
+    fn from(error: vera_delegation::CommandError) -> Self {
+        match error {
+            vera_delegation::CommandError::PolicyId(_) => Self::Query(error.to_string()),
+            other => Self::Config(other.to_string()),
+        }
+    }
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]

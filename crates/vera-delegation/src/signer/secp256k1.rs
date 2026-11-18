@@ -1,9 +1,9 @@
 use defra_core::thread_bounds::MaybeBoxFuture;
+use k256::ecdsa::SigningKey;
 use sha2::{Digest, Sha256};
-use vera_client::Secp256k1SigningKey as SigningKey;
 
 use super::{DelegationAlgorithm, DelegationSigner, SignerError};
-use crate::vera_rs::bearer;
+use crate::bearer;
 
 /// A secp256k1 key this process holds.
 pub struct Secp256k1Signer {

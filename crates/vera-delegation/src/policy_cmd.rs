@@ -10,15 +10,16 @@ use alloy_sol_types::SolCall as _;
 use vera_acp::{Relationship, Subject};
 use vera_modules::acp::types::{Object, PolicyCmd};
 
-use super::abi::IAcp;
-use super::did_spelling;
-use crate::policy_command::{PolicyAction, PolicyCommand, PolicySubject};
-use crate::provider::{ProviderError, SubjectRef};
+use crate::abi::IAcp;
+use crate::{
+    did_spelling, parse_policy_id, CommandError, PolicyAction, PolicyCommand, PolicySubject,
+    SubjectRef,
+};
 
 /// The command `command` is sent as.
-pub(super) fn typed(command: &PolicyCommand<'_>) -> Result<PolicyCmd, ProviderError> {
+pub fn typed(command: &PolicyCommand<'_>) -> Result<PolicyCmd, CommandError> {
     let relationship = |relation: &str, subject: &PolicySubject<'_>| {
-        Ok::<_, ProviderError>(Relationship::new(
+        Ok::<_, CommandError>(Relationship::new(
             command.resource,
             command.object_id,
             relation,
@@ -39,25 +40,24 @@ pub(super) fn typed(command: &PolicyCommand<'_>) -> Result<PolicyCmd, ProviderEr
 }
 
 /// The command that archives one object.
-pub(super) fn archive_object(resource: &str, object_id: &str) -> PolicyCmd {
+pub fn archive_object(resource: &str, object_id: &str) -> PolicyCmd {
     PolicyCmd::ArchiveObject(object(resource, object_id))
 }
 
 /// The bytes `command` is submitted as.
-pub(super) fn encode(command: &PolicyCmd) -> Result<Vec<u8>, ProviderError> {
-    serde_json::to_vec(command).map_err(|e| ProviderError::Config(format!("policy command: {e}")))
+pub fn encode(command: &PolicyCmd) -> Result<Vec<u8>, CommandError> {
+    serde_json::to_vec(command).map_err(CommandError::Encode)
 }
 
 /// The call that submits `command` on `policy_id` under `bearer_token`.
-pub(super) fn calldata(
+pub fn calldata(
     bearer_token: &str,
     policy_id: &str,
     command: &PolicyCmd,
-) -> Result<Bytes, ProviderError> {
+) -> Result<Bytes, CommandError> {
     let call = IAcp::bearerPolicyCmdCall {
         bearerToken: bearer_token.to_string(),
-        policyId: vera_client::parse_policy_id(policy_id)
-            .map_err(|e| ProviderError::Query(e.to_string()))?,
+        policyId: parse_policy_id(policy_id)?,
         cmd: encode(command)?.into(),
     };
     Ok(call.abi_encode().into())
@@ -71,11 +71,11 @@ fn object(resource: &str, object_id: &str) -> Object {
 }
 
 /// A relationship subject as DefraDB's permission engine names it.
-fn defra_subject(subject: &PolicySubject<'_>) -> Result<zanzibar::Subject, ProviderError> {
+fn defra_subject(subject: &PolicySubject<'_>) -> Result<zanzibar::Subject, CommandError> {
     match subject {
         PolicySubject::Actor(SubjectRef::Actor(did)) => zanzibar::Did::new(did.as_str())
             .map(zanzibar::Subject::Entity)
-            .map_err(|e| ProviderError::Config(format!("relationship subject: {e}"))),
+            .map_err(|e| CommandError::Subject(e.to_string())),
         PolicySubject::Actor(SubjectRef::AllActors) => Ok(zanzibar::Subject::Wildcard),
         PolicySubject::Structured {
             kind,
@@ -83,27 +83,27 @@ fn defra_subject(subject: &PolicySubject<'_>) -> Result<zanzibar::Subject, Provi
             object_id,
             relation,
         } => zanzibar::decode_subject(*kind, resource, object_id, relation)
-            .map_err(|e| ProviderError::Config(format!("relationship subject: {e}"))),
+            .map_err(|e| CommandError::Subject(e.to_string())),
     }
 }
 
 /// `subject` as vera.rs is sent it: an actor in the spelling vera.rs takes,
 /// which is the one an access check for it is sent in. A subject vera.rs has
 /// no command for is refused here, before anything is sent.
-fn chain_subject(subject: &zanzibar::Subject) -> Result<Subject, ProviderError> {
+fn chain_subject(subject: &zanzibar::Subject) -> Result<Subject, CommandError> {
     match subject {
         zanzibar::Subject::Entity(did) => did_spelling::wire(did.as_str())
             .parse()
             .map(Subject::Entity)
-            .map_err(|e| ProviderError::Config(format!("relationship subject: {e}"))),
+            .map_err(|e| CommandError::Subject(e.to_string())),
         zanzibar::Subject::EntitySet {
             resource,
             object_id,
             relation,
         } => Ok(Subject::entity_set(resource, object_id, relation)),
         zanzibar::Subject::Wildcard => Ok(Subject::Wildcard),
-        other => Err(ProviderError::Config(format!(
-            "relationship subject: vera.rs takes no command for {other}"
+        other => Err(CommandError::Subject(format!(
+            "vera.rs takes no command for {other}"
         ))),
     }
 }

@@ -1,16 +1,16 @@
 //! Who signs the delegations an actor gives this node's vera.rs worker.
 //!
-//! The provider needs three things from an actor's key: the DID it names, the
+//! A delegation needs three things from an actor's key: the DID it names, the
 //! algorithm it signs with, and a signature. It never needs the key itself,
-//! so the key may be one this process cannot read. The provider builds every
+//! so the key may be one this process cannot read. This crate builds every
 //! token (`bearer`) and checks each signature against the DID's key before
-//! the token leaves the node (`admission`).
+//! the token leaves it (`admission`).
 
 use std::fmt;
 
 use defra_core::thread_bounds::{MaybeBoxFuture, MaybeSendSync};
 
-pub(super) mod admission;
+pub mod admission;
 mod der;
 mod ed25519;
 mod p256;
@@ -128,4 +128,4 @@ pub enum SignerError {
 #[cfg(test)]
 mod key_type_tests;
 #[cfg(test)]
-pub(super) mod tests;
+mod tests;

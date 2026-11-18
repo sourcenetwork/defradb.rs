@@ -11,8 +11,8 @@
 use acp::{OwedOp, OwedSubject, ProviderCommand};
 
 use super::VeraDocumentACP;
-use crate::policy_command::{PolicyAction, PolicyCommand, PolicySubject};
 use crate::provider::{ProviderError, SubjectRef};
+use crate::{PolicyAction, PolicyCommand, PolicySubject};
 
 impl VeraDocumentACP {
     /// Whether `token`, bound to one request, lets the node send `command`

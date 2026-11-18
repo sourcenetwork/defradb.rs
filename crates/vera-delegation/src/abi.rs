@@ -1,5 +1,12 @@
-pub use vera_client::ACP_ADDRESS;
+//! The ACP precompile a policy command is submitted to.
+
+use alloy_primitives::{address, Address};
+
 pub use vera_modules::acp::abi::IAcp;
+
+/// The address of vera.rs's ACP precompile, `0x0810`: vera.rs's client
+/// names the same one.
+pub const ACP_ADDRESS: Address = address!("0000000000000000000000000000000000000810");
 
 #[cfg(test)]
 mod tests {
