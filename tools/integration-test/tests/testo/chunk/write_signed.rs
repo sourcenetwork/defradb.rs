@@ -1,4 +1,4 @@
-//! A node that signs its blocks keeps the parent's chunks exact (`defra.chunk.write.signed`).
+//! A node that signs its blocks signs the chunks and keeps the parent's chunks exact (`defra.chunk.write.signed`).
 
 use integration_test::actions::{Actions, NewNode, Request};
 use integration_test::m;
@@ -8,6 +8,7 @@ use serde_json::json;
 
 use super::support::{
     add_article, add_article_collection, body, chunks_are_listed, gql, read_list, update_article,
+    CHUNKS,
 };
 
 const CREATED: usize = 6;
@@ -39,6 +40,31 @@ fn list_is_signed(capture: &str) -> Actions {
     .into()
 }
 
+/// The text block of the first chunk carries a signature.
+fn a_chunk_is_signed() -> Vec<Actions> {
+    vec![
+        Request {
+            request: format!("query {{ {CHUNKS} {{ _docID }} }}").into(),
+            common: Common {
+                capture: captures([("chunk", &format!("/data/{CHUNKS}/0/_docID"))]),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+        .into(),
+        Request {
+            request: Text::concat([
+                Text::from(r#"query { _commits(docID: ""#),
+                Text::reference("chunk"),
+                Text::from(r#"", filter: {fieldName: {_eq: "text"}}) { signature { type } } }"#),
+            ]),
+            expected_data: json!({ "_commits": [{ "signature": { "type": m::nonempty_string() } }] }),
+            ..Default::default()
+        }
+        .into(),
+    ]
+}
+
 /// The list of the article named `capture` has the text's hash and `n` chunk hashes.
 fn list_has(capture: &str, n: usize) -> Actions {
     Request {
@@ -56,15 +82,20 @@ fn list_has(capture: &str, n: usize) -> Actions {
 #[test]
 #[mantra_macros::req_test("defra.chunk.write.signed")]
 fn a_signing_node_stores_the_list_of_the_first_update() {
-    TestCase::from_actions(vec![
-        signing_node(),
-        add_article_collection(),
-        add_article(&body(CREATED, "rivers"), "article"),
-        list_is_signed("article"),
-        update_article("article", &body(UPDATED, "mountains")),
-        read_list("updated", UPDATED, None),
-        chunks_are_listed("updated", UPDATED, None),
-    ])
+    TestCase::from_actions(
+        vec![
+            signing_node(),
+            add_article_collection(),
+            add_article(&body(CREATED, "rivers"), "article"),
+            list_is_signed("article"),
+            update_article("article", &body(UPDATED, "mountains")),
+            read_list("updated", UPDATED, None),
+            chunks_are_listed("updated", UPDATED, None),
+        ]
+        .into_iter()
+        .chain(a_chunk_is_signed())
+        .collect(),
+    )
     .execute();
 }
 

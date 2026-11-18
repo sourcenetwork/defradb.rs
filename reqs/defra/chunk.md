@@ -137,9 +137,16 @@ Creating an `Article` with a six-paragraph body gives a `_body_chunks` list of s
 # `defra.chunk.write.transaction`: An explicit transaction writes chunks when it commits
 
 - **Parents:** ["defra.chunk.write"]
-- **Scenarios:** ["chunk::write_transaction::an_explicit_transaction_writes_chunks_on_commit"]
+- **Scenarios:** ["chunk::write_transaction::an_explicit_transaction_writes_chunks_on_commit", "chunk::write_transaction::an_explicit_transaction_replaces_and_deletes_chunks_on_commit", "chunk::write_transaction::a_discarded_transaction_leaves_the_chunks_as_they_were"]
 
-An `add_Article` with a five-paragraph body inside an explicit transaction leaves `Article__body_chunk` empty outside it. After the transaction commits, `_body_chunks` lists six hashes and `Article__body_chunk` holds exactly the five after the first.
+An `add_Article` with a five-paragraph body inside an explicit transaction leaves `Article__body_chunk` empty outside it. After the transaction commits, `_body_chunks` lists six hashes and `Article__body_chunk` holds exactly the five after the first. An update of an existing article to two paragraphs inside a transaction shows the two new chunks inside it and the old four outside it until it commits, and then only the two. A delete inside a transaction shows no chunks inside it and the two outside it until it commits, and then none. An update and a delete in transactions that are discarded leave the original `_body_chunks` list and chunks.
+
+# `defra.chunk.write.graphql_batch`: GraphQL batch writes and upserts keep every parent's chunks exact
+
+- **Parents:** ["defra.chunk.write"]
+- **Scenarios:** ["chunk::write_graphql_batch::graphql_batch_writes_keep_each_parents_chunks_exact"]
+
+An `add_Article` with two articles of three and two paragraphs gives lists of four and three hashes, and `Article__body_chunk` holds the chunks of both texts. An `update_Article` with an empty filter that sets both bodies to the same two paragraphs gives each a list of three hashes, and each parent has its own two chunks. A `delete_Article` by filter leaves only the other parent's chunks. An `upsert_Article` that finds an article replaces its chunks, and one that finds none creates an article with its chunks. A `delete_Article` with an empty filter leaves `Article__body_chunk` empty.
 
 # `defra.chunk.write.document_api`: The document API keeps the chunks exact
 
@@ -147,6 +154,27 @@ An `add_Article` with a five-paragraph body inside an explicit transaction leave
 - **Scenarios:** ["chunk::write_document_api::document_api_writes_keep_chunks_exact"]
 
 Adding an `Article` with a five-paragraph body through the document API gives six hashes in `_body_chunks` and exactly the five chunks after the first. Updating its body to three paragraphs gives four hashes and exactly those three chunks. Deleting the document leaves `Article__body_chunk` empty.
+
+# `defra.chunk.write.document_api_batch`: Document API batch writes and saves keep every parent's chunks exact
+
+- **Parents:** ["defra.chunk.write"]
+- **Scenarios:** ["chunk::write_document_api_batch::document_api_batch_writes_keep_each_parents_chunks_exact", "chunk::write_document_api_batch::a_document_api_save_keeps_chunks_exact"]
+
+Adding two articles in one document API call gives the chunks of both texts. An update by filter of one replaces only its chunks, and a delete by filter of each removes only its chunks, until `Article__body_chunk` is empty. A save without a docID creates an article with its chunks, and a save with that docID replaces them. The CLI has no save command, so the save is not checked there.
+
+# `defra.chunk.write.encrypted`: An encrypted text gives encrypted chunks
+
+- **Parents:** ["defra.chunk.write"]
+- **Scenarios:** ["chunk::write_encrypted::an_encrypted_field_gives_encrypted_chunks", "chunk::write_encrypted::an_encrypted_document_gives_encrypted_chunks"]
+
+An article added with `body` encrypted, or with the whole document encrypted, has a chunk whose `text` reads in the clear and whose stored `text` delta in `_commits` is not the plain encoding of the text. After an update of the body without encryption options, the new chunk's stored `text` is still encrypted.
+
+# `defra.chunk.write.events`: A parent write publishes its chunks
+
+- **Parents:** ["defra.chunk.write"]
+- **Scenarios:** ["chunk::write_events::a_parent_create_publishes_its_chunks"]
+
+A GraphQL subscription on `Article__body_chunk { text }` gets one event for each of the three chunks of a new three-paragraph article. The CLI has no subscription stream, so this is not checked there.
 
 # `defra.chunk.write.revert`: Changing a text back shows the original chunks again
 
@@ -167,7 +195,7 @@ With `@chunk(maxChars: 160)` and a 40-paragraph body, changing one word in parag
 - **Parents:** ["defra.chunk.write"]
 - **Scenarios:** ["chunk::write_signed::a_signing_node_stores_the_list_of_the_first_update", "chunk::write_signed::a_signing_node_stores_the_lists_of_an_array_create", "chunk::write_signed::a_signing_node_stores_the_list_of_an_upsert_create"]
 
-On a node that signs its blocks, creating an `Article` with a six-paragraph body gives a signed `_body_chunks` block. Updating the body to four paragraphs then gives a `_body_chunks` list of five hashes: the whole text's, then the four chunks'. `Article__body_chunk` holds exactly those four. The same update gives a list of five hashes for each article of a two-article `add_Article` and for an article an `upsert_Article` created.
+On a node that signs its blocks, creating an `Article` with a six-paragraph body gives a signed `_body_chunks` block. Updating the body to four paragraphs then gives a `_body_chunks` list of five hashes: the whole text's, then the four chunks'. `Article__body_chunk` holds exactly those four, and the `text` block of a chunk is signed. The same update gives a list of five hashes for each article of a two-article `add_Article` and for an article an `upsert_Article` created.
 
 # `defra.chunk.write.concurrent`: Concurrent writes leave the chunks of the winning text
 
@@ -185,9 +213,16 @@ Chunks live only as long as the parent that has them.
 # `defra.chunk.purge.truncate`: Truncating the parent empties its chunks
 
 - **Parents:** ["defra.chunk.purge"]
-- **Scenarios:** ["chunk::purge_truncate::truncating_the_parent_empties_its_chunks"]
+- **Scenarios:** ["chunk::purge_truncate::truncating_the_parent_empties_its_chunks", "chunk::purge_truncate::a_filtered_truncate_empties_only_the_matching_parents_chunks"]
 
-After truncating `Article`, `Article__body_chunk` is empty.
+After truncating `Article`, `Article__body_chunk` is empty. A truncate filtered on one article's title leaves only the other article's chunks.
+
+# `defra.chunk.purge.docs`: Purging a parent removes its chunks
+
+- **Parents:** ["defra.chunk.purge"]
+- **Scenarios:** ["chunk::purge_docs::purging_a_parent_removes_only_its_chunks"]
+
+Purging one of two articles by docID purges one document and leaves only the other article's chunks.
 
 # `defra.chunk.replicate`: Chunks replicate with the parent
 
