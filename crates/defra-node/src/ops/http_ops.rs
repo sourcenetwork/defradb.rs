@@ -221,6 +221,41 @@ impl DocumentAcpOperations for HttpNodeOps {
             .map_err(text)
     }
 
+    async fn observe_doc_actor_relationship(
+        &self,
+        requestor: &identity::Did,
+        collection: &str,
+        doc_id: &str,
+        relation: &str,
+        target: &str,
+    ) -> Result<bool, String> {
+        let context = self.request_as(Some(requestor))?;
+        let acp = self.ops.acp_ops.clone();
+        let identity = requestor.to_string();
+        let (collection, doc_id, relation, target) = (
+            collection.to_owned(),
+            doc_id.to_owned(),
+            relation.to_owned(),
+            target.to_owned(),
+        );
+        self.ops
+            .on_acp(move || async move {
+                acp.observe_dac_actor_relationship(
+                    &context,
+                    &identity,
+                    crate::acp_ops::transactional::Relationship {
+                        collection: &collection,
+                        doc_id: &doc_id,
+                        relation: &relation,
+                        target: &target,
+                    },
+                )
+                .await
+            })
+            .await
+            .map_err(text)
+    }
+
     async fn list_doc_relationships(
         &self,
         requestor: &identity::Did,

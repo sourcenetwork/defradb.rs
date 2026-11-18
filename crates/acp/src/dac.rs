@@ -27,6 +27,15 @@ pub struct DocumentRelationship {
     pub subject: String,
 }
 
+pub struct ActorRelationshipObservation<'a> {
+    pub requester: &'a Did,
+    pub target: &'a Did,
+    pub policy: &'a str,
+    pub resource: &'a str,
+    pub document: &'a str,
+    pub relation: &'a str,
+}
+
 /// Document ACP interface (matches Go acp/dac/dac.go)
 ///
 /// This trait provides document-level access control operations:
@@ -284,6 +293,13 @@ pub trait DocumentACP: MaybeSendSync {
         _resource_name: &str,
         _doc_id: &str,
     ) -> Result<Vec<DocumentRelationship>> {
+        Err(Error::UnsupportedRelationshipListing)
+    }
+
+    async fn observe_actor_relationship(
+        &self,
+        _observation: ActorRelationshipObservation<'_>,
+    ) -> Result<bool> {
         Err(Error::UnsupportedRelationshipListing)
     }
 

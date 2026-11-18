@@ -16,7 +16,9 @@ use acp::{DocumentACP, DocumentPermission, Identity, Result, Subject};
 
 use crate::access_cache::AccessCache;
 use crate::decisions::{DecisionKey, RemoteDecisions};
-use crate::provider::{AcpLightClientStatus, ProviderError, SubjectRef, VeraProvider};
+use crate::provider::{
+    AcpLightClientStatus, ActorRelationshipQuery, ProviderError, SubjectRef, VeraProvider,
+};
 
 /// DocumentACP backed by Vera's on-chain x/acp module.
 ///
@@ -297,6 +299,9 @@ fn owned<const N: usize>(parts: [&str; N]) -> [String; N] {
 fn provider_err(error: impl std::borrow::Borrow<ProviderError>) -> acp::Error {
     match error.borrow() {
         ProviderError::Unavailable(reason) => acp::Error::ProviderUnavailable(reason.clone()),
+        ProviderError::RelationshipObservationDenied => acp::Error::NotManager {
+            operation: "observe relationship".into(),
+        },
         other => acp::Error::Storage(format!("Vera: {other}")),
     }
 }
@@ -409,6 +414,39 @@ impl DocumentACP for VeraDocumentACP {
 
     async fn submit_owed_change(&self, change: &acp::OwedChange) -> acp::Submission {
         owed::submit(self, change).await
+    }
+
+    async fn observe_actor_relationship(
+        &self,
+        observation: acp::ActorRelationshipObservation<'_>,
+    ) -> Result<bool> {
+        if observation.requester.is_wildcard() || observation.target.is_wildcard() {
+            return Err(acp::Error::PermissionDenied(
+                "an explicit actor DID is required".into(),
+            ));
+        }
+        let [requester, actor, policy, resource, object, relation] = owned([
+            observation.requester.as_str(),
+            observation.target.as_str(),
+            observation.policy,
+            observation.resource,
+            observation.document,
+            observation.relation,
+        ]);
+        self.remote(move |provider| async move {
+            provider
+                .query_actor_relationship(ActorRelationshipQuery {
+                    requester: &requester,
+                    actor: &actor,
+                    policy: &policy,
+                    resource: &resource,
+                    object: &object,
+                    relation: &relation,
+                })
+                .await
+        })
+        .await
+        .map_err(provider_err)
     }
 
     async fn check_named_permission(

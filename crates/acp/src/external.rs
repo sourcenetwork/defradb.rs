@@ -450,6 +450,52 @@ where
             .await
     }
 
+    async fn observe_actor_relationship(
+        &self,
+        observation: crate::ActorRelationshipObservation<'_>,
+    ) -> Result<bool> {
+        self.refuse_revoked(
+            observation.requester,
+            observation.policy,
+            observation.resource,
+            observation.document,
+        )
+        .await?;
+        if self
+            .owed(
+                observation.policy,
+                observation.resource,
+                observation.document,
+            )
+            .await?
+            .is_some()
+        {
+            return Err(Error::ProviderUnavailable(
+                "document registration is unsettled".into(),
+            ));
+        }
+        let tuple = crate::outbox::OwedTuple {
+            policy_id: observation.policy.to_owned(),
+            resource: observation.resource.to_owned(),
+            object: observation.document.to_owned(),
+            relation: observation.relation.to_owned(),
+            subject: crate::outbox::OwedSubject::Actor {
+                did: self.provider.canonical_actor(observation.target),
+            },
+        };
+        let transaction = self.store.new_txn(true).await.map_err(storage_error)?;
+        if crate::outbox::tuple_state(&transaction, &tuple)
+            .await?
+            .is_some()
+        {
+            return Err(Error::ProviderUnavailable(
+                "relationship change is unsettled".into(),
+            ));
+        }
+        drop(transaction);
+        self.provider.observe_actor_relationship(observation).await
+    }
+
     async fn check_named_permission(
         &self,
         subject: &Did,

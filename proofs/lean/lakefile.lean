@@ -262,6 +262,12 @@ lean_lib VerifiedMutationHandoff where
 lean_lib AdministrativeRelationship where
 
 @[default_target]
+lean_lib ProjectionRelationship where
+
+@[default_target]
+lean_lib ExactRelationshipObservation where
+
+@[default_target]
 lean_lib CommitConflictReceipt where
 
 @[default_target]

@@ -652,6 +652,35 @@ RUNS=(
   "MC_AdministrativeRelationship_Red_Revocation.cfg AdministrativeRelationship.tla RED" # INV_Revocation
   "MC_AdministrativeRelationship_Red_Rollback.cfg AdministrativeRelationship.tla RED" # INV_Rollback
   "MC_AdministrativeRelationship_Red_Route.cfg AdministrativeRelationship.tla RED" # INV_EmbedderRoute
+  "MC_ProjectionRelationship_Green.cfg ProjectionRelationship.tla GREEN"
+  "MC_ExactRelationshipObservation_Green.cfg ExactRelationshipObservation.tla GREEN"
+  "MC_ExactRelationshipObservation_Red.cfg ExactRelationshipObservation.tla RED"
+  "MC_ProjectionActor_Green.cfg ProjectionActor.tla GREEN"
+  "MC_ProjectionActor_Red.cfg ProjectionActor.tla RED"
+  "MC_ProjectionRelationship_Green_context.cfg ProjectionRelationship.tla GREEN"
+  "MC_ProjectionRelationship_Red_context.cfg ProjectionRelationship.tla RED"
+  "MC_ProjectionRelationship_Green_actor.cfg ProjectionRelationship.tla GREEN"
+  "MC_ProjectionRelationship_Red_actor.cfg ProjectionRelationship.tla RED"
+  "MC_ProjectionRelationship_Green_active.cfg ProjectionRelationship.tla GREEN"
+  "MC_ProjectionRelationship_Red_active.cfg ProjectionRelationship.tla RED"
+  "MC_ProjectionRelationship_Green_nacBound.cfg ProjectionRelationship.tla GREEN"
+  "MC_ProjectionRelationship_Red_nacBound.cfg ProjectionRelationship.tla RED"
+  "MC_ProjectionRelationship_Green_operation.cfg ProjectionRelationship.tla GREEN"
+  "MC_ProjectionRelationship_Red_operation.cfg ProjectionRelationship.tla RED"
+  "MC_ProjectionRelationship_Green_dacBound.cfg ProjectionRelationship.tla GREEN"
+  "MC_ProjectionRelationship_Red_dacBound.cfg ProjectionRelationship.tla RED"
+  "MC_ProjectionRelationship_Green_dacAllowed.cfg ProjectionRelationship.tla GREEN"
+  "MC_ProjectionRelationship_Red_dacAllowed.cfg ProjectionRelationship.tla RED"
+  "MC_ProjectionRelationship_Green_document.cfg ProjectionRelationship.tla GREEN"
+  "MC_ProjectionRelationship_Red_document.cfg ProjectionRelationship.tla RED"
+  "MC_ProjectionRelationship_Green_scope.cfg ProjectionRelationship.tla GREEN"
+  "MC_ProjectionRelationship_Red_scope.cfg ProjectionRelationship.tla RED"
+  "MC_ProjectionRelationship_Green_registered.cfg ProjectionRelationship.tla GREEN"
+  "MC_ProjectionRelationship_Red_registered.cfg ProjectionRelationship.tla RED"
+  "MC_ProjectionRelationship_Green_relation.cfg ProjectionRelationship.tla GREEN"
+  "MC_ProjectionRelationship_Red_relation.cfg ProjectionRelationship.tla RED"
+  "MC_ProjectionRelationship_Green_revoke.cfg ProjectionRelationship.tla GREEN"
+  "MC_ProjectionRelationship_Red_revoke.cfg ProjectionRelationship.tla RED"
   "MC_TransactionalRelationship_Green.cfg TransactionalRelationship.tla GREEN" # a grant and marker share the authorized transaction
   "MC_DelegatedRelationship_Green.cfg DelegatedRelationship.tla GREEN" # the embedder owns the transaction and the selected actor passes NAC and DAC
   "MC_DelegatedRelationship_Red_Http.cfg DelegatedRelationship.tla RED" # an HTTP caller reaches the privileged embedding boundary (INV_ActorAuthority)

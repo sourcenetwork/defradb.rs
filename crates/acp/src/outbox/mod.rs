@@ -30,6 +30,8 @@ mod record;
 mod staging;
 mod submission;
 
+pub(crate) use ops::tuple_state;
+
 pub use changes::{
     OwedChanges, StagedCount, MAX_OWED_CHANGES_PER_TRANSACTION, MAX_UNSETTLED_OWED_CHANGES,
     MAX_UNSETTLED_OWED_CHANGES_PER_ACTOR,

@@ -359,6 +359,17 @@ pub trait DocumentAcpOperations: defra_core::thread_bounds::MaybeSendSync {
         Err(acp::Error::UnsupportedRelationshipListing.to_string())
     }
 
+    async fn observe_doc_actor_relationship(
+        &self,
+        _requestor: &identity::Did,
+        _collection: &str,
+        _doc_id: &str,
+        _relation: &str,
+        _target: &str,
+    ) -> Result<bool, String> {
+        Err(acp::Error::UnsupportedRelationshipListing.to_string())
+    }
+
     /// Delete an actor relationship from a document.
     ///
     /// Revokes the `target_actor`'s `relation` on the document

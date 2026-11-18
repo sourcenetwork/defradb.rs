@@ -37,6 +37,7 @@ pub mod pending;
 mod permission;
 mod policy_cache;
 mod policy_lookup;
+pub mod projection;
 // Both persistent stores require `S: Store + Send + Sync`, which the wasm
 // LevelDB store cannot satisfy, so they are native-only.
 #[cfg(not(target_arch = "wasm32"))]
@@ -51,7 +52,8 @@ pub mod zanzibar;
 
 pub use auth_error::normalize_auth_error;
 pub use dac::{
-    bound_to_request, with_request_bearer, AuthenticatedCaller, DocumentACP, DocumentRelationship,
+    bound_to_request, with_request_bearer, ActorRelationshipObservation, AuthenticatedCaller,
+    DocumentACP, DocumentRelationship,
 };
 pub use error::{Error, Result};
 pub use external::{

@@ -3,7 +3,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::provider::{
-    AcpLightClientStatus, ProviderError, ProviderPolicyInfo, SubjectRef, VeraProvider,
+    AcpLightClientStatus, ActorRelationshipQuery, ProviderError, ProviderPolicyInfo, SubjectRef,
+    VeraProvider,
 };
 use crate::tuning::AcpTuning;
 use acp_light_client::{AcpLightClient, AcpTransport, FreshnessPolicy, HttpWsTransport};
@@ -30,6 +31,7 @@ use super::signer::{admission, DelegationSigner, Secp256k1Signer};
 use super::transport::RpcTransport;
 use super::worker::NativeWorker;
 
+mod exact_relationship;
 mod reach;
 #[cfg(test)]
 mod signer_tests;
@@ -741,6 +743,13 @@ impl VeraProvider for VeraRsProvider {
             Some(owner) => (true, did_spelling::defra(owner.0.as_str()).into_owned()),
             None => (false, String::new()),
         })
+    }
+
+    async fn query_actor_relationship(
+        &self,
+        query: ActorRelationshipQuery<'_>,
+    ) -> Result<bool, ProviderError> {
+        exact_relationship::query(&self.light_client, query).await
     }
 
     async fn verify_access(

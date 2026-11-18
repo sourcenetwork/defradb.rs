@@ -45,6 +45,7 @@ keyring = { path = "../keyring" }
 events = { path = "../events" }
 tempfile = "3"
 vera-client = "0.1.2"
+vera-acp = "0.1.2"
 vera-domain = "0.1.2"
 vera-modules = "0.1.2"
 # vera.rs's own token verifier: for a caller's delegation, and for the tokens built here in tests.

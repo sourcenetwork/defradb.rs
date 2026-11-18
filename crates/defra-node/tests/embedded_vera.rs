@@ -756,6 +756,50 @@ fn a_grant_staged_beside_its_document_lets_the_grantee_read_after_the_commit() {
             .check_named_permission(&reader, "writer", &policy, "users", &doc)
             .await
             .expect("relation check"));
+        vera.add_actor_relationship(
+            &owner,
+            &identity::Did::wildcard(),
+            &policy,
+            "users",
+            &doc,
+            "reader",
+            &[],
+        )
+        .await
+        .expect("wildcard grant");
+        assert!(vera
+            .observe_actor_relationship(acp::ActorRelationshipObservation {
+                requester: &owner,
+                target: &reader,
+                policy: &policy,
+                resource: "users",
+                document: &doc,
+                relation: "reader",
+            })
+            .await
+            .expect("direct grant"));
+        assert!(!vera
+            .observe_actor_relationship(acp::ActorRelationshipObservation {
+                requester: &owner,
+                target: &owner,
+                policy: &policy,
+                resource: "users",
+                document: &doc,
+                relation: "reader",
+            })
+            .await
+            .expect("exact absence"));
+        assert!(vera
+            .observe_actor_relationship(acp::ActorRelationshipObservation {
+                requester: &reader,
+                target: &reader,
+                policy: &policy,
+                resource: "users",
+                document: &doc,
+                relation: "reader",
+            })
+            .await
+            .is_err());
         drop(vera);
         node.shutdown().await.expect("shutdown");
     })

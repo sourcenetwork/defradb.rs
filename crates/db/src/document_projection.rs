@@ -15,9 +15,130 @@ pub struct DocumentMutationContext<'a> {
     pub node_did: &'a Did,
     notifier: &'a dyn AccessChangeNotifier,
     nac: Option<&'a dyn crate::nac::NacManagerApi>,
+    rules: &'a [acp::projection::Rule],
+    projected: Option<(&'a str, &'a str)>,
+    reconciling: bool,
 }
 
 impl DocumentMutationContext<'_> {
+    pub async fn change_projected_relationship(
+        &self,
+        collection: &str,
+        doc_id: &str,
+        relation: &str,
+        target: acp::Subject,
+        delete: bool,
+    ) -> Result<bool> {
+        if !self.reconciling && self.projected != Some((collection, doc_id)) {
+            return Err(storage::corekv::Error::ProjectionPermissionDenied);
+        }
+        let actor = match self.view.projection_actor() {
+            Some(actor) => {
+                Did::new(actor).map_err(|error| storage::corekv::Error::Other(error.to_string()))?
+            }
+            None => self.node_did.clone(),
+        };
+        let unavailable = || {
+            storage::corekv::Error::Other(
+                "transaction-bound node authorization is unavailable".into(),
+            )
+        };
+        let permission = if delete {
+            acp::NodePermission::DacRelationDelete
+        } else {
+            acp::NodePermission::DacRelationAdd
+        };
+        let granted = self
+            .nac
+            .ok_or_else(unavailable)?
+            .check_bound_permission_in_txn(
+                self.view.sibling(Namespace::Acpstore),
+                &actor,
+                permission,
+                true,
+            )
+            .await
+            .map_err(|error| storage::corekv::Error::Other(error.to_string()))?
+            .ok_or_else(unavailable)?;
+        if !granted {
+            return Err(storage::corekv::Error::ProjectionPermissionDenied);
+        }
+        let collection_name = collection;
+        let system = self.view.sibling(Namespace::Systemstore);
+        let collection =
+            crate::collection::loader::load_collection_from_systemstore(&system, collection)
+                .await
+                .map_err(|error| storage::corekv::Error::Other(error.to_string()))?
+                .ok_or_else(|| {
+                    storage::corekv::Error::Other("projection collection unavailable".into())
+                })?;
+        let binding =
+            collection.schema().policy.as_ref().ok_or_else(|| {
+                storage::corekv::Error::Other("projection policy unavailable".into())
+            })?;
+        if relation == "owner"
+            || !acp::projection::in_scope(
+                self.rules,
+                collection_name,
+                &binding.resource_name,
+                relation,
+                &target,
+            )
+        {
+            return Err(storage::corekv::Error::ProjectionPermissionDenied);
+        }
+        let acp_view = self.view.sibling(Namespace::Acpstore);
+        let policy_store = acp::zanzibar::store::TransactionZanzibarStore::new(acp_view.clone());
+        let policy = acp::ZanzibarStore::get_policy(&policy_store, &binding.id)
+            .await
+            .map_err(|error| storage::corekv::Error::Other(error.to_string()))?
+            .ok_or_else(|| storage::corekv::Error::Other("projection policy unavailable".into()))?;
+        if policy
+            .get_relation(&binding.resource_name, relation)
+            .is_none()
+        {
+            return Err(storage::corekv::Error::ProjectionPermissionDenied);
+        }
+        let acp = self
+            .document_acp
+            .bind_transaction(acp_view)
+            .ok_or_else(|| {
+                storage::corekv::Error::Other(
+                    "transaction-bound document authorization is unavailable".into(),
+                )
+            })?;
+        if !acp
+            .is_doc_registered(&binding.id, &binding.resource_name, doc_id)
+            .await
+            .map_err(|error| storage::corekv::Error::Other(error.to_string()))?
+        {
+            return Err(storage::corekv::Error::ProjectionPermissionDenied);
+        }
+        let result = if delete {
+            acp.delete_relationship(
+                &actor,
+                target,
+                &binding.id,
+                &binding.resource_name,
+                doc_id,
+                relation,
+                &[],
+            )
+            .await
+        } else {
+            acp.add_relationship(
+                &actor,
+                target,
+                &binding.id,
+                &binding.resource_name,
+                doc_id,
+                relation,
+                &[],
+            )
+            .await
+        };
+        result.map_err(|error| storage::corekv::Error::Other(error.to_string()))
+    }
     /// Stage a source edge as the actor that caused this projection. Startup,
     /// replication and any other actorless operation cannot mint or revoke
     /// a source. Native NAC and the document share the same transaction.
@@ -135,6 +256,9 @@ impl<S: Store + 'static> AccessChangeNotifier for DatabaseAccessNotifier<S> {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait DocumentMutationProjector: MaybeSendSync {
+    fn projection_rules(&self) -> &[acp::projection::Rule] {
+        &[]
+    }
     async fn reconcile(&self, context: &DocumentMutationContext<'_>) -> Result<()>;
     /// The host changed a source edge using the same transaction; no document
     /// writer or transport can manufacture this notification.
@@ -186,6 +310,9 @@ impl datastore::DocumentMutationProjector for BoundProjection {
                 node_did: &self.node_did,
                 notifier: self.notifier.as_ref(),
                 nac: self.nac.as_deref(),
+                rules: self.projector.projection_rules(),
+                projected: None,
+                reconciling: false,
             })
             .await
     }
@@ -198,6 +325,9 @@ impl datastore::DocumentMutationProjector for BoundProjection {
                 node_did: &self.node_did,
                 notifier: self.notifier.as_ref(),
                 nac: self.nac.as_deref(),
+                rules: self.projector.projection_rules(),
+                projected: None,
+                reconciling: true,
             })
             .await
     }
@@ -211,6 +341,9 @@ impl datastore::DocumentMutationProjector for BoundProjection {
                     node_did: &self.node_did,
                     notifier: self.notifier.as_ref(),
                     nac: self.nac.as_deref(),
+                    rules: self.projector.projection_rules(),
+                    projected: Some((collection, doc_id)),
+                    reconciling: false,
                 },
                 collection,
                 doc_id,

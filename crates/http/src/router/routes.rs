@@ -191,7 +191,8 @@ pub(crate) fn create_router_with_state_and_body_limits(
         .route("/document/is-owner", post(handlers::acp::own_documents))
         .route(
             "/document/relationship",
-            post(handlers::acp::add_doc_relationship),
+            post(handlers::acp::add_doc_relationship)
+                .get(handlers::acp::observe_doc_actor_relationship),
         )
         .route(
             "/document/relationships",

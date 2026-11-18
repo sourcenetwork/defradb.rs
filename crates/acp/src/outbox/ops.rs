@@ -14,7 +14,7 @@ fn inconsistent(what: &str, seq: u64) -> Error {
     Error::Storage(format!("owed ACP change {seq} has no {what}"))
 }
 
-pub(super) async fn tuple_state<R>(reader: &R, tuple: &OwedTuple) -> Result<Option<OwedTupleState>>
+pub(crate) async fn tuple_state<R>(reader: &R, tuple: &OwedTuple) -> Result<Option<OwedTupleState>>
 where
     R: Reader + ?Sized,
 {
