@@ -401,7 +401,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
             let txn = self.shared_txn()?;
             self.chunk_writes(&txn, context)
                 .following(parent)
-                .create_missing(&created.doc_id.to_string(), chunk_plans)
+                .sync_chunks(&created.doc_id.to_string(), chunk_plans)
                 .await?
         };
 
@@ -573,7 +573,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
             let txn = self.shared_txn()?;
             self.chunk_writes(&txn, context)
                 .following(parent)
-                .create_missing(&canonical_doc_id.to_string(), chunk_plans)
+                .sync_chunks(&canonical_doc_id.to_string(), chunk_plans)
                 .await?;
         }
 

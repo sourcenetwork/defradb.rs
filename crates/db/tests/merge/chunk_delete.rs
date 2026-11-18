@@ -1,4 +1,5 @@
-//! A peer's delete of a chunk merges only once the chunk's parent is gone here.
+//! A peer's delete of a chunk merges once the chunk's parent here is gone or
+//! no longer uses it.
 
 use std::sync::Arc;
 
@@ -95,11 +96,11 @@ fn assert_waits(outcome: &MergeOutcome, why: &str) {
 }
 
 #[test]
-fn a_peer_cannot_delete_a_chunk_its_live_parent_does_not_list_now() {
+fn a_peer_cannot_delete_a_chunk_its_live_parent_uses() {
     workers::block_on(async {
         let author = node().await;
         let peer = node().await;
-        let parent = add_article_with(&peer, "Other text.").await;
+        let parent = add_article(&peer).await;
         let chunk_id = merge_updated_chunk(&author, &peer, &parent).await;
         let delete = write_chunk_delete(&author, &chunk_id).await;
 
@@ -107,8 +108,67 @@ fn a_peer_cannot_delete_a_chunk_its_live_parent_does_not_list_now() {
             .await
             .unwrap();
 
-        assert_waits(&outcome, "parent is live");
+        assert_waits(&outcome, "parent is live and uses it");
         assert!(chunk_is_stored(&peer, &chunk_id).await);
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_peer_deletes_a_chunk_its_live_parent_does_not_use() {
+    workers::block_on(async {
+        let author = node().await;
+        let peer = node().await;
+        let parent = add_article(&peer).await;
+        // Stored on both nodes outside any write, under one ID, as an encrypted
+        // chunk would be: no merge on the peer builds or drops it.
+        let (_, _, created) = create_chunk(&author, &parent, "Other text.", None).await;
+        let (_, _, copy) = create_chunk(&peer, &parent, "Other text.", None).await;
+        assert_eq!(copy.doc_id, created.doc_id);
+        let delete = write_chunk_delete(&author, &created.doc_id).await;
+
+        let outcome = merge_outcome(&author, &peer, &delete, &created.doc_id)
+            .await
+            .unwrap();
+
+        assert!(outcome.is_merged(), "{outcome:?}");
+        assert!(!chunk_is_stored(&peer, &created.doc_id).await);
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_held_back_delete_merges_once_the_parent_stops_using_the_chunk() {
+    workers::block_on(async {
+        let author = node().await;
+        let peer = node().await;
+        let parent = add_article(&peer).await;
+        let chunk_id = merge_updated_chunk(&author, &peer, &parent).await;
+        let delete = write_chunk_delete(&author, &chunk_id).await;
+        let early = merge_outcome(&author, &peer, &delete, &chunk_id)
+            .await
+            .unwrap();
+        assert_waits(&early, "parent is live and uses it");
+
+        peer.run(
+            &format!(
+                r#"mutation {{ update_Article(docID: "{parent}", input: {{body: "Other text."}}) {{ _docID }} }}"#
+            ),
+            Some(owner()),
+        )
+        .await;
+        assert!(!chunk_is_stored(&peer, &chunk_id).await);
+        let retried = merge_outcome(&author, &peer, &delete, &chunk_id)
+            .await
+            .unwrap();
+
+        // The edit deleted the chunk already, so the delete has nothing left to wait for.
+        let settled = match &retried {
+            MergeOutcome::Skipped { reason, .. } => MergeOutcome::skip_reason_is_applied(reason),
+            other => other.is_merged(),
+        };
+        assert!(settled, "{retried:?}");
+        assert!(!chunk_is_stored(&peer, &chunk_id).await);
     })
     .unwrap()
 }
@@ -170,9 +230,9 @@ fn a_chunk_delete_cannot_merge_before_its_chunk() {
     workers::block_on(async {
         let author = node().await;
         let peer = node().await;
-        let parent = add_article(&peer).await;
-        // Another text, so the peer's own write holds no copy of this chunk.
-        let (_, _, created) = create_chunk(&author, &parent, "Other text.", None).await;
+        // A parent the peer lacks, so no write or merge of its own holds this chunk.
+        let parent = DocID::new_v0_from_seed("parent not merged yet").to_string();
+        let (_, _, created) = create_chunk(&author, &parent, BODY, None).await;
         let delete = write_chunk_delete(&author, &created.doc_id).await;
 
         let early = merge_outcome(&author, &peer, &delete, &created.doc_id).await;
@@ -189,7 +249,7 @@ fn a_chunk_delete_cannot_merge_before_its_chunk() {
         let retried = merge_outcome(&author, &peer, &delete, &created.doc_id)
             .await
             .unwrap();
-        assert_waits(&retried, "parent is live");
+        assert_waits(&retried, "has not arrived");
     })
     .unwrap()
 }

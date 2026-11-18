@@ -3,12 +3,15 @@
 //!
 //! [`set_lists`] puts the new list on the parent before it is written, so the
 //! text and its list are saved together. [`ChunkWrites`] then creates the
-//! missing chunks, or deletes them all when the parent is deleted.
-//! `proofs/tla/ParentChunks.tla` checks that this keeps them consistent.
+//! missing chunks and deletes the unused ones, or deletes them all when the
+//! parent is deleted. `proofs/tla/ParentChunks.tla` and
+//! `proofs/tla/ChunkCleanup.tla` check that this keeps them consistent.
 
 mod lookup;
+mod remove;
 mod write;
 
+pub(crate) use remove::{remove, RemoveInputs};
 pub(crate) use write::chunk_document;
 
 use std::sync::Arc;
@@ -89,9 +92,16 @@ pub(crate) fn set_lists(
                     encrypt: encryption.is_some_and(|config| config.should_encrypt_field(field)),
                 });
             }
-            None => doc
-                .set(list_field.clone(), NormalValue::Null)
-                .map_err(list_error)?,
+            None => {
+                doc.set(list_field.clone(), NormalValue::Null)
+                    .map_err(list_error)?;
+                plans.push(FieldChunks {
+                    field: field.to_string(),
+                    chunk_collection: chunked.collection(&schema.name),
+                    chunks: Vec::new(),
+                    encrypt: false,
+                });
+            }
         }
         if let Some(modified) = modified.as_deref_mut() {
             modified.insert(list_field);
@@ -136,10 +146,11 @@ where
         self
     }
 
-    /// Creates the chunk documents in `plans` that don't exist yet. An existing
-    /// chunk is never rewritten, since the same hash means the same content.
-    /// A new parent can have some already: they may arrive by P2P before it.
-    pub(crate) async fn create_missing(
+    /// Makes the parent's chunk documents match `plans`: deletes the ones the
+    /// new text does not use and creates the ones it lacks. A kept chunk is
+    /// never rewritten, since the same hash means the same content. A new
+    /// parent can have some already: they may arrive by P2P before it.
+    pub(crate) async fn sync_chunks(
         &self,
         parent_doc_id: &str,
         plans: Vec<FieldChunks>,
@@ -147,16 +158,31 @@ where
         let mut written = Vec::new();
         for plan in plans {
             let target = self.open(&plan.chunk_collection).await?;
-            // An update keeps the text encrypted when earlier writes did, even
-            // without the flag, so its chunks must be too.
-            let encrypt = plan.encrypt || self.parent_encrypts(parent_doc_id, &plan.field).await?;
             // One scan per field: a lookup per chunk would cost a pass over the
             // transaction's writes each time.
             let planned: RapidHashSet<&str> =
                 plan.chunks.iter().map(|(_, hash)| hash.as_str()).collect();
-            let existing = target.existing_of(parent_doc_id, &planned).await?;
+            let stored = target.stored_of(parent_doc_id).await?;
+            for (hash, short_ids) in &stored {
+                let used = planned.contains(hash.as_str());
+                for doc_short_id in target.unneeded(used, short_ids).await? {
+                    if let Some(write) = self.delete(&target, doc_short_id).await? {
+                        written.push(write);
+                    }
+                }
+            }
+            if plan
+                .chunks
+                .iter()
+                .all(|(_, hash)| stored.contains_key(hash))
+            {
+                continue;
+            }
+            // An update keeps the text encrypted when earlier writes did, even
+            // without the flag, so its chunks must be too.
+            let encrypt = plan.encrypt || self.parent_encrypts(parent_doc_id, &plan.field).await?;
             for (text, hash) in plan.chunks {
-                if existing.contains(&hash) {
+                if stored.contains_key(&hash) {
                     continue;
                 }
                 written.push(

@@ -22,7 +22,7 @@ Adding `type Article { title: String body: String @chunk(maxChars: 64) }` create
 - **Parents:** ["defra.chunk.declare"]
 - **Scenarios:** ["chunk::declare_definition::the_chunk_collection_is_listed_with_its_source"]
 
-Listing the collections named `Article__body_chunk` returns one active, materialized collection whose `ChunkOf` is `{"Collection": "Article", "Field": "body"}`, with the fields `_docID`, `_sourceID`, `source`, `hash` and `text` and an index on `_sourceID` and `hash`. The CLI cannot list by name, so this is not checked there.
+Listing the collections named `Article__body_chunk` returns one active, materialized collection whose `ChunkOf` is `{"Collection": "Article", "Field": "body"}`, with the fields `_docID`, `_sourceID`, `generation`, `hash`, `source` and `text` and an index on `_sourceID` and `hash`. The CLI cannot list by name, so this is not checked there.
 
 # `defra.chunk.declare.string_only`: `@chunk` is refused off a String field
 
@@ -125,7 +125,7 @@ For a chunk document of an existing article, updating it or deleting it fails wi
 
 - **Parents:** ["defra.chunk"]
 
-Every write to an `Article` writes, replaces or removes its chunks in the same transaction. The parent's `_body_chunks` lists the hash of the whole text and then the hash of each chunk in order, and `Article__body_chunk` holds exactly those chunks.
+Every write to an `Article` writes, replaces or removes its chunks in the same transaction. The parent's `_body_chunks` lists the hash of the whole text and then the hash of each chunk in order, and `Article__body_chunk` holds exactly those chunks: a chunk the new text no longer uses is deleted, so storage follows the size of the text, not the number of edits.
 
 # `defra.chunk.write.graphql`: GraphQL create, update and delete keep the chunks exact
 
@@ -176,12 +176,19 @@ An article added with `body` encrypted, or with the whole document encrypted, ha
 
 A GraphQL subscription on `Article__body_chunk { text }` gets one event for each of the three chunks of a new three-paragraph article. The CLI has no subscription stream, so this is not checked there.
 
-# `defra.chunk.write.revert`: Changing a text back shows the original chunks again
+# `defra.chunk.write.cleanup`: An edit deletes the chunks its text no longer uses
 
 - **Parents:** ["defra.chunk.write"]
-- **Scenarios:** ["chunk::write_revert::reverting_the_text_reuses_the_original_chunks"]
+- **Scenarios:** ["chunk::write_cleanup::an_edit_deletes_the_chunks_it_no_longer_uses"]
 
-An article with a five-paragraph body has five chunk documents. Updating the body to three other paragraphs leaves three chunk documents, none with a `_docID` of the first five. Updating it back to the first body shows the same five chunk documents again, each with its original `_docID`, `hash` and `text`.
+An article with a three-paragraph body about `rivers` has three chunk documents, each with a null `generation`. Updating the body to its first paragraph followed by two paragraphs about `mountains` keeps the first paragraph's chunk with its `_docID` and deletes the other two. Updating it back to the `rivers` body keeps the first chunk again, and makes the two deleted ones again with new `_docID`s and `generation` 1.
+
+# `defra.chunk.write.revert`: Changing a text back makes its deleted chunks again
+
+- **Parents:** ["defra.chunk.write"]
+- **Scenarios:** ["chunk::write_revert::reverting_the_text_makes_its_chunks_again_under_a_new_generation"]
+
+A deleted document's ID can never be used again, so a chunk made again takes the next `generation`, which gives it a new `_docID`. An article with a five-paragraph body has five chunk documents with a null `generation`. Updating the body to three other paragraphs leaves those three chunk documents, with `_docID`s none of the first five had. Updating it back to the first body shows five chunk documents with the original `hash` and `text`, new `_docID`s and `generation` 1. Changing it away and back once more gives `generation` 2 and new `_docID`s again.
 
 # `defra.chunk.write.locality`: Editing one paragraph changes one chunk
 
@@ -257,6 +264,15 @@ A replicator set up for `Article` alone gives the second node the same `_body_ch
 - **Scenarios:** ["chunk::replicate_concurrent::peers_that_edit_apart_end_with_the_chunks_of_the_merged_text", "chunk::replicate_concurrent::a_peer_that_merges_a_newer_text_builds_its_chunks"]
 
 Two unconnected nodes add the same article. One updates its body to three paragraphs about `north`, the other to three about `south`. After they connect and each syncs the article from the other, both show the `south` body and exactly its chunks. The text and the list break their ties apart, so both show the `_body_chunks` list the `north` node wrote: the same list on both nodes, which readers do not trust for the chunks. A node that syncs a newer body it has no chunks for shows that body's list and exactly its chunks.
+
+# `defra.chunk.replicate.cleanup`: A peer deletes and makes again the chunks the writer does
+
+- **Parents:** ["defra.chunk.replicate"]
+- **Scenarios:** ["chunk::replicate_cleanup::a_replicated_peer_follows_an_edit_and_its_revert", "chunk::replicate_cleanup::peers_that_edit_apart_and_revert_hold_the_same_chunks"]
+
+With `Article` replicated from one node to another, an article with a three-paragraph body about `rivers` shows the same chunk documents on both. After an update to two paragraphs about `mountains` on the first node, both show exactly the `mountains` chunks under the same `_docID`s. After an update back to `rivers`, both show the `rivers` chunks at `generation` 1 under the same new `_docID`s. A peer's delete of a chunk merges once its parent's text here no longer uses it, and waits while it does.
+
+Two unconnected nodes add the same two-paragraph article. One updates it to three paragraphs about `north`, the other to three about `south`. After each syncs the article from the other, both show the `south` chunks under the same `_docID`s. When the first node then changes the body back to the starting text and the second syncs it, both show the starting chunks at `generation` 1 under the same `_docID`s, since both had deleted the first ones.
 
 # `defra.chunk.replicate.signed`: Signing peers that write the same text show each chunk once
 

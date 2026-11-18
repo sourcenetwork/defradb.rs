@@ -1,13 +1,13 @@
 //! `@chunk`: adds the generated chunk collection and the parent's list field.
 //!
 //! For `body: String @chunk` on `Article`, it adds a type `Article__body_chunk`
-//! with `source`, `text` and `hash`, and a field `_body_chunks` on `Article`.
+//! with `source`, `text`, `hash` and `generation`, and a field `_body_chunks` on `Article`.
 //! This runs before relations are resolved, so both are built like any other type.
 
 use graphql_parser::schema::Directive;
 use schema::{
-    chunk_collection_name, chunk_list_field, CType, ChunkSource, ChunkedField, CHUNK_HASH_FIELD,
-    CHUNK_SOURCE_FIELD, CHUNK_TEXT_FIELD,
+    chunk_collection_name, chunk_list_field, CType, ChunkSource, ChunkedField,
+    CHUNK_GENERATION_FIELD, CHUNK_HASH_FIELD, CHUNK_SOURCE_FIELD, CHUNK_TEXT_FIELD,
 };
 
 use crate::error::{QueryError, Result};
@@ -179,6 +179,7 @@ impl SdlParser<'_> {
                         source,
                         field(CHUNK_TEXT_FIELD, scalar("String", false)),
                         field(CHUNK_HASH_FIELD, scalar("String", false)),
+                        field(CHUNK_GENERATION_FIELD, scalar("Int", false)),
                     ],
                     directives: ParsedTypeDirectives {
                         chunk_of: Some(ChunkSource {

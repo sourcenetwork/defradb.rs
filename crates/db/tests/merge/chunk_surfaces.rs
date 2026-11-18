@@ -130,8 +130,11 @@ fn a_chunk_block_is_served_signed_only_to_a_reader_of_its_parent() {
     workers::block_on(async {
         let author = node().await;
         let peer = node().await;
-        let parent = add_article(&peer).await;
+        // The signed chunk arrives first; the peer's own create of the same
+        // article then keeps it instead of writing an unsigned copy.
+        let parent = add_article(&author).await;
         let (_, cid) = merge_chunk(&author, &peer, &parent, BODY, Some(&signing())).await;
+        assert_eq!(add_article(&peer).await, parent);
 
         signed_bytes(&peer, &cid, Some(owner())).await.unwrap();
         for reader in readers() {
