@@ -148,11 +148,19 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     {
                         state.genesis_reader = context.collection.as_ref().and_then(|collection| {
                             let binding = collection.schema().policy.as_ref()?;
-                            let field = datastore.genesis_reader_field(
+                            let access = datastore.genesis_read_access(
                                 collection.name(),
                                 &binding.id,
                                 &binding.resource_name,
                             )?;
+                            let field = match access {
+                                datastore::multistore::GenesisReadAccess::Public => {
+                                    return Some(identity::Did::wildcard())
+                                }
+                                datastore::multistore::GenesisReadAccess::AddressedBy(field) => {
+                                    field
+                                }
+                            };
                             let data = payload
                                 .fields
                                 .get(field)

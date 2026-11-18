@@ -12,6 +12,11 @@ use storage::corekv::{
 };
 use storage::namespace::Namespace;
 
+pub enum GenesisReadAccess {
+    AddressedBy(&'static str),
+    Public,
+}
+
 /// A trusted host projection run inside the document's transaction. An error
 /// rejects the mutation and its staged projection. The host must stage all
 /// effects through this view, validate every read its decision depends on,
@@ -20,12 +25,12 @@ use storage::namespace::Namespace;
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait DocumentMutationProjector: storage::corekv::MaybeSendSync {
-    fn genesis_reader_field(
+    fn genesis_read_access(
         &self,
         _collection: &str,
         _policy: &str,
         _resource: &str,
-    ) -> Option<&'static str> {
+    ) -> Option<GenesisReadAccess> {
         None
     }
 
@@ -389,16 +394,16 @@ impl NamespaceView {
         }
     }
 
-    pub fn genesis_reader_field(
+    pub fn genesis_read_access(
         &self,
         collection: &str,
         policy: &str,
         resource: &str,
-    ) -> Option<&'static str> {
+    ) -> Option<GenesisReadAccess> {
         self.txn
             .projector
             .as_ref()?
-            .genesis_reader_field(collection, policy, resource)
+            .genesis_read_access(collection, policy, resource)
     }
 
     pub fn has_document_projector(&self) -> bool {
