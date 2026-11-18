@@ -121,6 +121,25 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         authorized
     }
 
+    // A synced parent brings the documents that follow it.
+    async fn with_followers(&self, doc_ids: &[String]) -> Vec<String> {
+        let mut all = doc_ids.to_vec();
+        for doc_id in doc_ids {
+            match self
+                .subscriptions
+                .head_provider
+                .following_doc_ids(doc_id)
+                .await
+            {
+                Ok(followers) => all.extend(followers),
+                Err(e) => {
+                    tracing::warn!(doc_id = %doc_id, error = %e, "Failed to find documents following a DocSync document");
+                }
+            }
+        }
+        all
+    }
+
     pub(super) async fn handle_doc_sync_request(
         &self,
         peer_id: PeerId,
@@ -152,7 +171,8 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         );
 
         let mut results: Vec<DocSyncItem> = Vec::new();
-        for doc_id in &request.doc_ids {
+        for doc_id in self.with_followers(&request.doc_ids).await {
+            let doc_id = &doc_id;
             tracing::trace!(doc_id = %doc_id, "Looking up heads for document");
             match self
                 .subscriptions

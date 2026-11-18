@@ -20,9 +20,12 @@ struct Owners(bool);
 
 #[async_trait]
 impl BlockDocIDResolver for Owners {
-    async fn doc_ids_for_block(&self, _: &EncryptionCid) -> crate::Result<Vec<String>> {
+    async fn owners_of_block(&self, _: &EncryptionCid) -> crate::Result<Vec<crate::BlockOwner>> {
         Ok(if self.0 {
-            vec!["bae-owner".to_string()]
+            vec![crate::BlockOwner {
+                doc_id: "bae-owner".to_string(),
+                block_collection_id: "collection".to_string(),
+            }]
         } else {
             Vec::new()
         })

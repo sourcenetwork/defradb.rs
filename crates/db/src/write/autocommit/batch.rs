@@ -95,6 +95,22 @@ impl<S: Store + 'static> BatchMutator<S> {
             .map_err(crate::error::commit_query_error)
     }
 
+    fn chunk_writes<'a>(
+        &'a self,
+        txn: &'a DbTxn<S>,
+        context: &'a RequestContext,
+    ) -> crate::chunk::sync::ChunkWrites<'a, S> {
+        crate::chunk::sync::ChunkWrites {
+            db: &self.db,
+            txn,
+            context,
+            prepared_inputs: self.prepared_inputs.as_ref(),
+            // The broadcast wrapper publishes derived writes, so this mutator must not.
+            broadcaster: None,
+            follows: None,
+        }
+    }
+
     pub async fn take_txn(&self) -> query::error::Result<DbTxn<S>> {
         self.txn.take().ok_or_else(|| {
             query::error::QueryError::execution("mutation batch transaction is no longer active")
@@ -106,6 +122,15 @@ impl<S: Store + 'static> BatchMutator<S> {
         self.txn.get().ok_or_else(|| {
             query::error::QueryError::execution("mutation batch transaction is no longer active")
         })
+    }
+
+    /// The collection `name` names in this batch's transaction.
+    pub(crate) async fn collection(
+        &self,
+        name: &str,
+    ) -> query::error::Result<crate::collection::Collection> {
+        let (collection, _, _) = get_collection_with_lazy_load(&*self.shared_txn()?, name).await?;
+        Ok(collection)
     }
 }
 
@@ -194,6 +219,7 @@ impl<S: Store + 'static> BatchMutator<S> {
             None,
             collection_block,
             None,
+            None,
         )
         .map_err(|e| {
             query::error::QueryError::execution(format!(
@@ -216,7 +242,7 @@ impl<S: Store + 'static> MutationBatchController for BatchMutator<S> {
         let attempt = BatchRetryAttempt {
             db: self.db.clone(),
             prepared_inputs: self.prepared_inputs.clone(),
-            operation,
+            work: RequestWork(operation),
         };
         match self
             .db
@@ -254,18 +280,69 @@ impl<S: Store + 'static> MutationBatchController for BatchMutator<S> {
     }
 }
 
-struct BatchRetryAttempt<S: Store> {
-    db: Arc<DB<S>>,
-    prepared_inputs: Option<query::prepared::PreparedInputMemo>,
-    operation: query::mutator::MutationBatchOperation,
+/// One batch attempt. It may run several times, so it must build everything
+/// it returns from scratch each time.
+pub(crate) trait AttemptWork<S>: defra_core::thread_bounds::MaybeSend
+where
+    S: Store + 'static,
+{
+    /// `lost` is why the previous attempt conflicted, if it did.
+    fn run(
+        &self,
+        mutator: Arc<BatchMutator<S>>,
+        fetcher: Arc<dyn query::fetcher::DocFetcher>,
+        lost: Option<storage::corekv::TransactionConflict>,
+    ) -> defra_core::thread_bounds::MaybeBoxFuture<
+        'static,
+        query::error::Result<storage::corekv::RetryAttemptValue>,
+    >;
 }
 
-impl<S: Store + 'static> storage::corekv::RetryAttemptFn for BatchRetryAttempt<S> {
+/// A whole implicit mutation request.
+struct RequestWork(query::mutator::MutationBatchOperation);
+
+impl<S> AttemptWork<S> for RequestWork
+where
+    S: Store + 'static,
+{
+    fn run(
+        &self,
+        mutator: Arc<BatchMutator<S>>,
+        fetcher: Arc<dyn query::fetcher::DocFetcher>,
+        _lost: Option<storage::corekv::TransactionConflict>,
+    ) -> defra_core::thread_bounds::MaybeBoxFuture<
+        'static,
+        query::error::Result<storage::corekv::RetryAttemptValue>,
+    > {
+        let operation = (self.0)(mutator, fetcher);
+        Box::pin(async move {
+            operation
+                .await
+                .map(|value| Box::new(value) as storage::corekv::RetryAttemptValue)
+        })
+    }
+}
+
+pub(crate) struct BatchRetryAttempt<S, W>
+where
+    S: Store,
+{
+    pub(crate) db: Arc<DB<S>>,
+    pub(crate) prepared_inputs: Option<query::prepared::PreparedInputMemo>,
+    pub(crate) work: W,
+}
+
+impl<S, W> storage::corekv::RetryAttemptFn for BatchRetryAttempt<S, W>
+where
+    S: Store + 'static,
+    W: AttemptWork<S>,
+{
     fn run<'a>(
         &'a mut self,
         retry: &'a mut dyn storage::corekv::RetryTxn,
     ) -> storage::corekv::RetryAttemptFuture<'a> {
         Box::pin(async move {
+            let lost = retry.previous_conflict();
             let io = retry
                 .begin_attempt_io()
                 .map_err(storage::corekv::RetryAttemptError::Storage)?;
@@ -286,12 +363,11 @@ impl<S: Store + 'static> storage::corekv::RetryAttemptFn for BatchRetryAttempt<S
                 txn: Held::new(txn),
                 prepared_inputs: self.prepared_inputs.clone(),
                 acp_registration_projection,
-                update_run: query::update_parts::Run::after(retry.previous_conflict().as_ref()),
+                update_run: query::update_parts::Run::after(lost.as_ref()),
                 creates: std::sync::atomic::AtomicU64::new(0),
             });
-            let mutator: Arc<dyn DocMutator> = batch.clone();
             let fetcher_dyn: Arc<dyn query::fetcher::DocFetcher> = fetcher.clone();
-            let outcome = (self.operation)(mutator, fetcher_dyn).await;
+            let outcome = self.work.run(batch.clone(), fetcher_dyn, lost).await;
             drop(fetcher);
 
             let value = match outcome {
@@ -315,7 +391,7 @@ impl<S: Store + 'static> storage::corekv::RetryAttemptFn for BatchRetryAttempt<S
             retry
                 .finish_attempt_io(io, callbacks)
                 .map_err(storage::corekv::RetryAttemptError::Storage)?;
-            Ok(Box::new(value) as storage::corekv::RetryAttemptValue)
+            Ok(value)
         })
     }
 }
@@ -399,6 +475,12 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         ensure_collection_is_active(&self.db, collection_name, &collection)?;
         crate::chunk::user_writes::ensure_user_writable(collection.schema())?;
         crate::chunk::user_writes::refuse_list_writes(collection.schema(), &doc, None)?;
+        let chunk_plans = crate::chunk::sync::set_lists(
+            collection.schema(),
+            &mut doc,
+            None,
+            context.encryption(),
+        )?;
 
         // No per-doc write guard for creates: the DocID is derived from the
         // genesis block inside the txn; the mapping duplicate check is the gate.
@@ -464,7 +546,15 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
             created.collection_block.clone(),
         )
         .await?;
-        Ok(created.into_result())
+        let parent_id = created.doc_id.to_string();
+        let mut result = created.into_result();
+        result.derived = {
+            let txn = self.shared_txn()?;
+            self.chunk_writes(&txn, context)
+                .create_missing(&parent_id, chunk_plans)
+                .await?
+        };
+        Ok(result)
     }
 
     async fn update(
@@ -510,6 +600,12 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
             collection.schema(),
             &doc,
             Some(&modified_fields),
+        )?;
+        let chunk_plans = crate::chunk::sync::set_lists(
+            collection.schema(),
+            &mut doc,
+            Some(&mut modified_fields),
+            context.encryption(),
         )?;
         let prepared_inputs = self.prepared_inputs.clone().unwrap_or_default();
 
@@ -616,10 +712,17 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
             )
             .await?;
         }
+        let derived = {
+            let txn = self.shared_txn()?;
+            self.chunk_writes(&txn, context)
+                .create_missing(&canonical_doc_id.to_string(), chunk_plans)
+                .await?
+        };
 
         let fields_modified = modified_fields.len();
         doc.clear_write_preparation();
         let mut result = UpdateResult::with_commit(doc, fields_modified, doc_cid, doc_block);
+        result.derived = derived;
         if let Some((col_cid, col_bytes)) = col_block_data {
             result.broadcast_cid = Some(col_cid);
             result.broadcast_block = Some(col_bytes);
@@ -753,8 +856,15 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
             col_block_data.clone(),
         )
         .await?;
+        let derived = {
+            let txn = self.shared_txn()?;
+            self.chunk_writes(&txn, context)
+                .delete_all(collection.schema(), &canonical_doc_id.to_string())
+                .await?
+        };
 
         let mut result = DeleteResult::with_commit(canonical_doc_id, existed, doc_cid, doc_block);
+        result.derived = derived;
         if let Some((col_cid, col_bytes)) = col_block_data {
             result.broadcast_cid = Some(col_cid);
             result.broadcast_block = Some(col_bytes);

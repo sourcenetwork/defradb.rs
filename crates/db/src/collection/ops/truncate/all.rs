@@ -13,6 +13,22 @@ impl<S: Store> crate::database::DB<S> {
     where
         S: 'static,
     {
+        // `@chunk` collections go first. If a parent is written meanwhile, the worst
+        // case is stray chunks no parent shows.
+        for chunked in &collection.schema().chunked_fields {
+            let name = chunked.collection(collection.name());
+            let chunks_col = self
+                .get_collection(&name)?
+                .ok_or(Error::CollectionNotFound(name))?;
+            self.truncate_documents(&chunks_col).await?;
+        }
+        self.truncate_documents(collection).await
+    }
+
+    async fn truncate_documents(self: &Arc<Self>, collection: &Collection) -> Result<usize>
+    where
+        S: 'static,
+    {
         let doc_ids = self.collect_doc_short_ids(collection).await?;
         for chunk in doc_ids.chunks(CHUNK_SIZE) {
             self.truncate_chunk(collection, chunk).await?;

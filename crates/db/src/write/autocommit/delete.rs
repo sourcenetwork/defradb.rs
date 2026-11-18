@@ -106,6 +106,18 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         collection_name: &str,
         doc_ids: &[DocID],
     ) -> query::error::Result<Vec<DeleteResult>> {
+        if let super::one_op::Route::Batch = self.chunk_route(collection_name)? {
+            return self
+                .in_batch(
+                    context,
+                    super::one_op::DeleteWork {
+                        context: context.clone(),
+                        collection_name: collection_name.to_string(),
+                        doc_ids: doc_ids.to_vec(),
+                    },
+                )
+                .await;
+        }
         if self.prepared_inputs.is_some() {
             return self
                 .delete_many_once_impl(context, collection_name, doc_ids)
