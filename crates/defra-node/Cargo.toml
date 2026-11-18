@@ -71,6 +71,10 @@ bench = false
 name = "embedded_vera"
 required-features = ["embedded-vera"]
 
+[[test]]
+name = "embedded_vera_replication"
+required-features = ["embedded-vera", "p2p"]
+
 [dependencies]
 rapidhash.workspace = true
 kovan-queue.workspace = true
