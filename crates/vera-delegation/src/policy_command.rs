@@ -1,11 +1,11 @@
 //! A policy command as it is sent to a provider under a bearer token.
 //!
-//! A delegation bound to one request names exactly one such command, so a
-//! provider that takes those delegations is told which command a token is
-//! about to be sent with
-//! ([`VeraProvider::caller_of_request_delegation`](crate::VeraProvider::caller_of_request_delegation)).
+//! A delegation bound to one request names exactly one such command, by its
+//! digest ([`request_digest`](crate::request_digest)), so a provider that
+//! takes those delegations is told which command a token is about to be sent
+//! with.
 
-use crate::provider::SubjectRef;
+use crate::SubjectRef;
 
 /// One command on one object of a policy.
 #[derive(Clone, Copy)]

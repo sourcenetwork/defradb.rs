@@ -25,6 +25,7 @@ members = [
     "crates/acp",
     "crates/defra-version",
     "crates/vera",
+    "crates/vera-delegation",
     "crates/vera-embedded",
     "crates/events",
     "crates/ffi",

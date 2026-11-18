@@ -21,8 +21,8 @@ use crate::vera_rs::client::tests::{Recorded, TRUSTED_KEY};
 use crate::vera_rs::client::VeraRsClient;
 use crate::vera_rs::did_spelling;
 use crate::vera_rs::signer::admission;
-use crate::vera_rs::signer::tests::{Recording, Returns};
 use crate::vera_rs::signer::DelegationSigner as _;
+use vera_delegation::testing::{Recording, Returns};
 
 pub(super) async fn provider(
     signer: Arc<Recording>,

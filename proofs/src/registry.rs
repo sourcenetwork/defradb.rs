@@ -163,7 +163,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "vera.rs actor spelling",
         name: "defra_idempotent / spellings_meet / other_unchanged / defra_same_actor / one_spelling_per_actor / wire_is_taken / wire_same_actor / defra_of_wire / wire_secp256k1_is_defra",
         axis: Lean,
-        anchor: "crates/vera/src/vera_rs/did_spelling.rs defra, wire, same_actor",
+        anchor: "crates/vera-delegation/src/did_spelling.rs defra, wire, same_actor",
         model_ref: "VeraActorSpelling (lake build)",
         tiers: &[Boundary],
         bound_by: "",
@@ -172,7 +172,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "vera.rs delegation signing",
         name: "admitted_iff_vera_accepts / sent_is_accepted / refused_is_not_sent / honest_answer_admitted / honest_ed25519_answer_admitted / ed25519_refusal_is_length_or_verification / refusal_names_the_first_failure / ed25519_refusal_names_the_first_failure",
         axis: Lean,
-        anchor: "crates/vera/src/vera_rs/signer/admission.rs admit, actor_key; crates/vera/src/vera_rs/bearer.rs issue_at",
+        anchor: "crates/vera-delegation/src/signer/admission.rs admit, actor_key; crates/vera-delegation/src/bearer.rs create_scoped_bearer_token_at",
         model_ref: "VeraDelegationSigner (lake build)",
         tiers: &[Boundary],
         bound_by: "",
@@ -181,7 +181,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "vera.rs delegation window",
         name: "issued_is_well_formed / issued_is_what_veras_builder_writes / request_holds_iff / written_at_provider_time_holds / ahead_within_allowance_holds / ahead_beyond_allowance_refused / behind_by_the_lifetime_refused / longer_than_the_longest_lifetime_refused_ahead / plain_ahead_within_allowance_holds / without_allowance_one_second_ahead_refused / reported_lead_is_a_lower_bound / unset_start_is_reported_exactly / set_back_start_is_reported_less_the_allowance / expired_claims_nothing_about_the_clock / outlasting_reaches_too_far / rewritten_at_reported_time_holds",
         axis: Lean,
-        anchor: "crates/vera/src/vera_rs/bearer/request.rs issue_request_at, MAX_REQUEST_LIFETIME; crates/vera/src/vera_rs/bearer.rs not_before, authorize_at; crates/vera/src/vera_rs/bearer/window.rs within_window; crates/acp/src/delegation_window.rs CLOCK_SKEW_ALLOWANCE, WindowRefusal",
+        anchor: "crates/vera-delegation/src/bearer/request.rs issue_request_at, MAX_REQUEST_LIFETIME; crates/vera-delegation/src/bearer.rs not_before; crates/vera/src/vera_rs/bearer.rs authorize_at; crates/vera/src/vera_rs/bearer/window.rs within_window; crates/acp/src/delegation_window.rs CLOCK_SKEW_ALLOWANCE, WindowRefusal",
         model_ref: "VeraDelegationWindow (lake build)",
         tiers: &[Boundary],
         bound_by: "",
@@ -235,7 +235,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Verified client graph transaction",
         name: "INV_AuthorityAtAdmission / INV_GrantAuthority / INV_RefusalRecordsNothing / INV_RequestOnlyItsRequest / INV_RequestIsNoLogin / INV_NothingSentStale / INV_RegistrationFirst / INV_SentUnderRecordedAuthority / INV_ReauthorizedWithAuthority / INV_FailureReported / INV_EditOnVerifiedPermission / INV_RequestBoundNoEdit / INV_EditOwesNothing: a verified write on a remote ACP provider is staged only with authority for its signer, a verified update or delete only when the signer held the permission at a verified revision no older than the freshness limit (owed registrations and revocations first), never with a request-bound delegation and owing nothing, a refusal records nothing, a delegation bound to one request is used for the command it names and never as a login, nothing is sent after expiry, a grant follows its document's registration, a command is sent only with the credential recorded for it, a parked command is owed again only on a fresh credential the rule of admission takes, and a submission that fails after the commit is reported",
         axis: Tla,
-        anchor: "crates/defra-node/src/lib.rs execute_verified_graph_in_txn; crates/defra-node/src/signer_credential.rs SignerCredential::carried_by; crates/query/src/runner/remote_authority.rs remote_write_authority, edit_credential; crates/query/src/runner/mutation.rs authorize_mutation; crates/query/src/txn/context.rs check_doc_access_with_prepared_inputs; crates/acp/src/external.rs ExternalDocumentAcp::check_doc_access, proves_decisions; crates/vera/src/cosmos/dac.rs check_doc_access, proves_decisions; crates/vera/src/vera_rs/provider.rs verify_access, proves_decisions, decision_state; crates/vera/src/cosmos/dac.rs authority; crates/vera/src/cosmos/dac/request_bound.rs request_bound, admit_for, with_policy_command; crates/vera/src/vera_rs/bearer/request.rs caller_of_request_delegation, bound_caller; crates/vera/src/vera_rs/bearer.rs caller_of_delegation; crates/vera/src/vera_rs/command_digest.rs request_digest; crates/vera/src/cosmos/dac/owed.rs token, lapsed; crates/acp/src/outbox/staging.rs TransactionOutbox::stage; crates/acp/src/external/settle.rs register_first; crates/acp/src/pending.rs PendingRegistration; crates/acp/src/external/registration.rs settle_with, registrar, note_failure; crates/acp/src/external/owed.rs reauthorize, entries; crates/db/src/write/autocommit/helpers.rs register_created_doc; crates/defra-node/src/owed.rs Node::reauthorize_owed_acp_as, Node::owed_acp_as",
+        anchor: "crates/defra-node/src/lib.rs execute_verified_graph_in_txn; crates/defra-node/src/signer_credential.rs SignerCredential::carried_by; crates/query/src/runner/remote_authority.rs remote_write_authority, edit_credential; crates/query/src/runner/mutation.rs authorize_mutation; crates/query/src/txn/context.rs check_doc_access_with_prepared_inputs; crates/acp/src/external.rs ExternalDocumentAcp::check_doc_access, proves_decisions; crates/vera/src/cosmos/dac.rs check_doc_access, proves_decisions; crates/vera/src/vera_rs/provider.rs verify_access, proves_decisions, decision_state; crates/vera/src/cosmos/dac.rs authority; crates/vera/src/cosmos/dac/request_bound.rs request_bound, admit_for, with_policy_command; crates/vera/src/vera_rs/bearer/request.rs caller_of_request_delegation, bound_caller; crates/vera/src/vera_rs/bearer.rs caller_of_delegation; crates/vera-delegation/src/command_digest.rs request_digest; crates/vera/src/cosmos/dac/owed.rs token, lapsed; crates/acp/src/outbox/staging.rs TransactionOutbox::stage; crates/acp/src/external/settle.rs register_first; crates/acp/src/pending.rs PendingRegistration; crates/acp/src/external/registration.rs settle_with, registrar, note_failure; crates/acp/src/external/owed.rs reauthorize, entries; crates/db/src/write/autocommit/helpers.rs register_created_doc; crates/defra-node/src/owed.rs Node::reauthorize_owed_acp_as, Node::owed_acp_as",
         model_ref: "MC_VerifiedRemoteWrite_{Green,Red_NoAuthority,Red_AnyIssuer,Red_AnyNode,Red_ExpiredAccepted,Red_AnyCommand,Red_RequestLogsIn,Red_RecordedFirst,Red_SentExpired,Red_GrantFirst,Red_GrantUnchecked,Red_AmbientRetry,Red_ReauthUnchecked,Red_SilentFailure,Red_NoPermission,Red_StaleEvidence,Red_OwedIgnored,Red_RequestEdit,Red_EditOwes,Red_WindowWitness}.cfg",
         tiers: &[Boundary, Contract],
         bound_by: "crates/defra-node/tests/unit/verified_remote.rs a_verified_create_is_staged_only_with_authority_for_its_signer, a_request_bound_delegation_covers_the_registration_it_names_and_nothing_else, a_grant_in_a_verified_transaction_takes_its_own_request_bound_delegation, a_request_bound_delegation_that_expires_before_submission_parks_its_change; crates/defra-node/tests/unit/verified_edit.rs a_verified_update_or_delete_is_admitted_on_the_signers_permission, every_credential_form_is_decided_by_the_permission, a_revocation_finalized_before_admission_refuses_the_update, an_update_fails_closed_without_fresh_evidence, what_the_node_owes_decides_before_the_provider; crates/defra-node/tests/embedded_vera/verified.rs a_verified_create_under_the_signers_delegation_registers_the_signer, a_verified_create_under_a_request_bound_delegation_registers_the_signer, a_grant_staged_in_a_verified_transaction_lands_after_the_registration; crates/defra-node/tests/embedded_vera/verified_edit.rs a_verified_update_and_delete_are_admitted_on_the_chains_permission, a_writer_whose_grant_was_revoked_on_chain_is_refused, a_verified_update_is_refused_when_the_chain_cannot_be_reached; crates/defra-node/tests/unit/owed_report.rs a_registration_that_fails_after_its_commit_is_reported_and_takes_a_fresh_credential, a_change_waiting_for_authority_takes_a_credential_bound_to_it, a_submission_that_fails_for_an_unreachable_provider_is_reported_and_sent_by_the_wait, a_retry_of_an_owed_registration_never_reads_the_token_the_process_holds",
@@ -1696,14 +1696,16 @@ pub const PROPERTIES: &[Property] = &[
         // authenticated, and refuses one that a block finalized during the
         // round trip overtook. The vera provider asks such a read again, at
         // most ATTEMPTS times, and a read the node answered busy (-32002,
-        // evidence not ready by its deadline) again after a pause, for at
-        // most BUSY_PATIENCE, counted apart: an error reaches a caller only
-        // after every ask of its kind, and a stale answer is never accepted.
+        // evidence not ready by its deadline) again after a jittered pause,
+        // only while that pause ends within BUSY_PATIENCE of its first ask,
+        // the requests' own time included; the two are counted apart. An
+        // error reaches a caller only after every overtaken ask, or once no
+        // pause fits in the patience, and a stale answer is never accepted.
         family: "ACP soundness + revocation + dual-path commits",
-        name: "INV_NeverStale / INV_FailsOnlyWhenEveryAskOvertaken / INV_AttemptsBounded / LIVE_Answers: a proven read the chain overtook or the node answered busy is asked again, bounded, never accepted stale",
+        name: "INV_NeverStale / INV_FailsOnlyWhenEveryAskOvertaken / INV_AttemptsBounded / LIVE_Answers: a proven read the chain overtook or the node answered busy is asked again, bounded by a count and by elapsed time, never accepted stale",
         axis: Tla,
-        anchor: "crates/vera/src/vera_rs/provider/verified.rs verified, verified_within, ATTEMPTS, BUSY_PATIENCE, BUSY_PAUSE, busy; crates/vera/src/vera_rs/provider.rs create_policy, query_policy, query_object_owner, verify_access, create_access_decision; backbone:acp-light-client HeaderChain::accept_response",
-        model_ref: "MC_VerifiedRead_{Green,Green_Exhausted,Red_AcceptStale,Red_NoRetry,Red_Uncapped,Red_NoBusyRetry,Red_BusyUncapped}.cfg",
+        anchor: "crates/vera/src/vera_rs/provider/verified.rs verified, verified_within, Pace, WallPace, JITTER, ATTEMPTS, BUSY_PATIENCE, BUSY_PAUSE, busy; crates/inputs/src/retry.rs Jitter, pause; crates/vera/src/vera_rs/provider.rs create_policy, query_policy, query_object_owner, verify_access, create_access_decision; backbone:acp-light-client HeaderChain::accept_response",
+        model_ref: "MC_VerifiedRead_{Green,Green_Exhausted,Red_AcceptStale,Red_NoRetry,Red_Uncapped,Red_NoBusyRetry,Red_BusyUncapped,Red_PausesOnly,Red_UndrawnPause}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },

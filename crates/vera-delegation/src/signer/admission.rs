@@ -1,10 +1,10 @@
-//! Which signatures leave the node.
+//! Which signatures leave this crate.
 //!
 //! vera.rs verifies a delegation against the key its issuer DID names. For an
 //! ECDSA key it refuses a signature that is not 64 bytes, is not two scalars
 //! of the curve order, has `s` in the upper half of that order, or does not
 //! verify. For an Ed25519 key it refuses one that is not 64 bytes or fails
-//! strict verification. The provider applies the same tests to what a signer
+//! strict verification. The same tests are applied here to what a signer
 //! returns, so a token vera.rs would refuse is refused here, with the reason,
 //! and nothing vera.rs would accept is
 //! (`proofs/lean/VeraDelegationSigner.lean`).
@@ -14,11 +14,11 @@ use k256::ecdsa::signature::hazmat::PrehashVerifier as _;
 use sha2::{Digest, Sha256};
 
 use super::{DelegationAlgorithm, DelegationSigner, SignerError};
-use crate::vera_rs::bearer;
+use crate::bearer;
 
 /// The key a signer's DID names, which its signatures must verify under.
 #[derive(Debug, PartialEq, Eq)]
-pub(in crate::vera_rs) enum ActorKey {
+pub enum ActorKey {
     Secp256k1(k256::ecdsa::VerifyingKey),
     Ed25519(ed25519_dalek::VerifyingKey),
     P256(p256::ecdsa::VerifyingKey),
@@ -28,7 +28,7 @@ impl ActorKey {
     /// Whether `issuer` is a spelling of this key that vera.rs accepts as a
     /// token's issuer: either point encoding of a secp256k1 key, and the one
     /// canonical DID of an Ed25519 or P-256 key.
-    pub(in crate::vera_rs) fn names(&self, issuer: &str) -> bool {
+    pub fn names(&self, issuer: &str) -> bool {
         match self {
             Self::Secp256k1(key) => {
                 issuer == bearer::did_from_key(key, true)
@@ -46,9 +46,7 @@ impl ActorKey {
 }
 
 /// The key `signer`'s DID names, of the type its algorithm signs with.
-pub(in crate::vera_rs) fn actor_key(
-    signer: &dyn DelegationSigner,
-) -> Result<ActorKey, SignerError> {
+pub fn actor_key(signer: &dyn DelegationSigner) -> Result<ActorKey, SignerError> {
     let unusable = |reason: String| SignerError::Did {
         did: signer.did().to_owned(),
         algorithm: signer.algorithm(),
@@ -82,8 +80,9 @@ pub(in crate::vera_rs) fn actor_key(
     }
 }
 
-/// Accepts `signature` over `signing_input` exactly when vera.rs would.
-pub(in crate::vera_rs) fn admit(
+/// Accepts `signature` over `signing_input` exactly when vera.rs would. `key`
+/// is the one [`actor_key`] gave for `signer`.
+pub(crate) fn admit(
     signer: &dyn DelegationSigner,
     key: &ActorKey,
     signing_input: &[u8],

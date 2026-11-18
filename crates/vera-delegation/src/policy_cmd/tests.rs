@@ -1,7 +1,7 @@
 use vera_modules::acp::delegated_operation::DelegatedOperation;
 
 use super::*;
-use crate::vera_rs::request_digest;
+use crate::request_digest;
 
 const POLICY: &str = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
 const ED25519: &str = "did:key:z6MkiTBz1ymuepAQ4HEHYSF1H8quG5GLVVQR3djdX3mDooWp";
@@ -234,10 +234,7 @@ fn sent(policy_id: &str, command: &PolicyCmd) -> Vec<u8> {
     let calldata = calldata("token", policy_id, command).expect("a call");
     let call = IAcp::bearerPolicyCmdCall::abi_decode(&calldata).expect("a policy command call");
     assert_eq!(call.bearerToken, "token");
-    assert_eq!(
-        call.policyId,
-        vera_client::parse_policy_id(policy_id).unwrap()
-    );
+    assert_eq!(call.policyId, parse_policy_id(policy_id).unwrap());
     call.cmd.to_vec()
 }
 
@@ -307,7 +304,7 @@ fn a_subject_vera_rs_has_no_command_for_is_refused() {
     };
     assert!(matches!(
         chain_subject(&typed_wildcard),
-        Err(ProviderError::Config(_))
+        Err(CommandError::Subject(_))
     ));
 
     let not_an_actor = SubjectRef::Actor("not a DID".into());
@@ -328,7 +325,7 @@ fn a_subject_vera_rs_has_no_command_for_is_refused() {
                 subject,
             },
         };
-        assert!(matches!(typed(&command), Err(ProviderError::Config(_))));
+        assert!(matches!(typed(&command), Err(CommandError::Subject(_))));
         assert!(request_digest(&command).is_err());
     }
 }

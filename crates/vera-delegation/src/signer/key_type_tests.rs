@@ -4,7 +4,7 @@ use std::borrow::Cow;
 
 use super::admission::{actor_key, admit};
 use super::*;
-use crate::vera_rs::did_spelling;
+use crate::did_spelling;
 
 const INPUT: &[u8] = b"header.payload";
 

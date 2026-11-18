@@ -45,6 +45,7 @@ pub use cache::Cache;
 pub use config::Config;
 pub use error::Error;
 pub use network::{Network, Runtime, RuntimeClock, Stopwatch};
+pub use retry::Jitter;
 pub use service::Service;
 pub use source::{Answers, Source};
 pub use stats::{Histogram, Stats};
