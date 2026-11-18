@@ -5,9 +5,10 @@ use serde::Serialize;
 /// Past `c34052cb` (sourcenetwork/defradb#5253), which rewrote the SIMILARITY
 /// argument shape and descriptions that the introspection tests expect, and
 /// past `f73a903f`, the first baseline whose Go binary understands a vector
-/// index at all. Go development ends this cycle, so this is the newest develop
-/// commit.
-pub const GO_COMPAT_COMMIT: &str = "307364d9d";
+/// index at all. It is `89cc88cf5` (sourcenetwork/defradb#5342), which refuses
+/// an empty relationship target actor, as the NAC relationship scenarios
+/// expect.
+pub const GO_COMPAT_COMMIT: &str = "89cc88cf5";
 /// Go upstream branch.
 pub const GO_COMPAT_BRANCH: &str = "develop";
 /// Go release tag; empty when CI should build the pinned commit from source.
