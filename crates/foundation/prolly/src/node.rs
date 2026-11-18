@@ -22,19 +22,23 @@ pub struct Node {
 
 impl Node {
     /// The canonical bytes the node's hash is taken over.
+    ///
+    /// The level byte, then the item count, then each key and value behind
+    /// its length, every length a big-endian `u64` so that no length is
+    /// truncated and distinct nodes never share an encoding.
     pub fn encode(&self) -> Vec<u8> {
         let size: usize = self
             .items
             .iter()
-            .map(|item| 8 + item.key.len() + item.value.len())
+            .map(|item| 16 + item.key.len() + item.value.len())
             .sum();
-        let mut bytes = Vec::with_capacity(5 + size);
+        let mut bytes = Vec::with_capacity(9 + size);
         bytes.push(self.level);
-        bytes.extend_from_slice(&(self.items.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(&(self.items.len() as u64).to_be_bytes());
         for item in &self.items {
-            bytes.extend_from_slice(&(item.key.len() as u32).to_be_bytes());
+            bytes.extend_from_slice(&(item.key.len() as u64).to_be_bytes());
             bytes.extend_from_slice(&item.key);
-            bytes.extend_from_slice(&(item.value.len() as u32).to_be_bytes());
+            bytes.extend_from_slice(&(item.value.len() as u64).to_be_bytes());
             bytes.extend_from_slice(&item.value);
         }
         bytes
@@ -48,5 +52,28 @@ impl Node {
     /// The largest key in the node, which is its last.
     pub fn last_key(&self) -> &[u8] {
         self.items.last().map_or(&[], |item| item.key.as_slice())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Item, Node};
+
+    #[test]
+    fn encode_prefixes_every_length_with_a_u64() {
+        let node = Node {
+            level: 2,
+            items: vec![Item {
+                key: b"ab".to_vec(),
+                value: b"xyz".to_vec(),
+            }],
+        };
+        let mut want = vec![2];
+        want.extend_from_slice(&1u64.to_be_bytes());
+        want.extend_from_slice(&2u64.to_be_bytes());
+        want.extend_from_slice(b"ab");
+        want.extend_from_slice(&3u64.to_be_bytes());
+        want.extend_from_slice(b"xyz");
+        assert_eq!(node.encode(), want);
     }
 }
