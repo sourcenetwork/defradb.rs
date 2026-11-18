@@ -1,8 +1,10 @@
-//! Builds the chunks of a merged parent's text that this node lacks.
+//! Makes a merged parent's chunk documents match its merged text.
 //!
 //! A merge can keep another peer's text whose chunks never arrive, as when a
-//! peer syncs only the parent. So the merge builds them in its own
-//! transaction. `proofs/tla/ChunkMerge.tla` checks this.
+//! peer syncs only the parent, so the merge builds them in its own
+//! transaction. It also deletes the chunks the merged text no longer uses: no
+//! edit of this node may ever do it, as when its own edit lost the merge.
+//! `proofs/tla/ChunkMerge.tla` and `proofs/tla/ChunkCleanup.tla` check this.
 
 use datastore::NamespaceView;
 use defra_core::RequestContext;
@@ -13,9 +15,10 @@ use storage::keys::doc_id_index::DocRef;
 use storage::namespace::Namespace;
 
 use crate::block::builder::{compute_document_blocks, write_document_blocks_with_inputs};
+use crate::chunk::generation::{is_taken, next_generation};
 use crate::chunk::list::distinct;
 use crate::chunk::split::{split, Chunk};
-use crate::chunk::sync::{chunk_document, ChunkCollection};
+use crate::chunk::sync::{chunk_document, remove, ChunkCollection, RemoveInputs};
 use crate::collection::Collection;
 use crate::database::DB;
 use crate::index::IndexManager;
@@ -26,7 +29,7 @@ fn failed(error: impl std::fmt::Display) -> MergeError {
     MergeError::MergeFailed(format!("chunk rebuild: {error}"))
 }
 
-/// What [`build_missing`] needs from the merge.
+/// What [`reconcile`] needs from the merge.
 pub(crate) struct MergedParent<'a> {
     pub(crate) collection: &'a Collection,
     pub(crate) doc_short_id: u64,
@@ -37,8 +40,9 @@ pub(crate) struct MergedParent<'a> {
     pub(crate) encrypted: bool,
 }
 
-/// Builds the chunks of each merged text that this node has no document for.
-pub(crate) async fn build_missing<S>(
+/// For each merged text, deletes the chunk documents it does not use and
+/// builds the ones this node lacks.
+pub(crate) async fn reconcile<S>(
     db: &DB<S>,
     datastore: &NamespaceView,
     systemstore: &NamespaceView,
@@ -55,10 +59,13 @@ where
         if !parent.merged.contains_key(field) {
             continue;
         }
-        let Some(NormalValue::String(text)) = parent.doc.get(field) else {
-            continue;
+        let text = match parent.doc.get(field) {
+            Some(NormalValue::String(text)) => Some(text.as_str()),
+            None | Some(NormalValue::Null) => None,
+            Some(_) => continue,
         };
-        // An encrypted chunk takes a key of its own, so its ID differs per node.
+        // An encrypted chunk takes a key of its own, so its ID differs per
+        // node, and a text this node can't read decides nothing.
         if parent.encrypted
             || encrypts(
                 &blockstore,
@@ -87,15 +94,35 @@ where
             index_manager,
         )
         .map_err(failed)?;
-        let config = crate::chunk::chunk_config(&schema.name, chunked).map_err(failed)?;
-        let chunks = split(text, &config);
-        let planned: RapidHashSet<&str> = chunks.iter().map(|chunk| chunk.hash.as_str()).collect();
-        let existing = target
-            .existing_of(parent.doc_id, &planned)
-            .await
-            .map_err(failed)?;
+        let chunks = match text {
+            Some(text) => {
+                let config = crate::chunk::chunk_config(&schema.name, chunked).map_err(failed)?;
+                split(text, &config)
+            }
+            None => Vec::new(),
+        };
+        let used: RapidHashSet<&str> = chunks.iter().map(|chunk| chunk.hash.as_str()).collect();
+        let stored = target.stored_of(parent.doc_id).await.map_err(failed)?;
+        for (hash, short_ids) in &stored {
+            let unneeded = target
+                .unneeded(used.contains(hash.as_str()), short_ids)
+                .await
+                .map_err(failed)?;
+            for doc_short_id in unneeded {
+                // Unsigned like the chunk's blocks, so peers that delete it write one block.
+                remove(
+                    &target,
+                    &blockstore,
+                    &headstore,
+                    doc_short_id,
+                    RemoveInputs::default(),
+                )
+                .await
+                .map_err(failed)?;
+            }
+        }
         for chunk in distinct(&chunks) {
-            if !existing.contains(&chunk.hash) {
+            if !stored.contains_key(&chunk.hash) {
                 build(db, &target, &blockstore, &headstore, parent.doc_id, chunk).await?;
             }
         }
@@ -138,24 +165,27 @@ where
     let mut doc =
         chunk_document(collection, parent_id, chunk.text.clone(), &chunk.hash).map_err(failed)?;
     let probe = DocRef::new(collection.resolved_root_id(), 0);
-    let doc_id = compute_document_blocks(
-        collection.crdts(),
-        &doc,
-        collection.schema(),
-        probe,
-        None,
-        None,
-    )
-    .map_err(failed)?
-    .block_result
-    .doc_id;
-    // A chunk this node already holds under that ID, live or deleted, is not built again.
-    if crate::docid::map::get_doc_ref(&target.systemstore, &doc_id)
-        .await
-        .map_err(MergeError::Database)?
-        .is_some()
-    {
-        return Ok(());
+    // An ID this node used before, live or deleted, is not built again: the
+    // next generation gets a new one, the one every peer picks after that delete.
+    loop {
+        let doc_id = compute_document_blocks(
+            collection.crdts(),
+            &doc,
+            collection.schema(),
+            probe,
+            None,
+            None,
+        )
+        .map_err(failed)?
+        .block_result
+        .doc_id;
+        if !is_taken(&target.systemstore, &doc_id)
+            .await
+            .map_err(failed)?
+        {
+            break;
+        }
+        next_generation(&mut doc).map_err(failed)?;
     }
     let identity = DocRef::new(
         collection.resolved_root_id(),

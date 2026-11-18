@@ -146,13 +146,19 @@ fn editing_one_paragraph_writes_only_its_chunk() {
 
         let updated = update_body(&mutator, &created.doc_id, &edited).await;
 
-        assert_eq!(updated.derived.len(), 1);
+        // One new chunk, and the delete of the one it replaces.
+        let (made, gone): (Vec<_>, Vec<_>) = updated
+            .derived
+            .iter()
+            .partition(|write| write.document.is_some());
+        assert_eq!((made.len(), gone.len()), (1, 1));
         assert_eq!(
             list_of(&mutator, &created.doc_id).await.unwrap(),
             chunk_list(&edited, &split(&edited, &CONFIG))
         );
         for old in &created.derived {
-            assert!(mutator.exists(CHUNKS, &old.doc_id).await.unwrap());
+            let kept = old.doc_id != gone[0].doc_id;
+            assert_eq!(mutator.exists(CHUNKS, &old.doc_id).await.unwrap(), kept);
         }
     })
     .unwrap()
@@ -185,7 +191,7 @@ fn an_update_that_leaves_the_text_alone_writes_no_chunk() {
 }
 
 #[test]
-fn reverting_the_text_reuses_the_old_chunks() {
+fn reverting_the_text_deletes_the_added_chunk_and_keeps_the_rest() {
     workers::block_on(async {
         let (mutator, _db, _keep) = setup().await;
         let a = text_of(&book());
@@ -198,7 +204,17 @@ fn reverting_the_text_reuses_the_old_chunks() {
             .is_empty());
         let back = update_body(&mutator, &created.doc_id, &a).await;
 
-        assert!(back.derived.is_empty());
+        // Only chunks the edit deleted come back, at their next generation;
+        // the untouched ones were never deleted.
+        let made: Vec<_> = back
+            .derived
+            .iter()
+            .filter_map(|write| write.document.as_ref())
+            .collect();
+        assert!(made.len() < back.derived.len());
+        for doc in made {
+            assert_eq!(doc.get("generation"), Some(&NormalValue::Int(1)));
+        }
         assert_eq!(
             list_of(&mutator, &created.doc_id).await.unwrap(),
             chunk_list(&a, &split(&a, &CONFIG))
@@ -461,7 +477,12 @@ fn an_update_of_an_unchanged_document_goes_through() {
             .update_if_unchanged("Article", selected, doc, modified(&["body"]))
             .await
             .unwrap();
-        assert_eq!(updated.derived.len(), 1);
+        let made = updated
+            .derived
+            .iter()
+            .filter(|write| write.document.is_some())
+            .count();
+        assert_eq!(made, 1);
         assert_eq!(
             list_of(&mutator, &created.doc_id).await.unwrap(),
             chunk_list("Rewritten.", &split("Rewritten.", &CONFIG))

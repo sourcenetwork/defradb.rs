@@ -10,11 +10,13 @@ use storage::corekv::Store;
 
 use storage::keys::doc_id_index::DocRef;
 
-use crate::block::builder::{write_delete_block_with_inputs, write_document_blocks_with_inputs};
+use crate::block::builder::{build_document_blocks, insert_computed_blocks, BuildError};
+use crate::chunk::generation::{is_taken, next_generation};
 use crate::collection::Collection;
 use crate::event::emission::register_update_event_callback;
 use crate::write::autocommit::helpers::{register_created_doc, write_local_create};
 
+use super::remove::{remove, RemoveInputs, Removed};
 use super::{json, ChunkCollection, ChunkWrites};
 
 /// The chunk of `parent` holding `text`, not yet written.
@@ -117,28 +119,38 @@ where
                 .await?
             }
         }
-        let block = write_document_blocks_with_inputs(
-            &blockstore,
-            &headstore,
-            &doc,
-            collection.schema(),
-            identity,
-            None,
-            encryption.as_ref(),
-            // Unsigned, so every node builds the same blocks and DocID for a chunk.
-            None,
-            None,
-            self.db.kms().as_ref(),
-            self.prepared_inputs,
-            None,
-        )
-        .await
-        .map_err(|error| {
+        let failed = |error: BuildError| {
             error.into_query_error_in(&format!(
                 "failed to write chunk blocks on collection {}",
                 collection.name()
             ))
-        })?;
+        };
+        // An encrypted chunk's key is new each time, so its ID is never taken.
+        let block = loop {
+            let built = build_document_blocks(
+                &blockstore,
+                &headstore,
+                &doc,
+                collection.schema(),
+                identity,
+                None,
+                encryption.as_ref(),
+                // Unsigned, so every node builds the same blocks and DocID for a chunk.
+                None,
+                self.db.kms().as_ref(),
+                self.prepared_inputs,
+                None,
+            )
+            .await
+            .map_err(failed)?;
+            if encrypt || !is_taken(&target.systemstore, &built.block_result.doc_id).await? {
+                insert_computed_blocks(&blockstore, &headstore, &built, None)
+                    .await
+                    .map_err(|error| failed(BuildError::Message(error)))?;
+                break built.block_result;
+            }
+            next_generation(&mut doc)?;
+        };
         let doc_id = register_created_doc(
             None,
             self.context,
@@ -182,59 +194,27 @@ where
         doc_short_id: u64,
     ) -> Result<Option<DerivedWrite>> {
         let collection = &target.collection;
-        let Some(doc_id) = crate::docid::map::get_doc_id(&target.systemstore, doc_short_id)
-            .await
-            .map_err(|e| QueryError::execution(e.to_string()))?
+        let inputs = RemoveInputs {
+            signing: self.context.signing(),
+            batch_session: self.context.batch_session(),
+            prepared_inputs: self.prepared_inputs,
+        };
+        let Some(Removed {
+            doc_id,
+            block,
+            before,
+        }) = remove(
+            target,
+            &self.blockstore()?,
+            &self.headstore()?,
+            doc_short_id,
+            inputs,
+        )
+        .await?
         else {
-            tracing::warn!(doc_short_id, chunks = %collection.name(), "chunk index names a document with no DocID");
             return Ok(None);
         };
-        let doc_id = DocID::from_string(&doc_id)
-            .map_err(|e| QueryError::execution(format!("invalid chunk DocID: {e}")))?;
-        let before = collection
-            .get_with_datastore(&target.datastore, doc_short_id, &doc_id)
-            .await
-            .map_err(|e| QueryError::execution(format!("chunk read failed: {e}")))?
-            .and_then(|doc| json(&doc));
-        let existed = collection
-            .delete_with_indexes(
-                &target.datastore,
-                &doc_id,
-                doc_short_id,
-                &target.index_manager,
-            )
-            .await
-            .map_err(|e| QueryError::execution(format!("chunk delete error: {e}")))?;
-        if !existed {
-            return Ok(None);
-        }
-        let blockstore = self.blockstore()?;
-        let headstore = self.headstore()?;
-        let block = write_delete_block_with_inputs(
-            &blockstore,
-            &headstore,
-            &doc_id.to_string(),
-            doc_short_id,
-            collection.version_id(),
-            self.context.signing(),
-            self.context.batch_session(),
-            self.prepared_inputs,
-            None,
-        )
-        .await
-        .map_err(|error| {
-            error.into_query_error_in(&format!(
-                "failed to write chunk delete block on collection {}",
-                collection.name()
-            ))
-        })?;
-        crate::docid::map::set_block_doc_id_mapping(
-            &target.systemstore,
-            &block.cid.to_string(),
-            &doc_id.to_string(),
-        )
-        .await
-        .map_err(|e| QueryError::execution(e.to_string()))?;
+        // Published like a create, so the delete follows the parent to its peers.
         self.publish(collection, &doc_id, block.cid, block.block.clone(), before)?;
         Ok(Some(DerivedWrite {
             collection_name: collection.name().to_string(),

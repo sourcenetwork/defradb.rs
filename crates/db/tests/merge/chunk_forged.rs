@@ -234,8 +234,8 @@ fn a_chunk_cannot_be_rewritten_after_it_merged() {
     workers::block_on(async {
         let author = node().await;
         let peer = node().await;
-        let parent = parent_article(&peer).await;
-        let before = list_of(&peer, &parent).await;
+        // A parent the peer lacks, so its text can't drop the chunk.
+        let parent = DocID::new_v0_from_seed("rewritten chunk parent");
 
         let collection = chunks_of(&author);
         let text = "original text";
@@ -282,7 +282,6 @@ fn a_chunk_cannot_be_rewritten_after_it_merged() {
         .await;
 
         assert_eq!(stored(&peer, &peer_chunks, &chunk_id).await.unwrap(), kept);
-        assert_eq!(list_of(&peer, &parent).await, before);
     })
     .unwrap()
 }
@@ -292,7 +291,8 @@ fn a_chunk_cannot_move_to_another_parent_after_it_merged() {
     workers::block_on(async {
         let author = node().await;
         let peer = node().await;
-        let parent = parent_article(&peer).await;
+        // A parent the peer lacks, so its text can't drop the chunk.
+        let parent = DocID::new_v0_from_seed("moved chunk parent");
         let other = parent_article_titled(&peer, "other").await;
 
         let collection = chunks_of(&author);

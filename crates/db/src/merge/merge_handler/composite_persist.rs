@@ -165,6 +165,21 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 context.block.encryption.is_some() || !state.linked_encryption_cids.is_empty();
             crate::chunk::guard::check_chunk_merge(old_doc.as_ref(), &doc, encrypted)
                 .map_err(|reason| MergeError::ChunkRejected(reason.to_string()))?;
+            // An encrypted chunk's ID differs per node, so this node can't build it later.
+            if old_doc.is_none() && !encrypted {
+                if let Some(reason) = crate::chunk::peer_create::create_is_stale(
+                    &self.db,
+                    datastore,
+                    systemstore,
+                    collection,
+                    &doc,
+                )
+                .await
+                .map_err(MergeError::Database)?
+                {
+                    return Ok(Some(MergeOutcome::terminal_skip(reason)));
+                }
+            }
         }
 
         let known_fields: rapidhash::RapidHashSet<&str> = collection
@@ -361,7 +376,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         }
 
         if !doc_is_tombstoned && !collection.schema().chunked_fields.is_empty() {
-            crate::chunk::rebuild::build_missing(
+            crate::chunk::rebuild::reconcile(
                 &self.db,
                 datastore,
                 systemstore,

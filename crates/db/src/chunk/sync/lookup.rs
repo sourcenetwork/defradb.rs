@@ -2,7 +2,7 @@
 
 use document::NormalValue;
 use query::error::{QueryError, Result};
-use rapidhash::RapidHashSet;
+use rapidhash::RapidHashMap;
 use schema::CHUNK_SOURCE_ID_FIELD;
 use storage::corekv::Store;
 use storage::index::{IndexIterator, RangeIterator};
@@ -82,15 +82,11 @@ impl ChunkCollection {
         })
     }
 
-    /// Which of the `planned` hashes `parent` already has a chunk document for.
-    /// Only those are kept, since a parent's old chunks stay until it is deleted.
-    pub(crate) async fn existing_of(
-        &self,
-        parent: &str,
-        planned: &RapidHashSet<&str>,
-    ) -> Result<RapidHashSet<String>> {
+    /// The live chunk documents of `parent`, by hash. A hash names more than
+    /// one only when copies from peers raced in before the parent.
+    pub(crate) async fn stored_of(&self, parent: &str) -> Result<RapidHashMap<String, Vec<u64>>> {
         let mut entries = self.scan_of(parent).await?;
-        let mut existing = RapidHashSet::default();
+        let mut stored: RapidHashMap<String, Vec<u64>> = RapidHashMap::default();
         while let Some(entry) = entries
             .next()
             .await
@@ -102,11 +98,49 @@ impl ChunkCollection {
                 Some(NormalValue::String(hash)) => Some(hash),
                 _ => None,
             };
-            if let Some(hash) = hash.filter(|hash| planned.contains(hash.as_str())) {
-                existing.insert(hash);
+            if let Some(hash) = hash {
+                stored.entry(hash).or_default().push(entry.doc_short_id);
             }
         }
-        Ok(existing)
+        Ok(stored)
+    }
+
+    /// The chunk documents of one hash a parent no longer needs: all of them
+    /// when its text does not use the hash, otherwise all but the highest
+    /// generation, which every peer keeps alike.
+    pub(crate) async fn unneeded(&self, used: bool, short_ids: &[u64]) -> Result<Vec<u64>> {
+        if !used {
+            return Ok(short_ids.to_vec());
+        }
+        if short_ids.len() < 2 {
+            return Ok(Vec::new());
+        }
+        let mut ranked = Vec::with_capacity(short_ids.len());
+        for &short_id in short_ids {
+            ranked.push((self.generation(short_id).await?, short_id));
+        }
+        ranked.sort_unstable();
+        ranked.pop();
+        Ok(ranked.into_iter().map(|(_, short_id)| short_id).collect())
+    }
+
+    async fn generation(&self, doc_short_id: u64) -> Result<i64> {
+        let Some(doc_id) = crate::docid::map::get_doc_id(&self.systemstore, doc_short_id)
+            .await
+            .map_err(|e| QueryError::execution(e.to_string()))?
+        else {
+            return Ok(0);
+        };
+        let doc_id = document::DocID::from_string(&doc_id)
+            .map_err(|e| QueryError::execution(format!("invalid chunk DocID: {e}")))?;
+        let doc = self
+            .collection
+            .get_with_datastore(&self.datastore, doc_short_id, &doc_id)
+            .await
+            .map_err(|e| QueryError::execution(format!("chunk read failed: {e}")))?;
+        Ok(doc
+            .as_ref()
+            .map_or(0, crate::chunk::generation::generation_of))
     }
 
     pub(super) async fn chunks_of(&self, parent: &str) -> Result<Vec<u64>> {
