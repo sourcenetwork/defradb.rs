@@ -2,7 +2,7 @@ use super::batch::{PendingFieldBlockFinalization, PendingMergeEvent, PendingPost
 use super::frame_source::FrameSource;
 use super::protected_update::Refusal;
 use super::*;
-use crate::merge::governance::{GovernedFrame, Judgement, WaitKey};
+use crate::merge::governance::{Deferral, GovernedFrame, Judgement, WaitKey};
 use crate::merge::replica::ReplicaStep;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -115,7 +115,7 @@ pub(super) enum CompositeMergePreparation {
     Complete(MergeOutcome),
     Deferred {
         outcome: MergeOutcome,
-        awaiting: Vec<crate::merge::governance::WaitKey>,
+        awaiting: Deferral,
     },
 }
 
@@ -326,14 +326,14 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                                     outcome,
                                     // A refused ancestor's own merge releases
                                     // what waits behind it, too.
-                                    awaiting: vec![
-                                        WaitKey::acp_object(
+                                    awaiting: Deferral::Parked {
+                                        object: WaitKey::acp_object(
                                             &policy.id,
                                             &policy.resource_name,
                                             doc_id,
                                         ),
-                                        WaitKey::Composite(*cid),
-                                    ],
+                                        refused: *cid,
+                                    },
                                 });
                             }
                         }
@@ -341,7 +341,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 }
                 Judgement::Accept => {}
                 Judgement::Verdict { outcome, awaiting } if !awaiting.is_empty() => {
-                    return Ok(CompositeMergePreparation::Deferred { outcome, awaiting });
+                    return Ok(CompositeMergePreparation::Deferred {
+                        outcome,
+                        awaiting: Deferral::Awaiting(awaiting),
+                    });
                 }
                 Judgement::Verdict { outcome, .. } => {
                     return Ok(CompositeMergePreparation::Complete(outcome));

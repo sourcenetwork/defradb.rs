@@ -35,6 +35,12 @@ pub const PERMISSION_DENIED_ERROR_CODE: &str = "PERMISSION_DENIED";
 /// act for the write's signer on the document ACP provider.
 pub const WRITE_AUTHORITY_UNAVAILABLE_ERROR_CODE: &str = "WRITE_AUTHORITY_UNAVAILABLE";
 
+/// A verified write was refused before anything was written: the delegation
+/// it carries does not hold at the document ACP provider's time. The error's
+/// `providerTime` extension is that time; a delegation issued at it is taken,
+/// so the write may be made again with one.
+pub const DELEGATION_OUTSIDE_WINDOW_ERROR_CODE: &str = "DELEGATION_OUTSIDE_WINDOW";
+
 /// The storage operation failed with a typed disk-full cause. Commit outcome
 /// remains unknown; clients must not infer that replaying a mutation is safe.
 pub const STORAGE_FULL_ERROR_CODE: &str = "STORAGE_FULL";
@@ -275,6 +281,14 @@ pub const WARNING_CODE_VECTOR_INDEX_UNUSED: &str = "VECTOR_INDEX_UNUSED";
 pub struct QueryResponseErrorExtensions {
     /// Stable machine-readable error code.
     pub code: String,
+    /// The document ACP provider's time, in Unix seconds, for
+    /// [`DELEGATION_OUTSIDE_WINDOW_ERROR_CODE`].
+    #[serde(
+        default,
+        rename = "providerTime",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub provider_time: Option<u64>,
 }
 
 /// A GraphQL error in the response.
@@ -326,8 +340,26 @@ impl QueryResponseError {
 
     /// Set a stable machine-readable error code.
     pub fn with_code(mut self, code: impl Into<String>) -> Self {
-        self.extensions = Some(QueryResponseErrorExtensions { code: code.into() });
+        self.extensions = Some(QueryResponseErrorExtensions {
+            code: code.into(),
+            provider_time: None,
+        });
         self
+    }
+
+    /// Set the provider time a delegation refusal names.
+    pub fn with_provider_time(mut self, provider_time: u64) -> Self {
+        if let Some(extensions) = self.extensions.as_mut() {
+            extensions.provider_time = Some(provider_time);
+        }
+        self
+    }
+
+    /// The provider time a delegation refusal names, if any.
+    pub fn provider_time(&self) -> Option<u64> {
+        self.extensions
+            .as_ref()
+            .and_then(|extensions| extensions.provider_time)
     }
 
     /// Return the machine-readable error code, if present.
@@ -350,6 +382,10 @@ impl QueryResponseError {
             &error,
             crate::error::QueryError::WriteAuthorityUnavailable(_)
         );
+        let refused_window = match &error {
+            crate::error::QueryError::DelegationOutsideWindow { window, .. } => Some(*window),
+            _ => None,
+        };
         let is_storage_full = matches!(
             &error,
             crate::error::QueryError::Storage(cause) if cause.is_storage_full()
@@ -370,6 +406,10 @@ impl QueryResponseError {
             response_error.with_code(STORAGE_FULL_ERROR_CODE)
         } else if is_permission_denied {
             response_error.with_code(PERMISSION_DENIED_ERROR_CODE)
+        } else if let Some(window) = refused_window {
+            response_error
+                .with_code(DELEGATION_OUTSIDE_WINDOW_ERROR_CODE)
+                .with_provider_time(window.provider_time)
         } else if lacks_write_authority {
             response_error.with_code(WRITE_AUTHORITY_UNAVAILABLE_ERROR_CODE)
         } else if is_secondary_relation {
@@ -1076,6 +1116,42 @@ mod tests {
             serde_json::to_value(response).unwrap()["errors"][0]["extensions"]["code"],
             TXN_CONFLICT_ERROR_CODE
         );
+    }
+
+    #[test]
+    fn a_delegation_outside_its_window_names_the_providers_time() {
+        let window = acp::DelegationWindow {
+            not_before: 1_030,
+            expires_at: 1_180,
+            provider_time: 1_000,
+            refusal: acp::WindowRefusal::NotYetValid {
+                ahead_by_at_least: 30,
+            },
+        };
+        let refused = QueryResponseError::from_query_error(
+            crate::error::QueryError::DelegationOutsideWindow {
+                reason: window.to_string(),
+                window,
+            },
+        );
+        assert_eq!(refused.code(), Some(DELEGATION_OUTSIDE_WINDOW_ERROR_CODE));
+        assert_eq!(refused.provider_time(), Some(1_000));
+        let wire = serde_json::to_value(&refused).unwrap();
+        assert_eq!(wire["extensions"]["providerTime"], 1_000);
+        assert_eq!(
+            serde_json::from_value::<QueryResponseError>(wire)
+                .unwrap()
+                .provider_time(),
+            Some(1_000)
+        );
+
+        let unavailable = QueryResponseError::from_query_error(
+            crate::error::QueryError::WriteAuthorityUnavailable("no key".into()),
+        );
+        assert_eq!(unavailable.provider_time(), None);
+        assert!(serde_json::to_value(&unavailable).unwrap()["extensions"]
+            .get("providerTime")
+            .is_none());
     }
 
     #[test]

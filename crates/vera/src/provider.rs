@@ -16,6 +16,9 @@ pub struct ProviderPolicyInfo {
 #[derive(Debug, Clone)]
 pub struct AcpLightClientStatus {
     pub height: u64,
+    /// The block time of the newest finalized revision the light client
+    /// verified, in Unix seconds.
+    pub chain_time: Option<u64>,
     pub module_state_root: String,
     pub cache_entries: usize,
     pub last_invalidation_height: u64,
@@ -42,6 +45,11 @@ pub enum ProviderError {
     /// The provider backend does not support the requested operation.
     #[error("unsupported operation: {0}")]
     Unsupported(String),
+
+    /// A delegation does not hold at the provider's time; one issued at
+    /// that time is taken.
+    #[error("delegation refused: {0}")]
+    DelegationOutsideWindow(acp::DelegationWindow),
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]

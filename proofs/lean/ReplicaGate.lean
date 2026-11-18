@@ -38,7 +38,8 @@ it too.
 Rust owner: crates/db/src/merge/acp_merge_handler.rs
 AcpCompositeMergeHook::on_protected_update and
 AcpCompositeMergeHook::parks_refusals, composed by
-crates/db/src/merge/merge_handler/protected_update.rs check_protected_update,
+crates/db/src/merge/merge_handler/protected_update.rs check_protected_update
+and frame_signer,
 over crates/acp/src/replica.rs ReplicaOwed. -/
 namespace ReplicaGate
 
@@ -87,7 +88,9 @@ structure Owed where
 
 /-- What is known about the change's signer. -/
 structure Frame where
-  /-- The change's own signature verified and names a DID. -/
+  /-- The change's own signature verified and names a DID. A signature
+  that fails to verify, or names something that is not a DID, counts as no
+  signature (`frame_signer`): the hook and the gate read this one flag. -/
   signed : Bool
   /-- That DID is the one the owed registration names. -/
   isRegistrant : Bool

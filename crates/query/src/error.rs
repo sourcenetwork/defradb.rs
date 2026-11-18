@@ -224,6 +224,15 @@ pub enum QueryError {
     #[error("verified write refused: {0}")]
     WriteAuthorityUnavailable(String),
 
+    /// A verified write was not staged: the delegation it carries does not
+    /// hold at the document ACP provider's time. Made again with a
+    /// delegation issued at the window's provider time, it is taken.
+    #[error("verified write refused: {reason}")]
+    DelegationOutsideWindow {
+        reason: String,
+        window: acp::DelegationWindow,
+    },
+
     /// ACP registration failed during document creation
     #[error("ACP registration failed for document '{doc_id}': {message}")]
     AcpRegistrationFailed { doc_id: String, message: String },

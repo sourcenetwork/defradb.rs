@@ -263,10 +263,7 @@ fn a_verified_update_is_refused_when_the_chain_cannot_be_reached() {
             Arc::new(Ed25519Signer::from_slice(&[42; 32]).expect("key"));
         let actor: Arc<dyn DelegationSigner> =
             Arc::new(Ed25519Signer::from_slice(&[43; 32]).expect("key"));
-        let rpc = std::net::TcpListener::bind("127.0.0.1:0")
-            .and_then(|listener| listener.local_addr())
-            .unwrap();
-        let chain = node_serving(
+        let (chain, rpc) = node_serving(
             &directory.path().join("chain"),
             EmbeddedVeraActor::Signer(Arc::clone(&chain_signer)),
             vec![EmbeddedVeraPolicy {
@@ -274,7 +271,6 @@ fn a_verified_update_is_refused_when_the_chain_cannot_be_reached() {
                 counter: 0,
                 owner: chain_signer.did().to_string(),
             }],
-            Some(rpc),
         )
         .await;
         let trust = chain.embedded_vera_trust().expect("deployment").clone();

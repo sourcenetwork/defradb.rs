@@ -47,16 +47,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             return Ok(None);
         }
 
-        // A signature that fails to verify names no one, so it is judged as
-        // unsigned; the root's own failure is already refused at dispatch.
-        let signer = match self.verify_block_signature(cid, block, &[]).await {
-            Ok(signer) => signer,
-            Err(error) => {
-                tracing::debug!(%cid, %error, "Composite signature did not verify");
-                None
-            }
-        };
-
+        let signer = frame_signer(cid, self.verify_block_signature(cid, block, &[]).await);
         let outcome = hook
             .on_protected_update(
                 doc_id,
@@ -64,12 +55,12 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 CompositeFrame {
                     is_genesis,
                     status: payload.status,
-                    signer: signer.as_deref(),
+                    signer: signer.as_ref(),
                 },
             )
             .await?;
-        // An unsigned frame names nobody a grant could ever cover: its
-        // refusal is final.
+        // A frame that names nobody names nobody a grant could ever cover:
+        // its refusal is final. The hook judged the same `signer`.
         Ok(outcome.map(|outcome| match outcome {
             MergeOutcome::Rejected { reason }
                 if signer.is_some() && hook.parks_refusals(collection) =>
@@ -78,5 +69,57 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             }
             outcome => Refusal::Outcome(outcome),
         }))
+    }
+}
+
+/// Whom a frame is judged as signed by: the DID its own signature names.
+/// A signature that fails to verify, or that names something other than a
+/// DID, names nobody, so the frame is judged as unsigned and its refusal is
+/// final; the root's own verification failure is already refused at
+/// dispatch.
+fn frame_signer(
+    cid: &Cid,
+    verified: std::result::Result<Option<String>, MergeError>,
+) -> Option<identity::Did> {
+    match verified {
+        Ok(Some(signer)) => identity::Did::new(signer)
+            .inspect_err(|error| tracing::debug!(%cid, %error, "Composite signer is not a DID"))
+            .ok(),
+        Ok(None) => None,
+        Err(error) => {
+            tracing::debug!(%cid, %error, "Composite signature did not verify");
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cid() -> Cid {
+        Cid::default()
+    }
+
+    /// A verified signer that is not a DID names nobody, as an unsigned
+    /// frame does, so its refusal is final rather than parked.
+    #[test]
+    fn a_signer_that_is_not_a_did_is_judged_unsigned() {
+        assert_eq!(frame_signer(&cid(), Ok(Some("not-a-did".into()))), None);
+        assert_eq!(frame_signer(&cid(), Ok(None)), None);
+        assert_eq!(
+            frame_signer(
+                &cid(),
+                Err(MergeError::SignatureVerificationFailed {
+                    cid: cid(),
+                    reason: "bad".into(),
+                })
+            ),
+            None
+        );
+        assert_eq!(
+            frame_signer(&cid(), Ok(Some("did:key:z6Mkowner".into()))),
+            Some(identity::Did::new("did:key:z6Mkowner").unwrap())
+        );
     }
 }

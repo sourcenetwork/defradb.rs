@@ -85,11 +85,12 @@ fn key(k: &KeyIn) -> WaitKey {
     }
 }
 
-fn park_keys(doc: u64, refused: u64) -> Vec<WaitKey> {
-    vec![
+fn park(index: &DeferredMerges, c: u64, doc: u64, refused: u64) {
+    index.park(
+        block(c),
         WaitKey::acp_object("p", "r", &format!("doc-{doc}")),
-        WaitKey::Composite(cid(refused)),
-    ]
+        cid(refused),
+    );
 }
 
 /// Apply one operation to the Rust index and report what the model reports.
@@ -100,12 +101,12 @@ fn apply(index: &DeferredMerges, names: &RapidHashMap<Cid, u64>, op: &OpIn) -> V
             Value::Null
         }
         "park" => {
-            index.defer(block(op.cid), park_keys(op.doc, op.refused));
+            park(index, op.cid, op.doc, op.refused);
             Value::Null
         }
         "fill" => {
             for c in op.cid..op.cid + op.n {
-                index.defer(block(c), park_keys(op.doc, c));
+                park(index, c, op.doc, c);
             }
             Value::Null
         }
@@ -198,8 +199,9 @@ fn random_trace(seed: u64, capacity: usize) -> TraceIn {
     TraceIn { capacity, ops }
 }
 
-/// More composites parked under one document than it holds, then released
-/// by the document's change and the sweep.
+/// More composites parked under one document than it holds, each refused
+/// itself: those past the bound are not indexed, under their own CIDs or
+/// anywhere. Then released by the document's change and the sweep.
 fn document_bound_trace() -> TraceIn {
     let mut fill = OpIn::new("fill");
     fill.cid = 100;
