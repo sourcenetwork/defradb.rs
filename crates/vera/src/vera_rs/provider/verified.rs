@@ -13,7 +13,8 @@
 //! is late, not absent: the same read asked a moment later is answered. Such
 //! a read is asked again after a pause for as long as [`BUSY_PATIENCE`] since
 //! its first ask, as the submission client asks again on the same code. Each
-//! pause is drawn between half of [`BUSY_PAUSE`] and all of it, so readers
+//! pause is drawn between half of [`BUSY_PAUSE`] and all of it, 250 ms on
+//! average, so readers
 //! the node turned away together do not come back together and keep its
 //! proof slots taken. The patience counts the requests' own time too: a node
 //! that takes its full deadline to answer busy spends it in fewer asks. An
@@ -39,8 +40,11 @@ const ATTEMPTS: usize = 4;
 const BUSY_PATIENCE: Duration = Duration::from_secs(30);
 
 /// The longest wait before a read the node answered busy is asked again;
-/// each wait is drawn between half of it and all of it.
-const BUSY_PAUSE: Duration = Duration::from_millis(250);
+/// each wait is drawn between half of it and all of it. The waits average
+/// 250 ms, so one reader asks a busy node as often as it did with a fixed
+/// wait of that length, and only the readers' timing against each other
+/// changes.
+const BUSY_PAUSE: Duration = Duration::from_millis(333);
 
 /// The JSON-RPC code a Vera node answers with when the evidence a read asks
 /// for is not ready yet or its proof slots are taken.
