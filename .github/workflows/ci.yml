@@ -299,8 +299,9 @@ jobs:
         uses: actions/setup-go@v7
         with:
           # The pinned GO_COMPAT_COMMIT declares `go 1.26.10`, so an older
-          # toolchain cannot build it.
-          go-version: '1.26'
+          # toolchain cannot build it, and a later 1.26 patch refuses the LTO
+          # section in wasmtime-go's prebuilt library ("disallowed LTO section").
+          go-version: '1.26.10'
       - name: Prepare Go DefraDB binary
         id: prepare
         run: |
@@ -645,8 +646,9 @@ jobs:
         uses: actions/setup-go@v7
         with:
           # The pinned GO_COMPAT_COMMIT declares `go 1.26.10`, so an older
-          # toolchain cannot build it.
-          go-version: '1.26'
+          # toolchain cannot build it, and a later 1.26 patch refuses the LTO
+          # section in wasmtime-go's prebuilt library ("disallowed LTO section").
+          go-version: '1.26.10'
       - name: Download Go DefraDB
         if: matrix.needs_go
         uses: actions/download-artifact@v8
