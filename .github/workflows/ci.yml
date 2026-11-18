@@ -44,6 +44,10 @@ env:
   # A per-second build time in defra-node changed its compile inputs in every
   # job, so it and every crate above it missed sccache. CI builds share one.
   DEFRA_NODE_BUILD_TIME_OVERRIDE: ci
+  # The git hash does the same on every commit, so test builds pin it too;
+  # release and artifact builds keep the real one.
+  DEFRA_NODE_GIT_HASH_OVERRIDE: ci
+  DEFRA_NODE_GIT_DIRTY_OVERRIDE: ''
 
 # RunsOn retries a job whose Spot instance is reclaimed, but a failed
 # merge-queue run ejects the pull request before that retry, so merge-queue

@@ -27,6 +27,10 @@ env:
   # Repeated from ci.yml for the same reason: a per-second build time would
   # change defra-node's compile inputs on every build.
   DEFRA_NODE_BUILD_TIME_OVERRIDE: ci
+  # The git hash does the same on every commit, so test builds pin it too;
+  # release and artifact builds keep the real one.
+  DEFRA_NODE_GIT_HASH_OVERRIDE: ci
+  DEFRA_NODE_GIT_DIRTY_OVERRIDE: ''
 
 jobs:
   # Linux splits the workspace five ways across RunsOn runners. macOS runs it
