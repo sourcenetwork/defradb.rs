@@ -303,6 +303,8 @@ pub struct TestCase {
     /// Go's in-process client is `InProcess`, its HTTP client `RustHttp` and
     /// `GoHttp`, its CLI `Cli`. Unset, every client.
     pub client_types: Option<&'static [ClientType]>,
+    /// The `DEFRA_MULTIPLIERS` the test does not run under, Go's `MultiplierExcludes`.
+    pub multiplier_excludes: &'static [&'static str],
 }
 
 /// Why a Go conformance scenario does not apply to defradb.rs. The scenario
@@ -373,7 +375,7 @@ impl TestCase {
             &self.actions,
             &multipliers,
             &[],
-            &[],
+            self.multiplier_excludes,
         );
         if let SkipReason::Skip(reason) = skip {
             eprintln!("skipped: {reason}");
