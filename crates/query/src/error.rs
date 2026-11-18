@@ -122,6 +122,12 @@ pub enum QueryError {
     #[error("parse error: {0}")]
     Parse(String),
 
+    /// A mutation names a collection that does not exist. The text is
+    /// GraphQL validation's, as a parse error; the collection API reports it
+    /// in Go's collection words.
+    #[error("parse error: {0}")]
+    UnknownMutationCollection(String),
+
     /// Invalid filter condition
     #[error("invalid filter: {0}")]
     InvalidFilter(String),

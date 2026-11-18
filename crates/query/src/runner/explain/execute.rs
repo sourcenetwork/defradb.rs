@@ -79,7 +79,10 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                     // Parse errors should propagate directly — in Go, GraphQL schema
                     // validation errors happen before the explain handler runs, so they
                     // are returned as top-level GQL errors, not wrapped in executionErrors.
-                    if matches!(&e, QueryError::Parse(_)) {
+                    if matches!(
+                        &e,
+                        QueryError::Parse(_) | QueryError::UnknownMutationCollection(_)
+                    ) {
                         return Err(e);
                     }
                     execution_success = false;

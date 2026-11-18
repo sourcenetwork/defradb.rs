@@ -48,6 +48,9 @@ pub const STORAGE_FULL_ERROR_CODE: &str = "STORAGE_FULL";
 /// A mutation input named the secondary side of a relation. The collection
 /// API reports it in Go's collection words rather than GraphQL's.
 pub const SECONDARY_RELATION_ERROR_CODE: &str = "SECONDARY_RELATION_INPUT";
+/// A mutation named a collection that does not exist. The collection API
+/// reports it in Go's collection words rather than GraphQL's.
+pub const UNKNOWN_MUTATION_COLLECTION_ERROR_CODE: &str = "UNKNOWN_MUTATION_COLLECTION";
 /// A subscription sent without `Accept: text/event-stream`; HTTP answers it with 406.
 pub const SUBSCRIPTION_NEEDS_SSE_ERROR_CODE: &str = "SUBSCRIPTION_NEEDS_SSE";
 
@@ -392,6 +395,10 @@ impl QueryResponseError {
         );
         let is_secondary_relation =
             matches!(&error, crate::error::QueryError::SecondaryRelationInput(_));
+        let is_unknown_mutation_collection = matches!(
+            &error,
+            crate::error::QueryError::UnknownMutationCollection(_)
+        );
         let needs_sse = matches!(&error, crate::error::QueryError::SubscriptionNeedsSse);
         let retry_input = match &error {
             crate::error::QueryError::NeedsInput(request) => Some(request.clone()),
@@ -414,6 +421,8 @@ impl QueryResponseError {
             response_error.with_code(WRITE_AUTHORITY_UNAVAILABLE_ERROR_CODE)
         } else if is_secondary_relation {
             response_error.with_code(SECONDARY_RELATION_ERROR_CODE)
+        } else if is_unknown_mutation_collection {
+            response_error.with_code(UNKNOWN_MUTATION_COLLECTION_ERROR_CODE)
         } else if needs_sse {
             response_error.with_code(SUBSCRIPTION_NEEDS_SSE_ERROR_CODE)
         } else {
