@@ -53,7 +53,7 @@ pub(super) fn build_commits_field_name_filter_arg() -> InputObject {
         .description(d::COMMITS_FIELD_NAME_FILTER)
         .field(InputValue::new("_eq", TypeRef::named("String")).description(d::EQ_OPERATOR))
         .field(InputValue::new("_in", TypeRef::named_list("String")).description(d::IN_OPERATOR))
-        .field(InputValue::new("_ne", TypeRef::named("String")))
+        .field(InputValue::new("_neq", TypeRef::named("String")).description(d::NEQ_OPERATOR))
         .field(InputValue::new("_nin", TypeRef::named_list("String")).description(d::NIN_OPERATOR))
 }
 
