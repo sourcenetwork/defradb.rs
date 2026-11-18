@@ -17,7 +17,7 @@ What must never happen:
 Characters are modelled as their byte values.
 
 Rust anchors: `Pointer::print`, `Pointer::parse` in
-`crates/p2p/src/iroh/records/pointer.rs`.
+`crates/database/p2p/src/iroh/records/pointer.rs`.
 -/
 
 namespace ServiceRecord

@@ -1,4 +1,4 @@
-# Survey: `crates/telemetry/`
+# Survey: `crates/building-blocks/telemetry/`
 
 ## Purpose
 OpenTelemetry exporter setup for DefraDB. Mirrors Go's `internal/telemetry/otel.go`.

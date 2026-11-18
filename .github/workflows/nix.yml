@@ -85,7 +85,7 @@ jobs:
       - name: Build the dbus-linked crate
         run: >-
           nix develop --command
-          cargo check --manifest-path crates/keyring/Cargo.toml --features system
+          cargo check --manifest-path crates/foundation/keyring/Cargo.toml --features system
 
       # The keyring system tests are all #[ignore]d, but the binary links
       # libdbus-1.so.3 with no rpath for it, so loading it to list its tests is
@@ -93,7 +93,7 @@ jobs:
       - name: Load a dbus-linked test binary
         run: >-
           nix develop --command
-          cargo test --manifest-path crates/keyring/Cargo.toml --features system -- --list
+          cargo test --manifest-path crates/foundation/keyring/Cargo.toml --features system -- --list
 
   workspace:
     name: Nix workspace check (full)

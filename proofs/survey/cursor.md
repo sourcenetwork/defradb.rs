@@ -1,4 +1,4 @@
-# Survey: `crates/cursor/`
+# Survey: `crates/foundation/cursor/`
 
 ## Purpose
 Opaque cursor-token codec for GraphQL cursor pagination. Defines a single

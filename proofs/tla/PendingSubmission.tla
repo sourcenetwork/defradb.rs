@@ -5,7 +5,7 @@
 \* Its worker journals the request before anything is sent, and keeps it
 \* until a verified receipt is acknowledged. Between the two, one loop drives
 \* the request to its receipt (resolve_pending in
-\* crates/vera/src/vera_rs/provider/submission.rs):
+\* crates/engine/vera/src/vera_rs/provider/submission.rs):
 \*   1. ask the node for the receipt. If it has one, the loop is done;
 \*   2. if it has none and no send is known to have reached the node, send
 \*      the request;
@@ -52,13 +52,13 @@
 \*   Resends          resolve_pending: a send that fails with a retryable
 \*                    error leaves awaiting_receipt false, so the next turn
 \*                    sends again (ClientError::retryable in
-\*                    crates/vera/src/vera_rs/client.rs; an in-process call
+\*                    crates/engine/vera/src/vera_rs/client.rs; an in-process call
 \*                    that elapsed is classified the same way,
-\*                    crates/vera-embedded/src/submission.rs);
+\*                    crates/engine/vera-embedded/src/submission.rs);
 \*   KeepsTrying      resolve_pending: a retryable error from a send or from
 \*                    a receipt read does not end the loop;
 \*   RetainsOnTimeout resolve_pending and NativeWorker::acknowledge in
-\*                    crates/vera/src/vera_rs/worker.rs: only an acknowledged
+\*                    crates/engine/vera/src/vera_rs/worker.rs: only an acknowledged
 \*                    receipt clears the journal;
 \*   NodeDedupes      vera.rs itself: a native sequence is spent once. It is
 \*                    the assumption the loop's resend rests on, and

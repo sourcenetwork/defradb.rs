@@ -1,6 +1,6 @@
 # pg-compat-harness
 
-Drizzle ORM compatibility test harness for DefraDB's Postgres wire protocol (`defradb.rs/crates/pg-compat/`).
+Drizzle ORM compatibility test harness for DefraDB's Postgres wire protocol (`defradb.rs/crates/database/pg-compat/`).
 
 Exercises the exact query patterns that OpenCode generates via Drizzle ORM. The PG wire implementation is "done" when all 10 test categories pass against DefraDB the same way they pass against real Postgres.
 

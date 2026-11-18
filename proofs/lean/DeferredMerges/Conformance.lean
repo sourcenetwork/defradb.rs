@@ -2,7 +2,7 @@ import DeferredMerges.Park
 import Lean
 
 /-! Runs the index model on operation traces, for
-`crates/db/src/merge/governance/deferred_conformance_tests.rs` to run the
+`crates/database/db/src/merge/governance/deferred_conformance_tests.rs` to run the
 same traces through the Rust `DeferredMerges` and compare.
 
 The story: the Rust test writes one line of JSON, a list of traces. Each

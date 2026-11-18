@@ -1,4 +1,4 @@
-# Survey: `crates/http/`
+# Survey: `crates/surfaces/http/`
 
 ## Purpose
 Axum-based HTTP API server exposing Go-compatible DefraDB endpoints (`/api/v1`,

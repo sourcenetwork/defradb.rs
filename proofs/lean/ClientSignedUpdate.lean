@@ -9,8 +9,8 @@ cryptography, source authenticity and the native transactional read set are
 external premises. Immutable genesis blocks retain their independently verified
 signatures; no immutable field may appear in an update. Ordinary block
 signatures can be replayed elsewhere.
-Rust owners: crates/db/src/block/builder/client_update.rs,
-client_update_snapshot.rs and client_waves.rs; crates/http/src/client_signed_update.rs;
+Rust owners: crates/database/db/src/block/builder/client_update.rs,
+client_update_snapshot.rs and client_waves.rs; crates/surfaces/http/src/client_signed_update.rs;
 the transactional update path and its ACP checks.
 -/
 

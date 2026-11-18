@@ -2,7 +2,7 @@
 //! `DELETE /collections/{name}/documents/purge` and through
 //! `client collection purge-docs`. Go's parity pin has no document purge, so
 //! go-http does not run these. What the purge leaves in the block store is
-//! checked in `crates/db/tests/collection/purge.rs`.
+//! checked in `crates/database/db/tests/collection/purge.rs`.
 
 use integration_test::actions::{
     Actions, AddCollection, AddDoc, PurgeDocs, Request, TxnBegin, TxnCommit, TxnDiscard,

@@ -16,7 +16,7 @@ the rest of the selection is still tried, because the receiver is answering. A
 send deadline, a disconnect or caller drop stops scheduling; started sends
 still drain. SelectedPushIsolation.tla models the concurrency and the per-head
 pause budget; this owner binds attempt outcomes to exact completion.
-Rust: crates/db/src/merge/push_docs.rs, push_docs/selected.rs and push_docs/stop.rs.
+Rust: crates/database/db/src/merge/push_docs.rs, push_docs/selected.rs and push_docs/stop.rs.
 -/
 namespace DocumentPush
 

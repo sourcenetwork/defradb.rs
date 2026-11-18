@@ -31,14 +31,14 @@ resolution's degenerate arms: internal index-state inconsistency such as a corru
 entry with no identifiable holder, not a live conflict between two alive documents,
 which #1126 now resolves deterministically instead of rejecting) are rejected on every
 attempt —
-`crates/db/src/merge/merge_handler/composite.rs` converts
+`crates/database/db/src/merge/merge_handler/composite.rs` converts
 `MergeError::UniqueConstraintViolation` into `MergeOutcome::Rejected` (defined in
-`crates/defra-core/src/merge.rs`), which `handle_block_received` and
-`process_merge_batch` in `crates/p2p/src/sync/replication/handlers.rs` route to
+`crates/foundation/defra-core/src/merge.rs`), which `handle_block_received` and
+`process_merge_batch` in `crates/database/p2p/src/sync/replication/handlers.rs` route to
 `SyncManager::quarantine_pending_dag`. **Sound** docs merge, possibly after one
 transient hiccup first (network blip, lock contention — not a function of content).
 
-`quarantine_pending_dag` (`crates/p2p/src/sync/manager/process/pending_dag.rs`)
+`quarantine_pending_dag` (`crates/database/p2p/src/sync/manager/process/pending_dag.rs`)
 writes the durable quarantine record **before** deleting the live
 `/p2p/pending_dag/` record, so a crash in that window leaves both records on disk
 rather than losing the live one; the resync sweep's `is_quarantined` check
@@ -120,7 +120,7 @@ write-then-delete ordering and the never-fails-for-lack-of-provenance guarantee 
 model assumes as `SweepPoisonReject`'s single atomic transition;
 `resync_deletes_live_leftover_of_quarantined_root_without_redriving` exercises the
 crash-window leftover the `is_quarantined` check exists to clean up without
-re-registering. `crates/p2p/src/sync/replication/mod.rs`'s `Rejected`-in-a-batch
+re-registering. `crates/database/p2p/src/sync/replication/mod.rs`'s `Rejected`-in-a-batch
 regression test is the sibling fence for the batch-merge path feeding the same
 disposition.
 
@@ -128,7 +128,7 @@ disposition.
 
 `RetryForever` is RED because the sweep re-drives a root whose merge is *rejected
 on content* forever. A governed collection's merge validator can also return
-`Defer` (`crates/db/src/merge/governance/verdict.rs`), a non-terminal skip on
+`Defer` (`crates/database/db/src/merge/governance/verdict.rs`), a non-terminal skip on
 **absence** of an input, and the governance sweep re-drives such a composite at
 every tick by design, until its inputs arrive or the plugin lets it go. That is
 not this model's wedge: the two outcomes are distinct (`MergeOutcome::rejected`

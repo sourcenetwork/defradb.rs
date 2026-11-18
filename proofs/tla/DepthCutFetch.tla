@@ -14,11 +14,11 @@
 \*     rounds stay logarithmic in what it misses;
 \*   - the fetch stops before every block is held.
 \*
-\* Rust: crates/p2p/src/sync/car.rs collect_dag_blocks_within (the provider
+\* Rust: crates/database/p2p/src/sync/car.rs collect_dag_blocks_within (the provider
 \* walks at most the requested cut below each wanted CID);
-\* crates/p2p/src/sync/coordinator/closure_depth.rs ClosureDepth::initial and
+\* crates/database/p2p/src/sync/coordinator/closure_depth.rs ClosureDepth::initial and
 \* ClosureDepth::widen (the first cut and its doubling);
-\* crates/p2p/src/sync/coordinator/dag_fetcher.rs fetch_dag_attempt (one
+\* crates/database/p2p/src/sync/coordinator/dag_fetcher.rs fetch_dag_attempt (one
 \* round per missing frontier, widening after each round that still left one).
 \* The model is one attempt: each retry attempt restarts at InitCut, so
 \* INV_RoundsLogarithmic bounds rounds per attempt, not per fetch.

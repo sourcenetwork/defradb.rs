@@ -7,7 +7,7 @@
 \* this does not prove their encoding or signature algorithm. Signatures are
 \* ordinary DefraDB block signatures, not cryptographically bound to sessions.
 \* Rust owners: HTTP signature continuation, query prepared inputs, db create,
-\* and crates/db/src/block/builder/client_waves.rs exact-wave validation.
+\* and crates/database/db/src/block/builder/client_waves.rs exact-wave validation.
 EXTENDS Naturals, FiniteSets
 \* Each switch controls one guard; RED configurations remove one guard.
 CONSTANT CheckActor, CheckContext, CheckSignature, CheckClient, CheckLive, CheckAcp, ResolveOutside, Reclaim

@@ -10,7 +10,7 @@
 \*
 \* The Vera node ends in one of two ways. It can stop on its own (an actor
 \* exits, its watchdog trips). Or the node's shutdown stops it
-\* (defra-node Node::shutdown in crates/defra-node/src/lib.rs):
+\* (defra-node Node::shutdown in crates/entry-points/defra-node/src/lib.rs):
 \*   1. stop admitting requests and drain those in flight, up to a deadline
 \*      (NodeEdge::drain_requests). A request still waiting at the deadline
 \*      is given up on, and shutdown goes on without it;
@@ -21,7 +21,7 @@
 \* A Vera node told to stop may never finish: its runtime can hang while it
 \* is dropped.
 \* The `defradb` binary stops its Vera node at the same place in its own
-\* shutdown (crates/cli/src/commands/start/run.rs Node::run): after the HTTP
+\* shutdown (crates/entry-points/cli/src/commands/start/run.rs Node::run): after the HTTP
 \* server drained and P2P stopped, before the database closes. Its PostgreSQL
 \* server is stopped without a drain of its connections, as it was before the
 \* Vera node existed, so a query in flight there is not a request this model
@@ -54,31 +54,31 @@
 \*      - LIVE_NextStartReturns.
 \*
 \* The Rust code each guard models:
-\*   FreshDecisions    crates/vera/src/vera_rs/provider.rs decision_state,
+\*   FreshDecisions    crates/engine/vera/src/vera_rs/provider.rs decision_state,
 \*                     which names a state to remember decisions under only
 \*                     while the light client holds it fresh, and
-\*                     crates/vera-embedded/src/call.rs call, which refuses a
+\*                     crates/engine/vera-embedded/src/call.rs call, which refuses a
 \*                     call whose link is closed or whose node has stopped.
 \*                     Regressions:
 \*                     a_remembered_decision_is_not_given_past_the_freshness_limit
-\*                     in crates/vera-embedded/tests/stopped_node_decisions.rs
+\*                     in crates/engine/vera-embedded/tests/stopped_node_decisions.rs
 \*                     and once_the_node_stops_the_provider_verifies_no_new_decision in
-\*                     crates/vera-embedded/tests/hosted_node.rs;
-\*   StopAfterRequests crates/defra-node/src/lib.rs Node::shutdown, which
+\*                     crates/engine/vera-embedded/tests/hosted_node.rs;
+\*   StopAfterRequests crates/entry-points/defra-node/src/lib.rs Node::shutdown, which
 \*                     stops the Vera node after the request drain and P2P's
 \*                     shutdown;
-\*   StopDeadline      crates/vera-embedded/src/host.rs HostedNode::stop, a
+\*   StopDeadline      crates/engine/vera-embedded/src/host.rs HostedNode::stop, a
 \*                     wait bounded by the network runtime's clock;
-\*   StartDeadline     crates/vera-embedded/src/host.rs HostedNode::start, a
+\*   StartDeadline     crates/engine/vera-embedded/src/host.rs HostedNode::start, a
 \*                     wait bounded by the network runtime's clock.
 \*                     Regression:
 \*                     a_start_over_a_held_directory_fails_at_its_deadline in
-\*                     crates/vera-embedded/tests/hosted_node.rs;
-\*   ClosesLink        crates/vera-embedded/src/host.rs HostedNode::stop and
-\*                     its Drop, which close crates/vera-embedded/src/link.rs
+\*                     crates/engine/vera-embedded/tests/hosted_node.rs;
+\*   ClosesLink        crates/engine/vera-embedded/src/host.rs HostedNode::stop and
+\*                     its Drop, which close crates/engine/vera-embedded/src/link.rs
 \*                     Link. Regression:
 \*                     a_stopped_nodes_deployment_is_reopened_by_the_next in
-\*                     crates/vera-embedded/tests/hosted_node.rs.
+\*                     crates/engine/vera-embedded/tests/hosted_node.rs.
 
 EXTENDS Naturals  \* numbers, for counting the waiting request
 

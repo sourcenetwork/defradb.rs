@@ -44,18 +44,18 @@ These writes race on purpose, and the loser gets a `Conflict` with a reason:
 
 Where each operation's writes live in the code:
 
-- **Create a document** ([`crates/db/src/write/autocommit/create.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/write/autocommit/create.rs)): blocks + CID,
+- **Create a document** ([`crates/database/db/src/write/autocommit/create.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/write/autocommit/create.rs)): blocks + CID,
   head-set merge, the whole stored document, index entries, the journal append (once key:
   the doc), the short-ID and DocID mappings, block ownership, and the ACP owner
   registration.
-- **Update a document** ([`crates/db/src/write/autocommit/update.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/write/autocommit/update.rs)): new field blocks,
+- **Update a document** ([`crates/database/db/src/write/autocommit/update.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/write/autocommit/update.rs)): new field blocks,
   head-set operand (supersede old heads, add new), one document part operand, index
   deltas for intersecting indexes.
-- **Delete a document** ([`crates/db/src/write/autocommit/delete.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/write/autocommit/delete.rs)): the deletion
+- **Delete a document** ([`crates/database/db/src/write/autocommit/delete.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/write/autocommit/delete.rs)): the deletion
   marker (ordinary key), index entry removals, a head operand, a delete block in the DAG.
-- **P2P merge of remote blocks** ([`crates/db/src/merge/pooled.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/merge/pooled.rs)): blocks, head sets,
+- **P2P merge of remote blocks** ([`crates/database/db/src/merge/pooled.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/merge/pooled.rs)): blocks, head sets,
   part operands, the applied key, the journal append, the DocID mapping.
-- **Counter increment** ([`crates/crdt/src/counter.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/crdt/src/counter.rs)): one blind merge; never a
+- **Counter increment** ([`crates/building-blocks/crdt/src/counter.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/building-blocks/crdt/src/counter.rs)): one blind merge; never a
   read-modify-write.
 - **DDL: schema or index change**: definition keys against current writers.
 - **ACP: register an owner, add or remove a relationship**: tuples in the same

@@ -100,37 +100,37 @@
 \*
 \* What exists in the code today, and what is specification ahead of code.
 \* Exists (the registry anchors these):
-\*   the owed registration and its key      crates/acp/src/pending.rs
+\*   the owed registration and its key      crates/engine/acp/src/pending.rs
 \*                                          (PendingRegistration,
 \*                                          PendingRegistrations::record);
-\*   recording it in the create transaction crates/db/src/write/autocommit/
+\*   recording it in the create transaction crates/database/db/src/write/autocommit/
 \*                                          helpers.rs register_created_doc;
-\*   creator-only until settled             crates/acp/src/external.rs
+\*   creator-only until settled             crates/engine/acp/src/external.rs
 \*                                          ExternalDocumentAcp::check_doc_access;
-\*   register, then clear                   settle, clear in crates/acp/src/
+\*   register, then clear                   settle, clear in crates/engine/acp/src/
 \*                                          external/registration.rs;
 \*   settling after the commit              acp_registration_retry_callback in
-\*                                          crates/db/src/write/autocommit/
+\*                                          crates/database/db/src/write/autocommit/
 \*                                          create.rs, DocumentACP::
 \*                                          redrive_registration;
 \*   the redrive at start                   ExternalDocumentAcp::redrive_owed,
 \*                                          started by gate_external_acp in
-\*                                          crates/defra-node/src/node_acp.rs;
-\*   staging a change in its transaction    crates/acp/src/outbox/staging.rs
+\*                                          crates/entry-points/defra-node/src/node_acp.rs;
+\*   staging a change in its transaction    crates/engine/acp/src/outbox/staging.rs
 \*                                          TransactionOutbox::stage, over
-\*                                          crates/acp/src/outbox/ops.rs stage,
+\*                                          crates/engine/acp/src/outbox/ops.rs stage,
 \*                                          called by relationship_in_txn in
-\*                                          crates/defra-node/src/acp_ops/
+\*                                          crates/entry-points/defra-node/src/acp_ops/
 \*                                          transactional.rs;
-\*   the deny overlay on committed state    crates/acp/src/outbox/deny.rs
+\*   the deny overlay on committed state    crates/engine/acp/src/outbox/deny.rs
 \*                                          owed_denial, read by
 \*                                          ExternalDocumentAcp::revoked;
-\*   the settlement pass                    crates/acp/src/external/settle.rs
+\*   the settlement pass                    crates/engine/acp/src/external/settle.rs
 \*                                          settle_owed_changes_once,
 \*                                          settle_change, submittable,
 \*                                          register_first;
-\*   parking a change                       crates/acp/src/outbox/ops.rs mark;
-\*   what a registration is sent with       crates/acp/src/pending.rs
+\*   parking a change                       crates/engine/acp/src/outbox/ops.rs mark;
+\*   what a registration is sent with       crates/engine/acp/src/pending.rs
 \*                                          PendingRegistration::authority,
 \*                                          recorded by register_created_doc and
 \*                                          used by ExternalDocumentAcp::
@@ -138,15 +138,15 @@
 \*                                          acp/src/external/registration.rs), which
 \*                                          also keep the reason of a failure
 \*                                          (note_failure);
-\*   the note of a discarded change         crates/acp/src/outbox/ops.rs discard,
+\*   the note of a discarded change         crates/engine/acp/src/outbox/ops.rs discard,
 \*                                          acknowledge;
-\*   the report, a fresh credential and     crates/acp/src/external/owed.rs
+\*   the report, a fresh credential and     crates/engine/acp/src/external/owed.rs
 \*   abandoning                             entries, reauthorize,
 \*                                          abandon_change, over
-\*                                          crates/acp/src/outbox/ops.rs
+\*                                          crates/engine/acp/src/outbox/ops.rs
 \*                                          reauthorize and settle, behind the
 \*                                          node calls in
-\*                                          crates/defra-node/src/owed.rs.
+\*                                          crates/entry-points/defra-node/src/owed.rs.
 \* In the model these are StageCreate, StageChange with its check (CanCheck,
 \* Passes, CheckedDeletes), Commit, Rollback, Crash, RegisterOnChain,
 \* ClearOwed, the deny overlay (DenyRule = "AnyOwedDelete",

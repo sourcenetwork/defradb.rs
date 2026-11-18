@@ -24,7 +24,7 @@
 \* filter read the document under a value it no longer has, a missing one
 \* hides it, and a lost edit means a peer's change never counted.
 \*
-\* Code it models (crates/db/src/merge/merge_handler):
+\* Code it models (crates/database/db/src/merge/merge_handler):
 \*   composite_fields.rs  process_linked_field_blocks (field merges, and the
 \*                        document read the index update starts from)
 \*   composite_persist.rs persist_merged_document (index update from that

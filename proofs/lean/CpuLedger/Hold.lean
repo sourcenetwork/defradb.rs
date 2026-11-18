@@ -23,7 +23,7 @@ order and with repeats. The races between pools are the TLA+ model
 `proofs/tla/CpuLedger.tla`; this file carries the law that model takes on
 trust about one claim, modeled as its sequential meaning.
 
-Rust anchors: `Ledger::hold` and `Hold::drop` (`crates/workers/src/ledger.rs`).
+Rust anchors: `Ledger::hold` and `Hold::drop` (`crates/foundation/workers/src/ledger.rs`).
 -/
 
 namespace CpuLedger

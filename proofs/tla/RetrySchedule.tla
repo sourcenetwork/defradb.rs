@@ -60,26 +60,26 @@
 \* A peer with no ReplicatorRetryIDKey has rung = wait = 0.
 \*
 \* Code it models:
-\*   crates/storage/src/stores/retry_info.rs  RetryInfo::bump_with_schedule (one rung up),
+\*   crates/engine/storage/src/stores/retry_info.rs  RetryInfo::bump_with_schedule (one rung up),
 \*                                            RetryInfo::restart_after_delivery (back to the first rung, never later),
 \*                                            RetryInfo::bounded_by (a deadline past the longest rung is due)
-\*   crates/storage/src/stores/peerstore.rs   RegisterScopeMarkerAttempt (a new marker keeps the clock),
+\*   crates/engine/storage/src/stores/peerstore.rs   RegisterScopeMarkerAttempt (a new marker keeps the clock),
 \*                                            PeerstoreRetryAttempt::CompleteMarker (an acknowledged completion
 \*                                            restarts it, whether or not its generation is current),
 \*                                            PeerstoreRetryAttempt::{Reschedule, Restart, Activate},
 \*                                            Peerstore::load_scope_markers (the deadline the sweep reads)
-\*   crates/p2p-adapter/src/retry.rs          run_retry_pass (one rung per failed pass, the first rung after progress,
+\*   crates/surfaces/p2p-adapter/src/retry.rs          run_retry_pass (one rung per failed pass, the first rung after progress,
 \*                                            nothing when MAX_MARKERS_PER_PEER_PASS or MAX_PEER_PASS cuts it short),
 \*                                            record_failure (live acknowledgements and failures)
-\*   crates/p2p/src/sync/coordinator/push_worker.rs  run_push_job (a superseded push reports its acknowledgement)
-\*   crates/db/src/merge/push_docs_common.rs  complete_document_retry_if_current (replay acknowledgements)
-\* Rust tests: crates/p2p-adapter/src/retry_sweep_tests.rs
+\*   crates/database/p2p/src/sync/coordinator/push_worker.rs  run_push_job (a superseded push reports its acknowledgement)
+\*   crates/database/db/src/merge/push_docs_common.rs  complete_document_retry_if_current (replay acknowledgements)
+\* Rust tests: crates/surfaces/p2p-adapter/src/retry_sweep_tests.rs
 \*   a_live_ack_returns_an_escalated_peer_to_the_first_rung,
 \*   a_superseded_live_ack_returns_an_escalated_peer_to_the_first_rung,
 \*   a_truncated_pass_that_delivered_returns_the_peer_to_the_first_rung,
 \*   a_failed_live_push_alone_keeps_the_escalated_rung;
-\* crates/p2p/src/sync/coordinator/push_worker_tests.rs superseded_acknowledged_push_reports_its_delivery;
-\* crates/storage/tests/retry_schedule.rs a_backward_clock_step_cannot_hold_a_ladder_deadline_past_its_longest_rung.
+\* crates/database/p2p/src/sync/coordinator/push_worker_tests.rs superseded_acknowledged_push_reports_its_delivery;
+\* crates/engine/storage/tests/retry_schedule.rs a_backward_clock_step_cannot_hold_a_ladder_deadline_past_its_longest_rung.
 EXTENDS Naturals, Sequences
 
 CONSTANTS

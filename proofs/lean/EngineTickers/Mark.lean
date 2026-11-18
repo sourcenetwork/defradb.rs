@@ -33,7 +33,7 @@ add coming a step after the swap) is the TLA+ model
 `proofs/tla/EngineTickers.tla`; this file carries the laws about the two shared
 numbers that model checks only for tiny sizes.
 
-Rust anchors: `Source::publish` (`crates/telemetry/src/engine_tickers.rs`): the
+Rust anchors: `Source::publish` (`crates/building-blocks/telemetry/src/engine_tickers.rs`): the
 loop test `now > seen`, `published[at].compare_exchange_weak(seen, now, ..)`
 and, on a win, `TOTALS[at].fetch_add(now - seen, ..)`, modeled here as their
 sequential meaning with the add folded into the swap that won.

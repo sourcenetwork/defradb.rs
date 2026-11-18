@@ -178,6 +178,7 @@ jobs:
               cargo clippy -p defra-node --features p2p --all-targets -- -D warnings
               cargo clippy -p vera-embedded --features node --all-targets -- -D warnings
               cargo clippy -p defra-node --features embedded-vera --all-targets -- -D warnings
+              cargo clippy -p defra-node --features embedded-vera,p2p --all-targets -- -D warnings
               cargo clippy -p cli --features embedded-vera --all-targets -- -D warnings
               cargo clippy -p db --features p2p --all-targets -- -D warnings
               cargo clippy -p cli --features iroh,model-trace --all-targets -- -D warnings
@@ -292,7 +293,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ~/.cache/defra-harness
-          key: go-defradb-${{ runner.os }}-${{ hashFiles('crates/defra-version/src/lib.rs') }}
+          key: go-defradb-${{ runner.os }}-${{ hashFiles('crates/foundation/defra-version/src/lib.rs') }}
       - name: Install Go toolchain
         if: steps.go-defradb.outputs.cache-hit != 'true'
         uses: actions/setup-go@v7
@@ -303,9 +304,9 @@ jobs:
       - name: Prepare Go DefraDB binary
         id: prepare
         run: |
-          GO_REF=$(grep 'pub const GO_COMPAT_COMMIT' crates/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
-          GO_BRANCH=$(grep 'pub const GO_COMPAT_BRANCH' crates/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
-          GO_TAG=$(grep 'pub const GO_COMPAT_TAG' crates/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
+          GO_REF=$(grep 'pub const GO_COMPAT_COMMIT' crates/foundation/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
+          GO_BRANCH=$(grep 'pub const GO_COMPAT_BRANCH' crates/foundation/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
+          GO_TAG=$(grep 'pub const GO_COMPAT_TAG' crates/foundation/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
 
           if [ -n "$GO_TAG" ]; then
             VER_NUM="${GO_TAG#v}"
@@ -345,47 +346,6 @@ jobs:
         with:
           name: go-defradb
           path: ${{ steps.prepare.outputs.dir }}/defradb
-          retention-days: 1
-      # Lens scenarios load the WASM modules Go's tests/lenses builds, from
-      # DEFRADB_GO_REPO, at the same pin as the Go binary.
-      - name: Restore Go lens modules
-        id: go-lenses
-        uses: actions/cache/restore@v6
-        with:
-          path: ~/.cache/defra-lenses
-          key: go-lenses-${{ runner.os }}-${{ hashFiles('crates/defra-version/src/lib.rs') }}
-      - uses: dtolnay/rust-toolchain@stable
-        if: steps.go-lenses.outputs.cache-hit != 'true'
-        with:
-          targets: wasm32-unknown-unknown
-      - name: Build Go lens modules
-        if: steps.go-lenses.outputs.cache-hit != 'true'
-        env:
-          PIN: ${{ steps.prepare.outputs.pin }}
-          BRANCH: ${{ steps.prepare.outputs.branch }}
-        run: |
-          WORK_DIR="$RUNNER_TEMP/defradb-lenses"
-          git clone --filter=blob:none --no-checkout --branch "$BRANCH" https://github.com/sourcenetwork/defradb "$WORK_DIR"
-          git -C "$WORK_DIR" sparse-checkout set tests/lenses
-          git -C "$WORK_DIR" checkout "$PIN"
-          make -C "$WORK_DIR/tests/lenses" build
-          OUT="$HOME/.cache/defra-lenses"
-          cd "$WORK_DIR"
-          for wasm in tests/lenses/*/target/wasm32-unknown-unknown/debug/*.wasm; do
-            mkdir -p "$OUT/$(dirname "$wasm")"
-            cp "$wasm" "$OUT/$wasm"
-          done
-          find "$OUT" -name '*.wasm' | sort
-      - name: Save Go lens modules
-        if: env.SAVE_CACHE == 'true' && steps.go-lenses.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
-        with:
-          path: ~/.cache/defra-lenses
-          key: ${{ steps.go-lenses.outputs.cache-primary-key }}
-      - uses: actions/upload-artifact@v7
-        with:
-          name: go-lenses
-          path: ~/.cache/defra-lenses
           retention-days: 1
 
   build-binaries:
@@ -461,6 +421,7 @@ jobs:
       - run: cargo nextest run --cargo-profile super-dev -p defra-node --features p2p
       - run: cargo nextest run --cargo-profile super-dev -p vera-embedded --features node --test hosted_node --test node_placement
       - run: cargo nextest run --cargo-profile super-dev -p defra-node --features embedded-vera,http --test embedded_vera
+      - run: cargo nextest run --cargo-profile super-dev -p defra-node --features embedded-vera,p2p --test embedded_vera_replication
       - run: cargo nextest run --cargo-profile super-dev -p cli --features embedded-vera --test embedded_vera --test embedded_vera_config
 
   wasm-check:
@@ -493,7 +454,7 @@ jobs:
       - name: Build WASM
         run: >-
           CARGO_PROFILE_RELEASE_OPT_LEVEL=z
-          wasm-pack build crates/wasm --release --target web --out-dir ../../pkg/wasm
+          wasm-pack build crates/surfaces/wasm --release --target web --out-dir ../../../pkg/wasm
       - uses: browser-actions/setup-firefox@0bc507ddf224827e3b1af68e014d5e42ab93e795 # v1
       - uses: browser-actions/setup-geckodriver@eb8b0670366f719ca31703766a8cb7e3ea2c56ed # v0.0.0
         with:
@@ -707,20 +668,20 @@ jobs:
         if: matrix.suite == 'go-compat'
         run: |
           OUT=$(mktemp)
-          (cd crates/p2p/testdata/gen_message_fixtures && go run .) >> "$OUT"
-          (cd crates/p2p/testdata/gen_pubsub_rpc_fixture && go run .) >> "$OUT"
+          (cd crates/database/p2p/testdata/gen_message_fixtures && go run .) >> "$OUT"
+          (cd crates/database/p2p/testdata/gen_pubsub_rpc_fixture && go run .) >> "$OUT"
           HEXES=$(grep -Eo '\(([0-9]+)( bytes)?\): [0-9a-f]+' "$OUT" | awk '{print $NF}')
           test -n "$HEXES"
           while IFS= read -r H; do
-            grep -qR --include='*.rs' -F "$H" crates/p2p/
+            grep -qR --include='*.rs' -F "$H" crates/database/p2p/
           done <<< "$HEXES"
       - name: Verify the pinned rustffi client resolves
         if: matrix.suite == 'go-compat'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          pin=$(sed -nE 's/^pub const GO_FFI_CLIENT_COMMIT: &str = "([0-9a-f]+)";/\1/p' crates/defra-version/src/lib.rs)
-          test -n "$pin" || { echo "GO_FFI_CLIENT_COMMIT not found in crates/defra-version/src/lib.rs"; exit 1; }
+          pin=$(sed -nE 's/^pub const GO_FFI_CLIENT_COMMIT: &str = "([0-9a-f]+)";/\1/p' crates/foundation/defra-version/src/lib.rs)
+          test -n "$pin" || { echo "GO_FFI_CLIENT_COMMIT not found in crates/foundation/defra-version/src/lib.rs"; exit 1; }
           gh api "repos/sourcenetwork/defradb/commits/$pin" --jq .sha > /dev/null \
             || { echo "GO_FFI_CLIENT_COMMIT=$pin does not resolve on sourcenetwork/defradb"; exit 1; }
       - name: Run rust integration tests (basic)
@@ -853,6 +814,8 @@ jobs:
   # implement counts as unsupported, not failed; testo-report.ts turns the JUnit
   # report into per-binary counts and fails on a failure missing from
   # .github/testo/known-failures/<client>.txt, or on a listed test that passes.
+  # go-http also tolerates the failures .github/testo/divergences.txt
+  # lists, and fails on one of those that passes.
   # The testo and legacy integration binaries, built once for every testo shard.
   testo-archive:
     name: Build testo archive
@@ -860,8 +823,6 @@ jobs:
     if: needs.ci-scope.outputs.full == 'true'
     timeout-minutes: 30
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
-    env:
-      DEFRADB_GO_REPO: ${{ github.workspace }}/target/go-repo
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v7
@@ -902,7 +863,6 @@ jobs:
     env:
       DEFRA_RUST_BINARY: ${{ github.workspace }}/target/ci/defradb
       DEFRA_IROH_BINARY: ${{ github.workspace }}/target/ci/defradb-iroh
-      DEFRADB_GO_REPO: ${{ github.workspace }}/target/go-repo
       DEFRA_E2E_KEEP: '1'
       # A failing scenario shows its in-process nodes' P2P trace.
       DEFRA_TEST_TRACE: p2p=debug,defra_p2p_adapter=debug,warn
@@ -945,10 +905,8 @@ jobs:
         with:
           name: go-defradb
           path: target/go
-      - uses: actions/download-artifact@v8
-        with:
-          name: go-lenses
-          path: target/go-repo
+      - name: Build the lens modules
+        run: cargo build --manifest-path tools/lenses/Cargo.toml --target wasm32-unknown-unknown
       - name: Pick the tests
         env:
           CLIENT: ${{ matrix.client }}
@@ -1000,7 +958,8 @@ jobs:
             --message-format json > target/nextest-list.json
           bun .github/scripts/testo-report.ts shard "$JUNIT" target/nextest-list.json \
             "$CLIENT" "${{ matrix.shard }}/${{ matrix.shards || 1 }}" \
-            ".github/testo/known-failures/$CLIENT.txt" "testo-report/$CLIENT-${{ matrix.shard }}.json"
+            ".github/testo/known-failures/$CLIENT.txt" "testo-report/$CLIENT-${{ matrix.shard }}.json" \
+            .github/testo/divergences.txt
           if [ "$STATUS" != 0 ] && ! grep -q '<failure' "$JUNIT"; then
             echo "::error::nextest exited $STATUS without a failing test"
             exit 1
@@ -1047,7 +1006,7 @@ jobs:
         # The report goes to a file first so the comment below can post it too.
         run: |
           status=0
-          GITHUB_STEP_SUMMARY=testo-summary.md TESTO_CLIENTS=${{ needs.ci-scope.outputs.testo_clients }} bun .github/scripts/testo-report.ts summary testo-report .github/testo/known-failures || status=$?
+          GITHUB_STEP_SUMMARY=testo-summary.md TESTO_CLIENTS=${{ needs.ci-scope.outputs.testo_clients }} bun .github/scripts/testo-report.ts summary testo-report .github/testo/known-failures .github/testo/divergences.txt || status=$?
           cat testo-summary.md >> "$GITHUB_STEP_SUMMARY"
           exit $status
 

@@ -23,8 +23,8 @@ What must never happen:
 The signature check itself is cryptography and is not proved here: a record
 carries whether its signature verified, and validation requires that it did.
 
-Rust anchors: `verify` in `crates/p2p/src/iroh/records/verify.rs`;
-`Book::offer`, `Book::live` in `crates/p2p/src/iroh/records/book.rs`.
+Rust anchors: `verify` in `crates/database/p2p/src/iroh/records/verify.rs`;
+`Book::offer`, `Book::live` in `crates/database/p2p/src/iroh/records/book.rs`.
 -/
 
 namespace ServiceRecord

@@ -29,12 +29,12 @@
 \* ID handed back that the node cannot find in its own store; a refusal
 \* reported with a later check's error than Go's.
 \*
-\* Code it models (crates/db/src/access/dac/mod.rs):
+\* Code it models (crates/database/db/src/access/dac/mod.rs):
 \*   DB::add_dac_policy_as   the whole sequence, for every edge
 \*   DB::add_policy          checks 1 to 5 in Go's order, then the store
 \*   parse, build            check 5: the policy's shape and expressions
 \*   DacPolicies::keep       the local store, and guard 6 (policies.rs)
-\*   RemotePolicies::add_policy  the remote create (crates/acp/src/policy_lookup.rs, Vera's impl in crates/vera/src/cosmos/dac.rs)
+\*   RemotePolicies::add_policy  the remote create (crates/engine/acp/src/policy_lookup.rs, Vera's impl in crates/engine/vera/src/cosmos/dac.rs)
 EXTENDS Naturals, Sequences   \* Seq and indexing, for the checks in Go's order
 
 CONSTANTS

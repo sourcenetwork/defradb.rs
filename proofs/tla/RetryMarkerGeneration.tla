@@ -26,8 +26,8 @@
 \* state, as invariants or as properties of each step, and nothing is recorded
 \* only to state them.
 \*
-\* Variables and the code state each one is (crates/storage/src/stores, and
-\* crates/p2p-adapter/src/retry.rs run_retry_pass):
+\* Variables and the code state each one is (crates/engine/storage/src/stores, and
+\* crates/surfaces/p2p-adapter/src/retry.rs run_retry_pass):
 \*   present      the peer's replicator row (Peerstore::get_replicator).
 \*   incarnation  Peerstore::get_replicator_incarnation.
 \*   marker[s]    the generation stored at scope s's marker key

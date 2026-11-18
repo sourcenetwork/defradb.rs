@@ -113,34 +113,34 @@
     "rust_tests": [
       "tools/integration-test/tests/legacy/query/go_vector_parity.rs::go_vector_index_sdl_is_accepted_by_both",
       "tools/integration-test/tests/legacy/query/go_vector_parity.rs::go_and_rust_refuse_the_same_out_of_range_params",
-      "crates/defra-node/tests/vector_index_query_path.rs::dimensions_are_required_when_the_schema_is_written",
-      "crates/query/tests/vector_index_sdl.rs::unknown_or_mistyped_arguments_are_refused",
-      "crates/query/tests/vector_index_sdl.rs::competing_kind_selectors_are_refused",
-      "crates/query/tests/vector_index_sdl.rs::every_algorithm_block_carries_every_metric"
+      "crates/entry-points/defra-node/tests/vector_index_query_path.rs::dimensions_are_required_when_the_schema_is_written",
+      "crates/engine/query/tests/vector_index_sdl.rs::unknown_or_mistyped_arguments_are_refused",
+      "crates/engine/query/tests/vector_index_sdl.rs::competing_kind_selectors_are_refused",
+      "crates/engine/query/tests/vector_index_sdl.rs::every_algorithm_block_carries_every_metric"
     ],
-    "evidence": "tools/integration-test/tests/legacy/query/go_vector_parity.rs:90 Rust accepts [Float32!] vector index and index list carries it; tools/integration-test/tests/legacy/query/go_vector_parity.rs:252 absent/zero dimensions and MANHATTAN refused by both; crates/defra-node/tests/vector_index_query_path.rs:699 error names dimensions; crates/query/tests/vector_index_sdl.rs:313 IVFFlat block refused; crates/query/tests/vector_index_sdl.rs:107 direction: DESC with vector refused; crates/query/tests/vector_index_sdl.rs:442 EUCLIDEAN/DOT parse",
+    "evidence": "tools/integration-test/tests/legacy/query/go_vector_parity.rs:90 Rust accepts [Float32!] vector index and index list carries it; tools/integration-test/tests/legacy/query/go_vector_parity.rs:252 absent/zero dimensions and MANHATTAN refused by both; crates/entry-points/defra-node/tests/vector_index_query_path.rs:699 error names dimensions; crates/engine/query/tests/vector_index_sdl.rs:313 IVFFlat block refused; crates/engine/query/tests/vector_index_sdl.rs:107 direction: DESC with vector refused; crates/engine/query/tests/vector_index_sdl.rs:442 EUCLIDEAN/DOT parse",
     "note": "Unverified: rejection of String, [Int!] and [Float64!] fields ('vector index requires a [Float32!] field'): no test, and Rust's own SDL tests put vector indexes on [Float!] (Float64), so Rust may accept what Go rejects; explicit ASC direction accepted; exact Go error messages."
   },
   {
     "id": "go.collection_version.relations.one_one",
     "verdict": "partial",
     "rust_tests": [
-      "crates/schema/tests/validation_tests.rs::secondary_relation_requires_a_primary_counterpart",
-      "crates/schema/tests/validation_tests.rs::paired_relation_cannot_have_two_primary_fields",
+      "crates/foundation/schema/tests/validation_tests.rs::secondary_relation_requires_a_primary_counterpart",
+      "crates/foundation/schema/tests/validation_tests.rs::paired_relation_cannot_have_two_primary_fields",
       "tools/integration-test/tests/legacy/basic/cross_runtime_schema_validation.rs::go_schema_creation_validation_parity"
     ],
-    "evidence": "crates/schema/tests/validation_tests.rs:267 asserts 'relation missing field'; crates/schema/tests/validation_tests.rs:295 asserts 'relation can only have a single field set as primary'; tools/integration-test/tests/legacy/basic/cross_runtime_schema_validation.rs:190 asserts self-type missing/double primary rejected and self one-one accepted by both runtimes",
+    "evidence": "crates/foundation/schema/tests/validation_tests.rs:267 asserts 'relation missing field'; crates/foundation/schema/tests/validation_tests.rs:295 asserts 'relation can only have a single field set as primary'; tools/integration-test/tests/legacy/basic/cross_runtime_schema_validation.rs:190 asserts self-type missing/double primary rejected and self one-one accepted by both runtimes",
     "note": "Errors are checked at definition-validation level, not via SDL for a two-type one-one; the self one-one's introspection output is not asserted."
   },
   {
     "id": "go.collection_version.relations.one_many",
     "verdict": "partial",
     "rust_tests": [
-      "crates/schema/tests/relation_id_fields_tests.rs::test_add_relation_id_fields",
-      "crates/schema/tests/relation_id_fields_tests.rs::test_add_relation_id_fields_skips_arrays",
-      "crates/query/src/sdl_parse/parser_tests.rs::test_one_to_many_collection_ids_match_go"
+      "crates/foundation/schema/tests/relation_id_fields_tests.rs::test_add_relation_id_fields",
+      "crates/foundation/schema/tests/relation_id_fields_tests.rs::test_add_relation_id_fields_skips_arrays",
+      "crates/engine/query/src/sdl_parse/parser_tests.rs::test_one_to_many_collection_ids_match_go"
     ],
-    "evidence": "crates/schema/tests/relation_id_fields_tests.rs:58 asserts _authorID added on the one side; crates/schema/tests/relation_id_fields_tests.rs:99 asserts no _postsID on the many side",
+    "evidence": "crates/foundation/schema/tests/relation_id_fields_tests.rs:58 asserts _authorID added on the one side; crates/foundation/schema/tests/relation_id_fields_tests.rs:99 asserts no _postsID on the many side",
     "note": "Not asserted: self-referencing one-to-many with either field sorting first, and the introspected GraphQL type for self one-many declared with the type's own name."
   },
   {
@@ -180,7 +180,7 @@
       "tools/integration-test/tests/testo/collection_version/aggregates/inline_array.rs::collection_version_aggregate_inline_array_adds_users_sum"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
-    "note": "Searched introspection tests (crates/query/src/runner/introspection/mod.rs tests, integration __type queries) for inline-array arguments on COUNT/SUM/AVG and element-kind filter blocks; collection_count_and_array_types_match_go checks only the CountSelector groupBy and the array field type."
+    "note": "Searched introspection tests (crates/engine/query/src/runner/introspection/mod.rs tests, integration __type queries) for inline-array arguments on COUNT/SUM/AVG and element-kind filter blocks; collection_count_and_array_types_match_go checks only the CountSelector groupBy and the array field type."
   },
   {
     "id": "go.collection_version.introspection.aggregate_fields",
@@ -254,23 +254,23 @@
     "id": "go.collection_version.get",
     "verdict": "partial",
     "rust_tests": [
-      "crates/http/tests/collection_selectors.rs::a_name_selects_only_that_collection",
-      "crates/http/tests/collection_selectors.rs::an_unknown_name_selects_nothing",
-      "crates/http/tests/collection_selectors.rs::a_version_id_selects_that_version_even_when_inactive",
-      "crates/http/tests/collection_selectors.rs::a_collection_id_selects_its_active_version",
-      "crates/http/tests/collection_selectors.rs::get_inactive_widens_to_the_inactive_versions",
-      "crates/http/tests/collection_selectors.rs::an_unknown_version_id_is_a_404"
+      "crates/surfaces/http/tests/collection_selectors.rs::a_name_selects_only_that_collection",
+      "crates/surfaces/http/tests/collection_selectors.rs::an_unknown_name_selects_nothing",
+      "crates/surfaces/http/tests/collection_selectors.rs::a_version_id_selects_that_version_even_when_inactive",
+      "crates/surfaces/http/tests/collection_selectors.rs::a_collection_id_selects_its_active_version",
+      "crates/surfaces/http/tests/collection_selectors.rs::get_inactive_widens_to_the_inactive_versions",
+      "crates/surfaces/http/tests/collection_selectors.rs::an_unknown_version_id_is_a_404"
     ],
-    "evidence": "crates/http/tests/collection_selectors.rs:149,155,162,168,175 assert name/collection-id/version-id filters, empty set for unknown name, inactive versions with get_inactive; :344 asserts unknown version id is a 404",
-    "note": "Tests run the HTTP router over a mock version store, not a full node. Unverified: field kinds rendered as readable strings and round-tripped back through AddCollection (Rust's schema tests assert kinds serialize as integers, crates/schema/tests/field_kind_tests.rs::test_go_compat_scalar_serializes_as_integer, which may diverge from Go's #4816 stringified describe output)."
+    "evidence": "crates/surfaces/http/tests/collection_selectors.rs:149,155,162,168,175 assert name/collection-id/version-id filters, empty set for unknown name, inactive versions with get_inactive; :344 asserts unknown version id is a 404",
+    "note": "Tests run the HTTP router over a mock version store, not a full node. Unverified: field kinds rendered as readable strings and round-tripped back through AddCollection (Rust's schema tests assert kinds serialize as integers, crates/foundation/schema/tests/field_kind_tests.rs::test_go_compat_scalar_serializes_as_integer, which may diverge from Go's #4816 stringified describe output)."
   },
   {
     "id": "go.collection_version.active_version",
     "verdict": "partial",
     "rust_tests": [
-      "crates/defra-node/tests/issue_859_schema_migration.rs::set_active_collection_version_round_trips_to_original"
+      "crates/entry-points/defra-node/tests/issue_859_schema_migration.rs::set_active_collection_version_round_trips_to_original"
     ],
-    "evidence": "crates/defra-node/tests/issue_859_schema_migration.rs:210 asserts switching back to the original version;",
+    "evidence": "crates/entry-points/defra-node/tests/issue_859_schema_migration.rs:210 asserts switching back to the original version;",
     "note": "Unverified: empty version ID error, unknown version 'collection not found', GraphQL field visibility after switching ('Cannot query field'), IsActive false removing the collection from Query and true restoring it, two active versions error (schema validator test asserts a different message, 'multiple versions of same collection cannot be active'), GetCollections in a txn seeing the activation."
   },
   {
@@ -284,7 +284,7 @@
       "tools/integration-test/tests/testo/collection_version/updates/with_version_branch.rs::collection_version_updates_with_patch_on_branched_collection"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
-    "note": "Searched crates/db/tests/definition, defra-node tests and integration tests for patching a non-active version / sibling version branches; set_active tests only switch along a linear history."
+    "note": "Searched crates/database/db/tests/definition, defra-node tests and integration tests for patching a non-active version / sibling version branches; set_active tests only switch along a linear history."
   },
   {
     "id": "go.collection_version.patch.add_field.basic",
@@ -312,7 +312,7 @@
       "tools/integration-test/tests/testo/collection_version/updates/add/field/with_introspection.rs::collection_version_updates_add_field_introspection_does_not_amend_gql_types_given_bad_patch"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
-    "note": "Searched patch tests (crates/db/tests/definition/patch.rs, cross_runtime_schema_validation.rs, collection_management.rs, defra-node issue_859) for a multi-op patch where one op fails. Only single-op failing patches exist; patch.rs::patch_collection_rolls_back_when_migration_is_invalid checks rollback on an invalid migration, not on a failing patch op, and nothing checks the valid field stays unqueryable or GraphQL types unchanged."
+    "note": "Searched patch tests (crates/database/db/tests/definition/patch.rs, cross_runtime_schema_validation.rs, collection_management.rs, defra-node issue_859) for a multi-op patch where one op fails. Only single-op failing patches exist; patch.rs::patch_collection_rolls_back_when_migration_is_invalid checks rollback on an invalid migration, not on a failing patch op, and nothing checks the valid field stays unqueryable or GraphQL types unchanged."
   },
   {
     "id": "go.collection_version.patch.add_field.validation",
@@ -365,16 +365,16 @@
       "tools/integration-test/tests/testo/collection_version/updates/add/field/with_index_sub.rs::collection_version_updates_add_field_simple_field_indexed_by_name_with_same_name_defined_in_value"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
-    "note": "Searched tests for add ops at `/<Col>/Fields/<name>` and for `the index used does not match the given name`; only crates/db/tests/definition/json.rs tests the path-parsing helper extract_field_name_from_path, no patch is applied by name and the mismatch error is never asserted."
+    "note": "Searched tests for add ops at `/<Col>/Fields/<name>` and for `the index used does not match the given name`; only crates/database/db/tests/definition/json.rs tests the path-parsing helper extract_field_name_from_path, no patch is applied by name and the mismatch error is never asserted."
   },
   {
     "id": "go.collection_version.patch.add_field.with_index",
     "verdict": "partial",
     "rust_tests": [
-      "crates/db/tests/collection/index_actions.rs::recaching_and_activation_preserve_pending_index_restrictions",
+      "crates/database/db/tests/collection/index_actions.rs::recaching_and_activation_preserve_pending_index_restrictions",
       "tools/integration-test/tests/legacy/query/lens_reindex_secondary_index_979.rs::single_field_index_rebuilt_after_lens_migration"
     ],
-    "evidence": "crates/db/tests/collection/index_actions.rs:117 asserts the patched definition still carries its index (`patched.indexes.len() == 1`); tools/integration-test/tests/legacy/query/lens_reindex_secondary_index_979.rs:66-73 indexed query returns a pre-patch doc after patch plus lens",
+    "evidence": "crates/database/db/tests/collection/index_actions.rs:117 asserts the patched definition still carries its index (`patched.indexes.len() == 1`); tools/integration-test/tests/legacy/query/lens_reindex_secondary_index_979.rs:66-73 indexed query returns a pre-patch doc after patch plus lens",
     "note": "Index presence in ListIndexes after a plain patch and indexed queries returning documents created after the patch are not asserted; the 979 test always adds a lens migration."
   },
   {
@@ -529,7 +529,7 @@
       "tools/integration-test/tests/testo/collection_version/updates/add/simple.rs::collection_version_updates_add_simple_errors_adding_unsupported_collection_prop_at_root"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
-    "note": "Searched tests for 'doc is missing path', 'unknown field \"-\"' and patch ops on unknown paths/root/unsupported properties (rg over tools/integration-test/tests, crates/*/tests, crates/db/tests/definition): only implementation in crates/db/src/definition/patch/{apply,helpers}.rs, no test."
+    "note": "Searched tests for 'doc is missing path', 'unknown field \"-\"' and patch ops on unknown paths/root/unsupported properties (rg over tools/integration-test/tests, crates/*/tests, crates/database/db/tests/definition): only implementation in crates/database/db/src/definition/patch/{apply,helpers}.rs, no test."
   },
   {
     "id": "go.collection_version.patch.field_reorder",
@@ -600,7 +600,7 @@
       "tools/integration-test/tests/testo/collection_version/updates/replace/field/simple.rs::collection_version_updates_replace_field"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
-    "note": "No test removes or replaces an existing field by patch and checks 'Cannot query field \"name\" on type \"Users\"' (searched for remove ops on /Fields paths and whole-Fields replacements dropping a field; crates/db/tests/definition/patch.rs:421 only replaces the list to add a field)."
+    "note": "No test removes or replaces an existing field by patch and checks 'Cannot query field \"name\" on type \"Users\"' (searched for remove ops on /Fields paths and whole-Fields replacements dropping a field; crates/database/db/tests/definition/patch.rs:421 only replaces the list to add a field)."
   },
   {
     "id": "go.collection_version.patch.field_mutation_errors",
@@ -615,7 +615,7 @@
       "tools/integration-test/tests/testo/collection_version/updates/replace/fields.rs::col_version_update_replace_fields_errors"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
-    "note": "Only Kind replacement is checked; removing/replacing name, CRDT type, default value and size constraint are unverified, as is the whole-fields-list replacement error 'no type found for given name. Type: 0' (crates/db/tests/definition/patch.rs:294 asserts 'Type: 111' for an added field, not a list replacement)."
+    "note": "Only Kind replacement is checked; removing/replacing name, CRDT type, default value and size constraint are unverified, as is the whole-fields-list replacement error 'no type found for given name. Type: 0' (crates/database/db/tests/definition/patch.rs:294 asserts 'Type: 111' for an added field, not a list replacement)."
   },
   {
     "id": "go.collection_version.patch.embeddings.valid",
@@ -627,7 +627,7 @@
       "tools/integration-test/tests/testo/collection_version/updates/replace/embeddings.rs::col_version_update_replace_vector_embedding_params_should_succeed"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
-    "note": "No test patches VectorEmbeddings (rg for VectorEmbeddings/vector_embeddings and patch usage in crates/db/tests, crates/query/tests, crates/defra-node/tests, tools/integration-test/tests found none); add/replace/remove by patch and GetCollections reflection untested."
+    "note": "No test patches VectorEmbeddings (rg for VectorEmbeddings/vector_embeddings and patch usage in crates/database/db/tests, crates/engine/query/tests, crates/entry-points/defra-node/tests, tools/integration-test/tests found none); add/replace/remove by patch and GetCollections reflection untested."
   },
   {
     "id": "go.collection_version.patch.embeddings.missing_settings",
@@ -645,7 +645,7 @@
       "tools/integration-test/tests/testo/collection_version/updates/add/embeddings.rs::col_version_update_add_vector_embedding_with_unsupported_provider_should_error_multiple"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
-    "note": "No patch test for empty FieldName/Fields/Provider/Model or unknown provider; the messages exist only in crates/schema/src/definition_validation/global_validators.rs. Nearest: tools/integration-test/tests/legacy/basic/cross_runtime_schema_validation.rs:176 rejects an unknown provider at SDL add (accept/reject only), a different surface."
+    "note": "No patch test for empty FieldName/Fields/Provider/Model or unknown provider; the messages exist only in crates/foundation/schema/src/definition_validation/global_validators.rs. Nearest: tools/integration-test/tests/legacy/basic/cross_runtime_schema_validation.rs:176 rejects an unknown provider at SDL add (accept/reject only), a different surface."
   },
   {
     "id": "go.collection_version.patch.embeddings.field_references",
@@ -687,7 +687,7 @@
       "tools/integration-test/tests/testo/collection_version/updates/test/name.rs::col_version_update_test_name_fails"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
-    "note": "No test sends a JSON Patch 'test' op (rg '\"op\": \"test\"' in all Rust tests); 'testing value ... failed: test failed' exists only in crates/db/src/definition/patch/apply.rs:339."
+    "note": "No test sends a JSON Patch 'test' op (rg '\"op\": \"test\"' in all Rust tests); 'testing value ... failed: test failed' exists only in crates/database/db/src/definition/patch/apply.rs:339."
   },
   {
     "id": "go.collection_version.patch.remove_collection.basic",
@@ -703,34 +703,34 @@
     "verdict": "missing",
     "rust_tests": [],
     "evidence": "",
-    "note": "No test asserts 'cannot delete a collection that has documents' (rg over all tests; message only in crates/db/src/definition/patch/mod.rs:266, txn/registry/collections.rs, collection/ops/version.rs). Soft-deleted and same-transaction variants also untested."
+    "note": "No test asserts 'cannot delete a collection that has documents' (rg over all tests; message only in crates/database/db/src/definition/patch/mod.rs:266, txn/registry/collections.rs, collection/ops/version.rs). Soft-deleted and same-transaction variants also untested."
   },
   {
     "id": "go.collection_version.patch.remove_collection.version_chain",
     "verdict": "missing",
     "rust_tests": [],
     "evidence": "",
-    "note": "No test asserts 'cannot delete a version that is used by a newer version' or removing newest versions then reactivating the previous one (rg over all tests; message only in crates/db/src/txn/registry/collections.rs and collection/ops/version.rs)."
+    "note": "No test asserts 'cannot delete a version that is used by a newer version' or removing newest versions then reactivating the previous one (rg over all tests; message only in crates/database/db/src/txn/registry/collections.rs and collection/ops/version.rs)."
   },
   {
     "id": "go.collection_version.patch.remove_collection.relations",
     "verdict": "partial",
     "rust_tests": [
-      "crates/db/tests/collection/delete.rs::delete_collections_rejects_dangling_relation_targets",
-      "crates/db/tests/collection/delete.rs::delete_collections_allows_deleting_both_sides_of_relation"
+      "crates/database/db/tests/collection/delete.rs::delete_collections_rejects_dangling_relation_targets",
+      "crates/database/db/tests/collection/delete.rs::delete_collections_allows_deleting_both_sides_of_relation"
     ],
-    "evidence": "crates/db/tests/collection/delete.rs:236-238 asserts 'cannot remove a collection while another field references it' and :239-240 both collections remain; :257-258 both sides deleted together succeeds",
+    "evidence": "crates/database/db/tests/collection/delete.rs:236-238 asserts 'cannot remove a collection while another field references it' and :239-240 both collections remain; :257-258 both sides deleted together succeeds",
     "note": "Asserted through the delete_collections API, not a patch 'remove' op; removal of the other side (from either side) is not checked."
   },
   {
     "id": "go.collection_version.patch.remove_collection.concurrency",
     "verdict": "diverges",
     "rust_tests": [
-      "crates/db/tests/collection/schema_write_conflicts.rs::document_write_conflicts_with_collection_drop",
-      "crates/db/tests/txn/registry_suite.rs::test_collection_snapshot_isolation_during_deletion",
+      "crates/database/db/tests/collection/schema_write_conflicts.rs::document_write_conflicts_with_collection_drop",
+      "crates/database/db/tests/txn/registry_suite.rs::test_collection_snapshot_isolation_during_deletion",
       "tools/integration-test/tests/legacy/basic/collection_delete_4657.rs::stale_transaction_cannot_write_after_collection_delete_test"
     ],
-    "evidence": "crates/db/tests/collection/schema_write_conflicts.rs:67-69 drop completes while a create is staged and the writer's commit fails with a txn conflict; crates/db/tests/txn/registry_suite.rs:1219-1227 a reader txn opened before deletion still sees the collection, :1249 a new txn does not; tools/integration-test/tests/legacy/basic/collection_delete_4657.rs:13-29 patch-remove succeeds while a txn is open and the stale txn's write then fails",
+    "evidence": "crates/database/db/tests/collection/schema_write_conflicts.rs:67-69 drop completes while a create is staged and the writer's commit fails with a txn conflict; crates/database/db/tests/txn/registry_suite.rs:1219-1227 a reader txn opened before deletion still sees the collection, :1249 a new txn does not; tools/integration-test/tests/legacy/basic/collection_delete_4657.rs:13-29 patch-remove succeeds while a txn is open and the stale txn's write then fails",
     "note": "Go pins removal as blocking (deadlock) until the writing txn ends; Rust removes immediately and the concurrent writer loses with a conflict at commit (regolith validation). Rust also lets an open txn keep reading the removed collection's documents (snapshot, via doc_fetcher().get_all); whether that txn's GetCollections still lists the collection, which Go's leaf says it omits, is unverified. Redeclaring in the txn and view-read non-deadlock are untested."
   },
   {
@@ -738,7 +738,7 @@
     "verdict": "missing",
     "rust_tests": [],
     "evidence": "",
-    "note": "No test removes a view (or its backing collection) by patch; searched tools/integration-test/tests/query/{view,go_view_paths}.rs, crates/db/tests/view/ops.rs, crates/db/tests/definition/patch.rs. Refreshed-view 'has documents' error and 'collection not found' after removing the source are untested."
+    "note": "No test removes a view (or its backing collection) by patch; searched tools/integration-test/tests/query/{view,go_view_paths}.rs, crates/database/db/tests/view/ops.rs, crates/database/db/tests/definition/patch.rs. Refreshed-view 'has documents' error and 'collection not found' after removing the source are untested."
   },
   {
     "id": "go.collection_version.patch.view_sources",
@@ -752,19 +752,19 @@
     "verdict": "partial",
     "rust_tests": [
       "tools/integration-test/tests/legacy/basic/cross_runtime_schema_validation/stateful.rs::go_schema_stateful_validation_parity",
-      "crates/schema/tests/validation_tests.rs::materialized_view_cannot_have_policy"
+      "crates/foundation/schema/tests/validation_tests.rs::materialized_view_cannot_have_policy"
     ],
-    "evidence": "crates/db/tests/definition/patch.rs:411-415 asserts 'cannot dematerialize a materialized view that has data, first truncate it and then try again'; :373 dematerializing an empty view succeeds; tools/integration-test/tests/legacy/basic/cross_runtime_schema_validation/stateful.rs:178 rejection parity with Go after refresh",
-    "note": "Success after truncate and the dematerialized view then querying its source directly are unverified. Policy part: Go errors 'materialized views do not support ACP' when a policy is patched onto a cacheless view (Go-Bug-Suspect); Rust asserts that message only for a materialized view (crates/schema/tests/validation_tests.rs:341), and tools/integration-test/tests/legacy/basic/cross_runtime_schema_validation/stateful.rs:202 asserts both runtimes accept @policy on a @materialized(if:false) view at add. Patching a policy onto a cacheless view is not tested."
+    "evidence": "crates/database/db/tests/definition/patch.rs:411-415 asserts 'cannot dematerialize a materialized view that has data, first truncate it and then try again'; :373 dematerializing an empty view succeeds; tools/integration-test/tests/legacy/basic/cross_runtime_schema_validation/stateful.rs:178 rejection parity with Go after refresh",
+    "note": "Success after truncate and the dematerialized view then querying its source directly are unverified. Policy part: Go errors 'materialized views do not support ACP' when a policy is patched onto a cacheless view (Go-Bug-Suspect); Rust asserts that message only for a materialized view (crates/foundation/schema/tests/validation_tests.rs:341), and tools/integration-test/tests/legacy/basic/cross_runtime_schema_validation/stateful.rs:202 asserts both runtimes accept @policy on a @materialized(if:false) view at add. Patching a policy onto a cacheless view is not tested."
   },
   {
     "id": "go.collection_version.migrations.lens_registry",
     "verdict": "partial",
     "rust_tests": [
       "tools/integration-test/tests/legacy/p2p_iroh/sync/version.rs::with_view",
-      "crates/defra-node/tests/issue_859_schema_migration.rs::set_migration_registers_lens_between_versions"
+      "crates/entry-points/defra-node/tests/issue_859_schema_migration.rs::set_migration_registers_lens_between_versions"
     ],
-    "evidence": "p2p_iroh/sync/version.rs:381-384 expects lens_add to return a lensId (then used for a view); crates/defra-node/tests/issue_859_schema_migration.rs:239-241 asserts the transform id is non-empty",
+    "evidence": "p2p_iroh/sync/version.rs:381-384 expects lens_add to return a lensId (then used for a view); crates/entry-points/defra-node/tests/issue_859_schema_migration.rs:239-241 asserts the transform id is non-empty",
     "note": "Unverified: ListLenses returning an added lens (query/lens_persistence.rs only lists lenses after a restart), distinct IDs for different lenses, the same CID for identical lenses, and 2^53 vs 2^53+1 arguments staying distinct. Searched lens_add/lens_list/add_lens callers and 'identical|same cid|9007199254740993'."
   },
   {
@@ -772,10 +772,10 @@
     "verdict": "partial",
     "rust_tests": [
       "tools/integration-test/tests/legacy/query/lens_cross_runtime.rs::go_lens_migration_http_parity",
-      "crates/http/src/handlers/collections_tests.rs::patch_collection_forwards_migration"
+      "crates/surfaces/http/src/handlers/collections_tests.rs::patch_collection_forwards_migration"
     ],
-    "evidence": "tools/integration-test/tests/legacy/query/lens_cross_runtime.rs:248-265 patches with a migration via CLI and asserts migrated=true on read (and equal to Go at :258); crates/db/tests/definition/patch.rs:103-106 asserts the patch records a transform on the previous version and registers it",
-    "note": "Unverified: a patch with no migration records no transform; a present-but-empty lens records the empty lens's ID (crates/http/src/handlers/collections_tests.rs:339 only checks the HTTP handler forwards an empty Lenses list to a mock); replacing or removing a collection source's Transform by patch (no test patches /Sources/.../Transform)."
+    "evidence": "tools/integration-test/tests/legacy/query/lens_cross_runtime.rs:248-265 patches with a migration via CLI and asserts migrated=true on read (and equal to Go at :258); crates/database/db/tests/definition/patch.rs:103-106 asserts the patch records a transform on the previous version and registers it",
+    "note": "Unverified: a patch with no migration records no transform; a present-but-empty lens records the empty lens's ID (crates/surfaces/http/src/handlers/collections_tests.rs:339 only checks the HTTP handler forwards an empty Lenses list to a mock); replacing or removing a collection source's Transform by patch (no test patches /Sources/.../Transform)."
   },
   {
     "id": "go.collection_version.migrations.configure",
@@ -788,7 +788,7 @@
       "tools/integration-test/tests/testo/collection_version/migrations/with_txn.rs::collection_migration_get_migrations_with_txn"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2373).",
-    "note": "Unverified: several migrations returned by GetCollections, a second migration with the same source replacing the first, and the 'cannot migrate between non-adjacent collection versions' error (string exists in crates/db/src/definition/migration/set.rs:165 but no test asserts it)."
+    "note": "Unverified: several migrations returned by GetCollections, a second migration with the same source replacing the first, and the 'cannot migrate between non-adjacent collection versions' error (string exists in crates/database/db/src/definition/migration/set.rs:165 but no test asserts it)."
   },
   {
     "id": "go.collection_version.migrations.query.forward",
@@ -826,7 +826,7 @@
     "rust_tests": [
       "tools/integration-test/tests/legacy/p2p_iroh/schema/schema_migration.rs::replicated_doc_much_older_schema_version"
     ],
-    "evidence": "crates/db/tests/definition/migration_suite.rs:642-650 asserts that after registering v2->v3 then the earlier edge v1->v2, a read returns values from both edges (stub transform store); tools/integration-test/tests/legacy/p2p_iroh/schema/schema_migration.rs:524-525 asserts a two-edge chain",
+    "evidence": "crates/database/db/tests/definition/migration_suite.rs:642-650 asserts that after registering v2->v3 then the earlier edge v1->v2, a read returns values from both edges (stub transform store); tools/integration-test/tests/legacy/p2p_iroh/schema/schema_migration.rs:524-525 asserts a two-edge chain",
     "note": "Unverified: sparse chain with an index, three or more incremental steps, the restart variant, and resetting the active version to the document's original version clearing migrations. Go-Bug-Suspect #4736: lens_reindex_secondary_index_979.rs header says Rust has no incremental lens mode, so the stale-stamp bug does not apply; no test exercises the indexed sparse-chain case."
   },
   {
@@ -929,22 +929,22 @@
     "id": "go.collection.relations_to_existing",
     "verdict": "partial",
     "rust_tests": [
-      "crates/schema/tests/validation_tests.rs::new_relation_can_target_an_existing_collection"
+      "crates/foundation/schema/tests/validation_tests.rs::new_relation_can_target_an_existing_collection"
     ],
-    "evidence": "crates/schema/tests/validation_tests.rs:228 validate_new_collections_with_existing(&[posts], &[user_collection()]).unwrap() accepts a new relation to an existing collection",
+    "evidence": "crates/foundation/schema/tests/validation_tests.rs:228 validate_new_collections_with_existing(&[posts], &[user_collection()]).unwrap() accepts a new relation to an existing collection",
     "note": "Only the definition validator is checked. Unverified: an AddCollection call through the node that relates to one or several existing collections (or a chain of separate adds, or a patch adding such a relation), and creating/querying documents across that relation."
   },
   {
     "id": "go.collection.delete.basic",
     "verdict": "partial",
     "rust_tests": [
-      "crates/db/tests/collection/delete.rs::delete_collections_removes_single_name",
-      "crates/db/tests/collection/delete.rs::delete_collections_removes_multiple_names_atomically",
-      "crates/db/tests/collection/delete.rs::delete_collections_errors_on_unknown_name",
-      "crates/db/tests/collection/delete.rs::delete_collections_rejects_empty_name_without_deleting_valid_names",
-      "crates/db/tests/collection/delete.rs::delete_collections_dedupes_repeated_names"
+      "crates/database/db/tests/collection/delete.rs::delete_collections_removes_single_name",
+      "crates/database/db/tests/collection/delete.rs::delete_collections_removes_multiple_names_atomically",
+      "crates/database/db/tests/collection/delete.rs::delete_collections_errors_on_unknown_name",
+      "crates/database/db/tests/collection/delete.rs::delete_collections_rejects_empty_name_without_deleting_valid_names",
+      "crates/database/db/tests/collection/delete.rs::delete_collections_dedupes_repeated_names"
     ],
-    "evidence": "crates/db/tests/collection/delete.rs:126-133 both names gone after one call; crates/db/tests/collection/delete.rs:189-198 unknown name errors and Users survives (rollback); crates/db/tests/collection/delete.rs:169 'collection name can't be empty'; crates/db/tests/collection/delete.rs:215 duplicates deduplicated",
+    "evidence": "crates/database/db/tests/collection/delete.rs:126-133 both names gone after one call; crates/database/db/tests/collection/delete.rs:189-198 unknown name errors and Users survives (rollback); crates/database/db/tests/collection/delete.rs:169 'collection name can't be empty'; crates/database/db/tests/collection/delete.rs:215 duplicates deduplicated",
     "note": "Unverified: GraphQL schema removal after DeleteCollection ('Cannot query field \"Users\" on type \"Query\"', no add_Users mutation); unknown-name error is only loosely checked (contains 'Ghost' or 'not found', not 'collection not found'). All tests run at the db layer with active_only=true, not via CLI/HTTP."
   },
   {
@@ -952,23 +952,23 @@
     "verdict": "missing",
     "rust_tests": [],
     "evidence": "",
-    "note": "The error 'cannot delete a collection that has documents' exists only in crates/db/src (collection/ops/version.rs:355, txn/registry/collections.rs:133, definition/patch/mod.rs:266) and no test asserts it, through delete_collections or otherwise. crates/db/tests/txn/registry_suite.rs::test_collection_snapshot_isolation_during_deletion (registry_suite.rs:1205, 1219) commits a document and then deletes the populated Users collection with db.delete_collection, which succeeds; that is a lower-level single-collection delete, not the rejection this leaf describes. Soft-deleted documents are untested."
+    "note": "The error 'cannot delete a collection that has documents' exists only in crates/database/db/src (collection/ops/version.rs:355, txn/registry/collections.rs:133, definition/patch/mod.rs:266) and no test asserts it, through delete_collections or otherwise. crates/database/db/tests/txn/registry_suite.rs::test_collection_snapshot_isolation_during_deletion (registry_suite.rs:1205, 1219) commits a document and then deletes the populated Users collection with db.delete_collection, which succeeds; that is a lower-level single-collection delete, not the rejection this leaf describes. Soft-deleted documents are untested."
   },
   {
     "id": "go.collection.delete.transactions",
     "verdict": "missing",
     "rust_tests": [],
     "evidence": "",
-    "note": "crates/db/tests/txn/registry_suite.rs::test_collection_snapshot_isolation_during_deletion deletes the collection outside any transaction and only checks what an already-open reader transaction sees, so it covers neither behaviour here. Untested: a delete in a committed transaction (delete_collections_in_txn has no test) removing the collections, and other transactions still seeing them in GetCollections before that commit."
+    "note": "crates/database/db/tests/txn/registry_suite.rs::test_collection_snapshot_isolation_during_deletion deletes the collection outside any transaction and only checks what an already-open reader transaction sees, so it covers neither behaviour here. Untested: a delete in a committed transaction (delete_collections_in_txn has no test) removing the collections, and other transactions still seeing them in GetCollections before that commit."
   },
   {
     "id": "go.collection.delete.relations",
     "verdict": "partial",
     "rust_tests": [
-      "crates/db/tests/collection/delete.rs::delete_collections_rejects_dangling_relation_targets",
-      "crates/db/tests/collection/delete.rs::delete_collections_allows_deleting_both_sides_of_relation"
+      "crates/database/db/tests/collection/delete.rs::delete_collections_rejects_dangling_relation_targets",
+      "crates/database/db/tests/collection/delete.rs::delete_collections_allows_deleting_both_sides_of_relation"
     ],
-    "evidence": "crates/db/tests/collection/delete.rs:236 deleting Users alone fails with 'cannot remove a collection while another field references it' and both survive (:239-240); crates/db/tests/collection/delete.rs:257-258 deleting both sides in one call removes both",
+    "evidence": "crates/database/db/tests/collection/delete.rs:236 deleting Users alone fails with 'cannot remove a collection while another field references it' and both survive (:239-240); crates/database/db/tests/collection/delete.rs:257-258 deleting both sides in one call removes both",
     "note": "Unverified: the error when deleting the other side (Books alone); active_only=false variant; survivor of a pair remaining queryable; deleting self-referencing one-to-one/one-to-many collections, and active-only leaving the earlier version."
   },
   {
@@ -990,7 +990,7 @@
     "verdict": "missing",
     "rust_tests": [],
     "evidence": "",
-    "note": "No test deletes a collection with secondary indexes and checks they are removed, or queries/refreshes a view whose source was deleted ('collection not found'). Closest: crates/db/src/database/mod.rs deleting_a_collection_evicts_its_vector_caches (in-memory vector code caches only, not indexes or views)."
+    "note": "No test deletes a collection with secondary indexes and checks they are removed, or queries/refreshes a view whose source was deleted ('collection not found'). Closest: crates/database/db/src/database/mod.rs deleting_a_collection_evicts_its_vector_caches (in-memory vector code caches only, not indexes or views)."
   },
   {
     "id": "go.collection.truncate.basic",
@@ -1143,7 +1143,7 @@
     "verdict": "missing",
     "rust_tests": [],
     "evidence": "",
-    "note": "No view test uses _count. 'aggregate must be provided with a property to aggregate' is only raised in crates/query/src (query_parse/aggregates.rs, runner/plan_validation.rs), not asserted for a view."
+    "note": "No view test uses _count. 'aggregate must be provided with a property to aggregate' is only raised in crates/engine/query/src (query_parse/aggregates.rs, runner/plan_validation.rs), not asserted for a view."
   },
   {
     "id": "go.view.one_to_one",

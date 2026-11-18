@@ -7,8 +7,8 @@ The optional wrapper is constructed once, after merging routes and fallback.
 This models a forwarding filter: it either refuses a request or forwards it
 to the unchanged inner router. An arbitrary application callback is trusted
 code; this model does not prove arbitrary callback bodies preserve access.
-Rust owners: crates/http/src/server.rs::Server::router and
-crates/defra-node/src/config.rs::HttpConfig::with_router_transform.
+Rust owners: crates/surfaces/http/src/server.rs::Server::router and
+crates/entry-points/defra-node/src/config.rs::HttpConfig::with_router_transform.
 -/
 
 namespace HttpRouterComposition

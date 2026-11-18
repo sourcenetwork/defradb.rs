@@ -3,7 +3,7 @@
 One database, several fronts. Each surface is a thin shell over the same core: the
 pool, the engine, the query pipeline.
 
-## HTTP (`crates/http`)
+## HTTP (`crates/surfaces/http`)
 
 An axum server on the edge, with data-path routes moved onto the pool:
 
@@ -22,14 +22,14 @@ An axum server on the edge, with data-path routes moved onto the pool:
 Auth: bearer-token middleware, per-route NAC permission mapping, optional TLS.
 Defaults: `127.0.0.1:9181`, 300 s timeout, bounded concurrency.
 
-## CLI (`crates/cli`)
+## CLI (`crates/entry-points/cli`)
 
 `defra` starts a node (HTTP, optional pg-compat, iroh or libp2p, keyring-backed keys,
 optional at-rest encryption, Vera or local ACP) and carries a full HTTP client surface
 (`defra client ...`: acp, backup, blocks, collections, documents, graphql, indexes,
 lens, p2p, txns, views), plus keyring, identity and SDL utilities.
 
-## Embedded (`crates/defra-node`)
+## Embedded (`crates/entry-points/defra-node`)
 
 One node assembly, reached through `NodeBuilder`, which opens a regolith store (server or
 embedded sizing profile, in memory or at a path). The builder fills in one `NodeConfig`
@@ -37,14 +37,14 @@ embedded sizing profile, in memory or at a path). The builder fills in one `Node
 knobs) and places the store on a pool (`storage::start_pool`); a node with no network starts
 no network runtime. FFI is built on it.
 
-## FFI (`crates/ffi`)
+## FFI (`crates/entry-points/ffi`)
 
 A C ABI static library matching Go's `cbindings/`: node lifecycle, schema, documents,
 queries and subscriptions, transactions, blocks, batch, backup, lens, indexes, ACP
 (DAC and NAC), P2P. Panics are captured per call and returned as results, never
 unwound across the boundary. For Go and mobile embedders.
 
-## pg-compat (`crates/pg-compat`)
+## pg-compat (`crates/database/pg-compat`)
 
 A Postgres wire-protocol server: accepts psql connections, translates SQL to the query
 engine (DDL, DML, joins, aggregates, expressions, parameters), on the edge runtime.
@@ -52,15 +52,15 @@ Existing SQL tooling works against defradb.rs without a new driver.
 
 ## Around the surfaces
 
-- **Orbis** (`crates/orbis`): a gRPC client for threshold BLS document signing by an
+- **Orbis** (`crates/building-blocks/orbis`): a gRPC client for threshold BLS document signing by an
   Orbis ring (the M6 milestone of the KMS plan); used for BLS-augmented batch
   signatures.
-- **KMS** (`crates/kms`): the key management service milestone set: a key store over
+- **KMS** (`crates/database/kms`): the key management service milestone set: a key store over
   durable IPLD blocks, an in-memory byte-bounded tier, remote single-flight batched
   key fetch over the P2P `encryption` topic, and the NAC/DAC dual gate for key
   release (document-scoped keys need DAC read; collection-scoped need NAC
   permission). Wire-compatible with Go's KMS.
-- **Telemetry** (`crates/telemetry`): OTLP trace/metrics export behind a feature;
+- **Telemetry** (`crates/building-blocks/telemetry`): OTLP trace/metrics export behind a feature;
   always-on process counters (retries, conflicts by layer, storage events, engine
   tickers as one OTel counter family).
 

@@ -163,8 +163,8 @@ setup-cargo-tools:
     fi
     echo "wasm-bindgen-cli: $wb_version (matched to Cargo.lock)"
 
-# protoc, required by crates/orbis's build.rs (proto/orbis.proto via tonic-prost-build).
-[doc("protoc, required by crates/orbis's build.rs.")]
+# protoc, required by crates/building-blocks/orbis's build.rs (proto/orbis.proto via tonic-prost-build).
+[doc("protoc, required by crates/building-blocks/orbis's build.rs.")]
 [group('setup')]
 setup-protoc:
     #!/usr/bin/env bash
@@ -488,12 +488,12 @@ build-fast:
 [group('build')]
 build-wasm:
     CARGO_PROFILE_RELEASE_OPT_LEVEL=z \
-        wasm-pack build crates/wasm --release --target web --out-dir ../../pkg/wasm
+        wasm-pack build crates/surfaces/wasm --release --target web --out-dir ../../../pkg/wasm
 
 # Regenerate the C header for the FFI surface.
 [group('build')]
 build-ffi-header:
-    cbindgen --config crates/ffi/cbindgen.toml --crate ffi --output crates/ffi/defradb.h
+    cbindgen --config crates/entry-points/ffi/cbindgen.toml --crate ffi --output crates/entry-points/ffi/defradb.h
 
 # Apple .xcframework plus the Swift import smoke test.
 [group('build')]
@@ -557,14 +557,19 @@ test-features:
     cargo nextest run -p cli --cargo-profile {{ profile }} --features otel --test telemetry_dedup
     cargo nextest run -p defra-node --cargo-profile {{ profile }} --features p2p
 
+# The WASM lens modules in tools/lenses that integration tests load.
+[group('test')]
+build-lenses:
+    cargo build --manifest-path tools/lenses/Cargo.toml --target wasm32-unknown-unknown
+
 # Every integration area, serially. Each spawns real nodes.
 [group('test')]
-integration:
+integration: build-lenses
     cargo nextest run -p integration-test --cargo-profile {{ profile }}
 
 # One integration area: `just integration-suite acp`, `just integration-suite p2p`.
 [group('test')]
-integration-suite suite *args:
+integration-suite suite *args: build-lenses
     cargo nextest run -p integration-test -E 'test(/^{{ suite }}::/) | binary({{ suite }})' --cargo-profile {{ profile }} {{ args }}
 
 # The basic and query areas with every node's data path on a one-worker pool
@@ -935,4 +940,4 @@ machete:
 # The Go compatibility baseline, read from its single source of truth.
 [group('misc')]
 go-baseline:
-    @grep -E 'GO_COMPAT_(BRANCH|COMMIT|TAG)' crates/defra-version/src/lib.rs
+    @grep -E 'GO_COMPAT_(BRANCH|COMMIT|TAG)' crates/foundation/defra-version/src/lib.rs

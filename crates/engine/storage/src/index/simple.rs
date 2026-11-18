@@ -1,0 +1,243 @@
+//! SimpleIndex implementation for non-unique indexes
+
+use async_trait::async_trait;
+use document::NormalValue;
+use schema::IndexDescription;
+
+use super::eq_iterator::ExactMatchIterator;
+use super::iterator::Bound;
+use super::range_iterator::RangeIterator;
+use super::validate_doc_short_id;
+use super::CollectionIndex;
+use crate::corekv::{IterOptions, MaybeSend, Reader, Result, Writer};
+use crate::keys::datastore::IndexedField;
+use crate::keys::IndexDataStoreKey;
+
+/// A simple (non-unique) index implementation.
+///
+/// SimpleIndex stores doc short IDs in the key itself, allowing
+/// multiple documents to have the same indexed field values.
+///
+/// Key format: `/[ColID]/[IdxID]/[EncodedFields]/[DocShortID]`
+/// Value: empty
+pub struct SimpleIndex {
+    /// The collection's short ID
+    collection_short_id: u32,
+    /// Index description from schema
+    desc: IndexDescription,
+}
+
+impl SimpleIndex {
+    /// Create a new SimpleIndex.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the index description has `unique = true`. Use `UniqueIndex`
+    /// for unique indexes.
+    pub fn new(collection_short_id: u32, desc: IndexDescription) -> Self {
+        assert!(
+            !desc.unique,
+            "SimpleIndex requires non-unique index, got unique=true for index '{}'",
+            desc.name
+        );
+        Self {
+            collection_short_id,
+            desc,
+        }
+    }
+
+    /// Create a new SimpleIndex, returning an error if the description is invalid.
+    pub fn try_new(collection_short_id: u32, desc: IndexDescription) -> Result<Self> {
+        if desc.unique {
+            return Err(crate::corekv::Error::Other(format!(
+                "SimpleIndex requires non-unique index, got unique=true for index '{}'",
+                desc.name
+            )));
+        }
+        Ok(Self {
+            collection_short_id,
+            desc,
+        })
+    }
+
+    /// Get the index ID
+    pub fn id(&self) -> u32 {
+        self.desc.id
+    }
+
+    /// Validate that the number of values matches the index field count.
+    fn validate_field_count(&self, values: &[NormalValue], doc_short_id: u64) -> Result<()> {
+        if values.len() != self.desc.fields.len() {
+            return Err(crate::corekv::Error::Other(format!(
+                "index '{}' field count mismatch for document '{}': expected {} fields, got {}",
+                self.desc.name,
+                doc_short_id,
+                self.desc.fields.len(),
+                values.len()
+            )));
+        }
+        Ok(())
+    }
+
+    /// The key of the entry for a document with the given field values.
+    pub fn entry_key(&self, values: &[NormalValue], doc_short_id: u64) -> Result<Vec<u8>> {
+        let fields = self.build_indexed_fields(values);
+        IndexDataStoreKey::with_doc_short_id(
+            self.collection_short_id,
+            self.desc.id,
+            fields,
+            doc_short_id,
+        )
+        .try_bytes()
+    }
+
+    /// Build IndexedField structs from values and index description.
+    fn build_indexed_fields(&self, values: &[NormalValue]) -> Vec<IndexedField> {
+        values
+            .iter()
+            .zip(self.desc.fields.iter())
+            .map(|(value, field_desc)| IndexedField::new(value.clone(), field_desc.descending))
+            .collect()
+    }
+
+    /// Get all entries with exact field values.
+    ///
+    /// Returns an iterator that yields all documents with the specified values.
+    /// For simple index, multiple documents can have the same indexed values.
+    pub async fn get<R: Reader + MaybeSend>(
+        &self,
+        txn: &R,
+        values: &[NormalValue],
+    ) -> Result<ExactMatchIterator> {
+        ExactMatchIterator::new_simple(txn, self.collection_short_id, &self.desc, values).await
+    }
+
+    /// Scan all entries in the index.
+    ///
+    /// Returns an iterator over all index entries in order (or reverse order).
+    pub async fn scan<R: Reader + MaybeSend>(
+        &self,
+        txn: &R,
+        reverse: bool,
+    ) -> Result<RangeIterator> {
+        RangeIterator::new_scan(txn, self.collection_short_id, &self.desc, false, reverse).await
+    }
+
+    /// Scan entries with a prefix match on the first N fields.
+    ///
+    /// Returns entries where the first `prefix_values.len()` fields match exactly.
+    /// Useful for composite indexes.
+    pub async fn scan_prefix<R: Reader + MaybeSend>(
+        &self,
+        txn: &R,
+        prefix_values: &[NormalValue],
+        reverse: bool,
+    ) -> Result<RangeIterator> {
+        RangeIterator::new_prefix(
+            txn,
+            self.collection_short_id,
+            &self.desc,
+            false,
+            prefix_values,
+            reverse,
+        )
+        .await
+    }
+
+    /// Scan entries within a range on a field.
+    ///
+    /// Optionally match first `prefix_values.len()` fields exactly,
+    /// then apply bounds on the next field.
+    pub async fn scan_range<R: Reader + MaybeSend>(
+        &self,
+        txn: &R,
+        prefix_values: &[NormalValue],
+        lower: Bound,
+        upper: Bound,
+        reverse: bool,
+    ) -> Result<RangeIterator> {
+        RangeIterator::new_range(
+            txn,
+            self.collection_short_id,
+            &self.desc,
+            false,
+            prefix_values,
+            lower,
+            upper,
+            reverse,
+        )
+        .await
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl CollectionIndex for SimpleIndex {
+    fn description(&self) -> &IndexDescription {
+        &self.desc
+    }
+
+    fn key_prefix(&self) -> Vec<u8> {
+        IndexDataStoreKey::index_prefix(self.collection_short_id, self.desc.id)
+    }
+
+    async fn save<T: Reader + Writer + MaybeSend>(
+        &self,
+        txn: &mut T,
+        doc_short_id: u64,
+        values: &[NormalValue],
+    ) -> Result<()> {
+        validate_doc_short_id(doc_short_id, &self.desc.name)?;
+        self.validate_field_count(values, doc_short_id)?;
+        let key = self.entry_key(values, doc_short_id)?;
+        txn.set(&key, &[]).await
+    }
+
+    async fn update<T: Reader + Writer + MaybeSend>(
+        &self,
+        txn: &mut T,
+        doc_short_id: u64,
+        old_values: &[NormalValue],
+        new_values: &[NormalValue],
+    ) -> Result<()> {
+        validate_doc_short_id(doc_short_id, &self.desc.name)?;
+        self.validate_field_count(old_values, doc_short_id)?;
+        self.validate_field_count(new_values, doc_short_id)?;
+
+        // Delete old entry
+        let old_key = self.entry_key(old_values, doc_short_id)?;
+        txn.delete(&old_key).await?;
+
+        // Insert new entry
+        let new_key = self.entry_key(new_values, doc_short_id)?;
+        txn.set(&new_key, &[]).await
+    }
+
+    async fn delete<T: Reader + Writer + MaybeSend>(
+        &self,
+        txn: &mut T,
+        doc_short_id: u64,
+        values: &[NormalValue],
+    ) -> Result<()> {
+        validate_doc_short_id(doc_short_id, &self.desc.name)?;
+        self.validate_field_count(values, doc_short_id)?;
+        let key = self.entry_key(values, doc_short_id)?;
+        txn.delete(&key).await
+    }
+
+    async fn remove_all<T: Reader + Writer + MaybeSend>(&self, txn: &mut T) -> Result<()> {
+        let prefix = IndexDataStoreKey::index_prefix(self.collection_short_id, self.desc.id);
+        // Iterate over all keys with this prefix and delete them
+        let opts = IterOptions::default().with_prefix(prefix.clone());
+        let mut iter = txn.iterator(opts).await?;
+
+        // Collect keys first using the async collect_all method
+        let items = iter.collect_all().await?;
+        let keys_to_delete: Vec<Vec<u8>> = items.into_iter().map(|kv| kv.key).collect();
+
+        for key in keys_to_delete {
+            txn.delete(&key).await?;
+        }
+        Ok(())
+    }
+}

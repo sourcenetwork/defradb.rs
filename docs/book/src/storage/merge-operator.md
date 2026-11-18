@@ -3,7 +3,7 @@
 The merge operator is defradb.rs's main superpower on top of the engine: writes that
 *commute* are expressed as merge operands, so concurrent writers of one key never
 conflict and the engine folds them in any order. `DefraMergeOperator`
-([`crates/storage/src/backends/regolith/merge/mod.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/merge/mod.rs)) implements regolith's
+([`crates/engine/storage/src/backends/regolith/merge/mod.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/merge/mod.rs)) implements regolith's
 `MergeOperator` under the name `"defra-values-v1"` and serves every operand kind from one
 dispatch on a kind byte.
 
@@ -30,7 +30,7 @@ Every operand starts with a magic (`DM\x01`) and a kind byte:
   in general; the engine keeps it deterministic by order.
 - **STATS**: two big-endian i128 halves, added with overflow checks; an overflow fails
   the merge rather than wrapping a statistic.
-- **DOCUMENT**: the base is a stored document ([`crates/document/src/stored.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/document/src/stored.rs), fields
+- **DOCUMENT**: the base is a stored document ([`crates/building-blocks/document/src/stored.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/building-blocks/document/src/stored.rs), fields
   keyed by stable u32 field ID, each with a kind and a priority). Each operand is applied
   field by field: LWW fields take the higher-priority value (empty bytes with a priority
   is a tombstone, and the priority survives), counter fields add. The stored format's
@@ -51,7 +51,7 @@ The engine can fold operands *before* seeing the base value (they may arrive in 
 
 Floats and the checked i128 statistics deliberately never fold: folding a pair could
 change rounding or hide an overflow that a later base would have surfaced
-([`crates/storage/src/backends/regolith/merge/mod.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/merge/mod.rs) documents the reasoning beside the code).
+([`crates/engine/storage/src/backends/regolith/merge/mod.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/merge/mod.rs) documents the reasoning beside the code).
 
 ## touches: which parts an operand changed
 
@@ -66,13 +66,13 @@ Projected reads are validated against exactly the operands whose `touches` retur
 
 The operator's contract is checked beside it with the engine's own property harnesses
 (`check_merge_operator`, `check_touches`) plus per-kind tests in
-`crates/storage/src/backends/regolith/merge/tests/`.
+`crates/engine/storage/src/backends/regolith/merge/tests/`.
 
 ## Head sets: state functions that compose
 
 A head set is one value holding the state of many named heads, each name in one of three
 states: `Absent`, `Ahead` (a parent seen before its child arrives) or `Live(priority)`.
-Writes are per-name state functions ([`crates/storage/src/backends/regolith/merge/head_set.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/merge/head_set.rs)):
+Writes are per-name state functions ([`crates/engine/storage/src/backends/regolith/merge/head_set.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/merge/head_set.rs)):
 
 | Operand | absent | ahead | live(p) |
 |---|---|---|---|
@@ -101,7 +101,7 @@ of a different field.
 ## Vector index records
 
 HNSW graph maintenance uses the same trick at the node level
-([`crates/storage/src/backends/regolith/merge/vector.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/merge/vector.rs)): `links(layer, neighbour)` is a 12-byte addition record; `full`
+([`crates/engine/storage/src/backends/regolith/merge/vector.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/merge/vector.rs)): `links(layer, neighbour)` is a 12-byte addition record; `full`
 appends the neighbour to that layer's sorted, deduped list. Two structural rules are
 enforced in the operator: a blind addition never raises a node's height (height is
 structural, chosen at insert), and self-links are refused. `counts(live, waste)` adjusts

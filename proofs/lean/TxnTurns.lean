@@ -19,7 +19,7 @@ skipping from a finished ticket passes only dropped tickets
 finishing call and a dropping one, are the TLA+ model
 `proofs/tla/TxnTurns.tla`.
 
-Rust anchors (`crates/ffi/src/state/turns.rs`): `Turns::take`,
+Rust anchors (`crates/entry-points/ffi/src/state/turns.rs`): `Turns::take`,
 `Turns::finish`, `Ticket`'s `Drop`.
 -/
 

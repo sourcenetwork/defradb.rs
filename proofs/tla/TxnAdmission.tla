@@ -5,15 +5,15 @@
 \* it by its ID. Callers are identities ("alice", "bob") or nobody ("anon").
 \* Requests come in through one of two surfaces, each with its own registry:
 \*   http  a server's HTTP API, where many remote callers share one node;
-\*   ffi   the C API of an embedded node (crates/defra-node, used by
-\*         crates/ffi), where the one process embedding the node is the only
+\*   ffi   the C API of an embedded node (crates/entry-points/defra-node, used by
+\*         crates/entry-points/ffi), where the one process embedding the node is the only
 \*         caller, and the identity a request carries is the user that process
 \*         acts for in that request.
 \* A registry remembers an owner key for each transaction it began, and lets a
 \* request reach the transaction only when the request's key is the same
-\* (Owners::run and Table::admits in crates/db/src/txn/owner). What the key is
+\* (Owners::run and Table::admits in crates/database/db/src/txn/owner). What the key is
 \* depends on the registry's ownership mode (TxnOwnership in
-\* crates/db/src/txn/registry/mod.rs):
+\* crates/database/db/src/txn/registry/mod.rs):
 \*   identity  the key is the identity the request acts as;
 \*   embedder  every request has the same key.
 \* A request that reaches the transaction runs its work as the identity the
@@ -30,13 +30,13 @@
 \*      control judges the wrong user - INV_ActsAsCaller.
 \*
 \* The Rust code each guard models:
-\*   EmbedderMode   crates/ffi/src/node/mod.rs: the C API's node asks
+\*   EmbedderMode   crates/entry-points/ffi/src/node/mod.rs: the C API's node asks
 \*                  NodeBuilder::with_txn_ownership for
 \*                  TxnOwnership::Embedder;
-\*   IdentityKey    crates/db/src/txn/registry/mod.rs: TxnOwnership defaults
+\*   IdentityKey    crates/database/db/src/txn/registry/mod.rs: TxnOwnership defaults
 \*                  to ByIdentity, which every other registry keeps;
-\*   ActsAsRequest  crates/db/src/txn/registry/mod.rs in_txn and
-\*                  crates/db/src/txn/registry/lifecycle.rs run_as: the work
+\*   ActsAsRequest  crates/database/db/src/txn/registry/mod.rs in_txn and
+\*                  crates/database/db/src/txn/registry/lifecycle.rs run_as: the work
 \*                  runs inside the request's own context (scope.mirror).
 \*
 \* Out of the model: commits, discards and idle expiry, which end a
@@ -67,7 +67,7 @@ Mode(s) ==
   ELSE (IF IdentityKey THEN "identity" ELSE "embedder")
 
 \* The owner key of a request from caller c on surface s (caller in
-\* crates/db/src/txn/registry/mod.rs).
+\* crates/database/db/src/txn/registry/mod.rs).
 Key(s, c) ==
   \* In embedder mode every request has one and the same key;
   IF Mode(s) = "embedder" THEN "embedder"

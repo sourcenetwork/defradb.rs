@@ -110,7 +110,7 @@ fn next_seq() -> usize {
 ///
 /// Criterion cannot run in a browser, so a criterion row exists on the native
 /// platforms and nowhere else. This family carries group and row names the
-/// browser harness in `crates/wasm/tests/perf.rs` reproduces exactly, which is
+/// browser harness in `crates/surfaces/wasm/tests/perf.rs` reproduces exactly, which is
 /// what puts a browser column beside the Linux and macOS ones on the dashboard
 /// instead of three tables that do not line up.
 fn report(rt: &common::Runtime) {

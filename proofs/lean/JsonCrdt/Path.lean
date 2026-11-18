@@ -25,7 +25,7 @@ does not start with it reads them all.
 Bytes are modeled as numbers; only `0`, `1` and `255` are special.
 
 Rust anchors: `encode_path` and `decode_path` in
-`crates/defra-core/src/json_crdt.rs`, the path keys (issue #2129).
+`crates/foundation/defra-core/src/json_crdt.rs`, the path keys (issue #2129).
 -/
 
 namespace JsonCrdt

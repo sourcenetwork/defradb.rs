@@ -2,13 +2,13 @@
 \* The story, in plain words.
 \*
 \* A node follows one document: it subscribed to the document's gossip topic
-\* (P2PAdapter::add_documents in crates/p2p-adapter/src/libp2p.rs and
+\* (P2PAdapter::add_documents in crates/surfaces/p2p-adapter/src/libp2p.rs and
 \* iroh.rs, or the restore at startup, restore_libp2p_documents and
 \* restore_iroh_p2p_state), putting the document in the shared set first. The document's publisher sends an update now and then. The
 \* node's transport hands each update on the topic to the sync coordinator
 \* through a queue, and the coordinator takes them one at a time
 \* (SyncCoordinator::handle_gossip_message in
-\* crates/p2p/src/sync/coordinator/event_handler/gossip.rs).
+\* crates/database/p2p/src/sync/coordinator/event_handler/gossip.rs).
 \*
 \* Then the node unsubscribes (P2PAdapter::remove_documents): it takes the
 \* document out of its set of followed documents, asks its transport to leave

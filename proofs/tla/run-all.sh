@@ -187,6 +187,25 @@ RUNS=(
   "MC_HttpRouterComposition_Red_Fallback.cfg HttpRouterComposition.tla RED"
   "MC_HttpRouterComposition_Red_Twice.cfg HttpRouterComposition.tla RED"
   "MC_HttpRouterComposition_Red_Overdeny.cfg HttpRouterComposition.tla RED"
+  "MC_ChunkMerge_Green.cfg ChunkMerge.tla GREEN" # readers cut the text when a peer merge kept another edit's list
+  "MC_ChunkMerge_Red_TrustList.cfg ChunkMerge.tla RED" # reader trusts the list instead of cutting the text (INV_ReadsMatchText)
+  "MC_ChunkMerge_Red_NoHashCheck.cfg ChunkMerge.tla RED" # merge stores a chunk whose hash does not match (INV_NoForgedChunk)
+  "MC_ChunkMerge_Red_MutableChunk.cfg ChunkMerge.tla RED" # merge lets a stored chunk change (INV_ChunksNeverChange)
+  "MC_ChunkMerge_Green_Delete.cfg ChunkMerge.tla GREEN" # a chunk delete waits until its article is gone here
+  "MC_ChunkMerge_Red_NoDeleteGuard.cfg ChunkMerge.tla RED" # merge takes a peer's chunk delete while the article is live (INV_ListedChunksStay)
+  "MC_ChunkMerge_Red_ListedDeleteOnly.cfg ChunkMerge.tla RED" # merge holds back only a listed chunk's delete (INV_ListedChunksStay)
+  "MC_ChunkMerge_Red_RefuseDelete.cfg ChunkMerge.tla RED" # merge refuses an early chunk delete for good (INV_DeletesNotLost)
+  "MC_ChunkMerge_Red_UnstoredDelete.cfg ChunkMerge.tla RED" # a chunk delete merges before its chunk's first block (INV_ListedChunksStay)
+  "MC_ChunkRead_Green.cfg ChunkRead.tla GREEN" # a chunk shows only while its parent is live, readable and uses it
+  "MC_ChunkRead_Red_NoDeletedCheck.cfg ChunkRead.tla RED" # deleted parent still shows its chunks (INV_ShownIsLiveAndReadable)
+  "MC_ChunkRead_Red_NoHashCheck.cfg ChunkRead.tla RED" # forged chunk claims a real hash (INV_ShownIsTheText)
+  "MC_ChunkRead_Red_SharedMemo.cfg ChunkRead.tla RED" # parent decision outlives its query (INV_ShownIsLiveAndReadable)
+  "MC_ChunkRead_Red_NoMergedCheck.cfg ChunkRead.tla RED" # a chunk that arrived first is served as public (INV_ServedIsReadable)
+  "MC_ChunkRead_Red_NoGrantCheck.cfg ChunkRead.tla RED" # revoked reader still sees chunks (INV_ShownIsLiveAndReadable)
+  "MC_ChunkRead_Red_NoListCheck.cfg ChunkRead.tla RED" # chunks dropped by an edit still show (INV_ShownIsTheText)
+  "MC_ChunkRead_Red_NoResolveCheck.cfg ChunkRead.tla RED" # a chunk of an unknown collection is served as public (INV_ServedIsReadable)
+  "MC_ChunkRead_Red_TrustList.cfg ChunkRead.tla RED" # a padded list shows chunks of old text (INV_ShownIsTheText)
+  "MC_ChunkRead_Red_NoOwnAppCheck.cfg ChunkRead.tla RED" # chunk collection's own app check skipped (INV_ShownPassesOwnApp)
   "MC_EndpointBind_Green.cfg EndpointBind.tla GREEN"
   "MC_EndpointBind_Red_Retain.cfg EndpointBind.tla RED"
   "MC_EndpointBind_Red_Address.cfg EndpointBind.tla RED"
@@ -495,6 +514,7 @@ RUNS=(
   "MC_NacDacBypass_Red_NacOff.cfg NacDacBypass.tla RED" # a bare permission check: NAC off reads as granted and opens DAC (INV_BypassOnlyWhenGranted)
   "MC_NacDacBypass_Red_Never.cfg NacDacBypass.tla RED" # no bypass, as before: the node owner reads nothing it does not own (INV_BypassWhenGranted)
   "MC_NacDacBypass_Red_Live.cfg NacDacBypass.tla RED" # grant read outside the read's transaction: a revoke after the snapshot is missed (INV_BypassOnlyWhenGranted)
+  "MC_NacDacBypass_Red_IgnoreDenial.cfg NacDacBypass.tla RED" # the caller's denial ignored: a node administrator's denied read still skips DAC (INV_DeniedNeverBypasses)
   "MC_RelationFilterScan_Green.cfg RelationFilterScan.tla GREEN" # #2099: a relation-filtered delete or update scans validated, so a concurrent change to a related document aborts it
   "MC_RelationFilterScan_Red_Unvalidated.cfg RelationFilterScan.tla RED" # scans left unvalidated: the delete commits on a stale related match (INV_DecisionHoldsAtCommit)
   "MC_DacPolicyAdd_Green.cfg DacPolicyAdd.tla GREEN" # #2321: add DAC policy checks nac, acp, creator, data, valid in Go's order; a remote ACP's policy is kept locally before its ID goes back
@@ -598,6 +618,10 @@ RUNS=(
   "MC_VerifiedRead_Red_AcceptStale.cfg VerifiedRead.tla RED" # light client skips the root check: a stale answer is accepted (INV_NeverStale)
   "MC_VerifiedRead_Red_NoRetry.cfg VerifiedRead.tla RED" # refused read never asked again: errors with asks left (INV_FailsOnlyWhenEveryAskOvertaken)
   "MC_VerifiedRead_Red_Uncapped.cfg VerifiedRead.tla RED" # retry without a cap asks past ATTEMPTS (INV_AttemptsBounded)
+  "MC_VerifiedRead_Red_NoBusyRetry.cfg VerifiedRead.tla RED" # a busy (-32002) answer never asked again: errors with patience left (INV_FailsOnlyWhenEveryAskOvertaken)
+  "MC_VerifiedRead_Red_BusyUncapped.cfg VerifiedRead.tla RED" # busy retry without a patience asks past BUSY_PATIENCE (INV_AttemptsBounded)
+  "MC_VerifiedRead_Red_PausesOnly.cfg VerifiedRead.tla RED" # patience counts only the pauses: a slow busy node carries asks past BUSY_PATIENCE (INV_AttemptsBounded)
+  "MC_VerifiedRead_Red_UndrawnPause.cfg VerifiedRead.tla RED" # patience checked against the shortest pause, the drawn one slept: an ask past BUSY_PATIENCE (INV_AttemptsBounded)
   "MC_PendingSubmission_Green.cfg PendingSubmission.tla GREEN" # a pending submission is resent until confirmed, takes effect once and stays journaled
   "MC_PendingSubmission_Green_Recalled.cfg PendingSubmission.tla GREEN" # a caller that keeps calling is confirmed though calls end early and the node drops the request
   "MC_PendingSubmission_Red_NoResend.cfg PendingSubmission.tla RED" # a lost send taken as sent waits for a receipt that cannot come
@@ -741,6 +765,42 @@ RUNS=(
   "MC_MergedFieldIndex_Red_ReadAfterPart.cfg MergedFieldIndex.tla RED" # the index update starts from the value the field merge already wrote (INV_IndexMatchesValue)
   "MC_MergedFieldIndex_Green_Clear.cfg MergedFieldIndex.tla GREEN" # a field write drops the kept read instead of updating it
   "MC_MergedFieldIndex_Red_StaleCache.cfg MergedFieldIndex.tla RED" # a field write leaves the kept read stale, so the next block loses an edit (INV_NoLostEdit)
+  "MC_DeferredIndex_Green.cfg DeferredIndex.tla GREEN" # reads through a deferred index are exact while drains catch up
+  "MC_DeferredIndex_Green_Deep.cfg DeferredIndex.tla GREEN" # the same with one drain and a third write
+  "MC_DeferredIndex_Green_Drains.cfg DeferredIndex.tla GREEN" # every owed document is eventually drained
+  "MC_DeferredIndex_Red_NoOverlay.cfg DeferredIndex.tla RED" # a read trusts stale stored entries (INV_ReadExact)
+  "MC_DeferredIndex_Red_NoOwnAppends.cfg DeferredIndex.tla RED" # a transaction misses its own increments (INV_TxReadExact)
+  "MC_DeferredIndex_Red_UnvalidatedRecord.cfg DeferredIndex.tla RED" # two drains leave an entry behind (INV_RecordMatchesIndex)
+  "MC_DeferredIndex_Red_TruncateHead.cfg DeferredIndex.tla RED" # a drain drops work appended after its plan (INV_ReadExact)
+  "MC_DeferredIndex_Red_ValidatedTxRecord.cfg DeferredIndex.tla RED" # a drain aborts a transaction that read through the index (INV_TxNotAbortedByDrain)
+  "MC_DeferredIndex_Green_Reindex.cfg DeferredIndex.tla GREEN" # a reindex walk racing drains leaves no orphan entry
+  "MC_DeferredIndex_Red_WalkOverwrite.cfg DeferredIndex.tla RED" # the walk overwrites the record and keeps the drain's entry (INV_NoOrphanEntry)
+  "MC_DeferredIndex_Red_WalkBlindRecord.cfg DeferredIndex.tla RED" # the walk's record put never conflicts, so it acts on a record a drain moved (INV_NoOrphanEntry)
+  "MC_DeferredIndex_Green_Drop.cfg DeferredIndex.tla GREEN" # a drop truncates the log in pages from the first entry left
+  "MC_DeferredIndex_Red_DropWhole.cfg DeferredIndex.tla RED" # a drop truncates the whole backlog in one transaction (INV_CleanupBounded)
+  "MC_DeferredIndex_Red_DropFromOne.cfg DeferredIndex.tla RED" # each drop page truncates from position 1 (INV_CleanupBounded)
+  "MC_DeferredIndex_Green_Poison.cfg DeferredIndex.tla GREEN" # a document that never migrates stays owed and the rest drain
+  "MC_DeferredIndex_Green_PoisonFixed.cfg DeferredIndex.tla GREEN" # a broken document drains once its lens is fixed
+  "MC_DeferredIndex_Red_PoisonAborts.cfg DeferredIndex.tla RED" # a broken document aborts the whole drain and holds the rest (PROP_HealthyDrains)
+  "MC_DeferredIndex_Red_PoisonDropped.cfg DeferredIndex.tla RED" # a broken document is truncated and forgotten (INV_ReadExact)
+  "MC_DeferredIndex_Red_FullPlanStuck.cfg DeferredIndex.tla RED" # a full plan of broken documents writes nothing and holds the rest (PROP_HealthyDrains)
+  "MC_DeferredIndex_Red_UncappedPlan.cfg DeferredIndex.tla RED" # a full plan doubles the cap with no limit (INV_PlanBounded)
+  "MC_DeferredIndexMode_Green.cfg DeferredIndexMode.tla GREEN" # an index kept the other way on an earlier start is rebuilt at open
+  "MC_DeferredIndexMode_Red_NoCheck.cfg DeferredIndexMode.tla RED" # no check at open: inline entries open deferred with no records (INV_OpenMatchesMode)
+  "MC_DeferredIndexMode_Red_OneWay.cfg DeferredIndexMode.tla RED" # the check misses a deferred index that opens inline (INV_OpenMatchesMode)
+  "MC_DeferredIndexMode_Red_KeepRecords.cfg DeferredIndexMode.tla RED" # an inline rebuild keeps stale records that hide the next change (INV_OpenMatchesMode)
+  "MC_DeferredIndexMode_Red_NoProgressReset.cfg DeferredIndexMode.tla RED" # a rebuild resumed under the other way mixes both (INV_OpenMatchesMode)
+  "MC_DeferredIndexMode_Red_BackfillFirst.cfg DeferredIndexMode.tla RED" # a stopped backfill resumes before the check, which then misses it (INV_OpenMatchesMode)
+  "MC_DeferredDrainTask_Green.cfg DeferredDrainTask.tla GREEN" # owed work is always asked for, and a quiet index settles under steady traffic
+  "MC_DeferredDrainTask_Red_StopAtFailure.cfg DeferredDrainTask.tla RED" # a failing index ends the pass and the rest is forgotten (INV_OwedKept)
+  "MC_DeferredDrainTask_Red_DropFailed.cfg DeferredDrainTask.tla RED" # a failed drain drops its request (INV_OwedKept)
+  "MC_DeferredDrainTask_Red_NoRequeue.cfg DeferredDrainTask.tla RED" # an index with work left after its turn does not ask again (INV_OwedKept)
+  "MC_DeferredDrainTask_Red_SilentPurge.cfg DeferredDrainTask.tla RED" # a purge owes without asking for a drain (INV_OwedKept)
+  "MC_DeferredDrainTask_Red_RearmSweep.cfg DeferredDrainTask.tla RED" # each pass restarts the sweep timer, so steady traffic holds it off (PROP_QuietSettles)
+  "MC_DeferredDrainTask_Red_NoSweep.cfg DeferredDrainTask.tla RED" # no sweep, as on wasm: a failed index is never retried (PROP_QuietSettles)
+  "MC_DeferredDrainTask_Red_RequestFirst.cfg DeferredDrainTask.tla RED" # a stored request beats a due sweep every time (PROP_QuietSettles)
+  "MC_DeferredDrainTask_Red_AskPerDoc.cfg DeferredDrainTask.tla RED" # a batch registers a commit callback per document it owes (INV_OneAsk)
+  "MC_DeferredDrainTask_Red_SharedNote.cfg DeferredDrainTask.tla RED" # the note that a batch asked outlives its attempt, so a later commit never asks (INV_OwedKept)
   "MC_DocumentMaterialization_Red_Overwrite.cfg DocumentMaterialization.tla RED" # active rematerialization must not clear delete marker
   "MC_DocumentMaterialization_Green.cfg DocumentMaterialization.tla GREEN" # deletion marker is componentwise/absorbing
   "MC_PushLogAdmission_Green.cfg MC_PushLogAdmission_Common.tla GREEN" # #1088 W1: capacity overflow nacks -> success implies registered-or-merged + all docs merge

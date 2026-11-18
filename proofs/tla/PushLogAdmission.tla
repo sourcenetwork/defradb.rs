@@ -1,15 +1,15 @@
 ---- MODULE PushLogAdmission ----
 \* PushLog admission at the hub's sync manager (#1088 slice 1 / W1, and F1 sibling
-\* heads), abstracting crates/p2p/src/sync/manager/process/pushlog.rs
+\* heads), abstracting crates/database/p2p/src/sync/manager/process/pushlog.rs
 \* (process_block_inner, assert_pushlog_left_durable_state), the scope rule in
-\* crates/p2p/src/sync/head_scope.rs (ScopeDecision::of), the in-memory registry in
-\* crates/p2p/src/sync/manager/process/pending_dag.rs (try_insert_pending_dag), the
-\* durable one in crates/p2p/src/sync/pending_store/store.rs (register), the hub's view
-\* of it in crates/p2p/src/sync/pending_store/view.rs (PersistedView), the Processed
+\* crates/database/p2p/src/sync/head_scope.rs (ScopeDecision::of), the in-memory registry in
+\* crates/database/p2p/src/sync/manager/process/pending_dag.rs (try_insert_pending_dag), the
+\* durable one in crates/database/p2p/src/sync/pending_store/store.rs (register), the hub's view
+\* of it in crates/database/p2p/src/sync/pending_store/view.rs (PersistedView), the Processed
 \* outcome of process_block_inner, the peer's share in
-\* crates/p2p/src/sync/pending_store/shares.rs, and the reply seams in
-\* crates/p2p/src/sync/coordinator/event_handler/pushlog.rs.
-\* Rust tests: crates/p2p/tests/unit/durable_only_ack.rs, crates/p2p/tests/unit/durable_share.rs
+\* crates/database/p2p/src/sync/pending_store/shares.rs, and the reply seams in
+\* crates/database/p2p/src/sync/coordinator/event_handler/pushlog.rs.
+\* Rust tests: crates/database/p2p/tests/unit/durable_only_ack.rs, crates/database/p2p/tests/unit/durable_share.rs
 \* poison_peer_cannot_fill_durable_cap, pending_store/tests.rs
 \* a_registration_beside_another_of_its_peer_is_refused_at_the_share.
 \*

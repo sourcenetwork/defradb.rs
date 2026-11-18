@@ -14,7 +14,7 @@ sequence, five things stay true (`Inv`):
 * every entry lists at least one key.
 
 The headline theorems are `inv_run` and `bounded_after_any_run`.
-Rust owner: crates/db/src/merge/governance/deferred.rs DeferredMerges. -/
+Rust owner: crates/database/db/src/merge/governance/deferred.rs DeferredMerges. -/
 namespace DeferredMerges
 
 /-- Key `k` holds exactly the composites whose entries list it. -/

@@ -1,0 +1,64 @@
+[package]
+name = "pg-compat"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["thiserror"]
+
+[lib]
+bench = false
+
+[dependencies]
+# Internal crates
+query = { path = "../../engine/query" }
+schema = { path = "../../foundation/schema" }
+identity = { path = "../../building-blocks/identity" }
+
+# Postgres wire protocol
+# `server-api-ring` in place of the default `server-api-aws-lc-rs`: ring is
+# unavoidable (libp2p-tls enables it), so this keeps one provider in the graph.
+pgwire = { version = "0.38", default-features = false, features = ["server-api-ring", "pg-ext-types"] }
+
+# SQL parsing
+sqlparser = { version = "0.55", features = ["visitor"] }
+
+# Async runtime: connections on nuclei sockets, each a task of the network edge
+nuclei.workspace = true
+edge = { path = "../../foundation/edge" }
+async-trait = { workspace = true }
+bytes.workspace = true
+# CertificateDer in pgwire's ClientInfo
+rustls.workspace = true
+
+# Lock-free shared state
+kovan.workspace = true
+regolith.workspace = true
+
+# Serialization
+serde_json = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Regex for parameter substitution
+regex = "1"
+
+# Error handling
+thiserror = { workspace = true }
+
+# Async streams
+futures = { workspace = true }
+
+# Hashing
+rapidhash.workspace = true
+
+[dev-dependencies]
+edge = { path = "../../foundation/edge", features = ["testing"] }
+
+[lints]
+workspace = true

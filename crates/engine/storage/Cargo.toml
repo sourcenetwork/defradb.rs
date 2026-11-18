@@ -1,0 +1,86 @@
+[package]
+name = "storage"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+bench = false
+
+[dependencies]
+web-time.workspace = true
+defra-core = { path = "../../foundation/defra-core" }
+crdt = { path = "../../building-blocks/crdt" }
+document = { path = "../../building-blocks/document" }
+schema = { path = "../../foundation/schema" }
+regolith.workspace = true
+# The worker pool: each worker's regolith queues, detached callbacks.
+workers = { path = "../../foundation/workers" }
+kovan.workspace = true
+bytes.workspace = true
+chrono = { version = "0.4", features = ["serde"] }
+
+# Async runtime
+async-trait.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# IPLD
+cid.workspace = true
+# multihash.workspace = true  # Not needed yet in Phase 1
+
+# Error handling
+thiserror.workspace = true
+
+# Hashing
+rapidhash.workspace = true
+sha2.workspace = true
+
+# At-rest keys
+zeroize = "1.8"
+
+
+# Logging
+tracing.workspace = true
+telemetry = { path = "../../building-blocks/telemetry" }
+
+# Full-text search
+bm25.workspace = true
+
+# Utilities
+hex = "0.4"
+
+[features]
+# regolith is the only backend, on every target, so there is nothing here to
+# select between. `wasm` marks the browser build, not a different store.
+default = []
+wasm = []
+# The backend conformance suite (`backends::test_suite`), for a test that
+# links the library.
+test-suite = []
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+uuid = { workspace = true, features = ["v4", "js"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Catches a panicking post-commit hook; the conformance suite joins its tasks.
+futures.workspace = true
+# Decrypts, once, a store the previous release encrypted value by value.
+crypto = { path = "../../foundation/crypto" }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+regolith = { workspace = true, features = ["testing"] }
+# The crate's own conformance suite, for its integration test.
+storage = { path = ".", features = ["test-suite"] }
+
+[dev-dependencies]
+proptest.workspace = true
+tempfile = "3.8"
+
+[lints]
+workspace = true

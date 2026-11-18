@@ -5,7 +5,7 @@ A subscriber has a bounded queue. A full queue can drop an update. The HTTP
 stream must then end so its client can fetch state again. A query error must
 be sent as an error, even when the query has no rows. An empty successful query
 is still filtered away. This models the decision in `graphql_sse` in
-`crates/http/src/handlers/graphql/query.rs`.
+`crates/surfaces/http/src/handlers/graphql/query.rs`.
 -/
 namespace SseDelivery
 

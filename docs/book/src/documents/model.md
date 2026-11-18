@@ -3,7 +3,7 @@
 ## The DocID
 
 A document's identity is its **DocID**: a UUIDv5 over a fixed namespace of the genesis
-composite block's CID ([`crates/document/src/doc_id.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/document/src/doc_id.rs)). The string form is
+composite block's CID ([`crates/building-blocks/document/src/doc_id.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/building-blocks/document/src/doc_id.rs)). The string form is
 `{base32 version}-{uuid}` (for example `bae-...`). The DocID is stable across replicas:
 any node that has the same genesis block computes the same DocID, which is what makes
 replication, dedup and the once-keys of the arrival journal possible.
@@ -13,7 +13,7 @@ The CID itself is not recoverable from the DocID string; it lives in the DAG.
 ## Short IDs
 
 Locally, every document also gets a compact **short ID**: a u64 allocated from
-`/seq/doc` in ranges of 1024 by a lock-free CAS allocator ([`crates/db/src/docid/map.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/docid/map.rs)).
+`/seq/doc` in ranges of 1024 by a lock-free CAS allocator ([`crates/database/db/src/docid/map.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/docid/map.rs)).
 Short IDs key the datastore layout (`doc_key(doc_short_id)`), which makes iteration
 order match allocation order and keeps keys small. The systemstore holds the bidirectional
 mappings (short ID to DocID and back), plus the DocRef, and the block-CID-to-DocID
@@ -25,7 +25,7 @@ the prepared-inputs rule from the doctrine chapter).
 
 ## The stored format: documents as parts
 
-The materialized value of a document is a `StoredDocument` ([`crates/document/src/stored.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/document/src/stored.rs)):
+The materialized value of a document is a `StoredDocument` ([`crates/building-blocks/document/src/stored.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/building-blocks/document/src/stored.rs)):
 magic `DFV\x01`, then fields keyed by **stable per-version u32 field IDs** (not names:
 renames must not rewrite every document), each with a kind (`Lww`, `Int64`, `Float32`,
 `Float64`), a priority, and bytes (CBOR for LWW values, big-endian numbers for counters).
@@ -36,12 +36,12 @@ The whole document is one value under one key, and the *field IDs* are the docum
 **parts**: this is what makes projected reads (`get_parts(key, parts)`) and blind
 part-operand merges the read and write primitives of the document. Part IDs are
 allocated from the systemstore and persisted per schema version
-([`crates/db/src/collection/parts.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/collection/parts.rs)), so two writers on two replicas name the same
+([`crates/database/db/src/collection/parts.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/collection/parts.rs)), so two writers on two replicas name the same
 fields with the same part IDs.
 
 ## The in-memory document
 
-The `Document` in memory ([`crates/document/src/document.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/document/src/document.rs)) carries the schema-typed
+The `Document` in memory ([`crates/building-blocks/document/src/document.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/building-blocks/document/src/document.rs)) carries the schema-typed
 field map, the current head CID, dirty tracking, the collection reference, counter
 deltas for updates, and the write preparation (precomputed keys and identity). Documents
 are built from client JSON against the collection's schema, validated, and then either

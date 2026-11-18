@@ -29,7 +29,7 @@ back once, run only on what it holds), are the TLA+ model
 `proofs/tla/CpuLedger.tla`.
 
 Rust anchors: `Ledger::hold`, `Ledger::share` and `Hold::drop`
-(`crates/workers/src/ledger.rs`).
+(`crates/foundation/workers/src/ledger.rs`).
 -/
 
 namespace CpuLedger

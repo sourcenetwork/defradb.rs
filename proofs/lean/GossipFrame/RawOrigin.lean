@@ -23,8 +23,8 @@ Bytes are modelled as natural numbers below 256. The signature check is a
 parameter, `verify`: the proof holds for any check, and says nothing about
 the cryptography itself.
 
-Rust anchors: `seal`, `open` in `crates/p2p/src/iroh/gossip/raw_origin.rs`;
-`raw_publisher` in `crates/p2p/src/iroh/gossip/delivery.rs`.
+Rust anchors: `seal`, `open` in `crates/database/p2p/src/iroh/gossip/raw_origin.rs`;
+`raw_publisher` in `crates/database/p2p/src/iroh/gossip/delivery.rs`.
 -/
 
 namespace GossipFrame.RawOrigin

@@ -6,8 +6,8 @@
 \* edge as the same actor: a present edge needs nothing, a missing one needs
 \* the actor's own authority, node authority is never borrowed, and a refused
 \* descendant rolls the whole statement back. A request caller does not replay.
-\* Rust: crates/query/src/txn/source_nac.rs source_permission_job_for;
-\* crates/db/src/document_projection.rs change_source_permission.
+\* Rust: crates/engine/query/src/txn/source_nac.rs source_permission_job_for;
+\* crates/database/db/src/document_projection.rs change_source_permission.
 EXTENDS Naturals
 
 CONSTANT Bug

@@ -16,7 +16,7 @@
 \* loop. That cycle stops the node: no command, no accept, no gossip. What
 \* must always happen: every request the consumer makes is answered.
 \*
-\* Code it models (crates/p2p/src/iroh):
+\* Code it models (crates/database/p2p/src/iroh):
 \*   gossip/inbox.rs          Inbox::push, Inbox::offer, Inbox::next  (two lanes)
 \*   gossip/driver.rs         read_stream    (offers what a peer sends; drops it when full)
 \*   gossip/driver.rs         Driver::emit   (waits for room on the event lane)

@@ -5,7 +5,8 @@ on:
     branches: ['iverc/native-release-*']
     paths:
       - Cargo.toml
-      - crates/vera/Cargo.toml
+      - crates/engine/vera/Cargo.toml
+      - crates/engine/vera-delegation/Cargo.toml
       - tools/integration-test/Cargo.toml
       - proofs/Cargo.toml
       - .github/scripts/resolve-native-release.sh

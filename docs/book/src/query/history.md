@@ -5,7 +5,7 @@ Because every write is a block in a DAG, history is queryable first-class.
 ## `_commits`
 
 The `_commits` system collection exposes the block DAG
-([`crates/query/src/runner/commits.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/query/src/runner/commits.rs), `crates/db/src/read/commits/`):
+([`crates/engine/query/src/runner/commits.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/query/src/runner/commits.rs), `crates/database/db/src/read/commits/`):
 
 - by **CID**: one block, or a traversal to a `depth` following block heads;
 - from **heads**: the frontier of a document (or collection), depth-limited;
@@ -20,7 +20,7 @@ the "gate commit queries with DAC" behaviour, ported from Go).
 ## Time travel (versioned reads)
 
 A versioned read reconstructs a document *as of* a target CID
-([`crates/db/src/read/versioned.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/read/versioned.rs)): walk the DAG from the target back to genesis,
+([`crates/database/db/src/read/versioned.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/read/versioned.rs)): walk the DAG from the target back to genesis,
 replay the CRDT deltas forward, and return the state. Encrypted fields resolve their
 DEKs through the KMS during the replay (prepared inputs, never a remote call per field).
 Versioned reads are also how "the document at this commit" is served to clients that

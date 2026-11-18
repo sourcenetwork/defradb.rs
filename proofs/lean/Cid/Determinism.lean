@@ -30,7 +30,7 @@ that is the standard crypto-hash assumption recorded in `proofs/README.md`
 
 ## Source anchors
 
-Rust (`crates/defra-core`, this worktree):
+Rust (`crates/foundation/defra-core`, this worktree):
 * `src/block.rs:80`  `Block::new` — sorts heads by `cid.to_string()` (`:83`), sorts
   links via `Ord` (`:92`), empty→`None` (`:84-88`, `:93-97`). Modeled by `Block.new`.
 * `src/block.rs:225` `impl Ord for DAGLink` — orders by `link.to_string()` then `name`.

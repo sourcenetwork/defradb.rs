@@ -20,9 +20,9 @@ The node keeps a code it does not know as `unknown`, so it can still name it
 in an error; it only ever builds one for a code above the known ones.
 
 Rust anchors: `CType::to_u8`, `CType::custom_name` and `CType::from_definition`
-in `crates/schema/src/ctype.rs`; `field_to_delta_with_priority` in
-`crates/schema/src/cid.rs`; `FieldDefinitionDeltaPayload::custom_crdt` in
-`crates/defra-core/src/block_delta.rs` (issue #2183).
+in `crates/foundation/schema/src/ctype.rs`; `field_to_delta_with_priority` in
+`crates/foundation/schema/src/cid.rs`; `FieldDefinitionDeltaPayload::custom_crdt` in
+`crates/foundation/defra-core/src/block_delta.rs` (issue #2183).
 -/
 
 namespace CustomCrdtCode

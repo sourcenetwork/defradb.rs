@@ -17,7 +17,7 @@ vocabulary the Rust side must keep matching. New families append to
 
 namespace Conformance
 
-/-- Mirrors `crates/crdt/src/field/mod.rs` `enum MergeResult`. -/
+/-- Mirrors `crates/building-blocks/crdt/src/field/mod.rs` `enum MergeResult`. -/
 inductive MergeOutcome
   | applied
   | rejectedLowerPriority
@@ -35,7 +35,7 @@ end MergeOutcome
 def mergeOutcomes : List MergeOutcome :=
   [.applied, .rejectedLowerPriority, .rejectedTieBreak]
 
-/-- Mirrors `crates/zanzibar/src/expression/mod.rs` `enum RelationExpression` —
+/-- Mirrors `crates/building-blocks/zanzibar/src/expression/mod.rs` `enum RelationExpression` —
     the domain of `Acp/Soundness.lean`'s `Expr` (the `eval_iff_derives`
     soundness theorem inducts over these constructors). -/
 inductive RelExpr

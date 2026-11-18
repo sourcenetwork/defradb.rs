@@ -27,9 +27,9 @@ selection, or two selections side by side.
 
 Rust anchors: `FragmentPath::check_nesting` and its callers in
 `parse_selection_to_selects`, `parse_selection_to_mutations` and
-`parse_selection_set` (`crates/query/src/query_parse/limits.rs`,
-`crates/query/src/query_parse/parser.rs`), and `collect_root_fields`
-(`crates/query/src/subscription.rs`), which keep the same bound.
+`parse_selection_set` (`crates/engine/query/src/query_parse/limits.rs`,
+`crates/engine/query/src/query_parse/parser.rs`), and `collect_root_fields`
+(`crates/engine/query/src/subscription.rs`), which keep the same bound.
 -/
 
 namespace FragmentNesting
