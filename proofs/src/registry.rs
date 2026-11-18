@@ -1696,14 +1696,16 @@ pub const PROPERTIES: &[Property] = &[
         // authenticated, and refuses one that a block finalized during the
         // round trip overtook. The vera provider asks such a read again, at
         // most ATTEMPTS times, and a read the node answered busy (-32002,
-        // evidence not ready by its deadline) again after a pause, for at
-        // most BUSY_PATIENCE, counted apart: an error reaches a caller only
-        // after every ask of its kind, and a stale answer is never accepted.
+        // evidence not ready by its deadline) again after a jittered pause,
+        // only while that pause ends within BUSY_PATIENCE of its first ask,
+        // the requests' own time included; the two are counted apart. An
+        // error reaches a caller only after every overtaken ask, or once no
+        // pause fits in the patience, and a stale answer is never accepted.
         family: "ACP soundness + revocation + dual-path commits",
-        name: "INV_NeverStale / INV_FailsOnlyWhenEveryAskOvertaken / INV_AttemptsBounded / LIVE_Answers: a proven read the chain overtook or the node answered busy is asked again, bounded, never accepted stale",
+        name: "INV_NeverStale / INV_FailsOnlyWhenEveryAskOvertaken / INV_AttemptsBounded / LIVE_Answers: a proven read the chain overtook or the node answered busy is asked again, bounded by a count and by elapsed time, never accepted stale",
         axis: Tla,
-        anchor: "crates/vera/src/vera_rs/provider/verified.rs verified, verified_within, ATTEMPTS, BUSY_PATIENCE, BUSY_PAUSE, busy; crates/vera/src/vera_rs/provider.rs create_policy, query_policy, query_object_owner, verify_access, create_access_decision; backbone:acp-light-client HeaderChain::accept_response",
-        model_ref: "MC_VerifiedRead_{Green,Green_Exhausted,Red_AcceptStale,Red_NoRetry,Red_Uncapped,Red_NoBusyRetry,Red_BusyUncapped}.cfg",
+        anchor: "crates/vera/src/vera_rs/provider/verified.rs verified, verified_within, Pace, WallPace, JITTER, ATTEMPTS, BUSY_PATIENCE, BUSY_PAUSE, busy; crates/inputs/src/retry.rs Jitter, pause; crates/vera/src/vera_rs/provider.rs create_policy, query_policy, query_object_owner, verify_access, create_access_decision; backbone:acp-light-client HeaderChain::accept_response",
+        model_ref: "MC_VerifiedRead_{Green,Green_Exhausted,Red_AcceptStale,Red_NoRetry,Red_Uncapped,Red_NoBusyRetry,Red_BusyUncapped,Red_PausesOnly,Red_UndrawnPause}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },
