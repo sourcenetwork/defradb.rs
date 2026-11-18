@@ -99,7 +99,12 @@ fn main() {
         watched.push(dir.join("index"));
         if let Ok(head) = fs::read_to_string(dir.join("HEAD")) {
             if let (Some(reference), Some(common)) = (head.strip_prefix("ref: "), &common_dir) {
-                watched.push(common.join(reference.trim()));
+                // A branch held only in packed-refs gets a loose file when it
+                // next moves, so watch the nearest directory that exists.
+                let loose = common.join(reference.trim());
+                if let Some(existing) = loose.ancestors().find(|path| path.exists()) {
+                    watched.push(existing.to_path_buf());
+                }
             }
         }
     }
