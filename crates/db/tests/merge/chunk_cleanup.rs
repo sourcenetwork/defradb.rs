@@ -112,7 +112,7 @@ fn an_update_deletes_the_chunks_its_text_no_longer_uses() {
             .iter()
             .map(|w| w.doc_id.clone())
             .collect();
-        assert_eq!(gone, [old.clone()]);
+        assert_eq!(gone, std::slice::from_ref(&old));
         assert!(stored(&writer.node, &old).await.is_none());
         let new = created(&updated.derived)[0].doc_id.clone();
         assert!(stored(&writer.node, &new).await.is_some());
