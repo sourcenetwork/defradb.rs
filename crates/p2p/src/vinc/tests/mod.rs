@@ -12,6 +12,7 @@ mod identity;
 mod inbound_admission;
 mod mux;
 mod redial;
+mod sticky_disconnect;
 mod topics;
 mod two_stream;
 

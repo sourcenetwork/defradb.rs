@@ -169,6 +169,9 @@ pub struct SyncStatus {
     /// Document-topic gossip messages dropped because the document is no
     /// longer followed.
     pub gossip_unfollowed_dropped_total: u64,
+    /// Deliberately disconnected peers a full quiet-peer table forgot, so
+    /// discovery may dial them again (#2992). Process-wide.
+    pub quiet_peers_evicted_total: u64,
     pub pending_dags: usize,
     pub pending_dag_capacity: usize,
     pub pending_dag_high_water: u64,
@@ -1166,6 +1169,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 .access
                 .gossip_unfollowed_dropped
                 .load(Ordering::Relaxed),
+            quiet_peers_evicted_total: crate::quiet_peers::evicted_total(),
             pending_dags: self.manager.pending_dag_count(),
             pending_dag_capacity: self.manager.max_pending_dags(),
             pending_dag_high_water: diagnostics.pending_dag_high_water,
