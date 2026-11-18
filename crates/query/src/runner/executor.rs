@@ -12,6 +12,7 @@ use identity::Did;
 
 use crate::error::{Result, TransactionError};
 use crate::executor::{GqlWarning, QueryExecutor, QueryRequest, QueryResponse, QueryResponseError};
+use crate::prepared::PreparedMutations;
 use crate::query_parse::{validate_operation, ParsedOperation};
 use crate::txn::{TransactionHandle, TransactionRegistry};
 
@@ -156,18 +157,14 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         input: &crate::prepared::PreparedInputRequest,
     ) -> Result<Option<std::sync::Arc<crate::prepared::PreparedMutations>>> {
         let runner = self.for_query(request);
-        let runner = match runner
-            .with_dac_bypass_resolved(request.identity.as_ref())
-            .await?
-        {
-            Some(bypassed) => bypassed,
-            None => runner,
-        };
         let Some(prepared) = prepared else {
             return Err(crate::error::QueryError::execution(
                 "retry input has no request preparation capsule",
             ));
         };
+        // Answered as the capsule was prepared: past document ACP only when
+        // its preparation was.
+        let runner = runner.with_prepared_dac_bypass(&prepared).unwrap_or(runner);
         prepared
             .inputs
             .answer_wave(input, |wave| runner.resolve_wave(wave))
@@ -606,23 +603,47 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
     /// grants `bypass-dac` reads and writes past document ACP, unless the
     /// request's caller denied it the bypass. `None` when that changes
     /// nothing: no caller, a bypass already resolved or denied, or none held.
-    pub(super) async fn with_dac_bypass_resolved(
-        &self,
-        caller: Option<&Did>,
-    ) -> Result<Option<Self>> {
+    /// A lookup that fails leaves the bypass off, as HTTP and FFI do at their
+    /// boundary, instead of failing a request that may never need it.
+    pub(super) async fn with_dac_bypass_resolved(&self, caller: Option<&Did>) -> Option<Self> {
         let context = self.context();
-        let Some(caller) = caller else {
-            return Ok(None);
-        };
+        let caller = caller?;
         if context.dac_bypass() || context.dac_bypass_denied() {
-            return Ok(None);
+            return None;
         }
-        if !self.fetcher.dac_bypass(caller).await? {
-            return Ok(None);
+        match self.fetcher.dac_bypass(caller).await {
+            Ok(true) => Some(self.for_request(context.into_owned().with_dac_bypass(true))),
+            Ok(false) => None,
+            Err(error) => {
+                tracing::warn!(%error, "could not resolve DAC bypass; leaving it off");
+                None
+            }
         }
-        Ok(Some(
-            self.for_request(context.into_owned().with_dac_bypass(true)),
-        ))
+    }
+
+    /// This runner with the DAC bypass `prepared` was prepared with, so a
+    /// request runs and retries as it was prepared without asking node
+    /// access control again. `None` when that changes nothing.
+    pub(super) fn with_prepared_dac_bypass(&self, prepared: &PreparedMutations) -> Option<Self> {
+        let context = self.context();
+        (prepared.dac_bypass && !context.dac_bypass() && !context.dac_bypass_denied())
+            .then(|| self.for_request(context.into_owned().with_dac_bypass(true)))
+    }
+
+    /// This runner as `request` runs: with the DAC bypass `prepared` was
+    /// prepared with, or resolved now when nothing was prepared.
+    pub(super) async fn with_request_dac_bypass(
+        &self,
+        request: &QueryRequest,
+        prepared: Option<&PreparedMutations>,
+    ) -> Option<Self> {
+        match prepared {
+            Some(prepared) => self.with_prepared_dac_bypass(prepared),
+            None => {
+                self.with_dac_bypass_resolved(request.identity.as_ref())
+                    .await
+            }
+        }
     }
 
     /// [`QueryExecutor::execute_prepared`] on a runner bound to the request.
@@ -708,13 +729,9 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             return denial;
         }
 
-        let bypassed = match self
-            .with_dac_bypass_resolved(request.identity.as_ref())
-            .await
-        {
-            Ok(bypassed) => bypassed,
-            Err(error) => return QueryResponse::error(QueryResponseError::from_query_error(error)),
-        };
+        let bypassed = self
+            .with_request_dac_bypass(&request, prepared.as_deref())
+            .await;
         let this = bypassed.as_ref().unwrap_or(self);
 
         // Resolve effective identity: request identity takes precedence over default

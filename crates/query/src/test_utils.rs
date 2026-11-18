@@ -52,6 +52,11 @@ pub fn doc_from_json(json: &str) -> Document {
 /// Mock fetcher for testing that stores documents in memory.
 pub struct MockFetcher {
     docs: HopscotchMap<String, Arc<Atom<Vec<Document>>>, RandomState>,
+    /// The identity node access control grants `bypass-dac`, if any; `Err`
+    /// when the lookup fails.
+    dac_bypass_holder: std::result::Result<Option<identity::Did>, String>,
+    /// How many times the DAC bypass was looked up.
+    dac_bypass_lookups: AtomicU64,
 }
 
 impl MockFetcher {
@@ -59,7 +64,24 @@ impl MockFetcher {
     pub fn new() -> Self {
         Self {
             docs: HopscotchMap::with_hasher(RandomState::default()),
+            dac_bypass_holder: Ok(None),
+            dac_bypass_lookups: AtomicU64::new(0),
         }
+    }
+
+    /// This fetcher answering that node access control grants `holder`
+    /// `bypass-dac`, or failing every lookup with `Err`.
+    pub fn with_dac_bypass_holder(
+        mut self,
+        holder: std::result::Result<identity::Did, String>,
+    ) -> Self {
+        self.dac_bypass_holder = holder.map(Some);
+        self
+    }
+
+    /// How many times the DAC bypass was looked up.
+    pub fn dac_bypass_lookups(&self) -> u64 {
+        self.dac_bypass_lookups.load(Ordering::SeqCst)
     }
 
     /// Add a document to a collection.
@@ -90,6 +112,14 @@ impl Default for MockFetcher {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl DocFetcher for MockFetcher {
+    async fn dac_bypass(&self, identity: &identity::Did) -> Result<bool> {
+        self.dac_bypass_lookups.fetch_add(1, Ordering::SeqCst);
+        match &self.dac_bypass_holder {
+            Ok(holder) => Ok(holder.as_ref() == Some(identity)),
+            Err(error) => Err(crate::error::QueryError::execution(error.clone())),
+        }
+    }
+
     /// A mock has no storage, so a document's short id is its 1-based position
     /// in the collection, mirroring how the real allocator hands them out.
     async fn stream_by_doc_short_ids(

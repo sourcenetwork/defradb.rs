@@ -405,6 +405,93 @@ fn the_dac_bypass_in_a_request_reads_documents_dac_hides() {
     .unwrap()
 }
 
+/// A runner over one `Company` document only `CALLER` may read under document
+/// access control, whose fetcher answers `holder` for the DAC bypass.
+fn private_company(holder: std::result::Result<Did, String>) -> QueryRunner<MockFetcher> {
+    let mut company = CollectionVersion::new(
+        "Company",
+        "v1",
+        "coll-company",
+        vec![
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+        ],
+    );
+    company.policy = Some(PolicyDescription::new("policy", "companies"));
+    let private = "bae-47bd7c29-69cc-5b8a-856f-caaa93d9ace0";
+    let fetcher = MockFetcher::new().with_dac_bypass_holder(holder);
+    fetcher.add_doc(
+        "Company",
+        crate::test_utils::doc_from_json(&format!(r#"{{"_docID":"{private}","name":"Private"}}"#)),
+    );
+    let acp = Arc::new(PolicyAcp {
+        private_docs: RapidHashMap::from_iter([(private.to_string(), Did::new(CALLER).unwrap())]),
+    });
+    QueryRunner::new(fetcher, vec![company])
+        .with_mutator(Arc::new(ContextMutator::default()))
+        .with_acp(acp)
+}
+
+const DELETE_ALL: &str = "mutation { delete_Company(filter: {}) { _docID } }";
+
+fn deleted(data: &serde_json::Value) -> usize {
+    data["delete_Company"].as_array().map_or(0, Vec::len)
+}
+
+/// The direct mutation API (what the wasm client runs every local write
+/// through) runs a write as it was prepared: past document ACP when its
+/// caller holds `bypass-dac`.
+#[test]
+fn a_direct_mutation_runs_past_dac_as_it_was_prepared() {
+    workers::block_on(async {
+        let admin = Did::new(ADMIN).unwrap();
+        let runner = private_company(Ok(admin.clone()));
+        let data = runner
+            .execute_mutation_with_identity_and_vars(DELETE_ALL, Some(admin), None)
+            .await
+            .unwrap();
+        assert_eq!(deleted(&data), 1);
+    })
+    .unwrap()
+}
+
+/// A request asks node access control for its bypass once, when it is
+/// prepared; execution and retries reuse that answer.
+#[test]
+fn a_mutation_resolves_the_dac_bypass_once() {
+    workers::block_on(async {
+        let admin = Did::new(ADMIN).unwrap();
+        let runner = private_company(Ok(admin.clone()));
+        let response = runner
+            .execute(QueryRequest::new(DELETE_ALL).with_identity(Some(admin)))
+            .await;
+        assert_ok(&response);
+        assert_eq!(deleted(response.data.as_ref().unwrap()), 1);
+        assert_eq!(runner.fetcher.dac_bypass_lookups(), 1);
+    })
+    .unwrap()
+}
+
+/// A bypass lookup that fails leaves the bypass off instead of failing the
+/// request, as HTTP and FFI do at their boundary.
+#[test]
+fn a_failed_dac_bypass_lookup_leaves_the_bypass_off() {
+    workers::block_on(async {
+        let runner = private_company(Err("node access control unavailable".to_string()));
+        let response = runner
+            .execute(QueryRequest::new(DELETE_ALL).with_identity(Some(Did::new(ADMIN).unwrap())))
+            .await;
+        assert_ok(&response);
+        assert_eq!(deleted(response.data.as_ref().unwrap()), 0);
+    })
+    .unwrap()
+}
+
 /// Records the bearer each access check presents: the one of the request it
 /// is bound to.
 #[derive(Default)]

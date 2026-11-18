@@ -145,6 +145,12 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
         });
         let execution = Box::pin(async {
             let mut prepared = runner.prepare_mutations(&request).await?;
+            // Run and retried as it was prepared: past document ACP only when
+            // its preparation was.
+            let bypassed = runner
+                .with_request_dac_bypass(&request, prepared.as_deref())
+                .await;
+            let runner = bypassed.as_ref().unwrap_or(&runner);
             loop {
                 let attempt_mutator = prepared
                     .as_ref()
@@ -162,7 +168,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
                 {
                     Err(QueryError::NeedsInput(input)) => {
                         prepared = crate::executor::QueryExecutor::resolve_retry_input(
-                            &runner, &request, prepared, &input,
+                            runner, &request, prepared, &input,
                         )
                         .await?;
                     }

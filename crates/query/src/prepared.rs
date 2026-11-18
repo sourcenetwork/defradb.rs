@@ -277,6 +277,11 @@ pub struct PreparedMutations {
     /// The request this capsule was prepared from, parsed once: each
     /// execution of the request uses a copy instead of parsing it again.
     pub parsed: Option<Arc<crate::query_parse::ParsedOperation>>,
+    /// Whether this capsule was prepared past document access control (Go's
+    /// `canDACBypass`, resolved once for the request). Its execution and
+    /// every retry run with the same answer, so a grant or revoke landing
+    /// between them cannot make execution disagree with preparation.
+    pub dac_bypass: bool,
 }
 
 impl Default for PreparedMutations {
@@ -287,6 +292,7 @@ impl Default for PreparedMutations {
             inputs: PreparedInputMemo::default(),
             engine_managed_retry: false,
             parsed: None,
+            dac_bypass: false,
         }
     }
 }

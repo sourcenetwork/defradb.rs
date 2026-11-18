@@ -41,7 +41,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         // `bypass-dac`.
         if let Some(bypassed) = self
             .with_dac_bypass_resolved(request.identity.as_ref())
-            .await?
+            .await
         {
             return Box::pin(bypassed.prepare_mutations(request)).await;
         }
@@ -91,6 +91,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 .any(|mutation| mutation.mutation_type == MutationType::Truncate)
                 && mutator.engine_retries_batches(),
             parsed: None,
+            dac_bypass: self.context().dac_bypass(),
         };
         if prepared.engine_managed_retry {
             // The identity the mutation's attempts act as.
