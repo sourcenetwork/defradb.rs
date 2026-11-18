@@ -111,7 +111,9 @@ impl super::Planner {
             for index in &collection.indexes {
                 let (can_order, needs_reverse) = can_be_ordered_by_index(order_by, index);
                 if can_order {
-                    let params = order_index_scan_params(index, needs_reverse, limit, offset);
+                    // The limit node skips the offset, so the scan only stops early.
+                    let stop = limit.filter(|&l| l > 0).map(|l| l.saturating_add(offset));
+                    let params = order_index_scan_params(index, needs_reverse, stop, 0);
                     return Some((params, true));
                 }
             }
