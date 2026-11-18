@@ -337,3 +337,4 @@ API rather than the offline command for an at-rest-encrypted store.
 ## License
 
 Apache-2.0 OR MIT
+
