@@ -323,6 +323,18 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         })?;
         drop(fetcher);
         if unchanged_skips && modified_fields.is_empty() {
+            let datastore = txn
+                .datastore()
+                .map_err(crate::error::commit_query_error)?
+                .with_projection_context(&attempt.context)
+                .with_projection_inputs(Arc::new(crate::txn::ProjectionInputs(
+                    attempt.prepared_inputs.clone().unwrap_or_default(),
+                )));
+            datastore
+                .project_document(&attempt.collection_name, &attempt.canonical_doc_id)
+                .await
+                .map_err(|error| crate::error::index_write_query_error("update", error.into()))?;
+            drop(datastore);
             // Nothing to write; the attempt still commits its reads, so a
             // concurrent change of a compared field runs it again.
             let (io, callbacks) = txn
