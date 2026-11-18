@@ -22,6 +22,8 @@ mod purge_truncate;
 mod replicate_chunks;
 mod replicate_concurrent;
 mod replicate_delete;
+mod replicate_doc_sync;
+mod replicate_filtered;
 mod replicate_parent_only;
 mod replicate_signed;
 mod support;

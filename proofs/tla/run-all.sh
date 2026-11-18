@@ -362,6 +362,10 @@ RUNS=(
   "MC_ParentChunks_Red_NoValidation.cfg ParentChunks.tla RED" # stale update after a delete creates chunks (INV_NoChunkOfDeletedParent)
   "MC_ParentChunks_Red_CreateWithoutList.cfg ParentChunks.tla RED" # signed create blocks without the list, first update ties (INV_ListMatchesText)
   "MC_ParentChunks_Red_NoLookup.cfg ParentChunks.tla RED" # a write creates chunks that arrived first, a valid create fails (INV_ValidWritesSucceed)
+  "MC_ChunkFollow_Green.cfg ChunkFollow.tla GREEN" # #2310: a chunk's push and sync follow its parent
+  "MC_ChunkFollow_Red_OwnFilter.cfg ChunkFollow.tla RED" # filter run on the chunk drops every chunk (INV_ChunksFollowParent)
+  "MC_ChunkFollow_Red_AllChunks.cfg ChunkFollow.tla RED" # chunks pushed unfiltered leak (INV_NoForeignChunks)
+  "MC_ChunkFollow_Red_SyncParentOnly.cfg ChunkFollow.tla RED" # doc sync without the chunks (INV_ChunksFollowParent)
   "MC_TruncateChunks_Green.cfg TruncateChunks.tla GREEN" # truncate empties chunks before parents
   "MC_TruncateChunks_Red_ParentsFirst.cfg TruncateChunks.tla RED" # parents first strands a racing create (INV_LiveParentHasChunks)
   "MC_TruncateChunks_Red_PurgeLeavesChunks.cfg TruncateChunks.tla RED" # purge leaves the chunks of purged articles (INV_PurgedHaveNoChunks)

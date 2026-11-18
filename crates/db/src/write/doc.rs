@@ -14,7 +14,7 @@ use crate::block::builder::DocRef;
 use crate::collection::loader::{get_collection_with_index_manager, get_collection_with_lazy_load};
 use crate::collection::Collection;
 use crate::database::DB;
-use crate::event::emission::register_update_event_callback;
+use crate::event::emission::{register_update_event_callback, FollowedParent};
 use crate::txn::held::Held;
 use crate::txn::{DbTxn, LentTxn};
 use crate::write::autocommit::helpers::write_branchable_collection_block;
@@ -153,6 +153,7 @@ impl<S: Store + 'static> DbDocMutator<S> {
             context,
             prepared_inputs: Some(&self.prepared_inputs),
             broadcaster: self.broadcaster.as_ref(),
+            follows: None,
         }
     }
 
@@ -215,6 +216,7 @@ impl<S: Store + 'static> DbDocMutator<S> {
             document_json,
             collection_block,
             creator_did,
+            None,
         )
         .map_err(|e| {
             query::error::QueryError::execution(format!(
@@ -379,13 +381,18 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         let mut doc = created.doc;
         doc.clear_write_preparation();
 
+        let document_json = document_json_value(&doc);
+        let parent = FollowedParent {
+            collection_id: collection.collection_id().to_string(),
+            document: document_json.clone(),
+        };
         self.register_update_callback(
             collection_name.to_string(),
             collection.collection_id().to_string(),
             created.doc_id.to_string(),
             created.cid,
             created.block,
-            document_json_value(&doc),
+            document_json,
             created.collection_block,
             context.creator().map(str::to_owned),
         )
@@ -393,6 +400,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         let derived = {
             let txn = self.shared_txn()?;
             self.chunk_writes(&txn, context)
+                .following(parent)
                 .create_missing(&created.doc_id.to_string(), chunk_plans)
                 .await?
         };
@@ -542,6 +550,11 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         )
         .await?;
 
+        let document_json = document_json_value(&doc);
+        let parent = FollowedParent {
+            collection_id: collection.collection_id().to_string(),
+            document: document_json.clone(),
+        };
         if let Some(doc_id) = doc.id().cloned() {
             self.register_update_callback(
                 collection_name.to_string(),
@@ -549,7 +562,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
                 doc_id.to_string(),
                 doc_cid,
                 doc_block,
-                document_json_value(&doc),
+                document_json,
                 col_block_data,
                 context.creator().map(str::to_owned),
             )
@@ -559,6 +572,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         {
             let txn = self.shared_txn()?;
             self.chunk_writes(&txn, context)
+                .following(parent)
                 .create_missing(&canonical_doc_id.to_string(), chunk_plans)
                 .await?;
         }
@@ -695,7 +709,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
             canonical_doc_id.to_string(),
             doc_cid,
             doc_block,
-            pre_delete_document_json,
+            pre_delete_document_json.clone(),
             col_block_data,
             context.creator().map(str::to_owned),
         )
@@ -703,6 +717,10 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         {
             let txn = self.shared_txn()?;
             self.chunk_writes(&txn, context)
+                .following(FollowedParent {
+                    collection_id: collection.collection_id().to_string(),
+                    document: pre_delete_document_json,
+                })
                 .delete_all(collection.schema(), &canonical_doc_id.to_string())
                 .await?;
         }

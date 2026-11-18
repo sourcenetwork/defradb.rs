@@ -222,6 +222,37 @@ impl<S: Store + 'static> DocumentHeadProvider for DbHeadProvider<S> {
         Ok(cids)
     }
 
+    async fn following_doc_ids(&self, doc_id: &str) -> p2p::error::Result<Vec<String>> {
+        let failed = |e: crate::error::Error| {
+            p2p::error::Error::HeadProvider(format!("chunk lookup failed: {e}"))
+        };
+        let txn = self.db.new_txn(true).await.map_err(failed)?;
+        let systemstore = txn.systemstore().map_err(failed)?;
+        let Some(doc_ref) = crate::docid::map::get_doc_ref(&systemstore, doc_id)
+            .await
+            .map_err(failed)?
+        else {
+            return Ok(Vec::new());
+        };
+        let Some(parent) = self
+            .db
+            .find_collection_by_root_id(doc_ref.collection_short_id)
+        else {
+            return Ok(Vec::new());
+        };
+        let mut followers = Vec::new();
+        for chunks_col in crate::chunk::purge::collections(&txn, &parent)
+            .await
+            .map_err(failed)?
+        {
+            let chunks = crate::chunk::purge::doc_ids(&txn, &chunks_col, &[doc_id.to_string()])
+                .await
+                .map_err(failed)?;
+            followers.extend(chunks.into_iter().map(|chunk| chunk.to_string()));
+        }
+        Ok(followers)
+    }
+
     async fn get_collection_heads(&self, collection_id: &str) -> p2p::error::Result<Vec<Cid>> {
         let txn = self.db.new_txn(true).await.map_err(|e| {
             p2p::error::Error::HeadProvider(format!("failed to create transaction: {}", e))

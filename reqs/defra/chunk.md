@@ -265,6 +265,20 @@ Two unconnected nodes add the same article. One updates its body to three paragr
 
 Two nodes that sign their blocks share an article. While disconnected, both update its body to the same three paragraphs. After they reconnect and the second syncs the article and the first node's chunk documents, the second shows the body and exactly its three chunks, each once.
 
+# `defra.chunk.replicate.doc_sync`: A document sync brings the parent's chunks
+
+- **Parents:** ["defra.chunk.replicate"]
+- **Scenarios:** ["chunk::replicate_doc_sync::a_document_sync_brings_the_parents_chunks"]
+
+A second node that syncs one article by its docID from the first gets the article and exactly its chunks in `Article__body_chunk`.
+
+# `defra.chunk.replicate.filtered`: A filtered replicator ships a matching parent's chunks
+
+- **Parents:** ["defra.chunk.replicate"]
+- **Scenarios:** ["chunk::replicate_filtered::a_filtered_replicator_ships_the_matching_parents_chunks", "chunk::replicate_filtered::a_filtered_replicator_replays_the_matching_parents_chunks"]
+
+A replicator for `Article` with the filter `{kind: {_eq: "public"}}` gives the second node the public article and exactly its chunks, and neither the private article nor its chunks. It holds whether the articles are written after the replicator is added or before, when adding it replays them.
+
 # `defra.chunk.backup`: Backups and chunks
 
 - **Parents:** ["defra.chunk"]

@@ -107,6 +107,7 @@ impl<S: Store + 'static> BatchMutator<S> {
             prepared_inputs: self.prepared_inputs.as_ref(),
             // The broadcast wrapper publishes derived writes, so this mutator must not.
             broadcaster: None,
+            follows: None,
         }
     }
 
@@ -217,6 +218,7 @@ impl<S: Store + 'static> BatchMutator<S> {
             doc_block,
             None,
             collection_block,
+            None,
             None,
         )
         .map_err(|e| {

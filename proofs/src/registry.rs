@@ -3208,6 +3208,15 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Text chunking",
+        name: "INV_ChunksFollowParent / INV_NoForeignChunks / INV_DeletesFollowParent",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/coordinator/broadcast.rs SyncCoordinator::push_jobs, SyncCoordinator::push_followed_document_to_replicators_with_creator; crates/db/src/merge/push_docs/follow.rs replica_takes; crates/db/src/chunk/sync/write.rs ChunkWrites::publish; crates/db/src/merge/broadcast_mutator/mod.rs BroadcastMutator::derived_heads; crates/p2p/src/sync/coordinator/event_handler/doc_sync.rs SyncCoordinator::with_followers; crates/db/src/merge/head_provider.rs DbHeadProvider::following_doc_ids",
+        model_ref: "MC_ChunkFollow_Green.cfg / MC_ChunkFollow_Red_OwnFilter.cfg / MC_ChunkFollow_Red_AllChunks.cfg / MC_ChunkFollow_Red_SyncParentOnly.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/chunk/replicate_filtered.rs a_filtered_replicator_ships_the_matching_parents_chunks; tools/integration-test/tests/testo/chunk/replicate_doc_sync.rs a_document_sync_brings_the_parents_chunks",
+    },
+    Property {
+        family: "Text chunking",
         name: "covers / bounded / pickPre_capped / deterministic / units_edit / local_edit / heading_keeps_text / unit_break_reads_only_headings / long_unit_fences",
         axis: Lean,
         anchor: "crates/chunk-split/src/split/mod.rs split, split_v1; version.rs SplitterVersion; segments.rs units, fence_before, segments; atoms.rs atoms, sentence_ends; pack.rs pack; overlap.rs with_overlap, borrow, REPEAT_SHARE",

@@ -267,6 +267,7 @@ where
             document_json,
             None,
             None,
+            self.follows.clone(),
         )
         .map_err(|e| {
             QueryError::execution(format!("failed to register chunk update callback: {e}"))

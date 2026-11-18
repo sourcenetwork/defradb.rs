@@ -110,22 +110,17 @@ where
 }
 
 /// `names` plus their `@chunk` collections, which replicate and subscribe with
-/// their parent. A `filtered` parent keeps its chunks out, since a chunk can't
-/// be matched against its parent's filter.
+/// their parent. A filtered parent's filter decides its chunks too.
 #[cfg(any(feature = "iroh", feature = "libp2p"))]
-pub fn with_chunk_collections<F>(
+pub fn with_chunk_collections(
     pusher: Option<&Arc<dyn TransportDocPusher>>,
     names: Vec<String>,
-    filtered: F,
-) -> Vec<String>
-where
-    F: Fn(&str) -> bool,
-{
+) -> Vec<String> {
     let Some(pusher) = pusher else {
         return names;
     };
     let mut all = names.clone();
-    for name in names.iter().filter(|name| !filtered(name)) {
+    for name in &names {
         for chunks in pusher.chunk_collections(name) {
             if !all.contains(&chunks) {
                 all.push(chunks);

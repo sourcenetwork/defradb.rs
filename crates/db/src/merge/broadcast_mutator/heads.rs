@@ -8,6 +8,7 @@ use p2p::sync::SyncCoordinator;
 use p2p::transport::P2PTransport;
 
 use crate::block::builder::BlockResult;
+use crate::event::emission::FollowedParent;
 
 /// What a filtered replicator decides a committed head by.
 pub(super) enum DecidedBy {
@@ -15,6 +16,8 @@ pub(super) enum DecidedBy {
     Own(Option<serde_json::Value>),
     /// A branchable collection's head, which no filter decides.
     Collection,
+    /// A chunk's parent. The chunk has none of the fields a filter names.
+    Parent(FollowedParent),
 }
 
 /// One committed head that still needs its sender markers.
@@ -71,6 +74,18 @@ impl CommittedHead {
                 self.push_unfiltered(sync, creator).await
             }
             DecidedBy::Collection => self.push_unfiltered(sync, creator).await,
+            DecidedBy::Parent(parent) => {
+                sync.push_followed_document_to_replicators_with_creator(
+                    &self.cid,
+                    &self.block,
+                    &self.doc_id,
+                    &self.collection_id,
+                    &parent.collection_id,
+                    parent.document.as_ref(),
+                    creator,
+                )
+                .await
+            }
         }
     }
 

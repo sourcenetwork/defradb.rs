@@ -17,6 +17,7 @@ use tracing::{error, warn};
 
 use crate::block::builder::BlockResult;
 use crate::database::DB;
+use crate::event::emission::FollowedParent;
 
 use super::heads::{register_committed_heads, CommittedHead, DecidedBy};
 
@@ -37,6 +38,7 @@ struct PendingBroadcast {
     se_artifacts: Vec<p2p::message::SEArtifact>,
     broadcast_cid: Option<Cid>,
     broadcast_block: Option<Bytes>,
+    follows: Option<FollowedParent>,
 }
 
 struct BroadcastCapture<'a> {
@@ -49,6 +51,7 @@ struct BroadcastCapture<'a> {
     se_artifacts: Vec<p2p::message::SEArtifact>,
     broadcast_cid: Option<Cid>,
     broadcast_block: Option<&'a Bytes>,
+    follows: Option<FollowedParent>,
 }
 
 pub(crate) struct BroadcastBatchMutator<S: Store, B: Blockstore, T: P2PTransport> {
@@ -133,6 +136,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport + 'static>
             se_artifacts,
             broadcast_cid,
             broadcast_block,
+            follows,
         } = capture;
 
         let (cid, block) = match (commit_cid, commit_block) {
@@ -159,15 +163,28 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport + 'static>
             creator_did,
             broadcast_cid,
             broadcast_block: broadcast_block.cloned(),
+            follows,
         });
 
         Ok(())
+    }
+
+    fn followed(
+        &self,
+        collection_name: &str,
+        document: Option<serde_json::Value>,
+    ) -> query::error::Result<FollowedParent> {
+        Ok(FollowedParent {
+            collection_id: self.get_collection_id(collection_name)?,
+            document,
+        })
     }
 
     async fn capture_derived(
         &self,
         context: &RequestContext,
         derived: &[query::mutator::DerivedWrite],
+        parent: FollowedParent,
     ) -> query::error::Result<()> {
         for write in derived {
             let doc_id = write.doc_id.to_string();
@@ -181,6 +198,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport + 'static>
                 se_artifacts: Vec::new(),
                 broadcast_cid: None,
                 broadcast_block: None,
+                follows: Some(parent.clone()),
             })
             .await?;
         }
@@ -195,7 +213,10 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport + 'static>
             doc_id: pending.doc_id.clone(),
             collection_id: pending.collection_id.clone(),
             creator: pending.creator_did.clone(),
-            decided_by: DecidedBy::Own(pending.document_json.clone()),
+            decided_by: match &pending.follows {
+                Some(parent) => DecidedBy::Parent(parent.clone()),
+                None => DecidedBy::Own(pending.document_json.clone()),
+            },
         }];
         if let (Some(cid), Some(block)) = (pending.broadcast_cid, pending.broadcast_block.as_ref())
         {
@@ -282,6 +303,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport + 'static>
             creator_did,
             broadcast_cid,
             broadcast_block,
+            follows: _,
         } = pending;
 
         if let Some(document_json) = &document_json {
@@ -515,6 +537,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
         let result = self.inner.create_as(context, collection_name, doc).await?;
         let doc_id = result.doc_id.to_string();
         let document_json = document_json_value(&result.document);
+        let parent = self.followed(collection_name, document_json.clone())?;
         self.capture_broadcast(BroadcastCapture {
             collection_name,
             creator_did: context.creator().map(str::to_owned),
@@ -525,9 +548,11 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
             se_artifacts: self.generate_se_artifacts(collection_name, &result.document, &[])?,
             broadcast_cid: result.broadcast_cid,
             broadcast_block: result.broadcast_block.as_ref(),
+            follows: None,
         })
         .await?;
-        self.capture_derived(context, &result.derived).await?;
+        self.capture_derived(context, &result.derived, parent)
+            .await?;
         Ok(result)
     }
 
@@ -562,6 +587,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
         if let Some(doc_id) = result.document.id() {
             let doc_id = doc_id.to_string();
             let document_json = document_json_value(&result.document);
+            let parent = self.followed(collection_name, document_json.clone())?;
             self.capture_broadcast(BroadcastCapture {
                 collection_name,
                 creator_did: context.creator().map(str::to_owned),
@@ -576,9 +602,11 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
                 )?,
                 broadcast_cid: result.broadcast_cid,
                 broadcast_block: result.broadcast_block.as_ref(),
+                follows: None,
             })
             .await?;
-            self.capture_derived(context, &result.derived).await?;
+            self.capture_derived(context, &result.derived, parent)
+                .await?;
         } else {
             warn!(
                 collection = %collection_name,
@@ -613,6 +641,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
             .inner
             .delete_as(context, collection_name, doc_id)
             .await?;
+        let parent = self.followed(collection_name, document_json.clone())?;
         let doc_id = result.doc_id.to_string();
         // Pass through the branchable collection block so it gets broadcast
         // alongside the composite delete (matches the non-batch BroadcastMutator
@@ -627,9 +656,11 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
             se_artifacts: Vec::new(),
             broadcast_cid: result.broadcast_cid,
             broadcast_block: result.broadcast_block.as_ref(),
+            follows: None,
         })
         .await?;
-        self.capture_derived(context, &result.derived).await?;
+        self.capture_derived(context, &result.derived, parent)
+            .await?;
         Ok(result)
     }
 
