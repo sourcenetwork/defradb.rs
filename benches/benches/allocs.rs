@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use db::DB;
 use defra_perf::emit::{Family, Group, Row};
-use defra_perf::measure::{per_op, CountingAllocator};
+use defra_perf::measure::{per_op, reset, taken, CountingAllocator};
 use document::{Document, NormalValue};
 use query::mutator::DocMutator;
 use query::DocFetcher;
@@ -38,6 +38,10 @@ static ALLOC: CountingAllocator<mimalloc::MiMalloc> = CountingAllocator(mimalloc
 const COLLECTION: &str = "Users";
 const FIELDS: usize = 16;
 const OPS: u64 = 200;
+/// How many collections one transaction loads into its catalog, per row. A
+/// load that copied the whole catalog would grow with this; one that does not
+/// stays flat across the rows.
+const CATALOG_SIZES: [usize; 3] = [10, 50, 200];
 
 fn field_names() -> Vec<String> {
     (0..FIELDS).map(|i| format!("field_{i}")).collect()
@@ -59,6 +63,23 @@ fn collection_version() -> CollectionVersion {
         ));
     }
     CollectionVersion::new(COLLECTION, "bafkallocs", "allocs", fields)
+}
+
+fn catalog_collection(index: usize) -> CollectionVersion {
+    CollectionVersion::new(
+        format!("Catalog{index}"),
+        format!("bafkcatalog{index}"),
+        format!("catalog{index}"),
+        vec![
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+        ],
+    )
 }
 
 fn document(seq: usize) -> Document {
@@ -151,6 +172,41 @@ fn main() {
         }),
     ));
 
+    // One transaction loading `size` collections, one at a time, as a request
+    // does on first use of each. Per load, so a row that rises with `size` is
+    // a load whose cost depends on how much the transaction already holds.
+    let names: Vec<String> = (0..CATALOG_SIZES[CATALOG_SIZES.len() - 1])
+        .map(|index| {
+            let version = catalog_collection(index);
+            let name = version.name.clone();
+            rt.block_on(db.create_collection(version))
+                .expect("the catalog collection");
+            name
+        })
+        .collect();
+    let mut catalog_bytes = Group::lower_better("collection load bytes", "bytes/op").note(
+        "Bytes allocated across the whole process per collection a transaction loads into its \
+         catalog, with that many collections loaded into the one transaction.",
+    );
+    for size in CATALOG_SIZES {
+        let load = || {
+            let txn = rt.block_on(db.new_txn(true)).expect("a transaction");
+            for name in &names[..size] {
+                rt.block_on(txn.get_collection(name))
+                    .expect("the load to succeed")
+                    .expect("the collection to exist");
+            }
+            txn.discard().expect("the discard to succeed");
+        };
+        load();
+        reset();
+        load();
+        let counted = taken();
+        let label = format!("collection load, {size} in txn");
+        group = group.row(Row::new(&label, counted.count as f64 / size as f64));
+        catalog_bytes = catalog_bytes.row(Row::new(&label, counted.bytes as f64 / size as f64));
+    }
+
     let family = Family::new(
         "Allocations per operation",
         format!(
@@ -160,10 +216,13 @@ fn main() {
         ),
     )
     .deterministic()
-    .group(group);
+    .group(group)
+    .group(catalog_bytes);
 
-    for row in family.groups.iter().flat_map(|g| &g.rows) {
-        println!("  {:<24} {:>10.1} allocations/op", row.name, row.value);
+    for group in &family.groups {
+        for row in &group.rows {
+            println!("  {:<32} {:>12.1} {}", row.name, row.value, group.unit);
+        }
     }
     family.emit("allocs");
 }

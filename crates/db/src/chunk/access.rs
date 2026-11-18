@@ -1,8 +1,4 @@
-//! Whose permissions decide access to a chunk's blocks and keys.
-//!
-//! A chunk has no policy, so its parent's applies. Blocks are history, so old
-//! chunks and chunks of a deleted parent count too, and they replicate like
-//! the parent's own old versions.
+//! A chunk's blocks and keys follow its parent's permissions, old chunks too.
 
 use document::{DocID, NormalValue};
 use schema::{CollectionVersion, CHUNK_SOURCE_ID_FIELD};
@@ -32,31 +28,65 @@ where
     merged(txn, parents).await
 }
 
-/// `doc_ids` with each chunk replaced by its parent, whose permissions decide.
+/// The collection whose readers decide a chunk collection's reads.
 ///
-/// A parent this node hasn't merged yet is left out, as in [`history_parents`].
+/// `None` when it is missing or doesn't chunk the field the chunks name, so the caller denies.
+pub fn parent_collection<S>(
+    db: &DB<S>,
+    chunks_col: &CollectionVersion,
+) -> Result<Option<Collection>>
+where
+    S: Store,
+{
+    let Some(source) = &chunks_col.chunk_of else {
+        return Ok(None);
+    };
+    Ok(db
+        .get_collection(&source.collection)?
+        .filter(|parent| parent.schema().chunked_field(&source.field_name).is_some()))
+}
+
+/// Each chunk replaced by its parent, so the parent's readers decide.
 pub async fn read_owners<S>(db: &DB<S>, txn: &DbTxn<S>, doc_ids: Vec<String>) -> Result<Vec<String>>
 where
     S: Store,
 {
-    if !db.has_chunk_collections() {
-        return Ok(doc_ids);
-    }
     let systemstore = txn.systemstore()?;
     let mut owners = Vec::with_capacity(doc_ids.len());
     for doc_id in doc_ids {
-        let doc_ref = crate::docid::map::get_doc_ref(&systemstore, &doc_id).await?;
-        let chunks_col = doc_ref
-            .and_then(|r| db.find_collection_by_root_id(r.collection_short_id))
-            .filter(|collection| collection.schema().is_generated());
-        let Some(chunks_col) = chunks_col else {
-            owners.push(doc_id);
+        // A document of an unknown collection might be a chunk, which has no policy of its own.
+        let Some(doc_ref) = crate::docid::map::get_doc_ref(&systemstore, &doc_id).await? else {
             continue;
         };
-        let parents = parents_of_chunks(txn, &chunks_col, &[doc_id]).await?;
+        let Some(collection) = db.find_collection_by_root_id(doc_ref.collection_short_id) else {
+            if stored_as_plain(txn, &doc_id).await? {
+                owners.push(doc_id);
+            }
+            continue;
+        };
+        if !collection.schema().is_generated() {
+            owners.push(doc_id);
+            continue;
+        }
+        let parents = parents_of_chunks(txn, &collection, &[doc_id]).await?;
         owners.extend(merged(txn, parents).await?);
     }
     Ok(owners)
+}
+
+// The cache can miss a collection the store holds, such as a synced one whose name another holds.
+async fn stored_as_plain<S>(txn: &DbTxn<S>, doc_id: &str) -> Result<bool>
+where
+    S: Store,
+{
+    let found = crate::collection::retriever::stored_doc_collection(
+        &txn.headstore()?,
+        &txn.blockstore()?,
+        &txn.systemstore()?,
+        doc_id,
+    )
+    .await?;
+    Ok(found.is_some_and(|collection| !collection.is_generated()))
 }
 
 async fn merged<S>(txn: &DbTxn<S>, parents: Vec<String>) -> Result<Vec<String>>

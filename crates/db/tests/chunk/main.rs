@@ -1,12 +1,15 @@
-//! Text chunking: chunk schemas, windows, chunk documents and key owners.
+//! Text chunking: chunk schemas, guards, windows, writes and key owners.
 #[path = "../common/mod.rs"]
 mod common;
 
+mod admin_ops;
+mod config;
 mod delete;
 mod guard;
 mod key_owners;
 mod kms_release;
 mod lookup;
+mod parent_collection;
 mod race;
 mod read;
 mod schema;

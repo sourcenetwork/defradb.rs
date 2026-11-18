@@ -124,12 +124,10 @@ impl ViewAddArgs {
             }
         };
 
-        let client = HttpClient::new(&ctx.url, &ctx.edge)?
-            .with_auth_token(ctx.auth_token.clone())
-            .with_verbose(ctx.verbose);
+        let (client, txn) = super::document::write_client(ctx)?;
 
         let result = client
-            .view_add(&query, &sdl, self.lens_cid.as_deref())
+            .view_add(txn.as_deref(), &query, &sdl, self.lens_cid.as_deref())
             .await?;
         println!("{}", serde_json::to_string_pretty(&result)?);
         Ok(())
@@ -138,11 +136,11 @@ impl ViewAddArgs {
 
 impl ViewRefreshArgs {
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
-        let client = HttpClient::new(&ctx.url, &ctx.edge)?
-            .with_auth_token(ctx.auth_token.clone())
-            .with_verbose(ctx.verbose);
+        let (client, txn) = super::document::write_client(ctx)?;
 
-        client.view_refresh(&self.selectors()).await?;
+        client
+            .view_refresh(txn.as_deref(), &self.selectors())
+            .await?;
         Ok(())
     }
 }

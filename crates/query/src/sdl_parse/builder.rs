@@ -1037,6 +1037,10 @@ impl<'a> SdlParser<'a> {
         collection
             .chunked_fields
             .clone_from(&type_def.directives.chunked_fields);
+        // Sorted like the identity, so a synced copy compares equal.
+        collection
+            .chunked_fields
+            .sort_by(|a, b| a.field_name.cmp(&b.field_name));
         collection
             .chunk_of
             .clone_from(&type_def.directives.chunk_of);

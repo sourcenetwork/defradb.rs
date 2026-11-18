@@ -408,6 +408,20 @@ pub struct CollectionDefinitionDeltaPayload {
     pub chunk_of: Option<Box<ChunkOfDelta>>,
 }
 
+/// The splitter version a `@chunk` setting that states none was cut with.
+///
+/// Fixed for good: deltas made before the version existed state none.
+pub const DEFAULT_SPLITTER_VERSION: u32 = 1;
+
+/// Whether `version` is the one a delta leaves unstated.
+pub fn is_default_splitter_version(version: &u32) -> bool {
+    *version == DEFAULT_SPLITTER_VERSION
+}
+
+fn default_splitter_version() -> u32 {
+    DEFAULT_SPLITTER_VERSION
+}
+
 /// One `@chunk` field's settings in its collection's delta.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChunkedFieldDelta {
@@ -417,6 +431,14 @@ pub struct ChunkedFieldDelta {
     pub max_chars: u32,
     #[serde(rename = "overlap")]
     pub overlap: u32,
+    /// The splitting rules, in the identity so peers on other rules see another collection.
+    /// Skipped at the default, so definitions made before it keep their IDs.
+    #[serde(
+        rename = "splitterVersion",
+        default = "default_splitter_version",
+        skip_serializing_if = "is_default_splitter_version"
+    )]
+    pub splitter_version: u32,
 }
 
 /// A generated chunk collection's parent field in its delta.

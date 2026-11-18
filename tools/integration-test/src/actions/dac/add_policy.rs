@@ -32,7 +32,7 @@ impl Op for AddDACPolicy {
     }
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
-        let identity = self.common.client_identity(Self::name())?;
+        let identity = self.common.acting_identity(Self::name(), state)?;
         state
             .block_on(
                 state
@@ -60,7 +60,7 @@ impl Action for AddDACPolicy {
 impl HttpRun for AddDACPolicy {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            let identity = action.common.client_identity(Self::name())?;
+            let identity = action.common.acting_identity(Self::name(), state)?;
             let policy = action.policy.clone();
             state
                 .http_as(action.common.node(), identity, |client| async move {
@@ -75,7 +75,7 @@ impl HttpRun for AddDACPolicy {
 impl CliRun for AddDACPolicy {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            let identity = action.common.client_identity(Self::name())?;
+            let identity = action.common.acting_identity(Self::name(), state)?;
             let args = ["acp", "document", "policy", "add", action.policy.as_str()];
             let printed = state
                 .defra_client_as(action.common.node(), None, identity, &args)

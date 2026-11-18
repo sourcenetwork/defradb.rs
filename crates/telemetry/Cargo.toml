@@ -51,25 +51,25 @@ regolith.workspace = true
 # the network edge given to `init`.
 net = { path = "../net", optional = true }
 edge = { path = "../edge", optional = true }
-opentelemetry-http = { version = "0.32", default-features = false, optional = true }
+opentelemetry-http = { version = "0.33", default-features = false, optional = true }
 async-trait = { workspace = true, optional = true }
 tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["registry", "std"], optional = true }
 thiserror = { workspace = true, optional = true }
 
-opentelemetry = { version = "0.32", features = ["metrics"], optional = true }
+opentelemetry = { version = "0.33", features = ["metrics"], optional = true }
 # `experimental_async_runtime` (not `rt-tokio`) is all that's needed: the
 # batch processors run on dedicated `std::thread` workers, and no tokio
 # runtime is touched.
-opentelemetry_sdk = { version = "0.32", default-features = false, features = ["experimental_async_runtime"], optional = true }
+opentelemetry_sdk = { version = "0.33", default-features = false, features = ["experimental_async_runtime"], optional = true }
 # OTLP over HTTP/proto, mirroring Go DefraDB's `otlptracehttp.New`. Default
 # endpoint is http://localhost:4318, the same default as the Go upstream. The
 # HTTP client is ours (`src/transport.rs`).
-opentelemetry-otlp = { version = "0.32", default-features = false, features = ["http-proto"], optional = true }
+opentelemetry-otlp = { version = "0.33", default-features = false, features = ["http-proto"], optional = true }
 # Provides the `SCHEMA_URL` constant for the resource's schema declaration,
 # matching Go's `resource.WithSchemaURL(semconv.SchemaURL)`.
 opentelemetry-semantic-conventions = { version = "0.33", optional = true }
-tracing-opentelemetry = { version = "0.33", optional = true }
+tracing-opentelemetry = { version = "0.34", optional = true }
 
 [lints]
 workspace = true

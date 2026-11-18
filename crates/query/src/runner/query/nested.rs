@@ -48,6 +48,11 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         // Validate groupBy and field references before planning
         let collection = self.get_collection(&select.collection_name).await?;
         super::super::plan::validate_select(select, &collection)?;
+        let float32_targets = super::relation_aggregate::float32_relation_targets(
+            select,
+            &collection,
+            &collections_map,
+        );
 
         // Create a fetcher wrapper that can be shared across plan nodes
         // We need to wrap the reference in an Arc-compatible struct
@@ -68,16 +73,15 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         let index_estimates = estimate_select(fetcher, &collection, select).await?;
 
         let plan_build_start = Instant::now();
-        let mut planner =
-            Planner::new(crate::runner::plan::indexes_for_documents(fetcher, collections).await?)
-                .with_query_limits(self.query_limits)
-                .with_fetcher(Arc::new(fetcher_arc))
-                .with_acp(self.acp.clone(), identity)
-                .with_dac_bypass(self.context().dac_bypass())
-                .with_acp_registration_projection(self.acp_registration_projection.clone())
-                .with_read_validator(self.read_validator.clone())
-                .with_retry_inputs(self.retry_inputs.clone())
-                .with_index_estimates(index_estimates);
+        let mut planner = Planner::new(collections)
+            .with_query_limits(self.query_limits)
+            .with_fetcher(Arc::new(fetcher_arc))
+            .with_acp(self.acp.clone(), identity)
+            .with_dac_bypass(self.context().dac_bypass())
+            .with_acp_registration_projection(self.acp_registration_projection.clone())
+            .with_read_validator(self.read_validator.clone())
+            .with_retry_inputs(self.retry_inputs.clone())
+            .with_index_estimates(index_estimates);
         if !fts_scores.is_empty() {
             planner = planner.with_fts_scores(fts_scores);
         }
@@ -160,8 +164,12 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         // Post-process relation-based aggregates
         // For aggregates like _count(books: {}), compute the value from joined data
         let relation_aggregate_start = Instant::now();
-        let results =
-            self.compute_relation_aggregates(results, select, &aggregate_internal_keys)?;
+        let results = self.compute_relation_aggregates(
+            results,
+            select,
+            &aggregate_internal_keys,
+            &float32_targets,
+        )?;
         profile.relation_aggregate_elapsed = relation_aggregate_start.elapsed();
 
         // For nested relation-local BM25, score the already-joined relation scope instead of

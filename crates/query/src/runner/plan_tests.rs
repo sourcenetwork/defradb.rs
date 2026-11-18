@@ -23,5 +23,13 @@ fn a_chunk_collection_is_refused_off_the_planner() {
         QueryLimits::default(),
     );
 
-    assert!(refused.is_err());
+    let Err(error) = refused else {
+        panic!("a chunk collection must not get a plan here");
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("must be read through the planner"),
+        "{error}"
+    );
 }

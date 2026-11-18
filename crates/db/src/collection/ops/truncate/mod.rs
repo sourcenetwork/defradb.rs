@@ -65,9 +65,7 @@ where
         let collection = self
             .get_collection(name)?
             .ok_or_else(|| Error::CollectionNotFound(name.to_owned()))?;
-        if collection.schema().is_generated() {
-            return Err(Error::TruncateGeneratedCollection(name.to_owned()).into());
-        }
+        crate::chunk::ensure_admin_changeable(collection.schema())?;
         if filtered && collection.schema().is_branchable {
             return Err(TruncateError::FilteredBranchable);
         }

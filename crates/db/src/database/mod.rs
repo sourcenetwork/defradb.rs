@@ -55,6 +55,9 @@ pub struct DbOptions {
     /// The embedder's check on replicated documents before their commits
     /// store anything. `None` keeps every document.
     pub replication_filter: Option<Arc<dyn crate::replication_filter::ReplicationFilter>>,
+    /// The gate every index backfill passes before each batch. `None` lets
+    /// every batch run.
+    pub index_build_gate: Option<Arc<dyn crate::index::build_gate::IndexBuildGate>>,
 }
 
 impl std::fmt::Debug for DbOptions {
@@ -78,6 +81,7 @@ impl std::fmt::Debug for DbOptions {
             )
             .field("pool", &self.pool)
             .field("replication_filter", &self.replication_filter.is_some())
+            .field("index_build_gate", &self.index_build_gate.is_some())
             .finish()
     }
 }
@@ -117,6 +121,15 @@ impl DbOptions {
         filter: Arc<dyn crate::replication_filter::ReplicationFilter>,
     ) -> Self {
         self.replication_filter = Some(filter);
+        self
+    }
+
+    /// Holds every index backfill at `gate` before each of its batches.
+    pub fn with_index_build_gate(
+        mut self,
+        gate: Arc<dyn crate::index::build_gate::IndexBuildGate>,
+    ) -> Self {
+        self.index_build_gate = Some(gate);
         self
     }
 
@@ -183,6 +196,9 @@ pub struct DB<S: Store> {
     migration_generation: AtomicU64,
     /// Whether the database has been closed.
     closed: AtomicBool,
+    /// Set when the database starts to close, so work parked at a hook (an
+    /// index build gate) stops waiting before the pool stops.
+    closing: regolith::sync::Event,
     /// Commits whose caller stopped waiting, fenced until they land: every
     /// new transaction waits for them.
     commit_fences: Arc<crate::txn::fence::CommitFences>,
@@ -190,6 +206,7 @@ pub struct DB<S: Store> {
     pub(crate) collections: Arc<crate::collection::epoch::EpochedCollections>,
     /// PQ codes of resident-codes DiskANN indexes, shared by every search.
     pub(crate) vector_codes: Arc<crate::index::vector::engine::diskann::CodeCaches>,
+    document_projector: regolith::sync::OnceCell<Arc<dyn datastore::DocumentMutationProjector>>,
     /// Event bus for subscription notifications.
     event_bus: Option<Arc<dyn Bus>>,
     /// Lens transform store for schema migrations.
@@ -229,6 +246,9 @@ pub struct DB<S: Store> {
     /// [`DB::set_nac_manager`]. When unset, all `check_node_access` calls are
     /// no-ops (NAC not configured).
     nac_manager: regolith::sync::OnceCell<std::sync::Arc<dyn NacManagerApi>>,
+    /// What every transaction owes once it writes NAC tuples, built when the
+    /// NAC manager is set.
+    node_access_writes: regolith::sync::OnceCell<Arc<dyn datastore::NodeAccessWrites>>,
     /// The node's DAC policies, where `@policy` directives are checked when a
     /// collection is added. Unset, the node runs without document ACP.
     pub(crate) dac_policies: regolith::sync::OnceCell<Arc<crate::access::dac::DacPolicies>>,
@@ -239,6 +259,9 @@ pub struct DB<S: Store> {
     /// `?Send`, so wrapping it in an `Arc` would be an `Arc` over a value that
     /// is neither `Send` nor `Sync`.
     merge_governance: regolith::sync::OnceCell<crate::merge::governance::MergeGovernance>,
+    /// Which replicated documents this node registers with a remote ACP
+    /// provider. Set once, before replication starts.
+    replica_registration: regolith::sync::OnceCell<Arc<crate::merge::ReplicaRegistration>>,
     /// Told about each composite a local write commits, so composites deferred
     /// awaiting what the write created are released.
     local_commit_release:
@@ -278,11 +301,13 @@ impl<S: Store> DB<S> {
             txn_id_counter: AtomicU64::new(0),
             migration_generation: AtomicU64::new(0),
             closed: AtomicBool::new(false),
+            closing: regolith::sync::Event::new(),
             commit_fences: Arc::default(),
             collections: Arc::new(crate::collection::epoch::EpochedCollections::new(
                 crate::collection::CollectionMap::default(),
             )),
             vector_codes: Arc::default(),
+            document_projector: regolith::sync::OnceCell::new(),
             event_bus: None,
             lens_store,
             pending_migrations: HopscotchMap::with_hasher(RandomState::default()),
@@ -294,8 +319,10 @@ impl<S: Store> DB<S> {
             network: regolith::sync::OnceCell::new(),
             kms_blockstore: regolith::sync::OnceCell::new(),
             nac_manager: regolith::sync::OnceCell::new(),
+            node_access_writes: regolith::sync::OnceCell::new(),
             dac_policies: regolith::sync::OnceCell::new(),
             merge_governance: regolith::sync::OnceCell::new(),
+            replica_registration: regolith::sync::OnceCell::new(),
             local_commit_release: regolith::sync::OnceCell::new(),
             active_actions: Arc::new(crate::database::action::ActionRegistry::default()),
             replication_runtime: Arc::default(),
@@ -349,11 +376,13 @@ impl<S: Store> DB<S> {
             txn_id_counter: AtomicU64::new(0),
             migration_generation: AtomicU64::new(0),
             closed: AtomicBool::new(false),
+            closing: regolith::sync::Event::new(),
             commit_fences: Arc::default(),
             collections: Arc::new(crate::collection::epoch::EpochedCollections::new(
                 crate::collection::CollectionMap::default(),
             )),
             vector_codes: Arc::default(),
+            document_projector: regolith::sync::OnceCell::new(),
             event_bus: None,
             lens_store,
             pending_migrations: HopscotchMap::with_hasher(RandomState::default()),
@@ -365,8 +394,10 @@ impl<S: Store> DB<S> {
             network: regolith::sync::OnceCell::new(),
             kms_blockstore: regolith::sync::OnceCell::new(),
             nac_manager: regolith::sync::OnceCell::new(),
+            node_access_writes: regolith::sync::OnceCell::new(),
             dac_policies: regolith::sync::OnceCell::new(),
             merge_governance: regolith::sync::OnceCell::new(),
+            replica_registration: regolith::sync::OnceCell::new(),
             local_commit_release: regolith::sync::OnceCell::new(),
             active_actions: Arc::new(crate::database::action::ActionRegistry::default()),
             replication_runtime: Arc::default(),
@@ -386,6 +417,10 @@ impl<S: Store> DB<S> {
     }
 
     /// Open a database from an Arc-wrapped store with options and load existing collections.
+    ///
+    /// Index backfills a restart interrupted are not resumed here: a node
+    /// resumes them with [`Self::start_resumed_index_backfills`] once it has
+    /// the database.
     pub async fn open_from_arc_with_options(store: Arc<S>, options: DbOptions) -> Result<Self>
     where
         S: 'static,
@@ -413,7 +448,9 @@ impl<S: Store> DB<S> {
         self.maybe_migrate_counter_accumulators().await?;
         self.migrate_index_format().await?;
         self.resume_index_drops().await?;
-        self.resume_index_backfills().await?;
+        // Interrupted backfills resume once the database is up
+        // (DB::start_resumed_index_backfills): an open that waited for them
+        // would wait on a build held at a gate only its caller can open.
         // Reindexes owed by schema changes a crash or a failure left unsettled.
         self.settle_owed_reindexes_after_commit().await;
         Ok(())
@@ -565,8 +602,13 @@ impl<S: Store> DB<S> {
     /// Install the NAC manager. First call wins (OnceCell); subsequent calls
     /// are silently discarded. Called once at node startup. When unset, all
     /// `check_node_access` calls are no-ops (NAC not configured).
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     pub fn set_nac_manager(&self, nac: std::sync::Arc<dyn NacManagerApi>) {
-        let _ = self.nac_manager.set(nac);
+        if self.nac_manager.set(Arc::clone(&nac)).is_ok() {
+            let _ = self
+                .node_access_writes
+                .set(Arc::new(crate::nac::EdgeRefreshOwed(nac)));
+        }
     }
 
     /// Install app merge governance. First call wins; install it before any
@@ -578,6 +620,18 @@ impl<S: Store> DB<S> {
 
     pub fn merge_governance(&self) -> Option<&crate::merge::governance::MergeGovernance> {
         self.merge_governance.get()
+    }
+
+    /// Register replicated documents of the listed collections with a remote
+    /// ACP provider ([`crate::merge::replica`]). First call wins; set it
+    /// before the merge handler is built.
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
+    pub fn set_replica_registration(&self, registration: crate::merge::ReplicaRegistration) {
+        let _ = self.replica_registration.set(Arc::new(registration));
+    }
+
+    pub fn replica_registration(&self) -> Option<&Arc<crate::merge::ReplicaRegistration>> {
+        self.replica_registration.get()
     }
 
     /// Install the hook that releases deferred composites awaiting what a
@@ -643,7 +697,7 @@ impl<S: Store> DB<S> {
         let basic_txn = BasicTxn::new(&*self.store, id, readonly)
             .await
             .map_err(Error::Storage)?;
-        Ok(self.new_db_txn(basic_txn))
+        Ok(self.new_db_txn(basic_txn).on_store(Arc::clone(&self.store)))
     }
 
     /// Runs `read` against a read-only transaction lent to it, then discards
@@ -667,9 +721,51 @@ impl<S: Store> DB<S> {
 
     /// Wraps a BasicTxn created by a storage-owned retry attempt while keeping
     /// database-scoped caches shared with ordinary transactions.
-    pub(crate) fn new_db_txn(&self, basic_txn: BasicTxn) -> DbTxn<S> {
+    pub(crate) fn new_db_txn(&self, mut basic_txn: BasicTxn) -> DbTxn<S> {
+        if let Some(projector) = self.document_projector.get() {
+            basic_txn.set_document_projector(Arc::clone(projector));
+        }
+        if let Some(writes) = self.node_access_writes.get() {
+            basic_txn.set_node_access_writes(Arc::clone(writes));
+        }
         DbTxn::of_database(basic_txn, self.vector_codes.clone())
             .with_shared_collections(Arc::clone(&self.collections))
+    }
+
+    /// Install a trusted host projection before the database serves requests.
+    pub fn set_document_projector(
+        self: &Arc<Self>,
+        projector: Arc<dyn crate::DocumentMutationProjector>,
+        document_acp: Arc<dyn acp::DocumentACP>,
+        node_did: identity::Did,
+    ) -> Result<()>
+    where
+        S: 'static,
+    {
+        #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
+        let bound: Arc<dyn datastore::DocumentMutationProjector> =
+            Arc::new(crate::document_projection::BoundProjection::new(
+                projector,
+                document_acp,
+                node_did,
+                Arc::downgrade(self),
+            ));
+        self.document_projector
+            .set(bound)
+            .map_err(|_| Error::Other("document projector already installed".into()))
+    }
+
+    /// Reconcile a trusted projection before exposing the node to requests.
+    pub async fn reconcile_document_projector(&self) -> Result<()> {
+        let Some(projector) = self.document_projector.get() else {
+            return Ok(());
+        };
+        let txn = self.new_txn(false).await?;
+        {
+            let view = txn.datastore()?;
+            projector.reconcile(&view).await.map_err(Error::Storage)?;
+        }
+        txn.commit().await
     }
 
     pub(crate) fn vector_codes(&self) -> &crate::index::vector::engine::diskann::CodeCaches {
@@ -751,6 +847,7 @@ impl<S: Store> DB<S> {
     /// pool is left to its owner: a worker cannot wait for itself to stop.
     pub async fn close(&self) -> Result<()> {
         self.closed.store(true, Ordering::SeqCst);
+        self.closing.set();
         if let Some(pool) = &self.options.pool {
             match pool.stop().await {
                 Ok(()) | Err(workers::Error::OnWorker) => {}
@@ -774,6 +871,11 @@ impl<S: Store> DB<S> {
             .pool
             .clone()
             .map_or_else(workers::default_pool, Ok)
+    }
+
+    /// Done once the database starts to close.
+    pub(crate) fn closing(&self) -> regolith::sync::EventWait<'_> {
+        self.closing.wait()
     }
 
     /// Returns true if the database has been closed.

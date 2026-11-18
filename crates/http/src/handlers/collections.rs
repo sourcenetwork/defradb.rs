@@ -225,6 +225,46 @@ pub async fn truncate_collection(
     Ok(Json(()))
 }
 
+#[derive(Deserialize)]
+struct PurgeDocumentsRequest {
+    #[serde(rename = "docIDs")]
+    doc_ids: Vec<String>,
+}
+
+/// How many documents a purge removed.
+#[derive(Serialize)]
+pub struct PurgeDocumentsResponse {
+    pub count: usize,
+}
+
+/// Hard-delete documents by DocID, in the request's transaction when it names
+/// one. Go shinzo's `collectionHandler.PurgeDocuments`; block history is
+/// always pruned unless the collection is branchable, so there is no
+/// `pruneHistory` field.
+///
+/// DELETE /api/v0/collections/{name}/documents/purge
+pub async fn purge_documents(
+    State(state): State<AppState>,
+    identity: ExtractIdentity,
+    headers: HeaderMap,
+    Path(name): Path<String>,
+    body: axum::body::Bytes,
+) -> Result<Json<PurgeDocumentsResponse>, HttpError> {
+    let request: PurgeDocumentsRequest = serde_json::from_slice(&body)
+        .map_err(|error| HttpError::BadRequest(format!("invalid request body: {error}")))?;
+    let doc_ids = request
+        .doc_ids
+        .iter()
+        .map(|id| document::DocID::from_string(id))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| HttpError::BadRequest(error.to_string()))?;
+    let count = state
+        .executor
+        .purge_by_doc_ids_as(&call_context(&identity, &headers)?, &name, &doc_ids)
+        .await?;
+    Ok(Json(PurgeDocumentsResponse { count }))
+}
+
 /// Describe a collection by name.
 ///
 /// GET /api/v0/collections/{name}/describe

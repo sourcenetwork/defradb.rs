@@ -232,11 +232,13 @@ where
     /// Gives each new document its short ID up front, so every attempt uses the same IDs.
     pub(super) async fn seed_creates(
         &self,
+        context: &RequestContext,
         collection_name: &str,
         docs: &mut [Document],
     ) -> Result<()> {
         for doc in docs {
-            self.seed_create_identity(collection_name, doc).await?;
+            self.seed_create_identity(context, collection_name, doc)
+                .await?;
         }
         Ok(())
     }

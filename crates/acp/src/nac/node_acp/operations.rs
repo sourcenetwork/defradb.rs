@@ -4,11 +4,86 @@ use identity::Did;
 
 use super::{NacStatus, NodeACP, NODE_OBJECT_ID};
 use crate::error::{Error, Result};
+use crate::nac::delegation::{DelegationFacts, NacRelation};
 use crate::nac::permission::NodePermission;
 use crate::nac::policy::{ADMIN_RELATION, NODE_POLICY_ID, NODE_RESOURCE_NAME};
 use zanzibar::{Relationship, Subject, ZanzibarStore};
 
+/// Who a node relationship change names.
+#[derive(Debug, Clone, Copy)]
+pub(super) enum ChangeSubject<'a> {
+    /// One DID, or everyone when it is the wildcard.
+    Actor(&'a Did),
+    /// The members of a named source.
+    Source,
+}
+
 impl<S: ZanzibarStore + ?Sized + 'static> NodeACP<S> {
+    /// The one authority gate for every node relationship change: direct
+    /// admin and permission grants and source edges, added or deleted.
+    /// Admins pass as before; anyone else passes only under the
+    /// held-bounded delegate rule ([`DelegationFacts::admits`]).
+    pub(super) async fn authorize_change(
+        &self,
+        requestor: &Did,
+        relation: NacRelation,
+        subject: ChangeSubject<'_>,
+        delete: bool,
+        operation: &str,
+    ) -> Result<()> {
+        if self.is_admin(requestor).await? {
+            return Ok(());
+        }
+        let facts = match relation {
+            NacRelation::Admin => DelegationFacts {
+                requestor_admin: false,
+                relation,
+                holds_operation: false,
+                holds_permission: false,
+                wildcard_subject: false,
+                privileged_subject: false,
+                delete,
+            },
+            NacRelation::Permission(permission) => {
+                let operation_permission = if delete {
+                    NodePermission::NacRelationDelete
+                } else {
+                    NodePermission::NacRelationAdd
+                };
+                let (wildcard_subject, privileged_subject) = match subject {
+                    ChangeSubject::Actor(did) if did.is_wildcard() => (true, true),
+                    ChangeSubject::Actor(did) => (false, self.is_admin(did).await?),
+                    ChangeSubject::Source => (false, false),
+                };
+                DelegationFacts {
+                    requestor_admin: false,
+                    relation,
+                    holds_operation: self
+                        .check_permission(requestor, operation_permission)
+                        .await?,
+                    holds_permission: self.check_permission(requestor, permission).await?,
+                    wildcard_subject,
+                    privileged_subject,
+                    delete,
+                }
+            }
+        };
+        if facts.admits() {
+            tracing::info!(
+                target: "nac::audit",
+                event = "delegated_change",
+                requestor = %requestor,
+                relation = %relation.as_str(),
+                delete,
+                "NAC relationship change admitted for a delegate"
+            );
+            return Ok(());
+        }
+        Err(Error::NotOwner {
+            operation: operation.into(),
+        })
+    }
+
     /// Check if an identity has a specific node permission.
     ///
     /// Returns `true` if:
@@ -118,7 +193,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NodeACP<S> {
 
     /// Add an admin relationship.
     ///
-    /// Only the owner or existing admins can add new admins.
+    /// Only the owner or existing admins can add new admins; a delegate never can.
     /// Write operations are blocked when NAC is disabled to prevent privilege escalation.
     pub async fn add_admin(&self, requestor: &Did, target: &Did) -> Result<bool> {
         // Block write operations when disabled to prevent privilege escalation
@@ -129,12 +204,14 @@ impl<S: ZanzibarStore + ?Sized + 'static> NodeACP<S> {
             ));
         }
 
-        // Check if requestor can manage admin relation
-        if !self.is_admin(requestor).await? {
-            return Err(Error::NotOwner {
-                operation: "add admin".into(),
-            });
-        }
+        self.authorize_change(
+            requestor,
+            NacRelation::Admin,
+            ChangeSubject::Actor(target),
+            false,
+            "add admin",
+        )
+        .await?;
 
         // Convert target DID to appropriate Subject (wildcard "*" -> Subject::Wildcard)
         let target_subject = if target.is_wildcard() {
@@ -205,12 +282,14 @@ impl<S: ZanzibarStore + ?Sized + 'static> NodeACP<S> {
             ));
         }
 
-        // Check if requestor can manage admin relation
-        if !self.is_admin(requestor).await? {
-            return Err(Error::NotOwner {
-                operation: "remove admin".into(),
-            });
-        }
+        self.authorize_change(
+            requestor,
+            NacRelation::Admin,
+            ChangeSubject::Actor(target),
+            true,
+            "remove admin",
+        )
+        .await?;
 
         // Convert target DID to appropriate Subject (wildcard "*" -> Subject::Wildcard)
         let target_subject = if target.is_wildcard() {
@@ -247,6 +326,8 @@ impl<S: ZanzibarStore + ?Sized + 'static> NodeACP<S> {
     /// Add a direct permission grant to an identity.
     ///
     /// This is for granting individual permissions rather than full admin access.
+    /// An admin grants any permission; a delegate only under
+    /// [`DelegationFacts::admits`].
     /// Write operations are blocked when NAC is disabled to prevent privilege escalation.
     pub async fn add_permission_grant(
         &self,
@@ -262,12 +343,14 @@ impl<S: ZanzibarStore + ?Sized + 'static> NodeACP<S> {
             ));
         }
 
-        // Only admins can grant permissions
-        if !self.is_admin(requestor).await? {
-            return Err(Error::NotOwner {
-                operation: "grant permission".into(),
-            });
-        }
+        self.authorize_change(
+            requestor,
+            NacRelation::Permission(permission),
+            ChangeSubject::Actor(target),
+            false,
+            "grant permission",
+        )
+        .await?;
 
         // Convert target DID to appropriate Subject (wildcard "*" -> Subject::Wildcard)
         let target_subject = if target.is_wildcard() {
@@ -316,6 +399,10 @@ impl<S: ZanzibarStore + ?Sized + 'static> NodeACP<S> {
 
     /// Remove a direct permission grant from an identity.
     ///
+    /// An admin revokes any grant; a delegate only under
+    /// [`DelegationFacts::admits`]. Grants carry no provenance, so a delegate
+    /// holding the permission may revoke another grantor's grant of it.
+    ///
     /// Write operations are blocked when NAC is disabled to prevent privilege escalation.
     pub async fn remove_permission_grant(
         &self,
@@ -331,12 +418,14 @@ impl<S: ZanzibarStore + ?Sized + 'static> NodeACP<S> {
             ));
         }
 
-        // Only admins can revoke permissions
-        if !self.is_admin(requestor).await? {
-            return Err(Error::NotOwner {
-                operation: "revoke permission".into(),
-            });
-        }
+        self.authorize_change(
+            requestor,
+            NacRelation::Permission(permission),
+            ChangeSubject::Actor(target),
+            true,
+            "revoke permission",
+        )
+        .await?;
 
         let target_subject = if target.is_wildcard() {
             Subject::Wildcard

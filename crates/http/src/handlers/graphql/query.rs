@@ -14,7 +14,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
 
-use query::executor::{QueryRequest, QueryResponse};
+use query::executor::{QueryRequest, QueryResponse, SUBSCRIPTION_NEEDS_SSE_ERROR_CODE};
 
 fn empty_string_as_none<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
 where
@@ -31,6 +31,7 @@ use query::subscription::{
 use query::{parse_request_with_limits, ParsedOperation, QueryLimits};
 
 use crate::error::{pool_failure, HttpError};
+use crate::handlers::closing::next_unless_closing;
 use crate::identity_extractor::ExtractIdentity;
 use crate::nac_guard::require_permission;
 use crate::query_context::{
@@ -276,20 +277,18 @@ pub async fn graphql_transactional(
     // Check if this is a subscription query.
     // Fast path: skip the full GraphQL parse for mutations/queries (the common case).
     // Only do the full parse when the query might be a subscription.
-    if might_be_subscription(&request.query)
+    // A subscription sent without SSE runs as a plain request, as Go's does,
+    // so an invalid one reports its GraphQL errors; a valid one is refused
+    // after it, below.
+    let subscription = might_be_subscription(&request.query)
         && is_subscription_operation_with_limits(
             &request.query,
             request.variables.as_ref(),
             request.operation_name.as_deref(),
             state.query_limits,
-        )
-    {
+        );
+    if subscription && wants_sse(&headers) {
         require_permission(&state, &identity, permission).await?;
-        if !wants_sse(&headers) {
-            return Err(HttpError::NotAcceptable(
-                "invalid subscription transport".to_string(),
-            ));
-        }
         // Validate before opening the stream. The per-event path enforces the
         // same rules, but by then the only place left to report a failure is
         // the log -- the caller would hold a healthy stream that never fires.
@@ -349,6 +348,17 @@ pub async fn graphql_transactional(
         }
     };
 
+    if subscription
+        && response
+            .errors
+            .iter()
+            .any(|error| error.code() == Some(SUBSCRIPTION_NEEDS_SSE_ERROR_CODE))
+    {
+        return Err(HttpError::NotAcceptable(
+            "invalid subscription transport".to_string(),
+        ));
+    }
+
     record_response_metrics(&response);
     if response.has_errors() {
         tracing::warn!(errors = ?response.errors, "GraphQL query returned errors");
@@ -364,7 +374,8 @@ pub async fn graphql_transactional(
 ///
 /// SSE event format:
 /// - `event: next` + `data: {json}` for each result
-/// - `event: complete` + `data: {}` when the stream ends
+/// - `event: complete` + `data: {}` when the stream ends, which it also does
+///   once the server's edge stops admitting requests
 async fn graphql_sse(
     state: AppState,
     identity: ExtractIdentity,
@@ -374,7 +385,7 @@ async fn graphql_sse(
         HttpError::ServiceUnavailable("event bus is not available for subscriptions".to_string())
     })?;
 
-    let mut subscription = event_bus.subscribe(&[events::EventName::Update]);
+    let mut subscription = event_bus.subscribe_closing_on_overflow(&[events::EventName::Update]);
     let query_str = request.query;
     let operation_name = request.operation_name;
     let variables = request.variables;
@@ -399,9 +410,16 @@ async fn graphql_sse(
 
     let query_limits = state.query_limits;
     let executor = state.executor.clone();
+    let closing = state.edge.closing();
 
     let stream = async_stream::stream! {
-        while let Some(message) = subscription.recv().await {
+        let mut closing = std::pin::pin!(closing);
+        while let Some(message) = next_unless_closing(closing.as_mut(), subscription.recv()).await {
+            let dropped = subscription.check_and_reset_dropped();
+            if dropped != 0 {
+                tracing::warn!(dropped, "GraphQL subscription lost updates; ending stream for resynchronization");
+                break;
+            }
             if let Some(update) = message.as_update() {
                 let event_doc_id = update.doc_id.clone();
 
@@ -423,7 +441,7 @@ async fn graphql_sse(
                     Ok(query) => query,
                     Err(error) => {
                         tracing::warn!(error = %error, "failed to scope subscription query");
-                        continue;
+                        break;
                     }
                 };
 
@@ -442,14 +460,20 @@ async fn graphql_sse(
                     &state.edge, executor.clone(), req, signing_config.clone(), dac_bypass, acting_did.clone(),
                 ).await;
 
-                // Skip empty results (filter excluded the document)
-                if !response_has_data(&response) {
+                // Empty successful results may be filtered by document authorization.
+                if !response.has_errors() && !response_has_data(&response) {
                     continue;
                 }
 
-                if let Ok(json) = serde_json::to_string(&response) {
-                    yield Ok(Event::default().event("next").data(json));
-                }
+                let failed = response.has_errors();
+                match serde_json::to_string(&response) {
+                    Ok(json) => yield Ok(Event::default().event("next").data(json)),
+                    Err(error) => {
+                        tracing::warn!(%error, "failed to serialize subscription response");
+                        break;
+                    }
+                };
+                if failed { break; }
             }
         }
 

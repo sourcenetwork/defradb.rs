@@ -12,6 +12,7 @@ use query::subscription::response_has_data;
 use serde::Deserialize;
 
 use crate::error::HttpError;
+use crate::handlers::closing::next_unless_closing;
 use crate::identity_extractor::ExtractIdentity;
 use crate::nac_guard::require_permission;
 use crate::query_context::{
@@ -72,7 +73,7 @@ fn parse_event_filter(event: Option<&str>) -> Result<EventSubscriptionFilter, Ht
 #[derive(Clone)]
 struct EventAccessContext {
     executor: Arc<dyn query::executor::QueryExecutor>,
-    collection_mgmt: Option<Arc<dyn crate::router::CollectionManagementOperations>>,
+    collections: Option<Arc<dyn crate::router::CollectionLookup>>,
     signing_config: Option<defra_core::signing::SigningConfig>,
     state: AppState,
     identity: ExtractIdentity,
@@ -89,27 +90,28 @@ impl EventAccessContext {
         doc_id: &str,
     ) -> Result<bool, HttpError> {
         let dac_bypass = resolve_dac_bypass(&self.state, &self.identity).await;
-        let Some(collection_mgmt) = &self.collection_mgmt else {
+        let Some(collections) = &self.collections else {
             // Without collection metadata we cannot safely prove visibility.
             return Ok(!self.acp_enabled);
         };
 
         // The version lookup reads the store for a version the cache does not
         // hold: only when the ID is not a known collection's.
-        let collection = match collection_mgmt
+        let collection = match collections
             .find_collection_by_id(collection_id)
             .await
             .map_err(HttpError::Internal)?
         {
             Some(collection) => Some(collection),
-            None => collection_mgmt
+            None => collections
                 .get_collection_by_version_id(collection_id)
                 .await
                 .map_err(HttpError::Internal)?,
         };
 
+        // An unknown collection could be a chunk one, which is gated even without ACP.
         let Some(collection) = collection else {
-            return Ok(!self.acp_enabled);
+            return Ok(false);
         };
 
         // A chunk is gated by its parent even without ACP.
@@ -171,7 +173,9 @@ impl EventAccessContext {
 
 /// GET /api/v0/events — stream event bus events as SSE.
 ///
-/// Optional query param `?event=topic-peer-event` filters by event name.
+/// Optional query param `?event=topic-peer-event` filters by event name. The
+/// stream ends with its `complete` event once the server's edge stops
+/// admitting requests.
 pub async fn events_sse(
     State(state): State<AppState>,
     identity: ExtractIdentity,
@@ -194,7 +198,7 @@ pub async fn events_sse(
     let mut subscription = event_bus.subscribe(&filter.events);
     let access = EventAccessContext {
         executor: state.executor.clone(),
-        collection_mgmt: state.collection_mgmt.clone(),
+        collections: state.collection_lookup.clone(),
         signing_config: resolve_signing_config(&state, &identity),
         state: state.clone(),
         identity: identity.clone(),
@@ -208,8 +212,10 @@ pub async fn events_sse(
         ),
     };
 
+    let closing = state.edge.closing();
     let stream = async_stream::stream! {
-        while let Some(message) = subscription.recv().await {
+        let mut closing = std::pin::pin!(closing);
+        while let Some(message) = next_unless_closing(closing.as_mut(), subscription.recv()).await {
             let json = if let Some(data) = message.as_topic_peer_event() {
                 serde_json::json!({
                     "name": "topic-peer-event",

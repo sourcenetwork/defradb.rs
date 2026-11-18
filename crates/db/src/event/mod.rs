@@ -2,3 +2,4 @@
 
 pub(crate) mod arrivals;
 pub mod emission;
+pub(crate) mod updates;

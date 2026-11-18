@@ -19,10 +19,10 @@ use axum::{
 
 use defra_core::RequestContext;
 
-use crate::identity_extractor::{parse_identity_from_headers, ExtractIdentity, MiddlewareIdentity};
-use crate::nac_guard::require_permission;
-use crate::route_permissions::{route_permission, RoutePermission};
-use crate::router::AppState;
+use crate::identity_extractor::{caller_from_headers, ExtractIdentity, MiddlewareIdentity};
+use crate::nac_guard::require_permissions;
+use crate::route_permissions::{self, route_permission, RoutePermission};
+use crate::router::{AppState, NodePermission};
 
 /// Auth middleware that enforces route-level permissions.
 ///
@@ -45,32 +45,57 @@ pub async fn auth_middleware(
 
     let permission = route_permission(path, &method);
     let is_exempt = matches!(permission, RoutePermission::Exempt);
+    let reads_collection_first = route_permissions::reads_collection_first(path, &method);
 
     // Parse the caller's identity once. The same value is reused below both to
     // pre-populate the handler extension and to bind the request-scoped NAC
     // context, so the JWT is verified only once per request.
-    let acting_did = match permission {
+    let caller = match permission {
         RoutePermission::Exempt => None,
         RoutePermission::IdentityOnly | RoutePermission::Dynamic | RoutePermission::Required(_) => {
-            match parse_identity_from_headers(request.headers()) {
+            match caller_from_headers(request.headers(), state.doc_acp.as_deref()) {
                 Ok(did) => did,
                 Err(err) => return err.into_response(),
             }
         }
     };
 
-    if !is_exempt {
+    let (acting_did, context) = bind_caller(&mut request, caller, !is_exempt);
+    let execution = async move {
+        let identity = ExtractIdentity::from_did(acting_did);
+        // `get-collection` first on the collection handler routes, then the
+        // route's own permission, decided in one call so the edge crosses
+        // onto the pool once.
+        let both;
+        let checks: &[NodePermission] = match (reads_collection_first, &permission) {
+            (true, RoutePermission::Required(own)) => {
+                both = [NodePermission::CollectionGet, *own];
+                &both
+            }
+            (true, _) => &[NodePermission::CollectionGet],
+            (false, RoutePermission::Required(own)) => std::slice::from_ref(own),
+            (false, _) => &[],
+        };
+        if let Err(err) = require_permissions(&state, &identity, checks).await {
+            return err.into_response();
+        }
+        next.run(request).await
+    };
+    context.mirror(execution).await
+}
+
+fn bind_caller(
+    request: &mut Request,
+    caller: Option<acp::AuthenticatedCaller>,
+    publish_identity: bool,
+) -> (Option<identity::Did>, RequestContext) {
+    let expiration = caller.as_ref().map(|caller| caller.expires_at);
+    let acting_did = caller.map(|caller| caller.did);
+    if publish_identity {
         request
             .extensions_mut()
             .insert(MiddlewareIdentity(acting_did.clone()));
     }
-
-    // The request's context carries the caller's DID to the DB-layer NAC
-    // checks the handlers reach, mirroring Go's `identity.FromContext`, and
-    // this request's verified token from its header, the one a remote ACP
-    // acts on the caller's behalf with. Never publish the token in the
-    // process-wide DID map: concurrent requests can share a DID while
-    // carrying different authorization tokens.
     let scoped = acting_did.as_ref().map(ToString::to_string);
     let bearer = acting_did.as_ref().and_then(|_| {
         request
@@ -86,16 +111,24 @@ pub async fn auth_middleware(
     });
     let context = RequestContext::default()
         .with_identity(scoped.clone())
-        .with_bearer(scoped, bearer);
+        .with_bearer(scoped, bearer)
+        .with_authorization_expiration(expiration);
     request.extensions_mut().insert(context.clone());
-    let execution = async move {
-        if let RoutePermission::Required(perm) = permission {
-            let identity = ExtractIdentity::from_did(acting_did);
-            if let Err(err) = require_permission(&state, &identity, perm).await {
-                return err.into_response();
-            }
-        }
-        next.run(request).await
+    (acting_did, context)
+}
+
+/// Authenticate application routes with this node's credential verifier.
+/// The application owner decides operation permissions; a verified caller is
+/// never itself a document or node-access grant.
+pub async fn authenticate_application(
+    State(state): State<AppState>,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    let caller = match caller_from_headers(request.headers(), state.doc_acp.as_deref()) {
+        Ok(caller) => caller,
+        Err(error) => return error.into_response(),
     };
-    context.mirror(execution).await
+    let (_, context) = bind_caller(&mut request, caller, true);
+    context.mirror(next.run(request)).await
 }

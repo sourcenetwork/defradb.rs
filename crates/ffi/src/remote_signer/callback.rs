@@ -18,7 +18,12 @@ pub const DEFRA_SIGN_RETRYABLE: c_int = 2;
 /// intended for device-bound keys such as Secure Enclave-backed P-256 keys.
 ///
 /// Contract:
-/// - `signer_handle` is an opaque host-managed context value.
+/// - `signer_handle` is an opaque host-managed context value. It must stay
+///   valid, and the callback callable, until every node using the DID is
+///   closed or given another identity, not just until the identity's handle
+///   is freed: a node keeps its hold on the identity, and signs through the
+///   callback, after `defra_identity_free`. Freeing the context together with
+///   the handle leaves such a node calling into freed memory.
 /// - `did` is the registered signing DID for this key.
 /// - `key_type` is the registered Defra key type, for example `secp256r1`.
 /// - `payload_ptr` / `payload_len` describe the exact message bytes to sign.
@@ -50,7 +55,9 @@ pub type DefraRemoteSignCallback = unsafe extern "C" fn(
 ///
 /// Contract:
 /// - `signer_handle`, `did` and `key_type` are as for
-///   [`DefraRemoteSignCallback`].
+///   [`DefraRemoteSignCallback`], and so is how long `signer_handle` and the
+///   callback must stay valid: until every node using the DID is closed or
+///   given another identity, not just until the handle is freed.
 /// - `payload_ptr` / `payload_len` are the exact message bytes to sign. They,
 ///   `did` and `key_type` are valid only until the callback returns: copy the
 ///   payload if the signature is made later.

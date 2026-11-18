@@ -316,6 +316,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
 
         let (collection, datastore, systemstore, index_manager) =
             get_collection_with_index_manager(&*self.shared_txn()?, collection_name).await?;
+        let datastore = datastore.with_projection_actor(context.identity());
         self.db
             .check_node_access_in_txn(
                 context,
@@ -345,6 +346,12 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
 
         let created = {
             let txn = &*self.shared_txn()?;
+            // What the create records as owed names the transaction by its
+            // handle, whether or not the request did.
+            let recorded_in = match (context.txn(), txn.handle_id()) {
+                (None, Some(id)) => context.clone().with_txn(Some(defra_core::TxnId(id))),
+                _ => context.clone(),
+            };
             let blockstore = txn.blockstore().map_err(|e| {
                 query::error::QueryError::execution(format!("failed to get blockstore: {}", e))
             })?;
@@ -364,7 +371,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
                 &index_manager,
                 &doc,
                 &computed,
-                context,
+                &recorded_in,
                 inputs,
             )
             .await?
@@ -424,6 +431,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
 
         let (collection, datastore, systemstore, index_manager) =
             get_collection_with_index_manager(&*self.shared_txn()?, collection_name).await?;
+        let datastore = datastore.with_projection_actor(context.identity());
         self.db
             .check_node_access_in_txn(
                 context,
@@ -581,6 +589,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
 
         let (collection, datastore, systemstore, index_manager) =
             get_collection_with_index_manager(&*self.shared_txn()?, collection_name).await?;
+        let datastore = datastore.with_projection_actor(context.identity());
         self.db
             .check_node_access_in_txn(
                 context,
@@ -612,7 +621,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         let existed = collection
             .delete_with_indexes(&datastore, &canonical_doc_id, doc_short_id, &index_manager)
             .await
-            .map_err(|e| query::error::QueryError::execution(format!("delete error: {}", e)))?;
+            .map_err(|error| crate::error::index_write_query_error("delete", error))?;
 
         if !existed {
             return Ok(DeleteResult::new(canonical_doc_id, existed));

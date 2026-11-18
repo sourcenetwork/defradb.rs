@@ -133,6 +133,7 @@ impl TransportDocPusher for ScriptedPusher {
         _filters: &p2p::ReplicationFilters,
         _se_key: Option<&[u8]>,
         _se_identity_pubkey: Option<&[u8]>,
+        _install_incarnation: u64,
     ) -> P2PResult<()> {
         unreachable!()
     }

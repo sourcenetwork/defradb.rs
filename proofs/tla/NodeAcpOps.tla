@@ -15,9 +15,12 @@
 \*              relationships, since the live check lets everyone through
 \*              while NAC is off), already (NAC is not on yet);
 \*   add        configured, nac, acp (NAC is on), identity (someone acts),
-\*              relation (one the node's policy has), target (a DID or *);
+\*              relation (one the node's policy has), target (a DID or *),
+\*              authority (the caller is an admin, or a delegate the Lean
+\*              model NodeAcpDelegation admits for this relation and target);
 \*   delete     the same but target: a target that is not a DID holds no
-\*              relationship, so Go finds none to take and refuses nothing.
+\*              relationship, so Go finds none to take and refuses nothing,
+\*              and taking nothing needs no authority.
 \* A restart, with or without NAC asked for at start, leaves a set-up NAC as
 \* it was: a disabled NAC stays off.
 \*
@@ -40,8 +43,9 @@
 \* What must never happen: NAC turned off by a caller without the live
 \* permission; NAC turned back on by a caller without the stored permission;
 \* a relation given or taken while NAC is off, without an identity, for a
-\* relation or target the policy does not have, or by a caller without the
-\* permission; a status answered to a caller without the permission; a status
+\* relation or target the policy does not have, by a caller without the
+\* permission, or by a caller with no authority over that relation and target;
+\* a status answered to a caller without the permission; a status
 \* change on a node where NAC was never set up; a restart that turns a
 \* disabled NAC back on; a refusal reported with another check's error than
 \* Go's. And when racing: a status change committed by a caller that lost its
@@ -71,6 +75,8 @@
 \*   crates/acp/src/zanzibar/store/persistent.rs
 \*     PersistentZanzibarStore::transact    the tries, through datastore::transact
 \*                                          (native only: no wasm client runs NAC)
+\*   crates/acp/src/nac/node_acp/operations.rs
+\*     NodeACP::authorize_change            the authority check, inside the change
 \*   crates/db/src/nac/mod.rs
 \*     NacManager::initialize               the restart
 EXTENDS Naturals, Sequences, FiniteSets   \* indexing, counting and set sizes
@@ -87,7 +93,7 @@ CONSTANTS
 
 \* Only the named checks can be enforced.
 ASSUME Enforced \subseteq {"configured", "already", "nac", "stored", "acp",
-                           "identity", "relation", "target"}
+                           "identity", "relation", "target", "authority"}
 \* The switches of part one are yes or no.
 ASSUME LiveReEnable \in BOOLEAN /\ StartReEnables \in BOOLEAN /\ AlreadyFirst \in BOOLEAN
 \* The switches of part two are yes or no.
@@ -101,8 +107,9 @@ GoOrder(o) ==
   CASE o = "status"   -> <<"nac">>
     [] o = "disable"  -> <<"configured", "already", "nac">>
     [] o = "reenable" -> <<"configured", "stored", "already">>
-    [] o = "add"      -> <<"configured", "nac", "acp", "identity", "relation", "target">>
-    [] o = "delete"   -> <<"configured", "nac", "acp", "identity", "relation">>
+    [] o = "add"      -> <<"configured", "nac", "acp", "identity", "relation", "target",
+                           "authority">>
+    [] o = "delete"   -> <<"configured", "nac", "acp", "identity", "relation", "authority">>
     [] o = "restart"  -> <<>>
 
 \* The order the database runs a request's checks in: Go's, or for re-enable
@@ -120,6 +127,7 @@ VARIABLES
   hasIdentity,  \* someone acts in the request
   relationOk,   \* the relation is one the node's policy has
   targetOk,     \* the target is a DID or *
+  authorityOk,  \* the caller is an admin, or a delegate admitted for this change
   step,         \* "check", then "apply", then "done"
   reason,       \* the check the request was refused at, or "none"
   after,        \* NAC after the request
@@ -127,7 +135,7 @@ VARIABLES
 
 \* Part one's variables, for saying a step leaves them all as they are.
 vars == <<op, status, permitted, stored, hasIdentity, relationOk, targetOk,
-          step, reason, after, granted>>
+          authorityOk, step, reason, after, granted>>
 
 \* The live NAC check: everyone passes while NAC is not on.
 Live == status # "on" \/ permitted
@@ -143,6 +151,8 @@ Passes(c) ==
     [] c = "identity"   -> hasIdentity
     [] c = "relation"   -> relationOk
     [] c = "target"     -> targetOk
+    \* a delete whose target is no DID takes nothing, so nothing needs authority
+    [] c = "authority"  -> authorityOk \/ (op = "delete" /\ ~targetOk)
 
 \* The positions in `order` of the checks that are enforced and fail.
 Failing(order) == {i \in 1..Len(order) : order[i] \in Enforced /\ ~Passes(order[i])}
@@ -158,10 +168,10 @@ TypeOK ==
   /\ op \in {"status", "disable", "reenable", "add", "delete", "restart"}
   /\ status \in {"none", "on", "off"}
   /\ permitted \in BOOLEAN /\ stored \in BOOLEAN /\ hasIdentity \in BOOLEAN
-  /\ relationOk \in BOOLEAN /\ targetOk \in BOOLEAN
+  /\ relationOk \in BOOLEAN /\ targetOk \in BOOLEAN /\ authorityOk \in BOOLEAN
   /\ step \in {"check", "apply", "done"}
   /\ reason \in {"none", "configured", "already", "nac", "stored", "acp",
-                 "identity", "relation", "target"}
+                 "identity", "relation", "target", "authority"}
   /\ after \in {"none", "on", "off"}
   /\ granted \in BOOLEAN
 
@@ -170,7 +180,7 @@ Init ==
   /\ op \in {"status", "disable", "reenable", "add", "delete", "restart"}
   /\ status \in {"none", "on", "off"}
   /\ permitted \in BOOLEAN /\ stored \in BOOLEAN /\ hasIdentity \in BOOLEAN
-  /\ relationOk \in BOOLEAN /\ targetOk \in BOOLEAN
+  /\ relationOk \in BOOLEAN /\ targetOk \in BOOLEAN /\ authorityOk \in BOOLEAN
   /\ step = "check"
   /\ reason = "none"
   /\ after = status
@@ -185,7 +195,7 @@ Check ==
        THEN /\ reason' = First(CheckOrder(op)) /\ step' = "done"
        ELSE /\ reason' = reason /\ step' = "apply"
   /\ UNCHANGED <<op, status, permitted, stored, hasIdentity, relationOk,
-                 targetOk, after, granted>>
+                 targetOk, authorityOk, after, granted>>
 
 \* The change. Disable turns NAC off and re-enable turns it on, even on a
 \* node where NAC was never set up when the check for that is left out. Add
@@ -205,7 +215,7 @@ Apply ==
                                             THEN "on" ELSE status
                              /\ UNCHANGED granted
   /\ UNCHANGED <<op, status, permitted, stored, hasIdentity, relationOk,
-                 targetOk, reason>>
+                 targetOk, authorityOk, reason>>
 
 \* Each step of a request is one of the two.
 Next == Check \/ Apply
@@ -379,7 +389,7 @@ RaceIdle ==
 RequestIdle ==
   /\ op = "restart" /\ status = "none"
   /\ permitted = FALSE /\ stored = FALSE /\ hasIdentity = FALSE
-  /\ relationOk = FALSE /\ targetOk = FALSE
+  /\ relationOk = FALSE /\ targetOk = FALSE /\ authorityOk = FALSE
   /\ step = "done" /\ reason = "none" /\ after = "none" /\ granted = FALSE
 
 \* ---------------------------------------------------------------------------
@@ -488,9 +498,11 @@ INV_NoReEnableWithoutStoredPermission ==
   (op = "reenable" /\ status = "off" /\ after = "on") => stored
 
 \* A relation is given or taken only while NAC is on, by a permitted caller
-\* with an identity, for a relation and a target the policy has.
+\* with an identity and authority over it, for a relation and a target the
+\* policy has.
 INV_NoGrantUnlessAllChecksPass ==
-  granted => (status = "on" /\ permitted /\ hasIdentity /\ relationOk /\ targetOk)
+  granted => (status = "on" /\ permitted /\ hasIdentity /\ relationOk /\ targetOk
+              /\ authorityOk)
 
 \* A node where NAC was never set up keeps it so.
 INV_NoChangeUnlessConfigured == status = "none" => after = "none"

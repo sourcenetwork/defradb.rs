@@ -9,6 +9,40 @@ use crate::ops::request::transaction_error;
 use crate::{Node, Result};
 
 impl Node {
+    /// Stage one source-specific node permission in the authenticated caller's transaction.
+    pub async fn change_nac_source_permission_as(
+        &self,
+        context: &RequestContext,
+        edge: &query::txn::SourcePermission,
+    ) -> Result<bool> {
+        self.runner()
+            .change_nac_source_permission_as(context, edge)
+            .await
+            .map_err(transaction_error)
+    }
+
+    /// Stage a source-only change as the transaction's authenticated actor.
+    /// This is a trusted embedded-host capability and is not an HTTP or
+    /// GraphQL operation. Native NAC checks that actor on the bound view.
+    pub async fn change_host_nac_source_permission_in_txn(
+        &self,
+        owner: &RequestContext,
+        edge: &query::txn::SourcePermission,
+    ) -> Result<bool> {
+        let node = self.node_identity_did().ok_or_else(|| {
+            crate::Error::Transaction(query::TransactionError::operation(
+                "configured Node identity required",
+            ))
+        })?;
+        identity::Did::new(node).map_err(|error| {
+            crate::Error::Transaction(query::TransactionError::operation(error.to_string()))
+        })?;
+        self.txn_registry
+            .change_host_nac_source_permission(owner, edge.clone())
+            .await
+            .map_err(transaction_error)
+    }
+
     /// The node's NAC status. Go's `GetNACStatus`.
     pub async fn nac_status_as(&self, context: &RequestContext) -> Result<acp::nac::NacStatus> {
         let runner = Arc::clone(self.runner());
@@ -16,6 +50,25 @@ impl Node {
         self.on_pool(move || async move {
             runner
                 .nac_status_as(&context)
+                .await
+                .map_err(transaction_error)
+        })
+        .await
+    }
+
+    /// Every way `subject` (a DID) holds each node permission, for a caller
+    /// who is `subject`, an admin, or holds `NacStatus`: owner, admin, a
+    /// direct grant, or the shortest chain of sources.
+    pub async fn explain_nac_subject_as(
+        &self,
+        context: &RequestContext,
+        subject: &str,
+    ) -> Result<Vec<acp::nac::PermissionProvenance>> {
+        let runner = Arc::clone(self.runner());
+        let (context, subject) = (context.clone(), subject.to_owned());
+        self.on_pool(move || async move {
+            runner
+                .explain_nac_subject_as(&context, &subject)
                 .await
                 .map_err(transaction_error)
         })

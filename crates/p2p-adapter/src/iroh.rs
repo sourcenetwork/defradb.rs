@@ -322,6 +322,8 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
     }
 
     async fn sync_status(&self) -> P2PResult<serde_json::Value> {
+        self.check_nac(acp::nac::NodePermission::P2pPeerInfo)
+            .await?;
         let Some(coordinator) = self.sync_coordinator.as_ref() else {
             return Ok(serde_json::Value::Null);
         };
@@ -338,6 +340,8 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
     }
 
     async fn peer_details(&self, peer_id: &TransportPeerId) -> P2PResult<serde_json::Value> {
+        self.check_nac(acp::nac::NodePermission::P2pPeerInfo)
+            .await?;
         let Some(coordinator) = self.sync_coordinator.as_ref() else {
             return Ok(serde_json::Value::Null);
         };
@@ -361,6 +365,8 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
     }
 
     async fn listen_addresses(&self) -> P2PResult<Vec<String>> {
+        self.check_nac(acp::nac::NodePermission::P2pPeerInfo)
+            .await?;
         self.transport
             .listen_addresses()
             .await
@@ -369,6 +375,8 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
     }
 
     async fn shareable_address(&self) -> P2PResult<Option<String>> {
+        self.check_nac(acp::nac::NodePermission::P2pPeerInfo)
+            .await?;
         self.transport
             .listen_addresses()
             .await
@@ -737,12 +745,11 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
         }
 
         if let Some(mut replay) = replay.take() {
-            let collections = replay
-                .plan
-                .as_ref()
-                .expect("new replay owns its plan")
-                .replay
-                .clone();
+            let Some(plan) = replay.plan.as_ref() else {
+                return Err(P2PError::internal("replicator replay has no install plan"));
+            };
+            let collections = plan.replay.clone();
+            let install_incarnation = plan.id;
             if !collections.is_empty() {
                 let push_pusher =
                     Arc::clone(self.doc_pusher.as_ref().expect("replay has a pusher"));
@@ -766,6 +773,7 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
                             &push_filters,
                             push_se_key.as_ref().map(|key| key.as_slice()),
                             push_identity.as_deref(),
+                            install_incarnation,
                         )
                         .await;
                     if let Err(ref error) = result {
@@ -1037,6 +1045,8 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
         doc_ids: Vec<String>,
         timeout: Option<std::time::Duration>,
     ) -> P2PResult<()> {
+        self.check_nac(acp::nac::NodePermission::P2pSyncDocuments)
+            .await?;
         let pusher = self
             .doc_pusher
             .as_ref()
@@ -1060,6 +1070,8 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
     }
 
     async fn sync_branchable_collection(&self, collection_id: &str) -> P2PResult<()> {
+        self.check_nac(acp::nac::NodePermission::P2pSyncBranchableCollection)
+            .await?;
         let pusher = self
             .doc_pusher
             .as_ref()
@@ -1096,6 +1108,8 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
     }
 
     async fn sync_collection_versions(&self, version_ids: Vec<String>) -> P2PResult<()> {
+        self.check_nac(acp::nac::NodePermission::P2pSyncCollectionVersions)
+            .await?;
         if version_ids.is_empty() {
             return Ok(());
         }
@@ -1140,7 +1154,9 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
             .into_iter()
             .map(|doc| (doc.collection, doc.doc_id))
             .collect();
-        pusher.push_existing_docs_by_id(&peer_id, &pairs).await
+        pusher
+            .push_existing_docs_by_id(&peer_id, &pairs, &db::merge::SelectedPushStop::new())
+            .await
     }
 }
 

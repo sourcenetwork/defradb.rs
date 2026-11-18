@@ -1,10 +1,14 @@
 use chunk_split::split::{
     cut_sentences, cut_words, fence_before, paragraphs, segments, split, units, Chunk, ChunkConfig,
-    SEGMENT_CHUNKS,
+    SplitterVersion, SEGMENT_CHUNKS,
 };
 
 fn config(max_chars: usize, overlap: usize) -> ChunkConfig {
-    ChunkConfig { max_chars, overlap }
+    ChunkConfig {
+        version: SplitterVersion::CURRENT,
+        max_chars,
+        overlap,
+    }
 }
 
 fn cores<'a>(text: &'a str, chunks: &[Chunk]) -> Vec<&'a str> {
@@ -145,11 +149,14 @@ fn lengths_count_characters_not_bytes() {
 
 #[test]
 fn overlap_borrows_trailing_sentences_that_fit() {
-    let text = "A a. B b. C c. D d.";
-    let chunks = split(text, &config(14, 1));
+    let text = "Aa a. Bb b. Cc c. Dd d. Ee ee e.";
+    let chunks = split(text, &config(24, 1));
     let texts: Vec<&str> = chunks.iter().map(|c| c.text.as_str()).collect();
-    assert_eq!(texts, vec!["A a. B b. ", "B b. C c. D d."]);
-    assert_eq!(cores(text, &chunks), vec!["A a. B b. ", "C c. D d."]);
+    assert_eq!(texts, vec!["Aa a. Bb b. Cc c. Dd d. ", "Dd d. Ee ee e."]);
+    assert_eq!(
+        cores(text, &chunks),
+        vec!["Aa a. Bb b. Cc c. Dd d. ", "Ee ee e."]
+    );
 }
 
 #[test]
@@ -426,4 +433,91 @@ fn a_heading_whose_text_fits_exactly_stays_in_the_chunk() {
     let text = format!("{intro}{section}");
     assert_eq!(text.chars().count(), PACK_MAX_CHARS);
     assert_eq!(chunk_texts(&text), vec![text.clone()]);
+}
+
+// A list with no sentence end, then a heading the half-full rule moves to a new chunk.
+fn list_then_heading() -> (String, String) {
+    let intro = "This intro has a few short sentences. ".repeat(4);
+    let list: String = (10..35)
+        .map(|i| format!("- item number {i} in the list\n"))
+        .collect();
+    let body = "The text under the heading goes on for a while. ".repeat(16);
+    let section = format!("# Heading\n\n{body}");
+    (format!("{intro}\n\n{list}\n{section}"), section)
+}
+
+#[test]
+fn overlap_never_repeats_a_trailing_piece_with_no_sentence_end() {
+    let (text, section) = list_then_heading();
+    assert!(one_segment(&text, 1600));
+    for overlap in [1, 2] {
+        let chunks = split(&text, &config(1600, overlap));
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[1].text, section);
+    }
+}
+
+#[test]
+fn overlap_is_capped_at_a_quarter_of_max_chars() {
+    let text: String = (1..=6).map(|i| format!("Number {i} here. ")).collect();
+    let text = text.trim_end();
+    let chunks = split(text, &config(64, 2));
+    let texts: Vec<&str> = chunks.iter().map(|c| c.text.as_str()).collect();
+    assert_eq!(
+        texts,
+        vec![
+            "Number 1 here. Number 2 here. Number 3 here. Number 4 here. ",
+            "Number 4 here. Number 5 here. Number 6 here.",
+        ]
+    );
+}
+
+#[test]
+fn full_width_terminators_end_sentences_without_a_space() {
+    assert_eq!(
+        cut_sentences("一つ。二つ！ 三つ？四つ．五つ｡六つ"),
+        vec!["一つ。", "二つ！ ", "三つ？", "四つ．", "五つ｡", "六つ"]
+    );
+}
+
+#[test]
+fn a_cjk_paragraph_splits_at_its_sentence_ends() {
+    let text = "これは最初の文です。これは二番目の文です。これは三番目の文です。";
+    let chunks = split(text, &config(25, 0));
+    let texts: Vec<&str> = chunks.iter().map(|c| c.text.as_str()).collect();
+    assert_eq!(
+        texts,
+        vec![
+            "これは最初の文です。これは二番目の文です。",
+            "これは三番目の文です。"
+        ]
+    );
+}
+
+#[test]
+fn emoji_and_combining_marks_are_never_split() {
+    let (thumb, accent, family) = ("👍🏽", "e\u{301}", "👨\u{200D}👩\u{200D}👧");
+    let text = format!("{thumb}{accent}{family}{accent}{thumb}");
+    let chunks = split(&text, &config(6, 0));
+    let texts: Vec<&str> = chunks.iter().map(|c| c.text.as_str()).collect();
+    assert_eq!(
+        texts,
+        vec![
+            format!("{thumb}{accent}").as_str(),
+            family,
+            format!("{accent}{thumb}").as_str()
+        ]
+    );
+}
+
+#[test]
+fn a_grapheme_longer_than_max_chars_is_cut_by_characters() {
+    let family = "👨\u{200D}👩\u{200D}👧";
+    let chunks = split(family, &config(3, 0));
+    let lens: Vec<usize> = chunks.iter().map(|c| c.text.chars().count()).collect();
+    assert_eq!(lens, vec![3, 2]);
+    assert_eq!(
+        chunks.iter().map(|c| c.text.as_str()).collect::<String>(),
+        family
+    );
 }

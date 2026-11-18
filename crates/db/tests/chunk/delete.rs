@@ -34,19 +34,13 @@ fn a_chunk_version_is_refused_while_its_parent_lives() {
             .delete_collection_versions_batch(vec![chunks.clone()])
             .await
             .unwrap_err();
-        assert!(
-            matches!(err, db::Error::DeleteGeneratedCollection(_)),
-            "{err}"
-        );
+        assert!(matches!(err, db::Error::ChunkCollection { .. }), "{err}");
 
         let err = db
             .delete_collection_version(&chunks, &[])
             .await
             .unwrap_err();
-        assert!(
-            matches!(err, db::Error::DeleteGeneratedCollection(_)),
-            "{err}"
-        );
+        assert!(matches!(err, db::Error::ChunkCollection { .. }), "{err}");
         assert!(db.get_collection(CHUNKS).unwrap().is_some());
     })
     .unwrap()

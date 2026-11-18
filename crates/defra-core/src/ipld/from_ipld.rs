@@ -9,6 +9,7 @@ use crate::block::{
     CollectionDeltaPayload, CompositeDeltaPayload, CounterDeltaPayload, CrdtDelta,
     CustomDeltaPayload, DAGLink, Encryption, FieldDefinitionDeltaPayload, ImmutableDeltaPayload,
     JsonDeltaPayload, LwwDeltaPayload, Signature, SignatureHeader, SignatureType, TextDeltaPayload,
+    DEFAULT_SPLITTER_VERSION,
 };
 use crate::{Error, Result};
 
@@ -475,6 +476,10 @@ impl TryFrom<&Ipld> for ChunkedFieldDelta {
             field: parse_string(map, "field")?,
             max_chars: parse_u32(map, "maxChars")?,
             overlap: parse_u32(map, "overlap")?,
+            splitter_version: match map.contains_key("splitterVersion") {
+                true => parse_u32(map, "splitterVersion")?,
+                false => DEFAULT_SPLITTER_VERSION,
+            },
         })
     }
 }

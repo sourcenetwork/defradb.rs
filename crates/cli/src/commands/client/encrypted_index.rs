@@ -2,7 +2,6 @@
 
 use clap::{Args, Subcommand};
 
-use super::http_client::HttpClient;
 use super::{validate_identifier, ClientContext};
 use crate::error::Result;
 
@@ -53,7 +52,8 @@ pub struct EncryptedIndexDeleteArgs {
 #[derive(Args, Debug)]
 pub struct EncryptedIndexListArgs {
     /// Collection name; without one, every collection's encrypted indexes
-    /// are listed, as Go's CLI lists them.
+    /// are listed, as Go's CLI lists them, in the `--tx` transaction when
+    /// given.
     #[arg(long, short = 'c')]
     pub collection: Option<String>,
 }
@@ -73,12 +73,10 @@ impl EncryptedIndexNewArgs {
         validate_identifier(&self.collection)?;
         validate_identifier(&self.field)?;
 
-        let client = HttpClient::new(&ctx.url, &ctx.edge)?
-            .with_auth_token(ctx.auth_token.clone())
-            .with_verbose(ctx.verbose);
+        let (client, txn) = super::document::write_client(ctx)?;
 
         let response = client
-            .encrypted_index_add(&self.collection, &self.field)
+            .encrypted_index_add(txn.as_deref(), &self.collection, &self.field)
             .await?;
 
         println!("{}", serde_json::to_string_pretty(&response)?);
@@ -91,12 +89,10 @@ impl EncryptedIndexDeleteArgs {
         validate_identifier(&self.collection)?;
         validate_identifier(&self.field)?;
 
-        let client = HttpClient::new(&ctx.url, &ctx.edge)?
-            .with_auth_token(ctx.auth_token.clone())
-            .with_verbose(ctx.verbose);
+        let (client, txn) = super::document::write_client(ctx)?;
 
         client
-            .encrypted_index_delete(&self.collection, &self.field)
+            .encrypted_index_delete(txn.as_deref(), &self.collection, &self.field)
             .await?;
 
         println!(
@@ -109,16 +105,20 @@ impl EncryptedIndexDeleteArgs {
 
 impl EncryptedIndexListArgs {
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
-        let client = HttpClient::new(&ctx.url, &ctx.edge)?
-            .with_auth_token(ctx.auth_token.clone())
-            .with_verbose(ctx.verbose);
+        let (client, txn) = super::document::write_client(ctx)?;
 
         let printed = match self.collection.as_deref().filter(|name| !name.is_empty()) {
             Some(collection) => {
                 validate_identifier(collection)?;
-                serde_json::to_string_pretty(&client.encrypted_index_list(collection).await?)?
+                serde_json::to_string_pretty(
+                    &client
+                        .encrypted_index_list(txn.as_deref(), collection)
+                        .await?,
+                )?
             }
-            None => serde_json::to_string_pretty(&client.encrypted_index_list_all().await?)?,
+            None => serde_json::to_string_pretty(
+                &client.encrypted_index_list_all(txn.as_deref()).await?,
+            )?,
         };
         println!("{printed}");
         Ok(())

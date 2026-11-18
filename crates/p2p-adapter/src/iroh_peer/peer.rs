@@ -85,11 +85,13 @@ impl<S: Store + 'static> IrohPeer<S> {
             retry_schedule,
             load_persisted_collections,
             replicator_push_options,
+            stream_protocols,
         } = config;
 
         let secret_key = endpoint.secret_key.clone();
         let (command_tx, events, replicators, endpoint_task) =
-            p2p::iroh::spawn_endpoint(endpoint, edge.clone()).await?;
+            p2p::iroh::spawn_endpoint_with_protocols(endpoint, edge.clone(), stream_protocols)
+                .await?;
         let transport = IrohTransport::new(command_tx, secret_key);
         let local_peer_id = transport.local_peer_id().to_string();
         p2p::model_trace!(Crash {

@@ -130,6 +130,20 @@ pub enum Error {
         source: std::io::Error,
     },
 
+    /// Go's `ErrCreateFile`.
+    #[error("failed to create file: {source}. Filepath: {path}")]
+    CreateFile {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+
+    /// Go's `ErrOpenFile`.
+    #[error("failed to open file: {source}. Filepath: {path}")]
+    OpenFile {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+
     #[error("collection not found: {0}")]
     CollectionNotFound(String),
 

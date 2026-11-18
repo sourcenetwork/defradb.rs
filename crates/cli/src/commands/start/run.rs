@@ -244,6 +244,17 @@ impl Node {
             }
         }
 
+        // The servers and P2P have stopped, so nothing asks for an access
+        // decision any more: the Vera node stops, up to its deadline.
+        #[cfg(feature = "embedded-vera")]
+        if let Some(vera) = self.embedded_vera.take() {
+            info!("Stopping embedded Vera node...");
+            match vera.stop().await {
+                Ok(()) => info!("Embedded Vera node stopped"),
+                Err(e) => warn!("Embedded Vera node did not stop cleanly: {}", e),
+            }
+        }
+
         // Nothing reaches the data path any more: the pool finishes what it
         // admitted and stops, then the store closes. The runtime is dropped
         // after this returns, outside any async context.

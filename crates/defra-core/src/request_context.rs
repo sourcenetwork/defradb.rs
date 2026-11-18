@@ -27,21 +27,74 @@ use crate::txn_id::TxnId;
 #[derive(Clone, Default)]
 pub struct RequestContext(Arc<Fields>);
 
+/// Whether a request reads past document access control.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum DacBypass {
+    /// Not granted; the engine still asks node access control whether the
+    /// request's identity holds `bypass-dac`.
+    #[default]
+    NotGranted,
+    /// Granted for the request's identity.
+    Granted,
+    /// Refused by the caller: nothing grants it for this request.
+    Denied,
+}
+
 #[derive(Clone, Default)]
 struct Fields {
     identity: Option<String>,
-    dac_bypass: bool,
+    dac_bypass: DacBypass,
+    require_transactional_authority: bool,
+    /// The document a verified write creates or changes, where the request
+    /// stages one.
+    verified_document: Option<String>,
     encryption: Option<EncryptionConfig>,
     signing: Option<SigningConfig>,
+    /// Go's per-operation `EnableSigning`: `Some(false)` writes this
+    /// request's blocks unsigned whatever key it carries.
+    signing_override: Option<bool>,
     batch_session: Option<String>,
     creator: Option<String>,
     /// The DID that presented a bearer token and the token, when the request
     /// carries a bearer at all.
     bearer: Option<(Option<String>, Option<String>)>,
+    /// Whether the bearer is a delegation its presenter bound to the one
+    /// command this request sends a remote ACP provider.
+    bearer_names_request: bool,
     txn: Option<TxnId>,
+    authorization_expiration: Option<u64>,
+    /// The collection version the request works through, when it names one
+    /// (possibly inactive): its turn pins that version for every lookup of
+    /// the collection's name.
+    collection_version: Option<String>,
 }
 
 impl RequestContext {
+    /// Require each active native authority to be bound to the write transaction.
+    pub fn with_transactional_authority_required(mut self) -> Self {
+        Arc::make_mut(&mut self.0).require_transactional_authority = true;
+        self
+    }
+
+    pub fn transactional_authority_required(&self) -> bool {
+        self.0.require_transactional_authority
+    }
+
+    /// This context staging a verified write of the document `doc_id`: the
+    /// one object a document ACP that cannot join the transaction is owed a
+    /// registration for when the write creates it.
+    #[must_use]
+    pub fn with_verified_document(mut self, doc_id: Option<String>) -> Self {
+        Arc::make_mut(&mut self.0).verified_document = doc_id;
+        self
+    }
+
+    /// The document the verified write this request stages creates or
+    /// changes; `None` for any other request.
+    pub fn verified_document(&self) -> Option<&str> {
+        self.0.verified_document.as_deref()
+    }
+
     /// The context a call that arrives without one runs in: the default
     /// anonymous context. Built for tests with the `ambient` feature, it
     /// carries what the test set through the thread-local API instead (see
@@ -85,7 +138,9 @@ impl RequestContext {
                 .identity
                 .take()
                 .or_else(|| ambient.0.identity.clone());
-            fields.dac_bypass |= ambient.0.dac_bypass;
+            if fields.dac_bypass == DacBypass::NotGranted {
+                fields.dac_bypass = ambient.0.dac_bypass;
+            }
             fields.encryption = fields
                 .encryption
                 .take()
@@ -96,7 +151,10 @@ impl RequestContext {
                 .take()
                 .or_else(|| ambient.0.batch_session.clone());
             fields.creator = fields.creator.take().or_else(|| ambient.0.creator.clone());
-            fields.bearer = fields.bearer.take().or_else(|| ambient.0.bearer.clone());
+            if fields.bearer.is_none() {
+                fields.bearer = ambient.0.bearer.clone();
+                fields.bearer_names_request = ambient.0.bearer_names_request;
+            }
             context
         }
         #[cfg(not(any(test, feature = "ambient")))]
@@ -110,6 +168,35 @@ impl RequestContext {
         self.0.identity.as_deref()
     }
 
+    /// Restricts dispatch to times before this authenticated request expires.
+    /// A dispatched database attempt retains its normal commit finality.
+    #[must_use]
+    pub fn with_authorization_expiration(mut self, expiration: Option<u64>) -> Self {
+        Arc::make_mut(&mut self.0).authorization_expiration = expiration;
+        self
+    }
+
+    pub fn authorization_expiration(&self) -> Option<u64> {
+        self.0.authorization_expiration
+    }
+
+    /// Whether a new database attempt may be dispatched now.
+    pub fn authorization_valid_now(&self) -> bool {
+        match self.0.authorization_expiration {
+            None => true,
+            Some(_) => std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .is_ok_and(|now| self.authorization_valid_at(now.as_secs())),
+        }
+    }
+
+    /// Whether a new attempt is authorized at the given Unix second.
+    pub fn authorization_valid_at(&self, now: u64) -> bool {
+        self.0
+            .authorization_expiration
+            .is_none_or(|expiration| now < expiration)
+    }
+
     /// This context with the acting identity set to `identity`.
     #[must_use]
     pub fn with_identity(mut self, identity: Option<String>) -> Self {
@@ -119,17 +206,52 @@ impl RequestContext {
 
     /// Whether node access control grants this request's identity the
     /// `bypass-dac` permission, so document access control lets an
-    /// authenticated caller read and write every document. Resolved once, at
-    /// the boundary, for the request's identity.
+    /// authenticated caller read and write every document. Resolved for the
+    /// request's identity at the boundary, or else by the engine at the
+    /// request's own snapshot; never for a request whose caller denied it
+    /// ([`with_dac_bypass_denied`](Self::with_dac_bypass_denied)).
     pub fn dac_bypass(&self) -> bool {
-        self.0.dac_bypass
+        self.0.dac_bypass == DacBypass::Granted
     }
 
-    /// This context with the DAC bypass set to `bypass`.
+    /// This context with the DAC bypass set to `bypass`. A context whose
+    /// caller denied the bypass keeps it denied.
     #[must_use]
     pub fn with_dac_bypass(mut self, bypass: bool) -> Self {
-        Arc::make_mut(&mut self.0).dac_bypass = bypass;
+        let fields = Arc::make_mut(&mut self.0);
+        if fields.dac_bypass != DacBypass::Denied {
+            fields.dac_bypass = match bypass {
+                true => DacBypass::Granted,
+                false => DacBypass::NotGranted,
+            };
+        }
         self
+    }
+
+    /// This context with the DAC bypass denied: document access control
+    /// decides every document this request reads or writes, even for an
+    /// identity node access control grants `bypass-dac` (a node owner or
+    /// administrator). Every context derived from it stays denied. An
+    /// embedder sets it on a request it signs as an identity that must not
+    /// read past document access control.
+    ///
+    /// The denial belongs to the request, not to a transaction, as the
+    /// encryption, signing and collection version do: beginning a
+    /// transaction with a denied context does not deny the later requests in
+    /// it, and a request in that transaction whose own context lacks the
+    /// denial is decided by node access control again. A
+    /// `query::TransactionGuard` runs every request in the context it was
+    /// begun with, so a guard begun denied stays denied.
+    #[must_use]
+    pub fn with_dac_bypass_denied(mut self) -> Self {
+        Arc::make_mut(&mut self.0).dac_bypass = DacBypass::Denied;
+        self
+    }
+
+    /// Whether this request's caller denied it the DAC bypass
+    /// ([`with_dac_bypass_denied`](Self::with_dac_bypass_denied)).
+    pub fn dac_bypass_denied(&self) -> bool {
+        self.0.dac_bypass == DacBypass::Denied
     }
 
     /// Which fields of the documents a mutation writes it encrypts, when the
@@ -159,7 +281,25 @@ impl RequestContext {
     /// The key this request signs the blocks it writes with; unsigned blocks
     /// without one.
     pub fn signing(&self) -> Option<&SigningConfig> {
-        self.0.signing.as_ref()
+        match self.0.signing_override {
+            Some(false) => None,
+            _ => self.0.signing.as_ref(),
+        }
+    }
+
+    /// The caller's per-operation signing choice, if it made one.
+    pub fn signing_override(&self) -> Option<bool> {
+        self.0.signing_override
+    }
+
+    /// This context with the per-operation signing choice `signing_override`.
+    /// The edge that resolves the request's key reads the choice first, so
+    /// `Some(true)` resolves one on a node configured not to sign, as Go
+    /// does; here `Some(false)` hides whatever key the request carries.
+    #[must_use]
+    pub fn with_signing_override(mut self, signing_override: Option<bool>) -> Self {
+        Arc::make_mut(&mut self.0).signing_override = signing_override;
+        self
     }
 
     /// This context with the signing set to `signing`.
@@ -197,17 +337,16 @@ impl RequestContext {
         self
     }
 
-    /// The bearer token `did` presents in this request, the credential a
+    /// The bearer token this request carries for `did`, the credential a
     /// remote ACP provider acts on its behalf with: the request's own token
     /// when `did` presented it, and none for any other DID. A request that
-    /// carries no bearer at all presents the token the process binds to `did`
-    /// ([`set_request_bearer_token`](crate::signing::set_request_bearer_token)).
+    /// carries no bearer presents none. Nothing a process keeps beside its
+    /// requests is read: what is sent to a provider for an actor goes under
+    /// a bearer a request carried for that actor, or a key the node holds.
     pub fn bearer_token_for(&self, did: &str) -> Option<String> {
         match &self.0.bearer {
-            Some((presenter, token)) => (presenter.as_deref() == Some(did))
-                .then(|| token.clone())
-                .flatten(),
-            None => crate::signing::stored_bearer_token(did),
+            Some((presenter, token)) if presenter.as_deref() == Some(did) => token.clone(),
+            _ => None,
         }
     }
 
@@ -224,6 +363,20 @@ impl RequestContext {
         self
     }
 
+    /// The collection version this request works through, if it names one:
+    /// every lookup of that collection's name in the request sees it, active
+    /// or not, as Go runs a document call on the selected collection.
+    pub fn collection_version(&self) -> Option<&str> {
+        self.0.collection_version.as_deref()
+    }
+
+    /// This context working through collection version `version_id`.
+    #[must_use]
+    pub fn with_collection_version(mut self, version_id: Option<String>) -> Self {
+        Arc::make_mut(&mut self.0).collection_version = version_id;
+        self
+    }
+
     /// The DID that presented this request's bearer token and the token,
     /// when it carries a bearer.
     #[cfg(any(test, feature = "ambient"))]
@@ -235,8 +388,30 @@ impl RequestContext {
     /// request with, `None` when it presented none.
     #[must_use]
     pub fn with_bearer(mut self, did: Option<String>, token: Option<String>) -> Self {
-        Arc::make_mut(&mut self.0).bearer = Some((did, token));
+        let fields = Arc::make_mut(&mut self.0);
+        fields.bearer = Some((did, token));
+        fields.bearer_names_request = false;
         self
+    }
+
+    /// This context carrying `token` as the delegation `did` bound to the
+    /// one command this request sends a remote ACP provider. A provider
+    /// that knows such delegations takes it for that command and for
+    /// nothing else, and takes no plain delegation in its place, when the
+    /// command is admitted and again when it is sent.
+    #[must_use]
+    pub fn with_request_delegation(mut self, did: String, token: String) -> Self {
+        let fields = Arc::make_mut(&mut self.0);
+        fields.bearer = Some((Some(did), Some(token)));
+        fields.bearer_names_request = true;
+        self
+    }
+
+    /// Whether the bearer this request carries was presented as bound to the
+    /// one command the request sends
+    /// ([`with_request_delegation`](Self::with_request_delegation)).
+    pub fn bearer_names_request(&self) -> bool {
+        self.0.bearer_names_request
     }
 }
 
@@ -289,6 +464,29 @@ mod tests {
         let shown = format!("{context:?}");
         assert!(shown.contains("Ed25519"));
         assert!(!shown.contains("171"), "{shown}");
+    }
+
+    #[test]
+    fn signing_override_false_hides_the_key_and_others_keep_it() {
+        let signed = RequestContext::default().with_signing(Some(SigningConfig {
+            key_type: crate::signing::SigningKeyType::Ed25519,
+            private_key_bytes: vec![0xAB; 32],
+            public_key_bytes: Vec::new(),
+            public_key_hex: "public".to_string(),
+            remote_signer: None,
+            signing_authorization: None,
+        }));
+        assert!(signed
+            .clone()
+            .with_signing_override(Some(false))
+            .signing()
+            .is_none());
+        assert!(signed
+            .clone()
+            .with_signing_override(Some(true))
+            .signing()
+            .is_some());
+        assert!(signed.with_signing_override(None).signing().is_some());
     }
 
     #[test]
@@ -411,7 +609,11 @@ mod tests {
         );
 
         let unscoped = RequestContext::default();
-        assert_eq!(unscoped.bearer_token_for(did).as_deref(), Some("stored"));
+        assert_eq!(
+            unscoped.bearer_token_for(did),
+            None,
+            "a request that carries no bearer read the process store"
+        );
 
         crate::signing::clear_request_bearer_token(did);
         crate::signing::clear_request_bearer_token(other);
@@ -438,5 +640,38 @@ mod tests {
         let admin = anonymous.clone().with_dac_bypass(true);
         assert!(admin.dac_bypass());
         assert!(!anonymous.dac_bypass());
+    }
+
+    #[test]
+    fn a_denied_bypass_stays_denied_whatever_is_granted_later() {
+        let denied = RequestContext::default()
+            .with_identity(Some("did:key:admin".to_string()))
+            .with_dac_bypass_denied();
+        assert!(denied.dac_bypass_denied());
+        assert!(!denied.dac_bypass());
+        let regranted = denied.clone().with_dac_bypass(true);
+        assert!(regranted.dac_bypass_denied());
+        assert!(!regranted.dac_bypass());
+        assert!(!denied.with_dac_bypass(false).dac_bypass());
+
+        let granted = RequestContext::default()
+            .with_dac_bypass(true)
+            .with_dac_bypass_denied();
+        assert!(!granted.dac_bypass());
+        assert!(!RequestContext::default().dac_bypass_denied());
+        assert!(!RequestContext::default()
+            .with_dac_bypass(true)
+            .dac_bypass_denied());
+    }
+
+    #[test]
+    fn or_ambient_never_grants_a_denied_bypass() {
+        crate::ambient::set_dac_bypass(true);
+        let merged = RequestContext::default()
+            .with_dac_bypass_denied()
+            .or_ambient();
+        crate::ambient::set_dac_bypass(false);
+        assert!(merged.dac_bypass_denied());
+        assert!(!merged.dac_bypass());
     }
 }

@@ -52,6 +52,17 @@ pub enum CollectionCommand {
     SetActive(SetActiveArgs),
     /// Truncate a collection
     Truncate(TruncateArgs),
+    /// Permanently remove documents by DocID from the local node
+    PurgeDocs(PurgeDocsArgs),
+}
+
+/// Arguments for purge-docs. History is always pruned unless the collection is
+/// branchable, so Go shinzo's `--prune-history` has no counterpart.
+#[derive(Args, Debug)]
+pub struct PurgeDocsArgs {
+    /// DocID of a document to purge (may be repeated)
+    #[arg(long = "docID")]
+    pub doc_ids: Vec<String>,
 }
 
 /// Arguments for collection add (schema definition) command
@@ -182,6 +193,7 @@ impl CollectionArgs {
             CollectionCommand::Patch(args) => args.execute(ctx).await,
             CollectionCommand::SetActive(args) => args.execute(ctx).await,
             CollectionCommand::Truncate(args) => args.execute(ctx, self.name.as_deref()).await,
+            CollectionCommand::PurgeDocs(args) => args.execute(ctx, self.name.as_deref()).await,
         }
     }
 }

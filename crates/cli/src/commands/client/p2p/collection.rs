@@ -96,7 +96,9 @@ impl P2pCollectionAddArgs {
         let collections: Vec<String> = self
             .collections
             .split(',')
-            .map(|s| s.trim().to_string())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
             .collect();
         for col in &collections {
             validate_identifier(col)?;
@@ -115,7 +117,9 @@ impl P2pCollectionDeleteArgs {
         let collections: Vec<String> = self
             .collections
             .split(',')
-            .map(|s| s.trim().to_string())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
             .collect();
         for col in &collections {
             validate_identifier(col)?;

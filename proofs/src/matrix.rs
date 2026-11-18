@@ -91,10 +91,16 @@ mod tests {
             .iter()
             .filter(|&family| !families.contains(family))
             .collect();
+        let repeated: Vec<_> = rows
+            .iter()
+            .enumerate()
+            .filter(|&(at, family)| rows[..at].contains(family))
+            .map(|(_, family)| family)
+            .collect();
         assert!(
-            missing.is_empty() && extra.is_empty(),
+            missing.is_empty() && extra.is_empty() && repeated.is_empty(),
             "README Modeled families table: registry families with no row {missing:?}, \
-             rows with no registry entry {extra:?}"
+             rows with no registry entry {extra:?}, rows listed twice {repeated:?}"
         );
     }
 }

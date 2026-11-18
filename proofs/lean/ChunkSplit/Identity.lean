@@ -9,10 +9,11 @@ The story, in plain words.
   and a peer node later learns that schema from the author's definition blocks.
 * What can happen: the author computes the collection's ID as a hash over the
   definition delta. The peer stores the definition it rebuilds from that delta.
-* What must never happen: two schemas that cut text differently (other `maxChars`
-  or `overlap`) share one ID, or a peer rebuilds a definition with no settings, or
+* What must never happen: two schemas that cut text differently (other `maxChars`,
+  `overlap` or splitter version) share one ID, or a peer rebuilds a definition with no settings, or
   with settings other than the author's. Either way two nodes would hold "the same"
-  collection and cut the same text into different chunks.
+  collection and cut the same text into different chunks. Nor may adding the
+  splitter version change the ID of any definition made before it existed.
 
 The hash and the CBOR bytes are the assumed boundary, as in `Cid/Determinism.lean`:
 equal deltas give equal IDs, different deltas give different IDs. So the model's
@@ -25,6 +26,10 @@ Rust anchors:
   settings before IDs are computed. The bug it replaced is modeled by `buggyId`.
 * `crates/db/src/merge/merge_handler/definition.rs` `process_collection_definition_delta`:
   a peer reads the settings back from the delta. Modeled by `restore`.
+* `crates/defra-core/src/block_delta.rs` `ChunkedFieldDelta` (serde) and
+  `crates/defra-core/src/ipld/to_ipld.rs`, `from_ipld.rs` for `ChunkedFieldDelta`:
+  the splitter version is left out of the bytes at `DEFAULT_SPLITTER_VERSION` and
+  read back as it when missing. Modeled by `encode` and `decode`.
 
 Verify: `cd proofs/lean && lake build ChunkSplit`
 -/
@@ -41,6 +46,8 @@ structure Setting where
   maxChars : Nat
   -- How many paragraphs a chunk repeats from the one before.
   overlap : Nat
+  -- Which splitting rules cut the text: two versions may cut it differently.
+  splitter : Nat
   -- Two settings can be compared for equality.
   deriving DecidableEq, Repr
 
@@ -214,17 +221,94 @@ def buggyId (base : Nat) (_settings : List Setting) : Delta :=
 theorem buggy_identity_ignores_settings :
     ∃ s s' : List Setting, s ≠ s' ∧ buggyId 0 s = buggyId 0 s' := by
   -- Two schemas that differ only in `maxChars`.
-  refine ⟨[⟨0, 64, 0⟩], [⟨0, 1600, 0⟩], ?_, rfl⟩
+  refine ⟨[⟨0, 64, 0, 1⟩], [⟨0, 1600, 0, 1⟩], ?_, rfl⟩
   -- They are different settings, yet `rfl` above shows the same ID.
   decide
 
 /-- The fixed code gives those two schemas different IDs. -/
 theorem fixed_identity_tells_them_apart :
-    build 0 [⟨0, 64, 0⟩] none ≠ build 0 [⟨0, 1600, 0⟩] none := by
+    build 0 [⟨0, 64, 0, 1⟩] none ≠ build 0 [⟨0, 1600, 0, 1⟩] none := by
   -- Equal IDs would mean equal sorted settings.
   intro h
   have hs := (same_identity_same_settings h).1
   -- Sorting one setting leaves it alone, and 64 is not 1600.
   simp [List.mergeSort_singleton] at hs
+
+/-! ## The splitter version
+
+The version is part of each setting, so it reaches the identity like `maxChars`.
+On the wire it is left out at the default, so the bytes of every definition made
+before it existed stay the same. -/
+
+-- The rules a setting that states no version was cut with. Fixed for good.
+def defaultSplitter : Nat := 1
+
+-- One setting as the delta's bytes hold it. `none` means the version is left out.
+structure WireSetting where
+  -- Which text field is chunked.
+  field : Nat
+  -- The most characters a chunk may hold.
+  maxChars : Nat
+  -- How many sentences a chunk repeats from the one before.
+  overlap : Nat
+  -- The splitter version, or nothing at the default.
+  splitter : Option Nat
+  -- Two wire settings can be compared for equality.
+  deriving DecidableEq, Repr
+
+-- What the Rust writes: the version only when it is not the default.
+def encode (s : Setting) : WireSetting :=
+  -- Everything else is copied as it is.
+  { field := s.field, maxChars := s.maxChars, overlap := s.overlap,
+    splitter := if s.splitter = defaultSplitter then none else some s.splitter }
+
+-- What the Rust reads: a missing version is the default.
+def decode (w : WireSetting) : Setting :=
+  -- Everything else is copied as it is.
+  { field := w.field, maxChars := w.maxChars, overlap := w.overlap,
+    splitter := w.splitter.getD defaultSplitter }
+
+-- A setting's bytes from before the version existed: just the three numbers.
+def legacyWire (field maxChars overlap : Nat) : WireSetting :=
+  -- No version at all.
+  { field := field, maxChars := maxChars, overlap := overlap, splitter := none }
+
+/-- Reading back what was written gives the same setting, whatever its version. -/
+theorem decode_encode (s : Setting) : decode (encode s) = s := by
+  -- Look inside the setting.
+  cases s with
+  | mk f m o v =>
+    -- Either the version is the default, and the missing one reads as it,
+    -- or it is not, and it was written out.
+    by_cases h : v = defaultSplitter <;> simp [encode, decode, h]
+
+/-- At the default version the bytes are the ones made before it existed, so the ID is too. -/
+theorem default_splitter_keeps_the_old_bytes (f m o : Nat) :
+    encode ⟨f, m, o, defaultSplitter⟩ = legacyWire f m o := by
+  -- The version equals the default, so it is left out.
+  simp [encode, legacyWire]
+
+/-- A setting stored before the version existed reads as the default rules. -/
+theorem old_bytes_read_as_the_default (f m o : Nat) :
+    decode (legacyWire f m o) = ⟨f, m, o, defaultSplitter⟩ := by
+  -- A missing version is read as the default.
+  rfl
+
+/-- Two settings with the same bytes are the same setting, so other rules mean other bytes. -/
+theorem encode_injective {s s' : Setting} (h : encode s = encode s') : s = s' := by
+  -- Decode both sides of the equal bytes.
+  have hd := congrArg decode h
+  -- Decoding undoes encoding on each side.
+  simpa [decode_encode] using hd
+
+/-- A schema on other splitting rules gets a different ID, even with the same numbers. -/
+theorem splitter_reaches_the_identity {b f m o v v' : Nat} {c : Option (Nat × Nat)}
+    (hv : v ≠ v') : build b [⟨f, m, o, v⟩] c ≠ build b [⟨f, m, o, v'⟩] c := by
+  -- Equal IDs would mean equal sorted settings.
+  intro h
+  have hs := (same_identity_same_settings h).1
+  -- Sorting one setting leaves it alone, and the versions differ.
+  simp [List.mergeSort_singleton] at hs
+  exact hv hs
 
 end ChunkSplit.Identity

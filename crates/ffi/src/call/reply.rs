@@ -1,18 +1,18 @@
 //! The caller's callback for an asynchronous call, called exactly once.
 
-use crate::types::FfiResult;
+use crate::types::DefraResult;
 
 /// Receives the result of an asynchronous call, exactly once.
 ///
 /// - `context` is the value the caller passed with the call.
 /// - `result` is the call's result, as its synchronous form returns it: the
-///   caller owns its strings and frees them with `defra_free_string`.
+///   caller owns it and frees it with `defra_result_free`.
 ///
 /// The callback runs on a DefraDB thread that serves other work: it must
 /// return promptly, and a synchronous DefraDB call made from it is refused
 /// (an asynchronous one is fine). A call that fails before it is submitted
 /// calls it on the caller's own thread, before the call returns.
-pub type DefraResultCallback = unsafe extern "C" fn(context: usize, result: FfiResult);
+pub type DefraResultCallback = unsafe extern "C" fn(context: usize, result: DefraResult);
 
 /// What a call has not reported when it ends without a result.
 pub(super) const ERR_ENDED: &str =
@@ -37,12 +37,12 @@ impl Reply {
     }
 
     /// Hands `result` to the caller.
-    pub(crate) fn send(mut self, result: FfiResult) {
+    pub(crate) fn send(mut self, result: DefraResult) {
         self.sent = true;
         self.call(result);
     }
 
-    fn call(&self, result: FfiResult) {
+    fn call(&self, result: DefraResult) {
         // SAFETY: the caller's callback contract: it takes the context it
         // gave and owns the result from here.
         unsafe { (self.callback)(self.context, result) }
@@ -52,7 +52,7 @@ impl Reply {
 impl Drop for Reply {
     fn drop(&mut self) {
         if !self.sent {
-            self.call(FfiResult::error(ERR_ENDED));
+            self.call(DefraResult::error(ERR_ENDED));
         }
     }
 }

@@ -20,6 +20,8 @@ use acp::nac::NodePermission::*;
 ///   `delete_collection_version`/`delete_collection_versions_batch`/
 ///   `set_active_collection_version`/`patch_collection` in `collection_ops/` +
 ///   `patch/mod.rs`); `add_collection_in_txn` also gates on the registry.
+///   `create_view_collections_as` is not: AddView needs only `add-view`, as
+///   in Go, and its callers check that.
 /// - `CollectionTruncate`: `truncate_collection_as` (`collection_ops/truncate/`).
 /// - `DacPolicyAdd`: `add_dac_policy_as` (`access/dac/`).
 /// - `NacStatus`, `NacRelationAdd`, `NacRelationDelete`: the NAC operations in

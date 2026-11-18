@@ -2,8 +2,8 @@
 //! backups, document ACP relationships, encrypted indexes and block
 //! signatures run the same core operations the node's own calls do.
 //!
-//! A request runs as the identity it carries, or as none: unlike the node's
-//! in-process calls, it never acts as the node.
+//! A request runs as the identity it carries, or as none: it never acts as
+//! the node.
 
 use std::sync::Arc;
 
@@ -39,6 +39,16 @@ impl HttpNodeOps {
 
     fn context(&self) -> RequestContext {
         RequestContext::bound_or_ambient(self.context.as_ref()).into_owned()
+    }
+
+    /// The bound request, when it acts as `requestor`.
+    fn request_as(&self, requestor: Option<&identity::Did>) -> Result<RequestContext, String> {
+        let context = self.context();
+        if context.identity() == requestor.map(identity::Did::as_str) {
+            Ok(context)
+        } else {
+            Err("request identity mismatch".to_owned())
+        }
     }
 }
 
@@ -135,6 +145,20 @@ impl BackupOperations for HttpNodeOps {
 
 #[async_trait::async_trait]
 impl DocumentAcpOperations for HttpNodeOps {
+    /// Only a provider that joins the transaction serves a relationship
+    /// change in one over HTTP. A remote provider would stage the change,
+    /// and staging is for embedders that call the node directly.
+    fn supports_transactional_relationships(&self) -> bool {
+        self.ops.document_acp.supports_transactions()
+    }
+
+    fn caller_of_delegation(
+        &self,
+        token: &str,
+    ) -> Option<Result<acp::AuthenticatedCaller, String>> {
+        self.ops.document_acp.caller_of_delegation(token)
+    }
+
     fn bind_request(&self, context: &RequestContext) -> Option<Arc<dyn DocumentAcpOperations>> {
         Some(self.bound(context))
     }
@@ -147,8 +171,12 @@ impl DocumentAcpOperations for HttpNodeOps {
         resource_name: &str,
         doc_id: &str,
     ) -> Result<bool, String> {
-        let acp = self.ops.document_acp.clone();
-        let actor = acp::Identity::Authenticated(actor.clone());
+        let context = self
+            .context
+            .clone()
+            .ok_or_else(|| "authentication required".to_owned())?;
+        let acp = self.ops.acp_ops.clone();
+        let actor = actor.clone();
         let (policy, resource, doc) = (
             policy_id.to_owned(),
             resource_name.to_owned(),
@@ -156,9 +184,8 @@ impl DocumentAcpOperations for HttpNodeOps {
         );
         self.ops
             .on_acp(move || async move {
-                acp.check_doc_access(&actor, permission, &policy, &resource, &doc)
+                acp.check_doc_access(&context, &actor, permission, &policy, &resource, &doc)
                     .await
-                    .map_err(crate::Error::from)
             })
             .await
             .map_err(text)
@@ -172,17 +199,44 @@ impl DocumentAcpOperations for HttpNodeOps {
         doc_id: &str,
         relation: &str,
     ) -> Result<bool, String> {
+        let context = self.request_as(requestor)?;
         let acp = self.ops.acp_ops.clone();
         let args = Relationship::new(requestor, target_actor, collection, doc_id, relation);
         self.ops
             .on_acp(move || async move {
                 let Relationship(identity, target, collection, doc_id, relation) = args;
-                acp.add_dac_actor_relationship(&identity, &collection, &doc_id, &relation, &target)
-                    .await
+                acp.add_dac_actor_relationship(
+                    &context,
+                    &identity,
+                    &collection,
+                    &doc_id,
+                    &relation,
+                    &target,
+                )
+                .await
             })
             .await
             // The core answers whether it existed already; the trait, whether it is new.
             .map(|existed| !existed)
+            .map_err(text)
+    }
+
+    async fn list_doc_relationships(
+        &self,
+        requestor: &identity::Did,
+        collection: &str,
+        doc_id: &str,
+    ) -> Result<Vec<acp::DocumentRelationship>, String> {
+        let context = self.request_as(Some(requestor))?;
+        let acp = self.ops.acp_ops.clone();
+        let identity = requestor.to_string();
+        let (collection, doc_id) = (collection.to_owned(), doc_id.to_owned());
+        self.ops
+            .on_acp(move || async move {
+                acp.list_dac_relationships(&context, &identity, &collection, &doc_id)
+                    .await
+            })
+            .await
             .map_err(text)
     }
 
@@ -194,12 +248,14 @@ impl DocumentAcpOperations for HttpNodeOps {
         doc_id: &str,
         relation: &str,
     ) -> Result<bool, String> {
+        let context = self.request_as(requestor)?;
         let acp = self.ops.acp_ops.clone();
         let args = Relationship::new(requestor, target_actor, collection, doc_id, relation);
         self.ops
             .on_acp(move || async move {
                 let Relationship(identity, target, collection, doc_id, relation) = args;
                 acp.delete_dac_actor_relationship(
+                    &context,
                     &identity,
                     &collection,
                     &doc_id,

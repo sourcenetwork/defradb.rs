@@ -134,6 +134,7 @@ where
             deferred: false,
             op: None,
             parked: None,
+            superseded: false,
         })
     }
 

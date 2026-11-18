@@ -1,8 +1,12 @@
-use crate::scenario::{Common, Op};
+use crate::scenario::{Common, Failure, Op};
 use crate::test_case::State;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
+use std::time::{Duration, Instant};
 use testo::prelude::*;
+
+/// How long a build may take before the wait gives up, as in Go's harness.
+const BUILD_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Waits for an index to be built, or for the build gate to block or open.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -35,6 +39,56 @@ impl Op for WaitForIndexReady {
 
     fn expected_error(&self) -> Option<&str> {
         self.expected_error.as_deref()
+    }
+
+    /// Opens the node's build gate, waits for a build to block at it or for
+    /// builds of `expected_count` collections to reach it, or waits until no
+    /// index of `collection` is building, as Go's harness does.
+    fn run(&self, state: &State) -> Result<Value, Failure> {
+        self.common.plain(Self::name())?;
+        let node = state.node(self.common.node())?;
+        if self.release_gate || self.blocked || self.expected_count.is_some() {
+            let gate = node.spec.index_gate.clone().ok_or_else(|| {
+                Failure::operation("no index build gate: NewNode { indexGate } did not run".into())
+            })?;
+            if self.release_gate {
+                gate.release().map_err(Failure::operation)?;
+            }
+            if self.blocked {
+                gate.wait_blocked().map_err(Failure::operation)?;
+            }
+            if let Some(count) = self.expected_count {
+                gate.wait_collections(count.max(0) as usize)
+                    .map_err(Failure::operation)?;
+            }
+        }
+        let Some(collection) = &self.collection else {
+            return Ok(json!({}));
+        };
+        let core = node.core().ok_or_else(|| {
+            Failure::unsupported(format!("{} on a node in another process", Self::name()))
+        })?;
+        let deadline = Instant::now() + BUILD_TIMEOUT;
+        loop {
+            let listing = state
+                .block_on(core.list_indexes_as(&state.context(None), collection))
+                .map_err(|e| Failure::operation(e.to_string()))?;
+            let listing =
+                serde_json::to_value(listing).map_err(|e| Failure::operation(e.to_string()))?;
+            let still_building = listing
+                .as_array()
+                .is_some_and(|all| all.iter().any(super::new::building));
+            if !still_building {
+                return Ok(json!({}));
+            }
+            if Instant::now() > deadline {
+                return Err(Failure::operation(format!(
+                    "{}: an index of {collection} was still building after {BUILD_TIMEOUT:?}",
+                    Self::name()
+                )));
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
     }
 }
 

@@ -12,7 +12,8 @@ How it holds: every atom fits (a too-long paragraph is cut down until each
 piece fits, all the way to single characters), packing only adds an atom to a
 core when the sum still fits (closing early before a heading only makes cores
 shorter), and the overlap only borrows a prefix that keeps
-the chunk within the limit.
+the chunk within the limit. `pickPre_capped` adds that the prefix is at most a
+quarter of the limit and no longer than the chunk's own text.
 
 The promise is `bounded`. It needs the limit to be at least 1, since a single
 character must fit; the schema validator requires `maxChars >= 64`.
@@ -178,14 +179,33 @@ theorem pickPre_fits (cfg : Config) (prev core : List Char) (hcore : core.length
     (pickPre cfg prev core).length + core.length ≤ cfg.max := by
   -- Open the definition of the prefix.
   unfold pickPre
-  -- Look at whether some candidate fit.
-  cases hf : (cfg.cands prev).find? (fun c => decide (c.length + core.length ≤ cfg.max)) with
-  -- None did: the prefix is empty, and the core alone is within the limit.
+  -- Look at whether some candidate was allowed.
+  cases hf : (cfg.cands prev).find? (preOk cfg core) with
+  -- None was: the prefix is empty, and the core alone is within the limit.
   | none => simpa using hcore
-  -- One did: it was picked exactly because it fits next to the core.
+  -- One was: it was picked only because it fits next to the core.
   | some c =>
     have := List.find?_some hf
-    simpa using this
+    simp only [preOk, Bool.and_eq_true, decide_eq_true_eq] at this
+    simpa using this.1.1
+
+-- Promise (pickPre_capped): a repeat is at most a quarter of the limit and never
+-- longer than the chunk's own text, so a chunk is never mostly a repeat.
+theorem pickPre_capped (cfg : Config) (prev core : List Char) :
+    -- Four times the prefix fits in the limit, and the prefix is no longer than the core.
+    repeatShare * (pickPre cfg prev core).length ≤ cfg.max
+      ∧ (pickPre cfg prev core).length ≤ core.length := by
+  -- Open the definition of the prefix.
+  unfold pickPre
+  -- Look at whether some candidate was allowed.
+  cases hf : (cfg.cands prev).find? (preOk cfg core) with
+  -- None was: the prefix is empty, which is within both bounds.
+  | none => simp
+  -- One was: both bounds are part of what allowed it.
+  | some c =>
+    have := List.find?_some hf
+    simp only [preOk, Bool.and_eq_true, decide_eq_true_eq] at this
+    simpa using ⟨this.1.2, this.2⟩
 
 -- Promise: every chunk made from cores that fit, overlap included, fits.
 theorem overlapFrom_bounded (cfg : Config) :

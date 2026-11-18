@@ -728,7 +728,7 @@ impl P2PHostHandle {
 
     /// Send an SE query request to a peer via the SE query two-stream protocol.
     ///
-    /// The response arrives asynchronously as [`HostEvent::SEQueryReply`].
+    /// The response arrives asynchronously as [`HostEvent::SEQueryReply`](crate::HostEvent::SEQueryReply).
     pub async fn send_se_query_request(
         &self,
         peer_id: PeerId,
@@ -766,7 +766,7 @@ impl P2PHostHandle {
 
     /// Send a management mutate request to a peer via the manage two-stream protocol.
     ///
-    /// The response arrives asynchronously as [`HostEvent::ManageReply`].
+    /// The response arrives asynchronously as [`HostEvent::ManageReply`](crate::HostEvent::ManageReply).
     pub async fn send_manage_request(
         &self,
         peer_id: PeerId,
@@ -804,7 +804,7 @@ impl P2PHostHandle {
 
     /// Send a management query request to a peer via the manage query two-stream protocol.
     ///
-    /// The response arrives asynchronously as [`HostEvent::ManageQueryReply`].
+    /// The response arrives asynchronously as [`HostEvent::ManageQueryReply`](crate::HostEvent::ManageQueryReply).
     pub async fn send_manage_query_request(
         &self,
         peer_id: PeerId,
@@ -841,12 +841,18 @@ impl P2PHostHandle {
     }
 
     /// Send a CAR request to a peer (request DAG as CARv1).
-    pub async fn send_car_request(&self, peer_id: PeerId, root_cid: Cid) -> Result<()> {
+    pub async fn send_car_request(
+        &self,
+        peer_id: PeerId,
+        root_cid: Cid,
+        haves: Vec<Cid>,
+    ) -> Result<()> {
         let (response_tx, response_rx) = oneshot::channel();
         self.command_tx
             .send(HostCommand::SendCarRequest {
                 peer_id,
                 root_cid,
+                haves,
                 response: response_tx,
             })
             .await

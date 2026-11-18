@@ -50,7 +50,7 @@ impl<S: Store> crate::database::DB<S> {
             .ok_or_else(|| Error::CollectionNotFound(name.to_string()))?;
         if let Some(source) = &collection.schema().chunk_of {
             if txn.get_collection(&source.collection).await?.is_some() {
-                return Err(Error::DeleteGeneratedCollection(name.to_string()));
+                crate::chunk::ensure_admin_changeable(collection.schema())?;
             }
         }
 
@@ -70,6 +70,11 @@ impl<S: Store> crate::database::DB<S> {
         let name_key = CollectionNameKey::new(name);
         systemstore
             .delete(&name_key.bytes())
+            .await
+            .map_err(Error::Storage)?;
+
+        txn.datastore()?
+            .project_document(name, "")
             .await
             .map_err(Error::Storage)?;
 

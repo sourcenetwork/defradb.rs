@@ -771,3 +771,72 @@ fn text_schema() -> CollectionVersion {
         ],
     )
 }
+
+struct AsyncOnlySigner {
+    key: crypto::Ed25519PrivateKey,
+    waves: AtomicUsize,
+    worker_calls: AtomicUsize,
+}
+
+impl RemoteSigner for AsyncOnlySigner {
+    fn sign_sync(&self, _: &[u8], _: Option<&SigningAuthorization>) -> Result<Vec<u8>, String> {
+        Err("synchronous signing is unavailable".into())
+    }
+
+    fn sign_batch(
+        &self,
+        payloads: Vec<Arc<[u8]>>,
+        _: Option<SigningAuthorization>,
+    ) -> MaybeBoxFuture<'static, Vec<Result<Vec<u8>, SignFailure>>> {
+        self.waves.fetch_add(1, Ordering::SeqCst);
+        if workers::on_worker() {
+            self.worker_calls.fetch_add(1, Ordering::SeqCst);
+        }
+        let signatures = payloads
+            .into_iter()
+            .map(|payload| {
+                self.key
+                    .sign(&payload)
+                    .map_err(|error| SignFailure::refused(error.to_string()))
+            })
+            .collect();
+        Box::pin(async move { signatures })
+    }
+}
+
+#[test]
+fn signed_create_preparation_uses_async_waves_outside_workers() {
+    workers::block_on(async {
+        let db = database().await;
+        let signer = Arc::new(AsyncOnlySigner {
+            key: crypto::generate_ed25519().unwrap(),
+            waves: AtomicUsize::new(0),
+            worker_calls: AtomicUsize::new(0),
+        });
+        let public = signer.key.public_key();
+        let context = defra_core::RequestContext::default().with_signing(Some(
+            defra_core::signing::SigningConfig {
+                key_type: defra_core::signing::SigningKeyType::Ed25519,
+                private_key_bytes: Vec::new(),
+                public_key_bytes: public.raw_owned(),
+                public_key_hex: hex::encode(public.raw()),
+                remote_signer: Some(signer.clone()),
+                signing_authorization: None,
+            },
+        ));
+        let mutator = AutoCommitMutator::new(db);
+        let docs = mutator
+            .prepare_creates_as(&context, "Things", documents(1))
+            .await
+            .unwrap();
+        assert_eq!(docs.len(), 1);
+        assert_eq!(signer.waves.load(Ordering::SeqCst), 2);
+        assert_eq!(signer.worker_calls.load(Ordering::SeqCst), 0);
+        mutator
+            .create_as(&context, "Things", docs.into_iter().next().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(signer.waves.load(Ordering::SeqCst), 2);
+    })
+    .unwrap();
+}

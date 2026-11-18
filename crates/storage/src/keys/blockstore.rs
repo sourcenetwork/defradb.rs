@@ -52,7 +52,7 @@ impl Key for BlockstoreKey {
 
 /// ToMergeIndexKey: Tracks blocks that haven't been merged into permanent store
 ///
-/// Structure: [MERGE_PREFIX_BYTE][CID_BYTES]
+/// Structure: `[MERGE_PREFIX_BYTE][CID_BYTES]`
 /// Example: 0x6D ('m') + CID bytes
 ///
 /// This is used to identify blocks pending merge in the blockstore for CRDT operations.

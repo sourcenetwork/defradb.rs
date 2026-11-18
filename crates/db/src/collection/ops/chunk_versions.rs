@@ -1,14 +1,12 @@
 use rapidhash::RapidHashSet;
 use schema::CollectionVersion;
 
-use crate::error::{Error, Result};
-
-/// The chunk collection versions that go with `version_ids`. A chunk collection
-/// can't outlive its parent, so deleting one whose parent stays is refused.
+/// The chunk collection versions that go with `version_ids`, since a chunk
+/// collection can't outlive its parent.
 pub(super) fn chunk_versions_to_add(
     all_versions: &[CollectionVersion],
     version_ids: &[String],
-) -> Result<Vec<String>> {
+) -> Vec<String> {
     let deleting: RapidHashSet<&str> = version_ids.iter().map(String::as_str).collect();
     let mut added: Vec<String> = Vec::new();
 
@@ -40,21 +38,5 @@ pub(super) fn chunk_versions_to_add(
             }
         }
     }
-
-    let going = |id: &str| deleting.contains(id) || added.iter().any(|added| added == id);
-    for version in all_versions {
-        let Some(source) = &version.chunk_of else {
-            continue;
-        };
-        if !version.is_active || !going(&version.version_id) {
-            continue;
-        }
-        let parent_stays = all_versions.iter().any(|other| {
-            other.is_active && other.name == source.collection && !going(&other.version_id)
-        });
-        if parent_stays {
-            return Err(Error::DeleteGeneratedCollection(version.name.clone()));
-        }
-    }
-    Ok(added)
+    added
 }

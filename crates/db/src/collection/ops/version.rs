@@ -59,6 +59,7 @@ impl<S: Store> crate::database::DB<S> {
                 })?;
             crate::collection::populate_collection_root_id(&systemstore, &mut target_schema)
                 .await?;
+            crate::chunk::ensure_admin_changeable(&target_schema)?;
             // A synced version binds its policy by CID. Rebuilt without the
             // reference, the record commits to less than its identity does,
             // and activating it would serve the collection unpoliced,
@@ -119,7 +120,17 @@ impl<S: Store> crate::database::DB<S> {
                             .await
                             .map_err(Error::Storage)?
                         {
-                            match serde_json::from_slice::<CollectionVersion>(&other_bytes) {
+                            let other = serde_json::from_slice::<CollectionVersion>(&other_bytes);
+                            if let Ok(other_schema) = &other {
+                                crate::chunk::user_writes::ensure_keeps_first_chunk_settings(
+                                    &target_schema,
+                                    other_schema,
+                                )?;
+                            }
+                            match other {
+                                Ok(other_schema) if other_schema.is_generated() => {
+                                    crate::chunk::ensure_admin_changeable(&other_schema)?;
+                                }
                                 Ok(mut other_schema) if other_schema.is_active => {
                                     other_schema.is_active = false;
                                     let other_data =
@@ -156,6 +167,11 @@ impl<S: Store> crate::database::DB<S> {
 
             (target_schema, name)
         };
+
+        txn.datastore()?
+            .project_document(&name, "")
+            .await
+            .map_err(Error::Storage)?;
 
         let collection =
             Collection::load_index_actions(target_schema.clone(), &txn.systemstore()?).await?;
@@ -197,8 +213,13 @@ impl<S: Store> crate::database::DB<S> {
         &self,
         version_id: &str,
     ) -> Result<Option<Collection>> {
-        // Check cache first
-        if let Some(c) = self.get_collection_by_version_id(version_id)? {
+        // The cache answers by the version's collection, which it holds at its
+        // active version: a hit is this version only when the IDs agree. An
+        // older version comes from the stored versions below.
+        if let Some(c) = self
+            .get_collection_by_version_id(version_id)?
+            .filter(|c| c.version_id() == version_id)
+        {
             return Ok(Some(c));
         }
         // Search all stored versions (including inactive)
@@ -302,26 +323,35 @@ impl<S: Store> crate::database::DB<S> {
     ) -> Result<()> {
         self.check_node_access_as(context, acp::nac::NodePermission::CollectionPatch)
             .await?;
-        let all_versions = self.get_all_collection_versions().await?;
+        let mut txn = self.new_txn(false).await?;
+        let all_versions = self.get_all_collection_versions_with_txn(&mut txn).await?;
         let mut requested: Vec<String> = also_deleting.to_vec();
         requested.push(version_id.to_string());
-        let chunk_versions =
-            super::chunk_versions::chunk_versions_to_add(&all_versions, &requested)?;
-        if chunk_versions.is_empty() {
-            return self.delete_version_checked(version_id, also_deleting).await;
-        }
-        requested.extend(chunk_versions);
-        self.delete_collection_versions_batch_as(context, requested)
-            .await
+        let deleted =
+            if super::chunk_versions::chunk_versions_to_add(&all_versions, &requested).is_empty() {
+                vec![
+                    self.delete_collection_version_with_txn(&mut txn, version_id, also_deleting)
+                        .await?,
+                ]
+            } else {
+                self.delete_collection_versions_batch_with_txn(&mut txn, requested)
+                    .await?
+            };
+        txn.commit().await?;
+        deleted
+            .iter()
+            .try_for_each(|deleted| self.after_version_deleted(deleted))
     }
 
-    async fn delete_version_checked(
+    /// [`Self::delete_collection_version_as`]'s reads and writes, in `txn`.
+    /// The caller has checked node access, commits `txn`, and then passes the
+    /// result to [`Self::after_version_deleted`].
+    pub(crate) async fn delete_collection_version_with_txn(
         &self,
+        txn: &mut DbTxn<S>,
         version_id: &str,
         also_deleting: &[String],
-    ) -> Result<()> {
-        // Load the version from KV store
-        let txn = self.new_txn(true).await?;
+    ) -> Result<DeletedVersion> {
         let target_schema = {
             let systemstore = txn.systemstore()?;
             let collection_key = CollectionKey::new(version_id);
@@ -342,13 +372,12 @@ impl<S: Store> crate::database::DB<S> {
 
             schema
         };
-        let _ = txn.discard();
 
         let collection_id = target_schema.collection_id.clone();
         let name = target_schema.name.clone();
 
-        let all_versions = self.get_all_collection_versions().await?;
         // Validate: no child versions reference this (excluding batch siblings)
+        let all_versions = self.get_all_collection_versions_with_txn(txn).await?;
         for other in &all_versions {
             if let Some(ref prev) = other.previous_version {
                 if prev.source_collection_id == version_id
@@ -363,6 +392,9 @@ impl<S: Store> crate::database::DB<S> {
         let mut deleting_versions: rapidhash::RapidHashSet<&str> =
             also_deleting.iter().map(String::as_str).collect();
         deleting_versions.insert(version_id);
+        crate::chunk::user_writes::ensure_removed_with_parent(&all_versions, |version| {
+            deleting_versions.contains(version.version_id.as_str())
+        })?;
         let is_deleting_last_local_version = all_versions.iter().all(|version| {
             version.collection_id != collection_id
                 || deleting_versions.contains(version.version_id.as_str())
@@ -370,7 +402,9 @@ impl<S: Store> crate::database::DB<S> {
 
         // Validate: no documents exist
         if target_schema.is_active {
-            let has_data = self.collection_has_data(&target_schema).await?;
+            let has_data = self
+                .collection_has_data_with_txn(txn, &target_schema)
+                .await?;
             if has_data {
                 return Err(Error::InvalidPatch(
                     "cannot delete a collection that has documents, first delete the documents and then delete the version".to_string(),
@@ -379,7 +413,6 @@ impl<S: Store> crate::database::DB<S> {
         }
 
         // Perform the actual deletion
-        let txn = self.new_txn(false).await?;
         {
             let systemstore = txn.systemstore()?;
 
@@ -405,6 +438,13 @@ impl<S: Store> crate::database::DB<S> {
                     .await
                     .map_err(Error::Storage)?;
             }
+        }
+
+        if target_schema.is_active {
+            txn.datastore()?
+                .project_document(&name, "")
+                .await
+                .map_err(Error::Storage)?;
         }
 
         // 4. Delete IPLD blocks from blockstore (collection CID + field CIDs)
@@ -435,21 +475,28 @@ impl<S: Store> crate::database::DB<S> {
                 });
             })))?;
         }
-        txn.commit().await?;
+        Ok(DeletedVersion {
+            version_id: version_id.to_string(),
+            name,
+            collection_id,
+            root_id: target_schema.resolved_root_id(),
+            is_last_local_version: is_deleting_last_local_version,
+        })
+    }
 
-        // 5. Remove from in-memory cache if active (ordered callback above).
-        if is_deleting_last_local_version {
-            self.forbid_collection_id(&collection_id)?;
-            self.vector_codes
-                .evict_collection(target_schema.resolved_root_id());
+    /// The in-memory follow-up to a committed version deletion: a collection
+    /// with no version left is forbidden and its vector codes evicted. The
+    /// cache entry is removed by the deletion's commit callback.
+    pub(crate) fn after_version_deleted(&self, deleted: &DeletedVersion) -> Result<()> {
+        if deleted.is_last_local_version {
+            self.forbid_collection_id(&deleted.collection_id)?;
+            self.vector_codes.evict_collection(deleted.root_id);
         }
-
         tracing::info!(
-            version_id = %version_id,
-            collection_name = %name,
+            version_id = %deleted.version_id,
+            collection_name = %deleted.name,
             "Deleted collection version"
         );
-
         Ok(())
     }
 
@@ -477,10 +524,31 @@ impl<S: Store> crate::database::DB<S> {
         if version_ids.is_empty() {
             return Ok(());
         }
+        let mut txn = self.new_txn(false).await?;
+        let deleted = self
+            .delete_collection_versions_batch_with_txn(&mut txn, version_ids)
+            .await?;
+        txn.commit().await?;
+        deleted
+            .iter()
+            .try_for_each(|deleted| self.after_version_deleted(deleted))
+    }
+
+    /// [`Self::delete_collection_versions_batch_as`]'s reads and writes, in
+    /// `txn`. The caller has checked node access, commits `txn`, and then
+    /// passes each result to [`Self::after_version_deleted`].
+    pub(crate) async fn delete_collection_versions_batch_with_txn(
+        &self,
+        txn: &mut DbTxn<S>,
+        version_ids: Vec<String>,
+    ) -> Result<Vec<DeletedVersion>> {
+        if version_ids.is_empty() {
+            return Ok(Vec::new());
+        }
 
         // Sort topologically: children before parents
         // A child has a PreviousVersion pointing to a parent in the batch
-        let all_versions = self.get_all_collection_versions().await?;
+        let all_versions = self.get_all_collection_versions_with_txn(txn).await?;
         let version_map: rapidhash::RapidHashMap<&str, &CollectionVersion> = all_versions
             .iter()
             .map(|v| (v.version_id.as_str(), v))
@@ -498,13 +566,13 @@ impl<S: Store> crate::database::DB<S> {
         version_ids.extend(super::chunk_versions::chunk_versions_to_add(
             &all_versions,
             &version_ids,
-        )?);
+        ));
         let deleting_versions: rapidhash::RapidHashSet<&str> =
             version_ids.iter().map(String::as_str).collect();
 
         for version in &all_versions {
             if deleting_versions.contains(version.version_id.as_str()) {
-                if version.is_active && self.collection_has_data(version).await? {
+                if version.is_active && self.collection_has_data_with_txn(txn, version).await? {
                     return Err(Error::InvalidPatch(
                         "cannot delete a collection that has documents, first delete the documents and then delete the version".to_string(),
                     ));
@@ -546,6 +614,9 @@ impl<S: Store> crate::database::DB<S> {
                 "cannot remove a collection while another field references it".to_string(),
             ));
         }
+        crate::chunk::user_writes::ensure_removed_with_parent(&all_versions, |version| {
+            deleting_versions.contains(version.version_id.as_str())
+        })?;
 
         let mut sorted = Vec::with_capacity(version_ids.len());
         let mut remaining: rapidhash::RapidHashSet<String> = version_ids.iter().cloned().collect();
@@ -596,24 +667,27 @@ impl<S: Store> crate::database::DB<S> {
         }
 
         // Delete each version in topological order
+        let mut deleted = Vec::with_capacity(sorted.len());
         for version_id in &sorted {
-            self.delete_version_checked(version_id, &version_ids)
-                .await?;
+            deleted.push(
+                self.delete_collection_version_with_txn(txn, version_id, &version_ids)
+                    .await?,
+            );
         }
 
-        Ok(())
+        Ok(deleted)
     }
 
-    /// Check if a collection has any documents in the datastore.
-    pub(crate) async fn collection_has_data(
+    /// Check if a collection has any documents in the datastore, read in `txn`.
+    pub(crate) async fn collection_has_data_with_txn(
         &self,
+        txn: &DbTxn<S>,
         version: &schema::CollectionVersion,
     ) -> Result<bool> {
         if !version.is_materialized {
             return Ok(false);
         }
 
-        let txn = self.new_txn(true).await?;
         let has_data = {
             let datastore = txn.datastore()?;
 
@@ -631,9 +705,19 @@ impl<S: Store> crate::database::DB<S> {
             iter.close().await.map_err(Error::Storage)?;
             has_any
         };
-        let _ = txn.discard();
         Ok(has_data)
     }
+}
+
+/// A collection version a transaction deleted, for the in-memory follow-up
+/// once that transaction commits ([`crate::database::DB::after_version_deleted`]).
+pub(crate) struct DeletedVersion {
+    version_id: String,
+    name: String,
+    collection_id: String,
+    root_id: u32,
+    /// No version of the collection is left.
+    is_last_local_version: bool,
 }
 
 #[cfg(test)]

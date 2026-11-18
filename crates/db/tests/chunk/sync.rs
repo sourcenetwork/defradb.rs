@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use db::chunk::list::chunk_list;
-use db::chunk::split::{split, ChunkConfig};
+use db::chunk::split::{split, ChunkConfig, SplitterVersion};
 use db::write::autocommit::batch::BatchMutator;
 use document::{DocID, Document, NormalValue};
 use query::mutator::{DocMutator, MutationBatchController};
@@ -17,6 +17,7 @@ const SDL: &str = r#"
 "#;
 pub(super) const CHUNKS: &str = "Article__body_chunk";
 pub(super) const CONFIG: ChunkConfig = ChunkConfig {
+    version: SplitterVersion::CURRENT,
     max_chars: 64,
     overlap: 0,
 };

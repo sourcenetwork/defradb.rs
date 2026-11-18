@@ -4232,6 +4232,71 @@ fn first_materialization_arrivals_include_peer_batches_once() {
 }
 
 #[test]
+fn peer_update_is_discovered_once_by_committed_cursor() {
+    workers::block_on(async {
+        let (handler, blockstore, _) = make_handler_with_schema_and_bus().await;
+        let collection = handler
+            .db()
+            .find_collection_by_id("col-users")
+            .unwrap()
+            .unwrap();
+        let mut doc = Document::new(collection.schema_arc());
+        doc.set("name", "before").unwrap();
+        doc.set_collection_version_id("v1");
+        let (doc_id, _, created) = create_doc_locally(&handler, &collection, &mut doc).await;
+        let mut changed_value = Vec::new();
+        ciborium::into_writer(&NormalValue::String("after".into()), &mut changed_value).unwrap();
+        let field = Block::new(
+            CrdtDelta::Lww(LwwDeltaPayload {
+                field_name: "name".into(),
+                collection_version_id: "v1".into(),
+                priority: 2,
+                data: changed_value,
+            }),
+            created.field_cids,
+            vec![],
+        );
+        let field_cid = field.generate_cid().unwrap();
+        blockstore
+            .put(&field_cid, &field.to_dag_cbor().unwrap())
+            .await
+            .unwrap();
+        let payload = CompositeDeltaPayload {
+            collection_version_id: "v1".into(),
+            priority: 7,
+            status: 1,
+        };
+        let block = Block::new(
+            CrdtDelta::Composite(payload.clone()),
+            vec![created.cid],
+            vec![DAGLink::new("name", field_cid)],
+        );
+        let cid = block.generate_cid().unwrap();
+        blockstore
+            .put(&cid, &block.to_dag_cbor().unwrap())
+            .await
+            .unwrap();
+        let id = doc_id.to_string();
+        let metadata =
+            BlockMetadata::normal(&id, "col-users", "did:key:z6MkrBatchMergeTest", None, false);
+        handler
+            .process_composite_delta(&cid, &block, &payload, &metadata, false, 0)
+            .await
+            .unwrap();
+        handler
+            .process_composite_delta(&cid, &block, &payload, &metadata, false, 0)
+            .await
+            .unwrap();
+        let page = super::update_journal::journal(handler.db()).await;
+        assert_eq!(page.head, 1);
+        assert_eq!(page.entries.len(), 1);
+        assert_eq!(page.entries[0].doc_id, id);
+        assert_eq!(page.entries[0].cid, cid.to_string());
+    })
+    .unwrap();
+}
+
+#[test]
 fn first_materialization_and_local_create_arrive_in_commit_order() {
     workers::block_on(async {
         use query::fetcher::{DocFetcher, DocumentArrivalOptions};
@@ -4371,4 +4436,117 @@ fn remote_field_tombstone_clears_materialized_value_and_keeps_its_priority() {
             .is_none());
     })
     .unwrap()
+}
+
+#[test]
+fn standalone_remote_merge_invalidates_stable_scope_after_schema_patch() {
+    workers::block_on(assert_remote_merge_invalidates_stable_scope_after_schema_patch(false))
+        .unwrap();
+}
+
+#[test]
+fn batch_remote_merge_invalidates_stable_scope_after_schema_patch() {
+    workers::block_on(assert_remote_merge_invalidates_stable_scope_after_schema_patch(true))
+        .unwrap();
+}
+
+async fn assert_remote_merge_invalidates_stable_scope_after_schema_patch(batch: bool) {
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let bus = Arc::new(ChannelBus::new());
+    let mut db = DB::from_arc(store.clone()).unwrap();
+    db.set_event_bus(bus.clone());
+    let db = Arc::new(db);
+    db.create_collections_atomic(
+        query::parse_sdl("type ObservationProbe { value: String }").unwrap(),
+    )
+    .await
+    .unwrap();
+    let original = db.get_collection("ObservationProbe").unwrap().unwrap();
+    let root_id = original.collection_id().to_owned();
+    let mut scoped = bus.subscribe_collection_changes(vec![root_id.clone()]);
+    db.patch_collection(
+        &defra_core::RequestContext::default(),
+        r#"[{"op":"add","path":"/ObservationProbe/Fields/-","value":{"Name":"extra","Kind":"String"}}]"#,
+        None,
+    )
+    .await
+    .unwrap();
+    let patched = db
+        .get_collection("ObservationProbe")
+        .unwrap()
+        .unwrap()
+        .schema_arc();
+    assert_eq!(patched.collection_id, root_id);
+    assert_ne!(
+        patched.version_id, root_id,
+        "the regression requires schema-version divergence"
+    );
+    let mut raw = bus.subscribe(&[EventName::Update]);
+    let blockstore = Arc::new(DefraBlockstore::new(store, false));
+    let mut doc = Document::new(patched.clone());
+    doc.set("value", NormalValue::String("remote".into()))
+        .unwrap();
+    let built = db::block::builder::build_blocks_from_document(
+        &storage::Crdts::default(),
+        &doc,
+        &patched,
+        &blockstore,
+    )
+    .await
+    .unwrap();
+    let handler = DbMergeHandler::new(db, blockstore);
+    if batch {
+        let blocks = [MergeBlock {
+            cid: built.cid,
+            block_data: built.block.clone(),
+            doc_id: built.doc_id.clone(),
+            collection_id: root_id.clone(),
+            creator: "did:key:z6MkrBatchMergeTest".into(),
+            sender_peer: Some("remote".into()),
+            is_explicit_replicator: false,
+            explicit_replay_authorization: None,
+            verified_creator: None,
+        }];
+        let outcomes = handler.handle_block_batch(&blocks).await;
+        assert!(
+            matches!(outcomes.as_slice(), [Ok(MergeOutcome::Merged)]),
+            "{outcomes:?}"
+        );
+    } else {
+        let metadata = BlockMetadata::normal(
+            &built.doc_id,
+            &root_id,
+            "did:key:z6MkrBatchMergeTest",
+            Some("remote"),
+            false,
+        );
+        assert_eq!(
+            handler
+                .handle_block(&built.cid, &built.block, metadata)
+                .await
+                .unwrap(),
+            MergeOutcome::Merged
+        );
+    }
+    let message = timeout(Duration::from_secs(1), raw.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let event = message.as_update().unwrap();
+    assert_eq!(
+        event.collection_id, patched.version_id,
+        "raw event retains the block's schema version"
+    );
+    assert_eq!(event.doc_id, built.doc_id);
+    assert_eq!(event.cid, built.cid);
+    assert_eq!(event.block, built.block);
+    let batch = timeout(Duration::from_secs(1), scoped.recv())
+        .await
+        .expect("a remote merge must wake the pre-patch stable collection scope")
+        .unwrap();
+    assert_eq!(batch.changes.len(), 1);
+    assert_eq!(batch.changes[0].collection_id, root_id);
+    assert_eq!(batch.changes[0].doc_id, built.doc_id);
+    assert!(!batch.changes[0].has_local_write);
+    assert!(!batch.resync_required);
 }

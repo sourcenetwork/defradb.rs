@@ -22,7 +22,7 @@ use super::log_throttle::DagFetchLogThrottles;
 /// Process-global counter of gossip payload decode failures.
 ///
 /// Both the libp2p and iroh gossip paths increment this via
-/// [`record_gossip_decode_failure`]. Exposed through every
+/// `record_gossip_decode_failure`. Exposed through every
 /// `SyncDiagnostics::snapshot()` so tests see the same number across all
 /// managers in the process.
 static GOSSIP_DECODE_FAILURES: AtomicU64 = AtomicU64::new(0);
@@ -130,6 +130,8 @@ pub struct SyncDiagnostics {
     car_present_cids: AtomicU64,
     car_served_cids: AtomicU64,
     car_filtered_cids: AtomicU64,
+    car_served_bytes: AtomicU64,
+    car_received_already_held: AtomicU64,
     provider_rotations: AtomicU64,
     provider_demotions: AtomicU64,
     provider_cooldown_skips: AtomicU64,
@@ -166,6 +168,11 @@ pub struct SyncDiagnosticsSnapshot {
     pub car_present_cids: u64,
     pub car_served_cids: u64,
     pub car_filtered_cids: u64,
+    /// Block bytes this node served in CAR responses.
+    pub car_served_bytes: u64,
+    /// Blocks CAR responses brought that this node already held, other than
+    /// the root each fetch asked for by name.
+    pub car_received_already_held: u64,
     pub provider_rotations: u64,
     pub provider_demotions: u64,
     pub provider_cooldown_skips: u64,
@@ -196,10 +203,10 @@ pub struct SyncDiagnosticsSnapshot {
     pub pending_dag_terminal_quarantined: u64,
     /// Dispatch passes whose due order the tie-break would have changed.
     pub pending_dag_tie_reorders: u64,
-    /// Process-global; see [`record_gossip_decode_failure`].
+    /// Process-global; see `record_gossip_decode_failure`.
     pub gossip_decode_failures: u64,
     /// Process-global recent samples captured by
-    /// [`record_gossip_decode_failure_sample`].
+    /// `record_gossip_decode_failure_sample`.
     pub recent_gossip_decode_failures: Vec<GossipDecodeFailureSample>,
 }
 
@@ -212,6 +219,8 @@ impl SyncDiagnostics {
             car_present_cids: self.car_present_cids.load(Ordering::Relaxed),
             car_served_cids: self.car_served_cids.load(Ordering::Relaxed),
             car_filtered_cids: self.car_filtered_cids.load(Ordering::Relaxed),
+            car_served_bytes: self.car_served_bytes.load(Ordering::Relaxed),
+            car_received_already_held: self.car_received_already_held.load(Ordering::Relaxed),
             provider_rotations: self.provider_rotations.load(Ordering::Relaxed),
             provider_demotions: self.provider_demotions.load(Ordering::Relaxed),
             provider_cooldown_skips: self.provider_cooldown_skips.load(Ordering::Relaxed),
@@ -276,6 +285,16 @@ impl SyncDiagnostics {
             .fetch_add(served as u64, Ordering::Relaxed);
         self.car_filtered_cids
             .fetch_add(filtered as u64, Ordering::Relaxed);
+    }
+
+    pub fn record_car_served_bytes(&self, bytes: usize) {
+        self.car_served_bytes
+            .fetch_add(bytes as u64, Ordering::Relaxed);
+    }
+
+    pub fn record_car_received_already_held(&self, blocks: usize) {
+        self.car_received_already_held
+            .fetch_add(blocks as u64, Ordering::Relaxed);
     }
 
     pub fn record_provider_rotation(&self) {

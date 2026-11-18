@@ -23,8 +23,8 @@ mod stream;
 use std::sync::Arc;
 
 use wasmtime::{
-    AsContextMut, InstancePre, Store, StoreContextMut, StoreLimits, StoreLimitsBuilder, Trap,
-    UpdateDeadline,
+    AsContextMut, InstancePre, Store, StoreContextMut, StoreHookState, StoreLimits,
+    StoreLimitsBuilder, Trap, UpdateDeadline,
 };
 
 use super::LensEngine;
@@ -140,7 +140,7 @@ fn resume(mut store: StoreContextMut<'_, CallData>) {
 
 /// Each epoch tick a module runs through: it yields to the executor polling
 /// the call, and traps once its ticks are spent.
-fn on_tick(mut store: StoreContextMut<'_, CallData>) -> wasmtime::Result<UpdateDeadline> {
+fn on_tick(mut store: StoreHookState<'_, CallData>) -> wasmtime::Result<UpdateDeadline> {
     let data = store.data_mut();
     data.ticks_left = data.ticks_left.saturating_sub(1);
     Ok(if data.ticks_left == 0 {

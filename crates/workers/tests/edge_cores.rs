@@ -1,5 +1,7 @@
 use workers::topology::{Core, CoreKind, CpuSet, Node, Source, Topology};
-use workers::{edge_cores, Config, EdgeCores, Pool, Priorities};
+use workers::{edge_cores, EdgeCores};
+#[cfg(target_os = "linux")]
+use workers::{Config, Pool, Priorities};
 
 /// `nodes` nodes of `cores` cores of `smt` siblings, numbered from `base` so
 /// machines of different tests never meet in the process's ledger.

@@ -34,8 +34,23 @@ pub enum Error {
     #[error("collection not found. collection version: {0}")]
     CollectionVersionNotFound(String),
 
-    #[error("index '{index}' not found on collection '{collection}'")]
+    /// No index of `collection` has the name `index`, in Go's words
+    /// (`NewErrIndexWithNameDoesNotExists`), so every surface and handle
+    /// answers a missing index alike.
+    #[error("index with name doesn't exists. Name: {index}")]
     IndexNotFound { collection: String, index: String },
+
+    /// Go's `NewErrEncryptedIndexOnNonExistentField`.
+    #[error("encrypted index on non-existent field. Field: {0}")]
+    EncryptedIndexFieldMissing(String),
+
+    /// Go's `NewErrEncryptedIndexAlreadyExists`.
+    #[error("encrypted index already exists on this field. Field: {0}")]
+    EncryptedIndexExists(String),
+
+    /// Go's `NewErrEncryptedIndexDoesNotExist`.
+    #[error("encrypted index does not exist on this field. Field: {0}")]
+    EncryptedIndexMissing(String),
 
     #[error("collection version ID can't be empty")]
     CollectionVersionIDEmpty,
@@ -69,12 +84,6 @@ pub enum Error {
 
     #[error("invalid collection name: {0}")]
     InvalidCollectionName(String),
-
-    #[error("{0} holds generated chunks and is emptied only with its parent")]
-    TruncateGeneratedCollection(String),
-
-    #[error("{0} holds generated chunks and is deleted only with its parent")]
-    DeleteGeneratedCollection(String),
 
     #[error("database is closed")]
     DatabaseClosed,
@@ -132,6 +141,27 @@ pub enum Error {
     #[error("{0}")]
     Other(String),
 
+    /// An admin change to a chunk collection, which follows its parent.
+    #[error(
+        "{collection} holds the chunks of {parent}.{field} and is changed only through {parent}"
+    )]
+    ChunkCollection {
+        collection: String,
+        parent: String,
+        field: String,
+    },
+
+    /// A version whose `@chunk` settings no schema could declare or keep.
+    #[error(transparent)]
+    ChunkSettings(#[from] schema::ChunkSettingsError),
+
+    /// A `@chunk` field's definition names splitting rules this node lacks.
+    #[error("cannot cut or check the chunks of {field}: {source}")]
+    UnknownSplitterVersion {
+        field: String,
+        source: chunk_split::split::UnknownSplitterVersion,
+    },
+
     /// A view names a lens transform CID with no committed lens config.
     #[error("lens CID not found: {0}")]
     ViewTransformMissing(String),
@@ -147,9 +177,6 @@ pub enum Error {
 
     #[error("lens error: {0}")]
     Lens(String),
-
-    #[error("json patch error: {0}")]
-    JsonPatch(#[from] crate::definition::patch::json::JsonPatchError),
 }
 
 impl From<acp::Error> for Error {
@@ -274,6 +301,12 @@ pub fn commit_query_error(error: Error) -> query::error::QueryError {
 
 fn storage_query_error(error: Error, context: &str) -> query::error::QueryError {
     match error {
+        Error::Storage(storage::Error::ProjectionPermissionDenied)
+        | Error::Datastore(datastore::Error::Storage(storage::Error::ProjectionPermissionDenied)) => {
+            query::error::QueryError::permission_denied(
+                storage::Error::ProjectionPermissionDenied.to_string(),
+            )
+        }
         Error::Storage(storage::Error::Io(cause))
         | Error::Datastore(datastore::Error::Storage(storage::Error::Io(cause))) => {
             query::error::QueryError::Storage(storage::Error::Io(cause.with_context(context)))

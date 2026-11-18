@@ -117,6 +117,35 @@ fn subject_to_json(subject: &SubjectRef) -> serde_json::Value {
     }
 }
 
+/// A failed transaction as the provider reports it: one whose fate is
+/// unknown because the chain was not reached is
+/// [`ProviderError::Unavailable`], one the node could not key or sign is
+/// its own [`ProviderError::Config`], and any other is the chain's answer.
+fn tx_error(error: super::tx::TxSignerError) -> ProviderError {
+    use super::tx::TxSignerError;
+
+    match error {
+        TxSignerError::Unreachable(_) => ProviderError::Unavailable(error.to_string()),
+        TxSignerError::Key(_) | TxSignerError::Sign(_) => ProviderError::Config(error.to_string()),
+        TxSignerError::Broadcast(_) => ProviderError::Transaction(error.to_string()),
+    }
+}
+
+/// Whether the node holds, for `did`, a local key
+/// [`resolve_cosmos_bearer_token_as`] builds a token with before it falls
+/// back to a request's token.
+fn holds_local_key(did: &str) -> bool {
+    use defra_core::signing::SigningKeyType;
+
+    defra_core::signing::get_identity(did).is_some_and(|signing_config| {
+        signing_config.has_local_private_key()
+            && matches!(
+                signing_config.key_type,
+                SigningKeyType::Ed25519 | SigningKeyType::Secp256k1 | SigningKeyType::Secp256r1
+            )
+    })
+}
+
 /// [`resolve_cosmos_bearer_token_as`] in [`defra_core::RequestContext::ambient`].
 #[cfg(test)]
 fn resolve_cosmos_bearer_token(
@@ -219,11 +248,15 @@ impl VeraProvider for CosmosProvider {
         None
     }
 
+    fn holds_key_for(&self, did: &str) -> bool {
+        holds_local_key(did)
+    }
+
     async fn create_policy(&self, policy_yaml: &str) -> Result<String, ProviderError> {
         self.signer
             .create_policy(&self.client, policy_yaml)
             .await
-            .map_err(|e| ProviderError::Transaction(e.to_string()))
+            .map_err(tx_error)
     }
 
     async fn register_object(
@@ -241,7 +274,7 @@ impl VeraProvider for CosmosProvider {
         self.signer
             .bearer_policy_cmd(&self.client, bearer_token, policy_id, cmd)
             .await
-            .map_err(|e| ProviderError::Transaction(e.to_string()))?;
+            .map_err(tx_error)?;
         Ok(())
     }
 
@@ -260,7 +293,7 @@ impl VeraProvider for CosmosProvider {
         self.signer
             .bearer_policy_cmd(&self.client, bearer_token, policy_id, cmd)
             .await
-            .map_err(|e| ProviderError::Transaction(e.to_string()))?;
+            .map_err(tx_error)?;
         Ok(())
     }
 
@@ -286,7 +319,7 @@ impl VeraProvider for CosmosProvider {
             .signer
             .bearer_policy_cmd(&self.client, bearer_token, policy_id, cmd)
             .await
-            .map_err(|e| ProviderError::Transaction(e.to_string()))?;
+            .map_err(tx_error)?;
 
         let record_existed = result
             .get("record_existed")
@@ -317,7 +350,7 @@ impl VeraProvider for CosmosProvider {
             .signer
             .bearer_policy_cmd(&self.client, bearer_token, policy_id, cmd)
             .await
-            .map_err(|e| ProviderError::Transaction(e.to_string()))?;
+            .map_err(tx_error)?;
 
         let record_found = result
             .get("record_found")
@@ -409,24 +442,23 @@ mod tests {
                 remote_signer: None,
                 signing_authorization: None,
             },
-        );
+        )
+        .expect("the store takes the identity");
     }
 
     #[test]
     fn resolve_cosmos_bearer_token_uses_request_token_for_remote_identity() {
         let did = "did:key:zRemoteCosmosToken";
         let token = "delegated.jwt.token".to_string();
-        defra_core::signing::clear_request_bearer_token(did);
-
         store_remote_secp256r1_identity(did);
-        defra_core::signing::set_request_bearer_token(did, token.clone());
+        let request = defra_core::RequestContext::default()
+            .with_bearer(Some(did.to_string()), Some(token.clone()));
 
-        let resolved = resolve_cosmos_bearer_token(did, "cosmos1delegated")
+        let resolved = resolve_cosmos_bearer_token_as(&request, did, "cosmos1delegated")
             .expect("resolution should succeed")
             .expect("token should resolve");
         assert_eq!(resolved, token);
-
-        defra_core::signing::clear_request_bearer_token(did);
+        assert!(!holds_local_key(did), "a remote identity's key is not held");
     }
 
     #[test]
@@ -448,7 +480,8 @@ mod tests {
                 remote_signer: None,
                 signing_authorization: None,
             },
-        );
+        )
+        .expect("the store takes the identity");
 
         let token = resolve_cosmos_bearer_token(&did, "cosmos1device")
             .expect("resolution should succeed")
@@ -456,6 +489,7 @@ mod tests {
         let parsed = identity::from_token(token.as_bytes()).expect("token should parse");
         assert_eq!(parsed.did().expect("did should parse").as_str(), did);
         assert_eq!(parsed.authorized_account(), Some("cosmos1device"));
+        assert!(holds_local_key(&did));
 
         defra_core::signing::clear_request_bearer_token(&did);
     }

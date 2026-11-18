@@ -237,7 +237,7 @@ fn rooted(name: &str, collection_id: &str, root_id: u32, chunk_of: bool) -> Coll
 }
 
 #[test]
-fn a_collection_is_found_by_its_root_id_until_removed_or_replaced() {
+fn a_collection_is_found_by_its_root_id_until_removed() {
     let mut map = CollectionMap::default();
     map.put(rooted("Agent", "col-agent", 7, false));
     map.put(rooted("Ledger", "col-ledger", 8, false));
@@ -262,4 +262,30 @@ fn the_map_knows_whether_any_collection_is_a_chunk_collection() {
 
     map.remove("Article__body_chunk");
     assert!(!map.has_chunk_collections());
+}
+
+#[test]
+fn a_replacing_put_moves_the_root_id_and_counts_the_chunk_collection_once() {
+    let mut map = CollectionMap::default();
+    map.put(rooted("Article__body_chunk", "col-chunks", 2, true));
+    map.put(rooted("Article__body_chunk", "col-chunks", 3, true));
+
+    assert!(map.by_root_id(2).is_none());
+    assert_eq!(
+        map.by_root_id(3).map(|c| c.name()),
+        Some("Article__body_chunk")
+    );
+    map.remove("Article__body_chunk");
+    assert!(!map.has_chunk_collections());
+}
+
+#[test]
+fn removing_a_collection_keeps_the_root_id_another_now_holds() {
+    let mut map = CollectionMap::default();
+    map.put(rooted("Old", "col-old", 5, false));
+    map.put(rooted("New", "col-new", 5, false));
+
+    map.remove("Old");
+
+    assert_eq!(map.by_root_id(5).map(|c| c.name()), Some("New"));
 }

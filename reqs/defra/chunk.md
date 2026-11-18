@@ -100,12 +100,26 @@ The `ArticleMutationInputArg` type has the input field `body` and no `_body_chun
 
 Adding a document to `Article__body_chunk` fails with `Article__body_chunk holds the chunks of Article.body and is written only by writes to Article`. Adding an `Article` with `_body_chunks`, or updating one to set it, fails with `Article._body_chunks is read-only: it is set from body by every write that changes it`. After these failures `Article__body_chunk` holds only the chunk of the article's own text `Some text.`, and the article's `_body_chunks` lists that chunk's hash twice, as the text's hash and as the one chunk.
 
+# `defra.chunk.protect.admin_ops`: Admin operations cannot change the chunk collection
+
+- **Parents:** ["defra.chunk.protect"]
+- **Scenarios:** ["chunk::protect_admin_ops::index_changes_to_the_chunk_collection_are_refused", "chunk::protect_admin_ops::collection_changes_to_the_chunk_collection_are_refused"]
+
+Creating an index or an encrypted index on `Article__body_chunk`, or dropping its generated index, fails with `Article__body_chunk holds the chunks of Article.body and is changed only through Article`, and the generated index is still listed. Truncating `Article__body_chunk`, making its version active, and setting a migration from it fail with the same error. An index on `Article` is still created and `Article` can still be truncated.
+
+# `defra.chunk.protect.rename`: A patch cannot rename a parent or its chunk collection
+
+- **Parents:** ["defra.chunk.protect"]
+- **Scenarios:** ["chunk::protect_rename::renaming_the_parent_or_the_chunk_collection_is_refused"]
+
+Chunks find their parent by name. A patch that renames `Article` to `Story`, or `Article__body_chunk` to `Story`, fails with an error containing `Changed: the collection name`.
+
 # `defra.chunk.protect.chunk_documents`: Chunk documents and chunk settings cannot be changed
 
 - **Parents:** ["defra.chunk.protect"]
 - **Scenarios:** ["chunk::protect_chunk_documents::chunk_documents_and_settings_are_read_only"]
 
-For a chunk document of an existing article, updating it or deleting it fails with `Article__body_chunk holds the chunks of Article.body and is written only by writes to Article`, and truncating `Article__body_chunk` fails with `Article__body_chunk holds generated chunks and is emptied only with its parent`. The GraphQL mutation `add_Article__body_chunk` fails with `Article__body_chunk holds the chunks of Article.body and is written only by writes to Article`, and `update_Article` with `_body_chunks` in its input fails with `Article._body_chunks is read-only: it is set from body by every write that changes it`. Patching `/Article/ChunkedFields/0/MaxChars` fails with `invalid patch: collection chunk settings cannot be mutated. Collection: Article`. After all of these the chunks, sorted by hash, are exactly as they were.
+For a chunk document of an existing article, updating it or deleting it fails with `Article__body_chunk holds the chunks of Article.body and is written only by writes to Article`, and truncating `Article__body_chunk` fails with `Article__body_chunk holds the chunks of Article.body and is changed only through Article`. The GraphQL mutation `add_Article__body_chunk` fails with `Article__body_chunk holds the chunks of Article.body and is written only by writes to Article`, and `update_Article` with `_body_chunks` in its input fails with `Article._body_chunks is read-only: it is set from body by every write that changes it`. Patching `/Article/ChunkedFields/0/MaxChars` fails with `invalid patch: collection chunk settings cannot be mutated. Collection: Article`. After all of these the chunks, sorted by hash, are exactly as they were.
 
 # `defra.chunk.write`: Writing a chunked field
 

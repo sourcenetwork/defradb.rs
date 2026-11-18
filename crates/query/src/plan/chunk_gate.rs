@@ -1,8 +1,4 @@
-//! Read checks for chunk collections.
-//!
-//! A chunk has no policy and is never registered with ACP, so no grant can make
-//! it more visible than its parent. A chunk is readable only while its parent is
-//! live, the parent's current list names it, and the reader may read the parent.
+//! Read checks for chunks. A chunk has no ACP entry, so its live parent decides.
 
 use std::sync::Arc;
 
@@ -12,16 +8,14 @@ use rapidhash::fast::RandomState;
 use rapidhash::RapidHashSet;
 use schema::{ChunkedField, CollectionVersion};
 
-use super::chunk_parent::{
-    chunk_fields, chunk_parent_id, parent_fields, parent_hashes, parent_lists, verified_hash,
-};
+use super::chunk_parent::{chunk_fields, parent_fields, parent_hashes, ChunkFields};
 use super::permission_filter::AcpReadCheck;
 use crate::access_hooks::AppReadCheck;
 use crate::error::Result;
 use crate::fetcher::DocFetcher;
 
 /// Reads one document, validating only `fields` where the fetcher can.
-async fn get_projected(
+pub(crate) async fn get_projected(
     fetcher: &dyn DocFetcher,
     collection: &str,
     doc_id: &str,
@@ -36,35 +30,6 @@ async fn get_projected(
         None => fetcher.get_by_ids(collection, &ids).await?,
     };
     Ok(found.into_docs().into_iter().next())
-}
-
-/// The parent a chunk's visibility follows, if that parent is live and its
-/// current list names the chunk.
-pub(crate) async fn live_parent_of(
-    fetcher: &dyn DocFetcher,
-    chunk_collection: &str,
-    parent_collection: &str,
-    chunked: &ChunkedField,
-    chunk_doc_id: &str,
-) -> Result<Option<String>> {
-    let Some(chunk) =
-        get_projected(fetcher, chunk_collection, chunk_doc_id, &chunk_fields()).await?
-    else {
-        return Ok(None);
-    };
-    let Some(parent_id) = chunk_parent_id(&chunk) else {
-        return Ok(None);
-    };
-    let parent = get_projected(
-        fetcher,
-        parent_collection,
-        parent_id,
-        &parent_fields(chunked),
-    )
-    .await?;
-    Ok(parent
-        .filter(|parent| parent_lists(parent, &chunk, chunked))
-        .map(|_| parent_id.to_string()))
 }
 
 /// The chunk hashes a parent's current text uses, or `None` when the reader
@@ -92,7 +57,7 @@ impl ChunkGate {
         parent_acp: Option<AcpReadCheck>,
         parent_app: Option<AppReadCheck>,
     ) -> Self {
-        Self {
+        let gate = Self {
             fetcher,
             chunk_collection: Arc::from(chunks_col.name.as_str()),
             parent: chunks_col
@@ -107,33 +72,50 @@ impl ChunkGate {
             parent_acp,
             parent_app,
             decided: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
+        };
+        if gate.fetcher.is_none() || gate.parent.is_none() {
+            tracing::warn!(
+                chunks = %gate.chunk_collection,
+                "chunk read gate has no fetcher or parent collection; every chunk is hidden"
+            );
         }
+        gate
     }
 
-    pub(crate) async fn allows(&self, doc_id: &str) -> Result<bool> {
+    /// Whether the chunk `doc_id` may show. `row` holds its fields when the
+    /// scan carried them; otherwise they are read again.
+    pub(crate) async fn allows(&self, doc_id: &str, row: Option<ChunkFields>) -> Result<bool> {
         let (Some(fetcher), Some((parent, chunked))) = (&self.fetcher, &self.parent) else {
             return Ok(false);
         };
-        let Some(chunk) = get_projected(
-            fetcher.as_ref(),
-            &self.chunk_collection,
-            doc_id,
-            &chunk_fields(),
-        )
-        .await?
-        else {
+        let chunk = match row {
+            Some(chunk) => chunk,
+            None => {
+                let found = get_projected(
+                    fetcher.as_ref(),
+                    &self.chunk_collection,
+                    doc_id,
+                    &chunk_fields(),
+                )
+                .await?;
+                let Some(chunk) = found.as_ref().and_then(ChunkFields::from_document) else {
+                    return Ok(false);
+                };
+                chunk
+            }
+        };
+        let Some(hash) = chunk.verified_hash() else {
+            tracing::debug!(chunks = %self.chunk_collection, %doc_id, "chunk hash does not match its text; hidden");
             return Ok(false);
         };
-        let (Some(parent_id), Some(hash)) = (chunk_parent_id(&chunk), verified_hash(&chunk)) else {
-            return Ok(false);
-        };
-        let decision = match self.decided.get(parent_id) {
+        let decision = match self.decided.get(&chunk.parent_id) {
             Some(decision) => decision,
             None => {
                 let decision = self
-                    .decide(fetcher.as_ref(), parent, chunked, parent_id)
+                    .decide(fetcher.as_ref(), parent, chunked, &chunk.parent_id)
                     .await?;
-                self.decided.get_or_insert(parent_id.to_string(), decision)
+                self.decided
+                    .get_or_insert(chunk.parent_id.clone(), decision)
             }
         };
         Ok(decision.is_some_and(|hashes| hashes.contains(hash)))

@@ -223,7 +223,8 @@ fn bench_query_context(c: &mut Criterion) {
     // The signing registry is process-global and keyed by DID, so this bench
     // uses a DID of its own rather than sharing one with any other test.
     let signing_did = "did:key:defra-http-transport-bench";
-    defra_core::signing::store_identity(signing_did, signing_config());
+    defra_core::signing::store_identity(signing_did, signing_config())
+        .expect("the store takes the identity");
     let signing_state = AppStateBuilder::new(executor(), edge::testing::edge())
         .with_node_identity_did(signing_did.to_string())
         .with_signing_enabled(true)

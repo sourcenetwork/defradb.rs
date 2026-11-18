@@ -122,6 +122,12 @@ pub enum QueryError {
     #[error("parse error: {0}")]
     Parse(String),
 
+    /// A mutation names a collection that does not exist. The text is
+    /// GraphQL validation's, as a parse error; the collection API reports it
+    /// in Go's collection words.
+    #[error("parse error: {0}")]
+    UnknownMutationCollection(String),
+
     /// Invalid filter condition
     #[error("invalid filter: {0}")]
     InvalidFilter(String),
@@ -159,6 +165,10 @@ pub enum QueryError {
     #[error("Argument \"input\" has invalid value.\nIn field \"{0}\": Unknown field.")]
     SecondaryRelationInput(String),
 
+    /// A subscription sent as a plain request: it is served only over SSE.
+    #[error("parse error: {}", crate::subscription::SUBSCRIPTION_NEEDS_SSE)]
+    SubscriptionNeedsSse,
+
     /// Storage layer error
     #[error("storage error: {0}")]
     Storage(#[from] storage::corekv::Error),
@@ -176,6 +186,12 @@ pub enum QueryError {
     /// the response for the logical request, and execute again.
     #[error("external input required")]
     NeedsInput(crate::prepared::PreparedInputRequest),
+
+    /// An index scan found a reindex owed on the collection it planned from:
+    /// the index no longer holds what reads see, so the select re-plans as a
+    /// collection scan. It never reaches a client.
+    #[error("collection '{0}' owes a reindex since this query planned its index")]
+    IndexOwed(String),
 
     /// Schema validation error
     #[error("schema error: {0}")]
@@ -208,6 +224,20 @@ pub enum QueryError {
     /// Permission denied (ACP check failed)
     #[error("permission denied: {0}")]
     PermissionDenied(String),
+
+    /// A verified write was not staged: the node cannot send the document
+    /// ACP provider what the write owes it as the write's signer.
+    #[error("verified write refused: {0}")]
+    WriteAuthorityUnavailable(String),
+
+    /// A verified write was not staged: the delegation it carries does not
+    /// hold at the document ACP provider's time. Made again with a
+    /// delegation issued at the window's provider time, it is taken.
+    #[error("verified write refused: {reason}")]
+    DelegationOutsideWindow {
+        reason: String,
+        window: acp::DelegationWindow,
+    },
 
     /// ACP registration failed during document creation
     #[error("ACP registration failed for document '{doc_id}': {message}")]

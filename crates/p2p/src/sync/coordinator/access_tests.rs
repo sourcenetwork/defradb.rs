@@ -686,6 +686,20 @@ pub(super) struct NoopTransport {
     two_stream_handler: Arc<AtomOption<TwoStreamHandler>>,
     branchable_replies: Arc<Atom<Vec<BranchableSyncReply>>>,
     car_requests: Arc<Atom<Vec<Cid>>>,
+    /// Whether `publish_raw` has a topic peer; without one it is refused with
+    /// `InsufficientPeers`, as libp2p's gossipsub refuses it.
+    pub(super) raw_topic_has_peer: Arc<AtomicBool>,
+    /// Topics of every `publish_raw` gossipsub accepted.
+    pub(super) raw_published: Arc<Atom<Vec<String>>>,
+    /// Gets a permit on every `publish_raw` call, accepted or refused.
+    pub(super) raw_publish_attempted: Arc<regolith::sync::Notify>,
+    /// Whether `publish_raw` never completes, like a host whose command queue
+    /// does not drain.
+    pub(super) raw_publish_stalls: Arc<AtomicBool>,
+    /// Whether a publish finds a subscriber; open unless a test closes it.
+    publish_open: Arc<AtomicBool>,
+    /// The topics every publish that found a subscriber went to.
+    published: Arc<Atom<Vec<DefraTopic>>>,
 }
 
 /// Appends to a recorder that tests read back cumulatively.
@@ -712,7 +726,32 @@ impl NoopTransport {
             two_stream_handler: Arc::new(AtomOption::none()),
             branchable_replies: Arc::new(Atom::new(Vec::new())),
             car_requests: Arc::new(Atom::new(Vec::new())),
+            raw_topic_has_peer: Arc::new(AtomicBool::new(false)),
+            raw_published: Arc::new(Atom::new(Vec::new())),
+            raw_publish_attempted: Arc::new(regolith::sync::Notify::new()),
+            raw_publish_stalls: Arc::new(AtomicBool::new(false)),
+            publish_open: Arc::new(AtomicBool::new(true)),
+            published: Arc::new(Atom::new(Vec::new())),
         }
+    }
+
+    /// A libp2p peer id, so the coordinator starts its pubsub_rpc services.
+    #[cfg(feature = "libp2p-transport")]
+    pub(super) fn with_libp2p_identity(mut self) -> Self {
+        self.peer_id = PeerId::new(libp2p::PeerId::random().to_string());
+        self
+    }
+
+    /// Open or close the topics to subscribers: a closed publish fails with
+    /// gossipsub's `InsufficientPeers`.
+    pub(super) fn set_publish_open(&self, open: bool) {
+        self.publish_open
+            .store(open, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// The topics publishes reached, in order.
+    pub(super) fn published(&self) -> Vec<DefraTopic> {
+        self.published.load_clone()
     }
 
     fn set_connected_peers(&self, peers: Vec<PeerId>) {
@@ -812,10 +851,36 @@ impl P2PTransport for NoopTransport {
 
     async fn publish(
         &self,
-        _topic: DefraTopic,
+        topic: DefraTopic,
         _msg: crate::message::PushLogBroadcast,
     ) -> crate::Result<MessageId> {
+        if !self.publish_open.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(crate::error::Error::GossipSubPublish(
+                "gossipsub publish error: InsufficientPeers".to_string(),
+            ));
+        }
+        record(&self.published, topic);
         Ok(MessageId::new("noop".to_string()))
+    }
+
+    async fn publish_raw(&self, topic: String, _data: Vec<u8>) -> crate::Result<MessageId> {
+        if self.raw_publish_stalls.load(Ordering::Acquire) {
+            std::future::pending::<()>().await;
+        }
+        let accepted = self.raw_topic_has_peer.load(Ordering::Acquire);
+        if accepted {
+            record(&self.raw_published, topic);
+        }
+        self.raw_publish_attempted.notify_one();
+        if accepted {
+            Ok(MessageId::new("raw".to_string()))
+        } else {
+            Err(Error::GossipSubPublish("InsufficientPeers".to_string()))
+        }
+    }
+
+    async fn subscribe_raw(&self, _topic: String) -> crate::Result<bool> {
+        Ok(true)
     }
 
     async fn topic_peers(&self, _topic: DefraTopic) -> crate::Result<Vec<PeerId>> {

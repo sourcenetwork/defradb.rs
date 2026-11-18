@@ -102,6 +102,11 @@ impl<S: Store + 'static> TxnCollectionProvider<S> {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: Store + 'static> CollectionProvider for TxnCollectionProvider<S> {
     async fn get_collection(&self, name: &str) -> QueryResult<Option<Arc<CollectionVersion>>> {
+        // A version the request pinned answers for its name, active or not,
+        // so validation and planning see the fields the request works with.
+        if let Some(pinned) = self.txn()?.pinned_collection(name) {
+            return Ok(Some(pinned.schema_for_queries()));
+        }
         {
             let systemstore = self
                 .txn()?

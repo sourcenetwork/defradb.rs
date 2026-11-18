@@ -1,7 +1,10 @@
 use super::{Error, Result};
 use serde_json::Value;
 
-use crate::executor::{QueryResponse, SECONDARY_RELATION_ERROR_CODE, TXN_CONFLICT_ERROR_CODE};
+use crate::executor::{
+    QueryResponse, SECONDARY_RELATION_ERROR_CODE, TXN_CONFLICT_ERROR_CODE,
+    UNKNOWN_MUTATION_COLLECTION_ERROR_CODE,
+};
 
 /// The `_docID` of each document mutation `op` on `collection` returned, or
 /// the request's first error with its text unchanged.
@@ -53,6 +56,7 @@ fn refused(response: &QueryResponse) -> Result<()> {
             Some(SECONDARY_RELATION_ERROR_CODE) => {
                 Error::SecondaryRelation(quoted_field(&error.message))
             }
+            Some(UNKNOWN_MUTATION_COLLECTION_ERROR_CODE) => Error::CollectionNotFound,
             _ => Error::Request(error.message.clone()),
         }),
     }
@@ -65,12 +69,7 @@ pub(super) fn single(ids: Vec<String>) -> Result<String> {
 /// The `_docID` each of `count` aliased fields `s0`, `s1`, … saved, in
 /// order, or the request's first error with its text unchanged.
 pub(super) fn saved_doc_ids(response: QueryResponse, count: usize) -> Result<Vec<String>> {
-    if let Some(error) = response.errors.first() {
-        return Err(match error.code() == Some(TXN_CONFLICT_ERROR_CODE) {
-            true => Error::Conflict,
-            false => Error::Request(error.message.clone()),
-        });
-    }
+    refused(&response)?;
     (0..count)
         .map(|index| {
             response

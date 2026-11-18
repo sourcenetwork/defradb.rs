@@ -78,14 +78,9 @@ pub(super) fn should_fallback_to_full_scan(
         }
     }
 
-    if field_kind.map(|kind| kind.is_array()).unwrap_or(false)
+    field_kind.map(|kind| kind.is_array()).unwrap_or(false)
         && matches!(cond.op, FilterOp::Eq | FilterOp::Ne)
         && matches!(cond.value, ConditionValue::Multiple(_))
-    {
-        return true;
-    }
-
-    false
 }
 
 fn is_numeric_filter_value(value: &ConditionValue) -> bool {

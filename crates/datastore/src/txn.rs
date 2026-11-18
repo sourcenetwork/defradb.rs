@@ -197,6 +197,21 @@ impl BasicTxn {
         }
     }
 
+    /// Install what the transaction owes once it writes node access control
+    /// tuples, before any namespace view is lent.
+    pub fn set_node_access_writes(&mut self, writes: Arc<dyn crate::NodeAccessWrites>) {
+        Arc::get_mut(&mut self.shared_txn)
+            .expect("node access writes are installed before transaction views are created")
+            .set_node_access_writes(writes);
+    }
+
+    /// Install the host projector before any namespace view is lent.
+    pub fn set_document_projector(&mut self, projector: Arc<dyn crate::DocumentMutationProjector>) {
+        Arc::get_mut(&mut self.shared_txn)
+            .expect("projector is installed before transaction views are created")
+            .set_document_projector(projector);
+    }
+
     pub fn set_savepoint(&mut self) -> Result<()> {
         if self.state != TxnState::Active || self.readonly {
             return Err(Error::Storage(if self.readonly {

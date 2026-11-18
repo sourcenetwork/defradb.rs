@@ -59,7 +59,7 @@ if-addrs = { version = "0.15", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 edge = { path = "../edge", features = ["testing"] }
-rcgen = "0.13"
+rcgen = "0.14"
 futures = { workspace = true }
 tower = { workspace = true, features = ["util"] }
 

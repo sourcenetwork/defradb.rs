@@ -160,7 +160,11 @@ pub enum TransportEvent<ResponseToken> {
     /// request or an `InternalResponse` envelope; the coordinator feeds
     /// it into a `pubsub_rpc::TopicHandler` for decoding.
     GossipRawMessage {
+        /// The neighbour that handed the message to us.
         propagation_source: PeerId,
+        /// The peer that published the message. A relayed request names its
+        /// publisher here, not the relay, and its reply goes to the publisher.
+        source: PeerId,
         message_id: MessageId,
         topic: String,
         data: Vec<u8>,
@@ -460,6 +464,12 @@ pub trait P2PTransport: Clone + Send + Sync + 'static {
         ))
     }
 
+    /// The largest payload [`P2PTransport::publish_raw`] carries, or `None`
+    /// when this transport sets no limit of its own.
+    fn max_raw_publish(&self) -> Option<usize> {
+        None
+    }
+
     /// Subscribe to an arbitrary topic string without the [`DefraTopic`]
     /// wrapper. Used for dynamic pubsub_rpc response sub-topics.
     ///
@@ -518,6 +528,18 @@ pub trait P2PTransport: Clone + Send + Sync + 'static {
     ) -> Result<()>;
 
     async fn send_car_request(&self, peer_id: &PeerId, root_cid: Cid) -> Result<()>;
+
+    /// [`send_car_request`](Self::send_car_request) naming merged blocks held
+    /// here, so the provider leaves their closures out. Transports that cannot
+    /// carry them keep the default and ask for the whole DAG.
+    async fn send_car_request_with_haves(
+        &self,
+        peer_id: &PeerId,
+        root_cid: Cid,
+        _haves: Vec<Cid>,
+    ) -> Result<()> {
+        self.send_car_request(peer_id, root_cid).await
+    }
 
     async fn send_car_response(&self, peer_id: &PeerId, car_data: Vec<u8>) -> Result<()>;
 
@@ -616,14 +638,16 @@ pub trait P2PTransport: Clone + Send + Sync + 'static {
     ) -> Result<QueryId>;
 
     /// [`sync_blocks`](Self::sync_blocks) with descendant closures cut
-    /// `max_depth` links below each missing CID. Exact-CID transports keep
-    /// the default.
+    /// `max_depth` links below each missing CID, leaving out the closures of
+    /// `haves` (merged blocks held here) where the provider holds one of them.
+    /// Exact-CID transports keep the default.
     async fn sync_blocks_within(
         &self,
         root: Cid,
         providers: Vec<PeerId>,
         missing: Vec<Cid>,
         _max_depth: u32,
+        _haves: Vec<Cid>,
     ) -> Result<QueryId> {
         self.sync_blocks(root, providers, missing).await
     }

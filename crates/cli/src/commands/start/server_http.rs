@@ -22,7 +22,7 @@ pub(super) struct HttpServerArgs<'a> {
     pub(super) query_setup: &'a QueryRunnerSetup,
     pub(super) p2p_adapter: Option<Arc<dyn defra_p2p_adapter::P2POperations>>,
     pub(super) manage_requester: Option<Arc<dyn defra_p2p_adapter::ManageRequester>>,
-    pub(super) nac_adapter: Option<Arc<crate::nac_adapter::NacAdapter>>,
+    pub(super) nac_adapter: Option<Arc<defra_http::nac_adapter::NacAdapter>>,
     pub(super) acp_setup: &'a DocumentAcpSetup,
     pub(super) zanzibar_store: Arc<dyn acp::ZanzibarStore>,
     pub(super) user_did: Option<&'a Did>,
@@ -146,11 +146,16 @@ impl Node {
         let view_adapter = if config.acp.document_type != AcpDocumentType::None {
             crate::view_adapter::ViewAdapter::new_arc_with_acp(
                 database.clone(),
+                query_setup.registry.clone(),
                 query_limits,
                 acp_setup.document_acp.clone(),
             )
         } else {
-            crate::view_adapter::ViewAdapter::new_arc(database.clone(), query_limits)
+            crate::view_adapter::ViewAdapter::new_arc(
+                database.clone(),
+                query_setup.registry.clone(),
+                query_limits,
+            )
         };
         server = server.with_view_arc(view_adapter);
         info!("View HTTP endpoints enabled");
@@ -160,7 +165,9 @@ impl Node {
         info!("Dump HTTP endpoint enabled");
 
         let collection_mgmt_adapter =
-            crate::collection_mgmt_adapter::CollectionManagementAdapter::new_arc(database.clone());
+            defra_http::collection_mgmt_adapter::CollectionManagementAdapter::new_arc(
+                database.clone(),
+            );
         server = server.with_collection_mgmt_arc(collection_mgmt_adapter);
         info!("Collection management HTTP endpoints enabled");
 
@@ -169,7 +176,10 @@ impl Node {
         info!("Index HTTP endpoints enabled");
 
         let encrypted_index_adapter =
-            crate::encrypted_index_adapter::EncryptedIndexAdapter::new_arc(database.clone());
+            crate::encrypted_index_adapter::EncryptedIndexAdapter::new_arc(
+                database.clone(),
+                query_setup.runner.clone(),
+            );
         server = server.with_encrypted_index_arc(encrypted_index_adapter);
         info!("Encrypted index HTTP endpoints enabled");
 

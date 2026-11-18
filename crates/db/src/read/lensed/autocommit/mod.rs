@@ -59,6 +59,23 @@ impl<S: Store> LensedAutoCommitFetcher<S> {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: Store + 'static> DocFetcher for LensedAutoCommitFetcher<S> {
+    async fn get_document_updates(
+        &self,
+        options: &query::fetcher::DocumentUpdateOptions,
+        reader: &query::fetcher::DocumentReader<'_>,
+    ) -> query::error::Result<query::fetcher::DocumentUpdatePage> {
+        let txn = self
+            .db
+            .new_txn(true)
+            .await
+            .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+        let result = crate::event::updates::read(Some(&self.db), &txn, options, reader)
+            .await
+            .map_err(crate::event::updates::query_error);
+        let _ = txn.discard();
+        result
+    }
+
     async fn get_document_arrivals(
         &self,
         options: &query::fetcher::DocumentArrivalOptions,
@@ -164,15 +181,6 @@ impl<S: Store + 'static> DocFetcher for LensedAutoCommitFetcher<S> {
         params: &IndexScanParams,
     ) -> query::error::Result<query::fetcher::IndexScanResult> {
         self.get_by_index_scan_impl(collection_name, params).await
-    }
-
-    async fn indexes_match_documents(&self, collection_name: &str) -> query::error::Result<bool> {
-        let collection = self
-            .db
-            .get_collection(collection_name)
-            .map_err(|e| query::error::QueryError::execution(e.to_string()))?
-            .ok_or_else(|| query::error::QueryError::collection_not_found(collection_name))?;
-        Ok(!self.load_migration_context(&collection).await?.1)
     }
 
     fn supports_index_queries(&self) -> bool {

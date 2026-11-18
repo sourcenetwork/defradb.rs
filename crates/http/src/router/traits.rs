@@ -65,6 +65,9 @@ pub struct IndexInfo {
     /// Kind-specific config, absent for an ordinary index.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<schema::IndexKind>,
+    /// The state of the action that builds the index; `None` reads as built.
+    #[serde(skip)]
+    pub execution: Option<defra_core::ActionExecution>,
 }
 
 /// Index field information.
@@ -163,6 +166,18 @@ pub struct ImportResult {
 /// Re-export NAC types from the acp crate for convenience.
 pub use acp::nac::{NacStatus, NodePermission};
 
+/// The outcome of [`NodeAcpOperations::check_permissions`]: every permission
+/// held, or the first one that was not and why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PermissionCheck {
+    /// The identity holds every permission asked for.
+    Granted,
+    /// The identity does not hold this permission.
+    Denied(NodePermission),
+    /// Checking this permission failed with this error.
+    Failed(NodePermission, String),
+}
+
 /// Trait for Node Access Control (NAC) operations.
 ///
 /// NAC provides node-level access control using the Zanzibar permission model.
@@ -180,6 +195,27 @@ pub trait NodeAcpOperations: defra_core::thread_bounds::MaybeSendSync {
         identity: &identity::Did,
         permission: NodePermission,
     ) -> Result<bool, String>;
+
+    /// Checks `permissions` in order and stops at the first one `identity`
+    /// does not hold, as [`Self::check_permission`] would one at a time.
+    ///
+    /// The HTTP edge decides all of a route's permissions in this one call,
+    /// so an implementation that reaches its store on a worker pool crosses
+    /// onto it once per request instead of once per permission.
+    async fn check_permissions(
+        &self,
+        identity: &identity::Did,
+        permissions: &[NodePermission],
+    ) -> PermissionCheck {
+        for &permission in permissions {
+            match self.check_permission(identity, permission).await {
+                Ok(true) => {}
+                Ok(false) => return PermissionCheck::Denied(permission),
+                Err(error) => return PermissionCheck::Failed(permission, error),
+            }
+        }
+        PermissionCheck::Granted
+    }
 
     /// Get the current NAC status.
     async fn get_status(&self) -> NacStatus;
@@ -206,13 +242,30 @@ pub trait CollectionOperations: defra_core::thread_bounds::MaybeSendSync {
     async fn add_collection(&self, sdl: &str) -> Result<Vec<schema::CollectionVersion>, String>;
 }
 
+/// Collection lookups the event stream needs, which a host gives it without the management routes.
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+pub trait CollectionLookup: defra_core::thread_bounds::MaybeSendSync {
+    /// Find a collection by its collection ID.
+    async fn find_collection_by_id(
+        &self,
+        collection_id: &str,
+    ) -> Result<Option<schema::CollectionVersion>, String>;
+
+    /// Get a collection by version ID, searching both cache and storage.
+    async fn get_collection_by_version_id(
+        &self,
+        version_id: &str,
+    ) -> Result<Option<schema::CollectionVersion>, String>;
+}
+
 /// Trait for collection management operations beyond basic CRUD.
 ///
 /// Provides action listing, purge, collection lookups and collection drops,
 /// that operate at the collection level rather than the document level.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
-pub trait CollectionManagementOperations: defra_core::thread_bounds::MaybeSendSync {
+pub trait CollectionManagementOperations: CollectionLookup {
     bind_request!(CollectionManagementOperations);
 
     /// List actions that have not completed successfully.
@@ -229,18 +282,6 @@ pub trait CollectionManagementOperations: defra_core::thread_bounds::MaybeSendSy
 
     /// Check if a collection exists.
     async fn has_collection(&self, name: &str) -> Result<bool, String>;
-
-    /// Find a collection by its collection ID.
-    async fn find_collection_by_id(
-        &self,
-        collection_id: &str,
-    ) -> Result<Option<schema::CollectionVersion>, String>;
-
-    /// Get a collection by version ID, searching both cache and storage.
-    async fn get_collection_by_version_id(
-        &self,
-        version_id: &str,
-    ) -> Result<Option<schema::CollectionVersion>, String>;
 
     /// Delete multiple collection versions in a batch.
     async fn delete_collection_versions(&self, version_ids: Vec<String>) -> Result<(), String>;
@@ -265,6 +306,23 @@ pub trait CollectionManagementOperations: defra_core::thread_bounds::MaybeSendSy
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 pub trait DocumentAcpOperations: defra_core::thread_bounds::MaybeSendSync {
     bind_request!(DocumentAcpOperations);
+
+    /// The DID that signed `token`, when `token` is a delegation the node's
+    /// document ACP may act under now for that DID. `None` when `token` is
+    /// not a delegation or the node's ACP takes none.
+    fn caller_of_delegation(
+        &self,
+        _token: &str,
+    ) -> Option<Result<acp::AuthenticatedCaller, String>> {
+        None
+    }
+
+    /// Whether a bound request stages relationship changes in its named
+    /// transaction. Backends must refuse the request if they cannot bind its
+    /// authorization provider to that transaction.
+    fn supports_transactional_relationships(&self) -> bool {
+        false
+    }
 
     /// Check whether an actor has a document permission.
     ///
@@ -293,6 +351,18 @@ pub trait DocumentAcpOperations: defra_core::thread_bounds::MaybeSendSync {
         doc_id: &str,
         relation: &str,
     ) -> Result<bool, String>;
+
+    /// Every relationship on a document, for its owner or a requester holding
+    /// a relation that manages one on that resource.
+    async fn list_doc_relationships(
+        &self,
+        requestor: &identity::Did,
+        collection: &str,
+        doc_id: &str,
+    ) -> Result<Vec<acp::DocumentRelationship>, String> {
+        let _ = (requestor, collection, doc_id);
+        Err(acp::Error::UnsupportedRelationshipListing.to_string())
+    }
 
     /// Delete an actor relationship from a document.
     ///

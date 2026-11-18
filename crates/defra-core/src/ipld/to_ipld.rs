@@ -5,10 +5,11 @@ use std::collections::BTreeMap;
 use ipld_core::ipld::Ipld;
 
 use crate::block::{
-    Block, ChunkOfDelta, ChunkedFieldDelta, CollectionDefinitionDeltaPayload,
-    CollectionDeltaPayload, CompositeDeltaPayload, CounterDeltaPayload, CrdtDelta,
-    CustomDeltaPayload, DAGLink, Encryption, FieldDefinitionDeltaPayload, ImmutableDeltaPayload,
-    JsonDeltaPayload, LwwDeltaPayload, Signature, SignatureHeader, SignatureType, TextDeltaPayload,
+    is_default_splitter_version, Block, ChunkOfDelta, ChunkedFieldDelta,
+    CollectionDefinitionDeltaPayload, CollectionDeltaPayload, CompositeDeltaPayload,
+    CounterDeltaPayload, CrdtDelta, CustomDeltaPayload, DAGLink, Encryption,
+    FieldDefinitionDeltaPayload, ImmutableDeltaPayload, JsonDeltaPayload, LwwDeltaPayload,
+    Signature, SignatureHeader, SignatureType, TextDeltaPayload,
 };
 use crate::{Error, Result};
 
@@ -363,6 +364,12 @@ impl From<&ChunkedFieldDelta> for Ipld {
             "overlap".to_string(),
             Ipld::Integer(chunked.overlap as i128),
         );
+        if !is_default_splitter_version(&chunked.splitter_version) {
+            map.insert(
+                "splitterVersion".to_string(),
+                Ipld::Integer(chunked.splitter_version as i128),
+            );
+        }
         Ipld::Map(map)
     }
 }

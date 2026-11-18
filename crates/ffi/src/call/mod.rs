@@ -1,14 +1,14 @@
 //! How a C call runs its work: on a node's worker pool, with no worker ever
 //! waiting for a C caller.
 //!
-//! - A synchronous call ([`run`], [`wait`]) parks only the C caller's own
+//! - A synchronous call (`run`, `wait`) parks only the C caller's own
 //!   thread until its one completion, with the pool's blocking wait for plain
 //!   threads. Made on a worker thread (a callback of an asynchronous call that
 //!   calls back in), it is refused: the wait would stop the very worker that
 //!   has to make progress.
-//! - An asynchronous call ([`detach`]) returns once the pool admitted its
+//! - An asynchronous call (`detach`) returns once the pool admitted its
 //!   work, and its result reaches the caller's [`DefraResultCallback`]
-//!   exactly once ([`Reply`]), called on the worker that finished the work.
+//!   exactly once (`Reply`), called on the worker that finished the work.
 //!   Made on a worker thread, its admission waits as a task of that worker
 //!   instead of blocking it.
 //!
@@ -54,6 +54,21 @@ where
         .get(node_ptr, |state| state.database.pool().cloned())
         .ok_or_else(|| ERR_INVALID_NODE_HANDLE.to_string())?;
     run(pool.as_ref(), Target::LeastLoaded, make)
+}
+
+/// Runs the future `make` builds for a call on `target`: in a transaction on
+/// the caller's thread, since the transaction registry routes the work to
+/// the transaction's own worker; on a node, on the node's worker pool.
+pub(crate) fn on_target<M, Fut, T>(target: &crate::target::Target, make: M) -> Result<T, String>
+where
+    M: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = Result<T, String>> + 'static,
+    T: Send + 'static,
+{
+    match target {
+        crate::target::Target::Txn(_) => wait(make()),
+        crate::target::Target::Node(node) => on_node(*node, make),
+    }
 }
 
 /// Runs the future `make` builds on the worker of `pool` that `target`

@@ -13,11 +13,15 @@ impl<S: ZanzibarStore + ?Sized + 'static> NodeACP<S> {
     /// The owner identity has full control over the node and can grant
     /// admin permissions to other identities.
     ///
-    /// Succeeds silently if NAC is already enabled (idempotent).
+    /// Succeeds silently if NAC is already enabled (idempotent). Refuses a
+    /// temporarily disabled NAC: only an authorized `re_enable()` turns it
+    /// back on, as in Go, where the start option sets NAC up only the first
+    /// time (`proofs/tla/Nac.tla`, `INV_ReEnableNeedsPersistedAdmin`).
     pub async fn enable(&self, owner: &Did) -> Result<()> {
-        let status = *self.status.load();
-        if status == NacStatus::Enabled {
-            return Ok(());
+        match *self.status.load() {
+            NacStatus::Enabled => return Ok(()),
+            NacStatus::DisabledTemporarily => return Err(Error::NacTemporarilyDisabled),
+            NacStatus::NotConfigured => {}
         }
 
         // Create and store the policy

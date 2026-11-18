@@ -1,25 +1,7 @@
+//! Secondary indexes: created, listed and deleted.
+
 mod create;
 mod manage;
 
-pub use create::create_index;
-pub use manage::{delete_index, get_indexes, list_all_indexes};
-
-/// Input structure for creating an index via FFI.
-#[derive(serde::Deserialize)]
-pub(crate) struct IndexCreateInput {
-    #[serde(rename = "Name")]
-    pub name: String,
-    #[serde(rename = "Fields", default)]
-    pub fields: Vec<IndexFieldInput>,
-    #[serde(rename = "Unique", default)]
-    pub unique: bool,
-}
-
-/// Input structure for an indexed field.
-#[derive(serde::Deserialize)]
-pub(crate) struct IndexFieldInput {
-    #[serde(rename = "Name")]
-    pub name: String,
-    #[serde(rename = "Descending", default)]
-    pub descending: bool,
-}
+pub use create::defra_index_new;
+pub use manage::{defra_index_delete, defra_index_list};

@@ -2,9 +2,10 @@ use std::ffi::c_char;
 use std::fs;
 
 use crate::ffi_entry;
-use crate::helpers::require_c_str;
+use crate::request::Request;
 use crate::state::NODES;
-use crate::types::FfiResult;
+use crate::target::go_string;
+use crate::types::DefraResult;
 use crate::{ffi_async_ok, try_ffi, ERR_INVALID_NODE_HANDLE};
 
 /// Import documents from a JSON backup file.
@@ -22,17 +23,22 @@ use crate::{ffi_async_ok, try_ffi, ERR_INVALID_NODE_HANDLE};
 ///
 /// # Safety
 ///
-/// `filepath` must be a valid null-terminated UTF-8 string.
+/// `filepath` must be null or a valid null-terminated string.
 #[no_mangle]
-pub unsafe extern "C" fn basic_import(node_ptr: usize, filepath: *const c_char) -> FfiResult {
+pub unsafe extern "C" fn defra_backup_import(
+    node_ptr: usize,
+    filepath: *const c_char,
+) -> DefraResult {
     ffi_entry! {
-        let path_str = try_ffi!(require_c_str(filepath, "filepath"));
+        let request = try_ffi!(Request::resolve(node_ptr, 0));
+        let node_ptr = try_ffi!(request.require_node("backup import"));
+        let path_str = go_string(filepath);
 
         let (database, runner) = match NODES.get(node_ptr, |state| {
             (state.database.clone(), state.query_runner.clone())
         }) {
             Some(r) => r,
-            None => return FfiResult::error(ERR_INVALID_NODE_HANDLE),
+            None => return DefraResult::error(ERR_INVALID_NODE_HANDLE),
         };
 
         ffi_async_ok!(node_ptr, {
@@ -48,74 +54,5 @@ pub unsafe extern "C" fn basic_import(node_ptr: usize, filepath: *const c_char) 
                 .await
                 .map(|_| ())
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::node::{new_node, node_close};
-    use crate::schema::add_schema;
-    use crate::types::NodeInitOptions;
-    use std::ffi::CString;
-
-    fn setup_node_with_schema() -> usize {
-        assert!(crate::runtime::init_runtime());
-        let options = NodeInitOptions::default();
-        let result = new_node(options);
-        assert_eq!(result.status, 0, "new_node failed");
-        let node = result.node_ptr;
-
-        let sdl = CString::new("type User { name: String, age: Int }").unwrap();
-        let result = unsafe { add_schema(node, std::ptr::null(), sdl.as_ptr()) };
-        assert_eq!(result.status, 0, "add_schema failed");
-        if !result.value.is_null() {
-            unsafe { crate::types::defra_free_string(result.value) };
-        }
-
-        node
-    }
-
-    #[test]
-    fn test_basic_import_invalid_json_array() {
-        let node = setup_node_with_schema();
-
-        let dir = std::env::temp_dir();
-        let path = dir.join("defra_test_import_array.json");
-        fs::write(&path, "[1, 2, 3]").unwrap();
-
-        let path_c = CString::new(path.to_str().unwrap()).unwrap();
-        let result = unsafe { basic_import(node, path_c.as_ptr()) };
-        assert_eq!(result.status, 1, "should fail for array root");
-
-        let _ = fs::remove_file(&path);
-        node_close(node);
-    }
-
-    #[test]
-    fn test_basic_import_invalid_filepath() {
-        let node = setup_node_with_schema();
-
-        let path_c = CString::new("/nonexistent/path/file.json").unwrap();
-        let result = unsafe { basic_import(node, path_c.as_ptr()) };
-        assert_eq!(result.status, 1, "should fail for missing file");
-
-        node_close(node);
-    }
-
-    #[test]
-    fn test_basic_import_invalid_collection() {
-        let node = setup_node_with_schema();
-
-        let dir = std::env::temp_dir();
-        let path = dir.join("defra_test_import_bad_col.json");
-        fs::write(&path, r#"{"NonExistent": [{"field": "value"}]}"#).unwrap();
-
-        let path_c = CString::new(path.to_str().unwrap()).unwrap();
-        let result = unsafe { basic_import(node, path_c.as_ptr()) };
-        assert_eq!(result.status, 1, "should fail for invalid collection");
-
-        let _ = fs::remove_file(&path);
-        node_close(node);
     }
 }

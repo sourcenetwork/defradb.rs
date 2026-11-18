@@ -63,6 +63,14 @@ impl<S: Store + 'static> TransactionContext for DbTransactionContext<S> {
         self.readonly
     }
 
+    fn on_commit(&self, callback: storage::corekv::OnCommit) -> query::error::Result<()> {
+        self.txn
+            .upgrade()
+            .ok_or_else(|| query::error::QueryError::execution("transaction is no longer active"))?
+            .on_commit(callback)
+            .map_err(|error| query::error::QueryError::execution(error.to_string()))
+    }
+
     fn doc_fetcher(&self) -> Arc<dyn DocFetcher> {
         self.fetcher.clone()
     }

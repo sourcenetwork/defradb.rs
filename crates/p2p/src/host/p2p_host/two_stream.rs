@@ -218,14 +218,22 @@ impl<S: Store> P2PHost<S> {
                     }
                 }
             }
-            TwoStreamEvent::CarFetchRequest { peer_id, root_cid } => {
+            TwoStreamEvent::CarFetchRequest {
+                peer_id,
+                root_cid,
+                haves,
+            } => {
                 debug!(
                     peer_id = %peer_id,
                     root_cid = %root_cid,
                     "Host received CAR fetch request"
                 );
                 if !self
-                    .forward_event(HostEvent::CarFetchRequest { peer_id, root_cid })
+                    .forward_event(HostEvent::CarFetchRequest {
+                        peer_id,
+                        root_cid,
+                        haves,
+                    })
                     .await
                 {
                     error!(peer_id = %peer_id, "Failed to send CarFetchRequest event");

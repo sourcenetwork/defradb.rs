@@ -19,7 +19,7 @@ use crate::keys::IndexDataStoreKey;
 /// UniqueIndex stores the encoded doc short ID in the value, enforcing
 /// that each indexed field value combination can only appear once.
 ///
-/// Key format: /[ColID]/[IdxID]/[EncodedFields]
+/// Key format: `/[ColID]/[IdxID]/[EncodedFields]`
 /// Value: order-preserving uvarint doc short ID (or empty for NULL values)
 ///
 /// For fields that allow NULL, entries fall back to the short-ID-in-key

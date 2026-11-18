@@ -404,7 +404,26 @@ where
         };
         let field_name = field_delta.field_name.to_owned();
         let collection_version_id = field_delta.collection_version_id.to_owned();
+        let collection = self
+            .block_collection(&collection_version_id, record.collection_id.as_deref())
+            .await?;
+        let doc_id = DocID::from_string(&record.doc_id)
+            .map_err(|error| MergeError::MergeFailed(format!("invalid doc_id: {error}")))?;
         let mut reads = super::block_reads::BlockReads::default();
+        // The field merge may write the merged value, so the index update
+        // starts from a read taken before it.
+        let before = match collection
+            .as_ref()
+            .filter(|collection| super::composite_fields::indexes_field(collection, &field_name))
+        {
+            Some(collection) => Some(
+                reads
+                    .document(collection, &datastore, record.doc_short_id, &doc_id)
+                    .await
+                    .map_err(MergeError::Database)?,
+            ),
+            None => None,
+        };
         let result = self
             .merge_field_delta_in_txn(
                 &mut datastore,
@@ -445,14 +464,15 @@ where
             .await
             .map_err(storage)?;
 
-        let collection = self
-            .block_collection(&collection_version_id, record.collection_id.as_deref())
-            .await?;
+        if result.order.is_none() {
+            reads.wrote_field(
+                &field_name,
+                result.value.as_ref().filter(|_| result.op.is_none()),
+            );
+        }
         if let (Some(collection), true) =
             (collection, result.value.is_some() || result.op.is_some())
         {
-            let doc_id = DocID::from_string(&record.doc_id)
-                .map_err(|error| MergeError::MergeFailed(format!("invalid doc_id: {error}")))?;
             let old = reads
                 .document(&collection, &datastore, record.doc_short_id, &doc_id)
                 .await
@@ -483,13 +503,17 @@ where
                     .on_document_update_merge(
                         &datastore,
                         &systemstore,
-                        &old,
+                        before.flatten().as_ref().unwrap_or(&old),
                         &doc,
                         record.doc_short_id,
                         collection.schema(),
                     )
                     .await
                     .map_err(index_error)?;
+                datastore
+                    .project_document(collection.name(), &record.doc_id)
+                    .await
+                    .map_err(storage)?;
             }
         }
         systemstore.delete(key).await.map_err(storage)?;

@@ -279,6 +279,22 @@ impl NodePermission {
         }
     }
 
+    /// The permissions checking this one takes, in Go's order: a document
+    /// write or a truncate reads its collection first (Go's
+    /// `GetCollectionByName`), so `get-collection` comes before the
+    /// operation's own permission and is the one a caller holding neither is
+    /// refused.
+    pub fn go_order(self) -> impl Iterator<Item = NodePermission> {
+        let reads_collection = matches!(
+            self,
+            Self::DocumentUpdate | Self::DocumentDelete | Self::CollectionTruncate
+        );
+        reads_collection
+            .then_some(Self::CollectionGet)
+            .into_iter()
+            .chain(std::iter::once(self))
+    }
+
     /// Returns all node permissions.
     pub fn all() -> &'static [NodePermission] {
         &[

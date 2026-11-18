@@ -22,7 +22,7 @@ use schema::CollectionVersion;
 use storage::corekv::Store;
 
 use crate::chunk::list::{chunk_list, distinct};
-use crate::chunk::split::{split, ChunkConfig};
+use crate::chunk::split::split;
 use crate::collection::Collection;
 use crate::database::DB;
 use crate::event::emission::TxnBroadcaster;
@@ -69,10 +69,8 @@ pub(crate) fn set_lists(
             .map(str::to_owned);
         match text {
             Some(text) => {
-                let config = ChunkConfig {
-                    max_chars: chunked.max_chars as usize,
-                    overlap: chunked.overlap as usize,
-                };
+                let config = crate::chunk::chunk_config(&schema.name, chunked)
+                    .map_err(|error| QueryError::execution(error.to_string()))?;
                 let chunks = split(&text, &config);
                 doc.set(
                     list_field.clone(),

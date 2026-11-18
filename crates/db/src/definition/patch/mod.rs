@@ -1,417 +1,392 @@
 //! Schema patching operations for DefraDB.
 //!
-//! This module implements JSON Patch (RFC 6902) operations for modifying
-//! collection schemas. It provides Go DefraDB compatible patching behavior
-//! including field addition, removal, and schema version management.
+//! A patch is a JSON Patch (RFC 6902) document over every collection version,
+//! held as a map keyed by version ID. Its paths start with the collection they
+//! change (`/Users/Fields/-`), by name or version ID. One patch may change
+//! several collections. The whole patch has its GQL values and names replaced
+//! with stored ones, is applied in one go, and the resulting versions are
+//! validated together before each changed collection is stored.
 
-mod apply;
-pub mod helpers;
-pub mod json;
+mod added;
+mod in_place;
+mod patch_slop;
 mod store;
+mod substitute_slop;
 mod validate;
 mod version;
 
 use crate::collection::Collection;
-use crate::definition::patch::json::{
-    extract_field_name_from_path, json_pointer_get, json_pointer_remove, json_pointer_replace,
-    json_pointer_set, JsonPatchError,
-};
 use crate::error::{Error, Result};
+use crate::txn::DbTxn;
+use rapidhash::{RapidHashMap, RapidHashSet};
 use schema::{CollectionSource, CollectionVersion};
+use serde_json::Value;
 use storage::corekv::{Key, OnCommit, Store};
 use storage::keys::systemstore::{CollectionKey, CollectionNameKey, CollectionVersionKey};
 use tracing::instrument;
 
-impl<S: Store> crate::database::DB<S> {
-    /// [`Self::patch_collection_as`] for `identity`, or for the identity acting in [`defra_core::RequestContext::ambient`] when there is none.
-    pub async fn patch_collection(
-        &self,
-        collection_name: &str,
-        patch: &str,
-        identity: Option<&identity::Did>,
-    ) -> Result<CollectionVersion> {
-        self.patch_collection_as(
-            &crate::access::nac::ambient_as(identity),
-            collection_name,
-            patch,
-        )
-        .await
-    }
+/// A collection version the patch changes.
+pub(crate) struct PendingPatch {
+    old_schema: CollectionVersion,
+    new_schema: CollectionVersion,
+    /// The patch writes `IsActive`.
+    is_active_explicitly_set: bool,
+}
 
-    /// Apply a JSON Patch to a collection schema.
+impl<S: Store> crate::database::DB<S> {
+    /// Apply a JSON Patch to one or more collection schemas.
     ///
-    /// This method takes a JSON Patch document (RFC 6902) and applies it to
-    /// the collection's schema, creating a new schema version.
+    /// The patch works on a map of every collection version keyed by version
+    /// ID; each operation's first path segment names the collection it
+    /// changes, by name or version ID. The patch has its GQL values, collection
+    /// names and field names replaced with stored values.
     ///
     /// # Arguments
     ///
-    /// * `collection_name` - The name of the collection to patch (can also be version ID)
+    /// * `context` - The core params shared by most Defra functions
     /// * `patch` - JSON array of patch operations
-    ///
-    /// # Patch Operations
-    ///
-    /// Supported operations:
-    /// - `add` - Add a new field or value
-    /// - `remove` - Remove a field or value
-    /// - `replace` - Replace an existing value
-    /// - `test` - Test that a value exists
-    /// - `copy` - Copy a value from one location to another
-    /// - `move` - Move a value from one location to another
-    ///
-    /// # Returns
-    ///
-    /// The updated collection version (with new version_id).
+    /// * `migration` - Optional Lens migration to apply to documents transiting between the
+    ///    old and new versions; the patch must then change exactly one collection
     ///
     /// # Errors
     ///
-    /// - `CollectionNotFound` if the collection doesn't exist
-    /// - `InvalidPatch` if the patch is invalid or cannot be applied
-    /// - `Schema` if the resulting schema is invalid
-    pub async fn patch_collection_as(
+    /// - `InvalidPatch` if the patch is invalid or cannot be applied, and no
+    ///   collection is changed
+    /// - `Schema` if a resulting schema is invalid
+    #[instrument(skip(self, context, patch, migration), name = "db.patch_collection", fields(collection = tracing::field::Empty))]
+    pub async fn patch_collection(
         &self,
         context: &defra_core::RequestContext,
-        collection_name: &str,
-        patch: &str,
-    ) -> Result<CollectionVersion> {
-        self.patch_collection_with_migration_as(context, collection_name, patch, None)
-            .await
-    }
-
-    /// [`Self::patch_collection_with_migration_as`] for `identity`, or for the identity acting in [`defra_core::RequestContext::ambient`] when there is none.
-    pub async fn patch_collection_with_migration(
-        &self,
-        collection_name: &str,
         patch: &str,
         migration: Option<lens::LensConfig>,
-        identity: Option<&identity::Did>,
-    ) -> Result<CollectionVersion> {
-        self.patch_collection_with_migration_as(
-            &crate::access::nac::ambient_as(identity),
-            collection_name,
-            patch,
-            migration,
-        )
-        .await
-    }
-
-    /// Apply a JSON Patch and its migration as one operation.
-    #[instrument(skip(self, patch, migration), fields(collection = %collection_name), name = "db.patch_collection")]
-    pub async fn patch_collection_with_migration_as(
-        &self,
-        context: &defra_core::RequestContext,
-        collection_name: &str,
-        patch: &str,
-        migration: Option<lens::LensConfig>,
-    ) -> Result<CollectionVersion> {
+    ) -> Result<()> {
         self.check_node_access_as(context, acp::nac::NodePermission::CollectionPatch)
             .await?;
-        // Parse the patch early - needed for both collection lookup fallbacks and processing
-        let patch_ops: serde_json::Value =
-            serde_json::from_str(patch).map_err(|e| Error::InvalidPatch(e.to_string()))?;
 
-        // Get the current schema - try by name first, then by version ID (including KV store),
-        // then check for collection-level move/copy targeting a non-existent collection
-        let collection = match self.get_collection(collection_name)? {
-            Some(c) => c,
-            None => {
-                // Try looking up by version ID - search both cache and KV store
-                match self
-                    .get_collection_by_version_id_full(collection_name)
-                    .await?
-                {
-                    Some(c) => c,
-                    None => {
-                        // Collection not found by name or version ID.
-                        // Check if the patch is a collection-level move/copy where the
-                        // "path" targets a non-existent collection (e.g., move /Users → /Books)
-                        return self
-                            .handle_unknown_collection_patch(collection_name, &patch_ops)
-                            .await;
-                    }
+        let raw = validate::operations(patch)?;
+        // Every read and write of the patch runs in this one transaction, so
+        // the patch commits whole or not at all.
+        let mut txn = self.new_txn(false).await?;
+        let old_versions = self.get_all_collection_versions_with_txn(&mut txn).await?;
+        let versions: RapidHashMap<String, CollectionVersion> = old_versions
+            .iter()
+            .map(|version| (version.version_id.clone(), version.clone()))
+            .collect();
+        // Each operation is substituted, checked and applied against the
+        // versions the operations before it left, so it can name a field or
+        // collection an earlier operation added.
+        let mut patched = versions.clone();
+        let mut ops = Vec::with_capacity(raw.len());
+        for raw_op in &raw {
+            // Collections resolve by their stored names, which an earlier
+            // operation may have moved away; fields by the current state.
+            let op =
+                substitute_slop::substitute(&with_leading_slashes(raw_op), &versions, &patched)?;
+            let (raw_op, op) = (std::slice::from_ref(raw_op), std::slice::from_ref(&op));
+            validate::check_operation(&raw_op[0], &op[0], &patched)?;
+            patched = patch_slop::apply_patch(&Value::Array(op.to_vec()), &patched)
+                .map_err(|e| without_substituted_ids(e, raw_op, op))?;
+            ops.push(op[0].clone());
+        }
+
+        let explicitly_active = explicitly_activated(&ops);
+        let mut new_versions = Vec::with_capacity(patched.len());
+        let mut changed = Vec::new();
+        let mut added = Vec::new();
+        for mut new_schema in patched.into_values() {
+            let old_schema = versions.get(&new_schema.version_id);
+            // root_id is runtime storage metadata, absent from the patched JSON.
+            if let Some(old_schema) = old_schema {
+                new_schema.root_id = old_schema.root_id;
+            }
+            match old_schema {
+                Some(old_schema) if new_schema != *old_schema => {
+                    let old_schema = old_schema.clone();
+                    prepare_changed(&mut new_schema, &old_schema)?;
+                    new_versions.push(new_schema.clone());
+                    changed.push(PendingPatch {
+                        is_active_explicitly_set: explicitly_active
+                            .contains(old_schema.version_id.as_str()),
+                        old_schema,
+                        new_schema,
+                    });
+                }
+                Some(_) => new_versions.push(new_schema),
+                None => {
+                    added.push(new_schema.clone());
+                    new_versions.push(new_schema);
                 }
             }
-        };
-
-        let old_schema = collection.schema().clone();
-        let actual_name = old_schema.name.clone();
-        let old_version_id = old_schema.version_id.clone();
-        let collection_id = old_schema.collection_id.clone();
-        // Collect known collection names for Kind validation
-        let known_collection_names: Vec<String> = self
-            .list_collections()
-            .unwrap_or_default()
-            .into_iter()
+        }
+        let present: RapidHashSet<&str> = new_versions
+            .iter()
+            .map(|version| version.version_id.as_str())
+            .collect();
+        let removed: Vec<&CollectionVersion> = old_versions
+            .iter()
+            .filter(|version| !present.contains(version.version_id.as_str()))
             .collect();
 
-        // Apply the patch to the schema JSON
-        let mut schema_json = serde_json::to_value(&old_schema)
-            .map_err(|e| Error::collection_schema_json("failed to serialize schema to JSON", e))?;
+        let names: Vec<&str> = changed
+            .iter()
+            .map(|patched| patched.old_schema.name.as_str())
+            .chain(removed.iter().map(|version| version.name.as_str()))
+            .collect();
+        tracing::Span::current().record("collection", names.join(",").as_str());
 
-        // Normalize JSON to match Go's serialization format before applying patches.
-        // Go always serializes struct fields (null for nil pointers, [] for nil slices),
-        // but Rust's skip_serializing_if omits them. Patches targeting these paths
-        // need the keys to exist for replace/remove operations to work correctly,
-        // and for validators to run instead of json_pointer errors.
-        // Note: EncryptedIndexes is NOT pre-populated because Go doesn't expose
-        // it in the JSON representation - patches targeting it should fail.
-        if let serde_json::Value::Object(ref mut map) = schema_json {
-            for key in &["Indexes", "VectorEmbeddings"] {
-                map.entry(key.to_string())
-                    .or_insert(serde_json::Value::Array(vec![]));
-            }
-            for key in &["CollectionSet", "Query", "PreviousVersion", "Policy"] {
-                map.entry(key.to_string())
-                    .or_insert(serde_json::Value::Null);
-            }
+        schema::definition_validation::validate_collection_changes(&old_versions, &new_versions)
+            .map_err(Error::InvalidPatch)?;
+        for version in &added {
+            validate::check_added_ids(&txn, version).await?;
+        }
+        for patched in &changed {
+            self.validate_changed(&txn, patched).await?;
+        }
+        if migration.is_some() && changed.len() > 1 {
+            return Err(Error::InvalidPatch(
+                "a migration applies to one collection, but this patch changes several".to_string(),
+            ));
         }
 
-        // Apply JSON patch operations
-        // Go DefraDB embeds collection name in patch paths: /CollectionName/Fields/-
-        // We need to strip the collection name prefix to get paths relative to schema.
-        // Patches may use the collection name, actual name, or version ID as prefix.
-        // Build a list of all recognized prefixes to try stripping.
-        let mut strip_prefixes: Vec<String> = vec![format!("/{}/", collection_name)];
-        if actual_name != collection_name {
-            strip_prefixes.push(format!("/{}/", actual_name));
-        }
-        if old_version_id != collection_name && old_version_id != actual_name {
-            strip_prefixes.push(format!("/{}/", old_version_id));
-        }
-
-        let (is_deactivation, is_active_explicitly_set) = self
-            .apply_patch_operations(
-                patch_ops,
-                &mut schema_json,
-                &strip_prefixes,
-                &known_collection_names,
-                &old_schema,
-                &collection_id,
-            )
+        // Removed versions go first and together: the batch may remove a
+        // version and the newer versions built on it, is checked as a whole
+        // for relations into the collections it removes, and frees the name
+        // for a version the patch activates.
+        let version_ids = removed
+            .iter()
+            .map(|version| version.version_id.clone())
+            .collect();
+        let deleted = self
+            .delete_collection_versions_batch_with_txn(&mut txn, version_ids)
             .await?;
+        // Collections are stored in the order the patch first names them, so
+        // generated IDs are deterministic; a deactivated version releases its
+        // collection's name before another version of it claims the name.
+        let order = first_named(&ops);
+        changed.sort_by_key(|patched| {
+            let version_id = patched.old_schema.version_id.as_str();
+            let position = order.iter().position(|named| *named == version_id);
+            (!is_deactivated(patched), position)
+        });
+        let mut migration = migration;
+        let mut stored = Vec::new();
+        for patched in changed {
+            if self.update_version_in_place(&mut txn, &patched).await? {
+                continue;
+            }
+            stored.push(
+                self.store_new_version(
+                    &mut txn,
+                    patched.new_schema,
+                    &patched.old_schema,
+                    patched.is_active_explicitly_set,
+                    migration.take(),
+                )
+                .await?,
+            );
+        }
+        // A new version of an existing collection whose IDs name stored
+        // blocks is stored as given, as Go does.
+        for version in &added {
+            self.store_added_version(&mut txn, version).await?;
+        }
+        txn.commit().await?;
 
-        let mut new_schema =
-            self.validate_patched_schema(schema_json, &old_schema, &actual_name)?;
-        // root_id is runtime storage metadata and is intentionally skipped in schema JSON.
-        // Preserve it across patch application so the new active version keeps using the
-        // same index/head/cache namespace as the rest of the collection history.
-        new_schema.root_id = old_schema.root_id;
+        for deleted in &deleted {
+            self.after_version_deleted(deleted)?;
+        }
+        for stored in stored {
+            self.after_version_stored(stored).await;
+        }
+        Ok(())
+    }
 
+    /// The checks on a changed version that need the database, read in `txn`.
+    async fn validate_changed(&self, txn: &DbTxn<S>, patched: &PendingPatch) -> Result<()> {
+        let PendingPatch {
+            old_schema,
+            new_schema,
+            ..
+        } = patched;
+        Collection::validate_default_values(new_schema)?;
         // Matches Go's validateDematerializedViewHasNoData.
         if old_schema.is_materialized
             && !new_schema.is_materialized
-            && self.collection_has_data(&old_schema).await?
+            && self.collection_has_data_with_txn(txn, old_schema).await?
         {
             return Err(Error::InvalidPatch(format!(
                 "cannot dematerialize a materialized view that has data, first truncate it and then try again. Name: {}, VersionID: {}",
                 old_schema.name, old_schema.version_id
             )));
         }
+        Ok(())
+    }
+}
 
-        // Handle in-place updates (deactivation, IsActive-only, or PreviousVersion/Transform-only).
-        // These don't create a new schema version - they update the existing one.
-        let is_isactive_only_change = is_active_explicitly_set
-            && new_schema.fields == old_schema.fields
-            && new_schema.name == old_schema.name;
+/// Complete a changed version the way Go does before validating it: keep its
+/// runtime `root_id`, number its new fields, give new scalar fields the
+/// default CRDT, store a new relation to its own collection as the `Self`
+/// kind, and add the `_<name>ID` field of each new relation.
+fn prepare_changed(
+    new_schema: &mut CollectionVersion,
+    old_schema: &CollectionVersion,
+) -> Result<()> {
+    new_schema.root_id = old_schema.root_id;
+    clear_copied_field_ids(new_schema, old_schema);
+    assign_field_ids(new_schema);
 
-        // Check if only PreviousVersion/Transform changed (lens migration linking).
-        // This is an in-place update that adds a migration transform to an existing version.
-        let is_transform_only_change = !is_deactivation
-            && !is_active_explicitly_set
-            && new_schema.fields == old_schema.fields
-            && new_schema.name == old_schema.name
-            && new_schema.is_active == old_schema.is_active
-            && new_schema.previous_version != old_schema.previous_version;
-
-        // Check if only metadata changed (VectorEmbeddings, Indexes, IsMaterialized, etc.)
-        // without field or name changes. Go treats these as in-place updates.
-        let is_metadata_only_change = !is_deactivation
-            && !is_active_explicitly_set
-            && !is_transform_only_change
-            && new_schema.fields == old_schema.fields
-            && new_schema.name == old_schema.name
-            && new_schema.is_active == old_schema.is_active
-            && new_schema.query == old_schema.query
-            && new_schema.previous_version == old_schema.previous_version;
-
-        if is_deactivation
-            || is_isactive_only_change
-            || is_transform_only_change
-            || is_metadata_only_change
-        {
-            // True deletion: remove from store entirely (matches Go behavior)
-            if is_deactivation {
-                self.delete_collection_version_as(context, &old_version_id, &[])
-                    .await?;
-                new_schema.is_active = false;
-                new_schema.version_id = old_version_id.clone();
-                if !is_transform_only_change {
-                    new_schema.previous_version = old_schema.previous_version.clone();
-                }
-                return Ok(new_schema);
-            }
-
-            // Keep original version_id
-            new_schema.version_id = old_version_id.clone();
-            // For IsActive-only, metadata-only, restore original previous_version.
-            // For Transform-only changes, keep the new previous_version (contains the transform).
-            if !is_transform_only_change {
-                new_schema.previous_version = old_schema.previous_version.clone();
-            }
-
-            // Validate: can't remove a collection that has documents (only on active→inactive)
-            if !new_schema.is_active && old_schema.is_active {
-                let has_data = self.collection_has_data(&old_schema).await?;
-                if has_data {
-                    return Err(Error::InvalidPatch(
-                        "cannot delete a collection that has documents, first delete the documents and then delete the version".to_string(),
-                    ));
-                }
-            }
-
-            // Run cross-collection validators to catch issues like multiple active versions
-            // against the same snapshot that will store the in-place update.
-            let mut txn = self.new_txn(false).await?;
-            let all_existing = self.get_all_collection_versions_with_txn(&mut txn).await?;
-            let Some(persisted_old_schema) = all_existing.iter().find(|version| {
-                version.collection_id == collection_id && version.version_id == old_version_id
-            }) else {
-                return Err(Error::CollectionVersionNotFound(old_version_id.clone()));
-            };
-            if !crate::collection::loader::same_schema(persisted_old_schema, &old_schema) {
-                return Err(Error::Storage(storage::Error::TxnConflict));
-            }
-            let name_key = CollectionNameKey::new(&actual_name);
-            let persisted_name_version = txn
-                .systemstore()?
-                .get(&name_key.bytes())
-                .await
-                .map_err(Error::Storage)?;
-            if old_schema.is_active
-                && persisted_name_version.as_deref() != Some(old_version_id.as_bytes())
-            {
-                return Err(Error::Storage(storage::Error::TxnConflict));
-            }
-            let new_collections: Vec<CollectionVersion> = all_existing
-                .iter()
-                .filter(|c| c.version_id != old_version_id)
-                .cloned()
-                .chain(std::iter::once(new_schema.clone()))
-                .collect();
-            schema::definition_validation::validate_collection_changes(
-                &all_existing,
-                &new_collections,
-            )
-            .map_err(Error::InvalidPatch)?;
-
-            // Store the updated version
-            {
-                let systemstore = txn.systemstore()?;
-                let key = CollectionKey::new(&old_version_id);
-                let data = serde_json::to_vec(&new_schema).map_err(|e| {
-                    Error::collection_schema_json(
-                        format!(
-                            "failed to serialize updated schema version '{}'",
-                            old_version_id
-                        ),
-                        e,
-                    )
-                })?;
-                systemstore
-                    .set(&key.bytes(), &data)
-                    .await
-                    .map_err(Error::Storage)?;
-
-                // Update name pointer based on activation state
-                let name_key = CollectionNameKey::new(&actual_name);
-                if new_schema.is_active {
-                    systemstore
-                        .set(&name_key.bytes(), old_version_id.as_bytes())
-                        .await
-                        .map_err(Error::Storage)?;
-                } else {
-                    systemstore
-                        .delete(&name_key.bytes())
-                        .await
-                        .map_err(Error::Storage)?;
-                }
-            }
-            let cached_collection =
-                Collection::load_index_actions(new_schema.clone(), &txn.systemstore()?).await?;
-            let collections = std::sync::Arc::clone(&self.collections);
-            let registered_name = actual_name.clone();
-            let active = new_schema.is_active;
-            txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
-                collections.rcu(|old| {
-                    let mut cache = old.clone();
-                    if active {
-                        cache.put_named(&registered_name, cached_collection.clone());
-                    } else {
-                        cache.remove(&registered_name);
-                    }
-                    cache
-                });
-            })))?;
-            txn.commit().await?;
-
-            tracing::info!(
-                collection = %actual_name,
-                version = %old_version_id,
-                is_active = new_schema.is_active,
-                "Updated collection version in place"
-            );
-
-            return Ok(new_schema);
+    let old_names: RapidHashSet<&str> = old_schema.fields.iter().map(|f| f.name.as_str()).collect();
+    let host = new_schema.name.clone();
+    for field in &mut new_schema.fields {
+        if old_names.contains(field.name.as_str()) {
+            continue;
         }
+        if !field.kind.is_relation() && field.crdt_type == schema::CType::None {
+            field.crdt_type = schema::CType::LwwRegister;
+        }
+        if let Some(kind) = self_kind(&field.kind, &host) {
+            field.kind = kind;
+        }
+    }
 
-        self.store_new_version(
-            new_schema,
-            &old_schema,
-            &old_version_id,
-            &actual_name,
-            &collection_id,
-            collection_name,
-            is_active_explicitly_set,
-            migration,
-        )
-        .await
+    let mut next_id = max_field_id(new_schema) + 1;
+    new_schema
+        .add_relation_id_fields(|| {
+            let id = next_id.to_string();
+            next_id += 1;
+            id
+        })
+        .map_err(|e| Error::InvalidPatch(format!("failed to add relation id fields: {e}")))
+}
+
+/// A patch names a self-referencing relation's kind by its own collection's
+/// name (`"Users"`, `"[Users]"` on `Users`); a stored version holds it as the
+/// `Self` kind, which the relation validators require.
+fn self_kind(kind: &schema::FieldKind, host: &str) -> Option<schema::FieldKind> {
+    match kind {
+        schema::FieldKind::Named { name, is_array } if name == host => {
+            Some(schema::FieldKind::SelfRef {
+                relative_id: String::new(),
+                is_array: *is_array,
+            })
+        }
+        _ => None,
     }
 }
 
-impl<S> crate::database::DB<S>
-where
-    S: Store,
-{
-    /// Go's `PatchCollection`: apply `patch` to the collection its paths
-    /// name (`/<Name>/...`) for `context`'s caller, with `migration` as the
-    /// migration to the version it adds.
-    pub async fn patch_collections_as(
-        &self,
-        context: &defra_core::RequestContext,
-        patch: &str,
-        migration: Option<lens::LensConfig>,
-    ) -> Result<()> {
-        let ops: serde_json::Value =
-            serde_json::from_str(patch).map_err(|e| Error::InvalidPatch(e.to_string()))?;
-        let name = patch_target(&ops)?;
-        self.patch_collection_with_migration_as(context, &name, patch, migration)
-            .await
-            .map(|_| ())
+/// A copied field is a new field: a field carrying an existing field's ID
+/// under another name, while that field is still present, loses the ID.
+fn clear_copied_field_ids(new_schema: &mut CollectionVersion, old_schema: &CollectionVersion) {
+    let old_names: RapidHashMap<&str, &str> = old_schema
+        .fields
+        .iter()
+        .map(|f| (f.id.as_str(), f.name.as_str()))
+        .collect();
+    let kept: RapidHashSet<String> = new_schema
+        .fields
+        .iter()
+        .filter(|f| old_names.get(f.id.as_str()) == Some(&f.name.as_str()))
+        .map(|f| f.id.clone())
+        .collect();
+    for field in &mut new_schema.fields {
+        let is_copy = kept.contains(&field.id)
+            && old_names.get(field.id.as_str()) != Some(&field.name.as_str());
+        if is_copy {
+            field.id.clear();
+        }
     }
 }
 
-/// The collection a Go patch names: the first segment of its first path.
-fn patch_target(ops: &serde_json::Value) -> Result<String> {
-    let invalid = |why: &str| Error::InvalidPatch(why.to_owned());
-    let path = ops
-        .as_array()
-        .ok_or_else(|| invalid("patch must be a JSON array"))?
-        .first()
-        .ok_or_else(|| invalid("patch array is empty"))?
-        .get("path")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| invalid("first patch op missing 'path' field"))?;
-    path.split('/')
-        .find(|segment| !segment.is_empty())
-        .map(str::to_owned)
-        .ok_or_else(|| invalid("patch path has no collection name"))
+fn max_field_id(version: &CollectionVersion) -> u64 {
+    version
+        .fields
+        .iter()
+        .filter_map(|field| field.id.parse::<u64>().ok())
+        .max()
+        .unwrap_or(0)
+}
+
+/// Give each field without a FieldID the next unused one.
+fn assign_field_ids(version: &mut CollectionVersion) {
+    let first_free = max_field_id(version) + 1;
+    let unnumbered = version.fields.iter_mut().filter(|f| f.id.is_empty());
+    for (id, field) in (first_free..).zip(unnumbered) {
+        field.id = id.to_string();
+    }
+}
+
+/// The version IDs whose `IsActive` the substituted operations write.
+fn explicitly_activated(ops: &[Value]) -> RapidHashSet<&str> {
+    ops.iter()
+        .filter(|op| {
+            matches!(
+                op.get("op").and_then(Value::as_str),
+                Some("add" | "replace")
+            )
+        })
+        .filter_map(|op| op.get("path").and_then(Value::as_str))
+        .filter_map(|path| path.strip_prefix('/')?.strip_suffix("/IsActive"))
+        .filter(|version_id| !version_id.contains('/'))
+        .collect()
+}
+
+/// The collections the substituted operations name, in the order they first
+/// name them.
+fn first_named(ops: &[Value]) -> Vec<&str> {
+    let mut named: Vec<&str> = Vec::new();
+    let pointers = ops.iter().flat_map(|op| {
+        ["path", "from"]
+            .into_iter()
+            .filter_map(|member| op.get(member).and_then(Value::as_str))
+    });
+    for pointer in pointers {
+        let collection = pointer.split('/').nth(1).unwrap_or_default();
+        if !named.contains(&collection) {
+            named.push(collection);
+        }
+    }
+    named
+}
+
+fn is_deactivated(patched: &PendingPatch) -> bool {
+    patched.old_schema.is_active && !patched.new_schema.is_active
+}
+
+/// `error` with the version ID that substitution put in place of a
+/// collection's name removed from its paths, so they read as paths within
+/// that collection.
+fn without_substituted_ids(error: Error, raw: &[Value], ops: &[Value]) -> Error {
+    let Error::InvalidPatch(mut message) = error else {
+        return error;
+    };
+    let first = |op: &Value| {
+        let path = op.get("path").and_then(Value::as_str).unwrap_or_default();
+        path.trim_start_matches('/')
+            .split('/')
+            .next()
+            .unwrap_or_default()
+            .to_string()
+    };
+    for (raw, op) in raw.iter().zip(ops) {
+        let (given, version_id) = (first(raw), first(op));
+        if given != version_id {
+            message = message.replace(&format!("/{version_id}"), "");
+        }
+    }
+    Error::InvalidPatch(message)
+}
+
+/// Go accepts collection paths without their leading `/`.
+fn with_leading_slashes(op: &Value) -> Value {
+    let mut op = op.clone();
+    if let Some(members) = op.as_object_mut() {
+        for member in ["path", "from"] {
+            if let Some(Value::String(pointer)) = members.get_mut(member) {
+                if !pointer.starts_with('/') {
+                    pointer.insert(0, '/');
+                }
+            }
+        }
+    }
+    op
 }

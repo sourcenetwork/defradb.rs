@@ -138,14 +138,17 @@ pub async fn verified_block_signer_did_in_txn_as<S: Store>(
     .await
 }
 
-pub(crate) async fn verified_block_signer_did_with_txn<S: Store>(
+pub(crate) async fn verified_block_signer_did_with_txn<S>(
     database: &Arc<DB<S>>,
     document_acp: &dyn acp::DocumentACP,
     txn: &DbTxn<S>,
     cid_str: &str,
     caller_identity: &acp::Identity,
     dac_bypass: bool,
-) -> Result<String, String> {
+) -> Result<String, String>
+where
+    S: Store,
+{
     let (block, signature, _, _) = load_authorized_block_signature(
         database,
         document_acp,
@@ -285,7 +288,7 @@ pub async fn verify_block_signature_in_txn_as<S: Store>(
 /// Verify at one view: NAC, the block read and document ACP all decide at
 /// `txn`. NAC goes first, as in Go's `VerifySignature`.
 #[allow(clippy::too_many_arguments)]
-async fn verify_block_signature_with_txn<S: Store>(
+async fn verify_block_signature_with_txn<S>(
     context: &RequestContext,
     database: &Arc<DB<S>>,
     document_acp: &dyn acp::DocumentACP,
@@ -294,7 +297,10 @@ async fn verify_block_signature_with_txn<S: Store>(
     public_key_hex: &str,
     key_type: crypto::KeyType,
     caller_identity: &acp::Identity,
-) -> Result<(), String> {
+) -> Result<(), String>
+where
+    S: Store,
+{
     let systemstore = txn
         .systemstore()
         .map_err(|e| format!("failed to get systemstore: {}", e))?;
@@ -329,7 +335,7 @@ async fn verify_block_signature_with_txn<S: Store>(
     verify_signature_bytes(&block, &signature, pub_key.as_ref())
 }
 
-async fn load_authorized_block_signature<S: Store>(
+async fn load_authorized_block_signature<S>(
     database: &Arc<DB<S>>,
     document_acp: &dyn acp::DocumentACP,
     txn: &DbTxn<S>,
@@ -344,7 +350,10 @@ async fn load_authorized_block_signature<S: Store>(
         Vec<u8>,
     ),
     String,
-> {
+>
+where
+    S: Store,
+{
     let blockstore = txn
         .blockstore()
         .map_err(|e| format!("failed to get blockstore: {}", e))?;
@@ -385,7 +394,7 @@ async fn load_authorized_block_signature<S: Store>(
             // A `@chunk` collection has no policy. Its blocks are part of the parent's
             // history, so the parent's policy decides, even for a deleted parent.
             let mut owners_override = None;
-            if let Some(source) = collection.chunk_of.clone() {
+            if collection.chunk_of.is_some() {
                 let owners =
                     crate::docid::map::resolve_block_doc_ids(&systemstore, &parsed_cid, &block)
                         .await
@@ -398,13 +407,12 @@ async fn load_authorized_block_signature<S: Store>(
                 if parents.is_empty() {
                     return Err("missing permission: the chunk's parent is not known here".into());
                 }
-                collection = database
-                    .get_collection(&source.collection)
+                collection = crate::chunk::access::parent_collection(database, &collection)
                     .map_err(|e| format!("failed to get collection: {}", e))?
                     .ok_or_else(|| {
                         format!(
-                            "missing permission: parent collection {} not found",
-                            source.collection
+                            "missing permission: no parent collection chunks {}",
+                            collection.name
                         )
                     })?
                     .schema()

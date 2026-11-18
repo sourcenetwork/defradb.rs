@@ -24,6 +24,15 @@ pub enum DocumentAcpConfig {
         config: VeraConfig,
         lcd_address: String,
     },
+    /// Document ACP via a vera.rs node.
+    #[cfg(feature = "vera")]
+    VeraRs(crate::VeraRsConfig),
+    /// Document ACP via a provider the host built.
+    #[cfg(feature = "vera")]
+    Provider(crate::DocumentAcpProvider),
+    /// Document ACP via a Vera node this node runs in its own process.
+    #[cfg(feature = "embedded-vera")]
+    EmbeddedVera(crate::EmbeddedVeraConfig),
 }
 
 /// Vera document ACP configuration.
@@ -46,9 +55,11 @@ pub struct HttpConfig {
     pub(crate) transaction_idle_timeout: Duration,
     pub(crate) transaction_cleanup_interval: Duration,
     pub(crate) extra_routes: Option<axum::Router>,
+    pub(crate) authenticated_routes: Option<axum::Router>,
     pub(crate) router_transform: Option<defra_http::RouterTransform>,
     pub(crate) listener: Option<std::net::TcpListener>,
     pub(crate) dev_mode: bool,
+    pub(crate) collection_management: bool,
 }
 
 #[cfg(feature = "http")]
@@ -66,9 +77,11 @@ impl HttpConfig {
             transaction_idle_timeout: DEFAULT_TRANSACTION_IDLE_TIMEOUT,
             transaction_cleanup_interval: DEFAULT_TRANSACTION_CLEANUP_INTERVAL,
             extra_routes: None,
+            authenticated_routes: None,
             router_transform: None,
             listener: None,
             dev_mode: false,
+            collection_management: false,
         }
     }
 
@@ -109,6 +122,13 @@ impl HttpConfig {
         self
     }
 
+    /// Application routes authenticated by the node without inventing an
+    /// application permission. Their owning handlers still decide access.
+    pub fn with_authenticated_routes(mut self, routes: axum::Router) -> Self {
+        self.authenticated_routes = Some(routes);
+        self
+    }
+
     pub fn with_extra_routes(mut self, extra: axum::Router) -> Self {
         self.extra_routes = Some(extra);
         self
@@ -125,6 +145,16 @@ impl HttpConfig {
     /// the CLI's `--development` does.
     pub fn with_dev_mode(mut self, dev_mode: bool) -> Self {
         self.dev_mode = dev_mode;
+        self
+    }
+
+    /// Serve collection management (`/actions`, deleting collections and
+    /// versions, purge), as `defradb start` and Go's server do. Off by
+    /// default: an application embedding a node exposes collection
+    /// observation only, unless it opts in. `/purge` also needs
+    /// [`Self::with_dev_mode`]; without it the route answers 403.
+    pub fn with_collection_management(mut self, enabled: bool) -> Self {
+        self.collection_management = enabled;
         self
     }
 }
@@ -372,6 +402,9 @@ impl Default for P2PConfig {
 pub struct NodeConfig {
     /// Optional application-owned keyring for the transport identity.
     pub peer_keyring: Option<crate::PeerKeyring>,
+    /// A transport identity for this start only, used ahead of the keyring
+    /// and the store, and recorded in neither.
+    pub start_peer_key: Option<crate::StartPeerKey>,
     pub persistence: Persistence,
     pub transport: TransportConfig,
     /// The network runtime the node's networking runs on: its transport,
@@ -380,6 +413,9 @@ pub struct NodeConfig {
     /// ([`edge::on_demand`]); a node without networking starts none.
     pub edge: Option<edge::Edge>,
     pub signing: NodeSigning,
+    /// Keep the identity `signing` configures but write unsigned blocks, as a
+    /// Go node with a `NodeIdentity` and `EnableSigning` off.
+    pub identity_only: bool,
     pub document_acp: DocumentAcpConfig,
     pub query_limits: query::QueryLimits,
     /// Retries of a conflicting transaction; `None` keeps the database default.
@@ -398,6 +434,27 @@ pub struct NodeConfig {
     pub introspection_cache: Option<bool>,
     /// The embedder's check on replicated documents; `None` keeps them all.
     pub replication_filter: Option<ReplicationFilterHandle>,
+    /// The gate index backfills pass before each batch; `None` holds none.
+    pub index_build_gate: Option<IndexBuildGateHandle>,
+}
+
+/// An embedder's [`db::index::build_gate::IndexBuildGate`], compared by
+/// identity.
+#[derive(Clone)]
+pub struct IndexBuildGateHandle(pub Arc<dyn db::index::build_gate::IndexBuildGate>);
+
+impl std::fmt::Debug for IndexBuildGateHandle {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("IndexBuildGateHandle")
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for IndexBuildGateHandle {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
 }
 
 /// An embedder's [`db::replication_filter::ReplicationFilter`], compared by

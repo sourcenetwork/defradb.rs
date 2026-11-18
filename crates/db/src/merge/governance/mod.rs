@@ -3,6 +3,8 @@
 
 mod awaited;
 mod deferred;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod deferred_conformance_tests;
 mod judge;
 mod local_commit;
 mod redriven;
@@ -14,7 +16,7 @@ mod view;
 mod view_index;
 
 pub use awaited::Awaited;
-pub(crate) use awaited::{is_immutable_scalar_field, WaitKey};
+pub(crate) use awaited::{is_immutable_scalar_field, Deferral, WaitKey};
 pub(crate) use deferred::DeferredMerges;
 pub use deferred::{
     MAX_AWAITED_PER_COMPOSITE, MAX_DEFERRED_COMPOSITES, MAX_WAITERS_PER_DEPENDENCY, REDRIVE_BUDGET,

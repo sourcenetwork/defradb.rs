@@ -13,7 +13,7 @@ type ReplicatorPushOptionsCallback =
 
 /// On-demand replicator retry trigger. Runs a single retry pass that re-pushes
 /// failed doc blocks AND regenerates/re-pushes their SE artifacts. Backs the
-/// `p2p_retry_replicators` FFI op, mirroring Go's `RetryReplicators`.
+/// `defra_p2p_replicator_retry` FFI call, mirroring Go's `RetryReplicators`.
 type RetryReplicatorsCallback =
     Arc<dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync>;
 
@@ -38,6 +38,10 @@ pub struct ManagedP2PSystem {
     /// P2P-only peers on behalf of an HTTP caller. Set once during P2P setup
     /// (after the system is built), consumed when wiring `AppState`.
     manage_requester: regolith::sync::OnceCell<Arc<dyn defra_p2p_adapter::ManageRequester>>,
+    /// The iroh transport, for opening embedder stream protocols. Set once
+    /// during iroh setup.
+    #[cfg(feature = "p2p")]
+    iroh_transport: regolith::sync::OnceCell<p2p::iroh::IrohTransport>,
     shutdown: ShutdownHandle,
 }
 
@@ -84,8 +88,20 @@ impl ManagedP2PSystem {
             on_replicator_push_options,
             retry_replicators: regolith::sync::OnceCell::new(),
             manage_requester: regolith::sync::OnceCell::new(),
+            #[cfg(feature = "p2p")]
+            iroh_transport: regolith::sync::OnceCell::new(),
             shutdown,
         }
+    }
+
+    #[cfg(feature = "p2p")]
+    pub(crate) fn set_iroh_transport(&self, transport: p2p::iroh::IrohTransport) {
+        let _ = self.iroh_transport.set(transport);
+    }
+
+    #[cfg(feature = "p2p")]
+    pub(crate) fn iroh_transport(&self) -> Option<&p2p::iroh::IrohTransport> {
+        self.iroh_transport.get()
     }
 
     /// Install the outbound management requester. Set once during P2P setup.
@@ -104,7 +120,8 @@ impl ManagedP2PSystem {
     }
 
     /// Run a single on-demand replicator retry pass (re-push failed doc blocks
-    /// and regenerate/re-push their SE artifacts). Backs `p2p_retry_replicators`.
+    /// and regenerate/re-push their SE artifacts). Backs
+    /// `defra_p2p_replicator_retry`.
     pub async fn retry_replicators(&self) -> Result<(), String> {
         match self.retry_replicators.get() {
             Some(callback) => {
@@ -149,14 +166,8 @@ impl ManagedP2PSystem {
         self.replicator_push_options.load()
     }
 
-    /// Stops the transport, then clears the process's signing identities, as
-    /// the FFI node's close does.
-    pub async fn shutdown(&self) {
-        self.shutdown.stop().await;
-        defra_core::signing::clear_identity_store();
-    }
-
-    /// Stops the transport and leaves the signing identities alone.
+    /// Stops the transport; [`Node::shutdown`](crate::Node::shutdown) calls it
+    /// before closing the database.
     pub(crate) async fn stop_transport(&self) {
         self.shutdown.stop().await;
     }

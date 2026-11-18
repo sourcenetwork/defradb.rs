@@ -5,72 +5,24 @@ use storage::corekv::OnCommit;
 impl<S: Store> crate::database::DB<S> {
     /// Create and store a new schema version from a validated patched schema.
     ///
-    /// Handles default CRDTs for new fields, cross-collection validation,
-    /// unique index creation, CID generation, placeholder/pending migration
-    /// linking, IsActive handling, transaction writes, and cache updates.
-    #[allow(clippy::too_many_arguments)]
+    /// Handles unique index creation, CID generation, placeholder/pending
+    /// migration linking, IsActive handling, the writes, and cache updates.
+    /// Its reads and writes run in `txn`; the caller commits it and then
+    /// passes the result to [`Self::after_version_stored`].
     pub(crate) async fn store_new_version(
         &self,
+        txn: &mut DbTxn<S>,
         mut new_schema: CollectionVersion,
         old_schema: &CollectionVersion,
-        old_version_id: &str,
-        actual_name: &str,
-        collection_id: &str,
-        collection_name: &str,
         is_active_explicitly_set: bool,
         migration: Option<lens::LensConfig>,
-    ) -> Result<CollectionVersion> {
-        // Start the write transaction before loading schema metadata so all
-        // version/head decisions use the snapshot that will be committed.
-        let mut txn = self.new_txn(false).await?;
+    ) -> Result<StoredVersion> {
+        let old_version_id = old_schema.version_id.as_str();
+        let actual_name = old_schema.name.as_str();
+        let collection_id = old_schema.collection_id.as_str();
+        let collection_name = actual_name;
 
-        // Go compatibility: default new fields with CType::None to CType::LwwRegister.
-        // Go's patchCollection does this in collection_define.go for new fields that
-        // don't have an explicit CRDT type. This must happen before CID generation.
-        {
-            let old_field_names: rapidhash::RapidHashSet<&str> =
-                old_schema.fields.iter().map(|f| f.name.as_str()).collect();
-            for field in &mut new_schema.fields {
-                if !old_field_names.contains(field.name.as_str())
-                    && !field.kind.is_relation()
-                    && field.crdt_type == schema::CType::None
-                {
-                    field.crdt_type = schema::CType::LwwRegister;
-                }
-            }
-        }
-
-        // Run Go-compatible cross-collection validators (before schema validate() which
-        // uses different error messages). These validators cover duplicate fields,
-        // CRDT/kind compatibility, and all Go-specific patch constraints.
-        let all_existing = self.get_all_collection_versions_with_txn(&mut txn).await?;
-        let Some(persisted_old_schema) = all_existing.iter().find(|version| {
-            version.collection_id == collection_id && version.version_id == old_version_id
-        }) else {
-            return Err(Error::CollectionVersionNotFound(old_version_id.to_string()));
-        };
-        if !crate::collection::loader::same_schema(persisted_old_schema, old_schema) {
-            return Err(Error::Storage(storage::Error::TxnConflict));
-        }
-        let old_name_key = CollectionNameKey::new(actual_name);
-        let persisted_name_version = txn
-            .systemstore()?
-            .get(&old_name_key.bytes())
-            .await
-            .map_err(Error::Storage)?;
-        if old_schema.is_active
-            && persisted_name_version.as_deref() != Some(old_version_id.as_bytes())
-        {
-            return Err(Error::Storage(storage::Error::TxnConflict));
-        }
-        let new_collections: Vec<CollectionVersion> = all_existing
-            .iter()
-            .filter(|c| c.version_id != old_version_id)
-            .cloned()
-            .chain(std::iter::once(new_schema.clone()))
-            .collect();
-        schema::definition_validation::validate_collection_changes(&all_existing, &new_collections)
-            .map_err(Error::InvalidPatch)?;
+        let all_existing = self.get_all_collection_versions_with_txn(txn).await?;
 
         // Also run schema-level validation for checks not covered by definition validators
         // (e.g., relation field requires relation_name, policy format validation)
@@ -218,7 +170,7 @@ impl<S: Store> crate::database::DB<S> {
                 collection_priority,
                 &collection_heads,
                 &collection_id_map,
-            );
+            )?;
 
         // Update new schema with version info
         new_schema.version_id = new_version_id.clone();
@@ -303,13 +255,18 @@ impl<S: Store> crate::database::DB<S> {
             config.source_collection_version_id = old_version_id.to_string();
             config.destination_collection_version_id = new_version_id.clone();
 
+            let lens = crate::definition::migration::committed_lenses::PreparedLens::new(
+                config.clone(),
+                self.pool(),
+            )
+            .await?;
             let txn_lens_store = crate::txn::lenses::TxnLensStore::new(self.lens_store.clone());
-            let transform_id = txn_lens_store.add(config.clone()).await?;
+            txn_lens_store.add_with_id(lens.id.clone(), config).await?;
             new_schema.previous_version = Some(CollectionSource {
                 source_collection_id: old_version_id.to_string(),
-                transform: Some(transform_id.to_string()),
+                transform: Some(lens.id.to_string()),
             });
-            Some((transform_id, config))
+            Some(lens)
         } else {
             None
         };
@@ -401,13 +358,8 @@ impl<S: Store> crate::database::DB<S> {
                 .await
                 .map_err(Error::Storage)?;
 
-            if let Some((transform_id, config)) = &committed_migration {
-                crate::definition::migration::committed_lenses::write_lens_config(
-                    &systemstore,
-                    transform_id,
-                    config,
-                )
-                .await?;
+            if let Some(lens) = &committed_migration {
+                lens.write(&txn.blockstore()?, &systemstore).await?;
             }
         } // systemstore reference dropped here
 
@@ -533,51 +485,74 @@ impl<S: Store> crate::database::DB<S> {
                 cache
             });
         })))?;
-        txn.commit().await?;
-
-        if let Some((transform_id, config)) = committed_migration {
-            self.bump_migration_generation();
-            self.register_committed_lens(transform_id, config).await;
+        if new_schema.is_active {
+            let view = txn.datastore()?;
+            view.project_document(actual_name, "")
+                .await
+                .map_err(Error::Storage)?;
+            if new_schema.name != actual_name {
+                view.project_document(&new_schema.name, "")
+                    .await
+                    .map_err(Error::Storage)?;
+            }
         }
-
-        // Clean up any pending migration that was linked to this version
-        self.pending_migrations.remove(&new_version_id);
-
         // Cross-collection one-to-one index creation.
         // When collections are patched sequentially (e.g., Author then Book), the
-        // primary side (Author) may not get its unique index during its own patch
+        // primary side (Author) may not get its unique index when it is stored
         // because the other side (Book) didn't have the relation field yet. Now that
         // this collection is stored, check if any OTHER collection has a primary
         // non-array relation that targets this collection and now forms a one-to-one,
         // and add the missing unique index.
         if new_schema.is_active {
-            self.create_cross_collection_one_to_one_indexes(&new_schema)
+            self.create_cross_collection_one_to_one_indexes(txn, &new_schema)
                 .await?;
         }
+
+        Ok(StoredVersion {
+            schema: new_schema,
+            migration: committed_migration,
+        })
+    }
+
+    /// The follow-up to a stored version once its transaction commits:
+    /// register its lens, drop the pending migration it consumed, and rebuild
+    /// the indexes an activation owes.
+    pub(crate) async fn after_version_stored(&self, stored: StoredVersion) {
+        let StoredVersion {
+            schema: new_schema,
+            migration: committed_migration,
+        } = stored;
+        let new_version_id = &new_schema.version_id;
+        if let Some(lens) = committed_migration {
+            self.bump_migration_generation();
+            self.register_committed_lens(lens.id, lens.config).await;
+        }
+
+        // Clean up any pending migration that was linked to this version
+        self.pending_migrations.remove(new_version_id);
 
         // After switching active versions, rebuild the indexes the switch owes.
         if new_schema.is_active {
             self.settle_owed_reindexes_after_commit().await;
         }
-
-        Ok(new_schema)
     }
 
     /// Check other active collections for primary relation fields that target
     /// `just_patched` and now form one-to-one relations needing unique indexes.
     async fn create_cross_collection_one_to_one_indexes(
         &self,
+        txn: &mut DbTxn<S>,
         just_patched: &CollectionVersion,
     ) -> Result<()> {
-        // Collect candidates from the cache: other collections with primary non-array
-        // relation fields pointing at just_patched.
-        let candidates: Vec<(String, CollectionVersion)> = self.collections.peek(|cache| {
-            cache
-                .iter()
-                .filter(|(_, col)| col.name() != just_patched.name)
-                .map(|(name, col)| (name.clone(), col.schema().clone()))
-                .collect()
-        });
+        // Candidates are the other active versions as this transaction sees
+        // them, so a collection stored earlier in the same patch is included.
+        let candidates: Vec<(String, CollectionVersion)> = self
+            .get_all_collection_versions_with_txn(txn)
+            .await?
+            .into_iter()
+            .filter(|version| version.is_active && version.name != just_patched.name)
+            .map(|version| (version.name.clone(), version))
+            .collect();
 
         for (coll_name, other_schema) in &candidates {
             let mut one_to_one = Vec::new();
@@ -611,7 +586,6 @@ impl<S: Store> crate::database::DB<S> {
 
             let mut needs_update = false;
             let mut updated_schema = other_schema.clone();
-            let txn = self.new_txn(false).await?;
             let max_index_id = updated_schema
                 .indexes
                 .iter()
@@ -671,10 +645,16 @@ impl<S: Store> crate::database::DB<S> {
                         cache
                     });
                 })))?;
-                txn.commit().await?;
             }
         }
 
         Ok(())
     }
+}
+
+/// A version [`crate::database::DB::store_new_version`] wrote, and the lens it
+/// committed, for the follow-up once its transaction commits.
+pub(crate) struct StoredVersion {
+    schema: CollectionVersion,
+    migration: Option<crate::definition::migration::committed_lenses::PreparedLens>,
 }

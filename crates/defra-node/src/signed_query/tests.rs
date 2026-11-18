@@ -27,7 +27,7 @@ fn a_signed_query_runs_on_after_its_caller_stops_waiting() {
             QueryRequest::new("{ delayed }"),
             None,
             test_signing_config(),
-            "did:key:zCancellationTest".to_string(),
+            Some("did:key:zCancellationTest".to_string()),
         ));
         // The caller waits until the query started, then stops waiting.
         poll_fn(|cx| {
@@ -58,7 +58,7 @@ fn work_a_signed_query_spawns_outlives_the_query() {
         QueryRequest::new("{ spawnBackgroundWork }"),
         None,
         test_signing_config(),
-        "did:key:zSpawnTest".to_string(),
+        Some("did:key:zSpawnTest".to_string()),
     ))
     .unwrap();
     assert!(
@@ -86,7 +86,7 @@ fn signed_query_context_survives_awaits() {
             QueryRequest::new("{ observeContext }"),
             None,
             signing_config,
-            expected_did,
+            Some(expected_did),
         )
         .await;
 
@@ -116,7 +116,7 @@ fn a_signed_query_after_the_node_began_shutting_down_is_refused() {
             QueryRequest::new("{ observeContext }"),
             None,
             signing_config,
-            "did:key:zRefusedTest".to_string(),
+            Some("did:key:zRefusedTest".to_string()),
         )
         .await;
 
@@ -158,7 +158,7 @@ fn a_signed_query_remains_admitted_past_the_edge_deadline() {
                         QueryRequest::new("mutation { held }"),
                         None,
                         test_signing_config(),
-                        "did:key:zHeldTest".to_string(),
+                        Some("did:key:zHeldTest".to_string()),
                     )
                     .await
                 })

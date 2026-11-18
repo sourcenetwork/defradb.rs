@@ -30,6 +30,11 @@ pub trait Bus: Send + Sync {
     /// Use `EventName::WildCard` to receive all events.
     fn subscribe(&self, events: &[EventName]) -> Subscription;
 
+    /// Subscribe to raw events, closing the subscription if any event is
+    /// dropped. Closure wakes a waiting receiver even when the queue was
+    /// drained after the publisher observed it full.
+    fn subscribe_closing_on_overflow(&self, events: &[EventName]) -> Subscription;
+
     /// Observe current document state with bounded, coalesced invalidations.
     /// Revision-sensitive consumers must keep using `subscribe` instead.
     #[cfg(feature = "channel")]

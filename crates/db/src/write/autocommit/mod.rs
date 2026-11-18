@@ -391,7 +391,8 @@ impl<S: Store + 'static> DocMutator for AutoCommitMutator<S> {
     ) -> query::error::Result<CreateResult> {
         if let one_op::Route::Batch = self.chunk_route(collection_name)? {
             let mut docs = vec![doc];
-            self.seed_creates(collection_name, &mut docs).await?;
+            self.seed_creates(context, collection_name, &mut docs)
+                .await?;
             let mut results: Vec<CreateResult> = self
                 .in_batch(
                     context,
@@ -427,7 +428,8 @@ impl<S: Store + 'static> DocMutator for AutoCommitMutator<S> {
     ) -> query::error::Result<Vec<CreateResult>> {
         if let one_op::Route::Batch = self.chunk_route(collection_name)? {
             let mut docs = docs;
-            self.seed_creates(collection_name, &mut docs).await?;
+            self.seed_creates(context, collection_name, &mut docs)
+                .await?;
             return self
                 .in_batch(
                     context,

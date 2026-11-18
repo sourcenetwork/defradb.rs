@@ -1,188 +1,95 @@
-//! Lens FFI functions: Go's `AddLens` and `ListLenses`, each a call to the
-//! core through the node's executor, in the transaction a `*_in_txn`
-//! variant names.
+//! Lenses: WASM transforms, and the migrations between collection versions
+//! they make.
 
 use std::ffi::c_char;
 
-use crate::ffi_entry;
-use crate::helpers::require_c_str;
-use crate::types::FfiResult;
-use crate::{ffi_async, try_ffi};
+use acp::nac::NodePermission;
+use lens::LensConfig;
 
-/// The context `identity_did` acts in, in transaction `txn_id` when it is set.
+use crate::request::Request;
+use crate::target::go_string;
+use crate::types::DefraResult;
+use crate::{ffi_async, ffi_entry, try_ffi};
+
+/// A lens configuration, Go's `model.Lens`: `{"Lenses": [...]}`.
+fn parse_lens(config: &str) -> Result<LensConfig, String> {
+    serde_json::from_str(config).map_err(|e| format!("failed to parse lens config: {}", e))
+}
+
+/// Adds a lens, on a node or in a transaction, and answers with its ID.
 ///
 /// # Safety
 ///
-/// Both pointers must be null or valid null-terminated UTF-8 strings.
-pub(crate) unsafe fn call_context(
-    identity_did: *const c_char,
-    txn_id: *const c_char,
-) -> Result<defra_core::RequestContext, FfiResult> {
-    let identity = crate::types::c_str_to_string(identity_did).filter(|s| !s.is_empty());
-    let txn = match txn_id.is_null() {
-        true => None,
-        false => Some(
-            require_c_str(txn_id, "txn_id")?
-                .parse::<defra_core::TxnId>()
-                .map_err(|e| FfiResult::error(format!("invalid transaction ID: {e}")))?,
-        ),
-    };
-    Ok(defra_core::RequestContext::default()
-        .with_identity(identity)
-        .with_txn(txn))
-}
-
-/// Store a lens, Go's `model.Lens` JSON (`{"Lenses": [...]}`); the result is
-/// its content ID.
-unsafe fn add(
-    node_ptr: usize,
-    txn_id: *const c_char,
-    identity_did: *const c_char,
-    lens_json: *const c_char,
-) -> FfiResult {
-    let context = try_ffi!(call_context(identity_did, txn_id));
-    let lens_str = try_ffi!(require_c_str(lens_json, "lens_json"));
-    let runner = try_ffi!(crate::helpers::get_node_runner(node_ptr));
-    ffi_async!(caller, {
-        let config: lens::LensConfig = serde_json::from_str(&lens_str)
-            .map_err(|e| format!("failed to parse lens config: {e}"))?;
-        runner
-            .add_lens_as(&context, config)
-            .await
-            .map_err(|e| e.to_string())
-    })
-}
-
-/// Every stored lens, a JSON object from content ID to Go's `model.Lens`.
-unsafe fn list(node_ptr: usize, txn_id: *const c_char, identity_did: *const c_char) -> FfiResult {
-    let context = try_ffi!(call_context(identity_did, txn_id));
-    let runner = try_ffi!(crate::helpers::get_node_runner(node_ptr));
-    ffi_async!(caller, {
-        runner
-            .list_lenses_as(&context)
-            .await
-            .map_err(|e| e.to_string())
-    })
-}
-
-/// Store a lens. See [`add`].
-///
-/// # Safety
-///
-/// `identity_did` and `lens_json` must be null or valid null-terminated
-/// UTF-8 strings.
+/// `cfg` must be null or a valid null-terminated string.
 #[no_mangle]
-pub unsafe extern "C" fn lens_add(
+pub unsafe extern "C" fn defra_lens_add(
     node_ptr: usize,
-    identity_did: *const c_char,
-    lens_json: *const c_char,
-) -> FfiResult {
-    ffi_entry! { add(node_ptr, std::ptr::null(), identity_did, lens_json) }
-}
-
-/// Store a lens in transaction `txn_id`. See [`add`].
-///
-/// # Safety
-///
-/// Every string pointer must be null or a valid null-terminated UTF-8 string.
-#[no_mangle]
-pub unsafe extern "C" fn lens_add_in_txn(
-    node_ptr: usize,
-    txn_id: *const c_char,
-    identity_did: *const c_char,
-    lens_json: *const c_char,
-) -> FfiResult {
-    ffi_entry! { add(node_ptr, txn_id, identity_did, lens_json) }
-}
-
-/// Every stored lens. See [`list`].
-///
-/// # Safety
-///
-/// `identity_did` must be null or a valid null-terminated UTF-8 string. The
-/// caller frees the returned string with `defra_free_string`.
-#[no_mangle]
-pub unsafe extern "C" fn lens_list(node_ptr: usize, identity_did: *const c_char) -> FfiResult {
-    ffi_entry! { list(node_ptr, std::ptr::null(), identity_did) }
-}
-
-/// Every lens transaction `txn_id` sees. See [`list`].
-///
-/// # Safety
-///
-/// Both string pointers must be null or valid null-terminated UTF-8 strings.
-#[no_mangle]
-pub unsafe extern "C" fn lens_list_in_txn(
-    node_ptr: usize,
-    txn_id: *const c_char,
-    identity_did: *const c_char,
-) -> FfiResult {
-    ffi_entry! { list(node_ptr, txn_id, identity_did) }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::node::{new_node, node_close};
-    use crate::types::NodeInitOptions;
-    use std::ffi::CString;
-
-    #[test]
-    fn test_lens_add_invalid_node() {
-        assert!(crate::runtime::init_runtime());
-
-        let lens_json = CString::new(r#"{"Path": "/path/to/transform.wasm"}"#).unwrap();
-        let result = unsafe { lens_add(0, std::ptr::null(), lens_json.as_ptr()) };
-        assert_eq!(result.status, 1);
-        assert!(!result.error.is_null());
-        unsafe { crate::types::defra_free_string(result.error) };
+    identity_ptr: usize,
+    cfg: *const c_char,
+) -> DefraResult {
+    ffi_entry! {
+        let request = try_ffi!(Request::begin(node_ptr, identity_ptr, NodePermission::LensCreate));
+        let cfg = go_string(cfg);
+        let context = request.context();
+        let runner = try_ffi!(request.runner());
+        ffi_async!(caller, {
+            let config = parse_lens(&cfg)?;
+            runner
+                .add_lens_as(&context, config)
+                .await
+                .map_err(|e| format!("failed to add lens: {}", e))
+        })
     }
+}
 
-    #[test]
-    fn test_lens_add_null_json() {
-        assert!(crate::runtime::init_runtime());
-
-        let options = NodeInitOptions::default();
-        let result = new_node(options);
-        assert_eq!(result.status, 0);
-        let node = result.node_ptr;
-
-        let result = unsafe { lens_add(node, std::ptr::null(), std::ptr::null()) };
-        assert_eq!(result.status, 1);
-        assert!(!result.error.is_null());
-        unsafe { crate::types::defra_free_string(result.error) };
-
-        node_close(node);
+/// Answers with the node's lenses as JSON, on a node or in a transaction.
+#[no_mangle]
+pub extern "C" fn defra_lens_list(node_ptr: usize, identity_ptr: usize) -> DefraResult {
+    ffi_entry! {
+        let request = try_ffi!(Request::begin(node_ptr, identity_ptr, NodePermission::LensList));
+        let context = request.context();
+        let runner = try_ffi!(request.runner());
+        ffi_async!(caller, {
+            runner
+                .list_lenses_as(&context)
+                .await
+                .map_err(|e| format!("failed to list lenses: {}", e))
+        })
     }
+}
 
-    #[test]
-    fn test_lens_list_empty() {
-        assert!(crate::runtime::init_runtime());
-
-        let options = NodeInitOptions::default();
-        let result = new_node(options);
-        assert_eq!(result.status, 0);
-        let node = result.node_ptr;
-
-        let result = unsafe { lens_list(node, std::ptr::null()) };
-        assert_eq!(result.status, 0);
-        assert!(!result.value.is_null());
-
-        let value = unsafe { std::ffi::CStr::from_ptr(result.value).to_string_lossy() };
-        // Should be empty object
-        assert!(value == "{}" || value == "[]", "should be empty: {}", value);
-        unsafe { crate::types::defra_free_string(result.value) };
-
-        node_close(node);
-    }
-
-    #[test]
-    fn test_lens_list_invalid_node() {
-        assert!(crate::runtime::init_runtime());
-
-        let result = unsafe { lens_list(0, std::ptr::null()) };
-        assert_eq!(result.status, 1);
-        assert!(!result.error.is_null());
-        unsafe { crate::types::defra_free_string(result.error) };
+/// Sets the lens `cfg` as the migration from collection version `src` to
+/// `dst`, on a node or in a transaction, and answers with the lens ID.
+///
+/// # Safety
+///
+/// `src`, `dst` and `cfg` must be null or valid null-terminated strings.
+#[no_mangle]
+pub unsafe extern "C" fn defra_lens_set(
+    node_ptr: usize,
+    identity_ptr: usize,
+    src: *const c_char,
+    dst: *const c_char,
+    cfg: *const c_char,
+) -> DefraResult {
+    ffi_entry! {
+        let request = try_ffi!(Request::begin(node_ptr, identity_ptr, NodePermission::MigrationSet));
+        let (src, dst, cfg) = (go_string(src), go_string(dst), go_string(cfg));
+        let context = request.context();
+        let migration = move || {
+            let mut config = parse_lens(&cfg)?;
+            config.source_collection_version_id = src;
+            config.destination_collection_version_id = dst;
+            Ok::<_, String>(config)
+        };
+        let runner = try_ffi!(request.runner());
+        ffi_async!(caller, {
+            let migration = serde_json::to_string(&migration()?)
+                .map_err(|e| format!("failed to serialize lens config: {}", e))?;
+            runner
+                .set_migration_as(&context, &migration)
+                .await
+                .map_err(|e| format!("failed to set migration: {}", e))
+        })
     }
 }

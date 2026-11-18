@@ -129,7 +129,7 @@ where
         })?;
         let doc_id = register_created_doc(
             None,
-            None,
+            self.context,
             &target.systemstore,
             &target.datastore,
             collection,

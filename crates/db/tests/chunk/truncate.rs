@@ -54,7 +54,7 @@ fn truncating_the_parent_empties_its_chunks_and_chunks_alone_are_refused() {
             .await
             .unwrap_err();
         assert!(
-            err.to_string().contains("emptied only with its parent"),
+            err.to_string().contains("is changed only through Article"),
             "{err}"
         );
 
@@ -115,7 +115,7 @@ fn a_chunk_collection_is_deleted_only_with_its_parent() {
             .await
             .unwrap_err();
         assert!(
-            err.to_string().contains("deleted only with its parent"),
+            err.to_string().contains("is changed only through Article"),
             "{err}"
         );
         let err = db
@@ -123,7 +123,7 @@ fn a_chunk_collection_is_deleted_only_with_its_parent() {
             .await
             .unwrap_err();
         assert!(
-            err.to_string().contains("deleted only with its parent"),
+            err.to_string().contains("is changed only through Article"),
             "{err}"
         );
         assert!(db.get_collection("Article__body_chunk").unwrap().is_some());
@@ -176,7 +176,7 @@ fn purging_a_parent_purges_its_chunks_and_chunks_alone_are_refused() {
             .await
             .unwrap_err();
         assert!(
-            err.to_string().contains("emptied only with its parent"),
+            err.to_string().contains("is changed only through Article"),
             "{err}"
         );
 

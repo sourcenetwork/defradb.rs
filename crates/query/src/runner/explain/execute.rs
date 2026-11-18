@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use crate::document::documents_to_plan_docs;
 use crate::error::{QueryError, Result};
+use crate::executor::GqlWarning;
 use crate::mapper::{Requestable, Select};
 use crate::plan::PermissionFilterNode;
 use crate::planner::index_selection::{
@@ -29,6 +30,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         query: &str,
         caller_identity: Option<Did>,
         variables: Option<&RapidHashMap<String, JsonValue>>,
+        warnings: &mut Vec<GqlWarning>,
     ) -> Result<JsonValue> {
         let mut selects = parse_query_with_limits(query, variables, self.query_limits)?;
         if query.contains("@exhaustive") {
@@ -46,7 +48,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
 
             // Execute the select and collect metrics
             match self
-                .execute_select_with_metrics(&select, caller_identity.clone())
+                .execute_select_with_metrics(&select, caller_identity.clone(), warnings)
                 .await
             {
                 Ok((explanation, _doc_count, _exec_count)) => {
@@ -77,7 +79,10 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                     // Parse errors should propagate directly — in Go, GraphQL schema
                     // validation errors happen before the explain handler runs, so they
                     // are returned as top-level GQL errors, not wrapped in executionErrors.
-                    if matches!(&e, QueryError::Parse(_)) {
+                    if matches!(
+                        &e,
+                        QueryError::Parse(_) | QueryError::UnknownMutationCollection(_)
+                    ) {
                         return Err(e);
                     }
                     execution_success = false;
@@ -128,6 +133,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         &self,
         select: &Select,
         caller_identity: Option<Did>,
+        warnings: &mut Vec<GqlWarning>,
     ) -> Result<(JsonValue, usize, u64)> {
         // Handle _commits system collection (no real collection exists)
         if select.collection_name == "_commits" {
@@ -176,9 +182,6 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             && select.filter.is_some()
             && !collection.indexes.is_empty()
             && fetcher.supports_index_queries()
-            && fetcher
-                .indexes_match_documents(&select.collection_name)
-                .await?
             && select
                 .filter
                 .as_ref()
@@ -190,9 +193,6 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             && select.order_by.is_some()
             && !collection.indexes.is_empty()
             && fetcher.supports_index_queries()
-            && fetcher
-                .indexes_match_documents(&select.collection_name)
-                .await?
             && select
                 .order_by
                 .as_ref()
@@ -208,9 +208,6 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             && select.filter.is_some()
             && !collection.indexes.is_empty()
             && fetcher.supports_index_queries()
-            && fetcher
-                .indexes_match_documents(&select.collection_name)
-                .await?
             && select
                 .filter
                 .as_ref()
@@ -275,20 +272,20 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             let collections: Vec<CollectionVersion> =
                 collections_map.values().map(|c| (**c).clone()).collect();
 
-            let mut planner = Planner::new(
-                crate::runner::plan::indexes_for_documents(fetcher, collections).await?,
-            )
-            .with_query_limits(self.query_limits)
-            .with_fetcher(Arc::new(fetcher_arc))
-            .with_acp(self.acp.clone(), caller_identity.clone())
-            .with_dac_bypass(self.context().dac_bypass())
-            .with_read_validator(self.read_validator.clone())
-            .with_retry_inputs(self.retry_inputs.clone())
-            .with_index_estimates(index_estimates);
+            let mut planner = Planner::new(collections)
+                .with_query_limits(self.query_limits)
+                .with_fetcher(Arc::new(fetcher_arc))
+                .with_acp(self.acp.clone(), caller_identity.clone())
+                .with_dac_bypass(self.context().dac_bypass())
+                .with_read_validator(self.read_validator.clone())
+                .with_acp_registration_projection(self.acp_registration_projection.clone())
+                .with_retry_inputs(self.retry_inputs.clone())
+                .with_index_estimates(index_estimates);
             if let Some(ref lens_store) = self.lens_store {
                 planner = planner.with_lens_store(lens_store.clone());
             }
             let plan_result = planner.plan_with_index_info(select)?;
+            warnings.extend(plan_result.warnings);
             let mut plan = plan_result.plan;
 
             // `plan_with_index_info` wraps a regular collection's root plan in
@@ -298,7 +295,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             // warnings.
             if collection.query.is_some() {
                 let app_read = self.app_read_check(caller_identity.clone(), &collection);
-                plan = PermissionFilterNode::wrap(
+                plan = PermissionFilterNode::wrap_with_projection_and_inputs(
                     plan,
                     collection
                         .policy
@@ -311,6 +308,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                             resource_name: policy.resource_name.clone(),
                         }),
                     app_read,
+                    self.acp_registration_projection.clone(),
                     self.retry_inputs.clone(),
                 );
             }
@@ -378,6 +376,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 policy_id: policy.id.clone(),
                 resource_name: policy.resource_name.clone(),
                 retry_inputs: self.retry_inputs.clone(),
+                projection: self.acp_registration_projection.clone(),
             });
 
             // Build the plan (ACP filter is inserted inside, after Select but before aggregates)

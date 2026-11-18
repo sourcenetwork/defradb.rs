@@ -92,11 +92,7 @@ where
         collection: &Collection,
         doc_ids: &[document::DocID],
     ) -> Result<usize> {
-        if collection.schema().is_generated() {
-            return Err(Error::TruncateGeneratedCollection(
-                collection.name().to_string(),
-            ));
-        }
+        crate::chunk::ensure_admin_changeable(collection.schema())?;
         let chunk_collections = crate::chunk::purge::collections(txn, collection).await?;
         if !chunk_collections.is_empty() {
             // Chunks name their parent's canonical DocID, and the purge drops its mapping.
@@ -223,6 +219,11 @@ where
                 )
                 .await?;
             }
+
+            datastore
+                .project_document(collection.name(), &canonical_doc_id.to_string())
+                .await
+                .map_err(Error::Storage)?;
 
             let heads = crate::block::heads::document::load(&headstore, doc_short_id)
                 .await

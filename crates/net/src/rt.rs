@@ -299,3 +299,55 @@ impl Future for Sleep {
 }
 
 impl hyper::rt::Sleep for Sleep {}
+
+/// An upgraded hyper stream as futures I/O, so connection protocols continue
+/// on the network edge without entering a second runtime.
+pub struct FromHyper<S> {
+    inner: S,
+}
+
+impl<S> FromHyper<S> {
+    pub fn new(inner: S) -> Self {
+        Self { inner }
+    }
+
+    pub fn into_inner(self) -> S {
+        self.inner
+    }
+}
+
+impl<S> AsyncRead for FromHyper<S>
+where
+    S: hyper::rt::Read + Unpin,
+{
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bytes: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        let mut buf = hyper::rt::ReadBuf::new(bytes);
+        ready!(Pin::new(&mut self.inner).poll_read(cx, buf.unfilled()))?;
+        Poll::Ready(Ok(buf.filled().len()))
+    }
+}
+
+impl<S> AsyncWrite for FromHyper<S>
+where
+    S: hyper::rt::Write + Unpin,
+{
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bytes: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.inner).poll_write(cx, bytes)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}

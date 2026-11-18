@@ -273,7 +273,10 @@ impl Planner {
                     }),
                 parent.as_deref().and_then(|parent| self.app_read(parent)),
             );
-            return Box::new(PermissionFilterNode::inherited(plan, gate));
+            return Box::new(
+                PermissionFilterNode::inherited(plan, gate)
+                    .with_app_check(self.app_read(collection)),
+            );
         }
         let acp = self.acp_read(collection);
         let app = self.app_read(collection);

@@ -14,6 +14,13 @@ use crate::thread_bounds::MaybeBoxFuture;
 use rapidhash::fast::RandomState;
 use zeroize::Zeroize;
 
+mod identity_store;
+
+pub use identity_store::{
+    clear_identity_store, find_remote_signer_did, get_identity, hold_identity, release_identity,
+    retain_identity, store_identity, IdentityConflict, IdentityHold,
+};
+
 #[cfg(any(test, feature = "ambient"))]
 pub use crate::ambient::{
     get_broadcast_creator_did, get_request_bearer_token, get_signing_config,
@@ -29,6 +36,13 @@ pub use crate::ambient::{
 /// completion form the write path uses: one call per wave of signatures,
 /// completing without holding a thread while the service works.
 pub trait RemoteSigner: Send + Sync {
+    /// Only a connection signer verifying every signature against the
+    /// authenticated caller's key returns true. Signing services retain the
+    /// ACP decision that authorizes their signature ceremony.
+    fn uses_caller_key(&self, _caller: &str) -> bool {
+        false
+    }
+
     fn sign_sync(
         &self,
         data: &[u8],
@@ -54,6 +68,31 @@ pub trait RemoteSigner: Send + Sync {
             .collect();
         Box::pin(std::future::ready(signatures))
     }
+
+    /// Whether this signer signs under an access decision
+    /// ([`SigningAuthorization::Decision`]) that a create obtains from
+    /// document ACP for it first. A signer that takes none says so, and the
+    /// create asks for no decision.
+    fn takes_authorization(&self) -> bool {
+        true
+    }
+
+    /// The host context this signer calls, if it calls one. Two signers with
+    /// the same context sign through the same host state, which the host
+    /// keeps valid while either is held, so the identity store treats them
+    /// as one signer. `None`, the default, makes a signer the same only as
+    /// itself.
+    fn host_context(&self) -> Option<HostContext> {
+        None
+    }
+}
+
+/// A host's signing context: the handle it passes to its callback, and the
+/// callback's address.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HostContext {
+    pub handle: usize,
+    pub callback: usize,
 }
 
 /// A signature a signer could not make.
@@ -342,37 +381,6 @@ impl SigningConfig {
     }
 }
 
-/// Global identity store mapping DID → SigningConfig.
-/// When create_identity() generates a keypair, we store it here so that
-/// exec_request() can look up the signing key from just a DID string.
-static IDENTITY_STORE: OnceCell<HopscotchMap<String, SigningConfig, RandomState>> = OnceCell::new();
-
-fn identity_store() -> &'static HopscotchMap<String, SigningConfig, RandomState> {
-    IDENTITY_STORE.get_or_init_racy(|| HopscotchMap::with_hasher(RandomState::default()))
-}
-
-/// Store a signing config for a DID.
-pub fn store_identity(did: &str, config: SigningConfig) {
-    identity_store().insert(did.to_string(), config);
-}
-
-/// Retrieve stored signing config for a DID.
-pub fn get_identity(did: &str) -> Option<SigningConfig> {
-    identity_store().get(did)
-}
-
-/// Find a registered DID backed by a remote signer.
-///
-/// This is used by HTTP request handling when the authenticated caller DID has no
-/// locally registered signing identity. In Orbis-backed deployments, the node
-/// should fall back to the remote signer identity rather than a local `--identity`
-/// secp256k1 key, so create mutations still go through the signing gate.
-pub fn find_remote_signer_did() -> Option<String> {
-    identity_store()
-        .iter()
-        .find_map(|(did, config)| config.has_remote_signer().then_some(did))
-}
-
 /// Resolve signing config for a request identity when signing is enabled.
 ///
 /// When an explicit identity DID is provided, uses that identity's signing config
@@ -420,35 +428,25 @@ pub fn resolve_signing_config_with_flag(
     }
 }
 
-/// Clear all stored identities (for node cleanup).
-pub fn clear_identity_store() {
-    identity_store().clear();
-}
-
 // ---------------------------------------------------------------------------
 // Request Bearer Token — keyed by DID for ACP registration passthrough
 // ---------------------------------------------------------------------------
 
-/// The bearer tokens bound to DIDs for requests that carry none of their own
-/// (see [`RequestContext::bearer_token_for`](crate::RequestContext::bearer_token_for)).
-/// A request authenticated over HTTP carries its own token, so concurrent
-/// requests for the same DID never replace each other's JWT.
+/// Bearer tokens a process binds to DIDs. No request reads them: a request
+/// presents to a provider only the bearer it carries itself
+/// ([`RequestContext::bearer_token_for`](crate::RequestContext::bearer_token_for)).
 fn request_token_store() -> &'static HopscotchMap<String, String, RandomState> {
     static STORE: OnceCell<HopscotchMap<String, String, RandomState>> = OnceCell::new();
     STORE.get_or_init_racy(|| HopscotchMap::with_hasher(RandomState::default()))
 }
 
-/// Bind `token` to `did` for requests that carry no bearer of their own.
-///
-/// When a user authenticates via JWT, the node doesn't have their private key
-/// and can't create new bearer tokens for them. Instead, we pass through the
-/// original JWT (which IS signed by the user's key) to vera.rs/Vera
-/// for ACP operations like register_object.
+/// Bind `token` to `did` in the process. The binding is kept and read back
+/// by [`stored_bearer_token`]; no request presents it.
 pub fn set_request_bearer_token(did: &str, token: impl Into<String>) {
     request_token_store().insert(did.to_string(), token.into());
 }
 
-/// The bearer token bound to `did` for requests that carry none of their own.
+/// The bearer token the process binds to `did`.
 pub fn stored_bearer_token(did: &str) -> Option<String> {
     request_token_store().get(did)
 }
@@ -461,10 +459,9 @@ pub fn clear_request_bearer_token(did: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use regolith::sync::{Mutex, MutexGuard};
 
     #[test]
-    fn request_bearer_scope_isolated_across_same_did_and_restores_global_fallback() {
+    fn request_bearer_scope_isolated_across_same_did_and_never_reads_the_process_store() {
         workers::block_on(async {
             let did = "did:key:bearer-scope-test";
             let other_did = "did:key:bearer-scope-other";
@@ -509,110 +506,12 @@ mod tests {
             })
             .await;
 
-            assert_eq!(
-                get_request_bearer_token(did).as_deref(),
-                Some("legacy-global")
-            );
+            // Outside a request nothing is presented, whatever the process
+            // binds to the DID.
+            assert_eq!(get_request_bearer_token(did), None);
+            assert_eq!(stored_bearer_token(did).as_deref(), Some("legacy-global"));
             clear_request_bearer_token(did);
             clear_request_bearer_token(other_did);
-        })
-        .unwrap()
-    }
-
-    fn make_config(label: &str) -> SigningConfig {
-        SigningConfig {
-            key_type: SigningKeyType::Secp256k1,
-            private_key_bytes: vec![],
-            public_key_bytes: vec![],
-            public_key_hex: label.to_string(),
-            remote_signer: None,
-            signing_authorization: None,
-        }
-    }
-
-    /// `IDENTITY_STORE` is process-global, so the tests that clear and refill it
-    /// cannot run concurrently: one test's `store_identity` lands between
-    /// another's `clear_identity_store` and its assertion.
-    static IDENTITY_STORE_GUARD: Mutex<()> = Mutex::new(());
-
-    async fn lock_identity_store() -> MutexGuard<'static, ()> {
-        IDENTITY_STORE_GUARD.lock().await
-    }
-
-    #[test]
-    fn resolve_signing_config_uses_request_identity_when_registered() {
-        workers::block_on(async {
-            let _guard = lock_identity_store().await;
-            clear_identity_store();
-            store_identity("did:key:request", make_config("request"));
-            store_identity("did:key:node", make_config("node"));
-
-            let disabled = resolve_signing_config_with_flag(
-                Some("did:key:request"),
-                Some("did:key:node"),
-                false,
-            );
-            assert!(disabled.is_none());
-
-            let resolved = resolve_signing_config(Some("did:key:request"), Some("did:key:node"))
-                .expect("request identity should resolve");
-            assert_eq!(resolved.public_key_hex, "request");
-
-            clear_identity_store();
-        })
-        .unwrap()
-    }
-
-    #[test]
-    fn resolve_signing_config_falls_back_to_node_identity_when_request_identity_missing() {
-        workers::block_on(async {
-            let _guard = lock_identity_store().await;
-            clear_identity_store();
-            store_identity("did:key:node", make_config("node"));
-
-            let resolved = resolve_signing_config(Some("did:key:request"), Some("did:key:node"))
-                .expect("node fallback should resolve");
-            assert_eq!(resolved.public_key_hex, "node");
-
-            clear_identity_store();
-        })
-        .unwrap()
-    }
-
-    #[test]
-    fn find_remote_signer_did_returns_registered_remote_signer() {
-        workers::block_on(async {
-            let _guard = lock_identity_store().await;
-            struct NoopRemoteSigner;
-
-            impl RemoteSigner for NoopRemoteSigner {
-                fn sign_sync(
-                    &self,
-                    _data: &[u8],
-                    _authorization: Option<&SigningAuthorization>,
-                ) -> Result<Vec<u8>, String> {
-                    Ok(vec![])
-                }
-            }
-
-            clear_identity_store();
-            store_identity("did:key:local", make_config("local"));
-            store_identity(
-                "did:key:remote",
-                SigningConfig {
-                    key_type: SigningKeyType::BlsAugV1,
-                    private_key_bytes: vec![],
-                    public_key_bytes: vec![],
-                    public_key_hex: "remote".to_string(),
-                    remote_signer: Some(Arc::new(NoopRemoteSigner)),
-                    signing_authorization: None,
-                },
-            );
-
-            let resolved = find_remote_signer_did().expect("remote signer DID should resolve");
-            assert_eq!(resolved, "did:key:remote");
-
-            clear_identity_store();
         })
         .unwrap()
     }

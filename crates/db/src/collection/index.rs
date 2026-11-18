@@ -36,6 +36,11 @@ impl Collection {
             .on_document_create(datastore, doc, doc_short_id, &self.def)
             .await?;
 
+        datastore
+            .project_document(self.name(), &doc_id.to_string())
+            .await
+            .map_err(Error::Storage)?;
+
         Ok(doc_id)
     }
 
@@ -190,6 +195,10 @@ impl Collection {
             }
         }
 
+        datastore
+            .project_document(self.name(), &doc_id.to_string())
+            .await
+            .map_err(Error::Storage)?;
         Ok(())
     }
 
@@ -238,6 +247,11 @@ impl Collection {
         index_manager
             .on_document_delete(datastore, &doc, doc_short_id, &self.def)
             .await?;
+
+        datastore
+            .project_document(self.name(), &doc_id.to_string())
+            .await
+            .map_err(Error::Storage)?;
 
         Ok(true)
     }

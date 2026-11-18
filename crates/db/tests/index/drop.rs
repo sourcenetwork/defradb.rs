@@ -303,6 +303,7 @@ fn a_restart_clears_a_failed_backfill_of_a_dropped_index() {
         drop(db);
 
         let db = DB::open_from_arc(store).await.unwrap();
+        db.resume_index_backfills().await.unwrap();
         assert!(db.list_actions().await.unwrap().is_empty());
     })
     .unwrap()

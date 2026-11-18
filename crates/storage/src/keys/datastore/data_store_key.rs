@@ -5,7 +5,7 @@ use crate::corekv::Key;
 
 /// DataStoreKey: Main key for storing field values in documents
 ///
-/// Structure: /[CollectionShortID]/[InstanceType]/[DocShortID uvarint]/[FieldID]
+/// Structure: `/[CollectionShortID]/[InstanceType]/[DocShortID uvarint]/[FieldID]`
 /// Example: /1/v/\x2a/fieldname
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DataStoreKey {
@@ -111,7 +111,7 @@ impl Key for DataStoreKey {
 
 /// PrimaryDataStoreKey: Maps documents to their primary keys
 ///
-/// Structure: /[CollectionShortID]/pk/[DocShortID uvarint]
+/// Structure: `/[CollectionShortID]/pk/[DocShortID uvarint]`
 /// Example: /1/pk/\x2a
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrimaryDataStoreKey {

@@ -30,7 +30,7 @@
 \*      control judges the wrong user - INV_ActsAsCaller.
 \*
 \* The Rust code each guard models:
-\*   EmbedderMode   crates/ffi/src/node.rs: the C API's node asks
+\*   EmbedderMode   crates/ffi/src/node/mod.rs: the C API's node asks
 \*                  NodeBuilder::with_txn_ownership for
 \*                  TxnOwnership::Embedder;
 \*   IdentityKey    crates/db/src/txn/registry/mod.rs: TxnOwnership defaults

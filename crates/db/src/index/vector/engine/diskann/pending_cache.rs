@@ -49,7 +49,7 @@ const NONE: u32 = u32::MAX;
 /// Pending log entries in log order, from position `base` with no gaps: the
 /// entry at index `i` was logged at `base + i`. Each has its vector, its code
 /// (`code_len` bytes each, in one run), and its superseded marker: the
-/// distance to the vector's next entry, [`NONE`] while none is known.
+/// distance to the vector's next entry, `NONE` while none is known.
 #[derive(Debug, Default)]
 pub struct Segment {
     base: u64,

@@ -104,15 +104,61 @@ impl<S: Store> P2PHost<S> {
         }
     }
 
-    pub(super) fn handle_peer_addresses(&self, response: crate::rt::oneshot::Sender<Vec<String>>) {
+    /// Answer `ActivePeers` once every peer that dialed us and was still
+    /// unidentified when the call came in has identified. Until then its
+    /// address is the connection's source port, not its listen address
+    /// (#2774). Its Identify failing or timing out, or its disconnect, also
+    /// ends the wait. A peer that dials in after the call never holds it: it
+    /// is listed at whatever address it has when the reply goes out, as Go
+    /// lists it.
+    pub(super) fn handle_peer_addresses(
+        &mut self,
+        response: crate::rt::oneshot::Sender<Vec<String>>,
+    ) {
+        let waits_on: RapidHashSet<PeerId> = self
+            .unidentified
+            .iter()
+            .filter(|peer| self.swarm.is_connected(peer))
+            .copied()
+            .collect();
+        self.pending_peer_addresses.push((waits_on, response));
+        self.answer_peer_addresses();
+    }
+
+    /// The peer's Identify arrived or failed, or its last connection closed:
+    /// release every `ActivePeers` reply it held.
+    pub(in crate::host) fn on_identify_settled(&mut self, peer_id: PeerId) {
+        self.unidentified.remove(&peer_id);
+        for (waits_on, _) in &mut self.pending_peer_addresses {
+            waits_on.remove(&peer_id);
+        }
+        self.answer_peer_addresses();
+    }
+
+    /// Send every held `ActivePeers` reply whose peers have all settled.
+    fn answer_peer_addresses(&mut self) {
+        if !self
+            .pending_peer_addresses
+            .iter()
+            .any(|(waits_on, _)| waits_on.is_empty())
+        {
+            return;
+        }
         // Build full multiaddrs for connected peers (matches Go's ActivePeers).
         let connected: RapidHashSet<PeerId> = self.swarm.connected_peers().cloned().collect();
         let addrs: Vec<String> = connected
             .iter()
             .filter_map(|pid| self.peer_addrs.get(pid).map(|addr| peer_address(addr, pid)))
             .collect();
-        if response.send(addrs).is_err() {
-            debug!("PeerAddresses command response dropped - caller cancelled");
+        let (ready, held): (Vec<_>, Vec<_>) = self
+            .pending_peer_addresses
+            .drain(..)
+            .partition(|(waits_on, _)| waits_on.is_empty());
+        self.pending_peer_addresses = held;
+        for (_, response) in ready {
+            if response.send(addrs.clone()).is_err() {
+                debug!("PeerAddresses command response dropped - caller cancelled");
+            }
         }
     }
 }

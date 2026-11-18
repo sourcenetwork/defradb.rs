@@ -15,14 +15,20 @@ pub(crate) const LEGACY_LIBP2P_KEY_ID: &str = "__local_p2p_identity__";
 
 pub(crate) type Seed = Zeroizing<[u8; 32]>;
 
+/// The node's peer key seed for this start: the caller's start key as given,
+/// else the keyring's, else the store's (`proofs/tla/PeerKeyLoad.tla`).
 pub(crate) async fn load_with_keyring<S>(
     peerstore: &Peerstore<S>,
     legacy_iroh_key: Option<&Path>,
     keyring: Option<&crate::PeerKeyring>,
+    start_key: Option<&crate::StartPeerKey>,
 ) -> Result<Seed>
 where
     S: storage::corekv::Store,
 {
+    if let Some(start_key) = start_key {
+        return Ok(start_key.seed().clone());
+    }
     let Some(keyring) = keyring else {
         return load_or_create(peerstore, legacy_iroh_key).await;
     };

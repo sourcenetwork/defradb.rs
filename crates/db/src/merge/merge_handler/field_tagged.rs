@@ -91,6 +91,7 @@ where
                 deferred: false,
                 op: None,
                 parked: None,
+                superseded: false,
             });
         }
         let part = state.as_ref().map(|state| state.part());
@@ -140,6 +141,7 @@ where
             deferred: false,
             op,
             parked: None,
+            superseded: false,
         })
     }
 

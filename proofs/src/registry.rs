@@ -54,6 +54,58 @@ use Tier::{Behavioral, Boundary, Contract};
 
 pub const PROPERTIES: &[Property] = &[
     Property {
+        family: "Transactional node source grants",
+        name: "HostNoopProjection rechecks descendants with the original actor",
+        axis: Tla,
+        anchor: "crates/query/src/txn/source_nac.rs; crates/db/src/document_projection.rs",
+        model_ref: "MC_HostNoopProjection_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Transactional node source grants",
+        name: "HostSourceNoop actual changes require authority and observations validate",
+        axis: Tla,
+        anchor: "crates/query/src/txn/source_nac.rs; crates/db/src/nac/trait_impl.rs",
+        model_ref: "MC_HostSourceNoop_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Transactional node source grants",
+        name: "ProjectorMutationOrigin actual actor and atomic publication",
+        axis: Tla,
+        anchor: "crates/db/src/document_projection.rs; crates/db/src/nac/trait_impl.rs",
+        model_ref: "MC_ProjectorMutationOrigin_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // A node's identity and its signing are separate choices, as in Go:
+        // an identity-only node runs each request as its caller and never
+        // signs, and a node built without `with_identity_only` runs requests
+        // exactly as before.
+        family: "Node identity and signing",
+        name: "NodeSigningChoice.default_build_unchanged / identity_only_runs_as_caller / identity_only_never_signs / identity_only_never_refused",
+        axis: Lean,
+        anchor: "crates/defra-node/src/lib.rs Node::execute_prepared_request; crates/defra-node/src/assemble.rs assemble; crates/defra-node/src/node_builder.rs NodeBuilder::with_identity_only",
+        model_ref: "NodeSigningChoice (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // A transaction the node begins and every request the node runs in it
+        // agree on its owner: the node's principal, which is no one on an
+        // identity-only node. The tests run that agreement on the live node.
+        family: "Node identity and signing",
+        name: "NodeSigningChoice.begin_and_execute_agree / owner_before_disagreed / default_owner_unchanged",
+        axis: Lean,
+        anchor: "crates/defra-node/src/lib.rs Node::node_principal, Node::node_context, Node::execute_prepared_request; crates/defra-node/src/signed_query/mod.rs execute_with_signing_context; crates/defra-node/src/ops/request.rs txn_owner",
+        model_ref: "NodeSigningChoice (lake build)",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/defra-node/tests/embedded_signer.rs an_identity_only_node_runs_requests_in_the_transactions_it_begins; crates/defra-node/tests/nac_embedded_test.rs an_identity_only_node_is_checked_as_its_caller_under_nac",
+    },
+    Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
         name: "LocalFetchPermit.released_before_send / release_preserves_queue",
         axis: Lean,
@@ -70,6 +122,401 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "MC_LocalFetchPermit_{Green,Red_Hold}.cfg",
         tiers: &[Boundary],
         bound_by: "crates/p2p/src/sync/coordinator/dag_fetcher_tests.rs local_complete_fetch_releases_peer_permit_before_waiting_to_send",
+    },
+    Property {
+        family: "Pull sync (doc-sync / sync-branchable)",
+        name: "Delivered / OneReplyEach / RefusedOnlyUnsent / NoResendAfterDeadline — a pubsub_rpc request is held until a peer subscribes, resent to each later subscriber, and never resent after its deadline",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/coordinator/held_request.rs HeldRequest::next, HeldRequest::publish, HeldRequest::publish_by_deadline, HeldRequest::finish; crates/p2p/src/sync/coordinator/pubsub_services.rs PubsubServices::peer_subscribed",
+        model_ref: "MC_HeldPubsubRequest_{Green,Red_NoHold,Red_NoResend,Red_LateWatch,Red_NoDedupe,Red_ResendLate}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/p2p/src/sync/coordinator/held_request_tests.rs doc_sync_sent_before_the_topic_has_a_peer_waits_for_one",
+    },
+    Property {
+        family: "Transactional node source grants",
+        name: "INV_Authority / INV_Private / INV_NoRevival / INV_Independent / INV_Reconciled / INV_RequestUnchanged",
+        axis: Tla,
+        anchor: "crates/acp/src/nac/node_acp/source.rs; crates/query/src/txn/source_nac.rs; crates/db/src/document_projection.rs",
+        model_ref: "MC_SourceScopedNac_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Transactional node source grants",
+        name: "remove_other / remove_self / direct_survives / owner_survives / admin_survives / denied / untrusted_noop_denied / embedded_unchanged_allowed / embedder_replay_reconciles / embedder_replay_never_widens / embedder_missing_unauthorized_refused / embedder_complete_replay_needs_no_authority / embedder_replay_ignores_node_authority / untrusted_no_replay",
+        axis: Lean,
+        anchor: "crates/acp/src/nac/node_acp/source.rs; crates/query/src/txn/source_nac.rs; crates/db/src/document_projection.rs; crates/defra-node/tests/unit/source_nac.rs",
+        model_ref: "SourceScopedNac (lake build)",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/defra-node/tests/unit/source_nac.rs source_admission_matches_executed_lean_model",
+    },
+    Property {
+        family: "Held-bounded node permission delegation",
+        name: "delegated_no_escalation / delegated_never_touches_admin / admin_behavior_preserved / admin_acceptances_kept / delegate_admin_refused / delegate_unheld_refused / delegate_admin_class_refused / delegate_wildcard_refused / delegate_privileged_delete_refused / delegation_not_transferable / admits_observe",
+        axis: Lean,
+        anchor: "crates/acp/src/nac/delegation.rs DelegationFacts::admits, ADMIN_CLASS; crates/acp/src/nac/node_acp/operations.rs NodeACP::authorize_change; crates/acp/src/nac/node_acp/source.rs NodeACP::change_source_permission",
+        model_ref: "NodeAcpDelegation (lake build)",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/defra-node/tests/unit/delegated_nac.rs delegation_matches_executed_lean_model, delegate_grants_and_revokes_only_held_non_admin_permissions, delegate_source_edges_follow_the_same_rule",
+    },
+    Property {
+        family: "vera.rs actor spelling",
+        name: "defra_idempotent / spellings_meet / other_unchanged / defra_same_actor / one_spelling_per_actor / wire_is_taken / wire_same_actor / defra_of_wire / wire_secp256k1_is_defra",
+        axis: Lean,
+        anchor: "crates/vera/src/vera_rs/did_spelling.rs defra, wire, same_actor",
+        model_ref: "VeraActorSpelling (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "vera.rs delegation signing",
+        name: "admitted_iff_vera_accepts / sent_is_accepted / refused_is_not_sent / honest_answer_admitted / honest_ed25519_answer_admitted / ed25519_refusal_is_length_or_verification / refusal_names_the_first_failure / ed25519_refusal_names_the_first_failure",
+        axis: Lean,
+        anchor: "crates/vera/src/vera_rs/signer/admission.rs admit, actor_key; crates/vera/src/vera_rs/bearer.rs issue_at",
+        model_ref: "VeraDelegationSigner (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "vera.rs delegation window",
+        name: "issued_is_well_formed / issued_is_what_veras_builder_writes / request_holds_iff / written_at_provider_time_holds / ahead_within_allowance_holds / ahead_beyond_allowance_refused / behind_by_the_lifetime_refused / longer_than_the_longest_lifetime_refused_ahead / plain_ahead_within_allowance_holds / without_allowance_one_second_ahead_refused / reported_lead_is_a_lower_bound / unset_start_is_reported_exactly / set_back_start_is_reported_less_the_allowance / expired_claims_nothing_about_the_clock / outlasting_reaches_too_far / rewritten_at_reported_time_holds",
+        axis: Lean,
+        anchor: "crates/vera/src/vera_rs/bearer/request.rs issue_request_at, MAX_REQUEST_LIFETIME; crates/vera/src/vera_rs/bearer.rs not_before, authorize_at; crates/vera/src/vera_rs/bearer/window.rs within_window; crates/acp/src/delegation_window.rs CLOCK_SKEW_ALLOWANCE, WindowRefusal",
+        model_ref: "VeraDelegationWindow (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "vera.rs embedded transport",
+        name: "within_iff / network_accepted_is_accepted / longer_is_refused / answer_in_time_is_kept / silent_node_ends_the_wait / late_answer_is_not_waited_for / node_error_keeps_its_code / busy_node_is_asked_again / slow_node_is_asked_again / stopped_node_is_not_asked_again / asked_again_iff / asked_again_as_over_http / client_errors_stay_distinct / transport_errors_stay_distinct",
+        axis: Lean,
+        anchor: "crates/vera-embedded/src/call.rs within; crates/vera-embedded/src/deadline.rs bounded; crates/vera-embedded/src/submission.rs client_error; crates/vera-embedded/src/acp.rs transport_error; crates/vera/src/vera_rs/client.rs ClientError::retryable",
+        model_ref: "VeraEmbeddedTransport (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Explicit embedded signing",
+        name: "admitted_binds",
+        axis: Lean,
+        anchor: "crates/defra-node/src/embedded_signer.rs admitted_signer; crates/defra-node/src/lib.rs execute_prepared_request",
+        model_ref: "EmbeddedSigner (lake build); embedded_signer::native_admission_matches_executed_lean_model",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/defra-node/tests/embedded_signer.rs native_admission_matches_executed_lean_model",
+    },
+    Property {
+        family: "Explicit embedded signing",
+        name: "INV_Bound",
+        axis: Tla,
+        anchor: "crates/defra-node/src/embedded_signer.rs admitted_signer; crates/defra-node/src/lib.rs execute_prepared_request",
+        model_ref: "MC_EmbeddedSigner_{Green,Red_*}.cfg",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/defra-node/tests/embedded_signer.rs selected_actor_signs_create_update_and_respects_transaction_finality, selected_signer_does_not_bypass_document_acp",
+    },
+    Property {
+        family: "Verified client graph transaction",
+        name: "exact operation and graph, active bound authority, revocation and atomic mixed-actor commit",
+        axis: Tla,
+        anchor: "crates/defra-node/src/lib.rs execute_verified_graph_in_txn; crates/db/src/block/builder/verified_client_create.rs; crates/db/src/block/builder/verified_client_mutation.rs; crates/query/src/runner/turn.rs lent",
+        model_ref: "MC_VerifiedClientGraph_{Green,Red_*}.cfg",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/defra-node/tests/unit/verified_create.rs verified_user_create_shares_node_transaction_with_agent_effects, verified_update_and_delete_use_exact_actor_and_transaction_state, verified_create_allows_disabled_nac_and_unbound_collection",
+    },
+    Property {
+        family: "Verified client graph transaction",
+        name: "exact evidence, signed actor, consumed wave and transaction-bound authority",
+        axis: Lean,
+        anchor: "crates/db/src/block/builder/verified_client_create.rs; crates/db/src/block/builder/verified_client_mutation.rs; crates/defra-node/src/lib.rs execute_verified_graph_in_txn",
+        model_ref: "VerifiedCreateHandoff and VerifiedMutationHandoff (lake build); client_create_graph::signed_create_evidence_matches_the_modeled_exact_handoff",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/db/tests/block/client_create_graph.rs signed_create_evidence_matches_the_modeled_exact_handoff, trusted_delete_graph_matches_model_and_refuses_other_waves; crates/defra-node/tests/unit/verified_create.rs verified_update_and_delete_use_exact_actor_and_transaction_state",
+    },
+    Property {
+        family: "Verified client graph transaction",
+        name: "INV_AuthorityAtAdmission / INV_GrantAuthority / INV_RefusalRecordsNothing / INV_RequestOnlyItsRequest / INV_RequestIsNoLogin / INV_NothingSentStale / INV_RegistrationFirst / INV_SentUnderRecordedAuthority / INV_ReauthorizedWithAuthority / INV_FailureReported / INV_EditOnVerifiedPermission / INV_RequestBoundNoEdit / INV_EditOwesNothing: a verified write on a remote ACP provider is staged only with authority for its signer, a verified update or delete only when the signer held the permission at a verified revision no older than the freshness limit (owed registrations and revocations first), never with a request-bound delegation and owing nothing, a refusal records nothing, a delegation bound to one request is used for the command it names and never as a login, nothing is sent after expiry, a grant follows its document's registration, a command is sent only with the credential recorded for it, a parked command is owed again only on a fresh credential the rule of admission takes, and a submission that fails after the commit is reported",
+        axis: Tla,
+        anchor: "crates/defra-node/src/lib.rs execute_verified_graph_in_txn; crates/defra-node/src/signer_credential.rs SignerCredential::carried_by; crates/query/src/runner/remote_authority.rs remote_write_authority, edit_credential; crates/query/src/runner/mutation.rs authorize_mutation; crates/query/src/txn/context.rs check_doc_access_with_prepared_inputs; crates/acp/src/external.rs ExternalDocumentAcp::check_doc_access, proves_decisions; crates/vera/src/cosmos/dac.rs check_doc_access, proves_decisions; crates/vera/src/vera_rs/provider.rs verify_access, proves_decisions, decision_state; crates/vera/src/cosmos/dac.rs authority; crates/vera/src/cosmos/dac/request_bound.rs request_bound, admit_for, with_policy_command; crates/vera/src/vera_rs/bearer/request.rs caller_of_request_delegation, bound_caller; crates/vera/src/vera_rs/bearer.rs caller_of_delegation; crates/vera/src/vera_rs/command_digest.rs request_digest; crates/vera/src/cosmos/dac/owed.rs token, lapsed; crates/acp/src/outbox/staging.rs TransactionOutbox::stage; crates/acp/src/external/settle.rs register_first; crates/acp/src/pending.rs PendingRegistration; crates/acp/src/external/registration.rs settle_with, registrar, note_failure; crates/acp/src/external/owed.rs reauthorize, entries; crates/db/src/write/autocommit/helpers.rs register_created_doc; crates/defra-node/src/owed.rs Node::reauthorize_owed_acp_as, Node::owed_acp_as",
+        model_ref: "MC_VerifiedRemoteWrite_{Green,Red_NoAuthority,Red_AnyIssuer,Red_AnyNode,Red_ExpiredAccepted,Red_AnyCommand,Red_RequestLogsIn,Red_RecordedFirst,Red_SentExpired,Red_GrantFirst,Red_GrantUnchecked,Red_AmbientRetry,Red_ReauthUnchecked,Red_SilentFailure,Red_NoPermission,Red_StaleEvidence,Red_OwedIgnored,Red_RequestEdit,Red_EditOwes,Red_WindowWitness}.cfg",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/defra-node/tests/unit/verified_remote.rs a_verified_create_is_staged_only_with_authority_for_its_signer, a_request_bound_delegation_covers_the_registration_it_names_and_nothing_else, a_grant_in_a_verified_transaction_takes_its_own_request_bound_delegation, a_request_bound_delegation_that_expires_before_submission_parks_its_change; crates/defra-node/tests/unit/verified_edit.rs a_verified_update_or_delete_is_admitted_on_the_signers_permission, every_credential_form_is_decided_by_the_permission, a_revocation_finalized_before_admission_refuses_the_update, an_update_fails_closed_without_fresh_evidence, what_the_node_owes_decides_before_the_provider; crates/defra-node/tests/embedded_vera/verified.rs a_verified_create_under_the_signers_delegation_registers_the_signer, a_verified_create_under_a_request_bound_delegation_registers_the_signer, a_grant_staged_in_a_verified_transaction_lands_after_the_registration; crates/defra-node/tests/embedded_vera/verified_edit.rs a_verified_update_and_delete_are_admitted_on_the_chains_permission, a_writer_whose_grant_was_revoked_on_chain_is_refused, a_verified_update_is_refused_when_the_chain_cannot_be_reached; crates/defra-node/tests/unit/owed_report.rs a_registration_that_fails_after_its_commit_is_reported_and_takes_a_fresh_credential, a_change_waiting_for_authority_takes_a_credential_bound_to_it, a_submission_that_fails_for_an_unreachable_provider_is_reported_and_sent_by_the_wait, a_retry_of_an_owed_registration_never_reads_the_token_the_process_holds",
+    },
+    Property {
+        family: "Verified client graph transaction",
+        name: "INV_RegistrantIsReceiver / INV_OwnCreatorNotPreempted / INV_GenesisWithRegistration / INV_CreatorNotRejectedWhileOwed / INV_DeniedOnlyByProvider / INV_MergeAuthorized / INV_RevokedWriterDenied / INV_RegisteredStays / LIVE_RowMerges: a receiving node registers a foreign creator's replicated document as its provider's actor with the creator's grants as one owed unit written with the genesis, never pre-empts an own creator, rejects nobody on the word of an owed registration nor the creator while its grants are owed, merges a change only while its signer may write, and keeps a deleted document registered",
+        axis: Tla,
+        anchor: "crates/db/src/merge/replica.rs ReplicaRegistration, ReplicaOwnership, ReplicaStep; crates/db/src/merge/merge_handler/replica_plan.rs plan_replica_frame; crates/db/src/merge/merge_handler/composite_persist.rs record_replica; crates/db/src/merge/acp_merge_handler.rs AcpCompositeMergeHook::plan_replica, AcpCompositeMergeHook::on_protected_update, AcpCompositeMergeHook::node_reads; crates/acp/src/replica.rs ReplicaMarker, ReplicaOwed; crates/acp/src/external/replica.rs record_replica_unit, record_adopted_replica, owed_on_replica, yield_replica_if_held_elsewhere, settle_replica_unit; crates/acp/src/external/registration.rs register_and_clear; crates/db/src/write/autocommit/helpers.rs unregister_deleted_doc",
+        model_ref: "MC_ReplicaRegistration_{Green,Green_Live,Red_RegisterOwn,Red_RegisterAfterMerge,Red_RejectWhileOwed,Red_GrantsSeparate,Red_AdoptDrops,Red_NoAdoptOnArrival,Red_OwnedDenies,Red_StaleDecision,Red_ArchiveOnDelete,Red_DeleteClears}.cfg",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/db/tests/merge/replica_registration.rs a_foreign_creators_row_merges_once_the_receiver_registers_it_and_its_changes_follow, the_creators_update_while_the_unit_is_owed_is_put_back_and_then_merges, another_signers_change_waits_while_the_receivers_registration_is_owed, a_same_deployment_creators_row_is_never_registered_by_the_receiver, an_unlisted_collection_waits_for_a_registration_as_before, an_update_reaching_the_receiver_before_its_genesis_registers_through_the_genesis, a_revoked_writers_later_update_is_parked, a_second_receiver_waits_for_the_owners_grants_and_never_refuses_the_creator, a_receiver_that_sees_the_genesis_after_another_registered_it_waits_for_the_owners_grant, a_local_provider_registers_the_genesis_signer_as_before; crates/db/tests/access/external_owed.rs a_document_deleted_before_its_registration_settles_is_still_registered",
+    },
+    Property {
+        family: "Verified client graph transaction",
+        name: "INV_NeverQuarantined / INV_MergeAuthorized / INV_HistoryFirst / INV_Bounded / LIVE_RedrivenOnGrant / LIVE_OtherBranchMerges: a replicated change whose signer a remote provider refuses is parked by its document, never rejected for good, re-driven with a fresh decision when this node changes the document's relationships or by the bounded sweep, never merged before its history, within the index bound, and a change on another branch is not held behind it",
+        axis: Tla,
+        anchor: "crates/db/src/merge/merge_handler/composite.rs prepare_composite_merge; crates/db/src/merge/merge_handler/protected_update.rs Refusal, check_protected_update; crates/db/src/merge/governance/awaited.rs WaitKey::AcpObject; crates/db/src/merge/governance/deferred.rs DeferredMerges::park, DeferredMerges::release_parked, MAX_WAITERS_PER_DEPENDENCY, MAX_DEFERRED_COMPOSITES; crates/db/src/merge/merge_handler/parked_acp.rs ParkedRelease, watch_parked_acp, sweep_parked_acp; crates/db/src/merge/acp_merge_handler.rs AcpCompositeMergeHook::parks_refusals; crates/acp/src/dac.rs ObjectChangeListener; crates/acp/src/external.rs ExternalDocumentAcp::object_changed",
+        model_ref: "MC_ParkedMerge_{Green,Green_Live,Red_Quarantine,Red_MergeOverParked,Red_RedriveAdmits,Red_Unbounded,Red_NoRelease,Red_ParkBlocksObject}.cfg",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/db/tests/merge/parked_refusals.rs a_revoked_writers_change_is_parked_and_merges_once_the_node_grants_it_again, a_change_built_on_a_parked_one_waits_with_it_and_one_on_another_branch_merges, the_sweep_re_drives_a_change_a_grant_made_elsewhere_lets_in, an_unsigned_change_is_still_rejected; crates/db/src/merge/governance/deferred.rs the_sweep_releases_parked_composites_only",
+    },
+    Property {
+        // The provider gate after the conversion to parking: the hook's
+        // judgement (on_protected_update, parks_refusals) is executed over
+        // every combination of its inputs against the Rust hook; the one
+        // match in check_protected_update that turns a signed refusal into a
+        // parked one is bound by the merge tests below.
+        family: "Verified client graph transaction",
+        name: "hook_never_parks / signed_never_rejected_under_remote / signed_refusal_parks_under_remote / unsigned_refusal_is_rejected / unsigned_is_rejected / parked_only_from_signed_refusal / allowed_merges / merged_only_when_allowed / rejected_only_on_refusal / owed_registration_rejects_nobody / creator_waits_for_its_grants / creator_waits_for_the_owners_grants / nothing_owed_the_provider_decides / other_signers_ignore_creator_grants / local_provider_unchanged / lax_access_unchanged / local_rejected_only_on_refusal / local_never_parks / local_reads_nothing_owed: under strict access with a remote provider a signed refusal is parked and only an unsigned one is rejected; a local provider or lax access decides as before",
+        axis: Lean,
+        anchor: "crates/db/src/merge/acp_merge_handler.rs AcpCompositeMergeHook::on_protected_update, AcpCompositeMergeHook::parks_refusals, AcpCompositeMergeHook::replicas_for; crates/db/src/merge/merge_handler/protected_update.rs Refusal, check_protected_update, frame_signer; crates/db/src/merge/merge_handler/hook.rs CompositeFrame; crates/acp/src/replica.rs ReplicaOwed",
+        model_ref: "ReplicaGate (lake build; lake env lean --run ReplicaGate.lean)",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/db/src/merge/gate_conformance_tests.rs the_acp_hook_matches_the_executed_gate_model; crates/db/src/merge/merge_handler/protected_update.rs a_signer_that_is_not_a_did_is_judged_unsigned; crates/db/tests/merge/parked_refusals.rs a_revoked_writers_change_is_parked_and_merges_once_the_node_grants_it_again, an_unsigned_change_is_still_rejected",
+    },
+    Property {
+        // The index the parked refusals are filed in, a data structure with
+        // its invariants proven over any sequence of operations and its
+        // observable results executed against the Rust type.
+        family: "Verified client graph transaction",
+        name: "inv_run / bounded_after_any_run / no_dangling_after_any_run / present_iff / has_waiters_iff / release_takes / release_leaves_no_trace / release_keeps / release_keeps_waiting / release_hands_back / release_idempotent / wf_run / releaseParked_count / picked_are_documents / release_parked_hands_back_only_parked / release_parked_keeps_governance / release_parked_drains / release_parked_twice_finds_nothing / defer_when_full_changes_nothing / defer_full_key_unchanged / defer_keeps_others / defer_keeps_other_waiters / park_of_room / park_of_full / park_files_under_both / park_past_document_bound / parked_released_by_either: the deferred-composite index keeps its per-key and per-node bounds and has no dangling entry after any operations, filing never drops another composite, a parked composite is filed under its document and the refused composite and leaves both when either releases it, a parked composite its document has no room for is not indexed at all, a release is idempotent, and the sweep hands back only composites parked under a document",
+        axis: Lean,
+        anchor: "crates/db/src/merge/governance/deferred.rs DeferredMerges::defer, DeferredMerges::park, DeferredMerges::release, DeferredMerges::release_parked, DeferredMerges::enqueue_ready, DeferredMerges::take_ready, DeferredMerges::forget, DeferredMerges::take_entry, DeferredMerges::unindex, MAX_DEFERRED_COMPOSITES, MAX_WAITERS_PER_DEPENDENCY, MAX_AWAITED_PER_COMPOSITE; crates/db/src/merge/governance/awaited.rs WaitKey::AcpObject, Deferral; crates/db/src/merge/merge_handler/composite.rs prepare_composite_merge",
+        model_ref: "DeferredMerges (lake build; lake env lean --run DeferredMerges/Conformance.lean)",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/db/src/merge/governance/deferred_conformance_tests.rs the_index_matches_the_executed_model; crates/db/src/merge/governance/deferred.rs the_sweep_releases_parked_composites_only, a_change_parked_past_its_documents_bound_is_not_indexed",
+    },
+    Property {
+        family: "Verified client graph transaction",
+        name: "nothing_without_authority / a_held_key_is_enough / a_foreign_signature_sends_nothing / another_nodes_delegation_sends_nothing / an_expired_credential_sends_nothing / a_request_sends_only_its_command / a_sent_request_names_its_command / a_request_is_no_general_authority / general_authority_covers_every_command / a_fresh_credential_is_taken_as_at_admission / a_fresh_request_for_another_command_is_refused / a_fresh_credential_of_another_signer_is_refused / a_fresh_request_releases_one_command / one_rule_for_every_form / an_edit_needs_the_permission / an_edit_is_admitted_on_fresh_evidence_only / stale_evidence_admits_nothing / an_unreachable_provider_admits_nothing / a_revocation_in_the_verified_revision_refuses / an_owed_revocation_refuses / an_owed_registration_admits_only_its_creator / a_request_never_admits_an_edit / no_credential_on_an_unproven_provider_needs_the_key / no_credential_is_admitted_on_the_permission / a_bad_delegation_admits_no_edit",
+        axis: Lean,
+        anchor: "crates/vera/src/cosmos/dac.rs authority; crates/vera/src/cosmos/dac/request_bound.rs request_bound; crates/acp/src/external/owed.rs reauthorize; crates/query/src/runner/remote_authority.rs edit_credential; crates/query/src/txn/context.rs check_doc_access_with_prepared_inputs",
+        model_ref: "VerifiedRemoteAuthority (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Transactional document relationships",
+        name: "INV_ActorAuthority / actor_nac_required / actor_dac_required",
+        axis: Tla,
+        anchor: "crates/defra-node/src/transaction.rs trusted embedded relationship delegation; crates/defra-node/tests/unit/delegated_relationship.rs embedded_delegation_matches_executed_lean_model",
+        model_ref: "MC_DelegatedRelationship_{Green,Red_*}.cfg",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/defra-node/tests/unit/delegated_relationship.rs embedded_delegation_matches_executed_lean_model, selected_actor_nac_revocation_conflicts_with_node_owned_grant",
+    },
+    Property {
+        family: "Transactional document relationships",
+        name: "native administrator requires active transaction-bound NAC and atomic relation authority",
+        axis: Tla,
+        anchor: "crates/acp/src/zanzibar/acp/administrative_relationship.rs; crates/defra-node/src/acp_ops/transactional.rs relationship_in_txn",
+        model_ref: "MC_AdministrativeRelationship_{Green,Red_*}.cfg",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/defra-node/tests/unit/administrative_relationship.rs native_node_admin_manages_foreign_relationships_and_rechecks_revocation",
+    },
+    Property {
+        family: "Transactional document relationships",
+        name: "mayAdmin / public_route_denied / inactive_denied / bypass_denied / operation_denied / unbound_nac_denied / unbound_dac_denied",
+        axis: Lean,
+        anchor: "crates/acp/src/zanzibar/acp/administrative_relationship.rs; crates/defra-node/src/acp_ops/transactional.rs relationship_in_txn",
+        model_ref: "AdministrativeRelationship (lake build)",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/defra-node/tests/unit/administrative_relationship.rs administrative_relationship_admission_matches_executed_lean_model",
+    },
+    Property {
+        family: "Transactional document relationships",
+        name: "INV_Wake / INV_Abort / INV_Noop for projected relationship changes",
+        axis: Tla,
+        anchor: "crates/db/src/document_projection.rs notify_access_changed; crates/datastore/src/multistore.rs on_commit",
+        model_ref: "MC_ProjectionAccessNotification_{Green,Red_*}.cfg",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/defra-node/tests/unit/projection_access_notification.rs projected_relationship_changes_notify_armed_observer_only_after_commit",
+    },
+    Property {
+        family: "Transactional document relationships",
+        name: "committed_grant_notifies / committed_revoke_notifies / abort_does_not_notify / unchanged_does_not_notify",
+        axis: Lean,
+        anchor: "crates/db/src/document_projection.rs notify_access_changed",
+        model_ref: "ProjectionAccessNotification (lake build)",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/defra-node/tests/unit/projection_access_notification.rs projected_access_notifications_match_executed_lean_model",
+    },
+    Property {
+        family: "Transactional document relationships",
+        name: "INV_Membership / INV_Revocation for userset relation managers",
+        axis: Tla,
+        anchor: "crates/acp/src/zanzibar/acp/mod.rs check_manage_relation; crates/defra-node/src/acp_ops/transactional.rs relationship_in_txn",
+        model_ref: "MC_UsersetRelationManager_{Green,Red_*}.cfg",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/defra-node/tests/unit/userset_manager.rs transactional_userset_managers_respect_owner_admin_scope_and_revocation",
+    },
+    Property {
+        family: "Transactional document relationships",
+        name: "owner_allowed / direct_allowed / wildcard_allowed / node_owner_allowed / node_admin_allowed / foreign_node_denied / undeclared_denied",
+        axis: Lean,
+        anchor: "crates/acp/src/zanzibar/acp/mod.rs check_manage_relation",
+        model_ref: "UsersetRelationManager (lake build)",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/defra-node/tests/unit/userset_manager.rs userset_manager_admission_matches_executed_lean_model",
+    },
+    Property {
+        family: "Transactional document relationships",
+        name: "INV_Authority / INV_Private / INV_NoRevival",
+        axis: Tla,
+        anchor: "crates/defra-node/src/acp_ops/transactional.rs; crates/defra-node/src/ops/http_ops.rs; crates/cli/src/doc_acp_adapter.rs",
+        model_ref: "MC_TransactionalRelationship_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/defra-node/tests/unit/transactional_relationship.rs relationship_grant_and_revoke_obey_commit_and_discard, stale_marker_cannot_restore_revoked_relationship, failed_relationship_statement_does_not_leak_its_writes_or_events",
+    },
+    Property {
+        family: "Transactional document relationships",
+        name: "INV_NoFalseAuthority",
+        axis: Tla,
+        anchor: "crates/http/src/handlers/acp.rs own_documents; crates/query/src/runner/owners.rs observe_owners",
+        model_ref: "MC_OwnerSelfObservation_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/defra-node/tests/unit/http_acp.rs http_owner_registration_matches_executed_model, http_relationships_and_owner_observation_use_the_authenticated_transaction",
+    },
+    Property {
+        family: "Transactional document relationships",
+        name: "INV_HttpOwnerIsolation / http_rejects_embedder / local_embedder_allowed",
+        axis: Tla,
+        anchor: "crates/defra-node/src/node_builder.rs build; crates/defra-node/tests/unit/http_acp.rs http_cannot_use_the_embedder_only_transaction_registry",
+        model_ref: "MC_HttpTxnConfiguration_{Green,Red_Allow}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/defra-node/tests/unit/http_acp.rs http_cannot_use_the_embedder_only_transaction_registry",
+    },
+    Property {
+        family: "Transactional document relationships",
+        name: "wrong_owner_refused / readonly_refused / node_denied / document_denied / unbound_refused / expired_refused / unsupported_backend_refused",
+        axis: Lean,
+        anchor: "crates/defra-node/tests/unit/transactional_relationship.rs transaction_admission_matches_executed_lean_model; crates/cli/tests/unit/doc_acp_adapter.rs a_named_transaction_never_falls_back_to_autocommit",
+        model_ref: "TransactionalRelationship (lake build)",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/defra-node/tests/unit/transactional_relationship.rs transaction_admission_matches_executed_lean_model; crates/cli/tests/unit/doc_acp_adapter.rs a_named_transaction_never_falls_back_to_autocommit",
+    },
+    Property {
+        family: "HTTP client-signed create",
+        name: "both_formats_admit_the_same_caller / expired_never_dispatches / permission_denied_never_dispatches",
+        axis: Lean,
+        anchor: "crates/http/src/client_signing.rs upgrade; crates/http/src/auth_middleware.rs auth_middleware; crates/vera/src/vera_rs/bearer.rs caller_of_delegation",
+        model_ref: "ClientSigningCredential (lake build)",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/defra-node/tests/embedded_vera.rs a_caller_that_keeps_its_key_writes_through_its_own_delegation",
+    },
+    Property {
+        family: "HTTP client-signed create",
+        name: "INV_DelegationAdmitted / INV_CurrentAtDispatch",
+        axis: Tla,
+        anchor: "crates/http/src/client_signing.rs upgrade and run",
+        model_ref: "MC_SigningCredential_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/defra-node/tests/embedded_vera.rs a_caller_that_keeps_its_key_writes_through_its_own_delegation",
+    },
+    Property {
+        family: "HTTP client-signed create",
+        name: "full_refused / expired_has_no_lifetime / lifetime_bounded / lifetime_before_expiration",
+        axis: Lean,
+        anchor: "crates/http/src/client_signing.rs upgrade; crates/http/src/router/state.rs AppState",
+        model_ref: "ClientSigningAdmission (lake build); client_signer_tests::admission_and_token_lifetime_match_the_model",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/http/tests/unit/client_signer.rs admission_and_token_lifetime_match_the_model",
+    },
+    Property {
+        family: "HTTP client-signed create",
+        name: "reuse_requires_same_definition",
+        axis: Lean,
+        anchor: "crates/db/src/write/create.rs compute; crates/db/src/write/prepare.rs PreparedCreateBlocks",
+        model_ref: "ClientCreateSchema (lake build); write::create::schema_binding_tests::prepared_create_checks_immutable_definition_even_when_version_is_unchanged",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/db/tests/write/create_schema_binding.rs prepared_create_checks_immutable_definition_even_when_version_is_unchanged",
+    },
+    Property {
+        family: "HTTP client-signed create",
+        name: "INV_Capacity / LIVE_Reaped",
+        axis: Tla,
+        anchor: "crates/http/src/client_signing.rs upgrade; crates/http/src/router/state.rs AppState",
+        model_ref: "MC_SigningAdmission_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/http/tests/unit/client_signer.rs admission_and_token_lifetime_match_the_model, disconnected_and_expired_connections_release_their_slots",
+    },
+    Property {
+        family: "HTTP client-signed create",
+        name: "original actor and context, verified waves, live operation, deciding ACP, outside-attempt interaction, and eventual cleanup",
+        axis: Tla,
+        anchor: "crates/http/src/client_signing.rs run; crates/query/src/runner/turn.rs drive; crates/db/src/write/create.rs compute",
+        model_ref: "MC_ClientSignedCreate_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/defra-node/src/http_signing_tests.rs http_client_signs_the_complete_agent_create_graph; crates/http/tests/unit/client_signer.rs signing_endpoint_requires_an_authenticated_caller, disconnected_and_expired_connections_release_their_slots",
+    },
+    Property {
+        family: "HTTP client-signed create",
+        name: "accepted_exact / null_cannot_be_omitted / generated_is_rejected",
+        axis: Lean,
+        anchor: "crates/db/src/block/builder/client_create.rs ClientCreateSignatures::matches_input",
+        model_ref: "ClientCreateIntent (lake build); client_create_graph::normalized_agent_intent_preserves_explicit_null_and_datetime",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/db/tests/block/client_create_graph.rs normalized_agent_intent_preserves_explicit_null_and_datetime",
+    },
+    Property {
+        family: "HTTP client-signed create",
+        name: "immutable_included / mutable_included / immutable_has_no_extra / mutable_has_no_extra / accepted_exact_links",
+        axis: Lean,
+        anchor: "crates/db/src/block/builder/immutable.rs immutable_fields; crates/db/src/block/builder/compute.rs compute_document_blocks; crates/db/src/block/builder/client_create.rs ClientCreateSignatures::build",
+        model_ref: "ClientCreateGraph (lake build); client_create_graph::trusted_create_graph_matches_model_and_rejects_unapproved_waves",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/db/tests/block/client_create_graph.rs trusted_create_graph_matches_model_and_rejects_unapproved_waves",
+    },
+    Property {
+        family: "HTTP client-signed create",
+        name: "accepted_live / accepted_exact_blocks / signed_exact_blocks",
+        axis: Lean,
+        anchor: "crates/http/src/client_signing.rs run; crates/db/src/block/builder/client_waves.rs ClientWaves::respond",
+        model_ref: "ClientSignedCreate (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/db/tests/block/client_create_graph.rs trusted_create_graph_matches_model_and_rejects_unapproved_waves; crates/http/tests/unit/client_signer.rs the_connection_signer_checks_each_signature_before_answering",
+    },
+    Property {
+        family: "HTTP client-signed update",
+        name: "fixed intent, live signing, relevant field and deciding authorization",
+        axis: Tla,
+        anchor: "crates/http/src/client_signing.rs run; crates/db/src/block/builder/client_update.rs and update transactions",
+        model_ref: "MC_ClientSignedUpdate_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/defra-node/src/http_signing_tests.rs http_client_signs_a_single_document_update, http_client_signed_update_rechecks_acp_and_cancellation",
+    },
+    Property {
+        family: "HTTP client-signed update",
+        name: "signed_document / signed_changes / signed_exact_wave / unchanged_skipped / immutable_refused / mutable_allowed",
+        axis: Lean,
+        anchor: "crates/db/src/block/builder/client_update.rs; crates/db/src/block/builder/client_waves.rs ClientWaves::respond",
+        model_ref: "ClientSignedUpdate (lake build); client_create_graph::trusted_update_graph_matches_model_and_rejects_unapproved_waves",
+        tiers: &[Boundary],
+        bound_by: "crates/db/tests/block/client_create_graph.rs trusted_update_graph_matches_model_and_rejects_unapproved_waves",
+    },
+    Property {
+        family: "HTTP client-signed conditional update",
+        name: "accepted_filter_has_approved_target",
+        axis: Lean,
+        anchor: "crates/http/src/client_signed_update.rs single_document_target",
+        model_ref: "ClientSignedUpdateFilter (lake build); single_document_filter_admission_matches_model",
+        tiers: &[Boundary],
+        bound_by: "crates/http/tests/unit/client_signed_update.rs single_document_filter_admission_matches_model",
+    },
+    Property {
+        family: "SSE loss and error delivery",
+        name: "INV_DetectedLossEnds / INV_ErrorForwarded / LossEndsStream",
+        axis: Tla,
+        anchor: "crates/events/src/channel_bus.rs ChannelBus::publish_raw; crates/http/src/handlers/graphql/query.rs graphql_sse; crates/http/tests/graphql_sse_recovery.rs",
+        model_ref: "MC_SseDelivery_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/http/tests/graphql_sse_recovery.rs overflow_ends_the_graphql_stream_before_a_queued_result, query_error_is_delivered_even_without_rows",
+    },
+    Property {
+        family: "SSE loss and error delivery",
+        name: "loss_requires_recovery / loss_aware_closes / raw_stays_open / errors_are_forwarded / empty_is_skipped / denial_has_code / other_has_no_denial",
+        axis: Lean,
+        anchor: "crates/events/src/channel_bus.rs ChannelBus::publish_raw; crates/http/src/handlers/graphql/query.rs graphql_sse; crates/query/src/executor.rs QueryResponseError::from_query_error",
+        model_ref: "SseDelivery (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/events/tests/unit/channel_bus.rs overflow_wakes_reader_that_drained_before_loss_was_recorded, ordinary_raw_subscription_remains_open_after_overflow; crates/http/tests/graphql_sse_recovery.rs typed_permission_refusal_keeps_its_code_in_the_graphql_stream",
     },
     Property {
         family: "HTTP router composition",
@@ -112,6 +559,24 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "MC_PeerDisconnect_Red_EarlyAck.cfg",
         tiers: &[Boundary],
         bound_by: "",
+    },
+    Property {
+        family: "ACP soundness + revocation + dual-path commits",
+        name: "Unified access observations preserve mode-specific gates and transactional authority",
+        axis: Tla,
+        anchor: "crates/query/src/runner/owners.rs; crates/db/src/read/lensed/fetcher/mod.rs",
+        model_ref: "MC_UnifiedAccess_Green.cfg / MC_UnifiedAccess_Red_*.cfg",
+        tiers: &[Contract],
+        bound_by: "crates/query/src/runner/owners_tests.rs unified_access_rejects_or_reports_unavailable_without_bound_acp, delegated_turn_uses_certified_acp_even_if_fetcher_fallback_is_unbound",
+    },
+    Property {
+        family: "ACP soundness + revocation + dual-path commits",
+        name: "Acp.OwnerObservation.accessDecision preserves delegated and named access gates",
+        axis: Lean,
+        anchor: "crates/query/src/runner/owners.rs",
+        model_ref: "Acp.OwnerObservation",
+        tiers: &[Contract],
+        bound_by: "crates/query/src/runner/owners_tests.rs unified_access_rejects_or_reports_unavailable_without_bound_acp; crates/db/tests/read/owner_observation.rs owner_observation_rejects_a_claim_without_a_bound_transaction_view",
     },
     Property {
         family: "Peer connection observation",
@@ -174,9 +639,9 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
-        name: "Selected pushes ignore subscription filters and retry schedules, retain hint ownership and drain all started tasks",
+        name: "Selected pushes ignore subscription filters and retry schedules, retain hint ownership, pause and retry the same head on capacity hints within its own first-send deadline, defer a head whose pauses outlast that deadline without stopping the rest, stop scheduling after a stall, disconnect or cancellation, bound late sends and timeouts by the send slots, drain all started tasks and succeed only when every document is acknowledged",
         axis: Tla,
-        anchor: "crates/db/src/merge/push_docs.rs push_existing_docs_by_id",
+        anchor: "crates/db/src/merge/push_docs.rs push_existing_docs_by_id; crates/db/src/merge/push_docs/stop.rs SelectedPushStop, stops_selected_transfer; crates/db/src/merge/push_docs/selected.rs HeadDeadline; crates/p2p-adapter/src/pooled_doc_pusher.rs push_existing_docs_by_id",
         model_ref: "MC_SelectedPushIsolation_{Green,Red_*}.cfg",
         tiers: &[Boundary],
         bound_by: "",
@@ -194,9 +659,9 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
-        name: "selection_owns_acknowledgements / absent_replay_is_refused / selected_failure_is_not_deferred / selected_retains_heads / absent_peer_has_no_observation",
+        name: "selection_owns_acknowledgements / absent_replay_is_refused / selected_failure_is_not_deferred / selected_retains_heads / absent_peer_has_no_observation / no_progress_stops / pause_expiry_does_not_stop / expired_head_leaves_the_rest / stopped_admits_nothing / stopped_selection_fails / selected_success_needs_every_acknowledgement",
         axis: Lean,
-        anchor: "crates/db/src/merge/push_docs.rs; crates/db/tests/merge/push_docs_selection.rs",
+        anchor: "crates/db/src/merge/push_docs.rs; crates/db/src/merge/push_docs/stop.rs; crates/db/tests/merge/push_docs_selection.rs",
         model_ref: "DocumentPush.lean; selected_document_transfers_match_executed_model",
         tiers: &[Boundary],
         bound_by: "",
@@ -230,6 +695,24 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "Deferred replay preserves its install identity, cannot recreate or alter a replaced peer row, flips its own install's row in one transaction whatever same-incarnation rewrite came first, writes retry markers only for its own install, and stops recording failures only when that install is replaced",
+        axis: Tla,
+        anchor: "crates/db/src/merge/push_docs_replay.rs persist_replay_failures; crates/db/src/merge/push_docs.rs push_existing_docs_with_config_and_allowlist; crates/storage/src/stores/peerstore.rs update_replicator_for_incarnation, observe_push_head_for_incarnation, record_push_failure_for_incarnation; crates/p2p-adapter/src/replicator_status.rs set_persisted_replicator_status_for_incarnation_with_marker_state; crates/p2p-adapter/src/replicator_install_store.rs finish",
+        model_ref: "MC_ReplicatorIncarnation_{Green,Red_Replay*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "defer_preserves_incarnation / defer_does_not_resurrect / stale_defer_leaves_replacement / fenced_preserves_incarnation / create_changes_incarnation / create_resurrects / stale_mark_writes_nothing / deleted_mark_writes_nothing / mark_owned / only_replacement_stops / superseded_continues",
+        axis: Lean,
+        anchor: "crates/db/src/merge/push_docs_replay.rs persist_replay_failures; crates/storage/src/stores/peerstore.rs record_push_failure_for_incarnation",
+        model_ref: "ReplicatorInstall (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
         name: "Install completion is identity-fenced and idempotent; stale allocations re-decide without regressing the incarnation",
         axis: Lean,
         anchor: "crates/p2p-adapter/src/replicator_install_store.rs finish",
@@ -243,6 +726,15 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/p2p/src/sync/replication/handlers.rs::process_one_event; crates/p2p/src/sync/replication/continuation_tests.rs::already_merged_duplicate_continuation_releases_reservation_without_handler",
         model_ref: "MC_ContinuationSlot_{Green,Red_LateClaim}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "INV_Capacity / INV_OwnedSlot / INV_NoIdleCapacity / INV_RollbackNeedsCause — only an owner's own generation releases its pending-DAG slot, the release wakes the retry clock, and a full-lane rollback does not",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/coordinator/mod.rs PendingDagWorkOwner, claim_pending_dag_merge, spawn_pending_dag_fetch, dispatch_due_pending_dag_fetches and run_pending_dag_retry_clock; crates/p2p/tests/unit/pending_capacity_wake.rs",
+        model_ref: "MC_PendingDagOwner_{Green,Red_NoGeneration,Red_NoWake,Red_RollbackWake}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },
@@ -340,7 +832,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Peer connection observation",
         name: "Reverse RPC reuses inbound and legacy paths; stale eviction cannot hide replacements from disconnect",
         axis: Tla,
-        anchor: "crates/p2p/src/iroh/endpoint_streams.rs handle_incoming; endpoint_rpc.rs remember_connection, connect_with_cache and evict_connection; crates/p2p/tests/iroh/shared_connection.rs",
+        anchor: "crates/p2p/src/iroh/endpoint_streams.rs adopt_new_connection; endpoint_rpc.rs remember_connection, connect_with_cache and evict_connection; crates/p2p/tests/iroh/shared_connection.rs",
         model_ref: "MC_SharedRpcConnection_{Green,Red_*}.cfg; MC_LegacyRpcCache_{Green,Red_*}.cfg; MC_RpcCacheEviction_{Green,Red_*}.cfg",
         tiers: &[Contract],
         bound_by: "crates/p2p/tests/iroh/shared_connection.rs disconnect_closes_replacement_despite_stale_cleanup, legacy_only_peer_reuses_and_refreshes_its_shared_rpc_path, accepted_inbound_connection_serves_reverse_rpc_without_another_dial, authenticated_reconnection_replaces_an_open_old_rpc_path",
@@ -360,9 +852,27 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Peer connection observation",
-        name: "SharedRpc replacement identity, legacy reuse, modern preference, revoked refusal and stable-id eviction",
+        name: "Every new connection is served, announced by its pump and released once; an allowlist miss keeps the sibling",
+        axis: Tla,
+        anchor: "crates/p2p/src/iroh/endpoint_streams.rs adopt_new_connection and finish_connection; endpoint_rpc.rs connect_with_cache and restore_displaced_connection; endpoint_commands.rs handle_dial; crates/p2p/tests/iroh/shared_connection.rs",
+        model_ref: "MC_ConnectionAdoption_{Green,Red_*}.cfg",
+        tiers: &[Contract],
+        bound_by: "crates/p2p/tests/iroh/shared_connection.rs repeated_cache_hits_reuse_one_adopted_connection, closed_registry_refuses_adoption_and_balances_the_peer_map, cancelled_adopt_still_announces_and_releases_its_connection, allowlist_miss_refuses_only_the_new_connection_and_spares_the_sibling",
+    },
+    Property {
+        family: "Peer connection observation",
+        name: "Open RPC connections stay counted after cache displacement and close on revoke",
+        axis: Tla,
+        anchor: "crates/p2p/src/iroh/endpoint_rpc.rs close_peer_connections; crates/p2p/tests/iroh/shared_connection.rs displaced_rpc_dialed_connection_is_closed_by_revoke",
+        model_ref: "MC_ConnectionAdoption_{Green,Red_*}.cfg",
+        tiers: &[Contract],
+        bound_by: "crates/p2p/tests/iroh/shared_connection.rs displaced_rpc_dialed_connection_is_closed_by_revoke",
+    },
+    Property {
+        family: "Peer connection observation",
+        name: "SharedRpc replacement identity, legacy reuse, modern preference, revoked refusal, stable-id eviction and refused-publish restore",
         axis: Lean,
-        anchor: "crates/p2p/src/iroh/endpoint_rpc.rs remember_connection, connect_with_cache and evict_connection; endpoint_streams.rs handle_incoming",
+        anchor: "crates/p2p/src/iroh/endpoint_rpc.rs remember_connection, restore_displaced_connection, connect_with_cache and evict_connection; endpoint_streams.rs adopt_new_connection",
         model_ref: "PeerConnection.SharedRpc",
         tiers: &[Contract],
         bound_by: "crates/p2p/tests/iroh/shared_connection.rs authenticated_reconnection_replaces_an_open_old_rpc_path, legacy_only_peer_reuses_and_refreshes_its_shared_rpc_path, legacy_mux_does_not_replace_the_modern_shared_rpc_handle, disconnect_closes_replacement_despite_stale_cleanup",
@@ -538,6 +1048,24 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "regolith@e844baefe838f3af76403afd46c4b42f1a0b98a5 proofs/tla/CommitOrderedAppend.tla (GREEN Groups/Pipeline/Faults, RED Counter/OnceFromView/AssignBeforeValidation)",
         tiers: &[Behavioral],
         bound_by: "crates/db/tests/read/arrival_transactions.rs reversed_concurrent_commits_receive_cursors_in_commit_order, rollback_is_atomic_and_duplicate_arrivals_do_not_advance, cursor_survives_database_reopen",
+    },
+    Property {
+        family: "Committed document update discovery",
+        name: "INV_Atomic / INV_Once / INV_OnlyChanges / INV_Authorized / INV_DeletedHidden / INV_UnregisteredAfterDelete / INV_CursorBound / INV_NoSkippedVisible — a block that changed its document is journaled once in its transaction, one that lost to the stored value is not; a page of up to Limit rows is decided at its own snapshot, or confirmed after a provider outside its transaction answered, which loses a registration only after this node's delete; a deleted document's rows are shown to nobody. Not modeled: the reader's cursor-beyond-head and missing-row errors. Not prevented: a registration a peer took from a shared provider (Red_Unordered)",
+        axis: Tla,
+        anchor: "crates/db/src/event/updates.rs record/read/rows/drain; crates/db/src/event/updates/gate.rs Gate::decide, Gate::confirm; crates/db/src/txn/mod.rs DbTxn::later; crates/db/src/docid/map.rs peek_doc_short_id; crates/db/src/write/update.rs write_blocks; crates/db/src/merge/merge_handler/composite_persist.rs persist_merged_document; crates/db/src/merge/merge_handler/field_state.rs merge_field_state; crates/query/src/runner/arrivals.rs execute_arrivals_query",
+        model_ref: "MC_DocumentUpdateJournal_{Green,Green_Outside}.cfg / MC_DocumentUpdateJournal_Red_{Detached,Duplicate,Superseded,Authorization,Deleted,Stale,Unordered,Skip}.cfg",
+        tiers: &[Behavioral],
+        bound_by: "crates/db/tests/read/update_transactions.rs commit_order_rollback_and_replayed_updates, updates_and_replay_checkpoint_survive_reopen, a_scan_returns_the_rows_of_its_collection_and_range_only, a_scan_is_closed_when_a_row_is_missing; crates/db/tests/read/arrivals.rs graphql_updates_page_each_committed_version_of_one_document, hidden_updates_advance_page_without_disclosing_identity_or_cid; crates/db/tests/read/update_visibility.rs a_deleted_private_documents_updates_are_shown_to_nobody, a_purged_private_documents_updates_are_shown_to_nobody, one_page_decides_each_document_once, a_page_in_a_transaction_decides_at_that_transactions_snapshot, a_page_in_a_writing_transaction_does_not_fail_it_when_its_document_is_purged, a_delete_during_the_page_hides_the_row_from_a_provider_outside_its_transaction, a_transaction_fetcher_pages_for_a_provider_outside_its_transaction; crates/db/tests/read/update_visibility/transaction_fetcher.rs a_delete_during_the_page_hides_the_row, a_page_in_a_writing_transaction_reads_its_later_snapshot_too, a_transaction_no_database_began_says_why_it_cannot_confirm; crates/db/tests/read/update_page.rs a_page_reads_its_rows_in_one_scan; crates/db/tests/docid/map.rs a_peek_resolves_what_a_get_resolves; crates/db/tests/merge/merge_handler_tests.rs peer_update_is_discovered_once_by_committed_cursor; crates/db/tests/merge/update_journal.rs a_merge_that_loses_to_the_stored_value_adds_no_row, a_block_merged_again_by_another_handler_adds_no_second_row, a_block_whose_field_was_merged_on_its_own_first_still_gets_its_row",
+    },
+    Property {
+        family: "Committed document update discovery",
+        name: "append_idempotent / different_blocks_are_distinct / superseded_adds_no_row / unauthorized_not_visible / deleted_not_visible / confirmed_rows_are_allowed / page_within_limit / pages_join / once_key_injective",
+        axis: Lean,
+        anchor: "crates/db/src/event/updates.rs record/rows/once_key; crates/db/src/event/updates/gate.rs Gate::decide, Gate::confirm; crates/db/src/merge/merge_handler/composite_persist.rs persist_merged_document",
+        model_ref: "DocumentUpdateJournal (lake build)",
+        tiers: &[Contract],
+        bound_by: "crates/db/tests/read/update_transactions.rs identities_are_unambiguous_and_payloads_round_trip, commit_order_rollback_and_replayed_updates, a_scan_returns_the_rows_of_its_collection_and_range_only; crates/db/tests/read/arrivals.rs graphql_updates_page_each_committed_version_of_one_document, hidden_updates_advance_page_without_disclosing_identity_or_cid; crates/db/tests/read/update_visibility.rs a_deleted_private_documents_updates_are_shown_to_nobody, a_delete_during_the_page_hides_the_row_from_a_provider_outside_its_transaction; crates/db/tests/merge/update_journal.rs a_merge_that_loses_to_the_stored_value_adds_no_row",
     },
     Property {
         family: "Retry input and marker fencing",
@@ -964,7 +1492,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Sync ownership transfer (head hint / receiver pull)",
         name: "INV_CommittedIsOwnedOrReported / INV_PendingBounded / INV_WindowHoldsNoSlot / INV_TasksBounded / LIVE_AllSettled: a committed write's gossip is published, or reported past a wait deadline, on one lane task",
         axis: Tla,
-        anchor: "crates/p2p/src/sync/coordinator/mod.rs spawn_non_authoritative_broadcast_task, publish_slot, acquire_non_authoritative_broadcast_slot; crates/p2p/src/sync/coordinator/broadcast_room.rs BroadcastRoom::reserve, BroadcastRoom::run, lane; crates/p2p/src/sync/coordinator/broadcast.rs broadcast_local_update_with_creator; crates/db/src/merge/broadcast_mutator/broadcast.rs spawn_gossip_or_report, broadcast_with_retry_with_creator",
+        anchor: "crates/p2p/src/sync/coordinator/mod.rs spawn_non_authoritative_broadcast_task, publish_slot, acquire_non_authoritative_broadcast_slot; crates/p2p/src/sync/coordinator/broadcast_room.rs BroadcastRoom::reserve, BroadcastRoom::run, lane; crates/p2p/src/sync/coordinator/broadcast.rs broadcast_local_update_with_creator; crates/db/src/merge/broadcast_mutator/broadcast.rs spawn_gossip_or_report, broadcast_with_creator",
         model_ref: "MC_SenderBroadcast_{Green,Red_Shed,Red_SilentExpiry,Red_SlotAcrossWindow,Red_UnboundedPending,Red_TaskPerWrite}.cfg",
         tiers: &[Boundary],
         bound_by: "",
@@ -1010,9 +1538,10 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         // Rejected is assumed content-determined. Under strict (Vera) ACP a
-        // denial depends on the local relationship view, so an update whose
-        // grant has not arrived yet is quarantined for good, after its
-        // sender's marker was discharged. Local ACP cannot reach this.
+        // signed update the provider refuses is no longer Rejected: it is
+        // parked by its document and re-driven (ParkedMerge.tla), so it never
+        // reaches the quarantine. An unsigned update's refusal stays
+        // Rejected, and is content-determined: no grant can cover it.
         family: "Sync ownership transfer (head hint / receiver pull)",
         name: "INV_NoSilentDrop / LIVE_SoundEventuallyMerged / LIVE_PoisonQuiesces assume a rejection is content-determined",
         axis: Tla,
@@ -1072,6 +1601,24 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "MC_Kms_Green.cfg",
         tiers: &[Behavioral, Boundary],
         bound_by: "proofs/tests/behavioral/kms.rs kms_unauthorized_dek_release_denied",
+    },
+    Property {
+        family: "KMS key distribution",
+        name: "chunks_flatten / chunk_size_le / answers_in_order / answers_length: a key batch split for a transport asks for every key once, no chunk over the per-request limit, and answers every key in its place",
+        axis: Lean,
+        anchor: "crates/kms/src/defra_kms.rs DefraKms::with_inputs, CHUNKS_IN_FLIGHT; crates/inputs/src/service.rs Inner::inline, Inner::answers",
+        model_ref: "KmsChunks (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/kms/src/remote_tests.rs a_batch_is_split_to_the_keys_a_transport_carries, a_split_batch_keeps_few_chunks_on_the_wire_at_once, a_retryable_send_failure_of_one_chunk_is_retried",
+    },
+    Property {
+        family: "KMS key distribution",
+        name: "WindowBound / PermitBound / RetriedBeforeError / OwnOutcome / AllAnswered: an inline call's chunks run at most flights_per_group at once and max_in_flight on the wire, a chunk errs only after its retries, each chunk's keys get that chunk's own outcome, and every chunk is answered",
+        axis: Tla,
+        anchor: "crates/inputs/src/service.rs Inner::inline, Inner::round_trip, Inner::answers; crates/kms/src/defra_kms.rs DefraKms::with_inputs, CHUNKS_IN_FLIGHT",
+        model_ref: "MC_InlineBatchFlights_Green.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/kms/src/remote_tests.rs a_split_batch_keeps_few_chunks_on_the_wire_at_once, a_retryable_send_failure_of_one_chunk_is_retried",
     },
     Property {
         // A merge that needs a DEK fetches it inline on the serial merge
@@ -1148,15 +1695,67 @@ pub const PROPERTIES: &[Property] = &[
         // The light client checks an answer at the newest root it has
         // authenticated, and refuses one that a block finalized during the
         // round trip overtook. The vera provider asks such a read again, at
-        // most ATTEMPTS times: the refusal reaches a caller only after a block
-        // overtook every ask, and a stale answer is never accepted.
+        // most ATTEMPTS times, and a read the node answered busy (-32002,
+        // evidence not ready by its deadline) again after a pause, for at
+        // most BUSY_PATIENCE, counted apart: an error reaches a caller only
+        // after every ask of its kind, and a stale answer is never accepted.
         family: "ACP soundness + revocation + dual-path commits",
-        name: "INV_NeverStale / INV_FailsOnlyWhenEveryAskOvertaken / INV_AttemptsBounded / LIVE_Answers: a proven read the chain overtook is asked again, bounded, never accepted stale",
+        name: "INV_NeverStale / INV_FailsOnlyWhenEveryAskOvertaken / INV_AttemptsBounded / LIVE_Answers: a proven read the chain overtook or the node answered busy is asked again, bounded, never accepted stale",
         axis: Tla,
-        anchor: "crates/vera/src/vera_rs/provider/verified.rs verified, ATTEMPTS; crates/vera/src/vera_rs/provider.rs create_policy, query_policy, query_object_owner, verify_access, create_access_decision; backbone:acp-light-client HeaderChain::accept_response",
-        model_ref: "MC_VerifiedRead_{Green,Green_Exhausted,Red_AcceptStale,Red_NoRetry,Red_Uncapped}.cfg",
+        anchor: "crates/vera/src/vera_rs/provider/verified.rs verified, verified_within, ATTEMPTS, BUSY_PATIENCE, BUSY_PAUSE, busy; crates/vera/src/vera_rs/provider.rs create_policy, query_policy, query_object_owner, verify_access, create_access_decision; backbone:acp-light-client HeaderChain::accept_response",
+        model_ref: "MC_VerifiedRead_{Green,Green_Exhausted,Red_AcceptStale,Red_NoRetry,Red_Uncapped,Red_NoBusyRetry,Red_BusyUncapped}.cfg",
         tiers: &[Boundary],
         bound_by: "",
+    },
+    Property {
+        // The vera provider drives a journaled submission to its receipt:
+        // ask, send when no send is known to have arrived, ask again, under
+        // one deadline. A send that timed out may have been admitted, so it
+        // is sent again; the node spends a sequence once, so the request
+        // takes effect at most once. A call ends early only on a failure
+        // that cannot pass. The journal keeps the request until a receipt is
+        // acknowledged, so a later call confirms what an earlier one could
+        // not, also after the node dropped an admitted copy.
+        family: "ACP soundness + revocation + dual-path commits",
+        name: "INV_AtMostOneEffect / INV_ConfirmedHasEffect / INV_NoEarlyGiveUp / INV_RetainedUntilConfirmed / LIVE_UndisturbedCallConfirms / LIVE_RecalledConfirms: a pending submission is resent until confirmed, takes effect once, is given up only at its deadline or on a failure that cannot pass, stays journaled until confirmed, and is confirmed by a later call when an earlier one was cut short",
+        axis: Tla,
+        anchor: "crates/vera/src/vera_rs/provider/submission.rs resolve_pending, recover_pending, send_tx_with_sequence; crates/vera/src/vera_rs/client.rs retryable; crates/vera/src/vera_rs/worker.rs acknowledge; crates/vera-embedded/src/submission.rs",
+        model_ref: "MC_PendingSubmission_{Green,Green_Recalled,Red_NoResend,Red_NoDedupe,Red_GivesUpEarly,Red_ForgetsOnTimeout,Red_Recalled_Forgets}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // A remote provider cannot join the row transaction, so a create
+        // writes the registration it owes into that transaction and the
+        // node settles it after the commit and again at start. Until the
+        // record is cleared the gate lets only the creator read. A
+        // relationship change made in a transaction is staged the same way
+        // and submitted after the commit: its actor is checked at staging,
+        // an add is staged unchecked when the provider cannot be asked and a
+        // delete is not staged then, an owed delete denies from the commit
+        // on, an owed add grants nothing, the registration settles first,
+        // one tuple's changes go one behind the other, a refused change is
+        // parked if it was checked and removed if it was not, a parked
+        // change holds its tuple only if it was checked, and an unchecked
+        // one that waits is removed when a later change of its tuple passes
+        // it. All of that is anchored here. The durable
+        // in-flight mark and the receipt lookup are specification ahead of
+        // code (#2954), so the code matches the model with Marker = FALSE
+        // (Green_NoMarker): INV_AtMostOneEffect does not hold for it, and a
+        // change the provider applied before a crash is sent again
+        // (Red_NoInFlightMarker). The creator's own named grant on a
+        // document still owed, and Reauthorize, are ahead of code too.
+        // INV_AtMostOneEffect also rests on a receipt staying readable
+        // (Red_ReceiptLost), and the creator-only gate on the provider not
+        // already holding the document for another owner
+        // (Red_ContestedRegistration).
+        family: "ACP outbox and owed registrations",
+        name: "INV_NoWidening / INV_RevokedAtCommit / INV_RegistrationFirst / INV_AtMostOneEffect / INV_RollbackLeavesNothing / INV_OwedDocumentNarrow / INV_DenialsChecked / INV_RefusedChecked / INV_UncheckedYields / INV_PresentedAuthority / INV_FailureReported / INV_AbandonIsFinal / LIVE_Drains: what a node owes a remote ACP provider never widens access before it is settled, a committed delete denies at once and until the provider holds it or its own actor abandons it, the registration settles before any change and only on its creator's word (its record, a delegation recorded with a change the creator owes, or the bearer a request carries for the creator), a registration whose submission failed says so and a change deleted without the provider holding it leaves a note until its actor was told, a change takes effect once across a crash and never after it was abandoned, a rollback leaves nothing owed, no delete denies on an unchecked word, no unchecked change is parked as refused or holds a later change of its tuple, and every committed change ends settled, parked or held behind a parked change of its tuple",
+        axis: Tla,
+        anchor: "crates/acp/src/pending.rs PendingRegistration, PendingRegistrations::record, PendingRegistrations::get, PendingRegistrations::clear; crates/acp/src/external/registration.rs settle, settle_with, registrar, recorded_registrar, presenting, note_failure, rewrite, clear; crates/defra-core/src/request_context.rs RequestContext::bearer_token_for; crates/acp/src/external.rs ExternalDocumentAcp::redrive_owed, ExternalDocumentAcp::check_doc_access, ExternalDocumentAcp::redrive_registration, ExternalDocumentAcp::revoked, ExternalDocumentAcp::transaction_outbox; crates/acp/src/external/settle.rs settle_owed_changes_once, pass, pass_unchecked, settle_change, submittable, register_first, creators_delegation, settle_owed_before, refusal; crates/acp/src/outbox/staging.rs TransactionOutbox::stage, TransactionOutbox::advise, unchecked; crates/acp/src/external/owed.rs entries, await_transaction, reauthorize, abandon_change; crates/acp/src/outbox/ops.rs stage, settle, mark, reauthorize, discard, acknowledge; crates/acp/src/outbox/record.rs run_epoch; crates/acp/src/outbox/deny.rs owed_denial, OwedDenials::on; crates/acp/src/outbox/submission.rs Submission; crates/db/src/write/autocommit/helpers.rs register_created_doc, unregister_deleted_doc; crates/db/src/write/autocommit/create.rs acp_registration_retry_callback; crates/db/src/txn/mod.rs DbTxn::owed_staged, rollback_statement_savepoint; crates/query/src/txn/context.rs AcpRegistrationProjection, denied_by_owed_delete; crates/defra-node/src/acp_ops/transactional.rs relationship_in_txn, settle_owed_changes; crates/defra-node/src/node_acp.rs gate_external_acp; crates/defra-node/src/owed.rs Node::owed_acp_as, Node::await_owed_acp_as, Node::reauthorize_owed_acp_as, Node::abandon_owed_acp_change_as; crates/vera/src/cosmos/dac/owed.rs submit",
+        model_ref: "MC_AcpOutbox_{Green,Green_Registered,Green_Three,Green_Three_Registered,Green_Live,Green_NoMarker,Green_OwnerChanges,Green_Live_OwnerChanges,Red_OwedOutsideTxn,Red_NoDenyOverlay,Red_LatestOpOverlay,Red_RefusedDeleteForgotten,Red_OwedAddGrants,Red_WildcardGrant,Red_ChangeBeforeRegistration,Red_OutOfOrder,Red_DrainPastAwaiting,Red_NoInFlightMarker,Red_ReceiptLost,Red_ContestedRegistration,Red_RefusedBlocksDrain,Red_UncheckedDelete,Red_UncheckedRefusedKept,Red_UncheckedHolds,Red_UncheckedPassedKept,Red_TransferWhileOwed,Red_AbandonByAnyone,Red_AbandonInFlight,Red_SilentFailure,Red_SilentDiscard,Red_AmbientRegistration,Red_AmbientRecorded,Red_ReauthorizeUnchecked}.cfg",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/db/tests/access/external_owed.rs a_registration_that_fails_after_its_commit_is_reported_with_its_reason, a_registration_with_no_authority_waits_for_a_credential_and_is_not_sent, changes_behind_a_parked_registration_go_once_it_is_given_a_credential, a_wait_says_pending_while_the_provider_is_away_and_ends_when_a_record_changes, only_the_actor_that_staged_a_refused_delete_lifts_its_denial_by_abandoning_it, an_abandoned_change_lets_the_changes_behind_it_go_and_only_a_refused_one_is_abandoned, a_refused_change_is_submitted_again_under_a_fresh_credential, a_change_the_provider_never_took_is_reported_as_discarded_and_not_as_settled, a_wait_is_for_a_transaction_of_this_run_and_for_its_callers_entries; crates/defra-node/tests/unit/owed_report.rs only_the_actor_that_staged_a_refused_revocation_abandons_it, a_retry_of_an_owed_registration_never_reads_the_token_the_process_holds, a_request_that_carries_no_bearer_registers_nothing_under_a_token_the_process_holds, a_pass_sends_a_registration_with_whichever_owed_delegation_the_report_found",
     },
     Property {
         // Registrations of one document that race each write their own owner
@@ -1184,7 +1783,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Text CRDT convergence",
         name: "INV_Converge / INV_MatchesReplay / INV_Intent / INV_PlacedAsIntended / INV_NoInterleave / INV_CriticalReplay / INV_NullConverge / INV_NullMatchesReplay / INV_NullEmpty: Fugue text converges, keeps every edit where its author put it, never interleaves runs, replays a concurrent merge from its critical block, and reads null only when every head writes null",
         axis: Tla,
-        anchor: "crates/crdt/src/fugue.rs Tree::apply, Tree::attach, replay, merge_text; crates/crdt/src/field/text.rs TextField (block_data, CausalCrdt diff, block_op, replay, merge_from, check_version, nil_heads); crates/db/src/merge/merge_handler/field_causal.rs merge_field_causal, critical_block, causal_history; crates/db/src/write/autocommit/helpers.rs apply_field_ops; crates/db/src/definition/migration/helpers.rs changes_block_state; crates/crdt/src/fugue_tests.rs, crates/crdt/src/field/testing.rs check_causal, crates/db/tests/merge/text_merge.rs, crates/db/tests/definition/migration_suite/text_lens.rs",
+        anchor: "crates/crdt/src/fugue.rs Tree::apply, Tree::attach, replay, merge_text; crates/crdt/src/field/text.rs TextField (block_data, CausalCrdt diff, block_op, replay, merge_from, check_version, nil_heads); crates/db/src/merge/merge_handler/field_causal.rs merge_field_causal, critical_block, causal_history; crates/db/src/write/autocommit/helpers.rs apply_field_ops; crates/db/src/definition/migration/helpers.rs changes_block_state; crates/crdt/src/fugue_tests.rs, crates/crdt/src/field/testing.rs check_causal, crates/db/tests/merge/text_merge.rs",
         model_ref: "MC_TextCrdt_{Green,Red_ArrivalOrder,Red_NoCausalBuffer,Red_CurrentText,Red_NextNode,Red_CommonAncestor,Red_NullLast}.cfg",
         tiers: &[Contract],
         bound_by: "crates/db/tests/merge/text_merge.rs concurrent_edits_of_one_text_keep_both_on_every_node; crates/crdt/src/fugue_tests.rs concurrent_inserts_at_one_spot_keep_each_run_whole_in_id_order, an_edit_concurrent_with_a_delete_still_finds_its_spot",
@@ -1316,6 +1915,48 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // #2378: a lens's ID is the CID of blocks that record every module and
+        // every argument value, as Go's lens store writes them; it used to
+        // hash the first module and only string arguments.
+        family: "Schema-evolution operations in the core",
+        name: "LensId.configBlock_injective / new_numbers_differ / new_keeps_later_modules / empty_lens_has_block",
+        axis: Lean,
+        anchor: "crates/defra-core/src/lens_block.rs build_lens_ipld_blocks, build_module_blocks; crates/db/src/definition/migration/committed_lenses.rs PreparedLens::new, module_arguments; crates/defra-core/src/lens_argument.rs encode_lens_argument",
+        model_ref: "LensId (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/defra-core/tests/lens_block_id.rs every_module_and_argument_value_counts, an_empty_lens_has_gos_config_block_cid",
+    },
+    Property {
+        // #2517: a document saved at another version is stored with that
+        // version's layout only when it is a real definition of the same
+        // collection; a placeholder (often in the orphan collection) is
+        // treated as unknown, so the value stays under the owning collection.
+        family: "Schema-evolution operations in the core",
+        name: "DocStoreTarget.stored_under_owner / placeholder_never_lays_out / old_stores_under_orphan",
+        axis: Lean,
+        anchor: "crates/db/src/collection/crud.rs Collection::save_with_datastore_priorities",
+        model_ref: "DocStoreTarget (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // #2379: an index answers queries only while no reindex is owed;
+        // schema changes and merges that store a document off the active
+        // version across a lens owe a fresh record, and a rebuild clears only
+        // the record it started from. Main before the fix refused every index
+        // once a lens existed (Red_LensGate). A query's index scan reads the
+        // owed record again in its own transaction and re-plans to a
+        // collection scan when one stands, so a merge that commits between
+        // the plan and the scan cannot make it miss a document (Red_TrustPlan).
+        family: "Schema-evolution operations in the core",
+        name: "INV_IndexMatchesReads / INV_SettledIndexAnswers / INV_ScanMatchesReads",
+        axis: Tla,
+        anchor: "crates/db/src/definition/migration/reindex/owed.rs owe_reindex, clear_owed_reindex; crates/db/src/collection/mod.rs queryable, Collection::validate_write_definition_read; crates/db/src/merge/merge_handler/stale_version.rs DbMergeHandler::owe_reindex_off_active_version; crates/query/src/planner/builder/index_methods.rs try_select_index; crates/db/src/read/lensed/autocommit/scan.rs get_by_index_scan_inner; crates/query/src/runner/query/select.rs execute_select_internal",
+        model_ref: "MC_LensIndexAnswer_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/db/tests/merge/plan_scan_race.rs",
+    },
+    Property {
         // An explicit transaction's ID is `sequence * workers + worker`. The
         // owner is the ID modulo the worker count and the sequence is the
         // quotient, so the round trip is exact for every worker below the
@@ -1372,6 +2013,18 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "MC_Nac_Green.cfg",
         tiers: &[Behavioral],
         bound_by: "proofs/tests/behavioral/nac_lifecycle.rs nac_lifecycle_no_escalation",
+    },
+    Property {
+        // Enabling sets NAC up only the first time: neither starting the node
+        // with the enable option nor an enable call turns a temporarily
+        // disabled NAC back on, so only an authorized re-enable does, as in Go.
+        family: "NAC lifecycle privilege-escalation",
+        name: "INV_ReEnableNeedsPersistedAdmin through enable and startup: a disabled NAC stays disabled until an authorized re-enable",
+        axis: Tla,
+        anchor: "crates/acp/src/nac/node_acp/lifecycle.rs NodeACP::enable; crates/db/src/nac/mod.rs NacManager::initialize",
+        model_ref: "MC_Nac_{Green,Red_EnableReEnables,Red_EnableAddsOwner,Red_StartReEnables}.cfg",
+        tiers: &[Contract],
+        bound_by: "crates/acp/tests/nac_tests.rs enabling_a_disabled_nac_is_refused; crates/db/tests/nac/tests.rs a_disabled_nac_stays_disabled_when_restarted_with_the_enable_option, enabling_a_disabled_nac_is_refused; crates/defra-node/tests/unit/http_acp.rs a_stranger_cannot_enable_a_disabled_nac_over_http",
     },
     Property {
         // No-loss / no-double-apply under concurrent same-document mutation is now
@@ -1437,7 +2090,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Transaction & merge-queue concurrency",
         name: "INV_FfiReaches / INV_HttpOwnerOnly / INV_ActsAsCaller: the embedder reaches its transactions as any identity, an HTTP caller only its own, and work runs as the request",
         axis: Tla,
-        anchor: "crates/db/src/txn/registry/mod.rs TxnOwnership, DbTransactionRegistry::caller, DbTransactionRegistry::in_txn; crates/db/src/txn/registry/lifecycle.rs run_as; crates/db/src/txn/owner/table.rs Table::admits; crates/ffi/src/node.rs build_node_state; crates/defra-node/src/node_builder.rs NodeBuilder::with_txn_ownership",
+        anchor: "crates/db/src/txn/registry/mod.rs TxnOwnership, DbTransactionRegistry::caller, DbTransactionRegistry::in_txn; crates/db/src/txn/registry/lifecycle.rs run_as; crates/db/src/txn/owner/table.rs Table::admits; crates/ffi/src/node/mod.rs build_node_state; crates/defra-node/src/node_builder.rs NodeBuilder::with_txn_ownership",
         model_ref: "MC_TxnAdmission_{Green,Red_IdentityOnFfi,Red_EmbedderOnHttp,Red_ActsAsOwner}.cfg",
         tiers: &[Boundary],
         bound_by: "",
@@ -1515,6 +2168,110 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // Every signing key lives in one process-wide store, one slot per
+        // DID. Holders (FFI identity handles, nodes) take and give back
+        // holds; the hold count, the pin and the key change together in one
+        // swap, a slot never leaves the map, and a clear only unpins and
+        // drops keys nothing holds. While a DID has a key its signer is
+        // fixed: a hold with another signer, or a pin over a held DID, is
+        // refused, so no holder is re-routed to a host context it did not
+        // bring.
+        family: "Signing identity store",
+        name: "INV_CountExact / INV_KeyWhileHeld / INV_KeyMatchesHolders / INV_OwnSigner / INV_AcceptSame: a DID's slot counts its holds exactly, a held DID always answers its key, no key outlives its holders unless pinned, no holder signs through a signer it did not bring, and a hold with the held host context is never refused",
+        axis: Tla,
+        anchor: "crates/defra-core/src/signing/identity_store.rs hold_identity, retain_identity, release_identity, store_identity, clear_identity_store, same_signer, IdentityHold; crates/defra-core/src/signing.rs RemoteSigner::host_context; crates/ffi/src/remote_signer/mod.rs FfiRemoteSigner::host_context; crates/ffi/src/remote_signer/register.rs store",
+        model_ref: "MC_IdentityStore_{Green,Red_SplitSwap,Red_DropCount,Red_ClearRemoves,Red_ClearDropsHeld,Red_RetainAbsent,Red_ReplaceOnHold,Red_PinReplacesHeld,Red_RefuseSameContext}.cfg",
+        tiers: &[Contract],
+        bound_by: "crates/defra-core/src/signing/identity_store_tests.rs the_last_hold_on_an_identity_removes_its_key, a_retained_identity_outlives_the_hold_it_was_taken_from, a_pinned_identity_survives_its_holds, a_clear_keeps_held_keys_and_their_count, a_held_did_refuses_another_signer, a_pin_replaces_only_an_unheld_signer, a_held_did_takes_a_signer_with_the_same_host_context; crates/ffi/src/remote_signer/registration_tests.rs a_second_registration_of_a_held_did_is_refused_until_the_first_is_freed, a_second_registration_with_the_same_context_shares_the_signer",
+    },
+    Property {
+        family: "Signing identity store",
+        name: "empty_keeps / hold_keeps / hold_keeps_signer / hold_accepts_same / hold_refuses_other / retain_keeps / retain_answers_key / release_keeps / pin_keeps / pin_keeps_held_signer / clear_keeps / held_has_key / free_has_no_key: every operation keeps the count exact and the key present exactly while pinned or held, a held DID's signer never changes, and a hold with its own signer is taken",
+        axis: Lean,
+        anchor: "crates/defra-core/src/signing/identity_store.rs Holders, same_signer, hold_identity, retain_identity, release_identity, store_identity, clear_identity_store",
+        model_ref: "IdentityStore (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // A peer key the caller hands in for one start (Go's P2PPrivateKey)
+        // is used as given: never checked against the store and never
+        // recorded in it, so a later start without it carries on with the
+        // store's own key.
+        family: "Peer key loading",
+        name: "INV_StartKeyStarts / INV_StartKeyLeavesNoMark / INV_PlainKeyStable: a start with a start key always starts, leaves no mark that refuses a later plain start, and never changes the key plain starts use",
+        axis: Tla,
+        anchor: "crates/defra-node/src/peer_key.rs load_with_keyring, load_or_create; crates/defra-node/src/start_peer_key.rs StartPeerKey; crates/defra-node/src/libp2p_runtime.rs assemble_libp2p; crates/defra-node/src/p2p_runtime.rs setup_iroh; crates/ffi/src/node/mod.rs build_node_state",
+        model_ref: "MC_PeerKeyLoad_{Green,Red_StartKeyChecked,Red_StartKeyRecorded}.cfg",
+        tiers: &[Contract],
+        bound_by: "crates/defra-node/tests/unit/peer_keyring.rs a_start_key_is_used_as_given_and_leaves_a_plain_store_as_it_was, a_start_key_starts_a_keyring_store_without_changing_it",
+    },
+    Property {
+        family: "Peer key loading",
+        name: "start_key_is_used / start_key_leaves_store / plain_after_start_key: a start key is answered as given, the store comes back unchanged, and a plain start after it loads what it would have without it",
+        axis: Lean,
+        anchor: "crates/defra-node/src/peer_key.rs load_with_keyring, load_or_create",
+        model_ref: "PeerKeyLoad (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // Calls a C caller makes on one explicit transaction run one at a
+        // time, in call order, even when a call returns before its work runs
+        // (the asynchronous query): each takes a ticket as it names the
+        // transaction, and a ticket dropped before its turn is skipped once.
+        family: "FFI transaction turns",
+        name: "INV_OneRunning / INV_NoOvertake / Progress: calls on a transaction run one at a time, none overtakes an earlier ticket (a commit never lands before work asked for first), and no call waits forever on a dropped ticket",
+        axis: Tla,
+        anchor: "crates/ffi/src/state/turns.rs Turns::take, Turns::finish, Ticket::wait, Ticket; crates/ffi/src/target.rs resolve_target, TxnCall; crates/ffi/src/request.rs Request::resolve; crates/ffi/src/query/exec.rs Prepared::run, run_in_turn, defra_query_execute_async; crates/ffi/src/txn/lifecycle.rs defra_transaction_commit, defra_transaction_discard",
+        model_ref: "MC_TxnTurns_{Green,Red_NoRecheck,Red_CancelSkipsNow}.cfg",
+        tiers: &[Contract],
+        bound_by: "crates/ffi/src/state/turns_tests.rs tickets_are_served_in_the_order_they_were_taken, a_ticket_dropped_before_its_turn_is_skipped, a_ticket_dropped_on_its_turn_serves_the_next, calls_from_several_threads_never_run_at_once; crates/ffi/src/call/tests.rs an_async_query_in_a_transaction_returns_before_it_runs, calls_on_a_transaction_run_in_the_order_they_were_made",
+    },
+    Property {
+        family: "FFI transaction turns",
+        name: "take_hands_out_next / take_moves_next / skip_passes_only_dropped: tickets come out distinct and in call order, and skipping passes only dropped tickets",
+        axis: Lean,
+        anchor: "crates/ffi/src/state/turns.rs Turns::take, Turns::finish",
+        model_ref: "TxnTurns (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // A vector index description's stored form is the normalized one:
+        // Go's defaults filled in, and an empty algorithm or metric read as
+        // the default. Normalizing is stable, so the stored form never drifts.
+        family: "Vector index defaults",
+        name: "normalize_idempotent / normalize_hnsw_fills / normalize_other_unchanged / empty_reads_default / nonempty_reads_itself: normalizing twice is normalizing once, an HNSW index is stored with every parameter set, any other index is untouched, and an empty string reads as the default",
+        axis: Lean,
+        anchor: "crates/schema/src/vector_index_defaults.rs VectorIndexDescription::normalized, empty_is_default",
+        model_ref: "VectorIndexDefaults (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // A document call through a selected collection version (possibly
+        // inactive) pins that version in the transaction's catalog for its
+        // turn: every name lookup sees it, writes are recorded at it, reads
+        // through it store nothing back, and the pin ends with the turn.
+        family: "Selected collection version",
+        name: "INV_PinScoped / INV_UnpinnedSeesActive / INV_ReadNoSideEffect / INV_WriteAtSelected: a pin never outlives its turn, an unpinned turn sees the active version, a read through an inactive version changes nothing, and a write lands at the selected version",
+        axis: Tla,
+        anchor: "crates/db/src/txn/catalog.rs Catalog::pin, Catalog::get; crates/db/src/txn/registry/owned.rs OwnedTxn TxnTurn::pin_collection; crates/query/src/runner/turn.rs run_turn_with_delegation, pin_selected_version; crates/db/src/collection/provider.rs TxnCollectionProvider::get_collection; crates/db/src/txn/mod.rs DbTxn::validate_collection_for_write; crates/db/src/read/lensed/fetcher/migration.rs update_datastore; crates/ffi/src/document/run.rs DocumentCall",
+        model_ref: "MC_VersionPin_{Green,Red_PinLeaks,Red_WriteBackOnPin}.cfg",
+        tiers: &[Contract],
+        bound_by: "crates/ffi/src/document/version_tests.rs a_document_added_through_an_old_version_is_recorded_at_it, a_get_answers_the_fields_of_the_version_it_reads_through, a_selected_version_does_not_outlive_its_call_in_a_transaction",
+    },
+    Property {
+        family: "Selected collection version",
+        name: "pinned_name_answers_pin / other_name_answers_cache / cleared_answers_cache: a pin answers only for its own name, and clearing it leaves the catalog answering exactly what the cache holds",
+        axis: Lean,
+        anchor: "crates/db/src/txn/catalog.rs Catalog::get, Catalog::pin, Catalog::unpin",
+        model_ref: "CatalogPin (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         // `default_pool()` answers the first registered pool that still runs,
         // else one pool started once for the process. Registration moves the
         // slot only off a pool that stopped, with one compare-and-swap; the
@@ -1580,7 +2337,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Deferred-ACP overlay consistency",
         name: "INV_FailClosedActive — txn-local ACP projection gates as committed state would",
         axis: Tla,
-        anchor: "crates/query/src/txn/context.rs; crates/db/src/write/autocommit/batch.rs",
+        anchor: "crates/query/src/txn/context.rs AcpRegistrationProjection::owed_creator, check_doc_access_with_projection, is_doc_registered_with_projection, is_creator; crates/db/src/txn/mod.rs DbTxn::acp_registration_projection; crates/acp/src/pending.rs PendingRegistrations::record, PendingRegistrations::get, PendingRegistrations::clear; crates/db/src/write/autocommit/helpers.rs register_created_doc, unregister_deleted_doc",
         model_ref: "MC_DeferredAcp_Green.cfg",
         tiers: &[Behavioral],
         bound_by: "proofs/tests/behavioral/deferred_acp.rs deferred_acp_txn_local_gating",
@@ -1682,6 +2439,15 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "proofs/tests/behavioral/index.rs index_no_stale_no_missing",
     },
     Property {
+        family: "Secondary index equal-key order",
+        name: "IndexEqualKeyOrder.exactMatch_ascending / exactMatch_creation_order / later_create_larger / docIdOrder_can_reverse_creation / inScan_scan_order_without_repeats / resolveUpTo_same_page: equal index keys come back in this node's short-ID order, which follows when each document was first stored on this node (created, or first received from a peer) rather than when its source created it, as Go returns them, paged without a reorder; an InScan lists each document once, at its first encounter; resolving only the page gives the page full resolution gives",
+        axis: Lean,
+        anchor: "crates/db/src/read/index_order.rs apply_exact_match_page, extend_unique, resolve_bound, resolve_in_order; crates/db/src/read/doc.rs get_by_index_scan; crates/db/src/read/lensed/fetcher/scan.rs get_by_index_scan_inner; crates/db/src/read/lensed/autocommit/scan.rs get_by_index_scan_inner; crates/db/src/docid/map.rs DocShortIdAllocator::next",
+        model_ref: "IndexEqualKeyOrder (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/db/tests/read/index_composite_in_order.rs partial_in_over_a_composite_index_keeps_secondary_field_order; tools/integration-test/tests/testo/encryption/peer_sec_index.rs doc_encryption_peer_if_encrypted_doc_has_indexed_field_should_index_after_decryption",
+    },
+    Property {
         // `index::index_reconciles_lww_merge_after_restart` drives a restart
         // partition where two replicas write different values for the same indexed
         // LWW field. Once the DAG converges, indexed filters must expose exactly
@@ -1693,6 +2459,18 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "MC_IndexReconciliation_Green.cfg",
         tiers: &[Behavioral],
         bound_by: "proofs/tests/behavioral/index.rs index_reconciles_lww_merge_after_restart",
+    },
+    Property {
+        // A text, JSON or custom field's merge writes its merged value into
+        // the document before the composite updates the index, so the
+        // update starts from a read taken before the field merges.
+        family: "Index-maintenance consistency",
+        name: "INV_IndexMatchesValue / INV_NoLostEdit — after a merge the index holds exactly the merged value, and every edit counts",
+        axis: Tla,
+        anchor: "crates/db/src/merge/merge_handler/composite_fields.rs process_linked_field_blocks; crates/db/src/merge/merge_handler/composite_persist.rs persist_merged_document; crates/db/src/merge/merge_handler/block_reads.rs BlockReads::wrote_field; crates/db/src/merge/merge_handler/parked.rs replay_in_txn",
+        model_ref: "MC_MergedFieldIndex_{Green,Green_Clear,Red_ReadAfterPart,Red_StaleCache}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // A node's shutdown aborts every task it holds and waits for each to
@@ -1711,6 +2489,33 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // A node dropped without shutdown aborts every task its shutdown set
+        // holds, the transaction sweep among them, without waiting for any,
+        // so its pool's threads and its store are released.
+        family: "Node shutdown order",
+        name: "LIVE_DroppedNodeReleasesPool / INV_DropNeverWaits / INV_ShutdownStopsEveryTask: a dropped node releases its pool and store, its drop waits for no task, a shutdown stops every task",
+        axis: Tla,
+        anchor: "crates/defra-node/src/assemble.rs assemble; crates/defra-node/src/background_tasks.rs BackgroundTasks; crates/db/src/txn/registry/cleanup.rs start_stale_transaction_cleanup; crates/workers/src/pool/background.rs Background",
+        model_ref: "MC_NodeDrop_{Green,Red_SweepOutsideSet,Red_NoAbortOnDrop,Red_DropAwaits}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/defra-node/tests/node_drop.rs a_dropped_http_node_releases_its_threads_and_descriptors",
+    },
+    Property {
+        // A node that runs its own Vera node stops it after the request
+        // drain, waits for it up to a deadline and closes its transports:
+        // a remembered decision outlives it by no more than the freshness of
+        // the state it was read at, and once it has ended its
+        // directory is free for the next node. A Vera node that hangs past
+        // the deadline keeps its directory.
+        family: "Node shutdown order",
+        name: "INV_NoDecisionPastFreshness / INV_AdmittedRequestsDecided / INV_StoppedNodeFreesDirectory / LIVE_ShutdownReturns / LIVE_NextStartReturns: once the embedded Vera node is gone a remembered access decision is repeated no longer than its state stays fresh and no new one is given, shutdown stops it under no admitted request but one the request drain gave up on, a node that shut down holds the directory of an ended Vera node no longer, shutdown returns, the next start over the directory starts or fails at its deadline",
+        axis: Tla,
+        anchor: "crates/defra-node/src/lib.rs Node::shutdown; crates/defra-node/src/embedded_vera.rs start; crates/cli/src/commands/start/run.rs Node::run; crates/cli/src/commands/start/server_acp_embedded.rs setup; crates/vera/src/vera_rs/provider.rs decision_state; crates/vera-embedded/src/host.rs HostedNode::start, HostedNode::stop; crates/vera-embedded/src/link.rs Link; crates/vera-embedded/src/call.rs call",
+        model_ref: "MC_EmbeddedVeraStop_{Green,Red_StaleDecision,Red_StopBeforeRequests,Red_NoStopDeadline,Red_LinkStaysOpen,Red_NoStartDeadline}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/vera-embedded/tests/hosted_node.rs once_the_node_stops_the_provider_verifies_no_new_decision; crates/vera-embedded/tests/stopped_node_decisions.rs a_remembered_decision_is_not_given_past_the_freshness_limit",
+    },
+    Property {
         // A signed query or transformed route keeps a request-scope permit
         // while its started worker writes, so P2P cannot stop first.
         family: "Node shutdown order",
@@ -1719,7 +2524,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/defra-node/src/signed_query/mod.rs execute_with_signing_context; crates/http/src/server.rs Server::router; crates/query/src/pooled/mod.rs PooledExecutor::execute_prepared; crates/workers/src/pool/detached.rs run_on; crates/defra-node/src/network.rs NodeEdge::drain_requests",
         model_ref: "MC_SignedRequestDrain_{Green,Red_TaskDeadline,Red_Transform}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/defra-node/src/signed_query/tests.rs a_signed_query_remains_admitted_past_the_edge_deadline; crates/http/tests/request_admission.rs a_route_added_by_router_transform_stays_admitted_until_it_ends",
+        bound_by: "crates/defra-node/src/signed_query/tests.rs a_signed_query_remains_admitted_past_the_edge_deadline; crates/defra-node/tests/unit/verified_create.rs signed_writes_are_refused_once_requests_have_drained; crates/http/tests/request_admission.rs a_route_added_by_router_transform_stays_admitted_until_it_ends",
     },
     Property {
         // A transaction guard follows its admitted commit task rather than a
@@ -1797,14 +2602,17 @@ pub const PROPERTIES: &[Property] = &[
         // A server's connections are tasks the drain waits for: a request in
         // flight when shutdown begins finishes and is answered, a connection
         // looks at closing only between requests, and the drain's deadline
-        // stops what is left.
+        // stops what is left. A subscription stream, which has no end of its
+        // own, ends with its complete event once closing began, so the
+        // deadline stops no stream; it may still stop a slow or stuck
+        // ordinary request.
         family: "Server drain",
-        name: "INV_NoDropBeforeDeadline / INV_NoNewWorkWhenClosing / LIVE_ServerReturns: a request in flight is only stopped at the drain's deadline, no request starts once closing began, the server returns",
+        name: "INV_NoDropBeforeDeadline / INV_NoNewWorkWhenClosing / INV_DeadlineStopsNoStream / LIVE_ServerReturns: a request in flight is only stopped at the drain's deadline, no request starts once closing began, the deadline stops no subscription stream, the server returns",
         axis: Tla,
-        anchor: "crates/net/src/server.rs serve, until_closing; crates/net/src/rt.rs Executor::execute; crates/pg-compat/src/lib.rs PgServer::run; crates/pg-compat/src/wire/process.rs serve; crates/edge/src/handle.rs Scope::drain",
-        model_ref: "MC_ServerDrain_{Green,Red_Service,Red_CheckInside,Red_NoCheck,Red_NoDeadline}.cfg",
+        anchor: "crates/net/src/server.rs serve, until_closing; crates/net/src/rt.rs Executor::execute; crates/pg-compat/src/lib.rs PgServer::run; crates/pg-compat/src/wire/process.rs serve; crates/edge/src/handle.rs Scope::drain; crates/http/src/handlers/closing.rs next_unless_closing; crates/http/src/handlers/graphql/query.rs graphql_sse; crates/http/src/handlers/events.rs events_sse",
+        model_ref: "MC_ServerDrain_{Green,Red_Service,Red_CheckInside,Red_NoCheck,Red_NoDeadline,Red_StreamIgnoresClosing}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/net/tests/server.rs a_closing_server_finishes_the_requests_in_flight_then_returns; crates/pg-compat/tests/wire.rs a_query_in_flight_when_the_edge_starts_closing_completes_and_the_connection_closes, an_idle_connection_closes_at_once_when_the_edge_starts_closing",
+        bound_by: "crates/net/tests/server.rs a_closing_server_finishes_the_requests_in_flight_then_returns; crates/pg-compat/tests/wire.rs a_query_in_flight_when_the_edge_starts_closing_completes_and_the_connection_closes, an_idle_connection_closes_at_once_when_the_edge_starts_closing; crates/http/tests/sse_ends_when_closing.rs a_graphql_subscription_ends_when_its_edge_closes, the_event_stream_ends_when_its_edge_closes; crates/defra-node/tests/subscription_shutdown.rs shutdown_ends_an_open_graphql_subscription_without_waiting_out_the_drain",
     },
     Property {
         // An update on a document's topic is applied only while the node
@@ -1862,6 +2670,24 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/p2p/src/sync/event_dispatcher.rs run_event_dispatcher, MAX_ACTIVE_REJECTIONS; crates/p2p/src/iroh/endpoint_rpc.rs CarFetchOutcome",
         model_ref: "MC_InboundAdmission_Green.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Inbound stream admission",
+        name: "INV_OnlyRegisteredServed / INV_ShareBound / INV_RoomIsTheRequest / INV_RevokedIsCut / INV_ShutdownLeavesNone / LIVE_HandlerEnds",
+        axis: Tla,
+        anchor: "crates/p2p/src/iroh/endpoint_streams.rs admit_stream, handle_connection_streams, serve_protocol_stream; crates/p2p/src/iroh/stream_protocols.rs StreamProtocols::get, ProtocolRequest::release, StreamHandler::handle; crates/p2p/src/iroh/endpoint_commands.rs handle_deny_peer; crates/p2p/src/iroh/task_registry.rs TaskRegistry::close",
+        model_ref: "MC_EmbedderStream_{Green,Red_AnyTag,Red_UntilReturn,Red_NoDeadline,Red_BarOnly,Red_NoAbort}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Inbound stream admission",
+        name: "register_all_valid / register_serves_each_as_given / reserved_tags_find_nothing / unregistered_tags_find_nothing / a_repeated_tag_is_refused",
+        axis: Lean,
+        anchor: "crates/p2p/src/iroh/stream_protocols.rs StreamProtocol::validate, StreamProtocols::new, StreamProtocols::get",
+        model_ref: "StreamProtocols (lake build)",
         tiers: &[Boundary],
         bound_by: "",
     },
@@ -1947,6 +2773,24 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        family: "Gossip connection ownership",
+        name: "broadcast_fits_frame / emitted_fits_frame / max_broadcast_fits / over_max_broadcast_dropped / sealed_raw_fits",
+        axis: Lean,
+        anchor: "crates/p2p/src/iroh/gossip/frame.rs MAX_MESSAGE_SIZE, TOPIC_ID_LEN, FRAME_LIMIT, BROADCAST_OVERHEAD, MAX_BROADCAST, max_broadcast; crates/p2p/src/iroh/gossip/driver.rs config; crates/p2p/src/iroh/gossip/raw_origin.rs HEADER_LEN, MAX_RAW_PAYLOAD; crates/p2p/src/iroh/transport.rs publish_raw",
+        model_ref: "GossipFrame.Budget (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/p2p/tests/iroh/direct_push.rs a_raw_publish_too_large_for_gossip_is_refused",
+    },
+    Property {
+        family: "Gossip connection ownership",
+        name: "INV_NoSilentLoss / INV_BroadcastFits",
+        axis: Tla,
+        anchor: "crates/p2p/src/iroh/gossip/mod.rs GossipHandle::publish; crates/p2p/src/iroh/gossip/driver.rs write_stream, write_queue; crates/p2p/src/iroh/endpoint_commands.rs handle_command; crates/p2p/src/iroh/direct_push.rs peers, push, push_one, FANOUT",
+        model_ref: "MC_GossipDelivery_Green.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         family: "Iroh service records",
         name: "INV_SeqNeverGoesBack / INV_NoExpiredChosen / LIVE_NewestReached",
         axis: Tla,
@@ -1994,6 +2838,33 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/p2p/src/two_stream/handler/car.rs read_stream; crates/p2p/src/two_stream/runner.rs TwoStreamRunner::new",
         model_ref: "MC_DepthCutFetch_Green.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Have-set DAG fetch",
+        name: "INV_MergeComplete / INV_NoForged / INV_HeldNotResent / INV_RoundsBounded / INV_Converges",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/car/region.rs collect_missing_region, Walk::mark_held, Walk::mark_wanted, Walk::serve_attachments; crates/p2p/src/sync/coordinator/haves.rs haves_from_heads; crates/p2p/src/sync/coordinator/dag_fetcher.rs fetch_dag_attempt, root_haves; crates/p2p/src/sync/coordinator/event_handler/car.rs drop_held_blocks",
+        model_ref: "MC_ExactDagFetch_{Green,Green_Liar,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Have-set DAG fetch",
+        name: "INV_OneMarkWriter / INV_HeldNeverContends / INV_Lands",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/coordinator/event_handler/car.rs drop_held_blocks; crates/p2p/src/sync/manager/process/mod.rs try_acquire_car_storage_owners; crates/storage/src/stores/blockstore.rs BlockWritesAttempt",
+        model_ref: "MC_HeldBlockIngest_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Have-set DAG fetch",
+        name: "wanted_served / served_held_is_asked / missing_is_served / receiver_complete / reach_lowers_priority / first_is_root / decode_encode",
+        axis: Lean,
+        anchor: "crates/p2p/src/sync/car/region.rs collect_missing_region; crates/p2p/src/two_stream/handler/car.rs encode_car_request, decode_car_request",
+        model_ref: "CarMissingRegion (lake build)",
         tiers: &[Boundary],
         bound_by: "",
     },
@@ -2057,6 +2928,21 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/db/src/index/drop.rs DB::drop_index, DropIndexAttempt, DropPage, DB::remove_dropped_entries, DB::resume_index_drops; crates/db/src/index/manager/mod.rs index_id_floor; crates/db/src/index/backfill.rs BackfillPage::index, DB::backfill_index, FailBackfillAttempt, DB::resume_index_backfills",
         model_ref: "MC_IndexDropBackfill_{Green,Red_KeepRecord,Red_BlindFail,Red_SameTxn,Red_Forget,Red_ReuseId}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // Closing the database while an index build waits at its build
+        // gate: the wait also ends on the close, so the pool, which waits
+        // for the build task, stops; the stopped build keeps its record in
+        // progress, as after a crash; the next open returns without waiting
+        // for it, and the node then resumes it as a task of its own, so the
+        // build finishes once the gate opens.
+        family: "Index build gate and close",
+        name: "INV_BuiltOnlyWhenIndexed / LIVE_CloseFinishes / LIVE_BuildFinishes",
+        axis: Tla,
+        anchor: "crates/db/src/index/backfill.rs DB::backfill_batches, DB::backfill_index, DB::start_resumed_index_backfills, DB::resume_index_backfills; crates/db/src/database/mod.rs DB::close, DB::closing, DB::finish_open; crates/defra-node/src/assemble.rs assemble; crates/db/src/index/build_gate.rs IndexBuildGate::enter",
+        model_ref: "MC_IndexBuildGateClose_{Green,Red_NoRace,Red_FailOnClose,Red_Forget,Red_OpenAwaits}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },
@@ -2142,16 +3028,34 @@ pub const PROPERTIES: &[Property] = &[
         family: "Add collection",
         name: "INV_NoCollectionUnlessAllChecksPass / INV_AllOrNone",
         axis: Tla,
-        anchor: "crates/db/src/collection/ops/add/mod.rs DB::add_collection, prepare_new_collections, check_policies, check_collection_patch; crates/db/src/txn/registry/schemas.rs add_collection_in_txn_as; crates/db/src/collection/ops/create.rs create_collections_atomic_inner",
+        anchor: "crates/db/src/collection/ops/add/mod.rs DB::add_collection, prepare_new_collections, check_policies, check_collection_patch; crates/db/src/txn/registry/schemas.rs add_collection_in_txn_as; crates/db/src/txn/registry/views.rs DbTransactionRegistry::add_view_in_txn; crates/db/src/collection/ops/create.rs create_collections_atomic_inner",
         model_ref: "MC_AddCollection_{Green,Red_*}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },
     Property {
-        family: "Collection truncate",
-        name: "INV_NoRemovalWithoutPermission / INV_FilteredNeverOnBranchable / INV_FilteredRemovesOnlyCommittedMatches / INV_BadFilterRemovesNothing / INV_UnfilteredRemovesAll",
+        family: "Index changes in a transaction",
+        name: "INV_WorkOnlyAfterCommit / INV_IsolatedUntilCommit / INV_SeesOwnChange / INV_BuiltWhenCommitReturns / INV_WorkSeesTxnWrites / INV_FailedChangeLeavesNothing",
         axis: Tla,
-        anchor: "crates/db/src/collection/ops/truncate/mod.rs DB::truncate_collection_as, DB::truncate_parsed_as, DB::truncate_target, conditions, DB::truncate; crates/db/src/collection/ops/truncate/all.rs DB::truncate_all; crates/db/src/collection/ops/truncate/filtered.rs DB::truncate_matching",
+        anchor: "crates/db/src/index/in_txn.rs DB::create_index_in, DB::drop_index_in; crates/db/src/txn/registry/indexes.rs DbTransactionRegistry::create_index_in_txn, DbTransactionRegistry::drop_index_in_txn, DbTransactionRegistry::indexes_in_txn; crates/db/src/txn/registry/mod.rs finish_statement; crates/defra-node/src/ops/index.rs Node::create_index_as, Node::delete_index_as, Node::list_indexes_as; crates/http/src/handlers/index/go_api.rs go_create_index, go_list_indexes, go_delete_index; crates/db/src/collection/encrypted_index.rs DB::add_encrypted_index_in, DB::delete_encrypted_index_in, DB::encrypted_indexes_in, DB::all_encrypted_indexes_in; crates/db/src/txn/registry/indexes.rs DbTransactionRegistry::add_encrypted_index_in_txn, DbTransactionRegistry::delete_encrypted_index_in_txn, DbTransactionRegistry::encrypted_indexes_in_txn, DbTransactionRegistry::all_encrypted_indexes_in_txn; crates/cli/src/encrypted_index_adapter.rs EncryptedIndexAdapter; crates/db/src/collection/ops/create.rs DB::stage_new_collections; crates/db/src/txn/registry/views.rs DbTransactionRegistry::add_view_in_txn, DbTransactionRegistry::refresh_views_in_txn",
+        model_ref: "MC_IndexInTxn_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Encrypted index changes outside a transaction",
+        name: "INV_NoLostIndex / INV_NoValidRefused",
+        axis: Tla,
+        anchor: "crates/db/src/collection/encrypted_index.rs DB::add_encrypted_index, DB::delete_encrypted_index, DB::rewrite_definition_in, definition_in; crates/db/src/txn/attempt.rs DB::transact_db; crates/defra-node/src/ops/encrypted_index.rs NodeOps::add_encrypted_index, NodeOps::delete_encrypted_index; crates/cli/src/encrypted_index_adapter.rs EncryptedIndexAdapter",
+        model_ref: "MC_EncryptedIndexAutocommit_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Collection truncate",
+        name: "INV_NoRemovalWithoutPermission / INV_NoRemovalFromChunks / INV_FilteredNeverOnBranchable / INV_FilteredRemovesOnlyCommittedMatches / INV_BadFilterRemovesNothing / INV_UnfilteredRemovesAll / INV_UnfilteredEmptiesView",
+        axis: Tla,
+        anchor: "crates/db/src/collection/ops/truncate/mod.rs DB::truncate_collection_as, DB::truncate_parsed_as, DB::truncate_target, conditions, DB::truncate; crates/db/src/collection/ops/truncate/all.rs DB::truncate_all, DB::truncate_metadata_in; crates/db/src/collection/ops/truncate/filtered.rs DB::truncate_matching; crates/db/src/chunk/user_writes.rs ensure_admin_changeable",
         model_ref: "MC_Truncate_{Green,Red_*}.cfg",
         tiers: &[Boundary],
         bound_by: "",
@@ -2178,10 +3082,10 @@ pub const PROPERTIES: &[Property] = &[
         family: "Node access control operations",
         name: "INV_NoStatusWithoutPermission / INV_NoDisableWithoutPermission / INV_NoReEnableWithoutStoredPermission / INV_NoGrantUnlessAllChecksPass / INV_NoChangeUnlessConfigured / INV_RestartKeepsStatus / INV_NoSilentNoOp / INV_GoOrder",
         axis: Tla,
-        anchor: "crates/db/src/access/nac_ops/mod.rs DB::nac_status_as, DB::disable_nac_as, DB::re_enable_nac_as, DB::add_nac_actor_relationship_as, DB::delete_nac_actor_relationship_as, DB::change_nac_relationship; crates/db/src/nac/toggle.rs NacManager::decide_toggle, NacManager::require; crates/db/src/nac/write.rs NacManager::decide_relationship; crates/db/src/nac/mod.rs NacManager::initialize",
+        anchor: "crates/db/src/access/nac_ops/mod.rs DB::nac_status_as, DB::disable_nac_as, DB::re_enable_nac_as, DB::add_nac_actor_relationship_as, DB::delete_nac_actor_relationship_as, DB::change_nac_relationship; crates/db/src/nac/toggle.rs NacManager::decide_toggle, NacManager::require; crates/db/src/nac/write.rs NacManager::decide_relationship; crates/db/src/nac/mod.rs NacManager::initialize; crates/acp/src/nac/node_acp/operations.rs NodeACP::authorize_change",
         model_ref: "MC_NodeAcpOps_{Green,Red_*}.cfg",
         tiers: &[Boundary],
-        bound_by: "",
+        bound_by: "tools/integration-test/tests/legacy/nac/core_operations.rs nac_core_operations_gate_test; crates/db/tests/nac/tests.rs test_nac_manager_disable_reenable, test_nac_manager_permission_check",
     },
     Property {
         family: "Node access control operations",
@@ -2203,10 +3107,61 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Node access control operations",
-        name: "disable_turns_off / re_enable_turns_on / re_enable_undoes_disable / toggles_keep_grants / writes_only_when_allowed / writes_only_when_configured / disable_writes_only_from_on / re_enable_writes_only_from_off / re_enable_checks_the_caller_first / rerun_after_a_win_hears_already",
+        name: "disable_turns_off / re_enable_turns_on / re_enable_undoes_disable / toggles_keep_grants / writes_only_when_allowed / writes_only_when_configured / disable_writes_only_from_on / re_enable_writes_only_from_off / re_enable_checks_the_caller_first / rerun_after_a_win_hears_already / enable_writes_only_when_not_configured / enable_refuses_a_disabled_nac / enable_leaves_a_disabled_store / startup_keeps_a_disabled_nac_off",
         axis: Lean,
-        anchor: "crates/acp/src/nac/node_acp/mod.rs NodeACP::load; crates/acp/src/nac/node_acp/lifecycle.rs NodeACP::disable, NodeACP::re_enable; crates/db/src/nac/toggle.rs NacManager::decide_toggle",
+        anchor: "crates/acp/src/nac/node_acp/mod.rs NodeACP::load; crates/acp/src/nac/node_acp/lifecycle.rs NodeACP::disable, NodeACP::re_enable, NodeACP::enable; crates/db/src/nac/toggle.rs NacManager::decide_toggle; crates/db/src/nac/mod.rs NacManager::initialize",
         model_ref: "NacToggle (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // A document write or a truncate checks `get-collection` and then
+        // its own permission, in Go's order, inside its transaction, and a
+        // call that names no identity acts as no one, never as the node.
+        // Over HTTP the edge checks first, in the same order, from a
+        // snapshot of the grants swapped in before any NAC write returns.
+        family: "Node access control operations",
+        name: "INV_NoEffectWithoutPermission / INV_RefusalNamesGoFirst / INV_EdgeSeesReturnedRevoke",
+        axis: Tla,
+        anchor: "crates/acp/src/nac/permission.rs NodePermission::go_order; crates/db/src/access/nac.rs check_node_access_as, check_node_access_in_txn; crates/db/src/write/autocommit/batch.rs check_attempt_node_access; crates/db/src/txn/registry/indexes.rs check_access_in; crates/query/src/runner/turn.rs lent, lent_node_permission; crates/defra-node/src/ops/request.rs caller, txn_owner; crates/http/src/auth_middleware.rs auth_middleware; crates/http/src/route_permissions.rs reads_collection_first, route_permission; crates/http/src/nac_guard.rs require_permissions; crates/http/src/nac_adapter.rs NacAdapter::check_permissions; crates/db/src/nac/mod.rs NacManager::check_permissions; crates/db/src/nac/edge.rs refresh_edge, refresh_edge_on_commit, refresh_guard, RefreshGuard, reload_after_commit, EdgeGrants::publish, EdgeSnapshot::check, check_all, decide; crates/acp/src/nac/node_acp/snapshot.rs copy_into; crates/db/src/nac/write.rs in_write; crates/db/src/nac/mod.rs initialize, enable, purge; crates/defra-node/src/node_builder.rs NodeBuilder::build",
+        model_ref: "MC_NacOrder_{Green,Red_SkipGet,Red_OwnFirst,Red_AnonAsNode,Red_OutsideTxn,Red_EdgeOwnOnly,Red_StaleEdge,Red_NoWithdraw}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/cli/src/nac_adapter_tests.rs a_returned_revocation_refuses_the_next_edge_check, the_snapshot_decides_every_permission_as_the_engine_does; crates/db/tests/nac/dropped_write.rs a_revoke_dropped_after_its_commit_still_checks_the_edge",
+    },
+    Property {
+        // A database transaction that commits a NAC tuple write (through a
+        // projector or a source grant) rebuilds the edge snapshot at commit;
+        // one that writes none registers nothing and rebuilds nothing. A
+        // savepoint rolled back drops the registrations made after it.
+        family: "Node access control operations",
+        name: "INV_RebuiltAfterNacWrite / INV_NoRebuildWithoutNacWrite",
+        axis: Tla,
+        anchor: "crates/acp/src/zanzibar/store/transaction.rs written; crates/datastore/src/multistore.rs node_access_written, NodeAccessWrites; crates/db/src/nac/edge.rs EdgeRefreshOwed, refresh_edge_on_commit; crates/db/src/database/mod.rs new_db_txn; crates/storage/src/corekv/callbacks.rs TxnCallbacks::mark, TxnCallbacks::truncate",
+        model_ref: "MC_NacEdgeRefreshOnWrite_{Green,Red_EveryWrite,Red_KeepOnRollback}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/acp/tests/node_access_writes.rs only_node_policy_writes_owe_the_edge_refresh; crates/defra-node/tests/unit/document_projector.rs raw_document_mutations_stage_sources_in_the_same_transaction",
+    },
+    Property {
+        family: "Node access control operations",
+        name: "goOrder_collection_write / goOrder_alone / firstMissing_none_iff / firstMissing_some / allowed_needs_both / refused_get_collection_first / no_bypass_when_off / no_bypass_anonymous / no_bypass_when_denied / bypass_iff_held",
+        axis: Lean,
+        anchor: "crates/acp/src/nac/permission.rs NodePermission::go_order; crates/db/src/access/nac.rs check_node_access_as, check_node_access_in_txn; crates/query/src/runner/turn.rs lent, lent_node_permission; crates/db/src/read/lensed/fetcher/mod.rs dac_bypass; crates/defra-core/src/request_context.rs RequestContext::with_dac_bypass_denied; crates/p2p-adapter/src/libp2p.rs P2PAdapter::check_nac; crates/p2p-adapter/src/iroh.rs IrohP2PAdapter::check_nac",
+        model_ref: "NacOrder (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // A read whose bypass the engine resolves bypasses document access
+        // control exactly when node access control is on and grants the
+        // caller `bypass-dac`, decided at the read's own snapshot, and its
+        // caller did not deny it the bypass. A bypass the caller set on the
+        // request (`RequestContext::with_dac_bypass`) is honoured as set,
+        // without the engine consulting node access control.
+        family: "Node access control operations",
+        name: "INV_BypassOnlyWhenGranted / INV_BypassWhenGranted / INV_DeniedNeverBypasses",
+        axis: Tla,
+        anchor: "crates/query/src/runner/turn.rs lent; crates/db/src/read/lensed/fetcher/mod.rs dac_bypass; crates/db/src/collection/acp.rs check_doc_permission_as; crates/defra-core/src/request_context.rs RequestContext::with_dac_bypass_denied, RequestContext::with_dac_bypass",
+        model_ref: "MC_NacDacBypass_{Green,Red_NacOff,Red_Never,Red_Live,Red_IgnoreDenial}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },
@@ -2253,37 +3208,37 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Text chunking",
-        name: "covers / bounded / deterministic / units_edit / local_edit / heading_keeps_text / unit_break_reads_only_headings / long_unit_fences",
+        name: "covers / bounded / pickPre_capped / deterministic / units_edit / local_edit / heading_keeps_text / unit_break_reads_only_headings / long_unit_fences",
         axis: Lean,
-        anchor: "crates/chunk-split/src/split/mod.rs split; segments.rs units, fence_before, segments; atoms.rs atoms; pack.rs pack; overlap.rs with_overlap",
+        anchor: "crates/chunk-split/src/split/mod.rs split, split_v1; version.rs SplitterVersion; segments.rs units, fence_before, segments; atoms.rs atoms, sentence_ends; pack.rs pack; overlap.rs with_overlap, borrow, REPEAT_SHARE",
         model_ref: "ChunkSplit (lake build)",
         tiers: &[Boundary],
         bound_by: "",
     },
     Property {
         family: "Text chunking",
-        name: "no_chunks_keeps_its_identity / different_settings_different_identity / field_order_does_not_change_identity / peer_holds_the_same_settings_as_the_author / buggy_identity_ignores_settings",
+        name: "no_chunks_keeps_its_identity / different_settings_different_identity / field_order_does_not_change_identity / peer_holds_the_same_settings_as_the_author / buggy_identity_ignores_settings / decode_encode / default_splitter_keeps_the_old_bytes / old_bytes_read_as_the_default / encode_injective / splitter_reaches_the_identity",
         axis: Lean,
-        anchor: "crates/schema/src/cid.rs build_collection_delta; crates/query/src/sdl_parse/chunk.rs synthesize_chunk_types; crates/db/src/merge/merge_handler/definition.rs process_collection_definition_delta",
+        anchor: "crates/schema/src/cid.rs build_collection_delta; crates/query/src/sdl_parse/chunk.rs synthesize_chunk_types; crates/db/src/merge/merge_handler/definition.rs process_collection_definition_delta; crates/defra-core/src/block_delta.rs ChunkedFieldDelta, DEFAULT_SPLITTER_VERSION, is_default_splitter_version; crates/defra-core/src/ipld/to_ipld.rs; crates/defra-core/src/ipld/from_ipld.rs",
         model_ref: "ChunkSplit (lake build)",
         tiers: &[Boundary],
         bound_by: "",
     },
     Property {
         family: "Text chunking",
-        name: "INV_ReadsMatchText / INV_SettledPeersAgree / INV_NoForgedChunk / INV_ChunksNeverChange",
+        name: "INV_ReadsMatchText / INV_SettledPeersAgree / INV_NoForgedChunk / INV_ChunksNeverChange / INV_ListedChunksStay / INV_DeletesNotLost",
         axis: Tla,
-        anchor: "crates/query/src/plan/chunk_parent.rs parent_hashes; crates/chunk-split/src/list.rs describes; crates/db/src/chunk/guard.rs check_chunk_merge",
-        model_ref: "MC_ChunkMerge_Green.cfg / MC_ChunkMerge_Red_TrustList.cfg / MC_ChunkMerge_Red_NoHashCheck.cfg / MC_ChunkMerge_Red_MutableChunk.cfg",
+        anchor: "crates/query/src/plan/chunk_parent.rs parent_hashes; crates/chunk-split/src/list.rs chunk_list; crates/crdt/src/field/lww.rs merge; crates/db/src/chunk/guard.rs check_chunk_merge; crates/db/src/chunk/peer_delete.rs delete_must_wait; crates/db/src/merge/merge_handler/composite_persist.rs; crates/db/src/merge/merge_handler/doc_identity.rs resolve_composite_doc_id_in_txn; crates/db/src/merge/merge_handler/composite.rs process_composite_delta_locked",
+        model_ref: "MC_ChunkMerge_Green.cfg / MC_ChunkMerge_Green_Delete.cfg / MC_ChunkMerge_Red_TrustList.cfg / MC_ChunkMerge_Red_NoHashCheck.cfg / MC_ChunkMerge_Red_MutableChunk.cfg / MC_ChunkMerge_Red_NoDeleteGuard.cfg / MC_ChunkMerge_Red_ListedDeleteOnly.cfg / MC_ChunkMerge_Red_RefuseDelete.cfg / MC_ChunkMerge_Red_UnstoredDelete.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },
     Property {
         family: "Text chunking",
-        name: "INV_ShownIsLiveAndReadable / INV_ShownIsTheText / INV_ServedIsReadable",
+        name: "INV_ShownIsLiveAndReadable / INV_ShownIsTheText / INV_ShownPassesOwnApp / INV_ServedIsReadable",
         axis: Tla,
-        anchor: "crates/query/src/plan/chunk_parent.rs parent_hashes, verified_hash; crates/query/src/plan/chunk_gate.rs ChunkGate::allows, ChunkGate::decide; crates/db/src/chunk/access.rs history_parents, read_owners; crates/p2p-adapter/src/read_gate.rs DbBlockReadGate::may_read, DbBlockClassifier::classify; crates/db/src/block/verify.rs load_authorized_block_signature",
-        model_ref: "MC_ChunkRead_Green.cfg / MC_ChunkRead_Red_NoDeletedCheck.cfg / MC_ChunkRead_Red_NoHashCheck.cfg / MC_ChunkRead_Red_SharedMemo.cfg / MC_ChunkRead_Red_NoMergedCheck.cfg / MC_ChunkRead_Red_NoGrantCheck.cfg / MC_ChunkRead_Red_NoListCheck.cfg",
+        anchor: "crates/query/src/plan/chunk_parent.rs parent_hashes, verified_hash; crates/query/src/plan/chunk_gate.rs ChunkGate::allows, ChunkGate::decide; crates/query/src/plan/permission_filter.rs permission_check; crates/db/src/chunk/access.rs history_parents, read_owners, parent_collection; crates/query/src/runner/chunk_access.rs chunk_readable, ChunkReads; crates/query/src/planner/builder/mod.rs maybe_wrap_with_acp_filter; crates/p2p-adapter/src/read_gate.rs DbBlockReadGate::may_read, DbBlockClassifier::classify; crates/db/src/block/verify.rs load_authorized_block_signature; crates/http/src/handlers/events.rs can_observe_document_event",
+        model_ref: "MC_ChunkRead_Green.cfg / MC_ChunkRead_Red_NoDeletedCheck.cfg / MC_ChunkRead_Red_NoHashCheck.cfg / MC_ChunkRead_Red_SharedMemo.cfg / MC_ChunkRead_Red_NoMergedCheck.cfg / MC_ChunkRead_Red_NoGrantCheck.cfg / MC_ChunkRead_Red_NoListCheck.cfg / MC_ChunkRead_Red_NoResolveCheck.cfg / MC_ChunkRead_Red_TrustList.cfg / MC_ChunkRead_Red_NoOwnAppCheck.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },
@@ -2313,6 +3268,19 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "MC_ChunkMarkerHandoff_Green.cfg / MC_ChunkMarkerHandoff_Red_RequestOwned.cfg",
         tiers: &[Boundary],
         bound_by: "crates/db/tests/merge/broadcast_marker_handoff.rs a_create_registers_every_chunk_after_its_caller_stops_waiting, a_batch_registers_every_chunk_after_its_caller_stops_waiting",
+    },
+    Property {
+        // A peer's definition blocks arrive in any order and may be forged.
+        // A first version follows the SDL's rules, a patch keeps its previous
+        // version's settings, and activation refuses settings other than the
+        // first version's, even for a record stored before the merge checked.
+        family: "Text chunking",
+        name: "FirstValid / MergedMatchFirst / ActiveMatchesFirst / MergedKeepName / ActiveKeepsName: a synced version's @chunk settings are ones a schema could declare, and every merged or active version keeps its collection's first version's settings and name",
+        axis: Tla,
+        anchor: "crates/db/src/merge/merge_handler/definition.rs process_collection_definition_delta; crates/db/src/merge/merge_handler/definition_chunks.rs chunk_settings_error, chunk_parent_error; crates/schema/src/chunk_rules.rs chunk_settings_errors, chunk_settings_change, ensure_chunk_settings_kept; crates/db/src/chunk/user_writes.rs ensure_keeps_first_chunk_settings; crates/db/src/collection/ops/version.rs set_active_collection_version_as; crates/db/src/txn/registry/collections.rs set_collection_active_in_txn_as",
+        model_ref: "MC_ChunkSettingsSync_{Green,Green_Legacy}.cfg (GREEN) / MC_ChunkSettingsSync_{Red_NoFirstCheck,Red_NoMergeGuard,Red_NoActivateGuard,Red_NoNameCheck}.cfg (RED)",
+        tiers: &[Contract],
+        bound_by: "crates/db/tests/merge/chunk_definition_guard.rs a_patch_that_changes_max_chars_is_rejected, a_first_version_with_max_chars_below_the_minimum_is_rejected, an_honest_patch_that_keeps_the_chunk_settings_is_accepted, activating_a_version_with_other_chunk_settings_is_refused, a_patch_that_changes_the_splitter_version_is_rejected, activating_a_version_with_another_splitter_version_is_refused, a_patch_that_renames_the_parent_is_rejected, activating_a_renamed_version_is_refused; crates/schema/tests/chunk_validation_tests.rs renaming_the_parent_is_refused, renaming_the_chunk_collection_is_refused",
     },
     Property {
         // One task serves a pg-compat connection: one deadline read at the
@@ -2354,6 +3322,42 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "MC_ConnectFallback_{Green,Green_NoTimeout,Green_Single,Red_NoDelay,Red_WaitAfterFailure,Red_FirstErrorWins,Red_KeepFirstError,Red_KeepLoser,Red_TimeoutMissesRace,Red_TimeoutMissesRaceHangs}.cfg",
         tiers: &[Boundary],
         bound_by: "crates/net/tests/connect.rs the_other_family_connects_when_the_first_is_silent_past_the_delay, the_other_family_is_tried_when_the_first_refuses, when_both_families_refuse_the_last_refusal_comes_back",
+    },
+    Property {
+        family: "Pubsub RPC reply addressing",
+        name: "INV_NoAnswerLost / INV_AllAnswered / LIVE_Done / LIVE_AllArrive: a peer answers a request on its publisher's reply topic, even when a relay handed it the request, so no answer is lost and the asker's wait ends with every answer, or at its deadline while some answer is still missing or on its way",
+        axis: Tla,
+        anchor: "crates/p2p/src/host/p2p_host/protocols.rs handle_gossipsub_event; crates/p2p/src/sync/coordinator/event_handler/pubsub_raw.rs handle_gossip_raw_message; crates/p2p/src/pubsub_rpc/topic_handler.rs TopicHandler::deliver_gossip_message; crates/p2p/src/sync/coordinator/pubsub_client.rs pubsub_sync_branchable_collection; crates/p2p/src/iroh/gossip/delivery.rs raw_publisher",
+        model_ref: "MC_PubsubRpcReply_{Green,Red_AnswerRelay,Red_DeadlineCutsOff}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/p2p/src/sync/coordinator/event_handler/mod.rs relayed_pubsub_rpc_request_is_answered_on_its_publishers_topic, relayed_kms_request_reaches_the_handler_as_its_publisher; crates/p2p/tests/pubsub_rpc_relayed_request.rs a_relayed_request_names_its_publisher; crates/p2p/tests/iroh/relayed_raw_request.rs a_relayed_raw_request_names_its_publisher; crates/p2p/src/iroh/gossip/delivery.rs a_sealed_raw_message_names_its_publisher_not_the_relay",
+    },
+    Property {
+        family: "Pubsub RPC reply addressing",
+        name: "open_seal / open_seal_never_unsigned / open_unsigned / open_refuses_short: an iroh raw payload sealed by its publisher opens to that publisher, is never taken for an unsealed one, and an unsealed one passes through untouched",
+        axis: Lean,
+        anchor: "crates/p2p/src/iroh/gossip/raw_origin.rs seal, open; crates/p2p/src/iroh/gossip/delivery.rs raw_publisher",
+        model_ref: "GossipFrame (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/p2p/tests/iroh/gossip_raw_origin.rs sealed_payload_opens_to_its_origin, a_truncated_seal_is_refused_not_passed_through, an_unsealed_cbor_payload_passes_through",
+    },
+    Property {
+        family: "ActivePeers listen addresses",
+        name: "INV_ListenAddress / INV_NotHeldByLater / LIVE_Answered: ActivePeers never lists a peer that was waiting at the call at its source port while its Identify may still come, a peer that dials in after the call never holds it, and every call is answered",
+        axis: Tla,
+        anchor: "crates/p2p/src/host/command_handler/network.rs handle_peer_addresses, on_identify_settled, answer_peer_addresses; crates/p2p/src/host/p2p_host/swarm.rs handle_swarm_event, handle_connection_closed; crates/p2p/src/host/p2p_host/protocols.rs handle_identify_event",
+        model_ref: "MC_ActivePeersIdentify_{Green,Red_AnswerAtOnce,Red_WaitOnLater}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/p2p/src/host/active_peers_tests.rs active_peers_lists_a_dialer_at_its_listen_address_before_its_identify, active_peers_is_not_held_by_a_peer_that_dials_in_after_the_call",
+    },
+    Property {
+        family: "Gossip announcement audience",
+        name: "INV_GoAudience / LIVE_Announced: a write committed with no peer subscribed is announced at once and never published again, so it reaches only peers subscribed at its commit, as Go's SendUpdate; every write is announced",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/coordinator/broadcast.rs broadcast_local_update_with_creator; crates/p2p/src/sync/peer_state/tracker/operations.rs has_subscriber; crates/p2p/src/sync/broadcast_coalescer.rs BroadcastCoalescer::run; crates/db/src/merge/broadcast_mutator/broadcast.rs broadcast_with_creator",
+        model_ref: "MC_AnnounceAudience_{Green,Red_HoldWhenAlone,Red_AloneMeansDisconnected,Red_RetryWhileConnected}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/p2p/src/sync/coordinator/broadcast_pool_tests.rs a_write_with_no_peer_connected_is_not_held_for_a_peer_that_joins, a_write_with_no_peer_subscribed_is_not_held_for_a_peer_that_subscribes; crates/db/tests/merge/broadcast_mutator_broadcast.rs a_write_that_finds_no_subscriber_is_not_published_again",
     },
     Property {
         // The first shutdown caller to swap the flag builds the one drain,
@@ -2563,6 +3567,19 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "CursorToken (lake build)",
         tiers: &[Boundary],
         bound_by: "",
+    },
+    Property {
+        // A write's own enableSigning picks the flag its key is resolved
+        // with, once, at the edge, before the write runs; no conformance
+        // binary test reaches the choice of key. Boundary, bound by the unit
+        // tests on each edge and the testo scenario.
+        family: "Per-operation signing choice",
+        name: "false_never_signs / true_signs_with_the_picked_key / true_signs_when_there_is_a_key / absent_follows_the_node / old_left_true_unsigned",
+        axis: Lean,
+        anchor: "crates/defra-core/src/request_context.rs RequestContext::signing; crates/defra-core/src/signing.rs resolve_signing_config_with_flag; crates/http/src/query_context.rs request_context; crates/ffi/src/document/run.rs DocumentCall::begin; crates/defra-node/src/lib.rs execute_prepared_request",
+        model_ref: "SigningOverride (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/defra-core/src/request_context.rs signing_override_false_hides_the_key_and_others_keep_it; crates/http/src/query_context.rs enable_signing_overrides_the_node_either_way; crates/ffi/src/document/signing_tests.rs opting_out_of_a_save_many_leaves_the_blocks_unsigned_on_a_signing_node; tools/integration-test/tests/testo/signature/per_op_signing.rs signature_with_per_op_signing_enabled_on_a_node_not_signing_signs_every_commit",
     },
     Property {
         // #2724: add_view accepts a transform CID only if it is non-empty and

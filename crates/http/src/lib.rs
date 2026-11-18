@@ -91,6 +91,20 @@ pub mod auth_error;
 #[cfg(feature = "server")]
 pub mod auth_middleware;
 #[cfg(feature = "server")]
+pub mod client_signed_create;
+pub mod client_signed_delete;
+pub mod client_signed_update;
+#[cfg(feature = "server")]
+mod client_signer;
+#[cfg(all(test, feature = "server"))]
+#[path = "../tests/unit/client_signer.rs"]
+mod client_signer_tests;
+#[cfg(feature = "server")]
+mod client_signing;
+mod client_signing_wire;
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+pub mod collection_mgmt_adapter;
+#[cfg(feature = "server")]
 pub mod error;
 #[cfg(feature = "server")]
 pub mod go_paths;
@@ -100,6 +114,9 @@ pub mod handlers;
 pub mod identity_extractor;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 pub mod index_adapter;
+/// The node's NAC manager, as the HTTP API's [`router::NodeAcpOperations`].
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+pub mod nac_adapter;
 #[cfg(feature = "server")]
 pub mod nac_guard;
 #[cfg(feature = "server")]
@@ -131,7 +148,7 @@ pub use router::{
 };
 pub use router::{
     BackupOperations, BlockOperations, DocumentAcpOperations, IndexFieldInfo, IndexInfo,
-    IndexOperations, NacStatus, NodeAcpOperations, NodePermission, ViewOperations,
+    IndexOperations, NacStatus, NodeAcpOperations, NodePermission, PermissionCheck, ViewOperations,
 };
 #[cfg(feature = "server")]
 pub use server::{RouterTransform, Server, ServerConfig, DEFAULT_MAX_BACKUP_SIZE};

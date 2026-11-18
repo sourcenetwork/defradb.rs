@@ -127,6 +127,10 @@ impl<S: Store> crate::database::DB<S> {
                         "document short ID {doc_short_id} has no canonical DocID"
                     ))
                 })?;
+            datastore
+                .project_document(collection.name(), &doc_id)
+                .await
+                .map_err(Error::Storage)?;
             crate::block::cleanup::delete_owned_dag(
                 &blockstore,
                 &systemstore,
@@ -165,6 +169,7 @@ impl<S: Store> crate::database::DB<S> {
         collection_id: &str,
         short_id: u32,
     ) -> Result<()> {
+        use storage::keys::datastore::ViewCacheKey;
         use storage::keys::{HeadstoreColPublishedKey, HeadstoreColSetKey, IndexDataStoreKey};
 
         let datastore = txn.datastore()?;
@@ -173,6 +178,8 @@ impl<S: Store> crate::database::DB<S> {
         let systemstore = txn.systemstore()?;
 
         delete_prefix(&datastore, IndexDataStoreKey::collection_prefix(short_id)).await?;
+        // A materialized view's rows live in its cache, not as documents.
+        delete_prefix(&datastore, ViewCacheKey::collection_prefix(short_id)).await?;
 
         // Collect block CIDs from the collection's heads, then delete them
         // with the guards that record their publication.

@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc d5898d3047e071a4583524cf62fe27e4ab79a0c3e4c7632d705bff21b8f7ac0d # shrinks to text = "a xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx. \n\n# a", config = ChunkConfig { max_chars: 79, overlap: 1 }
+cc decc30f592c4c714684d8baa70e2aff154a8de7351a2d323b7b4062fcb6d73e1 # shrinks to text = "a aa... Aaaaaa\naaaa aaaaa aa... aaaaaaaa xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx a.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx. ", config = ChunkConfig { max_chars: 104, overlap: 2 }
+cc b74072f872e2648dec4cca22c239b8282e5dc85469a9d603c67fbea762653401 # shrinks to text = "aaaaAaaaaaa\naaaaaaaAaxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx Aaaa  🇯🇵 a 👍🏽. a. ", config = ChunkConfig { max_chars: 3, overlap: 0 }

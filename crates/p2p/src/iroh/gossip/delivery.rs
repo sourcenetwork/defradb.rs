@@ -65,11 +65,29 @@ impl Delivery {
         let sender_peer_id = endpoint_id_to_peer_id(&msg.delivered_from);
         let message_id = MessageId::new(uuid::Uuid::new_v4().to_string());
         if self.raw_topics.contains_key(topic) {
+            let (publisher, data) = match raw_publisher(
+                topic,
+                &msg.content,
+                &msg.delivered_from,
+                msg.scope.is_direct(),
+            ) {
+                Ok(opened) => opened,
+                Err(error) => {
+                    warn!(
+                        peer_id = %sender_peer_id,
+                        topic,
+                        error = %error,
+                        "Dropping Iroh raw gossip with unauthenticated publisher"
+                    );
+                    return Ok(());
+                }
+            };
             let event = TransportEvent::GossipRawMessage {
+                source: endpoint_id_to_peer_id(&publisher),
                 propagation_source: sender_peer_id,
                 message_id,
                 topic: topic.to_string(),
-                data: msg.content.to_vec(),
+                data,
             };
             return self.event_tx.send(event).await.map_err(|_| Closed);
         }
@@ -163,6 +181,28 @@ fn record_decode_failure(
             error = %error,
             "Failed to decode Iroh gossip message"
         );
+    }
+}
+
+/// The publisher of a raw-topic message, and its payload.
+///
+/// `delivered_from` names only the last hop, so a raw message is answered and
+/// authorized as the endpoint that sealed it (`raw_origin`). During a rolling
+/// upgrade an unsealed payload is accepted only when iroh proves it came
+/// straight from its publisher; a relayed unsealed one has no publisher to
+/// answer and is refused.
+fn raw_publisher(
+    topic: &str,
+    content: &[u8],
+    delivered_from: &iroh::EndpointId,
+    is_direct: bool,
+) -> crate::error::Result<(iroh::EndpointId, Vec<u8>)> {
+    match super::raw_origin::open(topic, content)? {
+        super::raw_origin::Opened::Signed { origin, payload } => Ok((origin, payload.to_vec())),
+        super::raw_origin::Opened::Unsigned(payload) if is_direct => {
+            Ok((*delivered_from, payload.to_vec()))
+        }
+        super::raw_origin::Opened::Unsigned(_) => Err(crate::error::Error::MissingSignature),
     }
 }
 
@@ -293,6 +333,27 @@ mod tests {
         relayed_message.source_peer_id = Some("forged".to_string());
         assert!(matches!(
             authenticate_pushlog_origin(&mut relayed_message, &relay, false),
+            Err(crate::error::Error::MissingSignature)
+        ));
+    }
+    #[test]
+    fn a_sealed_raw_message_names_its_publisher_not_the_relay() {
+        let asker = iroh::SecretKey::generate();
+        let relay = iroh::SecretKey::generate().public();
+        let sealed = super::super::raw_origin::seal(&asker, "encryption", b"request").unwrap();
+        let (publisher, data) = raw_publisher("encryption", &sealed, &relay, false).unwrap();
+        assert_eq!(publisher, asker.public());
+        assert_eq!(data, b"request");
+    }
+
+    #[test]
+    fn an_unsealed_raw_message_is_accepted_only_from_its_direct_sender() {
+        let direct = iroh::SecretKey::generate().public();
+        let (publisher, data) = raw_publisher("encryption", b"request", &direct, true).unwrap();
+        assert_eq!(publisher, direct);
+        assert_eq!(data, b"request");
+        assert!(matches!(
+            raw_publisher("encryption", b"request", &direct, false),
             Err(crate::error::Error::MissingSignature)
         ));
     }

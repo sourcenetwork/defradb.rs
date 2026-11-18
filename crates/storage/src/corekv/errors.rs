@@ -66,6 +66,12 @@ impl std::fmt::Display for TransactionConflict {
 #[derive(Error, Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum Error {
+    /// A projection's actual actor cannot administer its required source edge.
+    #[error(
+        "source projection requires an authorized actor; use an explicit owner-authorized repair"
+    )]
+    ProjectionPermissionDenied,
+
     /// Key was not found in the store.
     ///
     /// This is a normal condition and not necessarily an error in many cases.

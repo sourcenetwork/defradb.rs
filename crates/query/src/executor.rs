@@ -28,6 +28,19 @@ pub type ResponseCallback = Box<dyn Respond>;
 pub const TXN_CONFLICT_ERROR_CODE: &str = "TXN_CONFLICT";
 pub const TXN_RETRY_EXHAUSTED_ERROR_CODE: &str = "TXN_RETRY_EXHAUSTED";
 
+/// An explicit authorization refusal, distinct from an empty filtered read.
+pub const PERMISSION_DENIED_ERROR_CODE: &str = "PERMISSION_DENIED";
+
+/// A verified write was refused before anything was written: the node cannot
+/// act for the write's signer on the document ACP provider.
+pub const WRITE_AUTHORITY_UNAVAILABLE_ERROR_CODE: &str = "WRITE_AUTHORITY_UNAVAILABLE";
+
+/// A verified write was refused before anything was written: the delegation
+/// it carries does not hold at the document ACP provider's time. The error's
+/// `providerTime` extension is that time; a delegation issued at it is taken,
+/// so the write may be made again with one.
+pub const DELEGATION_OUTSIDE_WINDOW_ERROR_CODE: &str = "DELEGATION_OUTSIDE_WINDOW";
+
 /// The storage operation failed with a typed disk-full cause. Commit outcome
 /// remains unknown; clients must not infer that replaying a mutation is safe.
 pub const STORAGE_FULL_ERROR_CODE: &str = "STORAGE_FULL";
@@ -35,6 +48,11 @@ pub const STORAGE_FULL_ERROR_CODE: &str = "STORAGE_FULL";
 /// A mutation input named the secondary side of a relation. The collection
 /// API reports it in Go's collection words rather than GraphQL's.
 pub const SECONDARY_RELATION_ERROR_CODE: &str = "SECONDARY_RELATION_INPUT";
+/// A mutation named a collection that does not exist. The collection API
+/// reports it in Go's collection words rather than GraphQL's.
+pub const UNKNOWN_MUTATION_COLLECTION_ERROR_CODE: &str = "UNKNOWN_MUTATION_COLLECTION";
+/// A subscription sent without `Accept: text/event-stream`; HTTP answers it with 406.
+pub const SUBSCRIPTION_NEEDS_SSE_ERROR_CODE: &str = "SUBSCRIPTION_NEEDS_SSE";
 
 /// Stable conflict message recognized by the remote DefraDB client.
 pub const TXN_CONFLICT_MESSAGE: &str = "transaction conflict. Please retry";
@@ -266,6 +284,14 @@ pub const WARNING_CODE_VECTOR_INDEX_UNUSED: &str = "VECTOR_INDEX_UNUSED";
 pub struct QueryResponseErrorExtensions {
     /// Stable machine-readable error code.
     pub code: String,
+    /// The document ACP provider's time, in Unix seconds, for
+    /// [`DELEGATION_OUTSIDE_WINDOW_ERROR_CODE`].
+    #[serde(
+        default,
+        rename = "providerTime",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub provider_time: Option<u64>,
 }
 
 /// A GraphQL error in the response.
@@ -317,8 +343,26 @@ impl QueryResponseError {
 
     /// Set a stable machine-readable error code.
     pub fn with_code(mut self, code: impl Into<String>) -> Self {
-        self.extensions = Some(QueryResponseErrorExtensions { code: code.into() });
+        self.extensions = Some(QueryResponseErrorExtensions {
+            code: code.into(),
+            provider_time: None,
+        });
         self
+    }
+
+    /// Set the provider time a delegation refusal names.
+    pub fn with_provider_time(mut self, provider_time: u64) -> Self {
+        if let Some(extensions) = self.extensions.as_mut() {
+            extensions.provider_time = Some(provider_time);
+        }
+        self
+    }
+
+    /// The provider time a delegation refusal names, if any.
+    pub fn provider_time(&self) -> Option<u64> {
+        self.extensions
+            .as_ref()
+            .and_then(|extensions| extensions.provider_time)
     }
 
     /// Return the machine-readable error code, if present.
@@ -336,12 +380,26 @@ impl QueryResponseError {
             &error,
             crate::error::QueryError::TransactionRetryExhausted(_)
         );
+        let is_permission_denied = matches!(&error, crate::error::QueryError::PermissionDenied(_));
+        let lacks_write_authority = matches!(
+            &error,
+            crate::error::QueryError::WriteAuthorityUnavailable(_)
+        );
+        let refused_window = match &error {
+            crate::error::QueryError::DelegationOutsideWindow { window, .. } => Some(*window),
+            _ => None,
+        };
         let is_storage_full = matches!(
             &error,
             crate::error::QueryError::Storage(cause) if cause.is_storage_full()
         );
         let is_secondary_relation =
             matches!(&error, crate::error::QueryError::SecondaryRelationInput(_));
+        let is_unknown_mutation_collection = matches!(
+            &error,
+            crate::error::QueryError::UnknownMutationCollection(_)
+        );
+        let needs_sse = matches!(&error, crate::error::QueryError::SubscriptionNeedsSse);
         let retry_input = match &error {
             crate::error::QueryError::NeedsInput(request) => Some(request.clone()),
             _ => None,
@@ -353,8 +411,20 @@ impl QueryResponseError {
             response_error.with_code(TXN_RETRY_EXHAUSTED_ERROR_CODE)
         } else if is_storage_full {
             response_error.with_code(STORAGE_FULL_ERROR_CODE)
+        } else if is_permission_denied {
+            response_error.with_code(PERMISSION_DENIED_ERROR_CODE)
+        } else if let Some(window) = refused_window {
+            response_error
+                .with_code(DELEGATION_OUTSIDE_WINDOW_ERROR_CODE)
+                .with_provider_time(window.provider_time)
+        } else if lacks_write_authority {
+            response_error.with_code(WRITE_AUTHORITY_UNAVAILABLE_ERROR_CODE)
         } else if is_secondary_relation {
             response_error.with_code(SECONDARY_RELATION_ERROR_CODE)
+        } else if is_unknown_mutation_collection {
+            response_error.with_code(UNKNOWN_MUTATION_COLLECTION_ERROR_CODE)
+        } else if needs_sse {
+            response_error.with_code(SUBSCRIPTION_NEEDS_SSE_ERROR_CODE)
         } else {
             response_error
         };
@@ -522,6 +592,27 @@ pub trait QueryExecutor: MaybeSendSync {
         ))
     }
 
+    /// Privileged authorization observations in the transaction's snapshot.
+    /// The caller authenticates the actor and restricts this API to trusted
+    /// native code. Decisions distinguish denial from absence and must not be
+    /// disclosed to untrusted requesters. No document metadata is returned.
+    /// Local ACP and row reads are transaction-bound; application hooks may
+    /// consult external state and are not fenced by this transaction.
+    async fn observe_document_access_in_txn(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        collection: &str,
+        doc_ids: &[String],
+        actor: identity::Did,
+        mode: crate::owners::DocumentAccessMode,
+    ) -> Result<Vec<crate::owners::DocumentAccessDecision>> {
+        let _ = (context, handle, collection, doc_ids, actor, mode);
+        Err(crate::error::QueryError::execution(
+            "transaction-bound access observations are unsupported",
+        ))
+    }
+
     /// Begin a new transaction.
     ///
     /// Returns a transaction handle that can be used with `execute_in_txn()`.
@@ -623,6 +714,105 @@ pub trait QueryExecutor: MaybeSendSync {
         ))
     }
 
+    /// [`TransactionRegistry::create_index_in_txn_as`](crate::txn::TransactionRegistry::create_index_in_txn_as).
+    async fn create_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        name: Option<&str>,
+        fields: Vec<schema::IndexedFieldDescription>,
+        kind: schema::IndexKind,
+    ) -> std::result::Result<schema::IndexDescription, TransactionError> {
+        let _ = (context, collection, name, fields, kind);
+        Err(TransactionError::not_supported(
+            "this index operation is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::drop_index_in_txn_as`](crate::txn::TransactionRegistry::drop_index_in_txn_as).
+    async fn drop_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        name: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, collection, name);
+        Err(TransactionError::not_supported(
+            "this index operation is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::indexes_in_txn_as`](crate::txn::TransactionRegistry::indexes_in_txn_as).
+    async fn indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+    ) -> std::result::Result<
+        (
+            schema::CollectionVersion,
+            rapidhash::RapidHashMap<u32, defra_core::ActionExecution>,
+        ),
+        TransactionError,
+    > {
+        let _ = (context, collection);
+        Err(TransactionError::not_supported(
+            "this index operation is not supported by this executor",
+        ))
+    }
+
+    /// Add an equality encrypted index on `field` of `collection` in the
+    /// transaction `context` carries.
+    async fn add_encrypted_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        field: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, collection, field);
+        Err(TransactionError::not_supported(
+            "this encrypted index operation is not supported by this executor",
+        ))
+    }
+
+    /// Delete the encrypted index on `field` of `collection` in the
+    /// transaction `context` carries.
+    async fn delete_encrypted_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        field: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, collection, field);
+        Err(TransactionError::not_supported(
+            "this encrypted index operation is not supported by this executor",
+        ))
+    }
+
+    /// The fields of `collection` with an encrypted index, as the transaction
+    /// `context` carries sees them.
+    async fn encrypted_indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+    ) -> std::result::Result<Vec<String>, TransactionError> {
+        let _ = (context, collection);
+        Err(TransactionError::not_supported(
+            "this encrypted index operation is not supported by this executor",
+        ))
+    }
+
+    /// Every collection's encrypted index fields, by collection name, as the
+    /// transaction `context` carries sees them.
+    async fn all_encrypted_indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<Vec<(String, Vec<String>)>, TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "this encrypted index operation is not supported by this executor",
+        ))
+    }
+
     /// [`TransactionRegistry::set_active_collection_version_as`](crate::txn::TransactionRegistry::set_active_collection_version_as).
     async fn set_active_collection_version_as(
         &self,
@@ -645,6 +835,19 @@ pub trait QueryExecutor: MaybeSendSync {
         let _ = (context, name, filter);
         Err(TransactionError::not_supported(
             "this collection operation is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::purge_by_doc_ids_as`](crate::txn::TransactionRegistry::purge_by_doc_ids_as).
+    async fn purge_by_doc_ids_as(
+        &self,
+        context: &RequestContext,
+        name: &str,
+        doc_ids: &[document::DocID],
+    ) -> std::result::Result<usize, TransactionError> {
+        let _ = (context, name, doc_ids);
+        Err(TransactionError::not_supported(
+            "document purge is not supported by this executor",
         ))
     }
 
@@ -705,6 +908,18 @@ pub trait QueryExecutor: MaybeSendSync {
         ))
     }
 
+    /// [`TransactionRegistry::explain_nac_subject_as`](crate::txn::TransactionRegistry::explain_nac_subject_as).
+    async fn explain_nac_subject_as(
+        &self,
+        context: &RequestContext,
+        subject: &str,
+    ) -> std::result::Result<Vec<acp::nac::PermissionProvenance>, TransactionError> {
+        let _ = (context, subject);
+        Err(TransactionError::not_supported(
+            "node access control is not supported by this executor",
+        ))
+    }
+
     /// [`TransactionRegistry::disable_nac_as`](crate::txn::TransactionRegistry::disable_nac_as).
     async fn disable_nac_as(
         &self,
@@ -737,6 +952,18 @@ pub trait QueryExecutor: MaybeSendSync {
         let _ = (context, relation, target_actor);
         Err(TransactionError::not_supported(
             "node access control is not supported by this executor",
+        ))
+    }
+
+    /// Stage a source-specific node permission in the caller's transaction.
+    async fn change_nac_source_permission_as(
+        &self,
+        context: &RequestContext,
+        edge: &crate::txn::SourcePermission,
+    ) -> std::result::Result<bool, TransactionError> {
+        let _ = (context, edge);
+        Err(TransactionError::not_supported(
+            "transactional node source permissions are unavailable",
         ))
     }
 
@@ -901,6 +1128,42 @@ mod tests {
     }
 
     #[test]
+    fn a_delegation_outside_its_window_names_the_providers_time() {
+        let window = acp::DelegationWindow {
+            not_before: 1_030,
+            expires_at: 1_180,
+            provider_time: 1_000,
+            refusal: acp::WindowRefusal::NotYetValid {
+                ahead_by_at_least: 30,
+            },
+        };
+        let refused = QueryResponseError::from_query_error(
+            crate::error::QueryError::DelegationOutsideWindow {
+                reason: window.to_string(),
+                window,
+            },
+        );
+        assert_eq!(refused.code(), Some(DELEGATION_OUTSIDE_WINDOW_ERROR_CODE));
+        assert_eq!(refused.provider_time(), Some(1_000));
+        let wire = serde_json::to_value(&refused).unwrap();
+        assert_eq!(wire["extensions"]["providerTime"], 1_000);
+        assert_eq!(
+            serde_json::from_value::<QueryResponseError>(wire)
+                .unwrap()
+                .provider_time(),
+            Some(1_000)
+        );
+
+        let unavailable = QueryResponseError::from_query_error(
+            crate::error::QueryError::WriteAuthorityUnavailable("no key".into()),
+        );
+        assert_eq!(unavailable.provider_time(), None);
+        assert!(serde_json::to_value(&unavailable).unwrap()["extensions"]
+            .get("providerTime")
+            .is_none());
+    }
+
+    #[test]
     fn engine_retry_exhaustion_has_stable_final_error_code() {
         let response = QueryResponseError::from_query_error(
             crate::error::QueryError::transaction_retry_exhausted("engine retries exhausted"),
@@ -913,6 +1176,21 @@ mod tests {
             serde_json::to_value(response).unwrap()["errors"][0]["extensions"]["code"],
             TXN_RETRY_EXHAUSTED_ERROR_CODE
         );
+    }
+
+    #[test]
+    fn explicit_permission_denial_has_stable_graphql_code() {
+        let denied = QueryResponse::error(QueryResponseError::from_query_error(
+            crate::error::QueryError::permission_denied("opaque"),
+        ));
+        assert_eq!(
+            serde_json::to_value(denied).unwrap()["errors"][0]["extensions"]["code"],
+            PERMISSION_DENIED_ERROR_CODE
+        );
+        let other = QueryResponseError::from_query_error(crate::error::QueryError::execution(
+            "permission denied",
+        ));
+        assert_eq!(other.code(), None);
     }
 
     #[test]

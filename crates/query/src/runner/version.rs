@@ -136,12 +136,14 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             .chunk_of
             .is_some()
             .then(|| Identity::from(app_identity.clone()));
+        let mut chunk_reads = super::chunk_access::ChunkReads::default();
         let mut readable = Vec::with_capacity(documents.len());
         for (doc, cid) in documents {
             let doc_id = doc.id().map(|id| id.to_string()).unwrap_or_default();
             let allowed = match &chunk_reader {
                 Some(identity) => {
                     self.chunk_readable(
+                        &mut chunk_reads,
                         fetcher,
                         identity,
                         app_identity.as_ref(),

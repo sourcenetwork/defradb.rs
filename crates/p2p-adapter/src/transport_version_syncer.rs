@@ -205,7 +205,7 @@ async fn sync_lens<S: storage::corekv::Store + 'static, B: Blockstore, T: P2PTra
                 .map(|entry| {
                     (
                         entry.key.clone(),
-                        serde_json::Value::String(entry.value.clone()),
+                        defra_core::decode_lens_argument(&entry.value),
                     )
                 })
                 .collect();

@@ -43,9 +43,10 @@ fn decode(bytes: &[u8]) -> Option<(u8, &[u8])> {
 }
 
 /// Operands of the standalone counter values written before counters became
-/// parts of the document value. Nothing writes them now; the operator still
-/// folds them so a store keeps reading until the counter migration moves them
-/// into their documents.
+/// parts of the document value. No document writes them now; the operator
+/// still folds them so a store keeps reading until the counter migration moves
+/// them into their documents. The ACP outbox counts a node's owed changes with
+/// the `i64` one (`acp::outbox`).
 pub fn counter_i64(delta: i64) -> Vec<u8> {
     encode(INT64, &delta.to_be_bytes())
 }

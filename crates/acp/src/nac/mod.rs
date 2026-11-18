@@ -28,11 +28,15 @@
 //! or any admin can perform any operation.
 
 mod dac_bypass;
+mod delegation;
 mod node_acp;
 mod permission;
 mod policy;
 
 pub use dac_bypass::should_bypass_dac;
+pub use delegation::{
+    DelegationFacts, NacRelation, PermissionProvenance, PermissionVia, ADMIN_CLASS,
+};
 pub use node_acp::{NacStatus, NodeACP, NodeAcpOperations, NODE_OBJECT_ID};
 pub use permission::NodePermission;
 pub use policy::{

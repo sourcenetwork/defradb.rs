@@ -37,6 +37,18 @@ pub enum Error {
     #[error("unsupported subject for this backend: {0}")]
     UnsupportedSubject(String),
 
+    /// The backend cannot evaluate named document permissions.
+    #[error("named document permission checks are unsupported by this backend")]
+    UnsupportedNamedPermission,
+
+    /// The backend cannot list a document's relationships.
+    #[error("listing document relationships is unsupported by this backend")]
+    UnsupportedRelationshipListing,
+
+    /// This provider cannot bind native node-administrator relationship writes.
+    #[error("transactional node-administrator relationship management is unsupported")]
+    UnsupportedAdministrativeRelationship,
+
     /// Not the owner of the document (UNAUTHORIZED)
     #[error("UNAUTHORIZED: not document owner, cannot {operation}")]
     NotOwner { operation: String },
@@ -45,9 +57,75 @@ pub enum Error {
     #[error("cannot {operation}: actor is not a manager of relation")]
     NotManager { operation: String },
 
+    /// One transaction staged more relationship changes owed to an external
+    /// provider than [`crate::outbox::MAX_OWED_CHANGES_PER_TRANSACTION`].
+    #[error("a transaction may stage at most {limit} ACP changes owed to the provider")]
+    OwedChangesPerTransaction { limit: u32 },
+
+    /// The node already owes its external provider as many relationship
+    /// changes as it may hold unsettled; staging resumes as they settle.
+    #[error("{unsettled} ACP changes are owed to the provider, at the node's limit of {limit}")]
+    OwedChangesPerNode { unsettled: u64, limit: u64 },
+
+    /// An owed relationship change does not fit its record.
+    #[error("an owed ACP change takes {size} bytes, over the limit of {limit}")]
+    OwedChangeTooLarge { size: usize, limit: usize },
+
+    /// The node cannot submit a relationship change as its acting DID: it
+    /// holds no key for that DID and the request carries no delegation the
+    /// provider takes for it.
+    #[error("no authority to submit ACP changes as {actor}: {reason}")]
+    OwedAuthorityUnavailable { actor: String, reason: String },
+
+    /// The delegation the request carries for `actor` does not hold at the
+    /// provider's time, so nothing is sent under it. The request may be made
+    /// again with a delegation issued at
+    /// [`DelegationWindow::provider_time`](crate::DelegationWindow::provider_time).
+    #[error("the delegation for {actor} is refused: {window}")]
+    DelegationOutsideWindow {
+        actor: String,
+        window: crate::DelegationWindow,
+    },
+
+    /// An external provider could not be reached or did not answer in time.
+    /// Nothing is known about what was asked; the same call may be made
+    /// again.
+    #[error("ACP provider unavailable: {0}")]
+    ProviderUnavailable(String),
+
+    /// A relationship delete cannot be staged while the provider cannot
+    /// confirm its acting DID's authority: an owed delete denies its subject
+    /// from the commit on, so it is never taken on an unchecked word. The
+    /// same call succeeds once the provider answers.
+    #[error("cannot check {actor}'s authority to revoke on {object} while the ACP provider is unavailable; try again")]
+    OwedCheckUnavailable { actor: String, object: String },
+
+    /// One acting DID already owes the provider as many relationship changes
+    /// as one may hold unsettled; staging resumes as they settle.
+    #[error("{unsettled} ACP changes by {actor} are owed to the provider, at the limit of {limit} for one actor")]
+    OwedChangesPerActor {
+        actor: String,
+        unsettled: u64,
+        limit: u64,
+    },
+
+    /// A relationship change made outside a transaction would reach the
+    /// provider before a change of the same relationship that a transaction
+    /// staged earlier and that is still owed. The same call succeeds once
+    /// that change is settled.
+    #[error(
+        "an earlier change of {relation} on {object} is still owed to the ACP provider; try again"
+    )]
+    OwedChangesPending { object: String, relation: String },
+
     /// Invalid policy configuration
     #[error("invalid policy: {0}")]
     InvalidPolicy(String),
+
+    /// Enabling NAC that is temporarily disabled: only an authorized
+    /// re-enable turns it back on.
+    #[error("node acp is temporarily disabled; re-enable it instead")]
+    NacTemporarilyDisabled,
 
     /// Storage operation failed (generic)
     #[error("storage error: {0}")]
@@ -84,6 +162,21 @@ pub enum Error {
     /// Cycle detected in permission evaluation
     #[error("cycle detected in permission evaluation: {0}")]
     CycleDetected(String),
+
+    /// Nothing is owed under the reference its caller gave, or what is
+    /// owed there belongs to another actor.
+    #[error("no owed ACP entry {entry} for {actor}")]
+    OwedEntryNotFound { entry: String, actor: String },
+
+    /// A transaction that committed meanwhile changed what is owed on the
+    /// entry's relationship; nothing was written. The same call may be made
+    /// again.
+    #[error("owed ACP {entry} was changed by a transaction that committed meanwhile; try again")]
+    OwedEntryConflict { entry: String },
+
+    /// Only a change the provider refused may be abandoned.
+    #[error("owed ACP change {seq} is {state}, and only a refused change may be abandoned; present a fresh credential for it instead")]
+    OwedChangeNotRefused { seq: u64, state: &'static str },
 
     /// Invalid expression
     #[error("invalid expression: {0}")]

@@ -1,5 +1,7 @@
+#[cfg(target_os = "linux")]
 use std::time::Duration;
 
+#[cfg(target_os = "linux")]
 use edge::{compat, EdgeConfig, EdgeRuntime};
 
 #[cfg(target_os = "linux")]

@@ -24,9 +24,9 @@ use serde_json::Map;
 use crate::error::Result;
 use crate::router::{
     create_router_with_state_and_body_limits, AppState, AppStateBuilder, BackupOperations,
-    BlockOperations, BodyLimits, CollectionManagementOperations, CollectionOperations,
-    DocumentAcpOperations, DumpOperations, EncryptedIndexOperations, IndexOperations,
-    ManageRequester, NodeAcpOperations, P2POperations, ViewOperations,
+    BlockOperations, BodyLimits, CollectionLookup, CollectionManagementOperations,
+    CollectionOperations, DocumentAcpOperations, DumpOperations, EncryptedIndexOperations,
+    IndexOperations, ManageRequester, NodeAcpOperations, P2POperations, ViewOperations,
 };
 
 /// Default cap on an inline backup import body (100 MiB).
@@ -109,6 +109,7 @@ pub struct Server {
     schema: Option<Arc<dyn CollectionOperations>>,
     nac: Option<Arc<dyn NodeAcpOperations>>,
     collection_mgmt: Option<Arc<dyn CollectionManagementOperations>>,
+    collection_lookup: Option<Arc<dyn CollectionLookup>>,
     doc_acp: Option<Arc<dyn DocumentAcpOperations>>,
     view: Option<Arc<dyn ViewOperations>>,
     dump: Option<Arc<dyn DumpOperations>>,
@@ -117,6 +118,7 @@ pub struct Server {
     node_identity_did: Option<String>,
     dev_mode: bool,
     extra_routes: Option<Router>,
+    authenticated_routes: Option<Router>,
     router_transform: Option<RouterTransform>,
 }
 
@@ -175,6 +177,7 @@ impl Server {
             schema: None,
             nac: None,
             collection_mgmt: None,
+            collection_lookup: None,
             doc_acp: None,
             view: None,
             dump: None,
@@ -183,11 +186,18 @@ impl Server {
             node_identity_did: None,
             dev_mode: false,
             extra_routes: None,
+            authenticated_routes: None,
             router_transform: None,
         }
     }
 
     /// Serve `routes` beside the API's own.
+    /// Application routes whose optional credentials are verified by this node.
+    pub fn with_authenticated_routes(mut self, routes: Router) -> Self {
+        self.authenticated_routes = Some(routes);
+        self
+    }
+
     pub fn with_extra_routes(mut self, routes: Router) -> Self {
         self.extra_routes = Some(routes);
         self
@@ -319,6 +329,15 @@ impl Server {
         self
     }
 
+    /// Set the collection lookup the event stream uses, for a host without the management routes.
+    pub fn with_collection_lookup_arc(
+        mut self,
+        collection_lookup: Arc<dyn CollectionLookup>,
+    ) -> Self {
+        self.collection_lookup = Some(collection_lookup);
+        self
+    }
+
     /// Set view operations from an Arc.
     pub fn with_view_arc(mut self, view: Arc<dyn ViewOperations>) -> Self {
         self.view = Some(view);
@@ -418,6 +437,9 @@ impl Server {
         }
         if let Some(ref collection_mgmt) = self.collection_mgmt {
             builder = builder.with_collection_mgmt(Arc::clone(collection_mgmt));
+        }
+        if let Some(ref collection_lookup) = self.collection_lookup {
+            builder = builder.with_collection_lookup(Arc::clone(collection_lookup));
         }
         if let Some(ref doc_acp) = self.doc_acp {
             builder = builder.with_doc_acp(Arc::clone(doc_acp));
@@ -542,6 +564,17 @@ impl Server {
         // clone that already carries the complete auth and request middleware.
         let normalized = NormalizePathLayer::trim_trailing_slash().layer(router.clone());
         let mut router = router.fallback_service(normalized);
+        if let Some(routes) = &self.authenticated_routes {
+            router = router.merge(
+                routes
+                    .clone()
+                    .route_layer(axum::middleware::from_fn_with_state(
+                        self.app_state(),
+                        crate::auth_middleware::authenticate_application,
+                    ))
+                    .layer(admitted.clone()),
+            );
+        }
         if let Some(extra) = &self.extra_routes {
             router = router.merge(extra.clone().layer(admitted.clone()));
         }

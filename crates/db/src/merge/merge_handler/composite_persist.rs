@@ -1,5 +1,6 @@
 use super::composite::{CompositeMergeContext, CompositeMergeState};
 use super::*;
+use crate::merge::replica::ReplicaStep;
 
 /// Marker byte indicating a document is deleted (matches Go's DeletedObjectMarker).
 const DELETED_MARKER: u8 = 0x01;
@@ -10,6 +11,62 @@ fn build_deleted_key(collection_id: &str, doc_short_id: u64) -> Vec<u8> {
 }
 
 impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
+    /// Record, in the genesis merge's transaction, what the node owes or
+    /// waits for on a replicated document it was planned to register or
+    /// adopt ([`ReplicaStep`]). A remote provider only: a local one has just
+    /// registered the signer above.
+    async fn record_replica(
+        &self,
+        systemstore: &NamespaceView,
+        context: &CompositeMergeContext<'_, '_>,
+        collection: &CollectionVersion,
+    ) -> std::result::Result<(), MergeError> {
+        let (Some(provider), Some(policy)) = (self.db.document_acp(), collection.policy.as_ref())
+        else {
+            return Ok(());
+        };
+        if provider.supports_transactions() {
+            return Ok(());
+        }
+        let acpstore = systemstore.sibling(storage::namespace::Namespace::Acpstore);
+        let recorded = match &context.replica {
+            ReplicaStep::Register {
+                creator,
+                registrant,
+                grants,
+            } => {
+                provider
+                    .stage_replica_unit(
+                        &acpstore,
+                        &acp::ReplicaUnit {
+                            policy_id: &policy.id,
+                            resource: &policy.resource_name,
+                            doc_id: context.doc_id_str,
+                            creator,
+                            registrant,
+                            grants,
+                        },
+                    )
+                    .await
+            }
+            ReplicaStep::Adopt { creator } => {
+                provider
+                    .adopt_replica(
+                        &acpstore,
+                        &policy.id,
+                        &policy.resource_name,
+                        context.doc_id_str,
+                        creator,
+                    )
+                    .await
+            }
+            ReplicaStep::Gate | ReplicaStep::AfterGenesis => Ok(()),
+        };
+        recorded.map_err(|error| {
+            MergeError::MergeFailed(format!("replicated document registration: {error}"))
+        })
+    }
+
     pub(crate) async fn persist_merged_document(
         &self,
         datastore: &mut NamespaceView,
@@ -24,8 +81,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             ))
         })?;
 
-        collection
-            .validate_write_definition(datastore, false)
+        let (active_version, stored_definition) = collection
+            .validate_write_definition_read(datastore, false)
             .await
             .map_err(MergeError::Database)?;
         if self
@@ -43,12 +100,29 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 )
                 .await?
             {
-                return Ok(Some(outcome));
+                return Ok(Some(outcome.into_outcome()));
             }
         }
         state.is_branchable = collection.schema().is_branchable;
 
         if context.payload.status == 2 {
+            if collection.schema().chunk_of.is_some() {
+                let chunk_id = DocID::from_string(context.doc_id_str)
+                    .map_err(|e| MergeError::MergeFailed(format!("Invalid doc_id: {}", e)))?;
+                if let Some(reason) = crate::chunk::peer_delete::delete_must_wait(
+                    &self.db,
+                    datastore,
+                    systemstore,
+                    collection,
+                    context.doc_short_id,
+                    &chunk_id,
+                )
+                .await
+                .map_err(MergeError::Database)?
+                {
+                    return Ok(Some(MergeOutcome::retryable_skip(reason)));
+                }
+            }
             self.handle_deletion(datastore, context, collection).await?;
             return Ok(None);
         }
@@ -87,7 +161,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 .map_err(|e| MergeError::MergeFailed(e.to_string()))?;
         }
         if collection.schema().chunk_of.is_some() {
-            crate::chunk::guard::check_chunk_merge(old_doc.as_ref(), &doc)
+            let encrypted =
+                context.block.encryption.is_some() || !state.linked_encryption_cids.is_empty();
+            crate::chunk::guard::check_chunk_merge(old_doc.as_ref(), &doc, encrypted)
                 .map_err(|reason| MergeError::ChunkRejected(reason.to_string()))?;
         }
 
@@ -155,12 +231,34 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             .map_err(|error| MergeError::MergeFailed(error.to_string()))?;
                     }
                 }
+                self.record_replica(systemstore, context, collection.schema())
+                    .await?;
             }
 
             crate::event::arrivals::record(
                 systemstore,
                 collection.resolved_root_id(),
                 context.doc_id_str,
+            )
+            .await
+            .map_err(MergeError::Database)?;
+        }
+
+        // A block whose every field lost to a stored state left the document
+        // as it was. A parked field lands later, with no merge of its own.
+        if !doc_is_tombstoned
+            && (state.any_field_stands || state.parked_fields)
+            && context
+                .block
+                .heads
+                .as_deref()
+                .is_some_and(|heads| !heads.is_empty())
+        {
+            crate::event::updates::record(
+                systemstore,
+                collection.resolved_root_id(),
+                context.doc_id_str,
+                &context.cid.to_string(),
             )
             .await
             .map_err(MergeError::Database)?;
@@ -176,7 +274,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 // forward history in permanent retry on both replicas (#1111).
                 // Both documents persist; the index converges to the same
                 // winner everywhere.
-                let index_result = match &old_doc {
+                let index_result = match state.indexed_before.as_ref().unwrap_or(&old_doc) {
                     Some(old_doc) => {
                         index_manager
                             .on_document_update_merge(
@@ -243,6 +341,24 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 );
             }
         }
+        // The version the document is stored at, which `collection` (resolved
+        // through the cache to the active collection) may not name.
+        if !doc_is_tombstoned
+            && active_version != context.payload.collection_version_id
+            && !state.reads.owes_reindex(collection.collection_id())
+        {
+            // Boxed so the rare path does not grow every merge's future.
+            let owed = Box::pin(self.owe_reindex_off_active_version(
+                systemstore,
+                collection,
+                &active_version,
+                &stored_definition,
+            ))
+            .await?;
+            if owed {
+                state.reads.owed_reindex(collection.collection_id());
+            }
+        }
 
         if let Some(enc_key) = self.se_enc_key() {
             if let Err(e) = se_merge::generate_merge_artifacts(
@@ -278,6 +394,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             );
         }
 
+        datastore
+            .project_document(collection.name(), context.doc_id_str)
+            .await
+            .map_err(|error| MergeError::Database(crate::error::Error::Storage(error)))?;
         Ok(None)
     }
 
@@ -335,6 +455,11 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         let deleted_key = build_deleted_key(collection.collection_id(), context.doc_short_id);
         datastore
             .set(&deleted_key, &[DELETED_MARKER])
+            .await
+            .map_err(|e| MergeError::Database(crate::error::Error::Storage(e)))?;
+
+        datastore
+            .project_document(collection.name(), context.doc_id_str)
             .await
             .map_err(|e| MergeError::Database(crate::error::Error::Storage(e)))?;
 

@@ -229,9 +229,10 @@ impl<S: Store> P2PHost<S> {
             HostCommand::SendCarRequest {
                 peer_id,
                 root_cid,
+                haves,
                 response,
             } => {
-                self.handle_send_car_request(peer_id, root_cid, response);
+                self.handle_send_car_request(peer_id, root_cid, haves, response);
             }
             HostCommand::SendCarResponse {
                 peer_id,

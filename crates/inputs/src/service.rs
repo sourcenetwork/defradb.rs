@@ -14,6 +14,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use futures::StreamExt;
 use futures_lite::FutureExt;
 use rapidhash::fast::{RandomState, RapidHashSet};
 use regolith::sync::{HopscotchMap, Semaphore};
@@ -441,14 +442,27 @@ where
                 }
             }
             for (group, members) in &groups {
-                for batch in members.chunks(self.config.max_batch) {
-                    let keys: Vec<S::Key> = batch.iter().map(|(_, key)| key.clone()).collect();
-                    let trip = self.trips.fetch_add(1, Ordering::Relaxed) + 1;
+                // A group's batches go out `flights_per_group` at a time, as
+                // its lane's do on a network. The round trips are built before
+                // the stream, so it holds futures, not a closure over borrowed
+                // batches, and stays Send.
+                let trips_of_group: Vec<_> = members
+                    .chunks(self.config.max_batch)
+                    .map(|batch| async move {
+                        let keys: Vec<S::Key> = batch.iter().map(|(_, key)| key.clone()).collect();
+                        let trip = self.trips.fetch_add(1, Ordering::Relaxed) + 1;
+                        let outcome = {
+                            let _permit = self.in_flight.acquire(1).await;
+                            self.round_trip(group, &keys).await
+                        };
+                        (batch, keys, trip, outcome)
+                    })
+                    .collect();
+                let batches = futures::stream::iter(trips_of_group)
+                    .buffer_unordered(self.config.flights_per_group);
+                let mut batches = std::pin::pin!(batches);
+                while let Some((batch, keys, trip, outcome)) = batches.next().await {
                     trips += 1;
-                    let outcome = {
-                        let _permit = self.in_flight.acquire(1).await;
-                        self.round_trip(group, &keys).await
-                    };
                     let answers = self.answers(keys.len(), outcome);
                     for ((index, _), answer) in batch.iter().zip(&answers) {
                         results[*index] = Some(answer.clone());

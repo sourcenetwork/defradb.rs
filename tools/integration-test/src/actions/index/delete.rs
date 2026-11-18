@@ -36,13 +36,6 @@ impl Op for DeleteIndex {
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.client_identity(Self::name())?;
-        if self.txn.is_some() {
-            // The core reads and drops indexes outside any transaction yet.
-            return Err(Failure::unsupported(format!(
-                "{} argument txn",
-                Self::name()
-            )));
-        }
         state
             .block_on(state.node_on(self.common.node())?.delete_index_as(
                 &state.context_as(self.txn, identity),
@@ -66,16 +59,13 @@ impl HttpRun for DeleteIndex {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
             let identity = action.common.client_identity(Self::name())?;
-            if action.txn.is_some() {
-                return Err(Failure::unsupported(format!(
-                    "{} argument txn",
-                    Self::name()
-                )));
-            }
             let (collection, name) = (action.collection.clone(), action.index_name.clone());
+            let txn = state.txn_id(action.txn);
             state
                 .http_as(action.common.node(), identity, |client| async move {
-                    client.index_delete(&collection, &name).await
+                    client
+                        .index_delete(txn.as_deref(), &collection, &name)
+                        .await
                 })?
                 .map(|()| json!({}))
                 .map_err(|e| Failure::operation(e.to_string()))
@@ -87,12 +77,6 @@ impl CliRun for DeleteIndex {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
             let identity = action.common.client_identity(Self::name())?;
-            if action.txn.is_some() {
-                return Err(Failure::unsupported(format!(
-                    "{} argument txn",
-                    Self::name()
-                )));
-            }
             let args = [
                 "index",
                 "delete",

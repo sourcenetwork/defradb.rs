@@ -6,6 +6,98 @@ use std::sync::Arc;
 use storage::RegolithStore;
 
 #[test]
+fn graphql_updates_page_each_committed_version_of_one_document() {
+    workers::block_on(async {
+        let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+        db.create_collection(users_schema()).await.unwrap();
+        let mutator = AutoCommitMutator::new(db.clone());
+        let mut doc = Document::new(users_schema());
+        doc.set("name", "initial").unwrap();
+        let id = mutator.create("Users", doc).await.unwrap().doc_id;
+        for name in ["first", "second"] {
+            let mut doc = Document::new(users_schema());
+            doc.set_id(id.clone());
+            doc.set("name", name).unwrap();
+            mutator.update("Users", doc, ["name".to_string()].into_iter().collect()).await.unwrap();
+        }
+        let runner = query::QueryRunner::with_provider(
+            LensedAutoCommitFetcher::new(db.clone()),
+            db::DbCollectionProvider::new_arc(db),
+        );
+        let result = runner.execute(QueryRequest::new(r#"{ _documentUpdates(collection: "Users", after: "0", limit: 1) { head next entries { cursor docID cid } } }"#)).await;
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let data = result.data.unwrap();
+        let first = &data["_documentUpdates"];
+        assert_eq!(first["head"], "2");
+        assert_eq!(first["next"], "1");
+        assert_eq!(first["entries"][0]["docID"], id.to_string());
+        let cid = first["entries"][0]["cid"].as_str().unwrap();
+        let details = runner.execute(QueryRequest::new(format!(
+            r#"{{ _commits(docID: "{}", cid: ["{}"], depth: 0) {{ cid links {{ fieldName }} }} }}"#,
+            id, cid,
+        ))).await;
+        assert!(details.errors.is_empty(), "{:?}", details.errors);
+        let data = details.data.unwrap();
+        let links = data["_commits"][0]["links"].as_array().unwrap();
+        assert!(links.iter().any(|link| link["fieldName"] == "name"));
+        for (name, expected) in [("first", 1), ("second", 0)] {
+            let query = format!(
+                r#"{{ Users(docID: "{}", cid: ["{}"], filter: {{_and: [{{_docID: {{_eq: "{}"}}}}, {{name: {{_eq: "{}"}}}}]}}, limit: 1) {{ _docID name }} }}"#,
+                id, cid, id, name,
+            );
+            let response = runner.execute(QueryRequest::new(query)).await;
+            assert!(response.errors.is_empty(), "{:?}", response.errors);
+            let data = response.data.unwrap();
+            assert_eq!(data["Users"].as_array().unwrap().len(), expected);
+            if expected == 1 { assert_eq!(data["Users"][0]["name"], "first"); }
+        }
+        let result = runner.execute(QueryRequest::new(r#"{ _documentUpdates(collection: "Users", after: "1", limit: 1) { head next entries { cursor docID cid } } }"#)).await;
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let data = result.data.unwrap();
+        let second = &data["_documentUpdates"];
+        assert_eq!(second["next"], "2");
+        assert_eq!(second["entries"][0]["docID"], id.to_string());
+        assert_ne!(first["entries"][0]["cid"], second["entries"][0]["cid"]);
+    }).unwrap();
+}
+
+#[test]
+fn hidden_updates_advance_page_without_disclosing_identity_or_cid() {
+    workers::block_on(async {
+        use acp::DocumentACP;
+        let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+        let mut schema = users_schema();
+        schema.policy = Some(schema::PolicyDescription::new("update-policy", "users"));
+        schema.is_branchable = false;
+        db.create_collection(schema).await.unwrap();
+        let mutator = AutoCommitMutator::new(db.clone());
+        let mut doc = Document::new(users_schema());
+        doc.set("name", "initial").unwrap();
+        let id = mutator.create("Users", doc).await.unwrap().doc_id;
+        let mut doc = Document::new(users_schema());
+        doc.set_id(id.clone());
+        doc.set("name", "changed").unwrap();
+        mutator.update("Users", doc, ["name".to_string()].into_iter().collect()).await.unwrap();
+        let acp = Arc::new(acp::LocalDocumentACP::new(Arc::new(acp::MemoryAcpStore::new())));
+        let owner = identity::Did::new("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK").unwrap();
+        acp.register_doc_object(&owner, "update-policy", "users", &id.to_string()).await.unwrap();
+        let runner = query::QueryRunner::with_provider(
+            LensedAutoCommitFetcher::new(db.clone()),
+            db::DbCollectionProvider::new_arc(db),
+        ).with_acp(acp);
+        let request = r#"{ _documentUpdates(collection: "Users") { head next entries { cursor docID cid } } }"#;
+        let response = runner.execute(QueryRequest::new(request)).await;
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+        let data = response.data.unwrap();
+        assert_eq!(data["_documentUpdates"]["next"], "1");
+        assert_eq!(data["_documentUpdates"]["entries"], serde_json::json!([]));
+        let response = runner.execute(QueryRequest::new(request).with_identity(Some(owner))).await;
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+        assert_eq!(response.data.unwrap()["_documentUpdates"]["entries"][0]["docID"], id.to_string());
+    }).unwrap();
+}
+
+#[test]
 fn graphql_creation_cursor_pages_and_docid_lookup() {
     workers::block_on(async {
     let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());

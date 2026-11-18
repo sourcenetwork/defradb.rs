@@ -4,8 +4,11 @@
 //! the paragraph under it), and groups units into segments of about
 //! `SEGMENT_CHUNKS` times `max_chars` on average. Each segment is packed into
 //! chunks of at most `max_chars` characters, and a heading starts a new chunk
-//! once the current one is half full. A chunk can repeat the last sentences of
-//! the chunk before it. Lengths count characters, not bytes.
+//! once the current one is half full. A chunk can repeat the last whole
+//! sentences of the chunk before it. Lengths count characters, not bytes, and
+//! every cut falls between graphemes unless one grapheme is longer than a chunk.
+//! Any change to where a text is cut is a new [`SplitterVersion`], so peers on
+//! different builds never cut one text two ways.
 //!
 //! The Lean proof `proofs/lean/ChunkSplit` shows that the chunks cover the text
 //! with no gaps, that no chunk is too long, and that an edit which keeps its
@@ -17,20 +20,41 @@ mod overlap;
 mod pack;
 mod paragraphs;
 mod segments;
+mod version;
 
 pub use atoms::{cut_sentences, cut_words};
+pub use overlap::REPEAT_SHARE;
 pub use paragraphs::{paragraphs, Para};
 pub use segments::{fence_before, segments, units, Unit, SEGMENT_CHUNKS};
+pub use version::{SplitterVersion, UnknownSplitterVersion};
 
 use crate::list::text_hash;
 
 /// Settings for one `@chunk` field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChunkConfig {
+    /// The rules the chunks are cut with, from the field's definition.
+    pub version: SplitterVersion,
     /// The most characters a chunk may hold, overlap included.
     pub max_chars: usize,
-    /// How many sentences a chunk repeats from the end of the chunk before it.
+    /// How many sentences a chunk repeats from the end of the chunk before it, up
+    /// to [`REPEAT_SHARE`] of `max_chars` and never more than its own text.
     pub overlap: usize,
+}
+
+impl ChunkConfig {
+    /// The config a definition's `@chunk` settings name, if this build has their rules.
+    pub fn new(
+        version: u32,
+        max_chars: usize,
+        overlap: usize,
+    ) -> Result<Self, UnknownSplitterVersion> {
+        Ok(Self {
+            version: SplitterVersion::try_from(version)?,
+            max_chars,
+            overlap,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,6 +70,12 @@ pub struct Chunk {
 }
 
 pub fn split(text: &str, config: &ChunkConfig) -> Vec<Chunk> {
+    match config.version {
+        SplitterVersion::V1 => split_v1(text, config),
+    }
+}
+
+fn split_v1(text: &str, config: &ChunkConfig) -> Vec<Chunk> {
     let max = config.max_chars.max(1);
     let paras = paragraphs(text);
     let mut chunks = Vec::new();

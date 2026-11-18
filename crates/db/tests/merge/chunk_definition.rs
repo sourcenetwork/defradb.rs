@@ -11,19 +11,19 @@ use defra_core::block::Block;
 use defra_core::merge::{BlockMetadata, MergeHandler};
 use storage::RegolithStore;
 
-const SDL: &str = r#"
+pub(crate) const SDL: &str = r#"
     type Article {
         title: String
         body: String @chunk(maxChars: 64, overlap: 1)
     }
 "#;
 
-struct Node {
-    db: Arc<DB<RegolithStore>>,
-    blockstore: Arc<DefraBlockstore<RegolithStore>>,
+pub(crate) struct Node {
+    pub(crate) db: Arc<DB<RegolithStore>>,
+    pub(crate) blockstore: Arc<DefraBlockstore<RegolithStore>>,
 }
 
-fn node() -> Node {
+pub(crate) fn node() -> Node {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let db = Arc::new(DB::from_arc(store.clone()).unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, false));
@@ -32,7 +32,7 @@ fn node() -> Node {
 
 /// Copies a definition block and the field blocks it links from `author` to
 /// `peer`, then merges it there.
-async fn sync_definition(author: &Node, peer: &Node, version_id: &str) {
+pub(crate) async fn sync_definition(author: &Node, peer: &Node, version_id: &str) {
     let cid = Cid::try_from(version_id).unwrap();
     let bytes = author
         .blockstore

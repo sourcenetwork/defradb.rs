@@ -9,3 +9,4 @@ mod drop;
 mod fence;
 mod manager;
 mod manager_value_extraction;
+mod merged_crdt;

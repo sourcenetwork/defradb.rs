@@ -352,7 +352,7 @@ pub(super) fn build_commit_type() -> Object {
             )),
         )
         .field(
-            null_field!("COUNT", TypeRef::named_nn("Int"))
+            null_field!("COUNT", TypeRef::named("Int"))
                 .description(d::COUNT)
                 .argument(InputValue::new(
                     "field",

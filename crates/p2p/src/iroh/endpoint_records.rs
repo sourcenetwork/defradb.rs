@@ -6,16 +6,24 @@ use futures_lite::StreamExt;
 use iroh::address_lookup::UserData;
 use iroh::EndpointId;
 use std::time::Duration;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use super::endpoint::{peer_direct_addr, spawn_task, EndpointResources};
 use super::endpoint_rpc::handle_fire_and_forget;
+use super::gossip::MAX_BROADCAST;
 use super::peer_map::endpoint_id_to_peer_id;
 use super::protocols::STREAM_SERVICE_RECORDS;
-use super::records::{Input, Net, Pointer, RecordsHandle, RecordsMessage, RECORDS_TOPIC};
+use super::records::{
+    Input, Net, Pointer, RecordsHandle, RecordsMessage, MAX_RECORD_BYTES, RECORDS_TOPIC,
+};
 
 /// How long a pointer lookup may take before the peer counts as having none.
 const RESOLVE_DEADLINE: Duration = Duration::from_secs(5);
+
+/// A signed record (its body, a 64-byte signature and their length
+/// prefixes, within the 128 bytes `MAX_RECORDS_MSG_SIZE` allows) always fits
+/// one gossip broadcast.
+const _: () = assert!(MAX_RECORD_BYTES + 128 <= MAX_BROADCAST);
 
 pub(super) struct EndpointNet {
     resources: EndpointResources,
@@ -30,8 +38,15 @@ impl EndpointNet {
 
 impl Net for EndpointNet {
     fn announce(&self, record: Bytes) {
-        let gossip = self.resources.gossip.clone();
-        gossip.publish(RECORDS_TOPIC.to_owned(), record, false);
+        // Unreachable: a record fits (asserted above), and a lost
+        // announcement is still recovered through the peer's pointer.
+        if let Err(error) = self
+            .resources
+            .gossip
+            .publish(RECORDS_TOPIC.to_owned(), record, false)
+        {
+            warn!(%error, "service record not announced");
+        }
     }
 
     fn set_pointer(&self, pointer: Pointer) {

@@ -6,7 +6,9 @@
 use ed25519_dalek::SigningKey as Ed25519SigningKey;
 use k256::ecdsa::SigningKey as Secp256k1SigningKey;
 use p256::ecdsa::SigningKey as Secp256r1SigningKey;
-use rand::{rngs::OsRng, RngCore};
+use rand::rand_core::UnwrapErr;
+use rand::rngs::SysRng;
+use rand::TryRng;
 use x25519_dalek::StaticSecret;
 use zeroize::Zeroizing;
 
@@ -67,7 +69,7 @@ pub fn generate_key(key_type: KeyType) -> Result<Box<dyn PrivateKey>> {
 pub fn generate_secp256k1() -> Result<Secp256k1PrivateKey> {
     loop {
         let mut bytes = Zeroizing::new([0u8; 32]);
-        OsRng
+        SysRng
             .try_fill_bytes(bytes.as_mut())
             .map_err(|error| crypto_error(format!("key generation failed: {error}")))?;
         if Secp256k1SigningKey::from_slice(bytes.as_ref()).is_ok() {
@@ -80,7 +82,7 @@ pub fn generate_secp256k1() -> Result<Secp256k1PrivateKey> {
 pub fn generate_secp256r1() -> Result<Secp256r1PrivateKey> {
     loop {
         let mut bytes = Zeroizing::new([0u8; 32]);
-        OsRng
+        SysRng
             .try_fill_bytes(bytes.as_mut())
             .map_err(|error| crypto_error(format!("key generation failed: {error}")))?;
         if Secp256r1SigningKey::from_slice(bytes.as_ref()).is_ok() {
@@ -103,7 +105,7 @@ pub fn generate_ed25519() -> Result<Ed25519PrivateKey> {
     use zeroize::Zeroize;
 
     let mut seed = [0u8; 32];
-    OsRng
+    SysRng
         .try_fill_bytes(&mut seed)
         .map_err(|e| crypto_error(format!("RNG failure in Ed25519 key generation: {}", e)))?;
 
@@ -131,7 +133,7 @@ pub fn generate_ed25519() -> Result<Ed25519PrivateKey> {
 /// let public_key = x25519_dalek::PublicKey::from(&private_key);
 /// ```
 pub fn generate_x25519() -> Result<StaticSecret> {
-    Ok(StaticSecret::random_from_rng(OsRng))
+    Ok(StaticSecret::random_from_rng(&mut UnwrapErr(SysRng)))
 }
 
 /// Generate a new AES-256 key
@@ -146,7 +148,7 @@ pub fn generate_x25519() -> Result<StaticSecret> {
 /// ```
 pub fn generate_aes256() -> Result<Vec<u8>> {
     let mut key = vec![0u8; AES_KEY_SIZE];
-    OsRng
+    SysRng
         .try_fill_bytes(&mut key)
         .map_err(|e| crypto_error(format!("RNG failure in AES-256 key generation: {}", e)))?;
     Ok(key)

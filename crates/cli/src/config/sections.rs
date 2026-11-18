@@ -708,6 +708,25 @@ pub struct AcpConfig {
     #[serde(default)]
     pub vera_deployment_id: Option<u64>,
 
+    /// Operator keys of the embedded Vera deployment: lowercase hexadecimal
+    /// compressed secp256k1 keys, and `did:key` for Ed25519 and P-256 keys.
+    /// Empty: the node identity is the only operator.
+    #[cfg(feature = "embedded-vera")]
+    #[serde(default)]
+    pub vera_embedded_operators: Vec<String>,
+
+    /// How many distinct operator approvals an administrative change of the
+    /// embedded Vera deployment needs. Unset: one.
+    #[cfg(feature = "embedded-vera")]
+    #[serde(default)]
+    pub vera_embedded_threshold: Option<u16>,
+
+    /// Consensus listener of the embedded Vera node. The default keeps it on
+    /// loopback with a port the system picks.
+    #[cfg(feature = "embedded-vera")]
+    #[serde(default = "default_vera_embedded_listen")]
+    pub vera_embedded_listen: String,
+
     /// Account the client names as the token's authorized account when it
     /// talks to a node using remote document ACP (Go: `--remote-dac-address`).
     #[serde(default)]
@@ -749,6 +768,10 @@ fn default_acp_cache_ttl() -> u64 {
 fn default_acp_receipt_timeout() -> u64 {
     30
 }
+#[cfg(feature = "embedded-vera")]
+fn default_vera_embedded_listen() -> String {
+    "127.0.0.1:0".to_string()
+}
 
 impl Default for AcpConfig {
     fn default() -> Self {
@@ -771,6 +794,12 @@ impl Default for AcpConfig {
             vera_consensus_key: String::new(),
             #[cfg(feature = "vera")]
             vera_deployment_id: None,
+            #[cfg(feature = "embedded-vera")]
+            vera_embedded_operators: Vec::new(),
+            #[cfg(feature = "embedded-vera")]
+            vera_embedded_threshold: None,
+            #[cfg(feature = "embedded-vera")]
+            vera_embedded_listen: default_vera_embedded_listen(),
             remote_address: String::new(),
             circuit_breaker_threshold: default_acp_cb_threshold(),
             circuit_breaker_reset_timeout: default_acp_cb_reset_timeout(),

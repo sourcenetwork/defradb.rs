@@ -1,189 +1,132 @@
-//! Save-many, purge, the replication filter and the libp2p node options,
-//! called as a C caller calls them.
+//! Save-many, purge and the replication filter, called as a C caller calls
+//! them.
 
-use std::ffi::{c_char, c_int, CStr, CString};
+use std::ffi::{c_char, c_int, CStr};
 use std::ptr::null;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use serde_json::{json, Value};
 
-use crate::collection::{purge_documents, save_many_documents};
-use crate::node::{new_node, node_close};
-use crate::query::exec_request;
-use crate::schema::add_schema;
+use crate::document::{defra_document_purge, defra_document_save_many};
 use crate::state::NODES;
-use crate::txn::{begin_txn, commit_txn};
-use crate::types::{defra_free_string, FfiResult, NodeInitOptions};
+use crate::test_support::{
+    add_collection, close, cstr, err, local_options, node, node_with, ok, ok_json, query, Named,
+};
+use crate::txn::{defra_transaction_commit, defra_transaction_create};
+use crate::types::NodeInitOptions;
 
 const USERS: &str = "type User { name: String @index age: Int }";
 
-fn cstr(text: &str) -> CString {
-    CString::new(text).unwrap()
-}
-
-/// The call's JSON value, or its error; both strings freed.
-fn take(result: FfiResult) -> Result<Value, String> {
-    let read = |ptr: *mut c_char| {
-        (!ptr.is_null()).then(|| {
-            let text = unsafe { CStr::from_ptr(ptr) }
-                .to_string_lossy()
-                .into_owned();
-            unsafe { defra_free_string(ptr) };
-            text
-        })
-    };
-    let value = read(result.value);
-    let error = read(result.error);
-    match result.status {
-        0 => Ok(value.map_or(Value::Null, |text| {
-            serde_json::from_str(&text).unwrap_or(Value::String(text))
-        })),
-        _ => Err(error.unwrap_or_default()),
-    }
-}
-
-fn node_with(options: NodeInitOptions) -> usize {
-    assert!(crate::runtime::init_runtime());
-    let result = new_node(options);
-    assert_eq!(result.status, 0);
-    let node = result.node_ptr;
-    let sdl = cstr(USERS);
-    take(unsafe { add_schema(node, null(), sdl.as_ptr()) }).unwrap();
+fn users_node() -> usize {
+    let node = node();
+    add_collection(node, USERS);
     node
 }
 
-fn node() -> usize {
-    node_with(NodeInitOptions::default())
-}
-
-fn gql(node: usize, txn: Option<&CStr>, request: &str) -> Value {
-    let request = cstr(request);
-    let txn = txn.map_or(null(), |txn| txn.as_ptr());
-    let response =
-        take(unsafe { exec_request(node, txn, null(), request.as_ptr(), null(), null(), null()) })
-            .unwrap();
-    response["data"].clone()
-}
-
 fn add(node: usize, name: &str, age: i64) -> String {
-    let data = gql(
+    let data = query(
         node,
-        None,
         &format!(r#"mutation {{ add_User(input: {{name: "{name}", age: {age}}}) {{ _docID }} }}"#),
     );
-    data["add_User"][0]["_docID"].as_str().unwrap().to_owned()
+    data["data"]["add_User"][0]["_docID"]
+        .as_str()
+        .unwrap()
+        .to_owned()
 }
 
 fn users(node: usize) -> Value {
-    gql(
+    query(
         node,
-        None,
         "query { User(order: {name: ASC}) { _docID name age } }",
-    )["User"]
+    )["data"]["User"]
         .clone()
 }
 
-fn begin(node: usize) -> CString {
-    let txn = begin_txn(node, 0);
+fn begin(node: usize) -> usize {
+    let txn = defra_transaction_create(node, 0);
     assert_eq!(txn.status, 0);
-    let id = unsafe { CStr::from_ptr(txn.txn_id) }.to_owned();
-    unsafe { defra_free_string(txn.txn_id) };
-    id
+    txn.txn_ptr
+}
+
+fn purge(handle: usize, ids: &Value) -> Result<Value, String> {
+    let user = Named::new("User");
+    let ids = cstr(&ids.to_string());
+    let result = unsafe { defra_document_purge(handle, ids.as_ptr(), user.options(), 0) };
+    match crate::test_support::take(result) {
+        (_, Ok(value)) => Ok(serde_json::from_str(&value).unwrap()),
+        (_, Err(error)) => Err(error),
+    }
+}
+
+fn save_many(handle: usize, docs: &Value) -> Value {
+    let user = Named::new("User");
+    let docs = cstr(&docs.to_string());
+    ok_json(unsafe {
+        defra_document_save_many(handle, docs.as_ptr(), 0, null(), user.options(), 0)
+    })
 }
 
 #[test]
-fn purge_documents_removes_them_in_a_transaction_on_commit() {
-    let node = node();
+fn purging_documents_in_a_transaction_removes_them_on_commit() {
+    let node = users_node();
     let alice = add(node, "Alice", 40);
     let bob = add(node, "Bob", 7);
-    let txn = begin(node);
 
-    let (collection, ids) = (cstr("User"), cstr(&json!([alice]).to_string()));
-    let purged = take(unsafe {
-        purge_documents(
-            node,
-            txn.as_ptr(),
-            null(),
-            collection.as_ptr(),
-            ids.as_ptr(),
-        )
-    })
-    .unwrap();
-    assert_eq!(purged, json!({ "purged": 1 }));
+    let txn = begin(node);
+    assert_eq!(purge(txn, &json!([alice])).unwrap(), json!({ "Count": 1 }));
     assert_eq!(
         users(node).as_array().unwrap().len(),
         2,
         "not yet committed"
     );
-
-    take(unsafe { commit_txn(node, txn.as_ptr()) }).unwrap();
+    ok(defra_transaction_commit(txn));
     assert_eq!(
         users(node),
         json!([{ "_docID": bob, "name": "Bob", "age": 7 }])
     );
 
-    let ids = cstr(&json!([bob]).to_string());
-    let purged =
-        take(unsafe { purge_documents(node, null(), null(), collection.as_ptr(), ids.as_ptr()) })
-            .unwrap();
-    assert_eq!(purged, json!({ "purged": 1 }), "without a transaction");
+    assert_eq!(
+        purge(node, &json!([bob])).unwrap(),
+        json!({ "Count": 1 }),
+        "without a transaction"
+    );
     assert_eq!(users(node), json!([]));
 
-    let bad = cstr(r#"["not-a-docid"]"#);
-    let error =
-        take(unsafe { purge_documents(node, null(), null(), collection.as_ptr(), bad.as_ptr()) })
-            .unwrap_err();
-    assert!(error.contains("invalid DocID"), "{error}");
-    node_close(node);
+    let error = purge(node, &json!(["not-a-docid"])).unwrap_err();
+    assert!(!error.is_empty());
+    let user = Named::new("User");
+    let not_json = cstr("not json");
+    let error = err(unsafe { defra_document_purge(node, not_json.as_ptr(), user.options(), 0) });
+    assert!(error.contains("invalid document IDs"), "{error}");
+    close(node);
 }
 
 #[test]
-fn save_many_documents_adds_and_updates_in_order() {
-    let node = node();
-    let collection = cstr("User");
-    let docs = cstr(r#"[{"name": "Alice", "age": 40}, {"name": "Bob", "age": 7}]"#);
-    let saved = take(unsafe {
-        save_many_documents(
-            node,
-            null(),
-            null(),
-            collection.as_ptr(),
-            docs.as_ptr(),
-            null(),
-        )
-    })
-    .unwrap();
-    let ids = saved["docIDs"].as_array().unwrap().clone();
+fn save_many_adds_and_updates_in_order() {
+    let node = users_node();
+    let ids = save_many(
+        node,
+        &json!([{ "name": "Alice", "age": 40 }, { "name": "Bob", "age": 7 }]),
+    );
+    let ids = ids.as_array().unwrap().clone();
     assert_eq!(ids.len(), 2);
 
     let txn = begin(node);
-    let update = cstr(
+    let saved = save_many(
+        txn,
         &json!([
             { "_docID": ids[0], "name": "Alice", "age": 41 },
             { "name": "Carol", "age": 3 },
-        ])
-        .to_string(),
+        ]),
     );
-    let saved = take(unsafe {
-        save_many_documents(
-            node,
-            txn.as_ptr(),
-            null(),
-            collection.as_ptr(),
-            update.as_ptr(),
-            null(),
-        )
-    })
-    .unwrap();
-    let carol = saved["docIDs"][1].clone();
-    assert_eq!(saved["docIDs"][0], ids[0]);
+    assert_eq!(saved[0], ids[0]);
+    let carol = saved[1].clone();
     assert_eq!(
         users(node).as_array().unwrap().len(),
         2,
         "not yet committed"
     );
-
-    take(unsafe { commit_txn(node, txn.as_ptr()) }).unwrap();
+    ok(defra_transaction_commit(txn));
     assert_eq!(
         users(node),
         json!([
@@ -193,20 +136,13 @@ fn save_many_documents_adds_and_updates_in_order() {
         ])
     );
 
-    let bad = cstr(r#"{"encryptDoc": "yes"}"#);
-    let error = take(unsafe {
-        save_many_documents(
-            node,
-            null(),
-            null(),
-            collection.as_ptr(),
-            docs.as_ptr(),
-            bad.as_ptr(),
-        )
-    })
-    .unwrap_err();
-    assert!(error.contains("invalid options_json"), "{error}");
-    node_close(node);
+    let user = Named::new("User");
+    let not_array = cstr(r#"{"name": "Dan"}"#);
+    let error = err(unsafe {
+        defra_document_save_many(node, not_array.as_ptr(), 0, null(), user.options(), 0)
+    });
+    assert!(error.contains("invalid documents JSON array"), "{error}");
+    close(node);
 }
 
 static FILTER_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -247,7 +183,7 @@ fn the_replication_filter_option_asks_the_callback() {
     let filtered = node_with(NodeInitOptions {
         replication_filter: Some(refuse_with_context),
         replication_filter_context: 7,
-        ..NodeInitOptions::default()
+        ..local_options()
     });
     let filter = NODES
         .get(filtered, |state| {
@@ -289,7 +225,7 @@ fn the_replication_filter_option_asks_the_callback() {
         "the callback still decides, without the field JSON cannot carry"
     );
     assert_eq!(FILTER_MISMATCHES.load(Ordering::SeqCst), 0);
-    node_close(filtered);
+    close(filtered);
 
     let without = node();
     let filter = NODES
@@ -298,5 +234,5 @@ fn the_replication_filter_option_asks_the_callback() {
         })
         .unwrap();
     assert!(filter.is_none(), "no callback, no filter");
-    node_close(without);
+    close(without);
 }

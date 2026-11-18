@@ -32,7 +32,9 @@ use db::DB;
 use document::{Document, NormalValue};
 use query::mutator::DocMutator;
 use query::{QueryExecutor, QueryRequest, QueryRunner};
-use schema::{CollectionVersion, FieldDescription, FieldKind};
+use schema::{
+    CollectionVersion, FieldDescription, FieldKind, IndexDescription, IndexedFieldDescription,
+};
 use storage::RegolithStore;
 
 mod common;
@@ -59,11 +61,32 @@ fn collection_version() -> CollectionVersion {
     )
 }
 
+/// The same collection with a secondary index on `city`, so an `_eq` on it
+/// is an index ExactMatch.
+fn indexed_collection_version() -> CollectionVersion {
+    collection_version().with_index(IndexDescription {
+        id: 1,
+        name: "city_idx".to_string(),
+        unique: false,
+        fields: vec![IndexedFieldDescription {
+            name: "city".to_string(),
+            descending: false,
+        }],
+        kind: None,
+        auto_generated: false,
+    })
+}
+
 /// A database holding `count` documents, and a runner over it.
 async fn fixture(count: usize) -> impl QueryExecutor {
+    fixture_of(count, collection_version()).await
+}
+
+/// A database holding `count` documents of `version`, and a runner over it.
+async fn fixture_of(count: usize, version: CollectionVersion) -> impl QueryExecutor {
     let store = Arc::new(RegolithStore::in_memory().expect("an in-memory store"));
     let db = Arc::new(DB::open_from_arc(store).await.expect("a database"));
-    db.create_collection(collection_version())
+    db.create_collection(version.clone())
         .await
         .expect("the collection to register");
 
@@ -72,7 +95,7 @@ async fn fixture(count: usize) -> impl QueryExecutor {
     // corpus rather than all of it or none: a predicate nothing matches
     // measures the scan and never the rest of the pipeline.
     for seq in 0..count {
-        let mut doc = Document::new(collection_version());
+        let mut doc = Document::new(version.clone());
         doc.set("name", NormalValue::String(format!("person-{seq}")))
             .unwrap();
         doc.set("city", NormalValue::String(format!("city-{}", seq % 10)))
@@ -86,8 +109,7 @@ async fn fixture(count: usize) -> impl QueryExecutor {
     }
 
     let fetcher = db::AutoCommitFetcher::new(db.clone());
-    QueryRunner::new(fetcher, vec![collection_version()])
-        .with_mutator(mutator as Arc<dyn DocMutator>)
+    QueryRunner::new(fetcher, vec![version]).with_mutator(mutator as Arc<dyn DocMutator>)
 }
 
 /// Every shape a read-heavy application actually issues.
@@ -143,6 +165,49 @@ fn shapes(c: &mut Criterion) {
     group.finish();
 }
 
+/// An index `_eq` matches a tenth of the corpus. With a limit, only the page
+/// needs its short IDs resolved to DocIDs; without one, all of them do.
+const INDEXED_SHAPES: [(&str, &str); 3] = [
+    (
+        "index_eq",
+        r#"query { User(filter: {city: {_eq: "city-3"}}) { name age } }"#,
+    ),
+    (
+        "index_eq_limit_1",
+        r#"query { User(filter: {city: {_eq: "city-3"}}, limit: 1) { name age } }"#,
+    ),
+    (
+        "index_eq_limit_10",
+        r#"query { User(filter: {city: {_eq: "city-3"}}, limit: 10) { name age } }"#,
+    ),
+];
+
+fn indexed(c: &mut Criterion) {
+    let rt = common::owned_runtime();
+    let mut group = c.benchmark_group("query_e2e_indexed");
+    group.sample_size(20);
+
+    for count in CORPUS {
+        let runner = rt.block_on(fixture_of(count, indexed_collection_version()));
+        for (name, query) in INDEXED_SHAPES {
+            group.throughput(Throughput::Elements(count as u64));
+            group.bench_with_input(BenchmarkId::new(name, count), &query, |b, query| {
+                b.iter(|| {
+                    let response =
+                        rt.block_on(runner.execute(QueryRequest::new(black_box(*query))));
+                    assert!(
+                        response.errors.is_empty(),
+                        "{name} failed: {:?}",
+                        response.errors
+                    );
+                    black_box(response)
+                })
+            });
+        }
+    }
+    group.finish();
+}
+
 /// A mutation through the same surface, so the write path is comparable with
 /// the read one at the level a user sees rather than at the mutator's.
 fn mutation(c: &mut Criterion) {
@@ -169,5 +234,5 @@ fn mutation(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, shapes, mutation);
+criterion_group!(benches, shapes, indexed, mutation);
 criterion_main!(benches);

@@ -8,7 +8,7 @@ use super::descriptions as d;
 /// Build the Mutation type, with Go's fields, arguments and types. `docIDs` on
 /// update and delete is defradb.rs's own spelling of `docID`, kept alongside.
 pub(super) fn build_mutation_type(collections: &[Arc<CollectionVersion>]) -> Object {
-    let mut mutation = Object::new("Mutation").description("Root mutation type");
+    let mut mutation = Object::new("Mutation");
 
     for collection in collections {
         // Embedded-only types have no mutations, and `@chunk` collections are
@@ -101,6 +101,10 @@ pub(super) fn build_mutation_type(collections: &[Arc<CollectionVersion>]) -> Obj
             .field(
                 field("truncate", TypeRef::named_nn(TypeRef::BOOLEAN))
                     .description(d::TRUNCATE_DOCUMENTS)
+                    .argument(
+                        InputValue::new("docID", TypeRef::named_nn_list(TypeRef::ID))
+                            .description(d::TRUNCATE_IDS_ARG),
+                    )
                     .argument(
                         InputValue::new("filter", TypeRef::named(&filter))
                             .description(d::TRUNCATE_FILTER_ARG),
