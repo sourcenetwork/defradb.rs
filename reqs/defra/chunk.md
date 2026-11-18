@@ -251,6 +251,20 @@ After an article and its chunks reach the second node, deleting the article on t
 
 A replicator set up for `Article` alone gives the second node the same `_body_chunks` list and exactly the same chunks. The CLI sets the replicator with `--collection Article`.
 
+# `defra.chunk.replicate.doc_sync`: A document sync brings the parent's chunks
+
+- **Parents:** ["defra.chunk.replicate"]
+- **Scenarios:** ["chunk::replicate_doc_sync::a_document_sync_brings_the_parents_chunks"]
+
+A second node that syncs one article by its docID from the first gets the article and exactly its chunks in `Article__body_chunk`.
+
+# `defra.chunk.replicate.filtered`: A filtered replicator ships a matching parent's chunks
+
+- **Parents:** ["defra.chunk.replicate"]
+- **Scenarios:** ["chunk::replicate_filtered::a_filtered_replicator_ships_the_matching_parents_chunks"]
+
+A replicator for `Article` with the filter `{kind: {_eq: "public"}}` gives the second node the public article and exactly its chunks, and neither the private article nor its chunks.
+
 # `defra.chunk.backup`: Backups and chunks
 
 - **Parents:** ["defra.chunk"]
