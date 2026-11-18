@@ -22,8 +22,7 @@ fn index_type(name: &str) -> Result<schema::EncryptedIndexType, String> {
 /// # Safety
 ///
 /// Every string must be null or a valid null-terminated string.
-#[no_mangle]
-pub unsafe extern "C" fn defra_encrypted_index_new(
+pub unsafe fn defra_encrypted_index_new(
     node_ptr: usize,
     collection_name: *const c_char,
     field_name: *const c_char,
@@ -54,8 +53,7 @@ pub unsafe extern "C" fn defra_encrypted_index_new(
 /// # Safety
 ///
 /// Every string must be null or a valid null-terminated string.
-#[no_mangle]
-pub unsafe extern "C" fn defra_encrypted_index_delete(
+pub unsafe fn defra_encrypted_index_delete(
     node_ptr: usize,
     collection_name: *const c_char,
     field_name: *const c_char,

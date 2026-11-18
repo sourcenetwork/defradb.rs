@@ -15,7 +15,7 @@ use crate::types::NodeInitOptions;
 fn print_dump_logs_the_stores_keys() {
     let node = node();
     add_collection(node, "type DumpUser { name: String }");
-    ok(defra_print_dump(node));
+    ok(defra_print_dump(node, 0));
     close(node);
 }
 

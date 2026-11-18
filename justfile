@@ -494,6 +494,20 @@ build-wasm:
 [group('build')]
 build-ffi-header:
     cbindgen --config crates/ffi/cbindgen.toml --crate ffi --output crates/ffi/defradb.h
+    just check-ffi-header crates/ffi/defradb.h
+
+# Compile a generated C header as C11 and C++17 with every warning an error,
+# so its inline wrappers and options structs are valid for both.
+[group('build')]
+check-ffi-header header:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    work=$(mktemp -d)
+    trap 'rm -rf "$work"' EXIT
+    echo "#include \"$(realpath {{header}})\"" > "$work/check.c"
+    cp "$work/check.c" "$work/check.cpp"
+    cc -std=c11 -Wall -Wextra -Werror -fsyntax-only "$work/check.c"
+    c++ -std=c++17 -Wall -Wextra -Werror -fsyntax-only "$work/check.cpp"
 
 # Apple .xcframework plus the Swift import smoke test.
 [group('build')]

@@ -13,8 +13,7 @@ use crate::{ffi_async, ffi_entry, try_ffi};
 ///
 /// `index_name` must be null or a valid null-terminated string; every
 /// non-null string in `opts` must be one too.
-#[no_mangle]
-pub unsafe extern "C" fn defra_index_delete(
+pub unsafe fn defra_index_delete(
     node_ptr: usize,
     index_name: *const c_char,
     opts: CollectionOptions,
@@ -43,8 +42,7 @@ pub unsafe extern "C" fn defra_index_delete(
 /// # Safety
 ///
 /// Every non-null string in `opts` must be a valid null-terminated string.
-#[no_mangle]
-pub unsafe extern "C" fn defra_index_list(
+pub unsafe fn defra_index_list(
     node_ptr: usize,
     opts: CollectionOptions,
     identity_ptr: usize,

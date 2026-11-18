@@ -24,13 +24,13 @@ use crate::{ffi_async_ok, try_ffi, ERR_INVALID_NODE_HANDLE};
 /// # Safety
 ///
 /// `filepath` must be null or a valid null-terminated string.
-#[no_mangle]
-pub unsafe extern "C" fn defra_backup_import(
+pub unsafe fn defra_backup_import(
     node_ptr: usize,
     filepath: *const c_char,
+    identity_ptr: usize,
 ) -> DefraResult {
     ffi_entry! {
-        let request = try_ffi!(Request::resolve(node_ptr, 0));
+        let request = try_ffi!(Request::resolve(node_ptr, identity_ptr));
         let node_ptr = try_ffi!(request.require_node("backup import"));
         let path_str = go_string(filepath);
 
@@ -41,6 +41,7 @@ pub unsafe extern "C" fn defra_backup_import(
             None => return DefraResult::error(ERR_INVALID_NODE_HANDLE),
         };
 
+        let context = request.context();
         ffi_async_ok!(node_ptr, {
             let content = fs::read_to_string(&path_str).map_err(|e| {
                 if e.kind() == std::io::ErrorKind::NotFound {
@@ -50,7 +51,7 @@ pub unsafe extern "C" fn defra_backup_import(
                 }
             })?;
 
-            db::backup::import_database(&database, &runner, &content)
+            db::backup::import_database_as(&context, &database, &runner, &content)
                 .await
                 .map(|_| ())
         })

@@ -15,6 +15,7 @@ use std::ptr;
 /// option this implementation does not support yet fails `defra_node_new`
 /// when it is set, rather than being ignored.
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct NodeInitOptions {
     /// Path to the store directory. Null or empty keeps the store in memory.
     pub db_path: *const c_char,
