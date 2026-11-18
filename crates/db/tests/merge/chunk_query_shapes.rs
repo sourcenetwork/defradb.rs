@@ -94,3 +94,34 @@ fn a_chunk_query_can_be_explained() {
     })
     .unwrap()
 }
+
+#[test]
+fn an_explained_chunk_mutation_is_refused_as_the_mutation_is() {
+    workers::block_on(async {
+        let (peer, _, chunk_id) = one_chunk().await;
+        for mutation in [
+            format!(r#"add_{CHUNKS}(input: {{text: "t"}}) {{ _docID }}"#),
+            format!(r#"update_{CHUNKS}(docID: "{chunk_id}", input: {{text: "t"}}) {{ _docID }}"#),
+            format!(r#"delete_{CHUNKS}(docID: "{chunk_id}") {{ _docID }}"#),
+        ] {
+            let refused = peer.errors(&format!("mutation {{ {mutation} }}")).await;
+            assert!(!refused.is_empty(), "{mutation}");
+            let explained = peer
+                .errors(&format!("mutation @explain {{ {mutation} }}"))
+                .await;
+            assert_eq!(explained, refused, "{mutation}");
+            let executed = peer
+                .run(
+                    &format!("mutation @explain(type: execute) {{ {mutation} }}"),
+                    Some(owner()),
+                )
+                .await;
+            assert_eq!(
+                executed["explain"]["executionErrors"],
+                json!(refused),
+                "{mutation}"
+            );
+        }
+    })
+    .unwrap()
+}
