@@ -657,13 +657,12 @@ impl<H: Hosted + 'static> Node<H> {
             }
             Command::SendCarRequest {
                 peer_id,
-                root_cid,
-                haves,
+                request,
                 reply,
             } => {
                 let requester = Rc::clone(&self);
                 self.run_or_busy(reply, async move {
-                    requester.car_request(&peer_id, root_cid, haves).await
+                    requester.car_request(&peer_id, request).await
                 });
             }
             Command::SyncBlocks {

@@ -727,14 +727,15 @@ impl P2PTransport for TestTransport {
         providers: Vec<PeerId>,
         missing: Vec<Cid>,
         max_depth: u32,
-        haves: Vec<Cid>,
+        held: crate::message::HeldCids,
     ) -> P2PResult<QueryId> {
         let provider = self.closure_provider.load().as_deref().cloned();
         if let Some(provider) = provider {
             let collected = crate::sync::car::collect_missing_region(
                 provider.as_ref(),
                 &missing,
-                &haves,
+                &held.haves,
+                &held.present,
                 Some(max_depth),
             )
             .await?;

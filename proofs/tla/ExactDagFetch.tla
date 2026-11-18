@@ -20,6 +20,11 @@
 \* receiver must ask for them by name, and a block asked for by name is always
 \* served.
 \*
+\* In the third world ("gossip") gossip stored M and its field block before
+\* the branches below M arrived. The receiver names them present: blocks it
+\* holds without their history. The provider walks through them as wanted,
+\* so the branches below are still served, but never sends them.
+\*
 \* A provider may also lie: send any blocks, forged ones too, and claim the
 \* DAG is done.
 \*
@@ -36,8 +41,10 @@
 \*
 \* Rust: crates/p2p/src/sync/car/region.rs collect_missing_region and Walk
 \* (the walk: mark_held, mark_wanted, serve_attachments, the explicit-want
-\* rule); crates/p2p/src/sync/coordinator/haves.rs haves_from_heads (a head
-\* and its ancestors) and dag_fetcher.rs root_haves (a held root's heads); crates/p2p/src/sync/coordinator/dag_fetcher.rs
+\* rule, Walk::serve leaving out the present blocks);
+\* crates/p2p/src/sync/coordinator/haves.rs haves_from_heads (a head and its
+\* ancestors) and dag_fetcher.rs held_below_root (a held root's merged heads
+\* as haves, the held composites above them as present); dag_fetcher.rs
 \* fetch_dag_attempt (ask again from the missing frontier, merge only when
 \* find_all_missing_links is empty); crates/p2p/src/sync/coordinator/
 \* event_handler/car.rs handle_car_fetch_response_inner (verify_block_cid on
@@ -55,6 +62,7 @@ EXTENDS Naturals, FiniteSets
 \*   "flipwant"      held overrides a block asked by name -> INV_RoundsBounded
 \*   "trustprovider" the receiver merges on the claim     -> INV_MergeComplete
 \*   "skipcid"       the receiver skips the CID check     -> INV_NoForged
+\*   "nopresent"     the provider ignores the present list -> INV_HeldNotResent
 CONSTANTS Liar, MaxRounds, Bug
 
 \* The composites: C1..C3 shared, B1 and A1 the provider's branches, M the
@@ -127,9 +135,17 @@ PHas == Blocks \ {"L1", "fL", "X"}
 Haves == {"L1", "C3"}
 
 \* What the receiver holds at the start, in each world.
-Start(world) ==
+Start(w) ==
+  \* The shared history and the receiver's own update.
   LET shared == {"C1", "C2", "C3", "f1", "f2", "f3", "L1", "fL"}
-  IN IF world = "steady" THEN shared ELSE shared \ {"C2", "f2"}
+  \* Steady holds just that; gossip also holds M and fM; hole lost C2, f2.
+  IN CASE w = "steady" -> shared
+       [] w = "gossip" -> shared \cup {"M", "fM"}
+       [] OTHER        -> shared \ {"C2", "f2"}
+
+\* The blocks the receiver names present: what gossip stored above history
+\* it lacks. Only the gossip world has any.
+Present(w) == IF w = "gossip" THEN {"M", "fM"} ELSE {}
 
 \* rhas: what the receiver holds. round: the request it is on.
 \* phase: "walk" (the provider walks), "deliver" (the response is on its way),
@@ -148,6 +164,13 @@ vars == <<rhas, round, phase, wants, col, heldBelow, popped, served, merged,
 
 \* The haves the provider holds; the "nohaves" bug ignores them.
 HeldSeeds == IF Bug = "nohaves" THEN {} ELSE Haves \cap PHas
+
+\* The present blocks the provider leaves out; "nopresent" ignores them.
+Unsent == IF Bug = "nopresent" THEN {} ELSE Present(world)
+
+\* What the response carries: every block the walk served, less the
+\* present ones. The walk itself still goes through those.
+Sent == served \ Unsent
 
 \* The colours a walk starts with: the wanted blocks the provider holds are
 \* wanted, the haves it holds are held.
@@ -192,7 +215,7 @@ MarkWantedCol(hs) ==
 
 \* The world picks a receiver; its first request asks for M.
 Init ==
-  /\ world \in {"steady", "hole"}
+  /\ world \in {"steady", "hole", "gossip"}
   /\ rhas = Start(world)
   /\ round = 1
   /\ phase = "walk"
@@ -282,13 +305,13 @@ Settle(got, done) ==
                /\ phase' = "walk"
                /\ UNCHANGED merged
 
-\* An honest provider's response arrives: exactly what the walk served.
-\* The receiver drops what it holds and counts it.
+\* An honest provider's response arrives: what the walk served, less the
+\* present blocks. The receiver drops what it holds and counts it.
 DeliverHonest ==
   /\ phase = "deliver"
   /\ ~Liar
-  /\ sentHeld' = sentHeld + Cardinality(served \cap rhas)
-  /\ Settle(served, FALSE)
+  /\ sentHeld' = sentHeld + Cardinality(Sent \cap rhas)
+  /\ Settle(Sent, FALSE)
   /\ UNCHANGED world
 
 \* What a lying provider picks its responses from: blocks of each branch, a
@@ -338,7 +361,7 @@ INV_RoundsBounded ==
   \* Only an honest provider promises a bound.
   ~Liar =>
     \* A receiver that lost nothing is served in one request.
-    /\ (world = "steady" => round <= 1)
+    /\ (world \in {"steady", "gossip"} => round <= 1)
     \* A receiver with a hole asks once more, by name.
     /\ round <= 2
 

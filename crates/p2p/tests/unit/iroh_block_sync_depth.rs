@@ -63,7 +63,10 @@ async fn block_sync_sends_the_receivers_depth_cut() {
                     vec![provider],
                     vec![root],
                     max_depth,
-                    haves.clone(),
+                    crate::message::HeldCids {
+                        haves: haves.clone(),
+                        present: Vec::new(),
+                    },
                 )
                 .await;
 

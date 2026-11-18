@@ -1,7 +1,5 @@
 //! Commands from the `VincTransport` facade to the endpoint's thread.
 
-use cid::Cid;
-
 use crate::error::Result;
 use crate::message::CarFetchRequest;
 use crate::rt::{mpsc, oneshot};
@@ -127,8 +125,7 @@ pub enum Command {
     },
     SendCarRequest {
         peer_id: PeerId,
-        root_cid: Cid,
-        haves: Vec<Cid>,
+        request: CarFetchRequest,
         reply: Reply<()>,
     },
     SyncBlocks {

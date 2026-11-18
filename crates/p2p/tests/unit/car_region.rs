@@ -31,7 +31,17 @@ async fn served(
     haves: &[Cid],
     max_depth: Option<u32>,
 ) -> RapidHashSet<Cid> {
-    let outcome = collect_missing_region(provider, wants, haves, max_depth)
+    served_present(provider, wants, haves, &[], max_depth).await
+}
+
+async fn served_present(
+    provider: &Store,
+    wants: &[Cid],
+    haves: &[Cid],
+    present: &[Cid],
+    max_depth: Option<u32>,
+) -> RapidHashSet<Cid> {
+    let outcome = collect_missing_region(provider, wants, haves, present, max_depth)
         .await
         .unwrap();
     let set = cids(
@@ -200,4 +210,75 @@ async fn a_wanted_block_inside_held_history_is_still_served() {
     let got = served(&provider, &[hole], &dag.heads(), Some(2)).await;
 
     assert_eq!(got, cids(&history[10..13]));
+}
+
+/// The composite blocks of `blocks`: what gossip hands a receiver ahead of
+/// their history.
+fn composites(blocks: &[(Cid, Vec<u8>)]) -> Vec<Cid> {
+    blocks
+        .iter()
+        .filter(|(_, data)| {
+            defra_core::Block::from_dag_cbor(data)
+                .is_ok_and(|block| matches!(block.delta, defra_core::CrdtDelta::Composite(_)))
+        })
+        .map(|(cid, _)| *cid)
+        .collect()
+}
+
+/// Gossip handed the receiver the last three heads, and nothing else. It
+/// names them present and no have: it is sent the whole DAG but those three.
+#[nuclei::test(threads = 0)]
+async fn present_heads_are_walked_through_but_not_sent() {
+    let provider = store();
+    let mut dag = DocDag::default();
+    let history = updates(&mut dag, 30, 1);
+    put_all(&provider, &history).await;
+    let gossiped = composites(&history)[27..].to_vec();
+
+    let got = served_present(&provider, &dag.heads(), &[], &gossiped, None).await;
+
+    let mut expected = cids(&history);
+    for cid in &gossiped {
+        expected.remove(cid);
+    }
+    assert_eq!(got, expected);
+}
+
+/// The receiver holds the first 20 updates whole (a have) and the composites
+/// of the next 5 from gossip (present): it is sent the field blocks of those
+/// 5 updates and nothing else.
+#[nuclei::test(threads = 0)]
+async fn presents_over_a_have_are_sent_only_their_missing_blocks() {
+    let provider = store();
+    let mut dag = DocDag::default();
+    let held = updates(&mut dag, 20, 1);
+    let have = dag.heads();
+    let burst = updates(&mut dag, 5, 2);
+    put_all(&provider, &held).await;
+    put_all(&provider, &burst).await;
+    let gossiped = composites(&burst);
+
+    let got = served_present(&provider, &dag.heads(), &have, &gossiped, Some(2)).await;
+
+    let mut expected = cids(&burst);
+    for cid in &gossiped {
+        expected.remove(cid);
+    }
+    assert_eq!(got, expected);
+}
+
+/// A present block is not sent on the depth-cut path either.
+#[nuclei::test(threads = 0)]
+async fn a_present_block_is_left_out_of_the_depth_cut() {
+    let provider = store();
+    let mut dag = DocDag::default();
+    let history = updates(&mut dag, 4, 1);
+    put_all(&provider, &history).await;
+    let field = history[0].0;
+    let present = history[1].0;
+
+    let got = served_present(&provider, &[field, present], &[], &[present], None).await;
+
+    assert!(got.contains(&field));
+    assert!(!got.contains(&present));
 }

@@ -251,8 +251,9 @@ pub enum IrohCommand {
         missing: Vec<Cid>,
         /// Links below each missing CID to walk; `None` is the whole closure.
         max_depth: Option<u32>,
-        /// Merged blocks held here whose closures the provider leaves out.
-        haves: Vec<Cid>,
+        /// Blocks held here: with their closures, which the provider leaves
+        /// out, and without them, which it does not send.
+        held: crate::message::HeldCids,
         reply: oneshot::Sender<crate::error::Result<QueryId>>,
     },
     CancelSync {

@@ -284,3 +284,20 @@ fn a_receiver_holding_nothing_still_gets_the_whole_document() {
     actions.push(at_most("db1", &[("car_received_already_held", 0)]));
     case(integration_test::scenario_id!(), actions);
 }
+
+/// `db1` holds none of a document with a long history when `db0` makes five
+/// updates back to back, so `db1` hears of several heads of the document
+/// while its first fetch is still bringing the history. Its fetches of the
+/// document run one at a time, each naming what the one before it fetched,
+/// and none is sent a block another already brought.
+#[test]
+#[mantra_macros::req_test("defra.net.sync.exact_fetch.burst")]
+fn a_burst_of_heads_for_one_document_is_fetched_without_overlap() {
+    let mut actions = vec![create("db0")];
+    actions.extend(updates("db0", 30));
+    actions.extend(connect());
+    actions.extend((1..=5).map(|idx| update("db0", json!({ "name": format!("b{idx}") }))));
+    actions.push(holds("db1", "b5"));
+    actions.push(at_most("db1", &[("car_received_already_held", 0)]));
+    case(integration_test::scenario_id!(), actions);
+}

@@ -1265,7 +1265,7 @@ pub(super) async fn handle_block_sync(
     providers: Vec<PeerId>,
     missing: Vec<cid::Cid>,
     max_depth: Option<u32>,
-    haves: Vec<cid::Cid>,
+    held: crate::message::HeldCids,
 ) {
     use edge::TaskSet;
 
@@ -1285,7 +1285,7 @@ pub(super) async fn handle_block_sync(
             max_depth,
             ..CarFetchRequest::selective_dag(root, missing.clone())
         }
-        .with_haves(haves)
+        .with_held(held)
     };
 
     let BlockSyncResources {

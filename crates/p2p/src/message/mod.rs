@@ -40,7 +40,7 @@ mod traits;
 
 // Re-export all public types
 pub use branchable::{BranchableSyncReply, BranchableSyncRequest};
-pub use car::CarFetchRequest;
+pub use car::{CarFetchRequest, HeldCids};
 pub use docsync::{DocSyncItem, DocSyncReply, DocSyncRequest, MAX_DOC_IDS};
 pub use identity::{IdentityRequest, IdentityResponse, IDENTITY_UNCONFIGURED_ERROR};
 pub use manage::{

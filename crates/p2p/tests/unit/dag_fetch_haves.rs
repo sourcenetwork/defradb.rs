@@ -77,3 +77,68 @@ async fn a_fetch_naming_its_haves_is_served_only_the_missing_blocks() {
         );
     }
 }
+
+/// Gossip stored a document's new update before its history arrived: the
+/// receiver holds the root and its field block, not the updates below it.
+/// The fetch names both present, so the provider walks through them and
+/// sends only the missing updates, never the blocks the receiver holds.
+#[nuclei::test(threads = 0)]
+async fn a_held_root_is_named_present_and_not_sent_back() {
+    let store = || {
+        Arc::new(DefraBlockstore::new(
+            Arc::new(RegolithStore::in_memory().unwrap()),
+            true,
+        ))
+    };
+    let (provider, receiver) = (store(), store());
+    let mut theirs = DocDag::default();
+    let history = updates(&mut theirs, 30, 1);
+    let ours = theirs.clone();
+    let missing = updates(&mut theirs, 20, 2);
+    let gossiped = theirs.update(&["name"], 9);
+    for (cid, data) in history.iter().chain(&missing).chain(&gossiped) {
+        provider.put(cid, data).await.unwrap();
+    }
+    for (cid, data) in history.iter().chain(&gossiped) {
+        receiver.put(cid, data).await.unwrap();
+    }
+    let haves = haves_from_heads(receiver.as_ref(), ours.heads()).await;
+    let (head, head_data) = gossiped.last().unwrap().clone();
+    let transport = TestTransport::new(
+        receiver.clone(),
+        head,
+        head_data,
+        RapidHashMap::new(),
+        RapidHashMap::new(),
+    );
+    transport.set_force_rooted_sync();
+    transport.set_closure_provider(provider);
+    let (event_tx, mut event_rx) = mpsc::channel(1);
+
+    poll_fetch_dag(
+        transport.clone(),
+        receiver.clone(),
+        event_tx,
+        head,
+        DagFetchContext::new(
+            "doc-id".to_string(),
+            "collection-id".to_string(),
+            "creator-id".to_string(),
+            PeerId::new("remote-peer".to_string()),
+        )
+        .with_haves(haves),
+        DagFetchLimiter::new(2),
+        diagnostics(),
+    )
+    .await;
+
+    assert!(matches!(
+        event_rx.recv().await,
+        Some(SyncEvent::DagReady { root_cid, .. }) if root_cid == head
+    ));
+    assert_eq!(
+        transport.closure_rounds(),
+        vec![(ClosureDepth::whole().get(), missing.len())],
+        "the gossiped blocks are named present and not sent"
+    );
+}

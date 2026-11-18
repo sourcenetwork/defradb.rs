@@ -8,8 +8,13 @@ block below them that no have reaches. The provider walks blocks highest
 priority first, and every link goes to a lower priority, so all the blocks
 that can tell it "this one is held" are walked before the block itself.
 
-The libp2p request carries the root CID and then the have CIDs, each CID
-self-delimiting, so an older provider that reads one CID reads the root.
+The receiver may also name present blocks: blocks it holds without their
+whole DAG (gossip stored a head before its history). The provider walks
+through them as before but never sends them (`Sent`).
+
+The libp2p request carries the root CID, then the have CIDs, then, when any
+are named, the marker 0 and the present CIDs; each CID is self-delimiting and
+never starts with 0, so an older provider that reads one CID reads the root.
 
 What is promised:
 - a block asked for by name is always served (`wanted_served`);
@@ -24,8 +29,13 @@ What is promised:
   a composite), the provider serves the whole closure below the wanted
   blocks, and the receiver again ends up holding all of it
   (`fallback_complete`);
-- the libp2p request round-trips (`decode_encode`), and its first CID is the
-  root (`first_is_root`).
+- a present block is never sent, and a receiver holding its present blocks
+  still ends up holding the whole wanted DAG, on the walk and on the fallback
+  (`present_not_sent`, `sent_held_is_asked`, `receiver_complete_present`,
+  `fallback_complete_present`);
+- the libp2p request round-trips with its haves and present blocks
+  (`decodeHaves_encode`, `decode_encode`), and its first CID is the root
+  (`first_is_root`).
 
 A DAG is a function naming each block's links; blocks are numbers. A CID is a
 list of bytes encoded behind its length, which is what makes it
@@ -58,8 +68,10 @@ plain link the composite walk would not follow
 (`a_collection_block_head_outside_the_haves_is_served`). A depth cut serves
 less, and the receiver asks again from its missing frontier.
 
-Rust anchors: `collect_missing_region` (`crates/p2p/src/sync/car/region.rs`),
+Rust anchors: `collect_missing_region`, `Walk::serve` and `fallback`
+(`crates/p2p/src/sync/car/region.rs`),
 `haves_from_heads` (`crates/p2p/src/sync/coordinator/haves.rs`),
+`held_below_root` (`crates/p2p/src/sync/coordinator/dag_fetcher.rs`),
 `encode_car_request` and `decode_car_request`
 (`crates/p2p/src/two_stream/handler/car.rs`).
 -/
@@ -141,6 +153,57 @@ theorem served_within_fallback (g : Dag) (wants haves : List Nat) (b : Nat)
   | inl hw => exact ⟨b, hw, Reaches.refl b⟩
   | inr hr => exact hr.1
 
+-- What the provider sends when the receiver also names present blocks:
+-- what it serves, less the present blocks. The walk still goes through a
+-- present block, so what lies below it is served as before.
+def Sent (g : Dag) (wants haves present : List Nat) (b : Nat) : Prop :=
+  Served g wants haves b ∧ b ∉ present
+
+-- A present block is never sent.
+theorem present_not_sent (g : Dag) (wants haves present : List Nat) (b : Nat)
+    (hs : Sent g wants haves present b) : b ∉ present := by
+  -- It is the second half of `Sent`.
+  exact hs.2
+
+-- A sent block a have reaches was asked for by name and is not present.
+theorem sent_held_is_asked (g : Dag) (wants haves present : List Nat) (b : Nat)
+    (hs : Sent g wants haves present b) (hh : ReachedFrom g haves b) :
+    b ∈ wants ∧ b ∉ present := by
+  -- The served half gives the name; the other half is the present check.
+  exact ⟨served_held_is_asked g wants haves b hs.1 hh, hs.2⟩
+
+-- A receiver holding its haves' DAGs and its present blocks holds the whole
+-- wanted DAG once it stores what it was sent.
+theorem receiver_complete_present (g : Dag) (wants haves present : List Nat)
+    (holds : Nat → Prop)
+    (held : ∀ b, ReachedFrom g haves b → holds b)
+    (hp : ∀ b, b ∈ present → holds b)
+    (stored : ∀ b, Sent g wants haves present b → holds b)
+    (b : Nat) (hw : ReachedFrom g wants b) : holds b := by
+  -- A have reaches it, or it is served; a served block is present or sent.
+  cases missing_is_served g wants haves b hw with
+  | inr hh => exact held b hh
+  | inl hs =>
+    by_cases hb : b ∈ present
+    · exact hp b hb
+    · exact stored b ⟨hs, hb⟩
+
+-- The fallback with present blocks: the closure, less the present blocks.
+def FallbackSent (g : Dag) (wants present : List Nat) (b : Nat) : Prop :=
+  FallbackServed g wants b ∧ b ∉ present
+
+-- The fallback less the present blocks still leaves the receiver holding
+-- the whole wanted DAG, since it holds the present blocks.
+theorem fallback_complete_present (g : Dag) (wants present : List Nat)
+    (holds : Nat → Prop)
+    (hp : ∀ b, b ∈ present → holds b)
+    (stored : ∀ b, FallbackSent g wants present b → holds b)
+    (b : Nat) (hw : ReachedFrom g wants b) : holds b := by
+  -- A present block is held; any other block of the closure is sent.
+  by_cases hb : b ∈ present
+  · exact hp b hb
+  · exact stored b ⟨hw, hb⟩
+
 -- With every heads link going to a lower priority, a block's priority is at
 -- most that of every block that reaches it along heads.
 theorem reach_priority_le (heads : Dag) (prio : Nat → Nat)
@@ -173,9 +236,15 @@ def decodeCid : List Nat → Option (List Nat × List Nat)
   -- A length, then that many bytes, if they are there.
   | n :: rest => if n ≤ rest.length then some (rest.take n, rest.drop n) else none
 
--- The request: the root, then each have.
-def encodeRequest (root : List Nat) (haves : List (List Nat)) : List Nat :=
-  encodeCid root ++ (haves.map encodeCid).flatten
+-- The present part of a request: nothing when none are named, otherwise the
+-- marker 0 and then each present block. A CID's encoding never starts with
+-- 0 (a CID is never empty), so the marker cannot be mistaken for a have.
+def encodePresent (present : List (List Nat)) : List Nat :=
+  if present = [] then [] else 0 :: (present.map encodeCid).flatten
+
+-- The request: the root, then each have, then the present part.
+def encodeRequest (root : List Nat) (haves present : List (List Nat)) : List Nat :=
+  encodeCid root ++ (haves.map encodeCid).flatten ++ encodePresent present
 
 -- Read CIDs until the bytes end, or a CID is torn.
 def decodeAll : Nat → List Nat → List (List Nat)
@@ -194,10 +263,69 @@ theorem decodeCid_encode (c rest : List Nat) :
   simp [encodeCid, decodeCid]
 
 -- An older provider reads one CID and gets the root.
-theorem first_is_root (root : List Nat) (haves : List (List Nat)) :
-    (decodeCid (encodeRequest root haves)).map Prod.fst = some root := by
+theorem first_is_root (root : List Nat) (haves present : List (List Nat)) :
+    (decodeCid (encodeRequest root haves present)).map Prod.fst = some root := by
   -- The request starts with the root's encoding.
-  simp [encodeRequest, decodeCid_encode]
+  simp [encodeRequest, List.append_assoc, decodeCid_encode]
+
+-- Read haves until the bytes end, a CID is torn, or the marker 0 comes;
+-- also give back what is left.
+def decodeHaves : Nat → List Nat → List (List Nat) × List Nat
+  -- Out of fuel: stop, leaving the bytes.
+  | 0, bytes => ([], bytes)
+  -- No bytes: no haves.
+  | _ + 1, [] => ([], [])
+  -- The marker: the haves end here.
+  | _ + 1, 0 :: rest => ([], 0 :: rest)
+  -- A CID's length: read it and go on, or stop if it is torn.
+  | fuel + 1, (n + 1) :: rest =>
+    match decodeCid ((n + 1) :: rest) with
+    | some (c, more) => (c :: (decodeHaves fuel more).1, (decodeHaves fuel more).2)
+    | none => ([], (n + 1) :: rest)
+
+-- Reading the encodings of non-empty CIDs, followed by nothing or the
+-- marker, gives the CIDs back and leaves what followed.
+theorem decodeHaves_encode (cs : List (List Nat)) (tail : List Nat) (fuel : Nat)
+    (hne : ∀ c ∈ cs, c ≠ []) (htail : tail = [] ∨ ∃ r, tail = 0 :: r)
+    (h : cs.length ≤ fuel) :
+    decodeHaves fuel ((cs.map encodeCid).flatten ++ tail) = (cs, tail) := by
+  -- One CID at a time; each starts with a length that is not 0.
+  induction cs generalizing fuel with
+  | nil =>
+    -- Only the tail is left: nothing, or the marker.
+    cases fuel with
+    | zero => simp [decodeHaves]
+    | succ fuel =>
+      rcases htail with ht | ⟨r, ht⟩ <;> subst ht <;> simp [decodeHaves]
+  | cons c cs ih =>
+    cases fuel with
+    | zero => simp at h
+    | succ fuel =>
+      -- The CID is not empty, so its length is one more than some k.
+      obtain ⟨k, hk⟩ : ∃ k, c.length = k + 1 :=
+        Nat.exists_eq_succ_of_ne_zero
+          (by simpa [List.length_eq_zero_iff] using hne c (by simp))
+      -- The rest decodes by the induction hypothesis.
+      have hrest := ih fuel (fun d hd => hne d (by simp [hd])) (by simp at h; omega)
+      -- Unfold one step: the length, the CID, then the rest.
+      have hdec : decodeCid ((k + 1) :: (c ++ ((cs.map encodeCid).flatten ++ tail)))
+          = some (c, (cs.map encodeCid).flatten ++ tail) := by
+        rw [← hk]; exact decodeCid_encode c _
+      simp only [List.map_cons, List.flatten_cons, encodeCid, hk, List.cons_append,
+        List.append_assoc, decodeHaves, hdec, hrest]
+
+-- Read a request: the root, the haves, and, after the marker, the present
+-- blocks.
+def decodeRequest (fuel : Nat) (bytes : List Nat) :
+    Option (List Nat × List (List Nat) × List (List Nat)) :=
+  match decodeCid bytes with
+  -- No root: no request.
+  | none => none
+  -- The root, then the haves, then whatever follows the marker.
+  | some (root, rest) =>
+    match decodeHaves fuel rest with
+    | (haves, 0 :: ps) => some (root, haves, decodeAll fuel ps)
+    | (haves, _) => some (root, haves, [])
 
 -- Reading the encodings of a list of CIDs gives the list back.
 theorem decodeAll_encode (cs : List (List Nat)) (fuel : Nat)
@@ -212,11 +340,24 @@ theorem decodeAll_encode (cs : List (List Nat)) (fuel : Nat)
       simp only [List.map_cons, List.flatten_cons, decodeAll, decodeCid_encode]
       rw [ih fuel (by simp at h; omega)]
 
--- The request round-trips: the root first, then the haves.
-theorem decode_encode (root : List Nat) (haves : List (List Nat)) :
-    decodeAll (haves.length + 1) (encodeRequest root haves) = root :: haves := by
-  -- The root comes off first, then the haves.
-  simp only [encodeRequest, decodeAll, decodeCid_encode]
-  rw [decodeAll_encode haves haves.length (Nat.le_refl _)]
+-- The request round-trips: the root, the haves and the present blocks, as
+-- long as no have is empty and there is fuel for each list.
+theorem decode_encode (root : List Nat) (haves present : List (List Nat))
+    (fuel : Nat) (hne : ∀ c ∈ haves, c ≠ [])
+    (hh : haves.length ≤ fuel) (hp : present.length ≤ fuel) :
+    decodeRequest fuel (encodeRequest root haves present) = some (root, haves, present) := by
+  cases present with
+  | nil =>
+    -- No present block: the haves end with the bytes.
+    have hd := decodeHaves_encode haves [] fuel hne (Or.inl rfl) hh
+    rw [List.append_nil] at hd
+    simp [decodeRequest, encodeRequest, encodePresent, decodeCid_encode, hd]
+  | cons p ps =>
+    -- The haves stop at the marker, and the present blocks follow it.
+    have hd := decodeHaves_encode haves (0 :: ((p :: ps).map encodeCid).flatten) fuel
+      hne (Or.inr ⟨_, rfl⟩) hh
+    have hall := decodeAll_encode (p :: ps) fuel hp
+    simp only [List.map_cons, List.flatten_cons] at hd hall
+    simp [decodeRequest, encodeRequest, encodePresent, decodeCid_encode, hd, hall]
 
 end CarMissingRegion

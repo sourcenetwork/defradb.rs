@@ -845,14 +845,14 @@ impl P2PHostHandle {
         &self,
         peer_id: PeerId,
         root_cid: Cid,
-        haves: Vec<Cid>,
+        held: crate::message::HeldCids,
     ) -> Result<()> {
         let (response_tx, response_rx) = oneshot::channel();
         self.command_tx
             .send(HostCommand::SendCarRequest {
                 peer_id,
                 root_cid,
-                haves,
+                held,
                 response: response_tx,
             })
             .await

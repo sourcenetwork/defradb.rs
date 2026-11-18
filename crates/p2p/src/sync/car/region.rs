@@ -19,6 +19,12 @@
 //! composite (a branchable collection's block, whose heads are collection
 //! blocks and whose document composite is a plain link) takes the depth-cut
 //! closure instead, which holds no have back.
+//!
+//! The receiver may also name present blocks: blocks it holds without their
+//! closures, such as heads gossip stored before their history arrived. A
+//! present block is never sent, on either path, but the walk goes through it
+//! as wanted, so the history below it is still served. With presents and no
+//! held have the spine is still walked, every block wanted.
 
 use std::collections::BinaryHeap;
 
@@ -35,6 +41,9 @@ use crate::error::{Error, Result};
 
 /// The most have CIDs a responder reads from one request.
 pub const MAX_HAVE_CIDS: usize = 16;
+
+/// The most present CIDs a responder reads from one request.
+pub const MAX_PRESENT_CIDS: usize = 64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Colour {
@@ -94,6 +103,7 @@ struct Walk {
     total_bytes: usize,
     served: RapidHashSet<Cid>,
     wants: RapidHashSet<Cid>,
+    present: RapidHashSet<Cid>,
     outcome: CarCollectOutcome,
 }
 
@@ -191,8 +201,14 @@ impl Walk {
         Ok(())
     }
 
+    /// A present block is walked as served but never sent.
     fn serve(&mut self, cid: Cid, data: Bytes) {
-        if self.served.insert(cid) {
+        if !self.served.insert(cid) {
+            return;
+        }
+        if self.present.contains(&cid) {
+            self.total_bytes -= data.len();
+        } else {
             self.outcome.blocks.push((cid, data));
         }
     }
@@ -221,24 +237,30 @@ impl Walk {
 /// of `haves`, under the same caps as [`collect_dag_blocks_within`].
 ///
 /// A wanted CID is always served, even when a have reaches it: the receiver
-/// asked for it because it lacks it. With no have this responder holds, or a
-/// wanted block that is not a composite, the walk falls back to
-/// [`collect_dag_blocks_within`] with `max_depth`.
+/// asked for it because it lacks it, unless it names it present. A present
+/// block is never served. With neither a have this responder holds nor a
+/// present block, or with a wanted block that is not a composite, the walk
+/// falls back to [`collect_dag_blocks_within`] with `max_depth`, less the
+/// present blocks.
 pub async fn collect_missing_region<B>(
     blockstore: &B,
     wants: &[Cid],
     haves: &[Cid],
+    present: &[Cid],
     max_depth: Option<u32>,
 ) -> Result<CarCollectOutcome>
 where
     B: Blockstore,
 {
-    let mut walk = Walk::default();
+    let mut walk = Walk {
+        present: present.iter().take(MAX_PRESENT_CIDS).copied().collect(),
+        ..Walk::default()
+    };
     for have in haves.iter().take(MAX_HAVE_CIDS) {
         walk.mark_held(blockstore, *have).await?;
     }
-    if walk.entries.is_empty() {
-        return collect_dag_blocks_within(blockstore, wants, max_depth).await;
+    if walk.entries.is_empty() && walk.present.is_empty() {
+        return fallback(blockstore, wants, &walk.present, max_depth).await;
     }
     for want in wants {
         if !walk.wants.insert(*want) || !walk.room() {
@@ -249,7 +271,7 @@ where
             walk.insert(*want, data, Colour::Wanted);
             if let Some(entry) = walk.entries.get_mut(want) {
                 if !entry.shape.spine {
-                    return collect_dag_blocks_within(blockstore, wants, max_depth).await;
+                    return fallback(blockstore, wants, &walk.present, max_depth).await;
                 }
                 entry.held_below = named_held;
             }
@@ -298,6 +320,22 @@ where
         }
     }
     Ok(walk.outcome)
+}
+
+/// The depth-cut closure below `wants`, less the blocks the receiver names
+/// present.
+async fn fallback<B>(
+    blockstore: &B,
+    wants: &[Cid],
+    present: &RapidHashSet<Cid>,
+    max_depth: Option<u32>,
+) -> Result<CarCollectOutcome>
+where
+    B: Blockstore,
+{
+    let mut outcome = collect_dag_blocks_within(blockstore, wants, max_depth).await?;
+    outcome.blocks.retain(|(cid, _)| !present.contains(cid));
+    Ok(outcome)
 }
 
 #[cfg(test)]

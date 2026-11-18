@@ -151,6 +151,9 @@ pub struct SyncDiagnostics {
     pending_dag_fetch_deferred_unavailable: AtomicU64,
     pending_dag_fetch_deferred_contention: AtomicU64,
     pending_dag_fetch_deferred_busy: AtomicU64,
+    dag_fetch_doc_waits: AtomicU64,
+    dag_fetch_doc_claims_full: AtomicU64,
+    dag_fetch_doc_completed_cleared: AtomicU64,
     car_busy_responses: AtomicU64,
     provider_busy_rotations: AtomicU64,
     pending_dag_fetch_exhausted: AtomicU64,
@@ -194,6 +197,12 @@ pub struct SyncDiagnosticsSnapshot {
     pub pending_dag_fetch_deferred_unavailable: u64,
     pub pending_dag_fetch_deferred_contention: u64,
     pub pending_dag_fetch_deferred_busy: u64,
+    /// Fetches that waited for another fetch of their document to end.
+    pub dag_fetch_doc_waits: u64,
+    /// Fetches that ran unguarded because the document claim table was full.
+    pub dag_fetch_doc_claims_full: u64,
+    /// Times the memory of completed roots per document was full and cleared.
+    pub dag_fetch_doc_completed_cleared: u64,
     pub car_busy_responses: u64,
     pub provider_busy_rotations: u64,
     pub pending_dag_fetch_exhausted: u64,
@@ -241,6 +250,11 @@ impl SyncDiagnostics {
             pending_dag_retry_suppressed: self.pending_dag_retry_suppressed.load(Ordering::Relaxed),
             pending_dag_fetch_deferred_unavailable: self
                 .pending_dag_fetch_deferred_unavailable
+                .load(Ordering::Relaxed),
+            dag_fetch_doc_waits: self.dag_fetch_doc_waits.load(Ordering::Relaxed),
+            dag_fetch_doc_claims_full: self.dag_fetch_doc_claims_full.load(Ordering::Relaxed),
+            dag_fetch_doc_completed_cleared: self
+                .dag_fetch_doc_completed_cleared
                 .load(Ordering::Relaxed),
             pending_dag_fetch_deferred_contention: self
                 .pending_dag_fetch_deferred_contention
@@ -364,6 +378,20 @@ impl SyncDiagnostics {
 
     pub fn record_pending_dag_retry_suppressed(&self) {
         self.pending_dag_retry_suppressed
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_dag_fetch_doc_wait(&self) {
+        self.dag_fetch_doc_waits.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_dag_fetch_doc_completed_cleared(&self) {
+        self.dag_fetch_doc_completed_cleared
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_dag_fetch_doc_claims_full(&self) {
+        self.dag_fetch_doc_claims_full
             .fetch_add(1, Ordering::Relaxed);
     }
 

@@ -15,10 +15,14 @@ use serde::{Deserialize, Serialize};
 /// `max_depth` bounds a recursive walk to that many links below each wanted
 /// CID. It is omitted when `None` so unbounded requests keep their legacy
 /// bytes; a responder that predates it serves the whole closure.
-/// `have_cids` names merged blocks the receiver holds, so it holds their
-/// closures too. A responder holding one of them serves only the part of the
-/// wanted closure outside those closures, and ignores `max_depth`. Omitted
-/// when empty; a responder that predates it ignores it.
+/// `have_cids` names blocks the receiver holds with their whole closures. A
+/// responder holding one of them serves only the part of the wanted closure
+/// outside those closures, and ignores `max_depth`. Omitted when empty; a
+/// responder that predates it ignores it.
+/// `present_cids` names blocks the receiver holds without their whole
+/// closures, such as heads gossip stored before their history arrived. A
+/// responder never sends one, but walks through it as wanted, so the history
+/// below it is still served. Omitted when empty.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CarFetchRequest {
     pub root_cid: Cid,
@@ -30,6 +34,8 @@ pub struct CarFetchRequest {
     pub max_depth: Option<u32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub have_cids: Vec<Cid>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub present_cids: Vec<Cid>,
 }
 
 fn default_recursive() -> bool {
@@ -44,6 +50,7 @@ impl CarFetchRequest {
             recursive: true,
             max_depth: None,
             have_cids: Vec::new(),
+            present_cids: Vec::new(),
         }
     }
 
@@ -54,6 +61,7 @@ impl CarFetchRequest {
             recursive: false,
             max_depth: None,
             have_cids: Vec::new(),
+            present_cids: Vec::new(),
         }
     }
 
@@ -67,13 +75,26 @@ impl CarFetchRequest {
             recursive: true,
             max_depth: None,
             have_cids: Vec::new(),
+            present_cids: Vec::new(),
         }
     }
 
-    /// The same request, naming merged blocks the receiver holds.
+    /// The same request, naming blocks the receiver holds with their closures.
     pub fn with_haves(mut self, have_cids: Vec<Cid>) -> Self {
         self.have_cids = dedupe_cids(have_cids);
         self
+    }
+
+    /// The same request, naming blocks the receiver holds without their
+    /// closures.
+    pub fn with_present(mut self, present_cids: Vec<Cid>) -> Self {
+        self.present_cids = dedupe_cids(present_cids);
+        self
+    }
+
+    /// The same request, naming what the receiver holds.
+    pub fn with_held(self, held: HeldCids) -> Self {
+        self.with_haves(held.haves).with_present(held.present)
     }
 
     pub fn response_roots(&self) -> Vec<Cid> {
@@ -83,6 +104,14 @@ impl CarFetchRequest {
             self.wanted_cids.clone()
         }
     }
+}
+
+/// What a fetch names about the blocks it holds: blocks held with their
+/// whole closures (`haves`), and blocks held without them (`present`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HeldCids {
+    pub haves: Vec<Cid>,
+    pub present: Vec<Cid>,
 }
 
 fn dedupe_cids(cids: Vec<Cid>) -> Vec<Cid> {

@@ -133,8 +133,8 @@ pub enum HostEvent {
     CarFetchRequest {
         peer_id: PeerId,
         root_cid: Cid,
-        /// Merged blocks the requester holds; empty from older peers.
-        haves: Vec<Cid>,
+        /// What the requester names as held; empty from older peers.
+        held: crate::message::HeldCids,
     },
 
     /// Received a CAR fetch response (CARv1 bytes containing a DAG).

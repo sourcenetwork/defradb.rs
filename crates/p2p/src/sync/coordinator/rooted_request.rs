@@ -6,10 +6,10 @@
 //! sends held field history back, and a doubling cut walks the field chains
 //! again each round. So a document's fetch names its root, with no cut below
 //! the response cap, when the provider can leave out everything the receiver
-//! holds: the receiver names haves, or holds nothing below the root (gossip
-//! handed it only the new head). One request then carries exactly the
-//! missing region, or the whole DAG. A receiver that holds blocks below the
-//! root but names no have (pushed blocks not merged yet), a branchable
+//! holds: the receiver names haves or present blocks, or holds nothing below
+//! the root (gossip handed it only the new head). One request then carries
+//! exactly the missing region, or the whole DAG. A receiver that holds blocks
+//! below the root but names neither (pushed blocks not merged yet), a branchable
 //! collection's blocks (an empty document ID) and a root that is not a
 //! composite keep the missing CIDs and the doubling cut, since naming the
 //! root would send those held blocks back.
@@ -45,7 +45,7 @@ where
     if !composite {
         return frontier;
     }
-    if context.haves().is_empty() {
+    if context.haves().is_empty() && context.present().is_empty() {
         for link in extract_links(&data) {
             if matches!(blockstore.has(&link).await, Ok(true)) {
                 return frontier;
