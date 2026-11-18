@@ -29,7 +29,7 @@ fn lapsed(acp: &VeraDocumentACP, change: &OwedChange, token: &str) -> Option<Str
         command.and_then(|command| acp.request_bound(actor, token, command))
     });
     if let Some(bound) = bound {
-        return bound.err();
+        return bound.err().map(|refusal| refusal.to_string());
     }
     match acp.provider.caller_of_delegation(token)? {
         Ok(caller)

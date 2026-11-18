@@ -122,6 +122,12 @@ pub enum QueryError {
     #[error("parse error: {0}")]
     Parse(String),
 
+    /// A mutation names a collection that does not exist. The text is
+    /// GraphQL validation's, as a parse error; the collection API reports it
+    /// in Go's collection words.
+    #[error("parse error: {0}")]
+    UnknownMutationCollection(String),
+
     /// Invalid filter condition
     #[error("invalid filter: {0}")]
     InvalidFilter(String),
@@ -223,6 +229,15 @@ pub enum QueryError {
     /// ACP provider what the write owes it as the write's signer.
     #[error("verified write refused: {0}")]
     WriteAuthorityUnavailable(String),
+
+    /// A verified write was not staged: the delegation it carries does not
+    /// hold at the document ACP provider's time. Made again with a
+    /// delegation issued at the window's provider time, it is taken.
+    #[error("verified write refused: {reason}")]
+    DelegationOutsideWindow {
+        reason: String,
+        window: acp::DelegationWindow,
+    },
 
     /// ACP registration failed during document creation
     #[error("ACP registration failed for document '{doc_id}': {message}")]

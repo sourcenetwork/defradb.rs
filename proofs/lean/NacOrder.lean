@@ -140,32 +140,46 @@ theorem refused_get_collection_first (holds : Perm → Bool) (p : Perm)
 Go's `canDACBypass`: a caller reads past document access control only when
 NAC is on and grants it `bypass-dac`. With NAC off a permission check says
 yes to everything, so the bypass must ask whether NAC is on first. A caller
-that names no identity never bypasses.
+that names no identity never bypasses. A caller can also deny its own request
+the bypass (an embedder signing as a node administrator that must still go
+through document access control); such a request never bypasses.
 
 Rust owner: crates/db/src/read/lensed/fetcher/mod.rs
 `LensedDocFetcher::dac_bypass`, called from crates/query/src/runner/turn.rs
-`QueryRunner::lent`.
+`QueryRunner::lent`; the denial is crates/defra-core/src/request_context.rs
+`RequestContext::with_dac_bypass_denied`.
 -/
 
--- The bypass: an identity is named, NAC is on, and it holds `bypass-dac`.
-def dacBypass (named nacOn holdsBypass : Bool) : Bool :=
-  -- all three must hold
-  named && nacOn && holdsBypass
+-- The bypass: an identity is named, its caller did not deny the bypass, NAC
+-- is on, and it holds `bypass-dac`.
+def dacBypass (named denied nacOn holdsBypass : Bool) : Bool :=
+  -- all four must hold
+  named && !denied && nacOn && holdsBypass
 
 -- With NAC off nobody bypasses, whatever a permission check would say.
-theorem no_bypass_when_off (named holds : Bool) : dacBypass named false holds = false := by
-  -- the middle term is false
+theorem no_bypass_when_off (named denied holds : Bool) :
+    dacBypass named denied false holds = false := by
+  -- the third term is false
   simp [dacBypass]
 
 -- A caller that names no identity never bypasses.
-theorem no_bypass_anonymous (on holds : Bool) : dacBypass false on holds = false := by
+theorem no_bypass_anonymous (denied on holds : Bool) :
+    dacBypass false denied on holds = false := by
   -- the first term is false
   simp [dacBypass]
 
--- With NAC on, a named caller bypasses exactly when it holds `bypass-dac`:
--- the node owner, who holds every node permission, reads every document.
-theorem bypass_iff_held (holds : Bool) : dacBypass true true holds = holds := by
-  -- the first two terms are true
+-- A request its caller denied the bypass never bypasses, even for the node
+-- owner or an administrator, who hold `bypass-dac` with NAC on.
+theorem no_bypass_when_denied (named on holds : Bool) :
+    dacBypass named true on holds = false := by
+  -- the second term is false
+  simp [dacBypass]
+
+-- With NAC on and no denial, a named caller bypasses exactly when it holds
+-- `bypass-dac`: the node owner, who holds every node permission, reads every
+-- document.
+theorem bypass_iff_held (holds : Bool) : dacBypass true false true holds = holds := by
+  -- the first three terms are true
   simp [dacBypass]
 
 end NacOrder

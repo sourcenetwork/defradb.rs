@@ -55,6 +55,17 @@ pub(crate) enum WaitKey {
     },
 }
 
+/// How a composite that cannot merge yet is indexed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Deferral {
+    /// Governance: the arrival of any of these inputs re-drives it.
+    Awaiting(Vec<WaitKey>),
+    /// A refusal parked by its document (`object`): a change of the
+    /// document's relationships, or the merge of the `refused` composite,
+    /// re-drives it ([`super::DeferredMerges::park`]).
+    Parked { object: WaitKey, refused: Cid },
+}
+
 impl WaitKey {
     pub(crate) fn acp_object(policy: &str, resource: &str, object: &str) -> Self {
         Self::AcpObject {

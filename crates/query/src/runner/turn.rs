@@ -390,8 +390,12 @@ where
             bound_acp
         };
         // Go's `canDACBypass`, read at this request's own snapshot: a caller
-        // node access control grants `bypass-dac` reads past document ACP.
-        let bypass = match request.identity.is_some() && !self.context().dac_bypass() {
+        // node access control grants `bypass-dac` reads past document ACP,
+        // unless the request's caller denied it the bypass.
+        let context = self.context();
+        let unresolved =
+            request.identity.is_some() && !context.dac_bypass() && !context.dac_bypass_denied();
+        let bypass = match unresolved {
             true => match txn_ctx.doc_fetcher().dac_bypass(&nac_identity).await {
                 Ok(bypass) => bypass,
                 Err(error) => return Ok(Turned::Done(QueryResponse::error(error.to_string()))),

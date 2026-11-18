@@ -14,8 +14,15 @@ use defra_node::{
 #[path = "embedded_vera/verified.rs"]
 mod verified;
 
+#[cfg(feature = "http")]
+#[path = "embedded_vera/clock_skew.rs"]
+mod clock_skew;
+
 #[path = "embedded_vera/replica.rs"]
 mod replica;
+
+#[path = "embedded_vera/rpc_port.rs"]
+mod rpc_port;
 
 #[cfg(feature = "http")]
 #[path = "embedded_vera/verified_edit.rs"]
@@ -57,18 +64,22 @@ async fn node_with(
     actor: EmbeddedVeraActor,
     policies: Vec<EmbeddedVeraPolicy>,
 ) -> Node {
-    node_serving(directory, actor, policies, None).await
+    starting(directory, actor, policies, None)
+        .await
+        .expect("node")
 }
 
+/// A node whose Vera node also serves its JSON-RPC methods, and the
+/// loopback address it serves them on.
 async fn node_serving(
     directory: &Path,
     actor: EmbeddedVeraActor,
     policies: Vec<EmbeddedVeraPolicy>,
-    rpc_listen: Option<std::net::SocketAddr>,
-) -> Node {
-    starting(directory, actor, policies, rpc_listen)
-        .await
-        .expect("node")
+) -> (Node, std::net::SocketAddr) {
+    rpc_port::on_free_rpc_port(|rpc| {
+        starting(directory, actor.clone(), policies.clone(), Some(rpc))
+    })
+    .await
 }
 
 async fn starting(
@@ -345,12 +356,8 @@ fn a_second_node_shares_the_first_nodes_vera_deployment() {
             Arc::new(Ed25519Signer::from_slice(&[43; 32]).expect("key"));
         let owner = identity::Did::new(first_signer.did()).unwrap();
         let peer = identity::Did::new(second_signer.did()).unwrap();
-        let rpc = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap();
 
-        let first = node_serving(
+        let (first, rpc) = node_serving(
             &directory.path().join("first"),
             EmbeddedVeraActor::Signer(first_signer),
             vec![EmbeddedVeraPolicy {
@@ -358,7 +365,6 @@ fn a_second_node_shares_the_first_nodes_vera_deployment() {
                 counter: 0,
                 owner: owner.to_string(),
             }],
-            Some(rpc),
         )
         .await;
         let trust = first.embedded_vera_trust().expect("deployment").clone();
@@ -870,23 +876,17 @@ fn a_restart_settles_a_change_the_chain_could_not_take() {
 
         // The deployment runs in one node; the node under test verifies
         // against it and keeps its own store on disk.
-        let chain = || async {
-            let rpc = std::net::TcpListener::bind("127.0.0.1:0")
-                .unwrap()
-                .local_addr()
-                .unwrap();
-            let node = node_serving(
-                &directory.path().join("chain"),
+        let chain_dir = directory.path().join("chain");
+        let chain = || {
+            node_serving(
+                &chain_dir,
                 EmbeddedVeraActor::Signer(Arc::clone(&chain_signer)),
                 vec![EmbeddedVeraPolicy {
                     definition: POLICY.to_string(),
                     counter: 0,
                     owner: chain_owner.to_string(),
                 }],
-                Some(rpc),
             )
-            .await;
-            (node, rpc)
         };
         let consumer = |trust: defra_node::EmbeddedVeraTrust, rpc: std::net::SocketAddr| {
             let home = directory.path().join("consumer");

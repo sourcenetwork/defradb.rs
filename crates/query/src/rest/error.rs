@@ -77,7 +77,9 @@ impl From<QueryError> for RestError {
             // Invalid input errors (user-fixable, should be 400 Bad Request)
             QueryError::InvalidDocId(id) => Self::InvalidDocId(id),
             QueryError::InvalidMutationInput(msg) => Self::InvalidInput(msg),
-            QueryError::Parse(msg) => Self::InvalidInput(format!("parse error: {}", msg)),
+            QueryError::Parse(msg) | QueryError::UnknownMutationCollection(msg) => {
+                Self::InvalidInput(format!("parse error: {}", msg))
+            }
             QueryError::InvalidFilter(msg) => {
                 Self::InvalidInput(format!("invalid filter: {}", msg))
             }

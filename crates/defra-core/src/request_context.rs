@@ -27,10 +27,23 @@ use crate::txn_id::TxnId;
 #[derive(Clone, Default)]
 pub struct RequestContext(Arc<Fields>);
 
+/// Whether a request reads past document access control.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum DacBypass {
+    /// Not granted; the engine still asks node access control whether the
+    /// request's identity holds `bypass-dac`.
+    #[default]
+    NotGranted,
+    /// Granted for the request's identity.
+    Granted,
+    /// Refused by the caller: nothing grants it for this request.
+    Denied,
+}
+
 #[derive(Clone, Default)]
 struct Fields {
     identity: Option<String>,
-    dac_bypass: bool,
+    dac_bypass: DacBypass,
     require_transactional_authority: bool,
     /// The document a verified write creates or changes, where the request
     /// stages one.
@@ -125,7 +138,9 @@ impl RequestContext {
                 .identity
                 .take()
                 .or_else(|| ambient.0.identity.clone());
-            fields.dac_bypass |= ambient.0.dac_bypass;
+            if fields.dac_bypass == DacBypass::NotGranted {
+                fields.dac_bypass = ambient.0.dac_bypass;
+            }
             fields.encryption = fields
                 .encryption
                 .take()
@@ -191,17 +206,52 @@ impl RequestContext {
 
     /// Whether node access control grants this request's identity the
     /// `bypass-dac` permission, so document access control lets an
-    /// authenticated caller read and write every document. Resolved once, at
-    /// the boundary, for the request's identity.
+    /// authenticated caller read and write every document. Resolved for the
+    /// request's identity at the boundary, or else by the engine at the
+    /// request's own snapshot; never for a request whose caller denied it
+    /// ([`with_dac_bypass_denied`](Self::with_dac_bypass_denied)).
     pub fn dac_bypass(&self) -> bool {
-        self.0.dac_bypass
+        self.0.dac_bypass == DacBypass::Granted
     }
 
-    /// This context with the DAC bypass set to `bypass`.
+    /// This context with the DAC bypass set to `bypass`. A context whose
+    /// caller denied the bypass keeps it denied.
     #[must_use]
     pub fn with_dac_bypass(mut self, bypass: bool) -> Self {
-        Arc::make_mut(&mut self.0).dac_bypass = bypass;
+        let fields = Arc::make_mut(&mut self.0);
+        if fields.dac_bypass != DacBypass::Denied {
+            fields.dac_bypass = match bypass {
+                true => DacBypass::Granted,
+                false => DacBypass::NotGranted,
+            };
+        }
         self
+    }
+
+    /// This context with the DAC bypass denied: document access control
+    /// decides every document this request reads or writes, even for an
+    /// identity node access control grants `bypass-dac` (a node owner or
+    /// administrator). Every context derived from it stays denied. An
+    /// embedder sets it on a request it signs as an identity that must not
+    /// read past document access control.
+    ///
+    /// The denial belongs to the request, not to a transaction, as the
+    /// encryption, signing and collection version do: beginning a
+    /// transaction with a denied context does not deny the later requests in
+    /// it, and a request in that transaction whose own context lacks the
+    /// denial is decided by node access control again. A
+    /// `query::TransactionGuard` runs every request in the context it was
+    /// begun with, so a guard begun denied stays denied.
+    #[must_use]
+    pub fn with_dac_bypass_denied(mut self) -> Self {
+        Arc::make_mut(&mut self.0).dac_bypass = DacBypass::Denied;
+        self
+    }
+
+    /// Whether this request's caller denied it the DAC bypass
+    /// ([`with_dac_bypass_denied`](Self::with_dac_bypass_denied)).
+    pub fn dac_bypass_denied(&self) -> bool {
+        self.0.dac_bypass == DacBypass::Denied
     }
 
     /// Which fields of the documents a mutation writes it encrypts, when the
@@ -590,5 +640,38 @@ mod tests {
         let admin = anonymous.clone().with_dac_bypass(true);
         assert!(admin.dac_bypass());
         assert!(!anonymous.dac_bypass());
+    }
+
+    #[test]
+    fn a_denied_bypass_stays_denied_whatever_is_granted_later() {
+        let denied = RequestContext::default()
+            .with_identity(Some("did:key:admin".to_string()))
+            .with_dac_bypass_denied();
+        assert!(denied.dac_bypass_denied());
+        assert!(!denied.dac_bypass());
+        let regranted = denied.clone().with_dac_bypass(true);
+        assert!(regranted.dac_bypass_denied());
+        assert!(!regranted.dac_bypass());
+        assert!(!denied.with_dac_bypass(false).dac_bypass());
+
+        let granted = RequestContext::default()
+            .with_dac_bypass(true)
+            .with_dac_bypass_denied();
+        assert!(!granted.dac_bypass());
+        assert!(!RequestContext::default().dac_bypass_denied());
+        assert!(!RequestContext::default()
+            .with_dac_bypass(true)
+            .dac_bypass_denied());
+    }
+
+    #[test]
+    fn or_ambient_never_grants_a_denied_bypass() {
+        crate::ambient::set_dac_bypass(true);
+        let merged = RequestContext::default()
+            .with_dac_bypass_denied()
+            .or_ambient();
+        crate::ambient::set_dac_bypass(false);
+        assert!(merged.dac_bypass_denied());
+        assert!(!merged.dac_bypass());
     }
 }

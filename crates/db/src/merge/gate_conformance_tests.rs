@@ -163,6 +163,7 @@ async fn check(line: &str) {
         Arc::new(NoOwnActors),
     )));
 
+    let signer = did(true);
     let judged = hook
         .on_protected_update(
             "doc",
@@ -170,7 +171,7 @@ async fn check(line: &str) {
             CompositeFrame {
                 is_genesis: false,
                 status: 1,
-                signer: signed.then_some(SIGNER),
+                signer: signed.then_some(&signer),
             },
         )
         .await

@@ -431,7 +431,12 @@ impl Node {
     /// for the signer and without a credential the provider takes for that
     /// registration, the create is refused with
     /// [`WRITE_AUTHORITY_UNAVAILABLE_ERROR_CODE`](query::executor::WRITE_AUTHORITY_UNAVAILABLE_ERROR_CODE)
-    /// before anything is written. A local document ACP reads no credential.
+    /// before anything is written. A delegation that does not hold at the
+    /// provider's time, because its signer's clock is off or it was held too
+    /// long, is refused instead with
+    /// [`DELEGATION_OUTSIDE_WINDOW_ERROR_CODE`](query::executor::DELEGATION_OUTSIDE_WINDOW_ERROR_CODE)
+    /// and that time, at which a new delegation is taken. A local document
+    /// ACP reads no credential.
     pub async fn execute_verified_create_in_txn(
         &self,
         request: QueryRequest,
@@ -1750,6 +1755,10 @@ mod userset_manager_tests;
 #[cfg(test)]
 #[path = "../tests/unit/transactional_relationship.rs"]
 mod transactional_relationship_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/dac_bypass_denied.rs"]
+mod dac_bypass_denied_tests;
 
 #[cfg(test)]
 #[path = "../tests/unit/administrative_relationship.rs"]

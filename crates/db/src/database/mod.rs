@@ -646,6 +646,7 @@ impl<S: Store> DB<S> {
     /// Register replicated documents of the listed collections with a remote
     /// ACP provider ([`crate::merge::replica`]). First call wins; set it
     /// before the merge handler is built.
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     pub fn set_replica_registration(&self, registration: crate::merge::ReplicaRegistration) {
         let _ = self.replica_registration.set(Arc::new(registration));
     }

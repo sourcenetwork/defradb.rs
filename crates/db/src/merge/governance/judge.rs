@@ -5,7 +5,7 @@ use document::NormalValue;
 use schema::CollectionVersion;
 use storage::corekv::Store;
 
-use super::awaited::{is_immutable_scalar_field, Awaited, WaitKey};
+use super::awaited::{is_immutable_scalar_field, Awaited, Deferral, WaitKey};
 use super::validator::MergeCandidate;
 use super::verdict::MergeVerdict;
 use super::view::DbMergeView;
@@ -221,7 +221,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         Ok(keys)
     }
 
-    /// Index the composite being merged under the CIDs a frame of its DAG is
+    /// Index the composite being merged under what a frame of its DAG is
     /// waiting for, keeping only what re-drive needs from the carrier's
     /// metadata.
     pub(crate) fn index_deferred(
@@ -229,26 +229,27 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         root: &Cid,
         doc_id: &str,
         metadata: &BlockMetadata<'_>,
-        awaiting: Vec<WaitKey>,
+        deferral: Deferral,
     ) {
-        self.deferred.defer(
-            MergeBlock {
-                cid: *root,
-                block_data: bytes::Bytes::new(),
-                doc_id: doc_id.to_string(),
-                // Only what the carrier said. A recovery merge carries no
-                // collection id, and the empty string keeps the re-driven merge
-                // off the replicator push, as the first attempt was; the schema
-                // version id is not an id replicators subscribe to.
-                collection_id: metadata.collection_id.unwrap_or_default().to_string(),
-                creator: metadata.creator.unwrap_or_default().to_string(),
-                sender_peer: metadata.sender_peer.map(str::to_string),
-                is_explicit_replicator: metadata.is_explicit_replicator,
-                explicit_replay_authorization: metadata.explicit_replay_authorization.clone(),
-                verified_creator: None,
-            },
-            awaiting,
-        );
+        let block = MergeBlock {
+            cid: *root,
+            block_data: bytes::Bytes::new(),
+            doc_id: doc_id.to_string(),
+            // Only what the carrier said. A recovery merge carries no
+            // collection id, and the empty string keeps the re-driven merge
+            // off the replicator push, as the first attempt was; the schema
+            // version id is not an id replicators subscribe to.
+            collection_id: metadata.collection_id.unwrap_or_default().to_string(),
+            creator: metadata.creator.unwrap_or_default().to_string(),
+            sender_peer: metadata.sender_peer.map(str::to_string),
+            is_explicit_replicator: metadata.is_explicit_replicator,
+            explicit_replay_authorization: metadata.explicit_replay_authorization.clone(),
+            verified_creator: None,
+        };
+        match deferral {
+            Deferral::Awaiting(awaiting) => self.deferred.defer(block, awaiting),
+            Deferral::Parked { object, refused } => self.deferred.park(block, object, refused),
+        }
     }
 
     /// An update whose document cannot be identified because an ancestor is
@@ -292,7 +293,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             cid,
             metadata.doc_id.unwrap_or_default(),
             metadata,
-            vec![WaitKey::Composite(missing)],
+            Deferral::Awaiting(vec![WaitKey::Composite(missing)]),
         );
         Ok(MergeOutcome::retryable_skip("document genesis not held"))
     }

@@ -22,6 +22,7 @@ use vera::vera_rs::{
 };
 use vera::{PolicyAction, PolicyCommand, PolicySubject, SubjectRef};
 
+use super::rpc_port::on_free_rpc_port;
 use super::{chain_reads, now, users, ACCOUNT_KEY, POLICY, STRANGER};
 
 pub(super) const LIFETIME: Duration = Duration::from_secs(120);
@@ -83,37 +84,40 @@ impl Deployed {
             keyring::FileKeyring::open(directory.path().join("keys"), b"test-password")
                 .expect("keyring"),
         );
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let http = listener.local_addr().unwrap();
-        let rpc = serve_rpc.then(|| {
-            std::net::TcpListener::bind("127.0.0.1:0")
-                .and_then(|listener| listener.local_addr())
-                .unwrap()
-        });
-        let node = Node::builder()
-            .enable_signing()
-            .with_http(defra_node::HttpConfig::with_listener(listener).unwrap())
-            .with_embedded_vera(EmbeddedVeraConfig {
-                data_dir: directory.path().join("vera"),
-                deployment: EmbeddedVeraDeployment {
-                    chain_id,
-                    threshold: 1,
-                    operator_keys: vec![ACCOUNT_KEY.to_string()],
-                    created: now(),
-                    policies: Vec::new(),
-                },
-                listen: "127.0.0.1:0".parse().expect("address"),
-                start_deadline: Duration::from_secs(60),
-                stop_deadline: Duration::from_secs(30),
-                actor: EmbeddedVeraActor::Secp256k1Key(vec![42; 32]),
-                rpc_listen: rpc,
-                worker_dir: directory.path().join("worker"),
-                keyring,
-                tuning: vera::AcpTuning::default(),
-            })
-            .build()
-            .await
-            .expect("node");
+        let vera = directory.path().join("vera");
+        let worker = directory.path().join("worker");
+        let start = |rpc_listen: Option<SocketAddr>| {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let http = listener.local_addr().unwrap();
+            let builder = Node::builder()
+                .enable_signing()
+                .with_http(defra_node::HttpConfig::with_listener(listener).unwrap())
+                .with_embedded_vera(EmbeddedVeraConfig {
+                    data_dir: vera.clone(),
+                    deployment: EmbeddedVeraDeployment {
+                        chain_id,
+                        threshold: 1,
+                        operator_keys: vec![ACCOUNT_KEY.to_string()],
+                        created: now(),
+                        policies: Vec::new(),
+                    },
+                    listen: "127.0.0.1:0".parse().expect("address"),
+                    start_deadline: Duration::from_secs(60),
+                    stop_deadline: Duration::from_secs(30),
+                    actor: EmbeddedVeraActor::Secp256k1Key(vec![42; 32]),
+                    rpc_listen,
+                    worker_dir: worker.clone(),
+                    keyring: Arc::clone(&keyring),
+                    tuning: vera::AcpTuning::default(),
+                });
+            async move { builder.build().await.map(|node| (node, http)) }
+        };
+        let ((node, http), rpc) = if serve_rpc {
+            let (started, rpc) = on_free_rpc_port(|rpc| start(Some(rpc))).await;
+            (started, Some(rpc))
+        } else {
+            (start(None).await.expect("node"), None)
+        };
         let vera = node.vera_acp().expect("vera.rs document ACP").clone();
         let admin = vera.self_did().expect("actor DID");
         let policy = vera.add_policy(&admin, POLICY).await.expect("policy");

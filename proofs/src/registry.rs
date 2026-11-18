@@ -178,6 +178,15 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        family: "vera.rs delegation window",
+        name: "issued_is_well_formed / issued_is_what_veras_builder_writes / request_holds_iff / written_at_provider_time_holds / ahead_within_allowance_holds / ahead_beyond_allowance_refused / behind_by_the_lifetime_refused / longer_than_the_longest_lifetime_refused_ahead / plain_ahead_within_allowance_holds / without_allowance_one_second_ahead_refused / reported_lead_is_a_lower_bound / unset_start_is_reported_exactly / set_back_start_is_reported_less_the_allowance / expired_claims_nothing_about_the_clock / outlasting_reaches_too_far / rewritten_at_reported_time_holds",
+        axis: Lean,
+        anchor: "crates/vera/src/vera_rs/bearer/request.rs issue_request_at, MAX_REQUEST_LIFETIME; crates/vera/src/vera_rs/bearer.rs not_before, authorize_at; crates/vera/src/vera_rs/bearer/window.rs within_window; crates/acp/src/delegation_window.rs CLOCK_SKEW_ALLOWANCE, WindowRefusal",
+        model_ref: "VeraDelegationWindow (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         family: "vera.rs embedded transport",
         name: "within_iff / network_accepted_is_accepted / longer_is_refused / answer_in_time_is_kept / silent_node_ends_the_wait / late_answer_is_not_waited_for / node_error_keeps_its_code / busy_node_is_asked_again / slow_node_is_asked_again / stopped_node_is_not_asked_again / asked_again_iff / asked_again_as_over_http / client_errors_stay_distinct / transport_errors_stay_distinct",
         axis: Lean,
@@ -244,7 +253,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Verified client graph transaction",
         name: "INV_NeverQuarantined / INV_MergeAuthorized / INV_HistoryFirst / INV_Bounded / LIVE_RedrivenOnGrant / LIVE_OtherBranchMerges: a replicated change whose signer a remote provider refuses is parked by its document, never rejected for good, re-driven with a fresh decision when this node changes the document's relationships or by the bounded sweep, never merged before its history, within the index bound, and a change on another branch is not held behind it",
         axis: Tla,
-        anchor: "crates/db/src/merge/merge_handler/composite.rs prepare_composite_merge; crates/db/src/merge/merge_handler/protected_update.rs Refusal, check_protected_update; crates/db/src/merge/governance/awaited.rs WaitKey::AcpObject; crates/db/src/merge/governance/deferred.rs DeferredMerges::release_parked, MAX_WAITERS_PER_DEPENDENCY, MAX_DEFERRED_COMPOSITES; crates/db/src/merge/merge_handler/parked_acp.rs ParkedRelease, watch_parked_acp, sweep_parked_acp; crates/db/src/merge/acp_merge_handler.rs AcpCompositeMergeHook::parks_refusals; crates/acp/src/dac.rs ObjectChangeListener; crates/acp/src/external.rs ExternalDocumentAcp::object_changed",
+        anchor: "crates/db/src/merge/merge_handler/composite.rs prepare_composite_merge; crates/db/src/merge/merge_handler/protected_update.rs Refusal, check_protected_update; crates/db/src/merge/governance/awaited.rs WaitKey::AcpObject; crates/db/src/merge/governance/deferred.rs DeferredMerges::park, DeferredMerges::release_parked, MAX_WAITERS_PER_DEPENDENCY, MAX_DEFERRED_COMPOSITES; crates/db/src/merge/merge_handler/parked_acp.rs ParkedRelease, watch_parked_acp, sweep_parked_acp; crates/db/src/merge/acp_merge_handler.rs AcpCompositeMergeHook::parks_refusals; crates/acp/src/dac.rs ObjectChangeListener; crates/acp/src/external.rs ExternalDocumentAcp::object_changed",
         model_ref: "MC_ParkedMerge_{Green,Green_Live,Red_Quarantine,Red_MergeOverParked,Red_RedriveAdmits,Red_Unbounded,Red_NoRelease,Red_ParkBlocksObject}.cfg",
         tiers: &[Boundary, Contract],
         bound_by: "crates/db/tests/merge/parked_refusals.rs a_revoked_writers_change_is_parked_and_merges_once_the_node_grants_it_again, a_change_built_on_a_parked_one_waits_with_it_and_one_on_another_branch_merges, the_sweep_re_drives_a_change_a_grant_made_elsewhere_lets_in, an_unsigned_change_is_still_rejected; crates/db/src/merge/governance/deferred.rs the_sweep_releases_parked_composites_only",
@@ -258,22 +267,22 @@ pub const PROPERTIES: &[Property] = &[
         family: "Verified client graph transaction",
         name: "hook_never_parks / signed_never_rejected_under_remote / signed_refusal_parks_under_remote / unsigned_refusal_is_rejected / unsigned_is_rejected / parked_only_from_signed_refusal / allowed_merges / merged_only_when_allowed / rejected_only_on_refusal / owed_registration_rejects_nobody / creator_waits_for_its_grants / creator_waits_for_the_owners_grants / nothing_owed_the_provider_decides / other_signers_ignore_creator_grants / local_provider_unchanged / lax_access_unchanged / local_rejected_only_on_refusal / local_never_parks / local_reads_nothing_owed: under strict access with a remote provider a signed refusal is parked and only an unsigned one is rejected; a local provider or lax access decides as before",
         axis: Lean,
-        anchor: "crates/db/src/merge/acp_merge_handler.rs AcpCompositeMergeHook::on_protected_update, AcpCompositeMergeHook::parks_refusals, AcpCompositeMergeHook::replicas_for; crates/db/src/merge/merge_handler/protected_update.rs Refusal, check_protected_update; crates/acp/src/replica.rs ReplicaOwed",
+        anchor: "crates/db/src/merge/acp_merge_handler.rs AcpCompositeMergeHook::on_protected_update, AcpCompositeMergeHook::parks_refusals, AcpCompositeMergeHook::replicas_for; crates/db/src/merge/merge_handler/protected_update.rs Refusal, check_protected_update, frame_signer; crates/db/src/merge/merge_handler/hook.rs CompositeFrame; crates/acp/src/replica.rs ReplicaOwed",
         model_ref: "ReplicaGate (lake build; lake env lean --run ReplicaGate.lean)",
         tiers: &[Boundary, Contract],
-        bound_by: "crates/db/src/merge/gate_conformance_tests.rs the_acp_hook_matches_the_executed_gate_model; crates/db/tests/merge/parked_refusals.rs a_revoked_writers_change_is_parked_and_merges_once_the_node_grants_it_again, an_unsigned_change_is_still_rejected",
+        bound_by: "crates/db/src/merge/gate_conformance_tests.rs the_acp_hook_matches_the_executed_gate_model; crates/db/src/merge/merge_handler/protected_update.rs a_signer_that_is_not_a_did_is_judged_unsigned; crates/db/tests/merge/parked_refusals.rs a_revoked_writers_change_is_parked_and_merges_once_the_node_grants_it_again, an_unsigned_change_is_still_rejected",
     },
     Property {
         // The index the parked refusals are filed in, a data structure with
         // its invariants proven over any sequence of operations and its
         // observable results executed against the Rust type.
         family: "Verified client graph transaction",
-        name: "inv_run / bounded_after_any_run / no_dangling_after_any_run / present_iff / has_waiters_iff / release_takes / release_leaves_no_trace / release_keeps / release_keeps_waiting / release_hands_back / release_idempotent / wf_run / releaseParked_count / picked_are_documents / release_parked_hands_back_only_parked / release_parked_keeps_governance / release_parked_drains / release_parked_twice_finds_nothing / defer_when_full_changes_nothing / defer_full_key_unchanged / defer_keeps_others / defer_keeps_other_waiters / park_files_under_both / park_past_document_bound / parked_released_by_either: the deferred-composite index keeps its per-key and per-node bounds and has no dangling entry after any operations, filing never drops another composite, a parked composite is filed under its document and the refused composite and leaves both when either releases it, a release is idempotent, and the sweep hands back only composites parked under a document",
+        name: "inv_run / bounded_after_any_run / no_dangling_after_any_run / present_iff / has_waiters_iff / release_takes / release_leaves_no_trace / release_keeps / release_keeps_waiting / release_hands_back / release_idempotent / wf_run / releaseParked_count / picked_are_documents / release_parked_hands_back_only_parked / release_parked_keeps_governance / release_parked_drains / release_parked_twice_finds_nothing / defer_when_full_changes_nothing / defer_full_key_unchanged / defer_keeps_others / defer_keeps_other_waiters / park_of_room / park_of_full / park_files_under_both / park_past_document_bound / parked_released_by_either: the deferred-composite index keeps its per-key and per-node bounds and has no dangling entry after any operations, filing never drops another composite, a parked composite is filed under its document and the refused composite and leaves both when either releases it, a parked composite its document has no room for is not indexed at all, a release is idempotent, and the sweep hands back only composites parked under a document",
         axis: Lean,
-        anchor: "crates/db/src/merge/governance/deferred.rs DeferredMerges::defer, DeferredMerges::release, DeferredMerges::release_parked, DeferredMerges::enqueue_ready, DeferredMerges::take_ready, DeferredMerges::forget, DeferredMerges::take_entry, DeferredMerges::unindex, MAX_DEFERRED_COMPOSITES, MAX_WAITERS_PER_DEPENDENCY, MAX_AWAITED_PER_COMPOSITE; crates/db/src/merge/governance/awaited.rs WaitKey::AcpObject; crates/db/src/merge/merge_handler/composite.rs prepare_composite_merge",
+        anchor: "crates/db/src/merge/governance/deferred.rs DeferredMerges::defer, DeferredMerges::park, DeferredMerges::release, DeferredMerges::release_parked, DeferredMerges::enqueue_ready, DeferredMerges::take_ready, DeferredMerges::forget, DeferredMerges::take_entry, DeferredMerges::unindex, MAX_DEFERRED_COMPOSITES, MAX_WAITERS_PER_DEPENDENCY, MAX_AWAITED_PER_COMPOSITE; crates/db/src/merge/governance/awaited.rs WaitKey::AcpObject, Deferral; crates/db/src/merge/merge_handler/composite.rs prepare_composite_merge",
         model_ref: "DeferredMerges (lake build; lake env lean --run DeferredMerges/Conformance.lean)",
         tiers: &[Boundary, Contract],
-        bound_by: "crates/db/src/merge/governance/deferred_conformance_tests.rs the_index_matches_the_executed_model; crates/db/src/merge/governance/deferred.rs the_sweep_releases_parked_composites_only",
+        bound_by: "crates/db/src/merge/governance/deferred_conformance_tests.rs the_index_matches_the_executed_model; crates/db/src/merge/governance/deferred.rs the_sweep_releases_parked_composites_only, a_change_parked_past_its_documents_bound_is_not_indexed",
     },
     Property {
         family: "Verified client graph transaction",
@@ -1686,13 +1695,15 @@ pub const PROPERTIES: &[Property] = &[
         // The light client checks an answer at the newest root it has
         // authenticated, and refuses one that a block finalized during the
         // round trip overtook. The vera provider asks such a read again, at
-        // most ATTEMPTS times: the refusal reaches a caller only after a block
-        // overtook every ask, and a stale answer is never accepted.
+        // most ATTEMPTS times, and a read the node answered busy (-32002,
+        // evidence not ready by its deadline) again after a pause, for at
+        // most BUSY_PATIENCE, counted apart: an error reaches a caller only
+        // after every ask of its kind, and a stale answer is never accepted.
         family: "ACP soundness + revocation + dual-path commits",
-        name: "INV_NeverStale / INV_FailsOnlyWhenEveryAskOvertaken / INV_AttemptsBounded / LIVE_Answers: a proven read the chain overtook is asked again, bounded, never accepted stale",
+        name: "INV_NeverStale / INV_FailsOnlyWhenEveryAskOvertaken / INV_AttemptsBounded / LIVE_Answers: a proven read the chain overtook or the node answered busy is asked again, bounded, never accepted stale",
         axis: Tla,
-        anchor: "crates/vera/src/vera_rs/provider/verified.rs verified, ATTEMPTS; crates/vera/src/vera_rs/provider.rs create_policy, query_policy, query_object_owner, verify_access, create_access_decision; backbone:acp-light-client HeaderChain::accept_response",
-        model_ref: "MC_VerifiedRead_{Green,Green_Exhausted,Red_AcceptStale,Red_NoRetry,Red_Uncapped}.cfg",
+        anchor: "crates/vera/src/vera_rs/provider/verified.rs verified, verified_within, ATTEMPTS, BUSY_PATIENCE, BUSY_PAUSE, busy; crates/vera/src/vera_rs/provider.rs create_policy, query_policy, query_object_owner, verify_access, create_access_decision; backbone:acp-light-client HeaderChain::accept_response",
+        model_ref: "MC_VerifiedRead_{Green,Green_Exhausted,Red_AcceptStale,Red_NoRetry,Red_Uncapped,Red_NoBusyRetry,Red_BusyUncapped}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },
@@ -3234,22 +3245,25 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Node access control operations",
-        name: "goOrder_collection_write / goOrder_alone / firstMissing_none_iff / firstMissing_some / allowed_needs_both / refused_get_collection_first / no_bypass_when_off / no_bypass_anonymous / bypass_iff_held",
+        name: "goOrder_collection_write / goOrder_alone / firstMissing_none_iff / firstMissing_some / allowed_needs_both / refused_get_collection_first / no_bypass_when_off / no_bypass_anonymous / no_bypass_when_denied / bypass_iff_held",
         axis: Lean,
-        anchor: "crates/acp/src/nac/permission.rs NodePermission::go_order; crates/db/src/access/nac.rs check_node_access_as, check_node_access_in_txn; crates/query/src/runner/turn.rs lent, lent_node_permission; crates/db/src/read/lensed/fetcher/mod.rs dac_bypass; crates/p2p-adapter/src/libp2p.rs P2PAdapter::check_nac; crates/p2p-adapter/src/iroh.rs IrohP2PAdapter::check_nac",
+        anchor: "crates/acp/src/nac/permission.rs NodePermission::go_order; crates/db/src/access/nac.rs check_node_access_as, check_node_access_in_txn; crates/query/src/runner/turn.rs lent, lent_node_permission; crates/db/src/read/lensed/fetcher/mod.rs dac_bypass; crates/defra-core/src/request_context.rs RequestContext::with_dac_bypass_denied; crates/p2p-adapter/src/libp2p.rs P2PAdapter::check_nac; crates/p2p-adapter/src/iroh.rs IrohP2PAdapter::check_nac",
         model_ref: "NacOrder (lake build)",
         tiers: &[Boundary],
         bound_by: "",
     },
     Property {
-        // A read bypasses document access control exactly when node access
-        // control is on and grants the caller `bypass-dac`, decided at the
-        // read's own snapshot.
+        // A read whose bypass the engine resolves bypasses document access
+        // control exactly when node access control is on and grants the
+        // caller `bypass-dac`, decided at the read's own snapshot, and its
+        // caller did not deny it the bypass. A bypass the caller set on the
+        // request (`RequestContext::with_dac_bypass`) is honoured as set,
+        // without the engine consulting node access control.
         family: "Node access control operations",
-        name: "INV_BypassOnlyWhenGranted / INV_BypassWhenGranted",
+        name: "INV_BypassOnlyWhenGranted / INV_BypassWhenGranted / INV_DeniedNeverBypasses",
         axis: Tla,
-        anchor: "crates/query/src/runner/turn.rs lent; crates/db/src/read/lensed/fetcher/mod.rs dac_bypass; crates/db/src/collection/acp.rs check_doc_permission_as",
-        model_ref: "MC_NacDacBypass_{Green,Red_NacOff,Red_Never,Red_Live}.cfg",
+        anchor: "crates/query/src/runner/turn.rs lent; crates/db/src/read/lensed/fetcher/mod.rs dac_bypass; crates/db/src/collection/acp.rs check_doc_permission_as; crates/defra-core/src/request_context.rs RequestContext::with_dac_bypass_denied, RequestContext::with_dac_bypass",
+        model_ref: "MC_NacDacBypass_{Green,Red_NacOff,Red_Never,Red_Live,Red_IgnoreDenial}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },

@@ -126,6 +126,7 @@ fn refused(error: documents::Error) -> HttpError {
         documents::Error::Conflict => HttpError::TransactionConflict,
         documents::Error::Request(_)
         | documents::Error::SecondaryRelation(_)
+        | documents::Error::CollectionNotFound
         | documents::Error::Deleted(_) => http_error_from_backend_message(message),
     }
 }
