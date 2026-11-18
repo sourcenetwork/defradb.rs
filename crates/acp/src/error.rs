@@ -77,6 +77,16 @@ pub enum Error {
     #[error("no authority to submit ACP changes as {actor}: {reason}")]
     OwedAuthorityUnavailable { actor: String, reason: String },
 
+    /// The delegation the request carries for `actor` does not hold at the
+    /// provider's time, so nothing is sent under it. The request may be made
+    /// again with a delegation issued at
+    /// [`DelegationWindow::provider_time`](crate::DelegationWindow::provider_time).
+    #[error("the delegation for {actor} is refused: {window}")]
+    DelegationOutsideWindow {
+        actor: String,
+        window: crate::DelegationWindow,
+    },
+
     /// An external provider could not be reached or did not answer in time.
     /// Nothing is known about what was asked; the same call may be made
     /// again.
@@ -111,6 +121,11 @@ pub enum Error {
     /// Invalid policy configuration
     #[error("invalid policy: {0}")]
     InvalidPolicy(String),
+
+    /// Enabling NAC that is temporarily disabled: only an authorized
+    /// re-enable turns it back on.
+    #[error("node acp is temporarily disabled; re-enable it instead")]
+    NacTemporarilyDisabled,
 
     /// Storage operation failed (generic)
     #[error("storage error: {0}")]
@@ -147,6 +162,21 @@ pub enum Error {
     /// Cycle detected in permission evaluation
     #[error("cycle detected in permission evaluation: {0}")]
     CycleDetected(String),
+
+    /// Nothing is owed under the reference its caller gave, or what is
+    /// owed there belongs to another actor.
+    #[error("no owed ACP entry {entry} for {actor}")]
+    OwedEntryNotFound { entry: String, actor: String },
+
+    /// A transaction that committed meanwhile changed what is owed on the
+    /// entry's relationship; nothing was written. The same call may be made
+    /// again.
+    #[error("owed ACP {entry} was changed by a transaction that committed meanwhile; try again")]
+    OwedEntryConflict { entry: String },
+
+    /// Only a change the provider refused may be abandoned.
+    #[error("owed ACP change {seq} is {state}, and only a refused change may be abandoned; present a fresh credential for it instead")]
+    OwedChangeNotRefused { seq: u64, state: &'static str },
 
     /// Invalid expression
     #[error("invalid expression: {0}")]

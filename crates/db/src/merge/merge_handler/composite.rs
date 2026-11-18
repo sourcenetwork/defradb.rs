@@ -1,7 +1,9 @@
 use super::batch::{PendingFieldBlockFinalization, PendingMergeEvent, PendingPostCommitAction};
 use super::frame_source::FrameSource;
+use super::protected_update::Refusal;
 use super::*;
-use crate::merge::governance::{GovernedFrame, Judgement};
+use crate::merge::governance::{Deferral, GovernedFrame, Judgement, WaitKey};
+use crate::merge::replica::ReplicaStep;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CompositeMergeMode {
@@ -25,6 +27,9 @@ pub struct CompositeMergeContext<'a, 'b> {
     pub(crate) doc_short_id: u64,
     pub(crate) collection: Option<Collection>,
     pub(crate) mode: CompositeMergeMode,
+    /// What the merge does about the document as a replica, decided before
+    /// the transaction opened.
+    pub(crate) replica: ReplicaStep,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -38,6 +43,7 @@ impl<'a, 'b> CompositeMergeContext<'a, 'b> {
         doc_short_id: u64,
         collection: Option<Collection>,
         mode: CompositeMergeMode,
+        replica: ReplicaStep,
     ) -> Self {
         Self {
             cid,
@@ -48,6 +54,7 @@ impl<'a, 'b> CompositeMergeContext<'a, 'b> {
             doc_short_id,
             collection,
             mode,
+            replica,
         }
     }
 
@@ -105,11 +112,11 @@ pub struct CompositeMergeState {
 }
 
 pub(super) enum CompositeMergePreparation {
-    Ready(Option<Box<Collection>>),
+    Ready(Option<Box<Collection>>, ReplicaStep),
     Complete(MergeOutcome),
     Deferred {
         outcome: MergeOutcome,
-        awaiting: Vec<crate::merge::governance::WaitKey>,
+        awaiting: Deferral,
     },
 }
 
@@ -126,6 +133,7 @@ enum CompositeMergeFrame {
         doc_id: String,
         collection: Option<Box<Collection>>,
         is_root: bool,
+        replica: ReplicaStep,
     },
 }
 
@@ -232,6 +240,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             .block_collection(&payload.collection_version_id, metadata.collection_id)
             .await?;
 
+        let mut replica_step = ReplicaStep::Gate;
         if let Some(collection) = collection.as_ref() {
             // A governed collection is resolved from the block alone: were the
             // carrier's collection id honoured, a sender would pick the validator.
@@ -276,7 +285,12 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 .await?
             {
                 Judgement::Ungoverned => {
-                    if let Some(hook) = self.composite_merge_hook() {
+                    replica_step = self
+                        .plan_replica_frame(cid, block, doc_id, collection.schema())
+                        .await?;
+                    let gated =
+                        matches!(replica_step, ReplicaStep::Gate | ReplicaStep::Adopt { .. });
+                    if let Some(hook) = self.composite_merge_hook().filter(|_| gated) {
                         if let Some(outcome) = hook
                             .on_protected_composite(doc_id, collection.schema(), metadata)
                             .await?
@@ -285,23 +299,53 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         }
                     }
 
-                    if let Some(outcome) = self
-                        .check_protected_update(
-                            cid,
-                            block,
-                            payload,
-                            doc_id,
-                            collection.schema(),
-                            None,
-                        )
-                        .await?
-                    {
-                        return Ok(CompositeMergePreparation::Complete(outcome));
+                    if gated {
+                        match self
+                            .check_protected_update(
+                                cid,
+                                block,
+                                payload,
+                                doc_id,
+                                collection.schema(),
+                                None,
+                            )
+                            .await?
+                        {
+                            None => {}
+                            Some(Refusal::Outcome(outcome)) => {
+                                return Ok(CompositeMergePreparation::Complete(outcome));
+                            }
+                            Some(Refusal::Parked(outcome)) => {
+                                let policy =
+                                    collection.schema().policy.as_ref().ok_or_else(|| {
+                                        MergeError::MergeFailed(
+                                            "a parked refusal names a collection without a policy"
+                                                .into(),
+                                        )
+                                    })?;
+                                return Ok(CompositeMergePreparation::Deferred {
+                                    outcome,
+                                    // A refused ancestor's own merge releases
+                                    // what waits behind it, too.
+                                    awaiting: Deferral::Parked {
+                                        object: WaitKey::acp_object(
+                                            &policy.id,
+                                            &policy.resource_name,
+                                            doc_id,
+                                        ),
+                                        refused: *cid,
+                                    },
+                                });
+                            }
+                        }
                     }
                 }
                 Judgement::Accept => {}
                 Judgement::Verdict { outcome, awaiting } if !awaiting.is_empty() => {
-                    return Ok(CompositeMergePreparation::Deferred { outcome, awaiting });
+                    return Ok(CompositeMergePreparation::Deferred {
+                        outcome,
+                        awaiting: Deferral::Awaiting(awaiting),
+                    });
                 }
                 Judgement::Verdict { outcome, .. } => {
                     return Ok(CompositeMergePreparation::Complete(outcome));
@@ -309,7 +353,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             }
         }
 
-        Ok(CompositeMergePreparation::Ready(collection.map(Box::new)))
+        Ok(CompositeMergePreparation::Ready(
+            collection.map(Box::new),
+            replica_step,
+        ))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -364,7 +411,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         )
                         .await?
                     {
-                        CompositeMergePreparation::Ready(collection) => {
+                        CompositeMergePreparation::Ready(collection, replica) => {
                             let heads = block.heads.clone();
                             frames.push(CompositeMergeFrame::Exit {
                                 cid,
@@ -373,6 +420,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                                 doc_id: doc_id_str.clone(),
                                 collection,
                                 is_root,
+                                replica,
                             });
                             if let Some(heads) = heads {
                                 if heads.len().saturating_add(frames.len()) > work_limit {
@@ -405,12 +453,16 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     doc_id,
                     collection,
                     is_root,
+                    replica,
                 } => {
                     if self.has_merged_composite(&cid) {
                         if is_root {
                             return Ok(MergeOutcome::terminal_skip(MergeOutcome::ALREADY_MERGED));
                         }
                         continue;
+                    }
+                    if replica == ReplicaStep::AfterGenesis {
+                        return Ok(after_replica_genesis());
                     }
                     let outcome = self
                         .process_composite_delta_body(
@@ -422,6 +474,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             is_root,
                             &doc_id,
                             collection.map(|collection| *collection),
+                            replica,
                         )
                         .await?;
                     if is_root || (!outcome.is_merged() && !outcome.is_terminal_skip()) {
@@ -447,6 +500,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         is_root: bool,
         doc_id_str: &str,
         collection_lookup: Option<Collection>,
+        replica: ReplicaStep,
     ) -> std::result::Result<MergeOutcome, MergeError> {
         self.with_merge_keys(block, Some(metadata))
             .await
@@ -459,6 +513,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 is_root,
                 doc_id_str,
                 collection_lookup,
+                replica,
             )
             .await
     }
@@ -474,6 +529,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         is_root: bool,
         doc_id_str: &str,
         collection_lookup: Option<Collection>,
+        replica: ReplicaStep,
     ) -> std::result::Result<MergeOutcome, MergeError> {
         let txn = self.db.new_txn(false).await?;
         if let Some(collection) = collection_lookup.as_ref() {
@@ -520,6 +576,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             doc_short_id,
             collection_lookup.clone(),
             CompositeMergeMode::Standalone,
+            replica,
         );
         let mut state = CompositeMergeState::default();
 
@@ -856,7 +913,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         )
                         .await?
                     {
-                        CompositeMergePreparation::Ready(collection) => {
+                        CompositeMergePreparation::Ready(collection, replica) => {
                             let heads = block.heads.clone();
                             frames.push(CompositeMergeFrame::Exit {
                                 cid,
@@ -865,6 +922,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                                 doc_id,
                                 collection,
                                 is_root,
+                                replica,
                             });
                             if let Some(heads) = heads {
                                 if heads.len().saturating_add(frames.len()) > work_limit {
@@ -897,6 +955,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     doc_id,
                     collection,
                     is_root,
+                    replica,
                 } => {
                     if self.has_merged_composite(&cid)
                         || Self::has_batch_merged_composite(batch_merged, &cid)
@@ -905,6 +964,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             return Ok(MergeOutcome::terminal_skip(MergeOutcome::ALREADY_MERGED));
                         }
                         continue;
+                    }
+                    if replica == ReplicaStep::AfterGenesis {
+                        return Ok(after_replica_genesis());
                     }
                     let outcome = self
                         .process_composite_delta_in_txn_body(
@@ -924,6 +986,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             &doc_id,
                             collection.map(|collection| *collection),
                             CompositeMergeMode::Batch,
+                            replica,
                             &mut block_reads,
                         )
                         .await?;
@@ -956,6 +1019,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         doc_id_str: &str,
         collection_lookup: Option<Collection>,
         mode: CompositeMergeMode,
+        replica: ReplicaStep,
         reads: &mut super::block_reads::BlockReads,
     ) -> std::result::Result<MergeOutcome, MergeError> {
         let doc_short_id = {
@@ -983,6 +1047,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             doc_short_id,
             collection_lookup.clone(),
             mode,
+            replica,
         );
         let mut state = CompositeMergeState {
             reads: std::mem::take(reads),
@@ -1153,4 +1218,12 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         *reads = state.reads;
         result
     }
+}
+
+/// A later frame of a replicated document nobody holds yet, reached before
+/// its genesis merged: tried again once the genesis and its unit commit.
+fn after_replica_genesis() -> MergeOutcome {
+    MergeOutcome::retryable_skip(
+        "replicated protected document is not yet registered; its genesis registers it first",
+    )
 }

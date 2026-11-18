@@ -1,4 +1,5 @@
 use super::*;
+use crate::merge::replica::ReplicaStep;
 
 impl<S, B> DbMergeHandler<S, B>
 where
@@ -66,7 +67,7 @@ where
                         )
                         .await?
                     {
-                        CompositeMergePreparation::Ready(_) => {}
+                        CompositeMergePreparation::Ready(..) => {}
                         CompositeMergePreparation::Complete(outcome) => return Ok(outcome),
                         CompositeMergePreparation::Deferred { outcome, awaiting } => {
                             self.index_deferred(root, doc, metadata, awaiting);
@@ -176,7 +177,7 @@ where
                         )
                         .await?
                     {
-                        CompositeMergePreparation::Ready(_) => {}
+                        CompositeMergePreparation::Ready(..) => {}
                         CompositeMergePreparation::Complete(outcome) => {
                             if let MergeOutcome::Rejected { reason } = outcome {
                                 return Err(MergeError::RetryRejected(reason));
@@ -271,7 +272,12 @@ where
                 )
                 .await?
             {
-                CompositeMergePreparation::Ready(collection) => {
+                CompositeMergePreparation::Ready(_, ReplicaStep::AfterGenesis) => {
+                    MergeOutcome::retryable_skip(
+                        "replicated protected document is not yet registered; its genesis registers it first",
+                    )
+                }
+                CompositeMergePreparation::Ready(collection, replica) => {
                     self.process_composite_delta_in_txn_body(
                         datastore,
                         headstore,
@@ -289,6 +295,7 @@ where
                         doc,
                         collection.map(|collection| *collection),
                         CompositeMergeMode::History,
+                        replica,
                         &mut block_reads,
                     )
                     .await?

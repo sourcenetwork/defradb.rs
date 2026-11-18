@@ -92,6 +92,46 @@ RUNS=(
   "MC_VerifiedClientGraph_Red_RevokeNac.cfg VerifiedClientGraph.tla RED" # NAC revocation is not validated at commit (INV_NacRevocation)
   "MC_VerifiedClientGraph_Red_RevokeDac.cfg VerifiedClientGraph.tla RED" # DAC revocation is not validated at commit (INV_DacRevocation)
   "MC_VerifiedClientGraph_Red_Rollback.cfg VerifiedClientGraph.tla RED" # a rejected graph publishes the Agent effect (INV_Atomic)
+  "MC_VerifiedRemoteWrite_Green.cfg VerifiedRemoteWrite.tla GREEN" # a verified write on a remote provider needs authority for its signer, an update or delete is admitted on the signer's verified permission and owes nothing, a request-bound delegation covers its own command only, and a failed submission is reported and takes a fresh credential by the same rule
+  "MC_VerifiedRemoteWrite_Red_NoAuthority.cfg VerifiedRemoteWrite.tla RED" # the write is staged with no key and no delegation (INV_AuthorityAtAdmission)
+  "MC_VerifiedRemoteWrite_Red_AnyIssuer.cfg VerifiedRemoteWrite.tla RED" # a delegation somebody else signed is taken (INV_AuthorityAtAdmission)
+  "MC_VerifiedRemoteWrite_Red_AnyNode.cfg VerifiedRemoteWrite.tla RED" # a delegation given to another node is taken (INV_AuthorityAtAdmission)
+  "MC_VerifiedRemoteWrite_Red_ExpiredAccepted.cfg VerifiedRemoteWrite.tla RED" # an expired delegation admits the write (INV_AuthorityAtAdmission)
+  "MC_VerifiedRemoteWrite_Red_AnyCommand.cfg VerifiedRemoteWrite.tla RED" # a request-bound delegation is sent with another command (INV_RequestOnlyItsRequest)
+  "MC_VerifiedRemoteWrite_Red_RequestLogsIn.cfg VerifiedRemoteWrite.tla RED" # a request-bound delegation authenticates an HTTP caller (INV_RequestIsNoLogin)
+  "MC_VerifiedRemoteWrite_Red_RecordedFirst.cfg VerifiedRemoteWrite.tla RED" # a refused write leaves its row and owed registration (INV_RefusalRecordsNothing)
+  "MC_VerifiedRemoteWrite_Red_SentExpired.cfg VerifiedRemoteWrite.tla RED" # an owed command is sent under an expired credential (INV_NothingSentStale)
+  "MC_VerifiedRemoteWrite_Red_GrantFirst.cfg VerifiedRemoteWrite.tla RED" # a grant is sent before its document's registration (INV_RegistrationFirst)
+  "MC_VerifiedRemoteWrite_Red_GrantUnchecked.cfg VerifiedRemoteWrite.tla RED" # a grant is staged with nothing that lets the node send it (INV_GrantAuthority)
+  "MC_VerifiedRemoteWrite_Red_AmbientRetry.cfg VerifiedRemoteWrite.tla RED" # a registration is sent with a token the process holds and nobody presented for it (INV_SentUnderRecordedAuthority)
+  "MC_VerifiedRemoteWrite_Red_ReauthUnchecked.cfg VerifiedRemoteWrite.tla RED" # a parked command is owed again on a fresh credential the rule of admission refuses (INV_ReauthorizedWithAuthority)
+  "MC_VerifiedRemoteWrite_Red_SilentFailure.cfg VerifiedRemoteWrite.tla RED" # a submission fails after the commit and the record does not say so (INV_FailureReported)
+  "MC_VerifiedRemoteWrite_Red_NoPermission.cfg VerifiedRemoteWrite.tla RED" # a verified update or delete is admitted without the signer's verified permission (INV_EditOnVerifiedPermission)
+  "MC_VerifiedRemoteWrite_Red_StaleEvidence.cfg VerifiedRemoteWrite.tla RED" # a verified update or delete is admitted on a proof of a revision older than the freshness limit (INV_EditOnVerifiedPermission)
+  "MC_VerifiedRemoteWrite_Red_OwedIgnored.cfg VerifiedRemoteWrite.tla RED" # an owed revocation or an owed registration is ignored for a verified update (INV_EditOnVerifiedPermission)
+  "MC_VerifiedRemoteWrite_Red_RequestEdit.cfg VerifiedRemoteWrite.tla RED" # a request-bound delegation admits a verified update (INV_RequestBoundNoEdit)
+  "MC_VerifiedRemoteWrite_Red_EditOwes.cfg VerifiedRemoteWrite.tla RED" # a verified update records a command as owed (INV_EditOwesNothing)
+  "MC_VerifiedRemoteWrite_Red_WindowWitness.cfg VerifiedRemoteWrite.tla RED" # witness, no bug: an update is admitted on a fresh proof that predates a finalized revocation, as the code allows within the freshness limit (NotPastRevocation)
+  "MC_ReplicaRegistration_Green.cfg ReplicaRegistration.tla GREEN" # a foreign replica is registered by a receiver with its creator's grants as one owed unit, an own creator is never pre-empted, nobody is rejected while a unit is owed, and every change merges only while its signer may write
+  "MC_ReplicaRegistration_Green_Live.cfg ReplicaRegistration.tla GREEN" # with everyone working, the creator's genesis, update and delete merge on every receiver, own or foreign, with two receivers racing
+  "MC_ReplicaRegistration_Red_RegisterOwn.cfg ReplicaRegistration.tla RED" # a receiver registers an own creator's document (INV_OwnCreatorNotPreempted)
+  "MC_ReplicaRegistration_Red_RegisterAfterMerge.cfg ReplicaRegistration.tla RED" # a foreign genesis merges with its registration left to after the commit (INV_GenesisWithRegistration)
+  "MC_ReplicaRegistration_Red_RejectWhileOwed.cfg ReplicaRegistration.tla RED" # the creator's change is rejected while the receiver's registration is owed (INV_CreatorNotRejectedWhileOwed)
+  "MC_ReplicaRegistration_Red_GrantsSeparate.cfg ReplicaRegistration.tla RED" # the gate counts the registration alone as owed, not its grants (INV_CreatorNotRejectedWhileOwed)
+  "MC_ReplicaRegistration_Red_AdoptDrops.cfg ReplicaRegistration.tla RED" # a receiver told the document is already registered forgets the owner's grants are owed (INV_CreatorNotRejectedWhileOwed)
+  "MC_ReplicaRegistration_Red_NoAdoptOnArrival.cfg ReplicaRegistration.tla RED" # a receiver that sees the genesis after another registered it forgets the owner's grants are owed (INV_CreatorNotRejectedWhileOwed)
+  "MC_ReplicaRegistration_Red_OwnedDenies.cfg ReplicaRegistration.tla RED" # the node's stand-in for an owed registration rejects a granted writer (INV_DeniedOnlyByProvider)
+  "MC_ReplicaRegistration_Red_StaleDecision.cfg ReplicaRegistration.tla RED" # a decision remembered from before a revocation admits the revoked writer (INV_RevokedWriterDenied)
+  "MC_ReplicaRegistration_Red_ArchiveOnDelete.cfg ReplicaRegistration.tla RED" # merging a delete archives the object on the provider (INV_RegisteredStays)
+  "MC_ReplicaRegistration_Red_DeleteClears.cfg ReplicaRegistration.tla RED" # a local delete drops the creator's owed registration and replicas wait for ever (LIVE_RowMerges)
+  "MC_ParkedMerge_Green.cfg ParkedMerge.tla GREEN" # a refused replicated change is parked by document, never rejected for good, never merged before its history or without its signer's write, within the index bound
+  "MC_ParkedMerge_Green_Live.cfg ParkedMerge.tla GREEN" # a parked change and its descendant merge once the signer holds write, and a change on another branch always merges
+  "MC_ParkedMerge_Red_Quarantine.cfg ParkedMerge.tla RED" # a refused change is rejected for good (INV_NeverQuarantined)
+  "MC_ParkedMerge_Red_MergeOverParked.cfg ParkedMerge.tla RED" # a descendant merges over its parked ancestor (INV_HistoryFirst)
+  "MC_ParkedMerge_Red_RedriveAdmits.cfg ParkedMerge.tla RED" # a re-driven change merges without a fresh decision (INV_MergeAuthorized)
+  "MC_ParkedMerge_Red_Unbounded.cfg ParkedMerge.tla RED" # the parked index grows past its bound (INV_Bounded)
+  "MC_ParkedMerge_Red_NoRelease.cfg ParkedMerge.tla RED" # neither a relationship change nor the sweep re-drives a parked change (LIVE_RedrivenOnGrant)
+  "MC_ParkedMerge_Red_ParkBlocksObject.cfg ParkedMerge.tla RED" # a parked change holds every change of its document (LIVE_OtherBranchMerges)
   "MC_SourceScopedNac_Green.cfg SourceScopedNac.tla GREEN"
   "MC_SourceScopedNac_Red_Authority.cfg SourceScopedNac.tla RED"
   "MC_SourceScopedNac_Red_Owner.cfg SourceScopedNac.tla RED"
@@ -455,6 +495,7 @@ RUNS=(
   "MC_NacDacBypass_Red_NacOff.cfg NacDacBypass.tla RED" # a bare permission check: NAC off reads as granted and opens DAC (INV_BypassOnlyWhenGranted)
   "MC_NacDacBypass_Red_Never.cfg NacDacBypass.tla RED" # no bypass, as before: the node owner reads nothing it does not own (INV_BypassWhenGranted)
   "MC_NacDacBypass_Red_Live.cfg NacDacBypass.tla RED" # grant read outside the read's transaction: a revoke after the snapshot is missed (INV_BypassOnlyWhenGranted)
+  "MC_NacDacBypass_Red_IgnoreDenial.cfg NacDacBypass.tla RED" # the caller's denial ignored: a node administrator's denied read still skips DAC (INV_DeniedNeverBypasses)
   "MC_RelationFilterScan_Green.cfg RelationFilterScan.tla GREEN" # #2099: a relation-filtered delete or update scans validated, so a concurrent change to a related document aborts it
   "MC_RelationFilterScan_Red_Unvalidated.cfg RelationFilterScan.tla RED" # scans left unvalidated: the delete commits on a stale related match (INV_DecisionHoldsAtCommit)
   "MC_DacPolicyAdd_Green.cfg DacPolicyAdd.tla GREEN" # #2321: add DAC policy checks nac, acp, creator, data, valid in Go's order; a remote ACP's policy is kept locally before its ID goes back
@@ -589,6 +630,14 @@ RUNS=(
   "MC_AcpOutbox_Red_UncheckedRefusedKept.cfg AcpOutbox.tla RED" # an unchecked change the provider refuses is parked and holds its tuple (INV_RefusedChecked)
   "MC_AcpOutbox_Red_UncheckedHolds.cfg AcpOutbox.tla RED" # an unchecked change awaiting authority holds the owner's later change of its tuple (INV_UncheckedYields)
   "MC_AcpOutbox_Red_UncheckedPassedKept.cfg AcpOutbox.tla RED" # an unchecked change passed by a later one is kept, reauthorized and lands after it (INV_RevokedAtCommit)
+  "MC_AcpOutbox_Red_TransferWhileOwed.cfg AcpOutbox.tla RED" # the owner changes on the provider while the node still holds the owed registration (INV_NoWidening)
+  "MC_AcpOutbox_Red_AbandonByAnyone.cfg AcpOutbox.tla RED" # the subject of a refused delete abandons it and reads again (INV_RevokedAtCommit)
+  "MC_AcpOutbox_Red_AbandonInFlight.cfg AcpOutbox.tla RED" # a change abandoned while it is being sent lands afterwards (INV_AbandonIsFinal)
+  "MC_AcpOutbox_Red_SilentFailure.cfg AcpOutbox.tla RED" # a registration whose submission failed stays owed with no reason recorded (INV_FailureReported)
+  "MC_AcpOutbox_Red_AmbientRegistration.cfg AcpOutbox.tla RED" # a retry sends the registration with a token the process holds (INV_PresentedAuthority)
+  "MC_AcpOutbox_Red_AmbientRecorded.cfg AcpOutbox.tla RED" # a bearer-less create records the token the process holds, and a retry sends it (INV_PresentedAuthority)
+  "MC_AcpOutbox_Red_SilentDiscard.cfg AcpOutbox.tla RED" # a change deleted without the provider holding it leaves no note for its actor (INV_FailureReported)
+  "MC_AcpOutbox_Red_ReauthorizeUnchecked.cfg AcpOutbox.tla RED" # a fresh credential for the registration is taken from anyone and its signer becomes the owner (INV_NoWidening)
   "MC_RegisterDocOnce_Green.cfg RegisterDocOnce.tla GREEN" # racing registrations of one document: one owner, the winner owns it, one wins
   "MC_RegisterDocOnce_Red_NoValidation.cfg RegisterDocOnce.tla RED" # deciding scan not validated: two owners (INV_OneOwner)
   "MC_RegisterDocOnce_Red_Sentinel.cfg RegisterDocOnce.tla RED" # main before the fix: the identical sentinel write commits, two owners (INV_OneOwner)
@@ -629,6 +678,9 @@ RUNS=(
   "MC_Nac_Red_NoPersist.cfg        MC_Nac_Red_NoPersist.tla        RED"   # NAC: disabled-flag not persisted across restart
   "MC_Nac_Red_ReEnableLive.cfg     MC_Nac_Red_ReEnableLive.tla     RED"   # NAC: re-enable from stale live admin (escalation)
   "MC_Nac_Red_WriteWhileDisabled.cfg MC_Nac_Red_WriteWhileDisabled.tla RED" # NAC: admin write accepted while disabled
+  "MC_Nac_Red_EnableReEnables.cfg  MC_Nac_Red_EnableReEnables.tla  RED"   # NAC: enable() turns a disabled NAC back on (INV_ReEnableNeedsPersistedAdmin)
+  "MC_Nac_Red_EnableAddsOwner.cfg  MC_Nac_Red_EnableReEnables.tla  RED"   # NAC: enable() on a disabled NAC makes the caller an owner (INV_NoNonAdminMutatesAdminSet)
+  "MC_Nac_Red_StartReEnables.cfg   MC_Nac_Red_StartReEnables.tla   RED"   # NAC: start with the enable option re-enables a disabled NAC (INV_ReEnableNeedsPersistedAdmin)
   "MC_TxnRegistry_Green.cfg        MC_TxnRegistry_Green.tla        GREEN" # txn cleanup never evicts a live transaction
   "MC_TxnRegistry_Red_NaiveSweep.cfg MC_TxnRegistry_Red_NaiveSweep.tla RED" # naive sweep evicts a still-live txn
   "MC_TxnContext_Green.cfg TxnContext.tla GREEN" # a transaction in the request context: only its opener runs in it, read-only writes nothing, finished runs nothing, discard leaves nothing, clashing commit fails

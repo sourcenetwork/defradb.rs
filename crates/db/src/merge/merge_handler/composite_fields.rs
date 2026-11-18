@@ -403,7 +403,13 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         linked_block: &Block,
         encrypted_policy_checked: &mut bool,
     ) -> std::result::Result<EffectiveLinkedDelta, MergeError> {
-        if linked_block.encryption.is_some() && !*encrypted_policy_checked {
+        // A genesis planned to register its replica merges before the
+        // provider holds the document: the registration commits with it.
+        let registering = matches!(
+            context.replica,
+            crate::merge::replica::ReplicaStep::Register { .. }
+        );
+        if linked_block.encryption.is_some() && !*encrypted_policy_checked && !registering {
             *encrypted_policy_checked = true;
             if let (Some(collection), Some(hook)) = (
                 context

@@ -154,3 +154,5 @@ mod identity_keys_tests;
 mod negative_tests;
 #[cfg(test)]
 mod test_support;
+#[cfg(test)]
+mod txn_ops_tests;

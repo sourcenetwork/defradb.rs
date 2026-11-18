@@ -22,6 +22,9 @@ lean_lib VeraActorSpelling where
 lean_lib VeraDelegationSigner where
 
 @[default_target]
+lean_lib VeraDelegationWindow where
+
+@[default_target]
 lean_lib VeraEmbeddedTransport where
 
 @[default_target]
@@ -257,6 +260,15 @@ lean_lib VerifiedCreateHandoff where
 
 @[default_target]
 lean_lib VerifiedMutationHandoff where
+
+@[default_target]
+lean_lib VerifiedRemoteAuthority where
+
+@[default_target]
+lean_lib ReplicaGate where
+
+@[default_target]
+lean_lib DeferredMerges where
 
 @[default_target]
 lean_lib AdministrativeRelationship where

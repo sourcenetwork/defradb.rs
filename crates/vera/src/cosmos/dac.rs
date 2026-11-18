@@ -16,6 +16,7 @@ use acp::{DocumentACP, DocumentPermission, Identity, Result, Subject};
 
 use crate::access_cache::AccessCache;
 use crate::decisions::{DecisionKey, RemoteDecisions};
+use crate::policy_command::{PolicyAction, PolicyCommand, PolicySubject};
 use crate::provider::{
     AcpLightClientStatus, ActorRelationshipQuery, ProviderError, SubjectRef, VeraProvider,
 };
@@ -267,6 +268,79 @@ impl VeraDocumentACP {
     ) -> std::result::Result<AcpLightClientStatus, ProviderError> {
         self.provider.acp_light_client_status()
     }
+
+    /// What lets the node send a command as `actor`: its own key for
+    /// `actor`, or the delegation the request this ACP serves carries for
+    /// it. One the request presents as bound to one request
+    /// ([`RequestContext::with_request_delegation`](defra_core::RequestContext::with_request_delegation))
+    /// counts for `command` when it names it, and for nothing when no
+    /// command is given; presented as a plain delegation it counts for
+    /// nothing at all.
+    fn authority(
+        &self,
+        actor: &Did,
+        command: Option<&crate::PolicyCommand<'_>>,
+    ) -> Result<acp::OwedAuthority> {
+        let canonical = self.provider.canonical_actor(actor.as_str());
+        if self.provider.holds_key_for(actor.as_str()) || self.provider.holds_key_for(&canonical) {
+            return Ok(acp::OwedAuthority::NodeKey);
+        }
+        let unavailable = |reason: String| acp::Error::OwedAuthorityUnavailable {
+            actor: actor.to_string(),
+            reason,
+        };
+        let token = self
+            .bearer_token_for(actor.as_str())
+            .or_else(|| self.bearer_token_for(&canonical))
+            .ok_or_else(|| {
+                unavailable(
+                    "the node holds no key for it and the request carries no delegation".into(),
+                )
+            })?;
+        // Presented as bound to one request, the token counts for the
+        // command it names and is never taken as a plain delegation.
+        if defra_core::RequestContext::bound_or_ambient(self.context.as_ref())
+            .bearer_names_request()
+        {
+            let bound =
+                command.and_then(|command| self.request_bound(actor.as_str(), &token, command));
+            return match bound {
+                Some(Ok(())) => Ok(acp::OwedAuthority::Delegation { token }),
+                Some(Err(refusal)) => Err(refusal),
+                None if command.is_some() => Err(unavailable(
+                    "the delegation presented as bound to one request is bound to none".into(),
+                )),
+                None => Err(unavailable(
+                    "a delegation bound to one request names no command of this write".into(),
+                )),
+            };
+        }
+        match self.provider.caller_of_delegation(&token) {
+            Some(Ok(caller)) if self.provider.canonical_actor(caller.did.as_str()) == canonical => {
+                Ok(acp::OwedAuthority::Delegation { token })
+            }
+            Some(Ok(caller)) => Err(unavailable(format!(
+                "the request's delegation is signed by {}",
+                caller.did
+            ))),
+            Some(Err(error)) => Err(request_bound::delegation_refused(actor.as_str(), error)),
+            None if self.provider.delegation_audience().is_some() => Err(unavailable(
+                "the request's token is not a delegation to this node".into(),
+            )),
+            // A verified write is staged on a credential the node checked,
+            // and a provider that takes no delegation gives it nothing to
+            // check a token against.
+            None if defra_core::RequestContext::bound_or_ambient(self.context.as_ref())
+                .transactional_authority_required() =>
+            {
+                Err(unavailable(
+                    "this provider cannot verify a delegation for a verified write".into(),
+                ))
+            }
+            // A provider that takes no delegation is passed its caller's token.
+            None => Ok(acp::OwedAuthority::Delegation { token }),
+        }
+    }
 }
 
 fn did_to_subject(target: &Did) -> SubjectRef {
@@ -328,6 +402,7 @@ impl acp::RemotePolicies for VeraDocumentACP {
         let status = self.acp_light_client_status().map_err(|e| e.to_string())?;
         Ok(acp::LightClientStatus {
             height: status.height,
+            chain_time: status.chain_time,
             module_state_root: status.module_state_root,
             cache_entries: status.cache_entries,
             last_invalidation_height: status.last_invalidation_height,
@@ -370,6 +445,12 @@ impl DocumentACP for VeraDocumentACP {
         Did::new_unchecked(self.provider.canonical_actor(did.as_str()))
     }
 
+    fn own_actor(&self) -> Option<Did> {
+        self.provider
+            .self_did()
+            .map(|did| Did::new_unchecked(self.provider.canonical_actor(&did)))
+    }
+
     fn submits_subject(&self, subject: &Subject) -> bool {
         match subject {
             Subject::Entity(_) | Subject::Wildcard => true,
@@ -379,37 +460,15 @@ impl DocumentACP for VeraDocumentACP {
     }
 
     fn owed_authority(&self, actor: &Did) -> Result<acp::OwedAuthority> {
-        let canonical = self.provider.canonical_actor(actor.as_str());
-        if self.provider.holds_key_for(actor.as_str()) || self.provider.holds_key_for(&canonical) {
-            return Ok(acp::OwedAuthority::NodeKey);
-        }
-        let unavailable = |reason: String| acp::Error::OwedAuthorityUnavailable {
-            actor: actor.to_string(),
-            reason,
-        };
-        let token = self
-            .bearer_token_for(actor.as_str())
-            .or_else(|| self.bearer_token_for(&canonical))
-            .ok_or_else(|| {
-                unavailable(
-                    "the node holds no key for it and the request carries no delegation".into(),
-                )
-            })?;
-        match self.provider.caller_of_delegation(&token) {
-            Some(Ok(caller)) if self.provider.canonical_actor(caller.did.as_str()) == canonical => {
-                Ok(acp::OwedAuthority::Delegation { token })
-            }
-            Some(Ok(caller)) => Err(unavailable(format!(
-                "the request's delegation is signed by {}",
-                caller.did
-            ))),
-            Some(Err(error)) => Err(unavailable(error.to_string())),
-            None if self.provider.delegation_audience().is_some() => Err(unavailable(
-                "the request's token is not a delegation to this node".into(),
-            )),
-            // A provider that takes no delegation is passed its caller's token.
-            None => Ok(acp::OwedAuthority::Delegation { token }),
-        }
+        self.authority(actor, None)
+    }
+
+    fn command_authority(
+        &self,
+        actor: &Did,
+        command: acp::ProviderCommand<'_>,
+    ) -> Result<acp::OwedAuthority> {
+        request_bound::with_policy_command(command, |command| self.authority(actor, command))
     }
 
     async fn submit_owed_change(&self, change: &acp::OwedChange) -> acp::Submission {
@@ -477,6 +536,12 @@ impl DocumentACP for VeraDocumentACP {
         self.provider.unregistered_documents_are_public()
     }
 
+    /// Only without the access cache: a cached decision may outlive the
+    /// freshness limit its provider proves it within.
+    fn proves_decisions(&self) -> bool {
+        self.access_cache.is_none() && self.provider.proves_decisions()
+    }
+
     async fn register_doc_object(
         &self,
         identity: &Did,
@@ -485,6 +550,16 @@ impl DocumentACP for VeraDocumentACP {
         doc_id: &str,
     ) -> Result<()> {
         let bearer_token = self.create_bearer_token(identity.as_str()).await?;
+        self.admit_for(
+            identity.as_str(),
+            &bearer_token,
+            &PolicyCommand {
+                policy_id,
+                resource: resource_name,
+                object_id: doc_id,
+                action: PolicyAction::RegisterObject,
+            },
+        )?;
         let [policy, resource, doc] = owned([policy_id, resource_name, doc_id]);
         self.remote(move |provider| async move {
             provider
@@ -636,6 +711,19 @@ impl DocumentACP for VeraDocumentACP {
     ) -> Result<bool> {
         let bearer_token = self.create_bearer_token(requestor.as_str()).await?;
         let subject = did_to_subject(target);
+        self.admit_for(
+            requestor.as_str(),
+            &bearer_token,
+            &PolicyCommand {
+                policy_id,
+                resource: resource_name,
+                object_id: doc_id,
+                action: PolicyAction::SetRelationship {
+                    relation,
+                    subject: PolicySubject::Actor(&subject),
+                },
+            },
+        )?;
         let [policy, resource, doc, relation] = owned([policy_id, resource_name, doc_id, relation]);
         let result = self
             .remote(move |provider| async move {
@@ -663,6 +751,19 @@ impl DocumentACP for VeraDocumentACP {
     ) -> Result<bool> {
         let bearer_token = self.create_bearer_token(requestor.as_str()).await?;
         let subject = did_to_subject(target);
+        self.admit_for(
+            requestor.as_str(),
+            &bearer_token,
+            &PolicyCommand {
+                policy_id,
+                resource: resource_name,
+                object_id: doc_id,
+                action: PolicyAction::DeleteRelationship {
+                    relation,
+                    subject: PolicySubject::Actor(&subject),
+                },
+            },
+        )?;
         let [policy, resource, doc, relation] = owned([policy_id, resource_name, doc_id, relation]);
         let result = self
             .remote(move |provider| async move {
@@ -715,6 +816,24 @@ impl DocumentACP for VeraDocumentACP {
                 let (kind, sr, so, srel) =
                     zanzibar::encode_subject(&target).map_err(acp::Error::from)?;
                 let bearer_token = self.create_bearer_token(requestor.as_str()).await?;
+                self.admit_for(
+                    requestor.as_str(),
+                    &bearer_token,
+                    &PolicyCommand {
+                        policy_id,
+                        resource: resource_name,
+                        object_id: doc_id,
+                        action: PolicyAction::SetRelationship {
+                            relation,
+                            subject: PolicySubject::Structured {
+                                kind,
+                                resource: &sr,
+                                object_id: &so,
+                                relation: &srel,
+                            },
+                        },
+                    },
+                )?;
                 let [policy, resource, doc, relation] =
                     owned([policy_id, resource_name, doc_id, relation]);
                 let result = self
@@ -772,6 +891,24 @@ impl DocumentACP for VeraDocumentACP {
                 let (kind, sr, so, srel) =
                     zanzibar::encode_subject(&target).map_err(acp::Error::from)?;
                 let bearer_token = self.create_bearer_token(requestor.as_str()).await?;
+                self.admit_for(
+                    requestor.as_str(),
+                    &bearer_token,
+                    &PolicyCommand {
+                        policy_id,
+                        resource: resource_name,
+                        object_id: doc_id,
+                        action: PolicyAction::DeleteRelationship {
+                            relation,
+                            subject: PolicySubject::Structured {
+                                kind,
+                                resource: &sr,
+                                object_id: &so,
+                                relation: &srel,
+                            },
+                        },
+                    },
+                )?;
                 let [policy, resource, doc, relation] =
                     owned([policy_id, resource_name, doc_id, relation]);
                 let result = self
@@ -842,6 +979,7 @@ impl DocumentACP for VeraDocumentACP {
 }
 
 mod owed;
+mod request_bound;
 
 #[cfg(test)]
 mod tests;

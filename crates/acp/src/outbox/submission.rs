@@ -51,7 +51,10 @@ impl Submission {
             Err(error @ Error::UnsupportedSubject(_)) => Self::Unsupported {
                 reason: error.to_string(),
             },
-            Err(error @ Error::OwedAuthorityUnavailable { .. }) => Self::AwaitingAuthority {
+            Err(
+                error @ (Error::OwedAuthorityUnavailable { .. }
+                | Error::DelegationOutsideWindow { .. }),
+            ) => Self::AwaitingAuthority {
                 reason: error.to_string(),
             },
             Err(Error::ProviderUnavailable(reason)) => Self::Unavailable { reason },

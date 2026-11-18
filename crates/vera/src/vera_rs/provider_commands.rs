@@ -1,65 +1,4 @@
-//! Command encoding helpers for vera.rs provider operations.
-
-use crate::provider::SubjectRef;
-
-pub(crate) fn subject_to_cmd_json(subject: &SubjectRef) -> serde_json::Value {
-    match subject {
-        SubjectRef::Actor(did) => {
-            serde_json::json!({ "Entity": super::did_spelling::wire(did) })
-        }
-        SubjectRef::AllActors => serde_json::json!("Wildcard"),
-    }
-}
-
-pub(crate) fn encode_register_object_cmd(resource: &str, object_id: &str) -> Vec<u8> {
-    // Matches vera.rs PolicyCmd::RegisterObject(Object { resource, id })
-    serde_json::to_vec(&serde_json::json!({
-        "RegisterObject": { "resource": resource, "id": object_id }
-    }))
-    .unwrap_or_default()
-}
-
-pub(crate) fn encode_archive_object_cmd(resource: &str, object_id: &str) -> Vec<u8> {
-    // Matches vera.rs PolicyCmd::ArchiveObject(Object { resource, id })
-    serde_json::to_vec(&serde_json::json!({
-        "ArchiveObject": { "resource": resource, "id": object_id }
-    }))
-    .unwrap_or_default()
-}
-
-pub(crate) fn encode_set_relationship_cmd(
-    resource: &str,
-    object_id: &str,
-    relation: &str,
-    subject: &SubjectRef,
-) -> Vec<u8> {
-    serde_json::to_vec(&serde_json::json!({
-        "SetRelationship": {
-            "resource": resource,
-            "object_id": object_id,
-            "relation": relation,
-            "subject": subject_to_cmd_json(subject),
-        }
-    }))
-    .unwrap_or_default()
-}
-
-pub(crate) fn encode_delete_relationship_cmd(
-    resource: &str,
-    object_id: &str,
-    relation: &str,
-    subject: &SubjectRef,
-) -> Vec<u8> {
-    serde_json::to_vec(&serde_json::json!({
-        "DeleteRelationship": {
-            "resource": resource,
-            "object_id": object_id,
-            "relation": relation,
-            "subject": subject_to_cmd_json(subject),
-        }
-    }))
-    .unwrap_or_default()
-}
+//! The bearer token an actor's policy commands are sent under.
 
 /// The signer of a registered identity's local key, for the key types a
 /// delegation can be signed with.
@@ -89,10 +28,19 @@ fn registered_signer(
 /// with: what [`resolve_registered_or_passthrough_bearer_token_as`] signs
 /// with before it falls back to a request's token.
 pub(crate) fn holds_registered_key(did: &str) -> bool {
-    defra_core::signing::get_identity(did).is_some_and(|signing_config| {
-        signing_config.has_local_private_key()
-            && matches!(registered_signer(&signing_config), Some(Ok(_)))
-    })
+    registered_key(did)
+        .is_some_and(|signing_config| matches!(registered_signer(&signing_config), Some(Ok(_))))
+}
+
+/// The local key registered for the actor `did` names, under whichever
+/// spelling of its key it was registered. A caller may name the actor in
+/// another spelling than the registration's, and a staged change keeps the
+/// actor in one spelling only.
+fn registered_key(did: &str) -> Option<defra_core::signing::SigningConfig> {
+    super::did_spelling::spellings(did)
+        .iter()
+        .filter_map(|spelling| defra_core::signing::get_identity(spelling))
+        .find(defra_core::signing::SigningConfig::has_local_private_key)
 }
 
 /// [`resolve_registered_or_passthrough_bearer_token_as`] in
@@ -122,124 +70,26 @@ pub(crate) async fn resolve_registered_or_passthrough_bearer_token_as(
     submitter: &str,
     deployment_id: u64,
 ) -> Result<Option<String>, crate::provider::ProviderError> {
-    if let Some(signing_config) = defra_core::signing::get_identity(did) {
-        if signing_config.has_local_private_key() {
-            if let Some(signer) = registered_signer(&signing_config) {
-                let signer = signer.map_err(|e| {
-                    crate::provider::ProviderError::Config(format!("invalid signing key: {}", e))
-                })?;
-                let issuer = super::did_spelling::wire(did);
-                return super::bearer::create_bearer_token(
-                    signer.as_ref(),
-                    &issuer,
-                    submitter,
-                    deployment_id,
-                    300,
-                )
-                .await
-                .map(Some)
-                .map_err(|e| {
-                    crate::provider::ProviderError::Config(format!(
-                        "bearer token creation failed: {}",
-                        e
-                    ))
-                });
-            }
-        }
+    if let Some(signer) = registered_key(did).as_ref().and_then(registered_signer) {
+        let signer = signer.map_err(|e| {
+            crate::provider::ProviderError::Config(format!("invalid signing key: {}", e))
+        })?;
+        let issuer = super::did_spelling::wire(did);
+        return super::bearer::create_bearer_token(
+            signer.as_ref(),
+            &issuer,
+            submitter,
+            deployment_id,
+            300,
+        )
+        .await
+        .map(Some)
+        .map_err(|e| {
+            crate::provider::ProviderError::Config(format!("bearer token creation failed: {}", e))
+        });
     }
 
     Ok(context.bearer_token_for(did))
-}
-
-#[cfg(test)]
-mod tests {
-    use serde_json::{json, Value};
-
-    use super::*;
-
-    #[test]
-    fn encodes_register_object_as_vera_rs_policy_cmd() {
-        let value: Value =
-            serde_json::from_slice(&encode_register_object_cmd("users", "doc-1")).unwrap();
-
-        assert_eq!(
-            value,
-            json!({
-                "RegisterObject": { "resource": "users", "id": "doc-1" }
-            })
-        );
-    }
-
-    #[test]
-    fn an_actor_subject_is_sent_under_one_spelling() {
-        let key = vera_client::Secp256k1SigningKey::from_slice(&[42; 32]).unwrap();
-        let compressed = crate::vera_rs::bearer::did_from_signing_key(&key, true);
-        let uncompressed = crate::vera_rs::bearer::did_from_signing_key(&key, false);
-        for did in [&compressed, &uncompressed] {
-            for cmd in [
-                encode_set_relationship_cmd(
-                    "users",
-                    "doc",
-                    "reader",
-                    &SubjectRef::Actor(did.clone()),
-                ),
-                encode_delete_relationship_cmd(
-                    "users",
-                    "doc",
-                    "reader",
-                    &SubjectRef::Actor(did.clone()),
-                ),
-            ] {
-                let value: Value = serde_json::from_slice(&cmd).unwrap();
-                let subject = value
-                    .as_object()
-                    .and_then(|command| command.values().next())
-                    .map(|body| body["subject"]["Entity"].clone());
-                assert_eq!(subject, Some(json!(uncompressed)));
-            }
-        }
-    }
-
-    #[test]
-    fn encodes_relationship_subjects_as_vera_rs_policy_cmds() {
-        let actor = crate::provider::SubjectRef::Actor("did:key:zActor".to_string());
-        let value: Value = serde_json::from_slice(&encode_set_relationship_cmd(
-            "users", "doc-1", "reader", &actor,
-        ))
-        .unwrap();
-
-        assert_eq!(
-            value,
-            json!({
-                "SetRelationship": {
-                    "resource": "users",
-                    "object_id": "doc-1",
-                    "relation": "reader",
-                    "subject": { "Entity": "did:key:zActor" }
-                }
-            })
-        );
-
-        let value: Value = serde_json::from_slice(&encode_delete_relationship_cmd(
-            "users",
-            "doc-1",
-            "reader",
-            &crate::provider::SubjectRef::AllActors,
-        ))
-        .unwrap();
-
-        assert_eq!(
-            value,
-            json!({
-                "DeleteRelationship": {
-                    "resource": "users",
-                    "object_id": "doc-1",
-                    "relation": "reader",
-                    "subject": "Wildcard"
-                }
-            })
-        );
-    }
 }
 
 #[cfg(test)]
@@ -272,7 +122,10 @@ mod request_bearer_tests {
         defra_core::signing::clear_request_bearer_token(did);
 
         assert_eq!(own.as_deref(), Some("request"));
-        assert_eq!(unscoped.as_deref(), Some("stored"));
+        assert_eq!(
+            unscoped, None,
+            "a request that carries no bearer presents none"
+        );
     }
 
     #[test]
@@ -302,6 +155,13 @@ mod request_bearer_tests {
         defra_core::signing::set_request_bearer_token(carried, "stored");
 
         assert!(holds_registered_key(&held));
+        // The same key named in its other spelling is the same held key.
+        let other = crate::vera_rs::did_spelling::spellings(&held)
+            .pop()
+            .expect("a spelling")
+            .into_owned();
+        assert_ne!(other, held);
+        assert!(holds_registered_key(&other));
         assert!(!holds_registered_key(carried));
         assert!(!holds_registered_key("did:key:z6MkVeraRsUnknown"));
 

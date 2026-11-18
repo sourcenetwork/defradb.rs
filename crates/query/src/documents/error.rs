@@ -13,6 +13,9 @@ pub enum Error {
     /// The save named a document that has been deleted. Go's text.
     #[error("a document with the given ID has been deleted. DocID: {0}")]
     Deleted(String),
+    /// The write named a collection that does not exist. Go's text.
+    #[error("collection not found")]
+    CollectionNotFound,
     /// The write named the secondary side of a relation. Go's text.
     #[error("cannot set relation from secondary side. Name: {0}")]
     SecondaryRelation(String),

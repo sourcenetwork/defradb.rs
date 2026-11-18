@@ -96,6 +96,29 @@ fn test_non_owner_denied_when_nac_enabled() {
     .unwrap()
 }
 
+/// Enabling a temporarily disabled NAC is refused and changes nothing: no
+/// new owner, still disabled. Only an authorized re-enable turns it back on.
+#[test]
+fn enabling_a_disabled_nac_is_refused() {
+    workers::block_on(async {
+        let store = Arc::new(MemoryZanzibarStore::new());
+        let nac = NodeACP::new(store);
+        let owner = test_did();
+        nac.enable(&owner).await.unwrap();
+        nac.disable().await.unwrap();
+
+        let stranger = test_did2();
+        let refused = nac.enable(&stranger).await.unwrap_err().to_string();
+        assert!(refused.contains("re-enable it instead"), "{refused}");
+        assert_eq!(nac.status().await, NacStatus::DisabledTemporarily);
+        assert!(!nac.is_owner(&stranger).await, "no owner was added");
+
+        nac.re_enable().await.unwrap();
+        assert_eq!(nac.status().await, NacStatus::Enabled);
+    })
+    .unwrap()
+}
+
 #[test]
 fn test_disable_and_re_enable() {
     workers::block_on(async {

@@ -2,6 +2,8 @@
 
 pub mod acp_merge_handler;
 pub mod broadcast_mutator;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod gate_conformance_tests;
 pub mod governance;
 pub mod head_provider;
 pub mod merge_handler;
@@ -15,6 +17,7 @@ pub mod push_docs_creator;
 mod push_docs_network;
 pub mod push_docs_replay;
 pub mod redriven_sink;
+pub mod replica;
 pub mod replication;
 pub mod replication_ack;
 pub mod se;
@@ -42,6 +45,7 @@ pub use push_docs::{
 };
 pub use push_docs_replay::ReplayPushConfig;
 pub use redriven_sink::SyncRedrivenSink;
+pub use replica::{ReplicaOwnership, ReplicaRegistration};
 pub use replication::{
     attach_failure_channel, create_acp_merge_handler, create_broadcast_mutator,
     create_head_provider, create_merge_handler, create_replication_stack,

@@ -85,6 +85,12 @@ impl RemoteSigner for ExactSignatures {
         self.consumed[*index].store(true, Ordering::Release);
         Ok(signature.clone())
     }
+
+    /// The signatures were made before the write: no decision authorizes
+    /// them, and none is asked of document ACP.
+    fn takes_authorization(&self) -> bool {
+        false
+    }
 }
 
 /// An exact create graph verified against a caller-supplied trusted schema and input.

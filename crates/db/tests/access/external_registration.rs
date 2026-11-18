@@ -55,6 +55,9 @@ pub(super) struct RemoteAcp {
     pub(super) lose_answer: AtomicBool,
     /// A registration is refused: its creator's credentials are missing.
     pub(super) refuse_registration: AtomicBool,
+    /// A registration is answered with an error that does not say whether
+    /// it is final.
+    pub(super) garble_registration: AtomicBool,
     /// A relationship write is answered with this error, which does not say
     /// whether it is final, and is not applied.
     garbled: HopscotchMap<(), String, rapidhash::fast::RandomState>,
@@ -62,6 +65,8 @@ pub(super) struct RemoteAcp {
     pub(super) malformed_owner: AtomicBool,
     /// The node cannot make the request for an owed change at all.
     pub(super) unsendable: AtomicBool,
+    /// The actors the node cannot make that request for.
+    unsigned: Set<String>,
     /// Every relationship write applied, in order: add or delete, document,
     /// subject.
     writes: SegQueue<(bool, String, String)>,
@@ -88,12 +93,14 @@ impl RemoteAcp {
             strict: AtomicBool::new(false),
             lose_answer: AtomicBool::new(false),
             refuse_registration: AtomicBool::new(false),
+            garble_registration: AtomicBool::new(false),
             garbled: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
             malformed_owner: AtomicBool::new(false),
             unsendable: AtomicBool::new(false),
             writes: SegQueue::new(),
             credentials: AtomicBool::new(false),
             keys: set(),
+            unsigned: set(),
             delegations: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
             expired: set(),
             spellings: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
@@ -113,6 +120,15 @@ impl RemoteAcp {
         self.keys.insert(did.to_string(), ());
     }
 
+    /// Whether the node can make the request for an owed change of `did`.
+    pub(super) fn can_sign(&self, did: &Did, can: bool) {
+        if can {
+            self.unsigned.remove(&did.to_string());
+        } else {
+            self.unsigned.insert(did.to_string(), ());
+        }
+    }
+
     pub(super) fn drop_key(&self, did: &Did) {
         self.keys.remove(&did.to_string());
     }
@@ -120,6 +136,11 @@ impl RemoteAcp {
     /// The request being served carries `token` for `did`.
     pub(super) fn carry_delegation(&self, did: &Did, token: &str) {
         self.delegations.insert(did.to_string(), token.to_string());
+    }
+
+    /// The request being served carries nothing for `did` any more.
+    pub(super) fn forget_delegation(&self, did: &Did) {
+        self.delegations.remove(did.as_str());
     }
 
     pub(super) fn expire(&self, token: &str) {
@@ -217,6 +238,9 @@ impl DocumentACP for RemoteAcp {
             return Err(acp::Error::PermissionDenied(
                 "no credentials for the creator".into(),
             ));
+        }
+        if self.garble_registration.load(Ordering::SeqCst) {
+            return Err(acp::Error::Storage("code 13".into()));
         }
         if let Some(owner) = self.owners.get(doc_id) {
             if owner != *identity {
@@ -334,7 +358,9 @@ impl DocumentACP for RemoteAcp {
     }
 
     async fn submit_owed_change(&self, change: &acp::OwedChange) -> acp::Submission {
-        if self.unsendable.load(Ordering::SeqCst) {
+        if self.unsendable.load(Ordering::SeqCst)
+            || self.unsigned.contains_key(change.actor.as_str())
+        {
             return acp::Submission::NotSent {
                 reason: "the node could not sign the request".into(),
             };

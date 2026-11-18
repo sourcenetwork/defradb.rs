@@ -77,7 +77,7 @@ async fn issue_at(
         exp: expiry,
         iat: now,
         iss: issuer,
-        nbf: now.saturating_sub(30),
+        nbf: not_before(now),
         scope,
         sub: subject,
     };
@@ -91,6 +91,14 @@ async fn issue_at(
     let sig_b64 = base64url_encode(&signature);
 
     Ok(format!("{}.{}", message, sig_b64))
+}
+
+/// The first second a delegation issued at `now` holds: set back by the
+/// [`acp::CLOCK_SKEW_ALLOWANCE`], so a signer whose clock runs ahead of the
+/// provider's by no more than that is not refused. vera.rs's own client sets
+/// a plain delegation back by the same 30 seconds.
+fn not_before(now: u64) -> u64 {
+    now.saturating_sub(acp::CLOCK_SKEW_ALLOWANCE.as_secs())
 }
 
 /// The claims of a delegation, in the order they are written into the token.
@@ -155,10 +163,26 @@ pub enum BearerError {
 
     #[error(transparent)]
     Signer(#[from] SignerError),
+
+    #[error("a delegation bound to one request lasts between 1 and {} seconds", request::MAX_REQUEST_LIFETIME.as_secs())]
+    RequestLifetime,
+
+    #[error("the node does not report its deployment's genesis identity")]
+    NoGenesisIdentity,
+
+    #[error("the command has no digest: {0}")]
+    Command(String),
 }
 
 #[cfg(test)]
 mod key_types;
+mod request;
+mod window;
+
+pub(super) use request::caller_of_request_delegation;
+pub use request::{
+    request_delegation, request_delegation_at, RequestBinding, MAX_REQUEST_LIFETIME,
+};
 #[cfg(test)]
 mod pinned;
 
@@ -337,16 +361,37 @@ pub(super) fn caller_of_delegation(
         .duration_since(UNIX_EPOCH)
         .map_err(|_| CallerDelegationError::Clock)?
         .as_secs();
-    claims.authorize(worker, deployment_id, now)?;
+    authorize_at(&claims, worker, deployment_id, now)?;
     Ok(acp::AuthenticatedCaller {
         did: identity::Did::new(super::did_spelling::defra(&claims.iss).into_owned())?,
         expires_at: claims.exp,
     })
 }
 
+/// Whether vera.rs would act under `claims` for `worker` on `deployment_id`
+/// at `now`. A delegation for another worker or deployment is refused as
+/// such whatever its times; one for this worker that does not hold at `now`
+/// is refused with the window it holds in.
+fn authorize_at(
+    claims: &vera_crypto::jwt::JwtClaims,
+    worker: &str,
+    deployment_id: u64,
+    now: u64,
+) -> Result<(), CallerDelegationError> {
+    // At `nbf` the times always pass, since a verified token has
+    // `nbf ≤ iat < exp`: this asks about the worker and deployment alone.
+    claims.authorize(worker, deployment_id, claims.nbf)?;
+    window::within_window(claims, now).map_err(CallerDelegationError::Window)?;
+    Ok(claims.authorize(worker, deployment_id, now)?)
+}
+
 /// Why a caller's delegation was refused.
 #[derive(Debug, thiserror::Error)]
 pub(super) enum CallerDelegationError {
+    #[error("{0}")]
+    Window(acp::DelegationWindow),
+    #[error(transparent)]
+    Identity(#[from] identity::Error),
     #[error(transparent)]
     Identity(#[from] identity::Error),
     #[error(transparent)]
@@ -355,6 +400,12 @@ pub(super) enum CallerDelegationError {
     Kind,
     #[error("the system clock is before the Unix epoch")]
     Clock,
+    #[error("the delegation is bound to another request")]
+    OtherRequest,
+    #[error("the delegation names another deployment's genesis identity")]
+    OtherGenesis,
+    #[error("the command the delegation is presented for has no digest: {0}")]
+    Command(String),
 }
 
 #[cfg(test)]
@@ -368,6 +419,7 @@ mod caller_tests {
         acp::DelegationAudience {
             worker: WORKER.into(),
             deployment,
+            genesis_id: None,
         }
     }
 
@@ -411,6 +463,49 @@ mod caller_tests {
                 Err(CallerDelegationError::Kind)
             ));
         }
+    }
+
+    #[nuclei::test]
+    async fn a_plain_delegation_outside_its_window_names_the_window_and_the_provider_time() {
+        const NOW: u64 = 1_900_000_000;
+        let signer = Ed25519Signer::from_slice(&[7; 32]).unwrap();
+        let at = |issued_at: u64| {
+            let signer = &signer;
+            async move {
+                let token = issue_at(
+                    signer,
+                    signer.did(),
+                    WORKER,
+                    9,
+                    60,
+                    DelegationScope::PolicyCommands,
+                    issued_at,
+                )
+                .await
+                .unwrap();
+                vera_crypto::jwt::verify_bearer_token(&token).unwrap()
+            }
+        };
+        for ahead in [0, 30] {
+            assert!(authorize_at(&at(NOW + ahead).await, WORKER, 9, NOW).is_ok());
+        }
+        let early = at(NOW + 31).await;
+        assert!(matches!(
+            authorize_at(&early, WORKER, 9, NOW),
+            Err(CallerDelegationError::Window(window))
+                if window.provider_time == NOW
+                    && window.refusal == acp::WindowRefusal::NotYetValid { ahead_by_at_least: 1 }
+        ));
+        let late = at(NOW - 61).await;
+        assert!(matches!(
+            authorize_at(&late, WORKER, 9, NOW),
+            Err(CallerDelegationError::Window(window))
+                if window.refusal == acp::WindowRefusal::Expired
+        ));
+        assert!(matches!(
+            authorize_at(&early, WORKER, 10, NOW),
+            Err(CallerDelegationError::Token(_))
+        ));
     }
 
     #[test]

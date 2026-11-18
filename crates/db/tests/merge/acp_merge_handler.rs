@@ -57,7 +57,11 @@ async fn grant(acp: &LocalDocumentACP, target: &str, relation: &str) {
     .unwrap();
 }
 
-fn update(signer: Option<&str>) -> CompositeFrame<'_> {
+fn did(signer: &str) -> Did {
+    Did::new(signer).unwrap()
+}
+
+fn update(signer: Option<&Did>) -> CompositeFrame<'_> {
     CompositeFrame {
         is_genesis: false,
         status: 1,
@@ -65,7 +69,7 @@ fn update(signer: Option<&str>) -> CompositeFrame<'_> {
     }
 }
 
-fn delete(signer: Option<&str>) -> CompositeFrame<'_> {
+fn delete(signer: Option<&Did>) -> CompositeFrame<'_> {
     CompositeFrame {
         status: 2,
         ..update(signer)
@@ -120,7 +124,10 @@ fn strict_acp_retries_unregistered_encrypted_document() {
 #[test]
 fn update_to_unregistered_document_is_not_judged() {
     workers::block_on(async {
-        assert_eq!(judge(&hook(false), update(Some(ATTACKER))).await, None);
+        assert_eq!(
+            judge(&hook(false), update(Some(&did(ATTACKER)))).await,
+            None
+        );
         assert_eq!(judge(&hook(false), update(None)).await, None);
     })
     .unwrap()
@@ -130,9 +137,10 @@ fn update_to_unregistered_document_is_not_judged() {
 fn genesis_is_not_judged() {
     workers::block_on(async {
         let hook = hook_with_acp(false, registered_acp().await);
+        let attacker = did(ATTACKER);
         let genesis = CompositeFrame {
             is_genesis: true,
-            ..update(Some(ATTACKER))
+            ..update(Some(&attacker))
         };
 
         assert_eq!(judge(&hook, genesis).await, None);
@@ -146,7 +154,7 @@ fn update_signed_without_update_permission_is_rejected() {
         let hook = hook_with_acp(false, registered_acp().await);
 
         assert_eq!(
-            judge(&hook, update(Some(ATTACKER))).await,
+            judge(&hook, update(Some(&did(ATTACKER)))).await,
             Some(MergeOutcome::rejected(format!(
                 "signer {ATTACKER} lacks update permission on protected document doc1"
             )))
@@ -160,7 +168,7 @@ fn update_signed_by_owner_merges() {
     workers::block_on(async {
         let hook = hook_with_acp(false, registered_acp().await);
 
-        assert_eq!(judge(&hook, update(Some(OWNER))).await, None);
+        assert_eq!(judge(&hook, update(Some(&did(OWNER)))).await, None);
     })
     .unwrap()
 }
@@ -172,7 +180,7 @@ fn update_signed_by_grantee_merges() {
         grant(&acp, ATTACKER, "updater").await;
         let hook = hook_with_acp(false, acp);
 
-        assert_eq!(judge(&hook, update(Some(ATTACKER))).await, None);
+        assert_eq!(judge(&hook, update(Some(&did(ATTACKER)))).await, None);
     })
     .unwrap()
 }
@@ -182,7 +190,7 @@ fn update_signed_by_node_identity_merges() {
     workers::block_on(async {
         let hook = hook_with_acp(false, registered_acp().await);
 
-        assert_eq!(judge(&hook, update(Some(NODE))).await, None);
+        assert_eq!(judge(&hook, update(Some(&did(NODE)))).await, None);
     })
     .unwrap()
 }
@@ -210,14 +218,14 @@ fn delete_requires_delete_permission() {
         let hook = hook_with_acp(false, acp.clone());
 
         assert_eq!(
-            judge(&hook, delete(Some(ATTACKER))).await,
+            judge(&hook, delete(Some(&did(ATTACKER)))).await,
             Some(MergeOutcome::rejected(format!(
                 "signer {ATTACKER} lacks delete permission on protected document doc1"
             )))
         );
 
         grant(&acp, ATTACKER, "deleter").await;
-        assert_eq!(judge(&hook, delete(Some(ATTACKER))).await, None);
+        assert_eq!(judge(&hook, delete(Some(&did(ATTACKER)))).await, None);
     })
     .unwrap()
 }
@@ -229,7 +237,7 @@ fn strict_acp_judges_updates() {
 
         assert!(hook.guards_protected_updates());
         assert_eq!(
-            judge(&hook, update(Some(ATTACKER))).await,
+            judge(&hook, update(Some(&did(ATTACKER)))).await,
             Some(MergeOutcome::rejected(format!(
                 "signer {ATTACKER} lacks update permission on protected document doc1"
             )))
@@ -270,10 +278,11 @@ fn strict_acp_requires_the_signers_permission_even_for_the_local_node() {
         let acp = registered_acp().await;
         grant(&acp, NODE, "reader").await;
         let hook = hook_with_acp(true, acp.clone());
-        for signer in [ATTACKER, NODE, "not-a-did", "unsigned"] {
+        for signer in [ATTACKER, NODE, "unsigned"] {
+            let named = (signer != "unsigned").then(|| did(signer));
             for (frame, permission) in [
-                (update((signer != "unsigned").then_some(signer)), "update"),
-                (delete((signer != "unsigned").then_some(signer)), "delete"),
+                (update(named.as_ref()), "update"),
+                (delete(named.as_ref()), "delete"),
             ] {
                 assert_eq!(
                     judge(&hook, frame).await,
@@ -298,15 +307,15 @@ fn strict_acp_requires_the_signers_permission_even_for_the_local_node() {
         for signer in [OWNER, ATTACKER, NODE] {
             if signer != OWNER {
                 grant(&acp, signer, "updater").await;
-                assert_eq!(judge(&hook, update(Some(signer))).await, None);
+                assert_eq!(judge(&hook, update(Some(&did(signer)))).await, None);
                 assert!(matches!(
-                    judge(&hook, delete(Some(signer))).await,
+                    judge(&hook, delete(Some(&did(signer)))).await,
                     Some(MergeOutcome::Rejected { .. })
                 ));
                 grant(&acp, signer, "deleter").await;
             }
-            assert_eq!(judge(&hook, update(Some(signer))).await, None);
-            assert_eq!(judge(&hook, delete(Some(signer))).await, None);
+            assert_eq!(judge(&hook, update(Some(&did(signer)))).await, None);
+            assert_eq!(judge(&hook, delete(Some(&did(signer)))).await, None);
         }
     })
     .unwrap()
@@ -317,7 +326,7 @@ fn strict_acp_retries_updates_until_registration_is_visible() {
     workers::block_on(async {
         let hook = hook(true);
         assert_eq!(
-            judge(&hook, update(Some(OWNER))).await,
+            judge(&hook, update(Some(&did(OWNER)))).await,
             Some(MergeOutcome::retryable_skip(
                 "replicated protected document is not yet registered in local ACP"
             ))
@@ -327,7 +336,7 @@ fn strict_acp_retries_updates_until_registration_is_visible() {
                 &hook,
                 CompositeFrame {
                     is_genesis: true,
-                    ..update(Some(OWNER))
+                    ..update(Some(&did(OWNER)))
                 }
             )
             .await,
@@ -341,7 +350,7 @@ fn strict_acp_retries_updates_until_registration_is_visible() {
 fn strict_acp_writer_permission_does_not_replace_receiver_read_permission() {
     workers::block_on(async {
         let hook = hook_with_acp(true, registered_acp().await);
-        assert_eq!(judge(&hook, update(Some(OWNER))).await, None);
+        assert_eq!(judge(&hook, update(Some(&did(OWNER)))).await, None);
         assert_eq!(
             hook.on_protected_composite(
                 "doc1",

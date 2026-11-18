@@ -7,15 +7,16 @@ impl<S: Store> crate::database::DB<S> {
     /// - Existing fields (present in old_schema) are SKIPPED entirely
     /// - Only NEW fields get CIDs generated with priority=1 (empty headstore)
     /// - The collection block uses headstore heads and priority
+    ///
+    /// A field or collection CID that cannot be generated is an error.
     pub(crate) fn generate_patch_version_id_with_heads(
         schema: &mut CollectionVersion,
         old_schema: &CollectionVersion,
         collection_priority: u64,
         collection_heads: &[cid::Cid],
         collection_id_map: &rapidhash::RapidHashMap<String, String>,
-    ) -> (String, Option<Vec<u8>>, Option<cid::Cid>) {
+    ) -> Result<(String, Option<Vec<u8>>, Option<cid::Cid>)> {
         use cid::Cid;
-        use sha2::{Digest, Sha256};
 
         // Resolve FieldKind::Named to FieldKind::Relation before CID generation.
         // Go's substituteRelationFieldKinds resolves named kinds to CollectionKind
@@ -77,13 +78,9 @@ impl<S: Store> crate::database::DB<S> {
         let mut field_cids: Vec<Cid> = Vec::new();
         for &idx in &new_field_indices {
             let field = &schema.fields[idx];
-            match schema::generate_field_cid_with_priority(field, 1, governed) {
-                Ok(cid) => {
-                    schema.fields[idx].id = cid.to_string();
-                    field_cids.push(cid);
-                }
-                Err(_e) => {}
-            }
+            let cid = schema::generate_field_cid_with_priority(field, 1, governed)?;
+            schema.fields[idx].id = cid.to_string();
+            field_cids.push(cid);
         }
 
         // Generate collection CID with headstore heads.
@@ -112,7 +109,7 @@ impl<S: Store> crate::database::DB<S> {
             })
             .and_then(|transform| cid::Cid::try_from(transform).ok());
 
-        let version_id = match schema::generate_collection_cid_full_with_query(
+        let version_id = schema::generate_collection_cid_full_with_query(
             collection_name,
             &field_cids,
             collection_priority,
@@ -120,24 +117,8 @@ impl<S: Store> crate::database::DB<S> {
             query_select.as_deref(),
             query_transform.as_ref(),
             schema::Commitments::of(&*schema),
-        ) {
-            Ok(cid) => cid.to_string(),
-            Err(_) => {
-                // Fallback to simple hash if CID generation fails
-                let mut hasher = Sha256::new();
-                hasher.update(b"version:");
-                hasher.update(schema.name.as_bytes());
-                for field in &schema.fields {
-                    hasher.update(field.name.as_bytes());
-                    hasher.update(field.id.as_bytes());
-                }
-                let hash = hasher.finalize();
-                format!(
-                    "v{:x}",
-                    &hash[..8].iter().fold(0u64, |acc, &b| (acc << 8) | b as u64)
-                )
-            }
-        };
-        (version_id, query_select, query_transform)
+        )?
+        .to_string();
+        Ok((version_id, query_select, query_transform))
     }
 }

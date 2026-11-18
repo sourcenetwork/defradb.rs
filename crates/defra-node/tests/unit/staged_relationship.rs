@@ -10,12 +10,15 @@ use crypto::Key;
 use defra_core::RequestContext;
 use identity::{Did, Identity as _, RawIdentity};
 use regolith::sync::{HopscotchMap, SegQueue};
-use vera::{ProviderError, ProviderPolicyInfo, SubjectRef, VeraProvider};
+use vera::{
+    PolicyAction, PolicyCommand, PolicySubject, ProviderError, ProviderPolicyInfo, SubjectRef,
+    VeraProvider,
+};
 
 use super::{DocumentAcpProvider, Node, RelationshipChange};
 
-const OWNER: &str = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
-const READER: &str = "did:key:z6MkfXG2FkNy3u7Eg3jm8e2YQpGz7Z1JqWgHDAP1hLk9r2bR";
+pub(super) const OWNER: &str = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
+pub(super) const READER: &str = "did:key:z6MkfXG2FkNy3u7Eg3jm8e2YQpGz7Z1JqWgHDAP1hLk9r2bR";
 const CALLER: &str = "did:key:z6MkiTBz1ymuepAQ4HEHYSF1H8quG5GLVVQR3djdX3mDooWp";
 const POLICY: &str = "name: Rows\nresources:\n  - name: rows\n    relations:\n      - name: reader\n    permissions:\n      - name: read\n        expr: reader\n      - name: update\n      - name: delete\n";
 
@@ -29,30 +32,83 @@ where
     HopscotchMap::with_hasher(rapidhash::fast::RandomState::default())
 }
 
-/// A remote provider kept in memory. It holds [`OWNER`]'s key, takes a
-/// token `delegation:<did>` as that DID's delegation, lets only an object's
-/// owner change its relationships, and rejects any other change with a
-/// receipt.
-struct Remote {
+/// A remote provider kept in memory. It holds [`OWNER`]'s key and those in
+/// `keys`, takes a token `delegation:<did>` as that DID's delegation and a
+/// token `request:<did>|<command>` ([`request_token`]) as that DID's
+/// delegation bound to one command, lets only an object's owner change its
+/// relationships, and rejects any other change with a receipt. It proves
+/// its decisions, as vera.rs does: only an owner or a `writer` updates or
+/// deletes an object, and a `reader` also holds every other permission.
+pub(super) struct Remote {
     policies: Map<String, String>,
-    owners: Map<String, String>,
+    pub(super) owners: Map<String, String>,
     tuples: Map<(String, String, String), ()>,
     writes: SegQueue<(bool, String, String)>,
-    down: AtomicBool,
+    /// Further DIDs whose keys the node holds.
+    pub(super) keys: Map<String, ()>,
+    /// Every delegation bound to one request has expired.
+    pub(super) lapsed: AtomicBool,
+    /// How many access decisions the provider was asked to record.
+    pub(super) decisions: std::sync::atomic::AtomicU64,
+    pub(super) down: AtomicBool,
+    /// Its newest verified state is past the freshness limit: every decision
+    /// fails as the vera.rs light client's does.
+    pub(super) stale: AtomicBool,
+    /// The provider gives the node nothing to check a delegation against,
+    /// as the Cosmos provider does: it is passed its caller's token as it
+    /// is.
+    pub(super) unverifying: AtomicBool,
     /// A relationship write does not answer until `released`, and then
     /// fails as not delivered.
     stalled: AtomicBool,
     released: regolith::sync::Event,
 }
 
+/// The words a delegation bound to one request names `command` by.
+fn named(command: &PolicyCommand<'_>) -> String {
+    let subject = |subject: &PolicySubject<'_>| match subject {
+        PolicySubject::Actor(SubjectRef::Actor(did)) => did.clone(),
+        PolicySubject::Actor(_) => "*".to_owned(),
+        PolicySubject::Structured {
+            resource,
+            object_id,
+            relation,
+            ..
+        } => format!("{resource}:{object_id}#{relation}"),
+    };
+    let object = command.object_id;
+    match &command.action {
+        PolicyAction::RegisterObject => format!("register {object}"),
+        PolicyAction::SetRelationship {
+            relation,
+            subject: on,
+        } => format!("set {object} {relation} {}", subject(on)),
+        PolicyAction::DeleteRelationship {
+            relation,
+            subject: on,
+        } => format!("delete {object} {relation} {}", subject(on)),
+    }
+}
+
+/// `did`'s delegation bound to the one command `command` names
+/// (`register <object>`, or `set`/`delete <object> <relation> <subject>`).
+pub(super) fn request_token(did: &str, command: &str) -> String {
+    format!("request:{did}|{command}")
+}
+
 impl Remote {
-    fn new() -> Arc<Self> {
+    pub(super) fn new() -> Arc<Self> {
         Arc::new(Self {
             policies: map(),
             owners: map(),
             tuples: map(),
             writes: SegQueue::new(),
+            keys: map(),
+            lapsed: AtomicBool::new(false),
+            decisions: std::sync::atomic::AtomicU64::new(0),
             down: AtomicBool::new(false),
+            stale: AtomicBool::new(false),
+            unverifying: AtomicBool::new(false),
             stalled: AtomicBool::new(false),
             released: regolith::sync::Event::new(),
         })
@@ -74,18 +130,47 @@ impl Remote {
         Ok(())
     }
 
-    fn holds(&self, object: &str, subject: &str) -> bool {
-        self.tuples
-            .contains_key(&(object.into(), "reader".into(), subject.into()))
+    pub(super) fn holds(&self, object: &str, subject: &str) -> bool {
+        self.holds_as(object, "reader", subject)
     }
 
-    fn take_writes(&self) -> Vec<(bool, String, String)> {
+    fn holds_as(&self, object: &str, relation: &str, subject: &str) -> bool {
+        self.tuples
+            .contains_key(&(object.into(), relation.into(), subject.into()))
+    }
+
+    /// The owner of `object` gives `subject` the relation `relation` on it,
+    /// or takes it back, and the provider finalizes that.
+    pub(super) fn finalize(&self, object: &str, relation: &str, subject: &str, held: bool) {
+        let key = (
+            object.to_string(),
+            relation.to_string(),
+            subject.to_string(),
+        );
+        if held {
+            self.tuples.insert(key, ());
+        } else {
+            self.tuples.remove(&key);
+        }
+    }
+
+    pub(super) fn take_writes(&self) -> Vec<(bool, String, String)> {
         std::iter::from_fn(|| self.writes.pop()).collect()
     }
 
     /// The DID a token acts as.
     fn actor(token: &str) -> &str {
-        token.split_once(':').map_or(token, |(_, did)| did)
+        let did = token.split_once(':').map_or(token, |(_, did)| did);
+        did.split_once('|').map_or(did, |(did, _)| did)
+    }
+
+    /// What the provider itself answers a token bound to one request that
+    /// is sent with another command, or after it expired: a rejection.
+    fn executes(&self, token: &str, command: &PolicyCommand<'_>) -> Result<(), ProviderError> {
+        match self.caller_of_request_delegation(token, command) {
+            Some(Err(_)) => Err(ProviderError::Transaction("submission was rejected".into())),
+            _ => Ok(()),
+        }
     }
 
     fn write(
@@ -144,7 +229,7 @@ impl VeraProvider for Remote {
     }
 
     fn holds_key_for(&self, did: &str) -> bool {
-        did == OWNER
+        did == OWNER || self.keys.contains_key(did)
     }
 
     fn write_refused(&self, error: &ProviderError) -> bool {
@@ -155,10 +240,18 @@ impl VeraProvider for Remote {
         true
     }
 
+    fn proves_decisions(&self) -> bool {
+        true
+    }
+
     fn delegation_audience(&self) -> Option<acp::DelegationAudience> {
+        if self.unverifying.load(Ordering::SeqCst) {
+            return None;
+        }
         Some(acp::DelegationAudience {
             worker: "did:key:stub-worker".into(),
             deployment: 1,
+            genesis_id: None,
         })
     }
 
@@ -166,11 +259,31 @@ impl VeraProvider for Remote {
         &self,
         token: &str,
     ) -> Option<Result<acp::AuthenticatedCaller, ProviderError>> {
+        if self.unverifying.load(Ordering::SeqCst) {
+            return None;
+        }
         let did = token.strip_prefix("delegation:")?;
         Some(Ok(acp::AuthenticatedCaller {
             did: identity::Did::new(did).expect("fixture DID"),
             expires_at: u64::MAX,
         }))
+    }
+
+    fn caller_of_request_delegation(
+        &self,
+        token: &str,
+        command: &PolicyCommand<'_>,
+    ) -> Option<Result<String, ProviderError>> {
+        let (did, names) = token.strip_prefix("request:")?.split_once('|')?;
+        Some(if self.lapsed.load(Ordering::SeqCst) {
+            Err(ProviderError::Config("the delegation has expired".into()))
+        } else if names != named(command) {
+            Err(ProviderError::Config(
+                "the delegation is bound to another request".into(),
+            ))
+        } else {
+            Ok(did.to_string())
+        })
     }
 
     async fn create_policy(&self, policy_yaml: &str) -> Result<String, ProviderError> {
@@ -197,11 +310,20 @@ impl VeraProvider for Remote {
     async fn register_object(
         &self,
         bearer_token: &str,
-        _policy_id: &str,
-        _resource: &str,
+        policy_id: &str,
+        resource: &str,
         object_id: &str,
     ) -> Result<(), ProviderError> {
         self.reachable()?;
+        self.executes(
+            bearer_token,
+            &PolicyCommand {
+                policy_id,
+                resource,
+                object_id,
+                action: PolicyAction::RegisterObject,
+            },
+        )?;
         self.owners
             .insert(object_id.to_string(), Self::actor(bearer_token).to_string());
         Ok(())
@@ -220,25 +342,49 @@ impl VeraProvider for Remote {
     async fn set_relationship(
         &self,
         bearer_token: &str,
-        _policy_id: &str,
-        _resource: &str,
+        policy_id: &str,
+        resource: &str,
         object_id: &str,
         relation: &str,
         subject: &SubjectRef,
     ) -> Result<bool, ProviderError> {
         self.stall().await?;
+        self.executes(
+            bearer_token,
+            &PolicyCommand {
+                policy_id,
+                resource,
+                object_id,
+                action: PolicyAction::SetRelationship {
+                    relation,
+                    subject: PolicySubject::Actor(subject),
+                },
+            },
+        )?;
         self.write(true, bearer_token, object_id, relation, subject)
     }
 
     async fn delete_relationship(
         &self,
         bearer_token: &str,
-        _policy_id: &str,
-        _resource: &str,
+        policy_id: &str,
+        resource: &str,
         object_id: &str,
         relation: &str,
         subject: &SubjectRef,
     ) -> Result<bool, ProviderError> {
+        self.executes(
+            bearer_token,
+            &PolicyCommand {
+                policy_id,
+                resource,
+                object_id,
+                action: PolicyAction::DeleteRelationship {
+                    relation,
+                    subject: PolicySubject::Actor(subject),
+                },
+            },
+        )?;
         self.write(false, bearer_token, object_id, relation, subject)
     }
 
@@ -273,22 +419,43 @@ impl VeraProvider for Remote {
         })
     }
 
+    async fn create_access_decision(
+        &self,
+        _policy_id: &str,
+        _resource: &str,
+        _object_id: &str,
+        _permission: &str,
+        _actor_did: &str,
+    ) -> Result<Option<String>, ProviderError> {
+        self.decisions.fetch_add(1, Ordering::SeqCst);
+        Ok(None)
+    }
+
     async fn verify_access(
         &self,
         _policy_id: &str,
         _resource: &str,
         object_id: &str,
-        _permission: &str,
+        permission: &str,
         actor_did: &str,
     ) -> Result<bool, ProviderError> {
         self.reachable()?;
-        Ok(self.owners.get(object_id).as_deref() == Some(actor_did)
-            || self.holds(object_id, actor_did)
-            || self.holds(object_id, "*"))
+        if self.stale.load(Ordering::SeqCst) {
+            return Err(ProviderError::Unavailable(
+                "verified permission: verified revision is stale; wait for a fresh finalized revision"
+                    .into(),
+            ));
+        }
+        let writes = self.owners.get(object_id).as_deref() == Some(actor_did)
+            || self.holds_as(object_id, "writer", actor_did);
+        Ok(match permission {
+            "update" | "delete" => writes,
+            _ => writes || self.holds(object_id, actor_did) || self.holds(object_id, "*"),
+        })
     }
 }
 
-fn actor(did: &str) -> RequestContext {
+pub(super) fn actor(did: &str) -> RequestContext {
     RequestContext::default().with_identity(Some(did.to_owned()))
 }
 
@@ -296,7 +463,7 @@ fn carrying(did: &str, token: &str) -> RequestContext {
     actor(did).with_bearer(Some(did.to_owned()), Some(token.to_owned()))
 }
 
-fn node_identity() -> String {
+pub(super) fn node_identity() -> String {
     let key = crypto::generate_ed25519().unwrap();
     let identity = RawIdentity::from_ed25519(key.clone()).unwrap();
     let node_did = identity.did().unwrap().to_string();
@@ -317,7 +484,7 @@ fn node_identity() -> String {
 }
 
 /// A node on local ACP or on `remote`, its store in memory or at `data`.
-async fn start(
+pub(super) async fn start(
     node_did: &str,
     remote: Option<&Arc<Remote>>,
     data: Option<&std::path::Path>,
@@ -332,7 +499,7 @@ async fn start(
     builder.build().await.unwrap()
 }
 
-async fn provision(node: &Node) {
+pub(super) async fn provision(node: &Node) {
     let policy = node.add_dac_policy_as(&actor(OWNER), POLICY).await.unwrap();
     node.add_collection(&format!(
         "type Record @policy(id: \"{policy}\", resource: \"rows\") {{ name: String }}"

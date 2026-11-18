@@ -109,7 +109,7 @@ fn collection_version_updates_add_simple_errors_adding_unsupported_collection_pr
 					]
 				"#
                 .into(),
-                expected_error: Some("add operation does not apply: doc is missing path".into()),
+                expected_error: Some("path /Foo does not exist".into()),
                 ..Default::default()
             }
             .into(),
@@ -155,7 +155,7 @@ fn collection_version_updates_add_simple_errors_adding_unsupported_collection_pr
 					]
 				"#
                 .into(),
-                expected_error: Some("add operation does not apply: doc is missing path".into()),
+                expected_error: Some("path /Foo/Fields does not exist".into()),
                 ..Default::default()
             }
             .into(),

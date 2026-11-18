@@ -334,6 +334,12 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
 
         let created = {
             let txn = &*self.shared_txn()?;
+            // What the create records as owed names the transaction by its
+            // handle, whether or not the request did.
+            let recorded_in = match (context.txn(), txn.handle_id()) {
+                (None, Some(id)) => context.clone().with_txn(Some(defra_core::TxnId(id))),
+                _ => context.clone(),
+            };
             let blockstore = txn.blockstore().map_err(|e| {
                 query::error::QueryError::execution(format!("failed to get blockstore: {}", e))
             })?;
@@ -353,7 +359,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
                 &index_manager,
                 &doc,
                 &computed,
-                context,
+                &recorded_in,
                 inputs,
             )
             .await?

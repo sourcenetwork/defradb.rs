@@ -158,6 +158,9 @@ fn classify_backend_message(message: &str) -> Option<ErrorStatus> {
         &[
             "already exists",
             "already registered",
+            // enabling NAC that is temporarily disabled: the node's state, not
+            // the request, is what stands in the way
+            "re-enable it instead",
             "multiple active collection versions",
             "transaction conflict",
             "unique constraint",
@@ -264,8 +267,7 @@ fn http_status_from_db_error(err: &DbError) -> HttpError {
         | DbError::InvalidCollectionName(_)
         | DbError::CollectionVersionIDEmpty
         | DbError::ExplicitTxnMustUseForce
-        | DbError::UnsafePolicyTransition(_)
-        | DbError::JsonPatch(_) => HttpError::UnprocessableEntity(message),
+        | DbError::UnsafePolicyTransition(_) => HttpError::UnprocessableEntity(message),
         DbError::DatabaseClosed | DbError::NetworkNotSet => HttpError::ServiceUnavailable(message),
         DbError::Query(source) => http_error_from_query_error(source),
         DbError::Other(message) | DbError::Acp(message) | DbError::Lens(message) => {
@@ -400,6 +402,13 @@ mod tests {
             ),
             (
                 DbError::CollectionAlreadyExists("Users".into()),
+                StatusCode::CONFLICT,
+            ),
+            (
+                DbError::Acp(format!(
+                    "failed to enable NAC: {}",
+                    acp::error::Error::NacTemporarilyDisabled
+                )),
                 StatusCode::CONFLICT,
             ),
             (

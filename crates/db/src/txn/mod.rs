@@ -121,6 +121,9 @@ pub struct DbTxn<S: Store> {
     txn: Option<BasicTxn>,
     /// Whether this is an explicit transaction.
     explicit: bool,
+    /// The ID of the handle an explicit transaction is known to its callers
+    /// by, once its registry named it.
+    handle_id: Option<u64>,
     /// The collections this transaction loaded, changed and created, and the
     /// branchable collection ACP registrations that must succeed before the
     /// storage commit, otherwise a protected collection could be persisted
@@ -198,6 +201,7 @@ impl<S: Store> DbTxn<S> {
             crdts: txn.crdts().clone(),
             txn: Some(txn),
             explicit,
+            handle_id: None,
             catalog: Catalog::new(),
             vector_codes,
             shared_collections: None,
@@ -284,6 +288,17 @@ impl<S: Store> DbTxn<S> {
     /// when passed to database methods.
     pub fn make_explicit(&mut self) {
         self.explicit = true;
+    }
+
+    /// Name the handle this explicit transaction is known to its callers by.
+    pub(crate) fn name_handle(&mut self, id: u64) {
+        self.handle_id = Some(id);
+    }
+
+    /// The ID of the handle this transaction is known to its callers by;
+    /// `None` for a transaction that commits on its own.
+    pub fn handle_id(&self) -> Option<u64> {
+        self.handle_id
     }
 
     pub(crate) fn set_statement_savepoint(&mut self) -> Result<()> {

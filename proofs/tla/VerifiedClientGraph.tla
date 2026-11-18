@@ -10,6 +10,9 @@
 \* assumes native cryptographic verification and Regolith's snapshot/read-set
 \* validation; it does not prove their encodings or algorithms. In particular,
 \* an inactive authority imposes no permission or transaction-binding check.
+\* A DAC that is a remote provider cannot share the snapshot: there "bound"
+\* means owed in the transaction with authority for the signer, which
+\* VerifiedRemoteWrite.tla models.
 \*
 \* Rust owners: crates/db/src/block/builder/verified_client_{create,mutation}.rs,
 \* crates/defra-node/src/lib.rs execute_verified_graph_in_txn,

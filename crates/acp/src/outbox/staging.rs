@@ -32,6 +32,7 @@ use crate::dac::DocumentACP;
 use crate::error::{Error, Result};
 use crate::identity::Identity;
 use crate::pending::PendingRegistrations;
+use crate::provider_command::ProviderCommand;
 
 /// A relationship change as its caller asks for it.
 pub struct StageRelationship<'a> {
@@ -224,7 +225,9 @@ impl TransactionOutbox {
     ///
     /// The acting DID and an actor subject are kept in the provider's one
     /// spelling of them. The change records what will let the node submit it
-    /// as its acting DID; with nothing to record the call fails with
+    /// as its acting DID ([`DocumentACP::command_authority`]: a delegation
+    /// bound to one request counts only when it names this change); with
+    /// nothing to record the call fails with
     /// [`Error::OwedAuthorityUnavailable`] and stages nothing. A refusal of
     /// the advisory check is the error a local ACP gives. A subject of a
     /// kind the provider cannot be sent is refused with
@@ -241,19 +244,26 @@ impl TransactionOutbox {
             },
             other => other,
         };
-        let authority = self.provider.owed_authority(request.actor)?;
+        let tuple = OwedTuple {
+            policy_id: request.policy_id.to_owned(),
+            resource: request.resource.to_owned(),
+            object: request.object.to_owned(),
+            relation: request.relation.to_owned(),
+            subject,
+        };
+        let authority = self.provider.command_authority(
+            request.actor,
+            ProviderCommand::Relationship {
+                tuple: &tuple,
+                op: request.op,
+            },
+        )?;
         let authority_checked = self.advise(&actor, &request).await?;
         let change = self
             .changes
             .stage(NewOwedChange {
                 txn: request.txn,
-                tuple: OwedTuple {
-                    policy_id: request.policy_id.to_owned(),
-                    resource: request.resource.to_owned(),
-                    object: request.object.to_owned(),
-                    relation: request.relation.to_owned(),
-                    subject,
-                },
+                tuple,
                 op: request.op,
                 actor,
                 authority,

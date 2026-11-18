@@ -20,12 +20,21 @@
 //! ([`ExternalDocumentAcp::settle_owed_changes_once`]). A relationship change
 //! made through the gate outside a transaction goes to the provider at once,
 //! after what is owed on its tuple.
+//!
+//! A registration is sent with what its record holds
+//! ([`PendingRegistration::authority`]) and with nothing a process keeps
+//! beside its requests (see `registration.rs`). One with nothing usable is
+//! parked as waiting for authority, and every failed submission leaves its
+//! reason in the record. What is owed is reported, given a fresh credential and abandoned through
+//! [`ExternalDocumentAcp::owed_entries`],
+//! [`ExternalDocumentAcp::reauthorize`] and
+//! [`ExternalDocumentAcp::abandon_change`].
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use identity::Did;
-use storage::corekv::{IterOptions, Reader, Store, Writer};
+use storage::corekv::{IterOptions, Reader, Store};
 use storage::namespace::{Namespace, NamespacedStore};
 use zanzibar::types::Subject;
 
@@ -37,6 +46,9 @@ use crate::outbox::{OwedChanges, StagedCount, TransactionOutbox};
 use crate::pending::{pending_key, PendingRegistration, PENDING_PREFIX};
 use crate::permission::DocumentPermission;
 
+mod owed;
+mod registration;
+mod replica;
 mod settle;
 
 pub use settle::{OwedScope, OwedSettlement, MAX_FAILED_SUBMISSIONS};
@@ -64,6 +76,16 @@ where
     /// Held by the one pass that submits owed changes: a second pass waits,
     /// so no change is submitted by two at once.
     settling: Arc<regolith::sync::Mutex<()>>,
+    /// Told every time a record of something owed is written or deleted.
+    changed: Arc<regolith::sync::Notify>,
+    /// The request `provider` serves and carries the credentials of, when
+    /// this gate serves one.
+    serving: Option<defra_core::RequestContext>,
+    /// The provider bound to no request: what a submission that serves no
+    /// request is bound from, so it never inherits another's credentials.
+    root: Arc<dyn DocumentACP>,
+    /// Told when this gate changes an object's relationships.
+    watcher: Arc<regolith::sync::OnceCell<Arc<dyn crate::ObjectChangeListener>>>,
 }
 
 fn storage_error(error: storage::corekv::Error) -> Error {
@@ -72,14 +94,26 @@ fn storage_error(error: storage::corekv::Error) -> Error {
 
 impl<S> ExternalDocumentAcp<S>
 where
-    S: Store,
+    S: Store + 'static,
 {
     /// Gate `provider` with the registrations owed in `store`'s ACP namespace.
     pub fn new(provider: Arc<dyn DocumentACP>, store: Arc<S>) -> Self {
         Self {
+            root: Arc::clone(&provider),
             provider,
             store: NamespacedStore::new(store, Namespace::Acpstore),
             settling: Arc::default(),
+            changed: Arc::new(regolith::sync::Notify::new()),
+            serving: None,
+            watcher: Arc::default(),
+        }
+    }
+
+    /// Tell the watcher, if any, that this gate changed an object's
+    /// relationships.
+    pub(crate) fn object_changed(&self, policy_id: &str, resource_name: &str, object_id: &str) {
+        if let Some(watcher) = self.watcher.get() {
+            watcher.changed(policy_id, resource_name, object_id);
         }
     }
 
@@ -163,78 +197,6 @@ where
         Ok(())
     }
 
-    /// Register the owed creator, then clear the record. A provider that
-    /// already holds the object keeps its owner: the record is cleared and the
-    /// provider decides from then on.
-    async fn settle(&self, owed: &PendingRegistration) -> Result<()> {
-        let registered = self
-            .provider
-            .is_doc_registered(&owed.policy_id, &owed.resource_name, &owed.doc_id)
-            .await?;
-        self.register_and_clear(&self.provider, owed, registered)
-            .await
-    }
-
-    /// [`Self::settle`] once the provider said whether it holds the object,
-    /// registering through `provider`.
-    async fn register_and_clear(
-        &self,
-        provider: &Arc<dyn DocumentACP>,
-        owed: &PendingRegistration,
-        registered: bool,
-    ) -> Result<()> {
-        if !registered {
-            match provider
-                .register_doc_object(
-                    &owed.creator,
-                    &owed.policy_id,
-                    &owed.resource_name,
-                    &owed.doc_id,
-                )
-                .await
-            {
-                Ok(()) | Err(Error::DocumentAlreadyRegistered(_)) => {}
-                Err(error) => return Err(error),
-            }
-        }
-        self.clear(owed).await
-    }
-
-    /// Clear `owed` unless its record changed since it was read: a record
-    /// written again for a re-created document is not this one to clear.
-    async fn clear(&self, owed: &PendingRegistration) -> Result<()> {
-        let key = owed.key();
-        let mut txn = self.store.new_txn(false).await.map_err(storage_error)?;
-        let current = txn.get(&key).await.map_err(storage_error)?;
-        let unchanged = match current {
-            Some(bytes) => PendingRegistration::decode(&bytes)? == *owed,
-            None => false,
-        };
-        if !unchanged {
-            txn.discard();
-            return Ok(());
-        }
-        txn.delete(&key).await.map_err(storage_error)?;
-        match txn.commit().await {
-            Ok(()) => Ok(()),
-            // A transaction that changed the record first owns what it says now.
-            Err(error) if error.is_txn_conflict() => Ok(()),
-            Err(error) => Err(storage_error(error)),
-        }
-    }
-
-    async fn settle_if_owed(
-        &self,
-        policy_id: &str,
-        resource_name: &str,
-        doc_id: &str,
-    ) -> Result<()> {
-        match self.owed(policy_id, resource_name, doc_id).await? {
-            Some(owed) => self.settle(&owed).await,
-            None => Ok(()),
-        }
-    }
-
     /// Settle every owed registration once, a page at a time. A registration
     /// the provider refuses stays owed, its document still readable only by
     /// its creator, and is counted in [`RedriveReport::failed`].
@@ -307,6 +269,10 @@ where
         self.provider.unregistered_documents_are_public()
     }
 
+    fn proves_decisions(&self) -> bool {
+        self.provider.proves_decisions()
+    }
+
     fn settles_owed_registrations(&self) -> bool {
         true
     }
@@ -317,6 +283,10 @@ where
             provider,
             store: NamespacedStore::new(Arc::clone(self.store.inner()), self.store.namespace()),
             settling: Arc::clone(&self.settling),
+            changed: Arc::clone(&self.changed),
+            serving: Some(context.clone()),
+            root: Arc::clone(&self.root),
+            watcher: Arc::clone(&self.watcher),
         }))
     }
 
@@ -341,12 +311,67 @@ where
         self.provider.canonical_actor(did)
     }
 
+    fn own_actor(&self) -> Option<Did> {
+        self.provider.own_actor()
+    }
+
+    fn watch_object_changes(&self, listener: Arc<dyn crate::ObjectChangeListener>) {
+        let _ = self.watcher.set(listener);
+    }
+
+    async fn replica_owed(
+        &self,
+        policy_id: &str,
+        resource_name: &str,
+        doc_id: &str,
+    ) -> Result<crate::ReplicaOwed> {
+        self.owed_on_replica(policy_id, resource_name, doc_id).await
+    }
+
+    async fn stage_replica_unit(
+        &self,
+        view: &datastore::NamespaceView,
+        unit: &crate::ReplicaUnit<'_>,
+    ) -> Result<()> {
+        self.record_replica_unit(view, unit).await
+    }
+
+    async fn adopt_replica(
+        &self,
+        view: &datastore::NamespaceView,
+        policy_id: &str,
+        resource_name: &str,
+        doc_id: &str,
+        creator: &Did,
+    ) -> Result<()> {
+        self.record_adopted_replica(view, policy_id, resource_name, doc_id, creator)
+            .await
+    }
+
+    async fn settle_replica(
+        &self,
+        policy_id: &str,
+        resource_name: &str,
+        doc_id: &str,
+    ) -> Result<()> {
+        self.settle_replica_unit(policy_id, resource_name, doc_id)
+            .await
+    }
+
     fn submits_subject(&self, subject: &Subject) -> bool {
         self.provider.submits_subject(subject)
     }
 
     fn owed_authority(&self, actor: &Did) -> Result<crate::outbox::OwedAuthority> {
         self.provider.owed_authority(actor)
+    }
+
+    fn command_authority(
+        &self,
+        actor: &Did,
+        command: crate::ProviderCommand<'_>,
+    ) -> Result<crate::outbox::OwedAuthority> {
+        self.provider.command_authority(actor, command)
     }
 
     async fn submit_owed_change(
@@ -358,6 +383,33 @@ where
 
     async fn settle_owed_changes(&self, scope: OwedScope) -> Result<OwedSettlement> {
         self.settle_owed_changes_once(scope).await
+    }
+
+    async fn owed_entries(
+        &self,
+        filter: crate::outbox::OwedFilter<'_>,
+    ) -> Result<Vec<crate::outbox::OwedEntry>> {
+        self.entries(filter).await
+    }
+
+    async fn await_owed(&self, txn: u64, only: Option<&Did>) -> Result<crate::outbox::OwedWait> {
+        self.await_transaction(txn, only).await
+    }
+
+    fn owed_changed(&self) {
+        self.changed.notify_waiters();
+    }
+
+    async fn reauthorize_owed(
+        &self,
+        actor: &Did,
+        entry: &crate::outbox::OwedRef,
+    ) -> Result<crate::outbox::OwedOutcome> {
+        self.reauthorize(actor, entry).await
+    }
+
+    async fn abandon_owed_change(&self, actor: &Did, seq: u64) -> Result<()> {
+        self.abandon_change(actor, seq).await
     }
 
     fn bearer_token_for(&self, did: &str) -> Option<String> {
@@ -570,7 +622,8 @@ where
             .await?;
         self.refuse_revoked(requestor, policy_id, collection_id, doc_id)
             .await?;
-        self.provider
+        let changed = self
+            .provider
             .add_actor_relationship(
                 requestor,
                 target,
@@ -580,7 +633,9 @@ where
                 relation,
                 managing_relations,
             )
-            .await
+            .await?;
+        self.object_changed(policy_id, collection_id, doc_id);
+        Ok(changed)
     }
 
     async fn add_relationship(
@@ -599,7 +654,8 @@ where
             .await?;
         self.refuse_revoked(requestor, policy_id, collection_id, doc_id)
             .await?;
-        self.provider
+        let changed = self
+            .provider
             .add_relationship(
                 requestor,
                 target,
@@ -609,7 +665,9 @@ where
                 relation,
                 managing_relations,
             )
-            .await
+            .await?;
+        self.object_changed(policy_id, collection_id, doc_id);
+        Ok(changed)
     }
 
     async fn delete_actor_relationship(
@@ -629,7 +687,8 @@ where
             .await?;
         self.refuse_revoked(requestor, policy_id, collection_id, doc_id)
             .await?;
-        self.provider
+        let changed = self
+            .provider
             .delete_actor_relationship(
                 requestor,
                 target,
@@ -639,7 +698,9 @@ where
                 relation,
                 managing_relations,
             )
-            .await
+            .await?;
+        self.object_changed(policy_id, collection_id, doc_id);
+        Ok(changed)
     }
 
     async fn delete_relationship(
@@ -658,7 +719,8 @@ where
             .await?;
         self.refuse_revoked(requestor, policy_id, collection_id, doc_id)
             .await?;
-        self.provider
+        let changed = self
+            .provider
             .delete_relationship(
                 requestor,
                 target,
@@ -668,7 +730,9 @@ where
                 relation,
                 managing_relations,
             )
-            .await
+            .await?;
+        self.object_changed(policy_id, collection_id, doc_id);
+        Ok(changed)
     }
 
     async fn unregister_doc_object(

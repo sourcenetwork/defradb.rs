@@ -69,6 +69,7 @@ pub struct NodeBuilder {
     crdts: Vec<crdt::Registration>,
     txn_ownership: db::TxnOwnership,
     document_projector: Option<Arc<dyn db::DocumentMutationProjector>>,
+    replica_registration: Option<db::merge::ReplicaRegistration>,
     /// How long an idle explicit transaction lives, and how often the sweep
     /// looks; when set, it takes precedence over an HTTP config's setting.
     #[cfg(not(target_arch = "wasm32"))]
@@ -112,6 +113,20 @@ impl NodeBuilder {
         projector: Arc<dyn db::DocumentMutationProjector>,
     ) -> Self {
         self.document_projector = Some(projector);
+        self
+    }
+
+    /// Register replicated documents of the listed collections with the
+    /// node's remote ACP provider (Vera): a document whose creator is not one
+    /// of the deployment's own actors is registered by this node as its
+    /// provider's actor, with the grants `registration` asks for its creator,
+    /// before its genesis merges. Off by default; a local provider and an
+    /// unlisted collection are not affected.
+    pub fn with_replica_registration(
+        mut self,
+        registration: db::merge::ReplicaRegistration,
+    ) -> Self {
+        self.replica_registration = Some(registration);
         self
     }
 
@@ -571,6 +586,7 @@ impl NodeBuilder {
             embedding_api_key: self.embedding_api_key.take(),
             txn_ownership: self.txn_ownership,
             document_projector: self.document_projector.take(),
+            replica_registration: self.replica_registration.take(),
             #[cfg(not(target_arch = "wasm32"))]
             transaction_cleanup,
             #[cfg(feature = "http")]

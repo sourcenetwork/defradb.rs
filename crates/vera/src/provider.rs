@@ -25,6 +25,9 @@ pub struct ActorRelationshipQuery<'a> {
 #[derive(Debug, Clone)]
 pub struct AcpLightClientStatus {
     pub height: u64,
+    /// The block time of the newest finalized revision the light client
+    /// verified, in Unix seconds.
+    pub chain_time: Option<u64>,
     pub module_state_root: String,
     pub cache_entries: usize,
     pub last_invalidation_height: u64,
@@ -54,6 +57,10 @@ pub enum ProviderError {
 
     #[error("relationship observation is not authorized")]
     RelationshipObservationDenied,
+    /// A delegation does not hold at the provider's time; one issued at
+    /// that time is taken.
+    #[error("delegation refused: {0}")]
+    DelegationOutsideWindow(acp::DelegationWindow),
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -100,7 +107,9 @@ pub trait VeraProvider: MaybeSendSync {
     }
 
     /// Whether [`Self::create_bearer_token`] signs for `did` with a key the
-    /// node holds, so it needs nothing from a request to act as `did`.
+    /// node holds, so it needs nothing from a request to act as `did`. The
+    /// answer is the same for every spelling [`Self::canonical_actor`]
+    /// brings to one: a staged change keeps the canonical one only.
     fn holds_key_for(&self, _did: &str) -> bool {
         false
     }
@@ -338,6 +347,13 @@ pub trait VeraProvider: MaybeSendSync {
         None
     }
 
+    /// Whether [`Self::verify_access`] proves every decision against the
+    /// provider's finalized state at a revision within its freshness limit,
+    /// and fails when it cannot: the vera.rs light client does.
+    fn proves_decisions(&self) -> bool {
+        false
+    }
+
     fn acp_light_client_status(&self) -> Result<AcpLightClientStatus, ProviderError> {
         Err(ProviderError::Unavailable(
             "ACP light client status is not available for this provider".into(),
@@ -345,7 +361,8 @@ pub trait VeraProvider: MaybeSendSync {
     }
 
     /// What a caller's own delegation must name for this provider to act
-    /// under it; `None` when the provider takes none.
+    /// under it, with the deployment's genesis identity when the provider
+    /// knows it; `None` when the provider takes none.
     fn delegation_audience(&self) -> Option<acp::DelegationAudience> {
         None
     }
@@ -358,6 +375,22 @@ pub trait VeraProvider: MaybeSendSync {
         &self,
         _token: &str,
     ) -> Option<Result<acp::AuthenticatedCaller, ProviderError>> {
+        None
+    }
+
+    /// The DID that signed `token`, when `token` is a delegation bound to
+    /// one request and this provider may send `command` under it now: signed
+    /// by its issuer, current, naming this provider's worker and deployment
+    /// and, when the provider knows it, the deployment's genesis identity,
+    /// and bound to exactly `command`. An error when it is bound to another
+    /// command or names another genesis identity. `None` when `token` is bound to no request, or this provider
+    /// takes no such delegation: [`Self::caller_of_delegation`] then says
+    /// who signed it.
+    fn caller_of_request_delegation(
+        &self,
+        _token: &str,
+        _command: &crate::PolicyCommand<'_>,
+    ) -> Option<Result<String, ProviderError>> {
         None
     }
 }

@@ -5,6 +5,8 @@ use std::sync::Arc;
 use storage::corekv::MaybeSendSync;
 use zanzibar::{Policy, ZanzibarStore};
 
+use crate::DelegationAudience;
+
 /// Reads a stored policy. `Ok(None)` means the policy does not exist; an
 /// error means the backend could not be asked.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -51,16 +53,15 @@ pub struct LightClientStatus {
     pub cache_entries: usize,
     pub last_invalidation_height: u64,
     pub connected: bool,
+    /// The block time of the newest finalized revision the light client
+    /// verified, in Unix seconds: the provider's time, which a caller can
+    /// issue a delegation at so its own clock does not decide whether the
+    /// delegation holds. It may lag the provider's latest block by as long
+    /// as the light client takes to verify one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chain_time: Option<u64>,
     /// What a caller's own delegation must name for the remote ACP to act
     /// for that caller through this node; absent when it takes none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delegation: Option<DelegationAudience>,
-}
-
-/// The worker and deployment a caller's delegation names: the node's
-/// submitting identity on the remote ACP, and that ACP's deployment.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct DelegationAudience {
-    pub worker: String,
-    pub deployment: u64,
 }

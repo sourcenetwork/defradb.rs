@@ -34,7 +34,10 @@ pub enum Error {
     #[error("collection not found. collection version: {0}")]
     CollectionVersionNotFound(String),
 
-    #[error("index '{index}' not found on collection '{collection}'")]
+    /// No index of `collection` has the name `index`, in Go's words
+    /// (`NewErrIndexWithNameDoesNotExists`), so every surface and handle
+    /// answers a missing index alike.
+    #[error("index with name doesn't exists. Name: {index}")]
     IndexNotFound { collection: String, index: String },
 
     /// Go's `NewErrEncryptedIndexOnNonExistentField`.
@@ -174,9 +177,6 @@ pub enum Error {
 
     #[error("lens error: {0}")]
     Lens(String),
-
-    #[error("json patch error: {0}")]
-    JsonPatch(#[from] crate::definition::patch::json::JsonPatchError),
 }
 
 impl From<acp::Error> for Error {

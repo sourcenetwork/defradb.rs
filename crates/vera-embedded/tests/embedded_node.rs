@@ -70,6 +70,7 @@ async fn a_provider_creates_and_reads_back_a_policy_through_the_embedded_node() 
         .expect("keyring");
     let worker =
         NativeWorker::open(&directory.path().join("worker"), &keyring, DEPLOYMENT).expect("worker");
+    let chain = transport.clone();
     let provider = VeraRsProvider::with_transport(
         transport.clone(),
         transport,
@@ -87,6 +88,20 @@ async fn a_provider_creates_and_reads_back_a_policy_through_the_embedded_node() 
             .acp_light_client_status()
             .expect("status")
             .connected
+    );
+    // The genesis identity the provider proved is the one the node names
+    // as its first block's parent.
+    let first = RpcTransport::call(&*chain, "vera_getLightBlock", json!(["0x1"]), 4 << 20)
+        .await
+        .expect("first block");
+    let parent = first["parent_hash"].as_str().expect("parent hash");
+    let genesis: [u8; 32] = hex::decode(parent.trim_start_matches("0x"))
+        .expect("hexadecimal")
+        .try_into()
+        .expect("32 bytes");
+    assert_eq!(
+        provider.delegation_audience().expect("audience").genesis_id,
+        Some(genesis)
     );
 
     let policy = provider.create_policy(POLICY).await.expect("policy");

@@ -22,6 +22,7 @@ use crate::query_parse::{validate_operation, ParsedOperation};
 use crate::txn::{txn_job, TransactionRegistry, TxnJob, TxnTurn};
 
 use super::executor::{check_nac, convert_variables, permission_for_operation};
+use super::remote_authority::remote_write_authority;
 use super::{DocFetcher, QueryRunner};
 
 /// How one run of a request on a transaction ended.
@@ -357,10 +358,28 @@ where
             if enforcing {
                 match fetcher.transaction_acp(self.acp.clone()).await {
                     Ok(Some(acp)) => Some(acp),
+                    // A provider that cannot join the transaction is owed
+                    // what the write needs from it, with authority to send it.
                     Ok(None) => {
-                        return Ok(Turned::Done(QueryResponse::error(
-                            "transaction-bound document authorization is unavailable",
-                        )))
+                        let ParsedOperation::Mutation { mutations, .. } = &parsed else {
+                            return Ok(Turned::Done(QueryResponse::error(
+                                "transaction-bound document authorization is unavailable",
+                            )));
+                        };
+                        if let Err(error) = remote_write_authority(
+                            fetcher.as_ref(),
+                            &self.acp,
+                            txn_provider.as_ref(),
+                            &request,
+                            mutations,
+                        )
+                        .await
+                        {
+                            return Ok(Turned::Done(QueryResponse::error(
+                                QueryResponseError::from_query_error(error),
+                            )));
+                        }
+                        bound_acp
                     }
                     Err(error) => return Ok(Turned::Done(QueryResponse::error(error.to_string()))),
                 }
@@ -371,8 +390,12 @@ where
             bound_acp
         };
         // Go's `canDACBypass`, read at this request's own snapshot: a caller
-        // node access control grants `bypass-dac` reads past document ACP.
-        let bypass = match request.identity.is_some() && !self.context().dac_bypass() {
+        // node access control grants `bypass-dac` reads past document ACP,
+        // unless the request's caller denied it the bypass.
+        let context = self.context();
+        let unresolved =
+            request.identity.is_some() && !context.dac_bypass() && !context.dac_bypass_denied();
+        let bypass = match unresolved {
             true => match txn_ctx.doc_fetcher().dac_bypass(&nac_identity).await {
                 Ok(bypass) => bypass,
                 Err(error) => return Ok(Turned::Done(QueryResponse::error(error.to_string()))),
