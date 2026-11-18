@@ -597,6 +597,8 @@ RUNS=(
   "MC_VerifiedRead_Red_AcceptStale.cfg VerifiedRead.tla RED" # light client skips the root check: a stale answer is accepted (INV_NeverStale)
   "MC_VerifiedRead_Red_NoRetry.cfg VerifiedRead.tla RED" # refused read never asked again: errors with asks left (INV_FailsOnlyWhenEveryAskOvertaken)
   "MC_VerifiedRead_Red_Uncapped.cfg VerifiedRead.tla RED" # retry without a cap asks past ATTEMPTS (INV_AttemptsBounded)
+  "MC_VerifiedRead_Red_NoBusyRetry.cfg VerifiedRead.tla RED" # a busy (-32002) answer never asked again: errors with busy asks left (INV_FailsOnlyWhenEveryAskOvertaken)
+  "MC_VerifiedRead_Red_BusyUncapped.cfg VerifiedRead.tla RED" # busy retry without a cap asks past BUSY_ATTEMPTS (INV_AttemptsBounded)
   "MC_PendingSubmission_Green.cfg PendingSubmission.tla GREEN" # a pending submission is resent until confirmed, takes effect once and stays journaled
   "MC_PendingSubmission_Green_Recalled.cfg PendingSubmission.tla GREEN" # a caller that keeps calling is confirmed though calls end early and the node drops the request
   "MC_PendingSubmission_Red_NoResend.cfg PendingSubmission.tla RED" # a lost send taken as sent waits for a receipt that cannot come
