@@ -20,12 +20,12 @@ DocID is new on every run, so a DocID order (the #1602 tie-break this
 replaces) puts the same documents in a different order from run to run
 (`docIdOrder_can_reverse_creation`).
 
-Rust anchors: `crates/db/src/read/index_order.rs` `apply_exact_match_page`,
+Rust anchors: `crates/database/db/src/read/index_order.rs` `apply_exact_match_page`,
 `extend_unique`, `resolve_bound` and `resolve_in_order`; the ExactMatch and InScan arms of `get_by_index_scan` in
-`crates/db/src/read/doc.rs` and of `get_by_index_scan_inner` in
+`crates/database/db/src/read/doc.rs` and of `get_by_index_scan_inner` in
 `read/lensed/fetcher/scan.rs` and `read/lensed/autocommit/scan.rs`;
-`crates/db/src/docid/map.rs`
-`DocShortIdAllocator::next`; `crates/storage/src/keys/datastore/index_key.rs`
+`crates/database/db/src/docid/map.rs`
+`DocShortIdAllocator::next`; `crates/engine/storage/src/keys/datastore/index_key.rs`
 `IndexDataStoreKey` (the short ID is the key's last, order-preserving part).
 -/
 namespace IndexEqualKeyOrder

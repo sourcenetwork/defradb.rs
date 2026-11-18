@@ -7,10 +7,10 @@ developer needs to know about what is underneath.
 
 ## Opening a store
 
-`RegolithStore::open_with_options` ([`crates/storage/src/backends/regolith/store.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/store.rs)) is
+`RegolithStore::open_with_options` ([`crates/engine/storage/src/backends/regolith/store.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/store.rs)) is
 the single entry point:
 
-1. Engine options are assembled in [`crates/storage/src/backends/regolith/config.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/config.rs): the merge operator, the prefix extractor,
+1. Engine options are assembled in [`crates/engine/storage/src/backends/regolith/config.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/config.rs): the merge operator, the prefix extractor,
    the at-rest key provider, statistics, and the store's event listener and transaction
    hooks.
 2. On native targets the open path first checks for a legacy per-value-encrypted store
@@ -21,7 +21,7 @@ the single entry point:
    reports no durable sync).
 4. The classifier and isolation level are attached to the handle.
 
-Configuration profiles ([`crates/storage/src/backends/regolith/config.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/config.rs)):
+Configuration profiles ([`crates/engine/storage/src/backends/regolith/config.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/config.rs)):
 
 - **server defaults**: `DurabilityMode::Immediate`, `IsolationLevel::DefraLevel`, a 30 s
   close timeout;
@@ -34,7 +34,7 @@ Configuration profiles ([`crates/storage/src/backends/regolith/config.rs`](https
 ## Threads: who runs what
 
 The pool wraps the engine environment with `placed_on(pool)`
-([`crates/storage/src/backends/regolith/config.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/config.rs)), which places the threads regolith
+([`crates/engine/storage/src/backends/regolith/config.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/config.rs)), which places the threads regolith
 starts (compaction, log writeback) through the workers pool as background-class threads.
 That keeps them off the cores running data-path workers and accounted for in one place.
 An in-memory environment starts none.
@@ -59,7 +59,7 @@ writes a file itself.
 ## Compaction
 
 A stripe-aware compaction worker merges SSTs in the background. defradb.rs installs *no
-compaction filter*, on principle ([`crates/storage/src/backends/regolith/mod.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/mod.rs) documents
+compaction filter*, on principle ([`crates/engine/storage/src/backends/regolith/mod.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/mod.rs) documents
 the decision): a head-set entry depends on later writes; nothing expires by time alone; a
 document part's tombstone carries the priority a late merge is ordered against; index
 entries, blocks, ACP tuples and guards each decide something until another key says
@@ -73,7 +73,7 @@ and those run as ordinary transactions; see
 Stores keep ticker-level statistics only (`StatsLevel::ExceptHistogramOrTimers`): a timer
 would read the clock twice per iterator step, and a histogram sample costs atomics on
 every read and commit. Every open store exports its tickers as one OTel counter
-([`crates/telemetry/src/engine_tickers.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/telemetry/src/engine_tickers.rs)), and the store's `EventListener` reports
+([`crates/building-blocks/telemetry/src/engine_tickers.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/building-blocks/telemetry/src/engine_tickers.rs)), and the store's `EventListener` reports
 flushes, compactions, table-file creation and deletion, background errors, a discarded
 WAL tail at open, and every commit conflict with its reason.
 

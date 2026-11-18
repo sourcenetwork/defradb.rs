@@ -1,7 +1,7 @@
 ---- MODULE NodeStartup ----
 \* The story, in plain words.
 \*
-\* An app starts a node with a config (crates/defra-node/src/assemble.rs
+\* An app starts a node with a config (crates/entry-points/defra-node/src/assemble.rs
 \* assemble). The config picks a transport (libp2p or iroh), may give its
 \* own replicator retry intervals, may ask for node access control (NAC), and,
 \* for libp2p, names the addresses to listen on and the peers to dial once the
@@ -10,10 +10,10 @@
 \*      only asked for by a node with an identity to own it;
 \*   2. open the database;
 \*   3. start the transport, handing it the retry ladder (setup_libp2p,
-\*      setup_iroh in crates/defra-node/src/p2p_runtime.rs and libp2p_runtime.rs);
+\*      setup_iroh in crates/entry-points/defra-node/src/p2p_runtime.rs and libp2p_runtime.rs);
 \*   4. libp2p only: listen on each address in turn;
 \*   5. create the NAC manager, owned by the node identity (create_nac_manager
-\*      in crates/defra-node/src/node_acp.rs), and wire it into the transport;
+\*      in crates/entry-points/defra-node/src/node_acp.rs), and wire it into the transport;
 \*   6. libp2p only: dial the bootstrap peers.
 \* Any step can fail, and then the node does not start.
 \*
@@ -31,20 +31,20 @@
 \*   6. startup never finishes - LIVE_StartupEnds.
 \*
 \* The Rust code each guard models:
-\*   ScheduleToIroh       crates/defra-node/src/p2p_runtime.rs setup_iroh: the
+\*   ScheduleToIroh       crates/entry-points/defra-node/src/p2p_runtime.rs setup_iroh: the
 \*                        ladder goes into the iroh peer config and its retry
 \*                        peerstore, as setup_libp2p and assemble_libp2p give
 \*                        it to the libp2p peerstore and document pusher;
-\*   ShutdownOnListenFail crates/defra-node/src/libp2p_runtime.rs assemble_libp2p: a
+\*   ShutdownOnListenFail crates/entry-points/defra-node/src/libp2p_runtime.rs assemble_libp2p: a
 \*                        listen that fails calls shutdown_libp2p_host, and
 \*                        assemble then closes the database (the background
 \*                        tasks start last, so none is running yet);
-\*   ValidateFirst        crates/defra-node/src/assemble.rs assemble: the NAC
+\*   ValidateFirst        crates/entry-points/defra-node/src/assemble.rs assemble: the NAC
 \*                        owner is checked with the retry ladder, before the
 \*                        database opens;
-\*   OwnerPassed          crates/defra-node/src/node_acp.rs create_nac_manager:
+\*   OwnerPassed          crates/entry-points/defra-node/src/node_acp.rs create_nac_manager:
 \*                        NAC is enabled with the node identity as its owner;
-\*   ConnectAfterNac      crates/defra-node/src/assemble.rs assemble: bootstrap
+\*   ConnectAfterNac      crates/entry-points/defra-node/src/assemble.rs assemble: bootstrap
 \*                        peers are dialed after the manage hooks are set;
 \*   BootstrapNonFatal    the same loop logs a failed dial and goes on.
 \*

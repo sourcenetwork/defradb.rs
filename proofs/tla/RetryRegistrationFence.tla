@@ -3,7 +3,7 @@
 \* A committed head fans out to every listed replicator one registration at a
 \* time; each registration commits or is rejected (fence or storage fault).
 \*
-\* State and its code (crates/storage/src/stores/peerstore.rs unless named):
+\* State and its code (crates/engine/storage/src/stores/peerstore.rs unless named):
 \*   present[p]     the ReplicatorKey row (create_replicator, delete_replicator)
 \*   epoch[p]       the ReplicatorIncarnationKey value; only equality is read
 \*   allocated      the /rep/retry/marker-generation sequence

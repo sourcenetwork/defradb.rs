@@ -18,7 +18,7 @@ A role is modelled as its rank: 0 for a replica, 1 for an archive, 2 for a
 reader. Nodes are numbers.
 
 Rust anchors: `Records::providers` and `rank` in
-`crates/p2p/src/iroh/records/task.rs`.
+`crates/database/p2p/src/iroh/records/task.rs`.
 -/
 
 namespace ServiceRecord

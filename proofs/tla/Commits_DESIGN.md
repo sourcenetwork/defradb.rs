@@ -22,29 +22,29 @@ property about the missing gate, not about CRDT merge details.
 ## Source Anchors
 
 - ACP permission being checked is `DocumentPermission::Read`; update/delete also imply
-  read in `crates/acp/src/permission.rs:14`.
+  read in `crates/engine/acp/src/permission.rs:14`.
 - The document ACP trait exposes document registration and `check_doc_access` in
-  `crates/acp/src/dac.rs:40`, with registered docs denying anonymous/non-granted
+  `crates/engine/acp/src/dac.rs:40`, with registered docs denying anonymous/non-granted
   identities.
 - Regular User query plans are wrapped with `PermissionFilterNode` when a collection has
-  an ACP policy in `crates/query/src/planner/builder/mod.rs:160`.
+  an ACP policy in `crates/engine/query/src/planner/builder/mod.rs:160`.
 - `PermissionFilterNode` calls
   `check_doc_access_with_overlay(..., DocumentPermission::Read, ...)` and fails closed in
-  `crates/query/src/plan/permission_filter.rs:84`.
+  `crates/engine/query/src/plan/permission_filter.rs:84`.
 - The query runner routes `_commits` away from regular collection selects in
-  `crates/query/src/runner/query/select.rs:30`.
+  `crates/engine/query/src/runner/query/select.rs:30`.
 - `_commits` fetches commit history, then applies a separate per-commit ACP filter in
-  `crates/query/src/runner/commits.rs:654`, calling
+  `crates/engine/query/src/runner/commits.rs:654`, calling
   `check_doc_access_with_overlay(..., DocumentPermission::Read, ...)` at
-  `crates/query/src/runner/commits.rs:792`.
-- P2P merge-side ACP filtering is in `crates/db/src/merge/acp_merge_handler.rs:71`: with
+  `crates/engine/query/src/runner/commits.rs:792`.
+- P2P merge-side ACP filtering is in `crates/database/db/src/merge/acp_merge_handler.rs:71`: with
   strict replicated-doc access enabled, protected composites require local
   `DocumentPermission::Read` before merge.
 - Embedded setup wires that strict merge-side mode for Vera-backed ACP in
-  `crates/defra-node/src/assemble.rs`.
+  `crates/entry-points/defra-node/src/assemble.rs`.
 - P2P egress also installs a Bitswap peer-block request filter in
-  `crates/p2p/src/behaviour.rs:287`, implemented in
-  `crates/p2p/src/bitswap/filter.rs:45`.
+  `crates/database/p2p/src/behaviour.rs:287`, implemented in
+  `crates/database/p2p/src/bitswap/filter.rs:45`.
 
 ## Model
 

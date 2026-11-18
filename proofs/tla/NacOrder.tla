@@ -50,37 +50,37 @@
 \*      (INV_EdgeSeesReturnedRevoke)
 \*
 \* The Rust code this models:
-\*   - the order                         crates/acp/src/nac/permission.rs NodePermission::go_order
-\*   - the checks, before and inside     crates/db/src/access/nac.rs DB::check_node_access_as,
+\*   - the order                         crates/engine/acp/src/nac/permission.rs NodePermission::go_order
+\*   - the checks, before and inside     crates/database/db/src/access/nac.rs DB::check_node_access_as,
 \*     the transaction                     DB::check_node_access_in_txn
-\*   - the write paths that call them    crates/db/src/write/doc.rs create_as, update_as, delete_as;
-\*                                       crates/db/src/write/autocommit/batch.rs check_attempt_node_access;
-\*                                       crates/db/src/collection/ops/truncate/mod.rs DB::truncate_target;
-\*                                       crates/db/src/txn/registry/indexes.rs check_access_in
+\*   - the write paths that call them    crates/database/db/src/write/doc.rs create_as, update_as, delete_as;
+\*                                       crates/database/db/src/write/autocommit/batch.rs check_attempt_node_access;
+\*                                       crates/database/db/src/collection/ops/truncate/mod.rs DB::truncate_target;
+\*                                       crates/database/db/src/txn/registry/indexes.rs check_access_in
 \*                                       (an index or encrypted index created, listed or
 \*                                       dropped in a transaction)
-\*   - a write in an explicit            crates/query/src/runner/turn.rs QueryRunner::lent,
+\*   - a write in an explicit            crates/engine/query/src/runner/turn.rs QueryRunner::lent,
 \*     transaction, whose refusal          lent_node_permission: walks go_order once, stops at
 \*     names the first missing one         the first missing permission and names it, never
 \*                                         answers empty
-\*   - the caller with no identity       crates/defra-node/src/ops/request.rs Node::caller
-\*   - the HTTP edge's checks            crates/http/src/auth_middleware.rs auth_middleware;
-\*                                       crates/http/src/route_permissions.rs reads_collection_first,
-\*                                       route_permission; crates/http/src/nac_guard.rs require_permissions;
-\*                                       crates/http/src/nac_adapter.rs NacAdapter::check_permissions;
-\*                                       crates/db/src/nac/mod.rs NacManager::check_permissions
-\*   - the edge snapshot and its swap    crates/db/src/nac/edge.rs NacManager::refresh_edge,
+\*   - the caller with no identity       crates/entry-points/defra-node/src/ops/request.rs Node::caller
+\*   - the HTTP edge's checks            crates/surfaces/http/src/auth_middleware.rs auth_middleware;
+\*                                       crates/surfaces/http/src/route_permissions.rs reads_collection_first,
+\*                                       route_permission; crates/surfaces/http/src/nac_guard.rs require_permissions;
+\*                                       crates/surfaces/http/src/nac_adapter.rs NacAdapter::check_permissions;
+\*                                       crates/database/db/src/nac/mod.rs NacManager::check_permissions
+\*   - the edge snapshot and its swap    crates/database/db/src/nac/edge.rs NacManager::refresh_edge,
 \*                                       EdgeGrants::publish, NacManager::refresh_edge_on_commit
 \*                                       (only after a NAC write: NacEdgeRefreshOnWrite.tla);
-\*   - the withdraw when a write is      crates/db/src/nac/edge.rs RefreshGuard (drop),
+\*   - the withdraw when a write is      crates/database/db/src/nac/edge.rs RefreshGuard (drop),
 \*     dropped after its commit            NacManager::refresh_guard, reload_after_commit;
-\*                                       crates/db/src/nac/mod.rs NacManager::initialize,
+\*                                       crates/database/db/src/nac/mod.rs NacManager::initialize,
 \*                                       enable, purge;
-\*   - the edge's decision, one lookup   crates/db/src/nac/edge.rs EdgeSnapshot::check, check_all,
+\*   - the edge's decision, one lookup   crates/database/db/src/nac/edge.rs EdgeSnapshot::check, check_all,
 \*     per permission                      decide (each identity's permissions, decided ahead by the
 \*                                       engine; the model's FirstMissingIn(snap, ...) is that lookup);
-\*                                       crates/acp/src/nac/node_acp/snapshot.rs NodeACP::copy_into;
-\*                                       crates/db/src/nac/write.rs NacManager::in_write
+\*                                       crates/engine/acp/src/nac/node_acp/snapshot.rs NodeACP::copy_into;
+\*                                       crates/database/db/src/nac/write.rs NacManager::in_write
 EXTENDS Naturals, Sequences, TLC
 
 CONSTANTS

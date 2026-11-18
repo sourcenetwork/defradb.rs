@@ -55,29 +55,29 @@
 \* instead of Go's "ACP not available".
 \*
 \* Code it models:
-\*   crates/db/src/access/nac_ops/mod.rs
+\*   crates/database/db/src/access/nac_ops/mod.rs
 \*     DB::nac_status_as                    the status check
 \*     DB::disable_nac_as                   hands the caller to NacManager::disable_as
 \*     DB::re_enable_nac_as                 hands the caller to NacManager::re_enable_as
 \*     DB::add_nac_actor_relationship_as    parses the request; NacManager::decide_relationship checks it
 \*     DB::delete_nac_actor_relationship_as the same checks but target, then the
 \*                                          revocation, or "not found" for a non-DID
-\*   crates/db/src/nac/toggle.rs
+\*   crates/database/db/src/nac/toggle.rs
 \*     NacManager::toggle_as                the status change, through in_write
 \*     NacManager::decide_toggle            the guard and the check in Go's order,
 \*                                          then the write, all in one try's scope
 \*     NacManager::require                  the live check, or the stored one for re-enable
-\*   crates/db/src/nac/write.rs
+\*   crates/database/db/src/nac/write.rs
 \*     NacManager::in_write                 one write scope per try; a lost
 \*                                          commit runs the decision again
 \*     NacManager::decide_relationship      part three: set up, permission, NAC on,
 \*                                          then the change, all in one try's scope
-\*   crates/acp/src/zanzibar/store/persistent.rs
+\*   crates/engine/acp/src/zanzibar/store/persistent.rs
 \*     PersistentZanzibarStore::transact    the tries, through datastore::transact
 \*                                          (native only: no wasm client runs NAC)
-\*   crates/acp/src/nac/node_acp/operations.rs
+\*   crates/engine/acp/src/nac/node_acp/operations.rs
 \*     NodeACP::authorize_change            the authority check, inside the change
-\*   crates/db/src/nac/mod.rs
+\*   crates/database/db/src/nac/mod.rs
 \*     NacManager::initialize               the restart
 EXTENDS Naturals, Sequences, FiniteSets   \* indexing, counting and set sizes
 

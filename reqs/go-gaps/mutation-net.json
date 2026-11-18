@@ -10,7 +10,7 @@
       "tools/integration-test/tests/testo/mutation/add/with_version.rs::mutation_add_returns_version_cid"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
-    "note": "Not asserted: `_version { cid }` on add_ returning exactly one valid CID (only read by a helper, crates/defra-node/tests/access_hooks.rs::create); the array create checks the returned count, not that a later query returns each doc with its _docID."
+    "note": "Not asserted: `_version { cid }` on add_ returning exactly one valid CID (only read by a helper, crates/entry-points/defra-node/tests/access_hooks.rs::create); the array create checks the returned count, not that a later query returns each doc with its _docID."
   },
   {
     "id": "go.mutation.add.null_input",
@@ -23,14 +23,14 @@
       "tools/integration-test/tests/testo/mutation/add/with_null_value.rs::mutation_add_with_omitted_value_and_explicit_null_value"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
-    "note": "Searched for `input: null`, `input: [null]`, `encrypt: null`, `encryptFields: null` and explicit-null create inputs across crates/*/tests, crates/query/src and tools/integration-test/tests: no matches (the only null input found is an update in p2p_iroh/schema/encryption.rs). The omitted-vs-explicit-null distinct-docs case is not tested either."
+    "note": "Searched for `input: null`, `input: [null]`, `encrypt: null`, `encryptFields: null` and explicit-null create inputs across crates/*/tests, crates/engine/query/src and tools/integration-test/tests: no matches (the only null input found is an update in p2p_iroh/schema/encryption.rs). The omitted-vs-explicit-null distinct-docs case is not tested either."
   },
   {
     "id": "go.mutation.add.variables",
     "verdict": "partial",
     "rust_tests": [
-      "crates/defra-node/tests/mutation_input_variables.rs::update_and_upsert_resolve_object_variables",
-      "crates/query/tests/mutation_input_variables.rs::default_object_input_is_resolved"
+      "crates/entry-points/defra-node/tests/mutation_input_variables.rs::update_and_upsert_resolve_object_variables",
+      "crates/engine/query/tests/mutation_input_variables.rs::default_object_input_is_resolved"
     ],
     "evidence": "defra-node mutation_input_variables.rs:21-24 and 41-44 assert an object variable (with a JSON payload {nested:[1,null,true]}) is applied and returned; query mutation_input_variables.rs:49 asserts a variable default resolves at parse time",
     "note": "Covers update/upsert input variables, not add_ with a `[UsersMutationInputArg!]!` list variable; a variable inside a JSON object literal (`{embed: {message: $message}}`) is not tested; the default-value case is parse-level only."
@@ -156,9 +156,9 @@
     "id": "go.mutation.embeddings.generate",
     "verdict": "partial",
     "rust_tests": [
-      "crates/db/tests/write/embedding.rs::autocommit_create_generates_embedding",
-      "crates/db/tests/write/embedding.rs::explicit_txn_update_regenerates_embedding",
-      "crates/db/tests/write/embedding.rs::explicit_txn_graphql_update_regenerates_embedding"
+      "crates/database/db/tests/write/embedding.rs::autocommit_create_generates_embedding",
+      "crates/database/db/tests/write/embedding.rs::explicit_txn_update_regenerates_embedding",
+      "crates/database/db/tests/write/embedding.rs::explicit_txn_graphql_update_regenerates_embedding"
     ],
     "evidence": "embedding.rs:102,108 assert a create fills the vector [1.0, 2.0] from a stub provider; :203,210 and :250 assert an update regenerates it as [3.0, 4.0]",
     "note": "Only single-source-field embeddings are tested; an embedding over two source fields (`fields: [\"name\", \"about\"]`) updated with one or both is not. The real ollama 768-dim model is out of scope."
@@ -168,7 +168,7 @@
     "verdict": "missing",
     "rust_tests": [],
     "evidence": "",
-    "note": "Searched crates/db/tests/write/embedding*.rs, crates/query/src/update_parts/tests.rs and integration vector tests: no test supplies an explicit vector on create/update and asserts it is stored as-is, or updates a non-source field and asserts no provider call and an unchanged vector."
+    "note": "Searched crates/database/db/tests/write/embedding*.rs, crates/engine/query/src/update_parts/tests.rs and integration vector tests: no test supplies an explicit vector on create/update and asserts it is stored as-is, or updates a non-source field and asserts no provider call and an unchanged vector."
   },
   {
     "id": "go.mutation.field_kinds.numeric",
@@ -217,8 +217,8 @@
     "id": "go.mutation.field_kinds.nillable_arrays",
     "verdict": "partial",
     "rust_tests": [
-      "crates/document/tests/encoding_tests.rs::nillable_array_preserves_null_elements",
-      "crates/document/tests/encoding_tests.rs::nullable_float_elements_preserve_null_and_reject_nonfinite_values"
+      "crates/building-blocks/document/tests/encoding_tests.rs::nillable_array_preserves_null_elements",
+      "crates/building-blocks/document/tests/encoding_tests.rs::nullable_float_elements_preserve_null_and_reject_nonfinite_values"
     ],
     "evidence": "encoding_tests.rs:326-345 asserts [Boolean] and [DateTime] JSON with a null element convert with None in place; :398-404 asserts [Float64]/[Float32] with a null render as [1.5, null, 2.5]",
     "note": "Conversion layer only: no create-then-query round trip for any nillable array kind; [Int] and [String] with null elements are not covered."
@@ -230,7 +230,7 @@
       "tools/integration-test/tests/legacy/query/cross_runtime_indexes.rs::go_cross_runtime_index_key_ordering"
     ],
     "evidence": "cross_runtime_indexes.rs:278-283 asserts [Int!] values [5, 5, 8] and [5, 9] are returned in order (and equal Go's)",
-    "note": "Only [Int!] is round-tripped end to end; [Boolean!], [Float!], [Float32!], [Float64!], [String!] and [DateTime!] (including from RFC 3339 strings) are not. crates/document/tests/encoding_tests.rs homogeneous-array tests only check is_array()."
+    "note": "Only [Int!] is round-tripped end to end; [Boolean!], [Float!], [Float32!], [Float64!], [String!] and [DateTime!] (including from RFC 3339 strings) are not. crates/building-blocks/document/tests/encoding_tests.rs homogeneous-array tests only check is_array()."
   },
   {
     "id": "go.mutation.field_kinds.json",
@@ -263,7 +263,7 @@
     "rust_tests": [
       "tools/integration-test/tests/legacy/basic/crdt_fields.rs::graphql_updates_replace_lww_and_add_to_counters",
       "tools/integration-test/tests/legacy/basic/crdt_fields.rs::float_counters_add_in_f64",
-      "crates/db/tests/write/doc_suite.rs::auto_commit_float32_counter_accumulates_with_float32_precision",
+      "crates/database/db/tests/write/doc_suite.rs::auto_commit_float32_counter_accumulates_with_float32_precision",
       "tools/integration-test/tests/legacy/basic/crdt_fields.rs::graphql_rejects_a_negative_pcounter_increment"
     ],
     "evidence": "crdt_fields.rs:66 asserts 2+3=5 for an Int pcounter and 1.5-4=-2.5 for a Float pncounter; :146 asserts 0.1+0.2 sums to 0.30000000000000004 in f64; doc_suite.rs:243-246 asserts a Float32 counter sums 10.1f32+10.2f32 at f32 precision; crdt_fields.rs:88-89 asserts a negative pcounter update fails with 'value cannot be negative' and the total is unchanged",
@@ -273,7 +273,7 @@
     "id": "go.mutation.crdt.overflow",
     "verdict": "partial",
     "rust_tests": [
-      "crates/crdt/tests/field_contract.rs::an_integer_counter_wraps_on_overflow"
+      "crates/building-blocks/crdt/tests/field_contract.rs::an_integer_counter_wraps_on_overflow"
     ],
     "evidence": "field_contract.rs:98 asserts a pncounter at i64::MAX plus 1 yields i64::MIN (Go's wrap)",
     "note": "Go-Bug-Suspect leaf; Rust matches Go's wrap at the CRDT unit level, but there is no mutation-level test, no pcounter wrap test, and no test for float pncounter overflow to +Inf/-Inf or for an insignificant float increment leaving the value unchanged."
@@ -282,7 +282,7 @@
     "id": "go.mutation.relation.one_to_one_link",
     "verdict": "partial",
     "rust_tests": [
-      "crates/defra-node/tests/one_to_one_primary.rs::a_primary_side_create_commits"
+      "crates/entry-points/defra-node/tests/one_to_one_primary.rs::a_primary_side_create_commits"
     ],
     "evidence": "one_to_one_primary.rs:84-87 asserts a Publisher created with book: <id> (primary side) is visible as Book { publisher { name } }",
     "note": "Not asserted: linking via update (and in the update_ response selection), the `_<field>ID` form, querying from the primary side, explicit `null` on the primary side, and a self-referencing one-to-one resolving both ways."
@@ -292,7 +292,7 @@
     "verdict": "missing",
     "rust_tests": [],
     "evidence": "",
-    "note": "No create/update test sets a one-to-one relation from the secondary side. crates/document/tests/document_tests.rs::set_refuses_a_relation_from_its_secondary_side only covers a list (one-to-many) secondary field at the Document level; the GraphQL `Argument \"input\" has invalid value` rejection is not tested."
+    "note": "No create/update test sets a one-to-one relation from the secondary side. crates/building-blocks/document/tests/document_tests.rs::set_refuses_a_relation_from_its_secondary_side only covers a list (one-to-many) secondary field at the Document level; the GraphQL `Argument \"input\" has invalid value` rejection is not tested."
   },
   {
     "id": "go.mutation.relation.one_to_one_unique",
@@ -303,7 +303,7 @@
       "tools/integration-test/tests/testo/mutation/update/field_kinds/one_to_one/with_simple.rs::mutation_update_one_to_one_relation_id_to_link_from_primary_side"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
-    "note": "crates/query/src/sdl_parse/parser_tests.rs (~line 1985) only asserts that a one-to-one primary gets an implicit unique FK index; no mutation creates or updates a second Author pointing at an already-linked book and asserts `violates unique index`."
+    "note": "crates/engine/query/src/sdl_parse/parser_tests.rs (~line 1985) only asserts that a one-to-one primary gets an implicit unique FK index; no mutation creates or updates a second Author pointing at an already-linked book and asserts `violates unique index`."
   },
   {
     "id": "go.mutation.relation.one_to_many_link",
@@ -322,7 +322,7 @@
     "id": "go.mutation.relation.one_to_many_single_side",
     "verdict": "partial",
     "rust_tests": [
-      "crates/document/tests/document_tests.rs::set_refuses_a_relation_from_its_secondary_side"
+      "crates/building-blocks/document/tests/document_tests.rs::set_refuses_a_relation_from_its_secondary_side"
     ],
     "evidence": "document_tests.rs:550-553 asserts setting the list relation `books` on Author fails with CannotSetRelationFromSecondarySide('books') ('cannot set relation from secondary side') and leaves the doc empty",
     "note": "Document level only. Not asserted: updating Author with `_publishedID` failing with `the given field does not exist`, the collection-API update path, and the GraphQL `Argument \"input\" has invalid value` rejection."
@@ -345,13 +345,13 @@
     "verdict": "missing",
     "rust_tests": [],
     "evidence": "",
-    "note": "Go-Bug-Suspect leaf. Only crates/document/tests/doc_id_tests.rs::test_invalid_string_bad_uuid checks that DocID::from_string rejects a bad UUID (no message). No mutation sets a relation field to a 30-character UUID part; the Go uuid-library message is not ported."
+    "note": "Go-Bug-Suspect leaf. Only crates/building-blocks/document/tests/doc_id_tests.rs::test_invalid_string_bad_uuid checks that DocID::from_string rejects a bad UUID (no message). No mutation sets a relation field to a 30-character UUID part; the Go uuid-library message is not ported."
   },
   {
     "id": "go.mutation.update.basic",
     "verdict": "partial",
     "rust_tests": [
-      "crates/defra-node/tests/json_update_revalidation.rs::retained_json_survives_unrelated_updates",
+      "crates/entry-points/defra-node/tests/json_update_revalidation.rs::retained_json_survives_unrelated_updates",
       "tools/integration-test/tests/legacy/basic/document_lifecycle.rs::document_lifecycle_test"
     ],
     "evidence": "json_update_revalidation.rs:64 asserts a JSON field is unchanged after updating only `sibling`; document_lifecycle.rs:118 asserts collection_update sets views=100",
@@ -367,7 +367,7 @@
       "tools/integration-test/tests/testo/mutation/update/with_ids.rs::mutation_update_with_ids"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
-    "note": "Unverified: a list of docIDs updates exactly those docs (only a mock-level preparation test, crates/query/src/runner/mutation.rs::update_preparation_keeps_custom_hook_and_only_records_found_targets, checks target recording), an unknown docID returns an empty list without error, and `_version { cid }` on update returns two entries (update commit then create commit)."
+    "note": "Unverified: a list of docIDs updates exactly those docs (only a mock-level preparation test, crates/engine/query/src/runner/mutation.rs::update_preparation_keeps_custom_hook_and_only_records_found_targets, checks target recording), an unknown docID returns an empty list without error, and `_version { cid }` on update returns two entries (update commit then create commit)."
   },
   {
     "id": "go.mutation.update.by_filter",
@@ -397,9 +397,9 @@
     "id": "go.mutation.update.collection_filter_errors",
     "verdict": "diverges",
     "rust_tests": [
-      "crates/http/tests/filtered_document_update.rs::a_json_patch_updater_is_refused_rather_than_silently_doing_nothing",
-      "crates/http/tests/filtered_document_update.rs::an_incomplete_request_is_refused",
-      "crates/http/tests/filtered_document_update.rs::an_unknown_collection_is_not_a_success"
+      "crates/surfaces/http/tests/filtered_document_update.rs::a_json_patch_updater_is_refused_rather_than_silently_doing_nothing",
+      "crates/surfaces/http/tests/filtered_document_update.rs::an_incomplete_request_is_refused",
+      "crates/surfaces/http/tests/filtered_document_update.rs::an_unknown_collection_is_not_a_success"
     ],
     "evidence": "filtered_document_update.rs:214 asserts a JSON-array (patch) updater returns 400 and :216 that nothing changed; :162 asserts a non-JSON updater returns 400",
     "note": "Go accepts a JSON-array updater and silently does nothing; Rust refuses it with 400 (deliberate, documented in the test). Error messages (`unsupported filter type`, `filter cannot be empty`, `cannot parse JSON`, `the updater of a document is of invalid type`) are not asserted on the update route; empty/unsupported filter types are only checked on the delete route (filtered_document_delete.rs::an_unsupported_filter_type_is_refused). Unknown collection only asserts non-200. All against a mock store."
@@ -433,7 +433,7 @@
       "tools/integration-test/tests/testo/mutation/update/field_kinds/array_string.rs::mutation_update_with_array_of_strings_to_nil"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
-    "note": "Searched update_ mutations with array inputs ([] / null) and array-named test fns; crates/db/tests/write/empty_arrays.rs only checks a stored [] survives an unrelated update, not updating an array to null or []."
+    "note": "Searched update_ mutations with array inputs ([] / null) and array-named test fns; crates/database/db/tests/write/empty_arrays.rs only checks a stored [] survives an unrelated update, not updating an array to null or []."
   },
   {
     "id": "go.mutation.update.array_replace",
@@ -491,7 +491,7 @@
       "tools/integration-test/tests/testo/mutation/upsert/simple.rs::mutation_upsert_simple_with_unique_composite_index_and_duplicate_update_returns_error"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2357).",
-    "note": "Parser-level, and for omitted arguments rather than explicit `null` (Go message `Argument \"add\" has invalid value <nil>` not asserted). `cannot upsert multiple matching documents` (code at crates/query/src/plan/mutation/upsert.rs:456) has no test; the unique composite index collision on upsert-update has no test."
+    "note": "Parser-level, and for omitted arguments rather than explicit `null` (Go message `Argument \"add\" has invalid value <nil>` not asserted). `cannot upsert multiple matching documents` (code at crates/engine/query/src/plan/mutation/upsert.rs:456) has no test; the unique composite index collision on upsert-update has no test."
   },
   {
     "id": "go.mutation.delete.by_id",
@@ -560,19 +560,19 @@
     "id": "go.mutation.truncate.apply",
     "verdict": "partial",
     "rust_tests": [
-      "crates/query/src/runner/mutation.rs::truncate_mutation_forwards_filter_and_returns_true",
-      "crates/db/tests/collection/truncate.rs::filtered_truncate_removes_only_matching_documents_and_indexes",
+      "crates/engine/query/src/runner/mutation.rs::truncate_mutation_forwards_filter_and_returns_true",
+      "crates/database/db/tests/collection/truncate.rs::filtered_truncate_removes_only_matching_documents_and_indexes",
       "tools/integration-test/tests/legacy/basic/document_lifecycle.rs::document_lifecycle_test"
     ],
     "evidence": "mutation.rs:1397 asserts truncate_User(filter:) returns true (mock truncator); truncate.rs:65-69 asserts filtered truncate keeps only Bob; document_lifecycle.rs:151 asserts collection truncate (CLI) leaves 0 docs",
-    "note": "No end-to-end GraphQL `truncate_User` test on a real node. The `docID:` argument (scalar, list, unknown, with filter) is not parsed by Rust at all (crates/query/src/query_parse/mutations.rs only accepts `filter` for truncate), so those cases are unverified and likely unimplemented."
+    "note": "No end-to-end GraphQL `truncate_User` test on a real node. The `docID:` argument (scalar, list, unknown, with filter) is not parsed by Rust at all (crates/engine/query/src/query_parse/mutations.rs only accepts `filter` for truncate), so those cases are unverified and likely unimplemented."
   },
   {
     "id": "go.mutation.truncate.restrictions",
     "verdict": "partial",
     "rust_tests": [
-      "crates/query/src/runner/mutation.rs::filtered_truncate_rejects_transactions_and_sibling_mutations",
-      "crates/query/src/query_parse/mutation_tests.rs::test_truncate_rejects_null_filter_and_selection"
+      "crates/engine/query/src/runner/mutation.rs::filtered_truncate_rejects_transactions_and_sibling_mutations",
+      "crates/engine/query/src/query_parse/mutation_tests.rs::test_truncate_rejects_null_filter_and_selection"
     ],
     "evidence": "mutation.rs:1434 asserts `only field in an operation` and :1449 `cannot run in a transaction`; mutation_tests.rs:155 asserts `truncate filter cannot be null` for a null filter variable",
     "note": "Unit level only. `docID: null` -> `truncate docID cannot be null` is unverified (the string does not exist in the Rust code). Documents left intact after a rejected truncate is not asserted."
@@ -598,7 +598,7 @@
     "verdict": "partial",
     "rust_tests": [
       "tools/integration-test/tests/legacy/issue1194_repro.rs::issue1194_same_doc_txn_pair_still_conflicts",
-      "crates/defra-node/tests/commit_conflict.rs::losing_commit_reports_a_typed_conflict",
+      "crates/entry-points/defra-node/tests/commit_conflict.rs::losing_commit_reports_a_typed_conflict",
       "tools/integration-test/tests/legacy/issue1194_repro.rs::issue1194_identical_delta_txn_pair_distinct_docs"
     ],
     "evidence": "issue1194_repro.rs:226-229 asserts the second commit on the same doc fails with `transaction conflict`; commit_conflict.rs:40 same at the embedded layer; issue1194_repro.rs:183 expects two txns updating different docs both to commit",
@@ -637,7 +637,7 @@
       "tools/integration-test/tests/testo/net/info/disconnect_peers.rs::net_info_disconnect_single_peer"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
-    "note": "Single-peer disconnect only. Unverified: disconnecting several peers in one call against a real node. Empty list: Rust's disconnect handler (crates/http/src/handlers/p2p/peers.rs:172) loops over an empty Vec and returns 200, so Go's 'addresses cannot be empty' error is neither implemented nor tested (a parity gap, not just a test gap)."
+    "note": "Single-peer disconnect only. Unverified: disconnecting several peers in one call against a real node. Empty list: Rust's disconnect handler (crates/surfaces/http/src/handlers/p2p/peers.rs:172) loops over an empty Vec and returns 200, so Go's 'addresses cannot be empty' error is neither implemented nor tested (a parity gap, not just a test gap)."
   },
   {
     "id": "go.net.peer_events.doc_sync",
@@ -687,7 +687,7 @@
       "tools/integration-test/tests/testo/net/simple/peer/subscribe/collection/with_get.rs::p2_p_collection_get_all"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
-    "note": "Go adds, lists and removes P2P collections by collection ID; Rust takes and returns collection names (crates/p2p-adapter/src/iroh.rs:855-905 maps names to IDs and back). A Go client sending collection IDs would get 'not found'. The list/remove semantics match. The multi-collection checks assert counts only, not which collection is left."
+    "note": "Go adds, lists and removes P2P collections by collection ID; Rust takes and returns collection names (crates/surfaces/p2p-adapter/src/iroh.rs:855-905 maps names to IDs and back). A Go client sending collection IDs would get 'not found'. The list/remove semantics match. The multi-collection checks assert counts only, not which collection is left."
   },
   {
     "id": "go.net.subscribe.collection_sync",
@@ -717,7 +717,7 @@
     "verdict": "missing",
     "rust_tests": [],
     "evidence": "",
-    "note": "Searched for tests that subscribe to, unsubscribe from or list a collection that has a synced but inactive version: rg 'inactive|NoActiveVersion' in tools/integration-test/tests; p2p_iroh/sync/version.rs syncs inactive versions but never calls p2p_collection_add on them. Rust resolves subscriptions by name through the active definition (crates/p2p-adapter/src/iroh.rs:883), so an inactive-only collection may fail; this is untested."
+    "note": "Searched for tests that subscribe to, unsubscribe from or list a collection that has a synced but inactive version: rg 'inactive|NoActiveVersion' in tools/integration-test/tests; p2p_iroh/sync/version.rs syncs inactive versions but never calls p2p_collection_add on them. Rust resolves subscriptions by name through the active definition (crates/surfaces/p2p-adapter/src/iroh.rs:883), so an inactive-only collection may fail; this is untested."
   },
   {
     "id": "go.net.subscribe.document_list",
@@ -749,7 +749,7 @@
       "tools/integration-test/tests/legacy/p2p_iroh/replication/document_sub.rs::document_add_erroneous_should_not_sync"
     ],
     "evidence": "document_sub.rs:323-326 the valid subscription is still listed after removing a bogus docID",
-    "note": "document_add_erroneous_should_not_sync accepts success or failure (document_sub.rs:247-255), and no test asserts 'malformed document ID, missing either version or cid' (implemented at crates/p2p-adapter/src/iroh.rs:972/999). Unverified: a failed add syncs nothing; the kept subscription still syncs."
+    "note": "document_add_erroneous_should_not_sync accepts success or failure (document_sub.rs:247-255), and no test asserts 'malformed document ID, missing either version or cid' (implemented at crates/surfaces/p2p-adapter/src/iroh.rs:972/999). Unverified: a failed add syncs nothing; the kept subscription still syncs."
   },
   {
     "id": "go.net.peer.isolation",
@@ -866,7 +866,7 @@
     "verdict": "partial",
     "rust_tests": [
       "tools/integration-test/tests/legacy/p2p/replication.rs::replication_test",
-      "crates/query/src/sdl_parse/parser_tests.rs::test_fields_sorted_alphabetically_after_docid"
+      "crates/engine/query/src/sdl_parse/parser_tests.rs::test_fields_sorted_alphabetically_after_docid"
     ],
     "evidence": "replication.rs:77 the replicated doc has the source's _docID; parser_tests.rs:1876-1880 fields are canonically sorted, which makes the collection ID independent of declaration order",
     "note": "Unverified end-to-end: two nodes declaring fields in different orders get the same collection version ID and _version{collectionVersionId}; two docs with the same field value ('Shared') both return it on the target. The parser test checks one declaration order only and does not compare two."
@@ -886,7 +886,7 @@
     "verdict": "missing",
     "rust_tests": [],
     "evidence": "",
-    "note": "No integration test replicates an @branchable collection to an offline target and checks the target's _commits(filter: {fieldName: {_eq: null}}) for the collection commit and version ID. Searched tools/integration-test/tests for '@branchable', '_eq: null', 'fieldName'; only sync/branchable.rs (on-demand sync, not replicator), signature.rs (single node) and issue1211_repro.rs (single node) use branchable. crates/db/tests/merge/collection_block_links.rs merges hand-built collection blocks at unit level but asserts head installation, not the replicated collection commit via _commits, and does no offline/restart or patch case."
+    "note": "No integration test replicates an @branchable collection to an offline target and checks the target's _commits(filter: {fieldName: {_eq: null}}) for the collection commit and version ID. Searched tools/integration-test/tests for '@branchable', '_eq: null', 'fieldName'; only sync/branchable.rs (on-demand sync, not replicator), signature.rs (single node) and issue1211_repro.rs (single node) use branchable. crates/database/db/tests/merge/collection_block_links.rs merges hand-built collection blocks at unit level but asserts head installation, not the replicated collection commit via _commits, and does no offline/restart or patch case."
   },
   {
     "id": "go.net.relations",
@@ -925,7 +925,7 @@
       "tools/integration-test/tests/legacy/p2p_iroh/peer/update.rs::update_per_node"
     ],
     "evidence": "update.rs:324 poll_until asserts both nodes agree on one value (45 or 60) after concurrent updates to the same field",
-    "note": "Only two nodes, joined by bidirectional replicators rather than three fully subscribed peers. Concurrent updates to different fields (name, age, score) all surviving the merge is not asserted anywhere across nodes. Searched for 'different fields', 'score', concurrent multi-field P2P tests; crates/db/tests/write/disjoint_parts.rs covers disjoint-field updates only inside one node's transactions."
+    "note": "Only two nodes, joined by bidirectional replicators rather than three fully subscribed peers. Concurrent updates to different fields (name, age, score) all surviving the merge is not asserted anywhere across nodes. Searched for 'different fields', 'score', concurrent multi-field P2P tests; crates/database/db/tests/write/disjoint_parts.rs covers disjoint-field updates only inside one node's transactions."
   },
   {
     "id": "go.net.crdt.counters_peer",
@@ -962,7 +962,7 @@
       "tools/integration-test/tests/legacy/p2p_iroh/sync/doc.rs::after_sync_no_auto_subscribe"
     ],
     "evidence": "doc.rs:99-100 docs pulled from one peer; doc.rs:188-190 docs pulled from two peers; doc.rs:264 one doc only; doc.rs:360 re-sync gets latest age 30; doc.rs:455-456 later source update not received (no subscription)",
-    "note": "Not asserted: four concurrent sync calls for the same docID all succeeding (no concurrent-sync test found; crates/p2p-adapter/src/doc_sync unit tests cover deadlines/timeouts only). 'Diverged versions across peers merge to the latest' is only approximated: Rust updates on one node then re-syncs, not two peers holding different versions. single_doc_on_multiple_nodes has the doc on only one node, not on several."
+    "note": "Not asserted: four concurrent sync calls for the same docID all succeeding (no concurrent-sync test found; crates/surfaces/p2p-adapter/src/doc_sync unit tests cover deadlines/timeouts only). 'Diverged versions across peers merge to the latest' is only approximated: Rust updates on one node then re-syncs, not two peers holding different versions. single_doc_on_multiple_nodes has the doc on only one node, not on several."
   },
   {
     "id": "go.net.sync.branchable_copy",
@@ -992,7 +992,7 @@
       "tools/integration-test/tests/legacy/p2p_iroh/sync/branchable.rs::non_branchable_collection_error"
     ],
     "evidence": "sync.rs (p2p_iroh):65-69 and p2p/sync.rs:178-182 assert an unknown collection fails with a 'not found'/'collection' lookup error instead of Go's 'index out of range'; branchable.rs:451 asserts a non-branchable collection fails",
-    "note": "Rust reports a collection-lookup error for a non-existent collection instead of Go's runtime 'index out of range' (the Go-Bug-Suspect part). The non-branchable case asserts only is_err(); the message 'collection is not branchable' (raised in crates/p2p-adapter/src/transport_doc_pusher.rs:593) is never asserted."
+    "note": "Rust reports a collection-lookup error for a non-existent collection instead of Go's runtime 'index out of range' (the Go-Bug-Suspect part). The non-branchable case asserts only is_err(); the message 'collection is not branchable' (raised in crates/surfaces/p2p-adapter/src/transport_doc_pusher.rs:593) is never asserted."
   },
   {
     "id": "go.net.sync.branchable_deadline",
@@ -1001,7 +1001,7 @@
       "tools/integration-test/tests/legacy/p2p_iroh/sync/branchable.rs::one_node_empty_another_with_docs"
     ],
     "evidence": "branchable.rs:110-111 a branchable sync with no caller deadline completes and the docs arrive (HTTP/CLI surface)",
-    "note": "The Go leaf is C-client only (deadline serialization over the C bindings). The Rust FFI p2p_sync_branchable_collection (crates/ffi/src/p2p/sync.rs:75) takes no deadline argument and has no test; the finite-deadline case is neither expressible nor tested."
+    "note": "The Go leaf is C-client only (deadline serialization over the C bindings). The Rust FFI p2p_sync_branchable_collection (crates/entry-points/ffi/src/p2p/sync.rs:75) takes no deadline argument and has no test; the finite-deadline case is neither expressible nor tested."
   },
   {
     "id": "go.net.sync.collection_version",
@@ -1013,7 +1013,7 @@
       "tools/integration-test/tests/legacy/p2p_iroh/sync/version.rs::patch_version_of_unknown_collection"
     ],
     "evidence": "version.rs:81-93 synced version ID arrives on node1; version.rs:147-163 after collection_set_active the synced collection accepts a synced doc and is queryable (John, 4); version.rs:226-238 patched version arrives",
-    "note": "Not asserted: that the synced version arrives inactive (listed only with get-inactive); that syncing a patched version also fetches the unknown predecessor with PreviousVersion set (patch_version_of_unknown_collection only checks some VersionID exists, version.rs:305); that a locally active version stays active. The crates/db merge tests assert !is_active only for a policy-bound version (crates/db/tests/merge/governance/definition.rs:503), not the plain case."
+    "note": "Not asserted: that the synced version arrives inactive (listed only with get-inactive); that syncing a patched version also fetches the unknown predecessor with PreviousVersion set (patch_version_of_unknown_collection only checks some VersionID exists, version.rs:305); that a locally active version stays active. The crates/database/db merge tests assert !is_active only for a policy-bound version (crates/database/db/tests/merge/governance/definition.rs:503), not the plain case."
   },
   {
     "id": "go.net.sync.collection_version_view",
@@ -1030,6 +1030,6 @@
     "verdict": "missing",
     "rust_tests": [],
     "evidence": "",
-    "note": "No test syncs a collection version with non-nillable scalar (Boolean!, Int!, Float64!, Float32!, String!, DateTime!, Blob!, JSON!) or non-nillable array fields and checks that the receiving node keeps the non-nillable kind with an LWW register. Searched for NonNillable/non_nillable together with sync/merge/block in crates/db/tests, crates/p2p*, crates/schema, tools/integration-test. crates/schema/tests/field_kind_tests.rs:371/414 round-trip kinds through JSON only, not through a synced definition block; governance/definition.rs:336 checks identity reproduction for a String field only."
+    "note": "No test syncs a collection version with non-nillable scalar (Boolean!, Int!, Float64!, Float32!, String!, DateTime!, Blob!, JSON!) or non-nillable array fields and checks that the receiving node keeps the non-nillable kind with an LWW register. Searched for NonNillable/non_nillable together with sync/merge/block in crates/database/db/tests, crates/database/p2p*, crates/foundation/schema, tools/integration-test. crates/foundation/schema/tests/field_kind_tests.rs:371/414 round-trip kinds through JSON only, not through a synced definition block; governance/definition.rs:336 checks identity reproduction for a String field only."
   }
 ]

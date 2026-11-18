@@ -65,7 +65,7 @@
 \* Rust; the AcqRel and Acquire orderings order the pool's other memory
 \* around a take and a give-back, and no promise here needs more.
 \*
-\* Correspondence with the Rust code (crates/workers/src/ unless named):
+\* Correspondence with the Rust code (crates/foundation/workers/src/ unless named):
 \*
 \*   | Model             | Rust                                                        |
 \*   |-------------------|-------------------------------------------------------------|
@@ -90,7 +90,7 @@
 \*   |                   | Pool::start (pool/start.rs:51-53) is a new life of a slot   |
 \*   | Edges             | the slots that are network runtimes: EdgeCores::reserve_on  |
 \*   |                   | (placement/edge.rs), called by EdgeCores::reserve from the  |
-\*   |                   | edge runtime's owner thread (crates/edge/src/platform/      |
+\*   |                   | edge runtime's owner thread (crates/foundation/edge/src/platform/      |
 \*   |                   | native.rs own); its claim is choose(), always alone         |
 \*   | GiveUp            | the edge's loop runs out of ATTEMPTS, or choose() finds too |
 \*   |                   | few cores: EdgeCores::sized, holding nothing (edge.rs)      |

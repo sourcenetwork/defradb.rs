@@ -60,19 +60,19 @@
 \*   * a write lands as anything but what its writer read it as.
 \*
 \* Code this models (defradb.rs):
-\*   crates/defra-core/src/json_crdt.rs            the per-path registers: the
+\*   crates/foundation/defra-core/src/json_crdt.rs            the per-path registers: the
 \*                                                 frontier of racing edits,
 \*                                                 the winner, the conflicts
-\*   crates/crdt/src/field/json.rs                 JsonField, the field's
+\*   crates/building-blocks/crdt/src/field/json.rs                 JsonField, the field's
 \*                                                 TaggedCrdt: a write's ops,
 \*                                                 a block's operand, replay
-\*   crates/db/src/merge/merge_handler/field_tagged.rs
+\*   crates/database/db/src/merge/merge_handler/field_tagged.rs
 \*                                                 applies a received block
 \*                                                 once its parents are merged
-\*   crates/db/src/write/autocommit/helpers.rs     a local write's ops and
+\*   crates/database/db/src/write/autocommit/helpers.rs     a local write's ops and
 \*                                                 operand
 \*                                                 (prepare_tagged_writes)
-\*   crates/db/src/definition/migration/helpers.rs a lens write-back leaves a
+\*   crates/database/db/src/definition/migration/helpers.rs a lens write-back leaves a
 \*                                                 tagged field it changes to
 \*                                                 the next write
 \*                                                 (changes_block_state)
@@ -98,13 +98,13 @@
 \*   ApplyOps      json.rs apply_ops: what the writer reads its ops as, in
 \*                 order; ReadAs names the two REDs the property test
 \*                 a_path_edit_write_lands_as_it_reads found
-\*                 (crates/crdt/tests/json_field.rs);
+\*                 (crates/building-blocks/crdt/tests/json_field.rs);
 \*                 "deleteMakesParent" is the bug that lost a set of {} after
 \*                 a delete below it in one write, pinned by
 \*                 a_delete_through_a_missing_path_leaves_a_later_set_in_the_write
 \*                 (json_field.rs) and, through a database update and read,
 \*                 a_delete_through_a_missing_path_keeps_a_later_set_in_the_update
-\*                 (crates/db/tests/merge/json_merge.rs)
+\*                 (crates/database/db/tests/merge/json_merge.rs)
 \*   Invariants    INV_DisjointKept, INV_SamePathLww, INV_UpdateWins,
 \*                 INV_TypeClash and INV_DeleteCreatesNothing speak of a
 \*                 block's one path and are checked on single-path runs; the
@@ -142,12 +142,12 @@
 \*                 per path, by its first entry there
 \*   Doc           json_crdt.rs Frontier::materialize
 \*   Conflicts     json_crdt.rs Frontier::conflicts, read by _jsonConflicts
-\*                 (crates/db/src/read/json_conflicts.rs); an edit's `seen`
+\*                 (crates/database/db/src/read/json_conflicts.rs); an edit's `seen`
 \*                 records the edits above it in its past, which is how the
 \*                 code tells two edits at different depths are concurrent
 \*   SpecDoc       json_crdt.rs replay (json.rs TaggedCrdt::replay): the JSON
 \*                 read straight from the whole DAG, used by time-travel reads
-\*                 (crates/db/src/read/versioned.rs)
+\*                 (crates/database/db/src/read/versioned.rs)
 
 EXTENDS Naturals, FiniteSets, TLC
 

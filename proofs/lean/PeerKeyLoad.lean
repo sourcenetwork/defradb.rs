@@ -18,7 +18,7 @@ answers that key (`start_key_is_used`) and hands the store back unchanged
 would have loaded without it (`plain_after_start_key`). The sequence of
 starts is the TLA+ model `proofs/tla/PeerKeyLoad.tla`.
 
-Rust anchors: `crates/defra-node/src/peer_key.rs` `load_with_keyring`,
+Rust anchors: `crates/entry-points/defra-node/src/peer_key.rs` `load_with_keyring`,
 `load_or_create`, `StartPeerKey`.
 -/
 

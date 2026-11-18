@@ -1,10 +1,10 @@
 # db-nac — Formal-Modelability Survey
 
-> **Now a module, not a crate.** `db-nac` was folded into `db` as `crates/db/src/nac/`. The slice below is unchanged; only its location moved.
+> **Now a module, not a crate.** `db-nac` was folded into `db` as `crates/database/db/src/nac/`. The slice below is unchanged; only its location moved.
 
 ## Purpose
 
-`crates/db (nac)/` is a thin **config-aware wrapper** around `acp::nac::NodeACP`.
+`crates/database/db (nac)/` is a thin **config-aware wrapper** around `acp::nac::NodeACP`.
 It adds three things to the DB layer: (1) a `NacConfig` (enabled / dev_mode /
 data_path) struct, (2) a startup `initialize()` routine that drives the NAC
 lifecycle off config, and (3) an **authorization layer** on lifecycle
@@ -15,7 +15,7 @@ transitions (disable/re-enable/purge/grant). The `NacManagerApi` trait
 
 - **NAC lifecycle** (`NacStatus`: NotConfigured → Enabled → DisabledTemporarily
   → Enabled; purge → NotConfigured). The transitions, idempotence, and the
-  write-blocking-while-disabled invariant **live in `crates/acp/src/nac/node_acp/
+  write-blocking-while-disabled invariant **live in `crates/engine/acp/src/nac/node_acp/
   lifecycle.rs`**, not here. `db-nac::initialize()` only *selects* transitions
   from config + current status.
 - **Authorization gate on transitions** (lib.rs): `disable` requires `is_admin`
@@ -33,7 +33,7 @@ transitions (disable/re-enable/purge/grant). The `NacManagerApi` trait
 ## Verdict
 
 **Plumbing-dominant.** The crate is a config gate + delegation shim; the real
-NAC state machine and its security invariants live in `crates/acp`. The one
+NAC state machine and its security invariants live in `crates/engine/acp`. The one
 candidate worth noting (the live-vs-persisted admin-check asymmetry across the
 disable/re-enable window) is a marginal extension of the already-built **Auth**
 slice, not a new model-worthy concern. Integration tests (`--test nac`) plus the

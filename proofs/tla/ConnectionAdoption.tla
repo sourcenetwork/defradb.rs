@@ -15,7 +15,7 @@
 \* never outlives the revoke. Revocation racing a dial, and gossip ownership,
 \* are modeled in SharedRpcConnection and GossipOwnership.
 \*
-\* Code: crates/p2p/src/iroh/endpoint_streams.rs adopt_new_connection,
+\* Code: crates/database/p2p/src/iroh/endpoint_streams.rs adopt_new_connection,
 \* handle_connection_streams, finish_connection and handle_incoming;
 \* endpoint_rpc.rs connect_with_cache,
 \* remember_connection and restore_displaced_connection; endpoint_commands.rs

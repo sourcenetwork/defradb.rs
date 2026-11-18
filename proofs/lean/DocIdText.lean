@@ -15,9 +15,9 @@ proves what it promises:
 * the "length" refusal is given only for a length gofrs never accepts, so a
   text of a right length but a wrong shape is told about its shape.
 
-Rust owner: crates/defra-core/src/doc_id.rs `parse_uuid`, called by
+Rust owner: crates/foundation/defra-core/src/doc_id.rs `parse_uuid`, called by
 `ParsedDocId::from_string`, which relation IDs go through on set
-(crates/query/src/plan/mutation/create_conversions.rs). Its tests are
+(crates/engine/query/src/plan/mutation/create_conversions.rs). Its tests are
 `a_bad_uuid_is_refused_in_gofrs_words` and
 `every_gofrs_form_parses_to_the_same_uuid`. The model leaves out how the
 message quotes the text (Go's `%q`, Rust's `{:?}`), which agree for ASCII.

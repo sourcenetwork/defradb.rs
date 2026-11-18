@@ -1,7 +1,7 @@
 ------------------------ MODULE HttpRouterComposition ------------------------
 \* A server builds its native router, merges extensions, then wraps the result.
 \* The wrapper is optional and is constructed once for each complete router.
-\* Rust: crates/http/src/server.rs::Server::router and Server::serve.
+\* Rust: crates/surfaces/http/src/server.rs::Server::router and Server::serve.
 EXTENDS Naturals, FiniteSets, TLC
 \* Negative runs move or duplicate the callback and expose a missing fence.
 CONSTANT Bug

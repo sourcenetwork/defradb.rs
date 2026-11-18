@@ -1,8 +1,8 @@
 ---- MODULE IrohDialOutcome ----
 \* The story, in plain words.
 \*
-\* A node dials a peer over iroh (crates/p2p-adapter/src/iroh.rs
-\* `connect_peer`; crates/p2p/src/iroh/endpoint_commands.rs `handle_dial`).
+\* A node dials a peer over iroh (crates/surfaces/p2p-adapter/src/iroh.rs
+\* `connect_peer`; crates/database/p2p/src/iroh/endpoint_commands.rs `handle_dial`).
 \* The QUIC handshake completes, the dialer registers the connection, and the
 \* dial answers. The peer may refuse the dialer (its allowlist does not admit
 \* it): it then closes the connection with the "not authorized" reason, a

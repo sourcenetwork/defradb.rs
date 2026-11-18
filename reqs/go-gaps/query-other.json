@@ -100,7 +100,7 @@
       "tools/integration-test/tests/legacy/query/multi_cid_vectors.rs::multi_cid_commits_same_doc_test",
       "tools/integration-test/tests/legacy/query/multi_cid_vectors.rs::multi_cid_commits_filters_unreadable_cid_test",
       "tools/integration-test/tests/legacy/query/commits_collection_id.rs::commits_and_versions_include_collection_id",
-      "crates/db/tests/read/commits_suite.rs::shared_field_cid_fans_out_to_every_owner"
+      "crates/database/db/tests/read/commits_suite.rs::shared_field_cid_fans_out_to_every_owner"
     ],
     "evidence": "multi_cid_vectors.rs:234,264 assert cid: [C1, C2] returns both (different docs, same doc); :353 asserts a CID of an unreadable doc is omitted under DAC; commits_collection_id.rs:157 composite+field cids return 2; commits_suite.rs:216 a shared field CID returns one commit per owning doc",
     "note": "Unverified: shared field CID combined with docID returning only that doc, and `docID + cid + depth: 5` returning the commit and its ancestors."
@@ -405,7 +405,7 @@
     "id": "go.query.inline_array.read.datetime",
     "verdict": "partial",
     "rust_tests": [
-      "crates/document/tests/encoding_tests.rs::nillable_array_preserves_null_elements"
+      "crates/building-blocks/document/tests/encoding_tests.rs::nillable_array_preserves_null_elements"
     ],
     "evidence": "encoding_tests.rs:337-346 asserts a nillable DateTime array parses RFC 3339 and keeps null elements",
     "note": "Encoding level only. Unverified: query read-back of DateTime arrays, update replacing the whole array, and the `UTC_NOW` element (no test found)."
@@ -423,7 +423,7 @@
     "id": "go.query.inline_array.non-nillable.elements-reject",
     "verdict": "partial",
     "rust_tests": [
-      "crates/document/tests/encoding_tests.rs::non_nillable_arrays_reject_null_elements"
+      "crates/building-blocks/document/tests/encoding_tests.rs::non_nillable_arrays_reject_null_elements"
     ],
     "evidence": "encoding_tests.rs:315-320 asserts a null element in Bool/Int/Float64/Float32/String/DateTime `[T!]` arrays is not converted",
     "note": "Conversion level only. Unverified: the create error `null value provided for non-nillable field`, and a malformed DateTime element failing with `not-a-date` in the message."
@@ -997,7 +997,7 @@
     "verdict": "partial",
     "rust_tests": [
       "tools/integration-test/tests/legacy/query/aggregate_groupby_1595.rs::top_level_group_by_array_relation_test",
-      "crates/query/src/runner/plan_validation.rs::group_by_array_relation_returns_go_mapper_error"
+      "crates/engine/query/src/runner/plan_validation.rs::group_by_array_relation_returns_go_mapper_error"
     ],
     "evidence": "aggregate_groupby_1595.rs:292-296 asserts grouping by `published` errors with `cannot group by array or object field`; plan_validation.rs:294-297 the full message `... Field: published`",
     "note": "Tested through `COUNT(Author: {groupBy: [published]})` and the validator, not `Author(groupBy: [published])`. Unverified: `cannot select a non-group-by field at group-level`, the `_publishedID` groupBy argument error and the `Cannot query field \"_publishedID\"` error."

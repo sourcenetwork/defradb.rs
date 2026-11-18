@@ -34,13 +34,13 @@
 \*   * NoWriteBackOnPin: a read through a non-active version stores nothing
 \*     back (Red_WriteBackOnPin).
 \*
-\* Rust: crates/db/src/txn/catalog.rs Catalog::pin, Catalog::get;
-\* crates/db/src/txn/registry/owned.rs OwnedTxn's TxnTurn::pin_collection;
-\* crates/query/src/runner/turn.rs run_turn_with_delegation (pins, then
-\* clears); crates/query/src/runner/pinned.rs PinnedProvider (the query-side
-\* lookup); crates/db/src/txn/mod.rs Txn::validate_collection_for_write;
-\* crates/db/src/read/lensed/fetcher/migration.rs (no write-back through a
-\* pin); crates/ffi/src/document/run.rs DocumentCall (sets the version).
+\* Rust: crates/database/db/src/txn/catalog.rs Catalog::pin, Catalog::get;
+\* crates/database/db/src/txn/registry/owned.rs OwnedTxn's TxnTurn::pin_collection;
+\* crates/engine/query/src/runner/turn.rs run_turn_with_delegation (pins, then
+\* clears); crates/engine/query/src/runner/pinned.rs PinnedProvider (the query-side
+\* lookup); crates/database/db/src/txn/mod.rs Txn::validate_collection_for_write;
+\* crates/database/db/src/read/lensed/fetcher/migration.rs (no write-back through a
+\* pin); crates/entry-points/ffi/src/document/run.rs DocumentCall (sets the version).
 EXTENDS Naturals
 
 CONSTANTS

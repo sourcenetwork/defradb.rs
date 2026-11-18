@@ -1,7 +1,7 @@
 ---- MODULE TwoStoreCounter ----
 \* Counter materialization under concurrent local-write vs remote-merge, abstracting
 \* the pre-#1021 merge path (reconcile acc := blob -> merge(+delta) -> blob := acc),
-\* now crates/db/src/merge/merge_handler/field_ops.rs (apply_field_op_once)
+\* now crates/database/db/src/merge/merge_handler/field_ops.rs (apply_field_op_once)
 \* and the local-write path in the `db` crate's doc_mutator. Anchors in the
 \* TwoStoreCounter_DESIGN.md (and project memory same_doc_merge_storm_undercount).
 \*
@@ -52,7 +52,7 @@
 \*                    composite applies the increment once                  [GREEN]
 \*           = "Off"  - the standalone merge claims the applied key, drops the
 \*                    value it computed, and reports the block merged       [RED]
-\* Code: crates/db/src/merge/merge_handler/field_ops.rs `apply_field_op_once`
+\* Code: crates/database/db/src/merge/merge_handler/field_ops.rs `apply_field_op_once`
 \* (its `standalone` deferral), called standalone by `merge_field_in_txn`
 \* (field.rs) from `process_block_in_txn` (batch.rs), and by the composite merge
 \* through `merge_field_delta_in_txn` from composite_fields.rs.

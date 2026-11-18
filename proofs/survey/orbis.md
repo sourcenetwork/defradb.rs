@@ -1,4 +1,4 @@
-# Survey: crates/orbis
+# Survey: crates/building-blocks/orbis
 
 ## Purpose
 gRPC client that delegates document signing to an external Orbis ring's threshold-BLS
@@ -27,7 +27,7 @@ modelable protocol.
 
 All proof-worthy behavior lives elsewhere:
 - BLS threshold signing / DID-from-pubkey correctness is the *ring's* job and lives in
-  `crates/crypto`, not here.
+  `crates/foundation/crypto`, not here.
 - JWT auth-token issuance on the management/RPC channel is conceptually the Auth slice.
 - "signature verified before a block merges" is the Integrity slice.
 - ACP authorization semantics embedded in the claims are the Acp slice.

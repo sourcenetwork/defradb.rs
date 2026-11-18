@@ -16,13 +16,13 @@ pending map's bound, the dispatch clock) is `P2PDelivery.tla`'s.
 
 | Fact | Source |
 |---|---|
-| A sender owes a head to a replicator through a durable retry marker; the retry sweep pushes it and the acknowledgement clears it. | `crates/storage/src/stores/peerstore.rs` `register_scope_marker`, `complete_retry_scope`; `crates/p2p-adapter/src/retry.rs` `run_retry_pass` |
-| A receiver persists its pending record before it acknowledges a PushLog. Without an installed pending store the record is in memory only. | `crates/p2p/src/sync/manager/process/pushlog.rs` `process_block_inner` |
-| The resync sweep brings durable records back into the in-memory map, at startup and on connect. | `crates/p2p/src/sync/manager/process/pending_dag.rs` `resync_persisted_pending_dags` |
-| On connect a node re-drives its own pending records and nothing else: no head rediscovery. | `crates/p2p/src/sync/coordinator/event_handler/mod.rs` `handle_peer_connected` |
-| DocSync and BranchableSync discover heads only when the embedder calls them. | `crates/p2p/src/sync/coordinator/event_handler/doc_sync.rs` `handle_doc_sync_reply`, `branchable_sync.rs` `handle_branchable_sync_reply` |
-| A fetch emits `DagReady` only when no missing links remain; the merge discharges the root's record. | `crates/p2p/src/sync/coordinator/dag_fetcher.rs` `fetch_dag_attempt`; `crates/p2p/src/sync/manager/process/mod.rs` `discharge_merged` |
-| Composite merge merges parent heads before the current block; durable merged sets skip duplicate replay. | `crates/db/src/merge/merge_handler/composite.rs`, `crates/db/src/merge/merge_handler/mod.rs` |
+| A sender owes a head to a replicator through a durable retry marker; the retry sweep pushes it and the acknowledgement clears it. | `crates/engine/storage/src/stores/peerstore.rs` `register_scope_marker`, `complete_retry_scope`; `crates/surfaces/p2p-adapter/src/retry.rs` `run_retry_pass` |
+| A receiver persists its pending record before it acknowledges a PushLog. Without an installed pending store the record is in memory only. | `crates/database/p2p/src/sync/manager/process/pushlog.rs` `process_block_inner` |
+| The resync sweep brings durable records back into the in-memory map, at startup and on connect. | `crates/database/p2p/src/sync/manager/process/pending_dag.rs` `resync_persisted_pending_dags` |
+| On connect a node re-drives its own pending records and nothing else: no head rediscovery. | `crates/database/p2p/src/sync/coordinator/event_handler/mod.rs` `handle_peer_connected` |
+| DocSync and BranchableSync discover heads only when the embedder calls them. | `crates/database/p2p/src/sync/coordinator/event_handler/doc_sync.rs` `handle_doc_sync_reply`, `branchable_sync.rs` `handle_branchable_sync_reply` |
+| A fetch emits `DagReady` only when no missing links remain; the merge discharges the root's record. | `crates/database/p2p/src/sync/coordinator/dag_fetcher.rs` `fetch_dag_attempt`; `crates/database/p2p/src/sync/manager/process/mod.rs` `discharge_merged` |
+| Composite merge merges parent heads before the current block; durable merged sets skip duplicate replay. | `crates/database/db/src/merge/merge_handler/composite.rs`, `crates/database/db/src/merge/merge_handler/mod.rs` |
 
 ## TLA+ Abstraction
 
@@ -72,16 +72,16 @@ BranchableSync or a replicator re-set, which the embedder owns.
 Lean lives under `proofs/lean/` and models local merge/apply behavior:
 
 - LWW is a join over a resolved total-order key derived from decoded priority and
-  deterministic value/tombstone tie-break (`crates/crdt/src/field/lww.rs`
+  deterministic value/tombstone tie-break (`crates/building-blocks/crdt/src/field/lww.rs`
   `LwwField::merge`).
 - Int64 counter accumulation is wrapping addition, so it is commutative and
   associative, but raw counter merge is not idempotent
-  (`crates/crdt/src/field/counter.rs` `CounterField::merge`).
+  (`crates/building-blocks/crdt/src/field/counter.rs` `CounterField::merge`).
 - Counter idempotency is modeled at the durable merged-CID/applied-set layer, which
   is the contract documented above the merge handler
-  (`crates/db/src/merge/merge_handler/field_ops.rs` `apply_field_op_once`).
+  (`crates/database/db/src/merge/merge_handler/field_ops.rs` `apply_field_op_once`).
 - A document value merges componentwise over field-local state
-  (`crates/crdt/src/stored.rs` `StoredDocument::apply`).
+  (`crates/building-blocks/crdt/src/stored.rs` `StoredDocument::apply`).
 
 The Lean README records `#print axioms` status. No theorem uses `sorry` or custom
 axioms. Float32/Float64 counter laws are intentionally not claimed because IEEE-754

@@ -39,7 +39,7 @@
 \* state; a filter that is not one removing anything; a view still showing rows
 \* after an unfiltered truncate.
 \*
-\* Code it models (crates/db/src/collection/ops/truncate/mod.rs):
+\* Code it models (crates/database/db/src/collection/ops/truncate/mod.rs):
 \*   DB::truncate_collection_as  the whole sequence, for every edge
 \*   DB::truncate_target         checks 1 to 3 in Go's order, with the chunk check
 \*                               (chunk/user_writes.rs ensure_admin_changeable) after nac

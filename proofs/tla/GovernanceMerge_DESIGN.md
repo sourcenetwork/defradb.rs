@@ -20,7 +20,7 @@ corrupts state.
 
 ## Source anchors
 
-`crates/db/src/merge/governance/` unless said otherwise.
+`crates/database/db/src/merge/governance/` unless said otherwise.
 
 - `validator.rs:39-55` — `MergeValidator::validate` and its purity contract:
   reads through `MergeView` only, no wall clock, randomness or node identity.
@@ -52,10 +52,10 @@ corrupts state.
   `enqueue_ready` and `redrive_deferred`: `Sweep` with `SweepScope = "Unmerged"`.
   `:124` `SWEEP_INTERVAL` (60 s) and `:129` `run_governance_sweep`, which runs
   one pass at startup (`Crash` followed by `Sweep`) and then on the interval.
-  Spawned from `crates/defra-node/src/libp2p_runtime.rs`,
-  `crates/p2p-adapter/src/iroh_peer/peer.rs:278` and
-  `crates/cli/src/commands/start/server_p2p/libp2p.rs:225`.
-- `crates/p2p/src/sync/replication/handlers.rs:429` — a non-terminal
+  Spawned from `crates/entry-points/defra-node/src/libp2p_runtime.rs`,
+  `crates/surfaces/p2p-adapter/src/iroh_peer/peer.rs:278` and
+  `crates/entry-points/cli/src/commands/start/server_p2p/libp2p.rs:225`.
+- `crates/database/p2p/src/sync/replication/handlers.rs:429` — a non-terminal
   `Skipped` is not marked merged, so the composite stays in the unmerged set
   the sweep walks. `Unmerged(r)`.
 - `merge_handler/composite.rs:160` `has_merged_composite`, the in-process
@@ -65,7 +65,7 @@ corrupts state.
 code; the knobs name real alternatives (`SweepScope = "Indexed"` is the natural
 refactor, `IndexDurable = TRUE` a persisted index that does not exist). The
 model is not derived from the Rust by a tool. What ties the two together
-executably is `crates/db/tests/merge/governance/sweep.rs`: the three probes
+executably is `crates/database/db/tests/merge/governance/sweep.rs`: the three probes
 there (restart, index at capacity, a Defer naming nothing) are the
 `Red_NoSweep` counterexample's three arrival orders as tests, and they fail
 without the sweep exactly as the RED run does.
@@ -138,7 +138,7 @@ arrived nothing is left to release it. The other two routes to the same place
 need a different instance: the index at capacity is
 `MC_GovernanceContract_Red_IndexFull`, and a Defer naming nothing is
 `Red_SweepIndexed` below, where there are no field keys to file it under. The
-three probe tests in `crates/db/tests/merge/governance/sweep.rs` are those three
+three probe tests in `crates/database/db/tests/merge/governance/sweep.rs` are those three
 routes as code.
 
 ## Result 3 — the sweep's scope is the load-bearing choice

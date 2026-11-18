@@ -35,12 +35,12 @@ Frames the gate does not judge at all (a genesis, a collection without a
 policy, a node without a provider, and a local provider's frames outside a
 transaction, which are judged in the mutation's own snapshot) are outside
 it too.
-Rust owner: crates/db/src/merge/acp_merge_handler.rs
+Rust owner: crates/database/db/src/merge/acp_merge_handler.rs
 AcpCompositeMergeHook::on_protected_update and
 AcpCompositeMergeHook::parks_refusals, composed by
-crates/db/src/merge/merge_handler/protected_update.rs check_protected_update
+crates/database/db/src/merge/merge_handler/protected_update.rs check_protected_update
 and frame_signer,
-over crates/acp/src/replica.rs ReplicaOwed. -/
+over crates/engine/acp/src/replica.rs ReplicaOwed. -/
 namespace ReplicaGate
 
 /-- What the node does with one change. -/
@@ -346,7 +346,7 @@ theorem local_reads_nothing_owed (n : Node) (owed : Owed) (hp : n.provider = .lo
 
 Every combination of the inputs, with the hook's judgement, whether
 refusals park, and the gate's outcome, one tab-separated line each, for
-`crates/db/src/merge/gate_conformance_tests.rs` to drive the Rust hook with.
+`crates/database/db/src/merge/gate_conformance_tests.rs` to drive the Rust hook with.
 Run by `lake env lean --run ReplicaGate.lean`. -/
 
 /-- Every yes/no value. -/

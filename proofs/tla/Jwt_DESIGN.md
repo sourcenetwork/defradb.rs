@@ -34,17 +34,17 @@ as **independent oracle invariants** (defined from ground truth `SigBy`,
 ## Source anchors
 
 ### Rust (this tree) — the hardened mechanism modeled as GREEN
-- `crates/identity/src/token/mod.rs:263-333` — `from_token`: the full pipeline.
-- `crates/identity/src/token/mod.rs:284-294` — `expected_alg` is derived from the
+- `crates/building-blocks/identity/src/token/mod.rs:263-333` — `from_token`: the full pipeline.
+- `crates/building-blocks/identity/src/token/mod.rs:284-294` — `expected_alg` is derived from the
   `key_type` **claim**; `header_alg != expected_alg ⇒ reject` (alg<->key binding).
-- `crates/identity/src/token/mod.rs:296-312` — reconstruct the public key from
+- `crates/building-blocks/identity/src/token/mod.rs:296-312` — reconstruct the public key from
   `sub` under the decode-path curve, then derive the actor DID **from that
   verified public key** (`public_key.did()`), not from `iss`.
-- `crates/identity/src/token/mod.rs:315-323` — `iss == did(pubkey)` issuer binding.
-- `crates/identity/src/token/decoding.rs:61-109` — `decode_ed25519/_secp256k1/`
+- `crates/building-blocks/identity/src/token/mod.rs:315-323` — `iss == did(pubkey)` issuer binding.
+- `crates/building-blocks/identity/src/token/decoding.rs:61-109` — `decode_ed25519/_secp256k1/`
   `_secp256r1`: the curve used to reconstruct the key AND verify the signature is
   selected by the **header alg** (dispatch in `from_token:270-280`).
-- `crates/identity/src/key_type.rs:19-26` — the three curves: Ed25519, Secp256k1,
+- `crates/building-blocks/identity/src/key_type.rs:19-26` — the three curves: Ed25519, Secp256k1,
   Secp256r1; `did()` is per-curve (distinct multicodec prefix) so the same `sub`
   bytes read under a different curve yield a different DID.
 

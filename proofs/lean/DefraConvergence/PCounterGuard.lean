@@ -3,7 +3,7 @@
 
 The story. A counter field holds a whole number. Every write to it is an
 "increment by d". A positive counter (`pcounter`) is the kind that may only go
-up. Its guard, `CounterField::op` in `crates/crdt/src/field/counter.rs`, looks
+up. Its guard, `CounterField::op` in `crates/building-blocks/crdt/src/field/counter.rs`, looks
 at each incoming `d` before anything is stored. If `d` is negative the guard
 says no and the write is dropped; otherwise the guard lets `d` through, and the
 counter adds it.

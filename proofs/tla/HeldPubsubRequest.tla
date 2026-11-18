@@ -22,7 +22,7 @@
 \* progress is given up. This is what Go does with pubsub-rpc's
 \* WithRepublishing.
 \*
-\* Rust code modelled (crates/p2p/src/sync/coordinator/held_request.rs):
+\* Rust code modelled (crates/database/p2p/src/sync/coordinator/held_request.rs):
 \*   phase, watching, woken, sent  ->  HeldRequest::next / HeldRequest::publish
 \*     (publish_due, next_join, sent, refused)
 \*   Deadline, Expire              ->  HeldRequest::next's Wake::Done and its

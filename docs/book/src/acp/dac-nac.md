@@ -2,7 +2,7 @@
 
 ## DAC: document access control
 
-The `DocumentACP` trait ([`crates/acp/src/dac.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/acp/src/dac.rs)) is the document-scope interface:
+The `DocumentACP` trait ([`crates/engine/acp/src/dac.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/acp/src/dac.rs)) is the document-scope interface:
 register a document's owner, check access, add and remove relationships. Implementations:
 
 - **Zanzibar-backed local ACP** (the default): tuples in the local store, evaluated by
@@ -34,7 +34,7 @@ NAC is one policy over a single singleton object (the node), always local (no Ve
 option), with a lifecycle: not configured -> enabled -> (optionally) temporarily
 disabled -> purged. It gates administrative surface: collection and index management,
 backup, P2P configuration, lens, views, and every management HTTP route (the route
-permission map lives in [`crates/http/src/route_permissions.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/http/src/route_permissions.rs). Some 51 node
+permission map lives in [`crates/surfaces/http/src/route_permissions.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/surfaces/http/src/route_permissions.rs). Some 51 node
 permissions exist, all admin-only (`owner + admin`).
 
 Two properties worth knowing:
@@ -49,7 +49,7 @@ Two properties worth knowing:
 ## Where identities come from
 
 Callers identify with decentralized identities (DID-key over Ed25519, secp256k1 or
-secp256r1 keys; `crates/identity`), presented as JWT bearer tokens (Go-`jwx`-compatible
+secp256r1 keys; `crates/building-blocks/identity`), presented as JWT bearer tokens (Go-`jwx`-compatible
 JOSE, with bounded clock skew). Anonymous requests map to the wildcard subject: whatever
 the policy grants `*`. Identity travels on the request context, never in a thread-local.
 

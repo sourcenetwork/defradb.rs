@@ -23,11 +23,11 @@ What must never happen:
   * two different endings are reported as the same one, so that a caller
     cannot tell a stopped node from a busy or a slow one.
 
-Rust owner: `within` in `crates/vera-embedded/src/call.rs`, `bounded` in
-`crates/vera-embedded/src/deadline.rs`, `client_error` in
-`crates/vera-embedded/src/submission.rs` and `transport_error` in
-`crates/vera-embedded/src/acp.rs`. The retry rule they feed is
-`ClientError::retryable` in `crates/vera/src/vera_rs/client.rs`.
+Rust owner: `within` in `crates/engine/vera-embedded/src/call.rs`, `bounded` in
+`crates/engine/vera-embedded/src/deadline.rs`, `client_error` in
+`crates/engine/vera-embedded/src/submission.rs` and `transport_error` in
+`crates/engine/vera-embedded/src/acp.rs`. The retry rule they feed is
+`ClientError::retryable` in `crates/engine/vera/src/vera_rs/client.rs`.
 
 The model is over the outcome of a call. That the node's method table gives
 the answers its network server gives is vera.rs's own property, assumed here.

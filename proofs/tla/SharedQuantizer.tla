@@ -55,7 +55,7 @@
 \*   MC_SharedQuantizer_Red_OneSlot: the node keeps one quantizer, so writers
 \*     on the two sides of a rebuild evict each other's and build again.
 \*
-\* Correspondence with the Rust code (crates/db/src/index/vector/engine/
+\* Correspondence with the Rust code (crates/database/db/src/index/vector/engine/
 \* diskann/):
 \*   committed      the trained record and codebooks a snapshot reads: codec.rs
 \*                  Trained (its `training` field), encode_trained,

@@ -20,14 +20,14 @@ equal deltas give equal IDs, different deltas give different IDs. So the model's
 identity is the delta itself.
 
 Rust anchors:
-* `crates/schema/src/cid.rs` `build_collection_delta`: sorts the settings by field
+* `crates/foundation/schema/src/cid.rs` `build_collection_delta`: sorts the settings by field
   name and puts them in the delta. Modeled by `build`.
-* `crates/query/src/sdl_parse/chunk.rs` `synthesize_chunk_types`: records the
+* `crates/engine/query/src/sdl_parse/chunk.rs` `synthesize_chunk_types`: records the
   settings before IDs are computed. The bug it replaced is modeled by `buggyId`.
-* `crates/db/src/merge/merge_handler/definition.rs` `process_collection_definition_delta`:
+* `crates/database/db/src/merge/merge_handler/definition.rs` `process_collection_definition_delta`:
   a peer reads the settings back from the delta. Modeled by `restore`.
-* `crates/defra-core/src/block_delta.rs` `ChunkedFieldDelta` (serde) and
-  `crates/defra-core/src/ipld/to_ipld.rs`, `from_ipld.rs` for `ChunkedFieldDelta`:
+* `crates/foundation/defra-core/src/block_delta.rs` `ChunkedFieldDelta` (serde) and
+  `crates/foundation/defra-core/src/ipld/to_ipld.rs`, `from_ipld.rs` for `ChunkedFieldDelta`:
   the splitter version is left out of the bytes at `DEFAULT_SPLITTER_VERSION` and
   read back as it when missing. Modeled by `encode` and `decode`.
 

@@ -18,14 +18,14 @@
 \*   - an ingest gives up because another ingest owns a block it already held;
 \*   - an ingest finishes and one of its blocks is neither stored nor swept.
 \*
-\* Rust: crates/p2p/src/sync/coordinator/event_handler/car.rs
+\* Rust: crates/database/p2p/src/sync/coordinator/event_handler/car.rs
 \* handle_car_fetch_response_inner and drop_held_blocks (drop held, read with
 \* one has_many snapshot, then own, then put_many);
-\* crates/p2p/src/sync/manager/process/mod.rs
+\* crates/database/p2p/src/sync/manager/process/mod.rs
 \* try_acquire_car_storage_owners (all-or-nothing owners, StorageContended on
-\* any taken one); crates/storage/src/stores/blockstore.rs BlockWritesAttempt
+\* any taken one); crates/engine/storage/src/stores/blockstore.rs BlockWritesAttempt
 \* (a put of a stored block writes nothing; MarkMerged deletes the mark);
-\* crates/db/src/merge/merge_handler/field_ops.rs
+\* crates/database/db/src/merge/merge_handler/field_ops.rs
 \* best_effort_finalize_linked_field_blocks (merge marks blocks merged without
 \* an ingest owner).
 EXTENDS Naturals, FiniteSets

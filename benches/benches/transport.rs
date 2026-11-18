@@ -12,7 +12,7 @@
 //!    production middleware stack (CORS, trace, timeout, concurrency limit,
 //!    body limit, auth). The deltas attribute cost to each layer.
 //!
-//! 2. **What does the pinned hop cost?** `crates/http/src/query_context.rs`
+//! 2. **What does the pinned hop cost?** `crates/surfaces/http/src/query_context.rs`
 //!    takes a fast path that awaits the executor directly when no signing
 //!    config and no NAC are configured, and otherwise hops the request onto
 //!    one thread of the network runtime (`Edge::spawn_pinned`) so that

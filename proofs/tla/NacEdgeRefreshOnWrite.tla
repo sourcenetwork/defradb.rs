@@ -22,14 +22,14 @@
 \*      touched no NAC tuple. (INV_NoRebuildWithoutNacWrite)
 \*
 \* The Rust code this models:
-\*   - a NAC tuple write marks it       crates/acp/src/zanzibar/store/transaction.rs
+\*   - a NAC tuple write marks it       crates/engine/acp/src/zanzibar/store/transaction.rs
 \*                                       TransactionZanzibarStore::written;
-\*                                       crates/datastore/src/multistore.rs
+\*                                       crates/engine/datastore/src/multistore.rs
 \*                                       NamespaceView::node_access_written
-\*   - what the mark registers          crates/db/src/nac/edge.rs EdgeRefreshOwed::written,
+\*   - what the mark registers          crates/database/db/src/nac/edge.rs EdgeRefreshOwed::written,
 \*                                       NacManager::refresh_edge_on_commit (OnCommit::Async)
-\*   - the hook on every db transaction crates/db/src/database/mod.rs DB::new_db_txn
-\*   - savepoints drop registrations    crates/storage/src/corekv/callbacks.rs TxnCallbacks::mark,
+\*   - the hook on every db transaction crates/database/db/src/database/mod.rs DB::new_db_txn
+\*   - savepoints drop registrations    crates/engine/storage/src/corekv/callbacks.rs TxnCallbacks::mark,
 \*                                       TxnCallbacks::truncate
 EXTENDS Naturals, Sequences, FiniteSets
 

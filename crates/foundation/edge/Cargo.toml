@@ -1,0 +1,46 @@
+[package]
+name = "edge"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The network runtime: one runtime for I/O and networking behind a narrow handle"
+
+[lib]
+bench = false
+
+[features]
+# `edge::testing::edge()`: one runtime a test binary's tests share.
+testing = []
+
+[dependencies]
+defra-core = { path = "../../foundation/defra-core" }
+# regolith::sync: the gate's drain and closing signals, the owner's stop request.
+regolith = { workspace = true }
+# The worker pool whose stuck-poll monitor runs on the edge's timer.
+workers = { path = "../../foundation/workers" }
+# `catch_unwind` and `or` on futures, on every target.
+futures-lite.workspace = true
+# The ready queue of a `TaskSet`.
+futures.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# The one runtime.
+nuclei.workspace = true
+# The way into a library that needs a tokio runtime (`compat`).
+async-compat.workspace = true
+# The runtime `compat` enters, owned by the edge on its cores.
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "net", "time"] }
+# libp2p's timer thread, started on the edge's cores.
+futures-timer = "3"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# Tasks and timers on the browser's event loop.
+n0-future.workspace = true
+
+[lints]
+workspace = true

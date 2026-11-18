@@ -36,20 +36,20 @@
 \* of work, and a turn that leaves work asks again as before.
 \*
 \* Code it models:
-\*   crates/db/src/index/deferred/task.rs     drain_pass (turns, kept failures,
+\*   crates/database/db/src/index/deferred/task.rs     drain_pass (turns, kept failures,
 \*                                            documents left to the sweep, the
 \*                                            plan size kept per index),
 \*                                            next_wake (the fixed sweep deadline,
 \*                                            a due sweep first), the settle at open
-\*   crates/db/src/index/deferred/requests.rs DrainRequests::request, defer, take
+\*   crates/database/db/src/index/deferred/requests.rs DrainRequests::request, defer, take
 \*                                            (a set of indexes: queue below)
-\*   crates/db/src/index/manager/deferred.rs  IndexManager::owe (the first owe of
+\*   crates/database/db/src/index/manager/deferred.rs  IndexManager::owe (the first owe of
 \*                                            an index asks on commit; the note is
 \*                                            the manager's, built per attempt)
-\*   crates/db/src/write/autocommit/create.rs, delete.rs  the batch: one manager
+\*   crates/database/db/src/write/autocommit/create.rs, delete.rs  the batch: one manager
 \*                                            per attempt, many documents
-\*   crates/db/src/collection/ops/purge.rs    purge_documents (asks like any write)
-\*   crates/db/src/definition/migration/helpers.rs cache_migrated_document_with_indexes
+\*   crates/database/db/src/collection/ops/purge.rs    purge_documents (asks like any write)
+\*   crates/database/db/src/definition/migration/helpers.rs cache_migrated_document_with_indexes
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS

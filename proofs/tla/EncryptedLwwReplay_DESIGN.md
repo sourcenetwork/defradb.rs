@@ -10,11 +10,11 @@ including across a receiver restart.
 
 | Fact | Source | Model consequence |
 |---|---|---|
-| Filtered replay pushes composite heads, and pending-DAG completion fetches their linked encrypted LWW blocks so merge triggers DEK resolution. | `crates/db/src/merge/push_docs.rs`, `crates/p2p/src/sync/coordinator/selective_car_access.rs`, `crates/db/src/merge/merge_handler/composite_fields.rs` | `DeliverComposite` records the link and durable retry before acknowledgement; `FetchCiphertext` models the later child fetch. The red mode omits the link and violates `INV_NoFilteredLoss`. |
-| Only `AccessDenied` is a terminal encrypted-field skip. `KeyUnavailable` and other transient KMS errors abort the merge transaction. | `crates/db/src/merge/merge_handler/composite_fields.rs`, `crates/db/src/merge/merge_handler/mod.rs` | `KmsFailureMode="Retry"` retains the pending merge; the red terminal mode retires it. |
-| Push-originated pending-DAG registrations are persisted before success acknowledgement and removed only after merge or quarantine. | `crates/p2p/src/sync/pending_store/mod.rs`, `crates/p2p/src/sync/manager/process/pending_dag.rs` | `PendingMode="Durable"` restores the retry obligation after a crash. |
-| A verified remotely fetched encryption block is stored before its key is returned to the merge. | `crates/kms/src/defra_kms.rs` | `keyAvailable` survives `Crash`; an in-flight request or envelope does not. |
-| LWW selects the greatest version independent of delivery order. | `crates/crdt/src/field/lww.rs` | `MergeMode="Lww"` preserves `LocalVersion`; arrival-wins is the red policy. |
+| Filtered replay pushes composite heads, and pending-DAG completion fetches their linked encrypted LWW blocks so merge triggers DEK resolution. | `crates/database/db/src/merge/push_docs.rs`, `crates/database/p2p/src/sync/coordinator/selective_car_access.rs`, `crates/database/db/src/merge/merge_handler/composite_fields.rs` | `DeliverComposite` records the link and durable retry before acknowledgement; `FetchCiphertext` models the later child fetch. The red mode omits the link and violates `INV_NoFilteredLoss`. |
+| Only `AccessDenied` is a terminal encrypted-field skip. `KeyUnavailable` and other transient KMS errors abort the merge transaction. | `crates/database/db/src/merge/merge_handler/composite_fields.rs`, `crates/database/db/src/merge/merge_handler/mod.rs` | `KmsFailureMode="Retry"` retains the pending merge; the red terminal mode retires it. |
+| Push-originated pending-DAG registrations are persisted before success acknowledgement and removed only after merge or quarantine. | `crates/database/p2p/src/sync/pending_store/mod.rs`, `crates/database/p2p/src/sync/manager/process/pending_dag.rs` | `PendingMode="Durable"` restores the retry obligation after a crash. |
+| A verified remotely fetched encryption block is stored before its key is returned to the merge. | `crates/database/kms/src/defra_kms.rs` | `keyAvailable` survives `Crash`; an in-flight request or envelope does not. |
+| LWW selects the greatest version independent of delivery order. | `crates/building-blocks/crdt/src/field/lww.rs` | `MergeMode="Lww"` preserves `LocalVersion`; arrival-wins is the red policy. |
 
 ## Properties
 

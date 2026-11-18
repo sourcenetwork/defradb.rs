@@ -1,4 +1,4 @@
-# Survey: `crates/p2p-adapter` (defra-p2p-adapter)
+# Survey: `crates/surfaces/p2p-adapter` (defra-p2p-adapter)
 
 ## Purpose
 Owns the P2P operation surface every edge calls (`P2POperations` and `peer`, `src/operations.rs` and `src/peer.rs`) and implements it

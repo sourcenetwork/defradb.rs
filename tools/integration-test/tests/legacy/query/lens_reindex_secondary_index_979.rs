@@ -4,7 +4,7 @@
 //! Originally written to probe whether Go DefraDB issue #4736 reproduces in
 //! Rust (defradb.rs#979). It does not — the *incremental* lens mode that #4736
 //! requires is not implemented in Rust, and the index/lens interaction here is
-//! kept consistent by the owed reindex in `crates/db/src/definition/migration/reindex/`.
+//! kept consistent by the owed reindex in `crates/database/db/src/definition/migration/reindex/`.
 //! The tests pin that behavior across
 //! single-field, composite, and multi-document scenarios.
 
