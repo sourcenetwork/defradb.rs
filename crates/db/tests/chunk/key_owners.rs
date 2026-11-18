@@ -233,3 +233,81 @@ fn a_mixed_list_keeps_plain_documents_and_maps_chunks_to_their_parents() {
     })
     .unwrap()
 }
+
+/// Points `doc_id` at a collection root the cache doesn't hold, keeping its stored blocks.
+async fn uncache_collection(db: &DB<RegolithStore>, doc_id: &str) {
+    let txn = db.new_txn(false).await.unwrap();
+    let systemstore = txn.systemstore().unwrap();
+    let doc_ref = db::docid::map::get_doc_ref(&systemstore, doc_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let unknown_root = u32::MAX;
+    assert!(db.find_collection_by_root_id(unknown_root).is_none());
+    db::docid::map::set_doc_id_mapping(&systemstore, unknown_root, doc_ref.doc_short_id, doc_id)
+        .await
+        .unwrap();
+    drop(systemstore);
+    txn.commit().await.unwrap();
+}
+
+#[test]
+fn a_stored_plain_document_the_cache_misses_owns_itself() {
+    workers::block_on(async {
+        let db = chunked_db().await;
+        let note = create(&db, "Note", r#"{"title": "n"}"#).await;
+        uncache_collection(&db, &note).await;
+
+        assert_eq!(read_owners(&db, vec![note.clone()]).await, vec![note]);
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_stored_chunk_the_cache_misses_has_no_owner() {
+    workers::block_on(async {
+        let db = chunked_db().await;
+        let parent = create(&db, "Article", r#"{"body": "x"}"#).await;
+        let chunks_col = db.get_collection("Article__body_chunk").unwrap().unwrap();
+        let chunk = Document::from_json_str(
+            &format!(
+                r#"{{"_sourceID": "{parent}", "text": "t", "hash": "{}"}}"#,
+                text_hash("t")
+            ),
+            chunks_col.schema().clone(),
+        )
+        .unwrap();
+        let txn = db.new_txn(false).await.unwrap();
+        let systemstore = txn.systemstore().unwrap();
+        let short_id = db::docid::map::next_doc_short_id(&systemstore)
+            .await
+            .unwrap();
+        let created = db::block::builder::write_document_blocks(
+            &txn.blockstore().unwrap(),
+            &txn.headstore().unwrap(),
+            &chunk,
+            chunks_col.schema(),
+            db::block::builder::DocRef::new(chunks_col.resolved_root_id(), short_id),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        db::docid::map::set_doc_id_mapping(
+            &systemstore,
+            chunks_col.resolved_root_id(),
+            short_id,
+            &created.doc_id,
+        )
+        .await
+        .unwrap();
+        drop(systemstore);
+        txn.commit().await.unwrap();
+        uncache_collection(&db, &created.doc_id).await;
+
+        assert!(read_owners(&db, vec![created.doc_id]).await.is_empty());
+    })
+    .unwrap()
+}
