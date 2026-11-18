@@ -234,6 +234,11 @@ impl RequestContext {
     /// administrator). Every context derived from it stays denied. An
     /// embedder sets it on a request it signs as an identity that must not
     /// read past document access control.
+    ///
+    /// The denial is per request, not per transaction: a transaction keeps
+    /// no context of its own, so beginning one with a denied context denies
+    /// nothing to the requests later run in it. Deny the context of every
+    /// request that joins the transaction.
     #[must_use]
     pub fn with_dac_bypass_denied(mut self) -> Self {
         Arc::make_mut(&mut self.0).dac_bypass = DacBypass::Denied;

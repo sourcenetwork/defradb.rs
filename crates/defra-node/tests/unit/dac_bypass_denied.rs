@@ -106,35 +106,35 @@ async fn reads(node: &Node, context: &RequestContext, doc: &str, cid: &str) -> [
     [query, commits, count, subscribed]
 }
 
-/// How many documents `context` changed by a filtered update and a delete.
+/// How many documents `context` changed by a filtered update and a delete,
+/// each of which must answer without errors.
 async fn writes(node: &Node, context: &RequestContext, doc: &str) -> (usize, usize) {
-    let updated = node
-        .execute_request_as(
-            context,
-            QueryRequest::new(
-                "mutation { update_Record(filter: {}, input: {pending: false}) { _docID } }",
-            ),
-        )
-        .await
-        .unwrap();
-    let updated = updated
-        .data
-        .as_ref()
-        .map_or(0, |d| rows(d, "update_Record"));
-    let deleted = node
-        .execute_request_as(
-            context,
-            QueryRequest::new(format!(
-                "mutation {{ delete_Record(docID: \"{doc}\") {{ _docID }} }}"
-            )),
-        )
-        .await
-        .unwrap();
-    let deleted = deleted
-        .data
-        .as_ref()
-        .map_or(0, |d| rows(d, "delete_Record"));
-    (updated, deleted)
+    let updated = run(
+        node,
+        context,
+        "mutation { update_Record(filter: {}, input: {pending: false}) { _docID } }",
+    )
+    .await;
+    let deleted = run(
+        node,
+        context,
+        &format!("mutation {{ delete_Record(docID: \"{doc}\") {{ _docID }} }}"),
+    )
+    .await;
+    (
+        rows(&updated, "update_Record"),
+        rows(&deleted, "delete_Record"),
+    )
+}
+
+/// What `context` is told by an executed explain of a query over `Record`.
+async fn explain(node: &Node, context: &RequestContext) -> Value {
+    run(
+        node,
+        context,
+        "query @explain(type: execute) { Record { pending } }",
+    )
+    .await
 }
 
 #[test]
@@ -171,6 +171,53 @@ fn an_administrator_without_the_denial_keeps_the_bypass() {
         let [query, commits, ..] = reads(&node, &actor(ADMIN), &doc, &cid).await;
         assert_eq!(query, 1);
         assert!(commits >= 1);
+        node.shutdown().await.unwrap();
+    })
+    .unwrap();
+}
+
+/// An executed explain reports plan statistics, never documents, so the
+/// denial answers it without error and exactly as it answers the bypass.
+#[test]
+fn an_explain_is_answered_alike_with_or_without_the_denial() {
+    workers::block_on(async {
+        let (node, _, _) = fixture().await;
+        assert_eq!(
+            explain(&node, &denied(ADMIN)).await,
+            explain(&node, &actor(ADMIN)).await
+        );
+        node.shutdown().await.unwrap();
+    })
+    .unwrap();
+}
+
+/// The denial is per request: a transaction keeps no context, so a request
+/// run in a transaction begun with a denied context keeps its own bypass.
+#[test]
+fn the_denial_is_not_carried_by_the_transaction_it_began() {
+    workers::block_on(async {
+        let (node, _, _) = fixture().await;
+        let handle = node
+            .runner()
+            .begin_txn_as(&denied(ADMIN), true)
+            .await
+            .unwrap();
+        let txn = Some(handle.as_str().parse().unwrap());
+
+        let read = run(
+            &node,
+            &denied(ADMIN).with_txn(txn),
+            "{ Record { pending } }",
+        )
+        .await;
+        assert_eq!(rows(&read, "Record"), 0);
+        let read = run(&node, &actor(ADMIN).with_txn(txn), "{ Record { pending } }").await;
+        assert_eq!(rows(&read, "Record"), 1);
+
+        node.runner()
+            .discard_txn_as(&actor(ADMIN), &handle)
+            .await
+            .unwrap();
         node.shutdown().await.unwrap();
     })
     .unwrap();
