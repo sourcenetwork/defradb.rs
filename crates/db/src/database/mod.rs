@@ -764,6 +764,9 @@ impl<S: Store> DB<S> {
             return Ok(());
         };
         let context = defra_core::RequestContext::default();
+        let node_context = context
+            .clone()
+            .with_identity(self.node_did().map(|did| did.to_string()));
         let inputs = query::prepared::PreparedInputMemo::default();
         loop {
             let txn = self.new_txn(false).await?;
@@ -785,7 +788,10 @@ impl<S: Store> DB<S> {
                     inputs
                         .answer_wave(&request, |wave| {
                             crate::write::prepare::resolve_inputs_with_projection(
-                                self, &context, &inputs, wave,
+                                self,
+                                &node_context,
+                                &inputs,
+                                wave,
                             )
                         })
                         .await
