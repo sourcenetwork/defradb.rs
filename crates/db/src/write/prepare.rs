@@ -7,6 +7,20 @@ use storage::corekv::Store;
 use crate::{block::builder::DocRef, database::DB};
 use defra_core::encryption::EncryptionConfig;
 
+#[derive(serde::Deserialize)]
+struct PreparedProjectionStage(
+    String,
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    String,
+    acp::OwedSubject,
+    acp::OwedOp,
+    Vec<String>,
+);
+
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case")]
 pub(crate) enum PreparedKmsOperation {
@@ -450,21 +464,23 @@ where
             ordinary.push(request);
             continue;
         }
-        let (actor, _, policy, resource, object, bearer, relation, subject, op, managers): (
-            String,
-            String,
-            String,
-            String,
-            String,
-            Option<String>,
-            String,
-            acp::OwedSubject,
-            acp::OwedOp,
-            Vec<String>,
+        let PreparedProjectionStage(
+            actor,
+            operation,
+            policy,
+            resource,
+            object,
+            bearer,
+            relation,
+            subject,
+            op,
+            managers,
         ) = serde_json::from_slice(request.exact_request()).map_err(|_| {
             query::error::QueryError::execution("invalid prepared projection relationship")
         })?;
-        if context.identity() != Some(actor.as_str()) || context.bearer_token_for(&actor) != bearer
+        if operation != "stage"
+            || context.identity() != Some(actor.as_str())
+            || context.bearer_token_for(&actor) != bearer
         {
             return Err(query::error::QueryError::permission_denied(
                 "projection authority does not match the acting identity",
