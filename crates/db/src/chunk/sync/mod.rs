@@ -25,7 +25,7 @@ use crate::chunk::list::{chunk_list, distinct};
 use crate::chunk::split::split;
 use crate::collection::Collection;
 use crate::database::DB;
-use crate::event::emission::TxnBroadcaster;
+use crate::event::emission::{FollowedParent, TxnBroadcaster};
 use crate::index::IndexManager;
 use crate::txn::DbTxn;
 
@@ -112,6 +112,7 @@ where
     pub(crate) context: &'a RequestContext,
     pub(crate) prepared_inputs: Option<&'a PreparedInputMemo>,
     pub(crate) broadcaster: Option<&'a Arc<dyn TxnBroadcaster>>,
+    pub(crate) follows: Option<FollowedParent>,
 }
 
 struct ChunkCollection {
@@ -126,6 +127,12 @@ impl<S> ChunkWrites<'_, S>
 where
     S: Store + 'static,
 {
+    /// A filtered replicator decides each chunk by `parent`. A chunk has none of its fields.
+    pub(crate) fn following(mut self, parent: FollowedParent) -> Self {
+        self.follows = Some(parent);
+        self
+    }
+
     /// Creates the chunk documents in `plans` that don't exist yet. An existing
     /// chunk is never rewritten, since the same hash means the same content.
     /// A new parent can have some already: they may arrive by P2P before it.

@@ -42,6 +42,7 @@ use self::heads::{register_committed_heads, CommittedHead, DecidedBy};
 use crate::block::builder::{build_blocks_from_document, BlockResult};
 use crate::block::reader::read_latest_composite_block;
 use crate::database::DB;
+use crate::event::emission::FollowedParent;
 use crate::write::autocommit::AutoCommitMutator;
 
 /// The roots one document's gossip announces: its composite block, and the
@@ -68,15 +69,14 @@ fn gossip_roots(
     .collect()
 }
 
-// A chunk document that does not encode is pushed without it.
-fn derived_document_json(write: &query::mutator::DerivedWrite) -> Option<serde_json::Value> {
-    match write.document.as_ref().map(|document| document.to_map()) {
-        Some(Ok(map)) => Some(serde_json::Value::Object(map.into_iter().collect())),
-        Some(Err(error)) => {
-            tracing::warn!(doc_id = %write.doc_id, %error, "chunk document did not encode; pushed without it");
-            None
-        }
-        None => None,
+// The parent's fields as a filtered replicator matches them.
+fn followed(collection_id: &str, document: &Document) -> FollowedParent {
+    FollowedParent {
+        collection_id: collection_id.to_string(),
+        document: document
+            .to_map()
+            .ok()
+            .map(|map| serde_json::Value::Object(map.into_iter().collect())),
     }
 }
 
@@ -327,11 +327,19 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> BroadcastMuta
         heads::joined(register_committed_heads(&self.sync, heads).await)
     }
 
-    /// The heads of a write's derived writes.
-    fn derived_heads(
+    /// The heads of a write's derived writes, each decided by `parent`.
+    fn derived_heads<F>(
         context: &RequestContext,
         derived: &[query::mutator::DerivedWrite],
-    ) -> Vec<CommittedHead> {
+        parent: F,
+    ) -> Vec<CommittedHead>
+    where
+        F: FnOnce() -> FollowedParent,
+    {
+        if derived.is_empty() {
+            return Vec::new();
+        }
+        let parent = parent();
         derived
             .iter()
             .map(|write| CommittedHead {
@@ -340,7 +348,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> BroadcastMuta
                 doc_id: write.doc_id.to_string(),
                 collection_id: write.collection_id.clone(),
                 creator: context.creator().map(str::to_owned),
-                decided_by: DecidedBy::Own(derived_document_json(write)),
+                decided_by: DecidedBy::Parent(parent.clone()),
             })
             .collect()
     }
@@ -409,13 +417,15 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> BroadcastMuta
         se_fields: Vec<String>,
         result: UpdateResult,
     ) -> query::error::Result<UpdateResult> {
-        let derived_heads = Self::derived_heads(context, &result.derived);
         let collection = self
             .db
             .get_collection(collection_name)
             .map_err(|e| query::error::QueryError::execution(e.to_string()))?
             .ok_or_else(|| query::error::QueryError::collection_not_found(collection_name))?;
         let collection_id = collection.collection_id().to_string();
+        let derived_heads = Self::derived_heads(context, &result.derived, || {
+            followed(&collection_id, &result.document)
+        });
 
         let doc_id_for_broadcast = result
             .document
@@ -731,7 +741,9 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
 
         // Execute the create mutation
         let result = self.inner.create_as(context, collection_name, doc).await?;
-        let derived_heads = Self::derived_heads(context, &result.derived);
+        let derived_heads = Self::derived_heads(context, &result.derived, || {
+            followed(&collection_id, &result.document)
+        });
 
         // Build the block result for broadcast
         let (cid, block, doc_id_str) =
@@ -914,7 +926,9 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
         let mut derived_heads = Vec::new();
         let mut derived_writes = Vec::new();
         for result in &results {
-            derived_heads.extend(Self::derived_heads(context, &result.derived));
+            derived_heads.extend(Self::derived_heads(context, &result.derived, || {
+                followed(&collection_id, &result.document)
+            }));
             derived_writes.extend(result.derived.iter().cloned());
         }
 
@@ -1246,7 +1260,10 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
             .inner
             .delete_as(context, collection_name, doc_id)
             .await?;
-        let derived_heads = Self::derived_heads(context, &result.derived);
+        let derived_heads = Self::derived_heads(context, &result.derived, || FollowedParent {
+            collection_id: collection_id.clone(),
+            document: pre_delete_document_json.clone(),
+        });
 
         // No-op delete (missing doc): the inner mutator wrote nothing, so
         // there's no tombstone block to read or broadcast. Returning here
