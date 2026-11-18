@@ -299,8 +299,10 @@ jobs:
         uses: actions/setup-go@v7
         with:
           # The pinned GO_COMPAT_COMMIT declares `go 1.26.10`, so an older
-          # toolchain cannot build it.
-          go-version: '1.26'
+          # toolchain cannot build it. Held at 1.26.10: Go 1.26.11 refuses the
+          # LTO section in wasmtime-go's prebuilt libwasmtime.a (golang/go#83126,
+          # bytecodealliance/wasmtime-go#299). Tracked in #3060.
+          go-version: '1.26.10'
       - name: Prepare Go DefraDB binary
         id: prepare
         run: |
