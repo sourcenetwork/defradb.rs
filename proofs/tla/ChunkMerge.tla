@@ -21,11 +21,11 @@
 \* A peer may delete the article. That delete also deletes every chunk it
 \* stores, and each chunk delete travels on its own, so a chunk delete can reach
 \* a peer before the article's delete. A peer can also send a chunk delete no
-\* article delete made, even for a chunk the receiver does not store yet. A
-\* chunk delete waits until the chunk is stored here, so its article can be
-\* read off it. Then it waits while the article here is live or has not
-\* arrived, and merges once the article is gone. A chunk the text does not use
-\* now may be used again by a later edit, so it waits too.
+\* article delete made. A delete names its chunk only through the chunk's first
+\* block, so it can't merge on a peer before that block has merged there. It
+\* waits while the article here is live or has not arrived, and merges once
+\* the article is gone. A chunk the text does not use now may be used again by
+\* a later edit, so it waits too.
 \*
 \* What must never happen:
 \*   - a reader shows a chunk that is not part of the current text (INV_ReadsMatchText);
@@ -43,7 +43,9 @@
 \*   crates/crdt/src/field/lww.rs            merge (the per-field tie break)
 \*   crates/db/src/chunk/guard.rs            check_chunk_merge
 \*   crates/db/src/merge/merge_handler/composite_persist.rs  the guard's call on a chunk merge
-\*   crates/db/src/chunk/peer_delete.rs      delete_must_wait (a chunk delete waits for its chunk, then its article)
+\*   crates/db/src/chunk/peer_delete.rs      delete_must_wait (a chunk delete waits for its article)
+\*   crates/db/src/merge/merge_handler/doc_identity.rs  resolve_composite_doc_id_in_txn (a delete needs its chunk's first block)
+\*   crates/db/src/merge/merge_handler/composite.rs     process_composite_delta_locked (older blocks merge first)
 \* The deleted-parent guard, the read-time hash check and races with a reader are
 \* ChunkRead.tla's. An encrypted chunk's hash can't be checked at merge, so that
 \* case is not modelled here.
@@ -58,7 +60,7 @@ CONSTANTS
   Immutable,   \* TRUE: the merge refuses any change to a chunk that is already stored (the fix)
   Deletes,     \* TRUE: the article and its chunks can be deleted (kept off where a model would be too big)
   DeleteRule,  \* how a chunk delete is judged: "wait" (the fix), "listed", "none" or "refuse"
-  WaitForChunk \* TRUE: a delete of a chunk not stored here waits for the chunk (the fix)
+  GenesisFirst \* TRUE: a chunk delete merges only after the chunk's first block (the fix)
 
 \* Each peer edits at least once.
 ASSUME MaxEdits \in Nat \ {0}
@@ -71,8 +73,8 @@ ASSUME Deletes \in BOOLEAN
 \* "listed" waits only for a chunk the text uses now, "none" merges every chunk
 \* delete, and "refuse" refuses a blocked one for good.
 ASSUME DeleteRule \in {"wait", "listed", "none", "refuse"}
-\* Waiting for the chunk is on or off.
-ASSUME WaitForChunk \in BOOLEAN
+\* Needing the chunk's first block is on or off.
+ASSUME GenesisFirst \in BOOLEAN
 
 \* The texts an edit may write.
 Texts == {"t1", "t2", "t3"}
@@ -246,11 +248,11 @@ ReceiveChunkDelete(p) ==
               /\ UNCHANGED refused                              \* nothing refused
       /\ UNCHANGED <<made, known, chunks, count, forged, changed, dead, chunkDels>>  \* nothing else changes
 
-\* A delete of chunk c reaches peer p before c does. The delete can't name c's
-\* article, so with the fix it waits; the bug merges it with no article check.
+\* A delete of chunk c reaches peer p before c does. With the fix it can't name
+\* c yet, so it does not merge; the bug merges it with no article check.
 ReceiveUnstoredChunkDelete(p) ==
   /\ Deletes                                                   \* deletes are modelled
-  /\ ~WaitForChunk                                             \* only when the delete does not wait for its chunk
+  /\ ~GenesisFirst                                             \* only when a delete can merge before its chunk
   /\ \E c \in AllChunks \ (chunks[p] \cup gone[p] \cup refused[p]) : \* a chunk p does not store
        gone' = [gone EXCEPT ![p] = @ \cup {c}]                  \* is marked deleted on p
   /\ UNCHANGED <<made, known, chunks, count, forged, changed, dead, chunkDels, refused>>  \* nothing else changes
