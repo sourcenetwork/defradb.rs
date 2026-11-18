@@ -10,10 +10,8 @@
 \* broken by comparing the two values. The text and the list compare different
 \* bytes, so a tie can keep one peer's text and the other peer's list.
 \*
-\* A reader shows the chunks of the current text. Entry 0 of the list is the
-\* hash of the text the list was cut from. The code always cuts the current text
-\* itself; the model's reader cuts it when entry 0 names other text, which shows
-\* the same chunks for the honest lists here and why a list can't be trusted.
+\* A reader shows the chunks of the current text: it cuts the text itself and
+\* never trusts the list, because the list can come from another edit.
 \*
 \* A peer can also send a chunk document that lies. One lie is a chunk whose
 \* hash is not the hash of its text. Another is a new version of a chunk the
@@ -23,9 +21,11 @@
 \* A peer may delete the article. That delete also deletes every chunk it
 \* stores, and each chunk delete travels on its own, so a chunk delete can reach
 \* a peer before the article's delete. A peer can also send a chunk delete no
-\* article delete made. A chunk delete waits while the article here is live or
-\* has not arrived, and merges once the article is gone. A chunk the text does
-\* not use now may be used again by a later edit, so it waits too.
+\* article delete made, even for a chunk the receiver does not store yet. A
+\* chunk delete waits until the chunk is stored here, so its article can be
+\* read off it. Then it waits while the article here is live or has not
+\* arrived, and merges once the article is gone. A chunk the text does not use
+\* now may be used again by a later edit, so it waits too.
 \*
 \* What must never happen:
 \*   - a reader shows a chunk that is not part of the current text (INV_ReadsMatchText);
@@ -39,11 +39,11 @@
 \*
 \* Code it models:
 \*   crates/query/src/plan/chunk_parent.rs  parent_hashes (the read rule: cut the text)
-\*   crates/chunk-split/src/list.rs          chunk_list (entry 0)
+\*   crates/chunk-split/src/list.rs          chunk_list (the list a RED reader trusts)
 \*   crates/crdt/src/field/lww.rs            merge (the per-field tie break)
 \*   crates/db/src/chunk/guard.rs            check_chunk_merge
 \*   crates/db/src/merge/merge_handler/composite_persist.rs  the guard's call on a chunk merge
-\*   crates/db/src/chunk/peer_delete.rs      delete_must_wait (a chunk delete waits for its article)
+\*   crates/db/src/chunk/peer_delete.rs      delete_must_wait (a chunk delete waits for its chunk, then its article)
 \* The deleted-parent guard, the read-time hash check and races with a reader are
 \* ChunkRead.tla's. An encrypted chunk's hash can't be checked at merge, so that
 \* case is not modelled here.
@@ -53,16 +53,17 @@ EXTENDS Naturals, FiniteSets
 CONSTANTS
   Peers,       \* the two peers, for example {p1, p2}
   MaxEdits,    \* how many edits each peer makes, at most
-  CheckEntry0, \* TRUE: a reader checks entry 0 against the text (the fix)
+  CutText,     \* TRUE: a reader cuts the current text and ignores the list (the fix)
   CheckHash,   \* TRUE: the merge refuses a chunk whose hash does not match its text (the fix)
   Immutable,   \* TRUE: the merge refuses any change to a chunk that is already stored (the fix)
   Deletes,     \* TRUE: the article and its chunks can be deleted (kept off where a model would be too big)
-  DeleteRule   \* how a chunk delete is judged: "wait" (the fix), "listed", "none" or "refuse"
+  DeleteRule,  \* how a chunk delete is judged: "wait" (the fix), "listed", "none" or "refuse"
+  WaitForChunk \* TRUE: a delete of a chunk not stored here waits for the chunk (the fix)
 
 \* Each peer edits at least once.
 ASSUME MaxEdits \in Nat \ {0}
 \* The switches are yes-or-no.
-ASSUME CheckEntry0 \in BOOLEAN
+ASSUME CutText \in BOOLEAN
 ASSUME CheckHash \in BOOLEAN
 ASSUME Immutable \in BOOLEAN
 \* Deletes are on or off.
@@ -70,6 +71,8 @@ ASSUME Deletes \in BOOLEAN
 \* "listed" waits only for a chunk the text uses now, "none" merges every chunk
 \* delete, and "refuse" refuses a blocked one for good.
 ASSUME DeleteRule \in {"wait", "listed", "none", "refuse"}
+\* Waiting for the chunk is on or off.
+ASSUME WaitForChunk \in BOOLEAN
 
 \* The texts an edit may write.
 Texts == {"t1", "t2", "t3"}
@@ -122,11 +125,10 @@ ListTextOn(p) == Winner(known[p], ListRank).text
 
 \* The chunks the read rule allows on peer p.
 Allowed(p) ==
-  \* With the fix, a list cut from other text is not trusted.
-  IF CheckEntry0 /\ ListTextOn(p) # TextOn(p)
-  \* Entry 0 names other text: cut the current text instead.
+  IF CutText
+  \* The fix: cut the text peer p holds.
   THEN ChunksOf(TextOn(p))
-  \* Otherwise trust the list.
+  \* The bug: trust the list, which may come from another edit.
   ELSE ChunksOf(ListTextOn(p))
 
 \* The chunks a reader on peer p sees: allowed, stored there and not deleted.
@@ -244,6 +246,15 @@ ReceiveChunkDelete(p) ==
               /\ UNCHANGED refused                              \* nothing refused
       /\ UNCHANGED <<made, known, chunks, count, forged, changed, dead, chunkDels>>  \* nothing else changes
 
+\* A delete of chunk c reaches peer p before c does. The delete can't name c's
+\* article, so with the fix it waits; the bug merges it with no article check.
+ReceiveUnstoredChunkDelete(p) ==
+  /\ Deletes                                                   \* deletes are modelled
+  /\ ~WaitForChunk                                             \* only when the delete does not wait for its chunk
+  /\ \E c \in AllChunks \ (chunks[p] \cup gone[p] \cup refused[p]) : \* a chunk p does not store
+       gone' = [gone EXCEPT ![p] = @ \cup {c}]                  \* is marked deleted on p
+  /\ UNCHANGED <<made, known, chunks, count, forged, changed, dead, chunkDels, refused>>  \* nothing else changes
+
 \* Every step a peer can take.
 Next ==
   \E p \in Peers :
@@ -254,7 +265,8 @@ Next ==
     \/ Rewrite(p)                   \* is sent a change to a stored chunk,
     \/ DeleteArticle(p)             \* deletes the article,
     \/ MergeArticleDelete(p)        \* merges the article's delete,
-    \/ ReceiveChunkDelete(p)        \* or is sent a chunk delete
+    \/ ReceiveChunkDelete(p)        \* is sent a chunk delete,
+    \/ ReceiveUnstoredChunkDelete(p) \* or a chunk delete before the chunk
 
 \* Start from Init and take any steps.
 Spec == Init /\ [][Next]_vars

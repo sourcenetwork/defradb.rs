@@ -3220,7 +3220,7 @@ pub const PROPERTIES: &[Property] = &[
         name: "INV_ReadsMatchText / INV_SettledPeersAgree / INV_NoForgedChunk / INV_ChunksNeverChange / INV_ListedChunksStay / INV_DeletesNotLost",
         axis: Tla,
         anchor: "crates/query/src/plan/chunk_parent.rs parent_hashes; crates/chunk-split/src/list.rs chunk_list; crates/crdt/src/field/lww.rs merge; crates/db/src/chunk/guard.rs check_chunk_merge; crates/db/src/chunk/peer_delete.rs delete_must_wait; crates/db/src/merge/merge_handler/composite_persist.rs",
-        model_ref: "MC_ChunkMerge_Green.cfg / MC_ChunkMerge_Green_Delete.cfg / MC_ChunkMerge_Red_TrustList.cfg / MC_ChunkMerge_Red_NoHashCheck.cfg / MC_ChunkMerge_Red_MutableChunk.cfg / MC_ChunkMerge_Red_NoDeleteGuard.cfg / MC_ChunkMerge_Red_ListedDeleteOnly.cfg / MC_ChunkMerge_Red_RefuseDelete.cfg",
+        model_ref: "MC_ChunkMerge_Green.cfg / MC_ChunkMerge_Green_Delete.cfg / MC_ChunkMerge_Red_TrustList.cfg / MC_ChunkMerge_Red_NoHashCheck.cfg / MC_ChunkMerge_Red_MutableChunk.cfg / MC_ChunkMerge_Red_NoDeleteGuard.cfg / MC_ChunkMerge_Red_ListedDeleteOnly.cfg / MC_ChunkMerge_Red_RefuseDelete.cfg / MC_ChunkMerge_Red_UnstoredDelete.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },
