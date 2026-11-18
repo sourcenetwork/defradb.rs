@@ -100,7 +100,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: native-consumer-1.99.1
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' || github.head_ref == 'fredcarle/ci/native-consumer-speed' }}
           cache-on-failure: true
           cache-targets: true
           cache-workspace-crates: true
