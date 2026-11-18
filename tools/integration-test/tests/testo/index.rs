@@ -18,6 +18,7 @@ mod json_array_filter;
 mod json_composite;
 mod json_unique;
 mod json_unique_array;
+mod like_nil;
 mod list_actions;
 mod list_collection_name;
 mod merged_field {
