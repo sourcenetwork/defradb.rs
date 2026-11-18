@@ -3,11 +3,13 @@
 //! `DisconnectPeers` closes a peer's connections, but discovery (Kademlia,
 //! vinc peer exchange) would dial it again within milliseconds. A peer in
 //! this table is never dialed by discovery; only an explicit dial
-//! (`ConnectPeers`, a replicator, `AllowPeer`) takes it out. A real drop or a
-//! restart never puts a peer here, so discovery reconnects those as before.
+//! (`ConnectPeers`, a replicator) takes it out. A real drop never puts a peer
+//! here, so discovery reconnects it as before. The table lives in memory, as
+//! Go's peerstore does, so a restart of this node forgets every disconnect.
 
 use std::collections::VecDeque;
 use std::hash::Hash;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use rapidhash::{HashSetExt, RapidHashSet};
 use tracing::warn;
@@ -15,6 +17,15 @@ use tracing::warn;
 /// The most peers kept. Past it the oldest is forgotten, and discovery may
 /// dial it again.
 pub const MAX_QUIET_PEERS: usize = 1024;
+
+/// Peers every full table in this process forgot, reported as
+/// `quiet_peers_evicted_total` in the sync status.
+static EVICTED_TOTAL: AtomicU64 = AtomicU64::new(0);
+
+/// How many peers full tables in this process have forgotten.
+pub fn evicted_total() -> u64 {
+    EVICTED_TOTAL.load(Ordering::Relaxed)
+}
 
 /// A bounded set of peers discovery must not dial, oldest evicted first.
 #[derive(Debug)]
@@ -58,6 +69,7 @@ where
             if let Some(oldest) = self.order.pop_front() {
                 self.peers.remove(&oldest);
                 self.evicted += 1;
+                EVICTED_TOTAL.fetch_add(1, Ordering::Relaxed);
                 warn!(
                     peer_id = ?oldest,
                     evicted = self.evicted,
@@ -111,6 +123,7 @@ mod tests {
         quiet.insert(3);
         assert_eq!(quiet.len(), 3);
         assert_eq!(quiet.evicted(), 1);
+        assert!(evicted_total() >= 1, "the sync status counts the eviction");
         assert!(!quiet.contains(&0), "the oldest peer is forgotten");
         assert!((1..4).all(|peer| quiet.contains(&peer)));
     }

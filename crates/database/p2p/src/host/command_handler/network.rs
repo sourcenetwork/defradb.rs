@@ -170,6 +170,37 @@ impl<S: Store> P2PHost<S> {
 #[cfg(test)]
 mod tests {
     use super::{format_listen_error, peer_address};
+    use crate::testutil::MockBitswapStore;
+    use crate::P2PHost;
+
+    /// #2992: `DisconnectPeers` keeps Kademlia from dialing the peer, and an
+    /// explicit dial (ConnectPeers, a replicator) lets Kademlia reach it
+    /// again, so a later drop of that connection is mended as before.
+    #[nuclei::test]
+    async fn an_explicit_dial_lets_kademlia_dial_a_disconnected_peer_again() {
+        let (mut host, _handle, _events, _replicators) =
+            P2PHost::new(MockBitswapStore::new(), edge::testing::edge())
+                .await
+                .unwrap();
+        let peer = libp2p::PeerId::random();
+        let kademlia_refuses = |host: &mut P2PHost<MockBitswapStore>| {
+            host.swarm
+                .behaviour_mut()
+                .kademlia
+                .refuses_kademlia_dial(peer)
+        };
+
+        let (response, _) = crate::rt::oneshot::channel();
+        host.handle_disconnect(peer, response);
+        assert!(kademlia_refuses(&mut host), "a disconnect quiets the peer");
+
+        host.dial_peer(peer, vec!["/ip4/127.0.0.1/tcp/1".parse().unwrap()])
+            .unwrap();
+        assert!(
+            !kademlia_refuses(&mut host),
+            "after an explicit dial Kademlia still refuses the peer"
+        );
+    }
 
     #[test]
     fn a_peer_address_names_its_peer_once() {

@@ -57,6 +57,8 @@ use crate::codec::PushLogCodec;
 use crate::message::{PushLogReply, PushLogRequest};
 
 mod dual_kademlia;
+#[cfg(test)]
+mod dual_kademlia_tests;
 mod public_addr;
 
 pub use dual_kademlia::{
