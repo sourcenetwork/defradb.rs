@@ -386,7 +386,11 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
 
         let (collection, datastore, systemstore, index_manager) =
             get_collection_with_index_manager(&*self.shared_txn()?, collection_name).await?;
-        let datastore = datastore.with_projection_actor(context.identity());
+        let datastore = datastore
+            .with_projection_context(context)
+            .with_projection_inputs(Arc::new(crate::txn::ProjectionInputs(
+                self.prepared_inputs.clone().unwrap_or_default(),
+            )));
         self.db
             .check_node_access_in_txn(
                 context,
@@ -494,7 +498,11 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
 
         let (collection, datastore, systemstore, index_manager) =
             get_collection_with_index_manager(&*self.shared_txn()?, collection_name).await?;
-        let datastore = datastore.with_projection_actor(context.identity());
+        let datastore = datastore
+            .with_projection_context(context)
+            .with_projection_inputs(Arc::new(crate::txn::ProjectionInputs(
+                self.prepared_inputs.clone().unwrap_or_default(),
+            )));
         self.db
             .check_node_access_in_txn(
                 context,
@@ -647,7 +655,11 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
 
         let (collection, datastore, systemstore, index_manager) =
             get_collection_with_index_manager(&*self.shared_txn()?, collection_name).await?;
-        let datastore = datastore.with_projection_actor(context.identity());
+        let datastore = datastore
+            .with_projection_context(context)
+            .with_projection_inputs(Arc::new(crate::txn::ProjectionInputs(
+                self.prepared_inputs.clone().unwrap_or_default(),
+            )));
         self.db
             .check_node_access_in_txn(
                 context,

@@ -42,5 +42,8 @@ pub use record::{
     NewOwedChange, OwedAuthority, OwedChange, OwedOp, OwedState, OwedSubject, OwedTuple,
     MAX_OWED_CHANGE_BYTES,
 };
-pub use staging::{StageRelationship, Staged, TransactionOutbox};
+pub use staging::{
+    prepare_owner_relationship, PreparedOwnerRelationship, StageRelationship, Staged,
+    TransactionOutbox,
+};
 pub use submission::{submit_relationship, Submission};

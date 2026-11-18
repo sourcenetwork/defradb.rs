@@ -30,6 +30,7 @@ cid.workspace = true
 
 # Internal crates
 storage = { path = "../storage" }
+defra-core = { path = "../defra-core" }
 
 [dev-dependencies]
 # Testing

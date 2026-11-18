@@ -24,6 +24,40 @@ pub(crate) mod lenses;
 pub(crate) mod owner;
 pub mod registry;
 
+pub(crate) struct ProjectionInputs(pub query::prepared::PreparedInputMemo);
+
+pub(crate) struct ProjectionAuthority(pub Arc<acp::outbox::PreparedOwnerRelationship>);
+
+impl datastore::multistore::ProjectionAuthority for ProjectionAuthority {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+impl datastore::multistore::ProjectionAcpInputs for ProjectionInputs {
+    fn get(&self, bytes: &[u8]) -> Option<Arc<[u8]>> {
+        let request = query::prepared::PreparedInputRequest::new(
+            query::prepared::PreparedInputKind::ProjectionAcp,
+            bytes.to_vec(),
+        );
+        self.0.get(&request)
+    }
+
+    fn authority(
+        &self,
+        bytes: &[u8],
+    ) -> Option<Arc<dyn datastore::multistore::ProjectionAuthority>> {
+        let request = query::prepared::PreparedInputRequest::new(
+            query::prepared::PreparedInputKind::ProjectionAcp,
+            bytes.to_vec(),
+        );
+        self.0.projection_authority(&request).map(|authority| {
+            Arc::new(ProjectionAuthority(authority))
+                as Arc<dyn datastore::multistore::ProjectionAuthority>
+        })
+    }
+}
+
 #[derive(Clone)]
 struct OwedAcpRegistration {
     acp: Arc<dyn acp::DocumentACP>,
@@ -340,7 +374,10 @@ impl<S: Store> DbTxn<S> {
     pub fn datastore(&self) -> Result<NamespaceView> {
         self.txn
             .as_ref()
-            .map(|t| t.datastore())
+            .map(|t| {
+                t.datastore()
+                    .with_projection_staged(self.owed_staged().shared())
+            })
             .ok_or(Error::TxnNotActive)
     }
 

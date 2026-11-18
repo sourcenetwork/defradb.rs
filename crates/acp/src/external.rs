@@ -333,6 +333,10 @@ where
         ))
     }
 
+    fn outbox_authority_provider(&self) -> Option<Arc<dyn DocumentACP>> {
+        Some(Arc::clone(&self.provider))
+    }
+
     fn canonical_actor(&self, did: &Did) -> Did {
         self.provider.canonical_actor(did)
     }

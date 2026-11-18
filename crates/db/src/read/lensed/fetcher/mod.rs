@@ -363,10 +363,19 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
         let view = txn
             .datastore()
             .map_err(|error| query::QueryError::execution(error.to_string()))?;
-        view.with_projection_actor(actor.identity())
+        view.with_projection_context(actor)
+            .with_projection_inputs(Arc::new(crate::txn::ProjectionInputs(
+                self.prepared_inputs.clone().unwrap_or_default(),
+            )))
             .project_host_source_change()
             .await
             .map_err(|error| match error {
+                storage::corekv::Error::ProjectionAcpInput(request) => {
+                    query::QueryError::NeedsInput(query::prepared::PreparedInputRequest::new(
+                        query::prepared::PreparedInputKind::ProjectionAcp,
+                        request.into_bytes(),
+                    ))
+                }
                 storage::corekv::Error::ProjectionPermissionDenied => {
                     query::QueryError::permission_denied(error.to_string())
                 }

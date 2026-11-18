@@ -315,6 +315,71 @@ where
             .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
             Ok(std::sync::Arc::from(response))
         }
+        query::prepared::PreparedInputKind::ProjectionAcp => {
+            let fields: Vec<serde_json::Value> = serde_json::from_slice(request.exact_request())
+                .map_err(|_| {
+                    query::error::QueryError::execution("invalid prepared projection ACP request")
+                })?;
+            let field = |index: usize| {
+                fields
+                    .get(index)
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| {
+                        query::error::QueryError::execution(
+                            "invalid prepared projection ACP request",
+                        )
+                    })
+            };
+            let actor = field(0)?;
+            let operation = field(1)?;
+            if context.identity() != Some(actor)
+                || context.bearer_token_for(actor).as_deref()
+                    != fields.get(5).and_then(serde_json::Value::as_str)
+            {
+                return Err(query::error::QueryError::permission_denied(
+                    "prepared projection ACP request does not match the acting identity",
+                ));
+            }
+            let provider = db.document_acp().ok_or_else(|| {
+                query::error::QueryError::execution("document ACP is unavailable")
+            })?;
+            let provider = provider.bind_request(context).ok_or_else(|| {
+                query::error::QueryError::execution("request-bound document ACP is unavailable")
+            })?;
+            let response = match operation {
+                "owner" => serde_json::to_vec(
+                    &provider
+                        .get_doc_owner(field(2)?, field(3)?, field(4)?)
+                        .await
+                        .map_err(|error| query::error::QueryError::execution(error.to_string()))?,
+                ),
+                "relationship" => {
+                    let requester = identity::Did::new(actor)
+                        .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+                    let target = identity::Did::new(field(7)?)
+                        .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+                    let present = provider
+                        .observe_actor_relationship(acp::ActorRelationshipObservation {
+                            requester: &requester,
+                            target: &target,
+                            policy: field(2)?,
+                            resource: field(3)?,
+                            document: field(4)?,
+                            relation: field(6)?,
+                        })
+                        .await
+                        .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+                    serde_json::to_vec(&present)
+                }
+                _ => {
+                    return Err(query::error::QueryError::execution(
+                        "unsupported prepared projection ACP request",
+                    ))
+                }
+            }
+            .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+            Ok(Arc::from(response))
+        }
         query::prepared::PreparedInputKind::NodePermission => {
             let (identity, permission): (String, String) =
                 serde_json::from_slice(request.exact_request()).map_err(|_| {
@@ -354,6 +419,94 @@ where
             "prepared {kind:?} input resolution is not available"
         ))),
     }
+}
+
+pub(crate) async fn resolve_inputs_with_projection<S>(
+    db: &DB<S>,
+    context: &defra_core::RequestContext,
+    memo: &query::prepared::PreparedInputMemo,
+    requests: Vec<query::prepared::PreparedInputRequest>,
+) -> query::error::Result<Vec<Arc<[u8]>>>
+where
+    S: Store + 'static,
+{
+    let mut answers = vec![None; requests.len()];
+    let mut ordinary = Vec::new();
+    let mut ordinary_indices = Vec::new();
+    for (index, request) in requests.into_iter().enumerate() {
+        let is_stage = request.kind() == query::prepared::PreparedInputKind::ProjectionAcp
+            && serde_json::from_slice::<Vec<serde_json::Value>>(request.exact_request())
+                .ok()
+                .and_then(|fields| {
+                    fields
+                        .get(1)
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_owned)
+                })
+                .as_deref()
+                == Some("stage");
+        if !is_stage {
+            ordinary_indices.push(index);
+            ordinary.push(request);
+            continue;
+        }
+        let (actor, _, policy, resource, object, bearer, relation, subject, op, managers): (
+            String,
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            String,
+            acp::OwedSubject,
+            acp::OwedOp,
+            Vec<String>,
+        ) = serde_json::from_slice(request.exact_request()).map_err(|_| {
+            query::error::QueryError::execution("invalid prepared projection relationship")
+        })?;
+        if context.identity() != Some(actor.as_str()) || context.bearer_token_for(&actor) != bearer
+        {
+            return Err(query::error::QueryError::permission_denied(
+                "projection authority does not match the acting identity",
+            ));
+        }
+        let actor = identity::Did::new(actor)
+            .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+        let provider = db
+            .document_acp()
+            .and_then(|provider| provider.bind_request(context))
+            .ok_or_else(|| {
+                query::error::QueryError::execution("request-bound document ACP is unavailable")
+            })?;
+        let stage = acp::StageRelationship {
+            txn: None,
+            actor: &actor,
+            subject: subject.into(),
+            policy_id: &policy,
+            resource: &resource,
+            object: &object,
+            relation: &relation,
+            managing_relations: &managers,
+            op,
+        };
+        let authority = acp::outbox::prepare_owner_relationship(provider, &stage)
+            .await
+            .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+        memo.insert_projection_authority(request, Arc::new(authority));
+        answers[index] = Some(Arc::from(b"true".as_slice()));
+    }
+    let ordinary_answers = resolve_inputs(db, context, ordinary).await?;
+    for (index, answer) in ordinary_indices.into_iter().zip(ordinary_answers) {
+        answers[index] = Some(answer);
+    }
+    answers
+        .into_iter()
+        .map(|answer| {
+            answer.ok_or_else(|| {
+                query::error::QueryError::execution("prepared projection input went unanswered")
+            })
+        })
+        .collect()
 }
 
 /// Fetch a wave of external inputs at once, outside any transaction: the

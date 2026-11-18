@@ -40,6 +40,14 @@ impl StagedCount {
         Self::default()
     }
 
+    pub fn from_shared(count: Arc<AtomicU32>) -> Self {
+        Self(count)
+    }
+
+    pub fn shared(&self) -> Arc<AtomicU32> {
+        Arc::clone(&self.0)
+    }
+
     pub fn get(&self) -> u32 {
         self.0.load(Ordering::Relaxed)
     }

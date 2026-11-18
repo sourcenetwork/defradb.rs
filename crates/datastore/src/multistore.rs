@@ -5,7 +5,7 @@
 /// This matches Go DefraDB's internal/datastore/multi.go pattern.
 use async_trait::async_trait;
 use bytes::Bytes;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use storage::corekv::{
     Error, IterOptions, Iterator, OnCommit, QueuedCallbacks, Reader, Result, Txn, Writer,
@@ -29,6 +29,15 @@ pub trait DocumentMutationProjector: storage::corekv::MaybeSendSync {
     async fn source_changed(&self, _view: &NamespaceView) -> Result<()> {
         Ok(())
     }
+}
+
+pub trait ProjectionAcpInputs: storage::corekv::MaybeSendSync {
+    fn get(&self, request: &[u8]) -> Option<Arc<[u8]>>;
+    fn authority(&self, request: &[u8]) -> Option<Arc<dyn ProjectionAuthority>>;
+}
+
+pub trait ProjectionAuthority: storage::corekv::MaybeSendSync {
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 /// What a transaction owes once it has written node access control tuples
@@ -299,7 +308,9 @@ impl Drop for SharedTxn {
 pub struct WeakNamespaceView {
     txn: std::sync::Weak<SharedTxn>,
     namespace: Namespace,
-    projection_actor: Option<Arc<str>>,
+    projection_context: Option<defra_core::RequestContext>,
+    projection_staged: Option<Arc<AtomicU32>>,
+    projection_inputs: Option<Arc<dyn ProjectionAcpInputs>>,
 }
 
 impl WeakNamespaceView {
@@ -309,7 +320,9 @@ impl WeakNamespaceView {
         self.txn.upgrade().map(|txn| NamespaceView {
             txn,
             namespace: self.namespace,
-            projection_actor: self.projection_actor.clone(),
+            projection_context: self.projection_context.clone(),
+            projection_staged: self.projection_staged.clone(),
+            projection_inputs: self.projection_inputs.clone(),
         })
     }
 }
@@ -318,19 +331,45 @@ impl WeakNamespaceView {
 pub struct NamespaceView {
     txn: Arc<SharedTxn>,
     namespace: Namespace,
-    projection_actor: Option<Arc<str>>,
+    projection_context: Option<defra_core::RequestContext>,
+    projection_staged: Option<Arc<AtomicU32>>,
+    projection_inputs: Option<Arc<dyn ProjectionAcpInputs>>,
 }
 
 impl NamespaceView {
     /// Bind the actor admitted by the request boundary to this operation's
     /// view. The actor is never stored on the transaction or shared by turns.
-    pub fn with_projection_actor(mut self, actor: Option<&str>) -> Self {
-        self.projection_actor = actor.map(Arc::from);
+    pub fn with_projection_context(mut self, context: &defra_core::RequestContext) -> Self {
+        self.projection_context = Some(context.clone());
         self
     }
 
     pub fn projection_actor(&self) -> Option<&str> {
-        self.projection_actor.as_deref()
+        self.projection_context
+            .as_ref()
+            .and_then(|context| context.identity())
+    }
+
+    pub fn projection_context(&self) -> Option<&defra_core::RequestContext> {
+        self.projection_context.as_ref()
+    }
+
+    pub fn with_projection_staged(mut self, staged: Arc<AtomicU32>) -> Self {
+        self.projection_staged = Some(staged);
+        self
+    }
+
+    pub fn projection_staged(&self) -> Option<Arc<AtomicU32>> {
+        self.projection_staged.clone()
+    }
+
+    pub fn with_projection_inputs(mut self, inputs: Arc<dyn ProjectionAcpInputs>) -> Self {
+        self.projection_inputs = Some(inputs);
+        self
+    }
+
+    pub fn projection_inputs(&self) -> Option<&dyn ProjectionAcpInputs> {
+        self.projection_inputs.as_deref()
     }
     /// This view's transaction wrote a node access control tuple: register
     /// what its [`NodeAccessWrites`] owes at commit, if it has one.
@@ -390,7 +429,9 @@ impl NamespaceView {
         Self {
             txn,
             namespace,
-            projection_actor: None,
+            projection_context: None,
+            projection_staged: None,
+            projection_inputs: None,
         }
     }
 
@@ -413,7 +454,9 @@ impl NamespaceView {
         Self {
             txn: self.txn.clone(),
             namespace,
-            projection_actor: self.projection_actor.clone(),
+            projection_context: self.projection_context.clone(),
+            projection_staged: self.projection_staged.clone(),
+            projection_inputs: self.projection_inputs.clone(),
         }
     }
 
@@ -423,7 +466,9 @@ impl NamespaceView {
         WeakNamespaceView {
             txn: Arc::downgrade(&self.txn),
             namespace: self.namespace,
-            projection_actor: self.projection_actor.clone(),
+            projection_context: self.projection_context.clone(),
+            projection_staged: self.projection_staged.clone(),
+            projection_inputs: self.projection_inputs.clone(),
         }
     }
 
@@ -473,7 +518,9 @@ impl Clone for NamespaceView {
         Self {
             txn: self.txn.clone(),
             namespace: self.namespace,
-            projection_actor: self.projection_actor.clone(),
+            projection_context: self.projection_context.clone(),
+            projection_staged: self.projection_staged.clone(),
+            projection_inputs: self.projection_inputs.clone(),
         }
     }
 }

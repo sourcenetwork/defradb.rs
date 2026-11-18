@@ -60,6 +60,63 @@ pub struct Staged {
     pub authority_checked: bool,
 }
 
+pub struct PreparedOwnerRelationship {
+    provider: Arc<dyn DocumentACP>,
+    outbox_provider: Arc<dyn DocumentACP>,
+    actor: Did,
+    tuple: OwedTuple,
+    op: OwedOp,
+    authority: super::record::OwedAuthority,
+}
+
+pub async fn prepare_owner_relationship(
+    provider: Arc<dyn DocumentACP>,
+    request: &StageRelationship<'_>,
+) -> Result<PreparedOwnerRelationship> {
+    let outbox_provider = provider;
+    let provider = outbox_provider.outbox_authority_provider().ok_or_else(|| {
+        Error::ProviderUnavailable("document ACP does not provide an outbox".into())
+    })?;
+    if !provider.submits_subject(&request.subject) {
+        return Err(Error::UnsupportedSubject(request.subject.to_string()));
+    }
+    let actor = provider.canonical_actor(request.actor);
+    let owner = provider
+        .get_doc_owner(request.policy_id, request.resource, request.object)
+        .await?
+        .map(|owner| provider.canonical_actor(&owner));
+    if owner.as_ref() != Some(&actor) {
+        return Err(refusal(request));
+    }
+    let subject = match OwedSubject::try_from(request.subject.clone())? {
+        OwedSubject::Actor { did } => OwedSubject::Actor {
+            did: provider.canonical_actor(&did),
+        },
+        other => other,
+    };
+    let authority = provider.owed_authority(request.actor)?;
+    Ok(PreparedOwnerRelationship {
+        provider,
+        outbox_provider,
+        actor,
+        tuple: OwedTuple {
+            policy_id: request.policy_id.to_owned(),
+            resource: request.resource.to_owned(),
+            object: request.object.to_owned(),
+            relation: request.relation.to_owned(),
+            subject,
+        },
+        op: request.op,
+        authority,
+    })
+}
+
+impl PreparedOwnerRelationship {
+    pub fn outbox_provider(&self) -> Arc<dyn DocumentACP> {
+        Arc::clone(&self.outbox_provider)
+    }
+}
+
 /// The relationship changes one transaction owes an external provider, as
 /// the transaction stages them. A savepoint needs the handle dropped, as it
 /// needs every view of the transaction gone.
@@ -71,6 +128,71 @@ pub struct TransactionOutbox {
 }
 
 impl TransactionOutbox {
+    pub async fn stage_prepared_owner(
+        &self,
+        request: StageRelationship<'_>,
+        prepared: &PreparedOwnerRelationship,
+    ) -> Result<Staged> {
+        let actor = self.provider.canonical_actor(request.actor);
+        let subject = match OwedSubject::try_from(request.subject.clone())? {
+            OwedSubject::Actor { did } => OwedSubject::Actor {
+                did: self.provider.canonical_actor(&did),
+            },
+            other => other,
+        };
+        let tuple = OwedTuple {
+            policy_id: request.policy_id.to_owned(),
+            resource: request.resource.to_owned(),
+            object: request.object.to_owned(),
+            relation: request.relation.to_owned(),
+            subject,
+        };
+        if !Arc::ptr_eq(&prepared.provider, &self.provider)
+            || prepared.actor != actor
+            || prepared.tuple != tuple
+            || prepared.op != request.op
+            || self.provider.owed_authority(request.actor)? != prepared.authority
+        {
+            return Err(refusal(&request));
+        }
+        if let Some(pending) = self
+            .pending
+            .get(request.policy_id, request.resource, request.object)
+            .await?
+        {
+            if self.provider.canonical_actor(&pending.creator) != actor {
+                return Err(refusal(&request));
+            }
+        }
+        let denial = self
+            .denials
+            .on(
+                &*self.provider,
+                &Identity::Authenticated(actor.clone()),
+                request.policy_id,
+                request.resource,
+                request.object,
+            )
+            .await?;
+        if denial == OwedDenial::Always {
+            return Err(refusal(&request));
+        }
+        let change = self
+            .changes
+            .stage(NewOwedChange {
+                txn: request.txn,
+                tuple,
+                op: request.op,
+                actor,
+                authority: prepared.authority.clone(),
+                authority_checked: true,
+            })
+            .await?;
+        Ok(Staged {
+            seq: change.seq,
+            authority_checked: true,
+        })
+    }
     /// `provider` is the external provider itself, serving the request that
     /// stages; `view` the transaction's ACP namespace, `sequences` the
     /// store's and `staged` the transaction's count.

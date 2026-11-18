@@ -262,7 +262,13 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         context: &RequestContext,
         requests: Vec<query::prepared::PreparedInputRequest>,
     ) -> query::error::Result<Vec<Arc<[u8]>>> {
-        crate::write::prepare::resolve_inputs(&self.db, context, requests).await
+        crate::write::prepare::resolve_inputs_with_projection(
+            &self.db,
+            context,
+            &self.prepared_inputs,
+            requests,
+        )
+        .await
     }
 
     fn set_document_acp(&self, provider: Arc<dyn acp::DocumentACP>) {
@@ -300,7 +306,11 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
 
         let (collection, datastore, systemstore, index_manager) =
             get_collection_with_index_manager(&*self.shared_txn()?, collection_name).await?;
-        let datastore = datastore.with_projection_actor(context.identity());
+        let datastore = datastore
+            .with_projection_context(context)
+            .with_projection_inputs(Arc::new(crate::txn::ProjectionInputs(
+                self.prepared_inputs.clone(),
+            )));
         self.db
             .check_node_access_in_txn(
                 context,
@@ -395,7 +405,11 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
 
         let (collection, datastore, systemstore, index_manager) =
             get_collection_with_index_manager(&*self.shared_txn()?, collection_name).await?;
-        let datastore = datastore.with_projection_actor(context.identity());
+        let datastore = datastore
+            .with_projection_context(context)
+            .with_projection_inputs(Arc::new(crate::txn::ProjectionInputs(
+                self.prepared_inputs.clone(),
+            )));
         self.db
             .check_node_access_in_txn(
                 context,
@@ -540,7 +554,11 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
 
         let (collection, datastore, systemstore, index_manager) =
             get_collection_with_index_manager(&*self.shared_txn()?, collection_name).await?;
-        let datastore = datastore.with_projection_actor(context.identity());
+        let datastore = datastore
+            .with_projection_context(context)
+            .with_projection_inputs(Arc::new(crate::txn::ProjectionInputs(
+                self.prepared_inputs.clone(),
+            )));
         self.db
             .check_node_access_in_txn(
                 context,

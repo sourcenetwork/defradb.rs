@@ -106,6 +106,53 @@ theorem unregistered_denied (i : Input) (h : i.registered = false) :
 theorem invalid_relation_denied (i : Input) (h : i.relationValid = false) :
     mayProject i = false := by simp [mayProject, h]
 
+/-- An external provider cannot join the document transaction. A projected
+change may be staged only when the transaction retains the actor's own
+authority, the target is supported, and the outbox shares that transaction. -/
+structure ExternalStage where
+  projection : Input
+  retainedAuthority : Bool
+  targetSupported : Bool
+  outboxBound : Bool
+  preparedForRequest : Bool
+  noLocalDenial : Bool
+  deriving FromJson, ToJson, Repr
+
+def mayStageExternal (i : ExternalStage) : Bool :=
+  let p := i.projection
+  p.projectorContext && p.actorMatches && p.nacActive && p.nacBound &&
+    p.operationAllowed && p.dacAllowed && (p.documentMatches || p.reconciliation) &&
+    p.scopeMatches && p.registered && p.relationValid && i.retainedAuthority &&
+    i.targetSupported && i.outboxBound && i.preparedForRequest && i.noLocalDenial
+
+theorem external_without_authority_denied (i : ExternalStage)
+    (h : i.retainedAuthority = false) : mayStageExternal i = false := by
+  simp [mayStageExternal, h]
+
+theorem external_detached_outbox_denied (i : ExternalStage)
+    (h : i.outboxBound = false) : mayStageExternal i = false := by
+  simp [mayStageExternal, h]
+
+theorem external_different_actor_denied (i : ExternalStage)
+    (h : i.projection.actorMatches = false) : mayStageExternal i = false := by
+  simp [mayStageExternal, h]
+
+theorem external_outside_scope_denied (i : ExternalStage)
+    (h : i.projection.scopeMatches = false) : mayStageExternal i = false := by
+  simp [mayStageExternal, h]
+
+theorem external_unsupported_target_denied (i : ExternalStage)
+    (h : i.targetSupported = false) : mayStageExternal i = false := by
+  simp [mayStageExternal, h]
+
+theorem external_mismatched_preparation_denied (i : ExternalStage)
+    (h : i.preparedForRequest = false) : mayStageExternal i = false := by
+  simp [mayStageExternal, h]
+
+theorem external_local_denial_respected (i : ExternalStage)
+    (h : i.noLocalDenial = false) : mayStageExternal i = false := by
+  simp [mayStageExternal, h]
+
 /-- Executable decisions drive the native conformance test. -/
 def evaluate (json : Json) : Except String Json := do
   let inputs : Array Input ← fromJson? json

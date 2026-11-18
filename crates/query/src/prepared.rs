@@ -103,6 +103,7 @@ pub enum PreparedInputKind {
     Signature,
     Encryption,
     AcpDecision,
+    ProjectionAcp,
     WriteValidation,
     NodePermission,
     ReadValidation,
@@ -135,6 +136,13 @@ pub enum PreparedInputKind {
 #[derive(Clone)]
 pub struct PreparedInputMemo {
     answers: Arc<HopscotchMap<PreparedInputRequest, Arc<[u8]>, RandomState>>,
+    projection_authorities: Arc<
+        HopscotchMap<
+            PreparedInputRequest,
+            Arc<acp::outbox::PreparedOwnerRelationship>,
+            RandomState,
+        >,
+    >,
     wanted: Arc<SegQueue<PreparedInputRequest>>,
 }
 
@@ -142,6 +150,7 @@ impl Default for PreparedInputMemo {
     fn default() -> Self {
         Self {
             answers: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
+            projection_authorities: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             wanted: Arc::new(SegQueue::new()),
         }
     }
@@ -158,6 +167,21 @@ impl std::fmt::Debug for PreparedInputMemo {
 }
 
 impl PreparedInputMemo {
+    pub fn projection_authority(
+        &self,
+        request: &PreparedInputRequest,
+    ) -> Option<Arc<acp::outbox::PreparedOwnerRelationship>> {
+        self.projection_authorities.get(request)
+    }
+
+    pub fn insert_projection_authority(
+        &self,
+        request: PreparedInputRequest,
+        authority: Arc<acp::outbox::PreparedOwnerRelationship>,
+    ) {
+        self.projection_authorities
+            .get_or_insert(request, authority);
+    }
     pub fn get(&self, request: &PreparedInputRequest) -> Option<Arc<[u8]>> {
         self.answers.get(request)
     }

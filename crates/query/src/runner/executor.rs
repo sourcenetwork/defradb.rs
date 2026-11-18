@@ -163,7 +163,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         };
         prepared
             .inputs
-            .answer_wave(input, |wave| runner.resolve_wave(wave))
+            .answer_wave(input, |wave| runner.resolve_wave(&prepared.inputs, wave))
             .await?;
         Ok(Some(prepared))
     }
@@ -800,6 +800,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
     /// in the context of the request this runner serves.
     async fn resolve_wave(
         &self,
+        inputs: &crate::prepared::PreparedInputMemo,
         wave: Vec<crate::prepared::PreparedInputRequest>,
     ) -> Result<Vec<std::sync::Arc<[u8]>>> {
         let (own, delegated): (Vec<_>, Vec<_>) =
@@ -834,6 +835,9 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             let mutator = self.mutator.as_ref().ok_or_else(|| {
                 crate::error::QueryError::execution("retry input has no document mutator")
             })?;
+            let mutator = mutator
+                .with_prepared_inputs(inputs.clone())
+                .unwrap_or_else(|| mutator.clone());
             mutator
                 .resolve_prepared_inputs_as(
                     &self.context(),

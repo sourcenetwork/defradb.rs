@@ -301,6 +301,13 @@ pub fn commit_query_error(error: Error) -> query::error::QueryError {
 
 fn storage_query_error(error: Error, context: &str) -> query::error::QueryError {
     match error {
+        Error::Storage(storage::Error::ProjectionAcpInput(request))
+        | Error::Datastore(datastore::Error::Storage(storage::Error::ProjectionAcpInput(
+            request,
+        ))) => query::error::QueryError::NeedsInput(query::prepared::PreparedInputRequest::new(
+            query::prepared::PreparedInputKind::ProjectionAcp,
+            request.into_bytes(),
+        )),
         Error::Storage(storage::Error::ProjectionPermissionDenied)
         | Error::Datastore(datastore::Error::Storage(storage::Error::ProjectionPermissionDenied)) => {
             query::error::QueryError::permission_denied(

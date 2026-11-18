@@ -11,7 +11,7 @@ use storage::namespace::Namespace;
 /// the same transaction as the mutation. Native ACP remains authoritative.
 pub struct DocumentMutationContext<'a> {
     pub view: &'a NamespaceView,
-    pub document_acp: &'a dyn acp::DocumentACP,
+    pub document_acp: &'a Arc<dyn acp::DocumentACP>,
     pub node_did: &'a Did,
     notifier: &'a dyn AccessChangeNotifier,
     nac: Option<&'a dyn crate::nac::NacManagerApi>,
@@ -21,6 +21,122 @@ pub struct DocumentMutationContext<'a> {
 }
 
 impl DocumentMutationContext<'_> {
+    pub async fn registration_pending(
+        &self,
+        policy: &str,
+        resource: &str,
+        doc: &str,
+    ) -> Result<bool> {
+        let view = self.view.sibling(Namespace::Acpstore);
+        acp::PendingRegistrations::new(&view)
+            .get(policy, resource, doc)
+            .await
+            .map(|registration| registration.is_some())
+            .map_err(|error| storage::corekv::Error::Other(error.to_string()))
+    }
+
+    pub async fn projected_actor_relationship(
+        &self,
+        policy: &str,
+        resource: &str,
+        doc: &str,
+        relation: &str,
+        target: &Did,
+    ) -> Result<bool> {
+        let view = self.view.sibling(Namespace::Acpstore);
+        if self.document_acp.supports_transactions() {
+            let store = acp::zanzibar::store::TransactionZanzibarStore::new(view);
+            return acp::ZanzibarStore::has_relationship(
+                &store,
+                policy,
+                resource,
+                doc,
+                relation,
+                &acp::Subject::entity(target.clone()),
+            )
+            .await
+            .map_err(|error| storage::corekv::Error::Other(error.to_string()));
+        }
+        if self.registration_pending(policy, resource, doc).await? {
+            return Ok(false);
+        }
+        let actor = self
+            .view
+            .projection_actor()
+            .unwrap_or(self.node_did.as_str());
+        let bearer = self
+            .view
+            .projection_context()
+            .and_then(|context| context.bearer_token_for(actor));
+        let request = serde_json::to_vec(&(
+            actor,
+            "relationship",
+            policy,
+            resource,
+            doc,
+            bearer,
+            relation,
+            target.as_str(),
+        ))
+        .map_err(|error| storage::corekv::Error::Other(error.to_string()))?;
+        let Some(response) = self
+            .view
+            .projection_inputs()
+            .and_then(|inputs| inputs.get(&request))
+        else {
+            return Err(storage::corekv::Error::ProjectionAcpInput(
+                storage::corekv::errors::ProjectionAcpInput::new(request),
+            ));
+        };
+        serde_json::from_slice(&response).map_err(|error| {
+            storage::corekv::Error::Other(format!("invalid prepared relationship: {error}"))
+        })
+    }
+
+    pub async fn projected_owner(
+        &self,
+        policy_id: &str,
+        resource: &str,
+        doc_id: &str,
+    ) -> Result<Option<Did>> {
+        let view = self.view.sibling(Namespace::Acpstore);
+        if let Some(pending) = acp::PendingRegistrations::new(&view)
+            .get(policy_id, resource, doc_id)
+            .await
+            .map_err(|error| storage::corekv::Error::Other(error.to_string()))?
+        {
+            return Ok(Some(pending.creator));
+        }
+        if let Some(scoped) = self.document_acp.bind_transaction(view) {
+            return scoped
+                .get_doc_owner(policy_id, resource, doc_id)
+                .await
+                .map_err(|error| storage::corekv::Error::Other(error.to_string()));
+        }
+        let actor = self
+            .view
+            .projection_actor()
+            .unwrap_or(self.node_did.as_str());
+        let bearer = self
+            .view
+            .projection_context()
+            .and_then(|context| context.bearer_token_for(actor));
+        let request = serde_json::to_vec(&(actor, "owner", policy_id, resource, doc_id, bearer))
+            .map_err(|error| storage::corekv::Error::Other(error.to_string()))?;
+        let Some(response) = self
+            .view
+            .projection_inputs()
+            .and_then(|inputs| inputs.get(&request))
+        else {
+            return Err(storage::corekv::Error::ProjectionAcpInput(
+                storage::corekv::errors::ProjectionAcpInput::new(request),
+            ));
+        };
+        serde_json::from_slice(&response).map_err(|error| {
+            storage::corekv::Error::Other(format!("invalid prepared document owner: {error}"))
+        })
+    }
+
     pub async fn change_projected_relationship(
         &self,
         collection: &str,
@@ -99,14 +215,139 @@ impl DocumentMutationContext<'_> {
         {
             return Err(storage::corekv::Error::ProjectionPermissionDenied);
         }
-        let acp = self
-            .document_acp
-            .bind_transaction(acp_view)
-            .ok_or_else(|| {
-                storage::corekv::Error::Other(
-                    "transaction-bound document authorization is unavailable".into(),
-                )
+        let Some(acp) = self.document_acp.bind_transaction(acp_view.clone()) else {
+            let pending = acp::PendingRegistrations::new(&acp_view)
+                .get(&binding.id, &binding.resource_name, doc_id)
+                .await
+                .map_err(|error| storage::corekv::Error::Other(error.to_string()))?;
+            if pending.as_ref().is_some_and(|pending| {
+                self.document_acp.canonical_actor(&pending.creator)
+                    != self.document_acp.canonical_actor(&actor)
+            }) {
+                return Err(storage::corekv::Error::ProjectionPermissionDenied);
+            }
+            let managers = policy
+                .get_managers_for_relation(&binding.resource_name, relation)
+                .into_iter()
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            let op = if delete {
+                acp::OwedOp::Delete
+            } else {
+                acp::OwedOp::Add
+            };
+            let prepared = if pending.is_none() {
+                let bearer = self
+                    .view
+                    .projection_context()
+                    .and_then(|context| context.bearer_token_for(actor.as_str()));
+                let subject = acp::OwedSubject::try_from(target.clone())
+                    .map_err(|error| storage::corekv::Error::Other(error.to_string()))?;
+                let request = serde_json::to_vec(&(
+                    actor.as_str(),
+                    "stage",
+                    &binding.id,
+                    &binding.resource_name,
+                    doc_id,
+                    bearer,
+                    relation,
+                    subject,
+                    op,
+                    &managers,
+                ))
+                .map_err(|error| storage::corekv::Error::Other(error.to_string()))?;
+                let Some(authority) = self
+                    .view
+                    .projection_inputs()
+                    .and_then(|inputs| inputs.authority(&request))
+                else {
+                    return Err(storage::corekv::Error::ProjectionAcpInput(
+                        storage::corekv::errors::ProjectionAcpInput::new(request),
+                    ));
+                };
+                Some(authority)
+            } else {
+                None
+            };
+            let prepared_owner = prepared.as_ref().and_then(|authority| {
+                authority
+                    .as_any()
+                    .downcast_ref::<crate::txn::ProjectionAuthority>()
+            });
+            if prepared.is_some() && prepared_owner.is_none() {
+                return Err(storage::corekv::Error::ProjectionPermissionDenied);
+            }
+            let provider = if let Some(prepared) = prepared_owner {
+                prepared.0.outbox_provider()
+            } else {
+                match self.view.projection_context() {
+                    Some(context) => self.document_acp.bind_request(context).ok_or_else(|| {
+                        storage::corekv::Error::Other(
+                            "request-bound document authorization is unavailable".into(),
+                        )
+                    })?,
+                    None => Arc::clone(self.document_acp),
+                }
+            };
+            let staged = self.view.projection_staged().ok_or_else(|| {
+                storage::corekv::Error::Other("projection transaction outbox is unavailable".into())
             })?;
+            let outbox = provider
+                .transaction_outbox(&acp_view, acp::StagedCount::from_shared(staged))
+                .ok_or_else(|| {
+                    storage::corekv::Error::Other(
+                        "projection transaction outbox is unavailable".into(),
+                    )
+                })?;
+            let first = outbox.staged() == 0;
+            let txn = self
+                .view
+                .projection_context()
+                .and_then(|context| context.txn())
+                .map(|id| id.0);
+            let change = acp::StageRelationship {
+                txn,
+                actor: &actor,
+                subject: target,
+                policy_id: &binding.id,
+                resource: &binding.resource_name,
+                object: doc_id,
+                relation,
+                managing_relations: &managers,
+                op,
+            };
+            match prepared_owner {
+                Some(prepared) => outbox.stage_prepared_owner(change, &prepared.0).await,
+                None => outbox.stage(change).await,
+            }
+            .map_err(|error| storage::corekv::Error::Other(error.to_string()))?;
+            if first {
+                let provider = Arc::clone(self.document_acp);
+                self.view
+                    .on_commit(OnCommit::Async(Box::new(move || {
+                        Box::pin(async move {
+                            let scope =
+                                txn.map_or(acp::OwedScope::All, acp::OwedScope::Transaction);
+                        match workers::timeout(
+                            std::time::Duration::from_secs(10),
+                            provider.settle_owed_changes(scope),
+                        )
+                        .await
+                        {
+                            Ok(Ok(_)) => {}
+                            Ok(Err(error)) => {
+                                tracing::warn!(%error, "projection relationship settlement failed");
+                            }
+                            Err(error) => {
+                                tracing::warn!(%error, "projection relationship settlement did not finish");
+                            }
+                            }
+                        })
+                    })))
+                    .await?;
+            }
+            return Ok(true);
+        };
         if !acp
             .is_doc_registered(&binding.id, &binding.resource_name, doc_id)
             .await
@@ -306,7 +547,7 @@ impl datastore::DocumentMutationProjector for BoundProjection {
         self.projector
             .source_changed(&DocumentMutationContext {
                 view,
-                document_acp: self.document_acp.as_ref(),
+                document_acp: &self.document_acp,
                 node_did: &self.node_did,
                 notifier: self.notifier.as_ref(),
                 nac: self.nac.as_deref(),
@@ -321,7 +562,7 @@ impl datastore::DocumentMutationProjector for BoundProjection {
         self.projector
             .reconcile(&DocumentMutationContext {
                 view,
-                document_acp: self.document_acp.as_ref(),
+                document_acp: &self.document_acp,
                 node_did: &self.node_did,
                 notifier: self.notifier.as_ref(),
                 nac: self.nac.as_deref(),
@@ -337,7 +578,7 @@ impl datastore::DocumentMutationProjector for BoundProjection {
             .project(
                 &DocumentMutationContext {
                     view,
-                    document_acp: self.document_acp.as_ref(),
+                    document_acp: &self.document_acp,
                     node_did: &self.node_did,
                     notifier: self.notifier.as_ref(),
                     nac: self.nac.as_deref(),

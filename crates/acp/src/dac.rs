@@ -91,6 +91,10 @@ pub trait DocumentACP: MaybeSendSync {
         None
     }
 
+    fn outbox_authority_provider(&self) -> Option<std::sync::Arc<dyn DocumentACP>> {
+        None
+    }
+
     /// `did` in the one spelling this provider keeps an actor under. A key
     /// that can be written in several ways names one actor, and what is
     /// stored about it is compared under this spelling.
