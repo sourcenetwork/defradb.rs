@@ -195,7 +195,7 @@ With `@chunk(maxChars: 160)` and a 40-paragraph body, changing one word in parag
 - **Parents:** ["defra.chunk.write"]
 - **Scenarios:** ["chunk::write_signed::a_signing_node_stores_the_list_of_the_first_update", "chunk::write_signed::a_signing_node_stores_the_lists_of_an_array_create", "chunk::write_signed::a_signing_node_stores_the_list_of_an_upsert_create"]
 
-On a node that signs its blocks, creating an `Article` with a six-paragraph body gives a signed `_body_chunks` block. Updating the body to four paragraphs then gives a `_body_chunks` list of five hashes: the whole text's, then the four chunks'. `Article__body_chunk` holds exactly those four, and the `text` block of a chunk is signed. The same update gives a list of five hashes for each article of a two-article `add_Article` and for an article an `upsert_Article` created.
+On a node that signs its blocks, creating an `Article` with a six-paragraph body gives a signed `_body_chunks` block. Updating the body to four paragraphs then gives a `_body_chunks` list of five hashes: the whole text's, then the four chunks'. `Article__body_chunk` holds exactly those four, and the `text` block of a chunk is not signed, so every node gives the chunk of one text the same `_docID`. The same update gives a list of five hashes for each article of a two-article `add_Article` and for an article an `upsert_Article` created.
 
 # `defra.chunk.write.concurrent`: Concurrent writes leave the chunks of the winning text
 
@@ -250,6 +250,20 @@ After an article and its chunks reach the second node, deleting the article on t
 - **Scenarios:** ["chunk::replicate_parent_only::a_replicator_of_the_parent_ships_its_chunks"]
 
 A replicator set up for `Article` alone gives the second node the same `_body_chunks` list and exactly the same chunks. The CLI sets the replicator with `--collection Article`.
+
+# `defra.chunk.replicate.concurrent`: Peers that edit apart end with the chunks of the merged text
+
+- **Parents:** ["defra.chunk.replicate"]
+- **Scenarios:** ["chunk::replicate_concurrent::peers_that_edit_apart_end_with_the_chunks_of_the_merged_text", "chunk::replicate_concurrent::a_peer_that_merges_a_newer_text_builds_its_chunks"]
+
+Two unconnected nodes add the same article. One updates its body to three paragraphs about `north`, the other to three about `south`. After they connect and each syncs the article from the other, both show the `south` body and exactly its chunks. The text and the list break their ties apart, so both show the `_body_chunks` list the `north` node wrote: the same list on both nodes, which readers do not trust for the chunks. A node that syncs a newer body it has no chunks for shows that body's list and exactly its chunks.
+
+# `defra.chunk.replicate.signed`: Signing peers that write the same text show each chunk once
+
+- **Parents:** ["defra.chunk.replicate"]
+- **Scenarios:** ["chunk::replicate_signed::signing_peers_that_write_the_same_text_show_each_chunk_once"]
+
+Two nodes that sign their blocks share an article. While disconnected, both update its body to the same three paragraphs. After they reconnect and the second syncs the article and the first node's chunk documents, the second shows the body and exactly its three chunks, each once.
 
 # `defra.chunk.backup`: Backups and chunks
 

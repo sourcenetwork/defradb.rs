@@ -88,6 +88,10 @@ pub fn add_article_on(body: &str, capture: &str, node: Option<&str>) -> Actions 
 
 /// Updates the body of the article named `capture` through GraphQL.
 pub fn update_article(capture: &str, body: &str) -> Actions {
+    update_article_on(capture, body, None)
+}
+
+pub fn update_article_on(capture: &str, body: &str, node: Option<&str>) -> Actions {
     Request {
         request: Text::concat([
             Text::from(r#"mutation { update_Article(docID: ""#),
@@ -97,6 +101,7 @@ pub fn update_article(capture: &str, body: &str) -> Actions {
                 gql(body)
             )),
         ]),
+        common: on(node),
         ..Default::default()
     }
     .into()
