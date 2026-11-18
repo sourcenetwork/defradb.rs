@@ -33,9 +33,8 @@ use tree::Tree;
 
 /// Go test files that are ported by hand, with their own test file. They are
 /// not generated, but stay in the module tree. The NAC relationship files
-/// carry Go #5342 (an empty target actor is refused): the pin includes it,
-/// but the scenario corpus, exported at `137dc624`, does not. They go back to
-/// being generated once the corpus is exported again past #5342.
+/// carry Go #5342 (an empty target actor is refused), which lands after the
+/// pin; once the pin includes it they go back to being generated.
 const HAND_PORTED: &[&str] = &[
     "tests/integration/collection_version/similarity_test.go",
     "tests/integration/acp/nac/add_nac_relationship_test.go",
