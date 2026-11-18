@@ -543,6 +543,9 @@ impl BoundProjection {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl datastore::DocumentMutationProjector for BoundProjection {
+    fn actor(&self) -> Option<&str> {
+        Some(self.node_did.as_str())
+    }
     async fn source_changed(&self, view: &NamespaceView) -> Result<()> {
         self.projector
             .source_changed(&DocumentMutationContext {

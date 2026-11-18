@@ -739,16 +739,45 @@ impl<S: Store> DB<S> {
     }
 
     /// Reconcile a trusted projection before exposing the node to requests.
-    pub async fn reconcile_document_projector(&self) -> Result<()> {
+    pub async fn reconcile_document_projector(&self) -> Result<()>
+    where
+        S: 'static,
+    {
         let Some(projector) = self.document_projector.get() else {
             return Ok(());
         };
-        let txn = self.new_txn(false).await?;
-        {
-            let view = txn.datastore()?;
-            projector.reconcile(&view).await.map_err(Error::Storage)?;
+        let context = defra_core::RequestContext::default()
+            .with_identity(projector.actor().map(str::to_owned));
+        let inputs = query::prepared::PreparedInputMemo::default();
+        loop {
+            let txn = self.new_txn(false).await?;
+            let result = {
+                let view = txn
+                    .datastore()?
+                    .with_projection_context(&context)
+                    .with_projection_inputs(Arc::new(crate::txn::ProjectionInputs(inputs.clone())));
+                projector.reconcile(&view).await
+            };
+            match result {
+                Ok(()) => return txn.commit().await,
+                Err(storage::Error::ProjectionAcpInput(request)) => {
+                    txn.discard()?;
+                    let request = query::prepared::PreparedInputRequest::new(
+                        query::prepared::PreparedInputKind::ProjectionAcp,
+                        request.into_bytes(),
+                    );
+                    inputs
+                        .answer_wave(&request, |wave| {
+                            crate::write::prepare::resolve_inputs_with_projection(
+                                self, &context, &inputs, wave,
+                            )
+                        })
+                        .await
+                        .map_err(|error| Error::Other(error.to_string()))?;
+                }
+                Err(error) => return Err(Error::Storage(error)),
+            }
         }
-        txn.commit().await
     }
 
     pub(crate) fn vector_codes(&self) -> &crate::index::vector::engine::diskann::CodeCaches {
