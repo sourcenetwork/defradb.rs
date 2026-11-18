@@ -15,7 +15,7 @@ use schema::{CollectionVersion, FieldDescription, FieldKind, PolicyDescription};
 
 use crate::error::Result;
 use crate::executor::{QueryExecutor, QueryRequest, QueryResponse};
-use crate::mutator::{CreateResult, DeleteResult, DocMutator, UpdateResult};
+use crate::mutator::{CollectionTruncator, CreateResult, DeleteResult, DocMutator, UpdateResult};
 use crate::runner::QueryRunner;
 use crate::test_utils::{MockFetcher, MockTxnRegistry};
 
@@ -540,16 +540,54 @@ fn a_failed_dac_bypass_lookup_in_a_transaction_leaves_the_bypass_off() {
     .unwrap()
 }
 
+/// Records the DAC bypass of each truncate's request.
+#[derive(Default)]
+struct BypassTruncator {
+    bypasses: SegQueue<bool>,
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl CollectionTruncator for BypassTruncator {
+    async fn truncate(
+        &self,
+        _collection_name: &str,
+        _filter: Option<crate::Filter>,
+        _identity: Option<&Did>,
+    ) -> Result<()> {
+        self.truncate_as(&RequestContext::ambient(), "", None).await
+    }
+
+    async fn truncate_as(
+        &self,
+        context: &RequestContext,
+        _collection_name: &str,
+        _filter: Option<crate::Filter>,
+    ) -> Result<()> {
+        self.bypasses.push(context.dac_bypass());
+        Ok(())
+    }
+}
+
 /// A mutation `prepare_mutations` leaves to execution (a lone truncate under
-/// non-transactional document ACP) asks node access control once, there.
+/// non-transactional document ACP) asks node access control once, there, and
+/// runs with the answer.
 #[test]
 fn an_unprepared_mutation_resolves_the_dac_bypass_once() {
     workers::block_on(async {
         let admin = Did::new(ADMIN).unwrap();
-        let runner = private_company(Ok(admin.clone()));
-        let _ = runner
+        let truncator = Arc::new(BypassTruncator::default());
+        let runner =
+            private_company(Ok(admin.clone())).with_collection_truncator(truncator.clone());
+        let response = runner
             .execute(QueryRequest::new("mutation { truncate_Company }").with_identity(Some(admin)))
             .await;
+        assert_ok(&response);
+        assert_eq!(
+            response.data,
+            Some(serde_json::json!({"truncate_Company": true}))
+        );
+        assert_eq!(drain(&truncator.bypasses), vec![true]);
         assert_eq!(runner.fetcher.dac_bypass_lookups(), 1);
     })
     .unwrap()
