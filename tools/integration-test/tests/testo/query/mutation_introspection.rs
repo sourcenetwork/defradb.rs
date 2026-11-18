@@ -80,3 +80,55 @@ fn mutations_show_go_arguments_and_types() {
     ])
     .execute();
 }
+
+fn boolean_placeholder() -> Value {
+    json!({ "name": "_", "type": named("SCALAR", "Boolean") })
+}
+
+/// A GraphQL object type needs at least one field, so Mutation always starts
+/// with Go's `_` placeholder, even on a node with no collections (#3062).
+#[test]
+#[mantra_macros::req_test("defra.request.mutation_introspection")]
+fn mutation_type_has_placeholder_without_collections() {
+    TestCase::from_actions(vec![Request {
+        request: r#"query {
+                __schema { mutationType { name } }
+                mutation: __type(name: "Mutation") { fields { name type { kind name ofType { kind name } } } }
+            }"#
+        .into(),
+        expected_data: json!({
+            "__schema": { "mutationType": { "name": "Mutation" } },
+            "mutation": { "fields": [boolean_placeholder()] },
+        }),
+        ..Default::default()
+    }
+    .into()])
+    .execute();
+}
+
+#[test]
+#[mantra_macros::req_test("defra.request.mutation_introspection")]
+fn mutation_type_keeps_placeholder_with_collections() {
+    TestCase::from_actions(vec![
+        AddCollection {
+            sdl: "type Book { name: String }".into(),
+            ..Default::default()
+        }
+        .into(),
+        Request {
+            request: r#"query {
+                    mutation: __type(name: "Mutation") { fields { name type { kind name ofType { kind name } } } }
+                }"#
+            .into(),
+            expected_data: json!({
+                "mutation": { "fields": m::all(json!([
+                    m::first_where("name", "_", boolean_placeholder()),
+                    m::first_where("name", "add_Book", m::nonempty()),
+                ])) },
+            }),
+            ..Default::default()
+        }
+        .into(),
+    ])
+    .execute();
+}

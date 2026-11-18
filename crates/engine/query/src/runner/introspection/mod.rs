@@ -79,13 +79,7 @@ pub fn build_introspection_schema(
     }
 
     // Start with basic scalar types
-    // Register Mutation root when collections exist so MutationInputArg types are reachable
-    let mutation_name = if collections.is_empty() {
-        None
-    } else {
-        Some("Mutation")
-    };
-    let mut schema_builder = Schema::build("Query", mutation_name, Some("Subscription"));
+    let mut schema_builder = Schema::build("Query", Some("Mutation"), Some("Subscription"));
 
     // Build a Query type with fields for each collection
     let mut query_type = Object::new("Query");
@@ -382,11 +376,7 @@ pub fn build_introspection_schema(
 
     schema_builder = schema_builder.register(query_type);
 
-    // Add mutation type if we have collections
-    if !collections.is_empty() {
-        let mutation_type = build_mutation_type(collections);
-        schema_builder = schema_builder.register(mutation_type);
-    }
+    schema_builder = schema_builder.register(build_mutation_type(collections));
 
     schema_builder.finish()
 }

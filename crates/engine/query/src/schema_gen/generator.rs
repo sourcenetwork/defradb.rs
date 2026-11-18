@@ -426,9 +426,11 @@ pub fn generate_cursor_query_type(collections: &[&CollectionVersion]) -> GqlObje
     cq
 }
 
-/// Generate Mutation type with all collection mutations
+/// Generate Mutation type with all collection mutations, after Go's `_`
+/// placeholder, which keeps the type valid when no collection takes mutations.
 pub fn generate_mutation_type(collections: &[&CollectionVersion]) -> GqlObjectType {
-    let mut mutation = GqlObjectType::new("Mutation");
+    let mut mutation =
+        GqlObjectType::new("Mutation").with_field(GqlField::new("_", GqlType::boolean()));
 
     // `@chunk` collections get no mutations. Only their parent's writes change them.
     for collection in collections.iter().filter(|c| !c.is_generated()) {
@@ -759,6 +761,8 @@ mod tests {
         let mutation = generate_mutation_type(&collections);
 
         assert_eq!(mutation.name, "Mutation");
+        assert_eq!(mutation.fields[0].name, "_");
+        assert_eq!(mutation.fields[0].field_type.to_sdl(), "Boolean");
 
         let create = mutation.fields.iter().find(|f| f.name == "add_User");
         assert!(create.is_some());
