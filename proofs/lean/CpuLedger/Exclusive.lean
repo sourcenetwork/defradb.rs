@@ -27,7 +27,7 @@ These laws hold for any number of CPUs and pools. The races between pools
 are the TLA+ model `proofs/tla/CpuLedger.tla`.
 
 Rust anchors: `Ledger::hold`, `Ledger::share`, `Hold::drop`
-(`crates/workers/src/ledger.rs`) and `reserve` (`crates/workers/src/placement/reserve.rs`).
+(`crates/foundation/workers/src/ledger.rs`) and `reserve` (`crates/foundation/workers/src/placement/reserve.rs`).
 -/
 
 namespace CpuLedger

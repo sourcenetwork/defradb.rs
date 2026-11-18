@@ -1,4 +1,4 @@
-# Survey: `crates/lens/`
+# Survey: `crates/foundation/lens/`
 
 ## Purpose
 Non-destructive schema migration via WASM transforms (mirrors Go `internal/lens`).

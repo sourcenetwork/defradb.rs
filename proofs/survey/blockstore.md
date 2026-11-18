@@ -1,4 +1,4 @@
-# Survey: `crates/blockstore/`
+# Survey: `crates/engine/blockstore/`
 
 ## Purpose
 

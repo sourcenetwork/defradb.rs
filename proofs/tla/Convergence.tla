@@ -19,8 +19,8 @@
 \* (MC_Conv_NoHeadRediscovery).
 \*
 \* Every variable is state the code holds, except the restart budget:
-\*   have      blockstore contents (crates/blockstore)
-\*   merged    blocks the merge handler applied (crates/db merge handler)
+\*   have      blockstore contents (crates/engine/blockstore)
+\*   merged    blocks the merge handler applied (crates/database/db merge handler)
 \*   owed      the creator's retry markers per node (peerstore.rs register_scope_marker; retry.rs run_retry_pass)
 \*   pendDur   a node's durable pending records (pushlog.rs process_block_inner; pending_store)
 \*   wanted    roots in a node's in-memory pending map (resync_persisted_pending_dags refills it)

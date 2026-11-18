@@ -16,9 +16,9 @@ lexicographic order).
 * otherwise the first differing byte decides, by unsigned `Nat` `<`.
 
 Anchors (the comparison this models):
-* Rust: backends compare keys as byte slices; e.g. `crates/storage/src/backends/memory`
+* Rust: backends compare keys as byte slices; e.g. `crates/engine/storage/src/backends/memory`
   uses a `BTreeMap<Vec<u8>, …>` whose `Ord` on `Vec<u8>` is `memcmp`-lex.
-* The encoders under test live in `crates/storage/src/encoding/`.
+* The encoders under test live in `crates/engine/storage/src/encoding/`.
 -/
 
 namespace OrderEncoding

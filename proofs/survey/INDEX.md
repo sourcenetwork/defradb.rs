@@ -124,7 +124,7 @@ integration tests, Go FFI parity, or unit tests. One line each on why.
 - **db-backup** — JSON (de)serialization + deterministic 3-phase FK-remap transform; covered by `--test backup`; content-addressing belongs to document layer.
 - **db-blocks** — deterministic single-txn block construction; the produce-side twin of already-modeled CRDT/convergence/content-addressing properties.
 - **db-search** — linear embed→query→fuse flow; only RRF total-order determinism, a low-value v1 heuristic de-risked by a doc_id tie-break.
-- **db-nac** — config-aware wrapper; the real NAC state machine lives in crates/acp; auth gate already in the Auth slice.
+- **db-nac** — config-aware wrapper; the real NAC state machine lives in crates/engine/acp; auth gate already in the Auth slice.
 - **defra-node** — pure assembly/wiring; all emergent protocol behavior delegated to crates with existing slices.
 - **defra-version** — compile-time version/build metadata; immutable string/JSON shapes covered by unit tests.
 - **document** — pure single-threaded value handling; only content-addressing determinism, already assumed by Convergence/Integrity and recorded in db-blocks survey.

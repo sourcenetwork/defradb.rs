@@ -24,14 +24,14 @@
 \*      conflict instead. (INV_NoLostUpdate)
 \*
 \* The Rust code this models:
-\*   - RequestContext::txn / with_txn            crates/defra-core/src/request_context.rs
+\*   - RequestContext::txn / with_txn            crates/foundation/defra-core/src/request_context.rs
 \*   - Node::txn_begin / txn_commit / txn_discard
-\*                                                crates/defra-node/src/ops/request.rs
+\*                                                crates/entry-points/defra-node/src/ops/request.rs
 \*   - DbTransactionRegistry begin_as / run_as / commit_as / discard_as,
-\*     and the owner check Owners::run / finish   crates/db/src/txn/registry/lifecycle.rs,
-\*                                                crates/db/src/txn/owner/mod.rs
-\*   - the read-only rejection                    crates/query/src/runner/turn.rs
-\*   - commit-time conflict (regolith validates)  crates/db/src/txn/registry/lifecycle.rs commit_error
+\*     and the owner check Owners::run / finish   crates/database/db/src/txn/registry/lifecycle.rs,
+\*                                                crates/database/db/src/txn/owner/mod.rs
+\*   - the read-only rejection                    crates/engine/query/src/runner/turn.rs
+\*   - commit-time conflict (regolith validates)  crates/database/db/src/txn/registry/lifecycle.rs commit_error
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS

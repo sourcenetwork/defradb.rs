@@ -308,7 +308,7 @@ jobs:
           cargo build --release -p cli
           command -v wasm-pack >/dev/null 2>&1 || cargo install wasm-pack --locked
           CARGO_PROFILE_RELEASE_OPT_LEVEL=z \
-            wasm-pack build crates/wasm --release --target web --out-dir ../../pkg/wasm
+            wasm-pack build crates/surfaces/wasm --release --target web --out-dir ../../../pkg/wasm
       - name: Weigh them
         run: |
           set -euo pipefail

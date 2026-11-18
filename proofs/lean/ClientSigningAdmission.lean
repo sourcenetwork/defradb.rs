@@ -6,7 +6,7 @@ of a bounded number of slots, and its token must still be unexpired when the
 request starts. Its lifetime ends no later than that token's expiration or the
 server's shorter session deadline. Releasing a slot restores capacity.
 TLA+ checks the races between opening and ending different connections.
-Rust owners: crates/http/src/client_signing.rs and router/state.rs.
+Rust owners: crates/surfaces/http/src/client_signing.rs and router/state.rs.
 -/
 
 namespace ClientSigningAdmission

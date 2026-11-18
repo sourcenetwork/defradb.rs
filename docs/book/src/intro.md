@@ -49,7 +49,7 @@ Every diagram is embedded as a rendered image, with its Mermaid source kept besi
 - **yellow**: a validated step, a gate, or I/O;
 - **grey**: the network boundary.
 
-Code references look like [`crates/storage/src/backends/regolith/classifier.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/classifier.rs), optionally
+Code references look like [`crates/engine/storage/src/backends/regolith/classifier.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/classifier.rs), optionally
 with a line number at the time of writing. The book is regenerated and deployed by CI
 whenever it changes; if you find prose that disagrees with the code, trust the code and fix
 the book.

@@ -36,11 +36,11 @@
 \*   * SkipOnTurn: a dropped ticket is skipped only when its turn comes, never
 \*     at once (Red_CancelSkipsNow).
 \*
-\* Rust: crates/ffi/src/state/turns.rs Turns::take, Ticket::wait, Ticket's
-\* Drop, Turns::finish; the callers that take tickets: crates/ffi/src/target.rs
-\* resolve_target, crates/ffi/src/request.rs Request::resolve,
-\* crates/ffi/src/query/exec.rs ExecArgs::read and defra_query_execute_async,
-\* crates/ffi/src/txn/lifecycle.rs defra_transaction_commit and
+\* Rust: crates/entry-points/ffi/src/state/turns.rs Turns::take, Ticket::wait, Ticket's
+\* Drop, Turns::finish; the callers that take tickets: crates/entry-points/ffi/src/target.rs
+\* resolve_target, crates/entry-points/ffi/src/request.rs Request::resolve,
+\* crates/entry-points/ffi/src/query/exec.rs ExecArgs::read and defra_query_execute_async,
+\* crates/entry-points/ffi/src/txn/lifecycle.rs defra_transaction_commit and
 \* defra_transaction_discard.
 EXTENDS Naturals, FiniteSets
 

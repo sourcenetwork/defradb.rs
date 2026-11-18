@@ -6,7 +6,7 @@ can keep its version ID while changing a field's immutable flag, which changes
 the blocks the document requires. A cached graph is reusable only when the
 complete deciding definition still matches, not merely its version ID. This
 model isolates version and ordered immutable field flags; the Rust owner checks
-the full collection definition. Rust owner: crates/db/src/write/create.rs.
+the full collection definition. Rust owner: crates/database/db/src/write/create.rs.
 -/
 
 namespace ClientCreateSchema

@@ -349,6 +349,13 @@ Over iroh, a create or an update whose head block is larger than one gossip broa
 
 `_commits(docID: [X], filter: {height: …})` takes `_eq`, `_gt`, `_gte`, `_lt` and `_lte`, alone, combined in one condition, under `_and`, or under `_or`. A document created at height 1 and then updated twice has composite commits at heights 1, 2 and 3: `{height: {_gte: 2, _lte: 3}, fieldName: {_eq: "_C"}}` and `{height: {_gte: 2, _lt: 5}, …}` return heights 2 and 3, `{height: {_gt: 1, _lt: 3}, …}` returns 2, `{height: {_eq: 2}, fieldName: {_eq: "age"}}` returns the `age` commit at height 2, and an `_or` of heights 1 and 3 returns both. A range above every height (`_gt: 10`) or an empty one (`_gt: 10, _lt: 5`) returns no commits. Go returns `{"data": null}` for these filters.
 
+# `defra.commits.field_name_neq`: Filtering commits on a field name they do not have
+
+- **Parents:** ["defra.commits"]
+- **Scenarios:** ["query::commits::with_filter_neq::commits_filter_field_name_neq_excludes_the_named_field"]
+
+`CommitsFieldNameFilterArg` names its inequality operator `_neq`, as the standard query filters and Go do, and introspection lists `_eq`, `_in`, `_neq` and `_nin`. For a document with `name` and `age`, `_commits(filter: {fieldName: {_neq: "_C"}})` returns the `age` and `name` commits and not the composite one.
+
 # `defra.commits.immutable_block`: Commits of a shared immutable block
 
 - **Parents:** ["defra.commits"]

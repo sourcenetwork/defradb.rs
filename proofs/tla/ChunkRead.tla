@@ -41,20 +41,20 @@
 \*     the peer may not read it (INV_ServedIsReadable).
 \*
 \* Code it models:
-\*   crates/query/src/plan/chunk_parent.rs  parent_hashes (deleted parent, the text cut again), ChunkFields::verified_hash
-\*   crates/query/src/plan/chunk_gate.rs    ChunkGate::allows, ChunkGate::decide (one decision per parent per query)
-\*   crates/query/src/plan/permission_filter.rs PermissionFilterNode::permission_check (the chunk's fields
+\*   crates/engine/query/src/plan/chunk_parent.rs  parent_hashes (deleted parent, the text cut again), ChunkFields::verified_hash
+\*   crates/engine/query/src/plan/chunk_gate.rs    ChunkGate::allows, ChunkGate::decide (one decision per parent per query)
+\*   crates/engine/query/src/plan/permission_filter.rs PermissionFilterNode::permission_check (the chunk's fields
 \*                                          come from its scan row, read at the query's snapshot)
-\*   crates/query/src/planner/builder/mod.rs maybe_wrap_with_acp_filter (a new gate per query)
-\*   crates/query/src/runner/chunk_access.rs chunk_readable, ChunkReads (commits, arrivals, updates and
+\*   crates/engine/query/src/planner/builder/mod.rs maybe_wrap_with_acp_filter (a new gate per query)
+\*   crates/engine/query/src/runner/chunk_access.rs chunk_readable, ChunkReads (commits, arrivals, updates and
 \*                                          version reads; one decision per parent per request, then
 \*                                          the chunk collection's own app check per chunk)
-\*   crates/query/src/planner/builder/mod.rs maybe_wrap_with_acp_filter (the chunk collection's own app check)
-\*   crates/db/src/chunk/access.rs         history_parents, read_owners, merged (an unarrived parent owns nothing)
-\*   crates/db/src/chunk/access.rs         parent_collection, read_owners (an unknown collection owns nothing)
-\*   crates/p2p-adapter/src/read_gate.rs    DbBlockReadGate::may_read, DbBlockClassifier::classify (chunk block serving)
-\*   crates/db/src/block/verify.rs          load_authorized_block_signature (the chunk branch)
-\*   crates/http/src/handlers/events.rs     can_observe_document_event (an unknown collection's event)
+\*   crates/engine/query/src/planner/builder/mod.rs maybe_wrap_with_acp_filter (the chunk collection's own app check)
+\*   crates/database/db/src/chunk/access.rs         history_parents, read_owners, merged (an unarrived parent owns nothing)
+\*   crates/database/db/src/chunk/access.rs         parent_collection, read_owners (an unknown collection owns nothing)
+\*   crates/surfaces/p2p-adapter/src/read_gate.rs    DbBlockReadGate::may_read, DbBlockClassifier::classify (chunk block serving)
+\*   crates/database/db/src/block/verify.rs          load_authorized_block_signature (the chunk branch)
+\*   crates/surfaces/http/src/handlers/events.rs     can_observe_document_event (an unknown collection's event)
 \* Merging text and list across peers is ChunkMerge.tla's job, not this one's.
 EXTENDS Naturals, FiniteSets
 

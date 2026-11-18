@@ -57,3 +57,6 @@ testo query::cyclic_fragments::a_cycle_no_field_spreads_still_fails_validation #
 testo net::info::connect_peers::net_info_connect_multiple_peers #2726
 testo acp::nac::list_p2p_replicator::nac_gates_list_p2_p_replicator_authorized_identity_allow_access #2727
 testo acp::nac::relation_admin::list_p2p_replicator::nac_admin_relation_can_list_p2_p_replicator #2727
+testo acp::nac::add_nac_relationship::nac_add_relationship_when_nac_is_enabled_with_invalid_identities_error #3060
+testo acp::nac::delete_nac_relationship::nac_delete_relationship_when_nac_is_enabled_with_invalid_identities_error #3060
+testo acp::nac::delete_nac_relationship::nac_delete_relationship_for_all_identities_all_implicit_identities_access_revoked #3060

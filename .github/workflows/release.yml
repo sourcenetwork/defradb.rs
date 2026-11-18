@@ -130,7 +130,7 @@ jobs:
         run: cargo install wasm-pack
 
       - name: Build WASM
-        run: CARGO_PROFILE_RELEASE_OPT_LEVEL=z wasm-pack build crates/wasm --release --target web --out-dir ../../pkg/wasm
+        run: CARGO_PROFILE_RELEASE_OPT_LEVEL=z wasm-pack build crates/surfaces/wasm --release --target web --out-dir ../../../pkg/wasm
 
       - name: Package
         run: |
@@ -263,7 +263,7 @@ jobs:
             --no-default-features --features ${{ matrix.features }}
 
       - name: Generate header
-        run: cbindgen --config crates/ffi/cbindgen.toml --crate ffi --output defra.h
+        run: cbindgen --config crates/entry-points/ffi/cbindgen.toml --crate ffi --output defra.h
 
       - name: Compile header
         shell: bash

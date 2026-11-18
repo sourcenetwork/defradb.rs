@@ -1,6 +1,6 @@
-# Survey: `crates/db (backup)/`
+# Survey: `crates/database/db (backup)/`
 
-> **Now a module, not a crate.** `db-backup` was folded into `db` as `crates/db/src/backup/`. The slice below is unchanged; only its location moved.
+> **Now a module, not a crate.** `db-backup` was folded into `db` as `crates/database/db/src/backup/`. The slice below is unchanged; only its location moved.
 
 ## Purpose
 Database export/import (backup) for DefraDB, extracted from `db` (#669 decomposition).

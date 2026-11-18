@@ -19,16 +19,16 @@
 \* registry until something ends it.
 \*
 \* Shutting the node down runs one sequence (defra-node Node::shutdown
-\* in crates/defra-node/src/lib.rs, and ShutdownHandle::stop in
-\* crates/defra-node/src/managed_p2p.rs):
+\* in crates/entry-points/defra-node/src/lib.rs, and ShutdownHandle::stop in
+\* crates/entry-points/defra-node/src/managed_p2p.rs):
 \*   1. abort every task in the node's shutdown set (BackgroundTasks), then
 \*      await each one until it let go of storage;
 \*   2. stop admitting requests and drain those in flight, up to a deadline
-\*      (NodeEdge::drain_requests, crates/defra-node/src/network.rs: the
+\*      (NodeEdge::drain_requests, crates/entry-points/defra-node/src/network.rs: the
 \*      request scope, a child of the node's scope, closes). The HTTP
 \*      server is a task of the request scope, not a service: once the scope
 \*      stops accepting, its accept loop stops and each connection finishes
-\*      the requests in flight and closes (crates/net/src/server.rs serve,
+\*      the requests in flight and closes (crates/building-blocks/net/src/server.rs serve,
 \*      until_closing), so the drain waits for them;
 \*   3. shut P2P down (ManagedP2PSystem::stop_transport): stop the services and
 \*      await them. From its start no write can register its marker any more;
@@ -66,27 +66,27 @@
 \*   6. shutdown never finishes - LIVE_ShutdownTerminates.
 \*
 \* The Rust code each guard models:
-\*   RedriveInSet    crates/defra-node/src/node_acp.rs gate_external_acp: the
+\*   RedriveInSet    crates/entry-points/defra-node/src/node_acp.rs gate_external_acp: the
 \*                   redrive is a workers::spawn_background task the node pushes
 \*                   into BackgroundTasks, instead of drop(network.spawn(..));
-\*   AwaitServices   crates/edge/src/task.rs Service::stopped, called by
-\*                   crates/defra-node/src/managed_p2p.rs stop_services;
-\*   DrainDeadline   crates/edge/src/handle.rs Scope::drain (a drain that
+\*   AwaitServices   crates/foundation/edge/src/task.rs Service::stopped, called by
+\*                   crates/entry-points/defra-node/src/managed_p2p.rs stop_services;
+\*   DrainDeadline   crates/foundation/edge/src/handle.rs Scope::drain (a drain that
 \*                   waits up to `within`);
-\*   SlotKeepsHandle crates/defra-node/src/lib.rs Node::shutdown, the
+\*   SlotKeepsHandle crates/entry-points/defra-node/src/lib.rs Node::shutdown, the
 \*                   telemetry slot that keeps the handle when the runtime
 \*                   refuses the flush;
-\*   RequestsFirst   crates/defra-node/src/lib.rs Node::shutdown, which drains
+\*   RequestsFirst   crates/entry-points/defra-node/src/lib.rs Node::shutdown, which drains
 \*                   the request scope (NodeEdge::drain_requests) before P2P,
 \*                   with every HTTP request run as a task of it
-\*                   (crates/http/src/server.rs Server::router) with no
+\*                   (crates/surfaces/http/src/server.rs Server::router) with no
 \*                   deadline of its own and inside the request timeout, so
 \*                   neither a client that goes away nor a timeout ends the
 \*                   request's admission before its handler ends. Regression:
 \*                   a_transaction_committed_during_shutdown_is_refused_or_keeps_its_head_marker
-\*                   in crates/defra-node/tests/commit_during_shutdown.rs, and
-\*                   crates/http/tests/request_admission.rs;
-\*   CommitsAdmitted crates/defra-node/src/lib.rs Node::as_request, through
+\*                   in crates/entry-points/defra-node/tests/commit_during_shutdown.rs, and
+\*                   crates/surfaces/http/tests/request_admission.rs;
+\*   CommitsAdmitted crates/entry-points/defra-node/src/lib.rs Node::as_request, through
 \*                   which begin_transaction (and with it
 \*                   begin_transaction_guard), commit_transaction (and
 \*                   NodeTransaction::commit), execute_as and the unsigned
@@ -94,15 +94,15 @@
 \*                   scope, as signed queries do with no task deadline (see
 \*                   SignedRequestDrain), and with them the ops API's
 \*                   Node::txn_begin and Node::txn_commit
-\*                   (crates/defra-node/src/ops/request.rs). The raw runner()
+\*                   (crates/entry-points/defra-node/src/ops/request.rs). The raw runner()
 \*                   is outside the promise, as are the ops that write no
 \*                   document head (truncate_collection_as purges, and the
 \*                   schema and lens ops);
-\*   EndsOpenTransactions crates/defra-node/src/lib.rs Node::shutdown, which
+\*   EndsOpenTransactions crates/entry-points/defra-node/src/lib.rs Node::shutdown, which
 \*                   ends the registry's transactions after the node's drain
 \*                   and before close_database. Regression:
 \*                   a_transaction_left_open_by_a_refused_commit_does_not_stall_shutdown
-\*                   in crates/defra-node/tests/commit_during_shutdown.rs.
+\*                   in crates/entry-points/defra-node/tests/commit_during_shutdown.rs.
 
 EXTENDS Naturals  \* numbers, for comparing step positions
 

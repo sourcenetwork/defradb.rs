@@ -17,7 +17,7 @@ leave the real ones behind.
 Bytes are modelled as natural numbers below 256.
 
 Rust anchors: `encode_record`, `decode_record` in
-`crates/db/src/index/deferred/record.rs`.
+`crates/database/db/src/index/deferred/record.rs`.
 -/
 
 namespace PositionRecord

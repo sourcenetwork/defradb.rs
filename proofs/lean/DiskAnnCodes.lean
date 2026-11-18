@@ -18,7 +18,7 @@ What must never happen:
   (`insert_refuses_other_length`).
 
 Rust anchors: `Codes::insert` and `Codes::get` in
-`crates/db/src/index/vector/engine/diskann/cache.rs`. The id map there is a
+`crates/database/db/src/index/vector/engine/diskann/cache.rs`. The id map there is a
 `RapidHashMap<NodeId, u32>`, modeled here as a function from id to slot; bytes
 are modeled as natural numbers. `started` stands for `!index.is_empty()`: the
 map only ever grows, so it is empty exactly until the first insert succeeds.

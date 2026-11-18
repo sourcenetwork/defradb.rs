@@ -17,7 +17,7 @@ spell it differently, two actors are taken for one, or vera.rs is sent a
 spelling it refuses.
 
 Rust owner: `defra`, `wire` and `same_actor` in
-`crates/vera-delegation/src/did_spelling.rs`.
+`crates/engine/vera-delegation/src/did_spelling.rs`.
 
 The model is over an abstract key. The constructors are distinct strings in
 Rust; that two different keys never share a spelling is the encoding's

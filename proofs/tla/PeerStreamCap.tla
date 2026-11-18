@@ -18,8 +18,8 @@
 \* runner admits, so a counter it finds at zero stays there until it admits
 \* again.
 \*
-\* Rust: crates/p2p/src/two_stream/peer_streams.rs PeerStreams::admit (and
-\* its prune of idle counters) and the StreamAdmission guard's drop; crates/p2p/src/two_stream/runner.rs,
+\* Rust: crates/database/p2p/src/two_stream/peer_streams.rs PeerStreams::admit (and
+\* its prune of idle counters) and the StreamAdmission guard's drop; crates/database/p2p/src/two_stream/runner.rs,
 \* where every inbound stream is admitted before its handler is spawned.
 EXTENDS Naturals
 

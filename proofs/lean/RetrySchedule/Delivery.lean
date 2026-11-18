@@ -24,8 +24,8 @@ What must never happen:
 * a failed pass leaves the clock on the same rung (`bump_climbs`).
 
 Rust anchors: `RetryInfo::bump_with_schedule` and
-`RetryInfo::restart_after_delivery` in `crates/storage/src/stores/retry_info.rs`;
-`PeerstoreRetryAttempt::CompleteMarker` in `crates/storage/src/stores/peerstore.rs`
+`RetryInfo::restart_after_delivery` in `crates/engine/storage/src/stores/retry_info.rs`;
+`PeerstoreRetryAttempt::CompleteMarker` in `crates/engine/storage/src/stores/peerstore.rs`
 restarts the clock for an acknowledged completion that leaves markers behind.
 Seconds are `u64` there and `Nat` here. The Rust jitter picks a delay in the
 upper half of the rung; here `delay` is any wait up to the rung.

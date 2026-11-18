@@ -16,7 +16,7 @@
 \* provider. What must always happen: the reader finds the owner. A reader
 \* asks at most once per ask interval, however many lookups it makes.
 \*
-\* Code it models (crates/p2p/src/iroh/records):
+\* Code it models (crates/database/p2p/src/iroh/records):
 \*   task.rs  Records::providers              (Lookup: the book, else Who to connected peers, once per interval)
 \*   task.rs  Records::on_message, Who         (Answer: book records and our own record)
 \*   task.rs  Records::on_message, Records     (Answer lands in the reader's book)

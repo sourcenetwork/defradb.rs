@@ -1,4 +1,4 @@
-# Survey: `crates/defra-core`
+# Survey: `crates/foundation/defra-core`
 
 ## Purpose
 Foundational types/traits shared across DefraDB.rs: content-addressed IPLD `Block`
@@ -13,7 +13,7 @@ mirror of Go's `internal/core/`.
 - Signing-config resolution (`resolve_signing_config_with_flag`) and the global
   DID→SigningConfig / DID→bearer-token stores are runtime plumbing (no protocol state).
 - No explicit lifecycle/transition machine in this crate. Block creation is a pure
-  function; CRDT *merge* state machines live in `crates/crdt` + `db-merge`, not here.
+  function; CRDT *merge* state machines live in `crates/building-blocks/crdt` + `db-merge`, not here.
 
 ## Candidates
 
@@ -23,7 +23,7 @@ mirror of Go's `internal/core/`.
 | Block.new canonicalization | Lean | `Block::new` is idempotent & order-insensitive: sorting heads/links + empty→None yields a unique normal form, so CID is independent of input link ordering | no | medium |
 | Merkle batch-root determinism | Lean | `compute_merkle_root` is invariant under input permutation (CIDs sorted) and injective enough that distinct CID sets give distinct roots (collision modulo SHA256) | no | low |
 | DocID parse/format round-trip | Lean | `from_string ∘ to_string = id` and `from_bytes ∘ to_bytes = id`; version!=V0 always rejected (uvarint round-trip total) | no | low |
-| CRDT delta-payload merge laws | Lean | assoc/comm/idem of LWW & counter merges | yes (Lean lww/counter/composite, src in `crates/crdt`) | low |
+| CRDT delta-payload merge laws | Lean | assoc/comm/idem of LWW & counter merges | yes (Lean lww/counter/composite, src in `crates/building-blocks/crdt`) | low |
 | Block integrity before merge | TLA+ | signed block verified before applied | yes (`Integrity.tla`) | low |
 
 ## Verdict

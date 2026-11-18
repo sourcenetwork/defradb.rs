@@ -24,14 +24,14 @@ arrives as someone other than the transaction's owner. Before this fix an
 identity-only node owned its transactions as its DID but ran unsigned
 requests in them as no one, so they were all refused.
 
-Rust owner: crates/defra-node/src/lib.rs `Node::execute_prepared_request`
+Rust owner: crates/entry-points/defra-node/src/lib.rs `Node::execute_prepared_request`
 (the `signing_identity` filter), `Node::node_principal` and
 `Node::node_context` (the owner of the transactions the node begins), and
-crates/defra-node/src/assemble.rs `assemble` (`node_query_identity`, the
+crates/entry-points/defra-node/src/assemble.rs `assemble` (`node_query_identity`, the
 identity a request without its own acts as). The signed path stamps the
-principal in crates/defra-node/src/signed_query/mod.rs
+principal in crates/entry-points/defra-node/src/signed_query/mod.rs
 `execute_with_signing_context`. The HTTP server takes the same choice through
-`ServerConfig::no_signing` (crates/defra-node/src/node_builder.rs
+`ServerConfig::no_signing` (crates/entry-points/defra-node/src/node_builder.rs
 `NodeBuilder::build`).
 -/
 

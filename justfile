@@ -163,8 +163,8 @@ setup-cargo-tools:
     fi
     echo "wasm-bindgen-cli: $wb_version (matched to Cargo.lock)"
 
-# protoc, required by crates/orbis's build.rs (proto/orbis.proto via tonic-prost-build).
-[doc("protoc, required by crates/orbis's build.rs.")]
+# protoc, required by crates/building-blocks/orbis's build.rs (proto/orbis.proto via tonic-prost-build).
+[doc("protoc, required by crates/building-blocks/orbis's build.rs.")]
 [group('setup')]
 setup-protoc:
     #!/usr/bin/env bash
@@ -488,13 +488,13 @@ build-fast:
 [group('build')]
 build-wasm:
     CARGO_PROFILE_RELEASE_OPT_LEVEL=z \
-        wasm-pack build crates/wasm --release --target web --out-dir ../../pkg/wasm
+        wasm-pack build crates/surfaces/wasm --release --target web --out-dir ../../../pkg/wasm
 
 # Regenerate the C header for the FFI surface.
 [group('build')]
 build-ffi-header:
-    cbindgen --config crates/ffi/cbindgen.toml --crate ffi --output crates/ffi/defradb.h
-    just check-ffi-header crates/ffi/defradb.h
+    cbindgen --config crates/entry-points/ffi/cbindgen.toml --crate ffi --output crates/entry-points/ffi/defradb.h
+    just check-ffi-header crates/entry-points/ffi/defradb.h
 
 # Compile a generated C header as C11 and C++17 with every warning an error,
 # so its inline wrappers and options structs are valid for both.
@@ -954,4 +954,4 @@ machete:
 # The Go compatibility baseline, read from its single source of truth.
 [group('misc')]
 go-baseline:
-    @grep -E 'GO_COMPAT_(BRANCH|COMMIT|TAG)' crates/defra-version/src/lib.rs
+    @grep -E 'GO_COMPAT_(BRANCH|COMMIT|TAG)' crates/foundation/defra-version/src/lib.rs

@@ -68,16 +68,16 @@
 \*   - with the provider and every node working, c's genesis, update and
 \*     delete do not all end merged on every receiver - LIVE_RowMerges.
 \*
-\* Rust owners: crates/db/src/merge/replica.rs ReplicaRegistration,
-\* ReplicaOwnership, ReplicaStep; crates/db/src/merge/merge_handler/
-\* replica_plan.rs plan_replica_frame; crates/db/src/merge/merge_handler/
-\* composite_persist.rs record_replica; crates/db/src/merge/
+\* Rust owners: crates/database/db/src/merge/replica.rs ReplicaRegistration,
+\* ReplicaOwnership, ReplicaStep; crates/database/db/src/merge/merge_handler/
+\* replica_plan.rs plan_replica_frame; crates/database/db/src/merge/merge_handler/
+\* composite_persist.rs record_replica; crates/database/db/src/merge/
 \* acp_merge_handler.rs AcpCompositeMergeHook (plan_replica,
-\* on_protected_update, node_reads); crates/acp/src/replica.rs ReplicaMarker,
-\* ReplicaOwed; crates/acp/src/external/replica.rs record_replica_unit,
+\* on_protected_update, node_reads); crates/engine/acp/src/replica.rs ReplicaMarker,
+\* ReplicaOwed; crates/engine/acp/src/external/replica.rs record_replica_unit,
 \* record_adopted_replica, owed_on_replica, yield_replica_if_held_elsewhere,
-\* settle_replica_unit; crates/acp/src/external/registration.rs
-\* register_and_clear; crates/db/src/write/autocommit/helpers.rs
+\* settle_replica_unit; crates/engine/acp/src/external/registration.rs
+\* register_and_clear; crates/database/db/src/write/autocommit/helpers.rs
 \* unregister_deleted_doc.
 EXTENDS Naturals, FiniteSets
 

@@ -58,7 +58,7 @@ echo "=== shutting down defra ==="
 stop_defra
 
 echo "=== checking the operator hint was emitted exactly once ==="
-# Go-parity behavior (crates/telemetry/src/dedup.rs): the raw, repeated SDK
+# Go-parity behavior (crates/building-blocks/telemetry/src/dedup.rs): the raw, repeated SDK
 # export errors are SUPPRESSED, and a single actionable hint is emitted once
 # per process via a global latch. So we assert:
 #   - the hint appears exactly once (proves: internal-logs on → SDK emitted →

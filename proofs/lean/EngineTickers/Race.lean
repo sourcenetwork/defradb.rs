@@ -34,7 +34,7 @@ The interleavings (a swap and its add as two steps, the close leaving the map,
 reads that miss a closed store) are the TLA+ model `proofs/tla/EngineTickers.tla`.
 
 Rust anchors: `Source::publish` and `EngineTickerExport::drop`
-(`crates/telemetry/src/engine_tickers.rs`).
+(`crates/building-blocks/telemetry/src/engine_tickers.rs`).
 -/
 
 namespace EngineTickers

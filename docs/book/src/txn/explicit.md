@@ -3,14 +3,14 @@
 An explicit (interactive) transaction spans multiple client statements: begin, several
 queries and mutations, commit or discard. defradb.rs runs each one as an **actor on
 one worker**: the transaction is begun on a worker of the pool and stays there, held
-*by value* by one task (`crates/db/src/txn/owner/`). Its ID names the worker, so every
+*by value* by one task (`crates/database/db/src/txn/owner/`). Its ID names the worker, so every
 request for it goes from the edge straight to that worker with `Target::Worker`, one
 hop in and one out, and the requests run one at a time, in arrival order, through the
 actor's mailbox. There is no lock to take: the requests are messages.
 
 ## The registry
 
-The transaction registry (`crates/db/src/txn/registry/`) maps IDs to owners:
+The transaction registry (`crates/database/db/src/txn/registry/`) maps IDs to owners:
 
 - **begin** on a least-loaded worker, made explicit, wrapped as an `OwnedTxn`;
 - **run**: a request routed to the owning worker under a deadline; the actor lends
@@ -37,7 +37,7 @@ was requested, and "the caller left" must not mean "the write vanishes" or, wors
 `CommitFence` counts commits whose caller stopped waiting, and every new transaction
 waits while that count is above zero, so no new work starts until the abandoned
 commits have landed. The protocol has its own TLA+ model and a Lean proof of the
-counter swap ([`CommitFence.tla`](https://github.com/sourcenetwork/defradb.rs/blob/main/proofs/tla/CommitFence.tla), [`crates/db/src/txn/fence.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/txn/fence.rs)).
+counter swap ([`CommitFence.tla`](https://github.com/sourcenetwork/defradb.rs/blob/main/proofs/tla/CommitFence.tla), [`crates/database/db/src/txn/fence.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/txn/fence.rs)).
 
 ## Auto-commit vs explicit
 

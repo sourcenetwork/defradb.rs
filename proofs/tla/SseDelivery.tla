@@ -4,7 +4,7 @@
 \* last event and waits. Recording the loss also closes the queue, which wakes
 \* the stream even if there is no later publication. A query error is sent,
 \* even if it has no rows. This models `ChannelBus::publish_raw` and
-\* `graphql_sse` in `crates/http/src/handlers/graphql/query.rs`.
+\* `graphql_sse` in `crates/surfaces/http/src/handlers/graphql/query.rs`.
 \* A red run removes each guard and demonstrates its specific failure.
 EXTENDS Naturals
 

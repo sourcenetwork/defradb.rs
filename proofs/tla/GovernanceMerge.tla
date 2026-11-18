@@ -8,7 +8,7 @@
 \*   MC_GovernanceMerge_*     the knob settings: today's mechanism, the ones
 \*                            that came before it, and the refactors to avoid
 \*
-\* Anchors (crates/db/src/merge/governance/ unless said otherwise; line
+\* Anchors (crates/database/db/src/merge/governance/ unless said otherwise; line
 \* numbers in GovernanceMerge_DESIGN.md):
 \*   validator.rs   MergeValidator::validate, the purity contract
 \*   verdict.rs     MergeVerdict::{Accept, Reject, Defer { awaiting }}

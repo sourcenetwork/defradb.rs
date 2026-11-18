@@ -84,31 +84,31 @@
 \* Such a provider proves none of its decisions either (proven is FALSE), so an
 \* update there still needs the key.
 \*
-\* Rust owners: crates/defra-node/src/lib.rs execute_verified_graph_in_txn;
-\* crates/defra-node/src/signer_credential.rs SignerCredential::carried_by;
-\* crates/query/src/runner/remote_authority.rs remote_write_authority,
+\* Rust owners: crates/entry-points/defra-node/src/lib.rs execute_verified_graph_in_txn;
+\* crates/entry-points/defra-node/src/signer_credential.rs SignerCredential::carried_by;
+\* crates/engine/query/src/runner/remote_authority.rs remote_write_authority,
 \* edit_credential;
-\* crates/query/src/runner/mutation.rs QueryRunner::authorize_mutation (the
+\* crates/engine/query/src/runner/mutation.rs QueryRunner::authorize_mutation (the
 \* permission, for every credential form);
-\* crates/query/src/txn/context.rs check_doc_access_with_prepared_inputs;
-\* crates/acp/src/external.rs ExternalDocumentAcp::check_doc_access (owed
+\* crates/engine/query/src/txn/context.rs check_doc_access_with_prepared_inputs;
+\* crates/engine/acp/src/external.rs ExternalDocumentAcp::check_doc_access (owed
 \* registration and owed revocation);
-\* crates/vera/src/cosmos/dac.rs VeraDocumentACP::check_doc_access,
+\* crates/engine/vera/src/cosmos/dac.rs VeraDocumentACP::check_doc_access,
 \* proves_decisions;
-\* crates/vera/src/vera_rs/provider.rs verify_access, decision_state;
-\* crates/vera/src/cosmos/dac.rs authority;
-\* crates/vera/src/cosmos/dac/request_bound.rs request_bound, admit_for;
-\* crates/vera/src/vera_rs/bearer/request.rs caller_of_request_delegation;
-\* crates/vera/src/vera_rs/bearer.rs caller_of_delegation (the HTTP door);
-\* crates/vera/src/cosmos/dac/owed.rs token, lapsed;
-\* crates/acp/src/outbox/staging.rs TransactionOutbox::stage;
-\* crates/acp/src/external/settle.rs register_first;
-\* crates/acp/src/pending.rs PendingRegistration (authority, state, last_error);
-\* crates/acp/src/external/registration.rs settle_with, registrar,
+\* crates/engine/vera/src/vera_rs/provider.rs verify_access, decision_state;
+\* crates/engine/vera/src/cosmos/dac.rs authority;
+\* crates/engine/vera/src/cosmos/dac/request_bound.rs request_bound, admit_for;
+\* crates/engine/vera/src/vera_rs/bearer/request.rs caller_of_request_delegation;
+\* crates/engine/vera/src/vera_rs/bearer.rs caller_of_delegation (the HTTP door);
+\* crates/engine/vera/src/cosmos/dac/owed.rs token, lapsed;
+\* crates/engine/acp/src/outbox/staging.rs TransactionOutbox::stage;
+\* crates/engine/acp/src/external/settle.rs register_first;
+\* crates/engine/acp/src/pending.rs PendingRegistration (authority, state, last_error);
+\* crates/engine/acp/src/external/registration.rs settle_with, registrar,
 \* note_failure;
-\* crates/acp/src/external/owed.rs reauthorize, entries;
-\* crates/db/src/write/autocommit/helpers.rs register_created_doc;
-\* crates/defra-node/src/owed.rs Node::reauthorize_owed_acp_as, Node::owed_acp_as.
+\* crates/engine/acp/src/external/owed.rs reauthorize, entries;
+\* crates/database/db/src/write/autocommit/helpers.rs register_created_doc;
+\* crates/entry-points/defra-node/src/owed.rs Node::reauthorize_owed_acp_as, Node::owed_acp_as.
 EXTENDS Naturals, FiniteSets
 
 \* Each RED configuration plants exactly one bug by naming it here.

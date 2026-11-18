@@ -30,13 +30,13 @@
 \* kept does not account for, so that a later write or drain leaves it behind.
 \*
 \* Code it models:
-\*   crates/db/src/definition/migration/format.rs  DB::migrate_index_format (the check at open)
-\*   crates/db/src/index/deferred/mode.rs          kept_in_other_mode (what the check looks at)
-\*   crates/db/src/definition/migration/reindex/page.rs  clear (an inline index's records and log go too)
-\*   crates/db/src/definition/migration/reindex/progress.rs  read (progress under another way starts over)
-\*   crates/db/src/index/manager/rebuild.rs        IndexManager::reindex_document (the walk)
-\*   crates/db/src/database/mod.rs                 DB::finish_open (the check before the backfills resume)
-\*   crates/db/src/index/backfill.rs               DB::resume_index_backfills (a stopped backfill)
+\*   crates/database/db/src/definition/migration/format.rs  DB::migrate_index_format (the check at open)
+\*   crates/database/db/src/index/deferred/mode.rs          kept_in_other_mode (what the check looks at)
+\*   crates/database/db/src/definition/migration/reindex/page.rs  clear (an inline index's records and log go too)
+\*   crates/database/db/src/definition/migration/reindex/progress.rs  read (progress under another way starts over)
+\*   crates/database/db/src/index/manager/rebuild.rs        IndexManager::reindex_document (the walk)
+\*   crates/database/db/src/database/mod.rs                 DB::finish_open (the check before the backfills resume)
+\*   crates/database/db/src/index/backfill.rs               DB::resume_index_backfills (a stopped backfill)
 EXTENDS Integers, FiniteSets
 
 CONSTANTS

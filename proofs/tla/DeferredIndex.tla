@@ -66,26 +66,26 @@
 \* DeferredDrainTask.tla; here a drain may start whenever something is owed.
 \*
 \* Code it models:
-\*   crates/db/src/index/manager/deferred.rs  IndexManager::owe (the append),
+\*   crates/database/db/src/index/manager/deferred.rs  IndexManager::owe (the append),
 \*                                            IndexManager::place (a create),
 \*                                            IndexManager::replace (the walk's record read
 \*                                            and the record put it relies on)
-\*   crates/db/src/index/deferred/drain.rs    plan (snapshot, up to the cap),
+\*   crates/database/db/src/index/deferred/drain.rs    plan (snapshot, up to the cap),
 \*                                            Plan::only_renumbers (a full plan
 \*                                            still carries), apply (live value,
 \*                                            then position record; a failed
 \*                                            document appended again; a yield
 \*                                            per slice), truncate,
 \*                                            PlanSize::after (the next cap)
-\*   crates/db/src/index/deferred/task.rs     drain_turn (the cap kept per index)
-\*   crates/db/src/index/manager/read.rs      IndexManager::read_index (owed docs,
+\*   crates/database/db/src/index/deferred/task.rs     drain_turn (the cap kept per index)
+\*   crates/database/db/src/index/manager/read.rs      IndexManager::read_index (owed docs,
 \*                                            own appends included, records read
 \*                                            unvalidated)
-\*   crates/storage/src/index/overlay.rs      the stored keys of owed docs hidden,
+\*   crates/engine/storage/src/index/overlay.rs      the stored keys of owed docs hidden,
 \*                                            their live keys merged in order
-\*   crates/db/src/definition/migration/reindex/page.rs  clear (entries out, records kept)
-\*   crates/db/src/index/manager/rebuild.rs   IndexManager::reindex_document (the walk)
-\*   crates/db/src/index/deferred/cleanup.rs  remove_page (the log truncated in pages)
+\*   crates/database/db/src/definition/migration/reindex/page.rs  clear (entries out, records kept)
+\*   crates/database/db/src/index/manager/rebuild.rs   IndexManager::reindex_document (the walk)
+\*   crates/database/db/src/index/deferred/cleanup.rs  remove_page (the log truncated in pages)
 EXTENDS Naturals, Integers, Sequences, FiniteSets
 
 CONSTANTS

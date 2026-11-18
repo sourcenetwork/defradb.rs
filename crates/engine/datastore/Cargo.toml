@@ -1,0 +1,41 @@
+[package]
+name = "datastore"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Transaction wrapper for DefraDB providing multistore access and callbacks"
+
+[package.metadata.cargo-machete]
+ignored = ["cid"]
+
+[lib]
+bench = false
+
+[dependencies]
+bytes.workspace = true
+# Async runtime
+async-trait.workspace = true
+
+# Error handling
+thiserror.workspace = true
+
+# Logging
+tracing.workspace = true
+
+# IPLD
+cid.workspace = true
+
+# Internal crates
+storage = { path = "../../engine/storage" }
+
+[dev-dependencies]
+# Testing
+futures.workspace = true
+regolith.workspace = true
+workers = { path = "../../foundation/workers" }
+
+[lints]
+workspace = true

@@ -45,7 +45,7 @@
 \*
 \* Every variable this module adds is state the code holds, and the
 \* properties are stated over it; nothing is recorded only to state them.
-\* Variables and the code state each one is (crates/p2p/src/sync):
+\* Variables and the code state each one is (crates/database/p2p/src/sync):
 \*   mem        the keys of the in-memory pending map (SyncManager::pending_dags,
 \*              manager/process/mod.rs:90) whose PendingDag::origin (manager/pending.rs:93)
 \*              is Push or Restored.
@@ -79,7 +79,7 @@
 \* (SyncShutdownHandle's pending_dag_fetch_tasks, coordinator/mod.rs), and crashed
 \* the restart.
 \*
-\* Code it models (crates/p2p/src/sync):
+\* Code it models (crates/database/p2p/src/sync):
 \*   manager/process/pushlog.rs  process_block_inner (the two tiers, the share check and the nack)
 \*   pending_store/store.rs  register and take_new (the quota, checked and charged with the record)
 \*   manager/process/pending_dag.rs  try_insert_pending_dag (the map's cap and the per-peer

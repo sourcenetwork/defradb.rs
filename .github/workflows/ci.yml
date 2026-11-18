@@ -293,7 +293,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ~/.cache/defra-harness
-          key: go-defradb-${{ runner.os }}-${{ hashFiles('crates/defra-version/src/lib.rs') }}
+          key: go-defradb-${{ runner.os }}-${{ hashFiles('crates/foundation/defra-version/src/lib.rs') }}
       - name: Install Go toolchain
         if: steps.go-defradb.outputs.cache-hit != 'true'
         uses: actions/setup-go@v7
@@ -304,9 +304,9 @@ jobs:
       - name: Prepare Go DefraDB binary
         id: prepare
         run: |
-          GO_REF=$(grep 'pub const GO_COMPAT_COMMIT' crates/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
-          GO_BRANCH=$(grep 'pub const GO_COMPAT_BRANCH' crates/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
-          GO_TAG=$(grep 'pub const GO_COMPAT_TAG' crates/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
+          GO_REF=$(grep 'pub const GO_COMPAT_COMMIT' crates/foundation/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
+          GO_BRANCH=$(grep 'pub const GO_COMPAT_BRANCH' crates/foundation/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
+          GO_TAG=$(grep 'pub const GO_COMPAT_TAG' crates/foundation/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
 
           if [ -n "$GO_TAG" ]; then
             VER_NUM="${GO_TAG#v}"
@@ -454,7 +454,7 @@ jobs:
       - name: Build WASM
         run: >-
           CARGO_PROFILE_RELEASE_OPT_LEVEL=z
-          wasm-pack build crates/wasm --release --target web --out-dir ../../pkg/wasm
+          wasm-pack build crates/surfaces/wasm --release --target web --out-dir ../../../pkg/wasm
       - uses: browser-actions/setup-firefox@0bc507ddf224827e3b1af68e014d5e42ab93e795 # v1
       - uses: browser-actions/setup-geckodriver@eb8b0670366f719ca31703766a8cb7e3ea2c56ed # v0.0.0
         with:
@@ -668,20 +668,20 @@ jobs:
         if: matrix.suite == 'go-compat'
         run: |
           OUT=$(mktemp)
-          (cd crates/p2p/testdata/gen_message_fixtures && go run .) >> "$OUT"
-          (cd crates/p2p/testdata/gen_pubsub_rpc_fixture && go run .) >> "$OUT"
+          (cd crates/database/p2p/testdata/gen_message_fixtures && go run .) >> "$OUT"
+          (cd crates/database/p2p/testdata/gen_pubsub_rpc_fixture && go run .) >> "$OUT"
           HEXES=$(grep -Eo '\(([0-9]+)( bytes)?\): [0-9a-f]+' "$OUT" | awk '{print $NF}')
           test -n "$HEXES"
           while IFS= read -r H; do
-            grep -qR --include='*.rs' -F "$H" crates/p2p/
+            grep -qR --include='*.rs' -F "$H" crates/database/p2p/
           done <<< "$HEXES"
       - name: Verify the pinned rustffi client resolves
         if: matrix.suite == 'go-compat'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          pin=$(sed -nE 's/^pub const GO_FFI_CLIENT_COMMIT: &str = "([0-9a-f]+)";/\1/p' crates/defra-version/src/lib.rs)
-          test -n "$pin" || { echo "GO_FFI_CLIENT_COMMIT not found in crates/defra-version/src/lib.rs"; exit 1; }
+          pin=$(sed -nE 's/^pub const GO_FFI_CLIENT_COMMIT: &str = "([0-9a-f]+)";/\1/p' crates/foundation/defra-version/src/lib.rs)
+          test -n "$pin" || { echo "GO_FFI_CLIENT_COMMIT not found in crates/foundation/defra-version/src/lib.rs"; exit 1; }
           gh api "repos/sourcenetwork/defradb/commits/$pin" --jq .sha > /dev/null \
             || { echo "GO_FFI_CLIENT_COMMIT=$pin does not resolve on sourcenetwork/defradb"; exit 1; }
       - name: Run rust integration tests (basic)
