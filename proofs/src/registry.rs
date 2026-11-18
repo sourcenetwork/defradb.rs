@@ -3184,12 +3184,24 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Node access control operations",
-        name: "INV_NoStatusWithoutPermission / INV_NoDisableWithoutPermission / INV_NoReEnableWithoutStoredPermission / INV_NoGrantUnlessAllChecksPass / INV_NoChangeUnlessConfigured / INV_RestartKeepsStatus / INV_NoSilentNoOp / INV_GoOrder",
+        name: "INV_NoStatusWithoutPermission / INV_NoDisableWithoutPermission / INV_NoReEnableWithoutStoredPermission / INV_NoGrantUnlessAllChecksPass / INV_NoChangeUnlessConfigured / INV_RestartKeepsStatus / INV_NoSilentNoOp / INV_GoOrder / INV_RefusedWhenGoRefuses",
         axis: Tla,
-        anchor: "crates/database/db/src/access/nac_ops/mod.rs DB::nac_status_as, DB::disable_nac_as, DB::re_enable_nac_as, DB::add_nac_actor_relationship_as, DB::delete_nac_actor_relationship_as, DB::change_nac_relationship; crates/database/db/src/nac/toggle.rs NacManager::decide_toggle, NacManager::require; crates/database/db/src/nac/write.rs NacManager::decide_relationship; crates/database/db/src/nac/mod.rs NacManager::initialize; crates/engine/acp/src/nac/node_acp/operations.rs NodeACP::authorize_change",
+        anchor: "crates/database/db/src/access/nac_ops/mod.rs DB::nac_status_as, DB::disable_nac_as, DB::re_enable_nac_as, DB::add_nac_actor_relationship_as, DB::delete_nac_actor_relationship_as, DB::change_nac_relationship; crates/database/db/src/nac/toggle.rs NacManager::decide_toggle, NacManager::require; crates/database/db/src/nac/write.rs NacManager::decide_relationship, NacTarget::parse; crates/database/db/src/nac/mod.rs NacManager::initialize; crates/engine/acp/src/nac/node_acp/operations.rs NodeACP::authorize_change",
         model_ref: "MC_NodeAcpOps_{Green,Red_*}.cfg",
         tiers: &[Boundary],
-        bound_by: "tools/integration-test/tests/legacy/nac/core_operations.rs nac_core_operations_gate_test; crates/database/db/tests/nac/tests.rs test_nac_manager_disable_reenable, test_nac_manager_permission_check",
+        bound_by: "tools/integration-test/tests/legacy/nac/core_operations.rs nac_core_operations_gate_test; crates/database/db/tests/nac/tests.rs test_nac_manager_disable_reenable, test_nac_manager_permission_check, an_empty_target_is_refused_and_never_reaches_the_wildcard",
+    },
+    Property {
+        // A NAC relationship change refuses an empty target with Go's
+        // ErrRelationshipTargetActorEmpty, after the identity and before the
+        // relation, on add and delete alike, so it never reaches `*`.
+        family: "Node access control operations",
+        name: "empty_target_never_changes / empty_target_is_refused_as_go / identity_is_checked_before_the_target / delete_of_a_non_did_finds_nothing",
+        axis: Lean,
+        anchor: "crates/database/db/src/nac/write.rs NacManager::decide_relationship, NacTarget::parse; crates/database/db/src/access/nac_ops/mod.rs DB::change_nac_relationship",
+        model_ref: "NacRelationship (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Node access control operations",

@@ -19,6 +19,9 @@ pub enum NodeAcpError {
     /// A relationship operation with no identity acting in the request.
     #[error("node acp relationship operation requires identity")]
     RequiresIdentity,
+    /// No target actor was given.
+    #[error("acp relationship target actor must not be empty")]
+    TargetActorEmpty,
     /// The relation is not one the node's policy has.
     #[error("relation not in resource")]
     RelationNotInResource,
@@ -42,6 +45,7 @@ impl From<crate::nac::Error> for NodeAcpError {
             crate::nac::Error::AlreadyEnabled => NodeAcpError::AlreadyEnabled,
             crate::nac::Error::NotEnabled => NodeAcpError::AcpNotAvailable,
             crate::nac::Error::RequiresIdentity => NodeAcpError::RequiresIdentity,
+            crate::nac::Error::TargetActorEmpty => NodeAcpError::TargetActorEmpty,
             crate::nac::Error::RelationNotInResource => NodeAcpError::RelationNotInResource,
             crate::nac::Error::InvalidActor => NodeAcpError::InvalidActor,
             crate::nac::Error::NotAuthorized(permission) => Error::NotAuthorized {

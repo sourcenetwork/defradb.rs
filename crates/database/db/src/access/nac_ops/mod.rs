@@ -13,7 +13,7 @@ use storage::corekv::Store;
 use crate::access::nac::acting_did;
 use crate::database::DB;
 use crate::error::Error;
-use crate::nac::{NacCaller, NacChange, NacRelation, NacRelationshipRequest};
+use crate::nac::{NacCaller, NacChange, NacRelation, NacRelationshipRequest, NacTarget};
 
 pub use error::NodeAcpError;
 
@@ -68,7 +68,8 @@ where
     /// Take `relation` on the node from `target_actor`, the caller asking.
     /// Go's `DeleteNACActorRelationship`; whether the relationship was
     /// there. A target that is not a DID holds no relationship, so Go's ACP
-    /// engine finds none for it rather than refusing it.
+    /// engine finds none for it rather than refusing it; an empty target is
+    /// refused, as Go refuses it.
     pub async fn delete_nac_actor_relationship_as(
         &self,
         context: &RequestContext,
@@ -132,10 +133,7 @@ where
                 ADMIN_RELATION => Some(NacRelation::Admin),
                 other => NodePermission::parse(other).map(NacRelation::Permission),
             },
-            target: match target_actor {
-                "*" => Some(Did::wildcard()),
-                did => Did::new(did).ok(),
-            },
+            target: NacTarget::parse(target_actor),
         };
         let permission = match change {
             NacChange::Add => NodePermission::NacRelationAdd,

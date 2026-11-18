@@ -92,6 +92,58 @@ mod unit_tests {
     /// The NAC store a node keeps in its own regolith store.
     type Stored = acp::PersistentZanzibarStore<storage::RegolithStore>;
 
+    /// A relationship change for `target`, as `DB::change_nac_relationship`
+    /// builds one.
+    fn admin_change(change: db::nac::NacChange, target: &str) -> db::nac::NacRelationshipRequest {
+        db::nac::NacRelationshipRequest {
+            change,
+            relation: Some(db::nac::NacRelation::Admin),
+            target: db::nac::NacTarget::parse(target),
+        }
+    }
+
+    /// Go's `ErrRelationshipTargetActorEmpty`: an empty target is refused on
+    /// add and on delete, so it never reaches the wildcard relationship; a
+    /// target that is no DID still finds nothing to take.
+    #[test]
+    fn an_empty_target_is_refused_and_never_reaches_the_wildcard() {
+        workers::block_on(async {
+            let manager = create_memory_nac_manager(NacConfig::new().with_enabled());
+            let owner = test_did();
+            manager.initialize(Some(&owner)).await.unwrap();
+            let caller = NacCaller {
+                identity: Some(owner.clone()),
+                node: None,
+            };
+            let add = db::nac::NacChange::Add;
+            let remove = db::nac::NacChange::Remove;
+            manager
+                .change_relationship_as(&caller, &admin_change(add, "*"))
+                .await
+                .unwrap();
+
+            for change in [add, remove] {
+                let refused = manager
+                    .change_relationship_as(&caller, &admin_change(change, ""))
+                    .await
+                    .unwrap_err()
+                    .to_string();
+                assert_eq!(refused, "acp relationship target actor must not be empty");
+            }
+            assert!(
+                manager.is_admin(&test_did2()).await.unwrap(),
+                "the wildcard admin is still there"
+            );
+
+            let found = manager
+                .change_relationship_as(&caller, &admin_change(remove, "not-a-did"))
+                .await
+                .unwrap();
+            assert!(!found, "a target that is no DID holds nothing");
+        })
+        .unwrap()
+    }
+
     /// A manager over the same stored state, as a restarted node builds one.
     fn restarted(store: &std::sync::Arc<Stored>, config: NacConfig) -> db::NacManager<Stored> {
         db::NacManager::new(std::sync::Arc::clone(store), config)

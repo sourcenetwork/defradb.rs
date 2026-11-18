@@ -130,7 +130,7 @@ pub use write::doc::DbDocMutator;
 pub use nac::create_persistent_nac_manager;
 pub use nac::{
     create_memory_nac_manager, NacCaller, NacChange, NacConfig, NacInfo, NacManager, NacManagerApi,
-    NacRelation, NacRelationshipRequest,
+    NacRelation, NacRelationshipRequest, NacTarget,
 };
 
 // Re-export related crate types for convenience
