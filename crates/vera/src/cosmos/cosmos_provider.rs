@@ -110,10 +110,13 @@ impl CosmosProvider {
     }
 }
 
-fn subject_to_json(subject: &SubjectRef) -> serde_json::Value {
+fn subject_to_json(subject: &SubjectRef) -> Result<serde_json::Value, ProviderError> {
     match subject {
-        SubjectRef::Actor(did) => serde_json::json!({ "actor": { "id": did } }),
-        SubjectRef::AllActors => serde_json::json!({ "all_actors": {} }),
+        SubjectRef::Actor(did) => Ok(serde_json::json!({ "actor": { "id": did } })),
+        SubjectRef::AllActors => Ok(serde_json::json!({ "all_actors": {} })),
+        _ => Err(ProviderError::Config(
+            "relationship subject: not one this provider sends".into(),
+        )),
     }
 }
 
@@ -311,7 +314,7 @@ impl VeraProvider for CosmosProvider {
                 "relationship": {
                     "object": { "resource": resource, "id": object_id },
                     "relation": relation,
-                    "subject": subject_to_json(subject),
+                    "subject": subject_to_json(subject)?,
                 }
             }
         });
@@ -342,7 +345,7 @@ impl VeraProvider for CosmosProvider {
                 "relationship": {
                     "object": { "resource": resource, "id": object_id },
                     "relation": relation,
-                    "subject": subject_to_json(subject),
+                    "subject": subject_to_json(subject)?,
                 }
             }
         });

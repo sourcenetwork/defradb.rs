@@ -25,10 +25,10 @@ use super::provider_commands::resolve_registered_or_passthrough_bearer_token;
 use super::provider_commands::{
     holds_registered_key, resolve_registered_or_passthrough_bearer_token_as,
 };
+use super::request_digest;
 use super::signer::{admission, DelegationSigner, Secp256k1Signer};
 use super::transport::RpcTransport;
 use super::worker::NativeWorker;
-use vera_delegation::request_digest;
 
 #[cfg(test)]
 mod audience_tests;
@@ -867,7 +867,7 @@ impl VeraProvider for VeraRsProvider {
         command: &crate::PolicyCommand<'_>,
     ) -> Option<Result<String, ProviderError>> {
         let audience = self.delegation_audience()?;
-        bearer::caller_of_request_delegation(token, &audience, || Ok(request_digest(command)?))
+        bearer::caller_of_request_delegation(token, &audience, || request_digest(command))
             .map(|caller| caller.map_err(|error| refused("request delegation", error)))
     }
 }

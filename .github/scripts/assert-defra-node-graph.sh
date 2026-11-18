@@ -22,7 +22,7 @@ assert_present() {
   stdout="$(cargo tree -p "$crate" -e normal --locked "$@" -i "$pkg")"
   rc=$?
   set -e
-  if printf '%s\n' "$stdout" | grep -q "^${pkg} v"; then
+  if grep -q "^${pkg} v" <<<"$stdout"; then
     echo "ok: ${crate}${*:+ $*} contains ^${pkg} v"
     return 0
   fi
@@ -45,7 +45,7 @@ assert_absent() {
   stdout="$(cargo tree -p "$crate" -e normal --locked "$@" -i "$pkg")"
   rc=$?
   set -e
-  if printf '%s\n' "$stdout" | grep -q "^${pkg} v"; then
+  if grep -q "^${pkg} v" <<<"$stdout"; then
     echo "error: unexpected ^${pkg} v in ${crate}${*:+ $*} tree (cargo tree -i exit ${rc})" >&2
     printf '%s\n' "$stdout" >&2
     exit 1
@@ -64,7 +64,7 @@ assert_no_libp2p() {
   shift
   local stdout
   stdout="$(cargo tree -p "$crate" -e normal --locked --prefix none "$@")"
-  if printf '%s\n' "$stdout" | grep -q '^libp2p'; then
+  if grep -q '^libp2p' <<<"$stdout"; then
     echo "error: unexpected ^libp2p in ${crate}${*:+ $*} --prefix none tree" >&2
     printf '%s\n' "$stdout" | grep '^libp2p' >&2
     exit 1
@@ -115,12 +115,12 @@ assert_p2p_crate_iroh_only() {
     fi
     exit 1
   fi
-  if ! printf '%s\n' "$line" | grep -q 'iroh-transport'; then
+  if ! grep -q 'iroh-transport' <<<"$line"; then
     echo "error: p2p crate line missing iroh-transport" >&2
     printf '%s\n' "$line" >&2
     exit 1
   fi
-  if printf '%s\n' "$line" | grep -q 'libp2p-transport'; then
+  if grep -q 'libp2p-transport' <<<"$line"; then
     echo "error: p2p crate line enables libp2p-transport" >&2
     printf '%s\n' "$line" >&2
     exit 1
@@ -157,7 +157,7 @@ assert_graph_free_of() {
   shift 2
   graph="$(cargo tree -p "$crate" -e normal --locked --target "$target" --prefix none)"
   for pkg in "$@"; do
-    if printf '%s\n' "$graph" | grep -q "^${pkg} v"; then
+    if grep -q "^${pkg} v" <<<"$graph"; then
       echo "error: unexpected ^${pkg} v in ${crate} --target ${target} tree" >&2
       cargo tree -p "$crate" -e normal --locked --target "$target" -i "$pkg" >&2 || true
       exit 1

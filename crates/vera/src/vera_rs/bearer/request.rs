@@ -261,7 +261,7 @@ mod tests {
                 &claims,
                 &request,
                 &audience(),
-                || Ok(request_digest(&command)?),
+                || request_digest(&command),
                 NOW
             )
             .unwrap(),

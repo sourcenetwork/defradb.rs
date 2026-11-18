@@ -80,8 +80,9 @@ pub fn actor_key(signer: &dyn DelegationSigner) -> Result<ActorKey, SignerError>
     }
 }
 
-/// Accepts `signature` over `signing_input` exactly when vera.rs would.
-pub fn admit(
+/// Accepts `signature` over `signing_input` exactly when vera.rs would. `key`
+/// is the one [`actor_key`] gave for `signer`.
+pub(crate) fn admit(
     signer: &dyn DelegationSigner,
     key: &ActorKey,
     signing_input: &[u8],

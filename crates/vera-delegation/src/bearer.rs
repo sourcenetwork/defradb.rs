@@ -110,6 +110,7 @@ pub async fn create_scoped_bearer_token_at(
     let payload = base64url_encode(payload_json.as_bytes());
 
     let message = format!("{}.{}", header, payload);
+    readable(subject, &message)?;
     let signature = signer.sign(message.as_bytes()).await?;
     admission::admit(signer, &key, message.as_bytes(), &signature)?;
     let sig_b64 = base64url_encode(&signature);
@@ -165,6 +166,27 @@ pub(crate) fn did_from_signing_key(key: &k256::ecdsa::SigningKey, compressed: bo
     did_from_key(key.verifying_key(), compressed)
 }
 
+/// How much of a token vera.rs reads: a longer one is refused before a claim
+/// is parsed.
+const MAX_TOKEN_BYTES: usize = 16 * 1024;
+
+/// A 64-byte signature in unpadded base64url.
+const SIGNATURE_CHARS: usize = 86;
+
+/// Refuses, before anything is signed, a token vera.rs would not take
+/// whatever its signature: one with no subject, or one longer than
+/// [`MAX_TOKEN_BYTES`] once `message` carries its signature.
+fn readable(subject: &str, message: &str) -> Result<(), BearerError> {
+    if subject.is_empty() {
+        return Err(BearerError::Subject);
+    }
+    let bytes = message.len() + 1 + SIGNATURE_CHARS;
+    if bytes > MAX_TOKEN_BYTES {
+        return Err(BearerError::Size { bytes });
+    }
+    Ok(())
+}
+
 fn base64url_encode(data: &[u8]) -> String {
     use base64::Engine;
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(data)
@@ -193,6 +215,14 @@ pub enum BearerError {
 
     #[error("the command has no digest: {0}")]
     Command(String),
+
+    #[error("a delegation names the actor it is given to")]
+    Subject,
+
+    #[error(
+        "the delegation would be {bytes} bytes, and vera.rs reads no more than {MAX_TOKEN_BYTES}"
+    )]
+    Size { bytes: usize },
 }
 
 #[cfg(test)]
@@ -204,6 +234,8 @@ pub use request::{
 };
 #[cfg(test)]
 mod pinned;
+#[cfg(test)]
+mod readable_tests;
 
 #[cfg(test)]
 mod tests {

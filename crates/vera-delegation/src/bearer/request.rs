@@ -88,6 +88,13 @@ pub async fn request_delegation(
 /// the one a refusal names
 /// ([`DelegationWindow::provider_time`](acp::DelegationWindow::provider_time)),
 /// so that the signer's own clock does not decide whether it holds.
+///
+/// The expiry is part of the operation identity vera.rs keeps an outcome
+/// under, so a delegation issued again for the same binding at another time
+/// names another operation. Send the same token again while it holds. Once it
+/// has lapsed, issue another only when the request is known not to have been
+/// executed, as after a refusal: vera.rs does not recognise the new one as a
+/// repeat of the old.
 pub async fn request_delegation_at(
     signer: &dyn DelegationSigner,
     audience: &acp::DelegationAudience,
@@ -145,6 +152,7 @@ async fn issue_request_at(
         base64url_encode(header(signer.algorithm())),
         base64url_encode(payload.as_bytes())
     );
+    super::readable(&audience.worker, &message)?;
     let signature = signer.sign(message.as_bytes()).await?;
     admission::admit(signer, &key, message.as_bytes(), &signature)?;
     Ok(format!("{message}.{}", base64url_encode(&signature)))
