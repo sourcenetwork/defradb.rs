@@ -3141,9 +3141,9 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Node access control operations",
-        name: "goOrder_collection_write / goOrder_alone / firstMissing_none_iff / firstMissing_some / allowed_needs_both / refused_get_collection_first / no_bypass_when_off / no_bypass_anonymous / bypass_iff_held",
+        name: "goOrder_collection_write / goOrder_alone / firstMissing_none_iff / firstMissing_some / allowed_needs_both / refused_get_collection_first / no_bypass_when_off / no_bypass_anonymous / no_bypass_when_denied / bypass_iff_held",
         axis: Lean,
-        anchor: "crates/acp/src/nac/permission.rs NodePermission::go_order; crates/db/src/access/nac.rs check_node_access_as, check_node_access_in_txn; crates/query/src/runner/turn.rs lent, lent_node_permission; crates/db/src/read/lensed/fetcher/mod.rs dac_bypass; crates/p2p-adapter/src/libp2p.rs P2PAdapter::check_nac; crates/p2p-adapter/src/iroh.rs IrohP2PAdapter::check_nac",
+        anchor: "crates/acp/src/nac/permission.rs NodePermission::go_order; crates/db/src/access/nac.rs check_node_access_as, check_node_access_in_txn; crates/query/src/runner/turn.rs lent, lent_node_permission; crates/db/src/read/lensed/fetcher/mod.rs dac_bypass; crates/defra-core/src/request_context.rs RequestContext::with_dac_bypass_denied; crates/p2p-adapter/src/libp2p.rs P2PAdapter::check_nac; crates/p2p-adapter/src/iroh.rs IrohP2PAdapter::check_nac",
         model_ref: "NacOrder (lake build)",
         tiers: &[Boundary],
         bound_by: "",
@@ -3151,12 +3151,12 @@ pub const PROPERTIES: &[Property] = &[
     Property {
         // A read bypasses document access control exactly when node access
         // control is on and grants the caller `bypass-dac`, decided at the
-        // read's own snapshot.
+        // read's own snapshot, and its caller did not deny it the bypass.
         family: "Node access control operations",
-        name: "INV_BypassOnlyWhenGranted / INV_BypassWhenGranted",
+        name: "INV_BypassOnlyWhenGranted / INV_BypassWhenGranted / INV_DeniedNeverBypasses",
         axis: Tla,
-        anchor: "crates/query/src/runner/turn.rs lent; crates/db/src/read/lensed/fetcher/mod.rs dac_bypass; crates/db/src/collection/acp.rs check_doc_permission_as",
-        model_ref: "MC_NacDacBypass_{Green,Red_NacOff,Red_Never,Red_Live}.cfg",
+        anchor: "crates/query/src/runner/turn.rs lent; crates/db/src/read/lensed/fetcher/mod.rs dac_bypass; crates/db/src/collection/acp.rs check_doc_permission_as; crates/defra-core/src/request_context.rs RequestContext::with_dac_bypass_denied, RequestContext::with_dac_bypass",
+        model_ref: "MC_NacDacBypass_{Green,Red_NacOff,Red_Never,Red_Live,Red_IgnoreDenial}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },
