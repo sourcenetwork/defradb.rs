@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-712cba6e.js";
+            window.path_to_searchindex_js = "../searchindex-b5e09575.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -206,10 +206,10 @@ engine: with a random nonce per value, identical plaintexts differ in bytes, so 
 value-validated reads and content-addressed block identity all broke, and merge operators
 saw ciphertext, making counters and head sets impossible. That wrapper was deleted, and a
 one-time rewrite migrates old stores at open
-(<code>crates/storage/src/backends/regolith/rewrite/</code>).</p>
+(<code>crates/engine/storage/src/backends/regolith/rewrite/</code>).</p>
 <h2 id="where-keys-come-from"><a class="header" href="#where-keys-come-from">Where keys come from</a></h2>
 <p>defradb.rs implements regolith’s <code>KeyProvider</code>
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/encryption.rs"><code>crates/storage/src/backends/regolith/encryption.rs</code></a>):</p>
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/encryption.rs"><code>crates/engine/storage/src/backends/regolith/encryption.rs</code></a>):</p>
 <ul>
 <li><code>current()</code> returns the active key id: the first 4 bytes of a domain-separated SHA-256
 of the key material.</li>
@@ -221,7 +221,7 @@ with a birthday-search test proving the check). Compaction re-seals files it rew
 under the current key, so rotation completes as data churns.</p>
 <p>Keys enter through the node builders (<code>with_at_rest_encryption_key</code>,
 <code>with_previous_at_rest_encryption_keys</code> on both the <code>defra-node</code> and <code>embedded</code>
-builders), and the CLI fetches them from the keyring (<code>crates/keyring</code>: file (JWE),
+builders), and the CLI fetches them from the keyring (<code>crates/foundation/keyring</code>: file (JWE),
 OS keyring, or systemd-creds backends; standard names <code>encryption-key</code> and
 <code>encryption-key-previous</code>).</p>
 <h2 id="what-is-deliberately-not-encrypted-at-rest"><a class="header" href="#what-is-deliberately-not-encrypted-at-rest">What is deliberately not encrypted at rest</a></h2>

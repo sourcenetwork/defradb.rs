@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-712cba6e.js";
+            window.path_to_searchindex_js = "../searchindex-b5e09575.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -184,19 +184,19 @@
                         <h1 id="lens-migrations"><a class="header" href="#lens-migrations">Lens Migrations</a></h1>
 <p>Schemas evolve; stored documents must not be rewritten to follow. A <strong>lens</strong> is a
 WASM module that transforms a document from one schema version to another, applied at
-<em>query time</em> (<code>crates/lens</code>): documents stay on disk in the version they were written
+<em>query time</em> (<code>crates/foundation/lens</code>): documents stay on disk in the version they were written
 in, and readers see them through the lens chain to the target version.</p>
 <h2 id="the-pipeline"><a class="header" href="#the-pipeline">The pipeline</a></h2>
 <p>Given a collection’s version history (a DAG of schema versions), the lens history
 builder prunes it to one path per source version toward the target, and the pipeline
 applies the transform chain lazily: one document per <code>next()</code> call, on the caller’s
-task, inside the reader’s transaction (the lensed fetcher, <code>crates/db/src/read/lensed/</code>).
+task, inside the reader’s transaction (the lensed fetcher, <code>crates/database/db/src/read/lensed/</code>).
 Explicit migration runs (backfills) use the same pipeline; nothing is rewritten at
 migration-<em>set</em> time, so setting a migration is metadata, not a data rewrite.</p>
 <h2 id="the-engine-and-the-sandbox"><a class="header" href="#the-engine-and-the-sandbox">The engine and the sandbox</a></h2>
 <p>One shared wasmtime <code>LensEngine</code> per database: one engine, one linker, one epoch
 clock; modules are compiled once at registration into an <code>InstancePre</code>, and each call
-instantiates and runs on a fiber the caller polls (<code>crates/lens/src/engine/</code>). The
+instantiates and runs on a fiber the caller polls (<code>crates/foundation/lens/src/engine/</code>). The
 default transform store is restrictive-sandboxed WASM; without the wasmtime runtime
 feature, the store refuses everything (a build without lens support fails loud, not
 silently passing documents through).</p>

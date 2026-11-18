@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-712cba6e.js";
+            window.path_to_searchindex_js = "../searchindex-b5e09575.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -184,14 +184,14 @@
                         <h1 id="the-document-model"><a class="header" href="#the-document-model">The document model</a></h1>
 <h2 id="the-docid"><a class="header" href="#the-docid">The DocID</a></h2>
 <p>A document’s identity is its <strong>DocID</strong>: a UUIDv5 over a fixed namespace of the genesis
-composite block’s CID (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/document/src/doc_id.rs"><code>crates/document/src/doc_id.rs</code></a>). The string form is
+composite block’s CID (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/building-blocks/document/src/doc_id.rs"><code>crates/building-blocks/document/src/doc_id.rs</code></a>). The string form is
 <code>{base32 version}-{uuid}</code> (for example <code>bae-...</code>). The DocID is stable across replicas:
 any node that has the same genesis block computes the same DocID, which is what makes
 replication, dedup and the once-keys of the arrival journal possible.</p>
 <p>The CID itself is not recoverable from the DocID string; it lives in the DAG.</p>
 <h2 id="short-ids"><a class="header" href="#short-ids">Short IDs</a></h2>
 <p>Locally, every document also gets a compact <strong>short ID</strong>: a u64 allocated from
-<code>/seq/doc</code> in ranges of 1024 by a lock-free CAS allocator (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/docid/map.rs"><code>crates/db/src/docid/map.rs</code></a>).
+<code>/seq/doc</code> in ranges of 1024 by a lock-free CAS allocator (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/docid/map.rs"><code>crates/database/db/src/docid/map.rs</code></a>).
 Short IDs key the datastore layout (<code>doc_key(doc_short_id)</code>), which makes iteration
 order match allocation order and keeps keys small. The systemstore holds the bidirectional
 mappings (short ID to DocID and back), plus the DocRef, and the block-CID-to-DocID
@@ -200,7 +200,7 @@ ownership map that memory reclamation walks.</p>
 closure <em>because</em> a reserved range survives attempts (an attempt never allocates twice;
 the prepared-inputs rule from the doctrine chapter).</p>
 <h2 id="the-stored-format-documents-as-parts"><a class="header" href="#the-stored-format-documents-as-parts">The stored format: documents as parts</a></h2>
-<p>The materialized value of a document is a <code>StoredDocument</code> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/document/src/stored.rs"><code>crates/document/src/stored.rs</code></a>):
+<p>The materialized value of a document is a <code>StoredDocument</code> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/building-blocks/document/src/stored.rs"><code>crates/building-blocks/document/src/stored.rs</code></a>):
 magic <code>DFV\x01</code>, then fields keyed by <strong>stable per-version u32 field IDs</strong> (not names:
 renames must not rewrite every document), each with a kind (<code>Lww</code>, <code>Int64</code>, <code>Float32</code>,
 <code>Float64</code>), a priority, and bytes (CBOR for LWW values, big-endian numbers for counters).
@@ -210,10 +210,10 @@ a delete is an LWW write that wins by priority, not a special row.</p>
 <strong>parts</strong>: this is what makes projected reads (<code>get_parts(key, parts)</code>) and blind
 part-operand merges the read and write primitives of the document. Part IDs are
 allocated from the systemstore and persisted per schema version
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/collection/parts.rs"><code>crates/db/src/collection/parts.rs</code></a>), so two writers on two replicas name the same
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/collection/parts.rs"><code>crates/database/db/src/collection/parts.rs</code></a>), so two writers on two replicas name the same
 fields with the same part IDs.</p>
 <h2 id="the-in-memory-document"><a class="header" href="#the-in-memory-document">The in-memory document</a></h2>
-<p>The <code>Document</code> in memory (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/document/src/document.rs"><code>crates/document/src/document.rs</code></a>) carries the schema-typed
+<p>The <code>Document</code> in memory (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/building-blocks/document/src/document.rs"><code>crates/building-blocks/document/src/document.rs</code></a>) carries the schema-typed
 field map, the current head CID, dirty tracking, the collection reference, counter
 deltas for updates, and the write preparation (precomputed keys and identity). Documents
 are built from client JSON against the collection’s schema, validated, and then either

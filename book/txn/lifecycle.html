@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-712cba6e.js";
+            window.path_to_searchindex_js = "../searchindex-b5e09575.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -183,7 +183,7 @@
                     <main>
                         <h1 id="lifecycle-and-states"><a class="header" href="#lifecycle-and-states">Lifecycle and states</a></h1>
 <p>A defradb.rs transaction is an engine transaction (<code>regolith::Transaction</code>) wrapped in a
-<code>DbTxn</code> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/txn/mod.rs"><code>crates/db/src/txn/mod.rs</code></a>) that adds the namespaced store views (datastore,
+<code>DbTxn</code> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/txn/mod.rs"><code>crates/database/db/src/txn/mod.rs</code></a>) that adds the namespaced store views (datastore,
 blockstore, headstore, systemstore, acpstore, peerstore), a transaction-scoped collection
 catalog, and the statement savepoint machinery. The state machine it moves through:</p>
 <p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="../diagrams/09-transaction-lifecycle.png" alt="Transaction lifecycle: from Open to Done, with the write-free fast path and the re-run"><span class="img-wrapper"><img src="../diagrams/09-transaction-lifecycle.png" alt="Transaction lifecycle: from Open to Done, with the write-free fast path and the re-run"></span></label></p>
@@ -196,14 +196,14 @@ rolled back to, and released, including the per-statement savepoints of an expli
 transaction.</p>
 <p>A read-only transaction does not begin an engine transaction at all: it pins a snapshot,
 which is the same view without commit-time validation nothing will ever ask for
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/transaction.rs"><code>crates/storage/src/backends/regolith/transaction.rs</code></a>).</p>
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/transaction.rs"><code>crates/engine/storage/src/backends/regolith/transaction.rs</code></a>).</p>
 <h2 id="validating-the-write-free-fast-path"><a class="header" href="#validating-the-write-free-fast-path">Validating: the write-free fast path</a></h2>
 <p>At commit the engine validates the read set against newer commits. A transaction that
 <em>wrote nothing</em> and read at one snapshot is write-free: no validation, no critical
 section, done. This is not a corner case; it is every status read, every query without a
 mutation, every arrival page. Concretely: a write-free attempt and a concurrent update of
 the very rows it read <em>both</em> commit (there is a regression test that asserts exactly
-this, <code>crates/storage/src/corekv/retry/</code>).</p>
+this, <code>crates/engine/storage/src/corekv/retry/</code>).</p>
 <h2 id="decided-written-durable-visible"><a class="header" href="#decided-written-durable-visible">Decided, written, durable, visible</a></h2>
 <p>A transaction that wrote something and kept every race:</p>
 <ol>

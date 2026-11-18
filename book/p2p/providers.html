@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-712cba6e.js";
+            window.path_to_searchindex_js = "../searchindex-b5e09575.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -187,20 +187,20 @@
 statement of what this node offers (collections with roles Replica/Archive/Reader,
 replicator service, searchable-encryption query service, KMS, relay, custom roles),
 published via pkarr, served on query streams, and announced on a discovery topic
-(<code>crates/p2p/src/iroh/records/</code>). Readers keep the newest valid record per node in a
+(<code>crates/database/p2p/src/iroh/records/</code>). Readers keep the newest valid record per node in a
 book and pick fetch candidates and gossip neighbours from it. Record freshness,
 fan-in of replies, and the alternate-slot rule for the best provider are modelled:
 the provider record family has TLA+ and Lean proofs (see
 <a href="../proofs/index.html">Verification</a>).</p>
 <h2 id="admission-who-may-connect"><a class="header" href="#admission-who-may-connect">Admission: who may connect</a></h2>
 <ul>
-<li><strong>Allowlists</strong> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/p2p/src/iroh/endpoint_config.rs"><code>crates/p2p/src/iroh/endpoint_config.rs</code></a>): <code>AcceptAll</code> (default) or an explicit
+<li><strong>Allowlists</strong> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/p2p/src/iroh/endpoint_config.rs"><code>crates/database/p2p/src/iroh/endpoint_config.rs</code></a>): <code>AcceptAll</code> (default) or an explicit
 endpoint set, mutable at runtime. Removing from the allowlist stops <em>new</em> admissions;
 <strong><code>PeerAdmission::revoke</code></strong> is the operation that actually bars a peer, and the
 admission authority makes revoke -&gt; re-admit a lockstep state machine so a revoked
 peer cannot slip back in through a stale allowlist update.</li>
 <li><strong>Peer identity challenges</strong> (optional): bind the Defra identity to the connection.</li>
-<li><strong>Inbound budgets</strong> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/p2p/src/iroh/inbound_budget.rs"><code>crates/p2p/src/iroh/inbound_budget.rs</code></a>): concurrent inbound streams are
+<li><strong>Inbound budgets</strong> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/p2p/src/iroh/inbound_budget.rs"><code>crates/database/p2p/src/iroh/inbound_budget.rs</code></a>): concurrent inbound streams are
 bounded; excess is refused, not queued unboundedly.</li>
 </ul>
 <h2 id="trust-and-capability-on-the-sync-path"><a class="header" href="#trust-and-capability-on-the-sync-path">Trust and capability on the sync path</a></h2>
@@ -209,7 +209,7 @@ data requires membership/subscription and explicit-replay authorization for the
 content; gated serving crosses the read gate (ACP) and block checks, while an open
 access mode or an unfiltered registered replicator is served without them. A
 separate capability regime governs <em>explicit replay</em> (re-broadcast of previously seen
-pushes), with its own revocation, modelled in <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/p2p/src/explicit_replay.rs"><code>crates/p2p/src/explicit_replay.rs</code></a>.</p>
+pushes), with its own revocation, modelled in <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/p2p/src/explicit_replay.rs"><code>crates/database/p2p/src/explicit_replay.rs</code></a>.</p>
 <h2 id="budgets-end-to-end"><a class="header" href="#budgets-end-to-end">Budgets, end to end</a></h2>
 <p>Backpressure is a property of the whole path, not a per-queue setting: bounded push
 queues (items and bytes), per-peer rate limits, bounded concurrent fetches, CAR caps

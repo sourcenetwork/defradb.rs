@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-712cba6e.js";
+            window.path_to_searchindex_js = "../searchindex-b5e09575.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -185,7 +185,7 @@
 <p>The merge operator is defradb.rs’s main superpower on top of the engine: writes that
 <em>commute</em> are expressed as merge operands, so concurrent writers of one key never
 conflict and the engine folds them in any order. <code>DefraMergeOperator</code>
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/merge/mod.rs"><code>crates/storage/src/backends/regolith/merge/mod.rs</code></a>) implements regolith’s
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/merge/mod.rs"><code>crates/engine/storage/src/backends/regolith/merge/mod.rs</code></a>) implements regolith’s
 <code>MergeOperator</code> under the name <code>"defra-values-v1"</code> and serves every operand kind from one
 dispatch on a kind byte.</p>
 <h2 id="operand-kinds"><a class="header" href="#operand-kinds">Operand kinds</a></h2>
@@ -214,7 +214,7 @@ the counter chapter of the CRDT docs is explicit that float addition is not conv
 in general; the engine keeps it deterministic by order.</li>
 <li><strong>STATS</strong>: two big-endian i128 halves, added with overflow checks; an overflow fails
 the merge rather than wrapping a statistic.</li>
-<li><strong>DOCUMENT</strong>: the base is a stored document (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/document/src/stored.rs"><code>crates/document/src/stored.rs</code></a>, fields
+<li><strong>DOCUMENT</strong>: the base is a stored document (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/building-blocks/document/src/stored.rs"><code>crates/building-blocks/document/src/stored.rs</code></a>, fields
 keyed by stable u32 field ID, each with a kind and a priority). Each operand is applied
 field by field: LWW fields take the higher-priority value (empty bytes with a priority
 is a tombstone, and the priority survives), counter fields add. The stored format’s
@@ -234,7 +234,7 @@ grouping. Anything else returns “cannot fold”, and the engine keeps the oper
 </ul>
 <p>Floats and the checked i128 statistics deliberately never fold: folding a pair could
 change rounding or hide an overflow that a later base would have surfaced
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/merge/mod.rs"><code>crates/storage/src/backends/regolith/merge/mod.rs</code></a> documents the reasoning beside the code).</p>
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/merge/mod.rs"><code>crates/engine/storage/src/backends/regolith/merge/mod.rs</code></a> documents the reasoning beside the code).</p>
 <h2 id="touches-which-parts-an-operand-changed"><a class="header" href="#touches-which-parts-an-operand-changed">touches: which parts an operand changed</a></h2>
 <p><code>touches(key, operand, parts)</code> answers: does this operand write any of these part IDs?
 Projected reads are validated against exactly the operands whose <code>touches</code> returns true:</p>
@@ -247,11 +247,11 @@ operand that cannot be understood must be assumed to change everything.</li>
 </ul>
 <p>The operator’s contract is checked beside it with the engine’s own property harnesses
 (<code>check_merge_operator</code>, <code>check_touches</code>) plus per-kind tests in
-<code>crates/storage/src/backends/regolith/merge/tests/</code>.</p>
+<code>crates/engine/storage/src/backends/regolith/merge/tests/</code>.</p>
 <h2 id="head-sets-state-functions-that-compose"><a class="header" href="#head-sets-state-functions-that-compose">Head sets: state functions that compose</a></h2>
 <p>A head set is one value holding the state of many named heads, each name in one of three
 states: <code>Absent</code>, <code>Ahead</code> (a parent seen before its child arrives) or <code>Live(priority)</code>.
-Writes are per-name state functions (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/merge/head_set.rs"><code>crates/storage/src/backends/regolith/merge/head_set.rs</code></a>):</p>
+Writes are per-name state functions (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/merge/head_set.rs"><code>crates/engine/storage/src/backends/regolith/merge/head_set.rs</code></a>):</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -283,7 +283,7 @@ the parent’s later arrival consumes it, exactly once.</p>
 </blockquote>
 <h2 id="vector-index-records"><a class="header" href="#vector-index-records">Vector index records</a></h2>
 <p>HNSW graph maintenance uses the same trick at the node level
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/merge/vector.rs"><code>crates/storage/src/backends/regolith/merge/vector.rs</code></a>): <code>links(layer, neighbour)</code> is a 12-byte addition record; <code>full</code>
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/merge/vector.rs"><code>crates/engine/storage/src/backends/regolith/merge/vector.rs</code></a>): <code>links(layer, neighbour)</code> is a 12-byte addition record; <code>full</code>
 appends the neighbour to that layer’s sorted, deduped list. Two structural rules are
 enforced in the operator: a blind addition never raises a node’s height (height is
 structural, chosen at insert), and self-links are refused. <code>counts(live, waste)</code> adjusts

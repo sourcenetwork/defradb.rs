@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-712cba6e.js";
+            window.path_to_searchindex_js = "../searchindex-b5e09575.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -185,7 +185,7 @@
 <p>Because every write is a block in a DAG, history is queryable first-class.</p>
 <h2 id="_commits"><a class="header" href="#_commits"><code>_commits</code></a></h2>
 <p>The <code>_commits</code> system collection exposes the block DAG
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/query/src/runner/commits.rs"><code>crates/query/src/runner/commits.rs</code></a>, <code>crates/db/src/read/commits/</code>):</p>
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/query/src/runner/commits.rs"><code>crates/engine/query/src/runner/commits.rs</code></a>, <code>crates/database/db/src/read/commits/</code>):</p>
 <ul>
 <li>by <strong>CID</strong>: one block, or a traversal to a <code>depth</code> following block heads;</li>
 <li>from <strong>heads</strong>: the frontier of a document (or collection), depth-limited;</li>
@@ -198,7 +198,7 @@ document’s data, so commit queries are filtered exactly like document queries 
 the “gate commit queries with DAC” behaviour, ported from Go).</p>
 <h2 id="time-travel-versioned-reads"><a class="header" href="#time-travel-versioned-reads">Time travel (versioned reads)</a></h2>
 <p>A versioned read reconstructs a document <em>as of</em> a target CID
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/read/versioned.rs"><code>crates/db/src/read/versioned.rs</code></a>): walk the DAG from the target back to genesis,
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/read/versioned.rs"><code>crates/database/db/src/read/versioned.rs</code></a>): walk the DAG from the target back to genesis,
 replay the CRDT deltas forward, and return the state. Encrypted fields resolve their
 DEKs through the KMS during the replay (prepared inputs, never a remote call per field).
 Versioned reads are also how “the document at this commit” is served to clients that

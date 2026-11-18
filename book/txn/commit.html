@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-712cba6e.js";
+            window.path_to_searchindex_js = "../searchindex-b5e09575.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -225,15 +225,15 @@ lock-free rather than merely fine-grained-locked.</p>
 <h2 id="what-defradbrs-adds-nothing-in-between"><a class="header" href="#what-defradbrs-adds-nothing-in-between">What defradb.rs adds: nothing in between</a></h2>
 <p>The store’s module doc states the rule: snapshot capture and native commit use the
 engine directly, “so independent commits can join its commit groups”
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/store.rs"><code>crates/storage/src/backends/regolith/store.rs</code></a>). On a worker’s <code>IoQueue</code> the commit is
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/store.rs"><code>crates/engine/storage/src/backends/regolith/store.rs</code></a>). On a worker’s <code>IoQueue</code> the commit is
 <code>commit_nowait</code> and the ticket is completed by that same queue
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/transaction.rs"><code>crates/storage/src/backends/regolith/transaction.rs</code></a>); without a queue, the commit
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/transaction.rs"><code>crates/engine/storage/src/backends/regolith/transaction.rs</code></a>); without a queue, the commit
 syncs on the calling thread. Nothing defradb.rs does stands between the caller and the
 engine’s grouping.</p>
 <h2 id="ordering-on-top-the-commit-receipt"><a class="header" href="#ordering-on-top-the-commit-receipt">Ordering on top: the commit receipt</a></h2>
 <p>Every commit returns a receipt with a sequence (<code>CommitReceipt.seq</code>). defradb.rs uses it
 as the one ordering token for everything downstream: post-commit callbacks run in receipt
-order across threads (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/event_order.rs"><code>crates/storage/src/backends/regolith/event_order.rs</code></a>), and events
+order across threads (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/event_order.rs"><code>crates/engine/storage/src/backends/regolith/event_order.rs</code></a>), and events
 are published in that order (see <a href="../events/index.html">Events</a>). A <code>seq</code> is never
 persisted across a wipe or restore, so ordering promises never span a database
 replacement.</p>

@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-712cba6e.js";
+            window.path_to_searchindex_js = "../searchindex-b5e09575.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -184,7 +184,7 @@
                         <h1 id="api-surfaces"><a class="header" href="#api-surfaces">API Surfaces</a></h1>
 <p>One database, several fronts. Each surface is a thin shell over the same core: the
 pool, the engine, the query pipeline.</p>
-<h2 id="http-crateshttp"><a class="header" href="#http-crateshttp">HTTP (<code>crates/http</code>)</a></h2>
+<h2 id="http-cratessurfaceshttp"><a class="header" href="#http-cratessurfaceshttp">HTTP (<code>crates/surfaces/http</code>)</a></h2>
 <p>An axum server on the edge, with data-path routes moved onto the pool:</p>
 <ul>
 <li><strong>GraphQL</strong> at <code>POST/GET /api/v0/graphql</code>, subscriptions over the WebSocket
@@ -201,37 +201,37 @@ indexes (including Go-compatible encrypted indexes).</li>
 </ul>
 <p>Auth: bearer-token middleware, per-route NAC permission mapping, optional TLS.
 Defaults: <code>127.0.0.1:9181</code>, 300 s timeout, bounded concurrency.</p>
-<h2 id="cli-cratescli"><a class="header" href="#cli-cratescli">CLI (<code>crates/cli</code>)</a></h2>
+<h2 id="cli-cratesentry-pointscli"><a class="header" href="#cli-cratesentry-pointscli">CLI (<code>crates/entry-points/cli</code>)</a></h2>
 <p><code>defra</code> starts a node (HTTP, optional pg-compat, iroh or libp2p, keyring-backed keys,
 optional at-rest encryption, Vera or local ACP) and carries a full HTTP client surface
 (<code>defra client ...</code>: acp, backup, blocks, collections, documents, graphql, indexes,
 lens, p2p, txns, views), plus keyring, identity and SDL utilities.</p>
-<h2 id="embedded-cratesdefra-node"><a class="header" href="#embedded-cratesdefra-node">Embedded (<code>crates/defra-node</code>)</a></h2>
+<h2 id="embedded-cratesentry-pointsdefra-node"><a class="header" href="#embedded-cratesentry-pointsdefra-node">Embedded (<code>crates/entry-points/defra-node</code>)</a></h2>
 <p>One node assembly, reached through <code>NodeBuilder</code>, which opens a regolith store (server or
 embedded sizing profile, in memory or at a path). The builder fills in one <code>NodeConfig</code>
 (transport: libp2p or iroh, signing, document ACP, node access control, query limits, sync
 knobs) and places the store on a pool (<code>storage::start_pool</code>); a node with no network starts
 no network runtime. FFI is built on it.</p>
-<h2 id="ffi-cratesffi"><a class="header" href="#ffi-cratesffi">FFI (<code>crates/ffi</code>)</a></h2>
+<h2 id="ffi-cratesentry-pointsffi"><a class="header" href="#ffi-cratesentry-pointsffi">FFI (<code>crates/entry-points/ffi</code>)</a></h2>
 <p>A C ABI static library matching Go’s <code>cbindings/</code>: node lifecycle, schema, documents,
 queries and subscriptions, transactions, blocks, batch, backup, lens, indexes, ACP
 (DAC and NAC), P2P. Panics are captured per call and returned as results, never
 unwound across the boundary. For Go and mobile embedders.</p>
-<h2 id="pg-compat-cratespg-compat"><a class="header" href="#pg-compat-cratespg-compat">pg-compat (<code>crates/pg-compat</code>)</a></h2>
+<h2 id="pg-compat-cratesdatabasepg-compat"><a class="header" href="#pg-compat-cratesdatabasepg-compat">pg-compat (<code>crates/database/pg-compat</code>)</a></h2>
 <p>A Postgres wire-protocol server: accepts psql connections, translates SQL to the query
 engine (DDL, DML, joins, aggregates, expressions, parameters), on the edge runtime.
 Existing SQL tooling works against defradb.rs without a new driver.</p>
 <h2 id="around-the-surfaces"><a class="header" href="#around-the-surfaces">Around the surfaces</a></h2>
 <ul>
-<li><strong>Orbis</strong> (<code>crates/orbis</code>): a gRPC client for threshold BLS document signing by an
+<li><strong>Orbis</strong> (<code>crates/building-blocks/orbis</code>): a gRPC client for threshold BLS document signing by an
 Orbis ring (the M6 milestone of the KMS plan); used for BLS-augmented batch
 signatures.</li>
-<li><strong>KMS</strong> (<code>crates/kms</code>): the key management service milestone set: a key store over
+<li><strong>KMS</strong> (<code>crates/database/kms</code>): the key management service milestone set: a key store over
 durable IPLD blocks, an in-memory byte-bounded tier, remote single-flight batched
 key fetch over the P2P <code>encryption</code> topic, and the NAC/DAC dual gate for key
 release (document-scoped keys need DAC read; collection-scoped need NAC
 permission). Wire-compatible with Go’s KMS.</li>
-<li><strong>Telemetry</strong> (<code>crates/telemetry</code>): OTLP trace/metrics export behind a feature;
+<li><strong>Telemetry</strong> (<code>crates/building-blocks/telemetry</code>): OTLP trace/metrics export behind a feature;
 always-on process counters (retries, conflicts by layer, storage events, engine
 tickers as one OTel counter family).</li>
 </ul>

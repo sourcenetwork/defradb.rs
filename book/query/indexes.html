@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-712cba6e.js";
+            window.path_to_searchindex_js = "../searchindex-b5e09575.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -184,7 +184,7 @@
                         <h1 id="indexes"><a class="header" href="#indexes">Indexes</a></h1>
 <p>Indexes are maintained inline in the write path: every document write updates exactly
 the indexes whose fields it touched. Four kinds exist
-(<code>crates/db/src/index/</code>, <code>crates/storage/src/index/</code>):</p>
+(<code>crates/database/db/src/index/</code>, <code>crates/engine/storage/src/index/</code>):</p>
 <h2 id="secondary-ordered"><a class="header" href="#secondary-ordered">Secondary (ordered)</a></h2>
 <p>A sorted mapping from field value to DocID, blind puts and deletes, kept per index
 (<code>IndexDataStoreKey</code> under the <code>d/</code> family). Multiple fields, arrays (multiple value
@@ -205,22 +205,22 @@ replicated concurrency resolves this way.</li>
 </ul>
 <h2 id="full-text"><a class="header" href="#full-text">Full-text</a></h2>
 <p>Tokenized, language-aware inverted indexes with BM25 scoring
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/index/fulltext.rs"><code>crates/storage/src/index/fulltext.rs</code></a>), synthesized from <code>@fulltext</code> schema directives
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/index/fulltext.rs"><code>crates/engine/storage/src/index/fulltext.rs</code></a>), synthesized from <code>@fulltext</code> schema directives
 under internal names (<code>__fulltext__:{field}</code>). Corpus statistics (document counts, field
 lengths) are maintained as blind STATS merges (checked i128 deltas), so concurrent
 indexers commute. Query time scores with BM25 over the stored statistics.</p>
 <h2 id="vector"><a class="header" href="#vector">Vector</a></h2>
-<p>Four engines behind one interface (<code>crates/db/src/index/vector/engine/</code>): <strong>flat</strong>
+<p>Four engines behind one interface (<code>crates/database/db/src/index/vector/engine/</code>): <strong>flat</strong>
 (exact brute force), <strong>HNSW</strong> (the Malkov-Yashunin graph; deterministic level seeds;
 links maintained by blind <code>VECTOR_LINKS</code> merges), <strong>IVF</strong> (inverted lists with product
 quantization) and <strong>SSG</strong> (Satellite System Graph), plus <strong>DiskANN</strong>-style PQ-coded
 resident graphs sharing code caches on the DB. Structural rules live in the merge
 operator: a blind addition can never raise a node’s height or add a self-link, so graph
 maintenance never needs locks. Similarity queries route through the planner to the
-engine (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/query/src/plan/similarity.rs"><code>crates/query/src/plan/similarity.rs</code></a>); HNSW advisory reads during maintenance are unvalidated
+engine (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/query/src/plan/similarity.rs"><code>crates/engine/query/src/plan/similarity.rs</code></a>); HNSW advisory reads during maintenance are unvalidated
 part reads, so building never conflicts with querying.</p>
 <h2 id="lifecycle"><a class="header" href="#lifecycle">Lifecycle</a></h2>
-<p>Indexes are created with a bulk backfill (resumable at open, <code>crates/db/src/index/ backfill.rs</code>), rebuilt on demand, and re-created when a schema change requires it (owed
+<p>Indexes are created with a bulk backfill (resumable at open, <code>crates/database/db/src/index/ backfill.rs</code>), rebuilt on demand, and re-created when a schema change requires it (owed
 reindexes settle at startup). Deletes remove entries page by page; the unique conflict
 event and index reconciliation have TLA+ models (see
 <a href="../proofs/index.html">Verification</a>).</p>

@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-712cba6e.js";
+            window.path_to_searchindex_js = "../searchindex-b5e09575.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -183,7 +183,7 @@
                     <main>
                         <h1 id="the-network-edge"><a class="header" href="#the-network-edge">The network edge</a></h1>
 <p>Every network-facing component runs on <strong>one tokio runtime</strong>, held in one place: the
-<code>Edge</code> (<code>crates/edge</code>). Natively it is a single runtime; in the browser it is the event
+<code>Edge</code> (<code>crates/foundation/edge</code>). Natively it is a single runtime; in the browser it is the event
 loop behind the same handle. Every network component (the HTTP server, P2P, the KMS
 transport, the Orbis and Vera clients, the embeddings fetcher, telemetry export) is
 handed an <code>Edge</code> at construction. Nothing finds a runtime ambiently: no
@@ -192,7 +192,7 @@ handed an <code>Edge</code> at construction. Nothing finds a runtime ambiently: 
 <ul>
 <li><strong>HTTP</strong>: the axum server; whole data-path routes move onto the pool through an
 <code>OnPool</code> layer, document-named paths to the document’s worker
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/http/src/pool_layer.rs"><code>crates/http/src/pool_layer.rs</code></a>); transaction routes, SSE and subscriptions stay on
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/surfaces/http/src/pool_layer.rs"><code>crates/surfaces/http/src/pool_layer.rs</code></a>); transaction routes, SSE and subscriptions stay on
 the edge (they are streams, not database work).</li>
 <li><strong>P2P</strong>: the iroh endpoint task (all protocols muxed over one ALPN), or the libp2p
 swarm where that transport is used.</li>

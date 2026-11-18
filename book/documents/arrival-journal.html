@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-712cba6e.js";
+            window.path_to_searchindex_js = "../searchindex-b5e09575.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -190,7 +190,7 @@ and “sorted by DocID” is not an arrival order.</p>
 <p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="../diagrams/10-arrival-journal.png" alt="The arrival journal: creates append with no conflict, positions follow commit order"><span class="img-wrapper"><img src="../diagrams/10-arrival-journal.png" alt="The arrival journal: creates append with no conflict, positions follow commit order"></span></label></p>
 <h2 id="the-mechanism"><a class="header" href="#the-mechanism">The mechanism</a></h2>
 <p>Each collection has a journal, stored as a <strong>Log</strong> under <code>s/arrival/</code>
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/event/arrivals.rs"><code>crates/db/src/event/arrivals.rs</code></a>):</p>
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/event/arrivals.rs"><code>crates/database/db/src/event/arrivals.rs</code></a>):</p>
 <ul>
 <li><code>/arrival/{collection}/head</code>: the number of rows,</li>
 <li><code>/arrival/{collection}/row/{cursor:020}</code>: one row per position, holding a DocID,</li>
@@ -200,7 +200,7 @@ and “sorted by DocID” is not an arrival order.</p>
 the document as the once key. The engine assigns positions in commit order: nothing
 conflicts, and a document appended twice (a local create racing a P2P merge of the same
 document) keeps exactly one row, because the once key is applied exactly once. Position
-keys are zero-padded to a fixed width (<code>{cursor:020}</code>, <code>crates/storage/src/backends/ [regolith](https://sourcenetwork.github.io/regolith/)/log_layout.rs</code>) so they sort in position order; the layout is frozen: a store
+keys are zero-padded to a fixed width (<code>{cursor:020}</code>, <code>crates/engine/storage/src/backends/ [regolith](https://sourcenetwork.github.io/regolith/)/log_layout.rs</code>) so they sort in position order; the layout is frozen: a store
 keeps reading its journal across releases.</p>
 <h2 id="the-dense-prefix"><a class="header" href="#the-dense-prefix">The dense prefix</a></h2>
 <p>A reader at a snapshot sees a <strong>dense prefix</strong>: rows 1..head, no gaps. A later arrival

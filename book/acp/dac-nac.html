@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-712cba6e.js";
+            window.path_to_searchindex_js = "../searchindex-b5e09575.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -183,7 +183,7 @@
                     <main>
                         <h1 id="dac-and-nac"><a class="header" href="#dac-and-nac">DAC and NAC</a></h1>
 <h2 id="dac-document-access-control"><a class="header" href="#dac-document-access-control">DAC: document access control</a></h2>
-<p>The <code>DocumentACP</code> trait (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/acp/src/dac.rs"><code>crates/acp/src/dac.rs</code></a>) is the document-scope interface:
+<p>The <code>DocumentACP</code> trait (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/acp/src/dac.rs"><code>crates/engine/acp/src/dac.rs</code></a>) is the document-scope interface:
 register a document’s owner, check access, add and remove relationships. Implementations:</p>
 <ul>
 <li><strong>Zanzibar-backed local ACP</strong> (the default): tuples in the local store, evaluated by
@@ -213,7 +213,7 @@ arrival entry: anything that reveals a document’s data goes through the same c
 option), with a lifecycle: not configured -&gt; enabled -&gt; (optionally) temporarily
 disabled -&gt; purged. It gates administrative surface: collection and index management,
 backup, P2P configuration, lens, views, and every management HTTP route (the route
-permission map lives in <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/http/src/route_permissions.rs"><code>crates/http/src/route_permissions.rs</code></a>. Some 51 node
+permission map lives in <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/surfaces/http/src/route_permissions.rs"><code>crates/surfaces/http/src/route_permissions.rs</code></a>. Some 51 node
 permissions exist, all admin-only (<code>owner + admin</code>).</p>
 <p>Two properties worth knowing:</p>
 <ul>
@@ -226,7 +226,7 @@ every read path, and it exists only when NAC is enabled.</li>
 </ul>
 <h2 id="where-identities-come-from"><a class="header" href="#where-identities-come-from">Where identities come from</a></h2>
 <p>Callers identify with decentralized identities (DID-key over Ed25519, secp256k1 or
-secp256r1 keys; <code>crates/identity</code>), presented as JWT bearer tokens (Go-<code>jwx</code>-compatible
+secp256r1 keys; <code>crates/building-blocks/identity</code>), presented as JWT bearer tokens (Go-<code>jwx</code>-compatible
 JOSE, with bounded clock skew). Anonymous requests map to the wildcard subject: whatever
 the policy grants <code>*</code>. Identity travels on the request context, never in a thread-local.</p>
 <blockquote>

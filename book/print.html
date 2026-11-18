@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-712cba6e.js";
+            window.path_to_searchindex_js = "searchindex-b5e09575.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-8198d451.js"></script>
@@ -225,7 +225,7 @@ repository root so you can jump straight to the code.</p>
 <li><strong>yellow</strong>: a validated step, a gate, or I/O;</li>
 <li><strong>grey</strong>: the network boundary.</li>
 </ul>
-<p>Code references look like <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/classifier.rs"><code>crates/storage/src/backends/regolith/classifier.rs</code></a>, optionally
+<p>Code references look like <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/classifier.rs"><code>crates/engine/storage/src/backends/regolith/classifier.rs</code></a>, optionally
 with a line number at the time of writing. The book is regenerated and deployed by CI
 whenever it changes; if you find prose that disagrees with the code, trust the code and fix
 the book.</p>
@@ -259,14 +259,14 @@ below is the whole story; the rest of this book walks each box. (The participant
 <h2 id="the-layers"><a class="header" href="#the-layers">The layers</a></h2>
 <p><strong>The client</strong> talks to defradb.rs over GraphQL, either over HTTP or through the embedded
 API. It owns its own agent logic: leases, claims, streaming segments, event consumption.</p>
-<p><strong>The network edge</strong> is one tokio runtime, held in one place (<code>crates/edge</code>). It terminates
+<p><strong>The network edge</strong> is one tokio runtime, held in one place (<code>crates/foundation/edge</code>). It terminates
 HTTP, P2P, the KMS transport, the Orbis, Vera and embeddings clients, and telemetry export.
 It is the only place in the process where a tokio runtime exists; no data-path crate depends
 on tokio. The edge also resolves <em>remote inputs</em>: KMS keys, signatures, Vera decisions,
 embeddings. These are fetched before the transaction that needs them, with single-flight
 deduplication, batching and caching, because nothing remote may run inside a transaction
 closure that can re-run.</p>
-<p><strong>The thread-per-core pool</strong> is where every database decision runs (<code>crates/workers</code>). Each
+<p><strong>The thread-per-core pool</strong> is where every database decision runs (<code>crates/foundation/workers</code>). Each
 core runs one pinned executor with no task stealing; a task spawned with <code>spawn_local</code>
 lives and dies on its core. The pool owns query planning, DAG block construction, CRDT
 rules, index maintenance, ACP decisions, lens migrations, and the business logic that
@@ -277,7 +277,7 @@ head sets, document part operands, and their <code>touches</code>), the arrival 
 the conflict event listener, and the key provider for encryption at rest. regolith’s
 mechanisms carry no downstream names; they are generic over exactly these traits. In the
 code the installed set is slightly larger than the diagram: a <code>PrefixExtractor</code>
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/prefix.rs"><code>crates/storage/src/backends/regolith/prefix.rs</code></a>) for prefix bloom filters, and
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/prefix.rs"><code>crates/engine/storage/src/backends/regolith/prefix.rs</code></a>) for prefix bloom filters, and
 <code>TransactionHooks</code> for per-transaction telemetry.</p>
 <p><strong>regolith’s DefraLevel mechanisms</strong> are the transactional vocabulary: key classes, blind
 merges, projected reads, validated scans, commit-ordered append, <code>Db::allocate</code>, write-free
@@ -407,13 +407,13 @@ mutation names. Everything else about the query is parsed and planned on a worke
 the pool, routed once, here, at the edge. A mutation naming exactly one document goes to that
 document’s core, so its writes and merges run one at a time; everything else goes to the
 least-loaded core
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/query/src/pooled/route.rs"><code>crates/query/src/pooled/route.rs</code></a>, <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/workers/src/pool/routing.rs"><code>crates/workers/src/pool/routing.rs</code></a>). No request
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/query/src/pooled/route.rs"><code>crates/engine/query/src/pooled/route.rs</code></a>, <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/foundation/workers/src/pool/routing.rs"><code>crates/foundation/workers/src/pool/routing.rs</code></a>). No request
 hops from core to core.</p>
 <h2 id="2-prepare-outside-effects"><a class="header" href="#2-prepare-outside-effects">2. Prepare outside effects</a></h2>
 <p>Before any database worker is involved, the caller (the edge task) prepares everything
 with an effect outside the transaction: KMS keys, embeddings, signatures, short IDs.
 Only then is the prepared work submitted to the pool
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/query/src/runner/prepare.rs"><code>crates/query/src/runner/prepare.rs</code></a>). A transaction closure may run more than once, so
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/query/src/runner/prepare.rs"><code>crates/engine/query/src/runner/prepare.rs</code></a>). A transaction closure may run more than once, so
 anything with an outside effect must already be in hand. Remote inputs that depend on the
 transaction’s own reads end the attempt, get resolved at the edge (single-flight, batched,
 cached), and the attempt re-runs with them memoized.</p>
@@ -456,7 +456,7 @@ the threading contract in one request.</p>
 <p>defradb.rs stores everything in one engine: <strong><a href="https://sourcenetwork.github.io/regolith/">regolith</a></strong>, an LSM-transaction engine that
 defradb.rs does not fork or wrap with adapters. It is opened directly, configured per
 target (server, embedded, wasm, memory), and extended through traits that defradb.rs
-implements (<code>crates/storage/src/backends/regolith/</code>).</p>
+implements (<code>crates/engine/storage/src/backends/regolith/</code>).</p>
 <p>This part covers the engine-facing surface a defradb.rs developer works with:</p>
 <ul>
 <li><strong>Keys, families and classes</strong>: the byte-level layout of every key defradb.rs writes,
@@ -477,7 +477,7 @@ how the engine treats the key: whether writes to it conflict, whether reads of i
 validated, whether identical bytes are the same write. This chapter is the complete map.</p>
 <h2 id="the-key-classes"><a class="header" href="#the-key-classes">The key classes</a></h2>
 <p><a href="https://sourcenetwork.github.io/regolith/">regolith</a> defines four behavioural classes; defradb.rs assigns each key family to one by
-implementing <code>KeyClassifier</code> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/classifier.rs"><code>crates/storage/src/backends/regolith/classifier.rs</code></a>):</p>
+implementing <code>KeyClassifier</code> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/classifier.rs"><code>crates/engine/storage/src/backends/regolith/classifier.rs</code></a>):</p>
 <ul>
 <li><strong>Ordinary</strong>: last-writer-wins keys. A read of an Ordinary key inside a write
 transaction is validated at commit (an identical rewrite is not a change), and two
@@ -499,9 +499,9 @@ of no family, cut short or malformed, stays Ordinary. Unknown keys are never rej
 they are simply ordinary.</p>
 <h2 id="the-family-table"><a class="header" href="#the-family-table">The family table</a></h2>
 <p>The namespace byte comes first (<code>d</code> datastore, <code>b</code> blockstore, <code>h</code> headstore, <code>s</code>
-systemstore, <code>p</code> peerstore, <code>e</code> encstore, <code>a</code> acpstore; <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/namespace.rs"><code>crates/storage/src/namespace.rs</code></a>),
+systemstore, <code>p</code> peerstore, <code>e</code> encstore, <code>a</code> acpstore; <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/namespace.rs"><code>crates/engine/storage/src/namespace.rs</code></a>),
 then the family prefix. First match wins; longer prefixes sort before shorter ones
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/families.rs"><code>crates/storage/src/backends/regolith/families.rs</code></a>):</p>
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/families.rs"><code>crates/engine/storage/src/backends/regolith/families.rs</code></a>):</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -549,7 +549,7 @@ changed, and a projected read is validated only against those.</li>
 <p><strong>Why one static table.</strong> Classification is on the hot path of every write and every
 validated read. One table, ordered longest-prefix-first, is one binary search over a
 handful of entries, and a 256-entry first-byte index jumps straight to the candidates
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/families.rs"><code>crates/storage/src/backends/regolith/families.rs</code></a>). It also makes the layout auditable: this page is the complete list of
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/families.rs"><code>crates/engine/storage/src/backends/regolith/families.rs</code></a>). It also makes the layout auditable: this page is the complete list of
 what defradb.rs stores.</p>
 </blockquote>
 <div style="break-before: page; page-break-before: always;"></div>
@@ -557,7 +557,7 @@ what defradb.rs stores.</p>
 <p>The merge operator is defradb.rs’s main superpower on top of the engine: writes that
 <em>commute</em> are expressed as merge operands, so concurrent writers of one key never
 conflict and the engine folds them in any order. <code>DefraMergeOperator</code>
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/merge/mod.rs"><code>crates/storage/src/backends/regolith/merge/mod.rs</code></a>) implements regolith’s
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/merge/mod.rs"><code>crates/engine/storage/src/backends/regolith/merge/mod.rs</code></a>) implements regolith’s
 <code>MergeOperator</code> under the name <code>"defra-values-v1"</code> and serves every operand kind from one
 dispatch on a kind byte.</p>
 <h2 id="operand-kinds"><a class="header" href="#operand-kinds">Operand kinds</a></h2>
@@ -586,7 +586,7 @@ the counter chapter of the CRDT docs is explicit that float addition is not conv
 in general; the engine keeps it deterministic by order.</li>
 <li><strong>STATS</strong>: two big-endian i128 halves, added with overflow checks; an overflow fails
 the merge rather than wrapping a statistic.</li>
-<li><strong>DOCUMENT</strong>: the base is a stored document (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/document/src/stored.rs"><code>crates/document/src/stored.rs</code></a>, fields
+<li><strong>DOCUMENT</strong>: the base is a stored document (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/building-blocks/document/src/stored.rs"><code>crates/building-blocks/document/src/stored.rs</code></a>, fields
 keyed by stable u32 field ID, each with a kind and a priority). Each operand is applied
 field by field: LWW fields take the higher-priority value (empty bytes with a priority
 is a tombstone, and the priority survives), counter fields add. The stored format’s
@@ -606,7 +606,7 @@ grouping. Anything else returns “cannot fold”, and the engine keeps the oper
 </ul>
 <p>Floats and the checked i128 statistics deliberately never fold: folding a pair could
 change rounding or hide an overflow that a later base would have surfaced
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/merge/mod.rs"><code>crates/storage/src/backends/regolith/merge/mod.rs</code></a> documents the reasoning beside the code).</p>
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/merge/mod.rs"><code>crates/engine/storage/src/backends/regolith/merge/mod.rs</code></a> documents the reasoning beside the code).</p>
 <h2 id="touches-which-parts-an-operand-changed"><a class="header" href="#touches-which-parts-an-operand-changed">touches: which parts an operand changed</a></h2>
 <p><code>touches(key, operand, parts)</code> answers: does this operand write any of these part IDs?
 Projected reads are validated against exactly the operands whose <code>touches</code> returns true:</p>
@@ -619,11 +619,11 @@ operand that cannot be understood must be assumed to change everything.</li>
 </ul>
 <p>The operator’s contract is checked beside it with the engine’s own property harnesses
 (<code>check_merge_operator</code>, <code>check_touches</code>) plus per-kind tests in
-<code>crates/storage/src/backends/regolith/merge/tests/</code>.</p>
+<code>crates/engine/storage/src/backends/regolith/merge/tests/</code>.</p>
 <h2 id="head-sets-state-functions-that-compose"><a class="header" href="#head-sets-state-functions-that-compose">Head sets: state functions that compose</a></h2>
 <p>A head set is one value holding the state of many named heads, each name in one of three
 states: <code>Absent</code>, <code>Ahead</code> (a parent seen before its child arrives) or <code>Live(priority)</code>.
-Writes are per-name state functions (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/merge/head_set.rs"><code>crates/storage/src/backends/regolith/merge/head_set.rs</code></a>):</p>
+Writes are per-name state functions (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/merge/head_set.rs"><code>crates/engine/storage/src/backends/regolith/merge/head_set.rs</code></a>):</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -655,7 +655,7 @@ the parent’s later arrival consumes it, exactly once.</p>
 </blockquote>
 <h2 id="vector-index-records"><a class="header" href="#vector-index-records">Vector index records</a></h2>
 <p>HNSW graph maintenance uses the same trick at the node level
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/merge/vector.rs"><code>crates/storage/src/backends/regolith/merge/vector.rs</code></a>): <code>links(layer, neighbour)</code> is a 12-byte addition record; <code>full</code>
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/merge/vector.rs"><code>crates/engine/storage/src/backends/regolith/merge/vector.rs</code></a>): <code>links(layer, neighbour)</code> is a 12-byte addition record; <code>full</code>
 appends the neighbour to that layer’s sorted, deduped list. Two structural rules are
 enforced in the operator: a blind addition never raises a node’s height (height is
 structural, chosen at insert), and self-links are refused. <code>counts(live, waste)</code> adjusts
@@ -675,10 +675,10 @@ to SST files, and compaction merges SSTs in the background. defradb.rs does not 
 any of this; it configures it and reads its telemetry. This chapter is what a defradb.rs
 developer needs to know about what is underneath.</p>
 <h2 id="opening-a-store"><a class="header" href="#opening-a-store">Opening a store</a></h2>
-<p><code>RegolithStore::open_with_options</code> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/store.rs"><code>crates/storage/src/backends/regolith/store.rs</code></a>) is
+<p><code>RegolithStore::open_with_options</code> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/store.rs"><code>crates/engine/storage/src/backends/regolith/store.rs</code></a>) is
 the single entry point:</p>
 <ol>
-<li>Engine options are assembled in <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/config.rs"><code>crates/storage/src/backends/regolith/config.rs</code></a>: the merge operator, the prefix extractor,
+<li>Engine options are assembled in <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/config.rs"><code>crates/engine/storage/src/backends/regolith/config.rs</code></a>: the merge operator, the prefix extractor,
 the at-rest key provider, statistics, and the store’s event listener and transaction
 hooks.</li>
 <li>On native targets the open path first checks for a legacy per-value-encrypted store
@@ -689,7 +689,7 @@ and, if found, performs the one-time rewrite to the file-sealed format
 reports no durable sync).</li>
 <li>The classifier and isolation level are attached to the handle.</li>
 </ol>
-<p>Configuration profiles (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/config.rs"><code>crates/storage/src/backends/regolith/config.rs</code></a>):</p>
+<p>Configuration profiles (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/config.rs"><code>crates/engine/storage/src/backends/regolith/config.rs</code></a>):</p>
 <ul>
 <li><strong>server defaults</strong>: <code>DurabilityMode::Immediate</code>, <code>IsolationLevel::DefraLevel</code>, a 30 s
 close timeout;</li>
@@ -701,7 +701,7 @@ the stall.</li>
 </ul>
 <h2 id="threads-who-runs-what"><a class="header" href="#threads-who-runs-what">Threads: who runs what</a></h2>
 <p>The pool wraps the engine environment with <code>placed_on(pool)</code>
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/config.rs"><code>crates/storage/src/backends/regolith/config.rs</code></a>), which places the threads regolith
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/config.rs"><code>crates/engine/storage/src/backends/regolith/config.rs</code></a>), which places the threads regolith
 starts (compaction, log writeback) through the workers pool as background-class threads.
 That keeps them off the cores running data-path workers and accounted for in one place.
 An in-memory environment starts none.</p>
@@ -720,7 +720,7 @@ flush to SST files when they fill; the manifest tracks the live file set. defrad
 writes a file itself.</p>
 <h2 id="compaction"><a class="header" href="#compaction">Compaction</a></h2>
 <p>A stripe-aware compaction worker merges SSTs in the background. defradb.rs installs <em>no
-compaction filter</em>, on principle (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/mod.rs"><code>crates/storage/src/backends/regolith/mod.rs</code></a> documents
+compaction filter</em>, on principle (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/mod.rs"><code>crates/engine/storage/src/backends/regolith/mod.rs</code></a> documents
 the decision): a head-set entry depends on later writes; nothing expires by time alone; a
 document part’s tombstone carries the priority a late merge is ordered against; index
 entries, blocks, ACP tuples and guards each decide something until another key says
@@ -732,7 +732,7 @@ and those run as ordinary transactions; see
 <p>Stores keep ticker-level statistics only (<code>StatsLevel::ExceptHistogramOrTimers</code>): a timer
 would read the clock twice per iterator step, and a histogram sample costs atomics on
 every read and commit. Every open store exports its tickers as one OTel counter
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/telemetry/src/engine_tickers.rs"><code>crates/telemetry/src/engine_tickers.rs</code></a>), and the store’s <code>EventListener</code> reports
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/building-blocks/telemetry/src/engine_tickers.rs"><code>crates/building-blocks/telemetry/src/engine_tickers.rs</code></a>), and the store’s <code>EventListener</code> reports
 flushes, compactions, table-file creation and deletion, background errors, a discarded
 WAL tail at open, and every commit conflict with its reason.</p>
 <blockquote>
@@ -766,10 +766,10 @@ engine: with a random nonce per value, identical plaintexts differ in bytes, so 
 value-validated reads and content-addressed block identity all broke, and merge operators
 saw ciphertext, making counters and head sets impossible. That wrapper was deleted, and a
 one-time rewrite migrates old stores at open
-(<code>crates/storage/src/backends/regolith/rewrite/</code>).</p>
+(<code>crates/engine/storage/src/backends/regolith/rewrite/</code>).</p>
 <h2 id="where-keys-come-from"><a class="header" href="#where-keys-come-from">Where keys come from</a></h2>
 <p>defradb.rs implements regolith’s <code>KeyProvider</code>
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/encryption.rs"><code>crates/storage/src/backends/regolith/encryption.rs</code></a>):</p>
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/encryption.rs"><code>crates/engine/storage/src/backends/regolith/encryption.rs</code></a>):</p>
 <ul>
 <li><code>current()</code> returns the active key id: the first 4 bytes of a domain-separated SHA-256
 of the key material.</li>
@@ -781,7 +781,7 @@ with a birthday-search test proving the check). Compaction re-seals files it rew
 under the current key, so rotation completes as data churns.</p>
 <p>Keys enter through the node builders (<code>with_at_rest_encryption_key</code>,
 <code>with_previous_at_rest_encryption_keys</code> on both the <code>defra-node</code> and <code>embedded</code>
-builders), and the CLI fetches them from the keyring (<code>crates/keyring</code>: file (JWE),
+builders), and the CLI fetches them from the keyring (<code>crates/foundation/keyring</code>: file (JWE),
 OS keyring, or systemd-creds backends; standard names <code>encryption-key</code> and
 <code>encryption-key-previous</code>).</p>
 <h2 id="what-is-deliberately-not-encrypted-at-rest"><a class="header" href="#what-is-deliberately-not-encrypted-at-rest">What is deliberately not encrypted at rest</a></h2>
@@ -818,7 +818,7 @@ statement savepoints, idle sweeping and commit fences.</li>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="lifecycle-and-states"><a class="header" href="#lifecycle-and-states">Lifecycle and states</a></h1>
 <p>A defradb.rs transaction is an engine transaction (<code>regolith::Transaction</code>) wrapped in a
-<code>DbTxn</code> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/txn/mod.rs"><code>crates/db/src/txn/mod.rs</code></a>) that adds the namespaced store views (datastore,
+<code>DbTxn</code> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/txn/mod.rs"><code>crates/database/db/src/txn/mod.rs</code></a>) that adds the namespaced store views (datastore,
 blockstore, headstore, systemstore, acpstore, peerstore), a transaction-scoped collection
 catalog, and the statement savepoint machinery. The state machine it moves through:</p>
 <p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="diagrams/09-transaction-lifecycle.png" alt="Transaction lifecycle: from Open to Done, with the write-free fast path and the re-run"><span class="img-wrapper"><img src="diagrams/09-transaction-lifecycle.png" alt="Transaction lifecycle: from Open to Done, with the write-free fast path and the re-run"></span></label></p>
@@ -831,14 +831,14 @@ rolled back to, and released, including the per-statement savepoints of an expli
 transaction.</p>
 <p>A read-only transaction does not begin an engine transaction at all: it pins a snapshot,
 which is the same view without commit-time validation nothing will ever ask for
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/transaction.rs"><code>crates/storage/src/backends/regolith/transaction.rs</code></a>).</p>
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/transaction.rs"><code>crates/engine/storage/src/backends/regolith/transaction.rs</code></a>).</p>
 <h2 id="validating-the-write-free-fast-path"><a class="header" href="#validating-the-write-free-fast-path">Validating: the write-free fast path</a></h2>
 <p>At commit the engine validates the read set against newer commits. A transaction that
 <em>wrote nothing</em> and read at one snapshot is write-free: no validation, no critical
 section, done. This is not a corner case; it is every status read, every query without a
 mutation, every arrival page. Concretely: a write-free attempt and a concurrent update of
 the very rows it read <em>both</em> commit (there is a regression test that asserts exactly
-this, <code>crates/storage/src/corekv/retry/</code>).</p>
+this, <code>crates/engine/storage/src/corekv/retry/</code>).</p>
 <h2 id="decided-written-durable-visible"><a class="header" href="#decided-written-durable-visible">Decided, written, durable, visible</a></h2>
 <p>A transaction that wrote something and kept every race:</p>
 <ol>
@@ -911,15 +911,15 @@ lock-free rather than merely fine-grained-locked.</p>
 <h2 id="what-defradbrs-adds-nothing-in-between"><a class="header" href="#what-defradbrs-adds-nothing-in-between">What defradb.rs adds: nothing in between</a></h2>
 <p>The store’s module doc states the rule: snapshot capture and native commit use the
 engine directly, “so independent commits can join its commit groups”
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/store.rs"><code>crates/storage/src/backends/regolith/store.rs</code></a>). On a worker’s <code>IoQueue</code> the commit is
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/store.rs"><code>crates/engine/storage/src/backends/regolith/store.rs</code></a>). On a worker’s <code>IoQueue</code> the commit is
 <code>commit_nowait</code> and the ticket is completed by that same queue
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/transaction.rs"><code>crates/storage/src/backends/regolith/transaction.rs</code></a>); without a queue, the commit
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/transaction.rs"><code>crates/engine/storage/src/backends/regolith/transaction.rs</code></a>); without a queue, the commit
 syncs on the calling thread. Nothing defradb.rs does stands between the caller and the
 engine’s grouping.</p>
 <h2 id="ordering-on-top-the-commit-receipt"><a class="header" href="#ordering-on-top-the-commit-receipt">Ordering on top: the commit receipt</a></h2>
 <p>Every commit returns a receipt with a sequence (<code>CommitReceipt.seq</code>). defradb.rs uses it
 as the one ordering token for everything downstream: post-commit callbacks run in receipt
-order across threads (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/event_order.rs"><code>crates/storage/src/backends/regolith/event_order.rs</code></a>), and events
+order across threads (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/event_order.rs"><code>crates/engine/storage/src/backends/regolith/event_order.rs</code></a>), and events
 are published in that order (see <a href="#events">Events</a>). A <code>seq</code> is never
 persisted across a wipe or restore, so ordering promises never span a database
 replacement.</p>
@@ -1058,12 +1058,12 @@ commit.</p>
 <p>An explicit (interactive) transaction spans multiple client statements: begin, several
 queries and mutations, commit or discard. defradb.rs runs each one as an <strong>actor on
 one worker</strong>: the transaction is begun on a worker of the pool and stays there, held
-<em>by value</em> by one task (<code>crates/db/src/txn/owner/</code>). Its ID names the worker, so every
+<em>by value</em> by one task (<code>crates/database/db/src/txn/owner/</code>). Its ID names the worker, so every
 request for it goes from the edge straight to that worker with <code>Target::Worker</code>, one
 hop in and one out, and the requests run one at a time, in arrival order, through the
 actor’s mailbox. There is no lock to take: the requests are messages.</p>
 <h2 id="the-registry"><a class="header" href="#the-registry">The registry</a></h2>
-<p>The transaction registry (<code>crates/db/src/txn/registry/</code>) maps IDs to owners:</p>
+<p>The transaction registry (<code>crates/database/db/src/txn/registry/</code>) maps IDs to owners:</p>
 <ul>
 <li><strong>begin</strong> on a least-loaded worker, made explicit, wrapped as an <code>OwnedTxn</code>;</li>
 <li><strong>run</strong>: a request routed to the owning worker under a deadline; the actor lends
@@ -1088,7 +1088,7 @@ was requested, and “the caller left” must not mean “the write vanishes” 
 <code>CommitFence</code> counts commits whose caller stopped waiting, and every new transaction
 waits while that count is above zero, so no new work starts until the abandoned
 commits have landed. The protocol has its own TLA+ model and a Lean proof of the
-counter swap (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/proofs/tla/CommitFence.tla"><code>CommitFence.tla</code></a>, <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/txn/fence.rs"><code>crates/db/src/txn/fence.rs</code></a>).</p>
+counter swap (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/proofs/tla/CommitFence.tla"><code>CommitFence.tla</code></a>, <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/txn/fence.rs"><code>crates/database/db/src/txn/fence.rs</code></a>).</p>
 <h2 id="auto-commit-vs-explicit"><a class="header" href="#auto-commit-vs-explicit">Auto-commit vs explicit</a></h2>
 <p>Every rule in this book applies to both; the differences are exactly three: explicit
 transactions own their retry policy (conflicts surface to the caller), span statements
@@ -1142,8 +1142,8 @@ read); a key the transaction then writes is validated as a read of that key.</li
 write inside the range conflicts.</li>
 </ul>
 <p>The same table, as code policy, lives in the repository’s working agreement, and the
-mechanisms are exercised end to end in <code>crates/storage/src/backends/regolith/</code> and the
-collection read paths (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/collection/crud.rs"><code>crates/db/src/collection/crud.rs</code></a>).</p>
+mechanisms are exercised end to end in <code>crates/engine/storage/src/backends/regolith/</code> and the
+collection read paths (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/collection/crud.rs"><code>crates/database/db/src/collection/crud.rs</code></a>).</p>
 <h2 id="where-the-value-comes-from"><a class="header" href="#where-the-value-comes-from">Where the value comes from</a></h2>
 <p>The engine’s read path serves a read with: the transaction’s own buffered puts, deletes
 and merges first, in operation order; then the memtables, then L0, then deeper levels by
@@ -1214,18 +1214,18 @@ and typically reports “not claimed”.</li>
 <h2 id="the-operations-mapped"><a class="header" href="#the-operations-mapped">The operations, mapped</a></h2>
 <p>Where each operation’s writes live in the code:</p>
 <ul>
-<li><strong>Create a document</strong> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/write/autocommit/create.rs"><code>crates/db/src/write/autocommit/create.rs</code></a>): blocks + CID,
+<li><strong>Create a document</strong> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/write/autocommit/create.rs"><code>crates/database/db/src/write/autocommit/create.rs</code></a>): blocks + CID,
 head-set merge, the whole stored document, index entries, the journal append (once key:
 the doc), the short-ID and DocID mappings, block ownership, and the ACP owner
 registration.</li>
-<li><strong>Update a document</strong> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/write/autocommit/update.rs"><code>crates/db/src/write/autocommit/update.rs</code></a>): new field blocks,
+<li><strong>Update a document</strong> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/write/autocommit/update.rs"><code>crates/database/db/src/write/autocommit/update.rs</code></a>): new field blocks,
 head-set operand (supersede old heads, add new), one document part operand, index
 deltas for intersecting indexes.</li>
-<li><strong>Delete a document</strong> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/write/autocommit/delete.rs"><code>crates/db/src/write/autocommit/delete.rs</code></a>): the deletion
+<li><strong>Delete a document</strong> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/write/autocommit/delete.rs"><code>crates/database/db/src/write/autocommit/delete.rs</code></a>): the deletion
 marker (ordinary key), index entry removals, a head operand, a delete block in the DAG.</li>
-<li><strong>P2P merge of remote blocks</strong> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/merge/pooled.rs"><code>crates/db/src/merge/pooled.rs</code></a>): blocks, head sets,
+<li><strong>P2P merge of remote blocks</strong> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/merge/pooled.rs"><code>crates/database/db/src/merge/pooled.rs</code></a>): blocks, head sets,
 part operands, the applied key, the journal append, the DocID mapping.</li>
-<li><strong>Counter increment</strong> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/crdt/src/counter.rs"><code>crates/crdt/src/counter.rs</code></a>): one blind merge; never a
+<li><strong>Counter increment</strong> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/building-blocks/crdt/src/counter.rs"><code>crates/building-blocks/crdt/src/counter.rs</code></a>): one blind merge; never a
 read-modify-write.</li>
 <li><strong>DDL: schema or index change</strong>: definition keys against current writers.</li>
 <li><strong>ACP: register an owner, add or remove a relationship</strong>: tuples in the same
@@ -1260,14 +1260,14 @@ prefix, and the <code>_documentArrivals</code> API.</li>
 <h1 id="the-document-model"><a class="header" href="#the-document-model">The document model</a></h1>
 <h2 id="the-docid"><a class="header" href="#the-docid">The DocID</a></h2>
 <p>A document’s identity is its <strong>DocID</strong>: a UUIDv5 over a fixed namespace of the genesis
-composite block’s CID (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/document/src/doc_id.rs"><code>crates/document/src/doc_id.rs</code></a>). The string form is
+composite block’s CID (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/building-blocks/document/src/doc_id.rs"><code>crates/building-blocks/document/src/doc_id.rs</code></a>). The string form is
 <code>{base32 version}-{uuid}</code> (for example <code>bae-...</code>). The DocID is stable across replicas:
 any node that has the same genesis block computes the same DocID, which is what makes
 replication, dedup and the once-keys of the arrival journal possible.</p>
 <p>The CID itself is not recoverable from the DocID string; it lives in the DAG.</p>
 <h2 id="short-ids"><a class="header" href="#short-ids">Short IDs</a></h2>
 <p>Locally, every document also gets a compact <strong>short ID</strong>: a u64 allocated from
-<code>/seq/doc</code> in ranges of 1024 by a lock-free CAS allocator (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/docid/map.rs"><code>crates/db/src/docid/map.rs</code></a>).
+<code>/seq/doc</code> in ranges of 1024 by a lock-free CAS allocator (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/docid/map.rs"><code>crates/database/db/src/docid/map.rs</code></a>).
 Short IDs key the datastore layout (<code>doc_key(doc_short_id)</code>), which makes iteration
 order match allocation order and keeps keys small. The systemstore holds the bidirectional
 mappings (short ID to DocID and back), plus the DocRef, and the block-CID-to-DocID
@@ -1276,7 +1276,7 @@ ownership map that memory reclamation walks.</p>
 closure <em>because</em> a reserved range survives attempts (an attempt never allocates twice;
 the prepared-inputs rule from the doctrine chapter).</p>
 <h2 id="the-stored-format-documents-as-parts"><a class="header" href="#the-stored-format-documents-as-parts">The stored format: documents as parts</a></h2>
-<p>The materialized value of a document is a <code>StoredDocument</code> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/document/src/stored.rs"><code>crates/document/src/stored.rs</code></a>):
+<p>The materialized value of a document is a <code>StoredDocument</code> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/building-blocks/document/src/stored.rs"><code>crates/building-blocks/document/src/stored.rs</code></a>):
 magic <code>DFV\x01</code>, then fields keyed by <strong>stable per-version u32 field IDs</strong> (not names:
 renames must not rewrite every document), each with a kind (<code>Lww</code>, <code>Int64</code>, <code>Float32</code>,
 <code>Float64</code>), a priority, and bytes (CBOR for LWW values, big-endian numbers for counters).
@@ -1286,10 +1286,10 @@ a delete is an LWW write that wins by priority, not a special row.</p>
 <strong>parts</strong>: this is what makes projected reads (<code>get_parts(key, parts)</code>) and blind
 part-operand merges the read and write primitives of the document. Part IDs are
 allocated from the systemstore and persisted per schema version
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/collection/parts.rs"><code>crates/db/src/collection/parts.rs</code></a>), so two writers on two replicas name the same
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/collection/parts.rs"><code>crates/database/db/src/collection/parts.rs</code></a>), so two writers on two replicas name the same
 fields with the same part IDs.</p>
 <h2 id="the-in-memory-document"><a class="header" href="#the-in-memory-document">The in-memory document</a></h2>
-<p>The <code>Document</code> in memory (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/document/src/document.rs"><code>crates/document/src/document.rs</code></a>) carries the schema-typed
+<p>The <code>Document</code> in memory (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/building-blocks/document/src/document.rs"><code>crates/building-blocks/document/src/document.rs</code></a>) carries the schema-typed
 field map, the current head CID, dirty tracking, the collection reference, counter
 deltas for updates, and the write preparation (precomputed keys and identity). Documents
 are built from client JSON against the collection’s schema, validated, and then either
@@ -1312,7 +1312,7 @@ identities, two jobs: one travels the network, one stays in the keys.</p>
 links form a Merkle DAG per document. Blocks are the replication unit: P2P ships blocks,
 merges apply blocks, history queries walk blocks, signatures sign blocks.</p>
 <h2 id="what-a-write-produces"><a class="header" href="#what-a-write-produces">What a write produces</a></h2>
-<p>The block builder (<code>crates/db/src/block/builder/</code>) computes, for one write:</p>
+<p>The block builder (<code>crates/database/db/src/block/builder/</code>) computes, for one write:</p>
 <ul>
 <li><strong>Field blocks</strong>: one per modified field, carrying the CRDT delta (an LWW value with
 its priority, or a counter increment) and linking the field’s previous heads.</li>
@@ -1334,17 +1334,17 @@ the document’s composite block, blind-merged into the collection head set.</li
 </ul>
 <h2 id="cids"><a class="header" href="#cids">CIDs</a></h2>
 <p>A CID is computed from the block’s canonical bytes
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/defra-core/src/block.rs"><code>crates/defra-core/src/block.rs</code></a>). Identical bytes produce identical CIDs: that is why
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/foundation/defra-core/src/block.rs"><code>crates/foundation/defra-core/src/block.rs</code></a>). Identical bytes produce identical CIDs: that is why
 two replicas that apply the same writes produce the same history, and why block writes
 are ContentAddressed and cannot conflict.</p>
 <h2 id="priorities"><a class="header" href="#priorities">Priorities</a></h2>
-<p>Every CRDT delta carries a priority (a u64 varint, <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/crdt/src/priority.rs"><code>crates/crdt/src/priority.rs</code></a>):
+<p>Every CRDT delta carries a priority (a u64 varint, <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/building-blocks/crdt/src/priority.rs"><code>crates/building-blocks/crdt/src/priority.rs</code></a>):
 create writes priority 1; an update writes the field’s current max priority plus one;
 the composite writes the document’s max plus one. Priorities are what order concurrent
 LWW writes deterministically without a coordinator: given two values, the higher
 priority wins, and the merge algebra is proven convergent in Lean.</p>
 <h2 id="verification"><a class="header" href="#verification">Verification</a></h2>
-<p>Replicated blocks are checked before merge (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/block/verify.rs"><code>crates/db/src/block/verify.rs</code></a>): the CID
+<p>Replicated blocks are checked before merge (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/block/verify.rs"><code>crates/database/db/src/block/verify.rs</code></a>): the CID
 must match the bytes (content integrity), and attached signatures are verified when
 present (including BLS-augmented batch signatures); unsigned blocks are supported. The
 read gate checks ACP before a block is even served. A
@@ -1352,8 +1352,8 @@ document’s DAG that fails verification is quarantined (the <code>PendingDagQua
 carries the forensics).</p>
 <h2 id="reading-the-dag-back"><a class="header" href="#reading-the-dag-back">Reading the DAG back</a></h2>
 <p>History reads walk the DAG: <code>_commits</code> by CID or depth
-(<code>crates/db/src/read/commits/</code>), versioned (time-travel) reads walk from a target CID
-back to genesis and replay CRDT deltas forward (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/read/versioned.rs"><code>crates/db/src/read/versioned.rs</code></a>). The
+(<code>crates/database/db/src/read/commits/</code>), versioned (time-travel) reads walk from a target CID
+back to genesis and replay CRDT deltas forward (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/read/versioned.rs"><code>crates/database/db/src/read/versioned.rs</code></a>). The
 <a href="#history--time-travel">query chapter</a> covers the API surface.</p>
 <blockquote>
 <p><strong>Why blocks when there is a local value.</strong> The local value is an index of “now”; the
@@ -1372,7 +1372,7 @@ exception and are covered below.) defradb.rs uses four.</p>
 <h2 id="lww-register"><a class="header" href="#lww-register">LWW register</a></h2>
 <p>The workhorse. A field value with a priority: given two writes, the higher priority
 wins; equal priorities break ties deterministically on the value bytes
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/crdt/src/lww.rs"><code>crates/crdt/src/lww.rs</code></a>). Empty data is a tombstone whose priority still counts, so a
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/building-blocks/crdt/src/lww.rs"><code>crates/building-blocks/crdt/src/lww.rs</code></a>). Empty data is a tombstone whose priority still counts, so a
 delete beats a lower-priority write and loses to a higher one. Every ordinary field is
 an LWW register by default.</p>
 <blockquote>
@@ -1382,7 +1382,7 @@ gives them one, and the convergence proofs lean on it.</p>
 </blockquote>
 <h2 id="counter"><a class="header" href="#counter">Counter</a></h2>
 <p>A single accumulated value with blind-merge increments
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/crdt/src/counter.rs"><code>crates/crdt/src/counter.rs</code></a>). This is deliberately <em>not</em> a classic PN-counter with two
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/building-blocks/crdt/src/counter.rs"><code>crates/building-blocks/crdt/src/counter.rs</code></a>). This is deliberately <em>not</em> a classic PN-counter with two
 registers: an increment is a document-part operand (kind <code>INT64</code>/<code>FLOAT32</code>/<code>FLOAT64</code>),
 and i64 addition is wrapping and order-independent (proven in Lean), so any grouping of
 increments folds to the same sum. Idempotence of replicated application is enforced one
@@ -1424,7 +1424,7 @@ heads it finds), history queries need them (walk from the heads), publication ne
 value under one key per document, updated by blind merges.</p>
 <h2 id="the-layout"><a class="header" href="#the-layout">The layout</a></h2>
 <p>Document head sets live under <code>h/hd/</code>, collection head sets under <code>h/hc/</code>
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/block/heads.rs"><code>crates/db/src/block/heads.rs</code></a>). A set value holds, per name, one of three states:
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/block/heads.rs"><code>crates/database/db/src/block/heads.rs</code></a>). A set value holds, per name, one of three states:
 <code>Absent</code>, <code>Ahead</code> (a child arrived before its parent), or <code>Live(priority)</code>. Names are
 <code>{field}/{cid}</code> pairs, so one set holds every field’s heads plus the composite <code>C</code>
 heads.</p>
@@ -1468,7 +1468,7 @@ and “sorted by DocID” is not an arrival order.</p>
 <p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="diagrams/10-arrival-journal.png" alt="The arrival journal: creates append with no conflict, positions follow commit order"><span class="img-wrapper"><img src="diagrams/10-arrival-journal.png" alt="The arrival journal: creates append with no conflict, positions follow commit order"></span></label></p>
 <h2 id="the-mechanism"><a class="header" href="#the-mechanism">The mechanism</a></h2>
 <p>Each collection has a journal, stored as a <strong>Log</strong> under <code>s/arrival/</code>
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/event/arrivals.rs"><code>crates/db/src/event/arrivals.rs</code></a>):</p>
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/event/arrivals.rs"><code>crates/database/db/src/event/arrivals.rs</code></a>):</p>
 <ul>
 <li><code>/arrival/{collection}/head</code>: the number of rows,</li>
 <li><code>/arrival/{collection}/row/{cursor:020}</code>: one row per position, holding a DocID,</li>
@@ -1478,7 +1478,7 @@ and “sorted by DocID” is not an arrival order.</p>
 the document as the once key. The engine assigns positions in commit order: nothing
 conflicts, and a document appended twice (a local create racing a P2P merge of the same
 document) keeps exactly one row, because the once key is applied exactly once. Position
-keys are zero-padded to a fixed width (<code>{cursor:020}</code>, <code>crates/storage/src/backends/ [regolith](https://sourcenetwork.github.io/regolith/)/log_layout.rs</code>) so they sort in position order; the layout is frozen: a store
+keys are zero-padded to a fixed width (<code>{cursor:020}</code>, <code>crates/engine/storage/src/backends/ [regolith](https://sourcenetwork.github.io/regolith/)/log_layout.rs</code>) so they sort in position order; the layout is frozen: a store
 keeps reading its journal across releases.</p>
 <h2 id="the-dense-prefix"><a class="header" href="#the-dense-prefix">The dense prefix</a></h2>
 <p>A reader at a snapshot sees a <strong>dense prefix</strong>: rows 1..head, no gaps. A later arrival
@@ -1527,7 +1527,7 @@ are maintained.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="the-graphql-pipeline"><a class="header" href="#the-graphql-pipeline">The GraphQL pipeline</a></h1>
-<p>The pipeline, in one line (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/query/src/lib.rs"><code>crates/query/src/lib.rs</code></a>):</p>
+<p>The pipeline, in one line (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/query/src/lib.rs"><code>crates/engine/query/src/lib.rs</code></a>):</p>
 <pre><code>GraphQL string -&gt; Parser -&gt; Mapper -&gt; Planner -&gt; Plan nodes -&gt; Executor -&gt; Results
 </code></pre>
 <h2 id="parse-and-map"><a class="header" href="#parse-and-map">Parse and map</a></h2>
@@ -1541,7 +1541,7 @@ input at a trust boundary.</p>
 <p>Schema SDL is parsed in the same crate (<code>sdl_parse/</code>), and the GraphQL schema a client
 introspects is generated from collection definitions (<code>schema_gen/</code>).</p>
 <h2 id="prepare"><a class="header" href="#prepare">Prepare</a></h2>
-<p>Mutation preparation (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/query/src/runner/prepare.rs"><code>crates/query/src/runner/prepare.rs</code></a>) runs once per request, outside any
+<p>Mutation preparation (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/query/src/runner/prepare.rs"><code>crates/engine/query/src/runner/prepare.rs</code></a>) runs once per request, outside any
 transaction retry: write preparation resolves KMS keys, embeddings and signatures;
 batches group; ACP-transactional providers bind. Remote inputs are resolved in waves at
 the edge: an input that is not yet local ends the wave (<code>NeedsInput</code>), is fetched, and
@@ -1564,7 +1564,7 @@ a <code>PermissionFilterNode</code> that checks each document’s access (bounde
 in-flight cap). App read validators hook the same node.</li>
 </ul>
 <h2 id="execute"><a class="header" href="#execute">Execute</a></h2>
-<p>The executor (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/query/src/runner/executor.rs"><code>crates/query/src/runner/executor.rs</code></a>) is a Volcano-style iterator over the plan: each node
+<p>The executor (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/query/src/runner/executor.rs"><code>crates/engine/query/src/runner/executor.rs</code></a>) is a Volcano-style iterator over the plan: each node
 pulls from its children. Reads stream: a scan yields pages from the storage iterator,
 never a materialized set. Execution happens on a pool worker, routed at the edge; when
 the request names an explicit transaction, it goes to that transaction’s owning worker
@@ -1590,7 +1590,7 @@ implementation so explain outputs and optimizations correspond.</p>
 <h1 id="indexes"><a class="header" href="#indexes">Indexes</a></h1>
 <p>Indexes are maintained inline in the write path: every document write updates exactly
 the indexes whose fields it touched. Four kinds exist
-(<code>crates/db/src/index/</code>, <code>crates/storage/src/index/</code>):</p>
+(<code>crates/database/db/src/index/</code>, <code>crates/engine/storage/src/index/</code>):</p>
 <h2 id="secondary-ordered"><a class="header" href="#secondary-ordered">Secondary (ordered)</a></h2>
 <p>A sorted mapping from field value to DocID, blind puts and deletes, kept per index
 (<code>IndexDataStoreKey</code> under the <code>d/</code> family). Multiple fields, arrays (multiple value
@@ -1611,22 +1611,22 @@ replicated concurrency resolves this way.</li>
 </ul>
 <h2 id="full-text"><a class="header" href="#full-text">Full-text</a></h2>
 <p>Tokenized, language-aware inverted indexes with BM25 scoring
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/index/fulltext.rs"><code>crates/storage/src/index/fulltext.rs</code></a>), synthesized from <code>@fulltext</code> schema directives
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/index/fulltext.rs"><code>crates/engine/storage/src/index/fulltext.rs</code></a>), synthesized from <code>@fulltext</code> schema directives
 under internal names (<code>__fulltext__:{field}</code>). Corpus statistics (document counts, field
 lengths) are maintained as blind STATS merges (checked i128 deltas), so concurrent
 indexers commute. Query time scores with BM25 over the stored statistics.</p>
 <h2 id="vector"><a class="header" href="#vector">Vector</a></h2>
-<p>Four engines behind one interface (<code>crates/db/src/index/vector/engine/</code>): <strong>flat</strong>
+<p>Four engines behind one interface (<code>crates/database/db/src/index/vector/engine/</code>): <strong>flat</strong>
 (exact brute force), <strong>HNSW</strong> (the Malkov-Yashunin graph; deterministic level seeds;
 links maintained by blind <code>VECTOR_LINKS</code> merges), <strong>IVF</strong> (inverted lists with product
 quantization) and <strong>SSG</strong> (Satellite System Graph), plus <strong>DiskANN</strong>-style PQ-coded
 resident graphs sharing code caches on the DB. Structural rules live in the merge
 operator: a blind addition can never raise a node’s height or add a self-link, so graph
 maintenance never needs locks. Similarity queries route through the planner to the
-engine (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/query/src/plan/similarity.rs"><code>crates/query/src/plan/similarity.rs</code></a>); HNSW advisory reads during maintenance are unvalidated
+engine (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/query/src/plan/similarity.rs"><code>crates/engine/query/src/plan/similarity.rs</code></a>); HNSW advisory reads during maintenance are unvalidated
 part reads, so building never conflicts with querying.</p>
 <h2 id="lifecycle"><a class="header" href="#lifecycle">Lifecycle</a></h2>
-<p>Indexes are created with a bulk backfill (resumable at open, <code>crates/db/src/index/ backfill.rs</code>), rebuilt on demand, and re-created when a schema change requires it (owed
+<p>Indexes are created with a bulk backfill (resumable at open, <code>crates/database/db/src/index/ backfill.rs</code>), rebuilt on demand, and re-created when a schema change requires it (owed
 reindexes settle at startup). Deletes remove entries page by page; the unique conflict
 event and index reconciliation have TLA+ models (see
 <a href="#verification-1">Verification</a>).</p>
@@ -1643,7 +1643,7 @@ only the indexes whose fields the patch intersects.</p>
 <p>Because every write is a block in a DAG, history is queryable first-class.</p>
 <h2 id="_commits"><a class="header" href="#_commits"><code>_commits</code></a></h2>
 <p>The <code>_commits</code> system collection exposes the block DAG
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/query/src/runner/commits.rs"><code>crates/query/src/runner/commits.rs</code></a>, <code>crates/db/src/read/commits/</code>):</p>
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/query/src/runner/commits.rs"><code>crates/engine/query/src/runner/commits.rs</code></a>, <code>crates/database/db/src/read/commits/</code>):</p>
 <ul>
 <li>by <strong>CID</strong>: one block, or a traversal to a <code>depth</code> following block heads;</li>
 <li>from <strong>heads</strong>: the frontier of a document (or collection), depth-limited;</li>
@@ -1656,7 +1656,7 @@ document’s data, so commit queries are filtered exactly like document queries 
 the “gate commit queries with DAC” behaviour, ported from Go).</p>
 <h2 id="time-travel-versioned-reads"><a class="header" href="#time-travel-versioned-reads">Time travel (versioned reads)</a></h2>
 <p>A versioned read reconstructs a document <em>as of</em> a target CID
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/read/versioned.rs"><code>crates/db/src/read/versioned.rs</code></a>): walk the DAG from the target back to genesis,
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/read/versioned.rs"><code>crates/database/db/src/read/versioned.rs</code></a>): walk the DAG from the target back to genesis,
 replay the CRDT deltas forward, and return the state. Encrypted fields resolve their
 DEKs through the KMS during the replay (prepared inputs, never a remote call per field).
 Versioned reads are also how “the document at this commit” is served to clients that
@@ -1701,8 +1701,8 @@ public window exists, and revocation.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="the-zanzibar-engine"><a class="header" href="#the-zanzibar-engine">The Zanzibar engine</a></h1>
-<p><code>crates/zanzibar</code> is a standalone implementation of Google’s Zanzibar permission model,
-and <code>crates/acp</code> builds DefraDB’s access control on it. No global mediator, no special
+<p><code>crates/building-blocks/zanzibar</code> is a standalone implementation of Google’s Zanzibar permission model,
+and <code>crates/engine/acp</code> builds DefraDB’s access control on it. No global mediator, no special
 cases in the query engine: authorization is evaluation of a policy over relationship
 tuples.</p>
 <h2 id="the-model"><a class="header" href="#the-model">The model</a></h2>
@@ -1710,7 +1710,7 @@ tuples.</p>
 <ul>
 <li><strong>Policies</strong> (<code>Policy</code>, <code>Resource</code>, <code>Relation</code>, <code>Subject</code>): a policy names resource
 types, relations on them, and permission expressions over those relations. DefraDB’s
-DPI format is a small YAML dialect (<code>crates/acp/src/policy_yaml/</code>); the default
+DPI format is a small YAML dialect (<code>crates/engine/acp/src/policy_yaml/</code>); the default
 document policy (used when a collection carries no explicit one) has an <code>owner</code>
 relation, an <code>admin</code> computed from <code>owner</code>, direct <code>reader</code>/<code>updater</code>/<code>deleter</code>
 relations, and <code>read</code>/<code>update</code>/<code>delete</code> permissions computed as unions over owner,
@@ -1719,14 +1719,14 @@ admin and the direct relations.</li>
 <code>a/zanzibar/</code> as Ordinary keys. Subjects can be actors, wildcards, or usersets
 (a subject that is itself a relation on another object).</li>
 <li><strong>Relation expressions</strong>: the algebra evaluated to answer “may this identity perform
-this permission on this resource” (<code>crates/zanzibar/src/expression/</code>):
+this permission on this resource” (<code>crates/building-blocks/zanzibar/src/expression/</code>):
 <code>This</code> (a direct tuple), <code>ComputedUserset</code> (follow to another relation on the same
 resource), <code>TupleToUserset</code> (follow a tuple relation to a target, then evaluate a
 computed relation there), and the set operations <code>Union</code>, <code>Intersection</code>, <code>Difference</code>.</li>
 </ul>
 <h2 id="evaluation"><a class="header" href="#evaluation">Evaluation</a></h2>
 <p>The checker is a goal-tree search with cycle detection
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/zanzibar/src/engine/evaluate.rs"><code>crates/zanzibar/src/engine/evaluate.rs</code></a>):</p>
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/building-blocks/zanzibar/src/engine/evaluate.rs"><code>crates/building-blocks/zanzibar/src/engine/evaluate.rs</code></a>):</p>
 <ul>
 <li><code>Union</code> short-circuits on true; <code>Intersection</code> short-circuits on false;</li>
 <li><code>Difference</code> requires the base to be <em>proven</em> true and the subtraction <em>proven</em>
@@ -1738,7 +1738,7 @@ unbounded;</li>
 <li>batch checks share one cache (<code>check_many</code>).</li>
 </ul>
 <p>Policies are immutable once stored; the node keeps them in a lock-free policy snapshot
-(an <code>Atom</code>-swapped lookup table, <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/acp/src/policy_cache.rs"><code>crates/acp/src/policy_cache.rs</code></a>) that reads never lock
+(an <code>Atom</code>-swapped lookup table, <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/acp/src/policy_cache.rs"><code>crates/engine/acp/src/policy_cache.rs</code></a>) that reads never lock
 to consult.</p>
 <h2 id="policy-identity"><a class="header" href="#policy-identity">Policy identity</a></h2>
 <p>Policy IDs come from the engine’s <code>Db::allocate</code> (the same atomic allocator as short
@@ -1756,7 +1756,7 @@ that guesses is a vulnerability with good manners.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="dac-and-nac"><a class="header" href="#dac-and-nac">DAC and NAC</a></h1>
 <h2 id="dac-document-access-control"><a class="header" href="#dac-document-access-control">DAC: document access control</a></h2>
-<p>The <code>DocumentACP</code> trait (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/acp/src/dac.rs"><code>crates/acp/src/dac.rs</code></a>) is the document-scope interface:
+<p>The <code>DocumentACP</code> trait (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/acp/src/dac.rs"><code>crates/engine/acp/src/dac.rs</code></a>) is the document-scope interface:
 register a document’s owner, check access, add and remove relationships. Implementations:</p>
 <ul>
 <li><strong>Zanzibar-backed local ACP</strong> (the default): tuples in the local store, evaluated by
@@ -1786,7 +1786,7 @@ arrival entry: anything that reveals a document’s data goes through the same c
 option), with a lifecycle: not configured -&gt; enabled -&gt; (optionally) temporarily
 disabled -&gt; purged. It gates administrative surface: collection and index management,
 backup, P2P configuration, lens, views, and every management HTTP route (the route
-permission map lives in <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/http/src/route_permissions.rs"><code>crates/http/src/route_permissions.rs</code></a>. Some 51 node
+permission map lives in <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/surfaces/http/src/route_permissions.rs"><code>crates/surfaces/http/src/route_permissions.rs</code></a>. Some 51 node
 permissions exist, all admin-only (<code>owner + admin</code>).</p>
 <p>Two properties worth knowing:</p>
 <ul>
@@ -1799,7 +1799,7 @@ every read path, and it exists only when NAC is enabled.</li>
 </ul>
 <h2 id="where-identities-come-from"><a class="header" href="#where-identities-come-from">Where identities come from</a></h2>
 <p>Callers identify with decentralized identities (DID-key over Ed25519, secp256k1 or
-secp256r1 keys; <code>crates/identity</code>), presented as JWT bearer tokens (Go-<code>jwx</code>-compatible
+secp256r1 keys; <code>crates/building-blocks/identity</code>), presented as JWT bearer tokens (Go-<code>jwx</code>-compatible
 JOSE, with bounded clock skew). Anonymous requests map to the wildcard subject: whatever
 the policy grants <code>*</code>. Identity travels on the request context, never in a thread-local.</p>
 <blockquote>
@@ -2387,7 +2387,7 @@ the deferred-ACP overlay pin it.</p>
 commonware-based chain) holds the policies and tuples, evaluates checks, and proofs
 flow back to the database.</p>
 <h2 id="what-it-is"><a class="header" href="#what-it-is">What it is</a></h2>
-<p><code>crates/vera</code> defines the <code>VeraProvider</code> interface: create policies, register and
+<p><code>crates/engine/vera</code> defines the <code>VeraProvider</code> interface: create policies, register and
 archive objects, set and delete relationships, check access. Two implementations:</p>
 <ul>
 <li><strong>CosmosProvider</strong>: a Cosmos-SDK chain over LCD/gRPC, transactions broadcast to it,
@@ -2622,7 +2622,7 @@ provides. Vera is opt-in: without it, local Zanzibar ACP is the whole story.</p>
 <p>External decisions are remote inputs, so they follow the doctrine’s remote-input rules:
 resolved at the edge, never inside a retried closure, memoized by request bytes across
 attempts, single-flight, batched, cached (access-decision and policy caches with the
-circuit breaker and tuning knobs in <code>crates/vera/src/</code>), with staleness documented and
+circuit breaker and tuning knobs in <code>crates/engine/vera/src/</code>), with staleness documented and
 a persisted-decision path for signers to verify via the light client.</p>
 <blockquote>
 <p><strong>Why fail closed.</strong> An external decider that times out is not “probably fine”: it is
@@ -2701,7 +2701,7 @@ network-shaped work, pinned cores for database-shaped work.</p>
 </blockquote>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="the-worker-pool"><a class="header" href="#the-worker-pool">The worker pool</a></h1>
-<p>The pool (<code>crates/workers</code>) is the compute side of defradb.rs: one pinned worker per
+<p>The pool (<code>crates/foundation/workers</code>) is the compute side of defradb.rs: one pinned worker per
 core, each with its own local executor.</p>
 <p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="diagrams/02-threading-native.png" alt="Native targets: the edge routes, workers run pinned executors, regolith runs inline"><span class="img-wrapper"><img src="diagrams/02-threading-native.png" alt="Native targets: the edge routes, workers run pinned executors, regolith runs inline"></span></label></p>
 <h2 id="workers"><a class="header" href="#workers">Workers</a></h2>
@@ -2717,7 +2717,7 @@ blocking threads) running a round:</p>
 <p>Tasks are spawned with <code>spawn_local</code> and never migrate: a waker from any thread puts
 the task back on <em>its</em> worker’s run queue. Data-path futures need not be <code>Send</code>.</p>
 <h2 id="routing-at-the-edge"><a class="header" href="#routing-at-the-edge">Routing at the edge</a></h2>
-<p>The target is chosen once, at the edge (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/workers/src/pool/routing.rs"><code>crates/workers/src/pool/routing.rs</code></a>):</p>
+<p>The target is chosen once, at the edge (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/foundation/workers/src/pool/routing.rs"><code>crates/foundation/workers/src/pool/routing.rs</code></a>):</p>
 <ul>
 <li><strong><code>Target::Worker(n)</code></strong>: an explicit transaction’s owner. A transaction is begun on a
 worker and stays there for its whole life; its ID names the worker, so every request
@@ -2731,8 +2731,8 @@ different workers, and while a home worker is stuck its keyed jobs move to a
 fallback on the same node. Correctness never depends on the affinity; the engine
 validates every commit wherever it runs. The GraphQL router sends a mutation naming
 exactly one document here
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/query/src/pooled/route.rs"><code>crates/query/src/pooled/route.rs</code></a>); P2P merges use the same affinity
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/merge/pooled.rs"><code>crates/db/src/merge/pooled.rs</code></a>).</li>
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/query/src/pooled/route.rs"><code>crates/engine/query/src/pooled/route.rs</code></a>); P2P merges use the same affinity
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/merge/pooled.rs"><code>crates/database/db/src/merge/pooled.rs</code></a>).</li>
 <li><strong><code>Target::LeastLoaded</code></strong>: everything else (read-only queries, batch work), a
 power-of-two choice among the caller’s node.</li>
 </ul>
@@ -2747,7 +2747,7 @@ background/blocking pools, never onto a data-path worker.</p>
 <h2 id="the-io-queues"><a class="header" href="#the-io-queues">The I/O queues</a></h2>
 <p>Each worker holds one regolith <code>IoQueue</code> per database, opened lazily on its own thread
 the first time a transaction reaches that database
-(<code>crates/storage/src/backends/regolith/worker_io/</code>). A transaction on a worker reads
+(<code>crates/engine/storage/src/backends/regolith/worker_io/</code>). A transaction on a worker reads
 <code>CacheOnly</code> on that queue (a miss suspends the task on an <code>IoWait</code>, never the thread on
 the device) and commits with <code>commit_nowait</code>, whose ticket the same queue completes.</p>
 <p>Between tasks, the worker polls its queues with a budget: completions run regolith
@@ -2757,7 +2757,7 @@ woken; a resting one is woken by the first completion. Single-flight per block m
 one device read serves every waiter for that block.</p>
 <p>Callers <em>off</em> the pool (tests, one-shot tools) still get correct behaviour: the store
 borrows an idle queue, drives its own polling inline in the calling task
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/worker_io/drive.rs"><code>crates/storage/src/backends/regolith/worker_io/drive.rs</code></a>: poll the future; if pending, poll the queue; completions loop,
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/worker_io/drive.rs"><code>crates/engine/storage/src/backends/regolith/worker_io/drive.rs</code></a>: poll the future; if pending, poll the queue; completions loop,
 otherwise park the task on the queue’s idle waker), or falls back to blocking reads and
 a synchronous commit. Off-pool calls are counted (<code>off_pool_calls</code>) so a request that
 was not routed is visible in telemetry.</p>
@@ -2777,7 +2777,7 @@ held across an await by mistake.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="the-network-edge"><a class="header" href="#the-network-edge">The network edge</a></h1>
 <p>Every network-facing component runs on <strong>one tokio runtime</strong>, held in one place: the
-<code>Edge</code> (<code>crates/edge</code>). Natively it is a single runtime; in the browser it is the event
+<code>Edge</code> (<code>crates/foundation/edge</code>). Natively it is a single runtime; in the browser it is the event
 loop behind the same handle. Every network component (the HTTP server, P2P, the KMS
 transport, the Orbis and Vera clients, the embeddings fetcher, telemetry export) is
 handed an <code>Edge</code> at construction. Nothing finds a runtime ambiently: no
@@ -2786,7 +2786,7 @@ handed an <code>Edge</code> at construction. Nothing finds a runtime ambiently: 
 <ul>
 <li><strong>HTTP</strong>: the axum server; whole data-path routes move onto the pool through an
 <code>OnPool</code> layer, document-named paths to the document’s worker
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/http/src/pool_layer.rs"><code>crates/http/src/pool_layer.rs</code></a>); transaction routes, SSE and subscriptions stay on
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/surfaces/http/src/pool_layer.rs"><code>crates/surfaces/http/src/pool_layer.rs</code></a>); transaction routes, SSE and subscriptions stay on
 the edge (they are streams, not database work).</li>
 <li><strong>P2P</strong>: the iroh endpoint task (all protocols muxed over one ALPN), or the libp2p
 swarm where that transport is used.</li>
@@ -2870,31 +2870,31 @@ inbound budgets, backpressure.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="transports-and-the-peer"><a class="header" href="#transports-and-the-peer">Transports and the peer</a></h1>
-<p>defradb.rs speaks two P2P stacks, feature-gated in one crate (<code>crates/p2p</code>):</p>
+<p>defradb.rs speaks two P2P stacks, feature-gated in one crate (<code>crates/database/p2p</code>):</p>
 <ul>
 <li><strong>iroh (QUIC)</strong>: the default for <code>defra-node</code>, the CLI’s <code>defra start</code>, the embedded
 and FFI nodes, and the browser. One background task owns all iroh state and is
-commanded over a channel (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/p2p/src/iroh/endpoint.rs"><code>crates/p2p/src/iroh/endpoint.rs</code></a>); every Defra protocol, including
+commanded over a channel (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/p2p/src/iroh/endpoint.rs"><code>crates/database/p2p/src/iroh/endpoint.rs</code></a>); every Defra protocol, including
 gossip, is multiplexed over a single ALPN (with a v1 fallback), so there is one
 connection per peer, not one per subsystem. An optional self-hosted relay server
 exists for NAT traversal.</li>
 <li><strong>libp2p</strong>: a full swarm (gossipsub, kad, identify, relay, QUIC) used where the
-libp2p ecosystem is the deployment requirement. The standalone <code>crates/bitswap</code>
+libp2p ecosystem is the deployment requirement. The standalone <code>crates/building-blocks/bitswap</code>
 (wantlists, ledgers, peer task queue) serves block fetches on this path.</li>
 </ul>
 <p>Both stacks sit behind the same adapter surface, so the sync mechanisms, the read gate
 and the security model are shared. All P2P runs on the edge runtime
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/defra-node/src/p2p_runtime.rs"><code>crates/defra-node/src/p2p_runtime.rs</code></a>).</p>
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/entry-points/defra-node/src/p2p_runtime.rs"><code>crates/entry-points/defra-node/src/p2p_runtime.rs</code></a>).</p>
 <h2 id="peer-identity"><a class="header" href="#peer-identity">Peer identity</a></h2>
 <p>A node has one peer key (Ed25519, from the keyring: name <code>peer-key</code>), shared across
 transports; a node that predates the shared key keeps its existing identity. On iroh,
 the QUIC layer already authenticates the connection; on top of it, an optional Defra
 identity challenge binds the peer’s Defra DID to the connection
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/p2p/src/peer_identity.rs"><code>crates/p2p/src/peer_identity.rs</code></a>).</p>
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/p2p/src/peer_identity.rs"><code>crates/database/p2p/src/peer_identity.rs</code></a>).</p>
 <h2 id="the-read-gate"><a class="header" href="#the-read-gate">The read gate</a></h2>
 <p>Replication carries data across a trust boundary, and gated access applies the same
 ACP read rules as a local query before a block is served
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/p2p/src/bitswap/read_gate.rs"><code>crates/p2p/src/bitswap/read_gate.rs</code></a>, <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/block/verify.rs"><code>crates/db/src/block/verify.rs</code></a>). Two
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/p2p/src/bitswap/read_gate.rs"><code>crates/database/p2p/src/bitswap/read_gate.rs</code></a>, <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/block/verify.rs"><code>crates/database/db/src/block/verify.rs</code></a>). Two
 deployment choices deliberately bypass the gate: an open Bitswap access mode serves
 without ACP checks, and a replicator registered for a collection without filters
 receives it; a filtered replicator’s access is checked against its filters. A peer
@@ -2913,11 +2913,11 @@ the network boundary.</p>
 <p>Replication moves blocks (the DAG units), in three shapes.</p>
 <h2 id="push-the-pushlog"><a class="header" href="#push-the-pushlog">Push: the PushLog</a></h2>
 <p>Local commits broadcast as signed PushLog messages over gossip topics
-(<code>crates/p2p/src/sync/</code>): per-collection and per-document topics, plus fixed topics for
+(<code>crates/database/p2p/src/sync/</code>): per-collection and per-document topics, plus fixed topics for
 branchable sync and encryption-key distribution. A peer that receives a PushLog stores
 the blocks it carries, queues anything missing, and emits sync events; the DB-side
 merge runs on the pool, routed to the document’s worker with the same key affinity as
-a local write (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/merge/pooled.rs"><code>crates/db/src/merge/pooled.rs</code></a>).</p>
+a local write (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/merge/pooled.rs"><code>crates/database/db/src/merge/pooled.rs</code></a>).</p>
 <p><strong>Replicators</strong> are registered outbound replay targets: a durable intent to push a
 collection’s history to a specific peer, with filters (<code>replication-filter</code>). Push
 delivery is durable: durable delivery markers are written before the committing
@@ -2959,20 +2959,20 @@ convergence models in <code>proofs/</code>).</p>
 statement of what this node offers (collections with roles Replica/Archive/Reader,
 replicator service, searchable-encryption query service, KMS, relay, custom roles),
 published via pkarr, served on query streams, and announced on a discovery topic
-(<code>crates/p2p/src/iroh/records/</code>). Readers keep the newest valid record per node in a
+(<code>crates/database/p2p/src/iroh/records/</code>). Readers keep the newest valid record per node in a
 book and pick fetch candidates and gossip neighbours from it. Record freshness,
 fan-in of replies, and the alternate-slot rule for the best provider are modelled:
 the provider record family has TLA+ and Lean proofs (see
 <a href="#verification-1">Verification</a>).</p>
 <h2 id="admission-who-may-connect"><a class="header" href="#admission-who-may-connect">Admission: who may connect</a></h2>
 <ul>
-<li><strong>Allowlists</strong> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/p2p/src/iroh/endpoint_config.rs"><code>crates/p2p/src/iroh/endpoint_config.rs</code></a>): <code>AcceptAll</code> (default) or an explicit
+<li><strong>Allowlists</strong> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/p2p/src/iroh/endpoint_config.rs"><code>crates/database/p2p/src/iroh/endpoint_config.rs</code></a>): <code>AcceptAll</code> (default) or an explicit
 endpoint set, mutable at runtime. Removing from the allowlist stops <em>new</em> admissions;
 <strong><code>PeerAdmission::revoke</code></strong> is the operation that actually bars a peer, and the
 admission authority makes revoke -&gt; re-admit a lockstep state machine so a revoked
 peer cannot slip back in through a stale allowlist update.</li>
 <li><strong>Peer identity challenges</strong> (optional): bind the Defra identity to the connection.</li>
-<li><strong>Inbound budgets</strong> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/p2p/src/iroh/inbound_budget.rs"><code>crates/p2p/src/iroh/inbound_budget.rs</code></a>): concurrent inbound streams are
+<li><strong>Inbound budgets</strong> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/p2p/src/iroh/inbound_budget.rs"><code>crates/database/p2p/src/iroh/inbound_budget.rs</code></a>): concurrent inbound streams are
 bounded; excess is refused, not queued unboundedly.</li>
 </ul>
 <h2 id="trust-and-capability-on-the-sync-path"><a class="header" href="#trust-and-capability-on-the-sync-path">Trust and capability on the sync path</a></h2>
@@ -2981,7 +2981,7 @@ data requires membership/subscription and explicit-replay authorization for the
 content; gated serving crosses the read gate (ACP) and block checks, while an open
 access mode or an unfiltered registered replicator is served without them. A
 separate capability regime governs <em>explicit replay</em> (re-broadcast of previously seen
-pushes), with its own revocation, modelled in <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/p2p/src/explicit_replay.rs"><code>crates/p2p/src/explicit_replay.rs</code></a>.</p>
+pushes), with its own revocation, modelled in <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/p2p/src/explicit_replay.rs"><code>crates/database/p2p/src/explicit_replay.rs</code></a>.</p>
 <h2 id="budgets-end-to-end"><a class="header" href="#budgets-end-to-end">Budgets, end to end</a></h2>
 <p>Backpressure is a property of the whole path, not a per-queue setting: bounded push
 queues (items and bytes), per-peer rate limits, bounded concurrent fetches, CAR caps
@@ -3001,19 +3001,19 @@ coordination point the design does not otherwise need.</p>
 <h1 id="lens-migrations"><a class="header" href="#lens-migrations">Lens Migrations</a></h1>
 <p>Schemas evolve; stored documents must not be rewritten to follow. A <strong>lens</strong> is a
 WASM module that transforms a document from one schema version to another, applied at
-<em>query time</em> (<code>crates/lens</code>): documents stay on disk in the version they were written
+<em>query time</em> (<code>crates/foundation/lens</code>): documents stay on disk in the version they were written
 in, and readers see them through the lens chain to the target version.</p>
 <h2 id="the-pipeline"><a class="header" href="#the-pipeline">The pipeline</a></h2>
 <p>Given a collection’s version history (a DAG of schema versions), the lens history
 builder prunes it to one path per source version toward the target, and the pipeline
 applies the transform chain lazily: one document per <code>next()</code> call, on the caller’s
-task, inside the reader’s transaction (the lensed fetcher, <code>crates/db/src/read/lensed/</code>).
+task, inside the reader’s transaction (the lensed fetcher, <code>crates/database/db/src/read/lensed/</code>).
 Explicit migration runs (backfills) use the same pipeline; nothing is rewritten at
 migration-<em>set</em> time, so setting a migration is metadata, not a data rewrite.</p>
 <h2 id="the-engine-and-the-sandbox"><a class="header" href="#the-engine-and-the-sandbox">The engine and the sandbox</a></h2>
 <p>One shared wasmtime <code>LensEngine</code> per database: one engine, one linker, one epoch
 clock; modules are compiled once at registration into an <code>InstancePre</code>, and each call
-instantiates and runs on a fiber the caller polls (<code>crates/lens/src/engine/</code>). The
+instantiates and runs on a fiber the caller polls (<code>crates/foundation/lens/src/engine/</code>). The
 default transform store is restrictive-sandboxed WASM; without the wasmtime runtime
 feature, the store refuses everything (a build without lens support fails loud, not
 silently passing documents through).</p>
@@ -3047,14 +3047,14 @@ design: <strong>events are published in commit-receipt order</strong> (<code>Com
 same order the engine made commits durable and visible. There is no separate sequencer
 to drift.</p>
 <h2 id="the-bus"><a class="header" href="#the-bus">The bus</a></h2>
-<p>The event bus (<code>crates/events</code>) publishes named events: <code>Update</code> (a document create,
+<p>The event bus (<code>crates/foundation/events</code>) publishes named events: <code>Update</code> (a document create,
 update or delete, with the block payload), <code>Merge</code> / <code>MergeComplete</code> (replicated
 merges), peer and connection events, replicator completions, ACP height/cache events,
 quarantine events, and unique-index conflicts. Subscribers subscribe by name;
 GraphQL subscriptions are the client surface.</p>
 <p>Events fire from <strong>ordered post-commit callbacks</strong>: the transaction registers an
 ordered <code>on_commit</code> hook, the engine’s receipt stream dispatches ordered callbacks in
-<code>seq</code> order across threads (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/event_order.rs"><code>crates/storage/src/backends/regolith/event_order.rs</code></a>), and
+<code>seq</code> order across threads (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/event_order.rs"><code>crates/engine/storage/src/backends/regolith/event_order.rs</code></a>), and
 a discarded transaction publishes nothing. A commit’s events follow its durability,
 never precede it.</p>
 <h2 id="the-two-subscription-shapes"><a class="header" href="#the-two-subscription-shapes">The two subscription shapes</a></h2>
@@ -3094,7 +3094,7 @@ compute path - and why nothing leaves by accident.</p>
 <h2 id="no-compaction-filter-on-principle"><a class="header" href="#no-compaction-filter-on-principle">No compaction filter, on principle</a></h2>
 <p>The engine offers a compaction filter (drop entries during SST compaction). defradb.rs
 installs none, and the reasoning is written beside the decision
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/mod.rs"><code>crates/storage/src/backends/regolith/mod.rs</code></a>):</p>
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/mod.rs"><code>crates/engine/storage/src/backends/regolith/mod.rs</code></a>):</p>
 <ul>
 <li>a head-set entry’s meaning depends on writes that follow it;</li>
 <li>nothing expires by time alone (a pending DAG record leaves when its root merges or
@@ -3111,14 +3111,14 @@ transactions:</p>
 <p>Blocks are shared: the same field block can back multiple documents’ histories. The
 systemstore keeps a CID -&gt; DocID ownership map (<code>/d/b/{cid}/{docID}</code>), written at every
 create and merge. Deleting history removes <em>ownership</em> first
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/block/cleanup.rs"><code>crates/db/src/block/cleanup.rs</code></a>): a block’s bytes die only when its last owner
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/block/cleanup.rs"><code>crates/database/db/src/block/cleanup.rs</code></a>): a block’s bytes die only when its last owner
 mapping is gone and it is not reachable from anything retained. <code>referenced_blocks</code>
 computes the reachable set (commit + links + encryption links) of what stays; deletes
 keep blocks in that set even when their own owner is gone - the fix for the class of
 bug where pruning one document’s history pulled a block out from under another’s.</p>
 <h2 id="downsample-gc"><a class="header" href="#downsample-gc">Downsample GC</a></h2>
 <p>Downsampled collections roll source documents into windowed targets; retention then
-prunes source history (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/downsample/gc.rs"><code>crates/db/src/downsample/gc.rs</code></a>):</p>
+prunes source history (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/downsample/gc.rs"><code>crates/database/db/src/downsample/gc.rs</code></a>):</p>
 <ul>
 <li>plans are grouped per source; a source with any consumer lacking a retention policy
 is skipped entirely (never partially pruned);</li>
@@ -3235,7 +3235,7 @@ wrong answer loses a commit instead of losing data.</p>
 <h1 id="api-surfaces"><a class="header" href="#api-surfaces">API Surfaces</a></h1>
 <p>One database, several fronts. Each surface is a thin shell over the same core: the
 pool, the engine, the query pipeline.</p>
-<h2 id="http-crateshttp"><a class="header" href="#http-crateshttp">HTTP (<code>crates/http</code>)</a></h2>
+<h2 id="http-cratessurfaceshttp"><a class="header" href="#http-cratessurfaceshttp">HTTP (<code>crates/surfaces/http</code>)</a></h2>
 <p>An axum server on the edge, with data-path routes moved onto the pool:</p>
 <ul>
 <li><strong>GraphQL</strong> at <code>POST/GET /api/v0/graphql</code>, subscriptions over the WebSocket
@@ -3252,37 +3252,37 @@ indexes (including Go-compatible encrypted indexes).</li>
 </ul>
 <p>Auth: bearer-token middleware, per-route NAC permission mapping, optional TLS.
 Defaults: <code>127.0.0.1:9181</code>, 300 s timeout, bounded concurrency.</p>
-<h2 id="cli-cratescli"><a class="header" href="#cli-cratescli">CLI (<code>crates/cli</code>)</a></h2>
+<h2 id="cli-cratesentry-pointscli"><a class="header" href="#cli-cratesentry-pointscli">CLI (<code>crates/entry-points/cli</code>)</a></h2>
 <p><code>defra</code> starts a node (HTTP, optional pg-compat, iroh or libp2p, keyring-backed keys,
 optional at-rest encryption, Vera or local ACP) and carries a full HTTP client surface
 (<code>defra client ...</code>: acp, backup, blocks, collections, documents, graphql, indexes,
 lens, p2p, txns, views), plus keyring, identity and SDL utilities.</p>
-<h2 id="embedded-cratesdefra-node"><a class="header" href="#embedded-cratesdefra-node">Embedded (<code>crates/defra-node</code>)</a></h2>
+<h2 id="embedded-cratesentry-pointsdefra-node"><a class="header" href="#embedded-cratesentry-pointsdefra-node">Embedded (<code>crates/entry-points/defra-node</code>)</a></h2>
 <p>One node assembly, reached through <code>NodeBuilder</code>, which opens a regolith store (server or
 embedded sizing profile, in memory or at a path). The builder fills in one <code>NodeConfig</code>
 (transport: libp2p or iroh, signing, document ACP, node access control, query limits, sync
 knobs) and places the store on a pool (<code>storage::start_pool</code>); a node with no network starts
 no network runtime. FFI is built on it.</p>
-<h2 id="ffi-cratesffi"><a class="header" href="#ffi-cratesffi">FFI (<code>crates/ffi</code>)</a></h2>
+<h2 id="ffi-cratesentry-pointsffi"><a class="header" href="#ffi-cratesentry-pointsffi">FFI (<code>crates/entry-points/ffi</code>)</a></h2>
 <p>A C ABI static library matching Go’s <code>cbindings/</code>: node lifecycle, schema, documents,
 queries and subscriptions, transactions, blocks, batch, backup, lens, indexes, ACP
 (DAC and NAC), P2P. Panics are captured per call and returned as results, never
 unwound across the boundary. For Go and mobile embedders.</p>
-<h2 id="pg-compat-cratespg-compat"><a class="header" href="#pg-compat-cratespg-compat">pg-compat (<code>crates/pg-compat</code>)</a></h2>
+<h2 id="pg-compat-cratesdatabasepg-compat"><a class="header" href="#pg-compat-cratesdatabasepg-compat">pg-compat (<code>crates/database/pg-compat</code>)</a></h2>
 <p>A Postgres wire-protocol server: accepts psql connections, translates SQL to the query
 engine (DDL, DML, joins, aggregates, expressions, parameters), on the edge runtime.
 Existing SQL tooling works against defradb.rs without a new driver.</p>
 <h2 id="around-the-surfaces"><a class="header" href="#around-the-surfaces">Around the surfaces</a></h2>
 <ul>
-<li><strong>Orbis</strong> (<code>crates/orbis</code>): a gRPC client for threshold BLS document signing by an
+<li><strong>Orbis</strong> (<code>crates/building-blocks/orbis</code>): a gRPC client for threshold BLS document signing by an
 Orbis ring (the M6 milestone of the KMS plan); used for BLS-augmented batch
 signatures.</li>
-<li><strong>KMS</strong> (<code>crates/kms</code>): the key management service milestone set: a key store over
+<li><strong>KMS</strong> (<code>crates/database/kms</code>): the key management service milestone set: a key store over
 durable IPLD blocks, an in-memory byte-bounded tier, remote single-flight batched
 key fetch over the P2P <code>encryption</code> topic, and the NAC/DAC dual gate for key
 release (document-scoped keys need DAC read; collection-scoped need NAC
 permission). Wire-compatible with Go’s KMS.</li>
-<li><strong>Telemetry</strong> (<code>crates/telemetry</code>): OTLP trace/metrics export behind a feature;
+<li><strong>Telemetry</strong> (<code>crates/building-blocks/telemetry</code>): OTLP trace/metrics export behind a feature;
 always-on process counters (retries, conflicts by layer, storage events, engine
 tickers as one OTel counter family).</li>
 </ul>
@@ -3330,7 +3330,7 @@ entries, by book chapter:</p>
 <tr><td>Head sets (<a href="#head-sets">head sets</a>)</td><td><a href="https://github.com/sourcenetwork/defradb.rs/blob/main/proofs/tla/HeadSet.tla"><code>HeadSet.tla</code></a>, <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/proofs/tla/HeadPublication.tla"><code>HeadPublication.tla</code></a></td></tr>
 <tr><td>CRDT convergence (<a href="#crdt-types">CRDTs</a>)</td><td><a href="https://github.com/sourcenetwork/defradb.rs/blob/main/proofs/tla/Convergence.tla"><code>Convergence.tla</code></a> + the Lean merge-law family</td></tr>
 <tr><td>ACP: soundness, revocation, deferred overlay (<a href="#acp-inside-the-transaction">ACP</a>)</td><td><a href="https://github.com/sourcenetwork/defradb.rs/blob/main/proofs/tla/Acp.tla"><code>Acp.tla</code></a>, <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/proofs/tla/DeferredAcp.tla"><code>DeferredAcp.tla</code></a>, <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/proofs/tla/Auth.tla"><code>Auth.tla</code></a></td></tr>
-<tr><td>Owner registration exactly once</td><td><a href="https://github.com/sourcenetwork/defradb.rs/blob/main/proofs/tla/RegisterDocOnce.tla"><code>RegisterDocOnce.tla</code></a> (cross-referenced from <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/acp/src/zanzibar/store/persistent.rs"><code>crates/acp/src/zanzibar/store/persistent.rs</code></a>)</td></tr>
+<tr><td>Owner registration exactly once</td><td><a href="https://github.com/sourcenetwork/defradb.rs/blob/main/proofs/tla/RegisterDocOnce.tla"><code>RegisterDocOnce.tla</code></a> (cross-referenced from <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/acp/src/zanzibar/store/persistent.rs"><code>crates/engine/acp/src/zanzibar/store/persistent.rs</code></a>)</td></tr>
 <tr><td>Explicit transactions: statement atomicity, idle sweep (<a href="#explicit-transactions">explicit</a>)</td><td>statement atomicity + registry models, <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/proofs/tla/CommitFence.tla"><code>CommitFence.tla</code></a> (with a Lean swap proof)</td></tr>
 <tr><td>Event order by receipt (<a href="#events">Events</a>)</td><td><a href="https://github.com/sourcenetwork/defradb.rs/blob/main/proofs/tla/EventOrder.tla"><code>EventOrder.tla</code></a></td></tr>
 <tr><td>The worker pool (<a href="#the-worker-pool">Threading</a>)</td><td><a href="https://github.com/sourcenetwork/defradb.rs/blob/main/proofs/tla/DefaultPool.tla"><code>DefaultPool.tla</code></a>, <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/proofs/tla/CpuLedger.tla"><code>CpuLedger.tla</code></a> (TLA+ and Lean)</td></tr>

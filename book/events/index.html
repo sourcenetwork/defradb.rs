@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-712cba6e.js";
+            window.path_to_searchindex_js = "../searchindex-b5e09575.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -187,14 +187,14 @@ design: <strong>events are published in commit-receipt order</strong> (<code>Com
 same order the engine made commits durable and visible. There is no separate sequencer
 to drift.</p>
 <h2 id="the-bus"><a class="header" href="#the-bus">The bus</a></h2>
-<p>The event bus (<code>crates/events</code>) publishes named events: <code>Update</code> (a document create,
+<p>The event bus (<code>crates/foundation/events</code>) publishes named events: <code>Update</code> (a document create,
 update or delete, with the block payload), <code>Merge</code> / <code>MergeComplete</code> (replicated
 merges), peer and connection events, replicator completions, ACP height/cache events,
 quarantine events, and unique-index conflicts. Subscribers subscribe by name;
 GraphQL subscriptions are the client surface.</p>
 <p>Events fire from <strong>ordered post-commit callbacks</strong>: the transaction registers an
 ordered <code>on_commit</code> hook, the engine’s receipt stream dispatches ordered callbacks in
-<code>seq</code> order across threads (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/event_order.rs"><code>crates/storage/src/backends/regolith/event_order.rs</code></a>), and
+<code>seq</code> order across threads (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/event_order.rs"><code>crates/engine/storage/src/backends/regolith/event_order.rs</code></a>), and
 a discarded transaction publishes nothing. A commit’s events follow its durability,
 never precede it.</p>
 <h2 id="the-two-subscription-shapes"><a class="header" href="#the-two-subscription-shapes">The two subscription shapes</a></h2>

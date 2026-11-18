@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-712cba6e.js";
+            window.path_to_searchindex_js = "../searchindex-b5e09575.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -185,11 +185,11 @@
 <p>Replication moves blocks (the DAG units), in three shapes.</p>
 <h2 id="push-the-pushlog"><a class="header" href="#push-the-pushlog">Push: the PushLog</a></h2>
 <p>Local commits broadcast as signed PushLog messages over gossip topics
-(<code>crates/p2p/src/sync/</code>): per-collection and per-document topics, plus fixed topics for
+(<code>crates/database/p2p/src/sync/</code>): per-collection and per-document topics, plus fixed topics for
 branchable sync and encryption-key distribution. A peer that receives a PushLog stores
 the blocks it carries, queues anything missing, and emits sync events; the DB-side
 merge runs on the pool, routed to the document’s worker with the same key affinity as
-a local write (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/merge/pooled.rs"><code>crates/db/src/merge/pooled.rs</code></a>).</p>
+a local write (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/merge/pooled.rs"><code>crates/database/db/src/merge/pooled.rs</code></a>).</p>
 <p><strong>Replicators</strong> are registered outbound replay targets: a durable intent to push a
 collection’s history to a specific peer, with filters (<code>replication-filter</code>). Push
 delivery is durable: durable delivery markers are written before the committing

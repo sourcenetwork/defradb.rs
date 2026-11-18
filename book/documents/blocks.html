@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-712cba6e.js";
+            window.path_to_searchindex_js = "../searchindex-b5e09575.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -186,7 +186,7 @@
 links form a Merkle DAG per document. Blocks are the replication unit: P2P ships blocks,
 merges apply blocks, history queries walk blocks, signatures sign blocks.</p>
 <h2 id="what-a-write-produces"><a class="header" href="#what-a-write-produces">What a write produces</a></h2>
-<p>The block builder (<code>crates/db/src/block/builder/</code>) computes, for one write:</p>
+<p>The block builder (<code>crates/database/db/src/block/builder/</code>) computes, for one write:</p>
 <ul>
 <li><strong>Field blocks</strong>: one per modified field, carrying the CRDT delta (an LWW value with
 its priority, or a counter increment) and linking the field’s previous heads.</li>
@@ -208,17 +208,17 @@ the document’s composite block, blind-merged into the collection head set.</li
 </ul>
 <h2 id="cids"><a class="header" href="#cids">CIDs</a></h2>
 <p>A CID is computed from the block’s canonical bytes
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/defra-core/src/block.rs"><code>crates/defra-core/src/block.rs</code></a>). Identical bytes produce identical CIDs: that is why
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/foundation/defra-core/src/block.rs"><code>crates/foundation/defra-core/src/block.rs</code></a>). Identical bytes produce identical CIDs: that is why
 two replicas that apply the same writes produce the same history, and why block writes
 are ContentAddressed and cannot conflict.</p>
 <h2 id="priorities"><a class="header" href="#priorities">Priorities</a></h2>
-<p>Every CRDT delta carries a priority (a u64 varint, <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/crdt/src/priority.rs"><code>crates/crdt/src/priority.rs</code></a>):
+<p>Every CRDT delta carries a priority (a u64 varint, <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/building-blocks/crdt/src/priority.rs"><code>crates/building-blocks/crdt/src/priority.rs</code></a>):
 create writes priority 1; an update writes the field’s current max priority plus one;
 the composite writes the document’s max plus one. Priorities are what order concurrent
 LWW writes deterministically without a coordinator: given two values, the higher
 priority wins, and the merge algebra is proven convergent in Lean.</p>
 <h2 id="verification"><a class="header" href="#verification">Verification</a></h2>
-<p>Replicated blocks are checked before merge (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/block/verify.rs"><code>crates/db/src/block/verify.rs</code></a>): the CID
+<p>Replicated blocks are checked before merge (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/block/verify.rs"><code>crates/database/db/src/block/verify.rs</code></a>): the CID
 must match the bytes (content integrity), and attached signatures are verified when
 present (including BLS-augmented batch signatures); unsigned blocks are supported. The
 read gate checks ACP before a block is even served. A
@@ -226,8 +226,8 @@ document’s DAG that fails verification is quarantined (the <code>PendingDagQua
 carries the forensics).</p>
 <h2 id="reading-the-dag-back"><a class="header" href="#reading-the-dag-back">Reading the DAG back</a></h2>
 <p>History reads walk the DAG: <code>_commits</code> by CID or depth
-(<code>crates/db/src/read/commits/</code>), versioned (time-travel) reads walk from a target CID
-back to genesis and replay CRDT deltas forward (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/read/versioned.rs"><code>crates/db/src/read/versioned.rs</code></a>). The
+(<code>crates/database/db/src/read/commits/</code>), versioned (time-travel) reads walk from a target CID
+back to genesis and replay CRDT deltas forward (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/read/versioned.rs"><code>crates/database/db/src/read/versioned.rs</code></a>). The
 <a href="../query/history.html">query chapter</a> covers the API surface.</p>
 <blockquote>
 <p><strong>Why blocks when there is a local value.</strong> The local value is an index of “now”; the

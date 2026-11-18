@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-712cba6e.js";
+            window.path_to_searchindex_js = "../searchindex-b5e09575.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -189,7 +189,7 @@ heads it finds), history queries need them (walk from the heads), publication ne
 value under one key per document, updated by blind merges.</p>
 <h2 id="the-layout"><a class="header" href="#the-layout">The layout</a></h2>
 <p>Document head sets live under <code>h/hd/</code>, collection head sets under <code>h/hc/</code>
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/block/heads.rs"><code>crates/db/src/block/heads.rs</code></a>). A set value holds, per name, one of three states:
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/block/heads.rs"><code>crates/database/db/src/block/heads.rs</code></a>). A set value holds, per name, one of three states:
 <code>Absent</code>, <code>Ahead</code> (a child arrived before its parent), or <code>Live(priority)</code>. Names are
 <code>{field}/{cid}</code> pairs, so one set holds every field’s heads plus the composite <code>C</code>
 heads.</p>

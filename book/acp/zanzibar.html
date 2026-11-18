@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-712cba6e.js";
+            window.path_to_searchindex_js = "../searchindex-b5e09575.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -182,8 +182,8 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="the-zanzibar-engine"><a class="header" href="#the-zanzibar-engine">The Zanzibar engine</a></h1>
-<p><code>crates/zanzibar</code> is a standalone implementation of Google’s Zanzibar permission model,
-and <code>crates/acp</code> builds DefraDB’s access control on it. No global mediator, no special
+<p><code>crates/building-blocks/zanzibar</code> is a standalone implementation of Google’s Zanzibar permission model,
+and <code>crates/engine/acp</code> builds DefraDB’s access control on it. No global mediator, no special
 cases in the query engine: authorization is evaluation of a policy over relationship
 tuples.</p>
 <h2 id="the-model"><a class="header" href="#the-model">The model</a></h2>
@@ -191,7 +191,7 @@ tuples.</p>
 <ul>
 <li><strong>Policies</strong> (<code>Policy</code>, <code>Resource</code>, <code>Relation</code>, <code>Subject</code>): a policy names resource
 types, relations on them, and permission expressions over those relations. DefraDB’s
-DPI format is a small YAML dialect (<code>crates/acp/src/policy_yaml/</code>); the default
+DPI format is a small YAML dialect (<code>crates/engine/acp/src/policy_yaml/</code>); the default
 document policy (used when a collection carries no explicit one) has an <code>owner</code>
 relation, an <code>admin</code> computed from <code>owner</code>, direct <code>reader</code>/<code>updater</code>/<code>deleter</code>
 relations, and <code>read</code>/<code>update</code>/<code>delete</code> permissions computed as unions over owner,
@@ -200,14 +200,14 @@ admin and the direct relations.</li>
 <code>a/zanzibar/</code> as Ordinary keys. Subjects can be actors, wildcards, or usersets
 (a subject that is itself a relation on another object).</li>
 <li><strong>Relation expressions</strong>: the algebra evaluated to answer “may this identity perform
-this permission on this resource” (<code>crates/zanzibar/src/expression/</code>):
+this permission on this resource” (<code>crates/building-blocks/zanzibar/src/expression/</code>):
 <code>This</code> (a direct tuple), <code>ComputedUserset</code> (follow to another relation on the same
 resource), <code>TupleToUserset</code> (follow a tuple relation to a target, then evaluate a
 computed relation there), and the set operations <code>Union</code>, <code>Intersection</code>, <code>Difference</code>.</li>
 </ul>
 <h2 id="evaluation"><a class="header" href="#evaluation">Evaluation</a></h2>
 <p>The checker is a goal-tree search with cycle detection
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/zanzibar/src/engine/evaluate.rs"><code>crates/zanzibar/src/engine/evaluate.rs</code></a>):</p>
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/building-blocks/zanzibar/src/engine/evaluate.rs"><code>crates/building-blocks/zanzibar/src/engine/evaluate.rs</code></a>):</p>
 <ul>
 <li><code>Union</code> short-circuits on true; <code>Intersection</code> short-circuits on false;</li>
 <li><code>Difference</code> requires the base to be <em>proven</em> true and the subtraction <em>proven</em>
@@ -219,7 +219,7 @@ unbounded;</li>
 <li>batch checks share one cache (<code>check_many</code>).</li>
 </ul>
 <p>Policies are immutable once stored; the node keeps them in a lock-free policy snapshot
-(an <code>Atom</code>-swapped lookup table, <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/acp/src/policy_cache.rs"><code>crates/acp/src/policy_cache.rs</code></a>) that reads never lock
+(an <code>Atom</code>-swapped lookup table, <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/acp/src/policy_cache.rs"><code>crates/engine/acp/src/policy_cache.rs</code></a>) that reads never lock
 to consult.</p>
 <h2 id="policy-identity"><a class="header" href="#policy-identity">Policy identity</a></h2>
 <p>Policy IDs come from the engine’s <code>Db::allocate</code> (the same atomic allocator as short

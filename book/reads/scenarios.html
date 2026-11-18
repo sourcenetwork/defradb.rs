@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-712cba6e.js";
+            window.path_to_searchindex_js = "../searchindex-b5e09575.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -212,8 +212,8 @@ read); a key the transaction then writes is validated as a read of that key.</li
 write inside the range conflicts.</li>
 </ul>
 <p>The same table, as code policy, lives in the repository’s working agreement, and the
-mechanisms are exercised end to end in <code>crates/storage/src/backends/regolith/</code> and the
-collection read paths (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/collection/crud.rs"><code>crates/db/src/collection/crud.rs</code></a>).</p>
+mechanisms are exercised end to end in <code>crates/engine/storage/src/backends/regolith/</code> and the
+collection read paths (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/collection/crud.rs"><code>crates/database/db/src/collection/crud.rs</code></a>).</p>
 <h2 id="where-the-value-comes-from"><a class="header" href="#where-the-value-comes-from">Where the value comes from</a></h2>
 <p>The engine’s read path serves a read with: the transaction’s own buffered puts, deletes
 and merges first, in operation order; then the memtables, then L0, then deeper levels by

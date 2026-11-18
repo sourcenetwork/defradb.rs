@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-712cba6e.js";
+            window.path_to_searchindex_js = "../searchindex-b5e09575.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -182,31 +182,31 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="transports-and-the-peer"><a class="header" href="#transports-and-the-peer">Transports and the peer</a></h1>
-<p>defradb.rs speaks two P2P stacks, feature-gated in one crate (<code>crates/p2p</code>):</p>
+<p>defradb.rs speaks two P2P stacks, feature-gated in one crate (<code>crates/database/p2p</code>):</p>
 <ul>
 <li><strong>iroh (QUIC)</strong>: the default for <code>defra-node</code>, the CLI’s <code>defra start</code>, the embedded
 and FFI nodes, and the browser. One background task owns all iroh state and is
-commanded over a channel (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/p2p/src/iroh/endpoint.rs"><code>crates/p2p/src/iroh/endpoint.rs</code></a>); every Defra protocol, including
+commanded over a channel (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/p2p/src/iroh/endpoint.rs"><code>crates/database/p2p/src/iroh/endpoint.rs</code></a>); every Defra protocol, including
 gossip, is multiplexed over a single ALPN (with a v1 fallback), so there is one
 connection per peer, not one per subsystem. An optional self-hosted relay server
 exists for NAT traversal.</li>
 <li><strong>libp2p</strong>: a full swarm (gossipsub, kad, identify, relay, QUIC) used where the
-libp2p ecosystem is the deployment requirement. The standalone <code>crates/bitswap</code>
+libp2p ecosystem is the deployment requirement. The standalone <code>crates/building-blocks/bitswap</code>
 (wantlists, ledgers, peer task queue) serves block fetches on this path.</li>
 </ul>
 <p>Both stacks sit behind the same adapter surface, so the sync mechanisms, the read gate
 and the security model are shared. All P2P runs on the edge runtime
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/defra-node/src/p2p_runtime.rs"><code>crates/defra-node/src/p2p_runtime.rs</code></a>).</p>
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/entry-points/defra-node/src/p2p_runtime.rs"><code>crates/entry-points/defra-node/src/p2p_runtime.rs</code></a>).</p>
 <h2 id="peer-identity"><a class="header" href="#peer-identity">Peer identity</a></h2>
 <p>A node has one peer key (Ed25519, from the keyring: name <code>peer-key</code>), shared across
 transports; a node that predates the shared key keeps its existing identity. On iroh,
 the QUIC layer already authenticates the connection; on top of it, an optional Defra
 identity challenge binds the peer’s Defra DID to the connection
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/p2p/src/peer_identity.rs"><code>crates/p2p/src/peer_identity.rs</code></a>).</p>
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/p2p/src/peer_identity.rs"><code>crates/database/p2p/src/peer_identity.rs</code></a>).</p>
 <h2 id="the-read-gate"><a class="header" href="#the-read-gate">The read gate</a></h2>
 <p>Replication carries data across a trust boundary, and gated access applies the same
 ACP read rules as a local query before a block is served
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/p2p/src/bitswap/read_gate.rs"><code>crates/p2p/src/bitswap/read_gate.rs</code></a>, <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/block/verify.rs"><code>crates/db/src/block/verify.rs</code></a>). Two
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/p2p/src/bitswap/read_gate.rs"><code>crates/database/p2p/src/bitswap/read_gate.rs</code></a>, <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/block/verify.rs"><code>crates/database/db/src/block/verify.rs</code></a>). Two
 deployment choices deliberately bypass the gate: an open Bitswap access mode serves
 without ACP checks, and a replicator registered for a collection without filters
 receives it; a filtered replicator’s access is checked against its filters. A peer

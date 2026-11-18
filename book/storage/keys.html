@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-712cba6e.js";
+            window.path_to_searchindex_js = "../searchindex-b5e09575.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -187,7 +187,7 @@ how the engine treats the key: whether writes to it conflict, whether reads of i
 validated, whether identical bytes are the same write. This chapter is the complete map.</p>
 <h2 id="the-key-classes"><a class="header" href="#the-key-classes">The key classes</a></h2>
 <p><a href="https://sourcenetwork.github.io/regolith/">regolith</a> defines four behavioural classes; defradb.rs assigns each key family to one by
-implementing <code>KeyClassifier</code> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/classifier.rs"><code>crates/storage/src/backends/regolith/classifier.rs</code></a>):</p>
+implementing <code>KeyClassifier</code> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/classifier.rs"><code>crates/engine/storage/src/backends/regolith/classifier.rs</code></a>):</p>
 <ul>
 <li><strong>Ordinary</strong>: last-writer-wins keys. A read of an Ordinary key inside a write
 transaction is validated at commit (an identical rewrite is not a change), and two
@@ -209,9 +209,9 @@ of no family, cut short or malformed, stays Ordinary. Unknown keys are never rej
 they are simply ordinary.</p>
 <h2 id="the-family-table"><a class="header" href="#the-family-table">The family table</a></h2>
 <p>The namespace byte comes first (<code>d</code> datastore, <code>b</code> blockstore, <code>h</code> headstore, <code>s</code>
-systemstore, <code>p</code> peerstore, <code>e</code> encstore, <code>a</code> acpstore; <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/namespace.rs"><code>crates/storage/src/namespace.rs</code></a>),
+systemstore, <code>p</code> peerstore, <code>e</code> encstore, <code>a</code> acpstore; <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/namespace.rs"><code>crates/engine/storage/src/namespace.rs</code></a>),
 then the family prefix. First match wins; longer prefixes sort before shorter ones
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/families.rs"><code>crates/storage/src/backends/regolith/families.rs</code></a>):</p>
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/families.rs"><code>crates/engine/storage/src/backends/regolith/families.rs</code></a>):</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -259,7 +259,7 @@ changed, and a projected read is validated only against those.</li>
 <p><strong>Why one static table.</strong> Classification is on the hot path of every write and every
 validated read. One table, ordered longest-prefix-first, is one binary search over a
 handful of entries, and a 256-entry first-byte index jumps straight to the candidates
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/families.rs"><code>crates/storage/src/backends/regolith/families.rs</code></a>). It also makes the layout auditable: this page is the complete list of
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/families.rs"><code>crates/engine/storage/src/backends/regolith/families.rs</code></a>). It also makes the layout auditable: this page is the complete list of
 what defradb.rs stores.</p>
 </blockquote>
 

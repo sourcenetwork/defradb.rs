@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-712cba6e.js";
+            window.path_to_searchindex_js = "../searchindex-b5e09575.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -221,18 +221,18 @@ and typically reports “not claimed”.</li>
 <h2 id="the-operations-mapped"><a class="header" href="#the-operations-mapped">The operations, mapped</a></h2>
 <p>Where each operation’s writes live in the code:</p>
 <ul>
-<li><strong>Create a document</strong> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/write/autocommit/create.rs"><code>crates/db/src/write/autocommit/create.rs</code></a>): blocks + CID,
+<li><strong>Create a document</strong> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/write/autocommit/create.rs"><code>crates/database/db/src/write/autocommit/create.rs</code></a>): blocks + CID,
 head-set merge, the whole stored document, index entries, the journal append (once key:
 the doc), the short-ID and DocID mappings, block ownership, and the ACP owner
 registration.</li>
-<li><strong>Update a document</strong> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/write/autocommit/update.rs"><code>crates/db/src/write/autocommit/update.rs</code></a>): new field blocks,
+<li><strong>Update a document</strong> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/write/autocommit/update.rs"><code>crates/database/db/src/write/autocommit/update.rs</code></a>): new field blocks,
 head-set operand (supersede old heads, add new), one document part operand, index
 deltas for intersecting indexes.</li>
-<li><strong>Delete a document</strong> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/write/autocommit/delete.rs"><code>crates/db/src/write/autocommit/delete.rs</code></a>): the deletion
+<li><strong>Delete a document</strong> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/write/autocommit/delete.rs"><code>crates/database/db/src/write/autocommit/delete.rs</code></a>): the deletion
 marker (ordinary key), index entry removals, a head operand, a delete block in the DAG.</li>
-<li><strong>P2P merge of remote blocks</strong> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/merge/pooled.rs"><code>crates/db/src/merge/pooled.rs</code></a>): blocks, head sets,
+<li><strong>P2P merge of remote blocks</strong> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/merge/pooled.rs"><code>crates/database/db/src/merge/pooled.rs</code></a>): blocks, head sets,
 part operands, the applied key, the journal append, the DocID mapping.</li>
-<li><strong>Counter increment</strong> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/crdt/src/counter.rs"><code>crates/crdt/src/counter.rs</code></a>): one blind merge; never a
+<li><strong>Counter increment</strong> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/building-blocks/crdt/src/counter.rs"><code>crates/building-blocks/crdt/src/counter.rs</code></a>): one blind merge; never a
 read-modify-write.</li>
 <li><strong>DDL: schema or index change</strong>: definition keys against current writers.</li>
 <li><strong>ACP: register an owner, add or remove a relationship</strong>: tuples in the same

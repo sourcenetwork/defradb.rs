@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-712cba6e.js";
+            window.path_to_searchindex_js = "../searchindex-b5e09575.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -187,10 +187,10 @@ to SST files, and compaction merges SSTs in the background. defradb.rs does not 
 any of this; it configures it and reads its telemetry. This chapter is what a defradb.rs
 developer needs to know about what is underneath.</p>
 <h2 id="opening-a-store"><a class="header" href="#opening-a-store">Opening a store</a></h2>
-<p><code>RegolithStore::open_with_options</code> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/store.rs"><code>crates/storage/src/backends/regolith/store.rs</code></a>) is
+<p><code>RegolithStore::open_with_options</code> (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/store.rs"><code>crates/engine/storage/src/backends/regolith/store.rs</code></a>) is
 the single entry point:</p>
 <ol>
-<li>Engine options are assembled in <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/config.rs"><code>crates/storage/src/backends/regolith/config.rs</code></a>: the merge operator, the prefix extractor,
+<li>Engine options are assembled in <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/config.rs"><code>crates/engine/storage/src/backends/regolith/config.rs</code></a>: the merge operator, the prefix extractor,
 the at-rest key provider, statistics, and the store’s event listener and transaction
 hooks.</li>
 <li>On native targets the open path first checks for a legacy per-value-encrypted store
@@ -201,7 +201,7 @@ and, if found, performs the one-time rewrite to the file-sealed format
 reports no durable sync).</li>
 <li>The classifier and isolation level are attached to the handle.</li>
 </ol>
-<p>Configuration profiles (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/config.rs"><code>crates/storage/src/backends/regolith/config.rs</code></a>):</p>
+<p>Configuration profiles (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/config.rs"><code>crates/engine/storage/src/backends/regolith/config.rs</code></a>):</p>
 <ul>
 <li><strong>server defaults</strong>: <code>DurabilityMode::Immediate</code>, <code>IsolationLevel::DefraLevel</code>, a 30 s
 close timeout;</li>
@@ -213,7 +213,7 @@ the stall.</li>
 </ul>
 <h2 id="threads-who-runs-what"><a class="header" href="#threads-who-runs-what">Threads: who runs what</a></h2>
 <p>The pool wraps the engine environment with <code>placed_on(pool)</code>
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/config.rs"><code>crates/storage/src/backends/regolith/config.rs</code></a>), which places the threads regolith
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/config.rs"><code>crates/engine/storage/src/backends/regolith/config.rs</code></a>), which places the threads regolith
 starts (compaction, log writeback) through the workers pool as background-class threads.
 That keeps them off the cores running data-path workers and accounted for in one place.
 An in-memory environment starts none.</p>
@@ -232,7 +232,7 @@ flush to SST files when they fill; the manifest tracks the live file set. defrad
 writes a file itself.</p>
 <h2 id="compaction"><a class="header" href="#compaction">Compaction</a></h2>
 <p>A stripe-aware compaction worker merges SSTs in the background. defradb.rs installs <em>no
-compaction filter</em>, on principle (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/mod.rs"><code>crates/storage/src/backends/regolith/mod.rs</code></a> documents
+compaction filter</em>, on principle (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/mod.rs"><code>crates/engine/storage/src/backends/regolith/mod.rs</code></a> documents
 the decision): a head-set entry depends on later writes; nothing expires by time alone; a
 document part’s tombstone carries the priority a late merge is ordered against; index
 entries, blocks, ACP tuples and guards each decide something until another key says
@@ -244,7 +244,7 @@ and those run as ordinary transactions; see
 <p>Stores keep ticker-level statistics only (<code>StatsLevel::ExceptHistogramOrTimers</code>): a timer
 would read the clock twice per iterator step, and a histogram sample costs atomics on
 every read and commit. Every open store exports its tickers as one OTel counter
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/telemetry/src/engine_tickers.rs"><code>crates/telemetry/src/engine_tickers.rs</code></a>), and the store’s <code>EventListener</code> reports
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/building-blocks/telemetry/src/engine_tickers.rs"><code>crates/building-blocks/telemetry/src/engine_tickers.rs</code></a>), and the store’s <code>EventListener</code> reports
 flushes, compactions, table-file creation and deletion, background errors, a discarded
 WAL tail at open, and every commit conflict with its reason.</p>
 <blockquote>

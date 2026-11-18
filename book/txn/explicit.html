@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-712cba6e.js";
+            window.path_to_searchindex_js = "../searchindex-b5e09575.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -185,12 +185,12 @@
 <p>An explicit (interactive) transaction spans multiple client statements: begin, several
 queries and mutations, commit or discard. defradb.rs runs each one as an <strong>actor on
 one worker</strong>: the transaction is begun on a worker of the pool and stays there, held
-<em>by value</em> by one task (<code>crates/db/src/txn/owner/</code>). Its ID names the worker, so every
+<em>by value</em> by one task (<code>crates/database/db/src/txn/owner/</code>). Its ID names the worker, so every
 request for it goes from the edge straight to that worker with <code>Target::Worker</code>, one
 hop in and one out, and the requests run one at a time, in arrival order, through the
 actor’s mailbox. There is no lock to take: the requests are messages.</p>
 <h2 id="the-registry"><a class="header" href="#the-registry">The registry</a></h2>
-<p>The transaction registry (<code>crates/db/src/txn/registry/</code>) maps IDs to owners:</p>
+<p>The transaction registry (<code>crates/database/db/src/txn/registry/</code>) maps IDs to owners:</p>
 <ul>
 <li><strong>begin</strong> on a least-loaded worker, made explicit, wrapped as an <code>OwnedTxn</code>;</li>
 <li><strong>run</strong>: a request routed to the owning worker under a deadline; the actor lends
@@ -215,7 +215,7 @@ was requested, and “the caller left” must not mean “the write vanishes” 
 <code>CommitFence</code> counts commits whose caller stopped waiting, and every new transaction
 waits while that count is above zero, so no new work starts until the abandoned
 commits have landed. The protocol has its own TLA+ model and a Lean proof of the
-counter swap (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/proofs/tla/CommitFence.tla"><code>CommitFence.tla</code></a>, <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/txn/fence.rs"><code>crates/db/src/txn/fence.rs</code></a>).</p>
+counter swap (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/proofs/tla/CommitFence.tla"><code>CommitFence.tla</code></a>, <a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/txn/fence.rs"><code>crates/database/db/src/txn/fence.rs</code></a>).</p>
 <h2 id="auto-commit-vs-explicit"><a class="header" href="#auto-commit-vs-explicit">Auto-commit vs explicit</a></h2>
 <p>Every rule in this book applies to both; the differences are exactly three: explicit
 transactions own their retry policy (conflicts surface to the caller), span statements

@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-712cba6e.js";
+            window.path_to_searchindex_js = "../searchindex-b5e09575.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -189,7 +189,7 @@ compute path - and why nothing leaves by accident.</p>
 <h2 id="no-compaction-filter-on-principle"><a class="header" href="#no-compaction-filter-on-principle">No compaction filter, on principle</a></h2>
 <p>The engine offers a compaction filter (drop entries during SST compaction). defradb.rs
 installs none, and the reasoning is written beside the decision
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/mod.rs"><code>crates/storage/src/backends/regolith/mod.rs</code></a>):</p>
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/mod.rs"><code>crates/engine/storage/src/backends/regolith/mod.rs</code></a>):</p>
 <ul>
 <li>a head-set entry’s meaning depends on writes that follow it;</li>
 <li>nothing expires by time alone (a pending DAG record leaves when its root merges or
@@ -206,14 +206,14 @@ transactions:</p>
 <p>Blocks are shared: the same field block can back multiple documents’ histories. The
 systemstore keeps a CID -&gt; DocID ownership map (<code>/d/b/{cid}/{docID}</code>), written at every
 create and merge. Deleting history removes <em>ownership</em> first
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/block/cleanup.rs"><code>crates/db/src/block/cleanup.rs</code></a>): a block’s bytes die only when its last owner
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/block/cleanup.rs"><code>crates/database/db/src/block/cleanup.rs</code></a>): a block’s bytes die only when its last owner
 mapping is gone and it is not reachable from anything retained. <code>referenced_blocks</code>
 computes the reachable set (commit + links + encryption links) of what stays; deletes
 keep blocks in that set even when their own owner is gone - the fix for the class of
 bug where pruning one document’s history pulled a block out from under another’s.</p>
 <h2 id="downsample-gc"><a class="header" href="#downsample-gc">Downsample GC</a></h2>
 <p>Downsampled collections roll source documents into windowed targets; retention then
-prunes source history (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/downsample/gc.rs"><code>crates/db/src/downsample/gc.rs</code></a>):</p>
+prunes source history (<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/downsample/gc.rs"><code>crates/database/db/src/downsample/gc.rs</code></a>):</p>
 <ul>
 <li>plans are grouped per source; a source with any consumer lacking a retention policy
 is skipped entirely (never partially pruned);</li>

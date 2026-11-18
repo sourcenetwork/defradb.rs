@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-712cba6e.js";
+            window.path_to_searchindex_js = "../searchindex-b5e09575.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -185,7 +185,7 @@
 <p>defradb.rs stores everything in one engine: <strong><a href="https://sourcenetwork.github.io/regolith/">regolith</a></strong>, an LSM-transaction engine that
 defradb.rs does not fork or wrap with adapters. It is opened directly, configured per
 target (server, embedded, wasm, memory), and extended through traits that defradb.rs
-implements (<code>crates/storage/src/backends/regolith/</code>).</p>
+implements (<code>crates/engine/storage/src/backends/regolith/</code>).</p>
 <p>This part covers the engine-facing surface a defradb.rs developer works with:</p>
 <ul>
 <li><strong>Keys, families and classes</strong>: the byte-level layout of every key defradb.rs writes,

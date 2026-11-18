@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-712cba6e.js";
+            window.path_to_searchindex_js = "../searchindex-b5e09575.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -186,7 +186,7 @@
 commonware-based chain) holds the policies and tuples, evaluates checks, and proofs
 flow back to the database.</p>
 <h2 id="what-it-is"><a class="header" href="#what-it-is">What it is</a></h2>
-<p><code>crates/vera</code> defines the <code>VeraProvider</code> interface: create policies, register and
+<p><code>crates/engine/vera</code> defines the <code>VeraProvider</code> interface: create policies, register and
 archive objects, set and delete relationships, check access. Two implementations:</p>
 <ul>
 <li><strong>CosmosProvider</strong>: a Cosmos-SDK chain over LCD/gRPC, transactions broadcast to it,
@@ -421,7 +421,7 @@ provides. Vera is opt-in: without it, local Zanzibar ACP is the whole story.</p>
 <p>External decisions are remote inputs, so they follow the doctrine’s remote-input rules:
 resolved at the edge, never inside a retried closure, memoized by request bytes across
 attempts, single-flight, batched, cached (access-decision and policy caches with the
-circuit breaker and tuning knobs in <code>crates/vera/src/</code>), with staleness documented and
+circuit breaker and tuning knobs in <code>crates/engine/vera/src/</code>), with staleness documented and
 a persisted-decision path for signers to verify via the light client.</p>
 <blockquote>
 <p><strong>Why fail closed.</strong> An external decider that times out is not “probably fine”: it is

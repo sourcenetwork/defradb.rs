@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-712cba6e.js";
+            window.path_to_searchindex_js = "../searchindex-b5e09575.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -189,14 +189,14 @@ below is the whole story; the rest of this book walks each box. (The participant
 <h2 id="the-layers"><a class="header" href="#the-layers">The layers</a></h2>
 <p><strong>The client</strong> talks to defradb.rs over GraphQL, either over HTTP or through the embedded
 API. It owns its own agent logic: leases, claims, streaming segments, event consumption.</p>
-<p><strong>The network edge</strong> is one tokio runtime, held in one place (<code>crates/edge</code>). It terminates
+<p><strong>The network edge</strong> is one tokio runtime, held in one place (<code>crates/foundation/edge</code>). It terminates
 HTTP, P2P, the KMS transport, the Orbis, Vera and embeddings clients, and telemetry export.
 It is the only place in the process where a tokio runtime exists; no data-path crate depends
 on tokio. The edge also resolves <em>remote inputs</em>: KMS keys, signatures, Vera decisions,
 embeddings. These are fetched before the transaction that needs them, with single-flight
 deduplication, batching and caching, because nothing remote may run inside a transaction
 closure that can re-run.</p>
-<p><strong>The thread-per-core pool</strong> is where every database decision runs (<code>crates/workers</code>). Each
+<p><strong>The thread-per-core pool</strong> is where every database decision runs (<code>crates/foundation/workers</code>). Each
 core runs one pinned executor with no task stealing; a task spawned with <code>spawn_local</code>
 lives and dies on its core. The pool owns query planning, DAG block construction, CRDT
 rules, index maintenance, ACP decisions, lens migrations, and the business logic that
@@ -207,7 +207,7 @@ head sets, document part operands, and their <code>touches</code>), the arrival 
 the conflict event listener, and the key provider for encryption at rest. regolith’s
 mechanisms carry no downstream names; they are generic over exactly these traits. In the
 code the installed set is slightly larger than the diagram: a <code>PrefixExtractor</code>
-(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/prefix.rs"><code>crates/storage/src/backends/regolith/prefix.rs</code></a>) for prefix bloom filters, and
+(<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/prefix.rs"><code>crates/engine/storage/src/backends/regolith/prefix.rs</code></a>) for prefix bloom filters, and
 <code>TransactionHooks</code> for per-transaction telemetry.</p>
 <p><strong>regolith’s DefraLevel mechanisms</strong> are the transactional vocabulary: key classes, blind
 merges, projected reads, validated scans, commit-ordered append, <code>Db::allocate</code>, write-free
