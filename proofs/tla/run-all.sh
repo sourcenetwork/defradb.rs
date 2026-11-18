@@ -191,9 +191,9 @@ RUNS=(
   "MC_ChunkMerge_Red_TrustList.cfg ChunkMerge.tla RED" # reader trusts the list instead of cutting the text (INV_ReadsMatchText)
   "MC_ChunkMerge_Red_NoHashCheck.cfg ChunkMerge.tla RED" # merge stores a chunk whose hash does not match (INV_NoForgedChunk)
   "MC_ChunkMerge_Red_MutableChunk.cfg ChunkMerge.tla RED" # merge lets a stored chunk change (INV_ChunksNeverChange)
-  "MC_ChunkMerge_Green_Delete.cfg ChunkMerge.tla GREEN" # a chunk delete waits until its article is gone here
+  "MC_ChunkMerge_Green_Delete.cfg ChunkMerge.tla GREEN" # a chunk delete waits while its live article uses the chunk
   "MC_ChunkMerge_Red_NoDeleteGuard.cfg ChunkMerge.tla RED" # merge takes a peer's chunk delete while the article is live (INV_ListedChunksStay)
-  "MC_ChunkMerge_Red_ListedDeleteOnly.cfg ChunkMerge.tla RED" # merge holds back only a listed chunk's delete (INV_ListedChunksStay)
+  "MC_ChunkMerge_Red_NoRegenerate.cfg ChunkMerge.tla RED" # a text that uses a deleted chunk again never makes it again (INV_ListedChunksStay)
   "MC_ChunkMerge_Red_RefuseDelete.cfg ChunkMerge.tla RED" # merge refuses an early chunk delete for good (INV_DeletesNotLost)
   "MC_ChunkMerge_Red_UnstoredDelete.cfg ChunkMerge.tla RED" # a chunk delete merges before its chunk's first block (INV_ListedChunksStay)
   "MC_ChunkMerge_Red_NoRebuild.cfg ChunkMerge.tla RED" # a merge keeps another peer's text and builds none of its chunks (INV_TextChunksStored)
@@ -362,10 +362,20 @@ RUNS=(
   "MC_ParentChunks_Red_NoValidation.cfg ParentChunks.tla RED" # stale update after a delete creates chunks (INV_NoChunkOfDeletedParent)
   "MC_ParentChunks_Red_CreateWithoutList.cfg ParentChunks.tla RED" # signed create blocks without the list, first update ties (INV_ListMatchesText)
   "MC_ParentChunks_Red_NoLookup.cfg ParentChunks.tla RED" # a write creates chunks that arrived first, a valid create fails (INV_ValidWritesSucceed)
+  "MC_ParentChunks_Red_NoPrune.cfg ParentChunks.tla RED" # an update keeps the chunks its new text does not use (INV_OnlyTextChunks)
   "MC_ChunkFollow_Green.cfg ChunkFollow.tla GREEN" # #2310: a chunk's push and sync follow its parent
   "MC_ChunkFollow_Red_OwnFilter.cfg ChunkFollow.tla RED" # filter run on the chunk drops every chunk (INV_ChunksFollowParent)
   "MC_ChunkFollow_Red_AllChunks.cfg ChunkFollow.tla RED" # chunks pushed unfiltered leak (INV_NoForeignChunks)
   "MC_ChunkFollow_Red_SyncParentOnly.cfg ChunkFollow.tla RED" # doc sync without the chunks (INV_ChunksFollowParent)
+  "MC_ChunkFollow_Green_Pushed.cfg ChunkFollow.tla GREEN" # #3040: an edit's chunk delete follows its parent
+  "MC_ChunkFollow_Red_DeletesStay.cfg ChunkFollow.tla RED" # an edit's chunk delete is never pushed (INV_DroppedChunksGo)
+  "MC_ChunkFollow_Red_NoReconcile.cfg ChunkFollow.tla RED" # a merged edit deletes nothing (INV_DroppedChunksGo)
+  "MC_ChunkCleanup_Green.cfg ChunkCleanup.tla GREEN" # #3040: edits and merges delete unused chunks, a remake takes the next generation
+  "MC_ChunkCleanup_Red_NoWriteClean.cfg ChunkCleanup.tla RED" # an edit only adds chunks (INV_StoredIsSplit)
+  "MC_ChunkCleanup_Red_NoMergeClean.cfg ChunkCleanup.tla RED" # a merge deletes no chunk (INV_StoredIsSplit)
+  "MC_ChunkCleanup_Red_KeepStale.cfg ChunkCleanup.tla RED" # a merge stores a create its text does not use (INV_StoredIsSplit)
+  "MC_ChunkCleanup_Red_NoDeleteGuard.cfg ChunkCleanup.tla RED" # a merge takes a delete its text still needs (INV_VisibleIsSplit)
+  "MC_ChunkCleanup_Red_SameGen.cfg ChunkCleanup.tla RED" # a remake reuses the deleted ID (INV_NoResurrect)
   "MC_TruncateChunks_Green.cfg TruncateChunks.tla GREEN" # truncate empties chunks before parents
   "MC_TruncateChunks_Red_ParentsFirst.cfg TruncateChunks.tla RED" # parents first strands a racing create (INV_LiveParentHasChunks)
   "MC_TruncateChunks_Red_PurgeLeavesChunks.cfg TruncateChunks.tla RED" # purge leaves the chunks of purged articles (INV_PurgedHaveNoChunks)
