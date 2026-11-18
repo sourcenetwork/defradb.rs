@@ -261,9 +261,9 @@ A second node that syncs one article by its docID from the first gets the articl
 # `defra.chunk.replicate.filtered`: A filtered replicator ships a matching parent's chunks
 
 - **Parents:** ["defra.chunk.replicate"]
-- **Scenarios:** ["chunk::replicate_filtered::a_filtered_replicator_ships_the_matching_parents_chunks"]
+- **Scenarios:** ["chunk::replicate_filtered::a_filtered_replicator_ships_the_matching_parents_chunks", "chunk::replicate_filtered::a_filtered_replicator_replays_the_matching_parents_chunks"]
 
-A replicator for `Article` with the filter `{kind: {_eq: "public"}}` gives the second node the public article and exactly its chunks, and neither the private article nor its chunks.
+A replicator for `Article` with the filter `{kind: {_eq: "public"}}` gives the second node the public article and exactly its chunks, and neither the private article nor its chunks. It holds whether the articles are written after the replicator is added or before, when adding it replays them.
 
 # `defra.chunk.backup`: Backups and chunks
 

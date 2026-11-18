@@ -30,9 +30,18 @@ fn article(kind: &str, text: &str) -> Actions {
     .into()
 }
 
-#[test]
-#[mantra_macros::req_test("defra.chunk.replicate.filtered")]
-fn a_filtered_replicator_ships_the_matching_parents_chunks() {
+fn replicator() -> Actions {
+    AddReplicator {
+        target: "db1".into(),
+        collections: vec!["Article".into()],
+        filter: json!({ "kind": { "_eq": "public" } }),
+        common: on(Some("db0")),
+        ..Default::default()
+    }
+    .into()
+}
+
+fn ships_public_chunks(replicator_first: bool) {
     let (public, private) = (body(3, "rivers"), body(2, "lakes"));
     let mut actions: Vec<Actions> = Vec::new();
     for node in ["db0", "db1"] {
@@ -61,17 +70,14 @@ fn a_filtered_replicator_ships_the_matching_parents_chunks() {
             .into(),
         );
     }
+    if replicator_first {
+        actions.push(replicator());
+    }
+    actions.extend([article("private", &private), article("public", &public)]);
+    if !replicator_first {
+        actions.push(replicator());
+    }
     actions.extend([
-        AddReplicator {
-            target: "db1".into(),
-            collections: vec!["Article".into()],
-            filter: json!({ "kind": { "_eq": "public" } }),
-            common: on(Some("db0")),
-            ..Default::default()
-        }
-        .into(),
-        article("private", &private),
-        article("public", &public),
         eventually(
             Request {
                 request: "query { Article { kind } }".into(),
@@ -88,4 +94,16 @@ fn a_filtered_replicator_ships_the_matching_parents_chunks() {
     // Filtered replication is defradb.rs only.
     case.client_types = Some(&[ClientType::InProcess, ClientType::RustHttp, ClientType::Cli]);
     case.execute();
+}
+
+#[test]
+#[mantra_macros::req_test("defra.chunk.replicate.filtered")]
+fn a_filtered_replicator_ships_the_matching_parents_chunks() {
+    ships_public_chunks(true);
+}
+
+#[test]
+#[mantra_macros::req_test("defra.chunk.replicate.filtered")]
+fn a_filtered_replicator_replays_the_matching_parents_chunks() {
+    ships_public_chunks(false);
 }
