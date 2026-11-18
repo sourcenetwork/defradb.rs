@@ -2475,6 +2475,108 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // Increments of an indexed counter append the document to a log
+        // instead of moving the entry; reads check owed documents live and a
+        // drain moves the entries later.
+        family: "Index-maintenance consistency",
+        name: "INV_ReadExact — a read through a deferred index finds exactly the matching documents",
+        axis: Tla,
+        anchor: "crates/db/src/index/deferred",
+        model_ref: "MC_DeferredIndex_{Green,Green_Deep,Green_Drains,Red_NoOverlay,Red_NoOwnAppends,Red_UnvalidatedRecord,Red_TruncateHead,Red_ValidatedTxRecord}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // A reindex clears the entries but keeps the records while drains run,
+        // so the walk removes what the record names before it writes, and its
+        // put of the record conflicts with a drain that moved it elsewhere.
+        family: "Index-maintenance consistency",
+        name: "INV_NoOrphanEntry — a reindex walk racing drains leaves no entry that no record names",
+        axis: Tla,
+        anchor: "crates/db/src/index/manager/deferred.rs IndexManager::replace; crates/db/src/index/manager/rebuild.rs IndexManager::reindex_document",
+        model_ref: "MC_DeferredIndex_{Green_Reindex,Red_WalkOverwrite,Red_WalkBlindRecord}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // A dropped index's log is truncated in pages from the first entry
+        // left, so no transaction grows with the index's write history.
+        family: "Index-maintenance consistency",
+        name: "INV_CleanupBounded — no drop page truncates more than a page of log positions",
+        axis: Tla,
+        anchor: "crates/db/src/index/deferred/cleanup.rs remove_page; crates/db/src/index/drop.rs DropPage::run",
+        model_ref: "MC_DeferredIndex_{Green_Drop,Red_DropWhole,Red_DropFromOne}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // A document whose migration fails is appended to the log again in
+        // the drain's own transaction, so the rest of the plan still drains.
+        family: "Index-maintenance consistency",
+        name: "PROP_HealthyDrains — a document that cannot be migrated never holds the others in a deferred index's log",
+        axis: Tla,
+        anchor: "crates/db/src/index/deferred/drain.rs apply",
+        model_ref: "MC_DeferredIndex_{Green_Poison,Green_PoisonFixed,Red_PoisonAborts,Red_PoisonDropped,Red_FullPlanStuck}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // A plan's cap doubles while plans come back full, so a backlog drains
+        // in fewer commits, and stops at the largest cap.
+        family: "Index-maintenance consistency",
+        name: "INV_PlanBounded — no drain plan takes more log entries than the largest cap",
+        axis: Tla,
+        anchor: "crates/db/src/index/deferred/drain.rs PlanSize::after; crates/db/src/index/deferred/task.rs drain_turn",
+        model_ref: "MC_DeferredIndex_{Green,Green_Deep,Green_Poison,Red_UncappedPlan}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/db/tests/index/deferred/plan_size.rs",
+    },
+    Property {
+        // Whether an index is deferred follows the types a start registers,
+        // so the check at open rebuilds one whose stored state is the other way.
+        family: "Index-maintenance consistency",
+        name: "INV_OpenMatchesMode — an open node's index holds exactly what the way it is kept accounts for",
+        axis: Tla,
+        anchor: "crates/db/src/definition/migration/format.rs DB::migrate_index_format; crates/db/src/database/mod.rs DB::finish_open; crates/db/src/index/deferred/mode.rs kept_in_other_mode; crates/db/src/definition/migration/reindex/page.rs clear; crates/db/src/definition/migration/reindex/progress.rs read",
+        model_ref: "MC_DeferredIndexMode_{Green,Red_NoCheck,Red_OneWay,Red_KeepRecords,Red_NoProgressReset,Red_BackfillFirst}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/db/tests/index/merged_crdt.rs",
+    },
+    Property {
+        // Every write that owes a deferred index asks for its drain; the
+        // drain task keeps a failed index for the sweep, and the sweep runs
+        // on a fixed deadline that requests cannot push back.
+        family: "Index-maintenance consistency",
+        name: "INV_OwedKept — work a deferred index owes is always asked for or being drained",
+        axis: Tla,
+        anchor: "crates/db/src/index/deferred/task.rs",
+        model_ref: "MC_DeferredDrainTask_{Green,Red_StopAtFailure,Red_DropFailed,Red_NoRequeue,Red_SilentPurge,Red_RearmSweep,Red_NoSweep,Red_RequestFirst,Red_SharedNote}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/db/tests/index/deferred_task.rs",
+    },
+    Property {
+        // A batch asks for each deferred index's drain once per attempt, not
+        // once per document it owes.
+        family: "Index-maintenance consistency",
+        name: "INV_OneAsk — an attempt registers one drain callback per deferred index it owes",
+        axis: Tla,
+        anchor: "crates/db/src/index/manager/deferred.rs IndexManager::owe",
+        model_ref: "MC_DeferredDrainTask_{Green,Red_AskPerDoc}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/db/tests/index/deferred/requests.rs",
+    },
+    Property {
+        // The drain finds a document's old entries only through its position
+        // record, so the record must read back as the keys it names.
+        family: "Index-maintenance consistency",
+        name: "decode_encode — a position record reads back as exactly its entry keys",
+        axis: Lean,
+        anchor: "crates/db/src/index/deferred/record.rs encode_record, decode_record",
+        model_ref: "PositionRecord (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         // A node's shutdown aborts every task it holds and waits for each to
         // let go of storage before the pool stops and regolith closes; the
         // drain gives up at its deadline; a refused telemetry flush moves to

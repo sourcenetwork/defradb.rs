@@ -41,6 +41,9 @@ pub(super) struct OwedReindex {
     /// rebuild is needed only while the active version's history contains it.
     /// `None` after a version switch, which always needs it.
     migration_destination: Option<String>,
+    /// The IDs of the indexes to rebuild; `None` for every index.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) indexes: Option<Vec<u32>>,
 }
 
 fn owed_key(collection_id: &str) -> Vec<u8> {
@@ -86,18 +89,21 @@ pub(crate) async fn owe_reindex(
         &OwedReindex {
             token: rand::random(),
             migration_destination: migration_destination.map(str::to_owned),
+            indexes: None,
         },
     )
     .await
 }
 
-/// Records, in the transaction of `systemstore`, a reindex of every index
-/// `collection_id` has, owed under `token` by the rebuild that writes it.
+/// Records, in the transaction of `systemstore`, a reindex of `indexes`
+/// (every index `collection_id` has, for `None`), owed under `token` by the
+/// rebuild that writes it.
 pub(super) async fn owe_full_reindex(
     systemstore: &NamespaceView,
     collections: &Arc<EpochedCollections>,
     collection_id: &str,
     token: u64,
+    indexes: Option<Vec<u32>>,
 ) -> Result<()> {
     write_owed(
         systemstore,
@@ -106,6 +112,7 @@ pub(super) async fn owe_full_reindex(
         &OwedReindex {
             token,
             migration_destination: None,
+            indexes,
         },
     )
     .await
@@ -126,17 +133,28 @@ async fn write_owed(
     publish_reindex_owed(systemstore, collections, collection_id, true).await
 }
 
-/// Whether the reindex owed to `collection_id` is still the one with `token`.
+/// The reindex owed to `collection_id` if it is still the one with `token`.
 /// The read is validated, so a later change that owes the collection again
 /// aborts a transaction that relied on it.
+pub(super) async fn owed_under(
+    systemstore: &NamespaceView,
+    collection_id: &str,
+    token: u64,
+) -> Result<Option<OwedReindex>> {
+    Ok(read_owed(systemstore, collection_id)
+        .await?
+        .filter(|owed| owed.token == token))
+}
+
+/// Whether the reindex owed to `collection_id` is still the one with `token`.
 pub(super) async fn owes(
     systemstore: &NamespaceView,
     collection_id: &str,
     token: u64,
 ) -> Result<bool> {
-    Ok(read_owed(systemstore, collection_id)
+    Ok(owed_under(systemstore, collection_id, token)
         .await?
-        .is_some_and(|owed| owed.token == token))
+        .is_some())
 }
 
 /// Clears, in the transaction of `systemstore`, the reindex owed to

@@ -75,17 +75,14 @@ async fn half_backfilled(
     let index = {
         let datastore = txn.datastore().unwrap();
         let systemstore = txn.systemstore().unwrap();
-        let mut manager =
-            IndexManager::from_collection(schema.resolved_root_id(), &schema).unwrap();
+        let mut manager = IndexManager::from_collection(
+            schema.resolved_root_id(),
+            &schema,
+            &crdt::Crdts::default(),
+        )
+        .unwrap();
         let index = manager
-            .create_index_of_kind(
-                &datastore,
-                COLLECTION,
-                "by_name".to_string(),
-                fields,
-                kind,
-                &schema.fields,
-            )
+            .create_index_of_kind(&datastore, COLLECTION, "by_name".to_string(), fields, kind)
             .await
             .unwrap();
         schema.indexes.push(index.clone());
@@ -105,7 +102,9 @@ async fn half_backfilled(
     write_definition(&db, &schema).await;
 
     let fence = db.next_doc_short_id().await.unwrap();
-    let manager = IndexManager::from_collection(schema.resolved_root_id(), &schema).unwrap();
+    let manager =
+        IndexManager::from_collection(schema.resolved_root_id(), &schema, &crdt::Crdts::default())
+            .unwrap();
     let txn = db.new_txn(false).await.unwrap();
     {
         let datastore = txn.datastore().unwrap();

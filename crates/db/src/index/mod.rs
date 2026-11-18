@@ -3,6 +3,7 @@
 pub mod backfill;
 pub mod build_gate;
 pub mod create;
+pub mod deferred;
 pub mod drop;
 pub mod error;
 mod in_txn;

@@ -56,14 +56,7 @@ fn test_create_index() {
         }];
 
         let desc = manager
-            .create_index(
-                &datastore,
-                "users",
-                "idx_name".to_string(),
-                fields,
-                false,
-                &[],
-            )
+            .create_index(&datastore, "users", "idx_name".to_string(), fields, false)
             .await
             .unwrap();
 
@@ -91,14 +84,7 @@ fn test_create_unique_index() {
         }];
 
         let desc = manager
-            .create_index(
-                &datastore,
-                "users",
-                "idx_email".to_string(),
-                fields,
-                true,
-                &[],
-            )
+            .create_index(&datastore, "users", "idx_email".to_string(), fields, true)
             .await
             .unwrap();
 
@@ -138,7 +124,7 @@ fn unique_typed_array_index_deduplicates_repeated_values() {
             kind: None,
             auto_generated: false,
         }];
-        let manager = IndexManager::from_collection(1, &schema).unwrap();
+        let manager = IndexManager::from_collection(1, &schema, &crdt::Crdts::default()).unwrap();
         let mut first = Document::new(schema.clone());
         first
             .set(
@@ -177,20 +163,12 @@ fn test_create_duplicate_index_fails() {
                 "idx_name".to_string(),
                 fields.clone(),
                 false,
-                &[],
             )
             .await
             .unwrap();
 
         let result = manager
-            .create_index(
-                &datastore,
-                "users",
-                "idx_name".to_string(),
-                fields,
-                false,
-                &[],
-            )
+            .create_index(&datastore, "users", "idx_name".to_string(), fields, false)
             .await;
 
         assert!(result.is_err());
@@ -210,14 +188,7 @@ fn test_create_empty_fields_fails() {
         let mut manager = IndexManager::new(1);
 
         let result = manager
-            .create_index(
-                &datastore,
-                "users",
-                "idx_empty".to_string(),
-                vec![],
-                false,
-                &[],
-            )
+            .create_index(&datastore, "users", "idx_empty".to_string(), vec![], false)
             .await;
 
         assert!(result.is_err());
@@ -245,14 +216,7 @@ fn test_delete_index() {
         }];
 
         manager
-            .create_index(
-                &datastore,
-                "users",
-                "idx_name".to_string(),
-                fields,
-                false,
-                &[],
-            )
+            .create_index(&datastore, "users", "idx_name".to_string(), fields, false)
             .await
             .unwrap();
 
@@ -304,7 +268,6 @@ fn test_get_indexes() {
                     descending: false,
                 }],
                 false,
-                &[],
             )
             .await
             .unwrap();
@@ -319,7 +282,6 @@ fn test_get_indexes() {
                     descending: false,
                 }],
                 true,
-                &[],
             )
             .await
             .unwrap();
@@ -359,7 +321,7 @@ fn test_from_collection_with_indexes() {
             },
         ];
 
-        let manager = IndexManager::from_collection(1, &schema).unwrap();
+        let manager = IndexManager::from_collection(1, &schema, &crdt::Crdts::default()).unwrap();
 
         assert_eq!(manager.index_count(), 2);
         assert!(manager.has_index("idx_name"));
@@ -374,7 +336,7 @@ fn test_fulltext_indexes_use_reserved_internal_names() {
         let mut schema = test_schema();
         schema.fulltext_indexes = vec![FullTextIndexDescription::new("name")];
 
-        let manager = IndexManager::from_collection(1, &schema).unwrap();
+        let manager = IndexManager::from_collection(1, &schema, &crdt::Crdts::default()).unwrap();
 
         assert!(manager.has_index(RESERVED_FULLTEXT_INDEX_NAME_FOR_NAME));
         assert!(!manager.has_index("name_fulltext"));
@@ -393,7 +355,8 @@ fn test_regular_index_named_field_fulltext_does_not_collide_with_fulltext_index(
         let mut schema = test_schema();
         schema.fulltext_indexes = vec![FullTextIndexDescription::new("name")];
 
-        let mut manager = IndexManager::from_collection(1, &schema).unwrap();
+        let mut manager =
+            IndexManager::from_collection(1, &schema, &crdt::Crdts::default()).unwrap();
 
         let desc = manager
             .create_index(
@@ -405,7 +368,6 @@ fn test_regular_index_named_field_fulltext_does_not_collide_with_fulltext_index(
                     descending: false,
                 }],
                 false,
-                &schema.fields,
             )
             .await
             .unwrap();
@@ -440,7 +402,6 @@ fn test_on_document_create() {
                         descending: false,
                     }],
                     false,
-                    &[],
                 )
                 .await
                 .unwrap();
@@ -484,7 +445,6 @@ fn test_index_id_sequence() {
                     descending: false,
                 }],
                 false,
-                &[],
             )
             .await
             .unwrap();
@@ -499,7 +459,6 @@ fn test_index_id_sequence() {
                     descending: false,
                 }],
                 false,
-                &[],
             )
             .await
             .unwrap();
@@ -514,7 +473,6 @@ fn test_index_id_sequence() {
                     descending: false,
                 }],
                 false,
-                &[],
             )
             .await
             .unwrap();
@@ -550,7 +508,6 @@ fn test_on_document_update_changes_index_entry() {
                         descending: false,
                     }],
                     false,
-                    &[],
                 )
                 .await
                 .unwrap();
@@ -640,7 +597,6 @@ fn test_on_document_update_no_change_when_values_same() {
                         descending: false,
                     }],
                     false,
-                    &[],
                 )
                 .await
                 .unwrap();
@@ -699,7 +655,6 @@ fn test_on_document_delete_removes_index_entries() {
                         descending: false,
                     }],
                     false,
-                    &[],
                 )
                 .await
                 .unwrap();
@@ -771,7 +726,6 @@ fn test_bulk_index_indexes_all_documents() {
                         descending: false,
                     }],
                     false,
-                    &[],
                 )
                 .await
                 .unwrap();
@@ -834,7 +788,6 @@ fn test_bulk_index_skips_documents_without_short_id() {
                         descending: false,
                     }],
                     false,
-                    &[],
                 )
                 .await
                 .unwrap();
@@ -914,7 +867,6 @@ fn test_on_document_create_without_short_id_fails() {
                         descending: false,
                     }],
                     false,
-                    &[],
                 )
                 .await
                 .unwrap();
@@ -958,7 +910,6 @@ fn test_on_document_update_without_short_id_fails() {
                         descending: false,
                     }],
                     false,
-                    &[],
                 )
                 .await
                 .unwrap();
@@ -1008,7 +959,6 @@ fn test_on_document_delete_without_short_id_fails() {
                         descending: false,
                     }],
                     false,
-                    &[],
                 )
                 .await
                 .unwrap();
@@ -1042,7 +992,7 @@ fn test_from_collection_with_empty_fields_fails() {
             auto_generated: false,
         }];
 
-        let result = IndexManager::from_collection(1, &schema);
+        let result = IndexManager::from_collection(1, &schema, &crdt::Crdts::default());
         assert!(result.is_err());
         let err = result.err().unwrap();
         assert!(err.to_string().contains("no fields"));
@@ -1074,7 +1024,6 @@ fn test_multi_index_update() {
                         descending: false,
                     }],
                     false,
-                    &[],
                 )
                 .await
                 .unwrap();
@@ -1089,7 +1038,6 @@ fn test_multi_index_update() {
                         descending: false,
                     }],
                     false,
-                    &[],
                 )
                 .await
                 .unwrap();
@@ -1245,7 +1193,6 @@ fn test_composite_index_through_manager() {
                         },
                     ],
                     false,
-                    &[],
                 )
                 .await
                 .unwrap();
@@ -1347,7 +1294,6 @@ fn test_missing_field_indexed_as_null() {
                         descending: false,
                     }],
                     false,
-                    &[],
                 )
                 .await
                 .unwrap();
@@ -1467,8 +1413,7 @@ fn test_unique_constraint_violation_returns_error() {
                         name: "email".to_string(),
                         descending: false,
                     }],
-                    true, // unique
-                    &[],
+                    true,
                 )
                 .await
                 .unwrap();
@@ -1552,7 +1497,6 @@ fn test_index_field_not_in_schema_fails() {
                         descending: false,
                     }],
                     false,
-                    &[],
                 )
                 .await
                 .unwrap();
@@ -1606,7 +1550,6 @@ fn test_index_idempotence_create_same_document_twice() {
                         descending: false,
                     }],
                     false,
-                    &[],
                 )
                 .await
                 .unwrap();
@@ -1670,7 +1613,6 @@ fn test_delete_then_recreate_same_value() {
                         descending: false,
                     }],
                     false,
-                    &[],
                 )
                 .await
                 .unwrap();
@@ -1832,7 +1774,12 @@ mod unique_boundaries {
             let systemstore = txn.systemstore().unwrap();
 
             let schema = unique_email_schema();
-            let manager = IndexManager::from_collection(COLLECTION_SHORT_ID, &schema).unwrap();
+            let manager = IndexManager::from_collection(
+                COLLECTION_SHORT_ID,
+                &schema,
+                &crdt::Crdts::default(),
+            )
+            .unwrap();
 
             let first = register(&systemstore, "a@x").await;
             write_doc_body(&mut datastore, &first).await;
@@ -1870,7 +1817,12 @@ mod unique_boundaries {
             let systemstore = txn.systemstore().unwrap();
 
             let schema = unique_email_schema();
-            let manager = IndexManager::from_collection(COLLECTION_SHORT_ID, &schema).unwrap();
+            let manager = IndexManager::from_collection(
+                COLLECTION_SHORT_ID,
+                &schema,
+                &crdt::Crdts::default(),
+            )
+            .unwrap();
 
             // Wound the store: holder is indexed, then tombstoned WITHOUT index
             // cleanup (exactly what pre-maintenance eras and out-of-order merges
@@ -1905,7 +1857,12 @@ mod unique_boundaries {
             let systemstore = txn.systemstore().unwrap();
 
             let schema = unique_email_schema();
-            let manager = IndexManager::from_collection(COLLECTION_SHORT_ID, &schema).unwrap();
+            let manager = IndexManager::from_collection(
+                COLLECTION_SHORT_ID,
+                &schema,
+                &crdt::Crdts::default(),
+            )
+            .unwrap();
 
             let ghost = register(&systemstore, "a@x").await;
             // Index the ghost WITHOUT writing its body.
@@ -1935,7 +1892,12 @@ mod unique_boundaries {
             let systemstore = txn.systemstore().unwrap();
 
             let schema = unique_email_schema();
-            let manager = IndexManager::from_collection(COLLECTION_SHORT_ID, &schema).unwrap();
+            let manager = IndexManager::from_collection(
+                COLLECTION_SHORT_ID,
+                &schema,
+                &crdt::Crdts::default(),
+            )
+            .unwrap();
 
             let holder = register(&systemstore, "a@x").await;
             write_doc_body(&mut datastore, &holder).await;
@@ -1972,7 +1934,12 @@ mod unique_boundaries {
             let systemstore = txn.systemstore().unwrap();
 
             let schema = unique_email_schema();
-            let manager = IndexManager::from_collection(COLLECTION_SHORT_ID, &schema).unwrap();
+            let manager = IndexManager::from_collection(
+                COLLECTION_SHORT_ID,
+                &schema,
+                &crdt::Crdts::default(),
+            )
+            .unwrap();
 
             let a = register(&systemstore, "a@x").await;
             let b = register(&systemstore, "a@x").await;
@@ -2022,7 +1989,12 @@ mod unique_boundaries {
             let txn2 = db2.new_txn(false).await.unwrap();
             let mut datastore2 = txn2.datastore().unwrap();
             let systemstore2 = txn2.systemstore().unwrap();
-            let manager2 = IndexManager::from_collection(COLLECTION_SHORT_ID, &schema).unwrap();
+            let manager2 = IndexManager::from_collection(
+                COLLECTION_SHORT_ID,
+                &schema,
+                &crdt::Crdts::default(),
+            )
+            .unwrap();
 
             let a2 = register(&systemstore2, "a@x").await;
             let b2 = register(&systemstore2, "a@x").await;

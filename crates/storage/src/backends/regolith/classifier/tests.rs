@@ -73,6 +73,9 @@ fn every_other_family_has_its_declared_class() {
         b"d/vplog/7/3/0/head",
         b"d/vplog/7/3/0/row/00000000000000000001",
         b"/vplog/7/3/0/head",
+        b"d/iplog/7/3/head",
+        b"d/iplog/7/3/row/00000000000000000001",
+        b"/iplog/7/3/head",
     ] {
         assert_eq!(class(key), KeyClass::Log, "{key:?}");
     }
@@ -83,6 +86,8 @@ fn every_other_family_has_its_declared_class() {
         b"bm\x01\x55\x00\x03abc",
         b"s/arrival",
         b"d/vplog",
+        b"d/iplog",
+        b"d/iprec/7/3/\x00\x00\x00\x00\x00\x00\x00\x01",
         b"h/p/\x01/0000000000000001/cid",
         b"h/p/applied",
         b"h/r/\x01/field/cid",

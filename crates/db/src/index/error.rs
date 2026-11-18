@@ -33,6 +33,16 @@ pub enum Error {
     #[error("{0}")]
     Other(String),
 
+    #[error("deferred index {index_id} of collection '{collection}' did not drain: {source}")]
+    DeferredDrain {
+        collection: String,
+        index_id: u32,
+        source: Box<Error>,
+    },
+
+    #[error("document {doc}: {source}")]
+    DeferredDrainDocument { doc: String, source: Box<Error> },
+
     /// A local write of a value another live document already indexes. It
     /// names the writer and the values it wrote, never the document holding
     /// the value, which the writer may not be allowed to read (Go's

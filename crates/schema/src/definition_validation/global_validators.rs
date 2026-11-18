@@ -486,28 +486,3 @@ pub(super) fn validate_embedding_provider_and_model(
     }
     errs
 }
-
-/// Validates that no index references a CRDT counter field.
-/// Matches Go's check in NewCollectionIndex: counter fields cannot be indexed.
-pub(super) fn validate_index_fields_not_counter(
-    new_state: &DefinitionState,
-    _old_state: &DefinitionState,
-) -> Vec<String> {
-    let mut errs = Vec::new();
-    for col in &new_state.collections {
-        for index in &col.indexes {
-            for idx_field in &index.fields {
-                if let Some(field) = col.fields.iter().find(|f| f.name == idx_field.name) {
-                    if field.crdt_type.is_counter() {
-                        errs.push(format!(
-                            "indexing accumulated CRDT fields is not yet supported. Field: {}, CRDTType: {}",
-                            field.name,
-                            format_crdt_type(field.crdt_type)
-                        ));
-                    }
-                }
-            }
-        }
-    }
-    errs
-}

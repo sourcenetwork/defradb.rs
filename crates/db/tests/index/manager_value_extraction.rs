@@ -47,7 +47,7 @@ fn collection() -> CollectionVersion {
 fn datetime_field_stored_as_string_is_indexed_as_time() {
     let schema = collection();
     let idx = datetime_index();
-    let mgr = IndexManager::from_collection(1, &schema).unwrap();
+    let mgr = IndexManager::from_collection(1, &schema, &crdt::Crdts::default()).unwrap();
 
     let mut doc = Document::new(schema.clone());
     doc.set(
@@ -91,7 +91,7 @@ fn string_field_with_date_like_value_is_left_as_string() {
         }],
     };
     schema.indexes = vec![idx.clone()];
-    let mgr = IndexManager::from_collection(1, &schema).unwrap();
+    let mgr = IndexManager::from_collection(1, &schema, &crdt::Crdts::default()).unwrap();
 
     let mut doc = Document::new(schema.clone());
     doc.set(

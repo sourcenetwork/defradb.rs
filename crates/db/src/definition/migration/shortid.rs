@@ -435,6 +435,7 @@ async fn rebuild_indexes(
             collection.resolved_root_id(),
             collection.schema(),
             collection.write_indexes(),
+            collection.crdts(),
         )?;
         let index_names = manager
             .get_indexes()

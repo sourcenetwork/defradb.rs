@@ -65,7 +65,6 @@ async fn routed_and_exact(documents: usize, query: &[f64], k: usize) -> (Vec<u64
                     descending: false,
                 }],
                 vector_kind(),
-                &[],
             )
             .await
             .unwrap();

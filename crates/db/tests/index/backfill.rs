@@ -64,7 +64,6 @@ fn creating_a_vector_index_backfills_every_document() {
                         descending: false,
                     }],
                     vector_kind(),
-                    &[],
                 )
                 .await
                 .unwrap();
@@ -132,7 +131,6 @@ fn backfill_skips_documents_without_a_vector() {
                         descending: false,
                     }],
                     vector_kind(),
-                    &[],
                 )
                 .await
                 .unwrap();
@@ -192,7 +190,6 @@ fn merged_documents_are_indexed() {
                         descending: false,
                     }],
                     vector_kind(),
-                    &[],
                 )
                 .await
                 .unwrap();
@@ -293,7 +290,6 @@ fn an_index_can_be_cleared_and_rebuilt() {
                         descending: false,
                     }],
                     vector_kind(),
-                    &[],
                 )
                 .await
                 .unwrap();

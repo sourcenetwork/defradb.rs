@@ -341,6 +341,7 @@ impl<S: Store> DB<S> {
             plan: plan.clone(),
             last,
             lens_store: Arc::clone(&self.lens_store),
+            drains: self.deferred_drains.clone(),
         };
         self.run_page(page, max_docs).await
     }
@@ -374,6 +375,7 @@ impl storage::corekv::RetryAttemptFn for FinishIndexAttempt {
                 let manager = IndexManager::from_collection(
                     collection.schema().resolved_root_id(),
                     collection.schema(),
+                    collection.crdts(),
                 )?;
                 manager.build_index(&datastore, &self.index_name).await?;
                 Ok(())
@@ -450,6 +452,7 @@ struct BackfillPage {
     plan: BackfillPlan,
     last: u64,
     lens_store: Arc<dyn TransformStore>,
+    drains: crate::index::deferred::DrainRequests,
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -498,6 +501,7 @@ impl BackfillPage {
             systemstore: systemstore.clone(),
             lens_store: Arc::clone(&self.lens_store),
             history,
+            drains: self.drains.clone(),
         };
         let batch = index_batch(
             &collection,
@@ -540,6 +544,7 @@ struct MigratingSource {
     systemstore: NamespaceView,
     lens_store: Arc<dyn TransformStore>,
     history: History,
+    drains: crate::index::deferred::DrainRequests,
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -563,6 +568,7 @@ impl DocumentSource for MigratingSource {
             &self.systemstore,
             &self.collection,
             &migrated,
+            Some(&self.drains),
         )
         .await
         .map_err(|e| IndexError::Other(e.to_string()))?;
@@ -578,8 +584,11 @@ async fn index_batch(
     source: &mut MigratingSource,
     max_docs: usize,
 ) -> Result<BatchIndexResult> {
-    let manager =
-        IndexManager::from_collection(collection.schema().resolved_root_id(), collection.schema())?;
+    let manager = IndexManager::from_collection(
+        collection.schema().resolved_root_id(),
+        collection.schema(),
+        collection.crdts(),
+    )?;
     let batch = manager
         .index_batch_from(
             datastore,

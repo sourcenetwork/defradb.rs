@@ -5,6 +5,8 @@ mod common;
 mod backfill;
 mod bulk;
 mod create;
+mod deferred;
+mod deferred_task;
 mod drop;
 mod fence;
 mod manager;

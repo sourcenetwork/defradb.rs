@@ -764,6 +764,42 @@ RUNS=(
   "MC_MergedFieldIndex_Red_ReadAfterPart.cfg MergedFieldIndex.tla RED" # the index update starts from the value the field merge already wrote (INV_IndexMatchesValue)
   "MC_MergedFieldIndex_Green_Clear.cfg MergedFieldIndex.tla GREEN" # a field write drops the kept read instead of updating it
   "MC_MergedFieldIndex_Red_StaleCache.cfg MergedFieldIndex.tla RED" # a field write leaves the kept read stale, so the next block loses an edit (INV_NoLostEdit)
+  "MC_DeferredIndex_Green.cfg DeferredIndex.tla GREEN" # reads through a deferred index are exact while drains catch up
+  "MC_DeferredIndex_Green_Deep.cfg DeferredIndex.tla GREEN" # the same with one drain and a third write
+  "MC_DeferredIndex_Green_Drains.cfg DeferredIndex.tla GREEN" # every owed document is eventually drained
+  "MC_DeferredIndex_Red_NoOverlay.cfg DeferredIndex.tla RED" # a read trusts stale stored entries (INV_ReadExact)
+  "MC_DeferredIndex_Red_NoOwnAppends.cfg DeferredIndex.tla RED" # a transaction misses its own increments (INV_TxReadExact)
+  "MC_DeferredIndex_Red_UnvalidatedRecord.cfg DeferredIndex.tla RED" # two drains leave an entry behind (INV_RecordMatchesIndex)
+  "MC_DeferredIndex_Red_TruncateHead.cfg DeferredIndex.tla RED" # a drain drops work appended after its plan (INV_ReadExact)
+  "MC_DeferredIndex_Red_ValidatedTxRecord.cfg DeferredIndex.tla RED" # a drain aborts a transaction that read through the index (INV_TxNotAbortedByDrain)
+  "MC_DeferredIndex_Green_Reindex.cfg DeferredIndex.tla GREEN" # a reindex walk racing drains leaves no orphan entry
+  "MC_DeferredIndex_Red_WalkOverwrite.cfg DeferredIndex.tla RED" # the walk overwrites the record and keeps the drain's entry (INV_NoOrphanEntry)
+  "MC_DeferredIndex_Red_WalkBlindRecord.cfg DeferredIndex.tla RED" # the walk's record put never conflicts, so it acts on a record a drain moved (INV_NoOrphanEntry)
+  "MC_DeferredIndex_Green_Drop.cfg DeferredIndex.tla GREEN" # a drop truncates the log in pages from the first entry left
+  "MC_DeferredIndex_Red_DropWhole.cfg DeferredIndex.tla RED" # a drop truncates the whole backlog in one transaction (INV_CleanupBounded)
+  "MC_DeferredIndex_Red_DropFromOne.cfg DeferredIndex.tla RED" # each drop page truncates from position 1 (INV_CleanupBounded)
+  "MC_DeferredIndex_Green_Poison.cfg DeferredIndex.tla GREEN" # a document that never migrates stays owed and the rest drain
+  "MC_DeferredIndex_Green_PoisonFixed.cfg DeferredIndex.tla GREEN" # a broken document drains once its lens is fixed
+  "MC_DeferredIndex_Red_PoisonAborts.cfg DeferredIndex.tla RED" # a broken document aborts the whole drain and holds the rest (PROP_HealthyDrains)
+  "MC_DeferredIndex_Red_PoisonDropped.cfg DeferredIndex.tla RED" # a broken document is truncated and forgotten (INV_ReadExact)
+  "MC_DeferredIndex_Red_FullPlanStuck.cfg DeferredIndex.tla RED" # a full plan of broken documents writes nothing and holds the rest (PROP_HealthyDrains)
+  "MC_DeferredIndex_Red_UncappedPlan.cfg DeferredIndex.tla RED" # a full plan doubles the cap with no limit (INV_PlanBounded)
+  "MC_DeferredIndexMode_Green.cfg DeferredIndexMode.tla GREEN" # an index kept the other way on an earlier start is rebuilt at open
+  "MC_DeferredIndexMode_Red_NoCheck.cfg DeferredIndexMode.tla RED" # no check at open: inline entries open deferred with no records (INV_OpenMatchesMode)
+  "MC_DeferredIndexMode_Red_OneWay.cfg DeferredIndexMode.tla RED" # the check misses a deferred index that opens inline (INV_OpenMatchesMode)
+  "MC_DeferredIndexMode_Red_KeepRecords.cfg DeferredIndexMode.tla RED" # an inline rebuild keeps stale records that hide the next change (INV_OpenMatchesMode)
+  "MC_DeferredIndexMode_Red_NoProgressReset.cfg DeferredIndexMode.tla RED" # a rebuild resumed under the other way mixes both (INV_OpenMatchesMode)
+  "MC_DeferredIndexMode_Red_BackfillFirst.cfg DeferredIndexMode.tla RED" # a stopped backfill resumes before the check, which then misses it (INV_OpenMatchesMode)
+  "MC_DeferredDrainTask_Green.cfg DeferredDrainTask.tla GREEN" # owed work is always asked for, and a quiet index settles under steady traffic
+  "MC_DeferredDrainTask_Red_StopAtFailure.cfg DeferredDrainTask.tla RED" # a failing index ends the pass and the rest is forgotten (INV_OwedKept)
+  "MC_DeferredDrainTask_Red_DropFailed.cfg DeferredDrainTask.tla RED" # a failed drain drops its request (INV_OwedKept)
+  "MC_DeferredDrainTask_Red_NoRequeue.cfg DeferredDrainTask.tla RED" # an index with work left after its turn does not ask again (INV_OwedKept)
+  "MC_DeferredDrainTask_Red_SilentPurge.cfg DeferredDrainTask.tla RED" # a purge owes without asking for a drain (INV_OwedKept)
+  "MC_DeferredDrainTask_Red_RearmSweep.cfg DeferredDrainTask.tla RED" # each pass restarts the sweep timer, so steady traffic holds it off (PROP_QuietSettles)
+  "MC_DeferredDrainTask_Red_NoSweep.cfg DeferredDrainTask.tla RED" # no sweep, as on wasm: a failed index is never retried (PROP_QuietSettles)
+  "MC_DeferredDrainTask_Red_RequestFirst.cfg DeferredDrainTask.tla RED" # a stored request beats a due sweep every time (PROP_QuietSettles)
+  "MC_DeferredDrainTask_Red_AskPerDoc.cfg DeferredDrainTask.tla RED" # a batch registers a commit callback per document it owes (INV_OneAsk)
+  "MC_DeferredDrainTask_Red_SharedNote.cfg DeferredDrainTask.tla RED" # the note that a batch asked outlives its attempt, so a later commit never asks (INV_OwedKept)
   "MC_DocumentMaterialization_Red_Overwrite.cfg DocumentMaterialization.tla RED" # active rematerialization must not clear delete marker
   "MC_DocumentMaterialization_Green.cfg DocumentMaterialization.tla GREEN" # deletion marker is componentwise/absorbing
   "MC_PushLogAdmission_Green.cfg MC_PushLogAdmission_Common.tla GREEN" # #1088 W1: capacity overflow nacks -> success implies registered-or-merged + all docs merge

@@ -50,10 +50,20 @@
   },
   {
     "id": "go.index.definition.accumulated-crdt",
-    "verdict": "missing",
-    "rust_tests": [],
+    "verdict": "diverges",
+    "rust_tests": [
+      "tools/integration-test/tests/index/crdt.rs::index_new_with_lww_field_should_succeed",
+      "tools/integration-test/tests/index/crdt.rs::index_new_with_collection_level_index_on_pn_counter_should_succeed",
+      "tools/integration-test/tests/index/crdt.rs::index_new_with_composite_index_including_pn_counter_should_succeed",
+      "tools/integration-test/tests/index/crdt.rs::index_new_with_p_counter_field_should_succeed",
+      "tools/integration-test/tests/index/crdt.rs::index_new_with_p_counter_field_via_directive_should_succeed",
+      "tools/integration-test/tests/index/crdt.rs::index_new_with_pn_counter_field_should_succeed",
+      "tools/integration-test/tests/index/crdt.rs::index_new_with_pn_counter_field_via_directive_should_succeed",
+      "tools/integration-test/tests/index/crdt.rs::index_new_with_pn_counter_float_field_should_succeed",
+      "tools/integration-test/tests/index/crdt.rs::index_new_with_unique_index_on_pn_counter_should_succeed"
+    ],
     "evidence": "",
-    "note": "Rejection exists in crates/db/src/index/manager/mod.rs:360 and crates/schema/src/definition_validation/global_validators.rs:524 but no test asserts it: rg for 'accumulated CRDT', 'counter.*@index' and validate_index_fields_not_counter in test code finds nothing. crates/db/tests/write/doc_suite.rs:976 builds an indexed counter collection directly (bypassing validation), so it does not assert either outcome."
+    "note": "Rust indexes counter fields on purpose (defra.index.counter); Go rejects them. The crdt.rs scenarios expect success and are known failures under go-http."
   },
   {
     "id": "go.index.definition.patch-immutable",

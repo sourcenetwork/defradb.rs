@@ -66,6 +66,8 @@ getrandom = { version = "0.2", features = ["js"] }
 futures.workspace = true
 # The page's one worker, driven by the browser's event loop.
 workers = { path = "../workers" }
+# The deferred index drain sweeps on a browser timer.
+gloo-timers = { version = "0.4", features = ["futures"] }
 query = { path = "../query" }
 events = { path = "../events", features = ["channel"] }
 # The browser's event loop behind the network runtime handle P2P runs on.

@@ -21,19 +21,30 @@ impl<S: Store + 'static> LensedDocFetcher<S> {
         params: &IndexScanParams,
         cap: u64,
     ) -> query::error::Result<Option<u64>> {
-        let (collection, datastore, _) =
+        let (collection, datastore, systemstore) =
             get_collection_with_lazy_load(&*self.shared_txn()?, collection_name).await?;
         let index_manager = IndexManager::from_indexes(
             collection.resolved_root_id(),
             collection.schema(),
             collection.write_indexes(),
+            collection.crdts(),
         )
         .map_err(|e| query::error::QueryError::execution(format!("index manager error: {}", e)))?;
-        let Some(index) = index_manager.get_index(&params.index_name) else {
+        let Some(index) = index_manager
+            .read_index(
+                &datastore,
+                &systemstore,
+                Some(&self.lens_store),
+                &collection,
+                &params.index_name,
+            )
+            .await
+            .map_err(|e| query::error::QueryError::execution(e.to_string()))?
+        else {
             return Ok(None);
         };
         let count = crate::read::index_count::count_index_scan(
-            index,
+            &index,
             &datastore,
             &params.scan_type,
             usize::try_from(cap).unwrap_or(usize::MAX),
@@ -60,21 +71,35 @@ impl<S: Store + 'static> LensedDocFetcher<S> {
             get_collection_with_lazy_load(&*self.shared_txn()?, collection_name).await?;
 
         let short_id = collection.resolved_root_id();
-        let index_manager =
-            IndexManager::from_indexes(short_id, collection.schema(), collection.write_indexes())
-                .map_err(|e| {
-                query::error::QueryError::execution(format!(
-                    "failed to create index manager for collection '{}': {}",
-                    collection_name, e
-                ))
-            })?;
-
-        let index = index_manager.get_index(&params.index_name).ok_or_else(|| {
+        let index_manager = IndexManager::from_indexes(
+            short_id,
+            collection.schema(),
+            collection.write_indexes(),
+            collection.crdts(),
+        )
+        .map_err(|e| {
             query::error::QueryError::execution(format!(
-                "index '{}' not found on collection '{}'",
-                params.index_name, collection_name
+                "failed to create index manager for collection '{}': {}",
+                collection_name, e
             ))
         })?;
+
+        let index = index_manager
+            .read_index(
+                &datastore,
+                &systemstore,
+                Some(&self.lens_store),
+                &collection,
+                &params.index_name,
+            )
+            .await
+            .map_err(|e| query::error::QueryError::execution(e.to_string()))?
+            .ok_or_else(|| {
+                query::error::QueryError::execution(format!(
+                    "index '{}' not found on collection '{}'",
+                    params.index_name, collection_name
+                ))
+            })?;
 
         let limit = params.limit;
         let offset = params.offset;

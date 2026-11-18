@@ -55,6 +55,8 @@ pub struct DbOptions {
     /// The embedder's check on replicated documents before their commits
     /// store anything. `None` keeps every document.
     pub replication_filter: Option<Arc<dyn crate::replication_filter::ReplicationFilter>>,
+    /// How often the deferred index drain sweeps every index. `None` is five seconds.
+    pub deferred_index_sweep: Option<std::time::Duration>,
     /// The gate every index backfill passes before each batch. `None` lets
     /// every batch run.
     pub index_build_gate: Option<Arc<dyn crate::index::build_gate::IndexBuildGate>>,
@@ -81,6 +83,7 @@ impl std::fmt::Debug for DbOptions {
             )
             .field("pool", &self.pool)
             .field("replication_filter", &self.replication_filter.is_some())
+            .field("deferred_index_sweep", &self.deferred_index_sweep)
             .field("index_build_gate", &self.index_build_gate.is_some())
             .finish()
     }
@@ -113,6 +116,18 @@ impl DbOptions {
     /// Returns the maximum number of transaction retries.
     pub fn max_txn_retries(&self) -> u32 {
         self.max_txn_retries.unwrap_or(DEFAULT_MAX_TXN_RETRIES)
+    }
+
+    /// Sets how often the deferred index drain sweeps every index.
+    pub fn with_deferred_index_sweep(mut self, every: std::time::Duration) -> Self {
+        self.deferred_index_sweep = Some(every);
+        self
+    }
+
+    /// How often the deferred index drain sweeps every index.
+    pub fn deferred_index_sweep(&self) -> std::time::Duration {
+        self.deferred_index_sweep
+            .unwrap_or(std::time::Duration::from_secs(5))
     }
 
     /// Asks `filter` whether to keep each replicated document.
@@ -206,6 +221,8 @@ pub struct DB<S: Store> {
     pub(crate) collections: Arc<crate::collection::epoch::EpochedCollections>,
     /// PQ codes of resident-codes DiskANN indexes, shared by every search.
     pub(crate) vector_codes: Arc<crate::index::vector::engine::diskann::CodeCaches>,
+    /// The deferred indexes a commit owes a drain.
+    pub(crate) deferred_drains: crate::index::deferred::DrainRequests,
     document_projector: regolith::sync::OnceCell<Arc<dyn datastore::DocumentMutationProjector>>,
     /// Event bus for subscription notifications.
     event_bus: Option<Arc<dyn Bus>>,
@@ -303,6 +320,7 @@ impl<S: Store> DB<S> {
             closed: AtomicBool::new(false),
             closing: regolith::sync::Event::new(),
             commit_fences: Arc::default(),
+            deferred_drains: Default::default(),
             collections: Arc::new(crate::collection::epoch::EpochedCollections::new(
                 crate::collection::CollectionMap::default(),
             )),
@@ -378,6 +396,7 @@ impl<S: Store> DB<S> {
             closed: AtomicBool::new(false),
             closing: regolith::sync::Event::new(),
             commit_fences: Arc::default(),
+            deferred_drains: Default::default(),
             collections: Arc::new(crate::collection::epoch::EpochedCollections::new(
                 crate::collection::CollectionMap::default(),
             )),
@@ -446,6 +465,8 @@ impl<S: Store> DB<S> {
         // Counters move into their document part, so they need the part IDs the step above gives
         // collections written before part IDs existed.
         self.maybe_migrate_counter_accumulators().await?;
+        // Before the backfills resume, so one a crash stopped under the other way of
+        // keeping its index is rebuilt whole (`proofs/tla/DeferredIndexMode.tla`).
         self.migrate_index_format().await?;
         self.resume_index_drops().await?;
         // Interrupted backfills resume once the database is up
@@ -730,6 +751,7 @@ impl<S: Store> DB<S> {
         }
         DbTxn::of_database(basic_txn, self.vector_codes.clone())
             .with_shared_collections(Arc::clone(&self.collections))
+            .with_deferred_drains(self.deferred_drains.clone())
     }
 
     /// Install a trusted host projection before the database serves requests.
