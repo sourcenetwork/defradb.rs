@@ -105,7 +105,7 @@ Adding a document to `Article__body_chunk` fails with `Article__body_chunk holds
 - **Parents:** ["defra.chunk.protect"]
 - **Scenarios:** ["chunk::protect_admin_ops::index_changes_to_the_chunk_collection_are_refused", "chunk::protect_admin_ops::collection_changes_to_the_chunk_collection_are_refused"]
 
-Creating an index or an encrypted index on `Article__body_chunk`, or dropping its generated index, fails with `Article__body_chunk holds the chunks of Article.body and is changed only through Article`, and the generated index is still listed. Truncating `Article__body_chunk`, making its version active, and setting a migration from it fail with the same error. An index on `Article` is still created and `Article` can still be truncated.
+Creating an index or an encrypted index on `Article__body_chunk`, or dropping its generated index, fails with `Article__body_chunk holds the chunks of Article.body and is changed only through Article`, and the generated index is still listed. Making its version active and setting a migration from it fail with the same error. An index on `Article` is still created. Truncating `Article__body_chunk` is covered by `defra.chunk.protect.chunk_documents`.
 
 # `defra.chunk.protect.rename`: A patch cannot rename a parent or its chunk collection
 
