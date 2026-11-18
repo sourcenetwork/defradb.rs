@@ -7,7 +7,11 @@ use schema::CHUNK_SOURCE_ID_FIELD;
 use storage::corekv::Store;
 use storage::index::{IndexIterator, RangeIterator};
 
+use datastore::NamespaceView;
+
 use crate::collection::loader::get_collection_with_index_manager;
+use crate::collection::Collection;
+use crate::index::IndexManager;
 
 use super::{ChunkCollection, ChunkWrites};
 
@@ -41,6 +45,17 @@ where
     pub(super) async fn open(&self, name: &str) -> Result<ChunkCollection> {
         let (collection, datastore, systemstore, index_manager) =
             get_collection_with_index_manager(self.txn, name).await?;
+        ChunkCollection::new(collection, datastore, systemstore, index_manager)
+    }
+}
+
+impl ChunkCollection {
+    pub(crate) fn new(
+        collection: Collection,
+        datastore: NamespaceView,
+        systemstore: NamespaceView,
+        index_manager: IndexManager,
+    ) -> Result<Self> {
         let index_name = collection
             .schema()
             .indexes
@@ -53,9 +68,12 @@ where
             })
             .map(|index| index.name.clone())
             .ok_or_else(|| {
-                QueryError::execution(format!("chunk collection {name} has no source index"))
+                QueryError::execution(format!(
+                    "chunk collection {} has no source index",
+                    collection.name()
+                ))
             })?;
-        Ok(ChunkCollection {
+        Ok(Self {
             collection,
             datastore,
             systemstore,
@@ -66,13 +84,12 @@ where
 
     /// Which of the `planned` hashes `parent` already has a chunk document for.
     /// Only those are kept, since a parent's old chunks stay until it is deleted.
-    pub(super) async fn existing_of(
+    pub(crate) async fn existing_of(
         &self,
-        target: &ChunkCollection,
         parent: &str,
         planned: &RapidHashSet<&str>,
     ) -> Result<RapidHashSet<String>> {
-        let mut entries = self.scan_of(target, parent).await?;
+        let mut entries = self.scan_of(parent).await?;
         let mut existing = RapidHashSet::default();
         while let Some(entry) = entries
             .next()
@@ -92,13 +109,9 @@ where
         Ok(existing)
     }
 
-    pub(super) async fn chunks_of(
-        &self,
-        target: &ChunkCollection,
-        parent: &str,
-    ) -> Result<Vec<u64>> {
+    pub(super) async fn chunks_of(&self, parent: &str) -> Result<Vec<u64>> {
         let entries = self
-            .scan_of(target, parent)
+            .scan_of(parent)
             .await?
             .collect_all()
             .await
@@ -109,14 +122,14 @@ where
             .collect())
     }
 
-    async fn scan_of(&self, target: &ChunkCollection, parent: &str) -> Result<RangeIterator> {
-        let index = target
+    async fn scan_of(&self, parent: &str) -> Result<RangeIterator> {
+        let index = self
             .index_manager
-            .get_index(&target.index_name)
+            .get_index(&self.index_name)
             .ok_or_else(|| QueryError::execution("chunk source index is not loaded"))?;
         index
             .scan_prefix(
-                &target.datastore,
+                &self.datastore,
                 &[NormalValue::String(parent.to_string())],
                 false,
             )

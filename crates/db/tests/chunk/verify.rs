@@ -1,4 +1,4 @@
-//! Who may fetch a chunk block with its signature: whoever may read the parent.
+//! Who may fetch a signed chunk block: whoever may read the parent.
 
 use std::sync::Arc;
 
@@ -90,36 +90,37 @@ async fn verify(
 }
 
 #[test]
-fn only_a_reader_of_the_parent_gets_a_signed_chunk_block() {
+fn a_chunk_block_is_unsigned_so_its_id_is_the_same_on_every_node() {
     workers::block_on(async {
-        let (db, created, acp) = author().await;
+        let (db, created, _) = author().await;
+        let blocks = DefraBlockstore::new(db.store().clone(), false);
         for chunk in &created.derived {
-            let cid = &chunk.commit_cid;
-            verify(&db, &acp, cid, &identity(OWNER)).await.unwrap();
-            for denied in [identity(STRANGER), Identity::Anonymous] {
-                let error = verify(&db, &acp, cid, &denied).await.unwrap_err();
-                assert!(error.contains("missing permission"), "{error}");
-            }
+            let bytes = blocks.get(&chunk.commit_cid).await.unwrap().unwrap();
+            let block = defra_core::Block::from_dag_cbor(&bytes).unwrap();
+            assert!(block.signature.is_none());
         }
     })
     .unwrap()
 }
 
 #[test]
-fn a_deleted_parent_keeps_its_chunk_history_behind_the_same_gate() {
+fn only_a_reader_of_the_parent_gets_a_signed_chunk_delete_block() {
     workers::block_on(async {
         let (db, created, acp) = author().await;
-        AutoCommitMutator::new(Arc::clone(&db))
+        sign_writes();
+        let deleted = AutoCommitMutator::new(Arc::clone(&db))
             .delete("Article", &created.doc_id)
             .await
             .unwrap();
-        for chunk in &created.derived {
+        set_signing_config(None);
+        assert!(!deleted.derived.is_empty());
+        for chunk in &deleted.derived {
             let cid = &chunk.commit_cid;
             verify(&db, &acp, cid, &identity(OWNER)).await.unwrap();
-            let error = verify(&db, &acp, cid, &identity(STRANGER))
-                .await
-                .unwrap_err();
-            assert!(error.contains("missing permission"), "{error}");
+            for denied in [identity(STRANGER), Identity::Anonymous] {
+                let error = verify(&db, &acp, cid, &denied).await.unwrap_err();
+                assert!(error.contains("missing permission"), "{error}");
+            }
         }
     })
     .unwrap()
@@ -144,9 +145,6 @@ fn a_chunk_block_whose_parent_has_not_merged_is_refused_to_everyone() {
             let data = source_blocks.get(&link.link).await.unwrap().unwrap();
             blockstore.put(&link.link, &data).await.unwrap();
         }
-        let signature = block.signature.unwrap();
-        let data = source_blocks.get(&signature).await.unwrap().unwrap();
-        blockstore.put(&signature, &data).await.unwrap();
         blockstore.put(&chunk.commit_cid, &bytes).await.unwrap();
         let outcome = handler
             .handle_block(
@@ -164,9 +162,34 @@ fn a_chunk_block_whose_parent_has_not_merged_is_refused_to_everyone() {
             .unwrap();
         assert!(outcome.is_merged(), "{outcome:?}");
 
+        // The chunk's own blocks are unsigned, so its signed delete is what a caller fetches.
+        sign_writes();
+        let deleted = AutoCommitMutator::new(Arc::clone(&source))
+            .delete("Article", &created.doc_id)
+            .await
+            .unwrap();
+        set_signing_config(None);
+        let delete = deleted
+            .derived
+            .iter()
+            .find(|write| write.doc_id == chunk.doc_id)
+            .unwrap();
+        let bytes = source_blocks
+            .get(&delete.commit_cid)
+            .await
+            .unwrap()
+            .unwrap();
+        let signature = defra_core::Block::from_dag_cbor(&bytes)
+            .unwrap()
+            .signature
+            .unwrap();
+        let data = source_blocks.get(&signature).await.unwrap().unwrap();
+        blockstore.put(&signature, &data).await.unwrap();
+        blockstore.put(&delete.commit_cid, &bytes).await.unwrap();
+
         let acp = Arc::new(LocalDocumentACP::new(Arc::new(MemoryAcpStore::new())));
         for caller in [identity(OWNER), Identity::Anonymous] {
-            let error = verify(&peer, &acp, &chunk.commit_cid, &caller)
+            let error = verify(&peer, &acp, &delete.commit_cid, &caller)
                 .await
                 .unwrap_err();
             assert!(error.contains("parent is not known here"), "{error}");

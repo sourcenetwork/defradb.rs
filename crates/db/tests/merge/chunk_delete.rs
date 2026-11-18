@@ -253,12 +253,16 @@ fn a_parent_delete_and_its_chunk_deletes_merge_on_a_peer() {
         .unwrap();
         assert!(merged.is_merged(), "{merged:?}");
         assert!(!created.derived.is_empty());
+        // The peer built the same chunks when it merged the parent.
         for chunk in &created.derived {
             let merged =
                 merge_outcome(&author, &peer, &chunk.commit_cid, &chunk.doc_id.to_string())
                     .await
                     .unwrap();
-            assert!(merged.is_merged(), "{merged:?}");
+            assert!(
+                matches!(&merged, MergeOutcome::Skipped { reason, .. } if MergeOutcome::skip_reason_is_applied(reason)),
+                "{merged:?}"
+            );
         }
         assert_eq!(shown(&peer).await.len(), created.derived.len());
 

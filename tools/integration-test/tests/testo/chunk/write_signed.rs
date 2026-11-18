@@ -1,4 +1,4 @@
-//! A node that signs its blocks signs the chunks and keeps the parent's chunks exact (`defra.chunk.write.signed`).
+//! A node that signs its blocks leaves the chunks unsigned and keeps the parent's chunks exact (`defra.chunk.write.signed`).
 
 use integration_test::actions::{Actions, NewNode, Request};
 use integration_test::m;
@@ -40,8 +40,8 @@ fn list_is_signed(capture: &str) -> Actions {
     .into()
 }
 
-/// The text block of the first chunk carries a signature.
-fn a_chunk_is_signed() -> Vec<Actions> {
+/// The text block of the first chunk carries no signature, so its ID is the same on every node.
+fn a_chunk_is_unsigned() -> Vec<Actions> {
     vec![
         Request {
             request: format!("query {{ {CHUNKS} {{ _docID }} }}").into(),
@@ -58,7 +58,7 @@ fn a_chunk_is_signed() -> Vec<Actions> {
                 Text::reference("chunk"),
                 Text::from(r#"", filter: {fieldName: {_eq: "text"}}) { signature { type } } }"#),
             ]),
-            expected_data: json!({ "_commits": [{ "signature": { "type": m::nonempty_string() } }] }),
+            expected_data: json!({ "_commits": [{ "signature": null }] }),
             ..Default::default()
         }
         .into(),
@@ -93,7 +93,7 @@ fn a_signing_node_stores_the_list_of_the_first_update() {
             chunks_are_listed("updated", UPDATED, None),
         ]
         .into_iter()
-        .chain(a_chunk_is_signed())
+        .chain(a_chunk_is_unsigned())
         .collect(),
     )
     .execute();
