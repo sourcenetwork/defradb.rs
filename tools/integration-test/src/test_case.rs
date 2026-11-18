@@ -6,12 +6,13 @@ use defra_node::Node;
 use rapidhash::RapidHashMap;
 use regolith::sync::Atom;
 use serde_json::Value;
-use testo::multiplier::get_active_multipliers;
+use testo::multiplier::{get_active_multipliers, SkipReason};
 use testo::prelude::*;
 
 use crate::actions::Actions;
 use crate::client_type::ClientType;
 use crate::export;
+use crate::multiplier::TestMultiplier;
 use crate::nodes::{NodeSpec, TestNode};
 use crate::scenario::{Bindings, Failure};
 
@@ -366,8 +367,21 @@ impl TestCase {
             eprintln!("skipped: runs only under {:?}", self.client_types);
             return;
         }
+        let multipliers = TestMultiplier::active();
+        let multipliers: Vec<&TestMultiplier> = multipliers.iter().collect();
+        let skip = testo::multiplier::skip::<State, Actions, Actions, TestMultiplier>(
+            &self.actions,
+            &multipliers,
+            &[],
+            &[],
+        );
+        if let SkipReason::Skip(reason) = skip {
+            eprintln!("skipped: {reason}");
+            return;
+        }
         trace_from_env();
-        let actions = with_stub_embedder(&self.actions);
+        let actions = testo::multiplier::apply(&self.actions, &multipliers);
+        let actions = with_stub_embedder(&actions);
         for client_type in clients {
             let actions = client_type.apply(&actions);
             drop(testo::action::execute(State::default(), &actions));
