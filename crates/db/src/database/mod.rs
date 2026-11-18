@@ -746,8 +746,7 @@ impl<S: Store> DB<S> {
         let Some(projector) = self.document_projector.get() else {
             return Ok(());
         };
-        let context = defra_core::RequestContext::default()
-            .with_identity(projector.actor().map(str::to_owned));
+        let context = defra_core::RequestContext::default();
         let inputs = query::prepared::PreparedInputMemo::default();
         loop {
             let txn = self.new_txn(false).await?;

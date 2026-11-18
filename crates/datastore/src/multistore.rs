@@ -20,9 +20,6 @@ use storage::namespace::Namespace;
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait DocumentMutationProjector: storage::corekv::MaybeSendSync {
-    fn actor(&self) -> Option<&str> {
-        None
-    }
     /// Reconcile existing documents on startup before network service begins.
     async fn reconcile(&self, view: &NamespaceView) -> Result<()>;
 
