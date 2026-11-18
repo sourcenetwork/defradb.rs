@@ -13,6 +13,10 @@ pub const CHUNK_SOURCE_ID_FIELD: &str = "_sourceID";
 pub const CHUNK_TEXT_FIELD: &str = "text";
 /// Hex SHA-256 of the chunk's text, its identity within the parent.
 pub const CHUNK_HASH_FIELD: &str = "hash";
+/// How many times the parent's chunk of this hash was deleted before this one
+/// was made. A deleted ID can't be used again, so each remake needs its own.
+/// The first is unset, so its ID does not change.
+pub const CHUNK_GENERATION_FIELD: &str = "generation";
 
 /// Name of the collection generated for `field` of `collection`.
 pub fn chunk_collection_name(collection: &str, field: &str) -> String {

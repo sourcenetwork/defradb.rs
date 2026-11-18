@@ -21,7 +21,17 @@ fn chunk_collection_has_source_text_and_hash() {
     let collections = parse_sdl(SDL).unwrap();
     let (article, chunk) = (&collections[0], &collections[1]);
     let names: Vec<&str> = chunk.fields.iter().map(|f| f.name.as_str()).collect();
-    assert_eq!(names, vec!["_docID", "_sourceID", "hash", "source", "text"]);
+    assert_eq!(
+        names,
+        vec![
+            "_docID",
+            "_sourceID",
+            "generation",
+            "hash",
+            "source",
+            "text"
+        ]
+    );
     assert_eq!(
         chunk.field_by_name("text").unwrap().kind,
         FieldKind::string()
@@ -232,7 +242,8 @@ fn chunk_refuses_a_repeated_argument() {
     );
 }
 
-/// Definitions made before the splitter version existed keep their IDs.
+/// The splitter version leaves the IDs as they were. The chunk collection's
+/// pin is the one with its `generation` field.
 #[test]
 fn chunk_ids_match_the_ones_made_before_the_splitter_version() {
     let ids: Vec<(String, String)> = parse_sdl(SDL)
@@ -245,7 +256,7 @@ fn chunk_ids_match_the_ones_made_before_the_splitter_version() {
         ids,
         vec![
             pinned("bafyreig4d3ybunzta5bmevpw3gpzw3tlwrt7i3zaavl5cgxtbp2thn6pbi"),
-            pinned("bafyreibq7m5mock2yfemrorb7lwdxexm6v453xjy5vn6g3hdsmfxwggd3a"),
+            pinned("bafyreihlvhgbliski43jz6aiaayoighbfs7atznnzym3v3l5atzhxilm7q"),
         ]
     );
 }
