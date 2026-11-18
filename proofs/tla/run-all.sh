@@ -391,6 +391,8 @@ RUNS=(
   "MC_StickyDisconnect_Red_DropRedials.cfg StickyDisconnect.tla RED" # witness: discovery still mends a real drop (NoRedialAfterDrop)
   "MC_StickyDisconnect_Green_Vinc.cfg StickyDisconnect.tla GREEN" # #2992 vinc: the close carries CLOSE_DISCONNECTED, so neither side of a hang-up discovery-dials the other back
   "MC_StickyDisconnect_Red_VincLocalLoud.cfg StickyDisconnect.tla RED" # vinc with the local half removed: the node that hung up dials back (NoRedialAfterDeliberateClose)
+  "MC_StickyDisconnect_Red_KeepsQuiet.cfg StickyDisconnect.tla RED" # an explicit connect lifts no quiet: a disconnected then reconnected peer stays unmendable (UnquietOnConnect)
+  "MC_StickyDisconnect_Red_EveryDialChecked.cfg StickyDisconnect.tla RED" # the quiet check refuses every dial: a PushLog to a disconnected peer never lands (RequestsStillDial)
   "MC_SchemaPublication_Green.cfg SchemaPublication.tla GREEN"
   "MC_SchemaPublication_Red_EarlyReply.cfg SchemaPublication.tla RED"
   "MC_ChunkSettingsSync_Green.cfg ChunkSettingsSync.tla GREEN"
