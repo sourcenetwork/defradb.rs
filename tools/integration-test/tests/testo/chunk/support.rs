@@ -23,6 +23,31 @@ pub fn body(n: usize, topic: &str) -> String {
         .join("\n\n")
 }
 
+/// The chunk texts of `body`. A chunk keeps the blank line that follows its paragraph.
+pub fn texts(body: &str) -> Vec<Value> {
+    body.split_inclusive("\n\n")
+        .map(|text| json!(text))
+        .collect()
+}
+
+/// `Article__body_chunk` holds exactly the chunks of `bodies`, one set per parent.
+pub fn chunk_texts_are(bodies: &[&str], node: Option<&str>) -> Actions {
+    let rows: Vec<Value> = bodies
+        .iter()
+        .flat_map(|body| texts(body))
+        .map(|text| json!({ "text": text }))
+        .collect();
+    let mut common = on(node);
+    common.unordered = vec![format!("/data/{CHUNKS}")];
+    Request {
+        request: format!("query {{ {CHUNKS} {{ text }} }}").into(),
+        expected_data: json!({ CHUNKS: rows }),
+        common,
+        ..Default::default()
+    }
+    .into()
+}
+
 /// `body` escaped for a GraphQL string.
 pub fn gql(body: &str) -> String {
     body.replace('\n', "\\n")
@@ -211,6 +236,17 @@ pub fn without_default_node(actions: Vec<Actions>) -> TestCase {
     let mut case = TestCase::from_actions(actions);
     case.without_db = true;
     case
+}
+
+/// Runs a request inside explicit transaction `txn`.
+pub fn in_txn(action: Actions, txn: usize) -> Actions {
+    match action {
+        Actions::Request(mut request) => {
+            request.txn = Some(txn);
+            request.into()
+        }
+        other => other,
+    }
 }
 
 /// Runs a read as client identity `seed`.
