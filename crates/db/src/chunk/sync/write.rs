@@ -17,6 +17,27 @@ use crate::write::autocommit::helpers::{register_created_doc, write_local_create
 
 use super::{json, ChunkCollection, ChunkWrites};
 
+/// The chunk of `parent` holding `text`, not yet written.
+pub(crate) fn chunk_document(
+    collection: &Collection,
+    parent: &str,
+    text: String,
+    hash: &str,
+) -> Result<Document> {
+    let mut doc = Document::new(collection.schema_arc());
+    let invalid = |e: document::Error| QueryError::execution(format!("chunk document: {e}"));
+    doc.set(
+        CHUNK_SOURCE_ID_FIELD,
+        NormalValue::String(parent.to_string()),
+    )
+    .map_err(invalid)?;
+    doc.set(CHUNK_TEXT_FIELD, NormalValue::String(text))
+        .map_err(invalid)?;
+    doc.set(CHUNK_HASH_FIELD, NormalValue::String(hash.to_string()))
+        .map_err(invalid)?;
+    Ok(doc)
+}
+
 impl<S> ChunkWrites<'_, S>
 where
     S: Store + 'static,
@@ -66,17 +87,7 @@ where
         encrypt: bool,
     ) -> Result<DerivedWrite> {
         let collection = &target.collection;
-        let mut doc = Document::new(collection.schema_arc());
-        let invalid = |e: document::Error| QueryError::execution(format!("chunk document: {e}"));
-        doc.set(
-            CHUNK_SOURCE_ID_FIELD,
-            NormalValue::String(parent.to_string()),
-        )
-        .map_err(invalid)?;
-        doc.set(CHUNK_TEXT_FIELD, NormalValue::String(text))
-            .map_err(invalid)?;
-        doc.set(CHUNK_HASH_FIELD, NormalValue::String(hash.clone()))
-            .map_err(invalid)?;
+        let mut doc = chunk_document(collection, parent, text, &hash)?;
 
         let encryption = encrypt.then(|| EncryptionConfig {
             encrypt_doc: true,
@@ -114,8 +125,9 @@ where
             identity,
             None,
             encryption.as_ref(),
-            self.context.signing(),
-            self.context.batch_session(),
+            // Unsigned, so every node builds the same blocks and DocID for a chunk.
+            None,
+            None,
             self.db.kms().as_ref(),
             self.prepared_inputs,
             None,
