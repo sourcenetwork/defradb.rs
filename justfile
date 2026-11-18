@@ -557,14 +557,19 @@ test-features:
     cargo nextest run -p cli --cargo-profile {{ profile }} --features otel --test telemetry_dedup
     cargo nextest run -p defra-node --cargo-profile {{ profile }} --features p2p
 
+# The WASM lens modules in tools/lenses that integration tests load.
+[group('test')]
+build-lenses:
+    cargo build --manifest-path tools/lenses/Cargo.toml --target wasm32-unknown-unknown
+
 # Every integration area, serially. Each spawns real nodes.
 [group('test')]
-integration:
+integration: build-lenses
     cargo nextest run -p integration-test --cargo-profile {{ profile }}
 
 # One integration area: `just integration-suite acp`, `just integration-suite p2p`.
 [group('test')]
-integration-suite suite *args:
+integration-suite suite *args: build-lenses
     cargo nextest run -p integration-test -E 'test(/^{{ suite }}::/) | binary({{ suite }})' --cargo-profile {{ profile }} {{ args }}
 
 # The basic and query areas with every node's data path on a one-worker pool

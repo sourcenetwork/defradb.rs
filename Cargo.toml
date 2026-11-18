@@ -46,6 +46,7 @@ members = [
     "proofs",
     "benches",
 ]
+exclude = ["tools/lenses"]
 
 [workspace.package]
 version = "0.5.0"
