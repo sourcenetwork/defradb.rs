@@ -71,7 +71,7 @@ fn col_version_update_remove_collection_source_transform() {
             }
             .into(),
         ],
-        // TODO(ISSUE): removing the transform leaves the migrated value the reindex wrote.
+        // TODO(https://github.com/sourcenetwork/defradb.rs/issues/3052): removing the transform leaves the migrated value the reindex wrote.
         multiplier_excludes: &["secondary-index"],
         ..Default::default()
     }
