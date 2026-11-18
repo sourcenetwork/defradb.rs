@@ -4,7 +4,7 @@
 use std::time::Instant;
 
 use acp::DocumentACP as _;
-use defra_node::{DocumentPermission, QueryRequest};
+use defra_node::{DocumentPermission, QueryRequest, QueryResponse};
 use identity::Did;
 
 use super::actor::Actor;
@@ -12,8 +12,14 @@ use super::peer::Peer;
 use super::wait::{pause, PATIENCE};
 
 impl Peer {
-    /// `actor`'s permission on `doc` as this peer's Vera node answers it.
-    pub async fn may(&self, actor: &Did, permission: DocumentPermission, doc: &str) -> bool {
+    /// `actor`'s permission on `doc` as this peer's Vera node answers it,
+    /// or the error it gives instead.
+    pub async fn may(
+        &self,
+        actor: &Did,
+        permission: DocumentPermission,
+        doc: &str,
+    ) -> acp::Result<bool> {
         self.node
             .vera_acp()
             .expect("vera.rs document ACP")
@@ -25,7 +31,21 @@ impl Peer {
                 doc,
             )
             .await
-            .unwrap_or(false)
+    }
+
+    /// [`Self::may`], asked again while the provider is unavailable, failing
+    /// on any other error: an answer, never an error read as a denial.
+    pub async fn answer(&self, actor: &Did, permission: DocumentPermission, doc: &str) -> bool {
+        let deadline = Instant::now() + PATIENCE;
+        loop {
+            match self.may(actor, permission, doc).await {
+                Ok(allowed) => return allowed,
+                Err(error) if transient(&error.to_string()) && Instant::now() < deadline => {
+                    pause().await
+                }
+                Err(error) => panic!("{permission:?} on {doc} for {actor}: {error}"),
+            }
+        }
     }
 
     /// Who this peer's Vera node says owns `doc`, if it answers.
@@ -67,15 +87,14 @@ impl Peer {
             .expect("revoke");
     }
 
-    /// The `Users` rows `reader` sees, by document ID.
+    /// The `Users` rows `reader` sees, by document ID. The query is asked
+    /// again while the provider is unavailable, and fails on any other
+    /// error. A row the provider could not decide is left out without an
+    /// error, as the permission filter fails closed.
     pub async fn rows(&self, reader: &Did) -> Vec<Row> {
-        let response = self
-            .node
-            .execute_request(
-                QueryRequest::new("{ Users { _docID name points } }")
-                    .with_identity(Some(reader.clone())),
-            )
-            .await;
+        let request = QueryRequest::new("{ Users { _docID name points } }")
+            .with_identity(Some(reader.clone()));
+        let response = self.answered(request).await;
         assert!(!response.has_errors(), "{:?}", response.errors);
         let mut rows: Vec<Row> = response.data.expect("data")["Users"]
             .as_array()
@@ -104,23 +123,33 @@ impl Peer {
         self.row(reader, doc).await.and_then(|row| row.points)
     }
 
+    /// The points of `doc`, which `reader` may read: read again while the
+    /// row is left out, as it is for a moment when the provider cannot
+    /// decide it, failing after [`PATIENCE`]. A value read is returned at
+    /// once, so a wrong one fails its check at once.
+    pub async fn visible_points(&self, reader: &Did, doc: &str) -> i64 {
+        let deadline = Instant::now() + PATIENCE;
+        loop {
+            if let Some(points) = self.points(reader, doc).await {
+                return points;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "{reader} cannot read the points of {doc}"
+            );
+            pause().await;
+        }
+    }
+
     /// The composite commits this peer holds merged for `doc`, sorted. The
     /// query decides the history's access through the node's provider, and
-    /// is asked again while that decision fails, as on a loaded machine the
-    /// provider can be too late to answer for a moment.
+    /// is asked again while the provider is unavailable.
     pub async fn commits(&self, reader: &Did, doc: &str) -> Vec<String> {
         let request = QueryRequest::new(format!(
             "{{ _commits(docID: \"{doc}\", filter: {{fieldName: {{_eq: \"_C\"}}}}) {{ cid }} }}"
         ))
         .with_identity(Some(reader.clone()));
-        let deadline = Instant::now() + PATIENCE;
-        let response = loop {
-            let response = self.node.execute_request(request.clone()).await;
-            if !response.has_errors() || Instant::now() >= deadline {
-                break response;
-            }
-            pause().await;
-        };
+        let response = self.answered(request).await;
         assert!(!response.has_errors(), "{:?}", response.errors);
         let mut cids: Vec<String> = response.data.expect("data")["_commits"]
             .as_array()
@@ -130,6 +159,19 @@ impl Peer {
             .collect();
         cids.sort();
         cids
+    }
+
+    /// The response to `request`, asked again while it fails only because
+    /// the provider is unavailable, until [`PATIENCE`] has passed.
+    async fn answered(&self, request: QueryRequest) -> QueryResponse {
+        let deadline = Instant::now() + PATIENCE;
+        loop {
+            let response = self.node.execute_request(request.clone()).await;
+            if !unavailable(&response) || Instant::now() >= deadline {
+                return response;
+            }
+            pause().await;
+        }
     }
 
     /// Run `request` and return the document it names, failing on an error.
@@ -150,33 +192,36 @@ impl Peer {
     /// the request deadline, or its newest state past the light client's
     /// freshness limit, for a moment.
     pub async fn write_while_unavailable(&self, request: QueryRequest, field: &str) -> String {
-        let deadline = Instant::now() + PATIENCE;
-        loop {
-            let response = self.node.execute_request(request.clone()).await;
-            let unavailable = response.errors.iter().any(|error| {
-                error.message.contains("ACP provider unavailable")
-                    || error.message.contains("Vera: no answer within")
-            });
-            if !unavailable || Instant::now() >= deadline {
-                assert!(!response.has_errors(), "{field}: {:?}", response.errors);
-                return response.data.expect("data")[field][0]["_docID"]
-                    .as_str()
-                    .expect("document ID")
-                    .to_owned();
-            }
-            pause().await;
-        }
+        let response = self.answered(request).await;
+        assert!(!response.has_errors(), "{field}: {:?}", response.errors);
+        response.data.expect("data")[field][0]["_docID"]
+            .as_str()
+            .expect("document ID")
+            .to_owned()
     }
 
-    /// Whether `request` changed a document: false when it was refused with
-    /// an error or found nothing it may change.
-    pub async fn wrote(&self, request: QueryRequest, field: &str) -> bool {
-        let response = self.node.execute_request(request).await;
-        !response.has_errors()
-            && response
-                .data
-                .and_then(|data| data[field].as_array().map(|rows| !rows.is_empty()))
-                .unwrap_or(false)
+    /// Run `request`, asked again while the provider is unavailable, and
+    /// return what it changed: the documents it names, or the errors it
+    /// was refused with.
+    pub async fn attempt(
+        &self,
+        request: QueryRequest,
+        field: &str,
+    ) -> Result<Vec<String>, Vec<String>> {
+        let response = self.answered(request).await;
+        if response.has_errors() {
+            return Err(response
+                .errors
+                .iter()
+                .map(|error| error.message.clone())
+                .collect());
+        }
+        Ok(response.data.expect("data")[field]
+            .as_array()
+            .expect("documents")
+            .iter()
+            .map(|row| row["_docID"].as_str().expect("document ID").to_owned())
+            .collect())
     }
 
     /// Create a `Users` row as `actor`, signed with its key.
@@ -196,6 +241,20 @@ impl Peer {
             "mutation {{ update_Users(docID: \"{doc}\", input: {{points: {points}}}) {{ _docID }} }}"
         )
     }
+}
+
+/// Whether `message` says the provider could not answer: it was unavailable,
+/// or gave no answer in time. Nothing is decided, so the same request may be
+/// made again.
+pub fn transient(message: &str) -> bool {
+    message.contains("ACP provider unavailable") || message.contains("Vera: no answer within")
+}
+
+fn unavailable(response: &QueryResponse) -> bool {
+    response
+        .errors
+        .iter()
+        .any(|error| transient(&error.message))
 }
 
 /// One `Users` row as a reader sees it.

@@ -10,6 +10,8 @@ mod actor;
 mod assembly;
 #[path = "embedded_vera_replication/documents.rs"]
 mod documents;
+#[path = "embedded_vera_replication/evidence.rs"]
+mod evidence;
 #[path = "embedded_vera_replication/network.rs"]
 mod network;
 #[path = "embedded_vera_replication/peer.rs"]

@@ -46,7 +46,7 @@ fn a_revocation_on_the_creators_node_stops_the_revoked_writer_on_the_receiver() 
         })
         .await;
 
-        a.write(writer.signed(Peer::add_points(&doc, 1)), "update_Users")
+        a.write_while_unavailable(writer.signed(Peer::add_points(&doc, 1)), "update_Users")
             .await;
         eventually("the granted writer's change reaches both nodes", || async {
             b.points(&creator.did, &doc).await == Some(1)
@@ -55,38 +55,58 @@ fn a_revocation_on_the_creators_node_stops_the_revoked_writer_on_the_receiver() 
         .await;
 
         a.part_from(&c).await;
-        c.write(writer.signed(Peer::add_points(&doc, 1)), "update_Users")
+        let before = c.commits(&creator.did, &doc).await;
+        c.write_while_unavailable(writer.signed(Peer::add_points(&doc, 1)), "update_Users")
             .await;
-        assert_eq!(c.points(&creator.did, &doc).await, Some(2));
+        assert_eq!(c.visible_points(&creator.did, &doc).await, 2);
+        let mut change = c.commits_since(&creator.did, &doc, &before).await;
+        assert_eq!(change.len(), 1, "one change: {change:?}");
+        let change = change.remove(0);
         throughout(
             "the writer's node has not reached the receiver yet",
             Duration::from_secs(3),
-            || async { b.points(&creator.did, &doc).await == Some(1) },
+            || async { b.visible_points(&creator.did, &doc).await == 1 },
         )
         .await;
         a.revoke(&doc, "writer", &writer.did).await;
         for peer in [&b, &c] {
             eventually("the revocation reaches the node's light client", || async {
-                !peer
-                    .may(&writer.did, DocumentPermission::Update, &doc)
-                    .await
+                matches!(
+                    peer.may(&writer.did, DocumentPermission::Update, &doc)
+                        .await,
+                    Ok(false)
+                )
             })
             .await;
         }
 
         c.replicate_to(&b).await;
+        eventually("the receiver holds the revoked writer's change", || async {
+            b.holds_unapplied(&creator.did, &doc, &change).await
+        })
+        .await;
         throughout(
             "the revoked writer's change is not applied",
             Duration::from_secs(10),
-            || async { b.points(&creator.did, &doc).await == Some(1) },
+            || async {
+                b.visible_points(&creator.did, &doc).await == 1
+                    && b.holds_unapplied(&creator.did, &doc, &change).await
+            },
         )
         .await;
-        for peer in [&a, &c] {
-            assert!(
-                !peer
-                    .wrote(writer.signed(Peer::add_points(&doc, 1)), "update_Users")
-                    .await,
+        for (peer, points) in [(&a, 1), (&c, 2)] {
+            let outcome = peer
+                .attempt(writer.signed(Peer::add_points(&doc, 1)), "update_Users")
+                .await;
+            assert_eq!(
+                outcome,
+                Ok(Vec::new()),
                 "a node writes for the revoked writer"
+            );
+            assert_eq!(
+                peer.visible_points(&creator.did, &doc).await,
+                points,
+                "a refused write changes nothing"
             );
         }
 
@@ -98,7 +118,7 @@ fn a_revocation_on_the_creators_node_stops_the_revoked_writer_on_the_receiver() 
         throughout(
             "the held-back change is applied once",
             Duration::from_secs(3),
-            || async { b.points(&creator.did, &doc).await == Some(2) },
+            || async { b.visible_points(&creator.did, &doc).await == 2 },
         )
         .await;
 

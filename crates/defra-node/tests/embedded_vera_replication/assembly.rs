@@ -71,7 +71,8 @@ fn signer(spec: &PeerSpec) -> Arc<dyn DelegationSigner> {
 }
 
 /// The builder every peer starts from: its store, its key, iroh on the
-/// peer's port, and unsigned writes when asked for.
+/// peer's port (one the system chooses on its first start), and unsigned
+/// writes when asked for.
 fn builder(spec: &PeerSpec) -> defra_node::NodeBuilder {
     let builder = Node::builder()
         .data_path(spec.home.join("data"))
@@ -79,7 +80,7 @@ fn builder(spec: &PeerSpec) -> defra_node::NodeBuilder {
         .with_p2p(P2PConfig {
             peer_key: PeerKeySource::Store,
             bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-            port: Some(spec.port),
+            port: spec.port,
             relay_mode: p2p::iroh::IrohRelayModeConfig::Disabled,
             discovery: p2p::iroh::IrohDiscoveryConfig::Disabled,
             ..Default::default()
@@ -177,14 +178,6 @@ where
             Err(error) => panic!("node: {error:?}"),
         }
     }
-}
-
-/// A UDP port that was free a moment ago.
-pub(crate) fn free_udp_port() -> u16 {
-    std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
-        .and_then(|socket| socket.local_addr())
-        .expect("free port")
-        .port()
 }
 
 fn now() -> u64 {

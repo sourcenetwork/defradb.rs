@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use defra_node::{EmbeddedVeraTrust, Node};
 
 use super::actor::Actor;
-use super::assembly::{free_udp_port, own, own_serving, shared, POLICY};
+use super::assembly::{own, own_serving, shared, POLICY};
 
 /// How a peer writes its blocks.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -36,9 +36,10 @@ pub enum Provider {
 #[derive(Clone)]
 pub struct PeerSpec {
     pub home: PathBuf,
-    /// The UDP port the peer listens on, the same across restarts, so a
-    /// replicator that names it reaches the restarted peer.
-    pub port: u16,
+    /// The UDP port the peer listens on: chosen by the system when it
+    /// first binds, then kept across restarts, so a replicator that names
+    /// it reaches the restarted peer.
+    pub port: Option<u16>,
     pub provider: Provider,
     pub owner: Actor,
     pub blocks: Blocks,
@@ -60,7 +61,7 @@ impl Peer {
     pub async fn start(home: &Path, chain_id: u64, owner: &Actor, blocks: Blocks) -> Self {
         Self::from_spec(PeerSpec {
             home: home.to_path_buf(),
-            port: free_udp_port(),
+            port: None,
             provider: Provider::Own {
                 chain_id,
                 serves: false,
@@ -75,7 +76,7 @@ impl Peer {
     pub async fn start_serving(home: &Path, chain_id: u64, owner: &Actor) -> Self {
         Self::from_spec(PeerSpec {
             home: home.to_path_buf(),
-            port: free_udp_port(),
+            port: None,
             provider: Provider::Own {
                 chain_id,
                 serves: true,
@@ -90,7 +91,7 @@ impl Peer {
     pub async fn start_sharing(home: &Path, host: &Peer, owner: &Actor) -> Self {
         Self::from_spec(PeerSpec {
             home: home.to_path_buf(),
-            port: free_udp_port(),
+            port: None,
             provider: Provider::Shared {
                 rpc: host.rpc.expect("the host serves its deployment"),
                 trust: host
@@ -136,12 +137,19 @@ impl Peer {
             .await
             .expect("collection");
         }
-        Self {
+        let mut peer = Self {
             node,
             spec,
             policy,
             rpc,
-        }
+        };
+        let port = peer.bound_port().await;
+        assert!(
+            peer.spec.port.is_none_or(|kept| kept == port),
+            "a restarted peer listens on the port it had"
+        );
+        peer.spec.port = Some(port);
+        peer
     }
 
     pub fn owner(&self) -> &Actor {

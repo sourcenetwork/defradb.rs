@@ -38,17 +38,31 @@ fn a_burst_past_the_per_document_bound_is_applied_once_when_its_grant_lands() {
         )
         .await;
         a.grant(&doc, "writer", &writer.did).await;
+        let before = a.commits(&creator.did, &doc).await;
 
         for _ in 0..BURST {
             a.write_while_unavailable(writer.signed(Peer::add_points(&doc, 1)), "update_Users")
                 .await;
         }
-        assert_eq!(a.points(&creator.did, &doc).await, Some(BURST));
+        assert_eq!(a.visible_points(&creator.did, &doc).await, BURST);
+        let burst = a.commits_since(&creator.did, &doc, &before).await;
+        assert_eq!(burst.len(), BURST as usize, "one change per write");
+        eventually_within(
+            "the receiver holds every change of the burst",
+            Duration::from_secs(600),
+            || async { b.held_unmerged(&burst).await == burst.len() },
+        )
+        .await;
+        assert_eq!(
+            b.commits(&creator.did, &doc).await,
+            before,
+            "the receiver has applied none of the burst"
+        );
         steady(
             "no refused change is applied",
             Duration::from_secs(5),
-            Some(0),
-            || b.points(&creator.did, &doc),
+            0,
+            || b.visible_points(&creator.did, &doc),
         )
         .await;
 
@@ -62,8 +76,8 @@ fn a_burst_past_the_per_document_bound_is_applied_once_when_its_grant_lands() {
         steady(
             "nothing is applied twice",
             Duration::from_secs(5),
-            Some(BURST),
-            || b.points(&creator.did, &doc),
+            BURST,
+            || b.visible_points(&creator.did, &doc),
         )
         .await;
         assert_eq!(

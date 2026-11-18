@@ -43,33 +43,41 @@ fn a_refused_change_does_not_hold_up_a_later_valid_change_to_its_document() {
             }
         }
 
-        c.write(
-            rogue.unsigned(Peer::add_points(&unsigned, 100)),
-            "update_Users",
-        )
-        .await;
-        c.write(rogue.signed(Peer::add_points(&signed, 100)), "update_Users")
-            .await;
-        for doc in [&unsigned, &signed] {
+        let mut changes = Vec::new();
+        for (doc, request) in [
+            (&unsigned, rogue.unsigned(Peer::add_points(&unsigned, 100))),
+            (&signed, rogue.signed(Peer::add_points(&signed, 100))),
+        ] {
+            let before = c.commits(&rogue.did, doc).await;
+            c.write_while_unavailable(request, "update_Users").await;
             assert_eq!(
-                c.row(&rogue.did, doc).await.and_then(|row| row.points),
-                Some(100),
+                c.visible_points(&rogue.did, doc).await,
+                100,
                 "the third node's owner may change what it registered"
             );
+            let mut change = c.commits_since(&rogue.did, doc, &before).await;
+            assert_eq!(change.len(), 1, "one change: {change:?}");
+            changes.push((doc, change.remove(0)));
         }
         c.replicate_to(&b).await;
+        for (doc, change) in &changes {
+            eventually("the receiver holds the third node's change", || async {
+                b.holds_unapplied(&receiver_owner.did, doc, change).await
+            })
+            .await;
+        }
         throughout(
             "the receiver applies neither refused change",
             Duration::from_secs(5),
             || async {
-                b.points(&receiver_owner.did, &unsigned).await == Some(0)
-                    && b.points(&receiver_owner.did, &signed).await == Some(0)
+                b.visible_points(&receiver_owner.did, &unsigned).await == 0
+                    && b.visible_points(&receiver_owner.did, &signed).await == 0
             },
         )
         .await;
 
         for doc in [&unsigned, &signed] {
-            a.write(creator.signed(Peer::add_points(doc, 1)), "update_Users")
+            a.write_while_unavailable(creator.signed(Peer::add_points(doc, 1)), "update_Users")
                 .await;
         }
         for doc in [&unsigned, &signed] {
@@ -93,8 +101,8 @@ fn a_refused_change_does_not_hold_up_a_later_valid_change_to_its_document() {
             "the unsigned change stays refused, and nothing is applied twice",
             Duration::from_secs(5),
             || async {
-                b.points(&receiver_owner.did, &unsigned).await == Some(1)
-                    && b.points(&receiver_owner.did, &signed).await == Some(101)
+                b.visible_points(&receiver_owner.did, &unsigned).await == 1
+                    && b.visible_points(&receiver_owner.did, &signed).await == 101
             },
         )
         .await;

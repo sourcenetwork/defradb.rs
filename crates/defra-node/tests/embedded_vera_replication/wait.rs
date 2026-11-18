@@ -20,16 +20,25 @@ where
     eventually_within(what, PATIENCE, check).await;
 }
 
-/// Wait until `check` holds, failing with `what` after `patience`.
+/// Wait until `check` holds, failing with `what` after `patience`. The
+/// deadline covers the check in flight too, so a check that never returns
+/// fails the wait on time.
 pub async fn eventually_within<F, Fut>(what: &str, patience: Duration, mut check: F)
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = bool>,
 {
-    let deadline = Instant::now() + patience;
-    while !check().await {
-        assert!(Instant::now() < deadline, "{what}");
-        pause().await;
+    let polling = async {
+        while !check().await {
+            pause().await;
+        }
+    };
+    if edge::testing::edge()
+        .timeout(patience, polling)
+        .await
+        .is_err()
+    {
+        panic!("{what}: not within {patience:?}");
     }
 }
 

@@ -1,25 +1,35 @@
 //! Connecting peers: replicators, subscriptions and parting.
 
+use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use super::peer::Peer;
 use super::wait::pause;
 
 impl Peer {
+    /// The address other peers dial this one at: an iroh ticket that names
+    /// a direct address, as relay and discovery are off.
     pub async fn p2p_addr(&self) -> String {
         let ops = self.node.p2p_system().expect("p2p").ops();
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
-            let addrs = ops.listen_addresses().await.expect("listen addresses");
-            if let Some(addr) = addrs
-                .into_iter()
-                .find(|addr| addr.contains("/p2p/") || addr.starts_with("endpoint"))
-            {
+            if let Some(addr) = ops.shareable_address().await.expect("shareable address") {
                 return addr;
             }
-            assert!(Instant::now() < deadline, "no iroh listen address");
+            assert!(Instant::now() < deadline, "no dialable iroh address");
             pause().await;
         }
+    }
+
+    /// The UDP port this peer's iroh endpoint is bound to.
+    pub async fn bound_port(&self) -> u16 {
+        let addr = self.p2p_addr().await;
+        let (_, hints) = p2p::iroh::parse_public_peer_addr(&addr).expect("iroh address");
+        hints
+            .iter()
+            .find_map(|hint| hint.as_str().parse::<SocketAddr>().ok())
+            .unwrap_or_else(|| panic!("no direct address in {addr}"))
+            .port()
     }
 
     /// Subscribe `to` to `Users` and have this peer push `Users` to it.
