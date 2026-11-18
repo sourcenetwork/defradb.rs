@@ -143,6 +143,20 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                                 .to_string(),
                         ));
                     }
+                    if link_name == IMMUTABLE_LINK_NAME
+                        && payload.collection_version_id == context.payload.collection_version_id
+                        && let Some(collection) = &context.collection
+                        && let Some(binding) = &collection.schema().policy
+                        && let Some(field) = datastore.genesis_reader_field(
+                            collection.name(), &binding.id, &binding.resource_name)
+                        && immutable_fields.contains(field)
+                        && let Some(data) = payload.fields.get(field)
+                        && let Ok(address) = ciborium::from_reader::<String, _>(data.as_ref())
+                        && let Some(receiver) = self.db.node_did()
+                        && receiver.as_str() == address
+                    {
+                        state.genesis_reader = Some(receiver);
+                    }
                     state
                         .immutable_block_fields
                         .insert(*link_cid, payload.fields.keys().cloned().collect());

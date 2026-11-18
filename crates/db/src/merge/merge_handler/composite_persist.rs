@@ -140,6 +140,13 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     ) {
                         let signer = identity::Did::new(signer)
                             .map_err(|error| MergeError::MergeFailed(error.to_string()))?;
+                        let initial_reader = if state.genesis_reader.is_some()
+                            && !scoped.is_doc_registered(&policy.id, &policy.resource_name, context.doc_id_str)
+                                .await.map_err(|error| MergeError::MergeFailed(error.to_string()))? {
+                            state.genesis_reader.as_ref()
+                        } else {
+                            None
+                        };
                         scoped
                             .register_doc_object(
                                 &signer,
@@ -149,6 +156,12 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             )
                             .await
                             .map_err(|error| MergeError::MergeFailed(error.to_string()))?;
+                        if let Some(reader) = initial_reader {
+                            scoped.add_actor_relationship(
+                                &signer, reader, &policy.id, &policy.resource_name,
+                                context.doc_id_str, "reader", &[],
+                            ).await.map_err(|error| MergeError::MergeFailed(error.to_string()))?;
+                        }
                     }
                 }
             }

@@ -20,6 +20,15 @@ use storage::namespace::Namespace;
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait DocumentMutationProjector: storage::corekv::MaybeSendSync {
+    fn genesis_reader_field(
+        &self,
+        _collection: &str,
+        _policy: &str,
+        _resource: &str,
+    ) -> Option<&'static str> {
+        None
+    }
+
     /// Reconcile existing documents on startup before network service begins.
     async fn reconcile(&self, view: &NamespaceView) -> Result<()>;
 
@@ -378,6 +387,18 @@ impl NamespaceView {
             Some(writes) => self.txn.queued.on_commit(writes.written()),
             None => Ok(()),
         }
+    }
+
+    pub fn genesis_reader_field(
+        &self,
+        collection: &str,
+        policy: &str,
+        resource: &str,
+    ) -> Option<&'static str> {
+        self.txn
+            .projector
+            .as_ref()?
+            .genesis_reader_field(collection, policy, resource)
     }
 
     pub fn has_document_projector(&self) -> bool {
