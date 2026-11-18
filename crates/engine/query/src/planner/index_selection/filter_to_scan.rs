@@ -113,9 +113,13 @@ pub fn filter_to_index_scan(
         .iter()
         .map(|c| {
             if &c.field_name == first_field && first_field_is_json && c.json_path.is_none() {
-                // Top-level JSON filter (e.g., custom: {_gt: 20}) needs an empty path
+                // Top-level JSON filter (e.g., custom: {_gt: 20}) needs an empty path.
+                // Under `_any`/`_all` only array elements match, as Go's index marker.
                 let mut c = c.clone();
-                c.json_path = Some(JsonPath::new());
+                c.json_path = Some(match c.array_op {
+                    Some(_) => JsonPath::new().append_index(),
+                    None => JsonPath::new(),
+                });
                 c
             } else {
                 c.clone()

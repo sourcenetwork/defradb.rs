@@ -14,6 +14,7 @@ mod delete;
 mod get;
 mod json;
 mod json_array;
+mod json_array_filter;
 mod json_composite;
 mod json_unique;
 mod json_unique_array;
