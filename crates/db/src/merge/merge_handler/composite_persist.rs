@@ -177,6 +177,11 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 .await
                 .map_err(MergeError::Database)?
                 {
+                    // A shared batch keeps the ID it mapped for this chunk, which
+                    // would make the ID look used, so the block is merged alone.
+                    if !context.mode.is_standalone() {
+                        return Err(MergeError::MergeFailed(reason.to_string()));
+                    }
                     return Ok(Some(MergeOutcome::terminal_skip(reason)));
                 }
             }
