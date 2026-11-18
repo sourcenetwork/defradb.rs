@@ -396,9 +396,14 @@ where
         let unresolved =
             request.identity.is_some() && !context.dac_bypass() && !context.dac_bypass_denied();
         let bypass = match unresolved {
+            // A lookup that fails leaves the bypass off, as it does outside a
+            // transaction, instead of failing a request that may never need it.
             true => match txn_ctx.doc_fetcher().dac_bypass(&nac_identity).await {
                 Ok(bypass) => bypass,
-                Err(error) => return Ok(Turned::Done(QueryResponse::error(error.to_string()))),
+                Err(error) => {
+                    tracing::warn!(%error, "could not resolve DAC bypass; leaving it off");
+                    false
+                }
             },
             false => false,
         };

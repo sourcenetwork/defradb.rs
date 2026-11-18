@@ -631,7 +631,10 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
     }
 
     /// This runner as `request` runs: with the DAC bypass `prepared` was
-    /// prepared with, or resolved now when nothing was prepared.
+    /// prepared with, or resolved now when nothing was prepared. A mutation
+    /// node access control denies in preparation is the one request that may
+    /// ask twice (the direct mutation API asks here again); it is denied
+    /// either way, so nothing runs on the second answer.
     pub(super) async fn with_request_dac_bypass(
         &self,
         request: &QueryRequest,

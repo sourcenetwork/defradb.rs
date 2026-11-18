@@ -37,14 +37,6 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         else {
             return Ok(None);
         };
-        // Prepared as it will run: past document ACP when its caller holds
-        // `bypass-dac`.
-        if let Some(bypassed) = self
-            .with_dac_bypass_resolved(request.identity.as_ref())
-            .await
-        {
-            return Box::pin(bypassed.prepare_mutations(request)).await;
-        }
         let schema_has_embeddings = if mutator.requires_write_preparation_as(&self.context()) {
             false
         } else {
@@ -71,6 +63,15 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             && !request_batch
         {
             return Ok(None);
+        }
+        // Prepared as it will run: past document ACP when its caller holds
+        // `bypass-dac`. Asked only once preparation is certain to be
+        // needed, so a request left to execution asks there, once.
+        if let Some(bypassed) = self
+            .with_dac_bypass_resolved(request.identity.as_ref())
+            .await
+        {
+            return Box::pin(bypassed.prepare_mutations(request)).await;
         }
         let graphql_text = request.parsed.is_none();
         validate_operation(&parsed, self.effective_provider().as_ref(), graphql_text).await?;
