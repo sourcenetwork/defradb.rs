@@ -308,7 +308,7 @@ impl DualKademlia {
     }
 
     /// Refresh `network`'s routing table now if it holds at most
-    /// [`LOW_PEERS`] peers, as Go's kad-dht does on every new routing-table
+    /// `LOW_PEERS` peers, as Go's kad-dht does on every new routing-table
     /// peer (`fixLowPeers`, go-libp2p-kad-dht v0.38 `dht.go:498-553`). This
     /// links a node to the peers of its peers at once. Starting a bootstrap
     /// also cancels the one rust-libp2p schedules 500 ms after each insert,
