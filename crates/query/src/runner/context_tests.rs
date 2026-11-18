@@ -381,7 +381,21 @@ fn the_dac_bypass_in_a_request_reads_documents_dac_hides() {
         };
 
         assert_eq!(visible(read(Some(admin.clone()), true).await), 1);
-        assert_eq!(visible(read(Some(admin), false).await), 0);
+        assert_eq!(visible(read(Some(admin.clone()), false).await), 0);
+        let denied = runner.execute(
+            QueryRequest::new("{ Company { name } }")
+                .with_identity(Some(admin))
+                .with_context(
+                    RequestContext::default()
+                        .with_dac_bypass_denied()
+                        .with_dac_bypass(true),
+                ),
+        );
+        assert_eq!(
+            visible(denied.await),
+            0,
+            "a bypass granted after the caller denied it is not honoured"
+        );
         assert_eq!(
             visible(read(None, true).await),
             0,

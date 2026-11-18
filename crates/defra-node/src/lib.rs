@@ -1757,6 +1757,10 @@ mod userset_manager_tests;
 mod transactional_relationship_tests;
 
 #[cfg(test)]
+#[path = "../tests/unit/dac_bypass_denied.rs"]
+mod dac_bypass_denied_tests;
+
+#[cfg(test)]
 #[path = "../tests/unit/administrative_relationship.rs"]
 mod administrative_relationship_tests;
 #[cfg(test)]
