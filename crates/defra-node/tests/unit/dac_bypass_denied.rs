@@ -168,9 +168,13 @@ fn an_administrator_denied_the_bypass_reads_and_writes_nothing_dac_hides() {
 fn an_administrator_without_the_denial_keeps_the_bypass() {
     workers::block_on(async {
         let (node, doc, cid) = fixture().await;
-        let [query, commits, ..] = reads(&node, &actor(ADMIN), &doc, &cid).await;
-        assert_eq!(query, 1);
+        let [query, commits, count, subscribed] = reads(&node, &actor(ADMIN), &doc, &cid).await;
+        assert_eq!((query, count, subscribed), (1, 1, 1));
         assert!(commits >= 1);
+        node.shutdown().await.unwrap();
+
+        let (node, doc, _) = fixture().await;
+        assert_eq!(writes(&node, &actor(ADMIN), &doc).await, (1, 1));
         node.shutdown().await.unwrap();
     })
     .unwrap();

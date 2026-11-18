@@ -108,6 +108,23 @@ impl<S: Store + 'static> DocFetcher for LensedAutoCommitFetcher<S> {
         result
     }
 
+    /// Whether `identity` reads and writes past document access control:
+    /// node access control is on and grants it `bypass-dac`, as its
+    /// committed state reads now (Go's `canDACBypass`).
+    async fn dac_bypass(&self, identity: &identity::Did) -> query::error::Result<bool> {
+        // With NAC off every permission reads as held, and Go does not let
+        // that bypass DAC.
+        let Some(nac) = self.db.nac_manager() else {
+            return Ok(false);
+        };
+        if !nac.is_enabled().await {
+            return Ok(false);
+        }
+        nac.check_permission(identity, acp::nac::NodePermission::DacBypass)
+            .await
+            .map_err(|error| query::error::QueryError::execution(error.to_string()))
+    }
+
     async fn get_all(&self, collection_name: &str) -> query::error::Result<Vec<Document>> {
         self.get_all_impl(collection_name).await
     }

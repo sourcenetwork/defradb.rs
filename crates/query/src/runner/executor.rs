@@ -156,6 +156,13 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         input: &crate::prepared::PreparedInputRequest,
     ) -> Result<Option<std::sync::Arc<crate::prepared::PreparedMutations>>> {
         let runner = self.for_query(request);
+        let runner = match runner
+            .with_dac_bypass_resolved(request.identity.as_ref())
+            .await?
+        {
+            Some(bypassed) => bypassed,
+            None => runner,
+        };
         let Some(prepared) = prepared else {
             return Err(crate::error::QueryError::execution(
                 "retry input has no request preparation capsule",
@@ -594,6 +601,30 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
 }
 
 impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
+    /// This runner with Go's `canDACBypass` resolved for `caller`, as a
+    /// request in a transaction resolves it: a caller node access control
+    /// grants `bypass-dac` reads and writes past document ACP, unless the
+    /// request's caller denied it the bypass. `None` when that changes
+    /// nothing: no caller, a bypass already resolved or denied, or none held.
+    pub(super) async fn with_dac_bypass_resolved(
+        &self,
+        caller: Option<&Did>,
+    ) -> Result<Option<Self>> {
+        let context = self.context();
+        let Some(caller) = caller else {
+            return Ok(None);
+        };
+        if context.dac_bypass() || context.dac_bypass_denied() {
+            return Ok(None);
+        }
+        if !self.fetcher.dac_bypass(caller).await? {
+            return Ok(None);
+        }
+        Ok(Some(
+            self.for_request(context.into_owned().with_dac_bypass(true)),
+        ))
+    }
+
     /// [`QueryExecutor::execute_prepared`] on a runner bound to the request.
     async fn run_prepared(
         &self,
@@ -677,10 +708,19 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             return denial;
         }
 
+        let bypassed = match self
+            .with_dac_bypass_resolved(request.identity.as_ref())
+            .await
+        {
+            Ok(bypassed) => bypassed,
+            Err(error) => return QueryResponse::error(QueryResponseError::from_query_error(error)),
+        };
+        let this = bypassed.as_ref().unwrap_or(self);
+
         // Resolve effective identity: request identity takes precedence over default
         let identity = self.resolve_identity(request.identity);
         // What this request writes is created by its caller.
-        let runner = self.for_caller(identity.as_ref());
+        let runner = this.for_caller(identity.as_ref());
 
         let mut warnings: Vec<GqlWarning> = Vec::new();
 

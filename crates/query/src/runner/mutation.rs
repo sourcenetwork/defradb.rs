@@ -47,6 +47,14 @@ fn preserve_acp_input_error(action: &str, doc_id: &str, error: QueryError) -> Qu
 }
 
 impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R> {
+    /// Whether this request reads and writes past document access control:
+    /// an authenticated caller node access control grants `bypass-dac`
+    /// (`RequestContext::dac_bypass`), as the query path's permission filter
+    /// and the collection layer honour it.
+    fn bypasses_dac(&self, identity: &Identity) -> bool {
+        identity.is_authenticated() && self.context().dac_bypass()
+    }
+
     pub(crate) async fn check_doc_access_for_read(
         &self,
         identity: &Identity,
@@ -55,6 +63,9 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
         resource_name: &str,
         doc_id: &str,
     ) -> Result<bool> {
+        if self.bypasses_dac(identity) {
+            return Ok(true);
+        }
         crate::txn::check_doc_access_with_prepared_inputs(
             self.acp.as_ref(),
             self.acp_registration_projection.as_deref(),
@@ -343,6 +354,9 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
         prepared_inputs: Option<&crate::prepared::PreparedInputMemo>,
         strict_attempt: bool,
     ) -> Result<bool> {
+        if self.bypasses_dac(identity) {
+            return Ok(true);
+        }
         let result = crate::txn::check_doc_access_with_prepared_inputs(
             self.acp.as_ref(),
             self.acp_registration_projection.as_deref(),
