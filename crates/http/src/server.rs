@@ -24,9 +24,9 @@ use serde_json::Map;
 use crate::error::Result;
 use crate::router::{
     create_router_with_state_and_body_limits, AppState, AppStateBuilder, BackupOperations,
-    BlockOperations, BodyLimits, CollectionManagementOperations, CollectionOperations,
-    DocumentAcpOperations, DumpOperations, EncryptedIndexOperations, IndexOperations,
-    ManageRequester, NodeAcpOperations, P2POperations, ViewOperations,
+    BlockOperations, BodyLimits, CollectionLookup, CollectionManagementOperations,
+    CollectionOperations, DocumentAcpOperations, DumpOperations, EncryptedIndexOperations,
+    IndexOperations, ManageRequester, NodeAcpOperations, P2POperations, ViewOperations,
 };
 
 /// Default cap on an inline backup import body (100 MiB).
@@ -109,6 +109,7 @@ pub struct Server {
     schema: Option<Arc<dyn CollectionOperations>>,
     nac: Option<Arc<dyn NodeAcpOperations>>,
     collection_mgmt: Option<Arc<dyn CollectionManagementOperations>>,
+    collection_lookup: Option<Arc<dyn CollectionLookup>>,
     doc_acp: Option<Arc<dyn DocumentAcpOperations>>,
     view: Option<Arc<dyn ViewOperations>>,
     dump: Option<Arc<dyn DumpOperations>>,
@@ -176,6 +177,7 @@ impl Server {
             schema: None,
             nac: None,
             collection_mgmt: None,
+            collection_lookup: None,
             doc_acp: None,
             view: None,
             dump: None,
@@ -327,6 +329,15 @@ impl Server {
         self
     }
 
+    /// Set the collection lookup the event stream uses, for a host without the management routes.
+    pub fn with_collection_lookup_arc(
+        mut self,
+        collection_lookup: Arc<dyn CollectionLookup>,
+    ) -> Self {
+        self.collection_lookup = Some(collection_lookup);
+        self
+    }
+
     /// Set view operations from an Arc.
     pub fn with_view_arc(mut self, view: Arc<dyn ViewOperations>) -> Self {
         self.view = Some(view);
@@ -426,6 +437,9 @@ impl Server {
         }
         if let Some(ref collection_mgmt) = self.collection_mgmt {
             builder = builder.with_collection_mgmt(Arc::clone(collection_mgmt));
+        }
+        if let Some(ref collection_lookup) = self.collection_lookup {
+            builder = builder.with_collection_lookup(Arc::clone(collection_lookup));
         }
         if let Some(ref doc_acp) = self.doc_acp {
             builder = builder.with_doc_acp(Arc::clone(doc_acp));

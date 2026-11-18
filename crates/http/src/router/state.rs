@@ -9,9 +9,9 @@ use query::QueryLimits;
 use serde_json::Map;
 
 use super::{
-    BackupOperations, BlockOperations, CollectionManagementOperations, CollectionOperations,
-    DocumentAcpOperations, DumpOperations, EncryptedIndexOperations, IndexOperations,
-    ManageRequester, NodeAcpOperations, P2POperations, ViewOperations,
+    BackupOperations, BlockOperations, CollectionLookup, CollectionManagementOperations,
+    CollectionOperations, DocumentAcpOperations, DumpOperations, EncryptedIndexOperations,
+    IndexOperations, ManageRequester, NodeAcpOperations, P2POperations, ViewOperations,
 };
 
 /// Application state shared across handlers.
@@ -37,6 +37,8 @@ pub struct AppStateFields {
     pub schema: Option<Arc<dyn CollectionOperations>>,
     pub nac: Option<Arc<dyn NodeAcpOperations>>,
     pub collection_mgmt: Option<Arc<dyn CollectionManagementOperations>>,
+    /// What the event stream resolves an event's collection with.
+    pub collection_lookup: Option<Arc<dyn CollectionLookup>>,
     pub doc_acp: Option<Arc<dyn DocumentAcpOperations>>,
     pub view: Option<Arc<dyn ViewOperations>>,
     pub dump: Option<Arc<dyn DumpOperations>>,
@@ -237,6 +239,7 @@ pub struct AppStateBuilder {
     schema: Option<Arc<dyn CollectionOperations>>,
     nac: Option<Arc<dyn NodeAcpOperations>>,
     collection_mgmt: Option<Arc<dyn CollectionManagementOperations>>,
+    collection_lookup: Option<Arc<dyn CollectionLookup>>,
     doc_acp: Option<Arc<dyn DocumentAcpOperations>>,
     view: Option<Arc<dyn ViewOperations>>,
     dump: Option<Arc<dyn DumpOperations>>,
@@ -266,6 +269,7 @@ impl AppStateBuilder {
             schema: None,
             nac: None,
             collection_mgmt: None,
+            collection_lookup: None,
             doc_acp: None,
             view: None,
             dump: None,
@@ -350,6 +354,12 @@ impl AppStateBuilder {
         self
     }
 
+    /// Set the collection lookup the event stream uses, for a host without the management routes.
+    pub fn with_collection_lookup(mut self, collection_lookup: Arc<dyn CollectionLookup>) -> Self {
+        self.collection_lookup = Some(collection_lookup);
+        self
+    }
+
     /// Set document ACP operations.
     pub fn with_doc_acp(mut self, doc_acp: Arc<dyn DocumentAcpOperations>) -> Self {
         self.doc_acp = Some(doc_acp);
@@ -420,6 +430,11 @@ impl AppStateBuilder {
             block: self.block,
             schema: self.schema,
             nac: self.nac,
+            collection_lookup: self.collection_lookup.or_else(|| {
+                self.collection_mgmt
+                    .clone()
+                    .map(|collection_mgmt| collection_mgmt as Arc<dyn CollectionLookup>)
+            }),
             collection_mgmt: self.collection_mgmt,
             doc_acp: self.doc_acp,
             view: self.view,

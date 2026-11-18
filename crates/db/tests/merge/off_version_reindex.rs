@@ -156,6 +156,26 @@ fn a_lens_into_the_active_version_owes_a_reindex() {
 }
 
 #[test]
+fn a_collection_owed_a_reindex_is_still_found_by_its_root_id() {
+    workers::block_on(async {
+        let (db, store) = database().await;
+        let v2 = add_field(&db, "level").await;
+        migrate(&db, V1, &v2).await;
+        let root = db
+            .get_collection("Users")
+            .unwrap()
+            .unwrap()
+            .resolved_root_id();
+
+        assert!(merge_at_v1_owes(db.clone(), store, 1).await);
+
+        let found = db.find_collection_by_root_id(root);
+        assert_eq!(found.as_ref().map(|c| c.name()), Some("Users"));
+    })
+    .unwrap()
+}
+
+#[test]
 fn a_lens_behind_an_unlensed_active_version_owes_a_reindex() {
     workers::block_on(async {
         let (db, store) = database().await;

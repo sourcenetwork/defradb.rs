@@ -3216,6 +3216,24 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        family: "Text chunking",
+        name: "INV_ReadsMatchText / INV_SettledPeersAgree / INV_NoForgedChunk / INV_ChunksNeverChange / INV_ListedChunksStay / INV_DeletesNotLost",
+        axis: Tla,
+        anchor: "crates/query/src/plan/chunk_parent.rs parent_hashes; crates/chunk-split/src/list.rs chunk_list; crates/crdt/src/field/lww.rs merge; crates/db/src/chunk/guard.rs check_chunk_merge; crates/db/src/chunk/peer_delete.rs delete_must_wait; crates/db/src/merge/merge_handler/composite_persist.rs; crates/db/src/merge/merge_handler/doc_identity.rs resolve_composite_doc_id_in_txn; crates/db/src/merge/merge_handler/composite.rs process_composite_delta_locked",
+        model_ref: "MC_ChunkMerge_Green.cfg / MC_ChunkMerge_Green_Delete.cfg / MC_ChunkMerge_Red_TrustList.cfg / MC_ChunkMerge_Red_NoHashCheck.cfg / MC_ChunkMerge_Red_MutableChunk.cfg / MC_ChunkMerge_Red_NoDeleteGuard.cfg / MC_ChunkMerge_Red_ListedDeleteOnly.cfg / MC_ChunkMerge_Red_RefuseDelete.cfg / MC_ChunkMerge_Red_UnstoredDelete.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Text chunking",
+        name: "INV_ShownIsLiveAndReadable / INV_ShownIsTheText / INV_ShownPassesOwnApp / INV_ServedIsReadable",
+        axis: Tla,
+        anchor: "crates/query/src/plan/chunk_parent.rs parent_hashes, verified_hash; crates/query/src/plan/chunk_gate.rs ChunkGate::allows, ChunkGate::decide; crates/query/src/plan/permission_filter.rs permission_check; crates/db/src/chunk/access.rs history_parents, read_owners, parent_collection; crates/query/src/runner/chunk_access.rs chunk_readable, ChunkReads; crates/query/src/planner/builder/mod.rs maybe_wrap_with_acp_filter; crates/p2p-adapter/src/read_gate.rs DbBlockReadGate::may_read, DbBlockClassifier::classify; crates/db/src/block/verify.rs load_authorized_block_signature; crates/http/src/handlers/events.rs can_observe_document_event",
+        model_ref: "MC_ChunkRead_Green.cfg / MC_ChunkRead_Red_NoDeletedCheck.cfg / MC_ChunkRead_Red_NoHashCheck.cfg / MC_ChunkRead_Red_SharedMemo.cfg / MC_ChunkRead_Red_NoMergedCheck.cfg / MC_ChunkRead_Red_NoGrantCheck.cfg / MC_ChunkRead_Red_NoListCheck.cfg / MC_ChunkRead_Red_NoResolveCheck.cfg / MC_ChunkRead_Red_TrustList.cfg / MC_ChunkRead_Red_NoOwnAppCheck.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         // A peer's definition blocks arrive in any order and may be forged.
         // A first version follows the SDL's rules, a patch keeps its previous
         // version's settings, and activation refuses settings other than the
@@ -3562,7 +3580,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Verify block signature",
         name: "INV_VerifiedAtOnePoint / INV_NoValidRejected",
         axis: Tla,
-        anchor: "crates/defra-node/src/ops/block.rs NodeOps::verify_block_signature; crates/db/src/txn/registry/blocks.rs DbTransactionRegistry::verify_block_signature_in_txn_as; crates/db/src/block/verify.rs verify_block_signature_as, verify_block_signature_in_txn_as, verify_block_signature_with_blockstore, load_authorized_block_signature; crates/db/src/access/nac.rs DB::check_node_access_in_txn",
+        anchor: "crates/defra-node/src/ops/block.rs NodeOps::verify_block_signature; crates/db/src/txn/registry/blocks.rs DbTransactionRegistry::verify_block_signature_in_txn_as; crates/db/src/block/verify.rs verify_block_signature_as, verify_block_signature_in_txn_as, verify_block_signature_with_txn, load_authorized_block_signature; crates/db/src/access/nac.rs DB::check_node_access_in_txn",
         model_ref: "MC_VerifySignature_{Green_*,Red_*}.cfg",
         tiers: &[Boundary],
         bound_by: "",

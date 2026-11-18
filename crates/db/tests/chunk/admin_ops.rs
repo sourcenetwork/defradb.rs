@@ -80,6 +80,30 @@ fn index_drop_on_a_chunk_collection_is_refused_and_keeps_the_index() {
 }
 
 #[test]
+fn an_encrypted_index_on_a_chunk_collection_is_refused() {
+    workers::block_on(async {
+        let db = chunked_db().await;
+        assert_refused(db.add_encrypted_index(CHUNKS, "text").await);
+
+        let registry = DbTransactionRegistry::new(Arc::clone(&db));
+        let handle = registry.begin(false).await.unwrap();
+        assert_refused(
+            registry
+                .add_encrypted_index_in_txn(
+                    &RequestContext::ambient(),
+                    handle.as_str(),
+                    CHUNKS,
+                    "text",
+                )
+                .await,
+        );
+        registry.discard(&handle).await.unwrap();
+        assert!(chunk_version(&db).encrypted_indexes.is_empty());
+    })
+    .unwrap()
+}
+
+#[test]
 fn the_parent_still_takes_index_changes() {
     workers::block_on(async {
         let db = chunked_db().await;
