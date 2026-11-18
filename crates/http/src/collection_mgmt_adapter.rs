@@ -8,7 +8,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use defra_core::RequestContext;
 
-use crate::router::CollectionManagementOperations;
+use crate::router::{CollectionLookup, CollectionManagementOperations};
 use storage::corekv::Store;
 
 /// Adapter that implements CollectionManagementOperations using the database.
@@ -40,6 +40,41 @@ where
     /// Create an Arc-wrapped adapter.
     pub fn new_arc(database: Arc<db::DB<S>>) -> Arc<dyn CollectionManagementOperations> {
         Arc::new(Self::new(database))
+    }
+}
+
+#[async_trait]
+impl<S> CollectionLookup for CollectionManagementAdapter<S>
+where
+    S: Store + 'static,
+{
+    async fn find_collection_by_id(
+        &self,
+        collection_id: &str,
+    ) -> Result<Option<schema::CollectionVersion>, String> {
+        self.database
+            .find_collection_by_id(collection_id)
+            .map(|opt| opt.map(|c| c.schema().clone()))
+            .map_err(|e| format!("{}", e))
+    }
+
+    async fn get_collection_by_version_id(
+        &self,
+        version_id: &str,
+    ) -> Result<Option<schema::CollectionVersion>, String> {
+        // A version the cache does not hold is read from the store: on the
+        // pool, for a caller on the network edge (an event stream).
+        let (database, version_id) = (Arc::clone(&self.database), version_id.to_owned());
+        let pool = self.database.pool();
+        workers::run_on(pool, workers::Target::LeastLoaded, move || async move {
+            database
+                .get_collection_by_version_id_full(&version_id)
+                .await
+                .map(|opt| opt.map(|c| c.schema().clone()))
+                .map_err(|e| format!("{}", e))
+        })
+        .await
+        .map_err(|error| error.report("collection version read").to_string())?
     }
 }
 
@@ -93,35 +128,6 @@ where
         self.database
             .has_collection(name)
             .map_err(|e| format!("{}", e))
-    }
-
-    async fn find_collection_by_id(
-        &self,
-        collection_id: &str,
-    ) -> Result<Option<schema::CollectionVersion>, String> {
-        self.database
-            .find_collection_by_id(collection_id)
-            .map(|opt| opt.map(|c| c.schema().clone()))
-            .map_err(|e| format!("{}", e))
-    }
-
-    async fn get_collection_by_version_id(
-        &self,
-        version_id: &str,
-    ) -> Result<Option<schema::CollectionVersion>, String> {
-        // A version the cache does not hold is read from the store: on the
-        // pool, for a caller on the network edge (an event stream).
-        let (database, version_id) = (Arc::clone(&self.database), version_id.to_owned());
-        let pool = self.database.pool();
-        workers::run_on(pool, workers::Target::LeastLoaded, move || async move {
-            database
-                .get_collection_by_version_id_full(&version_id)
-                .await
-                .map(|opt| opt.map(|c| c.schema().clone()))
-                .map_err(|e| format!("{}", e))
-        })
-        .await
-        .map_err(|error| error.report("collection version read").to_string())?
     }
 
     async fn delete_collection_versions(&self, version_ids: Vec<String>) -> Result<(), String> {

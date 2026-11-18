@@ -97,15 +97,11 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         let (cid_str, caller_identity) = (cid_str.to_owned(), caller_identity.clone());
         self.in_txn(context, txn_id, move |owned| {
             Box::pin(async move {
-                let (blockstore, systemstore) = {
-                    let txn = owned.alone()?;
-                    (txn.blockstore()?, txn.systemstore()?)
-                };
-                crate::block::verify::verified_block_signer_did_with_blockstore(
+                let txn = owned.alone()?;
+                crate::block::verify::verified_block_signer_did_with_txn(
                     &db,
                     document_acp.as_ref(),
-                    blockstore,
-                    systemstore,
+                    txn,
                     &cid_str,
                     &caller_identity,
                     dac_bypass,

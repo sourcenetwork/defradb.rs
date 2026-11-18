@@ -1,4 +1,4 @@
-use chunk_split::list::{chunk_list, describes, distinct, text_hash};
+use chunk_split::list::{chunk_list, distinct, text_hash};
 use chunk_split::split::{split, ChunkConfig, SplitterVersion};
 
 #[test]
@@ -16,8 +16,6 @@ fn list_starts_with_the_text_hash_then_chunks_in_order() {
     assert_eq!(list[0], text_hash(text));
     let hashes: Vec<&String> = chunks.iter().map(|c| &c.hash).collect();
     assert_eq!(list[1..].iter().collect::<Vec<_>>(), hashes);
-    assert!(describes(&list, text));
-    assert!(!describes(&list, "another text"));
 }
 
 #[test]

@@ -6,7 +6,7 @@ use serde_json::json;
 use std::sync::Arc;
 
 use crate::mock::update_vec;
-use crate::router::CollectionManagementOperations;
+use crate::router::{CollectionLookup, CollectionManagementOperations};
 
 fn mock_collection_version(name: &str) -> schema::CollectionVersion {
     serde_json::from_value(json!({
@@ -38,6 +38,23 @@ impl MockCollectionManagementOperations {
 }
 
 #[async_trait]
+impl CollectionLookup for MockCollectionManagementOperations {
+    async fn find_collection_by_id(
+        &self,
+        _collection_id: &str,
+    ) -> Result<Option<schema::CollectionVersion>, String> {
+        Ok(Some(mock_collection_version("MockCollection")))
+    }
+
+    async fn get_collection_by_version_id(
+        &self,
+        _version_id: &str,
+    ) -> Result<Option<schema::CollectionVersion>, String> {
+        Ok(Some(mock_collection_version("MockCollection")))
+    }
+}
+
+#[async_trait]
 impl CollectionManagementOperations for MockCollectionManagementOperations {
     async fn list_actions(&self) -> Result<Vec<defra_core::ActionExecution>, String> {
         Ok(Vec::new())
@@ -56,20 +73,6 @@ impl CollectionManagementOperations for MockCollectionManagementOperations {
 
     async fn has_collection(&self, _name: &str) -> Result<bool, String> {
         Ok(true)
-    }
-
-    async fn find_collection_by_id(
-        &self,
-        _collection_id: &str,
-    ) -> Result<Option<schema::CollectionVersion>, String> {
-        Ok(Some(mock_collection_version("MockCollection")))
-    }
-
-    async fn get_collection_by_version_id(
-        &self,
-        _version_id: &str,
-    ) -> Result<Option<schema::CollectionVersion>, String> {
-        Ok(Some(mock_collection_version("MockCollection")))
     }
 
     async fn delete_collection_versions(&self, _version_ids: Vec<String>) -> Result<(), String> {

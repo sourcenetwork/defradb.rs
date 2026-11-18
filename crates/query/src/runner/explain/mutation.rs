@@ -449,6 +449,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             .get_collection(&mutation.collection_name)
             .await?
             .ok_or_else(|| QueryError::collection_not_found(&mutation.collection_name))?;
+        crate::chunk_writes::ensure_user_writable(&collection)?;
 
         // Build a select for the mutation's result fields, including filter and docIDs
         // These are passed through to the scanNode for proper explain output

@@ -21,6 +21,7 @@
 //! - `commits`: Commits query handling
 
 mod arrivals;
+mod chunk_access;
 mod commits;
 mod commits_height;
 mod commits_numeric;

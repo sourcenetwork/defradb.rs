@@ -1,8 +1,7 @@
 //! The chunk list stored on the parent.
 //!
-//! The first entry is the hash of the whole text, so a reader can tell when the
-//! list was made from a different text. The other entries are the chunk hashes
-//! in reading order. A repeated chunk is listed once for each place it appears.
+//! The first entry is the hash of the whole text. The other entries are the
+//! chunk hashes in reading order. A repeated chunk is listed once for each place it appears.
 
 use rapidhash::{HashSetExt, RapidHashSet};
 use sha2::{Digest, Sha256};
@@ -29,9 +28,4 @@ pub fn distinct(chunks: &[Chunk]) -> Vec<&Chunk> {
         .iter()
         .filter(|chunk| seen.insert(chunk.hash.as_str()))
         .collect()
-}
-
-/// Whether `list` was made from `text`.
-pub fn describes(list: &[String], text: &str) -> bool {
-    list.first().is_some_and(|first| *first == text_hash(text))
 }

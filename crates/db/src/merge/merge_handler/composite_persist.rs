@@ -106,6 +106,23 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         state.is_branchable = collection.schema().is_branchable;
 
         if context.payload.status == 2 {
+            if collection.schema().chunk_of.is_some() {
+                let chunk_id = DocID::from_string(context.doc_id_str)
+                    .map_err(|e| MergeError::MergeFailed(format!("Invalid doc_id: {}", e)))?;
+                if let Some(reason) = crate::chunk::peer_delete::delete_must_wait(
+                    &self.db,
+                    datastore,
+                    systemstore,
+                    collection,
+                    context.doc_short_id,
+                    &chunk_id,
+                )
+                .await
+                .map_err(MergeError::Database)?
+                {
+                    return Ok(Some(MergeOutcome::retryable_skip(reason)));
+                }
+            }
             self.handle_deletion(datastore, context, collection).await?;
             return Ok(None);
         }
@@ -142,6 +159,12 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         for (field_name, op) in &state.field_ops {
             doc.edit(field_name.clone(), op.clone())
                 .map_err(|e| MergeError::MergeFailed(e.to_string()))?;
+        }
+        if collection.schema().chunk_of.is_some() {
+            let encrypted =
+                context.block.encryption.is_some() || !state.linked_encryption_cids.is_empty();
+            crate::chunk::guard::check_chunk_merge(old_doc.as_ref(), &doc, encrypted)
+                .map_err(|reason| MergeError::ChunkRejected(reason.to_string()))?;
         }
 
         let known_fields: rapidhash::RapidHashSet<&str> = collection
