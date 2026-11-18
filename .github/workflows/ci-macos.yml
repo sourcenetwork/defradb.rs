@@ -26,5 +26,6 @@ jobs:
     # request does only with ci:macos or ci:full.
     if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:macos') || contains(github.event.pull_request.labels.*.name, 'ci:full')
     uses: ./.github/workflows/unit-tests.yml
+    secrets: inherit
     with:
       os: macos-latest

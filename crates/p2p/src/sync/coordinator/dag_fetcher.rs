@@ -26,6 +26,7 @@ use super::dag_retry::{
 use super::fetch_failures::{FetchFailures, WindowFailure};
 use super::fetch_logs::{log_exhausted, log_no_progress_batch, log_retry};
 use super::provider_health::ProviderHealth;
+use super::rooted_request::rooted_request;
 use super::DagFetchLimiter;
 use crate::sync::arbitration::AttemptSample;
 use crate::sync::car::MAX_HAVE_CIDS;
@@ -592,15 +593,15 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
 
     // Sender demotion removes per-CID provider advertisements. Exercise the
     // rooted authority at the announcing publisher with a cancellable,
-    // bounded descendant closure rooted at the already-known missing
-    // frontier. This mirrors Go's one per-root blockservice session without
-    // returning to an unbounded recursive historical-root walk.
+    // bounded request (see rooted_request for what it names). This mirrors
+    // Go's one per-root blockservice session.
     let rooted_wants = car_missing_watch
         .as_deref()
         .unwrap_or(std::slice::from_ref(&root_cid));
     let mut car_answered = false;
     // A missing root is usually a new head over held history, which a
-    // whole-DAG CAR would re-send; on iroh the rotating fetch below depth-cuts it.
+    // whole-DAG CAR would re-send; on a rooted transport the rotating fetch
+    // below asks for it with the receiver's haves.
     let rooted_asked = !state.providers.cannot_serve(rooted_wants)
         && match car_missing_watch {
             Some(_) => context.needs_rooted_provider_discovery(),
@@ -995,11 +996,10 @@ async fn count_missing<B: Blockstore>(blockstore: &Arc<B>, cids: &[Cid]) -> usiz
 }
 
 /// Exercise one authenticated provider's rooted CAR authority with the
-/// missing frontier already known from the local root. Iroh returns a capped
-/// descendant closure from that frontier; other transports retain their
-/// native session/exact-want behavior. The query is cancellable and bounded,
-/// so an unavailable provider cannot retain a transport task or monopolize the
-/// receiver fetch owner.
+/// missing frontier already known from the local root, asking for what
+/// [`rooted_request`] names; the frontier measures progress. The query is
+/// cancellable and bounded, so an unavailable provider cannot retain a
+/// transport task or monopolize the receiver fetch owner.
 async fn poll_fetch_rooted_provider<B: Blockstore, T: P2PTransport>(
     root_cid: &Cid,
     watch_cids: &[Cid],
@@ -1018,11 +1018,13 @@ async fn poll_fetch_rooted_provider<B: Blockstore, T: P2PTransport>(
     if initially_missing == 0 {
         return ProviderWindowOutcome::Complete;
     }
+    let (wants, depth) =
+        rooted_request(blockstore.as_ref(), root_cid, watch_cids, context, depth).await;
     let query_id = match transport
         .sync_blocks_within(
             *root_cid,
             vec![source_peer.clone()],
-            watch_cids.to_vec(),
+            wants,
             depth.get(),
             context.haves().to_vec(),
         )
@@ -1349,11 +1351,16 @@ async fn poll_fetch_blocks<B: Blockstore, T: P2PTransport>(
         return ProviderWindowOutcome::Complete;
     }
 
+    let (wants, depth) = if transport.supports_cancellable_rooted_sync() {
+        rooted_request(blockstore.as_ref(), root_cid, &missing, context, depth).await
+    } else {
+        (missing.clone(), depth)
+    };
     let query_id = match transport
         .sync_blocks_within(
             *root_cid,
             vec![source_peer.clone()],
-            missing.clone(),
+            wants,
             depth.get(),
             context.haves().to_vec(),
         )

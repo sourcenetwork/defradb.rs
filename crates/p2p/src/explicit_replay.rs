@@ -11,7 +11,11 @@
 //! call [`revoke_capability`], or use [`ExplicitReplayRevocationRegistry`] with
 //! [`verify_capability_with_revocations`] for a custom synced deny-list.
 
-#[cfg(any(feature = "libp2p-transport", feature = "iroh-transport"))]
+#[cfg(any(
+    feature = "libp2p-transport",
+    feature = "iroh-transport",
+    feature = "vinc-transport"
+))]
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -37,20 +41,32 @@ pub const MAX_CAPABILITY_TTL: Duration = DEFAULT_CAPABILITY_TTL;
 static PROCESS_REVOCATIONS: Lazy<ExplicitReplayRevocationRegistry> =
     Lazy::new(ExplicitReplayRevocationRegistry::default);
 
-#[cfg(any(feature = "libp2p-transport", feature = "iroh-transport"))]
+#[cfg(any(
+    feature = "libp2p-transport",
+    feature = "iroh-transport",
+    feature = "vinc-transport"
+))]
 #[derive(Debug, Clone)]
 struct CachedExplicitReplayCapability {
     capability: String,
     authorizer_did: String,
 }
 
-#[cfg(any(feature = "libp2p-transport", feature = "iroh-transport"))]
+#[cfg(any(
+    feature = "libp2p-transport",
+    feature = "iroh-transport",
+    feature = "vinc-transport"
+))]
 #[derive(Clone)]
 pub(crate) struct ExplicitReplayCapabilityCache {
     capabilities: Arc<HopscotchMap<(String, String), CachedExplicitReplayCapability, RandomState>>,
 }
 
-#[cfg(any(feature = "libp2p-transport", feature = "iroh-transport"))]
+#[cfg(any(
+    feature = "libp2p-transport",
+    feature = "iroh-transport",
+    feature = "vinc-transport"
+))]
 impl Default for ExplicitReplayCapabilityCache {
     fn default() -> Self {
         Self {
@@ -59,7 +75,11 @@ impl Default for ExplicitReplayCapabilityCache {
     }
 }
 
-#[cfg(any(feature = "libp2p-transport", feature = "iroh-transport"))]
+#[cfg(any(
+    feature = "libp2p-transport",
+    feature = "iroh-transport",
+    feature = "vinc-transport"
+))]
 impl ExplicitReplayCapabilityCache {
     pub(crate) fn set(
         &self,

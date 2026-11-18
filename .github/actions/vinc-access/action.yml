@@ -1,0 +1,24 @@
+name: vinc access
+description: Lets git and cargo fetch the private sourcenetwork/vinc repository with its read-only deploy key.
+inputs:
+  key:
+    description: The private half of vinc's read-only deploy key (secrets.VINC_DEPLOY_KEY).
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        VINC_DEPLOY_KEY: ${{ inputs.key }}
+      run: |
+        # A fork's pull request gets no secrets, so it cannot fetch vinc.
+        if [ -z "$VINC_DEPLOY_KEY" ]; then
+          echo "::warning::VINC_DEPLOY_KEY is not available, so the private vinc dependency cannot be fetched."
+          exit 0
+        fi
+        key="$RUNNER_TEMP/vinc_deploy_key"
+        printf '%s\n' "$VINC_DEPLOY_KEY" > "$key"
+        chmod 600 "$key"
+        git config --global url."ssh://git@github.com/sourcenetwork/vinc".insteadOf "https://github.com/sourcenetwork/vinc"
+        git config --global core.sshCommand "ssh -i '$key' -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+        echo "CARGO_NET_GIT_FETCH_WITH_CLI=true" >> "$GITHUB_ENV"

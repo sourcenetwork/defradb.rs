@@ -298,7 +298,7 @@ pub async fn collect_exact_blocks<B: Blockstore>(
 }
 
 /// Extract CID links from a DAG-CBOR block.
-fn extract_links(block_data: &[u8]) -> Vec<Cid> {
+pub(crate) fn extract_links(block_data: &[u8]) -> Vec<Cid> {
     use ipld_core::codec::Links;
     use serde_ipld_dagcbor::codec::DagCborCodec;
 

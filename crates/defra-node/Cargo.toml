@@ -30,6 +30,9 @@ p2p = [
 ]
 # The iroh transport under its former `embedded` name.
 iroh = ["p2p"]
+# The vinc transport beside iroh (opt-in). It rides the managed-P2P plumbing
+# the `p2p` feature gates, so it brings iroh with it until iroh goes.
+vinc = ["p2p", "p2p/vinc-transport", "defra-p2p-adapter/vinc"]
 # libp2p transport. Off by default: the default node's graph has no libp2p.
 libp2p = [
     "native",

@@ -45,6 +45,9 @@ jobs:
           ref: ${{ steps.vera.outputs.revision }}
           path: .native/vera
           persist-credentials: false
+      - uses: ./.github/actions/vinc-access
+        with:
+          key: ${{ secrets.VINC_DEPLOY_KEY }}
       - uses: dtolnay/rust-toolchain@1.99.1
         with:
           components: clippy

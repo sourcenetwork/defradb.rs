@@ -352,6 +352,9 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
             },
         ));
     }
+    if spec.network && crate::transport_choice::TransportChoice::from_env().is_vinc() {
+        builder = vinc_transport(builder, spec, listen);
+    }
     if let Some(config) = http {
         builder = builder.with_http(config);
     } else if let Some((ttl, tick)) = spec.txn_ttl {
@@ -387,6 +390,65 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
         })?;
     }
     Ok(node)
+}
+
+/// Run `builder`'s node over vinc on loopback, `DEFRA_TRANSPORT=vinc`. A node
+/// restarted on its old address binds the port that address names; its key
+/// lives in its store, so a restart keeps its peer id.
+#[cfg(feature = "vinc")]
+fn vinc_transport(
+    builder: defra_node::NodeBuilder,
+    spec: &NodeSpec,
+    listen: &str,
+) -> defra_node::NodeBuilder {
+    let bind = listen
+        .split_once('@')
+        .and_then(|(_, addrs)| addrs.split(',').next())
+        .and_then(|addr| addr.parse().ok())
+        .unwrap_or_else(|| std::net::SocketAddr::from(([127, 0, 0, 1], 0)));
+    let mut config = defra_node::VincConfig {
+        bind,
+        peer_key: defra_node::PeerKeySource::Store,
+        max_connections: 16,
+        hubs: vec![VINC_HUB.clone()],
+        ..Default::default()
+    };
+    if let Some(limits) = &spec.admission {
+        config.sync.max_pending_dags = limits.max_pending_dags;
+        config.sync.rate_limit_burst = limits.rate_limit_burst;
+        config.sync.rate_limit_rate = limits.rate_limit_rate;
+        if let Some(bytes) = limits.deferral_peer_bytes {
+            config.sync.gossip_deferral_peer_bytes = bytes;
+        }
+    }
+    builder.with_vinc(config)
+}
+
+/// The vinc hub every node of this test process names, as a gossip mesh's
+/// stand-in: vinc topics run through a hub.
+#[cfg(feature = "vinc")]
+static VINC_HUB: regolith::sync::Lazy<String> = regolith::sync::Lazy::new(|| {
+    let edge = edge::testing::edge();
+    let bind = std::net::SocketAddr::from(([127, 0, 0, 1], 0));
+    let (ticket, task) = workers::block_on(
+        edge.clone()
+            .spawn(async move { defra_node::spawn_vinc_hub([0x48; 32], bind, edge).await }),
+    )
+    .expect("the test thread waits")
+    .expect("the hub task runs")
+    .expect("the vinc hub binds");
+    // ponytail: the hub lives as long as the process; nothing stops it.
+    std::mem::forget(task);
+    ticket
+});
+
+#[cfg(not(feature = "vinc"))]
+fn vinc_transport(
+    _builder: defra_node::NodeBuilder,
+    _spec: &NodeSpec,
+    _listen: &str,
+) -> defra_node::NodeBuilder {
+    panic!("DEFRA_TRANSPORT=vinc needs integration-test built with --features vinc")
 }
 
 /// The key a node signs with: its node identity's, or, for a node that only
@@ -666,7 +728,9 @@ impl Events {
     }
 }
 
-/// The peer ID at the end of a `/p2p/<ID>` address.
+/// The peer ID of an address: the end of a libp2p `/p2p/<ID>` address, or
+/// the start of a vinc `<ID>@<ip:port>` one.
 pub fn peer_id(address: &str) -> &str {
-    address.rsplit("/p2p/").next().unwrap_or(address)
+    let id = address.rsplit("/p2p/").next().unwrap_or(address);
+    id.split('@').next().unwrap_or(id)
 }

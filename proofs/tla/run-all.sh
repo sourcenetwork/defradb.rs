@@ -309,6 +309,15 @@ RUNS=(
   "MC_ExactDagFetch_Red_FlipWant.cfg ExactDagFetch.tla RED" # held overrides a block asked for by name (INV_RoundsBounded)
   "MC_ExactDagFetch_Red_TrustProvider.cfg ExactDagFetch.tla RED" # the receiver merges on the provider's word (INV_MergeComplete)
   "MC_ExactDagFetch_Red_SkipCid.cfg ExactDagFetch.tla RED" # the receiver skips the CID check (INV_NoForged)
+  "MC_RootNamedFetch_Green.cfg RootNamedFetch.tla GREEN" # a document asks once, naming the root, uncut: nothing held is sent back; a branchable fetch keeps its cut
+  "MC_RootNamedFetch_Red_Frontier.cfg RootNamedFetch.tla RED" # a document asks for its field frontier at a cut (INV_HeldNotResent)
+  "MC_RootNamedFetch_Red_Window.cfg RootNamedFetch.tla RED" # a document with no haves asks with a doubling cut (INV_HeldNotResent)
+  "MC_RootNamedFetch_Red_Whole.cfg RootNamedFetch.tla RED" # a branchable fetch asks uncut (INV_BranchCut)
+  "MC_RootNamedFetch_Red_RootAny.cfg RootNamedFetch.tla RED" # a document holding unmerged blocks below its root, with no have, names the root (INV_HeldNotResent)
+  "MC_MissedTopicResync_Green.cfg MissedTopicResync.tla GREEN" # a hub's missed report on a followed topic is pulled again, and the receiver ends at the latest head
+  "MC_MissedTopicResync_Red_NoPull.cfg MissedTopicResync.tla RED" # a missed report is only logged (INV_Converges)
+  "MC_MissedTopicResync_Red_WrongKind.cfg MissedTopicResync.tla RED" # a document topic is pulled with BranchableSync (INV_Converges)
+  "MC_MissedTopicResync_Red_AnyTopic.cfg MissedTopicResync.tla RED" # a foreign topic is pulled (INV_OnlyOwnTopics)
   "MC_HeldBlockIngest_Green.cfg HeldBlockIngest.tla GREEN" # ingest owns only the blocks it stores; one writer per mark, no contention on held blocks
   "MC_HeldBlockIngest_Red_NoOwners.cfg HeldBlockIngest.tla RED" # ingest owns nothing (INV_OneMarkWriter)
   "MC_HeldBlockIngest_Red_OwnHeld.cfg HeldBlockIngest.tla RED" # ingest also owns held blocks (INV_HeldNeverContends)
@@ -1197,6 +1206,32 @@ RUNS=(
   "MC_AnnounceAudience_Red_HoldWhenAlone.cfg AnnounceAudience.tla RED" # a write made alone is held for the window and reaches a peer that joined during it (INV_GoAudience)
   "MC_AnnounceAudience_Red_AloneMeansDisconnected.cfg AnnounceAudience.tla RED" # alone means no peer connected: a write made while the peer is connected but not subscribed waits out the window and reaches it (INV_GoAudience)
   "MC_AnnounceAudience_Red_RetryWhileConnected.cfg AnnounceAudience.tla RED" # an announcement that found no subscriber is published again while a peer is connected, and reaches it once it subscribes (INV_GoAudience)
+  "MC_VincDialAnswered_Green.cfg VincDialAnswered.tla GREEN" # the target stops and restarts while documents are owed: a dial counts it connected only once it answered, so no push goes into a silent connection
+  "MC_VincDialAnswered_Red_CountAtHandOver.cfg VincDialAnswered.tla RED" # a dial counts the target connected when vinc hands it over: a push goes into a stopped target (INV_NoPushUnanswered)
+  "MC_VincReplyBridge_Green.cfg VincReplyBridge.tla GREEN" # lossy drops, a refused stream, a connection that may end, every deadline reached: one answer per stream, a bounded table that empties for good
+  "MC_VincReplyBridge_Green_NoLoss.cfg VincReplyBridge.tla GREEN" # no lost drop and no deadline in the run: replies, drops and the purge alone empty the table
+  "MC_VincReplyBridge_Red_NoTakeOnce.cfg VincReplyBridge.tla RED" # a reply leaves its entry: the sweep resets a stream that got its reply (INV_OneOutcome)
+  "MC_VincReplyBridge_Red_NoDropReset.cfg VincReplyBridge.tla RED" # a dropped token sends nothing: its stream is held forever (LIVE_NoLeak)
+  "MC_VincReplyBridge_Red_NoSweep.cfg VincReplyBridge.tla RED" # no sweep: a drop lost to a full queue leaks its entry (LIVE_NoLeak)
+  "MC_VincReplyBridge_Red_NoCap.cfg VincReplyBridge.tla RED" # no capacity check: the table outgrows its bound (INV_Bounded)
+  "MC_VincTopicDelivery_Green.cfg VincTopicDelivery.tla GREEN" # two nodes subscribe, unsubscribe, publish and hold, let holds end, link and unlink: only a node on the mesh gets a message, JOINED only for a linked member of a subscribed or held topic, an ended hold keeps the engine's topic
+  "MC_VincTopicDelivery_Green_Raw.cfg VincTopicDelivery.tla GREEN" # a raw topic: every message reaches the engine as bytes
+  "MC_VincTopicDelivery_Red_NoGate.cfg VincTopicDelivery.tla RED" # no peer-session gate: a node that dialed no one takes the hub's push (INV_NoDeliveryOffMesh)
+  "MC_VincTopicDelivery_Red_RawLate.cfg VincTopicDelivery.tla RED" # raw marked after the join: a KMS message is decoded as a PushLog (INV_RawNeverDecoded)
+  "MC_VincTopicDelivery_Red_NoSessionFilter.cfg VincTopicDelivery.tla RED" # JOINED from the hub's member list: a peer with no session is reported joined (INV_JoinedOnlyLinkedMembers)
+  "MC_VincTopicDelivery_Red_NoOwnerCheck.cfg VincTopicDelivery.tla RED" # an ended hold leaves whatever happened: the engine loses a topic it subscribed to meanwhile (INV_EngineKeepsItsTopic)
+  "MC_VincTopicDelivery_Red_NoHoldEnd.cfg VincTopicDelivery.tla RED" # an unsubscribe leaves but keeps the hold: a held topic the node is off (INV_HeldIsJoined)
+  "MC_VincJoinConfirm_Green.cfg VincJoinConfirm.tla GREEN" # two subscribes, an unsubscribe, a hold and a lost event: "subscribed" only while the hub holds the join, no fail once confirmed, no missed wake-up, no stuck subscription
+  "MC_VincJoinConfirm_Green_Wide.cfg VincJoinConfirm.tla GREEN" # three attempts, two unsubscribes, two holds: the same promises
+  "MC_VincJoinConfirm_Red_NoConfirmCheck.cfg VincJoinConfirm.tla RED" # old code, waits only on a join new to vinc: a held topic answers before the hub has it (INV_OkOnlyWhenHeld)
+  "MC_VincJoinConfirm_Red_NoConfirmCheck_Wake.cfg VincJoinConfirm.tla RED" # old code: the event is read before the subscribe decides, and it waits for nothing (INV_NoMissedWake)
+  "MC_VincJoinConfirm_Red_NoStillJoined.cfg VincJoinConfirm.tla RED" # an event of a left topic confirms it: the next subscribe answers early (INV_OkOnlyWhenHeld)
+  "MC_VincJoinConfirm_Red_NoRecheck.cfg VincJoinConfirm.tla RED" # the timer wins over the wake-up and the subscribe fails though confirmed (INV_FailOnlyUnconfirmed)
+  "MC_VincJoinConfirm_Red_NoRollback.cfg VincJoinConfirm.tla RED" # a failed subscribe keeps its join: a lost event is never raised again (INV_NoStuckSubscription)
+  "MC_VincJoinConfirm_Red_NoClearOnLeave.cfg VincJoinConfirm.tla RED" # a left topic stays confirmed: a rejoin answers early (INV_OkOnlyWhenHeld)
+  "MC_VincJoinConfirm_Red_UntaggedList.cfg VincJoinConfirm.tla RED" # vinc today (#483): an old list confirms a new join (INV_OkOnlyWhenHeld)
+  "MC_VincJoinConfirm_Red_Undrained.cfg VincJoinConfirm.tla RED" # vinc today (#483): a queued old event confirms a new join (INV_OkOnlyWhenHeld)
+  "MC_VincTopicDelivery_Red_NoEngineFilter.cfg VincTopicDelivery.tla RED" # messages of a topic the engine is not subscribed to reach it (INV_OnlyEngineTopics)
   "MC_CoordinatorShutdown_Green.cfg CoordinatorShutdown.tla GREEN" # two callers, a late spawn racing the drain, the edge closing and the runtime torn down at any moment: one drain, no task left in the set, every caller returns
   "MC_CoordinatorShutdown_Green_TwoSpawns.cfg CoordinatorShutdown.tla GREEN" # two late spawns whose pruners race the drain and each other: no task left in the set, the caller returns
   "MC_CoordinatorShutdown_Red_DropRefused.cfg CoordinatorShutdown.tla RED" # the old code, a refused drain dropped: the tracked task leaks (INV_NoLeak)

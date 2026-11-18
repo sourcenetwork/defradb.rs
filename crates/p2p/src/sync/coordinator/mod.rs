@@ -71,6 +71,7 @@ mod push_worker;
 mod receive_gate;
 mod replicators;
 mod result_types;
+mod rooted_request;
 mod selective_car_access;
 mod subscriptions;
 
@@ -1698,6 +1699,10 @@ pub type Libp2pSyncCoordinator<B> =
 /// Type alias for SyncCoordinator using the iroh transport.
 #[cfg(feature = "iroh-transport")]
 pub type IrohSyncCoordinator<B> = SyncCoordinator<B, crate::iroh::IrohTransport>;
+
+/// Type alias for SyncCoordinator using the vinc transport.
+#[cfg(all(feature = "vinc-transport", not(target_arch = "wasm32")))]
+pub type VincSyncCoordinator<B> = SyncCoordinator<B, crate::vinc::VincTransport>;
 
 #[cfg(test)]
 mod access_tests;

@@ -208,6 +208,10 @@ pub enum Error {
     #[cfg(feature = "p2p")]
     #[error("iroh peer failed to start: {0}")]
     IrohStart(#[source] p2p::Error),
+    /// The vinc peer did not start.
+    #[cfg(feature = "vinc")]
+    #[error("vinc peer failed to start: {0}")]
+    VincStart(#[source] p2p::Error),
     /// The HTTP server was configured on a node with no network runtime.
     #[error("the HTTP server needs the network runtime")]
     HttpNeedsNetwork,

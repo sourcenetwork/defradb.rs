@@ -70,6 +70,9 @@ jobs:
       - if: inputs.os == 'linux'
         uses: runs-on/action@v2
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/vinc-access
+        with:
+          key: ${{ secrets.VINC_DEPLOY_KEY }}
       - uses: dtolnay/rust-toolchain@stable
       - name: Install Linux dependencies
         if: runner.os == 'Linux'

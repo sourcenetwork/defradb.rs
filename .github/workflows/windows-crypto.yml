@@ -32,6 +32,9 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - uses: ./.github/actions/vinc-access
+        with:
+          key: ${{ secrets.VINC_DEPLOY_KEY }}
       - uses: dtolnay/rust-toolchain@stable
       - name: Exercise the MSVC cryptography backend
         run: cargo test --locked -p crypto --lib

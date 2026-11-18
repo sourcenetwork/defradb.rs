@@ -53,6 +53,9 @@ jobs:
       threshold: ${{ steps.decide.outputs.threshold }}
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/vinc-access
+        with:
+          key: ${{ secrets.VINC_DEPLOY_KEY }}
       - uses: extractions/setup-just@v4
       # Its own interpreter rather than the system one: a PEP 668 image refuses
       # to let pip touch the system environment, and this gate must not be the
@@ -156,6 +159,9 @@ jobs:
             timeout: 150
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/vinc-access
+        with:
+          key: ${{ secrets.VINC_DEPLOY_KEY }}
       - uses: dtolnay/rust-toolchain@stable
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
@@ -240,6 +246,9 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/vinc-access
+        with:
+          key: ${{ secrets.VINC_DEPLOY_KEY }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
@@ -295,6 +304,9 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/vinc-access
+        with:
+          key: ${{ secrets.VINC_DEPLOY_KEY }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
@@ -350,6 +362,9 @@ jobs:
           - wasm32-unknown-unknown
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/vinc-access
+        with:
+          key: ${{ secrets.VINC_DEPLOY_KEY }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -454,6 +469,9 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/vinc-access
+        with:
+          key: ${{ secrets.VINC_DEPLOY_KEY }}
       - uses: actions/download-artifact@v8
         with:
           pattern: perf-platform-*
@@ -505,6 +523,9 @@ jobs:
       pull-requests: write
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/vinc-access
+        with:
+          key: ${{ secrets.VINC_DEPLOY_KEY }}
       - uses: actions/download-artifact@v8
         with:
           pattern: perf-platform-*
