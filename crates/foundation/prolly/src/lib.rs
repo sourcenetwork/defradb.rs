@@ -6,7 +6,7 @@
 //! is cut into chunks after each item whose hash says so ([`hash::is_boundary`]);
 //! each chunk becomes one item of the level above (its last key and its hash),
 //! and so on until a level is one chunk: the root. An insert or a remove re-cuts
-//! only the chunks around it. [`diff`] walks two trees down only where their
+//! only the chunks around it. [`diff()`] walks two trees down only where their
 //! hashes differ.
 //!
 //! The invariants are proven in `proofs/lean/ProllyTree.lean`; the sync
