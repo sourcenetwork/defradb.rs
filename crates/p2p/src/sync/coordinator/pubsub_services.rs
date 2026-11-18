@@ -179,8 +179,18 @@ impl MessageHandler for DocSyncHandler {
         let req: wire::DocSyncRequest =
             ciborium::from_reader(data.as_slice()).map_err(|e| format!("decode request: {e}"))?;
 
-        let mut results = Vec::new();
+        let mut doc_ids = req.doc_ids.clone();
         for doc_id in &req.doc_ids {
+            match self.ctx.head_provider.following_doc_ids(doc_id).await {
+                Ok(followers) => doc_ids.extend(followers),
+                Err(e) => {
+                    warn!(doc_id = %doc_id, error = %e, "doc-sync: follower lookup failed");
+                }
+            }
+        }
+
+        let mut results = Vec::new();
+        for doc_id in &doc_ids {
             match self.ctx.head_provider.get_document_heads(doc_id).await {
                 Ok(heads) if !heads.is_empty() => {
                     results.push(wire::DocSyncItem {

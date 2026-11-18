@@ -26,6 +26,8 @@ struct PendingPush {
     collection_id: String,
     creator: String,
     document: Option<JsonValue>,
+    // The collection whose filter decides this head. For a chunk, its parent's.
+    decided_in: String,
 }
 
 impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
@@ -202,6 +204,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             collection_id: collection_id.to_string(),
             creator: creator.to_string(),
             document: None,
+            decided_in: collection_id.to_string(),
         })
         .await
     }
@@ -231,6 +234,38 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             collection_id: collection_id.to_string(),
             creator: creator.to_string(),
             document: Some(document.clone()),
+            decided_in: collection_id.to_string(),
+        })
+        .await
+    }
+
+    /// Push a head that follows a parent, such as a `@chunk` chunk. Its own
+    /// fields can't match the parent's filter, so the parent's decide it.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn push_followed_document_to_replicators_with_creator(
+        &self,
+        cid: &Cid,
+        block: &[u8],
+        doc_id: &str,
+        collection_id: &str,
+        parent_collection_id: &str,
+        parent_document: Option<&JsonValue>,
+        creator_override: Option<&str>,
+    ) -> Result<()> {
+        let creator = creator_override.unwrap_or(&self.access.local_peer_id);
+        crate::model_trace!(Commit {
+            doc: doc_id,
+            head: cid.to_string(),
+            parents: crate::model_trace::parents_of(block),
+        });
+        self.admit_replicator_push(PendingPush {
+            cid: *cid,
+            block: Bytes::copy_from_slice(block),
+            doc_id: doc_id.to_string(),
+            collection_id: collection_id.to_string(),
+            creator: creator.to_string(),
+            document: parent_document.cloned(),
+            decided_in: parent_collection_id.to_string(),
         })
         .await
     }
@@ -311,14 +346,14 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 missing_documents += 1;
                 continue;
             }
-            if rep.is_filtered_for_collection(&push.collection_id) {
+            if rep.is_filtered_for_collection(&push.decided_in) {
                 let Some(document) = push.document.as_ref() else {
                     missing_documents += 1;
                     continue;
                 };
                 if !rep.matches_filter(
                     self.runtime.filter_matcher.as_ref(),
-                    &push.collection_id,
+                    &push.decided_in,
                     document,
                 ) {
                     filter_misses += 1;
