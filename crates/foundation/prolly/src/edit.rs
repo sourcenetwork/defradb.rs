@@ -5,8 +5,9 @@
 //! goes on into the next chunks until it closes a chunk. Everything before the
 //! first chunk closed before it, and everything after the last starts from a
 //! closed chunk, so the result is the cut of the whole level
-//! (`ProllyTree.chunks_append`, `closes_append`). The new chunks then replace
-//! the old ones' items in the level above, and so on up to the root.
+//! (`ProllyTree.rewrite_level_refines`). The new chunks then replace the old
+//! ones' items in the level above (`ProllyTree.rewrite_level_up`), and so on
+//! up to the root.
 
 use std::sync::Arc;
 

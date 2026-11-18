@@ -3529,14 +3529,16 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
-        // Lean models one-level chunking and `build` over a sorted list. The
-        // incremental edit path (`edit.rs`: window re-cut, splice one level up,
-        // single-child root collapse) is not modelled; it is checked against a
-        // fresh build by the `crates/foundation/prolly/tests/history.rs` proptest.
+        // Lean models one-level chunking, `build` over a sorted list, one level
+        // of the windowed edit (`rewrite_level` re-cut and the `splice` one
+        // level up) and the injective node encoding. Walking the edit up to
+        // the root and the single-child root collapse in `raise` are not
+        // modelled; they are checked against a fresh build by the
+        // `crates/foundation/prolly/tests/history.rs` proptest.
         family: "Prolly tree catch-up",
-        name: "chunks_append / closes_append / chunks_flatten / chunks_nonempty / chunks_shrink / build / sorted_insert / sorted_erase / eq_of_same_entries / build_same_entries / insert_comm / erase_insert_comm / insert_insert",
+        name: "chunks_append / closes_append / chunks_flatten / chunks_nonempty / chunks_shrink / build / sorted_insert / sorted_erase / eq_of_same_entries / build_same_entries / insert_comm / erase_insert_comm / insert_insert / canon_chunks / rewrite_level_refines / rewrite_level_up / encode_injective",
         axis: Lean,
-        anchor: "crates/foundation/prolly/src/chunk.rs Chunker::push, chunk; crates/foundation/prolly/src/hash.rs is_boundary; crates/foundation/prolly/src/tree.rs Tree::build, raise",
+        anchor: "crates/foundation/prolly/src/chunk.rs Chunker::push, Chunker::finish, chunk; crates/foundation/prolly/src/hash.rs is_boundary; crates/foundation/prolly/src/tree.rs Tree::build, raise; crates/foundation/prolly/src/edit.rs rewrite_level, splice; crates/foundation/prolly/src/node.rs Node::encode",
         model_ref: "ProllyTree (lake build)",
         tiers: &[Boundary],
         bound_by: "",

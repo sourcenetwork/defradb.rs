@@ -25,7 +25,8 @@ impl Node {
     ///
     /// The level byte, then the item count, then each key and value behind
     /// its length, every length a big-endian `u64` so that no length is
-    /// truncated and distinct nodes never share an encoding.
+    /// truncated and distinct nodes never share an encoding
+    /// (`ProllyTree.encode_injective`).
     pub fn encode(&self) -> Vec<u8> {
         let size: usize = self
             .items
