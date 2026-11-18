@@ -20,15 +20,62 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  scope:
+    name: Native consumer scope
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - id: decide
+        uses: actions/github-script@v9
+        with:
+          script: |
+            // Pull requests that change nothing the qualification builds or runs skip it. Main,
+            // manual runs, and anything not listed here as irrelevant always run.
+            if (context.eventName !== 'pull_request') {
+              core.setOutput('run', 'true');
+              return;
+            }
+            const own = [
+              '.github/workflows/native-consumer.yml',
+              '.github/scripts/native-consumer.py',
+              '.github/scripts/test-native-consumer.py',
+              '.github/scripts/install-linux-ci-deps.sh',
+              '.github/scripts/apt-update-without-nodesource.sh',
+            ];
+            // Workspace crates off the cli/vera/integration-test dependency graph, and files no
+            // build or test of those packages reads.
+            const irrelevant = (file) =>
+              (file.startsWith('.github/') && !own.includes(file)) ||
+              file.endsWith('.md') ||
+              /^(docs|reqs|proofs|benches|audit|licenses|crates\/ffi|crates\/wasm)\//.test(file) ||
+              (file.startsWith('tools/') && !file.startsWith('tools/integration-test/')) ||
+              /^(\.config\/.*|flake\.(nix|lock)|Dockerfile.*|\.dockerignore|justfile|deny\.toml|mantra\.json5|\.envrc|\.gitignore|rustfmt\.toml)$/.test(file);
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              ...context.repo, pull_number: context.payload.pull_request.number, per_page: 100,
+            });
+            // The API lists at most 3000 files; a longer list may hide a relevant one.
+            const names = files.flatMap((f) => [f.filename, f.previous_filename].filter(Boolean));
+            const run = files.length >= 3000 || names.some((file) => !irrelevant(file));
+            core.info(`${files.length} changed files; run=${run}`);
+            core.setOutput('run', run ? 'true' : 'false');
+
   native-consumer:
     name: Native ACP consumer
-    runs-on: ubuntu-24.04
+    needs: scope
+    if: needs.scope.outputs.run == 'true'
+    # Fat LTO with one codegen unit links each release binary in one rustc, so more cores
+    # stop helping past 16; 64 GB leaves room for that link beside a full -j build.
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}/spot=pco/cpu=16/ram=64/family=m6*+m7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     # Full normal-release compilation is retained on a cache miss.
     timeout-minutes: 90
     env:
-      CARGO_BUILD_JOBS: '2'
       VERA_RUNTIME_REVISION: ${{ inputs.vera_revision || 'bf4a4352cd620d6b498508e2dbf768edcbf3392b' }}
     steps:
+      # Routes actions/cache and rust-cache to RunsOn's S3 cache.
+      - uses: runs-on/action@v2
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
@@ -50,8 +97,6 @@ jobs:
           components: clippy
           targets: wasm32-unknown-unknown
       - run: .github/scripts/install-linux-ci-deps.sh
-      - name: Free unused hosted SDKs for release builds
-        run: sudo rm -rf -- /usr/local/lib/android /usr/share/dotnet
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: native-consumer-1.99.1
