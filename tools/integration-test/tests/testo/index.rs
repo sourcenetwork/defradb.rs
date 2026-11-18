@@ -12,6 +12,7 @@ mod backfill_unique_txn;
 mod crdt;
 mod delete;
 mod get;
+mod group_order;
 mod json;
 mod json_array;
 mod json_array_filter;
