@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-f4fb5a6b.js";
+            window.path_to_searchindex_js = "searchindex-712cba6e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-8198d451.js"></script>
@@ -2488,7 +2488,10 @@ identity until that identity expires. The same token sent again is answered with
 recorded outcome and changes nothing; a different command under a used identity is
 rejected. A registration or a grant submitted twice across a crash therefore takes effect
 once, even when the relationship was changed in between.</p>
-<p>A signer can make the token before the write runs. <code>vera::vera_rs::request_digest</code>
+<p>A signer can make the token before the write runs, without the provider: the
+<code>vera-delegation</code> crate holds the signers, both kinds of delegation, <code>RequestBinding</code>
+and the typed policy commands, and depends on neither vera.rs’s client nor a network
+runtime; <code>vera</code> re-exports the same names. <code>vera::vera_rs::request_digest</code>
 gives the digest from the same bytes the node submits, so an actor inside the command is
 in the spelling the node sends. A document ID comes from the document’s content: the
 client that signs a create’s blocks (<code>ClientCreateSignatures::from_input</code>) has it before
