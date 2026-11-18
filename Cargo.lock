@@ -9917,6 +9917,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "prolly"
+version = "0.5.0"
+dependencies = [
+ "proptest",
+ "rapidhash",
+ "sha2 0.10.9",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "prometheus-client"
 version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

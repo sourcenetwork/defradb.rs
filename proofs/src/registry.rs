@@ -3529,6 +3529,25 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        family: "Prolly tree catch-up",
+        name: "chunks_append / closes_append / chunks_flatten / chunks_nonempty / chunks_shrink / build / sorted_insert / sorted_erase / eq_of_same_entries / build_same_entries / insert_comm / erase_insert_comm / insert_insert",
+        axis: Lean,
+        anchor: "crates/foundation/prolly/src/chunk.rs Chunker::push, chunk; crates/foundation/prolly/src/hash.rs is_boundary; crates/foundation/prolly/src/tree.rs Tree::build, raise; crates/foundation/prolly/src/edit.rs Tree::insert, Tree::remove, rewrite_level, splice",
+        model_ref: "ProllyTree (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // The pull is not wired into p2p yet (#2977); the model is its contract.
+        family: "Prolly tree catch-up",
+        name: "NoLeak / PulledHolds: a pull never shows a peer a document it may not read, and a pull that ends caught up leaves the puller holding every version the responder may show it",
+        axis: Tla,
+        anchor: "crates/foundation/prolly/src/tree.rs Tree::build, Tree::root; crates/foundation/prolly/src/diff.rs diff",
+        model_ref: "MC_ProllySync_Green.cfg (GREEN) / MC_ProllySync_{Red_NoFilter,Red_StaleRoot,Red_MissingOnly}.cfg (RED)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         family: "Text chunking",
         name: "covers / bounded / pickPre_capped / deterministic / units_edit / local_edit / heading_keeps_text / unit_break_reads_only_headings / long_unit_fences",
         axis: Lean,
