@@ -7,6 +7,11 @@ use rapidhash::{HashMapExt, RapidHashMap};
 use crate::{hash::Hash, node::Node};
 
 /// A content-addressed node store.
+///
+/// Readers trust what `get` returns: a node whose `hash()` is the hash asked
+/// for, one level below the parent that named it, with its items sorted by key.
+/// `MemStore` holds only nodes it hashed itself. A store fed by another peer
+/// must check this before returning a node.
 pub trait Store {
     /// The node stored under `hash`, if any.
     fn get(&self, hash: &Hash) -> Option<Arc<Node>>;

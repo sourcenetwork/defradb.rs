@@ -80,7 +80,7 @@ enum Step {
 /// The keys where `left` and `right` differ, in key order. Subtrees with the
 /// same hash at the same place in both walks hold the same entries and are
 /// skipped unopened, so the nodes read grow with the difference, not with the
-/// trees.
+/// trees. Equal roots return at once, without reading either store.
 pub fn diff<A, B>(
     left_store: &A,
     left: &Tree,
@@ -91,6 +91,9 @@ where
     A: Store,
     B: Store,
 {
+    if left.root == right.root {
+        return Ok(Vec::new());
+    }
     let mut lhs = Walk::new(left_store, left)?;
     let mut rhs = Walk::new(right_store, right)?;
     let mut differences = Vec::new();

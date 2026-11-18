@@ -3738,10 +3738,14 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // Lean models one-level chunking and `build` over a sorted list. The
+        // incremental edit path (`edit.rs`: window re-cut, splice one level up,
+        // single-child root collapse) is not modelled; it is checked against a
+        // fresh build by the `crates/foundation/prolly/tests/history.rs` proptest.
         family: "Prolly tree catch-up",
         name: "chunks_append / closes_append / chunks_flatten / chunks_nonempty / chunks_shrink / build / sorted_insert / sorted_erase / eq_of_same_entries / build_same_entries / insert_comm / erase_insert_comm / insert_insert",
         axis: Lean,
-        anchor: "crates/foundation/prolly/src/chunk.rs Chunker::push, chunk; crates/foundation/prolly/src/hash.rs is_boundary; crates/foundation/prolly/src/tree.rs Tree::build, raise; crates/foundation/prolly/src/edit.rs Tree::insert, Tree::remove, rewrite_level, splice",
+        anchor: "crates/foundation/prolly/src/chunk.rs Chunker::push, chunk; crates/foundation/prolly/src/hash.rs is_boundary; crates/foundation/prolly/src/tree.rs Tree::build, raise",
         model_ref: "ProllyTree (lake build)",
         tiers: &[Boundary],
         bound_by: "",
