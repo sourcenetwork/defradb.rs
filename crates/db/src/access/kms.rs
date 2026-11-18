@@ -10,8 +10,8 @@ use std::future::Future;
 use std::sync::{Arc, Weak};
 
 use kms::{
-    BlockDocIDResolver, DocCollectionInfo, DocCollectionLookup, EncBlockStore, EncryptionCid,
-    NodeAcpRead,
+    BlockDocIDResolver, BlockOwner, DocCollectionInfo, DocCollectionLookup, EncBlockStore,
+    EncryptionCid, NodeAcpRead,
 };
 
 /// Runs `read` on `db`'s worker pool when it has one, so a KMS request the
@@ -106,7 +106,7 @@ impl<S: storage::corekv::Store + Send + Sync + 'static> DbBlockDocIDResolver<S> 
 impl<S: storage::corekv::Store + Send + Sync + 'static> BlockDocIDResolver
     for DbBlockDocIDResolver<S>
 {
-    async fn doc_ids_for_block(&self, cid: &EncryptionCid) -> kms::Result<Vec<String>> {
+    async fn owners_of_block(&self, cid: &EncryptionCid) -> kms::Result<Vec<BlockOwner>> {
         let Some(db) = self.db.upgrade() else {
             return Ok(Vec::new());
         };

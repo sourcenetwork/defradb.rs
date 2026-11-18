@@ -12,6 +12,7 @@ mod delete;
 pub(crate) mod helpers;
 mod one_op;
 mod read;
+mod selected;
 pub mod update;
 
 use async_trait::async_trait;

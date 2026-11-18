@@ -122,6 +122,15 @@ impl<S: Store + 'static> BatchMutator<S> {
             query::error::QueryError::execution("mutation batch transaction is no longer active")
         })
     }
+
+    /// The collection `name` names in this batch's transaction.
+    pub(crate) async fn collection(
+        &self,
+        name: &str,
+    ) -> query::error::Result<crate::collection::Collection> {
+        let (collection, _, _) = get_collection_with_lazy_load(&*self.shared_txn()?, name).await?;
+        Ok(collection)
+    }
 }
 
 impl<S: Store + 'static> BatchMutator<S> {
@@ -271,11 +280,14 @@ impl<S: Store + 'static> MutationBatchController for BatchMutator<S> {
 
 /// One batch attempt. It may run several times, so it must build everything
 /// it returns from scratch each time.
-pub(crate) trait AttemptWork: defra_core::thread_bounds::MaybeSend {
+pub(crate) trait AttemptWork<S>: defra_core::thread_bounds::MaybeSend
+where
+    S: Store + 'static,
+{
     /// `lost` is why the previous attempt conflicted, if it did.
     fn run(
         &self,
-        mutator: Arc<dyn DocMutator>,
+        mutator: Arc<BatchMutator<S>>,
         fetcher: Arc<dyn query::fetcher::DocFetcher>,
         lost: Option<storage::corekv::TransactionConflict>,
     ) -> defra_core::thread_bounds::MaybeBoxFuture<
@@ -287,10 +299,13 @@ pub(crate) trait AttemptWork: defra_core::thread_bounds::MaybeSend {
 /// A whole implicit mutation request.
 struct RequestWork(query::mutator::MutationBatchOperation);
 
-impl AttemptWork for RequestWork {
+impl<S> AttemptWork<S> for RequestWork
+where
+    S: Store + 'static,
+{
     fn run(
         &self,
-        mutator: Arc<dyn DocMutator>,
+        mutator: Arc<BatchMutator<S>>,
         fetcher: Arc<dyn query::fetcher::DocFetcher>,
         _lost: Option<storage::corekv::TransactionConflict>,
     ) -> defra_core::thread_bounds::MaybeBoxFuture<
@@ -318,7 +333,7 @@ where
 impl<S, W> storage::corekv::RetryAttemptFn for BatchRetryAttempt<S, W>
 where
     S: Store + 'static,
-    W: AttemptWork,
+    W: AttemptWork<S>,
 {
     fn run<'a>(
         &'a mut self,
@@ -349,9 +364,8 @@ where
                 update_run: query::update_parts::Run::after(lost.as_ref()),
                 creates: std::sync::atomic::AtomicU64::new(0),
             });
-            let mutator: Arc<dyn DocMutator> = batch.clone();
             let fetcher_dyn: Arc<dyn query::fetcher::DocFetcher> = fetcher.clone();
-            let outcome = self.work.run(mutator, fetcher_dyn, lost).await;
+            let outcome = self.work.run(batch.clone(), fetcher_dyn, lost).await;
             drop(fetcher);
 
             let value = match outcome {

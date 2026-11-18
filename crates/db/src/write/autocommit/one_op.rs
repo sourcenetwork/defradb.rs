@@ -13,7 +13,8 @@ use query::prepared::PreparedInputMemo;
 use rapidhash::RapidHashSet;
 use storage::corekv::{RetryAttemptValue, Store, TransactionConflict};
 
-use super::batch::{AttemptWork, BatchRetryAttempt};
+use super::batch::{AttemptWork, BatchMutator, BatchRetryAttempt};
+use super::selected::{dependencies, unchanged};
 use super::AutoCommitMutator;
 
 /// Which path a single write takes.
@@ -43,27 +44,6 @@ pub(super) struct UpdateWork {
     pub(super) expected_fields: Option<RapidHashSet<String>>,
 }
 
-/// Whether `current` is still the document the caller selected.
-fn unchanged(
-    expected: &Document,
-    fields: Option<&RapidHashSet<String>>,
-    current: &Document,
-) -> bool {
-    let values_match = match fields {
-        Some(fields) => fields
-            .iter()
-            .all(|field| expected.get(field) == current.get(field)),
-        None => {
-            expected.values().len() == current.values().len()
-                && expected
-                    .values()
-                    .iter()
-                    .all(|(name, value)| current.get(name) == Some(value.value()))
-        }
-    };
-    values_match && expected.id() == current.id() && expected.is_deleted() == current.is_deleted()
-}
-
 #[derive(Clone)]
 pub(super) struct DeleteWork {
     pub(super) context: RequestContext,
@@ -78,10 +58,13 @@ where
     Box::new(value)
 }
 
-impl AttemptWork for CreateWork {
+impl<S> AttemptWork<S> for CreateWork
+where
+    S: Store + 'static,
+{
     fn run(
         &self,
-        mutator: Arc<dyn DocMutator>,
+        mutator: Arc<BatchMutator<S>>,
         _fetcher: Arc<dyn query::fetcher::DocFetcher>,
         _lost: Option<TransactionConflict>,
     ) -> MaybeBoxFuture<'static, Result<RetryAttemptValue>> {
@@ -100,10 +83,13 @@ impl AttemptWork for CreateWork {
     }
 }
 
-impl AttemptWork for UpdateWork {
+impl<S> AttemptWork<S> for UpdateWork
+where
+    S: Store + 'static,
+{
     fn run(
         &self,
-        mutator: Arc<dyn DocMutator>,
+        mutator: Arc<BatchMutator<S>>,
         fetcher: Arc<dyn query::fetcher::DocFetcher>,
         lost: Option<TransactionConflict>,
     ) -> MaybeBoxFuture<'static, Result<RetryAttemptValue>> {
@@ -125,11 +111,22 @@ impl AttemptWork for UpdateWork {
                 let ids = [doc_id];
                 // Validate only what the write and the comparison depend on,
                 // so a write to another field doesn't conflict with this one.
-                let projected = match &expected_fields {
+                let compared = match &expected_fields {
                     Some(fields) => {
-                        let fields = fields.iter().chain(&modified).cloned().collect();
-                        fetcher.get_by_ids_projected(&name, &ids, &fields).await?
+                        let collection = mutator.collection(&name).await?;
+                        let run = mutator.update_run();
+                        Some(dependencies(
+                            &collection,
+                            run,
+                            &modified,
+                            &doc,
+                            Some(fields),
+                        ))
                     }
+                    None => None,
+                };
+                let projected = match &compared {
+                    Some(fields) => fetcher.get_by_ids_projected(&name, &ids, fields).await?,
                     None => None,
                 };
                 let current = match projected {
@@ -139,7 +136,7 @@ impl AttemptWork for UpdateWork {
                 let still = current
                     .docs()
                     .first()
-                    .is_some_and(|current| unchanged(expected, expected_fields.as_ref(), current));
+                    .is_some_and(|current| unchanged(expected, compared.as_ref(), current));
                 if !still {
                     return Err(QueryError::transaction_conflict(
                         lost.map_or(
@@ -158,10 +155,13 @@ impl AttemptWork for UpdateWork {
     }
 }
 
-impl AttemptWork for DeleteWork {
+impl<S> AttemptWork<S> for DeleteWork
+where
+    S: Store + 'static,
+{
     fn run(
         &self,
-        mutator: Arc<dyn DocMutator>,
+        mutator: Arc<BatchMutator<S>>,
         _fetcher: Arc<dyn query::fetcher::DocFetcher>,
         _lost: Option<TransactionConflict>,
     ) -> MaybeBoxFuture<'static, Result<RetryAttemptValue>> {
@@ -205,7 +205,7 @@ where
     pub(super) async fn in_batch<R, W>(&self, context: &RequestContext, work: W) -> Result<R>
     where
         R: Any,
-        W: AttemptWork + Clone + 'static,
+        W: AttemptWork<S> + Clone + 'static,
     {
         if self.prepared_inputs.is_some() {
             return self.batch_attempt(work).await;
@@ -246,7 +246,7 @@ where
     async fn batch_attempt<R, W>(&self, work: W) -> Result<R>
     where
         R: Any,
-        W: AttemptWork + 'static,
+        W: AttemptWork<S> + 'static,
     {
         let attempt = BatchRetryAttempt {
             db: self.db.clone(),

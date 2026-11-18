@@ -70,13 +70,28 @@ async fn plant_unknown(db: &DB<RegolithStore>) -> (String, cid::Cid) {
     (doc_id, block)
 }
 
-async fn read_owners(db: &Arc<DB<RegolithStore>>, doc_ids: Vec<String>) -> Vec<String> {
+async fn owners_with_collections(
+    db: &Arc<DB<RegolithStore>>,
+    doc_ids: Vec<String>,
+) -> Vec<kms::BlockOwner> {
     let txn = db.new_txn(true).await.unwrap();
     let owners = db::chunk::access::read_owners(db, &txn, doc_ids)
         .await
         .unwrap();
     let _ = txn.discard();
     owners
+}
+
+fn chunks_collection_id(db: &DB<RegolithStore>) -> String {
+    collection_id(db, "Article__body_chunk")
+}
+
+fn collection_id(db: &DB<RegolithStore>, name: &str) -> String {
+    db.get_collection(name)
+        .unwrap()
+        .unwrap()
+        .collection_id()
+        .to_string()
 }
 
 /// Stores a chunk of `parent` the way a merge would, and returns its block's CID.
@@ -131,7 +146,7 @@ fn a_chunk_whose_parent_has_not_arrived_has_no_key_owner() {
         let block = plant_chunk(&db, &missing).await;
 
         let owners = DbBlockDocIDResolver::new(Arc::clone(&db))
-            .doc_ids_for_block(&block)
+            .owners_of_block(&block)
             .await
             .unwrap();
 
@@ -152,11 +167,17 @@ fn a_deleted_parent_still_owns_its_old_chunks_keys() {
             .unwrap();
 
         let owners = DbBlockDocIDResolver::new(Arc::clone(&db))
-            .doc_ids_for_block(&block)
+            .owners_of_block(&block)
             .await
             .unwrap();
 
-        assert_eq!(owners, vec![parent]);
+        assert_eq!(
+            owners,
+            vec![kms::BlockOwner {
+                doc_id: parent,
+                block_collection_id: chunks_collection_id(&db),
+            }]
+        );
     })
     .unwrap()
 }
@@ -208,7 +229,7 @@ fn a_document_whose_collection_is_unknown_has_no_key_owner_on_a_node_without_chu
         let (_, block) = plant_unknown(&db).await;
 
         let owners = DbBlockDocIDResolver::new(Arc::clone(&db))
-            .doc_ids_for_block(&block)
+            .owners_of_block(&block)
             .await
             .unwrap();
 
@@ -227,9 +248,19 @@ fn a_mixed_list_keeps_plain_documents_and_maps_chunks_to_their_parents() {
         let chunk_id = DocID::new_v0_from_seed(&format!("chunk of {parent}")).to_string();
         let (unknown, _) = plant_unknown(&db).await;
 
-        let owners = read_owners(&db, vec![note.clone(), chunk_id, unknown]).await;
+        let owners = owners_with_collections(&db, vec![note.clone(), chunk_id, unknown]).await;
 
-        assert_eq!(owners, vec![note, parent]);
+        let expected = vec![
+            kms::BlockOwner {
+                doc_id: note,
+                block_collection_id: collection_id(&db, "Note"),
+            },
+            kms::BlockOwner {
+                doc_id: parent,
+                block_collection_id: chunks_collection_id(&db),
+            },
+        ];
+        assert_eq!(owners, expected);
     })
     .unwrap()
 }
@@ -258,7 +289,12 @@ fn a_stored_plain_document_the_cache_misses_owns_itself() {
         let note = create(&db, "Note", r#"{"title": "n"}"#).await;
         uncache_collection(&db, &note).await;
 
-        assert_eq!(read_owners(&db, vec![note.clone()]).await, vec![note]);
+        let owners = owners_with_collections(&db, vec![note.clone()]).await;
+        let expected = vec![kms::BlockOwner {
+            doc_id: note,
+            block_collection_id: collection_id(&db, "Note"),
+        }];
+        assert_eq!(owners, expected);
     })
     .unwrap()
 }
@@ -307,7 +343,9 @@ fn a_stored_chunk_the_cache_misses_has_no_owner() {
         txn.commit().await.unwrap();
         uncache_collection(&db, &created.doc_id).await;
 
-        assert!(read_owners(&db, vec![created.doc_id]).await.is_empty());
+        assert!(owners_with_collections(&db, vec![created.doc_id])
+            .await
+            .is_empty());
     })
     .unwrap()
 }
