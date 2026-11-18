@@ -458,6 +458,10 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
                 .await
                 .map_err(crate::error::commit_query_error)?
         {
+            datastore
+                .project_document(collection_name, &canonical_doc_id.to_string())
+                .await
+                .map_err(|error| crate::error::index_write_query_error("update", error.into()))?;
             return Ok(UpdateResult::new(doc, 0));
         }
 
