@@ -3149,9 +3149,12 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
-        // A read bypasses document access control exactly when node access
-        // control is on and grants the caller `bypass-dac`, decided at the
-        // read's own snapshot, and its caller did not deny it the bypass.
+        // A read whose bypass the engine resolves bypasses document access
+        // control exactly when node access control is on and grants the
+        // caller `bypass-dac`, decided at the read's own snapshot, and its
+        // caller did not deny it the bypass. A bypass the caller set on the
+        // request (`RequestContext::with_dac_bypass`) is honoured as set,
+        // without the engine consulting node access control.
         family: "Node access control operations",
         name: "INV_BypassOnlyWhenGranted / INV_BypassWhenGranted / INV_DeniedNeverBypasses",
         axis: Tla,

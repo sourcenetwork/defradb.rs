@@ -2,7 +2,15 @@
 //! (`RequestContext::with_dac_bypass_denied`) is decided by document access
 //! control on every path, even when node access control grants its identity
 //! `bypass-dac`, as it does a node administrator. A request without the denial
-//! keeps the bypass, and an identity without `bypass-dac` is unaffected.
+//! keeps the bypass, and an identity without `bypass-dac` is unaffected. The
+//! denial belongs to the request: a transaction begun with it does not deny
+//! a later request in that transaction.
+//!
+//! In-process, the identity-based bypass reaches only a query and a commits
+//! query. An administrator without the denial already counts 0, reads nothing
+//! from a subscription's scoped query and changes nothing by a mutation, so
+//! there the denied 0 is what document access control gives either way, not
+//! a sign of the denial.
 
 use defra_core::RequestContext;
 use query::QueryRequest;
@@ -107,33 +115,27 @@ async fn reads(node: &Node, context: &RequestContext, doc: &str, cid: &str) -> [
 }
 
 /// How many documents `context` changed by a filtered update and a delete.
+/// Each mutation must succeed, so 0 means document access control hid the
+/// document rather than that the mutation failed.
 async fn writes(node: &Node, context: &RequestContext, doc: &str) -> (usize, usize) {
-    let updated = node
-        .execute_request_as(
+    let updated = rows(
+        &run(
+            node,
             context,
-            QueryRequest::new(
-                "mutation { update_Record(filter: {}, input: {pending: false}) { _docID } }",
-            ),
+            "mutation { update_Record(filter: {}, input: {pending: false}) { _docID } }",
         )
-        .await
-        .unwrap();
-    let updated = updated
-        .data
-        .as_ref()
-        .map_or(0, |d| rows(d, "update_Record"));
-    let deleted = node
-        .execute_request_as(
+        .await,
+        "update_Record",
+    );
+    let deleted = rows(
+        &run(
+            node,
             context,
-            QueryRequest::new(format!(
-                "mutation {{ delete_Record(docID: \"{doc}\") {{ _docID }} }}"
-            )),
+            &format!("mutation {{ delete_Record(docID: \"{doc}\") {{ _docID }} }}"),
         )
-        .await
-        .unwrap();
-    let deleted = deleted
-        .data
-        .as_ref()
-        .map_or(0, |d| rows(d, "delete_Record"));
+        .await,
+        "delete_Record",
+    );
     (updated, deleted)
 }
 
@@ -142,6 +144,8 @@ fn an_administrator_denied_the_bypass_reads_and_writes_nothing_dac_hides() {
     workers::block_on(async {
         let (node, doc, cid) = fixture().await;
 
+        // Only the query and the commits query contrast with an administrator
+        // without the denial; the other paths give 0 to both.
         assert_eq!(reads(&node, &denied(ADMIN), &doc, &cid).await, [0; 4]);
         assert_eq!(writes(&node, &denied(ADMIN), &doc).await, (0, 0));
         let kept = run(&node, &actor(NAC_OWNER), "{ Record { pending } }").await;
@@ -168,9 +172,58 @@ fn an_administrator_denied_the_bypass_reads_and_writes_nothing_dac_hides() {
 fn an_administrator_without_the_denial_keeps_the_bypass() {
     workers::block_on(async {
         let (node, doc, cid) = fixture().await;
-        let [query, commits, ..] = reads(&node, &actor(ADMIN), &doc, &cid).await;
+        let [query, commits, count, subscribed] = reads(&node, &actor(ADMIN), &doc, &cid).await;
         assert_eq!(query, 1);
         assert!(commits >= 1);
+        // The identity-based bypass does not reach an aggregate, a
+        // subscription's scoped query or a mutation, so an administrator
+        // without the denial gets there what document access control gives.
+        assert_eq!((count, subscribed), (0, 0));
+        assert_eq!(writes(&node, &actor(ADMIN), &doc).await, (0, 0));
+        node.shutdown().await.unwrap();
+
+        let (node, doc, _) = fixture().await;
+        assert_eq!(writes(&node, &actor(NAC_OWNER), &doc).await, (1, 1));
+        node.shutdown().await.unwrap();
+    })
+    .unwrap();
+}
+
+#[test]
+fn a_transaction_begun_denied_leaves_a_later_request_undenied() {
+    workers::block_on(async {
+        let (node, _, _) = fixture().await;
+        let handle = node
+            .runner()
+            .begin_txn_as(&denied(ADMIN), true)
+            .await
+            .unwrap();
+        let txn = Some(handle.as_str().parse().unwrap());
+
+        let undenied = run(&node, &actor(ADMIN).with_txn(txn), "{ Record { pending } }").await;
+        assert_eq!(rows(&undenied, "Record"), 1);
+        let still_denied = run(
+            &node,
+            &denied(ADMIN).with_txn(txn),
+            "{ Record { pending } }",
+        )
+        .await;
+        assert_eq!(rows(&still_denied, "Record"), 0);
+
+        node.runner()
+            .discard_txn_as(&denied(ADMIN), &handle)
+            .await
+            .unwrap();
+
+        let guard = query::TransactionGuard::begin_as(node.runner().as_ref(), denied(ADMIN), true)
+            .await
+            .unwrap();
+        let response = guard
+            .execute(QueryRequest::new("{ Record { pending } }"))
+            .await;
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+        assert_eq!(rows(&response.data.unwrap(), "Record"), 0);
+        guard.discard().await.unwrap();
         node.shutdown().await.unwrap();
     })
     .unwrap();
