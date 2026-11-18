@@ -497,7 +497,14 @@ impl<S: Store + 'static> AccessChangeNotifier for DatabaseAccessNotifier<S> {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait DocumentMutationProjector: MaybeSendSync {
-    fn genesis_reader_field(&self, _collection: &str, _policy: &str, _resource: &str) -> Option<&'static str> { None }
+    fn genesis_reader_field(
+        &self,
+        _collection: &str,
+        _policy: &str,
+        _resource: &str,
+    ) -> Option<&'static str> {
+        None
+    }
 
     fn projection_rules(&self) -> &[acp::projection::Rule] {
         &[]
@@ -553,7 +560,15 @@ impl BoundProjection {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl datastore::DocumentMutationProjector for BoundProjection {
-    fn genesis_reader_field(&self, collection: &str, policy: &str, resource: &str) -> Option<&'static str> { self.projector.genesis_reader_field(collection, policy, resource) }
+    fn genesis_reader_field(
+        &self,
+        collection: &str,
+        policy: &str,
+        resource: &str,
+    ) -> Option<&'static str> {
+        self.projector
+            .genesis_reader_field(collection, policy, resource)
+    }
 
     async fn source_changed(&self, view: &NamespaceView) -> Result<()> {
         self.projector
