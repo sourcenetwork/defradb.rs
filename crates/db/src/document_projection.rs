@@ -501,6 +501,14 @@ pub trait DocumentMutationProjector: MaybeSendSync {
         &[]
     }
     async fn reconcile(&self, context: &DocumentMutationContext<'_>) -> Result<()>;
+    async fn project_related(
+        &self,
+        _context: &DocumentMutationContext<'_>,
+        _collection: &str,
+        _doc_id: &str,
+    ) -> Result<()> {
+        Ok(())
+    }
     /// The host changed a source edge using the same transaction; no document
     /// writer or transport can manufacture this notification.
     async fn source_changed(&self, _context: &DocumentMutationContext<'_>) -> Result<()> {
@@ -585,6 +593,22 @@ impl datastore::DocumentMutationProjector for BoundProjection {
                     rules: self.projector.projection_rules(),
                     projected: Some((collection, doc_id)),
                     reconciling: false,
+                },
+                collection,
+                doc_id,
+            )
+            .await?;
+        self.projector
+            .project_related(
+                &DocumentMutationContext {
+                    view,
+                    document_acp: &self.document_acp,
+                    node_did: &self.node_did,
+                    notifier: self.notifier.as_ref(),
+                    nac: self.nac.as_deref(),
+                    rules: self.projector.projection_rules(),
+                    projected: Some((collection, doc_id)),
+                    reconciling: true,
                 },
                 collection,
                 doc_id,
