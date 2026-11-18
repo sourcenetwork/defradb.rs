@@ -22,6 +22,8 @@ pub(crate) async fn delete_must_wait<S>(
 where
     S: Store,
 {
+    // A delete resolves its chunk through the chunk's first block, which merges
+    // before it, so a chunk missing here stored nothing this node can read.
     let Some(chunk) = chunks_col
         .get_with_datastore(datastore, chunk_short_id, chunk_id)
         .await?
@@ -38,7 +40,14 @@ where
     let Some(parent_ref) = crate::docid::map::get_doc_ref(systemstore, parent_id).await? else {
         return Ok(Some("the chunk's parent has not arrived"));
     };
-    let live = parent_col
+    if parent_col
+        .is_deleted(datastore, parent_ref.doc_short_id)
+        .await?
+    {
+        return Ok(None);
+    }
+    // A merge can map the parent's ID before it stores the parent.
+    let stored = parent_col
         .get_with_datastore(
             datastore,
             parent_ref.doc_short_id,
@@ -46,5 +55,9 @@ where
         )
         .await?
         .is_some();
-    Ok(live.then_some("the chunk's parent is live"))
+    Ok(Some(if stored {
+        "the chunk's parent is live"
+    } else {
+        "the chunk's parent has not arrived"
+    }))
 }

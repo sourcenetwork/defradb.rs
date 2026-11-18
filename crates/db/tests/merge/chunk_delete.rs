@@ -4,8 +4,10 @@ use defra_core::merge::MergeOutcome;
 use document::DocID;
 
 use super::chunk_update_journal::{
-    merge_outcome, merge_updated_chunk, node, owner, Node, BODY, CHUNKS,
+    create_chunk, merge_outcome, merge_outcome_in, merge_updated_chunk, node, owner, Node, BODY,
+    CHUNKS,
 };
+use db::merge::merge_handler::MergeError;
 
 async fn add_article(node: &Node) -> String {
     add_article_with(node, BODY).await
@@ -151,6 +153,69 @@ fn a_chunk_delete_waits_for_a_parent_that_has_not_arrived() {
             .unwrap();
 
         assert_waits(&outcome, "has not arrived");
+        assert!(chunk_is_stored(&peer, &chunk_id).await);
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_chunk_delete_cannot_merge_before_its_chunk() {
+    workers::block_on(async {
+        let author = node().await;
+        let peer = node().await;
+        let parent = add_article(&peer).await;
+        let (_, _, created) = create_chunk(&author, &parent, BODY, None).await;
+        let delete = write_chunk_delete(&author, &created.doc_id).await;
+
+        let early = merge_outcome(&author, &peer, &delete, &created.doc_id).await;
+        let Err(MergeError::MergeFailed(reason)) = early else {
+            panic!("expected the delete to name no chunk yet, got {early:?}");
+        };
+        assert!(reason.contains("no reachable genesis"), "{reason}");
+
+        let chunk = merge_outcome(&author, &peer, &created.cid, &created.doc_id)
+            .await
+            .unwrap();
+        assert!(chunk.is_merged(), "{chunk:?}");
+        assert_eq!(shown(&peer).await, std::slice::from_ref(&created.doc_id));
+        let retried = merge_outcome(&author, &peer, &delete, &created.doc_id)
+            .await
+            .unwrap();
+        assert_waits(&retried, "parent is live");
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_chunk_delete_waits_for_a_parent_merged_without_a_value() {
+    workers::block_on(async {
+        let author = node().await;
+        let peer = node().await;
+        let created = author
+            .run(
+                r#"mutation { add_Article(input: {}) { _docID _version { cid } } }"#,
+                Some(owner()),
+            )
+            .await;
+        let parent = created["add_Article"][0]["_docID"].as_str().unwrap();
+        let genesis: cid::Cid = created["add_Article"][0]["_version"][0]["cid"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let articles = author.db.get_collection("Article").unwrap().unwrap();
+        let merged = merge_outcome_in(&author, &peer, &genesis, parent, articles.collection_id())
+            .await
+            .unwrap();
+        assert!(merged.is_merged(), "{merged:?}");
+        let chunk_id = merge_updated_chunk(&author, &peer, parent).await;
+        let delete = write_chunk_delete(&author, &chunk_id).await;
+
+        let outcome = merge_outcome(&author, &peer, &delete, &chunk_id)
+            .await
+            .unwrap();
+
+        assert_waits(&outcome, "parent has not arrived");
         assert!(chunk_is_stored(&peer, &chunk_id).await);
     })
     .unwrap()

@@ -101,6 +101,25 @@ impl Node {
         response.data.unwrap()
     }
 
+    /// The error messages of a request that must fail.
+    pub(super) async fn errors(&self, query: &str) -> Vec<String> {
+        let runner = QueryRunner::with_arc_registry_and_provider(
+            LensedAutoCommitFetcher::new(self.db.clone()),
+            DbCollectionProvider::new_arc(self.db.clone()),
+            Arc::new(DbTransactionRegistry::new(self.db.clone())),
+        )
+        .with_mutator(Arc::new(AutoCommitMutator::new(self.db.clone())))
+        .with_acp(self.acp.clone());
+        let mut request = QueryRequest::new(query);
+        request.identity = Some(owner());
+        let response = runner.execute(request).await;
+        response
+            .errors
+            .into_iter()
+            .map(|error| error.message)
+            .collect()
+    }
+
     pub(super) async fn journal(&self, identity: Option<Did>) -> Vec<String> {
         let data = self
             .run(
@@ -125,6 +144,17 @@ pub(super) async fn merge_outcome(
     cid: &cid::Cid,
     doc_id: &str,
 ) -> Result<MergeOutcome, MergeError> {
+    merge_outcome_in(from, to, cid, doc_id, from.chunks().collection_id()).await
+}
+
+/// [`merge_outcome`] for a block of the collection `collection_id`.
+pub(super) async fn merge_outcome_in(
+    from: &Node,
+    to: &Node,
+    cid: &cid::Cid,
+    doc_id: &str,
+    collection_id: &str,
+) -> Result<MergeOutcome, MergeError> {
     let bytes = from.blockstore.get(cid).await.unwrap().unwrap();
     let block = Block::from_dag_cbor(&bytes).unwrap();
     let mut copies: Vec<cid::Cid> = block.signature.into_iter().collect();
@@ -144,7 +174,7 @@ pub(super) async fn merge_outcome(
             &bytes,
             BlockMetadata::normal(
                 doc_id,
-                from.chunks().collection_id(),
+                collection_id,
                 "did:key:z6MkChunkAuthor",
                 Some("peer"),
                 false,
