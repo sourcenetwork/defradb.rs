@@ -3,7 +3,7 @@ mod common;
 use axum::body::Body;
 use axum::http::header::{AUTHORIZATION, HOST};
 use axum::http::Request;
-use defra_http::router::{AppStateBuilder, CollectionManagementOperations};
+use defra_http::router::{AppStateBuilder, CollectionLookup, CollectionManagementOperations};
 use defra_http::{MockDocumentAcpOperations, MockNodeAcpOperations};
 use document::{DocID, Document, NormalValue};
 use events::{Bus, ChannelBus, Message, Update};
@@ -21,6 +21,27 @@ const SENTINEL: &str = "sentinel";
 
 /// Serves the given collections by ID.
 struct Collections(Vec<schema::CollectionVersion>);
+
+#[async_trait::async_trait]
+impl CollectionLookup for Collections {
+    async fn find_collection_by_id(
+        &self,
+        collection_id: &str,
+    ) -> Result<Option<schema::CollectionVersion>, String> {
+        Ok(self
+            .0
+            .iter()
+            .find(|c| c.collection_id == collection_id)
+            .cloned())
+    }
+
+    async fn get_collection_by_version_id(
+        &self,
+        version_id: &str,
+    ) -> Result<Option<schema::CollectionVersion>, String> {
+        Ok(self.0.iter().find(|c| c.version_id == version_id).cloned())
+    }
+}
 
 #[async_trait::async_trait]
 impl CollectionManagementOperations for Collections {
@@ -41,24 +62,6 @@ impl CollectionManagementOperations for Collections {
 
     async fn has_collection(&self, name: &str) -> Result<bool, String> {
         Ok(self.0.iter().any(|c| c.name == name))
-    }
-
-    async fn find_collection_by_id(
-        &self,
-        collection_id: &str,
-    ) -> Result<Option<schema::CollectionVersion>, String> {
-        Ok(self
-            .0
-            .iter()
-            .find(|c| c.collection_id == collection_id)
-            .cloned())
-    }
-
-    async fn get_collection_by_version_id(
-        &self,
-        version_id: &str,
-    ) -> Result<Option<schema::CollectionVersion>, String> {
-        Ok(self.0.iter().find(|c| c.version_id == version_id).cloned())
     }
 
     async fn delete_collection_versions(&self, _version_ids: Vec<String>) -> Result<(), String> {
@@ -264,6 +267,11 @@ fn update(collection: &str, doc_id: &str) -> Message {
 /// The doc ID of the first event the stream delivers after `message` is
 /// published, followed by an event nothing gates.
 async fn first_delivered(acp_enabled: bool, message: Message) -> String {
+    first_delivered_with(acp_enabled, true, message).await
+}
+
+/// [`first_delivered`] on a host with or without the collection management routes.
+async fn first_delivered_with(acp_enabled: bool, management: bool, message: Message) -> String {
     let (owner, _) = common::nac_owner();
     let (caller, token) = common::nac_owner();
     let mut nac = MockNodeAcpOperations::enabled_with_owner(owner);
@@ -277,8 +285,12 @@ async fn first_delivered(acp_enabled: bool, message: Message) -> String {
     let bus = Arc::new(ChannelBus::new());
     let mut builder = AppStateBuilder::new(executor(), edge::testing::edge())
         .with_nac(Arc::new(nac))
-        .with_collection_mgmt(Arc::new(Collections(collections())))
         .with_event_bus(bus.clone());
+    builder = if management {
+        builder.with_collection_mgmt(Arc::new(Collections(collections())))
+    } else {
+        builder.with_collection_lookup(Arc::new(Collections(collections())))
+    };
     if acp_enabled {
         builder = builder.with_doc_acp(Arc::new(MockDocumentAcpOperations::new()));
     }
@@ -311,67 +323,103 @@ async fn first_delivered(acp_enabled: bool, message: Message) -> String {
     json["data"]["doc_id"].as_str().unwrap().to_string()
 }
 
-#[nuclei::test]
-async fn a_chunk_event_reaches_only_those_who_can_read_it_with_acp_on() {
-    assert_eq!(
-        first_delivered(true, update("Users__body_chunk", &readable())).await,
-        readable()
-    );
-    assert_eq!(
-        first_delivered(true, update("Notes__body_chunk", &hidden())).await,
-        SENTINEL
-    );
+#[test]
+fn a_chunk_event_reaches_only_those_who_can_read_it_with_acp_on() {
+    edge::testing::edge()
+        .block_on(async {
+            assert_eq!(
+                first_delivered(true, update("Users__body_chunk", &readable())).await,
+                readable()
+            );
+            assert_eq!(
+                first_delivered(true, update("Notes__body_chunk", &hidden())).await,
+                SENTINEL
+            );
+        })
+        .unwrap();
 }
 
-#[nuclei::test]
-async fn a_chunk_event_is_still_gated_with_acp_off() {
-    assert_eq!(
-        first_delivered(false, update("Users__body_chunk", &readable())).await,
-        readable()
-    );
-    assert_eq!(
-        first_delivered(false, update("Notes__body_chunk", &hidden())).await,
-        SENTINEL
-    );
+#[test]
+fn a_chunk_event_is_still_gated_with_acp_off() {
+    edge::testing::edge()
+        .block_on(async {
+            assert_eq!(
+                first_delivered(false, update("Users__body_chunk", &readable())).await,
+                readable()
+            );
+            assert_eq!(
+                first_delivered(false, update("Notes__body_chunk", &hidden())).await,
+                SENTINEL
+            );
+        })
+        .unwrap();
 }
 
-#[nuclei::test]
-async fn an_ungated_collection_event_needs_no_read_check() {
-    for acp_enabled in [false, true] {
-        assert_eq!(
-            first_delivered(acp_enabled, update("Plain", "plain")).await,
-            "plain"
-        );
-    }
+#[test]
+fn an_ungated_collection_event_needs_no_read_check() {
+    edge::testing::edge()
+        .block_on(async {
+            for acp_enabled in [false, true] {
+                assert_eq!(
+                    first_delivered(acp_enabled, update("Plain", "plain")).await,
+                    "plain"
+                );
+            }
+        })
+        .unwrap();
 }
 
-#[nuclei::test]
-async fn a_policy_collection_event_is_gated_only_with_acp_on() {
-    // No such document is stored, so a read check would hide it.
-    assert_eq!(
-        first_delivered(false, update("Owned", "owned")).await,
-        "owned"
-    );
-    assert_eq!(
-        first_delivered(true, update("Owned", "owned")).await,
-        SENTINEL
-    );
+#[test]
+fn a_policy_collection_event_is_gated_only_with_acp_on() {
+    edge::testing::edge()
+        .block_on(async {
+            // No such document is stored, so a read check would hide it.
+            assert_eq!(
+                first_delivered(false, update("Owned", "owned")).await,
+                "owned"
+            );
+            assert_eq!(
+                first_delivered(true, update("Owned", "owned")).await,
+                SENTINEL
+            );
+        })
+        .unwrap();
 }
 
-#[nuclei::test]
-async fn an_event_of_an_unknown_collection_is_not_delivered() {
-    let unknown = Message::update(Update::new(
-        "unknown".to_string(),
-        cid::Cid::default(),
-        "collection-unknown".to_string(),
-        Vec::new(),
-        false,
-        false,
-    ));
-    for acp_enabled in [false, true] {
-        assert_eq!(
-            first_delivered(acp_enabled, unknown.clone()).await,
-            SENTINEL
-        );
-    }
+#[test]
+fn an_event_of_an_unknown_collection_is_not_delivered() {
+    edge::testing::edge()
+        .block_on(async {
+            let unknown = Message::update(Update::new(
+                "unknown".to_string(),
+                cid::Cid::default(),
+                "collection-unknown".to_string(),
+                Vec::new(),
+                false,
+                false,
+            ));
+            for acp_enabled in [false, true] {
+                assert_eq!(
+                    first_delivered(acp_enabled, unknown.clone()).await,
+                    SENTINEL
+                );
+            }
+        })
+        .unwrap();
+}
+
+#[test]
+fn a_chunk_event_is_gated_on_a_host_without_the_management_routes() {
+    edge::testing::edge()
+        .block_on(async {
+            assert_eq!(
+                first_delivered_with(false, false, update("Users__body_chunk", &readable())).await,
+                readable()
+            );
+            assert_eq!(
+                first_delivered_with(false, false, update("Notes__body_chunk", &hidden())).await,
+                SENTINEL
+            );
+        })
+        .unwrap();
 }
