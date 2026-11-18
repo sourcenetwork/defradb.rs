@@ -9,8 +9,8 @@
 # CLI's libp2p into every tree.
 set -euo pipefail
 
-# Always `-p defra-node`, `-p cli`, `-p db`, or `-p ffi`. Workspace trees are
-# forbidden.
+# Always `-p defra-node`, `-p cli`, `-p db`, `-p ffi` or `-p vera-delegation`.
+# Workspace trees are forbidden.
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 assert_present() {
@@ -147,6 +147,29 @@ assert_present ffi libp2p
 # Default ffi still carries the full Go-interop capability set.
 assert_present ffi vera
 assert_present ffi wasmtime
+
+# Delegation minting (#3038) builds wherever a client runs: no vera.rs client
+# or Commonware runtime (which does not build for Windows), no keyring (the
+# upstream crate links the OS keyring), no network runtime. `--target all`
+# also takes in target-specific dependencies no real target selects.
+assert_graph_free_of() {
+  local crate=$1 target=$2 graph pkg
+  shift 2
+  graph="$(cargo tree -p "$crate" -e normal --locked --target "$target" --prefix none)"
+  for pkg in "$@"; do
+    if printf '%s\n' "$graph" | grep -q "^${pkg} v"; then
+      echo "error: unexpected ^${pkg} v in ${crate} --target ${target} tree" >&2
+      cargo tree -p "$crate" -e normal --locked --target "$target" -i "$pkg" >&2 || true
+      exit 1
+    fi
+  done
+  echo "ok: ${crate} --target ${target} has none of: $*"
+}
+for target in all x86_64-pc-windows-msvc x86_64-unknown-linux-gnu; do
+  assert_graph_free_of vera-delegation "$target" \
+    commonware-runtime commonware-glue commonware-consensus commonware-p2p commonware-storage \
+    vera-client vera-domain vera-permission acp-light-client keyring edge cosmrs reqwest
+done
 
 # Unique crate names. Log only — not a gate and not binary size. Main may move.
 echo "defra-node default unique crate names: $(unique_crate_names)"

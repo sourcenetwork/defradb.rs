@@ -11,19 +11,16 @@
 
 use vera_modules::acp::delegated_operation::DelegatedOperation;
 
-use super::policy_cmd;
-use crate::policy_command::PolicyCommand;
-use crate::provider::ProviderError;
+use crate::{parse_policy_id, policy_cmd, CommandError, PolicyCommand};
 
 /// The digest a delegation bound to one request names `command` by: what its
 /// signer puts in the token's `request` claim.
-pub fn request_digest(command: &PolicyCommand<'_>) -> Result<[u8; 32], ProviderError> {
-    let policy = vera_client::parse_policy_id(command.policy_id)
-        .map_err(|e| ProviderError::Query(e.to_string()))?;
+pub fn request_digest(command: &PolicyCommand<'_>) -> Result<[u8; 32], CommandError> {
+    let policy = parse_policy_id(command.policy_id)?;
     let typed = policy_cmd::typed(command)?;
     DelegatedOperation::PolicyCommand(&hex::encode(policy.as_slice()), &typed)
         .digest()
-        .map_err(|e| ProviderError::Config(format!("policy command digest: {e}")))
+        .map_err(|e| CommandError::Digest(e.to_string()))
 }
 
 #[cfg(test)]
@@ -31,8 +28,7 @@ mod tests {
     use sha2::{Digest as _, Sha256};
 
     use super::*;
-    use crate::policy_command::{PolicyAction, PolicySubject};
-    use crate::provider::SubjectRef;
+    use crate::{PolicyAction, PolicySubject, SubjectRef};
 
     const POLICY: &str = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
 

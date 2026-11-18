@@ -29,8 +29,9 @@ What must never happen:
   a delegation held past its lifetime by a signer whose clock is right ends
   the same way.
 
-Rust owners: `issue_request_at` in `crates/vera/src/vera_rs/bearer/request.rs`
-and `issue_at` in `crates/vera/src/vera_rs/bearer.rs` write the times;
+Rust owners: `issue_request_at` in `crates/vera-delegation/src/bearer/request.rs`
+and `create_scoped_bearer_token_at` in `crates/vera-delegation/src/bearer.rs`
+write the times;
 `within_window` in `crates/vera/src/vera_rs/bearer/window.rs` is the node's
 check and names the refusal, a `WindowRefusal` of
 `crates/acp/src/delegation_window.rs`. The verifier mirrored is `verify_bearer_token`,

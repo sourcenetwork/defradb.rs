@@ -8,7 +8,7 @@
 //! and returns it under the compressed one. It accepts a P-256 key under the
 //! compressed spelling only, and compares it as written.
 //!
-//! Every actor DID this provider keeps or returns is therefore DefraDB's
+//! Every actor DID the vera.rs provider keeps or returns is therefore DefraDB's
 //! spelling ([`defra`]), including its own, and a DID read from vera.rs is
 //! compared with [`same_actor`]. A DID sent to vera.rs is written as vera.rs
 //! takes it ([`wire`]). Ed25519 keys have a single spelling and pass through
@@ -19,14 +19,14 @@ use std::borrow::Cow;
 use crypto::{create_did_key, parse_did_key, KeyType};
 
 /// The spelling DefraDB derives for the key `did` names.
-pub(crate) fn defra(did: &str) -> Cow<'_, str> {
+pub fn defra(did: &str) -> Cow<'_, str> {
     respelled(did, false, false)
 }
 
 /// The spelling vera.rs is sent for the key `did` names: DefraDB's for a
 /// secp256k1 key, which vera.rs takes in any spelling, and the compressed one
 /// for a P-256 key, which it takes in no other.
-pub(crate) fn wire(did: &str) -> Cow<'_, str> {
+pub fn wire(did: &str) -> Cow<'_, str> {
     respelled(did, false, true)
 }
 
@@ -56,7 +56,7 @@ fn respelled(did: &str, compress_secp256k1: bool, compress_p256: bool) -> Cow<'_
 
 /// Every spelling this module knows for the key `did` names, `did` itself
 /// first: a key the node holds may be registered under any of them.
-pub(crate) fn spellings(did: &str) -> Vec<Cow<'_, str>> {
+pub fn spellings(did: &str) -> Vec<Cow<'_, str>> {
     let mut all = vec![Cow::Borrowed(did)];
     for other in [respelled(did, false, false), respelled(did, true, true)] {
         if !all.contains(&other) {
@@ -67,7 +67,7 @@ pub(crate) fn spellings(did: &str) -> Vec<Cow<'_, str>> {
 }
 
 /// Whether `a` and `b` name one actor, whichever spelling each uses.
-pub(crate) fn same_actor(a: &str, b: &str) -> bool {
+pub fn same_actor(a: &str, b: &str) -> bool {
     defra(a) == defra(b)
 }
 
@@ -76,10 +76,10 @@ mod tests {
     use super::*;
 
     fn spellings() -> (String, String) {
-        let key = vera_client::Secp256k1SigningKey::from_slice(&[42; 32]).expect("valid key");
+        let key = k256::ecdsa::SigningKey::from_slice(&[42; 32]).expect("valid key");
         (
-            crate::vera_rs::bearer::did_from_signing_key(&key, true),
-            crate::vera_rs::bearer::did_from_signing_key(&key, false),
+            crate::bearer::did_from_signing_key(&key, true),
+            crate::bearer::did_from_signing_key(&key, false),
         )
     }
 
@@ -157,9 +157,9 @@ mod tests {
         assert!(same_actor(&uncompressed, &compressed));
         assert!(same_actor(&uncompressed, &uncompressed));
 
-        let other = vera_client::Secp256k1SigningKey::from_slice(&[43; 32]).expect("valid key");
+        let other = k256::ecdsa::SigningKey::from_slice(&[43; 32]).expect("valid key");
         for compressed_other in [true, false] {
-            let other = crate::vera_rs::bearer::did_from_signing_key(&other, compressed_other);
+            let other = crate::bearer::did_from_signing_key(&other, compressed_other);
             assert!(!same_actor(&compressed, &other));
             assert!(!same_actor(&uncompressed, &other));
         }

@@ -18,7 +18,6 @@ use vera_modules::acp::types::PolicyRecord;
 use super::abi::{IAcp, ACP_ADDRESS};
 use super::bearer;
 use super::client::{HttpTransport, VeraRsClient};
-use super::command_digest::request_digest;
 use super::did_spelling;
 use super::policy_cmd;
 #[cfg(test)]
@@ -29,6 +28,7 @@ use super::provider_commands::{
 use super::signer::{admission, DelegationSigner, Secp256k1Signer};
 use super::transport::RpcTransport;
 use super::worker::NativeWorker;
+use vera_delegation::request_digest;
 
 #[cfg(test)]
 mod audience_tests;
@@ -867,7 +867,7 @@ impl VeraProvider for VeraRsProvider {
         command: &crate::PolicyCommand<'_>,
     ) -> Option<Result<String, ProviderError>> {
         let audience = self.delegation_audience()?;
-        bearer::caller_of_request_delegation(token, &audience, || request_digest(command))
+        bearer::caller_of_request_delegation(token, &audience, || Ok(request_digest(command)?))
             .map(|caller| caller.map_err(|error| refused("request delegation", error)))
     }
 }

@@ -1,157 +1,20 @@
-//! Delegations bound to one request.
+//! Delegations bound to one request, as the node takes them.
 //!
-//! A plain delegation lets a node send any policy command for its signer
-//! until it expires. One bound to a request carries vera.rs's `request`
-//! claim: the digest of one command, the deployment's genesis identity and
-//! an operation identity that expires with the token. vera.rs executes
-//! exactly that command under it, within 600 seconds of its expiry, and
-//! keeps the outcome under the operation identity, so sending it a second
-//! time changes nothing.
-//!
-//! The node checks the same binding before it sends anything, against the
-//! digest of the command it is about to send and, when its provider knows
-//! it, the deployment's genesis identity. A provider that does not know it
-//! leaves that check to vera.rs.
+//! A delegation bound to one request (`vera_delegation::bearer::request`)
+//! names the digest of one command, the deployment's genesis identity and an
+//! operation identity. The node checks that binding before it sends anything,
+//! against the digest of the command it is about to send and, when its
+//! provider knows it, the deployment's genesis identity. A provider that does
+//! not know it leaves that check to vera.rs.
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use vera_client::DelegationScope;
-use vera_crypto::jwt::JwtClaims;
-use vera_crypto::operation::{OperationClaim, OperationId, MAX_OPERATION_TTL};
+use vera_crypto::jwt::{DelegationScope, JwtClaims};
+use vera_crypto::operation::OperationClaim;
 
-use super::{base64url_encode, header, BearerError, CallerDelegationError};
+use super::CallerDelegationError;
 use crate::provider::ProviderError;
-use crate::vera_rs::signer::{admission, DelegationSigner};
-use crate::vera_rs::{did_spelling, request_digest};
-use crate::PolicyCommand;
-
-/// The longest a delegation bound to one request lasts: as long as vera.rs
-/// keeps a request open, less the [`acp::CLOCK_SKEW_ALLOWANCE`]. vera.rs
-/// refuses an operation identity that expires more than
-/// [`MAX_OPERATION_TTL`] after the block that executes it, so a longer one
-/// from a signer whose clock is ahead would be refused.
-pub const MAX_REQUEST_LIFETIME: Duration =
-    Duration::from_secs(MAX_OPERATION_TTL - acp::CLOCK_SKEW_ALLOWANCE.as_secs());
-
-/// The one request a delegation is bound to.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RequestBinding {
-    /// The command's digest
-    /// ([`request_digest`](crate::vera_rs::request_digest)).
-    pub digest: [u8; 32],
-    /// The genesis identity of the deployment the command is for, as the
-    /// node reports it (`DelegationAudience::genesis_id`).
-    pub genesis_id: [u8; 32],
-    /// Bytes the signer chooses once for this request, not all zero. With
-    /// the expiry they are the operation identity vera.rs keeps the
-    /// request's outcome under.
-    pub nonce: [u8; 24],
-}
-
-impl RequestBinding {
-    /// The binding to `command` on the deployment `audience` names, the
-    /// audience a node reports (`LightClientStatus::delegation`), under
-    /// `nonce`. Refused when the node does not know its deployment's
-    /// genesis identity.
-    pub fn for_command(
-        audience: &acp::DelegationAudience,
-        command: &PolicyCommand<'_>,
-        nonce: [u8; 24],
-    ) -> Result<Self, BearerError> {
-        let genesis_id = audience.genesis_id.ok_or(BearerError::NoGenesisIdentity)?;
-        let digest = request_digest(command).map_err(|e| BearerError::Command(e.to_string()))?;
-        Ok(Self {
-            digest,
-            genesis_id,
-            nonce,
-        })
-    }
-}
-
-/// The delegation `signer` gives `audience.worker` for the one request
-/// `binding` names, on `audience.deployment`, for `lifetime`: at most
-/// [`MAX_REQUEST_LIFETIME`]. It is issued at the signer's clock; a signer that
-/// knows the provider's time issues it there with [`request_delegation_at`].
-pub async fn request_delegation(
-    signer: &dyn DelegationSigner,
-    audience: &acp::DelegationAudience,
-    binding: &RequestBinding,
-    lifetime: Duration,
-) -> Result<String, BearerError> {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|e| BearerError::Time(e.to_string()))?
-        .as_secs();
-    issue_request_at(signer, audience, binding, lifetime.as_secs(), now).await
-}
-
-/// [`request_delegation`], issued at `issued_at` in seconds since the epoch:
-/// the provider's time a node reports
-/// ([`LightClientStatus::chain_time`](acp::LightClientStatus::chain_time)), or
-/// the one a refusal names
-/// ([`DelegationWindow::provider_time`](acp::DelegationWindow::provider_time)),
-/// so that the signer's own clock does not decide whether it holds.
-pub async fn request_delegation_at(
-    signer: &dyn DelegationSigner,
-    audience: &acp::DelegationAudience,
-    binding: &RequestBinding,
-    lifetime: Duration,
-    issued_at: u64,
-) -> Result<String, BearerError> {
-    issue_request_at(signer, audience, binding, lifetime.as_secs(), issued_at).await
-}
-
-/// The request-bound delegation as it is issued at `now`, in seconds since
-/// the epoch.
-pub(in crate::vera_rs) async fn issue_request_at(
-    signer: &dyn DelegationSigner,
-    audience: &acp::DelegationAudience,
-    binding: &RequestBinding,
-    lifetime_secs: u64,
-    now: u64,
-) -> Result<String, BearerError> {
-    let key = admission::actor_key(signer)?;
-    if lifetime_secs == 0 || lifetime_secs > MAX_REQUEST_LIFETIME.as_secs() {
-        return Err(BearerError::RequestLifetime);
-    }
-    if binding.nonce == [0; 24] || binding.genesis_id == [0; 32] {
-        return Err(BearerError::Claims(
-            "a request needs a nonce and a genesis identity that are not zero".into(),
-        ));
-    }
-    let expiry = now
-        .checked_add(lifetime_secs)
-        .ok_or_else(|| BearerError::Time("invalid delegation lifetime".into()))?;
-    let mut id = [0; 32];
-    id[..8].copy_from_slice(&expiry.to_be_bytes());
-    id[8..].copy_from_slice(&binding.nonce);
-    let claims = JwtClaims {
-        iss: did_spelling::wire(signer.did()).into_owned(),
-        sub: audience.worker.clone(),
-        exp: expiry,
-        aud: format!("vera:{}", audience.deployment),
-        scope: DelegationScope::PolicyCommands,
-        // vera.rs's own builder writes an operation token with `nbf = iat`,
-        // and checks its operation identity at `iat`: both are set back.
-        iat: super::not_before(now),
-        nbf: super::not_before(now),
-        relay: None,
-        request: Some(OperationClaim {
-            id: OperationId(id),
-            digest: binding.digest,
-            genesis_id: binding.genesis_id,
-        }),
-    };
-    let payload = serde_json::to_string(&claims).map_err(|e| BearerError::Claims(e.to_string()))?;
-    let message = format!(
-        "{}.{}",
-        base64url_encode(header(signer.algorithm())),
-        base64url_encode(payload.as_bytes())
-    );
-    let signature = signer.sign(message.as_bytes()).await?;
-    admission::admit(signer, &key, message.as_bytes(), &signature)?;
-    Ok(format!("{message}.{}", base64url_encode(&signature)))
-}
+use crate::vera_rs::did_spelling;
 
 /// The DID that signed `token`, in DefraDB's spelling, when `token` is bound
 /// to one request and vera.rs would execute the command with `digest` under
@@ -209,9 +72,37 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use vera_crypto::operation::{OperationId, MAX_OPERATION_TTL};
+
     use super::*;
-    use crate::vera_rs::bearer::{caller_delegation, caller_of_delegation, is_delegation};
-    use crate::vera_rs::signer::Ed25519Signer;
+    use crate::vera_rs::bearer::{
+        caller_delegation, caller_of_delegation, is_delegation, request_delegation,
+        request_delegation_at, BearerError, RequestBinding, MAX_REQUEST_LIFETIME,
+    };
+    use crate::vera_rs::request_digest;
+    use crate::vera_rs::signer::{DelegationSigner, Ed25519Signer};
+    use crate::PolicyCommand;
+
+    /// The request-bound delegation `signer` issues at `now` for
+    /// `lifetime_secs`.
+    async fn issue_request_at(
+        signer: &dyn DelegationSigner,
+        audience: &acp::DelegationAudience,
+        binding: &RequestBinding,
+        lifetime_secs: u64,
+        now: u64,
+    ) -> Result<String, BearerError> {
+        request_delegation_at(
+            signer,
+            audience,
+            binding,
+            Duration::from_secs(lifetime_secs),
+            now,
+        )
+        .await
+    }
 
     const WORKER: &str = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
     const NOW: u64 = 1_900_000_000;
@@ -370,7 +261,7 @@ mod tests {
                 &claims,
                 &request,
                 &audience(),
-                || request_digest(&command),
+                || Ok(request_digest(&command)?),
                 NOW
             )
             .unwrap(),
