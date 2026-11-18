@@ -15,13 +15,13 @@
 \*     keys get that chunk's own outcome, and nothing fails the batch whole;
 \*   * a chunk left unanswered (every chunk is answered in the end).
 \*
-\* Rust anchors (crates/inputs/src/service.rs): `Inner::inline` builds one
+\* Rust anchors (crates/building-blocks/inputs/src/service.rs): `Inner::inline` builds one
 \* future per `members.chunks(max_batch)` and runs them through
 \* `buffer_unordered(flights_per_group)` (Start, Yield); each future takes an
 \* `in_flight` permit (Acquire) around `Inner::round_trip`, whose loop retries
 \* a failed send (Fail, Succeed); `Inner::answers` turns the outcome into one
 \* answer per key of that chunk only (Yield). `DefraKms::with_inputs`
-\* (crates/kms/src/defra_kms.rs) sets `max_batch` and `flights_per_group`.
+\* (crates/database/kms/src/defra_kms.rs) sets `max_batch` and `flights_per_group`.
 EXTENDS Naturals, FiniteSets
 
 \* Chunks: how many chunks the group was cut into (numbered 1..Chunks).

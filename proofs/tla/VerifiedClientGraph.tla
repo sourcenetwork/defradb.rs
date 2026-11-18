@@ -14,9 +14,9 @@
 \* means owed in the transaction with authority for the signer, which
 \* VerifiedRemoteWrite.tla models.
 \*
-\* Rust owners: crates/db/src/block/builder/verified_client_{create,mutation}.rs,
-\* crates/defra-node/src/lib.rs execute_verified_graph_in_txn,
-\* crates/query/src/runner/turn.rs lent, and the native transaction commit.
+\* Rust owners: crates/database/db/src/block/builder/verified_client_{create,mutation}.rs,
+\* crates/entry-points/defra-node/src/lib.rs execute_verified_graph_in_txn,
+\* crates/engine/query/src/runner/turn.rs lent, and the native transaction commit.
 EXTENDS Naturals
 
 \* Each RED configuration removes exactly one guard.

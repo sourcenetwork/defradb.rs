@@ -3,7 +3,7 @@
 \* TTL-capped, revocable tokens that authorize live encrypted-replay of one
 \* collection from one source peer to one target peer.
 \*
-\* Anchored in crates/p2p/src/explicit_replay.rs:
+\* Anchored in crates/database/p2p/src/explicit_replay.rs:
 \*   - ExplicitReplayCapabilityClaims {source_peer_id, target_peer_id,
 \*     collection_id, authorizer_did, expires_at}              (l.34-43)
 \*   - generate_capability: caps lifetime at MAX_CAPABILITY_TTL  (l.194-223, 201)

@@ -38,7 +38,7 @@ linked by the composite that made it; `ExactDagFetch.tla` checks the walk
 step by step on a DAG with branches and field chains, and
 `a_concurrent_branch_deeper_than_any_cut_is_served_exactly` and
 `a_merge_of_a_held_and_a_missing_branch_serves_the_missing_side`
-(`crates/p2p/tests/unit/car_region.rs`) check it on real blocks. The caps
+(`crates/database/p2p/tests/unit/car_region.rs`) check it on real blocks. The caps
 (`CAR_MAX_BLOCKS`, `CAR_MAX_BYTES`, `MAX_HAVE_CIDS`) and a block the provider
 cannot read (`read_wanted` returning nothing) can serve less; the receiver
 then asks again for what is still missing. The cap on held reads can only
@@ -58,10 +58,10 @@ plain link the composite walk would not follow
 (`a_collection_block_head_outside_the_haves_is_served`). A depth cut serves
 less, and the receiver asks again from its missing frontier.
 
-Rust anchors: `collect_missing_region` (`crates/p2p/src/sync/car/region.rs`),
-`haves_from_heads` (`crates/p2p/src/sync/coordinator/haves.rs`),
+Rust anchors: `collect_missing_region` (`crates/database/p2p/src/sync/car/region.rs`),
+`haves_from_heads` (`crates/database/p2p/src/sync/coordinator/haves.rs`),
 `encode_car_request` and `decode_car_request`
-(`crates/p2p/src/two_stream/handler/car.rs`).
+(`crates/database/p2p/src/two_stream/handler/car.rs`).
 -/
 namespace CarMissingRegion
 

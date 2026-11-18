@@ -1,7 +1,7 @@
 # The network edge
 
 Every network-facing component runs on **one tokio runtime**, held in one place: the
-`Edge` (`crates/edge`). Natively it is a single runtime; in the browser it is the event
+`Edge` (`crates/foundation/edge`). Natively it is a single runtime; in the browser it is the event
 loop behind the same handle. Every network component (the HTTP server, P2P, the KMS
 transport, the Orbis and Vera clients, the embeddings fetcher, telemetry export) is
 handed an `Edge` at construction. Nothing finds a runtime ambiently: no
@@ -11,7 +11,7 @@ handed an `Edge` at construction. Nothing finds a runtime ambiently: no
 
 - **HTTP**: the axum server; whole data-path routes move onto the pool through an
   `OnPool` layer, document-named paths to the document's worker
-  ([`crates/http/src/pool_layer.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/http/src/pool_layer.rs)); transaction routes, SSE and subscriptions stay on
+  ([`crates/surfaces/http/src/pool_layer.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/surfaces/http/src/pool_layer.rs)); transaction routes, SSE and subscriptions stay on
   the edge (they are streams, not database work).
 - **P2P**: the iroh endpoint task (all protocols muxed over one ALPN), or the libp2p
   swarm where that transport is used.

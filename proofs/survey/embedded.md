@@ -1,4 +1,4 @@
-# Survey: node assembly in `crates/defra-node/`
+# Survey: node assembly in `crates/entry-points/defra-node/`
 
 ## Purpose
 Node-assembly / wiring layer. `assemble` composes an `Node` from

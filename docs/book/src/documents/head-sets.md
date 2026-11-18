@@ -9,7 +9,7 @@ value under one key per document, updated by blind merges.
 ## The layout
 
 Document head sets live under `h/hd/`, collection head sets under `h/hc/`
-([`crates/db/src/block/heads.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/block/heads.rs)). A set value holds, per name, one of three states:
+([`crates/database/db/src/block/heads.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/block/heads.rs)). A set value holds, per name, one of three states:
 `Absent`, `Ahead` (a child arrived before its parent), or `Live(priority)`. Names are
 `{field}/{cid}` pairs, so one set holds every field's heads plus the composite `C`
 heads.

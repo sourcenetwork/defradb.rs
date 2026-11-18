@@ -1,12 +1,12 @@
 ---- MODULE PushBacklog ----
 \* Outbound PushLog backlog on the pusher (#1099, audit F24). The code it models:
-\*   crates/p2p/src/sync/push_backlog.rs: BacklogOwner::enqueue (admission),
+\*   crates/database/p2p/src/sync/push_backlog.rs: BacklogOwner::enqueue (admission),
 \*     BacklogOwner::pop_eligible (which job a free worker takes next, and which job
 \*     is a probe), BacklogOwner::park_peer, BacklogOwner::park_peer_unreachable,
 \*     BacklogOwner::peer_answered and BacklogOwner::retire_idle_cooldowns (the
 \*     unreachable state and its spells), BacklogOwner::take_queued_for_peer,
 \*     BacklogOwner::job_done;
-\*   crates/p2p/src/sync/coordinator/push_worker.rs: spawn_push_workers (the fixed
+\*   crates/database/p2p/src/sync/coordinator/push_worker.rs: spawn_push_workers (the fixed
 \*     pool) and run_push_job (send, park on a timeout, demote the peer's queue).
 \*
 \* THE STORY. A node pushes every write to each replicator peer; one (write, peer)
@@ -49,7 +49,7 @@
 \*
 \* Every variable is state the code holds; the properties are stated over that state,
 \* as invariants or as properties of each step, and nothing is recorded only to state
-\* them. Variables and the code state each one is (crates/p2p/src/sync):
+\* them. Variables and the code state each one is (crates/database/p2p/src/sync):
 \*   arrivals     the push_backlog.rs Counters enqueued_total + coalesced_total +
 \*                rejected_items_total + rejected_bytes_total
 \*   backlog[p]   Inner::queues[p].len()

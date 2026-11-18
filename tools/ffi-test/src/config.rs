@@ -21,10 +21,10 @@ pub fn reports_dir() -> PathBuf {
 }
 
 /// FFI crate path relative to Rust worktree root
-pub const FFI_CRATE_PATH: &str = "crates/ffi";
+pub const FFI_CRATE_PATH: &str = "crates/entry-points/ffi";
 
 /// cbindgen config path relative to Rust worktree root
-pub const CBINDGEN_CONFIG: &str = "crates/ffi/cbindgen.toml";
+pub const CBINDGEN_CONFIG: &str = "crates/entry-points/ffi/cbindgen.toml";
 
 /// Header destination relative to Go worktree root
 pub const HEADER_DESTINATION: &str = "tests/clients/rustffi/defra.h";

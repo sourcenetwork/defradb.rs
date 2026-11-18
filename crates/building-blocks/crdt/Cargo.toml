@@ -1,0 +1,26 @@
+[package]
+name = "crdt"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+bench = false
+
+[dependencies]
+ciborium = "0.2"
+defra-core = { path = "../../foundation/defra-core" }
+document = { path = "../../building-blocks/document" }
+rapidhash.workspace = true
+schema = { path = "../../foundation/schema" }
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

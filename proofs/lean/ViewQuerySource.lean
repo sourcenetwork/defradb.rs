@@ -18,16 +18,16 @@ What must never happen:
 * a stored transform differs from the CID the caller named, is empty, or names
   a lens the node did not hold when it accepted it.
 
-Rust owner: crates/schema/src/source.rs `QuerySource` (its serde derive:
+Rust owner: crates/foundation/schema/src/source.rs `QuerySource` (its serde derive:
 `Transform` is `skip_serializing_if = "Option::is_none"` and `default`;
 `Query` reads through `deserialize_query_select`) and `QuerySource::with_transform`;
-crates/schema/src/collection.rs `CollectionVersion::query` (`Query`, skipped when
-none, `default`); crates/defra-node/src/db_impls.rs `DbSchemaOps::add_view`,
-which refuses the empty CID, and crates/db/src/collection/ops/create.rs
+crates/foundation/schema/src/collection.rs `CollectionVersion::query` (`Query`, skipped when
+none, `default`); crates/entry-points/defra-node/src/db_impls.rs `DbSchemaOps::add_view`,
+which refuses the empty CID, and crates/database/db/src/collection/ops/create.rs
 `DB::require_view_transforms`, which refuses a CID with no lens config in the
 create transaction; the definition store writes `serde_json::to_vec` of the
 `CollectionVersion` and reads it with `serde_json::from_slice`
-(crates/db/src/collection/ops/version.rs `get_all_collection_versions_with_txn`).
+(crates/database/db/src/collection/ops/version.rs `get_all_collection_versions_with_txn`).
 -/
 
 namespace ViewQuerySource

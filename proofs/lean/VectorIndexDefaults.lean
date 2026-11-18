@@ -20,9 +20,9 @@ set (`normalize_hnsw_fills`), that any other index comes out unchanged
 default while any other string reads as itself (`empty_reads_default`,
 `nonempty_reads_itself`).
 
-Rust anchors: `crates/schema/src/vector_index_defaults.rs`
+Rust anchors: `crates/foundation/schema/src/vector_index_defaults.rs`
 `VectorIndexDescription::normalized`, `empty_is_default`; the defaults are
-`crates/schema/src/index.rs` `default_hnsw_m` (16),
+`crates/foundation/schema/src/index.rs` `default_hnsw_m` (16),
 `default_hnsw_ef_construction` (128), `default_hnsw_ef_search` (64).
 -/
 

@@ -6,8 +6,8 @@
     "go_revision": "53f0e76a32d1761e3396a88ce607ebc3e37baa5a",
     "published_revision": "7b7fb91af990f368d29e79a65df4df366922222f",
     "changed_paths": [
-      "crates/schema/tests/property_tests.rs",
-      "crates/schema/tests/relation_id_fields_tests.rs"
+      "crates/foundation/schema/tests/property_tests.rs",
+      "crates/foundation/schema/tests/relation_id_fields_tests.rs"
     ],
     "logs": [
       {
@@ -34,8 +34,8 @@
     "go_revision": "53f0e76a32d1761e3396a88ce607ebc3e37baa5a",
     "published_revision": "ea27f8338922b64df273a3940a5b9dfffd4a653f",
     "changed_paths": [
-      "crates/schema/tests/property_tests.rs",
-      "crates/schema/tests/relation_id_fields_tests.rs"
+      "crates/foundation/schema/tests/property_tests.rs",
+      "crates/foundation/schema/tests/relation_id_fields_tests.rs"
     ],
     "logs": [
       {
@@ -62,8 +62,8 @@
     "go_revision": "53f0e76a32d1761e3396a88ce607ebc3e37baa5a",
     "published_revision": "e309501d211ec6fdf0a10c890c1a0c454745562d",
     "changed_paths": [
-      "crates/schema/tests/property_tests.rs",
-      "crates/schema/tests/relation_id_fields_tests.rs"
+      "crates/foundation/schema/tests/property_tests.rs",
+      "crates/foundation/schema/tests/relation_id_fields_tests.rs"
     ],
     "logs": [
       {
@@ -90,8 +90,8 @@
     "go_revision": "53f0e76a32d1761e3396a88ce607ebc3e37baa5a",
     "published_revision": "7668ba87fb1cf7bd8401ece70a925a18128b5a2c",
     "changed_paths": [
-      "crates/schema/tests/property_tests.rs",
-      "crates/schema/tests/relation_id_fields_tests.rs"
+      "crates/foundation/schema/tests/property_tests.rs",
+      "crates/foundation/schema/tests/relation_id_fields_tests.rs"
     ],
     "logs": [
       {
@@ -118,8 +118,8 @@
     "go_revision": "53f0e76a32d1761e3396a88ce607ebc3e37baa5a",
     "published_revision": "b65de36345b17168bb18e520eabfa3f392fb1856",
     "changed_paths": [
-      "crates/schema/tests/property_tests.rs",
-      "crates/schema/tests/relation_id_fields_tests.rs"
+      "crates/foundation/schema/tests/property_tests.rs",
+      "crates/foundation/schema/tests/relation_id_fields_tests.rs"
     ],
     "logs": [
       {
@@ -146,9 +146,9 @@
     "go_revision": "53f0e76a32d1761e3396a88ce607ebc3e37baa5a",
     "published_revision": "78e48a854d7d9e18d06178eeeeb314036b00697a",
     "changed_paths": [
-      "crates/db/src/txn/context.rs",
-      "crates/schema/tests/property_tests.rs",
-      "crates/schema/tests/relation_id_fields_tests.rs"
+      "crates/database/db/src/txn/context.rs",
+      "crates/foundation/schema/tests/property_tests.rs",
+      "crates/foundation/schema/tests/relation_id_fields_tests.rs"
     ],
     "logs": [
       {
@@ -175,8 +175,8 @@
     "go_revision": "53f0e76a32d1761e3396a88ce607ebc3e37baa5a",
     "published_revision": "ad6427264f4807452a74fd9e5fedc9b45e285182",
     "changed_paths": [
-      "crates/schema/tests/property_tests.rs",
-      "crates/schema/tests/relation_id_fields_tests.rs"
+      "crates/foundation/schema/tests/property_tests.rs",
+      "crates/foundation/schema/tests/relation_id_fields_tests.rs"
     ],
     "logs": [
       {
@@ -203,8 +203,8 @@
     "go_revision": "53f0e76a32d1761e3396a88ce607ebc3e37baa5a",
     "published_revision": "913e98b280ee98b4e89545ce264c424de269cbeb",
     "changed_paths": [
-      "crates/schema/tests/property_tests.rs",
-      "crates/schema/tests/relation_id_fields_tests.rs"
+      "crates/foundation/schema/tests/property_tests.rs",
+      "crates/foundation/schema/tests/relation_id_fields_tests.rs"
     ],
     "logs": [
       {
@@ -231,8 +231,8 @@
     "go_revision": "53f0e76a32d1761e3396a88ce607ebc3e37baa5a",
     "published_revision": "e95a271125314cacc2a71b9771f02d498ee8a104",
     "changed_paths": [
-      "crates/schema/tests/property_tests.rs",
-      "crates/schema/tests/relation_id_fields_tests.rs"
+      "crates/foundation/schema/tests/property_tests.rs",
+      "crates/foundation/schema/tests/relation_id_fields_tests.rs"
     ],
     "logs": [
       {
@@ -259,8 +259,8 @@
     "go_revision": "53f0e76a32d1761e3396a88ce607ebc3e37baa5a",
     "published_revision": "158ec3991c0b3525955136d721df3cffe40d6f5e",
     "changed_paths": [
-      "crates/schema/tests/property_tests.rs",
-      "crates/schema/tests/relation_id_fields_tests.rs"
+      "crates/foundation/schema/tests/property_tests.rs",
+      "crates/foundation/schema/tests/relation_id_fields_tests.rs"
     ],
     "logs": [
       {

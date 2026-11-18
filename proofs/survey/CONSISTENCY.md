@@ -139,7 +139,7 @@ freshness/scope and Nac establishing admin-set integrity. No double-modeling.
 
 **2. Content-addressing (integrity-cid ↔ replication-convergence).** AGREE.
 Cid's normal-form Block (sorted heads by `cid.to_string()`, sorted links, empty→None)
-matches `crates/defra-core/src/block.rs` and the Go upstream `block.go` wire contract.
+matches `crates/foundation/defra-core/src/block.rs` and the Go upstream `block.go` wire contract.
 Convergence/M1/DagReplication/Replicator all treat CIDs as opaque deterministic content
 addresses — precisely the determinism Cid proves. Integrity relies on the same fact for
 its `signedContent = content` comparison. One delta-DAG model (acyclic `Parents`,
@@ -216,7 +216,7 @@ No cross-cluster contradiction found.
    - `Replicator_DESIGN.md` cites `replicator.rs:35`/`:129`; actual is
      `ReplicatorStatus` enum at **:43**, `ReplicatorInfo` struct at **:135** (confirmed).
    - `Cid` DESIGN says `compute_merkle_root` sorts "by CID string"; actual
-     `crates/defra-core/src/batch_signing.rs:32` sorts `by_key(|a| a.to_bytes())`
+     `crates/foundation/defra-core/src/batch_signing.rs:32` sorts `by_key(|a| a.to_bytes())`
      (bytes). Order-independence holds either way (Lean uses an abstract key).
    - Convergence/Claim cites (`lww.rs`, `dag_sync/state.rs`) drifted a few lines.
    Symbols all present and semantically matching; only line numbers drifted.

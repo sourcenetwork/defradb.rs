@@ -2,9 +2,9 @@
 
 ## Purpose
 
-`crates/acp/` is DefraDB's access-control core. It provides document-level access
+`crates/engine/acp/` is DefraDB's access-control core. It provides document-level access
 control (DAC) and node-level access control (NAC) on top of a Zanzibar relation
-engine (re-exported from `crates/zanzibar/`). Responsibilities: DPI policy
+engine (re-exported from `crates/building-blocks/zanzibar/`). Responsibilities: DPI policy
 validation, relation-tuple storage (`store.rs`/`persistent.rs`/`local.rs`),
 `DocumentACP` checks (owner/direct/wildcard tuples, read-implying relations),
 P2P export/replace of doc-scoped relationships, and the NAC subsystem

@@ -6,12 +6,12 @@
 \* namespace:
 \*   * a local provider joins the transaction (DocumentACP::bind_transaction) and registers
 \*     or unregisters through the transaction's view (register_created_doc and
-\*     unregister_deleted_doc in crates/db/src/write/autocommit/helpers.rs);
+\*     unregister_deleted_doc in crates/database/db/src/write/autocommit/helpers.rs);
 \*   * an external provider cannot join, so the create records the registration it owes in
-\*     the same view (PendingRegistrations::record in crates/acp/src/pending.rs), and
-\*     AcpRegistrationProjection in crates/query/src/txn/context.rs reads it back
+\*     the same view (PendingRegistrations::record in crates/engine/acp/src/pending.rs), and
+\*     AcpRegistrationProjection in crates/engine/query/src/txn/context.rs reads it back
 \*     (owed_creator), built per transaction by DbTxn::acp_registration_projection in
-\*     crates/db/src/txn/mod.rs.
+\*     crates/database/db/src/txn/mod.rs.
 \* What happens to an owed registration after the commit is AcpOutbox.tla, not this model.
 \*
 \* THE MECHANISM.  An explicit DefraDB transaction writes ACP registrations and

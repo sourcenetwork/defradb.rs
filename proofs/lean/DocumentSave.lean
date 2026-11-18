@@ -13,8 +13,8 @@ document the save writes over is updated or added under the named ID.
 `DocumentSave.tla` proves the other half: that the lookup and the write see
 the same state, because they run in one transaction.
 
-Rust owner: crates/query/src/documents/mod.rs `save` (the decision: the
-`response::deleted` check before the upsert), crates/query/src/plan/mutation/upsert.rs
+Rust owner: crates/engine/query/src/documents/mod.rs `save` (the decision: the
+`response::deleted` check before the upsert), crates/engine/query/src/plan/mutation/upsert.rs
 (what the upsert does with each state). The regression is
 mutation::update::with_delete::update_save_deleted_doc_does_nothing.
 -/

@@ -21,7 +21,7 @@
 \* ask leaves the peer looking reachable to gossip forever, holding a slot
 \* in its view, and gossip never asks for it again.
 \*
-\* Code it models (crates/p2p/src/iroh):
+\* Code it models (crates/database/p2p/src/iroh):
 \*   gossip/driver.rs         Driver::send        (a send path only on a live connection)
 \*   gossip/driver.rs         Driver::connected   (a connection already closed is ignored)
 \*   gossip/driver.rs         Driver::forget      (drops the send path, never the connection)

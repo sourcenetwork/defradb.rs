@@ -20,7 +20,7 @@
 \*      INV_NotHeldByLater;
 \*   3. a caller waits forever for its answer - LIVE_Answered.
 \*
-\* Correspondence with the Rust code (crates/p2p/src/host):
+\* Correspondence with the Rust code (crates/database/p2p/src/host):
 \*
 \*   | Model            | Rust                                                     |
 \*   |------------------|----------------------------------------------------------|

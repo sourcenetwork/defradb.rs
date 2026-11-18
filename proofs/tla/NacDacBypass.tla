@@ -28,10 +28,10 @@
 \*      (INV_DeniedNeverBypasses)
 \*
 \* The Rust code this models:
-\*   - the decision, in the request's transaction  crates/query/src/runner/turn.rs QueryRunner::lent
-\*   - the caller's denial, kept by every copy      crates/defra-core/src/request_context.rs RequestContext::with_dac_bypass_denied, RequestContext::with_dac_bypass
-\*   - NAC on and the grant, read in that view      crates/db/src/read/lensed/fetcher/mod.rs LensedDocFetcher::dac_bypass
-\*   - where the bypass is honoured                 crates/db/src/collection/acp.rs check_doc_permission_as
+\*   - the decision, in the request's transaction  crates/engine/query/src/runner/turn.rs QueryRunner::lent
+\*   - the caller's denial, kept by every copy      crates/foundation/defra-core/src/request_context.rs RequestContext::with_dac_bypass_denied, RequestContext::with_dac_bypass
+\*   - NAC on and the grant, read in that view      crates/database/db/src/read/lensed/fetcher/mod.rs LensedDocFetcher::dac_bypass
+\*   - where the bypass is honoured                 crates/database/db/src/collection/acp.rs check_doc_permission_as
 EXTENDS Naturals
 
 CONSTANT Bug   \* "None" for the real code; otherwise the guard a RED config breaks

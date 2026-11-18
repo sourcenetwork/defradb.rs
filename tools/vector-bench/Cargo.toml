@@ -3,7 +3,7 @@ name = "vector-bench"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "Corpus, warm-up and usearch reference tools for crates/db/tests/vector/vector_disk_cost.rs"
+description = "Corpus, warm-up and usearch reference tools for crates/database/db/tests/vector/vector_disk_cost.rs"
 
 # Standalone, so its C++ and Arrow dependencies stay out of the workspace build.
 [workspace]

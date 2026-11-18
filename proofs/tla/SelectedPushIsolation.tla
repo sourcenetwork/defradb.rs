@@ -16,10 +16,10 @@
 \* stop than there are send slots, more timeouts than send slots, returning
 \* before every started task is joined, success with a document unacknowledged,
 \* or a receiver pause ending the selection.
-\* Rust: crates/db/src/merge/push_docs.rs push_existing_docs_with_config_and_allowlist
+\* Rust: crates/database/db/src/merge/push_docs.rs push_existing_docs_with_config_and_allowlist
 \* (selected ownership); push_docs/stop.rs SelectedPushStop and stops_selected_transfer;
 \* push_docs/selected.rs HeadDeadline and send; push_docs_replay.rs
-\* ReplayPushGate::send_pushlog_with_admission; crates/p2p-adapter/src/
+\* ReplayPushGate::send_pushlog_with_admission; crates/surfaces/p2p-adapter/src/
 \* pooled_doc_pusher.rs push_existing_docs_by_id, which carries the caller's drop.
 EXTENDS Naturals, FiniteSets
 \* Bug names the one guard a RED configuration removes; "none" keeps them all.

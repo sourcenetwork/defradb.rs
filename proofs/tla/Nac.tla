@@ -14,18 +14,18 @@
 \*
 \* ---------------------------------------------------------------------------
 \* SOURCE ANCHORS (Rust, this repo)
-\*   crates/acp/src/nac/node_acp/mod.rs
+\*   crates/engine/acp/src/nac/node_acp/mod.rs
 \*     :33   DISABLED_RELATION sentinel ("_disabled") persisted in the store
 \*     :96-143 load(): on startup, status := DisabledTemporarily iff the
 \*             persisted _disabled relationship is present, else Enabled.
 \*             (== Restart action recovering status from disk_disabled)
-\*   crates/acp/src/nac/node_acp/lifecycle.rs
+\*   crates/engine/acp/src/nac/node_acp/lifecycle.rs
 \*     :74-108 disable(): Enabled -> DisabledTemporarily, and PERSISTS the
 \*             _disabled relationship (88-96) so it survives restart.
 \*     :120-155 re_enable(): DisabledTemporarily -> Enabled, DELETES the
 \*             persisted _disabled relationship (132-144).
 \*     :171-197 purge(): -> NotConfigured, deletes all node relationships.
-\*   crates/acp/src/nac/node_acp/operations.rs
+\*   crates/engine/acp/src/nac/node_acp/operations.rs
 \*     :72-79  is_admin(): when status != Enabled returns Ok(true) for EVERYONE
 \*             (the "live" permissive check).
 \*     :87-104 is_admin_persisted(): checks the STORED owner/admin relations
@@ -34,7 +34,7 @@
 \*             add_permission_grant / remove_permission_grant: each REJECTS
 \*             with InvalidPolicy when status == DisabledTemporarily
 \*             ("cannot modify relationships while NAC is disabled").
-\*   crates/db/src/nac/toggle.rs
+\*   crates/database/db/src/nac/toggle.rs
 \*     NacManager::disable_as(): auth via the live NacDisable check, which
 \*             every admin holds (LIVE), in the write that disables.
 \*     NacManager::re_enable_as(): auth via the stored NacReEnable check,
@@ -42,13 +42,13 @@
 \*             ** This asymmetry is the security crux: while disabled, live
 \*                is_admin is true for everyone, so re_enable MUST use the
 \*                persisted check or any actor could re-enable then escalate.
-\*   crates/db/src/nac/mod.rs NacManager::purge(): requires dev_mode && is_admin.
-\*   crates/acp/src/nac/node_acp/lifecycle.rs NodeACP::enable(): sets NAC up
+\*   crates/database/db/src/nac/mod.rs NacManager::purge(): requires dev_mode && is_admin.
+\*   crates/engine/acp/src/nac/node_acp/lifecycle.rs NodeACP::enable(): sets NAC up
 \*             only from NotConfigured; a no-op when Enabled; REFUSES when
 \*             DisabledTemporarily. Reached by node startup with the enable
 \*             option (NacManager::initialize) and by POST /api/v0/acp/node/enable
 \*             for any caller naming itself as OwnerDID (== the Enable(a) action).
-\*   crates/db/src/nac/mod.rs NacManager::initialize(): on startup with the
+\*   crates/database/db/src/nac/mod.rs NacManager::initialize(): on startup with the
 \*             enable option, enables only a NotConfigured NAC; a stored
 \*             DisabledTemporarily stays disabled (== the Restart action).
 \*

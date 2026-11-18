@@ -28,7 +28,7 @@
 \* and the attempt runs again. That is regolith's rule for an Ordinary key,
 \* and the model leans on it rather than adding any lock.
 \*
-\* Code it models (crates/db/src/index):
+\* Code it models (crates/database/db/src/index):
 \*   drop.rs      DB::drop_index, DropIndexAttempt (definition, backfill record,
 \*                drop record and the retired id in one commit), DropPage
 \*                (entries in pages), DB::remove_dropped_entries (a failed page

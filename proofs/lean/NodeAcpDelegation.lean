@@ -25,12 +25,12 @@ permission, never changes `admin` or `owner`, and never grants to everyone.
 An admin's authority is exactly what it was before delegation existed.
 
 Rust code it models:
-- `crates/acp/src/nac/node_acp/operations.rs`: `NodeACP::authorize_change`,
+- `crates/engine/acp/src/nac/node_acp/operations.rs`: `NodeACP::authorize_change`,
   the one gate for `add_admin`, `remove_admin`, `add_permission_grant` and
   `remove_permission_grant`.
-- `crates/acp/src/nac/node_acp/source.rs`: `NodeACP::change_source_permission`,
+- `crates/engine/acp/src/nac/node_acp/source.rs`: `NodeACP::change_source_permission`,
   through the same gate.
-- `crates/acp/src/nac/delegation.rs`: `DelegationFacts::admits`, the decision
+- `crates/engine/acp/src/nac/delegation.rs`: `DelegationFacts::admits`, the decision
   this file's `admits` states.
 -/
 namespace NodeAcpDelegation
@@ -89,8 +89,8 @@ inductive Relation where
 /-- The stored NAC relationships: the owner, the direct admin tuples, and the
 edges stored under each permission's relation.
 
-External premise (`crates/acp/src/nac/policy.rs`, `create_node_policy`, and
-`crates/acp/src/nac/node_acp/source.rs`, `source_relationship`): every
+External premise (`crates/engine/acp/src/nac/policy.rs`, `create_node_policy`, and
+`crates/engine/acp/src/nac/node_acp/source.rs`, `source_relationship`): every
 permission relation is `this + owner + admin`, and every source userset a
 permission's edge names carries that same permission. So whether a DID holds
 permission `p` depends only on the owner, the admin tuples and the edges

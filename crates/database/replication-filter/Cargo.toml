@@ -1,0 +1,24 @@
+[package]
+name = "replication-filter"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Query-filter-backed replication filter matcher shared between cli and defra-node"
+
+[lib]
+bench = false
+
+[dependencies]
+p2p = { path = "../../database/p2p" }
+query = { path = "../../engine/query" }
+schema = { path = "../../foundation/schema" }
+
+kovan-map.workspace = true
+rapidhash.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

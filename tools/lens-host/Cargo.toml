@@ -9,7 +9,7 @@ repository.workspace = true
 description = "Lens host CLI backed by the Rust WASM runtime"
 
 [dependencies]
-lens = { path = "../../crates/lens", features = ["wasmtime-runtime"] }
+lens = { path = "../../crates/foundation/lens", features = ["wasmtime-runtime"] }
 serde_json.workspace = true
 nuclei.workspace = true
 

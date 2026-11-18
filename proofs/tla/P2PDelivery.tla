@@ -72,22 +72,22 @@
 \* first idle turn (Red_ImmortalContinuation).
 \*
 \* Code it models, on origin/main d23a8cf47 (P2PDelivery_DESIGN.md has the line map):
-\*   crates/db/src/merge/txn_broadcaster.rs         SyncTxnBroadcaster::submit_update (Commit)
-\*   crates/defra-node/src/lib.rs                   Node::shutdown (Crash: stop_transport before the drain)
-\*   crates/p2p/src/sync/coordinator/broadcast.rs   admit_replicator_push (Register, RegFail)
-\*   crates/p2p-adapter/src/retry.rs                run_retry_pass; crates/db/src/merge/push_docs.rs retry_doc (Push)
-\*   crates/p2p/src/sync/manager/process/pushlog.rs process_block_inner (Push: the admission)
-\*   crates/p2p/src/sync/head_scope.rs              ScopeDecision::of (Covered, Superseded)
-\*   crates/p2p/src/sync/coordinator/mod.rs         dispatch_due_pending_dag_fetches, DagFetchLimiter (Schedule, Acquire)
-\*   crates/p2p/src/sync/coordinator/dag_fetcher.rs poll_fetch_dag, fetch_dag_attempt (Progress, Stall, Preempt)
-\*   crates/p2p/src/sync/coordinator/dag_context.rs DagFetchContext::finish_clock_attempt (EndAttempt)
-\*   crates/p2p/src/sync/manager/process/pending_dag.rs PendingDagLease::finish_attempt (EndAttempt),
+\*   crates/database/db/src/merge/txn_broadcaster.rs         SyncTxnBroadcaster::submit_update (Commit)
+\*   crates/entry-points/defra-node/src/lib.rs                   Node::shutdown (Crash: stop_transport before the drain)
+\*   crates/database/p2p/src/sync/coordinator/broadcast.rs   admit_replicator_push (Register, RegFail)
+\*   crates/surfaces/p2p-adapter/src/retry.rs                run_retry_pass; crates/database/db/src/merge/push_docs.rs retry_doc (Push)
+\*   crates/database/p2p/src/sync/manager/process/pushlog.rs process_block_inner (Push: the admission)
+\*   crates/database/p2p/src/sync/head_scope.rs              ScopeDecision::of (Covered, Superseded)
+\*   crates/database/p2p/src/sync/coordinator/mod.rs         dispatch_due_pending_dag_fetches, DagFetchLimiter (Schedule, Acquire)
+\*   crates/database/p2p/src/sync/coordinator/dag_fetcher.rs poll_fetch_dag, fetch_dag_attempt (Progress, Stall, Preempt)
+\*   crates/database/p2p/src/sync/coordinator/dag_context.rs DagFetchContext::finish_clock_attempt (EndAttempt)
+\*   crates/database/p2p/src/sync/manager/process/pending_dag.rs PendingDagLease::finish_attempt (EndAttempt),
 \*       resync_persisted_pending_dags, records_after_resync_cursor (Resync),
 \*       continue_merge, consume_pending_merge_continuation (StartCont, EndCont)
-\*   crates/p2p/src/sync/replication/handlers.rs    handle_block_received (Progress: merge, discharge, forward)
-\*   crates/p2p/src/iroh/endpoint_rpc.rs            connect_with_cache, retire_timed_out_connection (Reconnect, RetireTimedOut)
-\*   crates/p2p/src/iroh/endpoint_streams.rs        handle_incoming (Reconnect: the accepting side)
-\*   crates/p2p-adapter/src/iroh_peer/peer.rs       IrohPeer::assemble (Crash, RestoreReplicators)
+\*   crates/database/p2p/src/sync/replication/handlers.rs    handle_block_received (Progress: merge, discharge, forward)
+\*   crates/database/p2p/src/iroh/endpoint_rpc.rs            connect_with_cache, retire_timed_out_connection (Reconnect, RetireTimedOut)
+\*   crates/database/p2p/src/iroh/endpoint_streams.rs        handle_incoming (Reconnect: the accepting side)
+\*   crates/surfaces/p2p-adapter/src/iroh_peer/peer.rs       IrohPeer::assemble (Crash, RestoreReplicators)
 EXTENDS Naturals, Sequences, FiniteSets
 
 CONSTANTS

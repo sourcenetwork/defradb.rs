@@ -18,8 +18,8 @@
 //!
 //! Top-level aggregates are absent, and deliberately so rather than by
 //! oversight: `_count(User: {})` does not parse. `AggregateType::parse` in
-//! `crates/query/src/mapper/types.rs` matches `COUNT` and `AVG`, so the
-//! dispatch in `crates/query/src/query_parse/parser.rs` that would route a
+//! `crates/engine/query/src/mapper/types.rs` matches `COUNT` and `AVG`, so the
+//! dispatch in `crates/engine/query/src/query_parse/parser.rs` that would route a
 //! top-level aggregate never fires for `_count`, and the field falls through to
 //! the collection path where the collection name is rejected as an argument.
 //! Benchmarking a shape the engine rejects would measure its error path.

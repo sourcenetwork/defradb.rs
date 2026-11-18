@@ -41,7 +41,7 @@ async fn rust_rust_secp256k1_acp_round_trip() {
         let binary_path = node0.binary_path().to_path_buf();
 
         // The Rust CLI defaults `defra identity new` to secp256k1 (see
-        // crates/cli/src/commands/identity.rs default_value = "secp256k1"),
+        // crates/entry-points/cli/src/commands/identity.rs default_value = "secp256k1"),
         // so generate_identity() produces a secp256k1 owner. Pin the format
         // here so the test fails loudly if that default ever flips.
         let alice = generate_identity(&binary_path).expect("generate alice secp256k1 identity");

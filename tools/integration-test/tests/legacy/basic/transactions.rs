@@ -651,7 +651,7 @@ async fn rust_txn_create_shared_block_commits_both() {
 
 /// An `encrypt: true` create inside an interactive txn must commit: the KMS
 /// writes the DEK block in its own txn, so reading it back would abort every
-/// encrypted create. See crates/db/src/write/doc.rs (#1599).
+/// encrypted create. See crates/database/db/src/write/doc.rs (#1599).
 async fn txn_encrypted_create_commits(cluster: TestCluster) {
     let client = cluster.client(0);
 

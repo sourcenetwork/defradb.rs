@@ -10,7 +10,7 @@ Iroh's gateway mapper discovers the system default route, independently of the
 endpoint's selected address. It cannot scope UPnP, PCP or NAT-PMP to a specific
 binding. Specific addresses therefore disable automatic gateway mapping; absent
 or wildcard addresses retain the caller's existing mapping configuration.
-Rust owner: crates/p2p/src/iroh/endpoint_config.rs::apply_bind_config.
+Rust owner: crates/database/p2p/src/iroh/endpoint_config.rs::apply_bind_config.
 -/
 
 namespace EndpointBind

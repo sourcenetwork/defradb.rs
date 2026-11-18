@@ -18,7 +18,7 @@ cache (`other_name_answers_cache`), and that with the pin cleared every
 lookup answers the cache (`cleared_answers_cache`). The sequence of turns
 is the TLA+ model `proofs/tla/VersionPin.tla`.
 
-Rust anchors: `crates/db/src/txn/catalog.rs` `Catalog::get`, `Catalog::pin`,
+Rust anchors: `crates/database/db/src/txn/catalog.rs` `Catalog::get`, `Catalog::pin`,
 `Catalog::unpin`.
 -/
 

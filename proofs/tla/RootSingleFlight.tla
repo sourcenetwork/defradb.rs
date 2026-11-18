@@ -23,7 +23,7 @@
 \* a root not yet merged under its trust that starts nothing while no fetch
 \* covering its trust runs.
 \*
-\* Code it models (crates/p2p/src/sync/coordinator):
+\* Code it models (crates/database/p2p/src/sync/coordinator):
 \*   mod.rs                          DagFetchLimiter::claim_root, RootKey, RootClaim (dropped when the fetch ends)
 \*   event_handler/doc_sync.rs       handle_doc_sync_reply (claim with the replier's collections, then fetch)
 \*   event_handler/branchable_sync.rs handle_branchable_sync_reply (claim with the replier's trust, then fetch)

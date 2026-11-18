@@ -22,7 +22,7 @@ The keyed hash is cryptography and is not proved here: it is a parameter
 outputs, for a fixed secret) is assumed where a theorem needs it.
 
 Rust anchors: `blind`, `advertised_key`, `CollectionKey::encode` in
-`crates/p2p/src/iroh/records/key.rs`.
+`crates/database/p2p/src/iroh/records/key.rs`.
 -/
 
 namespace ServiceRecord

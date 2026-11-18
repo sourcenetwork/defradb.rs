@@ -64,11 +64,11 @@
 \* few enough times that the read's patience is never spent.
 \*
 \* Code this models (defradb.rs, light client at backbone rev 502e604):
-\*   crates/vera/src/vera_rs/provider/verified.rs   verified, ATTEMPTS, overtaken,
+\*   crates/engine/vera/src/vera_rs/provider/verified.rs   verified, ATTEMPTS, overtaken,
 \*       verified_within, Pace, WallPace, JITTER, BUSY_PATIENCE, BUSY_PAUSE, busy
-\*   crates/inputs/src/retry.rs                     Jitter::pause (a pause drawn
+\*   crates/building-blocks/inputs/src/retry.rs                     Jitter::pause (a pause drawn
 \*       between half of BUSY_PAUSE and all of it)
-\*   crates/vera/src/vera_rs/provider.rs            create_policy, query_policy,
+\*   crates/engine/vera/src/vera_rs/provider.rs            create_policy, query_policy,
 \*       query_object_owner, verify_access, create_access_decision (each read
 \*       goes through `verified`)
 \*   acp-light-client src/lib.rs                    verify_access, read_object_owner,

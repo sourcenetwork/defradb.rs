@@ -13,7 +13,7 @@ characters exactly as they were.
 
 What it trusts: the sentence and word cutters only cut; joining their pieces
 gives back their input (`LevelsJoin`). Rust unit tests check that for the real
-cutters in `crates/chunk-split/src/split/atoms.rs`.
+cutters in `crates/building-blocks/chunk-split/src/split/atoms.rs`.
 -/
 
 namespace ChunkSplit

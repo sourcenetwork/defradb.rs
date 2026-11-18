@@ -10,7 +10,7 @@ value. If those lookups run in the order the filter wrote them, the rows come
 back as 55, 25, 45, 35: out of order, and 25 twice. That must never happen.
 
 The fix (`sort_in_key_order` in
-`crates/query/src/planner/index_selection/filter_to_scan.rs`, called from
+`crates/engine/query/src/planner/index_selection/filter_to_scan.rs`, called from
 `filter_to_index_scan`) encodes every value into its index key, sorts the keys
 in byte order (the same `memcmp` order the store keeps keys in), drops a key
 equal to the one before it, and reverses the list when the scan runs backward.

@@ -8,12 +8,12 @@
 \* pool's threads and the store's files stay alive.
 \*
 \* A caller may end the node two ways:
-\*   * Node::shutdown (crates/defra-node/src/lib.rs) aborts and awaits every
+\*   * Node::shutdown (crates/entry-points/defra-node/src/lib.rs) aborts and awaits every
 \*     task, then closes the store (see NodeShutdown.tla);
 \*   * dropping the node, its last handle released, without a shutdown.
 \* A task stops only when someone aborts it (workers::Background::abort);
-\* dropping its handle leaves it running (crates/workers/src/pool/background.rs).
-\* The node's shutdown set (BackgroundTasks, crates/defra-node/src/
+\* dropping its handle leaves it running (crates/foundation/workers/src/pool/background.rs).
+\* The node's shutdown set (BackgroundTasks, crates/entry-points/defra-node/src/
 \* background_tasks.rs) aborts every task it holds when it is dropped. The
 \* abort only sets a flag: the task ends at its next poll on its own worker,
 \* and the thread that dropped the node waits for nothing, so a drop on a
@@ -29,13 +29,13 @@
 \*      - INV_ShutdownStopsEveryTask.
 \*
 \* The Rust code each guard models:
-\*   SweepInSet   crates/defra-node/src/assemble.rs assemble: the transaction
+\*   SweepInSet   crates/entry-points/defra-node/src/assemble.rs assemble: the transaction
 \*                sweep (DbTransactionRegistry::start_stale_transaction_cleanup)
 \*                is pushed into the node's BackgroundTasks, instead of a slot
 \*                of its own whose drop left it running. Regression:
 \*                a_dropped_http_node_releases_its_threads_and_descriptors in
-\*                crates/defra-node/tests/node_drop.rs;
-\*   AbortOnDrop  crates/defra-node/src/background_tasks.rs BackgroundTasks::drop,
+\*                crates/entry-points/defra-node/tests/node_drop.rs;
+\*   AbortOnDrop  crates/entry-points/defra-node/src/background_tasks.rs BackgroundTasks::drop,
 \*                which aborts every task it holds;
 \*   DropAwaits   FALSE in the code: BackgroundTasks::drop only aborts, it
 \*                never awaits a task.

@@ -57,12 +57,12 @@
 \* after it handed it over, or after the answer was already on its way.
 \*
 \* TLC runs whole steps one at a time, as if memory were sequentially
-\* consistent. crates/db/src/txn/fence.rs names the Rust memory orderings
+\* consistent. crates/database/db/src/txn/fence.rs names the Rust memory orderings
 \* (Release on each swap and on each lowering, Acquire on each failed swap and
 \* on the reader's load) that give every step here the order it has in the
 \* model.
 \*
-\* Correspondence with the Rust code (crates/db/src/txn/ unless named):
+\* Correspondence with the Rust code (crates/database/db/src/txn/ unless named):
 \*
 \*   | Model             | Rust                                                        |
 \*   |-------------------|-------------------------------------------------------------|

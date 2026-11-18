@@ -9,7 +9,7 @@ compute path - and why nothing leaves by accident.
 
 The engine offers a compaction filter (drop entries during SST compaction). defradb.rs
 installs none, and the reasoning is written beside the decision
-([`crates/storage/src/backends/regolith/mod.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/mod.rs)):
+([`crates/engine/storage/src/backends/regolith/mod.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/mod.rs)):
 
 - a head-set entry's meaning depends on writes that follow it;
 - nothing expires by time alone (a pending DAG record leaves when its root merges or
@@ -28,7 +28,7 @@ transactions:
 Blocks are shared: the same field block can back multiple documents' histories. The
 systemstore keeps a CID -> DocID ownership map (`/d/b/{cid}/{docID}`), written at every
 create and merge. Deleting history removes *ownership* first
-([`crates/db/src/block/cleanup.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/block/cleanup.rs)): a block's bytes die only when its last owner
+([`crates/database/db/src/block/cleanup.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/block/cleanup.rs)): a block's bytes die only when its last owner
 mapping is gone and it is not reachable from anything retained. `referenced_blocks`
 computes the reachable set (commit + links + encryption links) of what stays; deletes
 keep blocks in that set even when their own owner is gone - the fix for the class of
@@ -37,7 +37,7 @@ bug where pruning one document's history pulled a block out from under another's
 ## Downsample GC
 
 Downsampled collections roll source documents into windowed targets; retention then
-prunes source history ([`crates/db/src/downsample/gc.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/downsample/gc.rs)):
+prunes source history ([`crates/database/db/src/downsample/gc.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/downsample/gc.rs)):
 
 - plans are grouped per source; a source with any consumer lacking a retention policy
   is skipped entirely (never partially pruned);

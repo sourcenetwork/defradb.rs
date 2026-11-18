@@ -29,7 +29,7 @@
 //! in the crate tests, not here: `crates/db-merge/src/merge_handler/mod.rs`
 //! (`remote_composite_merge_with_corrupted_unique_index_entry_is_rejected`)
 //! for the degenerate-arm classification, and
-//! `crates/p2p/src/sync/manager/process/pending_dag.rs`
+//! `crates/database/p2p/src/sync/manager/process/pending_dag.rs`
 //! (`quarantine_pending_dag_*`, `resync_deletes_live_leftover_of_quarantined_root_*`)
 //! for the disposition/suppression mechanics. Post-#1126, no public-API path
 //! in this integration harness can manufacture a genuine `Rejected` outcome

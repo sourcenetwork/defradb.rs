@@ -14,7 +14,7 @@ keys did not hold; a composite filed under none of the released keys
 touched; releasing twice doing anything more than releasing once; the
 sweep handing back a composite that waits only for governance (another
 composite or a field value).
-Rust owner: crates/db/src/merge/governance/deferred.rs DeferredMerges::release,
+Rust owner: crates/database/db/src/merge/governance/deferred.rs DeferredMerges::release,
 DeferredMerges::release_parked. -/
 namespace DeferredMerges
 

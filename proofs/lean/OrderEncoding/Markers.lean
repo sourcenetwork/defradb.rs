@@ -10,7 +10,7 @@ we pin them exactly and let Lean check the inequalities by `decide` rather than
 asserting them.
 
 Anchors:
-* Rust: `crates/storage/src/encoding/mod.rs:27-51`
+* Rust: `crates/engine/storage/src/encoding/mod.rs:27-51`
   (`ENCODED_NULL = 0` … `FLOAT32_NAN_DESC = 16`, then the int range
   `INT_MIN = 0x80`, `INT_ZERO = 136`, `INT_MAX = 0xfd`, `ENCODED_NULL_DESC = 0xff`).
 * Go: `git show origin/develop:internal/encoding/encoding.go` — the `iota` block

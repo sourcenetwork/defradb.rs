@@ -2,13 +2,13 @@
 \* The story, in plain words.
 \*
 \* A piece of network work runs as a task on the network runtime, and its
-\* caller awaits its completion (crates/edge/src/task.rs Task::poll). Three
+\* caller awaits its completion (crates/foundation/edge/src/task.rs Task::poll). Three
 \* things can end the work:
 \*   * the work finishes and hands back its value;
 \*   * the caller's handle aborts it (Task::abort, Service::stop,
 \*     Service::stopped, TaskSet::abort_all): the handle first records that it
 \*     aborted, then asks the runtime to cancel the task;
-\*   * the runtime stops (crates/edge/src/platform/native.rs, the shutdown):
+\*   * the runtime stops (crates/foundation/edge/src/platform/native.rs, the shutdown):
 \*     it first marks itself stopped (Shared::stop), then ends every task it
 \*     still holds, a task never woken included (nuclei 0.5.4 and later).
 \* The caller's poll sees how the task ended. A task the runtime cancelled
