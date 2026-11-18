@@ -9,6 +9,8 @@
 mod lookup;
 mod write;
 
+pub(crate) use write::chunk_document;
+
 use std::sync::Arc;
 
 use defra_core::encryption::EncryptionConfig;
@@ -114,11 +116,12 @@ where
     pub(crate) broadcaster: Option<&'a Arc<dyn TxnBroadcaster>>,
 }
 
-struct ChunkCollection {
-    collection: Collection,
-    datastore: datastore::NamespaceView,
-    systemstore: datastore::NamespaceView,
-    index_manager: IndexManager,
+/// A chunk collection opened for writes in one transaction.
+pub(crate) struct ChunkCollection {
+    pub(crate) collection: Collection,
+    pub(crate) datastore: datastore::NamespaceView,
+    pub(crate) systemstore: datastore::NamespaceView,
+    pub(crate) index_manager: IndexManager,
     index_name: String,
 }
 
@@ -144,7 +147,7 @@ where
             // transaction's writes each time.
             let planned: RapidHashSet<&str> =
                 plan.chunks.iter().map(|(_, hash)| hash.as_str()).collect();
-            let existing = self.existing_of(&target, parent_doc_id, &planned).await?;
+            let existing = target.existing_of(parent_doc_id, &planned).await?;
             for (text, hash) in plan.chunks {
                 if existing.contains(&hash) {
                     continue;
@@ -167,7 +170,7 @@ where
         let mut written = Vec::new();
         for chunked in &parent.chunked_fields {
             let target = self.open(&chunked.collection(&parent.name)).await?;
-            for doc_short_id in self.chunks_of(&target, parent_doc_id).await? {
+            for doc_short_id in target.chunks_of(parent_doc_id).await? {
                 if let Some(write) = self.delete(&target, doc_short_id).await? {
                     written.push(write);
                 }

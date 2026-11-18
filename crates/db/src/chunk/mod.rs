@@ -15,6 +15,7 @@ pub(crate) mod encryption;
 pub mod guard;
 pub(crate) mod peer_delete;
 pub(crate) mod purge;
+pub(crate) mod rebuild;
 pub(crate) mod sync;
 pub(crate) mod user_writes;
 pub mod window;
