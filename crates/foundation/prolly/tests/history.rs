@@ -38,7 +38,7 @@ proptest! {
 
     #[test]
     fn edits_reach_the_root_a_fresh_build_gives(
-        target in 2u32..8,
+        target in 1u32..8,
         ops in prop::collection::vec(op(), 1..600),
     ) {
         let target = NonZeroU32::new(target).unwrap();

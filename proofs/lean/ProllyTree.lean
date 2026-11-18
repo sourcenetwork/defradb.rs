@@ -28,8 +28,11 @@ chunk a different hash. Keys and values are numbers here; in Rust they are
 bytes, compared the same way.
 
 Rust anchors: `chunk` in `crates/prolly/src/chunk.rs`; `is_boundary` in
-`crates/prolly/src/hash.rs`; `Tree::build` in `crates/prolly/src/tree.rs`;
-`Tree::insert`, `Tree::remove` and `splice` in `crates/prolly/src/edit.rs`.
+`crates/prolly/src/hash.rs`; `Tree::build` and `raise` in `crates/prolly/src/tree.rs`. The incremental
+edit path (`Tree::insert`, `Tree::remove`, `rewrite_level`, `splice` in
+`crates/prolly/src/edit.rs`) is not modelled here: `insert_comm` and the like
+are about `build` of the edited list. That path is checked against a fresh
+build by the proptest in `crates/prolly/tests/history.rs`.
 -/
 
 namespace ProllyTree

@@ -78,7 +78,7 @@ proptest! {
 }
 
 #[test]
-fn equal_trees_differ_nowhere_and_read_only_their_roots() {
+fn equal_trees_differ_nowhere_and_read_nothing() {
     let mut store = MemStore::new();
     let map: BTreeMap<u16, u8> = (0..5_000).map(|k| (k, (k % 7) as u8)).collect();
     let tree = build(&mut store, DEFAULT_TARGET, &map);
@@ -87,7 +87,7 @@ fn equal_trees_differ_nowhere_and_read_only_their_roots() {
         reads: std::cell::Cell::new(0),
     };
     assert!(diff(&counting, &tree, &counting, &tree).unwrap().is_empty());
-    assert_eq!(counting.reads.get(), 2);
+    assert_eq!(counting.reads.get(), 0);
 }
 
 #[test]
