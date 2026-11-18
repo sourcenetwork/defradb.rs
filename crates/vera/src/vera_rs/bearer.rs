@@ -393,8 +393,6 @@ pub(super) enum CallerDelegationError {
     #[error(transparent)]
     Identity(#[from] identity::Error),
     #[error(transparent)]
-    Identity(#[from] identity::Error),
-    #[error(transparent)]
     Token(#[from] vera_crypto::jwt::JwtError),
     #[error("the delegation is not a plain delegation for policy commands")]
     Kind,
