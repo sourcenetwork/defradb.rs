@@ -3980,6 +3980,7 @@ dependencies = [
  "async-tungstenite",
  "axum",
  "base64 0.23.1",
+ "chunk-split",
  "cid",
  "crypto",
  "db",

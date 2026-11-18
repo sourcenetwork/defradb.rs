@@ -132,13 +132,32 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         } else {
             documents
         };
+        let chunk_reader = collection
+            .chunk_of
+            .is_some()
+            .then(|| Identity::from(app_identity.clone()));
+        let mut chunk_reads = super::chunk_access::ChunkReads::default();
         let mut readable = Vec::with_capacity(documents.len());
         for (doc, cid) in documents {
             let doc_id = doc.id().map(|id| id.to_string()).unwrap_or_default();
-            if self
-                .app_may_read(app_identity.as_ref(), &collection, &doc_id)
-                .await?
-            {
+            let allowed = match &chunk_reader {
+                Some(identity) => {
+                    self.chunk_readable(
+                        &mut chunk_reads,
+                        fetcher,
+                        identity,
+                        app_identity.as_ref(),
+                        &collection,
+                        &doc_id,
+                    )
+                    .await?
+                }
+                None => {
+                    self.app_may_read(app_identity.as_ref(), &collection, &doc_id)
+                        .await?
+                }
+            };
+            if allowed {
                 readable.push((doc, cid));
             }
         }
@@ -361,7 +380,12 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         let is_view = collection.query.is_some();
 
         // Execute the query for document data (without _version)
-        let result = if is_view || has_nested || filter_has_relations || order_has_relations {
+        let result = if is_view
+            || has_nested
+            || filter_has_relations
+            || order_has_relations
+            || collection.chunk_of.is_some()
+        {
             self.execute_nested_select_with_planner(
                 &select_without_version,
                 fetcher,

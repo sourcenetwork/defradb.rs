@@ -156,6 +156,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 Option<std::sync::Arc<schema::CollectionVersion>>,
             > = RapidHashMap::new();
 
+            let mut chunk_reads = super::chunk_access::ChunkReads::default();
             let mut keep = Vec::with_capacity(commits.len());
             for commit in &mut commits {
                 let version_id = commit.get("collectionVersionId").and_then(|v| v.as_str());
@@ -186,6 +187,20 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                     // resolved is denied (Go errors the query here). Never allow
                     // an unresolved version through unchecked.
                     None => false,
+                    Some(collection) if collection.chunk_of.is_some() => self
+                        .chunk_readable(
+                            &mut chunk_reads,
+                            fetcher,
+                            &identity,
+                            caller_identity.as_ref(),
+                            collection,
+                            doc_id,
+                        )
+                        .await
+                        .map_err(|error| match error {
+                            error @ QueryError::NeedsInput(_) => error,
+                            error => QueryError::commit_access_check_failed(error),
+                        })?,
                     Some(collection) => match &collection.policy {
                         None => true,
                         Some(policy) => crate::txn::check_doc_read_access_as(
@@ -207,8 +222,9 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                         })?,
                     },
                 };
+                // `chunk_readable` already ran the chunk collection's own app check.
                 let allowed = match &collection {
-                    Some(collection) if allowed => {
+                    Some(collection) if allowed && collection.chunk_of.is_none() => {
                         self.app_may_read(caller_identity.as_ref(), collection, doc_id)
                             .await?
                     }

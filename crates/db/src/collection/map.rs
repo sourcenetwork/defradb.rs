@@ -36,6 +36,8 @@ pub struct CollectionMap {
     by_id: RapidHashMap<String, Collection>,
     id_by_name: RapidHashMap<String, String>,
     id_by_version: RapidHashMap<String, String>,
+    id_by_root: RapidHashMap<u32, String>,
+    chunk_collections: usize,
 }
 
 impl CollectionMap {
@@ -84,6 +86,7 @@ impl CollectionMap {
         let id = self.id_by_name.remove(name)?;
         let entry = self.by_id.remove(&id)?;
         self.id_by_version.remove(entry.version_id());
+        self.unindex_root(&id, &entry);
         Some(entry)
     }
 
@@ -108,8 +111,17 @@ impl CollectionMap {
     where
         F: FnOnce(&Collection) -> Collection,
     {
-        if let Some(entry) = self.by_id.get_mut(collection_id) {
-            *entry = update(entry);
+        if let Some(entry) = self.by_id.get(collection_id) {
+            let updated = update(entry);
+            if let Some(previous) = self.by_id.insert(collection_id.to_string(), updated) {
+                self.unindex_root(collection_id, &previous);
+            }
+            if let Some(current) = self.by_id.get(collection_id) {
+                let root = current.resolved_root_id();
+                let is_chunk = current.schema().is_generated();
+                self.id_by_root.insert(root, collection_id.to_string());
+                self.chunk_collections += usize::from(is_chunk);
+            }
         }
     }
 
@@ -119,6 +131,16 @@ impl CollectionMap {
     /// version is not found here; reading those goes to the store.
     pub fn by_version(&self, version_id: &str) -> Option<&Collection> {
         self.by_id.get(self.id_by_version.get(version_id)?)
+    }
+
+    /// The collection whose documents' refs carry `root_id`.
+    pub fn by_root_id(&self, root_id: u32) -> Option<&Collection> {
+        self.by_id.get(self.id_by_root.get(&root_id)?)
+    }
+
+    /// Whether any cached collection is a `@chunk` collection.
+    pub fn has_chunk_collections(&self) -> bool {
+        self.chunk_collections > 0
     }
 
     pub fn len(&self) -> usize {
@@ -164,6 +186,7 @@ impl CollectionMap {
         let id = collection.collection_id().to_string();
         if let Some(previous) = self.by_id.remove(&id) {
             self.id_by_version.remove(previous.version_id());
+            self.unindex_root(&id, &previous);
             if self.id_by_name.get(previous.name()).map(String::as_str) == Some(id.as_str())
                 && previous.name() != name
             {
@@ -173,6 +196,21 @@ impl CollectionMap {
         self.id_by_name.insert(name.to_string(), id.clone());
         self.id_by_version
             .insert(collection.version_id().to_string(), id.clone());
+        self.id_by_root
+            .insert(collection.resolved_root_id(), id.clone());
+        self.chunk_collections += usize::from(collection.schema().is_generated());
         self.by_id.insert(id, collection);
+    }
+
+    fn unindex_root(&mut self, id: &str, gone: &Collection) {
+        if self
+            .id_by_root
+            .get(&gone.resolved_root_id())
+            .map(String::as_str)
+            == Some(id)
+        {
+            self.id_by_root.remove(&gone.resolved_root_id());
+        }
+        self.chunk_collections -= usize::from(gone.schema().is_generated());
     }
 }

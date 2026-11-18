@@ -19,6 +19,7 @@
 //! - `plan`: Concrete plan node implementations
 
 pub mod access_hooks;
+pub mod chunk_writes;
 pub(crate) mod collection_provider;
 pub(crate) mod doc;
 pub mod document;

@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use defra_core::thread_bounds::MaybeBoxFuture;
 use futures::{stream::FuturesOrdered, FutureExt, StreamExt};
 use identity::Did;
+use schema::{CHUNK_HASH_FIELD, CHUNK_SOURCE_ID_FIELD, CHUNK_TEXT_FIELD};
 use sync_wrapper::SyncWrapper;
 
 use crate::access_hooks::read::app_allows;
@@ -36,7 +37,7 @@ pub struct AcpRead {
 }
 
 #[derive(Clone)]
-struct AcpReadCheck {
+pub(crate) struct AcpReadCheck {
     acp: Arc<dyn DocumentACP>,
     identity: Arc<Identity>,
     dac_bypass: bool,
@@ -44,6 +45,58 @@ struct AcpReadCheck {
     resource_name: Arc<str>,
     retry_inputs: Option<crate::prepared::PreparedInputMemo>,
     projection: Option<Arc<AcpRegistrationProjection>>,
+}
+
+impl AcpReadCheck {
+    pub(crate) fn from_read(
+        read: AcpRead,
+        projection: Option<Arc<AcpRegistrationProjection>>,
+        retry_inputs: Option<crate::prepared::PreparedInputMemo>,
+    ) -> Self {
+        Self {
+            acp: read.acp,
+            identity: Arc::new(read.identity),
+            dac_bypass: read.dac_bypass,
+            policy_id: Arc::from(read.policy_id),
+            resource_name: Arc::from(read.resource_name),
+            retry_inputs,
+            projection,
+        }
+    }
+
+    /// Whether the reader may read `doc_id`. A failed check denies, except a missing
+    /// prepared input, which ends the attempt so the input can be fetched.
+    pub(crate) async fn allows(&self, doc_id: &str) -> Result<bool> {
+        if self.identity.is_authenticated() && self.dac_bypass {
+            return Ok(true);
+        }
+        match crate::txn::check_doc_access_with_prepared_inputs(
+            self.acp.as_ref(),
+            self.projection.as_deref(),
+            self.identity.as_ref(),
+            DocumentPermission::Read,
+            self.policy_id.as_ref(),
+            self.resource_name.as_ref(),
+            doc_id,
+            self.retry_inputs.as_ref(),
+        )
+        .await
+        {
+            Ok(allowed) => Ok(allowed),
+            Err(error @ crate::error::QueryError::NeedsInput(_)) => Err(error),
+            Err(error) => {
+                tracing::warn!(
+                    %doc_id,
+                    policy_id = %self.policy_id,
+                    resource_name = %self.resource_name,
+                    identity = %self.identity,
+                    %error,
+                    "Permission check failed, denying access to document"
+                );
+                Ok(false)
+            }
+        }
+    }
 }
 
 /// PermissionFilterNode filters documents based on ACP permissions.
@@ -60,6 +113,12 @@ pub struct PermissionFilterNode {
 
     /// App read check, when an app read validator governs the collection.
     app: Option<AppReadCheck>,
+
+    /// Set for a `@chunk` collection, whose chunks are as readable as their parent.
+    chunk: Option<super::chunk_gate::ChunkGate>,
+
+    /// Where a row holds a chunk's parent, text and hash, when the scan carries them.
+    chunk_row: Option<[usize; 3]>,
 
     /// Current document
     current_doc: Doc,
@@ -107,6 +166,8 @@ impl PermissionFilterNode {
                 projection: None,
             }),
             app: None,
+            chunk: None,
+            chunk_row: None,
             current_doc: Doc::default(),
             document_mapping,
             pending: SyncWrapper::new(FuturesOrdered::new()),
@@ -141,6 +202,29 @@ impl PermissionFilterNode {
             source,
             acp: None,
             app: Some(app),
+            chunk: None,
+            chunk_row: None,
+            current_doc: Doc::default(),
+            document_mapping,
+            pending: SyncWrapper::new(FuturesOrdered::new()),
+            source_exhausted: false,
+        }
+    }
+
+    /// A filter for a `@chunk` collection, which checks each chunk against its parent.
+    pub(crate) fn inherited(source: Box<dyn PlanNode>, gate: super::chunk_gate::ChunkGate) -> Self {
+        let document_mapping = source.document_map().clone();
+        let index = |name| document_mapping.first_index_of_name(name);
+        let chunk_row = index(CHUNK_SOURCE_ID_FIELD)
+            .zip(index(CHUNK_TEXT_FIELD))
+            .zip(index(CHUNK_HASH_FIELD))
+            .map(|((parent, text), hash)| [parent, text, hash]);
+        Self {
+            source,
+            acp: None,
+            app: None,
+            chunk: Some(gate),
+            chunk_row,
             current_doc: Doc::default(),
             document_mapping,
             pending: SyncWrapper::new(FuturesOrdered::new()),
@@ -223,50 +307,25 @@ impl PermissionFilterNode {
     fn permission_check(&self, doc_id: String, doc: Doc) -> PermissionCheck {
         let acp = self.acp.clone();
         let app = self.app.clone();
+        let chunk = self.chunk.clone();
+        let row = self.chunk_row.and_then(|[parent, text, hash]| {
+            let field = |index| doc.get(index).and_then(|value| value.as_str());
+            Some(super::chunk_parent::ChunkFields::new(
+                field(parent)?,
+                field(text)?,
+                field(hash)?,
+            ))
+        });
 
         Box::pin(async move {
-            let Some(AcpReadCheck {
-                acp,
-                identity,
-                dac_bypass,
-                policy_id,
-                resource_name,
-                retry_inputs,
-                projection,
-            }) = acp
-            else {
-                let allowed = app_allows(app.as_ref(), &doc_id).await?;
+            if let Some(chunk) = chunk {
+                let allowed =
+                    chunk.allows(&doc_id, row).await? && app_allows(app.as_ref(), &doc_id).await?;
                 return Ok((doc, allowed));
-            };
-            let allowed = if identity.is_authenticated() && dac_bypass {
-                true
-            } else {
-                match crate::txn::check_doc_access_with_prepared_inputs(
-                    acp.as_ref(),
-                    projection.as_deref(),
-                    identity.as_ref(),
-                    DocumentPermission::Read,
-                    policy_id.as_ref(),
-                    resource_name.as_ref(),
-                    &doc_id,
-                    retry_inputs.as_ref(),
-                )
-                .await
-                {
-                    Ok(allowed) => allowed,
-                    Err(error @ crate::error::QueryError::NeedsInput(_)) => return Err(error),
-                    Err(error) => {
-                        tracing::warn!(
-                            %doc_id,
-                            policy_id = %policy_id,
-                            resource_name = %resource_name,
-                            identity = %identity,
-                            %error,
-                            "Permission check failed, denying access to document"
-                        );
-                        false
-                    }
-                }
+            }
+            let allowed = match &acp {
+                Some(acp) => acp.allows(&doc_id).await?,
+                None => true,
             };
             let allowed = allowed && app_allows(app.as_ref(), &doc_id).await?;
 

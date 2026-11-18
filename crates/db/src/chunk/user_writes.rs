@@ -7,16 +7,7 @@ use schema::CollectionVersion;
 
 use crate::error::Error;
 
-/// Refuses a user write to a chunk collection. Only the parent's writes change chunks.
-pub(crate) fn ensure_user_writable(collection: &CollectionVersion) -> Result<()> {
-    match &collection.chunk_of {
-        Some(parent) => Err(QueryError::execution(format!(
-            "{} holds the chunks of {}.{} and is written only by writes to {}",
-            collection.name, parent.collection, parent.field_name, parent.collection
-        ))),
-        None => Ok(()),
-    }
-}
+pub(crate) use query::chunk_writes::ensure_user_writable;
 
 /// Refuses an admin change to a chunk collection, such as an index, a truncate or a
 /// version switch. The parent's writes rely on the generated definition as it is.
