@@ -17,6 +17,7 @@ mod go_source;
 mod lifecycle;
 mod literal;
 mod mantra;
+mod multiplier_excludes;
 mod names;
 mod not_applying;
 mod parallel;

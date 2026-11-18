@@ -7,6 +7,7 @@ use serde_json::json;
 #[mantra_macros::req_test("defra.cursor.errors")]
 fn an_order_field_without_an_index_fails() {
     TestCase {
+        // The multiplier indexes `age`, so the order would have its index.
         multiplier_excludes: &[SecondaryIndex::NAME],
         ..TestCase::from_actions(vec![
             collection("type User { name: String age: Int }"),

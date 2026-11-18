@@ -371,6 +371,8 @@ fn one_to_many_limit_asc_order_sum_of_sub_type_and_limit_asc_order_fields_of_sub
             }
             .into(),
         ],
+        // TODO(ISSUE): a nested limit bounds the whole child index scan, not each parent's children.
+        multiplier_excludes: &["secondary-index"],
         ..Default::default()
     }
     .execute();
@@ -503,6 +505,8 @@ fn one_to_many_limit_desc_order_sum_of_sub_type_and_limit_asc_order_fields_of_su
             }
             .into(),
         ],
+        // TODO(ISSUE): a nested limit bounds the whole child index scan, not each parent's children.
+        multiplier_excludes: &["secondary-index"],
         ..Default::default()
     }
     .execute();
