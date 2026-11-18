@@ -68,6 +68,9 @@ fn three_connected_nodes() -> Vec<Actions> {
 }
 
 /// An explicit `ConnectPeers` after the disconnect reaches the peer again.
+/// That the connect also lifts the quiet for Kademlia is checked by the p2p
+/// unit test `an_explicit_dial_lets_kademlia_dial_a_disconnected_peer_again`:
+/// on libp2p db0 rediscovers db1 itself, so no scenario here can see it.
 #[test]
 #[mantra_macros::req_test("defra.net.peers.disconnect_sticks.explicit_connect")]
 fn an_explicit_connect_undoes_a_disconnect() {

@@ -390,6 +390,8 @@ RUNS=(
   "MC_StickyDisconnect_Red_LocalLoud.cfg StickyDisconnect.tla RED" # a hang-up quiets nothing: a late list has the node dial the peer back (NoLocalRedial)
   "MC_StickyDisconnect_Red_Libp2pRemote.cfg StickyDisconnect.tla RED" # libp2p's close carries no reason: the peer hung up on dials back from a late list (NoRedialAfterDeliberateClose)
   "MC_StickyDisconnect_Red_DropRedials.cfg StickyDisconnect.tla RED" # witness: discovery still mends a real drop (NoRedialAfterDrop)
+  "MC_StickyDisconnect_Red_KeepsQuiet.cfg StickyDisconnect.tla RED" # an explicit connect lifts no quiet: a disconnected then reconnected peer stays unmendable (UnquietOnConnect)
+  "MC_StickyDisconnect_Red_EveryDialChecked.cfg StickyDisconnect.tla RED" # the quiet check refuses every dial: a PushLog to a disconnected peer never lands (RequestsStillDial)
   "MC_SchemaPublication_Green.cfg SchemaPublication.tla GREEN"
   "MC_SchemaPublication_Red_EarlyReply.cfg SchemaPublication.tla RED"
   "MC_ChunkSettingsSync_Green.cfg ChunkSettingsSync.tla GREEN"
