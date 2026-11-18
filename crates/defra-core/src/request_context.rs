@@ -234,6 +234,14 @@ impl RequestContext {
     /// administrator). Every context derived from it stays denied. An
     /// embedder sets it on a request it signs as an identity that must not
     /// read past document access control.
+    ///
+    /// The denial belongs to the request, not to a transaction, as the
+    /// encryption, signing and collection version do: beginning a
+    /// transaction with a denied context does not deny the later requests in
+    /// it, and a request in that transaction whose own context lacks the
+    /// denial is decided by node access control again. A
+    /// `query::TransactionGuard` runs every request in the context it was
+    /// begun with, so a guard begun denied stays denied.
     #[must_use]
     pub fn with_dac_bypass_denied(mut self) -> Self {
         Arc::make_mut(&mut self.0).dac_bypass = DacBypass::Denied;
