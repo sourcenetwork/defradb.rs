@@ -23,9 +23,10 @@ and whether the open chunk is empty; that is what keeps edits local.
 
 What this model trusts. The boundary test (`b`) and the chunk hash (`H`) are any
 functions here: in Rust they are SHA-256 of the item's bytes, and a chunk's hash
-is SHA-256 of its encoding, which this model takes as giving each different
-chunk a different hash. Keys and values are numbers here; in Rust they are
-bytes, compared the same way.
+is SHA-256 of its encoding (`Node::encode` in `crates/prolly/src/node.rs`:
+every length behind a 64-bit prefix, so the encoding is injective), which this
+model takes as giving each different chunk a different hash. Keys and values
+are numbers here; in Rust they are bytes, compared the same way.
 
 Rust anchors: `chunk` in `crates/prolly/src/chunk.rs`; `is_boundary` in
 `crates/prolly/src/hash.rs`; `Tree::build` and `raise` in `crates/prolly/src/tree.rs`. The incremental
