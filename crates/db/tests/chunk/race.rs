@@ -15,6 +15,10 @@ const SDL: &str = r#"
         title: String
         body: String @chunk(maxChars: 64)
     }
+    type Plain {
+        title: String
+        body: String
+    }
 "#;
 
 type Node = Arc<DB<FailingWriteStore>>;
@@ -147,6 +151,81 @@ fn a_filtered_truncate_runs_a_page_again_after_a_concurrent_write() {
         for collection in ["Article", "Article__body_chunk"] {
             let left = query::DocFetcher::get_all(&docs, collection).await.unwrap();
             assert!(left.is_empty(), "{collection}: {left:?}");
+        }
+    })
+    .unwrap()
+}
+
+/// Sets `field` of `doc_id` in `collection`.
+async fn set(db: &Node, collection: &str, doc_id: &DocID, field: &str, value: &str) {
+    let version = db
+        .get_collection(collection)
+        .unwrap()
+        .unwrap()
+        .schema()
+        .clone();
+    let mut doc = Document::new(version);
+    doc.set_id(doc_id.clone());
+    doc.set(field, NormalValue::String(value.into())).unwrap();
+    AutoCommitMutator::new(Arc::clone(db))
+        .update(collection, doc, fields(&[field]))
+        .await
+        .unwrap();
+}
+
+#[test]
+fn a_checked_update_loses_the_race_to_a_body_write_after_its_selection() {
+    workers::block_on(async {
+        let (db, _) = racing_node(0, |_| {}).await;
+        let mutator = AutoCommitMutator::new(Arc::clone(&db));
+        for collection in ["Article", "Plain"] {
+            let version = db
+                .get_collection(collection)
+                .unwrap()
+                .unwrap()
+                .schema()
+                .clone();
+            let doc = Document::from_json_str(
+                r#"{"title": "draft", "body": "The first text."}"#,
+                version.clone(),
+            )
+            .unwrap();
+            let doc_id = mutator.create(collection, doc).await.unwrap().doc_id;
+            let selected = mutator
+                .get_for_update(collection, &doc_id)
+                .await
+                .unwrap()
+                .unwrap();
+            set(&db, collection, &doc_id, "body", "Another writer's text.").await;
+
+            let mut doc = Document::new(version);
+            doc.set_id(doc_id.clone());
+            doc.set("body", NormalValue::String("A new text.".into()))
+                .unwrap();
+            let error = mutator
+                .update_if_fields_unchanged(
+                    collection,
+                    selected,
+                    fields(&["title"]),
+                    doc,
+                    fields(&["body"]),
+                )
+                .await
+                .expect_err("the body this update writes changed after it was selected");
+            assert!(
+                matches!(error, query::error::QueryError::TransactionConflict(_)),
+                "{collection}: {error:?}"
+            );
+            let current = mutator
+                .get_for_update(collection, &doc_id)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                current.get("body"),
+                Some(&NormalValue::String("Another writer's text.".into())),
+                "{collection}"
+            );
         }
     })
     .unwrap()

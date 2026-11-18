@@ -3244,6 +3244,15 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Text chunking",
+        name: "INV_NoSilentOverwrite / INV_LosesOnlyToItsFields",
+        axis: Tla,
+        anchor: "crates/db/src/write/autocommit/selected.rs dependencies, unchanged; crates/db/src/write/autocommit/update.rs run_update_attempt; crates/db/src/write/autocommit/one_op.rs UpdateWork::run",
+        model_ref: "MC_SelectedUpdate_Green.cfg / MC_SelectedUpdate_Red_ExpectedOnly.cfg / MC_SelectedUpdate_Red_Whole.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Text chunking",
         name: "no_orphan_chunks / parent_is_gone / others_stay / delete_alone_leaves_an_orphan",
         axis: Lean,
         anchor: "crates/db/src/collection/ops/delete.rs delete_collection_with_txn; crates/db/src/collection/ops/chunk_versions.rs chunk_versions_to_add",

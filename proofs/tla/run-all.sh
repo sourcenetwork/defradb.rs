@@ -207,6 +207,9 @@ RUNS=(
   "MC_ChunkRead_Red_TrustList.cfg ChunkRead.tla RED" # a padded list shows chunks of old text (INV_ShownIsTheText)
   "MC_ChunkRead_Red_NoOwnAppCheck.cfg ChunkRead.tla RED" # chunk collection's own app check skipped (INV_ShownPassesOwnApp)
   "MC_ChunkRead_Red_DelegationScope.cfg ChunkRead.tla RED" # a chunk delegation gets the article's own keys (INV_DelegatedKeyInScope)
+  "MC_SelectedUpdate_Green.cfg SelectedUpdate.tla GREEN" # an update of a selected document loses only to a change of a field it depends on
+  "MC_SelectedUpdate_Red_ExpectedOnly.cfg SelectedUpdate.tla RED" # a written field is not compared and a change to it is written over (INV_NoSilentOverwrite)
+  "MC_SelectedUpdate_Red_Whole.cfg SelectedUpdate.tla RED" # every field is compared and an unrelated change loses the race (INV_LosesOnlyToItsFields)
   "MC_EndpointBind_Green.cfg EndpointBind.tla GREEN"
   "MC_EndpointBind_Red_Retain.cfg EndpointBind.tla RED"
   "MC_EndpointBind_Red_Address.cfg EndpointBind.tla RED"
