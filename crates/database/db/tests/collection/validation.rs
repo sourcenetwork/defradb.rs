@@ -114,18 +114,11 @@ fn atomic_creation_rejects_an_unknown_relation_target() {
         let database = db::DB::open(storage::backends::RegolithStore::in_memory().unwrap())
             .await
             .unwrap();
-        let author = FieldDescription::new(
-            "1",
-            "author",
-            FieldKind::named("Missing", false),
-            schema::CType::LwwRegister,
-        )
-        .with_relation_name("missing_posts")
-        .as_primary();
-        let posts = CollectionVersion::new("Post", "v-post", "c-post", vec![author]);
-
         let error = database
-            .create_collections_atomic_as(&defra_core::RequestContext::ambient(), vec![posts])
+            .add_collection(
+                &defra_core::RequestContext::ambient(),
+                r#"type Post { author: Missing @relation(name: "missing_posts") @primary }"#,
+            )
             .await
             .unwrap_err();
 
@@ -161,8 +154,10 @@ fn creation_accepts_supported_scalar_defaults() {
         let database = db::DB::open(storage::backends::RegolithStore::in_memory().unwrap())
             .await
             .unwrap();
-        let collections = query::parse_sdl(
-            r#"
+        database
+            .add_collection(
+                &defra_core::RequestContext::ambient(),
+                r#"
         type Defaults {
             active: Boolean @default(value: true)
             created: DateTime @default(value: "2000-07-23T03:00:00Z")
@@ -173,11 +168,7 @@ fn creation_accepts_supported_scalar_defaults() {
             image: Blob @default(value: "ff0099")
         }
         "#,
-        )
-        .unwrap();
-
-        database
-            .create_collections_atomic_as(&defra_core::RequestContext::ambient(), collections)
+            )
             .await
             .unwrap();
     })

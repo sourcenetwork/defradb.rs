@@ -31,17 +31,16 @@ const RENAMED: &str = "Story";
 /// An author with the `@chunk` schema and a peer that has synced both collections.
 async fn synced() -> (Node, Node, Vec<CollectionVersion>) {
     let author = node();
-    let parsed = query::parse_sdl(SDL).unwrap();
-    author
+    let created = author
         .db
-        .create_collections_atomic_as(&defra_core::RequestContext::ambient(), parsed.clone())
+        .add_collection(&defra_core::RequestContext::ambient(), SDL)
         .await
         .unwrap();
     let peer = node();
-    for collection in &parsed {
+    for collection in &created {
         sync_definition(&author, &peer, &collection.version_id).await;
     }
-    (author, peer, parsed)
+    (author, peer, created)
 }
 
 /// Stores `block` on `peer` and merges it there.
@@ -144,10 +143,10 @@ async fn assert_rejected(
 #[test]
 fn a_patch_that_changes_max_chars_is_rejected() {
     workers::block_on(async {
-        let (_author, peer, parsed) = synced().await;
+        let (_author, peer, created) = synced().await;
         let delta = CollectionDefinitionDeltaPayload::new(2).with_chunked_fields(chunked(128));
-        let merged = merge(&peer, &patch(&parsed[PARENT].version_id, delta)).await;
-        assert_rejected(&peer, &parsed, merged, CHANGED_FIELDS).await;
+        let merged = merge(&peer, &patch(&created[PARENT].version_id, delta)).await;
+        assert_rejected(&peer, &created, merged, CHANGED_FIELDS).await;
     })
     .unwrap()
 }
@@ -155,11 +154,11 @@ fn a_patch_that_changes_max_chars_is_rejected() {
 #[test]
 fn a_patch_that_changes_the_splitter_version_is_rejected() {
     workers::block_on(async {
-        let (_author, peer, parsed) = synced().await;
+        let (_author, peer, created) = synced().await;
         let delta = CollectionDefinitionDeltaPayload::new(2)
             .with_chunked_fields(chunked_on(64, unknown_splitter()));
-        let merged = merge(&peer, &patch(&parsed[PARENT].version_id, delta)).await;
-        assert_rejected(&peer, &parsed, merged, CHANGED_SPLITTER).await;
+        let merged = merge(&peer, &patch(&created[PARENT].version_id, delta)).await;
+        assert_rejected(&peer, &created, merged, CHANGED_SPLITTER).await;
     })
     .unwrap()
 }
@@ -170,14 +169,13 @@ fn a_patch_that_changes_the_splitter_version_is_rejected() {
 fn a_first_version_on_a_splitter_version_this_node_lacks_is_kept_but_not_cut() {
     workers::block_on(async {
         let author = node();
-        let parsed = query::parse_sdl(SDL).unwrap();
-        author
+        let created = author
             .db
-            .create_collections_atomic_as(&defra_core::RequestContext::ambient(), parsed.clone())
+            .add_collection(&defra_core::RequestContext::ambient(), SDL)
             .await
             .unwrap();
         let peer = node();
-        let mut block = author_block(&author, &parsed[PARENT].version_id).await;
+        let mut block = author_block(&author, &created[PARENT].version_id).await;
         for link in block.links.iter().flatten() {
             let field = author.blockstore.get(&link.link).await.unwrap().unwrap();
             peer.blockstore.put(&link.link, &field).await.unwrap();
@@ -189,7 +187,7 @@ fn a_first_version_on_a_splitter_version_this_node_lacks_is_kept_but_not_cut() {
             !matches!(outcome, MergeOutcome::Rejected { .. }),
             "{outcome:?}"
         );
-        assert_ne!(cid.to_string(), parsed[PARENT].version_id);
+        assert_ne!(cid.to_string(), created[PARENT].version_id);
         let stored = peer
             .db
             .get_collection_by_version_id_full(&cid.to_string())
@@ -211,10 +209,10 @@ fn a_first_version_on_a_splitter_version_this_node_lacks_is_kept_but_not_cut() {
 #[test]
 fn a_patch_with_max_chars_below_the_minimum_is_rejected() {
     workers::block_on(async {
-        let (_author, peer, parsed) = synced().await;
+        let (_author, peer, created) = synced().await;
         let delta = CollectionDefinitionDeltaPayload::new(2).with_chunked_fields(chunked(1));
-        let merged = merge(&peer, &patch(&parsed[PARENT].version_id, delta)).await;
-        assert_rejected(&peer, &parsed, merged, CHANGED_FIELDS).await;
+        let merged = merge(&peer, &patch(&created[PARENT].version_id, delta)).await;
+        assert_rejected(&peer, &created, merged, CHANGED_FIELDS).await;
     })
     .unwrap()
 }
@@ -222,10 +220,10 @@ fn a_patch_with_max_chars_below_the_minimum_is_rejected() {
 #[test]
 fn a_patch_that_empties_the_chunked_fields_is_rejected() {
     workers::block_on(async {
-        let (_author, peer, parsed) = synced().await;
+        let (_author, peer, created) = synced().await;
         let delta = CollectionDefinitionDeltaPayload::new(2);
-        let merged = merge(&peer, &patch(&parsed[PARENT].version_id, delta)).await;
-        assert_rejected(&peer, &parsed, merged, CHANGED_FIELDS).await;
+        let merged = merge(&peer, &patch(&created[PARENT].version_id, delta)).await;
+        assert_rejected(&peer, &created, merged, CHANGED_FIELDS).await;
     })
     .unwrap()
 }
@@ -233,15 +231,15 @@ fn a_patch_that_empties_the_chunked_fields_is_rejected() {
 #[test]
 fn a_patch_that_adds_chunk_of_to_the_parent_is_rejected() {
     workers::block_on(async {
-        let (_author, peer, parsed) = synced().await;
+        let (_author, peer, created) = synced().await;
         let delta = CollectionDefinitionDeltaPayload::new(2)
             .with_chunked_fields(chunked(64))
             .with_chunk_of(ChunkOfDelta {
                 collection: "Article".to_string(),
                 field: "body".to_string(),
             });
-        let merged = merge(&peer, &patch(&parsed[PARENT].version_id, delta)).await;
-        assert_rejected(&peer, &parsed, merged, CHANGED_PARENT).await;
+        let merged = merge(&peer, &patch(&created[PARENT].version_id, delta)).await;
+        assert_rejected(&peer, &created, merged, CHANGED_PARENT).await;
     })
     .unwrap()
 }
@@ -249,10 +247,10 @@ fn a_patch_that_adds_chunk_of_to_the_parent_is_rejected() {
 #[test]
 fn a_patch_that_removes_chunk_of_from_the_chunk_collection_is_rejected() {
     workers::block_on(async {
-        let (_author, peer, parsed) = synced().await;
+        let (_author, peer, created) = synced().await;
         let delta = CollectionDefinitionDeltaPayload::new(2);
-        let merged = merge(&peer, &patch(&parsed[CHUNKS].version_id, delta)).await;
-        assert_rejected(&peer, &parsed, merged, CHANGED_PARENT).await;
+        let merged = merge(&peer, &patch(&created[CHUNKS].version_id, delta)).await;
+        assert_rejected(&peer, &created, merged, CHANGED_PARENT).await;
     })
     .unwrap()
 }
@@ -260,11 +258,11 @@ fn a_patch_that_removes_chunk_of_from_the_chunk_collection_is_rejected() {
 #[test]
 fn a_patch_that_renames_the_parent_is_rejected() {
     workers::block_on(async {
-        let (_author, peer, parsed) = synced().await;
+        let (_author, peer, created) = synced().await;
         let mut delta = CollectionDefinitionDeltaPayload::new(2).with_chunked_fields(chunked(64));
         delta.name = Some(RENAMED.to_string());
-        let merged = merge(&peer, &patch(&parsed[PARENT].version_id, delta)).await;
-        assert_rejected(&peer, &parsed, merged, CHANGED_NAME).await;
+        let merged = merge(&peer, &patch(&created[PARENT].version_id, delta)).await;
+        assert_rejected(&peer, &created, merged, CHANGED_NAME).await;
     })
     .unwrap()
 }
@@ -273,14 +271,13 @@ fn a_patch_that_renames_the_parent_is_rejected() {
 fn a_first_version_with_max_chars_below_the_minimum_is_rejected() {
     workers::block_on(async {
         let author = node();
-        let parsed = query::parse_sdl(SDL).unwrap();
-        author
+        let created = author
             .db
-            .create_collections_atomic_as(&defra_core::RequestContext::ambient(), parsed.clone())
+            .add_collection(&defra_core::RequestContext::ambient(), SDL)
             .await
             .unwrap();
         let peer = node();
-        let mut block = author_block(&author, &parsed[PARENT].version_id).await;
+        let mut block = author_block(&author, &created[PARENT].version_id).await;
         for link in block.links.iter().flatten() {
             let field = author.blockstore.get(&link.link).await.unwrap().unwrap();
             peer.blockstore.put(&link.link, &field).await.unwrap();
@@ -297,14 +294,13 @@ fn a_first_version_with_max_chars_below_the_minimum_is_rejected() {
 fn a_first_version_with_chunk_of_on_the_parent_is_rejected() {
     workers::block_on(async {
         let author = node();
-        let parsed = query::parse_sdl(SDL).unwrap();
-        author
+        let created = author
             .db
-            .create_collections_atomic_as(&defra_core::RequestContext::ambient(), parsed.clone())
+            .add_collection(&defra_core::RequestContext::ambient(), SDL)
             .await
             .unwrap();
         let peer = node();
-        let mut block = author_block(&author, &parsed[PARENT].version_id).await;
+        let mut block = author_block(&author, &created[PARENT].version_id).await;
         for link in block.links.iter().flatten() {
             let field = author.blockstore.get(&link.link).await.unwrap().unwrap();
             peer.blockstore.put(&link.link, &field).await.unwrap();
@@ -329,8 +325,8 @@ fn a_first_version_with_chunk_of_on_the_parent_is_rejected() {
 #[test]
 fn a_chunk_collection_naming_a_parent_field_without_chunk_is_rejected() {
     workers::block_on(async {
-        let (author, peer, parsed) = synced().await;
-        let mut block = author_block(&author, &parsed[CHUNKS].version_id).await;
+        let (author, peer, created) = synced().await;
+        let mut block = author_block(&author, &created[CHUNKS].version_id).await;
         let mut delta = payload(&block).with_chunk_of(ChunkOfDelta {
             collection: "Article".to_string(),
             field: "title".to_string(),
@@ -340,7 +336,7 @@ fn a_chunk_collection_naming_a_parent_field_without_chunk_is_rejected() {
         let merged = merge(&peer, &block).await;
         assert_rejected(
             &peer,
-            &parsed,
+            &created,
             merged,
             "Article.title as its parent, which has no @chunk",
         )
@@ -352,7 +348,7 @@ fn a_chunk_collection_naming_a_parent_field_without_chunk_is_rejected() {
 #[test]
 fn an_honest_patch_that_keeps_the_chunk_settings_is_accepted() {
     workers::block_on(async {
-        let (author, peer, parsed) = synced().await;
+        let (author, peer, created) = synced().await;
         author
             .db
             .patch_collection(
@@ -370,7 +366,7 @@ fn an_honest_patch_that_keeps_the_chunk_settings_is_accepted() {
             .await
             .unwrap()
             .expect("synced patch");
-        assert_eq!(synced.schema().chunked_fields, parsed[PARENT].chunked_fields);
+        assert_eq!(synced.schema().chunked_fields, created[PARENT].chunked_fields);
         assert!(synced.schema().field_by_name("summary").is_some());
     })
     .unwrap()
@@ -441,8 +437,8 @@ where
     F: FnOnce(&mut CollectionVersion),
 {
     workers::block_on(async {
-        let (_author, peer, parsed) = synced().await;
-        let drifted = store_drifted_version(&peer, &parsed[PARENT], drift).await;
+        let (_author, peer, created) = synced().await;
+        let drifted = store_drifted_version(&peer, &created[PARENT], drift).await;
 
         assert_settings_refused(peer.db.set_active_collection_version(&drifted).await);
         let registry = DbTransactionRegistry::new(Arc::clone(&peer.db));
@@ -455,11 +451,11 @@ where
         registry.discard(&handle).await.unwrap();
 
         peer.db
-            .set_active_collection_version(&parsed[PARENT].version_id)
+            .set_active_collection_version(&created[PARENT].version_id)
             .await
             .expect("the first version activates");
         let active = peer.db.get_collection("Article").unwrap().unwrap();
-        assert_eq!(active.schema().version_id, parsed[PARENT].version_id);
+        assert_eq!(active.schema().version_id, created[PARENT].version_id);
     })
     .unwrap()
 }

@@ -24,17 +24,16 @@ fn document_crud_roundtrips_through_encrypted_store() {
         );
         let db = Arc::new(DB::open_from_arc(store).await.unwrap());
 
-        let collections = query::parse_sdl(
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
             r#"
         type Users {
             name: String
         }
         "#,
         )
+        .await
         .unwrap();
-        db.create_collections_atomic_as(&defra_core::RequestContext::ambient(), collections)
-            .await
-            .unwrap();
 
         // Create a document through the encrypted store via the real mutator flow
         // (allocates the doc short ID and derives the DocID from the genesis block).

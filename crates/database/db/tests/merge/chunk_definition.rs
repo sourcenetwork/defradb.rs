@@ -65,18 +65,17 @@ pub(crate) async fn sync_definition(author: &Node, peer: &Node, version_id: &str
 fn a_peer_rebuilds_chunk_settings_from_definition_blocks() {
     workers::block_on(async {
         let author = node();
-        let parsed = query::parse_sdl(SDL).unwrap();
-        author
+        let created = author
             .db
-            .create_collections_atomic_as(&defra_core::RequestContext::ambient(), parsed.clone())
+            .add_collection(&defra_core::RequestContext::ambient(), SDL)
             .await
             .unwrap();
 
         let peer = node();
-        for collection in &parsed {
+        for collection in &created {
             sync_definition(&author, &peer, &collection.version_id).await;
         }
-        for collection in &parsed {
+        for collection in &created {
             let synced = peer
                 .db
                 .get_collection_by_version_id_full(&collection.version_id)
@@ -86,8 +85,8 @@ fn a_peer_rebuilds_chunk_settings_from_definition_blocks() {
             assert_eq!(synced.schema().chunked_fields, collection.chunked_fields);
             assert_eq!(synced.schema().chunk_of, collection.chunk_of);
         }
-        assert_eq!(parsed[0].chunked_fields[0].max_chars, 64);
-        assert!(parsed[1].chunk_of.is_some());
+        assert_eq!(created[0].chunked_fields[0].max_chars, 64);
+        assert!(created[1].chunk_of.is_some());
     })
     .unwrap()
 }
