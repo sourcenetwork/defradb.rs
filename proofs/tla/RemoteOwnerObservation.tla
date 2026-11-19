@@ -54,7 +54,8 @@
 \*     the commit began (a stale owner);
 \*   - an answer the transaction kept commits without being confirmed, one
 \*     kept after the commit looked included;
-\*   - a request joins the transaction after its commit began;
+\*   - a request joins the transaction after its commit began, one that
+\*     passed the caller's early check before the commit began included;
 \*   - an owed registration is ignored: the answer comes from the provider
 \*     while a registration is owed, reporting no owner (or another one) for a
 \*     document its creator can already read;
@@ -66,7 +67,8 @@
 \* crates/engine/query/src/runner/owner_confirmation.rs commit_confirming;
 \* crates/database/db/src/txn/registry/owned.rs OwnedTxn::commit_unless_told,
 \* OwnedTxn::commit_confirmed; crates/database/db/src/txn/owner/mod.rs
-\* Owners::finish_unless; crates/database/db/src/txn/owner/table.rs Table::runs;
+\* Owners::finish_unless; crates/database/db/src/txn/owner/table.rs Table::runs,
+\* Table::send_request;
 \* crates/engine/query/src/txn/context.rs AcpRegistrationProjection::owed_creator.
 EXTENDS Naturals
 
@@ -95,12 +97,13 @@ VARIABLES
   confirmRev, \* the revision the confirmation read at
   heldSince,  \* every owner the provider held at some revision since the commit began
   atCommit,   \* the provider's owner at the instant the commit landed
-  changes     \* provider changes left to explore (keeps the model finite)
+  changes,    \* provider changes left to explore (keeps the model finite)
+  pending     \* TRUE while a request passed the caller's early check and is not yet on the owner
 
 \* The tuple of all variables, for stuttering steps.
 vars == <<owedBy, record, provider, rev, reachable, phase, sawOwed, seen, kept,
           snapshot, joined, startRev, confirmed, confirmRev, heldSince, atCommit,
-          changes>>
+          changes, pending>>
 
 \* The type of every variable.
 TypeOK ==
@@ -138,6 +141,8 @@ TypeOK ==
   /\ atCommit \in Owners \cup {"unread"}
   \* Changes left to explore.
   /\ changes \in 0..2
+  \* A request is on its way to the owner or not.
+  /\ pending \in BOOLEAN
 
 \* The document is registered on the provider already, owed by an earlier
 \* committed transaction, or created in this one.
@@ -178,6 +183,8 @@ Init ==
   /\ atCommit = "unread"
   \* Two changes to explore.
   /\ changes = 2
+  \* No request on its way.
+  /\ pending = FALSE
 
 \* While a commit is under way every owner the provider takes is noted.
 Note(owner) == IF phase \in {"plain", "confirming"} THEN heldSince \cup {owner} ELSE heldSince
@@ -201,7 +208,7 @@ RemoteChange ==
   /\ changes' = changes - 1
   \* Nothing else changes.
   /\ UNCHANGED <<owedBy, record, reachable, phase, sawOwed, seen, kept, snapshot,
-                 joined, startRev, confirmed, confirmRev, atCommit>>
+                 joined, startRev, confirmed, confirmRev, atCommit, pending>>
 
 \* The registration an earlier transaction owes settles. A provider that holds
 \* the document already keeps its owner (contested); the record is cleared
@@ -228,7 +235,7 @@ Settle ==
   /\ changes' = changes - 1
   \* Nothing else changes.
   /\ UNCHANGED <<reachable, phase, sawOwed, seen, kept, snapshot, joined, startRev,
-                 confirmed, confirmRev, atCommit>>
+                 confirmed, confirmRev, atCommit, pending>>
 
 \* The provider goes away or comes back.
 Flap ==
@@ -236,7 +243,8 @@ Flap ==
   /\ reachable' = ~reachable
   \* Nothing else changes.
   /\ UNCHANGED <<owedBy, record, provider, rev, phase, sawOwed, seen, kept, snapshot,
-                 joined, startRev, confirmed, confirmRev, heldSince, atCommit, changes>>
+                 joined, startRev, confirmed, confirmRev, heldSince, atCommit, changes,
+                 pending>>
 
 \* Whether a request reaches the transaction now: while it is open; with the
 \* split-look bug, between its empty look and its commit; with the bugs that
@@ -249,22 +257,44 @@ Admitted ==
   \* Only a bug lets a request into the round.
   \/ phase = "confirming" /\ Bug \in {"no_seal", "no_seal_snapshot"}
 
-\* A lookup: an owed record names its creator; otherwise the provider's owner,
-\* read at the edge and kept. It may come at any time the transaction admits
-\* a request, as often as the embedder asks.
-Observe ==
-  \* The transaction takes the request.
+\* A request passes the caller's early check, which only turns a stranger
+\* away without a hop: it is not yet on the transaction's owner.
+EarlyCheck ==
+  \* The transaction takes requests now.
   /\ Admitted
-  \* Owed: the creator, from the record; otherwise the provider, if it answers.
-  /\ IF owedBy # "none" /\ Bug # "owed_ignored"
-       THEN /\ sawOwed' = TRUE
-            /\ seen' = record
-            /\ UNCHANGED kept
-       ELSE /\ reachable
-            /\ kept' = kept \cup {provider}
-            /\ UNCHANGED <<sawOwed, seen>>
-  \* A request after the commit began joined it.
-  /\ joined' = (joined \/ phase # "open")
+  \* One request on its way at a time is enough to show the race.
+  /\ ~pending
+  \* It is on its way.
+  /\ pending' = TRUE
+  \* Nothing else changes.
+  /\ UNCHANGED <<owedBy, record, provider, rev, reachable, phase, sawOwed, seen, kept,
+                 snapshot, joined, startRev, confirmed, confirmRev, heldSince, atCommit,
+                 changes>>
+
+\* The request reaches the owner, whose one lookup that picks the mailbox
+\* decides admission again: a commit that began since refuses it. With the
+\* stale-admission bug the early check is taken as the decision.
+\* An admitted lookup: an owed record names its creator; otherwise the
+\* provider's owner, read at the edge and kept.
+Dispatch ==
+  \* A request is on its way.
+  /\ pending
+  \* It is no longer on its way, whatever happens.
+  /\ pending' = FALSE
+  \* Admitted now (or by the bug), it runs; otherwise it finds no transaction.
+  /\ IF Admitted \/ Bug = "stale_admission"
+       THEN /\ IF owedBy # "none" /\ Bug # "owed_ignored"
+                 \* Owed: the creator, from the record.
+                 THEN /\ sawOwed' = TRUE
+                      /\ seen' = record
+                      /\ UNCHANGED kept
+                 \* Otherwise the provider, if it answers, kept.
+                 ELSE /\ reachable
+                      /\ kept' = kept \cup {provider}
+                      /\ UNCHANGED <<sawOwed, seen>>
+            \* A request after the commit began joined it.
+            /\ joined' = (joined \/ phase # "open")
+       ELSE UNCHANGED <<sawOwed, seen, kept, joined>>
   \* Nothing else changes.
   /\ UNCHANGED <<owedBy, record, provider, rev, reachable, phase, snapshot, startRev,
                  confirmed, confirmRev, heldSince, atCommit, changes>>
@@ -296,7 +326,7 @@ Look ==
             /\ UNCHANGED atCommit
   \* Nothing else changes.
   /\ UNCHANGED <<owedBy, record, provider, rev, reachable, sawOwed, seen, kept, joined,
-                 confirmed, confirmRev, changes>>
+                 confirmed, confirmRev, changes, pending>>
 
 \* The split-look bug's later commit: it commits without looking again.
 PlainCommit ==
@@ -308,7 +338,7 @@ PlainCommit ==
   /\ atCommit' = provider
   \* Nothing else changes.
   /\ UNCHANGED <<owedBy, record, provider, rev, reachable, sawOwed, seen, kept, snapshot,
-                 joined, startRev, confirmed, confirmRev, heldSince, changes>>
+                 joined, startRev, confirmed, confirmRev, heldSince, changes, pending>>
 
 \* The edge reads the answers again, outside the transaction, in one round.
 \* Unreachable: refused, nothing commits.
@@ -333,7 +363,7 @@ Confirm ==
                    /\ UNCHANGED <<confirmed, confirmRev, atCommit>>
   \* Nothing else changes.
   /\ UNCHANGED <<owedBy, record, provider, rev, reachable, sawOwed, seen, kept, snapshot,
-                 joined, startRev, heldSince, changes>>
+                 joined, startRev, heldSince, changes, pending>>
 
 \* The answers the commit compares: every one kept, or, with the bug, only
 \* those the look returned.
@@ -353,10 +383,10 @@ Commit ==
   /\ atCommit' = provider
   \* Nothing else changes.
   /\ UNCHANGED <<owedBy, record, provider, rev, reachable, sawOwed, seen, kept, snapshot,
-                 joined, startRev, confirmed, confirmRev, heldSince, changes>>
+                 joined, startRev, confirmed, confirmRev, heldSince, changes, pending>>
 
 \* Every step the system can take.
-Next == RemoteChange \/ Settle \/ Flap \/ Observe \/ Look \/ PlainCommit \/ Confirm \/ Commit
+Next == RemoteChange \/ Settle \/ Flap \/ EarlyCheck \/ Dispatch \/ Look \/ PlainCommit \/ Confirm \/ Commit
 
 \* From the initial state, any sequence of steps.
 Spec == Init /\ [][Next]_vars
