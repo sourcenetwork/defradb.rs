@@ -1,6 +1,15 @@
 ------------------------- MODULE ProjectionRelationship -------------------------
 \* An actor projects a relationship while another transaction may revoke its authority.
 \* Native authorization, registration and publication share the same transaction.
+\* What must never happen: a relationship published while any required fact is
+\* missing, after a revocation committed first, or by an aborted transaction.
+\* The "document" fact is waived for reconciliation: startup reconciliation and
+\* project_related may change any document, still as the request's actor (or
+\* the node) and under every other guard.
+\* The code: DocumentMutationContext::change_projected_relationship in
+\* crates/database/db/src/document_projection.rs, with acp::projection::in_scope
+\* (crates/engine/acp/src/projection.rs) and, for an external provider,
+\* TransactionOutbox::stage_prepared_owner (crates/engine/acp/src/outbox/staging.rs).
 EXTENDS Naturals
 \* Bug removes one guard; Scenario selects which authority or scope is absent.
 CONSTANTS Bug, Scenario

@@ -1,8 +1,19 @@
 -------------------- MODULE ExactRelationshipObservation --------------------
-\* An observation must not combine proofs from different certified roots.
+\* The story. A node answers whether one actor holds one relation on a document
+\* by reading three certified proofs from Vera, one after another: the policy,
+\* the object's incarnation and the relationship record. Vera certifies a new
+\* root at any time, so each read may see a different root.
+\* What must never happen: an answer assembled from proofs of different roots.
+\* The code: exact_relationship::query in
+\* crates/engine/vera/src/vera_rs/provider/exact_relationship.rs, which compares
+\* every proof's module_state_root with the policy's and refuses a mismatch.
 EXTENDS Naturals
+\* Bug accepts an answer whatever roots its proofs name.
 CONSTANT Bug
+\* root: the latest certified root. policyRoot, objectRoot, relationRoot: the
+\* root each proof was read at. phase: the next read. answer: the outcome.
 VARIABLES root, policyRoot, objectRoot, relationRoot, phase, answer
+\* Every variable, for stuttering steps.
 vars == <<root, policyRoot, objectRoot, relationRoot, phase, answer>>
 \* The read starts before any proof is collected.
 Init == /\ root = 0 /\ policyRoot = "unset" /\ objectRoot = "unset"
@@ -23,8 +34,11 @@ Decide == /\ phase = "decide"
                         THEN "result" ELSE "refused"
           /\ phase' = "done"
           /\ UNCHANGED <<root, policyRoot, objectRoot, relationRoot>>
+\* The read is over.
 Done == /\ phase = "done" /\ UNCHANGED vars
+\* Reads and new roots interleave in any order.
 Next == Advance \/ ReadPolicy \/ ReadObject \/ ReadRelation \/ Decide \/ Done
+\* Steps may also wait.
 Spec == Init /\ [][Next]_vars
 \* An accepted answer is backed by one coherent certified state.
 INV_SameRoot == answer = "result" => policyRoot = objectRoot /\ objectRoot = relationRoot
