@@ -43,6 +43,7 @@ async fn either_spelling_of_a_secp256k1_actor_is_one_vera_actor() {
             VeraRsProvider::new(
                 hub.node(0).rpc_url(),
                 &consensus_key,
+                vera::vera_rs::GenesisSource::Unnamed,
                 &private_key,
                 worker,
                 &AcpTuning::default(),

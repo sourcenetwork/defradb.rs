@@ -196,6 +196,15 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        family: "vera.rs deployment terms",
+        name: "missing_is_suffix / takeWhile_is_filter / scan_finds_missing / floor_covers_pruned: the submissions a takeover voided are exactly the journal's suffix from the first void one, found by asking newest first, and the newest pruned entry vouches for every older one",
+        axis: Lean,
+        anchor: "crates/engine/vera/src/vera_rs/follow/mod.rs reconcile, uncovered; crates/engine/vera/src/vera_rs/follow/journal.rs Journal::record, Journal::prune, Floor",
+        model_ref: "VeraConfirmationJournal (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         family: "Explicit embedded signing",
         name: "admitted_binds",
         axis: Lean,
@@ -1794,8 +1803,29 @@ pub const PROPERTIES: &[Property] = &[
         family: "ACP soundness + revocation + dual-path commits",
         name: "INV_NeverStale / INV_FailsOnlyWhenEveryAskOvertaken / INV_AttemptsBounded / LIVE_Answers: a proven read the chain overtook or the node answered busy is asked again, bounded by a count and by elapsed time, never accepted stale",
         axis: Tla,
-        anchor: "crates/engine/vera/src/vera_rs/provider/verified.rs verified, verified_within, Pace, WallPace, JITTER, ATTEMPTS, BUSY_PATIENCE, BUSY_PAUSE, busy; crates/building-blocks/inputs/src/retry.rs Jitter, pause; crates/engine/vera/src/vera_rs/provider.rs create_policy, query_policy, query_object_owner, verify_access, create_access_decision; backbone:acp-light-client HeaderChain::accept_response",
+        anchor: "crates/engine/vera/src/vera_rs/provider/verified.rs verified, verified_within, Pace, WallPace, JITTER, ATTEMPTS, BUSY_PATIENCE, BUSY_PAUSE, busy; crates/building-blocks/inputs/src/retry.rs Jitter, pause; crates/engine/vera/src/vera_rs/provider.rs create_policy, query_policy, query_object_owner, verify_access, create_access_decision; backbone:acp-light-client HeaderChain::accept_response, HeaderChain::voided",
         model_ref: "MC_VerifiedRead_{Green,Green_Exhausted,Red_AcceptStale,Red_NoRetry,Red_Uncapped,Red_NoBusyRetry,Red_BusyUncapped,Red_PausesOnly,Red_UndrawnPause}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // An account's Vera deployment runs on every device, one active at a
+        // time; a takeover without a handover voids the blocks above its cut,
+        // and the light client's height goes down. The provider decides and
+        // sends nothing while a certified term is unchecked, caches decisions
+        // under the term it last checked, sends again exactly as signed the
+        // journaled submissions the deployment no longer holds, owes again
+        // through the outbox what a replay does not restore (and everything
+        // after it on the same object), and fails closed for good when the
+        // term may have voided more than the journal keeps. Where a replay
+        // starts is written down before it begins, so one cut short is run
+        // again from there; what it leaves to owe is published with the
+        // checked term and blocks admission until the outbox holds it.
+        family: "ACP soundness + revocation + dual-path commits",
+        name: "INV_NoVoidDecision / INV_RevocationDenies / INV_NothingLost / LIVE_ResubmittedSettles: no decision is served from a voided revision, a revocation confirmed on a void block still denies, nothing a term voided is taken as kept, and what is owed again settles",
+        axis: Tla,
+        anchor: "crates/engine/vera/src/vera_rs/follow/mod.rs Follow::admit, Follow::still, Follow::epoch, reconcile, scan, uncovered; crates/engine/vera/src/vera_rs/follow/journal.rs Journal::record, Journal::begin_replay, Journal::handled, MAX_CONFIRMATIONS, MAX_CONFIRMATION_BYTES; crates/engine/vera/src/vera_rs/follow/lost.rs lost_effects, tainted_by; crates/engine/vera/src/vera_rs/provider/terms.rs Follower::check; crates/engine/vera/src/vera_rs/provider.rs decision_state, admitted_read; crates/engine/vera/src/vera_rs/provider/owed_request.rs locked_worker; crates/engine/acp/src/external/voided.rs OweAgain, VoidedEffect; backbone:acp-light-client HeaderChain::voided",
+        model_ref: "MC_FollowDeployment_{Green,Green_Window,Red_KeepsCache,Red_ForgetsRevocation,Red_NoGate,Red_NoTaint,Red_AssumesWindow,Red_NoMark,Red_NoDeliveryGate,Red_CollapsesBatch}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },

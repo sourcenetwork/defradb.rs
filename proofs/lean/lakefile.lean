@@ -28,6 +28,9 @@ lean_lib VeraDelegationWindow where
 lean_lib VeraEmbeddedTransport where
 
 @[default_target]
+lean_lib VeraConfirmationJournal where
+
+@[default_target]
 lean_lib DelegatedRelationship where
 
 @[default_target]

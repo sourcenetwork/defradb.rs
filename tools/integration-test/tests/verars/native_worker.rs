@@ -167,6 +167,7 @@ async fn native_provider_recovers_pending_before_concurrent_requests() {
                 VeraRsProvider::new(
                     rpc_url,
                     &consensus_key,
+                    vera::vera_rs::GenesisSource::Unnamed,
                     &private_key,
                     worker,
                     &AcpTuning::default(),

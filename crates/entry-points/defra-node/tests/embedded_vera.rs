@@ -380,6 +380,7 @@ fn a_second_node_shares_the_first_nodes_vera_deployment() {
             .with_vera_rs(VeraRsConfig {
                 rpc_address: format!("http://{rpc}"),
                 consensus_key: trust.consensus_key,
+                genesis_id: None,
                 deployment_id: trust.chain_id,
                 actor: VeraRsActor::Signer(second_signer),
                 worker_dir: second_dir.join("worker"),
@@ -1012,6 +1013,7 @@ fn a_restart_settles_a_change_the_chain_could_not_take() {
                     .with_vera_rs(VeraRsConfig {
                         rpc_address: format!("http://{rpc}"),
                         consensus_key: trust.consensus_key,
+                        genesis_id: None,
                         deployment_id: trust.chain_id,
                         actor: VeraRsActor::Signer(signer),
                         worker_dir: home.join("worker"),
@@ -1143,6 +1145,7 @@ fn an_idle_node_settles_a_staged_grant_once_its_deployment_is_back() {
             .with_vera_rs(VeraRsConfig {
                 rpc_address: format!("http://{rpc}"),
                 consensus_key: trust.consensus_key,
+                genesis_id: None,
                 deployment_id: trust.chain_id,
                 actor: VeraRsActor::Signer(Arc::clone(&signer)),
                 worker_dir: home.join("worker"),

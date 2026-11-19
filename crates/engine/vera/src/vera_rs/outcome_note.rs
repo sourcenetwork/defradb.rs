@@ -120,6 +120,23 @@ impl OutcomeNote {
     }
 }
 
+impl OutcomeNote {
+    /// Note that the transaction `tx`, if it is noted, came to `success` on
+    /// the deployment's history now: a switch of its active device voided
+    /// the block that held it, and it was sent again
+    /// (`follow::reconcile`). A note says what the deployment holds, not
+    /// what a void block held. Blocking IO.
+    pub fn revise(&mut self, tx: &str, success: bool) -> Result<(), ProviderError> {
+        let Some(noted) = self.outcomes.iter().find(|noted| noted.tx == tx).cloned() else {
+            return Ok(());
+        };
+        if noted.success == success {
+            return Ok(());
+        }
+        self.record(Noted { success, ..noted })
+    }
+}
+
 /// Replace `path` with `bytes` so a crash leaves the old file or the new
 /// one, never part of either.
 fn persist(path: &Path, bytes: &[u8]) -> Result<(), ProviderError> {
@@ -152,6 +169,19 @@ mod tests {
             sequence: index as u64,
             success: index.is_multiple_of(2),
         }
+    }
+
+    #[test]
+    fn a_noted_outcome_is_revised_to_what_a_replay_came_to() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut note = OutcomeNote::open(directory.path()).unwrap();
+        note.record(noted(0)).unwrap();
+        assert!(note.get("0xd0", Some("0xt0"), None).unwrap().success);
+        note.revise("0xt0", false).unwrap();
+        note.revise("0xunknown", false).unwrap();
+        let note = OutcomeNote::open(directory.path()).unwrap();
+        assert!(!note.get("0xd0", Some("0xt0"), None).unwrap().success);
+        assert_eq!(note.get("0xd0", None, None).unwrap().sequence, 0);
     }
 
     #[test]

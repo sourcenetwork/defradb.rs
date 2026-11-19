@@ -13930,6 +13930,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "vera",
+ "vera-client",
  "vera-jsonrpc",
  "vera-node",
  "workers",
