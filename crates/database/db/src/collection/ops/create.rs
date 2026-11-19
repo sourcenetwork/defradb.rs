@@ -331,22 +331,6 @@ impl<S: Store> crate::database::DB<S> {
             .await
     }
 
-    /// [`Self::create_collections_atomic_with_acp_registration_as`] in [`defra_core::RequestContext::ambient`].
-    pub async fn create_collections_atomic_with_acp_registration(
-        &self,
-        schemas: Vec<CollectionVersion>,
-        document_acp: std::sync::Arc<dyn acp::DocumentACP>,
-        creator: Option<identity::Did>,
-    ) -> Result<Vec<CollectionVersion>> {
-        self.create_collections_atomic_with_acp_registration_as(
-            &defra_core::RequestContext::ambient(),
-            schemas,
-            document_acp,
-            creator,
-        )
-        .await
-    }
-
     /// Create multiple collections atomically, registering branchable ACP before commit.
     ///
     /// If any collection ACP registration fails, the DB transaction is discarded
