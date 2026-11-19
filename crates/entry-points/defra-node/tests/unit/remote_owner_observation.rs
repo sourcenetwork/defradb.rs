@@ -253,7 +253,7 @@ fn a_request_made_during_the_confirmation_round_finds_no_transaction() {
             node.observe_document_owners_in_txn(
                 &txn,
                 "Record",
-                &[doc.clone()],
+                std::slice::from_ref(&doc),
                 Some(Did::new(OWNER).unwrap())
             )
             .await
