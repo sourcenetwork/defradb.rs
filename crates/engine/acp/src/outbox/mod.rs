@@ -33,10 +33,11 @@ mod submission;
 
 pub use changes::{
     OwedChanges, StagedCount, MAX_OWED_CHANGES_PER_TRANSACTION, MAX_UNSETTLED_OWED_CHANGES,
-    MAX_UNSETTLED_OWED_CHANGES_PER_ACTOR,
+    MAX_UNSETTLED_OWED_CHANGES_PER_ACTOR, VALIDATED_WITHIN_OF_NODE_LIMIT,
 };
 pub use deny::{OwedDenial, OwedDenials};
 pub use keys::OwedTupleState;
+pub(crate) use ops::legacy_changes;
 pub use ops::MAX_DISCARD_NOTES;
 pub use record::{
     run_epoch, NewOwedChange, OwedAuthority, OwedChange, OwedOp, OwedState, OwedSubject, OwedTuple,
