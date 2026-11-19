@@ -927,7 +927,8 @@ impl VeraProvider for VeraRsProvider {
         &self,
         query: ActorRelationshipQuery<'_>,
     ) -> Result<bool, ProviderError> {
-        exact_relationship::query(&self.light_client, query).await
+        self.admitted_read(exact_relationship::query(&self.light_client, query))
+            .await
     }
 
     async fn verify_access(
