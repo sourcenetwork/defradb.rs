@@ -1091,6 +1091,7 @@ fn an_idle_node_settles_a_staged_grant_once_its_deployment_is_back() {
             .with_vera_rs(VeraRsConfig {
                 rpc_address: format!("http://{rpc}"),
                 consensus_key: trust.consensus_key,
+                genesis_id: None,
                 deployment_id: trust.chain_id,
                 actor: VeraRsActor::Signer(Arc::clone(&signer)),
                 worker_dir: home.join("worker"),
