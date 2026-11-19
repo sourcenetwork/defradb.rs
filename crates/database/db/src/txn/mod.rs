@@ -107,6 +107,10 @@ pub struct DbTxn<S: Store> {
     /// transaction has staged (see [`acp::outbox`]). Made when the first one
     /// is staged: a transaction that stages none carries nothing for it.
     owed_staged: regolith::sync::OnceCell<acp::StagedCount>,
+    /// The owners a document ACP that cannot join this transaction told it,
+    /// for its commit to confirm (see [`query::txn::ObservedOwners`]). Made
+    /// when the first one is kept.
+    observed_owners: regolith::sync::OnceCell<Arc<query::txn::ObservedOwners>>,
     /// The CRDT types of the node whose store the transaction runs on, kept
     /// past the commit for the collections it hands out.
     crdts: crdt::Crdts,
@@ -176,6 +180,7 @@ impl<S: Store> DbTxn<S> {
             deferred_drains: None,
             statement_savepoint: None,
             owed_staged: regolith::sync::OnceCell::new(),
+            observed_owners: regolith::sync::OnceCell::new(),
             store: None,
         }
     }
@@ -445,6 +450,23 @@ impl<S: Store> DbTxn<S> {
     pub fn owed_staged(&self) -> acp::StagedCount {
         self.owed_staged
             .get_or_init_racy(acp::StagedCount::new)
+            .clone()
+    }
+
+    /// The requests behind the owners a provider told this transaction, each
+    /// once; none when it was told nothing, without making the record.
+    pub fn observed_owner_requests(&self) -> Vec<query::prepared::PreparedInputRequest> {
+        self.observed_owners
+            .get()
+            .map(|observed| observed.requests())
+            .unwrap_or_default()
+    }
+
+    /// The owners a provider that cannot join this transaction told it, kept
+    /// for its commit to confirm.
+    pub fn observed_owners(&self) -> Arc<query::txn::ObservedOwners> {
+        self.observed_owners
+            .get_or_init_racy(|| Arc::new(query::txn::ObservedOwners::default()))
             .clone()
     }
 

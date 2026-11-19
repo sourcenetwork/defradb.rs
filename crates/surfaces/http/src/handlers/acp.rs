@@ -16,7 +16,7 @@ use crate::error::{http_error_from_backend_message, HttpError};
 use crate::identity_extractor::ExtractIdentity;
 use crate::nac_guard::require_permission;
 use crate::request_scope::bound;
-use crate::router::{AppState, NodePermission};
+use crate::router::{AppState, DocRelationshipChange, NodePermission};
 
 /// Response for adding a policy.
 #[derive(Debug, Clone, Serialize)]
@@ -125,6 +125,39 @@ pub struct DocRelationshipRequest {
 pub struct DocRelationshipResponse {
     #[serde(rename = "ExistedAlready")]
     pub existed_already: bool,
+    /// Present when the change was staged in the request's transaction for
+    /// a remote provider instead of applied. Go has no such answer.
+    #[serde(rename = "Staged", skip_serializing_if = "Option::is_none")]
+    pub staged: Option<StagedRelationship>,
+}
+
+/// A relationship change recorded as owed in the request's transaction: it
+/// is sent to the remote provider after the commit, and grants or revokes
+/// nothing there until the provider holds it. A staged revocation denies its
+/// subject in the transaction at once, and on this node from the commit.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct StagedRelationship {
+    /// The change's place in the node's queue of owed changes.
+    #[serde(rename = "Seq")]
+    pub seq: u64,
+    /// Whether the acting DID's authority was checked before staging:
+    /// `false` only for an add staged while the provider could not be
+    /// asked, which the provider then decides.
+    #[serde(rename = "AuthorityChecked")]
+    pub authority_checked: bool,
+}
+
+fn staged(change: DocRelationshipChange) -> Option<StagedRelationship> {
+    match change {
+        DocRelationshipChange::Applied { .. } => None,
+        DocRelationshipChange::Staged {
+            seq,
+            authority_checked,
+        } => Some(StagedRelationship {
+            seq,
+            authority_checked,
+        }),
+    }
 }
 
 fn relationship_operations(
@@ -135,6 +168,8 @@ fn relationship_operations(
     if context.txn().is_none() {
         return Ok(bound(operations, context));
     }
+    // A provider that joins the transaction changes the relationship in it;
+    // a remote one has it staged in it, as owed, by the caller's credential.
     let bound = operations.bind_request(context).ok_or_else(|| {
         HttpError::NotImplemented("transaction-bound document relationships are unavailable".into())
     })?;
@@ -219,6 +254,9 @@ pub async fn own_documents(
 pub struct DocRelationshipDeleteResponse {
     #[serde(rename = "RecordFound")]
     pub record_found: bool,
+    /// Present when the delete was staged, as for an add.
+    #[serde(rename = "Staged", skip_serializing_if = "Option::is_none")]
+    pub staged: Option<StagedRelationship>,
 }
 
 fn validate_add_doc_relationship(body: &DocRelationshipRequest) -> Result<(), HttpError> {
@@ -247,19 +285,21 @@ async fn apply_add_doc_relationship(
     requestor: Option<&identity::Did>,
     body: &DocRelationshipRequest,
 ) -> Result<DocRelationshipResponse, HttpError> {
-    let is_new = doc_acp
-        .add_doc_relationship(
+    let change = doc_acp
+        .change_doc_relationship(
             requestor,
             &body.target_actor,
             &body.collection,
             &body.doc_id,
             &body.relation,
+            false,
         )
         .await
         .map_err(http_error_from_backend_message)?;
 
     Ok(DocRelationshipResponse {
-        existed_already: !is_new,
+        existed_already: change.existed_already(),
+        staged: staged(change),
     })
 }
 
@@ -465,19 +505,21 @@ pub async fn remove_doc_relationship(
     let context = super::txn_header::call_context(&identity, &headers)?;
     let doc_acp = relationship_operations(&state, &context)?;
 
-    let was_removed = doc_acp
-        .delete_doc_relationship(
+    let change = doc_acp
+        .change_doc_relationship(
             requestor,
             &body.target_actor,
             &body.collection,
             &body.doc_id,
             &body.relation,
+            true,
         )
         .await
         .map_err(http_error_from_backend_message)?;
 
     Ok(Json(DocRelationshipDeleteResponse {
-        record_found: was_removed,
+        record_found: change.record_found(),
+        staged: staged(change),
     }))
 }
 
@@ -552,6 +594,47 @@ mod tests {
         assert_eq!(snake.policy_id, "policy");
         assert_eq!(snake.resource_name, "resource");
         assert_eq!(snake.doc_id, "doc");
+    }
+
+    /// An applied change answers as Go does; a staged one adds where it
+    /// waits and whether its actor was checked.
+    #[test]
+    fn a_staged_change_is_answered_with_its_place_and_an_applied_one_as_go() {
+        let applied = DocRelationshipChange::Applied { existed: true };
+        let add = DocRelationshipResponse {
+            existed_already: applied.existed_already(),
+            staged: staged(applied),
+        };
+        assert_eq!(
+            serde_json::to_value(&add).unwrap(),
+            serde_json::json!({"ExistedAlready": true})
+        );
+        let change = DocRelationshipChange::Staged {
+            seq: 7,
+            authority_checked: false,
+        };
+        let add = DocRelationshipResponse {
+            existed_already: change.existed_already(),
+            staged: staged(change),
+        };
+        assert_eq!(
+            serde_json::to_value(&add).unwrap(),
+            serde_json::json!({
+                "ExistedAlready": false,
+                "Staged": {"Seq": 7, "AuthorityChecked": false}
+            })
+        );
+        let delete = DocRelationshipDeleteResponse {
+            record_found: change.record_found(),
+            staged: staged(change),
+        };
+        assert_eq!(
+            serde_json::to_value(&delete).unwrap(),
+            serde_json::json!({
+                "RecordFound": true,
+                "Staged": {"Seq": 7, "AuthorityChecked": false}
+            })
+        );
     }
 
     #[test]

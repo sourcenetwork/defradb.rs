@@ -60,6 +60,31 @@ impl From<vera_delegation::CommandError> for ProviderError {
     }
 }
 
+/// One command of a request built for owed changes, under the bearer token
+/// it is submitted with.
+pub struct OwedCall<'a> {
+    pub bearer_token: &'a str,
+    pub command: crate::PolicyCommand<'a>,
+}
+
+/// What a request journaled for owed changes came to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OwedRequestOutcome {
+    /// It executed and every command in it applied.
+    Applied,
+    /// It executed and was rejected: nothing in it applied.
+    Rejected(String),
+    /// Neither the journal, a verified receipt nor the note knows it.
+    Unknown,
+}
+
+/// The name a provider gives the request `request`: the hex Keccak-256
+/// digest of its bytes, as stored with the changes it carries and as the
+/// note of resolved requests keys it.
+pub fn owed_request_digest(request: &[u8]) -> String {
+    format!("{:#x}", alloy_primitives::keccak256(request))
+}
+
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait VeraProvider: MaybeSendSync {
@@ -124,6 +149,57 @@ pub trait VeraProvider: MaybeSendSync {
     /// such error, so a failed write is taken as possibly not delivered.
     fn write_refused(&self, _error: &ProviderError) -> bool {
         false
+    }
+
+    /// Whether this provider's worker journals each request until a
+    /// verified receipt lets it go, so owed changes can be sent through
+    /// [`Self::journal_owed_request`] with an in-flight mark.
+    fn journals_owed_requests(&self) -> bool {
+        false
+    }
+
+    /// The request that submits `calls` in order, applied together or not
+    /// at all: one command alone, several in one batch.
+    fn owed_request(&self, calls: &[OwedCall<'_>]) -> Result<Vec<u8>, ProviderError> {
+        let _ = calls;
+        Err(ProviderError::Unsupported(
+            "this provider journals no requests".into(),
+        ))
+    }
+
+    /// The worker's next sequence: every request journaled from now on is
+    /// numbered from it, and every one resolved before below it.
+    async fn owed_request_floor(&self) -> Result<u64, ProviderError> {
+        Err(ProviderError::Unsupported(
+            "this provider journals no requests".into(),
+        ))
+    }
+
+    /// Have the worker journal `request`, resolving first one it already
+    /// journals (and noting that one's outcome), and return its transaction
+    /// hash. A request the journal holds already is kept as it is.
+    async fn journal_owed_request(&self, request: &[u8]) -> Result<String, ProviderError> {
+        let _ = request;
+        Err(ProviderError::Unsupported(
+            "this provider journals no requests".into(),
+        ))
+    }
+
+    /// What became of the request whose digest is `digest` and, once it
+    /// was journaled, whose transaction hash is `tx`: one still journaled is
+    /// sent and its verified receipt waited for, one out of the journal is
+    /// looked up by its hash, then in the note by its digest among the
+    /// requests numbered from `floor` on.
+    async fn owed_request_outcome(
+        &self,
+        digest: &str,
+        tx: Option<&str>,
+        floor: Option<u64>,
+    ) -> Result<OwedRequestOutcome, ProviderError> {
+        let _ = (digest, tx, floor);
+        Err(ProviderError::Unsupported(
+            "this provider journals no requests".into(),
+        ))
     }
 
     async fn create_policy(&self, policy_yaml: &str) -> Result<String, ProviderError>;
@@ -347,6 +423,11 @@ pub trait VeraProvider: MaybeSendSync {
             "ACP light client status is not available for this provider".into(),
         ))
     }
+
+    /// Where this provider hands back the registrations and relationship
+    /// changes it confirmed on blocks a switch of its deployment's active
+    /// device voided, to be owed again. A provider without terms takes none.
+    fn owe_voided_to(&self, _sink: std::sync::Weak<dyn acp::OweAgain>) {}
 
     /// What a caller's own delegation must name for this provider to act
     /// under it, with the deployment's genesis identity when the provider

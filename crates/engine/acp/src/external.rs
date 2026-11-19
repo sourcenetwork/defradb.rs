@@ -16,8 +16,9 @@
 //!
 //! A transaction stages its relationship changes through the gate
 //! ([`DocumentACP::transaction_outbox`]), and the gate submits what is owed
-//! after the commit and at start
-//! ([`ExternalDocumentAcp::settle_owed_changes_once`]). A relationship change
+//! after the commit and whenever the node's drainer runs a pass
+//! ([`ExternalDocumentAcp::settle_owed_changes_once`]), woken by commits
+//! that staged changes ([`ExternalDocumentAcp::staged_changes_committed`]). A relationship change
 //! made through the gate outside a transaction goes to the provider at once,
 //! after what is owed on its tuple.
 //!
@@ -46,12 +47,16 @@ use crate::outbox::{OwedChanges, StagedCount, TransactionOutbox};
 use crate::pending::{pending_key, PendingRegistration, PENDING_PREFIX};
 use crate::permission::DocumentPermission;
 
+mod drain;
 mod owed;
 mod registration;
 mod replica;
 mod settle;
+mod voided;
 
+pub use drain::MAX_CHANGES_PER_REQUEST;
 pub use settle::{OwedScope, OwedSettlement, MAX_FAILED_SUBMISSIONS};
+pub use voided::{OweAgain, VoidedEffect};
 
 /// Records read into memory per redrive page, bounded by their encoded size.
 const REDRIVE_PAGE_BYTES: usize = 256 * 1024;
@@ -78,6 +83,11 @@ where
     settling: Arc<regolith::sync::Mutex<()>>,
     /// Told every time a record of something owed is written or deleted.
     changed: Arc<regolith::sync::Notify>,
+    /// Told when a transaction that staged changes has committed: wakes the
+    /// node's drainer, or leaves it a permit when it is busy.
+    wake: Arc<regolith::sync::Notify>,
+    /// Told of every owed change the provider refuses for good.
+    refusals: Arc<regolith::sync::OnceCell<Arc<dyn crate::OwedRefusalListener>>>,
     /// The request `provider` serves and carries the credentials of, when
     /// this gate serves one.
     serving: Option<defra_core::RequestContext>,
@@ -86,6 +96,10 @@ where
     root: Arc<dyn DocumentACP>,
     /// Told when this gate changes an object's relationships.
     watcher: Arc<regolith::sync::OnceCell<Arc<dyn crate::ObjectChangeListener>>>,
+    /// How many changes the store owes in the layout before the owed counts
+    /// were split, once read. Nothing writes that layout any more, so the
+    /// number cannot change while the store is open.
+    legacy: Arc<regolith::sync::OnceCell<u64>>,
 }
 
 fn storage_error(error: storage::corekv::Error) -> Error {
@@ -104,8 +118,31 @@ where
             store: NamespacedStore::new(store, Namespace::Acpstore),
             settling: Arc::default(),
             changed: Arc::new(regolith::sync::Notify::new()),
+            wake: Arc::new(regolith::sync::Notify::new()),
+            refusals: Arc::default(),
             serving: None,
             watcher: Arc::default(),
+            legacy: Arc::default(),
+        }
+    }
+
+    /// Wait until a transaction that staged changes commits, or return at
+    /// once when one did since the last wait: what the node's drainer waits
+    /// for between passes.
+    pub async fn staged_changes_committed(&self) {
+        self.wake.notified().await;
+    }
+
+    /// Tell the listener, if any, that the provider refused `change` for
+    /// good, and whether it stays parked.
+    pub(crate) fn told_refused(
+        &self,
+        change: &crate::outbox::OwedChange,
+        reason: &str,
+        kept: bool,
+    ) {
+        if let Some(listener) = self.refusals.get() {
+            listener.refused(change, reason, kept);
         }
     }
 
@@ -151,6 +188,7 @@ where
         resource_name: &str,
         object_id: &str,
     ) -> Result<bool> {
+        self.owed_layout().await?;
         let denial = {
             let txn = self.store.new_txn(true).await.map_err(storage_error)?;
             owed_denial(
@@ -201,6 +239,7 @@ where
     /// the provider refuses stays owed, its document still readable only by
     /// its creator, and is counted in [`RedriveReport::failed`].
     pub async fn redrive_owed(&self) -> Result<RedriveReport> {
+        self.owed_layout().await?;
         let mut report = RedriveReport::default();
         let mut start = PENDING_PREFIX.to_vec();
         loop {
@@ -233,6 +272,27 @@ where
                 }
             }
         }
+    }
+
+    /// Refuse while the store owes changes in the layout before the owed
+    /// counts were split: this version neither submits them nor denies by
+    /// them, so a revocation among them would stop denying unseen. Every
+    /// access decision, settling pass and redrive asks first; the store is
+    /// read once.
+    pub async fn owed_layout(&self) -> Result<()> {
+        let count = match self.legacy.get() {
+            Some(&count) => count,
+            None => {
+                let txn = self.store.new_txn(true).await.map_err(storage_error)?;
+                let count = crate::outbox::legacy_changes(&txn).await?;
+                let _ = self.legacy.set(count);
+                count
+            }
+        };
+        if count > 0 {
+            return Err(Error::LegacyOwedChanges { count });
+        }
+        Ok(())
     }
 
     async fn owed_page(&self, start: &[u8]) -> Result<Vec<PendingRegistration>> {
@@ -284,10 +344,17 @@ where
             store: NamespacedStore::new(Arc::clone(self.store.inner()), self.store.namespace()),
             settling: Arc::clone(&self.settling),
             changed: Arc::clone(&self.changed),
+            wake: Arc::clone(&self.wake),
+            refusals: Arc::clone(&self.refusals),
             serving: Some(context.clone()),
             root: Arc::clone(&self.root),
             watcher: Arc::clone(&self.watcher),
+            legacy: Arc::clone(&self.legacy),
         }))
+    }
+
+    fn stages_relationship_changes(&self) -> bool {
+        true
     }
 
     fn transaction_outbox(
@@ -313,6 +380,14 @@ where
 
     fn watch_object_changes(&self, listener: Arc<dyn crate::ObjectChangeListener>) {
         let _ = self.watcher.set(listener);
+    }
+
+    fn owed_journal(&self) -> Option<Arc<dyn crate::outbox::OwedJournal>> {
+        self.root.owed_journal()
+    }
+
+    fn watch_owed_refusals(&self, listener: Arc<dyn crate::OwedRefusalListener>) {
+        let _ = self.refusals.set(listener);
     }
 
     async fn replica_owed(
@@ -381,6 +456,10 @@ where
         self.settle_owed_changes_once(scope).await
     }
 
+    async fn check_owed_layout(&self) -> Result<()> {
+        self.owed_layout().await
+    }
+
     async fn owed_entries(
         &self,
         filter: crate::outbox::OwedFilter<'_>,
@@ -394,6 +473,7 @@ where
 
     fn owed_changed(&self) {
         self.changed.notify_waiters();
+        self.wake.notify_one();
     }
 
     async fn reauthorize_owed(
@@ -488,6 +568,7 @@ where
         resource_name: &str,
         doc_id: &str,
     ) -> Result<bool> {
+        self.owed_layout().await?;
         if let Some(owed) = self.owed(policy_id, resource_name, doc_id).await? {
             return Ok(matches!(identity, Identity::Authenticated(did) if *did == owed.creator));
         }

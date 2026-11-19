@@ -45,7 +45,7 @@ namespace VeraDelegationWindow
 /-- The clock skew allowance, in seconds (`CLOCK_SKEW_ALLOWANCE`). -/
 def allowance : Nat := 30
 
-/-- The longest vera.rs keeps a request open, in seconds (`MAX_OPERATION_TTL`). -/
+/-- The longest vera.rs keeps a request open, in seconds (`DEFAULT_OPERATION_LEAD`). -/
 def maxTtl : Nat := 600
 
 /-- The longest lifetime a request-bound delegation is written with

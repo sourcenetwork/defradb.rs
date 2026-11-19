@@ -63,6 +63,8 @@ mod node_query_identity_tests;
 mod on_pool_tests;
 mod ops;
 mod owed;
+#[cfg(feature = "vera")]
+mod owed_drainer;
 pub use ops::{EncryptedIndexListing, IndexListing};
 #[cfg(any(feature = "p2p", feature = "libp2p"))]
 mod p2p_runtime;
@@ -1771,6 +1773,10 @@ mod delegated_relationship_tests;
 #[path = "../tests/unit/staged_relationship.rs"]
 mod staged_relationship_tests;
 
+#[cfg(all(test, feature = "vera", not(target_arch = "wasm32")))]
+#[path = "../tests/unit/remote_owner_observation.rs"]
+mod remote_owner_observation_tests;
+
 #[cfg(all(test, not(target_arch = "wasm32")))]
 #[path = "../tests/unit/verified_create.rs"]
 mod verified_create_tests;
@@ -1793,6 +1799,10 @@ mod http_signing_tests;
 #[cfg(all(test, feature = "http"))]
 #[path = "../tests/unit/http_acp.rs"]
 mod http_acp_tests;
+
+#[cfg(all(test, feature = "http", feature = "vera", not(target_arch = "wasm32")))]
+#[path = "../tests/unit/http_staged_relationship.rs"]
+mod http_staged_relationship_tests;
 
 #[cfg(all(test, feature = "http"))]
 mod router_transform_tests;

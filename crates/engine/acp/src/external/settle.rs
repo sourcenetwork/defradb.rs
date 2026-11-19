@@ -16,9 +16,12 @@
 //!   [`MAX_FAILED_SUBMISSIONS`] such answers in a row, whatever their
 //!   words, are taken as a refusal;
 //! - an error of the node's own before anything was sent: the change stays
-//!   staged with the error recorded, nothing is counted, and the pass goes
-//!   on. A checked change in this state holds its tuple until the node can
-//!   send it; every pass says so in a warning that names it;
+//!   staged with the error recorded, nothing is counted against it, and the
+//!   pass goes on and reports it to be tried again. A checked change in this
+//!   state holds its tuple until the node can send it; every pass says so in
+//!   a warning that names it;
+//! - a request whose outcome nobody knows any more: the change's mark is
+//!   cleared and it is reported to be tried again;
 //! - unreachable: the pass stops, and nothing is written.
 //!
 //! A parked change whose acting DID was checked keeps every later change of
@@ -29,13 +32,25 @@
 //! the unchecked one is deleted, so it cannot be submitted after the change
 //! that passed it.
 //!
-//! Nothing here retries or runs by itself: a pass runs after the commit of a
-//! request that staged a change (over that transaction's objects), once at
-//! start, before a change made outside a transaction on a tuple that has
-//! changes owed, and when a caller waits for a transaction's changes, hands
-//! in a fresh credential or abandons a change (see `owed.rs`). A crash
-//! between the provider applying a change and its record being deleted
-//! leaves the change staged, and the next pass submits it again.
+//! A provider that journals its requests is sent changes another way (see
+//! `drain.rs`): a change is marked in flight before its request goes, a
+//! marked change is decided before anything else is done with it, and the
+//! changes one transaction staged one after the other go in one request.
+//! The answers above are what a request's outcome comes to for each change.
+//!
+//! A pass runs after the commit of a request that staged a change (over
+//! that transaction's objects), before a change made outside a transaction
+//! on a tuple that has changes owed, when a caller waits for a
+//! transaction's changes, hands in a fresh credential or abandons a change
+//! (see `owed.rs`), and whenever the node's drainer task runs one: at
+//! start, after every commit that staged a change, and again after a
+//! back-off while the provider is away or a pass left a change to be tried
+//! again ([`OwedSettlement::wants_another_pass`]). Through a provider
+//! without a journal a crash between the provider applying a change and its
+//! record being deleted leaves the change staged, and the next pass submits
+//! it again. A change marked in flight by a provider that journaled its
+//! requests is sent again the same way when the node's provider no longer
+//! journals them: the journal that held its request is not there to ask.
 
 use datastore::BasicTxn;
 use rapidhash::{HashSetExt, RapidHashSet};
@@ -46,7 +61,7 @@ use super::{storage_error, ExternalDocumentAcp};
 use crate::error::{Error, Result};
 use crate::outbox::record::of_this_run;
 use crate::outbox::{
-    OwedAuthority, OwedChange, OwedState, OwedSubject, OwedTuple, StagedCount, Submission,
+    InFlight, OwedAuthority, OwedChange, OwedState, OwedSubject, OwedTuple, StagedCount, Submission,
 };
 use crate::pending::PendingRegistration;
 
@@ -83,24 +98,39 @@ pub struct OwedSettlement {
     /// staged.
     pub failed: u64,
     /// Staged changes the pass came to and did not submit: behind an earlier
-    /// change of their tuple, behind their object's owed registration,
-    /// changed by a transaction that committed meanwhile, or not sent for an
-    /// error of the node's own. One of the last kind that a later change
-    /// then passes is counted in `discarded` too.
+    /// change of their tuple, behind their object's owed registration, or
+    /// changed by a transaction that committed meanwhile.
     pub left: u64,
+    /// Staged changes the pass did not get through and that may be sent
+    /// again at once: not sent for an error of the node's own, or sent in a
+    /// request whose outcome nobody knows any more. One of the first kind
+    /// that a later change then passes is counted in `discarded` too.
+    pub retry: u64,
     /// The provider could not be reached and the pass stopped there; what
     /// follows in the queue was not looked at.
     pub provider_unavailable: bool,
 }
 
+impl OwedSettlement {
+    /// Whether another pass should follow without waiting for a commit: the
+    /// provider was away, answered with an error that may pass, or a change
+    /// may be sent again at once. A change parked as refused or awaiting
+    /// authority is not one: nothing but its actor moves it.
+    pub fn wants_another_pass(&self) -> bool {
+        self.provider_unavailable || self.failed > 0 || self.retry > 0
+    }
+}
+
 /// What became of one change in a pass.
-enum Step {
+pub(super) enum Step {
     Settled,
     Refused,
     Discarded,
     Awaiting,
     Failed,
     Left,
+    /// Not got through in this pass, and may be sent again at once.
+    Retry,
     /// Already refused or awaiting authority, or outside the pass's scope:
     /// not submitted.
     Skipped,
@@ -115,6 +145,10 @@ enum Registration {
     Held,
     Unavailable,
 }
+
+/// The changes a pass has already decided while it was at an earlier one:
+/// those that shared its request.
+pub(super) type Handled = RapidHashSet<u64>;
 
 /// Why a change a later one passed was deleted.
 const PASSED: &str = "a later change of its relationship passed it";
@@ -133,6 +167,18 @@ pub(super) enum Write {
     /// Delete the record without the provider holding the change, and keep
     /// a note of why.
     Discard(String),
+    /// Store this in-flight mark with the change and with `others`, in one
+    /// transaction, before the request it names is sent.
+    MarkInFlight {
+        others: Vec<u64>,
+        flight: InFlight,
+    },
+    /// Clear the change's in-flight mark of the request with this digest;
+    /// with `alone` it goes in a request of its own from now on.
+    ClearInFlight {
+        digest: String,
+        alone: bool,
+    },
 }
 
 pub(super) type ObjectKey = (String, String, String);
@@ -153,6 +199,7 @@ where
     /// head of the queue. One pass runs at a time; a second waits for the
     /// first.
     pub async fn settle_owed_changes_once(&self, scope: OwedScope) -> Result<OwedSettlement> {
+        self.owed_layout().await?;
         let _pass = self.settling.lock().await;
         let objects = match scope {
             OwedScope::All => None,
@@ -193,6 +240,7 @@ where
     ) -> Result<OwedSettlement> {
         let mut report = OwedSettlement::default();
         let mut held = RapidHashSet::new();
+        let mut handled = Handled::new();
         let mut after = None;
         loop {
             let page = self.owed_changes_after(after).await?;
@@ -204,18 +252,27 @@ where
                 if objects.is_some_and(|objects| !objects.contains(&object_of(&change.tuple))) {
                     continue;
                 }
+                if handled.remove(&change.seq) {
+                    continue;
+                }
                 report.discarded += self.pass_unchecked(change).await?;
-                match self.settle_change(change, &mut held).await? {
-                    Step::Settled => report.settled += 1,
-                    Step::Refused => report.refused += 1,
-                    Step::Discarded => report.discarded += 1,
-                    Step::Awaiting => report.awaiting_authority += 1,
-                    Step::Failed => report.failed += 1,
-                    Step::Left => report.left += 1,
-                    Step::Skipped => {}
-                    Step::Unavailable => {
-                        report.provider_unavailable = true;
-                        return Ok(report);
+                let steps = self
+                    .settle_change(change, &mut held, objects, &mut handled)
+                    .await?;
+                for step in steps {
+                    match step {
+                        Step::Settled => report.settled += 1,
+                        Step::Refused => report.refused += 1,
+                        Step::Discarded => report.discarded += 1,
+                        Step::Awaiting => report.awaiting_authority += 1,
+                        Step::Failed => report.failed += 1,
+                        Step::Left => report.left += 1,
+                        Step::Retry => report.retry += 1,
+                        Step::Skipped => {}
+                        Step::Unavailable => {
+                            report.provider_unavailable = true;
+                            return Ok(report);
+                        }
                     }
                 }
             }
@@ -303,9 +360,29 @@ where
     }
 
     pub(super) async fn owed_changes_after(&self, after: Option<u64>) -> Result<Vec<OwedChange>> {
+        self.read_owed_changes(after, None).await
+    }
+
+    /// At most `count` owed changes after `after`, as committed now.
+    pub(super) async fn next_owed_changes(
+        &self,
+        after: u64,
+        count: usize,
+    ) -> Result<Vec<OwedChange>> {
+        self.read_owed_changes(Some(after), Some(count)).await
+    }
+
+    async fn read_owed_changes(
+        &self,
+        after: Option<u64>,
+        count: Option<usize>,
+    ) -> Result<Vec<OwedChange>> {
         let txn = self.begin(true).await?;
         let changes = self.owed_changes(&txn.acpstore(), StagedCount::new());
-        let page = changes.page(after).await;
+        let page = match (after, count) {
+            (Some(after), Some(count)) => changes.next(after, count).await,
+            _ => changes.page(after).await,
+        };
         drop(changes);
         txn.discard()
             .map_err(|error| Error::Storage(error.to_string()))?;
@@ -320,12 +397,14 @@ where
     /// provider, and once passed they must never be submitted after it.
     /// Returns how many were deleted.
     async fn pass_unchecked(&self, change: &OwedChange) -> Result<u64> {
-        if change.state != OwedState::Staged {
+        if change.state != OwedState::Staged || change.in_flight.is_some() {
             return Ok(0);
         }
         let mut passed = 0;
         while let Some(oldest) = self.oldest_on(&change.tuple).await? {
+            // A change in flight may have landed: only its outcome decides it.
             let yields = oldest.seq < change.seq
+                && oldest.in_flight.is_none()
                 && !oldest.authority_checked
                 && match oldest.state {
                     OwedState::AwaitingAuthority => true,
@@ -347,9 +426,9 @@ where
         Ok(passed)
     }
 
-    /// `change` as committed now, when it is staged and the oldest unsettled
-    /// change of its tuple.
-    async fn submittable(&self, change: &OwedChange) -> Result<Option<OwedChange>> {
+    /// `change` as committed now, when it is staged, not in flight and the
+    /// oldest unsettled change of its tuple.
+    pub(super) async fn submittable(&self, change: &OwedChange) -> Result<Option<OwedChange>> {
         let txn = self.begin(true).await?;
         let changes = self.owed_changes(&txn.acpstore(), StagedCount::new());
         let current = changes.get(change.seq).await;
@@ -358,49 +437,106 @@ where
         txn.discard()
             .map_err(|error| Error::Storage(error.to_string()))?;
         let head = tuple?.is_some_and(|state| state.oldest == change.seq);
-        Ok(current?.filter(|current| head && current.state == OwedState::Staged))
+        Ok(current?.filter(|current| {
+            head && current.state == OwedState::Staged && current.in_flight.is_none()
+        }))
     }
 
+    /// Settle `change`, and with it the changes after it that share its
+    /// request: what became of each.
     async fn settle_change(
         &self,
         change: &OwedChange,
         held: &mut RapidHashSet<ObjectKey>,
-    ) -> Result<Step> {
+        objects: Option<&RapidHashSet<ObjectKey>>,
+        handled: &mut Handled,
+    ) -> Result<Vec<Step>> {
         if change.state != OwedState::Staged {
-            return Ok(Step::Skipped);
+            return Ok(vec![Step::Skipped]);
+        }
+        let journal = self.root.owed_journal();
+        if let Some(flight) = &change.in_flight {
+            match &journal {
+                Some(journal) => {
+                    if let Some(step) = self.recover_marked(&**journal, change).await? {
+                        return Ok(vec![step]);
+                    }
+                }
+                None => {
+                    if !self.unmark_without_journal(change, flight).await? {
+                        return Ok(vec![Step::Left]);
+                    }
+                }
+            }
         }
         let Some(change) = self.submittable(change).await? else {
-            return Ok(Step::Left);
+            return Ok(vec![Step::Left]);
         };
         let object = object_of(&change.tuple);
         if held.contains(&object) {
-            return Ok(Step::Left);
+            return Ok(vec![Step::Left]);
         }
         match self.register_first(&change).await? {
             Registration::Done => {}
             Registration::Held => {
                 held.insert(object);
-                return Ok(Step::Left);
+                return Ok(vec![Step::Left]);
             }
-            Registration::Unavailable => return Ok(Step::Unavailable),
+            Registration::Unavailable => return Ok(vec![Step::Unavailable]),
         }
+        match journal {
+            Some(journal) => self.send_request(&*journal, change, objects, handled).await,
+            None => {
+                let answer = self.provider.submit_owed_change(&change).await;
+                Ok(vec![self.conclude(&change, answer).await?])
+            }
+        }
+    }
+
+    /// Clear the mark of `change`, marked in flight by a provider that
+    /// journaled its requests, now that the node's provider journals none:
+    /// it is sent again as a provider without a journal sends every change
+    /// (`Marker = FALSE`). Whether the request it names landed is not known.
+    async fn unmark_without_journal(&self, change: &OwedChange, flight: &InFlight) -> Result<bool> {
+        tracing::warn!(
+            target: "acp::audit",
+            seq = change.seq,
+            digest = %flight.digest,
+            tx = ?flight.tx,
+            "An owed ACP change was marked in flight by a provider that journaled its requests; the node's provider journals none, so it is sent again"
+        );
+        self.write(
+            change.seq,
+            Write::ClearInFlight {
+                digest: flight.digest.clone(),
+                alone: change.alone,
+            },
+        )
+        .await
+    }
+
+    /// Store what `answer`, the provider's answer to `change` alone, says of
+    /// it, and say what became of it.
+    pub(super) async fn conclude(&self, change: &OwedChange, answer: Submission) -> Result<Step> {
         let attempts = change.attempts.saturating_add(1);
-        let (write, step) = match self.provider.submit_owed_change(&change).await {
+        // Not a refusal: the provider was asked nothing.
+        let unsupported = matches!(answer, Submission::Unsupported { .. });
+        let (write, step) = match answer {
             Submission::Applied => (Write::Settle, Step::Settled),
-            Submission::Refused { reason } => refusal(&change, attempts, reason),
+            Submission::Refused { reason } => refusal(change, attempts, reason),
             Submission::AwaitingAuthority { reason } => (
                 Write::Mark(OwedState::AwaitingAuthority, attempts, reason),
                 Step::Awaiting,
             ),
             Submission::Failed { reason } if attempts >= MAX_FAILED_SUBMISSIONS => {
-                refusal(&change, attempts, reason)
+                refusal(change, attempts, reason)
             }
             Submission::Failed { reason } => (
                 Write::Mark(OwedState::Staged, attempts, reason),
                 Step::Failed,
             ),
             Submission::Unsupported { reason } => {
-                discarded(&change, &reason);
+                discarded(change, &reason);
                 (Write::Discard(reason), Step::Discarded)
             }
             // The node's own error: kept with the record so the change is
@@ -424,7 +560,7 @@ where
                     )
                     .await?;
                 }
-                return Ok(Step::Left);
+                return Ok(Step::Retry);
             }
             Submission::Unavailable { reason } => {
                 tracing::debug!(
@@ -436,10 +572,20 @@ where
                 return Ok(Step::Unavailable);
             }
         };
+        let refused = match (&write, &step) {
+            (Write::Mark(OwedState::Refused { reason }, ..), _) => Some((reason.clone(), true)),
+            (Write::Discard(reason), Step::Discarded) if !unsupported => {
+                Some((reason.clone(), false))
+            }
+            _ => None,
+        };
         Ok(if self.write(change.seq, write).await? {
             if matches!(step, Step::Settled) {
                 let tuple = &change.tuple;
                 self.object_changed(&tuple.policy_id, &tuple.resource, &tuple.object);
+            }
+            if let Some((reason, kept)) = refused {
+                self.told_refused(change, &reason, kept);
             }
             step
         } else {
@@ -550,6 +696,13 @@ where
                 Ok(_) => Ok(false),
                 Err(error) => Err(error),
             },
+            Write::MarkInFlight { others, flight } => {
+                let seqs: Vec<u64> = std::iter::once(seq).chain(others).collect();
+                changes.mark_in_flight(&seqs, &flight).await
+            }
+            Write::ClearInFlight { digest, alone } => {
+                changes.clear_in_flight(seq, &digest, alone).await
+            }
         };
         drop(changes);
         drop(view);

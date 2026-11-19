@@ -196,6 +196,7 @@ fn embedded_delegation_matches_executed_lean_model() {
     let cases = workers::block_on(async {
         let _serial = super::tests::SIGNING_STORE_GUARD.lock().await;
         let (node, _, doc) = fixture().await;
+        let stages_owed = node.document_acp().stages_relationship_changes();
         let transaction = node.begin_transaction_guard(false).await.unwrap();
         let handle = transaction.handle().clone();
         let mut cases = Vec::<Value>::new();
@@ -214,7 +215,8 @@ fn embedded_delegation_matches_executed_lean_model() {
                 "input": {
                     "trustedEmbedder": true, "ownsTransaction": true,
                     "authenticatedActor": authenticated, "actorNac": true,
-                    "actorDac": dac, "boundProvider": true
+                    "actorDac": dac, "boundProvider": true,
+                    "stagesOwed": stages_owed
                 },
                 "mayStage": accepted
             }));
@@ -232,7 +234,8 @@ fn embedded_delegation_matches_executed_lean_model() {
             "input": {
                 "trustedEmbedder": true, "ownsTransaction": false,
                 "authenticatedActor": true, "actorNac": true,
-                "actorDac": true, "boundProvider": true
+                "actorDac": true, "boundProvider": true,
+                "stagesOwed": stages_owed
             },
             "mayStage": accepted
         }));
@@ -244,6 +247,8 @@ fn embedded_delegation_matches_executed_lean_model() {
         cases
     })
     .unwrap();
+    #[cfg(feature = "vera")]
+    let cases = [cases, owed_staging_cases()].concat();
     let inputs: Vec<_> = cases.iter().map(|case| case["input"].clone()).collect();
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../proofs/lean");
     let mut child = Command::new("lake")
@@ -263,4 +268,73 @@ fn embedded_delegation_matches_executed_lean_model() {
     );
     let expected: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(cases, expected);
+}
+
+/// The embedder's call on a remote provider that cannot join the transaction
+/// and stages the change in it as owed: accepted for the actor that may make
+/// the change, refused for one the provider's document check refuses.
+#[cfg(feature = "vera")]
+fn owed_staging_cases() -> Vec<serde_json::Value> {
+    use crate::staged_relationship_tests::{node_identity, provision, start, Remote};
+    use serde_json::json;
+
+    workers::block_on(async {
+        let _serial = super::tests::SIGNING_STORE_GUARD.lock().await;
+        let remote = Remote::new();
+        // The node holds the reader's key too, so the reader's change is
+        // refused by the provider's document check and not for want of
+        // authority to send it.
+        remote.keys.insert(READER.to_owned(), ());
+        let node = start(&node_identity(), Some(&remote), None).await;
+        provision(&node).await;
+        let created = node
+            .execute_request(
+                query::QueryRequest::new(
+                    "mutation { add_Record(input: {name: \"owed\"}) { _docID } }",
+                )
+                .with_identity(Some(Did::new(OWNER).unwrap())),
+            )
+            .await;
+        assert!(!created.has_errors(), "{:?}", created.errors);
+        let doc = created.data.unwrap()["add_Record"][0]["_docID"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let provider = node.document_acp();
+        let bound = provider.supports_transactions();
+        let stages_owed = provider.stages_relationship_changes();
+        let transaction = node.begin_transaction_guard(false).await.unwrap();
+        let mut cases = Vec::new();
+        for (caller, dac) in [(READER, false), (OWNER, true)] {
+            let change = node
+                .add_dac_actor_relationship_change_for_in_txn(
+                    transaction.handle(),
+                    &actor(caller),
+                    "Record",
+                    &doc,
+                    "reader",
+                    READER,
+                )
+                .await;
+            if let Ok(change) = &change {
+                assert!(
+                    matches!(change, super::RelationshipChange::Staged { .. }),
+                    "{change:?}"
+                );
+            }
+            cases.push(json!({
+                "input": {
+                    "trustedEmbedder": true, "ownsTransaction": true,
+                    "authenticatedActor": true, "actorNac": true,
+                    "actorDac": dac, "boundProvider": bound,
+                    "stagesOwed": stages_owed
+                },
+                "mayStage": change.is_ok()
+            }));
+        }
+        transaction.discard().await.unwrap();
+        node.shutdown().await.unwrap();
+        cases
+    })
+    .unwrap()
 }

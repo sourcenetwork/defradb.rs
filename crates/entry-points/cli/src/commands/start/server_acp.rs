@@ -124,6 +124,7 @@ impl Node {
                 vera::VeraRsProvider::new(
                     config.acp.vera_rs_address.clone(),
                     &config.acp.vera_consensus_key,
+                    vera_genesis(config)?,
                     signer_key_bytes,
                     worker,
                     &tuning,
@@ -203,7 +204,7 @@ fn gate_external_acp(
     provider: Arc<dyn acp::DocumentACP>,
     store: Arc<storage::DynStore>,
     edge: &edge::Edge,
-) -> Arc<dyn acp::DocumentACP> {
+) -> Arc<acp::ExternalDocumentAcp<storage::DynStore>> {
     let gate = Arc::new(acp::ExternalDocumentAcp::new(provider, store));
     let redrive = Arc::clone(&gate);
     drop(edge.spawn(async move {
@@ -261,6 +262,24 @@ pub(super) fn vera_rs_tuning(config: &Config) -> vera::AcpTuning {
     }
 }
 
+/// Where the vera.rs provider takes its deployment's genesis identifier from:
+/// `vera_genesis_id`, hexadecimal, or nowhere. Without one the provider
+/// refuses every term above 0, so after a switch of the deployment's active
+/// device every verified read fails until it is configured.
+#[cfg(feature = "vera")]
+fn vera_genesis(config: &Config) -> Result<vera::vera_rs::GenesisSource> {
+    let configured = config.acp.vera_genesis_id.trim();
+    if configured.is_empty() {
+        return Ok(vera::vera_rs::GenesisSource::Unnamed);
+    }
+    let bytes = hex::decode(configured.strip_prefix("0x").unwrap_or(configured))
+        .map_err(|e| Error::InvalidConfig(format!("vera_genesis_id: {e}")))?;
+    let id = <[u8; 32]>::try_from(bytes.as_slice()).map_err(|_| {
+        Error::InvalidConfig(format!("vera_genesis_id: {} bytes, not 32", bytes.len()))
+    })?;
+    Ok(vera::vera_rs::GenesisSource::Configured(id))
+}
+
 /// The worker that journals this node's vera.rs submissions under
 /// `<rootdir>/vera-worker`, with its key in the node's keyring.
 #[cfg(feature = "vera")]
@@ -294,14 +313,50 @@ pub(super) fn vera_rs_setup(
     edge: &edge::Edge,
 ) -> DocumentAcpSetup {
     let document_acp = Arc::new(
-        vera::VeraDocumentACP::without_access_cache(provider)
+        vera::VeraDocumentACP::without_access_cache(provider.clone())
             .on_network(edge, tuning.request_timeout),
     );
     let dac_policies = db::DacPolicies::remote(document_acp.clone(), zanzibar_store);
+    let gate = gate_external_acp(document_acp, store, edge);
+    // What a switch of the deployment's active device voided is owed again
+    // through the gate's outbox.
+    let owed = Arc::downgrade(&gate);
+    let owed: std::sync::Weak<dyn acp::OweAgain> = owed;
+    vera::VeraProvider::owe_voided_to(provider.as_ref(), owed);
     DocumentAcpSetup {
-        document_acp: gate_external_acp(document_acp, store, edge),
+        document_acp: gate,
         dac_policies: Arc::new(dac_policies),
         #[cfg(feature = "embedded-vera")]
         embedded_vera: None,
+    }
+}
+
+#[cfg(all(test, feature = "vera"))]
+mod tests {
+    use super::*;
+
+    fn genesis(configured: &str) -> Result<vera::vera_rs::GenesisSource> {
+        let mut config = Config::default();
+        config.acp.vera_genesis_id = configured.into();
+        vera_genesis(&config)
+    }
+
+    #[test]
+    fn a_remote_node_without_a_genesis_identifier_refuses_terms_above_zero() {
+        assert_eq!(genesis("").unwrap(), vera::vera_rs::GenesisSource::Unnamed);
+        assert_eq!(
+            genesis(&format!("0x{}", "ab".repeat(32))).unwrap(),
+            vera::vera_rs::GenesisSource::Configured([0xab; 32])
+        );
+        assert_eq!(
+            genesis(&"01".repeat(32)).unwrap(),
+            vera::vera_rs::GenesisSource::Configured([1; 32])
+        );
+        for invalid in ["not-hex", "abcd"] {
+            assert!(matches!(
+                genesis(invalid),
+                Err(Error::InvalidConfig(message)) if message.contains("vera_genesis_id")
+            ));
+        }
     }
 }

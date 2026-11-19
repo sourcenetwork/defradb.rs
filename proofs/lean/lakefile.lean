@@ -28,6 +28,9 @@ lean_lib VeraDelegationWindow where
 lean_lib VeraEmbeddedTransport where
 
 @[default_target]
+lean_lib VeraConfirmationJournal where
+
+@[default_target]
 lean_lib DelegatedRelationship where
 
 @[default_target]
@@ -329,3 +332,12 @@ lean_lib KmsChunks where
 
 @[default_target]
 lean_lib SigningOverride where
+
+@[default_target]
+lean_lib OwedParts where
+
+@[default_target]
+lean_lib OwedLive where
+
+@[default_target]
+lean_lib RemoteOwnerAnswer where

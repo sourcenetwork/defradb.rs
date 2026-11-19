@@ -43,6 +43,8 @@ fn cli_with_defaults() -> Cli {
         #[cfg(feature = "vera")]
         vera_consensus_key: None,
         #[cfg(feature = "vera")]
+        vera_genesis_id: None,
+        #[cfg(feature = "vera")]
         vera_deployment_id: None,
         #[cfg(feature = "embedded-vera")]
         vera_embedded_operators: Vec::new(),
@@ -237,6 +239,8 @@ const CONFIG_BACKED_GLOBAL_FLAGS: &[&str] = &[
     "vera-rs-address",
     #[cfg(feature = "vera")]
     "vera-consensus-key",
+    #[cfg(feature = "vera")]
+    "vera-genesis-id",
     #[cfg(feature = "vera")]
     "vera-deployment-id",
     "secret-file",
@@ -478,4 +482,20 @@ fn vera_consensus_key_survives_config_and_cli_override() {
     config.apply_cli_flags(&cli).expect("apply config override");
     assert_eq!(config.acp.vera_consensus_key, "operator-key");
     assert_eq!(config.acp.vera_deployment_id, Some(9002));
+}
+
+#[cfg(feature = "vera")]
+#[test]
+fn vera_genesis_id_survives_config_and_cli_override() {
+    use clap::Parser as _;
+    let mut config = Config::default();
+    assert!(config.acp.vera_genesis_id.is_empty());
+    config.acp.vera_genesis_id = "aa".repeat(32);
+    let encoded = toml::to_string(&config).expect("serialize config");
+    let mut config: Config = toml::from_str(&encoded).expect("deserialize config");
+    assert_eq!(config.acp.vera_genesis_id, "aa".repeat(32));
+    let cli = Cli::try_parse_from(["defra", "--vera-genesis-id", "0xbb", "version"])
+        .expect("parse genesis flag");
+    config.apply_cli_flags(&cli).expect("apply config override");
+    assert_eq!(config.acp.vera_genesis_id, "0xbb");
 }

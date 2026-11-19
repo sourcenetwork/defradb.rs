@@ -86,6 +86,7 @@ impl Embedded {
             transport.clone(),
             transport,
             self.node.consensus_key(),
+            vera::vera_rs::GenesisSource::Hosted,
             &ACTOR_KEY,
             worker,
             &tuning,
@@ -109,6 +110,7 @@ impl Embedded {
             between(transport),
             acp,
             self.node.consensus_key(),
+            vera::vera_rs::GenesisSource::Hosted,
             &ACTOR_KEY,
             worker,
             tuning,
@@ -123,6 +125,7 @@ impl Embedded {
         VeraRsProvider::new(
             self.rpc_url(),
             self.node.consensus_key(),
+            vera::vera_rs::GenesisSource::Hosted,
             &ACTOR_KEY,
             worker,
             &AcpTuning::default(),

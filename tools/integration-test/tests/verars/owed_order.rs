@@ -203,21 +203,31 @@ async fn a_grant_still_in_flight_cannot_land_after_the_revocation_that_follows_i
         assert!(!reads().await);
 
         // The grant lands now, after the revocation was committed and its
-        // pass ran.
+        // pass ran. The node's drainer settles what it can by itself, and
+        // the passes asked for here settle the rest: whichever pass takes
+        // each, both end settled, with nothing owed or discarded left.
         channel.released.set();
-        let mut settled = 0;
+        let owed = || async {
+            node.owed_acp_as(&acting, owner.as_str())
+                .await
+                .expect("what is owed")
+        };
         for _ in 0..60 {
             let pass = node
                 .document_acp()
                 .settle_owed_changes(OwedScope::All)
                 .await
                 .expect("pass");
-            settled += pass.settled;
-            if pass == OwedSettlement::default() {
+            if pass == OwedSettlement::default() && owed().await.is_empty() {
                 break;
             }
+            nuclei::time::sleep(Duration::from_millis(500)).await;
         }
-        assert_eq!(settled, 2, "the grant and the revocation are both settled");
+        assert_eq!(
+            owed().await,
+            Vec::new(),
+            "the grant and the revocation are both settled"
+        );
         assert!(
             channel.arrived.load(Ordering::SeqCst) >= before + 2,
             "the grant and then the revocation reached the node"
