@@ -7,9 +7,12 @@
 //! ([`acp::ExternalDocumentAcp::settle_owed_changes_once`]), so it is serial
 //! with every other pass and with the worker behind the provider. Between
 //! turns it waits for a commit that staged changes; while the provider is
-//! away, or answers with errors that may pass, it also turns after a
-//! back-off that doubles up to [`MAX_BACKOFF`]. A staged change on an idle
-//! node is therefore settled without another request.
+//! away, answers with errors that may pass, or a pass leaves a change the
+//! node may send again at once, it also turns after a back-off that doubles
+//! up to [`MAX_BACKOFF`] ([`acp::OwedSettlement::wants_another_pass`]). A
+//! staged change on an idle node is therefore settled without another
+//! request. A parked change is not a reason to turn: only its actor moves
+//! it.
 //!
 //! This is the fairness `SpecLiveJournaled` of `proofs/tla/AcpOutbox.tla`
 //! promises: the drainer takes its turns by itself.
@@ -65,11 +68,12 @@ where
                         failed = settlement.failed,
                         awaiting_authority = settlement.awaiting_authority,
                         left = settlement.left,
+                        retry = settlement.retry,
                         provider_unavailable = settlement.provider_unavailable,
                         "Submitted ACP relationship changes owed from a previous run"
                     );
                 }
-                settlement.provider_unavailable || settlement.failed > 0
+                settlement.wants_another_pass()
             }
             Err(error) => {
                 tracing::warn!(

@@ -177,7 +177,8 @@ where
                     };
                     self.write(change.seq, clear).await?;
                 }
-                Ok(vec![Step::Left])
+                // The node can send them now: they do not wait for a commit.
+                Ok(vec![Step::Retry])
             }
             RequestOutcome::Unavailable { reason } => {
                 unavailable(&changes[0], &reason);

@@ -62,6 +62,11 @@ struct Journal {
     /// The next resolution executes the request and keeps its receipt, and
     /// then the node crashes before it stores what the request came to.
     crash_after_receipt: AtomicBool,
+    /// The next resolution finds the request gone from the journal with no
+    /// receipt or note of it: resolved by another, and since forgotten.
+    forget_next: AtomicBool,
+    /// The worker cannot build a request for the changes it is given.
+    unsupported: AtomicBool,
 }
 
 impl Journal {
@@ -76,6 +81,8 @@ impl Journal {
             next_tx: AtomicU64::new(1),
             crash_after_journal: AtomicBool::new(false),
             crash_after_receipt: AtomicBool::new(false),
+            forget_next: AtomicBool::new(false),
+            unsupported: AtomicBool::new(false),
         });
         let as_journal: Arc<dyn OwedJournal> = journal.clone();
         assert!(remote.journal.set(as_journal).is_ok());
@@ -149,6 +156,11 @@ fn crashed() -> RequestOutcome {
 #[async_trait::async_trait]
 impl OwedJournal for Journal {
     async fn prepare(&self, changes: &[OwedChange]) -> Result<PreparedRequest, Submission> {
+        if self.unsupported.load(Ordering::SeqCst) {
+            return Err(Submission::Unsupported {
+                reason: "the provider cannot take this change".into(),
+            });
+        }
         let seqs: Vec<String> = changes
             .iter()
             .map(|change| change.seq.to_string())
@@ -203,6 +215,10 @@ impl OwedJournal for Journal {
             return RequestOutcome::Unavailable {
                 reason: "provider unreachable".into(),
             };
+        }
+        if self.forget_next.swap(false, Ordering::SeqCst) {
+            self.pending.remove(&());
+            return RequestOutcome::Unknown;
         }
         if let Some(pending) = self.pending.get(&()) {
             if flight.tx.as_deref() == Some(pending.tx.as_str()) || flight.digest == pending.digest
@@ -554,6 +570,73 @@ fn a_refused_request_is_sent_again_one_change_at_a_time() {
         assert!(queue[0].alone);
     })
     .unwrap()
+}
+
+/// A request that leaves the journal with nobody knowing its outcome had
+/// no effect the node can tell of: its change is to be sent again, and the
+/// pass says so, so the drainer runs another without waiting for a commit.
+/// The next pass sends it.
+#[test]
+fn a_change_whose_request_nobody_knows_is_tried_again_without_a_commit() {
+    workers::block_on(async {
+        let (staging, journal) = journaled().await;
+        let doc = staging.create(alice(), "shared", None).await;
+        staging.commit_change(add(alice(), &doc, bob())).await;
+
+        journal.forget_next.store(true, Ordering::SeqCst);
+        let settlement = staging.pass_once().await;
+        assert_eq!(
+            settlement,
+            OwedSettlement {
+                retry: 1,
+                ..OwedSettlement::default()
+            }
+        );
+        assert!(settlement.wants_another_pass());
+        let queue = staging.queue().await;
+        assert_eq!(queue[0].state, OwedState::Staged);
+        assert_eq!(queue[0].in_flight, None);
+        assert!(staging.remote.take_writes().is_empty());
+
+        let settlement = staging.pass_once().await;
+        assert_eq!(settlement, settled(1));
+        assert!(!settlement.wants_another_pass());
+        assert_eq!(
+            staging.remote.take_writes(),
+            [(true, doc.clone(), bob().to_string())]
+        );
+        assert!(staging.queue().await.is_empty());
+    })
+    .unwrap()
+}
+
+/// A parked change is no reason for another pass: only its actor moves it.
+#[test]
+fn a_parked_change_asks_for_no_other_pass() {
+    let parked = OwedSettlement {
+        refused: 1,
+        awaiting_authority: 1,
+        discarded: 1,
+        left: 1,
+        ..OwedSettlement::default()
+    };
+    assert!(!parked.wants_another_pass());
+    for retried in [
+        OwedSettlement {
+            failed: 1,
+            ..parked
+        },
+        OwedSettlement {
+            retry: 1,
+            ..parked
+        },
+        OwedSettlement {
+            provider_unavailable: true,
+            ..parked
+        },
+    ] {
+        assert!(retried.wants_another_pass(), "{retried:?}");
+    }
 }
 
 impl Staging {

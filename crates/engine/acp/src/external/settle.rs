@@ -16,9 +16,12 @@
 //!   [`MAX_FAILED_SUBMISSIONS`] such answers in a row, whatever their
 //!   words, are taken as a refusal;
 //! - an error of the node's own before anything was sent: the change stays
-//!   staged with the error recorded, nothing is counted, and the pass goes
-//!   on. A checked change in this state holds its tuple until the node can
-//!   send it; every pass says so in a warning that names it;
+//!   staged with the error recorded, nothing is counted against it, and the
+//!   pass goes on and reports it to be tried again. A checked change in this
+//!   state holds its tuple until the node can send it; every pass says so in
+//!   a warning that names it;
+//! - a request whose outcome nobody knows any more: the change's mark is
+//!   cleared and it is reported to be tried again;
 //! - unreachable: the pass stops, and nothing is written.
 //!
 //! A parked change whose acting DID was checked keeps every later change of
@@ -41,10 +44,11 @@
 //! transaction's changes, hands in a fresh credential or abandons a change
 //! (see `owed.rs`), and whenever the node's drainer task runs one: at
 //! start, after every commit that staged a change, and again after a
-//! back-off while the provider is away. Through a provider without a
-//! journal a crash between the provider applying a change and its record
-//! being deleted leaves the change staged, and the next pass submits it
-//! again.
+//! back-off while the provider is away or a pass left a change to be tried
+//! again ([`OwedSettlement::wants_another_pass`]). Through a provider
+//! without a journal a crash between the provider applying a change and its
+//! record being deleted leaves the change staged, and the next pass submits
+//! it again.
 
 use datastore::BasicTxn;
 use rapidhash::{HashSetExt, RapidHashSet};
@@ -92,14 +96,27 @@ pub struct OwedSettlement {
     /// staged.
     pub failed: u64,
     /// Staged changes the pass came to and did not submit: behind an earlier
-    /// change of their tuple, behind their object's owed registration,
-    /// changed by a transaction that committed meanwhile, or not sent for an
-    /// error of the node's own. One of the last kind that a later change
-    /// then passes is counted in `discarded` too.
+    /// change of their tuple, behind their object's owed registration, or
+    /// changed by a transaction that committed meanwhile.
     pub left: u64,
+    /// Staged changes the pass did not get through and that may be sent
+    /// again at once: not sent for an error of the node's own, or sent in a
+    /// request whose outcome nobody knows any more. One of the first kind
+    /// that a later change then passes is counted in `discarded` too.
+    pub retry: u64,
     /// The provider could not be reached and the pass stopped there; what
     /// follows in the queue was not looked at.
     pub provider_unavailable: bool,
+}
+
+impl OwedSettlement {
+    /// Whether another pass should follow without waiting for a commit: the
+    /// provider was away, answered with an error that may pass, or a change
+    /// may be sent again at once. A change parked as refused or awaiting
+    /// authority is not one: nothing but its actor moves it.
+    pub fn wants_another_pass(&self) -> bool {
+        self.provider_unavailable || self.failed > 0 || self.retry > 0
+    }
 }
 
 /// What became of one change in a pass.
@@ -110,6 +127,8 @@ pub(super) enum Step {
     Awaiting,
     Failed,
     Left,
+    /// Not got through in this pass, and may be sent again at once.
+    Retry,
     /// Already refused or awaiting authority, or outside the pass's scope:
     /// not submitted.
     Skipped,
@@ -245,6 +264,7 @@ where
                         Step::Awaiting => report.awaiting_authority += 1,
                         Step::Failed => report.failed += 1,
                         Step::Left => report.left += 1,
+                        Step::Retry => report.retry += 1,
                         Step::Skipped => {}
                         Step::Unavailable => {
                             report.provider_unavailable = true;
@@ -484,7 +504,7 @@ where
                     )
                     .await?;
                 }
-                return Ok(Step::Left);
+                return Ok(Step::Retry);
             }
             Submission::Unavailable { reason } => {
                 tracing::debug!(
