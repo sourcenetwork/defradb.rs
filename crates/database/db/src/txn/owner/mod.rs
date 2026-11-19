@@ -261,10 +261,11 @@ where
         R: MaybeSend + 'static,
         W: for<'t> FnOnce(&'t mut T) -> LocalBoxFuture<'t, R> + MaybeSend + 'static,
     {
+        // Early, for a caller turned away without a hop; `send` decides.
         if !self.table(id).runs(id, key) {
             return Err(Unavailable::NotFound);
         }
-        self.send(id, "txn.request", move |reply| {
+        self.send(id, key, "txn.request", move |reply| {
             Message::Run(actor::work(move |mut txn, idle| {
                 Box::pin(async move {
                     let answer = work(&mut txn).await;
@@ -406,21 +407,33 @@ where
         self.shared.tables.iter().map(Table::len).sum()
     }
 
-    /// Queues the message `build` makes for transaction `id` on its owner and
-    /// waits for the reply the message carries back. No reply (the message
-    /// was dropped, or never queued) means no such transaction.
-    async fn send<R, B>(&self, id: TxnId, name: &'static str, build: B) -> Result<R, Unavailable>
+    /// Queues the request `build` makes for transaction `id` of the caller
+    /// `key` on its owner and waits for the reply the message carries back.
+    /// Admission is decided again on the owner, by the lookup that picks the
+    /// mailbox ([`Table::send_request`]): the check at the caller only turns
+    /// a stranger away early. No reply (the message was dropped, or never
+    /// queued) means no such transaction.
+    async fn send<R, B>(
+        &self,
+        id: TxnId,
+        key: &K,
+        name: &'static str,
+        build: B,
+    ) -> Result<R, Unavailable>
     where
         R: MaybeSend + 'static,
         B: FnOnce(regolith::sync::UnboundedSender<R>) -> Message<T> + MaybeSend + 'static,
     {
         let shared = Arc::downgrade(&self.shared);
         let owner = id.owner(self.workers());
+        let key = key.clone();
         self.place(Target::Worker(owner), name, move || {
             let (reply, answer) = unbounded();
-            let queued = shared
-                .upgrade()
-                .is_some_and(|shared| shared.tables[owner].send(id, build(reply)).is_ok());
+            let queued = shared.upgrade().is_some_and(|shared| {
+                shared.tables[owner]
+                    .send_request(id, &key, build(reply))
+                    .is_ok()
+            });
             async move {
                 match queued {
                     true => answer.recv_async().await,
