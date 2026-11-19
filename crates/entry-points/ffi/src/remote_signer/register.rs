@@ -29,7 +29,9 @@ pub(crate) unsafe fn register_hex(
     let result = (|| {
         let did_str = c_str_to_string(did).ok_or("invalid did parameter")?;
         let pub_hex = c_str_to_string(public_key_hex).ok_or("invalid public_key_hex parameter")?;
-        let key_type_str = c_str_to_string(key_type).unwrap_or_else(|| "secp256r1".to_string());
+        let key_type_str = c_str_to_string(key_type)
+            .filter(|key_type| !key_type.is_empty())
+            .unwrap_or_else(|| "secp256r1".to_string());
         let signing_key_type = parse_signing_key_type(&key_type_str)?;
 
         let public_key_bytes =
@@ -74,7 +76,9 @@ pub(crate) unsafe fn register_bytes(
                 public_key_len
             ));
         }
-        let key_type_str = c_str_to_string(key_type).unwrap_or_else(|| "secp256r1".to_string());
+        let key_type_str = c_str_to_string(key_type)
+            .filter(|key_type| !key_type.is_empty())
+            .unwrap_or_else(|| "secp256r1".to_string());
         let signing_key_type = parse_signing_key_type(&key_type_str)?;
         // SAFETY: `public_key_ptr` is non-null and `public_key_len` is
         // bounded (checked above). The caller guarantees the pointer is

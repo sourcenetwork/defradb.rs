@@ -247,6 +247,42 @@ fn a_bytes_registration_stores_the_public_key() {
 }
 
 #[test]
+fn an_empty_key_type_is_secp256r1_as_a_null_one_is() {
+    for form in ["hex", "bytes"] {
+        let key = HostKey::new();
+        let did = cstr(&key.did);
+        let public = cstr(&hex::encode(&key.public));
+        let empty = cstr("");
+        let identity = registered(match form {
+            "hex" => register_remote_hex(
+                did.as_ptr(),
+                public.as_ptr(),
+                empty.as_ptr(),
+                key.handle(),
+                sign,
+            ),
+            _ => register_remote_bytes(
+                did.as_ptr(),
+                key.public.as_ptr(),
+                key.public.len(),
+                empty.as_ptr(),
+                key.handle(),
+                Some(sign),
+                None,
+            ),
+        });
+
+        let config = defra_core::signing::get_identity(&key.did).expect("the identity is stored");
+        assert_eq!(
+            config.key_type,
+            defra_core::signing::SigningKeyType::Secp256r1,
+            "{form}"
+        );
+        defra_identity_free(identity);
+    }
+}
+
+#[test]
 fn a_registration_refuses_an_unknown_key_type_and_a_key_that_is_not_the_dids() {
     let key = HostKey::new();
     let did = cstr(&key.did);

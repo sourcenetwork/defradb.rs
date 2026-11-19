@@ -13,6 +13,12 @@
 //! does not know. A newer caller's longer struct is accepted when the bytes
 //! past the library's struct are all zero; a set field this library does not
 //! know is refused, never ignored (`proofs/lean/FfiOptions.lean`).
+//!
+//! That needs every byte of a struct to belong to a field. An options struct
+//! has no implicit padding, and its size is a multiple of 8: a gap is filled
+//! with a reserved field. Otherwise an appended field could sit in an older
+//! struct's tail padding, ignored instead of refused, and the bytes past the
+//! library's struct could be padding nobody set.
 
 use std::mem::{size_of, MaybeUninit};
 

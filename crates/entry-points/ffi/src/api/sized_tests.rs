@@ -7,8 +7,8 @@ use std::ptr;
 
 use super::collection::{defra_collection_truncate_sized, DefraCollectionTruncateOptions};
 use super::document::{
-    defra_document_add_sized, defra_document_get_sized, DefraDocumentAddOptions,
-    DefraDocumentGetOptions,
+    defra_document_add_sized, defra_document_delete_sized, defra_document_get_sized,
+    DefraDocumentAddOptions, DefraDocumentDeleteOptions, DefraDocumentGetOptions,
 };
 use super::identity::{defra_identity_new_remote_sized, DefraRemoteIdentityOptions};
 use super::node::{defra_version_get_sized, DefraVersionOptions};
@@ -70,15 +70,29 @@ fn an_older_callers_shorter_options_get_defaults_for_the_rest() {
         .unwrap()
         .to_string();
 
-    // A caller whose struct ends after `collection_name`.
+    let doc_id = cstr(&id);
+    let delete = DefraDocumentDeleteOptions {
+        collection_name: user.as_ptr(),
+        doc_id: doc_id.as_ptr(),
+        ..zeroed()
+    };
+    ok(unsafe { defra_document_delete_sized(node, &delete, size_of_val(&delete)) });
+
+    // `show_deleted` is set, but a caller whose struct ends after
+    // `collection_name` never passes it: the library reads it as unset, and
+    // the deleted document is not found.
     let get = DefraDocumentGetOptions {
         collection_name: user.as_ptr(),
         show_deleted: 1,
         ..zeroed()
     };
     let older = (size_of::<usize>() * 2) as u32;
-    let doc_id = cstr(&id);
-    let found = ok_json(unsafe { defra_document_get_sized(node, doc_id.as_ptr(), &get, older) });
+    err(unsafe { defra_document_get_sized(node, doc_id.as_ptr(), &get, older) });
+
+    // The whole struct passes it, and the deleted document is answered.
+    let found = ok_json(unsafe {
+        defra_document_get_sized(node, doc_id.as_ptr(), &get, size_of_val(&get))
+    });
     assert_eq!(found["name"], "Ada", "{found}");
     close(node);
 }

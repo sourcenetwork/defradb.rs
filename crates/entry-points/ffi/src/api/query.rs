@@ -28,7 +28,7 @@ pub struct DefraEventSubscribeOptions {
     pub identity: usize,
 }
 
-zero_default!(DefraQueryOptions, DefraEventSubscribeOptions);
+zero_default!(DefraQueryOptions, DefraEventSubscribeOptions,);
 
 /// Runs the GraphQL request `query` and answers with its JSON response.
 ///

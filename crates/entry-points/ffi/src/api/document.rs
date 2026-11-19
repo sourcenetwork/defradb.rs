@@ -26,6 +26,8 @@ pub struct DefraDocumentAddOptions {
     pub encrypted_fields: *const c_char,
     /// Block signing: 0 node default, 1 sign, -1 do not sign.
     pub signing: c_int,
+    /// Reserved, so the struct has no padding: leave it zero.
+    pub reserved: u32,
 }
 
 /// Options of `defra_document_get`.
@@ -61,12 +63,16 @@ pub struct DefraDocumentUpdateOptions {
     pub collection_id: *const c_char,
     /// Include inactive collection versions (1=true, 0=false).
     pub collection_get_inactive: c_int,
+    /// Reserved, so the struct has no padding: leave it zero.
+    pub reserved0: u32,
     /// The document to update.
     pub doc_id: *const c_char,
     /// A GraphQL filter choosing the documents to update, as JSON.
     pub filter_json: *const c_char,
     /// Block signing: 0 node default, 1 sign, -1 do not sign.
     pub signing: c_int,
+    /// Reserved, so the struct has no padding: leave it zero.
+    pub reserved1: u32,
 }
 
 /// Options of `defra_document_delete`: the documents are `doc_id`, or those
@@ -84,12 +90,16 @@ pub struct DefraDocumentDeleteOptions {
     pub collection_id: *const c_char,
     /// Include inactive collection versions (1=true, 0=false).
     pub collection_get_inactive: c_int,
+    /// Reserved, so the struct has no padding: leave it zero.
+    pub reserved0: u32,
     /// The document to delete.
     pub doc_id: *const c_char,
     /// A GraphQL filter choosing the documents to delete, as JSON.
     pub filter_json: *const c_char,
     /// Block signing: 0 node default, 1 sign, -1 do not sign.
     pub signing: c_int,
+    /// Reserved, so the struct has no padding: leave it zero.
+    pub reserved1: u32,
 }
 
 /// Options of `defra_document_purge`.
@@ -106,6 +116,8 @@ pub struct DefraDocumentPurgeOptions {
     pub collection_id: *const c_char,
     /// Include inactive collection versions (1=true, 0=false).
     pub collection_get_inactive: c_int,
+    /// Reserved, so the struct has no padding: leave it zero.
+    pub reserved: u32,
 }
 
 zero_default!(

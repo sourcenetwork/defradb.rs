@@ -31,6 +31,8 @@ pub struct DefraViewRefreshOptions {
     pub collection_id: *const c_char,
     /// Include inactive collection versions (1=true, 0=false).
     pub collection_get_inactive: c_int,
+    /// Reserved, so the struct has no padding: leave it zero.
+    pub reserved: u32,
 }
 
 /// Options of the three lens calls.
@@ -53,6 +55,8 @@ pub struct DefraBackupExportOptions {
     pub format: *const c_char,
     /// Indent the JSON (1=true, 0=false).
     pub pretty: c_int,
+    /// Reserved, so the struct has no padding: leave it zero.
+    pub reserved: u32,
 }
 
 /// Options of `defra_backup_import`.

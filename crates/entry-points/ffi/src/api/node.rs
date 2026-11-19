@@ -12,6 +12,8 @@ use crate::{node, txn, version};
 pub struct DefraTransactionOptions {
     /// A transaction that only reads (1=true, 0=false).
     pub read_only: c_int,
+    /// Reserved, so the struct has no padding: leave it zero.
+    pub reserved: u32,
 }
 
 /// Options of `defra_version_get`.
@@ -27,7 +29,7 @@ pub struct DefraVersionOptions {
 zero_default!(
     NodeInitOptions,
     DefraTransactionOptions,
-    DefraVersionOptions
+    DefraVersionOptions,
 );
 
 /// Starts a node. `defra_node_new` in `defra.h` passes the size.

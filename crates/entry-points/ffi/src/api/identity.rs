@@ -22,7 +22,7 @@ pub struct DefraIdentityNewOptions {
 #[derive(Clone, Copy)]
 pub struct DefraIdentityBearerOptions {
     /// Reserved: leave zero.
-    pub reserved: i32,
+    pub reserved: u64,
 }
 
 /// Options of `defra_identity_new_remote`: the public key as hex or as

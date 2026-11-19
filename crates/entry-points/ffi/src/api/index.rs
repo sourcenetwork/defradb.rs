@@ -20,10 +20,14 @@ pub struct DefraIndexNewOptions {
     pub collection_id: *const c_char,
     /// Include inactive collection versions (1=true, 0=false).
     pub collection_get_inactive: c_int,
+    /// Reserved, so the struct has no padding: leave it zero.
+    pub reserved0: u32,
     /// The index name (null or empty to generate one).
     pub name: *const c_char,
     /// A unique index (1=true, 0=false).
     pub unique: c_int,
+    /// Reserved, so the struct has no padding: leave it zero.
+    pub reserved1: u32,
     /// A vector index description as JSON (null or empty for an ordered index).
     pub vector_json: *const c_char,
 }
@@ -42,6 +46,8 @@ pub struct DefraIndexDeleteOptions {
     pub collection_id: *const c_char,
     /// Include inactive collection versions (1=true, 0=false).
     pub collection_get_inactive: c_int,
+    /// Reserved, so the struct has no padding: leave it zero.
+    pub reserved: u32,
 }
 
 /// Options of `defra_index_list`. With no collection chosen, every
@@ -59,6 +65,8 @@ pub struct DefraIndexListOptions {
     pub collection_id: *const c_char,
     /// Include inactive collection versions (1=true, 0=false).
     pub collection_get_inactive: c_int,
+    /// Reserved, so the struct has no padding: leave it zero.
+    pub reserved: u32,
 }
 
 /// Options of `defra_encrypted_index_new`. Encrypted indexes choose their
@@ -76,6 +84,8 @@ pub struct DefraEncryptedIndexNewOptions {
     pub collection_id: *const c_char,
     /// Include inactive collection versions (1=true, 0=false).
     pub collection_get_inactive: c_int,
+    /// Reserved, so the struct has no padding: leave it zero.
+    pub reserved: u32,
     /// The index type (null or empty for "equality").
     pub index_type: *const c_char,
 }
@@ -94,6 +104,8 @@ pub struct DefraEncryptedIndexDeleteOptions {
     pub collection_id: *const c_char,
     /// Include inactive collection versions (1=true, 0=false).
     pub collection_get_inactive: c_int,
+    /// Reserved, so the struct has no padding: leave it zero.
+    pub reserved: u32,
 }
 
 /// Options of `defra_encrypted_index_list`. With no collection named, every
@@ -111,6 +123,8 @@ pub struct DefraEncryptedIndexListOptions {
     pub collection_id: *const c_char,
     /// Include inactive collection versions (1=true, 0=false).
     pub collection_get_inactive: c_int,
+    /// Reserved, so the struct has no padding: leave it zero.
+    pub reserved: u32,
 }
 
 zero_default!(

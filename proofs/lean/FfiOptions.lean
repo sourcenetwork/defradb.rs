@@ -4,6 +4,9 @@ program was built against one version of the header, the library against
 another, so their structs can differ in length: a struct only ever grows at
 its end, and zero is every field's default. The program passes its struct's
 bytes and how many there are. The library reads its own struct from them.
+Every byte of a struct belongs to a field: the structs have no hidden padding
+(a gap is filled with a reserved field), so a byte past an older struct's end
+is always part of a field added since, never filler.
 
 What must never happen: a byte the program set, inside the library's struct,
 read as something else; a field the program's older struct does not have read
@@ -12,7 +15,7 @@ does not know silently ignored; a newer program that leaves its new fields
 unset read differently from an older one.
 
 Rust owners:
-  crates/ffi/src/options.rs   read (the size-prefix copy), ZeroDefault
+  crates/entry-points/ffi/src/options.rs   read (the size-prefix copy), ZeroDefault
 -/
 
 namespace FfiOptions
