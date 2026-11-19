@@ -498,6 +498,8 @@ where
     /// it, and say what became of it.
     pub(super) async fn conclude(&self, change: &OwedChange, answer: Submission) -> Result<Step> {
         let attempts = change.attempts.saturating_add(1);
+        // Not a refusal: the provider was asked nothing.
+        let unsupported = matches!(answer, Submission::Unsupported { .. });
         let (write, step) = match answer {
             Submission::Applied => (Write::Settle, Step::Settled),
             Submission::Refused { reason } => refusal(change, attempts, reason),
@@ -551,7 +553,9 @@ where
         };
         let refused = match (&write, &step) {
             (Write::Mark(OwedState::Refused { reason }, ..), _) => Some((reason.clone(), true)),
-            (Write::Discard(reason), Step::Discarded) => Some((reason.clone(), false)),
+            (Write::Discard(reason), Step::Discarded) if !unsupported => {
+                Some((reason.clone(), false))
+            }
             _ => None,
         };
         Ok(if self.write(change.seq, write).await? {

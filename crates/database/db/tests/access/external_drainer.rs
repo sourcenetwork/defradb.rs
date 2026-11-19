@@ -639,6 +639,33 @@ fn a_parked_change_asks_for_no_other_pass() {
     }
 }
 
+/// A change the provider cannot take is removed without its request being
+/// sent: the provider was asked nothing, so nothing is told as its refusal.
+#[test]
+fn a_change_the_provider_cannot_take_is_removed_and_not_told_as_refused() {
+    workers::block_on(async {
+        let (staging, journal) = journaled().await;
+        let refusals = Arc::new(Refusals::default());
+        staging.gate.watch_owed_refusals(refusals.clone());
+        let doc = staging.create(alice(), "shared", None).await;
+        let staged = staging.commit_change(add(alice(), &doc, bob())).await;
+        assert!(staged.authority_checked);
+
+        journal.unsupported.store(true, Ordering::SeqCst);
+        assert_eq!(
+            staging.pass_once().await,
+            OwedSettlement {
+                discarded: 1,
+                ..OwedSettlement::default()
+            }
+        );
+        assert!(staging.queue().await.is_empty());
+        assert!(journal.take_requests().is_empty());
+        assert_eq!(refusals.0.pop(), None);
+    })
+    .unwrap()
+}
+
 /// A change marked in flight when the node last ran on a provider that
 /// journals its requests, opened on one that journals none: nothing is left
 /// to ask about its request, so its mark is cleared and it is sent, as that
