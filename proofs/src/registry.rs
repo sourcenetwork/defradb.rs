@@ -1760,6 +1760,38 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/database/db/tests/access/external_owed.rs a_registration_that_fails_after_its_commit_is_reported_with_its_reason, a_registration_with_no_authority_waits_for_a_credential_and_is_not_sent, changes_behind_a_parked_registration_go_once_it_is_given_a_credential, a_wait_says_pending_while_the_provider_is_away_and_ends_when_a_record_changes, only_the_actor_that_staged_a_refused_delete_lifts_its_denial_by_abandoning_it, an_abandoned_change_lets_the_changes_behind_it_go_and_only_a_refused_one_is_abandoned, a_refused_change_is_submitted_again_under_a_fresh_credential, a_change_the_provider_never_took_is_reported_as_discarded_and_not_as_settled, a_wait_is_for_a_transaction_of_this_run_and_for_its_callers_entries; crates/entry-points/defra-node/tests/unit/owed_report.rs only_the_actor_that_staged_a_refused_revocation_abandons_it, a_retry_of_an_owed_registration_never_reads_the_token_the_process_holds, a_request_that_carries_no_bearer_registers_nothing_under_a_token_the_process_holds, a_pass_sends_a_registration_with_whichever_owed_delegation_the_report_found",
     },
     Property {
+        // What a node owes a remote provider is counted per tuple, per
+        // object, per actor a delete names on an object, and for the node,
+        // each as one value in a staged part that only staging merges into
+        // and a settled part that only settling merges into. Staging and the
+        // deny decision read the staged part alone, validated, so a settle
+        // aborts none of them, while a delete committed after a decision
+        // refuses it. A fully settled count is never deleted: it stays one
+        // folded operand and reads as nothing owed.
+        family: "ACP outbox and owed registrations",
+        name: "INV_NoMissedRevoke / INV_SettleAbortsNobody / INV_OwedNotNegative: a settle never aborts a stager or a deny decision, a decision never commits past a delete it did not see, and nothing more is settled than was staged",
+        axis: Tla,
+        anchor: "crates/engine/acp/src/outbox/ops.rs owed_at, staged_parts, stage, settle, account, unsettled_validated, tuple_state; crates/engine/acp/src/outbox/deny.rs owed_denial, denial; crates/engine/acp/src/outbox/changes.rs OwedChanges::stage, VALIDATED_WITHIN_OF_NODE_LIMIT; crates/engine/acp/src/outbox/keys.rs tuple_key, object_key, subject_key, live_key, LEGACY_PREFIX; crates/engine/storage/src/backends/regolith/merge/owed.rs touches, fold, full",
+        model_ref: "MC_OwedParts_{Green,Red_SettleTouchesStaged,Red_UnvalidatedDecision,Red_UnguardedSettle}.cfg",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/database/db/tests/access/external_counts.rs staging_another_tuple_of_a_document_while_one_settles_commits, staging_the_same_tuple_while_its_earlier_change_settles_commits, staging_on_another_document_while_one_settles_commits, two_transactions_staging_one_tuple_still_conflict, a_decision_commits_past_a_settle_on_its_document, a_revocation_committed_after_a_decision_refuses_it, a_grant_committed_after_a_decision_does_not_refuse_it, every_kind_of_subject_is_denied_as_its_delete_says, what_is_fully_settled_or_rolled_back_owes_nothing, near_the_node_bound_stagers_are_ordered_and_settles_abort_none",
+    },
+    Property {
+        // The owed-state operand: four counters, each one part, added
+        // counter by counter. Folding is exact, associative and commutative;
+        // a fold touches what either operand touches; settling touches no
+        // staged part; under the write rule nothing settled passes what was
+        // staged; and a reader of the staged part with an older settled part
+        // can only find more owed.
+        family: "ACP outbox and owed registrations",
+        name: "apply_fold / fold_assoc / fold_comm / fold_exact / touches_fold / settle_touches_no_staged_part / stage_touches_staged / settled_le_staged / run_sound / late_settled_over_owes / late_settled_never_misses / fully_settled_owes_nothing: the owed-state counters fold exactly, settling and staging touch disjoint parts, what is owed is never negative, and a late settlement only denies more",
+        axis: Lean,
+        anchor: "crates/engine/storage/src/backends/regolith/merge/owed.rs delta, read, full, fold, touches, part",
+        model_ref: "OwedParts (lake build)",
+        tiers: &[Contract],
+        bound_by: "crates/engine/storage/src/backends/regolith/merge/tests/owed.rs owed_folds_obey_the_engine_contract, owed_touches_obey_the_engine_contract, staging_and_settling_touch_disjoint_parts, a_read_of_the_staged_part_meets_only_staging, a_fully_settled_value_owes_nothing_before_and_after_compaction",
+    },
+    Property {
         // Registrations of one document that race each write their own owner
         // key, so only the commit can refuse all but one. The deciding prefix
         // scan is a validated scan: a registration that commits under the

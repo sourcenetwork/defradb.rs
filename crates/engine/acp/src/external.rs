@@ -201,6 +201,7 @@ where
     /// the provider refuses stays owed, its document still readable only by
     /// its creator, and is counted in [`RedriveReport::failed`].
     pub async fn redrive_owed(&self) -> Result<RedriveReport> {
+        self.warn_of_legacy_changes().await?;
         let mut report = RedriveReport::default();
         let mut start = PENDING_PREFIX.to_vec();
         loop {
@@ -233,6 +234,19 @@ where
                 }
             }
         }
+    }
+
+    /// Say, at start, when the store holds owed changes in the layout before
+    /// their counts were split: nothing submits them and none of them denies.
+    async fn warn_of_legacy_changes(&self) -> Result<()> {
+        let txn = self.store.new_txn(true).await.map_err(storage_error)?;
+        if crate::outbox::legacy_records(&txn).await? {
+            tracing::error!(
+                target: "acp::audit",
+                "This store holds relationship changes owed to the ACP provider in a layout this version does not read: they are not submitted and an owed revocation among them no longer denies. Settle them with the version that staged them, or re-apply them, before relying on this node's access decisions"
+            );
+        }
+        Ok(())
     }
 
     async fn owed_page(&self, start: &[u8]) -> Result<Vec<PendingRegistration>> {
