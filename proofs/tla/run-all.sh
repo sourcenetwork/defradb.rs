@@ -766,6 +766,8 @@ RUNS=(
   "MC_ProjectionRelationship_Green.cfg ProjectionRelationship.tla GREEN"
   "MC_ExactRelationshipObservation_Green.cfg ExactRelationshipObservation.tla GREEN"
   "MC_ExactRelationshipObservation_Red.cfg ExactRelationshipObservation.tla RED"
+  "MC_ExactRelationshipObservation_Green_Exhausted.cfg ExactRelationshipObservation.tla GREEN" # refused only once every ask was overtaken
+  "MC_ExactRelationshipObservation_Red_NoRetry.cfg ExactRelationshipObservation.tla RED" # INV_FailsOnlyWhenEveryAskOvertaken
   "MC_ProjectionActor_Green.cfg ProjectionActor.tla GREEN"
   "MC_ProjectionActor_Red.cfg ProjectionActor.tla RED"
   "MC_ProjectionRelationship_Green_context.cfg ProjectionRelationship.tla GREEN"
