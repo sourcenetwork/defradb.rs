@@ -302,6 +302,8 @@ CONSTANTS
   AbandonBy,                 \* who may abandon a change: see Abandon
   Journaled,                 \* TRUE: changes go through the worker's journal (the drainer)
   Note,                      \* TRUE: a request resolved by someone else leaves a note of its outcome
+  Floor,                     \* TRUE: a note found by digest counts only from the mark's sequence on
+  Captured,                  \* TRUE: a journaled request lands under the credential it carries
   MaxBatch,                  \* how many changes one request may carry
   Isolate                    \* TRUE: a refused batch is sent again one change at a time
 
@@ -320,6 +322,7 @@ ASSUME RegRetry \in {"recorded", "ambient"}                \* a known retry rule
 ASSUME AbandonStates \in {"refused", "any"}                \* a known abandon rule
 ASSUME AbandonBy \in {"actor", "anyone"}                   \* a known abandon rule
 ASSUME Journaled \in BOOLEAN /\ Note \in BOOLEAN /\ Isolate \in BOOLEAN  \* switches
+ASSUME Floor \in BOOLEAN /\ Captured \in BOOLEAN                \* switches
 ASSUME MaxBatch \in {1, 2}                                 \* one change a request, or two
 
 Slots == 1..MaxChanges       \* the sequence numbers
@@ -329,6 +332,8 @@ Abandoners == Actors \cup {"g"}  \* who may ask to abandon a change: an actor, o
 
 \* A slot nobody staged holds this placeholder.
 NoChange == [subj |-> "-", op |-> "-", actor |-> "-", auth |-> "-"]
+\* A slot never marked names no request.
+NoDigest == [c |-> <<>>, g |-> 0]
 \* Everything a transaction may stage: a subject, add or delete, who asks,
 \* and how the request will be signed.
 Changes == [subj : Subjects, op : {"add", "del"}, actor : Actors, auth : Auths]
@@ -366,17 +371,29 @@ VARIABLES
                 \* request's digest, "hash" its digest and its transaction hash
   journal,      \* the slots of the request the worker's journal holds, {} if none
   landed,       \* TRUE once the request in the journal has executed on the provider
-  noted,        \* per slot: the outcome the provider's note keeps, "none" if none
+  noted,        \* the provider's note: one entry per request resolved by another, with
+                \* the request's digest, its outcome, and the slots whose stored
+                \* sequence floor its sequence reaches ("fresh")
   solo,         \* the slots to be sent in a request of their own, stored
   tx,           \* per slot: the transaction that staged it (its first slot)
-  cur           \* in memory: the slots of the request the drainer is working on
+  cur,          \* in memory: the slots of the request the drainer is working on
+  dg,           \* per slot, stored with the mark: the digest of its request (NoDigest if none)
+  cg,           \* per slot: the generation of the delegation its journaled request carries
+  gen,          \* the generation of the stored delegation: one more each time a fresh
+                \* one replaces an expired one
+  jfresh,       \* the slots marked when the journaled request was signed: its
+                \* sequence reaches their floors
+  stale         \* the slots that took effect under a delegation that had expired
 
 \* How the registration was sent, and what is kept of discarded changes.
 rest == <<regVia, tomb, acked>>
 \* The record of the owed registration, and what became of abandoned changes.
 more == <<regAuth, regOk, regBy, regPark, regNote, regFail, gone, late, rest>>
+\* What a journaled request names and carries: its digest, its credential,
+\* and the sequence it was signed with.
+keyed == <<dg, cg, gen, jfresh, stale>>
 \* What the journaled drain keeps: the marks, the journal, the note, batches.
-drain == <<flight, journal, landed, noted, solo, tx, cur>>
+drain == <<flight, journal, landed, noted, solo, tx, cur, keyed>>
 
 vars == <<doc, owedReg, st, chg, receipt, effects, checked, chk, rolled,
           chainOwner, chainTuples, up, delegOk, crashes, expiries, more,
@@ -410,7 +427,10 @@ TypeOK ==
   /\ tomb \subseteq Slots /\ acked \subseteq Slots          \* some slots
   /\ flight \in [Slots -> {"-", "digest", "hash"}]          \* a known mark each
   /\ journal \subseteq Slots /\ landed \in BOOLEAN          \* a request or none, a flag
-  /\ noted \in [Slots -> {"none", "ok", "rejected", "lapsed"}]  \* a known outcome each
+  /\ \A e \in noted : e.o \in {"ok", "rejected"} /\ e.fresh \subseteq Slots  \* known entries
+  /\ DOMAIN dg = Slots /\ cg \in [Slots -> 0..MaxExpiries]   \* a digest and a generation each
+  /\ gen \in 0..MaxExpiries                                  \* a small count
+  /\ jfresh \subseteq Slots /\ stale \subseteq Slots         \* some slots
   /\ solo \subseteq Slots /\ cur \subseteq Slots            \* some slots
   /\ tx \in [Slots -> 0..MaxChanges]                        \* a transaction each
 
@@ -441,7 +461,9 @@ Init ==
   /\ tomb = {} /\ acked = {}                              \* nothing was discarded
   /\ flight = [s \in Slots |-> "-"]                       \* nothing is in flight
   /\ journal = {} /\ landed = FALSE                       \* the journal is empty
-  /\ noted = [s \in Slots |-> "none"]                     \* the note is empty
+  /\ noted = {}                                           \* the note is empty
+  /\ dg = [s \in Slots |-> NoDigest] /\ cg = [s \in Slots |-> 0]  \* nothing is marked
+  /\ gen = 0 /\ jfresh = {} /\ stale = {}                  \* the first delegation, nothing signed
   /\ solo = {} /\ cur = {}                                \* no batch refused, no request held
   /\ tx = [s \in Slots |-> 0]                             \* no slot is staged
 
@@ -472,6 +494,13 @@ OpenTxn == doc = "open" \/ \E s \in Slots : st[s] = "open"
 \* The change can be signed now: the node's own key always can, a delegation
 \* only while it is valid.
 Valid(s) == chg[s].auth = "node" \/ delegOk
+\* A journaled change's request can be executed: signed with the node's own
+\* key, or with the delegation it carries while that one is still valid. A
+\* fresh delegation handed in since is not in its bytes. The bug (Captured =
+\* FALSE) takes the stored delegation, which a fresh one renews.
+JValid(s) ==
+  IF Captured THEN chg[s].auth = "node" \/ (cg[s] = gen /\ delegOk)
+  ELSE Valid(s)
 \* A set of tuples lets this reader in: by name, or through "everyone".
 Carries(T, who) == who \in T \/ "*" \in T
 
@@ -637,7 +666,7 @@ Commit ==
                                  THEN FirstOpen           \*   is named by the first of them
                                  ELSE tx[s]]
            ELSE tx                                        \* else nobody asks
-  /\ UNCHANGED <<flight, journal, landed, noted, solo, cur>>  \* nothing is sent at a commit
+  /\ UNCHANGED <<flight, journal, landed, noted, solo, cur, keyed>>  \* nothing is sent at a commit
 
 \* What a discarded transaction leaves of its changes. Owned by the
 \* transaction, they are gone with it. Written beside it (the bug), they
@@ -690,7 +719,7 @@ Crash ==
   /\ cur' = {}                                            \* nor which request it held
   /\ flight' = IF Marker THEN flight                      \* the marks are stored,
               ELSE [s \in Slots |-> "-"]                  \* or (bug) they are lost
-  /\ UNCHANGED <<journal, landed, noted, solo, tx>>       \* the provider's journal and note stay
+  /\ UNCHANGED <<journal, landed, noted, solo, tx, keyed>>  \* the provider's journal and note stay
   /\ UNCHANGED <<receipt, effects, chainOwner, chainTuples, up, delegOk, expiries>>
   /\ UNCHANGED chk                                       \* what was checked stays so
   /\ UNCHANGED more                                      \* and so do the registration's record and what was abandoned
@@ -960,10 +989,15 @@ Lookup(s) ==
 \*   4. sends it and waits for its receipt (JLand, JResolve).
 \* Whoever finds a request still in the journal sends it and waits for its
 \* receipt: the provider at start, another command before its own
-\* (JRecover). That one keeps a note of the outcome under the digest. A
-\* change still marked when nothing in memory holds its request is decided
-\* by the journal (JAdopt), else by a receipt found by its hash or by the
-\* note found by its digest, else it is sent again (JDecide).
+\* (JRecover). That one keeps a note of the outcome under the digest, with
+\* the sequence the request was signed with. A change still marked when
+\* nothing in memory holds its request is decided by the journal (JAdopt),
+\* else by a receipt found by its hash or by the note found by its digest
+\* among the requests signed from the floor stored with its mark on (Floor),
+\* else it is sent again (JDecide). Two requests with the same changes and
+\* the same delegation have the same digest. A journaled request carries
+\* its delegation: it lands only while that one is valid (Captured), and a
+\* fresh one handed in later is for the requests built after it.
 
 \* The changes in R can go as one request: one change, or (MaxBatch = 2)
 \* changes staged one after the other by one transaction, none of which had
@@ -987,10 +1021,21 @@ AppliedAll(R) ==
      IN IF S = {} THEN t \in chainTuples                  \* untouched: as it was
         ELSE chg[Last(S)].op = "add"}                     \* else the last one decides
 
+\* The digest of the request for R: the bytes of its changes in order, and
+\* of the delegation it carries. Two requests with the same changes and the
+\* same delegation have the same digest (a delegation used again for the
+\* same command), and only their sequences tell them apart.
+Digest(R) ==
+  [c |-> IF Cardinality(R) = 1 THEN <<chg[Last(R)]>>
+         ELSE <<chg[CHOOSE s \in R : \A r \in R : s <= r], chg[Last(R)]>>,
+   g |-> IF \E r \in R : chg[r].auth = "deleg" THEN gen ELSE 0]
+
 \* The drainer builds the request for R and stores its digest with every
-\* change of R, durably, before anything is put in the journal.
-\* The unchecked changes the request passes are removed as Mark removes
-\* them. Any receipt or note left from an earlier request is not this one's.
+\* change of R, durably, before anything is put in the journal, and with it
+\* the worker's next sequence: every request signed from now on reaches
+\* that floor, and every earlier one, the note's entries among them, does
+\* not. The unchecked changes the request passes are removed as Mark
+\* removes them. Any receipt left from an earlier request is not this one's.
 JMark(R) ==
   /\ Journaled /\ cur = {}                                 \* the journaled drain, idle
   /\ Batch(R)                                              \* the request may go
@@ -1000,10 +1045,12 @@ JMark(R) ==
                             ELSE st[r]]                    \* the rest stays
   /\ flight' = [r \in Slots |-> IF r \in R THEN "digest" ELSE flight[r]]  \* with the digest
   /\ receipt' = [r \in Slots |-> IF r \in R THEN "none" ELSE receipt[r]]  \* a new request:
-  /\ noted' = [r \in Slots |-> IF r \in R THEN "none" ELSE noted[r]]      \* nothing known of it
+  /\ noted' = {[e EXCEPT !.fresh = e.fresh \ R] : e \in noted}  \* below the new floor
+  /\ dg' = [r \in Slots |-> IF r \in R THEN Digest(R) ELSE dg[r]]  \* the request it names
+  /\ cg' = [r \in Slots |-> IF r \in R THEN gen ELSE cg[r]]  \* and the delegation it carries
   /\ cur' = R                                              \* held in memory
   /\ tomb' = Noted({r \in Slots \ R : \E s \in R : Passed(r, s)})  \* removals are noted
-  /\ UNCHANGED <<journal, landed, solo, tx>>               \* nothing is journaled yet
+  /\ UNCHANGED <<journal, landed, solo, tx, gen, jfresh, stale>>  \* nothing is journaled yet
   /\ UNCHANGED <<regAuth, regOk, regBy, regPark, regNote, regFail, gone, late,
                  regVia, acked>>
   /\ UNCHANGED <<doc, owedReg, chg, effects, checked, chk, rolled,
@@ -1015,7 +1062,8 @@ JPrepare ==
   /\ Journaled /\ cur # {} /\ journal = {}                 \* a request held, the journal free
   /\ \A s \in cur : st[s] = "inflight" /\ flight[s] = "digest"  \* marked with its digest
   /\ journal' = cur /\ landed' = FALSE                     \* journaled, not yet executed
-  /\ UNCHANGED <<flight, noted, solo, tx, cur>>            \* the marks stay
+  /\ jfresh' = {s \in Slots : flight[s] # "-"}            \* signed after every mark stored now
+  /\ UNCHANGED <<flight, noted, solo, tx, cur, dg, cg, gen, stale>>  \* the marks stay
   /\ UNCHANGED <<doc, owedReg, st, chg, receipt, effects, checked, chk, rolled,
                  chainOwner, chainTuples, up, delegOk, crashes, expiries>>
   /\ UNCHANGED more                                        \* the registration's record stays
@@ -1025,7 +1073,7 @@ JHash ==
   /\ Journaled /\ cur # {} /\ journal = cur                \* its request is journaled
   /\ \E s \in cur : flight[s] = "digest"                   \* and the hash is not stored yet
   /\ flight' = [s \in Slots |-> IF s \in cur THEN "hash" ELSE flight[s]]  \* now it is
-  /\ UNCHANGED <<journal, landed, noted, solo, tx, cur>>   \* the rest stays
+  /\ UNCHANGED <<journal, landed, noted, solo, tx, cur, keyed>>  \* the rest stays
   /\ UNCHANGED <<doc, owedReg, st, chg, receipt, effects, checked, chk, rolled,
                  chainOwner, chainTuples, up, delegOk, crashes, expiries>>
   /\ UNCHANGED more                                        \* the registration's record stays
@@ -1033,23 +1081,26 @@ JHash ==
 \* The request in the journal executes on the provider, once: a request sent
 \* again is the same signed bytes and is executed once (PendingSubmission.tla).
 \* Whoever sends it, the drainer or another, it may do so before the hash is
-\* stored. The provider applies every change of it when all are signable and
-\* from the document's owner, and none otherwise, and receipts the request.
+\* stored. The provider applies every change of it when all are from the
+\* document's owner and the credentials it carries are valid, and none
+\* otherwise, and receipts the request.
 JLand ==
   /\ Journaled /\ journal # {} /\ ~landed /\ up            \* journaled, not executed, reachable
   /\ landed' = TRUE                                        \* it executes once
-  /\ IF \A s \in journal : chg[s].actor = chainOwner /\ Valid(s)
+  /\ IF \A s \in journal : chg[s].actor = chainOwner /\ JValid(s)
      THEN /\ chainTuples' = AppliedAll(journal)            \* all applied,
           /\ effects' = [s \in Slots |->                   \* each counted,
                 IF s \in journal /\ effects[s] < 2 THEN effects[s] + 1 ELSE effects[s]]
           /\ receipt' = [s \in Slots |-> IF s \in journal THEN "ok" ELSE receipt[s]]
+          /\ stale' = stale \cup {s \in journal :           \* (bug) under an expired delegation
+                         chg[s].auth = "deleg" /\ ~(cg[s] = gen /\ delegOk)}
      ELSE /\ receipt' = [s \in Slots |->                  \* or none, and rejected,
                 IF s \notin journal THEN receipt[s]
-                ELSE IF Valid(s) THEN "rejected"           \*   for what it asks,
+                ELSE IF JValid(s) THEN "rejected"          \*   for what it asks,
                 ELSE "lapsed"]                             \*   or for its credential
-          /\ UNCHANGED <<chainTuples, effects>>            \* and nothing changes
+          /\ UNCHANGED <<chainTuples, effects, stale>>     \* and nothing changes
   /\ late' = late \cup {s \in journal : st[s] = "abandoned"}  \* landed after its abandonment
-  /\ UNCHANGED <<flight, journal, noted, solo, tx, cur>>   \* the rest of the drain stays
+  /\ UNCHANGED <<flight, journal, noted, solo, tx, cur, dg, cg, gen, jfresh>>  \* the rest stays
   /\ UNCHANGED <<regAuth, regOk, regBy, regPark, regNote, regFail, gone, rest>>
   /\ UNCHANGED <<doc, owedReg, st, chg, checked, chk, rolled,
                  chainOwner, up, delegOk, crashes, expiries>>
@@ -1081,7 +1132,7 @@ JResolve ==
         /\ tomb' = Noted({s \in cur : next[s] = "dropped"})  \* removals are noted
   /\ flight' = [s \in Slots |-> IF s \in cur THEN "-" ELSE flight[s]]  \* no longer in flight
   /\ journal' = {} /\ cur' = {}                            \* the journal and memory are free
-  /\ UNCHANGED <<landed, noted, tx>>                       \* the rest of the drain stays
+  /\ UNCHANGED <<landed, noted, tx, keyed>>                \* the rest of the drain stays
   /\ UNCHANGED <<regAuth, regOk, regBy, regPark, regNote, regFail, gone, late,
                  regVia, acked>>
   /\ UNCHANGED <<doc, owedReg, chg, receipt, effects, checked, chk, rolled,
@@ -1090,17 +1141,21 @@ JResolve ==
 \* Someone other than the drainer resolves the request in the journal: the
 \* provider at start, another command before its own, or the drainer's
 \* own pass after a wait for it was dropped. It keeps a note of the
-\* outcome under the request's digest (Note; the bug keeps none). A drainer
-\* that held the request no longer finds it journaled and decides by what is
-\* stored.
+\* outcome under the request's digest, with the sequence the request was
+\* signed with (Note; the bug keeps none). A drainer that held the request
+\* no longer finds it journaled and decides by what is stored.
 JRecover ==
   /\ Journaled /\ journal # {} /\ landed /\ up              \* an executed request
   /\ noted' = IF Note                                      \* its outcome is noted,
-              THEN [s \in Slots |-> IF s \in journal THEN receipt[s] ELSE noted[s]]
+              THEN noted \cup
+                     {[d |-> dg[CHOOSE s \in journal : TRUE],
+                       o |-> IF \A s \in journal : receipt[s] = "ok"
+                             THEN "ok" ELSE "rejected",
+                       fresh |-> jfresh]}
               ELSE noted                                   \* or (bug) forgotten
   /\ journal' = {}                                         \* the journal is free
   /\ cur' = IF cur = journal THEN {} ELSE cur              \* the drainer lets it go too
-  /\ UNCHANGED <<flight, landed, solo, tx>>                \* the marks stay
+  /\ UNCHANGED <<flight, landed, solo, tx, keyed>>         \* the marks stay
   /\ UNCHANGED <<doc, owedReg, st, chg, receipt, effects, checked, chk, rolled,
                  chainOwner, chainTuples, up, delegOk, crashes, expiries>>
   /\ UNCHANGED more                                        \* the registration's record stays
@@ -1113,7 +1168,7 @@ JDrop ==
   /\ crashes < MaxCrashes                                  \* drops are not endless
   /\ crashes' = crashes + 1                                \* one more
   /\ cur' = {}                                             \* and forgotten
-  /\ UNCHANGED <<flight, journal, landed, noted, solo, tx>>  \* the rest stays
+  /\ UNCHANGED <<flight, journal, landed, noted, solo, tx, keyed>>  \* the rest stays
   /\ UNCHANGED <<doc, owedReg, st, chg, receipt, effects, checked, chk, rolled,
                  chainOwner, chainTuples, up, delegOk, expiries>>
   /\ UNCHANGED more                                        \* the registration's record stays
@@ -1124,17 +1179,26 @@ JAdopt ==
   /\ Journaled /\ cur = {} /\ journal # {}                 \* idle, a request journaled
   /\ \E s \in journal : st[s] = "inflight" /\ flight[s] # "-"  \* its own
   /\ cur' = journal                                        \* held again
-  /\ UNCHANGED <<flight, journal, landed, noted, solo, tx>>  \* the rest stays
+  /\ UNCHANGED <<flight, journal, landed, noted, solo, tx, keyed>>  \* the rest stays
   /\ UNCHANGED <<doc, owedReg, st, chg, receipt, effects, checked, chk, rolled,
                  chainOwner, chainTuples, up, delegOk, crashes, expiries>>
   /\ UNCHANGED more                                        \* the registration's record stays
 
+\* The note's entries for marked change s: those under its request's
+\* digest whose sequence reaches the floor stored with its mark. Without the
+\* floor (the bug) an earlier request with the same bytes counts too. With
+\* the hash stored the code reads the entry of that transaction alone; a
+\* request with the same bytes signed after the mark would have to carry a
+\* later change of the same tuple, which waits behind this one.
+NotedFor(s) ==
+  {e \in noted : e.d = dg[s] /\ (Floor => s \in e.fresh)}
+
 \* What is known of marked change s with its request out of the journal: a
-\* receipt found by the stored hash, else the note found by the digest,
-\* else nothing.
+\* receipt found by the stored hash, else the note, else nothing.
 Known(s) ==
   IF flight[s] = "hash" /\ receipt[s] # "none" THEN receipt[s]
-  ELSE noted[s]
+  ELSE IF NotedFor(s) = {} THEN "none"
+  ELSE (CHOOSE e \in NotedFor(s) : TRUE).o
 
 \* The drainer decides a marked change no request in memory or in the
 \* journal holds. Applied: its record is deleted. Rejected: it had no
@@ -1150,7 +1214,7 @@ JDecide(s) ==
   /\ solo' = IF Known(s) \in {"rejected", "lapsed"}       \* rejected: alone next
              THEN solo \cup {s} ELSE solo
   /\ flight' = [flight EXCEPT ![s] = "-"]                  \* the mark is cleared
-  /\ UNCHANGED <<journal, landed, noted, tx, cur>>          \* the rest of the drain stays
+  /\ UNCHANGED <<journal, landed, noted, tx, cur, keyed>>   \* the rest of the drain stays
   /\ UNCHANGED <<doc, owedReg, chg, receipt, effects, checked, chk, rolled,
                  chainOwner, chainTuples, up, delegOk, crashes, expiries>>
   /\ UNCHANGED more                                        \* the registration's record stays
@@ -1169,16 +1233,19 @@ AwaitAuthority(s) ==
   /\ UNCHANGED drain                                     \* the journaled drain is not involved
 
 \* The change's actor hands the node a fresh delegation, checked as the one
-\* it was staged with: the change is owed again.
+\* it was staged with: the change is owed again. A fresh one in place of an
+\* expired one is another generation; a request journaled with the old one
+\* still carries the old one.
 Reauthorize(s) ==
   /\ st[s] = "awaiting"                                   \* it waits for authority
   /\ st' = [st EXCEPT ![s] = "staged"]                    \* owed again
   /\ delegOk' = TRUE                                      \* with a valid delegation
+  /\ gen' = IF Journaled /\ ~delegOk THEN gen + 1 ELSE gen  \* a new one, where it matters
   /\ UNCHANGED <<doc, owedReg, chg, receipt, effects, checked, rolled,
                  chainOwner, chainTuples, up, crashes, expiries>>
   /\ UNCHANGED chk                                       \* what was checked stays so
   /\ UNCHANGED more                                      \* and so do the registration's record and what was abandoned
-  /\ UNCHANGED drain                                     \* the journaled drain is not involved
+  /\ UNCHANGED <<flight, journal, landed, noted, solo, tx, cur, dg, cg, jfresh, stale>>
 
 \* A change is abandoned: its record is deleted without the provider holding
 \* it. Only a change the provider refused may go (AbandonStates = "refused"):
@@ -1259,12 +1326,12 @@ ReceiptLost(s) ==
   /\ st[s] = "inflight" /\ receipt[s] = "ok"              \* landed, not yet noticed
   /\ s \notin journal                                     \* and no longer journaled
   /\ receipt' = [receipt EXCEPT ![s] = "none"]            \* and now unreadable,
-  /\ noted' = [noted EXCEPT ![s] = "none"]                \* in the note too
+  /\ noted' = noted \ NotedFor(s)                        \* in the note too
   /\ UNCHANGED <<doc, owedReg, st, chg, effects, checked, rolled,
                  chainOwner, chainTuples, up, delegOk, crashes, expiries>>
   /\ UNCHANGED chk                                       \* what was checked stays so
   /\ UNCHANGED more                                      \* and so do the registration's record and what was abandoned
-  /\ UNCHANGED <<flight, journal, landed, solo, tx, cur>>  \* the rest of the drain stays
+  /\ UNCHANGED <<flight, journal, landed, solo, tx, cur, keyed>>  \* the rest of the drain stays
 
 \* Someone else takes the document over on the provider, after the node
 \* checked a change against the owner it then had. Possible only without
@@ -1421,6 +1488,15 @@ INV_RefusedOnItsOwn ==
 
 \* Nothing of an abandoned change reaches the provider afterwards.
 INV_AbandonIsFinal == late = {}
+
+\* A change whose record was deleted as settled took effect on the provider:
+\* nobody's outcome but its own request's decides it.
+INV_SettledTookEffect == \A s \in Slots : st[s] = "settled" => effects[s] >= 1
+
+\* A journaled request takes effect only under the delegation it carries,
+\* while that one is valid: a fresh delegation handed in later renews no
+\* request already signed.
+INV_LandsUnderItsCredential == stale = {}
 
 \* A parked change of the same tuple, staged earlier, holds this one.
 Held(s) == \E r \in Slots : Holds(r, s)

@@ -669,6 +669,9 @@ RUNS=(
   "MC_AcpOutbox_Red_JournalNoNote.cfg AcpOutbox.tla RED" # a request resolved by another leaves no note: a change marked with its digest alone is sent again (INV_AtMostOneEffect)
   "MC_AcpOutbox_Red_JournalReceiptLost.cfg AcpOutbox.tla RED" # receipt and note can no longer be read: the drainer sends a landed change again (INV_AtMostOneEffect)
   "MC_AcpOutbox_Red_BatchNotIsolated.cfg AcpOutbox.tla RED" # a refused batch is parked whole: the owner's change is parked for another's refusal (INV_RefusedOnItsOwn)
+  "MC_AcpOutbox_Green_JournalSameBytes.cfg AcpOutbox.tla GREEN" # requests with the same bytes: a note counts only from the mark's sequence floor on, so every settled change took effect
+  "MC_AcpOutbox_Red_JournalNoFloor.cfg AcpOutbox.tla RED" # a note of an earlier request with the same bytes settles a change that was never sent (INV_SettledTookEffect)
+  "MC_AcpOutbox_Red_JournalRenewedCredential.cfg AcpOutbox.tla RED" # a fresh delegation renews a request journaled with an expired one (INV_LandsUnderItsCredential)
   "MC_RegisterDocOnce_Green.cfg RegisterDocOnce.tla GREEN" # racing registrations of one document: one owner, the winner owns it, one wins
   "MC_RegisterDocOnce_Red_NoValidation.cfg RegisterDocOnce.tla RED" # deciding scan not validated: two owners (INV_OneOwner)
   "MC_RegisterDocOnce_Red_Sentinel.cfg RegisterDocOnce.tla RED" # main before the fix: the identical sentinel write commits, two owners (INV_OneOwner)
