@@ -138,10 +138,10 @@ fn a_replay_cut_short_still_owes_what_it_learnt_and_taints_its_object() {
 
     assert!(block_on(reconcile(&mut journal, &deployment, 1)).is_err());
     assert_eq!(journal.handled_term(), 0, "the term is still unchecked");
-    assert_eq!(journal.undelivered(), &[lost_grant(false)]);
 
     // Run again, the revocation is held (its replay was refused, and spent
-    // its sequence); the grant after it executes, and is owed behind it.
+    // its sequence); it is sent again all the same, and the grant after it,
+    // which executes, is owed behind it.
     deployment.unreachable_after = None;
     let checked = block_on(reconcile(&mut journal, &deployment, 1)).unwrap();
     assert_eq!(
@@ -149,6 +149,86 @@ fn a_replay_cut_short_still_owes_what_it_learnt_and_taints_its_object() {
         Reconciled::Checked {
             owed: vec![lost_grant(false), lost_grant(true)]
         }
+    );
+    assert_eq!(journal.replaying(), None);
+}
+
+#[test]
+fn a_refused_revocation_whose_answer_was_lost_is_still_owed_after_a_restart() {
+    let directory = tempfile::tempdir().unwrap();
+    let reader = reader();
+    let kept = confirmed(wire(0, "bae-0", register()), 5);
+    let revoked = confirmed(wire(1, "bae-1", revoke(&reader)), 6);
+    let mut journal = journal(directory.path(), &[kept.clone(), revoked.clone()]);
+    // The revocation is sent again and refused, and the node stops before
+    // it learns so: the deployment holds the refused request, so asking it
+    // shows nothing missing.
+    let mut deployment = Deployment::holding([&kept]).refuse(&revoked);
+    deployment.answer_lost_at = Some(0);
+    assert!(block_on(reconcile(&mut journal, &deployment, 1)).is_err());
+    drop(journal);
+
+    let mut journal = Journal::open(directory.path(), 0).unwrap();
+    deployment.answer_lost_at = None;
+    let checked = block_on(reconcile(&mut journal, &deployment, 1)).unwrap();
+    assert_eq!(
+        checked,
+        Reconciled::Checked {
+            owed: vec![lost_grant(false)]
+        },
+        "the revocation is owed although the deployment holds its refused replay"
+    );
+}
+
+#[test]
+fn a_replay_an_earlier_term_left_unfinished_is_sent_again_under_the_next() {
+    let directory = tempfile::tempdir().unwrap();
+    let reader = reader();
+    let kept = confirmed(wire(0, "bae-0", register()), 5);
+    let revoked = confirmed(wire(1, "bae-1", revoke(&reader)), 6);
+    let mut journal = journal(directory.path(), &[kept.clone(), revoked.clone()]);
+    let mut deployment = Deployment::holding([&kept]).refuse(&revoked);
+    deployment.answer_lost_at = Some(0);
+    assert!(block_on(reconcile(&mut journal, &deployment, 1)).is_err());
+
+    // A second takeover keeps everything: still the revocation is owed.
+    deployment.answer_lost_at = None;
+    let checked = block_on(reconcile(&mut journal, &deployment, 2)).unwrap();
+    assert_eq!(
+        checked,
+        Reconciled::Checked {
+            owed: vec![lost_grant(false)]
+        }
+    );
+}
+
+#[test]
+fn a_read_that_a_term_check_overtook_is_refused() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut journal = Journal::open(directory.path(), 0).unwrap();
+    let follow = Follow::from_journal(&journal);
+    let epoch = follow.admit(0).unwrap();
+    // While the read is on its way a term is certified and checked.
+    block_on(reconcile(&mut journal, &Deployment::default(), 1)).unwrap();
+    follow.update(&journal);
+    follow.admit(1).expect("the checked term admits new reads");
+    assert!(
+        follow.still(epoch, 1).is_err(),
+        "an answer from before the check is not served"
+    );
+    follow.still(1, 1).expect("one read at the checked term is");
+}
+
+#[test]
+fn a_checked_term_is_published_with_what_it_leaves_to_owe() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut journal = Journal::open(directory.path(), 0).unwrap();
+    let follow = Follow::from_journal(&journal);
+    journal.handled(1, vec![lost_grant(false)]).unwrap();
+    follow.update(&journal);
+    assert!(
+        follow.admit(1).is_err(),
+        "the owed revocation blocks admission"
     );
 }
 

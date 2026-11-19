@@ -97,6 +97,18 @@ struct Meta {
     undelivered: Vec<Lost>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     closed: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    replaying: Option<Replaying>,
+}
+
+/// A replay begun and not finished: the term it checks, and the first
+/// sequence it sends again. Every entry from there on is sent again on the
+/// next check, whatever the deployment holds by then: a refused replay is
+/// held, and only this mark still says its effect is lost.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Replaying {
+    pub term: u64,
+    pub from: u64,
 }
 
 /// What the journal knows of one entry without reading it.
@@ -203,11 +215,13 @@ impl Journal {
             let pruned = self.entry(oldest.sequence)?;
             // The floor is stored before the entry goes, so a crash between
             // the two leaves an entry the floor already vouches for.
-            self.meta.floor = Some(Floor::Pruned {
-                sequence: pruned.sequence,
-                submission: pruned.submission,
-            });
-            self.write_meta()?;
+            self.commit(Meta {
+                floor: Some(Floor::Pruned {
+                    sequence: pruned.sequence,
+                    submission: pruned.submission,
+                }),
+                ..self.meta.clone()
+            })?;
             remove(&self.entry_path(oldest.sequence))?;
             self.entries.pop_front();
             self.bytes -= oldest.bytes;
@@ -248,28 +262,59 @@ impl Journal {
         self.meta.closed.as_deref()
     }
 
-    /// Records that `term` was checked and what it voided that is still to
-    /// be handed over.
+    /// The replay begun and not finished, if any.
+    pub(crate) fn replaying(&self) -> Option<Replaying> {
+        self.meta.replaying
+    }
+
+    /// Records, before anything is sent again, that the check of `term`
+    /// sends again every entry from sequence `from` on.
+    pub(crate) fn begin_replay(&mut self, term: u64, from: u64) -> Result<(), JournalError> {
+        self.commit(Meta {
+            replaying: Some(Replaying { term, from }),
+            ..self.meta.clone()
+        })
+    }
+
+    /// Records that `term` was checked, its replay finished, and what it
+    /// voided that is still to be handed over.
     pub(crate) fn handled(
         &mut self,
         term: u64,
         undelivered: Vec<Lost>,
     ) -> Result<(), JournalError> {
-        self.meta.handled_term = self.meta.handled_term.max(term);
-        self.meta.undelivered = undelivered;
-        self.write_meta()
+        self.commit(Meta {
+            handled_term: self.meta.handled_term.max(term),
+            undelivered,
+            replaying: None,
+            ..self.meta.clone()
+        })
     }
 
     /// Records that what was owed again was handed over.
     pub(crate) fn delivered(&mut self) -> Result<(), JournalError> {
-        self.meta.undelivered.clear();
-        self.write_meta()
+        self.commit(Meta {
+            undelivered: Vec::new(),
+            ..self.meta.clone()
+        })
     }
 
     /// Records that the node cannot tell what a term voided, and why.
     pub(crate) fn close(&mut self, reason: String) -> Result<(), JournalError> {
-        self.meta.closed = Some(reason);
-        self.write_meta()
+        self.commit(Meta {
+            closed: Some(reason),
+            ..self.meta.clone()
+        })
+    }
+
+    /// Writes `next` and only then takes it as the journal's state, so what
+    /// the journal reports is never ahead of its file. A failed write keeps
+    /// the state it had; the file then holds that state or `next` (the
+    /// rename is atomic), and the next write that succeeds settles it.
+    fn commit(&mut self, next: Meta) -> Result<(), JournalError> {
+        self.write(&self.directory.join(META), &next)?;
+        self.meta = next;
+        Ok(())
     }
 
     fn entry_path(&self, sequence: u64) -> PathBuf {

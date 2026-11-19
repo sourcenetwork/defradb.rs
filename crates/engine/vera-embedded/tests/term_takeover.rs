@@ -325,10 +325,19 @@ async fn a_provider_follows_a_confirmed_takeover_and_sends_again_what_it_voided(
     let mut phone = EmbeddedNode::start(phone_device.backup.clone())
         .await
         .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(60);
     let change = loop {
         match phone.takeover_change().await {
             Ok(change) => break change,
-            Err(EmbedError::Term(TermRefusal::NotAtCut { .. })) => {}
+            // Still executing blocks it holds; each call waits for that up
+            // to the device's answer timeout.
+            Err(EmbedError::Term(TermRefusal::NotAtCut { head, cut })) => {
+                assert!(
+                    Instant::now() < deadline,
+                    "the phone stayed at block {cut} below finalized block {head}"
+                );
+                nuclei::time::sleep(Duration::from_millis(200)).await;
+            }
             Err(error) => panic!("{error}"),
         }
     };

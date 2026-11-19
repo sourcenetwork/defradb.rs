@@ -19,10 +19,11 @@
 //! term that may have voided more than the journal keeps fails closed for
 //! good, with the reason (`proofs/tla/FollowDeployment.tla`).
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 
 use alloy_primitives::B256;
 use defra_core::thread_bounds::MaybeBoxFuture;
+use regolith::sync::Atom;
 
 use crate::provider::ProviderError;
 
@@ -60,13 +61,28 @@ pub(crate) struct Replayed {
     pub height: u64,
 }
 
-/// Where the provider stands with the deployment's terms. Read on every
-/// decision without waiting.
-#[derive(Debug, Default)]
+/// Where the provider stands with the deployment's terms: the term last
+/// checked, whether changes it voided still wait to be owed again, and why
+/// the node failed closed, if it did. Published whole, so a reader that sees
+/// a term as checked also sees what still blocks admission with it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct Standing {
+    handled: u64,
+    undelivered: bool,
+    closed: Option<Arc<str>>,
+}
+
+/// [`Standing`], read on every decision without waiting.
 pub(crate) struct Follow {
-    handled: AtomicU64,
-    undelivered: AtomicBool,
-    closed: regolith::sync::OnceCell<String>,
+    standing: Atom<Standing>,
+}
+
+impl Default for Follow {
+    fn default() -> Self {
+        Self {
+            standing: Atom::new(Standing::default()),
+        }
+    }
 }
 
 impl Follow {
@@ -77,48 +93,64 @@ impl Follow {
         follow
     }
 
-    /// Takes what `journal` records now.
+    /// Takes what `journal` records now, in one publication. Only the holder
+    /// of the worker, which owns the journal, calls it.
     pub(crate) fn update(&self, journal: &Journal) {
-        self.handled
-            .fetch_max(journal.handled_term(), Ordering::AcqRel);
-        self.undelivered
-            .store(!journal.undelivered().is_empty(), Ordering::Release);
-        if let Some(reason) = journal.closed() {
-            let _ = self.closed.set(reason.to_owned());
-        }
+        let previous = self.standing.load_clone();
+        self.standing.store(Standing {
+            handled: previous.handled.max(journal.handled_term()),
+            undelivered: !journal.undelivered().is_empty(),
+            closed: journal.closed().map(Arc::from).or(previous.closed),
+        });
     }
 
     /// Whether the node could not tell what a term voided.
     pub(crate) fn is_closed(&self) -> bool {
-        self.closed.get().is_some()
+        self.standing.load_clone().closed.is_some()
     }
 
     /// Whether changes a term voided are still to be owed again.
     pub(crate) fn has_undelivered(&self) -> bool {
-        self.undelivered.load(Ordering::Acquire)
+        self.standing.load_clone().undelivered
     }
 
     /// The term last checked: part of every cached decision's key.
     pub(crate) fn epoch(&self) -> u64 {
-        self.handled.load(Ordering::Acquire)
+        self.standing.load_clone().handled
     }
 
     /// Whether the provider may decide and send while `certified` is the
-    /// newest term its light client holds a certificate of. It may not while
-    /// that term is unchecked, while changes it voided are still to be owed
-    /// again, or once the node could not tell what a term voided.
-    pub(crate) fn admit(&self, certified: u64) -> Result<(), ProviderError> {
-        if let Some(reason) = self.closed.get() {
-            return Err(ProviderError::Unavailable(reason.clone()));
+    /// newest term its light client holds a certificate of, and if so the
+    /// term last checked. It may not while that term is unchecked, while
+    /// changes it voided are still to be owed again, or once the node could
+    /// not tell what a term voided.
+    pub(crate) fn admit(&self, certified: u64) -> Result<u64, ProviderError> {
+        let standing = self.standing.load_clone();
+        if let Some(reason) = &standing.closed {
+            return Err(ProviderError::Unavailable(reason.to_string()));
         }
-        if certified > self.epoch() || self.undelivered.load(Ordering::Acquire) {
-            return Err(ProviderError::Unavailable(format!(
-                "the Vera deployment switched its active device (term {certified}); \
-                 submissions confirmed on blocks the switch voided are being checked again"
-            )));
+        if certified > standing.handled || standing.undelivered {
+            return Err(unchecked(certified));
+        }
+        Ok(standing.handled)
+    }
+
+    /// Whether what was admitted at `epoch` still is: admitted now, and no
+    /// term checked since. A read that a term check overtook was answered at
+    /// a state the check may have found void.
+    pub(crate) fn still(&self, epoch: u64, certified: u64) -> Result<(), ProviderError> {
+        if self.admit(certified)? != epoch {
+            return Err(unchecked(certified));
         }
         Ok(())
     }
+}
+
+fn unchecked(certified: u64) -> ProviderError {
+    ProviderError::Unavailable(format!(
+        "the Vera deployment switched its active device (term {certified}); \
+         submissions confirmed on blocks the switch voided are being checked again"
+    ))
 }
 
 /// What checking a term came to.
@@ -151,63 +183,68 @@ where
             owed: journal.undelivered().to_vec(),
         });
     }
-    let sequences: Vec<u64> = journal.sequences().collect();
-    let mut missing = Vec::new();
-    let mut reached_held = false;
-    for sequence in sequences.into_iter().rev() {
-        let entry = journal.entry(sequence).map_err(failure)?;
-        if chain.holds(entry.submission).await? {
-            reached_held = true;
-            break;
+    let unfinished = journal.replaying();
+    let from = match unfinished {
+        // This term's replay was cut short: it is run again from the same
+        // entry, whatever the deployment holds now.
+        Some(replaying) if replaying.term == certified => Some(replaying.from),
+        _ => {
+            let scanned = match scan(journal, chain).await? {
+                Ok(first) => first,
+                Err(reason) => {
+                    journal.close(reason.clone()).map_err(failure)?;
+                    return Ok(Reconciled::Closed(reason));
+                }
+            };
+            // An earlier term's replay was cut short: its entries are sent
+            // again too, whether or not this term kept them.
+            match (scanned, unfinished) {
+                (Some(first), Some(replaying)) => Some(first.min(replaying.from)),
+                (first, None) => first,
+                (None, Some(replaying)) => Some(replaying.from),
+            }
         }
-        missing.push(entry);
-    }
-    missing.reverse();
-    if !reached_held {
-        if let Some(reason) = uncovered(journal.floor(), chain).await? {
-            journal.close(reason.clone()).map_err(failure)?;
-            return Ok(Reconciled::Closed(reason));
-        }
-    }
+    };
     let mut losses = Losses {
         owed: journal.undelivered().to_vec(),
         ..Losses::default()
     };
-    let mut tainted = tainted_by(&losses.owed);
-    for entry in missing {
-        let replayed = chain.replay(&entry.wire).await?;
-        let recorded = losses.owed.len();
-        lost_effects(
-            &mut losses,
-            &mut tainted,
-            effect_of(&entry.wire),
-            replayed.executed,
-        );
-        if let Some(object) = losses.archives.first() {
-            let reason = format!(
-                "the Vera deployment switched its active device and voided the archive of \
-                 {}/{}/{} this node confirmed; it was refused when sent again, so access it \
-                 removed may be back. Archive the object again, then restart the node with a \
-                 new worker directory",
-                object.0, object.1, object.2
+    if let Some(from) = from {
+        // Marked before the first replay: a refused replay is held at once,
+        // and from then on only this mark says its effect was lost.
+        journal.begin_replay(certified, from).map_err(failure)?;
+        let mut tainted = tainted_by(&losses.owed);
+        let resent: Vec<u64> = journal
+            .sequences()
+            .filter(|sequence| *sequence >= from)
+            .collect();
+        for sequence in resent {
+            let entry = journal.entry(sequence).map_err(failure)?;
+            let replayed = chain.replay(&entry.wire).await?;
+            lost_effects(
+                &mut losses,
+                &mut tainted,
+                effect_of(&entry.wire),
+                replayed.executed,
             );
-            journal.close(reason.clone()).map_err(failure)?;
-            return Ok(Reconciled::Closed(reason));
-        }
-        // What a replay leaves to be owed is recorded before the next replay,
-        // so a check stopped half way still owes it, and still taints its
-        // object, when it is run again.
-        if losses.owed.len() > recorded {
+            if let Some(object) = losses.archives.first() {
+                let reason = format!(
+                    "the Vera deployment switched its active device and voided the archive of \
+                     {}/{}/{} this node confirmed; it was refused when sent again, so access it \
+                     removed may be back. Archive the object again, then restart the node with \
+                     a new worker directory",
+                    object.0, object.1, object.2
+                );
+                journal.close(reason.clone()).map_err(failure)?;
+                return Ok(Reconciled::Closed(reason));
+            }
             journal
-                .handled(journal.handled_term(), losses.owed.clone())
+                .record(&Confirmation {
+                    height: replayed.height,
+                    ..entry
+                })
                 .map_err(failure)?;
         }
-        journal
-            .record(&Confirmation {
-                height: replayed.height,
-                ..entry
-            })
-            .map_err(failure)?;
     }
     if losses.other > 0 {
         tracing::warn!(
@@ -220,6 +257,28 @@ where
         .handled(certified, losses.owed.clone())
         .map_err(failure)?;
     Ok(Reconciled::Checked { owed: losses.owed })
+}
+
+/// The first journaled sequence the deployment no longer holds, asking
+/// newest first and stopping at the first one held (`None` when it holds the
+/// newest), or why the journal cannot vouch for what the term voided when it
+/// holds none of them.
+async fn scan<C>(journal: &Journal, chain: &C) -> Result<Result<Option<u64>, String>, ProviderError>
+where
+    C: Chain,
+{
+    let mut first_missing = None;
+    for sequence in journal.sequences().rev().collect::<Vec<_>>() {
+        let entry = journal.entry(sequence).map_err(failure)?;
+        if chain.holds(entry.submission).await? {
+            return Ok(Ok(first_missing));
+        }
+        first_missing = Some(sequence);
+    }
+    Ok(match uncovered(journal.floor(), chain).await? {
+        Some(reason) => Err(reason),
+        None => Ok(first_missing),
+    })
 }
 
 /// Why the journal cannot vouch for what lies below its oldest entry, when

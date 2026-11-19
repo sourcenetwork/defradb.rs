@@ -67,10 +67,14 @@ impl VeraRsProvider {
         &self,
         data: Bytes,
     ) -> Result<ConfirmedSubmission, ProviderError> {
-        self.admitted()?;
+        self.admitted().await?;
         let mut worker = nuclei::time::timeout(self.sync_timeout, self.worker.clone().lock_owned())
             .await
             .map_err(|_| unavailable("worker is busy"))?;
+        // A term check holds the worker while it runs: one that ran while
+        // this call waited for it may have left the provider closed or with
+        // changes still to owe again.
+        self.follower.admit()?;
         if let Some(wire) = worker.pending().map(<[u8]>::to_vec) {
             let tx = NativeTx::decode_wire(&wire).map_err(unavailable)?;
             let retry = tx.target == ACP_ADDRESS && tx.calldata == data;

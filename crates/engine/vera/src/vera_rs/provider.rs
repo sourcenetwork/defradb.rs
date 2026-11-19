@@ -343,7 +343,6 @@ impl VeraRsProvider {
                 trusted,
                 id: genesis_id.clone(),
             },
-            follower.clone(),
         )));
 
         let provider = Self {
@@ -367,23 +366,31 @@ impl VeraRsProvider {
         Ok(provider)
     }
 
-    /// Whether the provider may decide and send now: not while a switch of
-    /// the deployment's active device is unchecked, nor once the node could
-    /// not tell what one voided.
-    fn admitted(&self) -> Result<(), ProviderError> {
-        self.follower.admit()
+    /// Whether the provider may decide and send now, and the term last
+    /// checked: not while a switch of the deployment's active device is
+    /// unchecked, nor once the node could not tell what one voided. A switch
+    /// not yet checked is checked here, on the caller's task.
+    async fn admitted(&self) -> Result<u64, ProviderError> {
+        match self.follower.admit() {
+            Ok(epoch) => Ok(epoch),
+            Err(_) => {
+                self.follower.check().await;
+                self.follower.admit()
+            }
+        }
     }
 
-    /// `read`, refused unless the provider is admitted both before and
-    /// after it: a term certified while the read was on its way may void the
-    /// state it was answered at.
+    /// `read`, refused unless the provider is admitted before it and still
+    /// admitted at the same checked term after it: a term certified, or
+    /// checked, while the read was on its way may void the state it was
+    /// answered at.
     async fn admitted_read<T>(
         &self,
         read: impl std::future::Future<Output = Result<T, ProviderError>>,
     ) -> Result<T, ProviderError> {
-        self.admitted()?;
+        let epoch = self.admitted().await?;
         let answer = read.await?;
-        self.admitted()?;
+        self.follower.still(epoch)?;
         Ok(answer)
     }
 
@@ -439,25 +446,22 @@ async fn learn_genesis(
     Ok(())
 }
 
-/// How long the observer waits for the next height before it looks at the
-/// deployment's terms again: a term that voids the head lowers the height,
-/// so the next one may be long in coming.
-const TERM_CHECK: Duration = Duration::from_secs(1);
+/// How long the observer waits for the next height before it asks the
+/// light client for its height again: a term that voids the head lowers the
+/// height, so the one it waited for may be long in coming.
+const NEXT_HEIGHT: Duration = Duration::from_secs(1);
 
 async fn run_light_client_observer(
     light_client: Arc<AcpLightClient>,
     last_invalidation_height: Arc<AtomicU64>,
     event_bus: Option<Arc<dyn Bus>>,
     genesis: Genesis,
-    follower: Arc<Follower>,
 ) {
     let mut next_height = 1u64;
     let mut previous_root = None;
 
     loop {
-        let waited = light_client.wait_for_height(next_height, TERM_CHECK).await;
-        follower.check().await;
-        let sync = match waited {
+        let sync = match light_client.wait_for_height(next_height, NEXT_HEIGHT).await {
             Ok(sync) => sync,
             Err(error) => {
                 tracing::trace!(error = %error, "ACP light client observer wait_for_height ended");
@@ -955,7 +959,7 @@ impl VeraProvider for VeraRsProvider {
     /// deployment's active device is given after it, and there is none
     /// while a switch is unchecked.
     fn decision_state(&self) -> Option<String> {
-        self.admitted().ok()?;
+        self.follower.admit().ok()?;
         self.light_client
             .header_chain()
             .fresh_state()

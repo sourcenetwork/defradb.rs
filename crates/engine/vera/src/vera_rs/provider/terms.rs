@@ -33,9 +33,15 @@ impl Follower {
             .map_or(0, |certificate| certificate.change.term)
     }
 
-    /// Whether the provider may decide and send now ([`Follow::admit`]).
-    pub fn admit(&self) -> Result<(), ProviderError> {
+    /// Whether the provider may decide and send now, and the term last
+    /// checked ([`Follow::admit`]).
+    pub fn admit(&self) -> Result<u64, ProviderError> {
         self.follow.admit(self.certified())
+    }
+
+    /// Whether what was admitted at `epoch` still is ([`Follow::still`]).
+    pub fn still(&self, epoch: u64) -> Result<(), ProviderError> {
+        self.follow.still(epoch, self.certified())
     }
 
     /// The term last checked.
@@ -44,8 +50,11 @@ impl Follower {
     }
 
     /// Checks a certified term that is not checked yet, and hands what it
-    /// voided to the outbox. Runs from the light client observer and once at
-    /// start; a check that fails is run again at the next one.
+    /// voided to the outbox. Runs on the task of a provider call that found
+    /// the provider not admitted, and once at start, never on a task of its
+    /// own: nothing but the provider holds its worker, so dropping the
+    /// provider lets go of the worker's directory at once. A check that fails
+    /// is run again by the next call.
     pub async fn check(&self) {
         let certified = self.certified();
         if self.follow.is_closed()
@@ -53,7 +62,12 @@ impl Follower {
         {
             return;
         }
-        let mut worker = self.worker.clone().lock_owned().await;
+        let Ok(mut worker) =
+            nuclei::time::timeout(self.chain.timeout, self.worker.clone().lock_owned()).await
+        else {
+            tracing::debug!(term = certified, "Vera term check waits for the worker");
+            return;
+        };
         let outcome = follow::reconcile(worker.confirmed(), &self.chain, certified).await;
         self.follow.update(worker.confirmed());
         let owed = match outcome {

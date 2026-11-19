@@ -105,3 +105,25 @@ fn the_term_checked_what_is_owed_and_a_closure_are_kept() {
     assert!(journal.undelivered().is_empty());
     assert_eq!(journal.closed(), Some("why"));
 }
+
+#[cfg(unix)]
+#[test]
+fn a_failed_write_leaves_what_the_journal_reports_as_it_was() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let directory = tempfile::tempdir().unwrap();
+    let mut journal = Journal::open(directory.path(), 0).unwrap();
+    let owed = vec![Lost::Registration {
+        policy_id: "p".into(),
+        resource: "users".into(),
+        object: "bae-1".into(),
+        token: "t".into(),
+    }];
+    journal.handled(1, owed.clone()).unwrap();
+    std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
+    let delivered = journal.delivered();
+    let handled = journal.handled(2, Vec::new());
+    std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(delivered.is_err() && handled.is_err());
+    assert_eq!(journal.undelivered(), owed.as_slice(), "still owed");
+    assert_eq!(journal.handled_term(), 1);
+}

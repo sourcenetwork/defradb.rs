@@ -99,6 +99,8 @@ pub(super) struct Deployment {
     refuses: HopscotchMap<B256, (), RandomState>,
     /// A replay after this many fails, as an unreachable node does.
     pub unreachable_after: Option<usize>,
+    /// The replay of this index is executed, and its answer is lost.
+    pub answer_lost_at: Option<usize>,
     replays: AtomicUsize,
     pub sent: kovan_queue::seg_queue::SegQueue<u64>,
 }
@@ -139,6 +141,9 @@ impl Chain for Deployment {
             let submission = tx.tx_id().0;
             self.sent.push(tx.nonce);
             self.held.insert(submission, ());
+            if self.answer_lost_at == Some(done) {
+                return Err(ProviderError::Unavailable("connection reset".into()));
+            }
             Ok(Replayed {
                 executed: self.refuses.get(&submission).is_none(),
                 height: 100 + tx.nonce,
