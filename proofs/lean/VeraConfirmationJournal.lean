@@ -31,8 +31,17 @@ Rust owner: `reconcile` and `uncovered` in
 `crates/engine/vera/src/vera_rs/follow/mod.rs`, and `Journal::record` and
 `Journal::prune` in `crates/engine/vera/src/vera_rs/follow/journal.rs`. The
 model is over heights: a submission is held exactly when it was confirmed at
-or below the cut. The temporal side (what is decided and sent meanwhile) is
-`proofs/tla/FollowDeployment.tla`.
+or below the cut.
+
+Scope: these theorems are about the scan of a journal no replay has touched
+since the term it is checked against, where every entry still carries the
+height it was first confirmed at. A replay records new heights entry by
+entry, so a journal whose replay was cut short need not be ordered. The code
+never scans such a journal for the same term: it writes down where its replay
+starts before the first replay (`Journal::begin_replay`), and a check run
+again sends everything from there on again without asking (`reconcile`);
+under a later term it starts no later than that mark. That side, with stops
+part way, is `proofs/tla/FollowDeployment.tla`.
 -/
 namespace VeraConfirmationJournal
 

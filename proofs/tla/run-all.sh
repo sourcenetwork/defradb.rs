@@ -628,7 +628,10 @@ RUNS=(
   "MC_FollowDeployment_Red_ForgetsRevocation.cfg FollowDeployment.tla RED" # a refused replay is dropped: a void revocation stops denying (INV_RevocationDenies)
   "MC_FollowDeployment_Red_NoGate.cfg FollowDeployment.tla RED" # deciding while a term is unchecked: the new chain's grant is served before the revocation is sent again (INV_RevocationDenies)
   "MC_FollowDeployment_Red_NoTaint.cfg FollowDeployment.tla RED" # only refused replays owed again: the grant overtakes the revocation (INV_RevocationDenies)
-  "MC_FollowDeployment_Red_AssumesWindow.cfg FollowDeployment.tla RED" # pruned entries taken as kept: a voided change is neither held nor owed (INV_NothingLost)
+  "MC_FollowDeployment_Red_AssumesWindow.cfg FollowDeployment.tla RED" # pruned entries taken as kept: the replay cannot pass the voided pruned request and the node stalls silently (LIVE_ResubmittedSettles)
+  "MC_FollowDeployment_Red_NoMark.cfg FollowDeployment.tla RED" # replay start not written down: a refused replay cut short is held and its revocation forgotten (INV_RevocationDenies)
+  "MC_FollowDeployment_Red_NoDeliveryGate.cfg FollowDeployment.tla RED" # a checked term admits before its owed changes reach the outbox (INV_RevocationDenies)
+  "MC_FollowDeployment_Red_CollapsesBatch.cfg FollowDeployment.tla RED" # only the first change of an object handed back together is owed: the revocation after it is lost (INV_RevocationDenies)
   "MC_PendingSubmission_Green.cfg PendingSubmission.tla GREEN" # a pending submission is resent until confirmed, takes effect once and stays journaled
   "MC_PendingSubmission_Green_Recalled.cfg PendingSubmission.tla GREEN" # a caller that keeps calling is confirmed though calls end early and the node drops the request
   "MC_PendingSubmission_Red_NoResend.cfg PendingSubmission.tla RED" # a lost send taken as sent waits for a receipt that cannot come
