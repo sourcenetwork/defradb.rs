@@ -585,25 +585,44 @@ where
         &self,
         observation: crate::ActorRelationshipObservation<'_>,
     ) -> Result<bool> {
-        self.refuse_revoked(
-            observation.requester,
-            observation.policy,
-            observation.resource,
-            observation.document,
-        )
-        .await?;
-        if self
+        // Authority comes first: a caller who may not manage the relation gets
+        // the one refusal whatever is owed on the document.
+        let refused = || Error::NotManager {
+            operation: "observe relationship".into(),
+        };
+        let requester = self.provider.canonical_actor(observation.requester);
+        if let Some(pending) = self
             .owed(
                 observation.policy,
                 observation.resource,
                 observation.document,
             )
             .await?
-            .is_some()
         {
-            return Err(Error::ProviderUnavailable(
-                "document registration is unsettled".into(),
-            ));
+            // Until the provider holds the registration, its creator is the
+            // only authority on the document.
+            return Err(
+                if self.provider.canonical_actor(&pending.creator) == requester {
+                    Error::ProviderUnavailable("document registration is unsettled".into())
+                } else {
+                    refused()
+                },
+            );
+        }
+        let present = match self.provider.observe_actor_relationship(observation).await {
+            Err(Error::NotOwner { .. } | Error::NotManager { .. }) => return Err(refused()),
+            other => other?,
+        };
+        if self
+            .revoked(
+                &Identity::Authenticated(requester),
+                observation.policy,
+                observation.resource,
+                observation.document,
+            )
+            .await?
+        {
+            return Err(refused());
         }
         let tuple = crate::outbox::OwedTuple {
             policy_id: observation.policy.to_owned(),
@@ -615,16 +634,16 @@ where
             },
         };
         let transaction = self.store.new_txn(true).await.map_err(storage_error)?;
-        if crate::outbox::tuple_state(&transaction, &tuple)
+        let unsettled = crate::outbox::tuple_state(&transaction, &tuple)
             .await?
-            .is_some()
-        {
+            .is_some();
+        drop(transaction);
+        if unsettled {
             return Err(Error::ProviderUnavailable(
                 "relationship change is unsettled".into(),
             ));
         }
-        drop(transaction);
-        self.provider.observe_actor_relationship(observation).await
+        Ok(present)
     }
 
     async fn check_named_permission(

@@ -751,7 +751,7 @@ fn an_exact_observation_waits_for_a_change_marked_in_flight() {
         assert_eq!(pass(&restarted).await, settled(1));
         assert!(staging.queue().await.is_empty());
         assert!(
-            matches!(observe().await, Err(acp::Error::UnsupportedRelationshipListing)),
+            observe().await.unwrap(),
             "a settled tuple is observed by the provider"
         );
     })

@@ -59,18 +59,15 @@ pub(super) async fn query(
             .read_current_object_owner(&policy_id, &owner_object, minimum)
             .await
             .map_err(|e| fail(e.to_string()))?;
-        if owner.is_none() {
-            return Err(fail("object ownership proof is unavailable".into()));
-        }
         at_policy_root(
             policy.module_state_root,
             owner_revision.module_state_root,
             "ownership",
         )?;
-        let requester = vera_modules::actor::canonical_str(query.requester);
-        let is_owner = owner
-            .as_ref()
-            .is_some_and(|owner| vera_modules::actor::canonical_str(owner.0.as_str()) == requester);
+        let is_owner = owner_authorizes(
+            owner.as_ref().map(|owner| owner.0.as_str()),
+            query.requester,
+        )?;
         if !is_owner {
             let mut authorized = false;
             for manager in record
@@ -158,6 +155,17 @@ pub(super) async fn query(
     .await
 }
 
+/// Whether the proven owner is the requester. A proven absence of an owner
+/// refuses the requester as an owner that is not the requester and a relation
+/// nobody can hold would: an unregistered document is not told apart from a
+/// registered one the requester may not manage.
+fn owner_authorizes(owner: Option<&str>, requester: &str) -> Result<bool, ProviderError> {
+    let Some(owner) = owner else {
+        return Err(ProviderError::RelationshipObservationDenied);
+    };
+    Ok(vera_modules::actor::canonical_str(owner) == vera_modules::actor::canonical_str(requester))
+}
+
 /// Every proof of one observation must be taken at the policy's certified
 /// root; proofs of different roots answer nothing
 /// (`proofs/tla/ExactRelationshipObservation.tla`, `INV_SameRoot`).
@@ -222,6 +230,16 @@ mod tests {
                 "{refused:?}"
             );
         }
+    }
+
+    #[test]
+    fn an_absent_owner_refuses_as_a_registered_document_does() {
+        assert!(matches!(
+            owner_authorizes(None, "did:key:z6Mkreader"),
+            Err(ProviderError::RelationshipObservationDenied)
+        ));
+        assert!(!owner_authorizes(Some("did:key:z6Mkowner"), "did:key:z6Mkreader").unwrap());
+        assert!(owner_authorizes(Some("did:key:z6Mkowner"), "did:key:z6Mkowner").unwrap());
     }
 
     #[test]

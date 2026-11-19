@@ -8,6 +8,7 @@ mod dac_policy;
 mod enforcement;
 mod external_counts;
 mod external_drainer;
+mod external_observation;
 mod external_outbox;
 mod external_outbox_gate;
 mod external_owed;

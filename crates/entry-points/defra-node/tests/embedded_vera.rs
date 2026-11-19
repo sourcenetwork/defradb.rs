@@ -820,17 +820,24 @@ fn a_grant_staged_beside_its_document_lets_the_grantee_read_after_the_commit() {
             })
             .await
             .expect("exact absence"));
-        assert!(vera
-            .observe_actor_relationship(acp::ActorRelationshipObservation {
-                requester: &reader,
-                target: &reader,
-                policy: &policy,
-                resource: "users",
-                document: &doc,
-                relation: "reader",
-            })
-            .await
-            .is_err());
+        // A caller who may not manage the relation is refused alike for a
+        // registered document and for one nobody registered.
+        for document in [doc.as_str(), "bae-never-registered"] {
+            let refused = vera
+                .observe_actor_relationship(acp::ActorRelationshipObservation {
+                    requester: &reader,
+                    target: &reader,
+                    policy: &policy,
+                    resource: "users",
+                    document,
+                    relation: "reader",
+                })
+                .await;
+            assert!(
+                matches!(&refused, Err(acp::Error::NotManager { operation }) if operation == "observe relationship"),
+                "{document}: {refused:?}"
+            );
+        }
         drop(vera);
         node.shutdown().await.expect("shutdown");
     })

@@ -43,6 +43,7 @@ pub struct DocumentRelationship {
     pub subject: String,
 }
 
+#[derive(Clone, Copy)]
 pub struct ActorRelationshipObservation<'a> {
     pub requester: &'a Did,
     pub target: &'a Did,
