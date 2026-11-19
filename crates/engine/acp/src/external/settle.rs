@@ -363,7 +363,11 @@ where
     }
 
     /// At most `count` owed changes after `after`, as committed now.
-    pub(super) async fn next_owed_changes(&self, after: u64, count: usize) -> Result<Vec<OwedChange>> {
+    pub(super) async fn next_owed_changes(
+        &self,
+        after: u64,
+        count: usize,
+    ) -> Result<Vec<OwedChange>> {
         self.read_owed_changes(Some(after), Some(count)).await
     }
 

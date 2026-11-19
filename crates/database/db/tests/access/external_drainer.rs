@@ -651,10 +651,7 @@ fn a_parked_change_asks_for_no_other_pass() {
             failed: 1,
             ..parked
         },
-        OwedSettlement {
-            retry: 1,
-            ..parked
-        },
+        OwedSettlement { retry: 1, ..parked },
         OwedSettlement {
             provider_unavailable: true,
             ..parked
