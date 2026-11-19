@@ -11,8 +11,13 @@ use std::time::Duration;
 use acp::{ActorRelationshipObservation, DocumentACP, OwedOp};
 use identity::Did;
 
-use super::external_registration::{alice, bob, mallory, ObserveHook, POLICY, RESOURCE};
-use super::external_staging::{Change, Staging};
+use super::external_registration::{alice, bob, mallory, ObserveHook, MANAGER, POLICY, RESOURCE};
+use super::external_staging::{carol, Change, Staging};
+
+/// A node on a provider that decides authority itself.
+async fn staging_on() -> Staging {
+    Staging::new().await
+}
 
 async fn observe(staging: &Staging, requester: &Did, doc: &str) -> acp::Result<bool> {
     staging
@@ -122,6 +127,90 @@ fn a_revocation_owed_when_the_provider_answered_is_not_settled_under_the_observa
             .await
             .unwrap();
         assert!(!observe(&staging, &alice(), &doc).await.unwrap());
+    })
+    .unwrap()
+}
+
+/// A grant committed a moment ago is still owed when the observation comes:
+/// it waits for the settlement pass and answers from the state that holds
+/// the grant (`proofs/tla/SettleBeforeObserving.tla`).
+#[test]
+fn an_observation_waits_for_a_change_about_to_settle() {
+    workers::block_on(async {
+        let staging = staging_on().await;
+        let doc = staging.create(alice(), "shared", None).await;
+        staging
+            .commit_change(Change::new(alice(), &doc, OwedOp::Add, bob()))
+            .await;
+        assert!(!staging.remote.holds(&doc, &bob()), "the grant is owed");
+
+        let settle = async {
+            workers::delay(Duration::from_millis(200))
+                .unwrap()
+                .await
+                .unwrap();
+            staging
+                .gate
+                .settle_owed_changes_once(acp::OwedScope::All)
+                .await
+                .unwrap();
+        };
+        let owner = alice();
+        let (observed, ()) = futures::join!(observe(&staging, &owner, &doc), settle);
+        assert!(observed.unwrap(), "answered once the grant settled");
+    })
+    .unwrap()
+}
+
+/// A change that cannot settle refuses the observation: one nothing settles
+/// once the patience is spent, a refused change at once.
+#[test]
+fn an_observation_refuses_a_change_that_cannot_settle() {
+    workers::block_on(async {
+        let staging = staging_on().await;
+        let doc = staging.create(alice(), "shared", None).await;
+        let unsettled = |result: &acp::Result<bool>| {
+            matches!(result, Err(acp::Error::ProviderUnavailable(reason)) if reason == "relationship change is unsettled")
+        };
+
+        staging
+            .commit_change(Change::new(alice(), &doc, OwedOp::Add, bob()))
+            .await;
+        // Nothing settles it here: the wait runs out its patience.
+        let waited = observe(&staging, &alice(), &doc).await;
+        assert!(unsettled(&waited), "{waited:?}");
+        staging
+            .gate
+            .settle_owed_changes_once(acp::OwedScope::All)
+            .await
+            .unwrap();
+
+        let mut manager = Change::new(alice(), &doc, OwedOp::Add, mallory());
+        manager.relation = MANAGER;
+        staging.on_provider(alice(), manager.clone()).await;
+        staging
+            .commit_change(Change::new(mallory(), &doc, OwedOp::Add, carol()))
+            .await;
+        manager.op = OwedOp::Delete;
+        staging.on_provider(alice(), manager).await;
+        staging
+            .gate
+            .settle_owed_changes_once(acp::OwedScope::All)
+            .await
+            .unwrap();
+        let (owner, grantee) = (alice(), carol());
+        let refused = staging
+            .gate
+            .observe_actor_relationship(ActorRelationshipObservation {
+                requester: &owner,
+                target: &grantee,
+                policy: POLICY,
+                resource: RESOURCE,
+                document: &doc,
+                relation: "reader",
+            })
+            .await;
+        assert!(unsettled(&refused), "{refused:?}");
     })
     .unwrap()
 }

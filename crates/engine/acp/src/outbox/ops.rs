@@ -124,6 +124,42 @@ where
     Ok(state)
 }
 
+/// The sequence of the latest change ever staged on `tuple`, which settling
+/// leaves in place: what an answer about the tuple must postdate. Read as a
+/// whole value, so a change staged on the tuple that commits first aborts the
+/// decision resting on it.
+pub async fn tuple_head<R>(reader: &R, tuple: &OwedTuple) -> Result<Option<u64>>
+where
+    R: Reader + ?Sized,
+{
+    let Some(bytes) = reader
+        .get(&keys::head_key(tuple))
+        .await
+        .map_err(storage_error)?
+    else {
+        return Ok(None);
+    };
+    <[u8; 8]>::try_from(bytes.as_ref())
+        .map(|seq| Some(u64::from_be_bytes(seq)))
+        .map_err(|_| Error::Serialization("owed ACP head is malformed".into()))
+}
+
+/// Whether `tuple` owes a change, and whether the oldest one it owes is at
+/// rest (refused, or waiting for authority): one that will not settle by
+/// itself. `None` when nothing is owed on it.
+pub(crate) async fn tuple_rest<R>(reader: &R, tuple: &OwedTuple) -> Result<Option<bool>>
+where
+    R: Reader + ?Sized,
+{
+    let Some(state) = tuple_state(reader, tuple).await? else {
+        return Ok(None);
+    };
+    let oldest = change(reader, state.oldest)
+        .await?
+        .ok_or_else(|| inconsistent("record", state.oldest))?;
+    Ok(Some(!matches!(oldest.state, OwedState::Staged)))
+}
+
 /// Whether `tuple` has a change owed to the provider that this transaction
 /// sees: one it staged itself, or one committed before it and not settled.
 /// The scan is validated, so a change on the tuple that commits first aborts

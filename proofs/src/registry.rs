@@ -421,6 +421,15 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Transactional document relationships",
+        name: "INV_NotOlderThanOwed / INV_Bounded: an observation waits for its owed change",
+        axis: Tla,
+        anchor: "crates/engine/acp/src/external.rs observe_actor_relationship, await_tuple, OBSERVATION_PATIENCE; crates/database/db/src/document_projection.rs projected_actor_relationship",
+        model_ref: "MC_SettleBeforeObserving_{Green,Red_NoWait,Red_Unbounded}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/database/db/tests/access/external_observation.rs an_observation_waits_for_a_change_about_to_settle, an_observation_refuses_a_change_that_cannot_settle; crates/entry-points/defra-node/tests/embedded_vera/settle_before_observing.rs documents_updated_right_after_their_creation_are_projected_without_refusal",
+    },
+    Property {
+        family: "Transactional document relationships",
         name: "INV_NoEscalation / INV_NoOwner / projection_keeps_requester_authority",
         axis: Tla,
         anchor: "crates/database/db/src/document_projection.rs change_projected_relationship, DocumentMutationProjector::project_related",
