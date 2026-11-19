@@ -295,10 +295,9 @@ impl TransactionOutbox {
             return Ok(false);
         };
         let store = crate::zanzibar::store::TransactionZanzibarStore::new(view.clone());
-        let sources = match crate::ZanzibarStore::get_policy(&store, request.policy_id).await? {
-            Some(policy) => Some(policy.management_sources(request.resource, request.relation)),
-            None => None,
-        };
+        let sources = crate::ZanzibarStore::get_policy(&store, request.policy_id)
+            .await?
+            .map(|policy| policy.management_sources(request.resource, request.relation));
         let deletes =
             super::ops::owed_deletes_on(&view, request.policy_id, request.resource, request.object)
                 .await?;
@@ -477,7 +476,7 @@ impl TransactionOutbox {
 /// `actor` or a subject wider than one actor.
 fn rests_on_revoked(sources: Option<&[String]>, deletes: &[OwedTuple], actor: &Did) -> bool {
     deletes.iter().any(|delete| {
-        sources.is_none_or(|sources| sources.iter().any(|source| *source == delete.relation))
+        sources.is_none_or(|sources| sources.contains(&delete.relation))
             && match &delete.subject {
                 OwedSubject::Actor { did } => did == actor,
                 _ => true,
