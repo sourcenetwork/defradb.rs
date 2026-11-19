@@ -499,6 +499,7 @@ fn unified_access_matches_lean_and_validates_authority_at_commit() {
         node.on_acp(move || async move {
             nac.add_permission_grant(&owner_did, &actor_did, NodePermission::DocumentRead).await.map_err(crate::Error::NacInit)?;
             nac.add_permission_grant(&owner_did, &actor_did, NodePermission::DocumentUpdate).await.map_err(crate::Error::NacInit)?;
+            nac.add_permission_grant(&owner_did, &actor_did, NodePermission::CollectionGet).await.map_err(crate::Error::NacInit)?;
             Ok(())
         }).await.unwrap();
         let principal_context = actor(B);
