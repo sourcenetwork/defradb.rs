@@ -246,11 +246,12 @@ type Case = (OwedSubject, &'static str, [(Identity, OwedDenial); 3]);
 
 /// Whom each kind of owed delete denies: the actor it names unless it owns
 /// the document, the actor whose owner relation it takes always, and, for a
-/// wildcard or a set, everyone but the owner, anonymous readers included.
+/// wildcard, a set or every object of a resource, everyone but the owner,
+/// anonymous readers included.
 #[test]
 fn every_kind_of_subject_is_denied_as_its_delete_says() {
     workers::block_on(async {
-        let cases: [Case; 4] = [
+        let cases: [Case; 5] = [
             (
                 actor(bob()),
                 "reader",
@@ -283,6 +284,17 @@ fn every_kind_of_subject_is_denied_as_its_delete_says() {
                     resource: "groups".into(),
                     object: "team".into(),
                     relation: "member".into(),
+                },
+                "reader",
+                [
+                    (as_actor(bob()), OwedDenial::UnlessOwner),
+                    (as_actor(carol()), OwedDenial::UnlessOwner),
+                    (Identity::Anonymous, OwedDenial::UnlessOwner),
+                ],
+            ),
+            (
+                OwedSubject::TypedWildcard {
+                    resource: "groups".into(),
                 },
                 "reader",
                 [
