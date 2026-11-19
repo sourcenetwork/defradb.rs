@@ -349,3 +349,17 @@ A node that holds a node identity but was started without signing (`--no-signing
 - **Scenarios:** ["encryption::peer_registered_identity::a_registered_identity_peer_fetches_an_encrypted_doc_from_a_node_with_no_identity"]
 
 A node can take its node identity from the process's signing registry, where the embedding host registered it before starting the node (the FFI's `identity_ptr`, defradb.rs's `NodeBuilder::with_node_identity_did`), instead of loading it from a key it is given. The key-holding node needs no node identity of its own (started with signing disabled and no key) to serve it, and its KMS authenticates that peer's key request against the registered DID exactly as against a loaded one: on a private `@branchable` collection whose owner grants `reader` on the collection to the peer's node identity, a document the key-holding node creates anonymously with `encrypt: true` reaches the subscribed peer, and the owner reads `{name: "Fred"}` there.
+
+# `defra.encryption.peer.iroh_grant`: A granted iroh peer obtains a policy-bound document's key
+
+- **Parents:** ["go.encryption.peer"]
+- **Scenarios:** ["encryption::peer_iroh_acp_branchable::a_granted_iroh_peer_obtains_the_key"]
+
+Over iroh, the key-holding node's KMS releases a document's key to the node identity the iroh handshake authenticated. With two iroh nodes, the key holder started with no node identity and the peer with one the host registered, a private `@branchable` collection whose owner grants `reader` on the collection to the peer's node identity, and both nodes subscribed to it: a document the key holder creates anonymously with `encrypt: true` reaches the peer, and the owner reads `{name: "Fred"}` there.
+
+# `defra.encryption.peer.iroh_no_grant`: An ungranted iroh peer receives the blocks but not the key
+
+- **Parents:** ["go.encryption.peer"]
+- **Scenarios:** ["encryption::peer_iroh_acp_branchable::an_ungranted_iroh_peer_receives_the_blocks_but_not_the_key"]
+
+The same two iroh nodes and collection with no `reader` grant to the peer: the encrypted document's blocks still replicate to the subscribed peer, but the key holder's KMS withholds the key, so the owner querying `Users { name }` on the peer gets `[]`, and still gets `[]` after the peer has had time to fetch the key.

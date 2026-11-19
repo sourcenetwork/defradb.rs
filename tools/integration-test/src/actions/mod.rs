@@ -184,6 +184,7 @@ client_actions! {
         SubscriptionRequest,
         SyncCounters,
         Wait,
+        WaitForBlocks,
         WaitForIndexReady,
         WaitForPeersEvents,
         WaitForSESync,
