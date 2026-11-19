@@ -58,6 +58,7 @@ async fn once_the_node_stops_the_provider_verifies_no_new_decision() {
         transport.clone(),
         transport,
         node.consensus_key(),
+        vera::vera_rs::GenesisSource::Hosted,
         &[42; 32],
         worker,
         &tuning,

@@ -6,8 +6,10 @@ use crate::provider::{
     AcpLightClientStatus, ProviderError, ProviderPolicyInfo, SubjectRef, VeraProvider,
 };
 use crate::tuning::AcpTuning;
-use acp_light_client::{AcpLightClient, AcpTransport, FreshnessPolicy, HttpWsTransport};
-use alloy_primitives::{Bytes, FixedBytes};
+use acp_light_client::{
+    AcpLightClient, AcpTransport, FreshnessPolicy, HttpWsTransport, ProofClient,
+};
+use alloy_primitives::{Bytes, FixedBytes, B256};
 use alloy_sol_types::{SolCall, SolEvent};
 use async_trait::async_trait;
 use commonware_codec::DecodeExt as _;
@@ -19,6 +21,7 @@ use super::abi::{IAcp, ACP_ADDRESS};
 use super::bearer;
 use super::client::{HttpTransport, VeraRsClient};
 use super::did_spelling;
+use super::follow::{Follow, ProviderChain};
 use super::policy_cmd;
 #[cfg(test)]
 use super::provider_commands::resolve_registered_or_passthrough_bearer_token;
@@ -37,16 +40,21 @@ mod reach;
 #[cfg(test)]
 mod signer_tests;
 mod submission;
+mod terms;
 #[cfg(test)]
 mod transport_tests;
 mod verified;
 
+pub use genesis::GenesisSource;
+use terms::Follower;
 use verified::verified;
 
 pub struct VeraRsProvider {
     light_client: Arc<AcpLightClient>,
-    client: VeraRsClient,
+    client: Arc<VeraRsClient>,
     worker: Arc<regolith::sync::Mutex<NativeWorker>>,
+    /// Where the provider stands with the deployment's terms.
+    follower: Arc<Follower>,
     worker_did: String,
     actor_did: String,
     deployment: u64,
@@ -96,9 +104,11 @@ impl VeraRsProvider {
     /// A provider of the node at `rpc_url`, reached over HTTP and, for
     /// finalized headers, the WebSocket at the same address. Its connections,
     /// light client observer and worker calls run on `edge`.
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         rpc_url: String,
         trusted_consensus_key: &str,
+        genesis: GenesisSource,
         private_key: &[u8],
         worker: NativeWorker,
         tuning: &AcpTuning,
@@ -115,6 +125,7 @@ impl VeraRsProvider {
             Arc::new(rpc),
             Arc::new(acp),
             trusted_consensus_key,
+            genesis,
             private_key,
             worker,
             tuning,
@@ -125,9 +136,11 @@ impl VeraRsProvider {
     }
 
     /// As [`new`](Self::new), for an actor whose key `signer` holds.
+    #[allow(clippy::too_many_arguments)]
     pub async fn new_with_signer(
         rpc_url: String,
         trusted_consensus_key: &str,
+        genesis: GenesisSource,
         signer: Arc<dyn DelegationSigner>,
         worker: NativeWorker,
         tuning: &AcpTuning,
@@ -143,6 +156,7 @@ impl VeraRsProvider {
             Arc::new(rpc),
             Arc::new(acp),
             trusted_consensus_key,
+            genesis,
             signer,
             worker,
             tuning,
@@ -161,6 +175,7 @@ impl VeraRsProvider {
         rpc: Arc<dyn RpcTransport>,
         acp: Arc<dyn AcpTransport>,
         trusted_consensus_key: &str,
+        genesis: GenesisSource,
         private_key: &[u8],
         worker: NativeWorker,
         tuning: &AcpTuning,
@@ -171,6 +186,7 @@ impl VeraRsProvider {
             rpc,
             acp,
             trusted_consensus_key,
+            genesis,
             Actor::Key(private_key),
             worker,
             tuning,
@@ -188,6 +204,7 @@ impl VeraRsProvider {
         rpc: Arc<dyn RpcTransport>,
         acp: Arc<dyn AcpTransport>,
         trusted_consensus_key: &str,
+        genesis: GenesisSource,
         signer: Arc<dyn DelegationSigner>,
         worker: NativeWorker,
         tuning: &AcpTuning,
@@ -198,6 +215,7 @@ impl VeraRsProvider {
             rpc,
             acp,
             trusted_consensus_key,
+            genesis,
             Actor::Signer(signer),
             worker,
             tuning,
@@ -212,6 +230,7 @@ impl VeraRsProvider {
         rpc: Arc<dyn RpcTransport>,
         acp: Arc<dyn AcpTransport>,
         trusted_consensus_key: &str,
+        genesis: GenesisSource,
         actor: Actor<'_>,
         worker: NativeWorker,
         tuning: &AcpTuning,
@@ -221,34 +240,100 @@ impl VeraRsProvider {
         let trusted = trusted_key(trusted_consensus_key)?;
         let genesis_id = Arc::new(regolith::sync::OnceCell::new());
         let light_client = edge::compat(async {
-            let light_client = Arc::new(
-                AcpLightClient::with_transport(
+            let named = match genesis {
+                GenesisSource::Configured(id) => Some(id),
+                GenesisSource::Hosted => {
+                    let proofs = ProofClient::with_transport(acp.clone(), trusted_consensus_key)
+                        .map_err(|e| ProviderError::Config(format!("light client: {e}")))?;
+                    Some(
+                        genesis::read_within(&proofs, &trusted, tuning.receipt_timeout)
+                            .await
+                            .map_err(|e| {
+                                ProviderError::Config(format!("hosted genesis identity: {e}"))
+                            })?,
+                    )
+                }
+                GenesisSource::Unnamed => {
+                    tracing::warn!(
+                        "no Vera genesis identifier is configured: after a switch of the \
+                         deployment's active device every verified read fails until one is"
+                    );
+                    None
+                }
+            };
+            let light_client = match named {
+                Some(id) => {
+                    let _ = genesis_id.set(id);
+                    AcpLightClient::for_deployment(
+                        acp,
+                        trusted_consensus_key,
+                        B256::from(id),
+                        10,
+                        FreshnessPolicy::default(),
+                    )
+                }
+                None => AcpLightClient::with_transport(
                     acp,
                     trusted_consensus_key,
                     10,
                     FreshnessPolicy::default(),
-                )
-                .map_err(|e| ProviderError::Config(format!("light client: {}", e)))?,
-            );
+                ),
+            }
+            .map_err(|e| ProviderError::Config(format!("light client: {}", e)))?;
+            let light_client = Arc::new(light_client);
             light_client
                 .wait_for_height(1, tuning.receipt_timeout)
                 .await
                 .map_err(|e| ProviderError::Config(format!("initial verified state: {e}")))?;
-            if let Err(error) = learn_genesis(&light_client, &trusted, &genesis_id).await {
-                tracing::warn!(error = %error, "vera.rs genesis identity not proven at start");
+            match genesis::read(light_client.proof_client(), &trusted).await {
+                Ok(served) => match named {
+                    Some(id) if id != served => {
+                        return Err(ProviderError::Config(format!(
+                            "the Vera node serves the deployment whose genesis is 0x{}, not \
+                             the configured 0x{}",
+                            hex::encode(served),
+                            hex::encode(id)
+                        )))
+                    }
+                    Some(_) => {}
+                    None => {
+                        let _ = genesis_id.set(served);
+                    }
+                },
+                Err(error) => {
+                    tracing::warn!(error = %error, "vera.rs genesis identity not proven at start")
+                }
             }
             Ok::<_, ProviderError>(light_client)
         })
         .await?;
         let light_client_observability = Arc::new(AtomicU64::new(0));
 
-        let client = VeraRsClient::with_transport(rpc);
+        let client = Arc::new(VeraRsClient::with_transport(rpc));
         let signer = actor.signer()?;
         admission::actor_key(signer.as_ref())
             .map_err(|e| ProviderError::Config(format!("actor signer: {e}")))?;
         let actor_did = did_spelling::defra(signer.did()).into_owned();
         let worker_did = worker.did().to_owned();
         let deployment = worker.deployment_id();
+        let mut worker = worker;
+        let follow = Follow::from_journal(worker.confirmed());
+        let worker = Arc::new(regolith::sync::Mutex::new(worker));
+        let own = actor_did.clone();
+        let follower = Arc::new(Follower {
+            light_client: light_client.clone(),
+            chain: ProviderChain {
+                client: client.clone(),
+                light_client: light_client.clone(),
+                trusted,
+                timeout: tuning.receipt_timeout,
+            },
+            worker: worker.clone(),
+            follow,
+            sink: regolith::sync::OnceCell::new(),
+            shared: std::sync::atomic::AtomicBool::new(false),
+            holds_key: Box::new(move |did| did == own || holds_registered_key(did)),
+        });
 
         let _light_client_observer = edge.spawn_service(edge::compat(run_light_client_observer(
             light_client.clone(),
@@ -258,12 +343,14 @@ impl VeraRsProvider {
                 trusted,
                 id: genesis_id.clone(),
             },
+            follower.clone(),
         )));
 
         let provider = Self {
             light_client,
             client,
-            worker: Arc::new(regolith::sync::Mutex::new(worker)),
+            worker,
+            follower,
             worker_did,
             actor_did,
             deployment,
@@ -275,8 +362,29 @@ impl VeraRsProvider {
             _light_client_observer,
             edge: edge.clone(),
         };
+        provider.follower.check().await;
         provider.recover_pending().await?;
         Ok(provider)
+    }
+
+    /// Whether the provider may decide and send now: not while a switch of
+    /// the deployment's active device is unchecked, nor once the node could
+    /// not tell what one voided.
+    fn admitted(&self) -> Result<(), ProviderError> {
+        self.follower.admit()
+    }
+
+    /// `read`, refused unless the provider is admitted both before and
+    /// after it: a term certified while the read was on its way may void the
+    /// state it was answered at.
+    async fn admitted_read<T>(
+        &self,
+        read: impl std::future::Future<Output = Result<T, ProviderError>>,
+    ) -> Result<T, ProviderError> {
+        self.admitted()?;
+        let answer = read.await?;
+        self.admitted()?;
+        Ok(answer)
     }
 
     fn policy_id_to_bytes32(policy_id: &str) -> Result<FixedBytes<32>, ProviderError> {
@@ -326,28 +434,33 @@ async fn learn_genesis(
     known: &regolith::sync::OnceCell<[u8; 32]>,
 ) -> Result<(), ProviderError> {
     if known.get().is_none() {
-        let _ = known.set(genesis::read(light_client, trusted).await?);
+        let _ = known.set(genesis::read(light_client.proof_client(), trusted).await?);
     }
     Ok(())
 }
+
+/// How long the observer waits for the next height before it looks at the
+/// deployment's terms again: a term that voids the head lowers the height,
+/// so the next one may be long in coming.
+const TERM_CHECK: Duration = Duration::from_secs(1);
 
 async fn run_light_client_observer(
     light_client: Arc<AcpLightClient>,
     last_invalidation_height: Arc<AtomicU64>,
     event_bus: Option<Arc<dyn Bus>>,
     genesis: Genesis,
+    follower: Arc<Follower>,
 ) {
     let mut next_height = 1u64;
     let mut previous_root = None;
 
     loop {
-        let sync = match light_client
-            .wait_for_height(next_height, Duration::from_secs(24 * 60 * 60))
-            .await
-        {
+        let waited = light_client.wait_for_height(next_height, TERM_CHECK).await;
+        follower.check().await;
+        let sync = match waited {
             Ok(sync) => sync,
             Err(error) => {
-                tracing::debug!(error = %error, "ACP light client observer wait_for_height failed");
+                tracing::trace!(error = %error, "ACP light client observer wait_for_height ended");
                 next_height = light_client
                     .header_chain()
                     .latest_height()
@@ -506,9 +619,13 @@ impl VeraProvider for VeraRsProvider {
             ));
         }
         let id = hex::encode(event.policyId);
-        let record = verified(|| self.light_client.read_policy(&id))
-            .await
-            .map_err(|e| ProviderError::Query(format!("created policy proof: {e}")))?;
+        let record = self
+            .admitted_read(async {
+                verified(|| self.light_client.read_policy(&id))
+                    .await
+                    .map_err(|e| ProviderError::Query(format!("created policy proof: {e}")))
+            })
+            .await?;
         let record: PolicyRecord = serde_json::from_slice(
             record
                 .value
@@ -723,9 +840,13 @@ impl VeraProvider for VeraRsProvider {
         policy_id: &str,
     ) -> Result<Option<ProviderPolicyInfo>, ProviderError> {
         let id = hex::encode(Self::policy_id_to_bytes32(policy_id)?);
-        let proof = verified(|| self.light_client.read_policy(&id))
-            .await
-            .map_err(|e| ProviderError::Query(format!("policy proof: {e}")))?;
+        let proof = self
+            .admitted_read(async {
+                verified(|| self.light_client.read_policy(&id))
+                    .await
+                    .map_err(|e| ProviderError::Query(format!("policy proof: {e}")))
+            })
+            .await?;
         let Some(bytes) = proof.value.as_deref() else {
             return Ok(None);
         };
@@ -754,9 +875,13 @@ impl VeraProvider for VeraRsProvider {
             resource: resource.into(),
             id: object_id.into(),
         };
-        let owner = verified(|| self.light_client.read_object_owner(&policy, &object))
-            .await
-            .map_err(|e| reach::read_error(&self.light_client, "owner proof", e))?;
+        let owner = self
+            .admitted_read(async {
+                verified(|| self.light_client.read_object_owner(&policy, &object))
+                    .await
+                    .map_err(|e| reach::read_error(&self.light_client, "owner proof", e))
+            })
+            .await?;
         Ok(match owner {
             Some(owner) => (true, did_spelling::defra(owner.0.as_str()).into_owned()),
             None => (false, String::new()),
@@ -772,9 +897,12 @@ impl VeraProvider for VeraRsProvider {
         actor_did: &str,
     ) -> Result<bool, ProviderError> {
         let request = access_request(resource, object_id, permission, actor_did)?;
-        verified(|| self.light_client.verify_access(policy_id, &request))
-            .await
-            .map_err(|e| reach::read_error(&self.light_client, "verified permission", e))
+        self.admitted_read(async {
+            verified(|| self.light_client.verify_access(policy_id, &request))
+                .await
+                .map_err(|e| reach::read_error(&self.light_client, "verified permission", e))
+        })
+        .await
     }
 
     async fn create_access_decision(
@@ -803,9 +931,13 @@ impl VeraProvider for VeraRsProvider {
             creator_sequence: confirmed.sequence,
             request,
         };
-        let decision = verified(|| self.light_client.verify_access_decision(&expected))
-            .await
-            .map_err(|e| ProviderError::Query(format!("verified access decision: {e}")))?;
+        let decision = self
+            .admitted_read(async {
+                verified(|| self.light_client.verify_access_decision(&expected))
+                    .await
+                    .map_err(|e| ProviderError::Query(format!("verified access decision: {e}")))
+            })
+            .await?;
         Ok(Some(decision.id))
     }
 
@@ -818,13 +950,23 @@ impl VeraProvider for VeraRsProvider {
     /// The state decisions are remembered under, while it is fresh. Once the
     /// light client's newest state is older than its freshness limit there
     /// is none, so no decision made at it is given again: the check goes to
-    /// the light client, which refuses a stale state.
+    /// the light client, which refuses a stale state. The state names the
+    /// last term checked, so nothing remembered before a switch of the
+    /// deployment's active device is given after it, and there is none
+    /// while a switch is unchecked.
     fn decision_state(&self) -> Option<String> {
+        self.admitted().ok()?;
         self.light_client
             .header_chain()
             .fresh_state()
             .ok()
-            .map(|state| format_root(state.module_state_root))
+            .map(|state| {
+                format!(
+                    "{}:{}",
+                    self.follower.epoch(),
+                    format_root(state.module_state_root)
+                )
+            })
     }
 
     fn acp_light_client_status(&self) -> Result<AcpLightClientStatus, ProviderError> {
@@ -841,6 +983,22 @@ impl VeraProvider for VeraRsProvider {
             last_invalidation_height,
             connected: sync.is_some(),
         })
+    }
+
+    /// One outbox per provider. A provider several nodes share cannot tell
+    /// whose outbox a voided change belongs in, nor make another node's
+    /// owed revocation deny: a term that leaves changes to owe again then
+    /// fails closed.
+    fn owe_voided_to(&self, sink: std::sync::Weak<dyn acp::OweAgain>) {
+        if self.follower.sink.set(sink).is_err() {
+            self.follower
+                .shared
+                .store(true, std::sync::atomic::Ordering::Release);
+            tracing::warn!(
+                "this vera.rs provider serves several nodes: a switch of its deployment's \
+                 active device that voids a change it confirmed fails closed"
+            );
+        }
     }
 
     fn delegation_audience(&self) -> Option<acp::DelegationAudience> {
@@ -900,6 +1058,7 @@ mod tests {
             let error = VeraRsProvider::new(
                 "http://127.0.0.1:1".into(),
                 key,
+                GenesisSource::Unnamed,
                 &[],
                 worker,
                 &AcpTuning::default(),

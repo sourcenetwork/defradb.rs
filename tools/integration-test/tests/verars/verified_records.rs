@@ -33,6 +33,7 @@ async fn archived_owner_record_does_not_authorize_access() {
             VeraRsProvider::new(
                 hub.node(0).rpc_url(),
                 &consensus_key,
+                vera::vera_rs::GenesisSource::Unnamed,
                 &private_key,
                 worker,
                 &AcpTuning::default(),
@@ -179,6 +180,7 @@ async fn native_permissions_honor_policy_exclusions_and_cross_object_rules() {
             VeraRsProvider::new(
                 hub.node(0).rpc_url(),
                 &consensus_key,
+                vera::vera_rs::GenesisSource::Unnamed,
                 &hex::decode(&owner.private_key_hex).unwrap(),
                 worker,
                 &AcpTuning::default(),

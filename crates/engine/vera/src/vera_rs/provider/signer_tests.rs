@@ -16,7 +16,9 @@ use serde_json::Value;
 use vera_domain::NativeTx;
 
 use super::transport_tests::{Silent, Workers};
-use super::{trusted_key, IAcp, ProviderError, VeraProvider, VeraRsProvider};
+use super::{
+    trusted_key, Follow, Follower, IAcp, ProviderChain, ProviderError, VeraProvider, VeraRsProvider,
+};
 use crate::vera_rs::client::tests::{Recorded, TRUSTED_KEY};
 use crate::vera_rs::client::VeraRsClient;
 use crate::vera_rs::did_spelling;
@@ -40,15 +42,36 @@ pub(super) async fn provider(
         .expect("light client")
     })
     .await;
-    let worker = workers.next();
+    let mut worker = workers.next();
     admission::actor_key(signer.as_ref()).expect("secp256k1 actor");
+    let light_client = Arc::new(light_client);
+    let client = Arc::new(VeraRsClient::with_transport(rpc));
+    let follow = Follow::from_journal(worker.confirmed());
+    let worker_did = worker.did().to_owned();
+    let deployment = worker.deployment_id();
+    let worker = Arc::new(regolith::sync::Mutex::new(worker));
+    let follower = Arc::new(Follower {
+        light_client: light_client.clone(),
+        chain: ProviderChain {
+            client: client.clone(),
+            light_client: light_client.clone(),
+            trusted: trusted_key(TRUSTED_KEY).expect("trusted key"),
+            timeout: Duration::from_secs(5),
+        },
+        worker: worker.clone(),
+        follow,
+        sink: regolith::sync::OnceCell::new(),
+        shared: std::sync::atomic::AtomicBool::new(false),
+        holds_key: Box::new(|_| false),
+    });
     VeraRsProvider {
-        light_client: Arc::new(light_client),
-        client: VeraRsClient::with_transport(rpc),
-        worker_did: worker.did().to_owned(),
-        deployment: worker.deployment_id(),
+        light_client,
+        client,
+        follower,
+        worker_did,
+        deployment,
         genesis_id: Arc::new(regolith::sync::OnceCell::new()),
-        worker: Arc::new(regolith::sync::Mutex::new(worker)),
+        worker,
         actor_did: did_spelling::defra(signer.did()).into_owned(),
         trusted: trusted_key(TRUSTED_KEY).expect("trusted key"),
         signer,

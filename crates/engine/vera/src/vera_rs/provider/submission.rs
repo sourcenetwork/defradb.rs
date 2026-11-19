@@ -67,6 +67,7 @@ impl VeraRsProvider {
         &self,
         data: Bytes,
     ) -> Result<ConfirmedSubmission, ProviderError> {
+        self.admitted()?;
         let mut worker = nuclei::time::timeout(self.sync_timeout, self.worker.clone().lock_owned())
             .await
             .map_err(|_| unavailable("worker is busy"))?;

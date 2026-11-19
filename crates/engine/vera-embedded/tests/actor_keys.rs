@@ -66,6 +66,7 @@ async fn provider(
         transport.clone(),
         transport,
         &hex::encode(node.consensus_key().encode()),
+        vera::vera_rs::GenesisSource::Hosted,
         signer,
         worker,
         &tuning,

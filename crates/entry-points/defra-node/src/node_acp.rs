@@ -115,6 +115,7 @@ where
                     vera::VeraRsProvider::new(
                         config.rpc_address.clone(),
                         &config.consensus_key,
+                        genesis_source(config.genesis_id),
                         key,
                         worker,
                         &config.tuning,
@@ -127,6 +128,7 @@ where
                     vera::VeraRsProvider::new_with_signer(
                         config.rpc_address.clone(),
                         &config.consensus_key,
+                        genesis_source(config.genesis_id),
                         Arc::clone(signer),
                         worker,
                         &config.tuning,
@@ -165,6 +167,17 @@ where
     }
 }
 
+/// Where a remote Vera node's provider takes its deployment's genesis
+/// identifier from: the configuration, or nowhere (every term above 0 is
+/// then refused).
+#[cfg(feature = "vera")]
+fn genesis_source(configured: Option<[u8; 32]>) -> vera::vera_rs::GenesisSource {
+    configured.map_or(
+        vera::vera_rs::GenesisSource::Unnamed,
+        vera::vera_rs::GenesisSource::Configured,
+    )
+}
+
 /// The edge the Vera provider's connections run on: the node's, or for a
 /// node that runs no other network work, the process's on-demand one.
 #[cfg(feature = "vera")]
@@ -189,12 +202,18 @@ where
     S: storage::corekv::Store + 'static,
 {
     let vera_acp = Arc::new(
-        vera::VeraDocumentACP::without_access_cache(provider).on_network(edge, request_timeout),
+        vera::VeraDocumentACP::without_access_cache(Arc::clone(&provider))
+            .on_network(edge, request_timeout),
     );
     let dac_policies = vera_policies(&vera_acp, &store);
-    let (document_acp, redrive) = gate_external_acp(vera_acp.clone(), store);
+    let (gate, redrive) = gate_external_acp(vera_acp.clone(), store);
+    // What a switch of the deployment's active device voided is owed again
+    // through the gate's outbox.
+    let owed = Arc::downgrade(&gate);
+    let owed: std::sync::Weak<dyn acp::OweAgain> = owed;
+    provider.owe_voided_to(owed);
     DocumentAcpSetup {
-        document_acp,
+        document_acp: gate,
         local_zanzibar_store: None,
         dac_policies,
         vera_acp: Some(vera_acp),
@@ -224,7 +243,7 @@ where
 fn gate_external_acp<S>(
     provider: Arc<dyn acp::DocumentACP>,
     store: Arc<S>,
-) -> (Arc<dyn acp::DocumentACP>, StartRedrive)
+) -> (Arc<acp::ExternalDocumentAcp<S>>, StartRedrive)
 where
     S: storage::corekv::Store + 'static,
 {
@@ -334,6 +353,7 @@ mod tests {
                     // Nothing listens here; a connection attempt would fail differently.
                     rpc_address: "http://127.0.0.1:1".into(),
                     consensus_key: "not-a-key".into(),
+                    genesis_id: None,
                     deployment_id: 9001,
                     actor: crate::VeraRsActor::Secp256k1Key(vec![7; 32]),
                     worker_dir: worker_dir.clone(),

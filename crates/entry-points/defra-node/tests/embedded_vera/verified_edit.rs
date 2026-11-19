@@ -288,6 +288,7 @@ fn a_verified_update_is_refused_when_the_chain_cannot_be_reached() {
             .with_vera_rs(VeraRsConfig {
                 rpc_address: format!("http://{rpc}"),
                 consensus_key: trust.consensus_key,
+                genesis_id: None,
                 deployment_id: trust.chain_id,
                 actor: VeraRsActor::Signer(Arc::clone(&actor)),
                 worker_dir: home.path().join("worker"),
