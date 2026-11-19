@@ -4,7 +4,7 @@
 //! node1 is stopped, node0 writes N protected (owned by Alice) and N public
 //! (anonymous) documents, node1 is restarted. Every document must arrive.
 //!
-//! Characterises `resolve_push_creator` (`crates/db/src/merge/push_docs_creator.rs:59`),
+//! Characterises `resolve_push_creator` (`crates/database/db/src/merge/push_docs_creator.rs:59`),
 //! which the replay and retry paths call and which has no fallback creator once
 //! the collection carries a `@policy`.
 

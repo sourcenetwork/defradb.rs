@@ -39,11 +39,11 @@ cutters are modeled as any functions that cut a string into pieces which join ba
 overlap candidates (`cands`) are any function too: in Rust they are the whole sentences at
 the end of the previous core, never its first one; Rust property tests check that.
 
-Rust anchors: `split` in `crates/chunk-split/src/split/mod.rs`; `units`,
-`fence_before` and `segments` in `crates/chunk-split/src/split/segments.rs`; `atoms` in
-`crates/chunk-split/src/split/atoms.rs`; `pack` in
-`crates/chunk-split/src/split/pack.rs`; `with_overlap`, `borrow` and `REPEAT_SHARE` in
-`crates/chunk-split/src/split/overlap.rs`.
+Rust anchors: `split` in `crates/building-blocks/chunk-split/src/split/mod.rs`; `units`,
+`fence_before` and `segments` in `crates/building-blocks/chunk-split/src/split/segments.rs`; `atoms` in
+`crates/building-blocks/chunk-split/src/split/atoms.rs`; `pack` in
+`crates/building-blocks/chunk-split/src/split/pack.rs`; `with_overlap`, `borrow` and `REPEAT_SHARE` in
+`crates/building-blocks/chunk-split/src/split/overlap.rs`.
 -/
 
 namespace ChunkSplit

@@ -16,11 +16,11 @@ What must never happen:
 * a write whose caller said `true` is left unsigned while there is a key;
 * a write whose caller said nothing signs other than as the node's setting says.
 
-Rust anchors: `crates/defra-core/src/request_context.rs`
-`RequestContext::signing`; `crates/defra-core/src/signing.rs`
-`resolve_signing_config_with_flag`; `crates/http/src/query_context.rs`
-`request_context`; `crates/ffi/src/document/run.rs` `DocumentCall::begin`;
-`crates/defra-node/src/lib.rs` `execute_prepared_request`.
+Rust anchors: `crates/foundation/defra-core/src/request_context.rs`
+`RequestContext::signing`; `crates/foundation/defra-core/src/signing.rs`
+`resolve_signing_config_with_flag`; `crates/surfaces/http/src/query_context.rs`
+`request_context`; `crates/entry-points/ffi/src/document/run.rs` `DocumentCall::begin`;
+`crates/entry-points/defra-node/src/lib.rs` `execute_prepared_request`.
 -/
 
 namespace SigningOverride

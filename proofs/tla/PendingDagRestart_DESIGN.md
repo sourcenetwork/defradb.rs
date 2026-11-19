@@ -1,7 +1,7 @@
 # PendingDagRestart — pending-DAG durability across hub restart (TLA+ design)
 
 Models the hub-side pending-DAG registration's survival of a process restart for issue
-**#1099**, abstracting `crates/p2p/src/sync/manager/process/pushlog.rs`
+**#1099**, abstracting `crates/database/p2p/src/sync/manager/process/pushlog.rs`
 (`process_block_inner`: `try_insert_pending_dag`, then the pending store's
 `register`) plus the pusher's persisted retry ladder. Companion to
 `PushLogAdmission.tla` (#1088 W1): that slice fixed the **reply decision** at capacity —
@@ -9,7 +9,7 @@ kept here as `HubOverflowNack` — while this slice asks what survives a hub **c
 after an *honest* success reply.
 
 > **Status: the GREEN config is current-main behavior.** `process_block_inner` persists
-> a push-originated registration through `crates/p2p/src/sync/pending_store/` before the
+> a push-originated registration through `crates/database/p2p/src/sync/pending_store/` before the
 > success reply. The RED config is the pre-#1099 behavior: registrations lived only in the
 > hub's in-memory map, so a hub crash after the success ack destroyed the registration
 > while the pusher had already deleted its persisted retry record — silent, permanent
@@ -67,7 +67,7 @@ The Rust-side fence for the same invariant is the restart integration test
 `tools/integration-test/tests/legacy/p2p_admission_restart.rs`
 (`hub_restart_recovers_success_acked_pending_dags`) — kill and restart the hub after it
 success-acks a missing-links push, then assert the doc still merges — plus the
-`crates/p2p` unit tests around pending-DAG persistence
+`crates/database/p2p` unit tests around pending-DAG persistence
 (`sync_manager_tests.rs::pending_persistence`). Note the record-lifetime
 refinement the model's atomic `Resolve` glosses over: in Rust the durable
 record is deleted only when the root is **successfully marked merged** —

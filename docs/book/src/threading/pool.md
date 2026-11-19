@@ -1,6 +1,6 @@
 # The worker pool
 
-The pool (`crates/workers`) is the compute side of defradb.rs: one pinned worker per
+The pool (`crates/foundation/workers`) is the compute side of defradb.rs: one pinned worker per
 core, each with its own local executor.
 
 ![Native targets: the edge routes, workers run pinned executors, regolith runs inline](../diagrams/02-threading-native.png)
@@ -21,7 +21,7 @@ the task back on *its* worker's run queue. Data-path futures need not be `Send`.
 
 ## Routing at the edge
 
-The target is chosen once, at the edge ([`crates/workers/src/pool/routing.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/workers/src/pool/routing.rs)):
+The target is chosen once, at the edge ([`crates/foundation/workers/src/pool/routing.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/foundation/workers/src/pool/routing.rs)):
 
 - **`Target::Worker(n)`**: an explicit transaction's owner. A transaction is begun on a
   worker and stays there for its whole life; its ID names the worker, so every request
@@ -35,8 +35,8 @@ The target is chosen once, at the edge ([`crates/workers/src/pool/routing.rs`](h
   fallback on the same node. Correctness never depends on the affinity; the engine
   validates every commit wherever it runs. The GraphQL router sends a mutation naming
   exactly one document here
-  ([`crates/query/src/pooled/route.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/query/src/pooled/route.rs)); P2P merges use the same affinity
-  ([`crates/db/src/merge/pooled.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/db/src/merge/pooled.rs)).
+  ([`crates/engine/query/src/pooled/route.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/query/src/pooled/route.rs)); P2P merges use the same affinity
+  ([`crates/database/db/src/merge/pooled.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/database/db/src/merge/pooled.rs)).
 - **`Target::LeastLoaded`**: everything else (read-only queries, batch work), a
   power-of-two choice among the caller's node.
 
@@ -55,7 +55,7 @@ background/blocking pools, never onto a data-path worker.
 
 Each worker holds one regolith `IoQueue` per database, opened lazily on its own thread
 the first time a transaction reaches that database
-(`crates/storage/src/backends/regolith/worker_io/`). A transaction on a worker reads
+(`crates/engine/storage/src/backends/regolith/worker_io/`). A transaction on a worker reads
 `CacheOnly` on that queue (a miss suspends the task on an `IoWait`, never the thread on
 the device) and commits with `commit_nowait`, whose ticket the same queue completes.
 
@@ -67,7 +67,7 @@ one device read serves every waiter for that block.
 
 Callers *off* the pool (tests, one-shot tools) still get correct behaviour: the store
 borrows an idle queue, drives its own polling inline in the calling task
-([`crates/storage/src/backends/regolith/worker_io/drive.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/worker_io/drive.rs): poll the future; if pending, poll the queue; completions loop,
+([`crates/engine/storage/src/backends/regolith/worker_io/drive.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/worker_io/drive.rs): poll the future; if pending, poll the queue; completions loop,
 otherwise park the task on the queue's idle waker), or falls back to blocking reads and
 a synchronous commit. Off-pool calls are counted (`off_pool_calls`) so a request that
 was not routed is visible in telemetry.

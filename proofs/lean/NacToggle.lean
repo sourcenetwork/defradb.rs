@@ -21,12 +21,12 @@ loser of the race told anything but Go's "already"; an enable, or a start with
 the enable option, that turns temporarily-off NAC back on.
 
 Rust owners:
-  crates/acp/src/nac/node_acp/mod.rs        NodeACP::load (decode)
-  crates/acp/src/nac/node_acp/lifecycle.rs  NodeACP::disable, NodeACP::re_enable (the writes),
+  crates/engine/acp/src/nac/node_acp/mod.rs        NodeACP::load (decode)
+  crates/engine/acp/src/nac/node_acp/lifecycle.rs  NodeACP::disable, NodeACP::re_enable (the writes),
                                             NodeACP::enable (decideEnable)
-  crates/db/src/nac/toggle.rs               NacManager::decide_toggle (decide),
+  crates/database/db/src/nac/toggle.rs               NacManager::decide_toggle (decide),
                                             NacManager::toggle_as (the re-run)
-  crates/db/src/nac/mod.rs                  NacManager::initialize (startup)
+  crates/database/db/src/nac/mod.rs                  NacManager::initialize (startup)
 -/
 
 namespace NacToggle

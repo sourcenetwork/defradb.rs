@@ -39,7 +39,7 @@ This is one swap at a time. Two holders racing on one slot, a lookup between
 swaps, and what clear must not do to the map are the TLA+ model
 `proofs/tla/IdentityStore.tla`.
 
-Rust anchors (`crates/defra-core/src/signing/identity_store.rs`): `Holders`,
+Rust anchors (`crates/foundation/defra-core/src/signing/identity_store.rs`): `Holders`,
 `same_signer`, `hold_identity`, `retain_identity`, `release_identity`,
 `store_identity`, `clear_identity_store`.
 -/

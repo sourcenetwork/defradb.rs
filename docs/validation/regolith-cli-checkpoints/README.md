@@ -8,7 +8,7 @@ Each log begins with its tested revision. Checksums cover compressed and origina
 
 The reported source differences are the two schema test files fixed after CI exposed
 a preexisting fixture collision. At the mechanisms checkpoint, there is also the
-removal of an unused `BTreeMap` import in `crates/db/src/txn/context.rs`; no runtime
+removal of an unused `BTreeMap` import in `crates/database/db/src/txn/context.rs`; no runtime
 behavior changes. The intermediate lock-removal history repairs preserve its final
 implementation. These checks are not claimed to rerun after documentation or test-only changes.
 

@@ -1,4 +1,4 @@
-# Survey: `crates/ffi/`
+# Survey: `crates/entry-points/ffi/`
 
 ## Purpose
 C-compatible FFI binding layer. Exposes DefraDB.rs to Go (and other languages)

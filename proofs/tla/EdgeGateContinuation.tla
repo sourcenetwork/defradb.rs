@@ -1,7 +1,7 @@
 ---- MODULE EdgeGateContinuation ----
 \* The story, in plain words.
 \*
-\* The network edge admits work through a gate (crates/edge/src/gate.rs). A
+\* The network edge admits work through a gate (crates/foundation/edge/src/gate.rs). A
 \* gate counts what it admitted. Shutdown closes the gate, so it admits
 \* nothing new, and the drain waits for the count to reach zero before the
 \* rest is stopped.
@@ -21,7 +21,7 @@
 \*     itself first, then sees the gate closed and backs out (Gate::admit);
 \*   * the closer, which closes the gate once;
 \*   * the drain, which waits for zero, seals the gate, looks again, and only
-\*     then says the gate is drained. The drain's report (crates/edge/src/handle.rs
+\*     then says the gate is drained. The drain's report (crates/foundation/edge/src/handle.rs
 \*     drain_gate) is that result itself, not a later look at the count.
 \*
 \* What must never happen:

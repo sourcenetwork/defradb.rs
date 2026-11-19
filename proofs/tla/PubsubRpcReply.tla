@@ -37,24 +37,24 @@
 \*   | Model             | Rust                                                        |
 \*   |-------------------|-------------------------------------------------------------|
 \*   | Publish           | SyncCoordinator::pubsub_sync_branchable_collection and the  |
-\*   |                   | doc-sync caller (crates/p2p/src/sync/coordinator/           |
+\*   |                   | doc-sync caller (crates/database/p2p/src/sync/coordinator/           |
 \*   |                   | pubsub_client.rs): publish_raw on the base topic            |
 \*   | Deliver(p, how)   | gossipsub::Event::Message, emitted for the first copy only  |
-\*   |                   | (crates/p2p/src/host/p2p_host/protocols.rs                  |
+\*   |                   | (crates/database/p2p/src/host/p2p_host/protocols.rs                  |
 \*   |                   | handle_gossipsub_event)                                     |
 \*   | via[p]            | that event's propagation_source: the asker when "direct",   |
 \*   |                   | the relay when "relayed"; on iroh, iroh-gossip's            |
-\*   |                   | delivered_from (Delivery::received in crates/p2p/src/       |
+\*   |                   | delivered_from (Delivery::received in crates/database/p2p/src/       |
 \*   |                   | iroh/gossip/delivery.rs), which also names only the hop     |
-\*   | Answer(p)         | TopicHandler::deliver_gossip_message (crates/p2p/src/       |
+\*   | Answer(p)         | TopicHandler::deliver_gossip_message (crates/database/p2p/src/       |
 \*   |                   | pubsub_rpc/topic_handler.rs): the reply goes to             |
 \*   |                   | response_topic(base, from)                                  |
 \*   | AnswerPublisher   | `from` is HostEvent::GossipRawMessage's `source`, the       |
 \*   |                   | message's signed author (protocols.rs, then                 |
-\*   |                   | handle_gossip_raw_message in crates/p2p/src/sync/           |
+\*   |                   | handle_gossip_raw_message in crates/database/p2p/src/sync/           |
 \*   |                   | coordinator/event_handler/pubsub_raw.rs); on iroh, the      |
 \*   |                   | key that sealed the payload (raw_publisher in               |
-\*   |                   | crates/p2p/src/iroh/gossip/delivery.rs, raw_origin.rs).     |
+\*   |                   | crates/database/p2p/src/iroh/gossip/delivery.rs, raw_origin.rs).     |
 \*   |                   | RED: the propagation_source, as before #2773                |
 \*   | inflight          | a reply published but not yet read by the reply loop's      |
 \*   |                   | `prep.responses.recv()`                                     |

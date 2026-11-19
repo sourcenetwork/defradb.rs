@@ -10,8 +10,8 @@ A provider outside the page's transaction also lets through a document it
 finds unregistered. The page then drops what is deleted, which is enough as
 long as a document is unregistered only once it is deleted.
 
-Rust owners: crates/db/src/event/updates.rs (record, read, rows, once_key),
-crates/db/src/event/updates/gate.rs (Gate::decide, Gate::confirm), and the
+Rust owners: crates/database/db/src/event/updates.rs (record, read, rows, once_key),
+crates/database/db/src/event/updates/gate.rs (Gate::decide, Gate::confirm), and the
 document update and merge writers that append the journal entry in the
 document transaction.
 -/

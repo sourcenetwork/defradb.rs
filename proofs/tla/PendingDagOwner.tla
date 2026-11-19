@@ -15,7 +15,7 @@
 \* slot), the clock asleep with no wake owed while a due root could take a
 \* free slot, or the clock waking itself after a full lane and spinning
 \* through dispatches that cannot make progress.
-\* Rust: crates/p2p/src/sync/coordinator/mod.rs PendingDagWorkOwner::drop (the
+\* Rust: crates/database/p2p/src/sync/coordinator/mod.rs PendingDagWorkOwner::drop (the
 \* generation check and the capacity wake), SyncShutdownHandle::reserve_pending_dag_fetch,
 \* spawn_pending_dag_fetch and claim_pending_dag_merge (the claim race),
 \* SyncCoordinator::dispatch_due_pending_dag_fetches with

@@ -31,7 +31,7 @@
 \* the heads an update builds on: a head set is a blind merge, so two updates
 \* on the same heads both commit and both become heads.
 \*
-\* Code it models (crates/db/src/write):
+\* Code it models (crates/database/db/src/write):
 \*   create.rs              embed, identity, seed_identity, memo_identity (the memo ordinal keeps the short ID), prepare_keys, compute, compute_many, persist
 \*   autocommit/create.rs   create_many_with_resolved_inputs (seed once, resolve waves), create_impl, run_create_attempt
 \*   autocommit/batch.rs    BatchMutator::create_as (with a memo: memo-ordinal short ID, keys asked of the memo)

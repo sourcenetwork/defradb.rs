@@ -1,4 +1,4 @@
-# Survey: `crates/cli/`
+# Survey: `crates/entry-points/cli/`
 
 ## Purpose
 The `defra` binary's library half: clap-based command parsing (`cli.rs`,

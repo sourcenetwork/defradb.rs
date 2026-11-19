@@ -6,7 +6,7 @@ flow back to the database.
 
 ## What it is
 
-`crates/vera` defines the `VeraProvider` interface: create policies, register and
+`crates/engine/vera` defines the `VeraProvider` interface: create policies, register and
 archive objects, set and delete relationships, check access. Two implementations:
 
 - **CosmosProvider**: a Cosmos-SDK chain over LCD/gRPC, transactions broadcast to it,
@@ -262,7 +262,7 @@ provides. Vera is opt-in: without it, local Zanzibar ACP is the whole story.
 External decisions are remote inputs, so they follow the doctrine's remote-input rules:
 resolved at the edge, never inside a retried closure, memoized by request bytes across
 attempts, single-flight, batched, cached (access-decision and policy caches with the
-circuit breaker and tuning knobs in `crates/vera/src/`), with staleness documented and
+circuit breaker and tuning knobs in `crates/engine/vera/src/`), with staleness documented and
 a persisted-decision path for signers to verify via the light client.
 
 > **Why fail closed.** An external decider that times out is not "probably fine": it is

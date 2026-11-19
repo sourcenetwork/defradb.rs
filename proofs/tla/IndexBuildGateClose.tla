@@ -21,18 +21,18 @@
 \*     it while the gate it waits at opens only once that open returns.
 \*
 \* Code it models:
-\*   crates/db/src/index/backfill.rs  DB::backfill_batches (the gate wait
+\*   crates/database/db/src/index/backfill.rs  DB::backfill_batches (the gate wait
 \*       raced with DB::closing; a close ends it with DatabaseClosed),
 \*       DB::backfill_index (DatabaseClosed leaves the record in progress),
 \*       DB::start_resumed_index_backfills (spawns DB::resume_index_backfills
 \*       once the database is open, and does not wait for it)
-\*   crates/db/src/database/mod.rs  DB::close (sets closing, then stops the
+\*   crates/database/db/src/database/mod.rs  DB::close (sets closing, then stops the
 \*       pool, which waits for the build task), DB::finish_open (resumes no
 \*       backfill, so the open returns with the build still owed)
-\*   crates/defra-node/src/assemble.rs  assemble (opens the database, then
+\*   crates/entry-points/defra-node/src/assemble.rs  assemble (opens the database, then
 \*       calls DB::start_resumed_index_backfills before the node is handed
 \*       back, so no test step runs between the two)
-\*   crates/db/src/index/build_gate.rs  IndexBuildGate::enter
+\*   crates/database/db/src/index/build_gate.rs  IndexBuildGate::enter
 \* Crashes and drops during a build are in IndexDropBackfill.tla; a close
 \* here leaves the build in the same state a crash does.
 EXTENDS Naturals

@@ -37,9 +37,9 @@ copies published by other searches, is the TLA+ model
 per-search laws it rests on, for logs of any length.
 
 Rust anchors: `pending_candidates` and `snapshot_pending`
-(`crates/db/src/index/vector/engine/diskann/graph.rs`), and
+(`crates/database/db/src/index/vector/engine/diskann/graph.rs`), and
 `Copy::for_each_latest_through` and `Segment`
-(`crates/db/src/index/vector/engine/diskann/pending_cache.rs`).
+(`crates/database/db/src/index/vector/engine/diskann/pending_cache.rs`).
 -/
 
 namespace PendingCache

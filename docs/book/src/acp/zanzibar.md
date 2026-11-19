@@ -1,7 +1,7 @@
 # The Zanzibar engine
 
-`crates/zanzibar` is a standalone implementation of Google's Zanzibar permission model,
-and `crates/acp` builds DefraDB's access control on it. No global mediator, no special
+`crates/building-blocks/zanzibar` is a standalone implementation of Google's Zanzibar permission model,
+and `crates/engine/acp` builds DefraDB's access control on it. No global mediator, no special
 cases in the query engine: authorization is evaluation of a policy over relationship
 tuples.
 
@@ -11,7 +11,7 @@ Three nouns:
 
 - **Policies** (`Policy`, `Resource`, `Relation`, `Subject`): a policy names resource
   types, relations on them, and permission expressions over those relations. DefraDB's
-  DPI format is a small YAML dialect (`crates/acp/src/policy_yaml/`); the default
+  DPI format is a small YAML dialect (`crates/engine/acp/src/policy_yaml/`); the default
   document policy (used when a collection carries no explicit one) has an `owner`
   relation, an `admin` computed from `owner`, direct `reader`/`updater`/`deleter`
   relations, and `read`/`update`/`delete` permissions computed as unions over owner,
@@ -20,7 +20,7 @@ Three nouns:
   `a/zanzibar/` as Ordinary keys. Subjects can be actors, wildcards, or usersets
   (a subject that is itself a relation on another object).
 - **Relation expressions**: the algebra evaluated to answer "may this identity perform
-  this permission on this resource" (`crates/zanzibar/src/expression/`):
+  this permission on this resource" (`crates/building-blocks/zanzibar/src/expression/`):
   `This` (a direct tuple), `ComputedUserset` (follow to another relation on the same
   resource), `TupleToUserset` (follow a tuple relation to a target, then evaluate a
   computed relation there), and the set operations `Union`, `Intersection`, `Difference`.
@@ -28,7 +28,7 @@ Three nouns:
 ## Evaluation
 
 The checker is a goal-tree search with cycle detection
-([`crates/zanzibar/src/engine/evaluate.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/zanzibar/src/engine/evaluate.rs)):
+([`crates/building-blocks/zanzibar/src/engine/evaluate.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/building-blocks/zanzibar/src/engine/evaluate.rs)):
 
 - `Union` short-circuits on true; `Intersection` short-circuits on false;
 - `Difference` requires the base to be *proven* true and the subtraction *proven*
@@ -40,7 +40,7 @@ The checker is a goal-tree search with cycle detection
 - batch checks share one cache (`check_many`).
 
 Policies are immutable once stored; the node keeps them in a lock-free policy snapshot
-(an `Atom`-swapped lookup table, [`crates/acp/src/policy_cache.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/acp/src/policy_cache.rs)) that reads never lock
+(an `Atom`-swapped lookup table, [`crates/engine/acp/src/policy_cache.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/acp/src/policy_cache.rs)) that reads never lock
 to consult.
 
 ## Policy identity

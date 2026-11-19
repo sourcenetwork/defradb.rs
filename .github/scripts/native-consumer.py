@@ -24,9 +24,9 @@ except ModuleNotFoundError:
     except ModuleNotFoundError:
         sys.exit("native-consumer.py needs Python 3.11+ or the tomli package to read Cargo manifests")
 
-SDK_MANIFESTS = ("crates/vera/Cargo.toml", "tools/integration-test/Cargo.toml")
+SDK_MANIFESTS = ("crates/engine/vera/Cargo.toml", "tools/integration-test/Cargo.toml")
 # Crates built against the unpublished Vera node crates the harness also uses.
-NODE_MANIFESTS = ("crates/vera-embedded/Cargo.toml",)
+NODE_MANIFESTS = ("crates/engine/vera-embedded/Cargo.toml",)
 # The vera.rs repository on github.com under every scheme, user, port and letter case: Cargo resolves
 # those spellings to the same source. Another host is another source. Matching more spellings than
 # Cargo equates only adds declarations that must carry the pin.

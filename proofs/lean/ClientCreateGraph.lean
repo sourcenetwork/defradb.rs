@@ -12,7 +12,7 @@ encoding, CID hashing, CRDT encoding, and cryptographic signatures are separate
 external premises. The concrete client must independently reconstruct the
 native blocks using the trusted schema; a remote collection version alone is
 not a trusted schema. Present nulls remain fields in the native block graph;
-omitted fields do not. Rust owners: crates/db/src/block/builder/immutable.rs,
+omitted fields do not. Rust owners: crates/database/db/src/block/builder/immutable.rs,
 compute.rs, and client_create.rs.
 -/
 

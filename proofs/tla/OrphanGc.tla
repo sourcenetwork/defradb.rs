@@ -34,11 +34,11 @@
 \* is unowned and whose mark expired is reclaimed.
 \*
 \* Code it models:
-\*   crates/storage/src/stores/blockstore.rs BlockWritesAttempt::run (put),
+\*   crates/engine/storage/src/stores/blockstore.rs BlockWritesAttempt::run (put),
 \*   marker_value, marker_time;
-\*   crates/db/src/block/orphan_gc.rs DB::reclaim_orphan_blocks, nominate_orphans,
+\*   crates/database/db/src/block/orphan_gc.rs DB::reclaim_orphan_blocks, nominate_orphans,
 \*   DB::decide_orphans (the decision);
-\*   crates/db/src/merge/merge_handler/doc_identity.rs record_block_ownership
+\*   crates/database/db/src/merge/merge_handler/doc_identity.rs record_block_ownership
 \*   and the merge's mark clearing (the signature block's owner and mark).
 EXTENDS Naturals, FiniteSets
 

@@ -263,7 +263,7 @@ async fn encryption_acp_user_and_node_access() {
 /// This now passes with the DEK-leak fix (#976): node0 registers the encrypted
 /// doc on Vera *before* the detached P2P broadcast fires (the broadcast
 /// mutator's pre-broadcast registration is now wired via
-/// `crates/cli/src/commands/start/server_p2p.rs`), so there is no
+/// `crates/entry-points/cli/src/commands/start/server_p2p.rs`), so there is no
 /// unregistered-window leak. With the doc registered and node1 never granted
 /// `reader`, node0's KMS serve-gate denies the DEK fetch and node1 cannot
 /// decrypt the replicated block. The grant-before-connect ordering below keeps

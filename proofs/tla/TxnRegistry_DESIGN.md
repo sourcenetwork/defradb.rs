@@ -15,7 +15,7 @@ idle gap `clock - lastSeen` was `<= MaxIdle` at the instant of removal.
 
 ## Source anchors (Rust — the mechanism being modeled)
 
-All in `crates/db/src/`:
+All in `crates/database/db/src/`:
 
 | Symbol in model | Rust code | Anchor |
 |---|---|---|

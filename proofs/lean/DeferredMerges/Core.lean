@@ -30,11 +30,11 @@ This file is the model. The proofs are in `DeferredMerges/Invariant.lean`,
 The model is sequential: one operation at a time. The Rust is lock-free and
 its operations are atomic per map, not across maps; a race costs only a
 composite's fast path, never its bound (see the Rust type's comment).
-Rust owner: crates/db/src/merge/governance/deferred.rs DeferredMerges
+Rust owner: crates/database/db/src/merge/governance/deferred.rs DeferredMerges
 (defer, park, release, release_parked, enqueue_ready, take_ready, forget,
 take_entry, unindex; MAX_DEFERRED_COMPOSITES, MAX_WAITERS_PER_DEPENDENCY,
-MAX_AWAITED_PER_COMPOSITE), over crates/db/src/merge/governance/awaited.rs
-WaitKey; parking by crates/db/src/merge/merge_handler/composite.rs
+MAX_AWAITED_PER_COMPOSITE), over crates/database/db/src/merge/governance/awaited.rs
+WaitKey; parking by crates/database/db/src/merge/merge_handler/composite.rs
 prepare_composite_merge. -/
 namespace DeferredMerges
 

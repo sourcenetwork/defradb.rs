@@ -9,7 +9,7 @@ scopes end up sharing one key.
 
 Keys are modelled as the counter value of the KMS call that made them, so a
 fresh key is a number no earlier key has.
-Rust owner: crates/db/src/write/prepare.rs, the `generated` memo in the KMS
+Rust owner: crates/database/db/src/write/prepare.rs, the `generated` memo in the KMS
 key preparation of a document write.
 -/
 

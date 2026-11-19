@@ -2,12 +2,12 @@
 
 Models the hub-side admission decision for incoming PushLog pushes for issue **#1088**
 (slice 1, W1) and for sibling heads of one sender scope (audit finding F1), abstracting
-`crates/p2p/src/sync/manager/process/pushlog.rs` (`process_block_inner`,
+`crates/database/p2p/src/sync/manager/process/pushlog.rs` (`process_block_inner`,
 `assert_pushlog_left_durable_state`), the scope rule in
-`crates/p2p/src/sync/head_scope.rs` (`ScopeDecision::of`), the in-memory and durable
+`crates/database/p2p/src/sync/head_scope.rs` (`ScopeDecision::of`), the in-memory and durable
 registrations (`pending_dag.rs` `try_insert_pending_dag`, `pending_store/store.rs`
 `register`) and the reply seams in
-`crates/p2p/src/sync/coordinator/event_handler/pushlog.rs` (gossip-token and two-stream
+`crates/database/p2p/src/sync/coordinator/event_handler/pushlog.rs` (gossip-token and two-stream
 paths). Companion to `Replicator.tla`, which models the pusher's resumable retry
 lifecycle over a source→target edge; this slice isolates the **hub's reply decision**
 when its bounded pending-DAG map is full.
@@ -120,5 +120,5 @@ the capacity-nack reply — both assert that no document is success-acked on a p
 while unmerged and unregistered on the hub. For siblings:
 `sibling_heads_from_one_sender_are_both_retained` and
 `a_head_retires_only_the_scope_head_it_links` (`pushlog.rs`),
-`sibling_heads_from_one_sender_are_both_durable` (`crates/p2p/tests/sync_manager_tests.rs`),
+`sibling_heads_from_one_sender_are_both_durable` (`crates/database/p2p/tests/sync_manager_tests.rs`),
 and `a_sibling_neither_retires_nor_is_covered_whatever_its_version` (`head_scope.rs`).

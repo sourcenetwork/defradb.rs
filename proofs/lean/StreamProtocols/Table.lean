@@ -18,7 +18,7 @@ What must never happen:
 * a tag nobody registered finds a protocol (`unregistered_tags_find_nothing`).
 
 Rust anchors: `StreamProtocol::validate` and `StreamProtocols::new` /
-`StreamProtocols::get` in `crates/p2p/src/iroh/stream_protocols.rs`. A tag is
+`StreamProtocols::get` in `crates/database/p2p/src/iroh/stream_protocols.rs`. A tag is
 modeled as its bytes; the per-priority share as one number, since each protocol
 names one priority.
 -/

@@ -1,0 +1,51 @@
+[package]
+name = "events"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Event bus for DefraDB subscriptions"
+
+[package.metadata.cargo-machete]
+ignored = ["async-trait", "thiserror"]
+
+[features]
+default = ["channel"]
+channel = ["dep:async-channel", "dep:kovan"]
+
+[lib]
+bench = false
+
+[dependencies]
+defra-core = { path = "../../foundation/defra-core" }
+
+# Async channels
+async-trait.workspace = true
+async-channel = { version = "2", optional = true }
+
+# Lock-free shared state
+kovan = { workspace = true, optional = true }
+
+# Hash maps
+rapidhash.workspace = true
+
+# Bytes
+bytes.workspace = true
+
+# IPLD
+cid.workspace = true
+
+# Error handling
+thiserror.workspace = true
+
+# Logging
+tracing.workspace = true
+
+[dev-dependencies]
+regolith.workspace = true
+workers = { path = "../../foundation/workers" }
+
+[lints]
+workspace = true

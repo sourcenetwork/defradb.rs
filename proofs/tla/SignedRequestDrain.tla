@@ -10,9 +10,9 @@
 \*
 \* State correspondence:
 \*   task       the request scope permit held by Edge::spawn in
-\*              crates/defra-node/src/signed_query/mod.rs;
+\*              crates/entry-points/defra-node/src/signed_query/mod.rs;
 \*   worker     the task already started by workers::run_on in
-\*              crates/query/src/pooled/mod.rs and its committed write;
+\*              crates/engine/query/src/pooled/mod.rs and its committed write;
 \*   p2pUp      the coordinator before ManagedP2PSystem::stop_transport;
 \*   marked     the durable retry marker stored for that committed head.
 \* NoTaskDeadline models Task::within(Duration::MAX). TransformAdmitted models

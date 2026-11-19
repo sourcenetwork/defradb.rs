@@ -1,6 +1,6 @@
 //! `--max-schema-size` must reject an oversized schema on the wire (#1296).
 //!
-//! The in-process tests in `crates/http` prove the router applies the cap. This
+//! The in-process tests in `crates/surfaces/http` prove the router applies the cap. This
 //! proves the whole chain: the flag reaches a real node, and a real HTTP client
 //! gets a 413 back. It is also the first consumer of the harness's
 //! `with_extra_rust_args`, which exists precisely so a flag with no typed

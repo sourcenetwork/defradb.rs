@@ -28,9 +28,9 @@ protocol.
 
 Rust anchors: `MAX_MESSAGE_SIZE`, `TOPIC_ID_LEN`, `FRAME_LIMIT`,
 `BROADCAST_OVERHEAD`, `MAX_BROADCAST`, `varint_len`, `max_broadcast` in
-`crates/p2p/src/iroh/gossip/frame.rs`; `HEADER_LEN`, `MAX_RAW_PAYLOAD` in
-`crates/p2p/src/iroh/gossip/raw_origin.rs`, checked by `publish_raw` in
-`crates/p2p/src/iroh/transport.rs`.
+`crates/database/p2p/src/iroh/gossip/frame.rs`; `HEADER_LEN`, `MAX_RAW_PAYLOAD` in
+`crates/database/p2p/src/iroh/gossip/raw_origin.rs`, checked by `publish_raw` in
+`crates/database/p2p/src/iroh/transport.rs`.
 -/
 
 namespace GossipFrame

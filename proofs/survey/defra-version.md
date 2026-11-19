@@ -1,4 +1,4 @@
-# Survey: `crates/defra-version/`
+# Survey: `crates/foundation/defra-version/`
 
 ## Purpose
 Compile-time version/build metadata. Exposes `VersionInfo` (semver, git commit/date

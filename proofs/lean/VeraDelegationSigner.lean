@@ -15,8 +15,8 @@ for an ECDSA key the scalars and the half of `s`, then verification.
 What must never happen: a token leaves the node with a signature vera.rs would
 refuse, or the provider refuses a signature vera.rs would accept.
 
-Rust owner: `admit` in `crates/vera-delegation/src/signer/admission.rs`, called
-by `create_scoped_bearer_token_at` in `crates/vera-delegation/src/bearer.rs`. The verifier it mirrors is
+Rust owner: `admit` in `crates/engine/vera-delegation/src/signer/admission.rs`, called
+by `create_scoped_bearer_token_at` in `crates/engine/vera-delegation/src/bearer.rs`. The verifier it mirrors is
 `verify_bearer_token` in vera.rs `vera-crypto`.
 
 The model is over what the tests observe of a signature. That ECDSA and

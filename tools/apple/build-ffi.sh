@@ -161,7 +161,7 @@ for target in "${simulator_targets[@]}"; do
 done
 
 cbindgen \
-    --config "$ROOT_DIR/crates/ffi/cbindgen.toml" \
+    --config "$ROOT_DIR/crates/entry-points/ffi/cbindgen.toml" \
     --crate ffi \
     --output "$HEADER_PATH"
 write_modulemap

@@ -14,5 +14,5 @@
 ## Notes
 
 The `version::with_view` and `version::with_view_activated_and_queried` tests require:
-- The Go repo's copy lens WASM binary (build with `cd ~/go/src/github.com/sourcenetwork/defradb/tests/lenses && make build`)
+- The copy lens WASM binary from `tools/lenses` (build with `just build-lenses`)
 - Nodes running in development mode (file-path WASM loading via HTTP is blocked in production mode)

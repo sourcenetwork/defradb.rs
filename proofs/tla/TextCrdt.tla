@@ -68,10 +68,10 @@
 \* that already holds it.
 \*
 \* Correspondence table (model -> Rust):
-\*   Create         crates/db/src/write/autocommit/helpers.rs apply_field_ops:
+\*   Create         crates/database/db/src/write/autocommit/helpers.rs apply_field_ops:
 \*                  a write diffs the stored text against the new value
 \*                  (TextField's CausalCrdt::diff in
-\*                  crates/crdt/src/field/text.rs) or takes the edits it was
+\*                  crates/building-blocks/crdt/src/field/text.rs) or takes the edits it was
 \*                  given, and TextField::block_data writes them as one
 \*                  block, its parents the field's heads; a write of null
 \*                  keeps the null value and its block is the "nil" kind,
@@ -80,40 +80,40 @@
 \*                  the write does not name as the edits from the stored
 \*                  text, on the write that moves its document to the new
 \*                  version, and the migration write-back
-\*                  (crates/db/src/definition/migration/helpers.rs
+\*                  (crates/database/db/src/definition/migration/helpers.rs
 \*                  changes_block_state) never stores one, so the stored
 \*                  text is always the replay of its blocks
-\*   Deliver        crates/db/src/merge/merge_handler/field_causal.rs
+\*   Deliver        crates/database/db/src/merge/merge_handler/field_causal.rs
 \*                  merge_field_causal: a received block is merged once every
 \*                  parent block is local (the DAG sync's causal buffer); a
 \*                  block whose parents are the field's heads is applied to
 \*                  the stored text as plain edits (FieldCrdt::apply), which
 \*                  INV_Intent makes equal to the replay; that block alone
 \*                  decides whether the field is null (NullAfter)
-\*   Place          crates/crdt/src/fugue.rs Tree::apply, the insert arm:
+\*   Place          crates/building-blocks/crdt/src/fugue.rs Tree::apply, the insert arm:
 \*                  Fugue placement against the block's parent version
-\*   Target         crates/crdt/src/fugue.rs Tree::apply, the delete arm
-\*   SortBy/IdKey   crates/crdt/src/fugue.rs Tree::attach and Tree::cmp_id:
+\*   Target         crates/building-blocks/crdt/src/fugue.rs Tree::apply, the delete arm
+\*   SortBy/IdKey   crates/building-blocks/crdt/src/fugue.rs Tree::attach and Tree::cmp_id:
 \*                  siblings ordered by block CID, then offset in the block
-\*   Trav           crates/crdt/src/fugue.rs Tree::traverse
-\*   Restrict,      crates/crdt/src/fugue.rs Tree::present and Tree::dead: a
+\*   Trav           crates/building-blocks/crdt/src/fugue.rs Tree::traverse
+\*   Restrict,      crates/building-blocks/crdt/src/fugue.rs Tree::present and Tree::dead: a
 \*   DeadIn         node or delete counts in a version when its block is in
 \*                  the version's Ancestry
-\*   Canon          crates/crdt/src/fugue.rs replay, through TextField's
+\*   Canon          crates/building-blocks/crdt/src/fugue.rs replay, through TextField's
 \*                  CausalCrdt::replay, from causal_history in
 \*                  merge_handler/field_causal.rs; the stored value is the
 \*                  replayed text, the tree is thrown away
-\*   PhReplay       crates/crdt/src/fugue.rs merge_text, through TextField's
+\*   PhReplay       crates/building-blocks/crdt/src/fugue.rs merge_text, through TextField's
 \*                  CausalCrdt::merge_from, called from
 \*                  merge_handler/field_causal.rs merge_field_causal once
 \*                  critical_block has found the block; its length is
 \*                  TextEdits::len of that block
-\*   Chain          crates/crdt/src/fugue.rs Tree::with_placeholder keeps the
+\*   Chain          crates/building-blocks/crdt/src/fugue.rs Tree::with_placeholder keeps the
 \*                  chain as one span node (Node::len), and Tree::split cuts
 \*                  it only where an edit lands (Tree::end_at, Tree::start_at);
 \*                  proofs/lean/TextCrdt/Span.lean split_run shows a cut span
 \*                  is the same tree as the chain of single characters
-\*   Critical       crates/db/src/merge/merge_handler/field_causal.rs
+\*   Critical       crates/database/db/src/merge/merge_handler/field_causal.rs
 \*                  critical_block: the walk down from the heads and the new
 \*                  block that stops when one block is left and no root was
 \*                  passed; in debug builds, is_critical checks the block it
@@ -123,7 +123,7 @@
 \*                  the RED configuration
 \*   PlaceRule      "fugue" is Tree::apply; "next" exists only for the RED
 \*                  configuration that breaks non-interleaving
-\*   NilTips        crates/crdt/src/field/text.rs nil_heads, through
+\*   NilTips        crates/building-blocks/crdt/src/field/text.rs nil_heads, through
 \*                  text_value in TextField's CausalCrdt::replay and
 \*                  merge_from: null when every head writes null
 \*   NullRule       "heads" is NilTips on a concurrent merge; "last" exists

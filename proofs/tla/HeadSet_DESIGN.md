@@ -11,7 +11,7 @@ turned away has changed the data structure, not its speed.
 
 ## The mechanism
 
-`crates/db/src/block/builder/collection.rs::write_collection_block` used to:
+`crates/database/db/src/block/builder/collection.rs::write_collection_block` used to:
 
 1. scan the head prefix, collecting `col_heads` and `old_head_keys`,
 2. build a block whose parents are exactly `col_heads`,
@@ -23,11 +23,11 @@ hold the same `old_head_keys` and issue the same delete. That is a write-write
 conflict on one key.
 
 Step 4 is gone. A writer now merges blind operands into the collection's one
-head-set key (`crates/db/src/block/heads.rs::publish_collection_block`): an
+head-set key (`crates/database/db/src/block/heads.rs::publish_collection_block`): an
 `add` for its own block and a `supersede` per parent, folded by the operator in
-`crates/storage/src/backends/regolith/merge/head_set.rs`. A reader takes the
+`crates/engine/storage/src/backends/regolith/merge/head_set.rs`. A reader takes the
 set with one point read (`live_collection_heads`), and
-`crates/db/src/merge/merge_handler/collection.rs` does the same for a
+`crates/database/db/src/merge/merge_handler/collection.rs` does the same for a
 replicated block.
 
 The store regolith replaced carried a conflict tracker with an explicit
@@ -89,10 +89,10 @@ head key is a head exactly when nothing supersedes it.
 
 That is the design the tree had before the head-set operator, and the model's
 variables are its keys, not the tree's. The tree maps to it only at reads:
-`crates/db/tests/block/head_conformance.rs::head_queries_match_executable_lean`
+`crates/database/db/tests/block/head_conformance.rs::head_queries_match_executable_lean`
 runs the Lean oracle and the storage owner on the same transaction actions and
 compares the heads each reads, and
-`crates/db/tests/block/heads.rs::overlapping_appends_both_commit` checks the
+`crates/database/db/tests/block/heads.rs::overlapping_appends_both_commit` checks the
 conclusion, that two concurrent appends both commit, which the tree reaches by
 blind merges into one key.
 
