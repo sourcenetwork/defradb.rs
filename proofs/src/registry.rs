@@ -349,6 +349,15 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Transactional document relationships",
+        name: "unauthorized_learns_nothing / local_answer_requires_authority",
+        axis: Lean,
+        anchor: "crates/engine/acp/src/zanzibar/acp/document_acp.rs observe_actor_relationship",
+        model_ref: "ExactRelationshipObservation (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/engine/acp/tests/exact_observation.rs owners_and_managers_observe_the_exact_tuple, an_unauthorized_caller_learns_nothing_about_the_document, a_wildcard_is_not_an_exact_actor",
+    },
+    Property {
+        family: "Transactional document relationships",
         name: "INV_SignedOnly / INV_OptedIn / INV_RevocationStands for genesis read access",
         axis: Tla,
         anchor: "crates/database/db/src/merge/merge_handler/genesis_access.rs register_signed_genesis",

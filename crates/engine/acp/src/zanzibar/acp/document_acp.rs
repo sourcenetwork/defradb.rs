@@ -337,6 +337,27 @@ impl<S: ZanzibarStore + ?Sized + 'static> DocumentACP for ZanzibarDocumentACP<S>
             scope.commit().await?;
             return Ok(result);
         }
+        // Authority comes first: a caller who may not manage the relation
+        // learns nothing, not even whether the document is registered.
+        match self
+            .check_manage_relation(
+                observation.requester,
+                observation.policy,
+                observation.resource,
+                observation.document,
+                observation.relation,
+                "observe",
+            )
+            .await
+        {
+            Ok(()) => {}
+            Err(Error::NotOwner { .. } | Error::NotManager { .. }) => {
+                return Err(Error::NotManager {
+                    operation: "observe relationship".into(),
+                });
+            }
+            Err(error) => return Err(error),
+        }
         if !self
             .is_doc_registered(
                 observation.policy,
@@ -363,15 +384,6 @@ impl<S: ZanzibarStore + ?Sized + 'static> DocumentACP for ZanzibarDocumentACP<S>
                 relation: observation.relation.to_owned(),
             });
         }
-        self.check_manage_relation(
-            observation.requester,
-            observation.policy,
-            observation.resource,
-            observation.document,
-            observation.relation,
-            "observe",
-        )
-        .await?;
         Ok(self
             .store
             .has_relationship(
