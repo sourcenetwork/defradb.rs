@@ -1037,6 +1037,12 @@ impl<S: Store> DB<S> {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod close_tests;
 
+/// The actor and document ACP a document projector was installed with.
+pub(crate) struct ProjectionBinding {
+    pub(crate) node_did: identity::Did,
+    pub(crate) document_acp: Arc<dyn acp::DocumentACP>,
+}
+
 #[cfg(test)]
 mod vector_cache_tests {
     use super::*;
@@ -1102,10 +1108,4 @@ mod vector_cache_tests {
         })
         .unwrap()
     }
-}
-
-/// The actor and document ACP a document projector was installed with.
-pub(crate) struct ProjectionBinding {
-    pub(crate) node_did: identity::Did,
-    pub(crate) document_acp: Arc<dyn acp::DocumentACP>,
 }
