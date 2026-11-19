@@ -125,7 +125,7 @@ fn atomic_creation_rejects_an_unknown_relation_target() {
         let posts = CollectionVersion::new("Post", "v-post", "c-post", vec![author]);
 
         let error = database
-            .create_collections_atomic(vec![posts])
+            .create_collections_atomic_as(&defra_core::RequestContext::ambient(), vec![posts])
             .await
             .unwrap_err();
 
@@ -177,7 +177,7 @@ fn creation_accepts_supported_scalar_defaults() {
         .unwrap();
 
         database
-            .create_collections_atomic(collections)
+            .create_collections_atomic_as(&defra_core::RequestContext::ambient(), collections)
             .await
             .unwrap();
     })

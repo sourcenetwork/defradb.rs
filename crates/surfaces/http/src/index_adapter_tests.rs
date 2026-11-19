@@ -29,7 +29,8 @@ async fn datastore_keys(db: &db::DB<storage::RegolithStore>) -> BTreeSet<Vec<u8>
 #[nuclei::test]
 async fn delete_index_removes_its_entries() {
     let db = Arc::new(db::DB::new(storage::RegolithStore::in_memory().unwrap()).unwrap());
-    db.create_collections_atomic(
+    db.create_collections_atomic_as(
+        &defra_core::RequestContext::ambient(),
         query::parse_sdl("type Note { title: String embedding: [Float32!] }").unwrap(),
     )
     .await

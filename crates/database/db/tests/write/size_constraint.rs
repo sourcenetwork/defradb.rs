@@ -16,9 +16,12 @@ fn users() -> schema::CollectionVersion {
 
 async fn mutator() -> (db::AutoCommitMutator<storage::RegolithStore>, impl Sized) {
     let (db, bus) = make_test_db_with_bus().await;
-    db.create_collections_atomic(query::parse_sdl(SDL).unwrap())
-        .await
-        .expect("schema");
+    db.create_collections_atomic_as(
+        &defra_core::RequestContext::ambient(),
+        query::parse_sdl(SDL).unwrap(),
+    )
+    .await
+    .expect("schema");
     (db::AutoCommitMutator::new(Arc::clone(&db)), (db, bus))
 }
 
@@ -44,7 +47,7 @@ fn create_ignores_size_on_a_json_field() {
     "#;
         let collections = query::parse_sdl(sdl).unwrap();
         let users = collections[0].clone();
-        db.create_collections_atomic(collections)
+        db.create_collections_atomic_as(&defra_core::RequestContext::ambient(), collections)
             .await
             .expect("schema");
         let mutator = db::AutoCommitMutator::new(Arc::clone(&db));

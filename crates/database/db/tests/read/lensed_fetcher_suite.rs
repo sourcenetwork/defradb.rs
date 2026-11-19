@@ -103,7 +103,8 @@ fn a_projected_read_by_id_reads_each_identity_and_version_once() {
             ))
             .unwrap(),
         );
-        db.create_collections_atomic(
+        db.create_collections_atomic_as(
+            &defra_core::RequestContext::ambient(),
             query::parse_sdl("type Probe { left: Int right: Int }").unwrap(),
         )
         .await

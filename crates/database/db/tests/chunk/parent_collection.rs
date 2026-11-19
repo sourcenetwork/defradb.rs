@@ -16,9 +16,12 @@ const SDL: &str = r#"
 fn a_chunk_collections_parent_must_chunk_the_named_field() {
     workers::block_on(async {
         let (db, _bus) = make_test_db_with_bus().await;
-        db.create_collections_atomic(query::parse_sdl(SDL).unwrap())
-            .await
-            .expect("schema");
+        db.create_collections_atomic_as(
+            &defra_core::RequestContext::ambient(),
+            query::parse_sdl(SDL).unwrap(),
+        )
+        .await
+        .expect("schema");
         let chunks_col = db
             .get_collection("Article__body_chunk")
             .unwrap()

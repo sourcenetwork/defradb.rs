@@ -34,7 +34,7 @@ async fn synced() -> (Node, Node, Vec<CollectionVersion>) {
     let parsed = query::parse_sdl(SDL).unwrap();
     author
         .db
-        .create_collections_atomic(parsed.clone())
+        .create_collections_atomic_as(&defra_core::RequestContext::ambient(), parsed.clone())
         .await
         .unwrap();
     let peer = node();
@@ -173,7 +173,7 @@ fn a_first_version_on_a_splitter_version_this_node_lacks_is_kept_but_not_cut() {
         let parsed = query::parse_sdl(SDL).unwrap();
         author
             .db
-            .create_collections_atomic(parsed.clone())
+            .create_collections_atomic_as(&defra_core::RequestContext::ambient(), parsed.clone())
             .await
             .unwrap();
         let peer = node();
@@ -276,7 +276,7 @@ fn a_first_version_with_max_chars_below_the_minimum_is_rejected() {
         let parsed = query::parse_sdl(SDL).unwrap();
         author
             .db
-            .create_collections_atomic(parsed.clone())
+            .create_collections_atomic_as(&defra_core::RequestContext::ambient(), parsed.clone())
             .await
             .unwrap();
         let peer = node();
@@ -300,7 +300,7 @@ fn a_first_version_with_chunk_of_on_the_parent_is_rejected() {
         let parsed = query::parse_sdl(SDL).unwrap();
         author
             .db
-            .create_collections_atomic(parsed.clone())
+            .create_collections_atomic_as(&defra_core::RequestContext::ambient(), parsed.clone())
             .await
             .unwrap();
         let peer = node();

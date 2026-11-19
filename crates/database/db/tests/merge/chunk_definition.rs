@@ -68,7 +68,7 @@ fn a_peer_rebuilds_chunk_settings_from_definition_blocks() {
         let parsed = query::parse_sdl(SDL).unwrap();
         author
             .db
-            .create_collections_atomic(parsed.clone())
+            .create_collections_atomic_as(&defra_core::RequestContext::ambient(), parsed.clone())
             .await
             .unwrap();
 

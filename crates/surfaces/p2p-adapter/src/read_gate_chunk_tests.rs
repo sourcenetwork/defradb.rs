@@ -18,7 +18,9 @@ async fn chunked_db() -> Arc<db::DB<RegolithStore>> {
             collection.policy = Some(PolicyDescription::new("chunk-policy", "articles"));
         }
     }
-    db.create_collections_atomic(collections).await.unwrap();
+    db.create_collections_atomic_as(&defra_core::RequestContext::ambient(), collections)
+        .await
+        .unwrap();
     db
 }
 

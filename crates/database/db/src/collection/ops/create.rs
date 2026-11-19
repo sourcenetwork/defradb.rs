@@ -316,15 +316,6 @@ impl<S: Store> crate::database::DB<S> {
         Ok(())
     }
 
-    /// [`Self::create_collections_atomic_as`] in [`defra_core::RequestContext::ambient`].
-    pub async fn create_collections_atomic(
-        &self,
-        schemas: Vec<CollectionVersion>,
-    ) -> Result<Vec<CollectionVersion>> {
-        self.create_collections_atomic_as(&defra_core::RequestContext::ambient(), schemas)
-            .await
-    }
-
     /// Create multiple collections atomically in a single transaction.
     ///
     /// This is useful for creating related collections (e.g., with relations between them)

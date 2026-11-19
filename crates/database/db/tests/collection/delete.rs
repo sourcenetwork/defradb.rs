@@ -95,9 +95,12 @@ fn related_schemas() -> Vec<CollectionVersion> {
 fn delete_collections_removes_single_name() {
     workers::block_on(async {
         let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
-        db.create_collections_atomic(vec![user_schema()])
-            .await
-            .unwrap();
+        db.create_collections_atomic_as(
+            &defra_core::RequestContext::ambient(),
+            vec![user_schema()],
+        )
+        .await
+        .unwrap();
 
         db.delete_collections(vec!["Users".into()], true)
             .await
@@ -115,9 +118,12 @@ fn delete_collections_removes_single_name() {
 fn delete_collections_removes_multiple_names_atomically() {
     workers::block_on(async {
         let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
-        db.create_collections_atomic(vec![user_schema(), book_schema()])
-            .await
-            .unwrap();
+        db.create_collections_atomic_as(
+            &defra_core::RequestContext::ambient(),
+            vec![user_schema(), book_schema()],
+        )
+        .await
+        .unwrap();
 
         db.delete_collections(vec!["Users".into(), "Books".into()], true)
             .await
@@ -157,9 +163,12 @@ fn delete_collections_errors_on_empty_names() {
 fn delete_collections_rejects_empty_name_without_deleting_valid_names() {
     workers::block_on(async {
         let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
-        db.create_collections_atomic(vec![user_schema()])
-            .await
-            .unwrap();
+        db.create_collections_atomic_as(
+            &defra_core::RequestContext::ambient(),
+            vec![user_schema()],
+        )
+        .await
+        .unwrap();
 
         let err = db
             .delete_collections(vec!["Users".into(), String::new()], true)
@@ -176,9 +185,12 @@ fn delete_collections_rejects_empty_name_without_deleting_valid_names() {
 fn delete_collections_errors_on_unknown_name() {
     workers::block_on(async {
         let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
-        db.create_collections_atomic(vec![user_schema()])
-            .await
-            .unwrap();
+        db.create_collections_atomic_as(
+            &defra_core::RequestContext::ambient(),
+            vec![user_schema()],
+        )
+        .await
+        .unwrap();
 
         let err = db
             .delete_collections(vec!["Users".into(), "Ghost".into()], true)
@@ -204,9 +216,12 @@ fn delete_collections_errors_on_unknown_name() {
 fn delete_collections_dedupes_repeated_names() {
     workers::block_on(async {
         let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
-        db.create_collections_atomic(vec![user_schema()])
-            .await
-            .unwrap();
+        db.create_collections_atomic_as(
+            &defra_core::RequestContext::ambient(),
+            vec![user_schema()],
+        )
+        .await
+        .unwrap();
 
         db.delete_collections(vec!["Users".into(), "Users".into()], true)
             .await
@@ -224,7 +239,7 @@ fn delete_collections_dedupes_repeated_names() {
 fn delete_collections_rejects_dangling_relation_targets() {
     workers::block_on(async {
         let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
-        db.create_collections_atomic(related_schemas())
+        db.create_collections_atomic_as(&defra_core::RequestContext::ambient(), related_schemas())
             .await
             .unwrap();
 
@@ -246,7 +261,7 @@ fn delete_collections_rejects_dangling_relation_targets() {
 fn delete_collections_allows_deleting_both_sides_of_relation() {
     workers::block_on(async {
         let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
-        db.create_collections_atomic(related_schemas())
+        db.create_collections_atomic_as(&defra_core::RequestContext::ambient(), related_schemas())
             .await
             .unwrap();
 

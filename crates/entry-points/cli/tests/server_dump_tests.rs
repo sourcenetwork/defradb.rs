@@ -36,7 +36,7 @@ async fn server_dump_reads_encrypted_regolith_store() {
         let database = DB::open_from_arc(store).await.unwrap();
         let collections = query::parse_sdl("type Users { name: String }").unwrap();
         database
-            .create_collections_atomic(collections)
+            .create_collections_atomic_as(&defra_core::RequestContext::ambient(), collections)
             .await
             .unwrap();
         database.print_dump().await.unwrap()

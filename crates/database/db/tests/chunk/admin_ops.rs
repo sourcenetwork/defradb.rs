@@ -25,9 +25,12 @@ const REFUSED: &str =
 
 async fn chunked_db() -> Arc<DB<RegolithStore>> {
     let (db, _bus) = make_test_db_with_bus().await;
-    db.create_collections_atomic(query::parse_sdl(SDL).unwrap())
-        .await
-        .expect("schema");
+    db.create_collections_atomic_as(
+        &defra_core::RequestContext::ambient(),
+        query::parse_sdl(SDL).unwrap(),
+    )
+    .await
+    .expect("schema");
     db
 }
 
@@ -205,9 +208,12 @@ fn a_chunk_collection_is_deleted_only_with_its_parent() {
             .await
             .expect("the parent and its chunks together");
         assert!(db.get_collection(CHUNKS).unwrap().is_none());
-        db.create_collections_atomic(query::parse_sdl(SDL).unwrap())
-            .await
-            .expect("the schema again");
+        db.create_collections_atomic_as(
+            &defra_core::RequestContext::ambient(),
+            query::parse_sdl(SDL).unwrap(),
+        )
+        .await
+        .expect("the schema again");
     })
     .unwrap()
 }

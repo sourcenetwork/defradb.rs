@@ -33,9 +33,12 @@ pub(super) struct Node {
 pub(super) async fn node() -> Node {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let db = Arc::new(DB::from_arc(store.clone()).unwrap());
-    db.create_collections_atomic(query::parse_sdl(SDL).unwrap())
-        .await
-        .unwrap();
+    db.create_collections_atomic_as(
+        &defra_core::RequestContext::ambient(),
+        query::parse_sdl(SDL).unwrap(),
+    )
+    .await
+    .unwrap();
     let blockstore = Arc::new(DefraBlockstore::new(store, false));
     let handler = DbMergeHandler::new(db.clone(), blockstore.clone());
     Node {

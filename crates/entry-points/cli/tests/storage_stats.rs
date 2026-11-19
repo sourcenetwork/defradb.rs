@@ -20,9 +20,12 @@ async fn storage_stats_prints_aggregates_without_creating_config_or_keys() {
     };
     let db =
         Arc::new(db::DB::new(storage::RegolithStore::open(config.data_path()).unwrap()).unwrap());
-    db.create_collections_atomic(query::parse_sdl("type Users { name: String }").unwrap())
-        .await
-        .unwrap();
+    db.create_collections_atomic_as(
+        &defra_core::RequestContext::ambient(),
+        query::parse_sdl("type Users { name: String }").unwrap(),
+    )
+    .await
+    .unwrap();
     let mutator = db::DbDocMutator::new(db.clone(), db.new_txn(false).await.unwrap());
     let users = db.get_collection("Users").unwrap().unwrap().schema_arc();
     let mut doc = document::Document::new(users);
@@ -102,7 +105,10 @@ async fn storage_stats_reads_engine_encryption_without_replacing_key() {
     )
     .unwrap();
     database
-        .create_collections_atomic(query::parse_sdl("type Users { name: String }").unwrap())
+        .create_collections_atomic_as(
+            &defra_core::RequestContext::ambient(),
+            query::parse_sdl("type Users { name: String }").unwrap(),
+        )
         .await
         .unwrap();
     database.close().await.unwrap();
@@ -186,7 +192,10 @@ async fn storage_stats_reads_a_store_sealed_under_a_previous_key() {
     )
     .unwrap();
     database
-        .create_collections_atomic(query::parse_sdl("type Users { name: String }").unwrap())
+        .create_collections_atomic_as(
+            &defra_core::RequestContext::ambient(),
+            query::parse_sdl("type Users { name: String }").unwrap(),
+        )
         .await
         .unwrap();
     database.close().await.unwrap();

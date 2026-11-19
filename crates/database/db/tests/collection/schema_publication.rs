@@ -52,7 +52,8 @@ fn schema_success_waits_for_its_ordered_cache_publication() {
                     ),
                 ],
             );
-            let pending = db.create_collections_atomic(vec![schema]);
+            let context = defra_core::RequestContext::ambient();
+            let pending = db.create_collections_atomic_as(&context, vec![schema]);
             futures::pin_mut!(pending);
             assert!(
                 futures::poll!(&mut pending).is_pending(),
