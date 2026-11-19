@@ -16,7 +16,7 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use vera_crypto::jwt::{DelegationScope, JwtClaims};
-use vera_crypto::operation::{OperationClaim, OperationId, MAX_OPERATION_TTL};
+use vera_crypto::operation::{OperationClaim, OperationId, DEFAULT_OPERATION_LEAD};
 
 use super::{base64url_encode, header, BearerError};
 use crate::signer::{admission, DelegationSigner};
@@ -25,10 +25,10 @@ use crate::{did_spelling, request_digest, PolicyCommand};
 /// The longest a delegation bound to one request lasts: as long as vera.rs
 /// keeps a request open, less the [`acp::CLOCK_SKEW_ALLOWANCE`]. vera.rs
 /// refuses an operation identity that expires more than
-/// [`MAX_OPERATION_TTL`] after the block that executes it, so a longer one
+/// [`DEFAULT_OPERATION_LEAD`] after the block that executes it, so a longer one
 /// from a signer whose clock is ahead would be refused.
 pub const MAX_REQUEST_LIFETIME: Duration =
-    Duration::from_secs(MAX_OPERATION_TTL - acp::CLOCK_SKEW_ALLOWANCE.as_secs());
+    Duration::from_secs(DEFAULT_OPERATION_LEAD - acp::CLOCK_SKEW_ALLOWANCE.as_secs());
 
 /// The one request a delegation is bound to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -205,8 +205,8 @@ mod tests {
     async fn a_request_delegation_outside_its_lifetime_or_without_its_binding_is_not_issued() {
         let signer = crate::Ed25519Signer::from_slice(&[9; 32]).expect("key");
         let longest = MAX_REQUEST_LIFETIME.as_secs();
-        assert_eq!(longest, MAX_OPERATION_TTL - 30);
-        for lifetime in [0, longest + 1, MAX_OPERATION_TTL] {
+        assert_eq!(longest, DEFAULT_OPERATION_LEAD - 30);
+        for lifetime in [0, longest + 1, DEFAULT_OPERATION_LEAD] {
             assert!(matches!(
                 issue_request_at(&signer, &audience(), &binding(), lifetime, NOW).await,
                 Err(BearerError::RequestLifetime)
