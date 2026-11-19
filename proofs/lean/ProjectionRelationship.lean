@@ -19,11 +19,13 @@ structure Rule where
 
 /-- An operation outside the Node's configured projection rules is refused. -/
 def inScope (rules : List Rule) (collection resource relation targetKind : String) : Bool :=
+  -- The candidate must be one of the rules, field for field.
   rules.contains ⟨collection, resource, relation, targetKind⟩
 
 /-- An actorless native callback acts as the Node itself. An authenticated
 mutation keeps its actual actor; neither path borrows the document owner. -/
 def projectionActor (actor : Option String) (node : String) : String :=
+  -- The request's identity when it has one, the node otherwise.
   actor.getD node
 
 theorem actorless_projection_uses_node (node : String) :
@@ -61,6 +63,7 @@ structure Input where
 /-- Only a transaction-bound projection of the same registered document
 may publish a declared relationship. -/
 def mayProject (i : Input) : Bool :=
+  -- Every fact must hold; reconciliation waives only the same-document fact.
   i.projectorContext && i.actorMatches && i.nacActive && i.nacBound &&
     i.operationAllowed && i.dacBound && i.dacAllowed && (i.documentMatches || i.reconciliation) && i.scopeMatches &&
     i.registered && i.relationValid
@@ -120,23 +123,39 @@ theorem projection_keeps_requester_authority (i : Input) (h : mayProject i = tru
 change may be staged only when the transaction retains the actor's own
 authority, the target is supported, and the outbox shares that transaction. -/
 structure ExternalStage where
+  -- The facts of the projection itself.
   projection : Input
+  -- The node holds what lets it send the change as the actor.
   retainedAuthority : Bool
+  -- That authority is the one the provider takes for exactly this change
+  -- (its tuple and operation), as a delegation bound to one command needs.
+  authorityForCommand : Bool
+  -- The provider can be sent a subject of this kind.
   targetSupported : Bool
+  -- The outbox writes into the projection's own transaction.
   outboxBound : Bool
+  -- The preparation was made for this provider, actor and change.
   preparedForRequest : Bool
+  -- No revocation owed to the provider denies the actor here.
   noLocalDenial : Bool
   deriving FromJson, ToJson, Repr
 
 def mayStageExternal (i : ExternalStage) : Bool :=
+  -- The projection facts, read from the nested input.
   let p := i.projection
   p.projectorContext && p.actorMatches && p.nacActive && p.nacBound &&
     p.operationAllowed && p.dacAllowed && (p.documentMatches || p.reconciliation) &&
     p.scopeMatches && p.registered && p.relationValid && i.retainedAuthority &&
+    i.authorityForCommand &&
     i.targetSupported && i.outboxBound && i.preparedForRequest && i.noLocalDenial
 
 theorem external_without_authority_denied (i : ExternalStage)
     (h : i.retainedAuthority = false) : mayStageExternal i = false := by
+  simp [mayStageExternal, h]
+
+/-- An authority taken for some other command cannot send this change. -/
+theorem external_authority_for_other_command_denied (i : ExternalStage)
+    (h : i.authorityForCommand = false) : mayStageExternal i = false := by
   simp [mayStageExternal, h]
 
 theorem external_detached_outbox_denied (i : ExternalStage)
@@ -165,6 +184,7 @@ theorem external_local_denial_respected (i : ExternalStage)
 
 /-- Executable decisions drive the native conformance test. -/
 def evaluate (json : Json) : Except String Json := do
+  -- Parse the inputs, then answer each with its decision.
   let inputs : Array Input ← fromJson? json
   pure <| toJson <| inputs.map fun i => Json.mkObj
     [("input", toJson i), ("mayProject", toJson (mayProject i))]
@@ -188,6 +208,7 @@ def scopeCases : Json :=
 end ProjectionRelationship
 
 def main (args : List String) : IO Unit := do
+  -- `scope` prints the scope cases; anything else reads inputs from stdin.
   if args == ["scope"] then
     IO.println ProjectionRelationship.scopeCases.compress
   else

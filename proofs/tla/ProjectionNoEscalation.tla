@@ -15,14 +15,15 @@
 \* crates/database/db/src/document_projection.rs (the `reconciling` flag lifts
 \* only the same-document check), with the direct path it must not exceed,
 \* add_dac_actor_relationship_as through DocumentACP::add_relationship.
+\* Only the standard operators on numbers are used.
 EXTENDS Naturals
 
 \* Bug names the one guard a RED configuration breaks; "none" breaks nothing.
 CONSTANT Bug
 
-\* Docs: the document written and another one. Relations: an ordinary
-\* relation and the owner relation.
+\* Docs: the document the request wrote and another one.
 Docs == {"written", "other"}
+\* Relations: an ordinary relation and the owner relation.
 Relations == {"reader", "owner"}
 
 \* nac: the requester holds the node permission to add relationships.

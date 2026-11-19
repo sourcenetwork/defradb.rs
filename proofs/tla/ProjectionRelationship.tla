@@ -9,7 +9,8 @@
 \* The code: DocumentMutationContext::change_projected_relationship in
 \* crates/database/db/src/document_projection.rs, with acp::projection::in_scope
 \* (crates/engine/acp/src/projection.rs) and, for an external provider,
-\* TransactionOutbox::stage_prepared_owner (crates/engine/acp/src/outbox/staging.rs).
+\* TransactionOutbox::stage_prepared (crates/engine/acp/src/outbox/staging.rs).
+\* Only the standard operators on numbers are used.
 EXTENDS Naturals
 \* Bug removes one guard; Scenario selects which authority or scope is absent.
 CONSTANTS Bug, Scenario

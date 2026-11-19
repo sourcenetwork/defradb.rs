@@ -17,6 +17,7 @@
 \* crates/database/db/src/merge/merge_handler/genesis_access.rs, called from
 \* process_linked_field_blocks (composite_fields.rs) and the registration in
 \* composite_persist.rs.
+\* Only the standard operators on numbers are used.
 EXTENDS Naturals
 
 \* Bug names the one guard a RED configuration breaks; "none" breaks nothing.

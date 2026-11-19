@@ -7,6 +7,7 @@
 \* The code: exact_relationship::query in
 \* crates/engine/vera/src/vera_rs/provider/exact_relationship.rs, which compares
 \* every proof's module_state_root with the policy's (at_policy_root) and refuses a mismatch.
+\* Only the standard operators on numbers are used.
 EXTENDS Naturals
 \* Bug accepts an answer whatever roots its proofs name.
 CONSTANT Bug
@@ -24,8 +25,10 @@ Advance == /\ root < 2 /\ root' = root + 1
 \* Each proof is bound to the root observed for its own read.
 ReadPolicy == /\ phase = "policy" /\ policyRoot' = root /\ phase' = "object"
               /\ UNCHANGED <<root, objectRoot, relationRoot, answer>>
+\* The object incarnation is read next, at the root current then.
 ReadObject == /\ phase = "object" /\ objectRoot' = root /\ phase' = "relation"
               /\ UNCHANGED <<root, policyRoot, relationRoot, answer>>
+\* The relationship record is read last, at the root current then.
 ReadRelation == /\ phase = "relation" /\ relationRoot' = root /\ phase' = "decide"
                 /\ UNCHANGED <<root, policyRoot, objectRoot, answer>>
 \* Only proofs at one root may produce a definitive answer.
