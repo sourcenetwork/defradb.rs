@@ -270,8 +270,8 @@ jobs:
         run: |
           echo "#include \"$GITHUB_WORKSPACE/defra.h\"" > header-check.c
           cp header-check.c header-check.cpp
-          cc -std=c11 -Wall -Wextra -Werror -fsyntax-only header-check.c
-          c++ -std=c++17 -Wall -Wextra -Werror -fsyntax-only header-check.cpp
+          cc -std=c11 -Wall -Wextra -Wpadded -Werror -fsyntax-only header-check.c
+          c++ -std=c++17 -Wall -Wextra -Wpadded -Werror -fsyntax-only header-check.cpp
           rm header-check.c header-check.cpp
 
       - name: Package
