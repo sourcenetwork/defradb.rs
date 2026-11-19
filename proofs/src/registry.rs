@@ -345,7 +345,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/engine/vera/src/vera_rs/provider/exact_relationship.rs query",
         model_ref: "ExactRelationshipObservation (lake build)",
         tiers: &[Boundary],
-        bound_by: "crates/engine/vera/src/vera_rs/provider/exact_relationship.rs a_proof_at_another_root_answers_nothing, only_a_verified_record_of_the_grant_answers",
+        bound_by: "crates/engine/vera/src/vera_rs/provider/exact_relationship.rs a_proof_at_another_root_answers_nothing, only_a_verified_record_of_the_grant_answers, an_absent_owner_refuses_as_a_registered_document_does",
     },
     Property {
         family: "Transactional document relationships",
@@ -354,7 +354,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/engine/acp/src/zanzibar/acp/document_acp.rs observe_actor_relationship",
         model_ref: "ExactRelationshipObservation (lake build)",
         tiers: &[Boundary],
-        bound_by: "crates/engine/acp/tests/exact_observation.rs owners_and_managers_observe_the_exact_tuple, an_unauthorized_caller_learns_nothing_about_the_document, a_wildcard_is_not_an_exact_actor; crates/entry-points/defra-node/tests/unit/delegated_nac.rs http_inspection_routes_apply_the_embedded_gates; crates/database/db/tests/access/external_drainer.rs an_exact_observation_waits_for_a_change_marked_in_flight",
+        bound_by: "crates/engine/acp/tests/exact_observation.rs owners_and_managers_observe_the_exact_tuple, an_unauthorized_caller_learns_nothing_about_the_document, a_wildcard_is_not_an_exact_actor; crates/entry-points/defra-node/tests/unit/delegated_nac.rs http_inspection_routes_apply_the_embedded_gates; crates/database/db/tests/access/external_drainer.rs an_exact_observation_waits_for_a_change_marked_in_flight; crates/database/db/tests/access/external_observation.rs an_unauthorized_caller_is_refused_alike_whatever_the_document_owes, the_owner_observes_and_the_creator_of_an_owed_registration_waits; crates/entry-points/defra-node/tests/unit/transactional_relationship.rs an_observation_in_a_transaction_sees_its_own_relationship_changes; crates/entry-points/defra-node/tests/embedded_vera.rs a_grant_staged_beside_its_document_lets_the_grantee_read_after_the_commit",
     },
     Property {
         family: "Transactional document relationships",
@@ -372,7 +372,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/database/db/src/document_projection.rs change_projected_relationship; crates/engine/acp/src/outbox/staging.rs prepare_relationship, stage_prepared",
         model_ref: "ProjectionRelationship (lake build)",
         tiers: &[Boundary],
-        bound_by: "crates/entry-points/defra-node/tests/unit/document_projector.rs scoped_projection_uses_owner_authority_without_read_bypass; crates/database/db/tests/access/external_prepared.rs the_owner_stages_its_prepared_change_with_its_authority_checked, a_manager_prepares_as_the_owner_does_and_nobody_else_does, a_preparation_is_taken_for_its_own_change_and_provider_only",
+        bound_by: "crates/entry-points/defra-node/tests/unit/document_projector.rs scoped_projection_uses_owner_authority_without_read_bypass; crates/database/db/tests/access/external_prepared.rs the_owner_stages_its_prepared_change_with_its_authority_checked, a_manager_prepares_as_the_owner_does_and_nobody_else_does, a_preparation_is_taken_for_its_own_change_and_provider_only, a_delegation_bound_to_the_change_authorizes_that_change_only; crates/entry-points/defra-node/tests/embedded_vera/projection.rs a_projection_stages_through_vera_for_a_manager_in_a_transaction_and_for_the_node",
     },
     Property {
         family: "Transactional document relationships",
@@ -381,7 +381,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/database/db/src/document_projection.rs change_projected_relationship, projected_owner; crates/database/db/src/database/mod.rs reconcile_document_projector",
         model_ref: "MC_ProjectionActor_{Green,Red}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/entry-points/defra-node/tests/unit/document_projector.rs scoped_projection_uses_owner_authority_without_read_bypass",
+        bound_by: "crates/entry-points/defra-node/tests/unit/document_projector.rs scoped_projection_uses_owner_authority_without_read_bypass; crates/entry-points/defra-node/tests/embedded_vera/projection.rs a_projection_stages_through_vera_for_a_manager_in_a_transaction_and_for_the_node",
     },
     Property {
         family: "Transactional document relationships",
