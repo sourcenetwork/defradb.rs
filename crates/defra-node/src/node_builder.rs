@@ -651,13 +651,17 @@ impl NodeBuilder {
                 Arc::clone(node.database()),
             ));
             #[cfg(not(target_arch = "wasm32"))]
-            let server = match http_cfg.collection_management {
-                true => server.with_collection_mgmt_arc(
+            let server = {
+                let collections =
                     defra_http::collection_mgmt_adapter::CollectionManagementAdapter::new_arc(
                         Arc::clone(node.database()),
-                    ),
-                ),
-                false => server,
+                    );
+                // The event stream gates chunk events by collection even without the management routes.
+                let server = server.with_collection_lookup_arc(collections.clone());
+                match http_cfg.collection_management {
+                    true => server.with_collection_mgmt_arc(collections),
+                    false => server,
+                }
             };
             // With node ACP configured, the routes that check permissions at
             // the edge (events, P2P, `/node/*`) check them, as `defradb

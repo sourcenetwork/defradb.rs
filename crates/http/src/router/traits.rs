@@ -242,13 +242,30 @@ pub trait CollectionOperations: defra_core::thread_bounds::MaybeSendSync {
     async fn add_collection(&self, sdl: &str) -> Result<Vec<schema::CollectionVersion>, String>;
 }
 
+/// Collection lookups the event stream needs, which a host gives it without the management routes.
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+pub trait CollectionLookup: defra_core::thread_bounds::MaybeSendSync {
+    /// Find a collection by its collection ID.
+    async fn find_collection_by_id(
+        &self,
+        collection_id: &str,
+    ) -> Result<Option<schema::CollectionVersion>, String>;
+
+    /// Get a collection by version ID, searching both cache and storage.
+    async fn get_collection_by_version_id(
+        &self,
+        version_id: &str,
+    ) -> Result<Option<schema::CollectionVersion>, String>;
+}
+
 /// Trait for collection management operations beyond basic CRUD.
 ///
 /// Provides action listing, purge, collection lookups and collection drops,
 /// that operate at the collection level rather than the document level.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
-pub trait CollectionManagementOperations: defra_core::thread_bounds::MaybeSendSync {
+pub trait CollectionManagementOperations: CollectionLookup {
     bind_request!(CollectionManagementOperations);
 
     /// List actions that have not completed successfully.
@@ -265,18 +282,6 @@ pub trait CollectionManagementOperations: defra_core::thread_bounds::MaybeSendSy
 
     /// Check if a collection exists.
     async fn has_collection(&self, name: &str) -> Result<bool, String>;
-
-    /// Find a collection by its collection ID.
-    async fn find_collection_by_id(
-        &self,
-        collection_id: &str,
-    ) -> Result<Option<schema::CollectionVersion>, String>;
-
-    /// Get a collection by version ID, searching both cache and storage.
-    async fn get_collection_by_version_id(
-        &self,
-        version_id: &str,
-    ) -> Result<Option<schema::CollectionVersion>, String>;
 
     /// Delete multiple collection versions in a batch.
     async fn delete_collection_versions(&self, version_ids: Vec<String>) -> Result<(), String>;

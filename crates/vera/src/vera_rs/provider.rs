@@ -19,7 +19,6 @@ use vera_modules::acp::types::PolicyRecord;
 use super::abi::{IAcp, ACP_ADDRESS};
 use super::bearer;
 use super::client::{HttpTransport, VeraRsClient};
-use super::command_digest::request_digest;
 use super::did_spelling;
 use super::policy_cmd;
 #[cfg(test)]
@@ -27,6 +26,7 @@ use super::provider_commands::resolve_registered_or_passthrough_bearer_token;
 use super::provider_commands::{
     holds_registered_key, resolve_registered_or_passthrough_bearer_token_as,
 };
+use super::request_digest;
 use super::signer::{admission, DelegationSigner, Secp256k1Signer};
 use super::transport::RpcTransport;
 use super::worker::NativeWorker;

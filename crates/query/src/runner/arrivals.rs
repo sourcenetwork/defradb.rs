@@ -40,8 +40,9 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 "arrival limit and docID count must be between 1 and 1024",
             ));
         }
-        let identity = acp::Identity::from(caller);
+        let identity = acp::Identity::from(caller.clone());
         let context = self.context();
+        let mut chunk_reads = super::chunk_access::ChunkReads::default();
         if select.collection_name == "_documentUpdates" {
             let page = fetcher
                 .get_document_updates(
@@ -58,17 +59,28 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                     },
                 )
                 .await?;
-            let entries: Vec<Value> = page
-                .entries
-                .into_iter()
-                .map(|entry| {
-                    json!({
-                        "cursor": entry.cursor.to_string(),
-                        "docID": entry.doc_id,
-                        "cid": entry.cid,
-                    })
-                })
-                .collect();
+            let mut entries = Vec::new();
+            for entry in page.entries {
+                if collection.chunk_of.is_some()
+                    && !self
+                        .chunk_readable(
+                            &mut chunk_reads,
+                            fetcher,
+                            &identity,
+                            caller.as_ref(),
+                            &collection,
+                            &entry.doc_id,
+                        )
+                        .await?
+                {
+                    continue;
+                }
+                entries.push(json!({
+                    "cursor": entry.cursor.to_string(),
+                    "docID": entry.doc_id,
+                    "cid": entry.cid,
+                }));
+            }
             return project(
                 &json!({
                     "head": page.head.to_string(),
@@ -90,6 +102,17 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         let mut entries = Vec::new();
         for entry in page.entries {
             let allowed = match &collection.policy {
+                None if collection.chunk_of.is_some() => {
+                    self.chunk_readable(
+                        &mut chunk_reads,
+                        fetcher,
+                        &identity,
+                        caller.as_ref(),
+                        &collection,
+                        &entry.doc_id,
+                    )
+                    .await?
+                }
                 None => true,
                 Some(policy) => {
                     crate::txn::check_doc_read_access_as(

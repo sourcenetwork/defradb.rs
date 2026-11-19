@@ -9,9 +9,9 @@ use super::signer_tests::provider;
 use super::transport_tests::Workers;
 use super::VeraProvider as _;
 use crate::vera_rs::client::tests::Recorded;
-use crate::vera_rs::signer::tests::{Recording, Returns};
 use crate::vera_rs::{request_delegation, DelegationSigner as _, Ed25519Signer, RequestBinding};
 use crate::{PolicyAction, PolicyCommand};
+use vera_delegation::testing::{Recording, Returns};
 
 const GENESIS: [u8; 32] = [3; 32];
 

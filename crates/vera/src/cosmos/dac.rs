@@ -16,10 +16,10 @@ use acp::{DocumentACP, DocumentPermission, Identity, Result, Subject};
 
 use crate::access_cache::AccessCache;
 use crate::decisions::{DecisionKey, RemoteDecisions};
-use crate::policy_command::{PolicyAction, PolicyCommand, PolicySubject};
 use crate::provider::{
     AcpLightClientStatus, ActorRelationshipQuery, ProviderError, SubjectRef, VeraProvider,
 };
+use crate::{PolicyAction, PolicyCommand, PolicySubject};
 
 /// DocumentACP backed by Vera's on-chain x/acp module.
 ///

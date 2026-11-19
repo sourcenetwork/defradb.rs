@@ -13,6 +13,9 @@ use storage::corekv::Store;
 use storage::keys::HeadstorePriorityKey;
 use storage::IterOptions;
 
+use datastore::NamespaceView;
+use schema::CollectionVersion;
+
 use crate::database::DB;
 use crate::error::{Error, Result};
 
@@ -54,101 +57,55 @@ pub async fn resolve_collection_from_doc_id<S: Store>(
     // futures must be `Send`. The read-only txn is discarded on every return
     // path (matches schema_loader.rs and Go's `defer txn.Discard()`).
     let txn = db.new_txn(true).await?;
-
-    let headstore = txn.headstore()?;
-    let blockstore = txn.blockstore()?;
-    let systemstore = txn.systemstore()?;
-
-    let doc_short_id = match crate::docid::map::get_doc_ref(&systemstore, doc_id).await {
-        Ok(Some(doc_ref)) => doc_ref.doc_short_id,
-        Ok(None) => {
-            let _ = txn.discard();
-            return Ok(None);
-        }
-        Err(e) => {
-            let _ = txn.discard();
-            return Err(e);
-        }
-    };
-
-    let prefix = HeadstorePriorityKey::document_prefix(doc_short_id);
-    let opts = IterOptions::new().with_prefix(prefix);
-    let mut iter = headstore.iterator(opts).await.map_err(Error::Storage)?;
-    let cid_offset = HeadstorePriorityKey::cid_offset(doc_short_id);
-
-    let pair = match iter.next().await.map_err(Error::Storage)? {
-        Some(p) => p,
-        None => {
-            let _ = iter.close().await;
-            let _ = txn.discard();
-            return Ok(None);
-        }
-    };
-    let cid_bytes = match pair.key.get(cid_offset..) {
-        Some(b) => b.to_vec(),
-        None => {
-            let _ = iter.close().await;
-            let _ = txn.discard();
-            return Ok(None);
-        }
-    };
-    let _ = iter.close().await;
-
-    let cid = match Cid::try_from(cid_bytes.as_slice()) {
-        Ok(c) => c,
-        Err(e) => {
-            let _ = txn.discard();
-            return Err(Error::Serialization(format!("decode head cid: {e}")));
-        }
-    };
-
-    // Load the block to read its delta.
-    let block_bytes_res = blockstore.get(&cid.to_bytes()).await;
-    let block_bytes = match block_bytes_res {
-        Ok(Some(b)) => b,
-        Ok(None) => {
-            let _ = txn.discard();
-            return Ok(None);
-        }
-        Err(e) => {
-            let _ = txn.discard();
-            return Err(Error::Storage(e));
-        }
-    };
-    let block = match defra_core::block::Block::from_dag_cbor(&block_bytes) {
-        Ok(b) => b,
-        Err(e) => {
-            let _ = txn.discard();
-            return Err(Error::Serialization(format!("decode block: {e}")));
-        }
-    };
-    let collection_version_id = match block.delta.collection_version_id() {
-        Some(v) => v.to_string(),
-        None => {
-            let _ = txn.discard();
-            return Ok(None);
-        }
-    };
-
-    // Resolve collection via the systemstore.
-    let collection_res = crate::definition::loader::get_collection_by_version_id(
-        &systemstore,
-        &collection_version_id,
-    )
-    .await;
-    let info = match collection_res {
-        Ok(Some(collection)) => collection.policy.clone().map(|policy| DocCollectionInfo {
+    let stores = (txn.headstore()?, txn.blockstore()?, txn.systemstore()?);
+    let found = stored_doc_collection(&stores.0, &stores.1, &stores.2, doc_id).await;
+    drop(stores);
+    let _ = txn.discard();
+    Ok(found?.and_then(|collection| {
+        collection.policy.clone().map(|policy| DocCollectionInfo {
             collection_id: collection.collection_id.clone(),
             policy_id: policy.id,
             resource_name: policy.resource_name,
             is_branchable: collection.is_branchable,
-        }),
-        Ok(None) => None,
-        Err(e) => {
-            let _ = txn.discard();
-            return Err(e);
-        }
+        })
+    }))
+}
+
+/// The collection version `doc_id`'s first head block names.
+pub(crate) async fn stored_doc_collection(
+    headstore: &NamespaceView,
+    blockstore: &NamespaceView,
+    systemstore: &NamespaceView,
+    doc_id: &str,
+) -> Result<Option<CollectionVersion>> {
+    let Some(doc_ref) = crate::docid::map::get_doc_ref(systemstore, doc_id).await? else {
+        return Ok(None);
     };
-    let _ = txn.discard();
-    Ok(info)
+    let doc_short_id = doc_ref.doc_short_id;
+    let prefix = HeadstorePriorityKey::document_prefix(doc_short_id);
+    let opts = IterOptions::new().with_prefix(prefix);
+    let mut iter = headstore.iterator(opts).await.map_err(Error::Storage)?;
+    let cid_offset = HeadstorePriorityKey::cid_offset(doc_short_id);
+    let pair = iter.next().await.map_err(Error::Storage);
+    let _ = iter.close().await;
+    let Some(cid_bytes) = pair?.and_then(|pair| pair.key.get(cid_offset..).map(<[u8]>::to_vec))
+    else {
+        return Ok(None);
+    };
+    let cid = Cid::try_from(cid_bytes.as_slice())
+        .map_err(|e| Error::Serialization(format!("decode head cid: {e}")))?;
+    let Some(block_bytes) = blockstore
+        .get(&cid.to_bytes())
+        .await
+        .map_err(Error::Storage)?
+    else {
+        return Ok(None);
+    };
+    let block = defra_core::block::Block::from_dag_cbor(&block_bytes)
+        .map_err(|e| Error::Serialization(format!("decode block: {e}")))?;
+    let Some(collection_version_id) = block.delta.collection_version_id() else {
+        return Ok(None);
+    };
+    crate::definition::loader::get_collection_by_version_id(systemstore, collection_version_id)
+        .await
 }

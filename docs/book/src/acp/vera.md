@@ -110,7 +110,10 @@ recorded outcome and changes nothing; a different command under a used identity 
 rejected. A registration or a grant submitted twice across a crash therefore takes effect
 once, even when the relationship was changed in between.
 
-A signer can make the token before the write runs. `vera::vera_rs::request_digest`
+A signer can make the token before the write runs, without the provider: the
+`vera-delegation` crate holds the signers, both kinds of delegation, `RequestBinding`
+and the typed policy commands, and depends on neither vera.rs's client nor a network
+runtime; `vera` re-exports the same names. `vera::vera_rs::request_digest`
 gives the digest from the same bytes the node submits, so an actor inside the command is
 in the spelling the node sends. A document ID comes from the document's content: the
 client that signs a create's blocks (`ClientCreateSignatures::from_input`) has it before

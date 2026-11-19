@@ -187,6 +187,25 @@ RUNS=(
   "MC_HttpRouterComposition_Red_Fallback.cfg HttpRouterComposition.tla RED"
   "MC_HttpRouterComposition_Red_Twice.cfg HttpRouterComposition.tla RED"
   "MC_HttpRouterComposition_Red_Overdeny.cfg HttpRouterComposition.tla RED"
+  "MC_ChunkMerge_Green.cfg ChunkMerge.tla GREEN" # readers cut the text when a peer merge kept another edit's list
+  "MC_ChunkMerge_Red_TrustList.cfg ChunkMerge.tla RED" # reader trusts the list instead of cutting the text (INV_ReadsMatchText)
+  "MC_ChunkMerge_Red_NoHashCheck.cfg ChunkMerge.tla RED" # merge stores a chunk whose hash does not match (INV_NoForgedChunk)
+  "MC_ChunkMerge_Red_MutableChunk.cfg ChunkMerge.tla RED" # merge lets a stored chunk change (INV_ChunksNeverChange)
+  "MC_ChunkMerge_Green_Delete.cfg ChunkMerge.tla GREEN" # a chunk delete waits until its article is gone here
+  "MC_ChunkMerge_Red_NoDeleteGuard.cfg ChunkMerge.tla RED" # merge takes a peer's chunk delete while the article is live (INV_ListedChunksStay)
+  "MC_ChunkMerge_Red_ListedDeleteOnly.cfg ChunkMerge.tla RED" # merge holds back only a listed chunk's delete (INV_ListedChunksStay)
+  "MC_ChunkMerge_Red_RefuseDelete.cfg ChunkMerge.tla RED" # merge refuses an early chunk delete for good (INV_DeletesNotLost)
+  "MC_ChunkMerge_Red_UnstoredDelete.cfg ChunkMerge.tla RED" # a chunk delete merges before its chunk's first block (INV_ListedChunksStay)
+  "MC_ChunkRead_Green.cfg ChunkRead.tla GREEN" # a chunk shows only while its parent is live, readable and uses it
+  "MC_ChunkRead_Red_NoDeletedCheck.cfg ChunkRead.tla RED" # deleted parent still shows its chunks (INV_ShownIsLiveAndReadable)
+  "MC_ChunkRead_Red_NoHashCheck.cfg ChunkRead.tla RED" # forged chunk claims a real hash (INV_ShownIsTheText)
+  "MC_ChunkRead_Red_SharedMemo.cfg ChunkRead.tla RED" # parent decision outlives its query (INV_ShownIsLiveAndReadable)
+  "MC_ChunkRead_Red_NoMergedCheck.cfg ChunkRead.tla RED" # a chunk that arrived first is served as public (INV_ServedIsReadable)
+  "MC_ChunkRead_Red_NoGrantCheck.cfg ChunkRead.tla RED" # revoked reader still sees chunks (INV_ShownIsLiveAndReadable)
+  "MC_ChunkRead_Red_NoListCheck.cfg ChunkRead.tla RED" # chunks dropped by an edit still show (INV_ShownIsTheText)
+  "MC_ChunkRead_Red_NoResolveCheck.cfg ChunkRead.tla RED" # a chunk of an unknown collection is served as public (INV_ServedIsReadable)
+  "MC_ChunkRead_Red_TrustList.cfg ChunkRead.tla RED" # a padded list shows chunks of old text (INV_ShownIsTheText)
+  "MC_ChunkRead_Red_NoOwnAppCheck.cfg ChunkRead.tla RED" # chunk collection's own app check skipped (INV_ShownPassesOwnApp)
   "MC_EndpointBind_Green.cfg EndpointBind.tla GREEN"
   "MC_EndpointBind_Red_Retain.cfg EndpointBind.tla RED"
   "MC_EndpointBind_Red_Address.cfg EndpointBind.tla RED"
@@ -598,6 +617,10 @@ RUNS=(
   "MC_VerifiedRead_Red_AcceptStale.cfg VerifiedRead.tla RED" # light client skips the root check: a stale answer is accepted (INV_NeverStale)
   "MC_VerifiedRead_Red_NoRetry.cfg VerifiedRead.tla RED" # refused read never asked again: errors with asks left (INV_FailsOnlyWhenEveryAskOvertaken)
   "MC_VerifiedRead_Red_Uncapped.cfg VerifiedRead.tla RED" # retry without a cap asks past ATTEMPTS (INV_AttemptsBounded)
+  "MC_VerifiedRead_Red_NoBusyRetry.cfg VerifiedRead.tla RED" # a busy (-32002) answer never asked again: errors with patience left (INV_FailsOnlyWhenEveryAskOvertaken)
+  "MC_VerifiedRead_Red_BusyUncapped.cfg VerifiedRead.tla RED" # busy retry without a patience asks past BUSY_PATIENCE (INV_AttemptsBounded)
+  "MC_VerifiedRead_Red_PausesOnly.cfg VerifiedRead.tla RED" # patience counts only the pauses: a slow busy node carries asks past BUSY_PATIENCE (INV_AttemptsBounded)
+  "MC_VerifiedRead_Red_UndrawnPause.cfg VerifiedRead.tla RED" # patience checked against the shortest pause, the drawn one slept: an ask past BUSY_PATIENCE (INV_AttemptsBounded)
   "MC_PendingSubmission_Green.cfg PendingSubmission.tla GREEN" # a pending submission is resent until confirmed, takes effect once and stays journaled
   "MC_PendingSubmission_Green_Recalled.cfg PendingSubmission.tla GREEN" # a caller that keeps calling is confirmed though calls end early and the node drops the request
   "MC_PendingSubmission_Red_NoResend.cfg PendingSubmission.tla RED" # a lost send taken as sent waits for a receipt that cannot come

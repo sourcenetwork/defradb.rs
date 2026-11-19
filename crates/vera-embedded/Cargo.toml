@@ -59,7 +59,7 @@ vera-node = { git = "https://github.com/sourcenetwork/vera.rs", rev = "bf4a4352c
 commonware-codec = "=2026.10.0"
 edge = { path = "../edge", features = ["testing"] }
 hex.workspace = true
-keyring = { path = "../keyring" }
+keyring = { path = "../keyring", default-features = false }
 nuclei.workspace = true
 tempfile = "3"
 # The CPU sets the placement test compares.
