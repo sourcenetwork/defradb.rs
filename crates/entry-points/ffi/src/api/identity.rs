@@ -27,6 +27,14 @@ pub struct DefraIdentityBearerOptions {
 
 /// Options of `defra_identity_new_remote`: the public key as hex or as
 /// bytes, and exactly one of the two signing callbacks.
+///
+/// Public key format, as bytes or hex-encoded:
+/// - `secp256r1` / `secp256k1`: uncompressed SEC1 / X9.63 bytes
+///   (`0x04 || X || Y`)
+/// - `ed25519`: the raw 32-byte public key
+///
+/// Swift and Objective-C callers that already have the device public key as
+/// `Data` or `UnsafePointer<UInt8>` set `public_key` and `public_key_len`.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct DefraRemoteIdentityOptions {
@@ -34,7 +42,8 @@ pub struct DefraRemoteIdentityOptions {
     pub key_type: *const c_char,
     /// The public key, hex-encoded.
     pub public_key_hex: *const c_char,
-    /// The public key's bytes, used when `public_key_hex` is null.
+    /// The public key's bytes, used when `public_key_hex` is null (at most
+    /// 256 bytes).
     pub public_key: *const u8,
     /// Length of `public_key` in bytes.
     pub public_key_len: usize,
@@ -123,8 +132,26 @@ pub unsafe extern "C" fn defra_identity_new_from_bearer_token_sized(
     acp::defra_identity_new_from_bearer_token(did, bearer_token)
 }
 
-/// Registers identity `did`, whose private key the host keeps and signs
-/// with through the callback the options give.
+/// Registers identity `did`, whose private key stays outside DefraDB: the
+/// host keeps it and signs with it through the callback the options give.
+/// This supports device-bound keys (for example Secure Enclave P-256 keys)
+/// and remote identity providers such as Orbis, without exporting private
+/// key bytes.
+///
+/// `sign` answers before it returns. `sign_async` starts each signature and
+/// returns at once, and the host reports the result with
+/// `defra_remote_sign_complete`; no DefraDB thread waits while the host
+/// signs, so it is the form for a host that signs on its own queue or over
+/// the network, and for a node running a single worker.
+///
+/// While a DID has live identity handles, its signer is fixed: registering
+/// the DID again with another `signer_handle` or callback fails until every
+/// handle for it is freed; with the same `signer_handle` and callback it
+/// gives another handle for the same signer. `signer_handle` must stay
+/// valid, and the callback callable, until every identity handle naming them
+/// is freed and every node started with one (or given one as its identity)
+/// is closed or given another identity: a node keeps signing through them
+/// after the handle is freed.
 ///
 /// # Safety
 ///
