@@ -358,12 +358,13 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
     async fn project_host_source_change(
         &self,
         actor: &defra_core::RequestContext,
+        inputs: &query::prepared::PreparedInputMemo,
     ) -> query::error::Result<()> {
         let txn = &*self.shared_txn()?;
         let view = txn
             .datastore()
             .map_err(|error| query::QueryError::execution(error.to_string()))?;
-        crate::txn::bind_projection(view, actor, self.prepared_inputs.as_ref())
+        crate::txn::bind_projection(view, actor, Some(inputs))
             .project_host_source_change()
             .await
             .map_err(|error| match error {

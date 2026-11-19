@@ -788,6 +788,21 @@ impl<S: Store> DB<S> {
         Ok(())
     }
 
+    /// Answer a wave of the projector's remote inputs at the network edge, as
+    /// `context`'s acting identity, keeping prepared authorities in `memo`
+    /// for the next attempt.
+    pub async fn resolve_projection_inputs(
+        &self,
+        context: &defra_core::RequestContext,
+        memo: &query::prepared::PreparedInputMemo,
+        wave: Vec<query::prepared::PreparedInputRequest>,
+    ) -> query::error::Result<Vec<Arc<[u8]>>>
+    where
+        S: 'static,
+    {
+        crate::write::prepare::resolve_inputs_with_projection(self, context, memo, wave).await
+    }
+
     /// The actor and document ACP the installed projector acts with: what
     /// its prepared inputs are resolved through, whatever the database's own
     /// identity and document ACP are.

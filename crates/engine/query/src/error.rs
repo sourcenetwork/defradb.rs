@@ -44,6 +44,11 @@ pub enum TransactionError {
     /// The transaction registry lock is poisoned (indicates a panic elsewhere).
     #[error("lock poisoned: {0}")]
     LockPoisoned(String),
+
+    /// A step needs a remote input fetched at the network edge: its
+    /// statement was undone, and it runs again once the input is answered.
+    #[error("a prepared input is required")]
+    NeedsInput(crate::prepared::PreparedInputRequest),
 }
 
 impl TransactionError {
@@ -101,6 +106,8 @@ impl TransactionError {
     /// - `Conflict`: Retryable - another commit won a write conflict.
     /// - `LockPoisoned`: Not retryable - indicates a panic occurred and the system
     ///   may be in a corrupted state.
+    /// - `NeedsInput`: Not retryable as it is - the turn runs again only once
+    ///   its caller has answered the input.
     pub fn is_retryable(&self) -> bool {
         match self {
             Self::NotFound(_) => false,
@@ -111,6 +118,7 @@ impl TransactionError {
             Self::Storage(source) => source.is_retriable(),
             Self::Conflict(_) => true,
             Self::LockPoisoned(_) => false,
+            Self::NeedsInput(_) => false,
         }
     }
 }

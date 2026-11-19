@@ -464,12 +464,31 @@ impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
             )
             .into());
         }
-        let job = query::txn::embedded_source_permission_job(actor_context.clone(), edge.clone())?;
         let handle = query::txn::TransactionHandle::new(id.to_string());
-        Ok(self
-            .registry
-            .run_as(transaction_context, &handle, None, job)
-            .await??)
+        // A projection the edge sets off may need a remote input: its
+        // statement is undone, the input answered here, and the edge run again.
+        let inputs = query::prepared::PreparedInputMemo::default();
+        loop {
+            let job = query::txn::embedded_source_permission_job(
+                actor_context.clone(),
+                edge.clone(),
+                inputs.clone(),
+            )?;
+            match self
+                .registry
+                .run_as(transaction_context, &handle, None, job)
+                .await?
+            {
+                Err(query::TransactionError::NeedsInput(request)) => inputs
+                    .answer_wave(&request, |wave| {
+                        self.database
+                            .resolve_projection_inputs(actor_context, &inputs, wave)
+                    })
+                    .await
+                    .map_err(Error::from)?,
+                done => return Ok(done?),
+            }
+        }
     }
     async fn change_dac_relationship_for_in_txn(
         &self,

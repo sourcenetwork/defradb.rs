@@ -47,6 +47,10 @@ struct RelatedReader {
     /// next write observes, and what it saw.
     observe: Arc<Atom<Option<(String, String)>>>,
     observed: Arc<Atom<Option<bool>>>,
+    /// The policy and document whose owner a source change asks for, and
+    /// the owner it was given.
+    source_owner: Arc<Atom<Option<(String, String)>>>,
+    owner_seen: Arc<Atom<Option<Option<Did>>>>,
     reconcile: Arc<Atom<Vec<String>>>,
     rules: Vec<acp::projection::Rule>,
 }
@@ -83,6 +87,18 @@ impl db::DocumentMutationProjector for RelatedReader {
         let docs: Vec<String> = Vec::clone(&self.reconcile.load());
         for doc in docs {
             self.grant(context, &doc).await?;
+        }
+        Ok(())
+    }
+
+    async fn source_changed(
+        &self,
+        context: &db::DocumentMutationContext<'_>,
+    ) -> storage::corekv::Result<()> {
+        let asked: Option<(String, String)> = Option::clone(&self.source_owner.load());
+        if let Some((policy, doc)) = asked {
+            let owner = context.projected_owner(&policy, "users", &doc).await?;
+            self.owner_seen.store(Some(owner));
         }
         Ok(())
     }
@@ -127,11 +143,15 @@ fn a_projection_stages_through_vera_for_a_manager_in_a_transaction_and_for_the_n
         let reconcile = Arc::new(Atom::new(Vec::new()));
         let observe = Arc::new(Atom::new(None));
         let observed = Arc::new(Atom::new(None));
+        let source_owner = Arc::new(Atom::new(None));
+        let owner_seen = Arc::new(Atom::new(None));
         let projector = Arc::new(RelatedReader {
             reader: reader.clone(),
             related: Arc::clone(&related),
             observe: Arc::clone(&observe),
             observed: Arc::clone(&observed),
+            source_owner: Arc::clone(&source_owner),
+            owner_seen: Arc::clone(&owner_seen),
             reconcile: Arc::clone(&reconcile),
             rules: vec![acp::projection::Rule {
                 collection: "Users".into(),
@@ -276,6 +296,30 @@ fn a_projection_stages_through_vera_for_a_manager_in_a_transaction_and_for_the_n
         );
         drop(transaction);
         observe.store(None);
+
+        // A node source change replays the projector, which asks the Vera node
+        // for an owner: the edge's statement is undone, the input answered at
+        // the edge, and the edge run again with it.
+        source_owner.store(Some((policy.clone(), theirs.clone())));
+        let transaction = node.begin_transaction_guard(false).await.unwrap();
+        let changed = node
+            .change_nac_source_permission_for_in_txn(
+                transaction.handle(),
+                &admin_context,
+                &query::txn::SourcePermission {
+                    permission: NodePermission::CollectionPatch.as_str().into(),
+                    parent_source: None,
+                    subject_kind: "source".into(),
+                    subject: "tools:one".into(),
+                    delete: false,
+                },
+            )
+            .await
+            .expect("a source change whose projection needs a prepared owner");
+        assert!(changed);
+        transaction.commit().await.expect("commit");
+        source_owner.store(None);
+        assert_eq!(Option::clone(&owner_seen.load()), Some(Some(actor.clone())));
 
         drop(vera);
         node.shutdown().await.expect("shutdown");
