@@ -394,7 +394,7 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Transactional document relationships",
-        name: "wrong_owner_refused / readonly_refused / node_denied / document_denied / unbound_refused / expired_refused / unsupported_backend_refused",
+        name: "wrong_owner_refused / readonly_refused / node_denied / document_denied / neither_bound_nor_staging_refused / owed_staging_accepted / owed_staging_keeps_guards / expired_refused / unsupported_backend_refused",
         axis: Lean,
         anchor: "crates/entry-points/defra-node/tests/unit/transactional_relationship.rs transaction_admission_matches_executed_lean_model; crates/entry-points/cli/tests/unit/doc_acp_adapter.rs a_named_transaction_never_falls_back_to_autocommit",
         model_ref: "TransactionalRelationship (lake build)",
