@@ -11,6 +11,7 @@ mod external_drainer;
 mod external_observation;
 mod external_outbox;
 mod external_outbox_gate;
+mod external_overlay;
 mod external_owed;
 mod external_prepared;
 mod external_registration;

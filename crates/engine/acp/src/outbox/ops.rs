@@ -143,6 +143,48 @@ where
     Ok(iter.next().await.map_err(storage_error)?.is_some())
 }
 
+/// The deletes owed on one object as this transaction sees them, each its
+/// tuple: from the object's live keys, whose last eight bytes are the
+/// change's sequence, and the change's record.
+pub(super) async fn owed_deletes_on<R>(
+    reader: &R,
+    policy_id: &str,
+    resource: &str,
+    object: &str,
+) -> Result<Vec<OwedTuple>>
+where
+    R: Reader + ?Sized,
+{
+    let prefix = keys::object_live_prefix(policy_id, resource, object);
+    let mut iter = reader
+        .iterator(IterOptions::new().with_prefix(prefix))
+        .await
+        .map_err(storage_error)?;
+    let mut seqs = Vec::new();
+    while let Some(entry) = iter.next().await.map_err(storage_error)? {
+        if entry.value.as_ref() != LIVE_DELETE {
+            continue;
+        }
+        let seq = entry
+            .key
+            .len()
+            .checked_sub(8)
+            .and_then(|at| <[u8; 8]>::try_from(&entry.key[at..]).ok())
+            .map(u64::from_be_bytes)
+            .ok_or_else(|| Error::Serialization("owed ACP live key is malformed".into()))?;
+        seqs.push(seq);
+    }
+    drop(iter);
+    let mut deletes = Vec::with_capacity(seqs.len());
+    for seq in seqs {
+        let change = change(reader, seq)
+            .await?
+            .ok_or_else(|| inconsistent("record", seq))?;
+        deletes.push(change.tuple);
+    }
+    Ok(deletes)
+}
+
 /// How many changes are unsettled on one object: its tuples' live
 /// sequences. Only reports and tests ask; no decision rests on it.
 pub(super) async fn unsettled_on<R>(

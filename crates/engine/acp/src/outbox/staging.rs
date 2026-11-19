@@ -186,6 +186,7 @@ pub struct TransactionOutbox {
     changes: OwedChanges,
     pending: PendingRegistrations,
     denials: OwedDenials,
+    view: datastore::WeakNamespaceView,
 }
 
 impl TransactionOutbox {
@@ -235,7 +236,11 @@ impl TransactionOutbox {
                 request.object,
             )
             .await?;
-        if denial == OwedDenial::Always || (denial == OwedDenial::UnlessOwner && !prepared.owner) {
+        if denial == OwedDenial::Always
+            || (denial == OwedDenial::UnlessOwner
+                && !prepared.owner
+                && self.authority_revoked(&actor, &request).await?)
+        {
             return Err(Error::PermissionDenied(format!(
                 "a revocation owed to the provider denies {actor} on {} {}",
                 request.resource, request.object
@@ -271,7 +276,37 @@ impl TransactionOutbox {
             changes: OwedChanges::new(view, sequences, staged),
             pending: PendingRegistrations::new(view),
             denials: OwedDenials::new(view),
+            view: view.downgrade(),
         }
+    }
+
+    /// Whether a delete owed on the object may take away `actor`'s authority
+    /// to make `request`: one of a relation the managers of the changed
+    /// relation are computed from ([`zanzibar::types::Policy::management_sources`]),
+    /// naming `actor` or a subject wider than one actor, whoever staged it
+    /// (`proofs/tla/OwedStagingAuthority.tla`). Without the policy here, any
+    /// such delete may.
+    async fn authority_revoked(
+        &self,
+        actor: &Did,
+        request: &StageRelationship<'_>,
+    ) -> Result<bool> {
+        let Some(view) = self.view.upgrade() else {
+            return Ok(false);
+        };
+        let store = crate::zanzibar::store::TransactionZanzibarStore::new(view.clone());
+        let sources = match crate::ZanzibarStore::get_policy(&store, request.policy_id).await? {
+            Some(policy) => Some(policy.management_sources(request.resource, request.relation)),
+            None => None,
+        };
+        let deletes =
+            super::ops::owed_deletes_on(&view, request.policy_id, request.resource, request.object)
+                .await?;
+        Ok(rests_on_revoked(
+            sources.as_deref(),
+            &deletes,
+            &self.provider.canonical_actor(actor),
+        ))
     }
 
     /// Whether `subject`'s `relation` on the object has a change owed to the
@@ -400,7 +435,10 @@ impl TransactionOutbox {
             Ok(owner) => owner.map(|owner| self.provider.canonical_actor(&owner)),
             // A denial that spares only the owner stands while nobody can
             // say who the owner is.
-            Err(Error::ProviderUnavailable(_)) if denial == OwedDenial::UnlessOwner => {
+            Err(Error::ProviderUnavailable(_))
+                if denial == OwedDenial::UnlessOwner
+                    && self.authority_revoked(actor, request).await? =>
+            {
                 return Err(revoked())
             }
             Err(Error::ProviderUnavailable(reason)) => return unchecked(actor, request, &reason),
@@ -408,7 +446,11 @@ impl TransactionOutbox {
         };
         match owner {
             Some(owner) if owner == *actor => return Ok(true),
-            _ if denial == OwedDenial::UnlessOwner => return Err(revoked()),
+            _ if denial == OwedDenial::UnlessOwner
+                && self.authority_revoked(actor, request).await? =>
+            {
+                return Err(revoked())
+            }
             None => return Err(refusal(request)),
             Some(_) => {}
         }
@@ -428,6 +470,19 @@ impl TransactionOutbox {
         }
         Err(refusal(request))
     }
+}
+
+/// Whether one of `deletes` takes away what an actor's authority rests on: a
+/// delete of one of `sources` (any relation when they are unknown) naming
+/// `actor` or a subject wider than one actor.
+fn rests_on_revoked(sources: Option<&[String]>, deletes: &[OwedTuple], actor: &Did) -> bool {
+    deletes.iter().any(|delete| {
+        sources.is_none_or(|sources| sources.iter().any(|source| *source == delete.relation))
+            && match &delete.subject {
+                OwedSubject::Actor { did } => did == actor,
+                _ => true,
+            }
+    })
 }
 
 /// The refusal a local ACP gives an actor that neither owns the object nor
@@ -465,4 +520,59 @@ fn unchecked(actor: &Did, request: &StageRelationship<'_>, reason: &str) -> Resu
         "ACP provider unavailable; relationship add staged without the authority check"
     );
     Ok(false)
+}
+
+#[cfg(test)]
+mod authority_tests {
+    use super::*;
+
+    fn delete(relation: &str, subject: OwedSubject) -> OwedTuple {
+        OwedTuple {
+            policy_id: "p".into(),
+            resource: "users".into(),
+            object: "doc".into(),
+            relation: relation.into(),
+            subject,
+        }
+    }
+
+    fn actor(name: &str) -> Did {
+        Did::new(format!("did:key:{name}")).unwrap()
+    }
+
+    #[test]
+    fn only_a_revoked_source_naming_the_actor_or_everyone_takes_its_authority() {
+        let sources = ["manager".to_string()];
+        let mallory = actor("mallory");
+        let named = |relation, who: &str| delete(relation, OwedSubject::Actor { did: actor(who) });
+        assert!(rests_on_revoked(
+            Some(&sources),
+            &[named("manager", "mallory")],
+            &mallory
+        ));
+        assert!(rests_on_revoked(
+            Some(&sources),
+            &[delete("manager", OwedSubject::Wildcard)],
+            &mallory
+        ));
+        assert!(!rests_on_revoked(
+            Some(&sources),
+            &[named("manager", "bob")],
+            &mallory
+        ));
+        assert!(!rests_on_revoked(
+            Some(&sources),
+            &[delete("reader", OwedSubject::Wildcard)],
+            &mallory
+        ));
+        assert!(!rests_on_revoked(
+            Some(&sources),
+            &[named("reader", "mallory")],
+            &mallory
+        ));
+        assert!(
+            rests_on_revoked(None, &[delete("reader", OwedSubject::Wildcard)], &mallory),
+            "without the policy any wide delete may"
+        );
+    }
 }
