@@ -26,9 +26,10 @@
 //! a kind byte, then the actor's DID, or the length-prefixed parts of a set,
 //! or a resource.
 //!
-//! The layout before the counts were split lived under `/acp-owed/`
-//! ([`LEGACY_PREFIX`]). Nothing reads it: a store that still holds such
-//! records owes them nowhere, and a start says so.
+//! The layout before the counts were split lived under `/acp-owed/`.
+//! Nothing reads it as owed state: a store whose queue
+//! there still holds a record ([`LEGACY_QUEUE_PREFIX`]) is refused, so a
+//! revocation it owes can never stop denying unseen.
 
 use identity::Did;
 
@@ -45,9 +46,9 @@ const DISCARD_PREFIX: &[u8] = b"/acp-owed2/x/";
 pub(super) const UNSETTLED_KEY: &[u8] = b"/acp-owed2/n";
 pub(super) const SEQUENCE_KEY: &[u8] = b"/acp-owed2/seq";
 
-/// Where owed changes lived before their counts were split. No key of the
-/// current layout starts with it.
-pub(super) const LEGACY_PREFIX: &[u8] = b"/acp-owed/";
+/// The queue of the layout before the counts were split, under
+/// `/acp-owed/`: one record per change still owed.
+pub(super) const LEGACY_QUEUE_PREFIX: &[u8] = b"/acp-owed/q/";
 
 const SUBJECT_WILDCARD: u8 = 0;
 const SUBJECT_ACTOR: u8 = 1;
@@ -354,6 +355,9 @@ mod tests {
         }
         assert!(queue_key(u64::MAX).starts_with(&queue_prefix()));
     }
+
+    /// Where the layout before the counts were split lived.
+    const LEGACY_PREFIX: &[u8] = b"/acp-owed/";
 
     #[test]
     fn no_key_of_the_layout_starts_with_the_legacy_root() {

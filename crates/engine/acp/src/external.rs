@@ -86,6 +86,10 @@ where
     root: Arc<dyn DocumentACP>,
     /// Told when this gate changes an object's relationships.
     watcher: Arc<regolith::sync::OnceCell<Arc<dyn crate::ObjectChangeListener>>>,
+    /// How many changes the store owes in the layout before the owed counts
+    /// were split, once read. Nothing writes that layout any more, so the
+    /// number cannot change while the store is open.
+    legacy: Arc<regolith::sync::OnceCell<u64>>,
 }
 
 fn storage_error(error: storage::corekv::Error) -> Error {
@@ -106,6 +110,7 @@ where
             changed: Arc::new(regolith::sync::Notify::new()),
             serving: None,
             watcher: Arc::default(),
+            legacy: Arc::default(),
         }
     }
 
@@ -151,6 +156,7 @@ where
         resource_name: &str,
         object_id: &str,
     ) -> Result<bool> {
+        self.owed_layout().await?;
         let denial = {
             let txn = self.store.new_txn(true).await.map_err(storage_error)?;
             owed_denial(
@@ -201,7 +207,7 @@ where
     /// the provider refuses stays owed, its document still readable only by
     /// its creator, and is counted in [`RedriveReport::failed`].
     pub async fn redrive_owed(&self) -> Result<RedriveReport> {
-        self.warn_of_legacy_changes().await?;
+        self.owed_layout().await?;
         let mut report = RedriveReport::default();
         let mut start = PENDING_PREFIX.to_vec();
         loop {
@@ -236,15 +242,23 @@ where
         }
     }
 
-    /// Say, at start, when the store holds owed changes in the layout before
-    /// their counts were split: nothing submits them and none of them denies.
-    async fn warn_of_legacy_changes(&self) -> Result<()> {
-        let txn = self.store.new_txn(true).await.map_err(storage_error)?;
-        if crate::outbox::legacy_records(&txn).await? {
-            tracing::error!(
-                target: "acp::audit",
-                "This store holds relationship changes owed to the ACP provider in a layout this version does not read: they are not submitted and an owed revocation among them no longer denies. Settle them with the version that staged them, or re-apply them, before relying on this node's access decisions"
-            );
+    /// Refuse while the store owes changes in the layout before the owed
+    /// counts were split: this version neither submits them nor denies by
+    /// them, so a revocation among them would stop denying unseen. Every
+    /// access decision, settling pass and redrive asks first; the store is
+    /// read once.
+    pub async fn owed_layout(&self) -> Result<()> {
+        let count = match self.legacy.get() {
+            Some(&count) => count,
+            None => {
+                let txn = self.store.new_txn(true).await.map_err(storage_error)?;
+                let count = crate::outbox::legacy_changes(&txn).await?;
+                let _ = self.legacy.set(count);
+                count
+            }
+        };
+        if count > 0 {
+            return Err(Error::LegacyOwedChanges { count });
         }
         Ok(())
     }
@@ -301,6 +315,7 @@ where
             serving: Some(context.clone()),
             root: Arc::clone(&self.root),
             watcher: Arc::clone(&self.watcher),
+            legacy: Arc::clone(&self.legacy),
         }))
     }
 
@@ -393,6 +408,10 @@ where
 
     async fn settle_owed_changes(&self, scope: OwedScope) -> Result<OwedSettlement> {
         self.settle_owed_changes_once(scope).await
+    }
+
+    async fn check_owed_layout(&self) -> Result<()> {
+        self.owed_layout().await
     }
 
     async fn owed_entries(
@@ -502,6 +521,7 @@ where
         resource_name: &str,
         doc_id: &str,
     ) -> Result<bool> {
+        self.owed_layout().await?;
         if let Some(owed) = self.owed(policy_id, resource_name, doc_id).await? {
             return Ok(matches!(identity, Identity::Authenticated(did) if *did == owed.creator));
         }

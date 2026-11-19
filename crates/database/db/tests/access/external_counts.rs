@@ -4,7 +4,7 @@
 //! covers every kind of subject in two point reads, and the bounds hold.
 
 use acp::outbox::VALIDATED_WITHIN_OF_NODE_LIMIT;
-use acp::{Identity, NewOwedChange, OwedDenial, OwedDenials, OwedOp, OwedSubject};
+use acp::{DocumentACP, Identity, NewOwedChange, OwedDenial, OwedDenials, OwedOp, OwedSubject};
 use datastore::BasicTxn;
 use identity::Did;
 
@@ -418,6 +418,90 @@ fn near_the_node_bound_stagers_are_ordered_and_settles_abort_none() {
             })
         ));
         txn.discard().unwrap();
+    })
+    .unwrap()
+}
+
+/// Write `keys` under the ACP namespace as an earlier version of the outbox
+/// left them.
+async fn seed_earlier_layout(outbox: &Outbox, keys: &[&[u8]]) {
+    let txn = BasicTxn::new(outbox.store.as_ref(), 0, false)
+        .await
+        .unwrap();
+    for key in keys {
+        txn.acpstore().set(key, b"earlier").await.unwrap();
+    }
+    txn.commit().await.unwrap();
+}
+
+/// Whether `result` is the refusal of a store owing two changes in the
+/// earlier layout.
+fn refused<T>(result: acp::Result<T>) -> bool {
+    matches!(result, Err(acp::Error::LegacyOwedChanges { count: 2 }))
+}
+
+/// A store whose earlier-layout queue still holds a change refuses every
+/// access decision, settling pass and redrive, naming how many it owes.
+#[test]
+fn a_store_owing_changes_in_the_earlier_layout_is_refused() {
+    workers::block_on(async {
+        let outbox = Outbox::new();
+        let seq = |n: u64| [b"/acp-owed/q/".as_slice(), &n.to_be_bytes()].concat();
+        seed_earlier_layout(&outbox, &[&seq(7), &seq(9)]).await;
+        assert!(refused(outbox.gate.owed_layout().await));
+        assert!(refused(
+            outbox
+                .gate
+                .check_doc_access(
+                    &as_actor(bob()),
+                    acp::DocumentPermission::Read,
+                    POLICY,
+                    RESOURCE,
+                    "doc-1",
+                )
+                .await
+        ));
+        assert!(refused(
+            outbox
+                .gate
+                .settle_owed_changes_once(acp::OwedScope::All)
+                .await
+        ));
+        assert!(refused(outbox.gate.redrive_owed().await));
+        assert!(refused(
+            acp::DocumentACP::check_owed_layout(&*outbox.gate).await
+        ));
+    })
+    .unwrap()
+}
+
+/// What an earlier layout keeps once everything settled (counts at zero, the
+/// sequence counter, notes of discarded changes) owes nothing, and the store
+/// is served as one that never had that layout.
+#[test]
+fn an_earlier_layout_with_nothing_owed_is_served() {
+    workers::block_on(async {
+        let empty = Outbox::new();
+        assert!(empty.gate.owed_layout().await.is_ok());
+
+        let settled = Outbox::new();
+        seed_earlier_layout(
+            &settled,
+            &[
+                b"/acp-owed/n",
+                b"/acp-owed/seq",
+                b"/acp-owed/a/did:key:z6MkalicE",
+                b"/acp-owed/x/\0\0\0\0\0\0\0\x07",
+                b"/acp-owed/q",
+            ],
+        )
+        .await;
+        assert!(settled.gate.owed_layout().await.is_ok());
+        assert!(settled
+            .gate
+            .settle_owed_changes_once(acp::OwedScope::All)
+            .await
+            .is_ok());
     })
     .unwrap()
 }

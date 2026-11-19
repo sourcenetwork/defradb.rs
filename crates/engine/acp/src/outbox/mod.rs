@@ -37,7 +37,7 @@ pub use changes::{
 };
 pub use deny::{OwedDenial, OwedDenials};
 pub use keys::OwedTupleState;
-pub(crate) use ops::legacy_records;
+pub(crate) use ops::legacy_changes;
 pub use ops::MAX_DISCARD_NOTES;
 pub use record::{
     run_epoch, NewOwedChange, OwedAuthority, OwedChange, OwedOp, OwedState, OwedSubject, OwedTuple,

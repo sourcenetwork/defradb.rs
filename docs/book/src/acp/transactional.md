@@ -235,11 +235,15 @@ with no HTTP route.
   is not removed: **each tuple, object and actor ever staged on keeps one small folded
   value (about 40 bytes and its key)** until regolith can fold a chain of merges that
   has no value beneath it, which a compaction filter could then drop.
-- **The layout before the counts were split.** It lived under `/acp-owed/`, and nothing
-  reads it. A development store that still holds changes owed in it neither submits
-  them nor denies by them: an owed revocation among them stops denying on this node.
-  A start that finds any logs an error saying so; settle them with the version that
-  staged them, or apply them again, before relying on that node's access decisions.
+- **The layout before the counts were split.** It lived under `/acp-owed/`, and this
+  version does not read it as owed state. A store whose queue there still holds a
+  change (a `/acp-owed/q/` record; a settled change has none) is refused: the node does
+  not start, with `LegacyOwedChanges` naming how many it owes, and a gate opened on such
+  a store refuses every access decision, settling pass and redrive with the same error.
+  An owed revocation in it can therefore never stop denying unseen. Settle those changes
+  with the version that staged them, or create the store again. What else that layout
+  keeps once everything has settled (counts at zero, the sequence counter, notes of
+  discarded changes) owes nothing, is not counted and does not hold a start back.
 - **The order.** A sequence comes from `Db::allocate` after the staging transaction read
   the staged part of the tuple's count, which it also merges into. Two transactions that
   stage the same tuple conflict, and the one that commits later holds the higher
@@ -274,7 +278,7 @@ with no HTTP route.
   revokes nothing. An owed add grants nothing, in its own transaction either. A decision
   is two point reads, whatever the policy: the object's count of deletes wider than one
   actor and the count of deletes naming the identity there, each read on its staged
-  part. A delete that commits after the decision read refuses it at commit; a settle
+  part. An anonymous decision reads only the object's count: no delete can name it. A delete that commits after the decision read refuses it at commit; a settle
   never does, and one the read did not see only denies more.
 
 ### Verified writes on an external provider

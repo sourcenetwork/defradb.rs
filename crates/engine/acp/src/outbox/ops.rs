@@ -199,15 +199,21 @@ where
     Ok(page)
 }
 
-/// Whether the store holds owed changes in the layout before the counts were
-/// split ([`keys::LEGACY_PREFIX`]), which nothing reads any more.
-pub(crate) async fn legacy_records<R>(reader: &R) -> Result<bool>
+/// How many changes the store still owes in the layout before the counts
+/// were split ([`keys::LEGACY_QUEUE_PREFIX`]): one record each, deleted when it
+/// settled. The rest of that layout (counts settled to zero, the sequence
+/// counter, notes of discarded changes) owes nothing and is not counted.
+pub(crate) async fn legacy_changes<R>(reader: &R) -> Result<u64>
 where
     R: Reader + ?Sized,
 {
-    let options = IterOptions::new().with_prefix(keys::LEGACY_PREFIX.to_vec());
+    let options = IterOptions::new().with_prefix(keys::LEGACY_QUEUE_PREFIX.to_vec());
     let mut iter = reader.iterator(options).await.map_err(storage_error)?;
-    Ok(iter.next().await.map_err(storage_error)?.is_some())
+    let mut count = 0;
+    while iter.next().await.map_err(storage_error)?.is_some() {
+        count += 1;
+    }
+    Ok(count)
 }
 
 async fn put<T>(txn: &T, key: &[u8], value: &[u8]) -> Result<()>
