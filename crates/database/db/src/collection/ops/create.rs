@@ -281,23 +281,13 @@ impl<S: Store> crate::database::DB<S> {
         Ok(schema)
     }
 
-    /// [`Self::create_collection_as`] in [`defra_core::RequestContext::ambient`].
-    pub async fn create_collection(&self, schema: CollectionVersion) -> Result<()> {
-        self.create_collection_as(&defra_core::RequestContext::ambient(), schema, None, None)
-            .await
-    }
-
     /// Create a new collection.
     ///
     /// This creates a new transaction, calls `create_collection_with_txn`, commits,
     /// and updates the process-wide cache.
-    async fn create_collection_as(
-        &self,
-        context: &defra_core::RequestContext,
-        schema: CollectionVersion,
-        document_acp: Option<std::sync::Arc<dyn acp::DocumentACP>>,
-        creator: Option<identity::Did>,
-    ) -> Result<()> {
+    pub async fn create_collection(&self, schema: CollectionVersion) -> Result<()> {
+        let context = &defra_core::RequestContext::ambient();
+
         self.check_node_access_as(context, acp::nac::NodePermission::CollectionPatch)
             .await?;
         let mut txn = self.new_txn(false).await?;
@@ -309,15 +299,6 @@ impl<S: Store> crate::database::DB<S> {
         .map_err(Error::Other)?;
 
         let finalized_schema = self.create_collection_with_txn(&mut txn, schema).await?;
-
-        if let (Some(document_acp), Some(creator)) = (document_acp, creator) {
-            txn.stage_collection_acp_registration(
-                context,
-                document_acp,
-                creator,
-                vec![finalized_schema.clone()],
-            );
-        }
 
         let collection =
             Collection::load_index_actions(finalized_schema.clone(), &txn.systemstore()?).await?;
