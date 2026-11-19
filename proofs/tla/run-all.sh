@@ -682,6 +682,10 @@ RUNS=(
   "MC_AcpOutbox_Green_JournalSameBytes.cfg AcpOutbox.tla GREEN" # requests with the same bytes: a note counts only from the mark's sequence floor on, so every settled change took effect
   "MC_AcpOutbox_Red_JournalNoFloor.cfg AcpOutbox.tla RED" # a note of an earlier request with the same bytes settles a change that was never sent (INV_SettledTookEffect)
   "MC_AcpOutbox_Red_JournalRenewedCredential.cfg AcpOutbox.tla RED" # a fresh delegation renews a request journaled with an expired one (INV_LandsUnderItsCredential)
+  "MC_AcpOutbox_Green_Remote.cfg AcpOutbox.tla GREEN" # clients stage over HTTP under their own delegations: each change acts as its credential's DID, is checked, lapses to awaiting authority, or goes with a rollback
+  "MC_AcpOutbox_Green_Remote_Live.cfg AcpOutbox.tla GREEN" # a client's change, its delegation lapsing or not, ends settled, refused or awaiting authority
+  "MC_AcpOutbox_Red_RemoteActorFromRequest.cfg AcpOutbox.tla RED" # the HTTP route takes the actor from the request: a change goes in under another's credential (INV_ActsAsItsCredential)
+  "MC_AcpOutbox_Red_RemoteUnchecked.cfg AcpOutbox.tla RED" # the HTTP route skips the advisory check: an unvouched revocation denies from the commit (INV_DenialsChecked)
   "MC_OwedParts_Green.cfg OwedParts.tla GREEN" # owed counts in a staged and a settled part: a settle aborts no stager or decision, no decision commits past an unseen delete
   "MC_OwedParts_Red_SettleTouchesStaged.cfg OwedParts.tla RED" # a settle rewrites the staged part too: readers are refused for it (INV_SettleAbortsNobody)
   "MC_OwedParts_Red_UnvalidatedDecision.cfg OwedParts.tla RED" # the deny decision reads unvalidated: it commits past a delete (INV_NoMissedRevoke)
