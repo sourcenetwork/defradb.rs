@@ -1792,6 +1792,21 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/engine/storage/src/backends/regolith/merge/tests/owed.rs owed_folds_obey_the_engine_contract, owed_touches_obey_the_engine_contract, staging_and_settling_touch_disjoint_parts, a_read_of_the_staged_part_meets_only_staging, a_fully_settled_value_owes_nothing_before_and_after_compaction",
     },
     Property {
+        // The live sequences of one owed tuple: one key each, the tuple's
+        // prefix and the sequence as eight big-endian bytes. Byte order of
+        // the keys is numeric order and each reads back as its sequence, so
+        // a prefix scan lists them ascending; the first is the oldest owed
+        // and the last the latest, before and after any one settles, and an
+        // empty index names neither.
+        family: "ACP outbox and owed registrations",
+        name: "decode_encode / order_iff / lex_iff_val / empty_index / oldest_is_min / latest_is_max / settle_index / oldest_after_settle / latest_after_settle / ten_and_twenty: live-sequence keys sort and read back as their sequences, and the first and last key read are the oldest and latest change still owed after any settle",
+        axis: Lean,
+        anchor: "crates/engine/acp/src/outbox/keys.rs live_prefix, live_key, live_seq; crates/engine/acp/src/outbox/ops.rs tuple_state, stage, settle",
+        model_ref: "OwedLive (lake build)",
+        tiers: &[Contract],
+        bound_by: "crates/engine/acp/src/outbox/keys.rs the_live_keys_of_a_tuple_sort_by_sequence_and_name_only_it; crates/database/db/tests/access/external_outbox.rs settling_a_change_leaves_the_later_ones_of_its_tuple_owed, settling_out_of_order_keeps_the_oldest_the_latest_and_the_deletes_true",
+    },
+    Property {
         // Registrations of one document that race each write their own owner
         // key, so only the commit can refuse all but one. The deciding prefix
         // scan is a validated scan: a registration that commits under the
