@@ -662,6 +662,13 @@ RUNS=(
   "MC_AcpOutbox_Red_AmbientRecorded.cfg AcpOutbox.tla RED" # a bearer-less create records the token the process holds, and a retry sends it (INV_PresentedAuthority)
   "MC_AcpOutbox_Red_SilentDiscard.cfg AcpOutbox.tla RED" # a change deleted without the provider holding it leaves no note for its actor (INV_FailureReported)
   "MC_AcpOutbox_Red_ReauthorizeUnchecked.cfg AcpOutbox.tla RED" # a fresh credential for the registration is taken from anyone and its signer becomes the owner (INV_NoWidening)
+  "MC_AcpOutbox_Green_Journal.cfg AcpOutbox.tla GREEN" # the drainer through the worker's journal: digest mark, journal, hash mark, batches of one transaction, crashes and dropped waits; each change takes effect once
+  "MC_AcpOutbox_Green_Journal_Registered.cfg AcpOutbox.tla GREEN" # a refused batch is sent one change at a time: the owner's change lands, the unchecked one is removed
+  "MC_AcpOutbox_Green_Journal_Live.cfg AcpOutbox.tla GREEN" # the drainer takes its turns by itself: every committed change ends settled, refused or awaiting authority
+  "MC_AcpOutbox_Red_JournalNoMarker.cfg AcpOutbox.tla RED" # the drainer sends without a durable in-flight mark: a change that landed before a crash is sent again (INV_AtMostOneEffect)
+  "MC_AcpOutbox_Red_JournalNoNote.cfg AcpOutbox.tla RED" # a request resolved by another leaves no note: a change marked with its digest alone is sent again (INV_AtMostOneEffect)
+  "MC_AcpOutbox_Red_JournalReceiptLost.cfg AcpOutbox.tla RED" # receipt and note can no longer be read: the drainer sends a landed change again (INV_AtMostOneEffect)
+  "MC_AcpOutbox_Red_BatchNotIsolated.cfg AcpOutbox.tla RED" # a refused batch is parked whole: the owner's change is parked for another's refusal (INV_RefusedOnItsOwn)
   "MC_RegisterDocOnce_Green.cfg RegisterDocOnce.tla GREEN" # racing registrations of one document: one owner, the winner owns it, one wins
   "MC_RegisterDocOnce_Red_NoValidation.cfg RegisterDocOnce.tla RED" # deciding scan not validated: two owners (INV_OneOwner)
   "MC_RegisterDocOnce_Red_Sentinel.cfg RegisterDocOnce.tla RED" # main before the fix: the identical sentinel write commits, two owners (INV_OneOwner)

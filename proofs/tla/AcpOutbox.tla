@@ -33,7 +33,12 @@
 \*   * the settlement loop (the redrive, the drainer) registers the document,
 \*     then submits the changes in sequence order. Before it sends a change it
 \*     marks the record "in flight"; after a send it asks for the receipt and
-\*     sends again only when the provider has none. A change the provider
+\*     sends again only when the provider has none. Through a provider with
+\*     a journal (Journaled) the mark holds the request's digest, then its
+\*     transaction hash, and the journal, a receipt or the provider's note
+\*     decides a marked change after a crash; changes of one transaction may
+\*     share one request, applied together or not at all, and a refused one
+\*     is sent again one change at a time. A change the provider
 \*     refuses is parked if its actor was checked at staging, and removed if
 \*     it was not. A parked change holds the later changes of its tuple if
 \*     its actor was checked. An unchecked one that waits for authority
@@ -96,7 +101,9 @@
 \*  14. a reader a committed delete denies reads again because someone other
 \*      than the delete's actor abandoned it - INV_RevokedAtCommit;
 \*  15. the registration is sent under a credential that is not its
-\*      creator's, and the provider registers that signer - INV_NoWidening.
+\*      creator's, and the provider registers that signer - INV_NoWidening;
+\*  16. a change is parked as refused because another change it shared a
+\*      request with was refused - INV_RefusedOnItsOwn.
 \*
 \* What exists in the code today, and what is specification ahead of code.
 \* Exists (the registry anchors these):
@@ -146,7 +153,23 @@
 \*                                          crates/engine/acp/src/outbox/ops.rs
 \*                                          reauthorize and settle, behind the
 \*                                          node calls in
-\*                                          crates/entry-points/defra-node/src/owed.rs.
+\*                                          crates/entry-points/defra-node/src/owed.rs;
+\*   the drainer task, woken by commits     crates/entry-points/defra-node/src/
+\*   and backing off while the provider     owed_drainer.rs run_drainer, started by
+\*   is away                                gate_external_acp;
+\*   the journaled request and its marks    crates/engine/acp/src/external/drain.rs
+\*                                          send_request, recover_marked, batch,
+\*                                          over crates/engine/acp/src/outbox/
+\*                                          ops.rs mark_in_flight, clear_in_flight
+\*                                          and the record's InFlight;
+\*   the worker's journal, the receipt by   crates/engine/vera/src/vera_rs/provider/
+\*   hash and the note                      owed_request.rs prepare_owed_request,
+\*                                          journal_owed_request, resolve_owed_request,
+\*                                          owed_request_outcome, with the note in
+\*                                          crates/engine/vera/src/vera_rs/
+\*                                          outcome_note.rs and the start-up
+\*                                          recovery in provider/submission.rs
+\*                                          recover_pending.
 \* In the model these are StageCreate, StageChange with its check (CanCheck,
 \* Passes, CheckedDeletes), Commit, Rollback, Crash, RegisterOnChain,
 \* ClearOwed, the deny overlay (DenyRule = "AnyOwedDelete",
@@ -156,13 +179,19 @@
 \* RegRetry = "recorded", the three ways of MaySendBy), the notes of
 \* discarded changes (Noted, Acknowledge) and Abandon with
 \* AbandonStates = "refused" and
-\* AbandonBy = "actor". A pass that submits a change and reads the provider's
-\* answer is Mark, Land and Lookup taken together with nothing stored in
-\* between, which is the model with Marker = FALSE:
-\* MC_AcpOutbox_Green_NoMarker holds every property but
-\* INV_AtMostOneEffect, and MC_AcpOutbox_Red_NoInFlightMarker is the trace
-\* of what the code does after a crash (it sends again). A change without
-\* usable authority is parked as AwaitAuthority parks it, checked or not: the
+\* AbandonBy = "actor". Through a provider with a journal (vera.rs) the
+\* drainer is JMark, JPrepare, JHash, JLand and JResolve, with JRecover for
+\* the provider at start and every other command that finds the request
+\* still journaled, JDrop for a commit that stops waiting, and JAdopt and
+\* JDecide for a change found marked: the configurations with
+\* Journaled = TRUE. Through a provider without one (Cosmos, the test
+\* providers) a pass that submits a change and reads the provider's answer
+\* is Mark, Land and Lookup taken together with nothing stored in between,
+\* which is the model with Marker = FALSE: MC_AcpOutbox_Green_NoMarker holds
+\* every property but INV_AtMostOneEffect, and
+\* MC_AcpOutbox_Red_NoInFlightMarker is the trace of what such a provider
+\* sees after a crash (the change is sent again). A change without usable
+\* authority is parked as AwaitAuthority parks it, checked or not: the
 \* provider has not refused it.
 \* Where the code differs from the model:
 \*   * it honours no owed add at all, not even the creator's own named grant
@@ -170,29 +199,33 @@
 \*     "CreatorExplicit", so every property about not widening carries over);
 \*   * its check also lets through an actor that holds a managing relation
 \*     on the provider; the model knows only the owner;
-\*   * it parks a change as waiting for authority without knowing whether a
-\*     request sent for it earlier is still on the way (a commit that stopped
-\*     waiting leaves one). AwaitAuthority here parks only a change known not
-\*     to have landed. That is why the code lets only a refused change be
-\*     abandoned, and a change waiting for authority only be reauthorized;
+\*   * through a provider without a journal it parks a change as waiting for
+\*     authority without knowing whether a request sent for it earlier is
+\*     still on the way (a commit that stopped waiting leaves one).
+\*     AwaitAuthority here parks only a change known not to have landed. That
+\*     is why the code lets only a refused change be abandoned, and a change
+\*     waiting for authority only be reauthorized. Through a journal a marked
+\*     change is decided before anything else is done with it;
+\*   * the model's transaction is the first slot it staged; the code batches
+\*     changes that carry the same transaction and run, one after the other
+\*     in the queue, and never more than fit one request;
+\*   * the provider's note is bounded: an entry pushed out is a note that can
+\*     no longer be read, which ReceiptLost covers;
 \*   * a registration the provider refuses outright is kept as refused with
 \*     the provider's words and tried again at start; the model has no
 \*     provider that refuses a registration.
-\* Specification ahead of code (#2954): the durable in-flight mark and the
-\* receipt lookup that give INV_AtMostOneEffect (Marker, Lookup after a
-\* restart), the creator's owed grants, and a loop that takes
-\* its turns by itself (the fairness of SpecLive): a pass runs only after a
-\* commit that staged a change, once at start, and before a change made
-\* outside a transaction on a tuple that has changes owed
-\* (settle_owed_before, so that such a change follows the staged ones).
+\* Specification ahead of code (#2954): the creator's owed grants, and the
+\* fairness of SpecLive for a provider without a journal, whose changes
+\* the drainer submits without a mark.
 \*
 \* Assumptions, by name. Each is a switch, and a RED configuration turns it
 \* off to show what rests on it.
-\*   AssumeReceiptRetrievable   after a change landed, its receipt (or the
-\*       worker's journal entry) can still be read when the loop asks. This is
-\*       the open question of #2954: when no receipt is retrievable, the loop
-\*       cannot tell "landed" from "lost", sends again, and the change takes
-\*       effect twice. INV_AtMostOneEffect holds only under this assumption.
+\*   AssumeReceiptRetrievable   after a change landed, its receipt, the
+\*       worker's journal entry or the provider's note of it can still be read
+\*       when the loop asks. When none is, the loop cannot tell "landed" from
+\*       "lost", sends again, and the change takes effect twice.
+\*       INV_AtMostOneEffect holds only under this assumption
+\*       (MC_AcpOutbox_Red_ReceiptLost, MC_AcpOutbox_Red_JournalReceiptLost).
 \*   AssumeUncontested          the provider does not already hold the
 \*       document under another owner. When it does, settle keeps that owner,
 \*       and the creator read a document the provider gives to someone else.
@@ -265,7 +298,11 @@ CONSTANTS
   ReauthChecked,             \* TRUE: a fresh credential is taken only from the creator
   ReportFailures,            \* TRUE: a submission that failed leaves its reason in the record
   AbandonStates,             \* which changes may be abandoned: see Abandon
-  AbandonBy                  \* who may abandon a change: see Abandon
+  AbandonBy,                 \* who may abandon a change: see Abandon
+  Journaled,                 \* TRUE: changes go through the worker's journal (the drainer)
+  Note,                      \* TRUE: a request resolved by someone else leaves a note of its outcome
+  MaxBatch,                  \* how many changes one request may carry
+  Isolate                    \* TRUE: a refused batch is sent again one change at a time
 
 ASSUME MaxChanges \in Nat /\ MaxCrashes \in Nat /\ MaxExpiries \in Nat  \* bounds are numbers
 ASSUME Subjects \subseteq {"g", "*"} /\ Subjects # {}       \* known subjects
@@ -281,6 +318,8 @@ ASSUME RegAuths \subseteq {"node", "deleg", "none", "ambient"} /\ RegAuths # {} 
 ASSUME RegRetry \in {"recorded", "ambient"}                \* a known retry rule
 ASSUME AbandonStates \in {"refused", "any"}                \* a known abandon rule
 ASSUME AbandonBy \in {"actor", "anyone"}                   \* a known abandon rule
+ASSUME Journaled \in BOOLEAN /\ Note \in BOOLEAN /\ Isolate \in BOOLEAN  \* switches
+ASSUME MaxBatch \in {1, 2}                                 \* one change a request, or two
 
 Slots == 1..MaxChanges       \* the sequence numbers
 Readers == {"c", "g", "x"}   \* who asks for access: creator, grantee, stranger
@@ -298,7 +337,8 @@ VARIABLES
   owedReg,      \* TRUE while the stored record says the registration is owed
   st,           \* per slot: where its change stands (see TypeOK)
   chg,          \* per slot: the change staged there
-  receipt,      \* per slot: what the provider recorded: "none", "ok", "rejected"
+  receipt,      \* per slot: what the provider recorded: "none", "ok", "rejected",
+                \* or "lapsed" (rejected: the credential it was sent with no longer held)
   effects,      \* per slot: how often the change took effect on the provider
   checked,      \* per slot, in memory only: "I asked, the provider has no receipt"
   chk,          \* per slot: TRUE when the actor's authority was checked at staging
@@ -320,15 +360,26 @@ VARIABLES
   regVia,       \* whose word the registration was sent on: see RegisterOnChain
   tomb,         \* the slots whose record was deleted without the provider holding
                 \* the change, and whose actor has not been told yet
-  acked         \* the slots whose actor was told so
+  acked,        \* the slots whose actor was told so
+  flight,       \* per slot, stored: the in-flight mark, "-" none, "digest" the
+                \* request's digest, "hash" its digest and its transaction hash
+  journal,      \* the slots of the request the worker's journal holds, {} if none
+  landed,       \* TRUE once the request in the journal has executed on the provider
+  noted,        \* per slot: the outcome the provider's note keeps, "none" if none
+  solo,         \* the slots to be sent in a request of their own, stored
+  tx,           \* per slot: the transaction that staged it (its first slot)
+  cur           \* in memory: the slots of the request the drainer is working on
 
 \* How the registration was sent, and what is kept of discarded changes.
 rest == <<regVia, tomb, acked>>
 \* The record of the owed registration, and what became of abandoned changes.
 more == <<regAuth, regOk, regBy, regPark, regNote, regFail, gone, late, rest>>
+\* What the journaled drain keeps: the marks, the journal, the note, batches.
+drain == <<flight, journal, landed, noted, solo, tx, cur>>
 
 vars == <<doc, owedReg, st, chg, receipt, effects, checked, chk, rolled,
-          chainOwner, chainTuples, up, delegOk, crashes, expiries, more>>  \* every variable
+          chainOwner, chainTuples, up, delegOk, crashes, expiries, more,
+          drain>>  \* every variable
 
 TypeOK ==
   /\ doc \in {"absent", "open", "exists"}                 \* a known document state
@@ -337,7 +388,7 @@ TypeOK ==
                        "awaiting", "refused", "settled",
                        "dropped", "abandoned"}]           \* a known step each
   /\ chg \in [Slots -> Changes \cup {NoChange}]           \* a change or nothing
-  /\ receipt \in [Slots -> {"none", "ok", "rejected"}]    \* a known receipt each
+  /\ receipt \in [Slots -> {"none", "ok", "rejected", "lapsed"}]  \* a known receipt each
   /\ effects \in [Slots -> 0..2]                          \* a small count each
   /\ checked \in [Slots -> BOOLEAN]                       \* a flag each
   /\ chk \in [Slots -> BOOLEAN]                           \* a flag each
@@ -356,6 +407,11 @@ TypeOK ==
   /\ late \subseteq Slots                                 \* some slots
   /\ regVia \in {"-", "record", "change", "request", "ambient"}  \* a known way
   /\ tomb \subseteq Slots /\ acked \subseteq Slots          \* some slots
+  /\ flight \in [Slots -> {"-", "digest", "hash"}]          \* a known mark each
+  /\ journal \subseteq Slots /\ landed \in BOOLEAN          \* a request or none, a flag
+  /\ noted \in [Slots -> {"none", "ok", "rejected", "lapsed"}]  \* a known outcome each
+  /\ solo \subseteq Slots /\ cur \subseteq Slots            \* some slots
+  /\ tx \in [Slots -> 0..MaxChanges]                        \* a transaction each
 
 Init ==
   /\ doc = (IF Preexisting THEN "exists" ELSE "absent")   \* there from the start, or not yet
@@ -382,6 +438,11 @@ Init ==
   /\ late = {}                                            \* nothing landed late
   /\ regVia = "-"                                         \* the registration was not sent
   /\ tomb = {} /\ acked = {}                              \* nothing was discarded
+  /\ flight = [s \in Slots |-> "-"]                       \* nothing is in flight
+  /\ journal = {} /\ landed = FALSE                       \* the journal is empty
+  /\ noted = [s \in Slots |-> "none"]                     \* the note is empty
+  /\ solo = {} /\ cur = {}                                \* no batch refused, no request held
+  /\ tx = [s \in Slots |-> 0]                             \* no slot is staged
 
 \* ---- Words used below ----
 
@@ -507,6 +568,7 @@ StageCreate ==
                  chainOwner, chainTuples, up, delegOk, crashes, expiries>>
   /\ UNCHANGED chk                                       \* what was checked stays so
   /\ UNCHANGED more                                      \* and so do the registration's record and what was abandoned
+  /\ UNCHANGED drain                                     \* the journaled drain is not involved
 
 \* The staging check can run: the document's registration is still owed
 \* (its creator is then the only authority, and the node knows it without
@@ -537,6 +599,10 @@ StageChange(s, c) ==
   /\ UNCHANGED <<doc, owedReg, receipt, effects, checked, rolled,
                  chainOwner, chainTuples, up, delegOk, crashes, expiries>>
   /\ UNCHANGED more                                      \* and so do the registration's record and what was abandoned
+  /\ UNCHANGED drain                                     \* the journaled drain is not involved
+
+\* The first slot the open transaction staged: the name of that transaction.
+FirstOpen == CHOOSE s \in Slots : st[s] = "open" /\ \A r \in Slots : st[r] = "open" => s <= r
 
 \* The open transaction commits: the document, its owed registration and the
 \* staged changes become durable together. The registration records what it
@@ -565,6 +631,12 @@ Commit ==
   /\ UNCHANGED <<chg, receipt, effects, checked, rolled,
                  chainOwner, chainTuples, up, delegOk, crashes, expiries>>
   /\ UNCHANGED chk                                       \* what was checked stays so
+  /\ tx' = IF Journaled                                  \* the journaled drain batches by
+           THEN [s \in Slots |-> IF st[s] = "open"        \*   transaction: each slot it commits
+                                 THEN FirstOpen           \*   is named by the first of them
+                                 ELSE tx[s]]
+           ELSE tx                                        \* else nobody asks
+  /\ UNCHANGED <<flight, journal, landed, noted, solo, cur>>  \* nothing is sent at a commit
 
 \* What a discarded transaction leaves of its changes. Owned by the
 \* transaction, they are gone with it. Written beside it (the bug), they
@@ -594,6 +666,7 @@ Rollback ==
                  up, delegOk, crashes, expiries>>
   /\ UNCHANGED chk                                       \* what was checked stays so
   /\ UNCHANGED more                                      \* and so do the registration's record and what was abandoned
+  /\ UNCHANGED drain                                     \* the journaled drain is not involved
 
 \* The node crashes and restarts. An open transaction is rolled back. The
 \* settlement loop forgets what it had checked. Without a durable mark, a
@@ -602,7 +675,8 @@ Crash ==
   /\ crashes < MaxCrashes                                 \* crashes are not endless
   /\ \/ OpenTxn                                           \* there is something to lose:
      \/ \E s \in Slots : checked[s]                       \* an open transaction, a memory,
-     \/ ~Marker /\ \E s \in Slots : st[s] = "inflight"    \* or a mark that does not last
+     \/ ~Marker /\ \E s \in Slots : st[s] = "inflight"    \* or a mark that does not last,
+     \/ Journaled /\ cur # {}                             \* or a request the drainer holds
   /\ crashes' = crashes + 1                               \* one more
   /\ doc' = (IF doc = "open" THEN "absent" ELSE doc)      \* the open document is gone
   /\ owedReg' = DiscardReg                                \* with what it owed
@@ -612,6 +686,10 @@ Crash ==
   /\ chg' = DiscardChg                                    \* open changes are forgotten
   /\ rolled' = rolled \cup Discarded                      \* remembered, for the properties
   /\ checked' = [s \in Slots |-> FALSE]                   \* the loop remembers nothing
+  /\ cur' = {}                                            \* nor which request it held
+  /\ flight' = IF Marker THEN flight                      \* the marks are stored,
+              ELSE [s \in Slots |-> "-"]                  \* or (bug) they are lost
+  /\ UNCHANGED <<journal, landed, noted, solo, tx>>       \* the provider's journal and note stay
   /\ UNCHANGED <<receipt, effects, chainOwner, chainTuples, up, delegOk, expiries>>
   /\ UNCHANGED chk                                       \* what was checked stays so
   /\ UNCHANGED more                                      \* and so do the registration's record and what was abandoned
@@ -665,6 +743,7 @@ RegisterOnChain(via) ==
   /\ UNCHANGED <<doc, owedReg, st, chg, receipt, effects, checked, rolled,
                  chainTuples, up, delegOk, crashes, expiries>>
   /\ UNCHANGED chk                                       \* what was checked stays so
+  /\ UNCHANGED drain                                     \* the journaled drain is not involved
 
 \* The provider holds the document, so the record is cleared. An owner the
 \* provider already had stays: from here on the provider decides.
@@ -678,6 +757,7 @@ ClearOwed ==
   /\ UNCHANGED <<doc, st, chg, receipt, effects, checked, rolled,
                  chainOwner, chainTuples, up, delegOk, crashes, expiries>>
   /\ UNCHANGED chk                                       \* what was checked stays so
+  /\ UNCHANGED drain                                     \* the journaled drain is not involved
 
 \* A submission of the registration fails after the commit: the provider
 \* cannot be reached, or what the record holds no longer lets the node send
@@ -695,6 +775,7 @@ RegistrationFails ==
   /\ UNCHANGED rest                                      \* how it was sent and what was discarded stay
   /\ UNCHANGED <<doc, owedReg, st, chg, receipt, effects, checked, chk, rolled,
                  chainOwner, chainTuples, up, delegOk, crashes, expiries>>
+  /\ UNCHANGED drain                                     \* the journaled drain is not involved
 
 \* Someone hands the node a fresh credential for the parked registration.
 \* The node takes it only when it is the creator's own, checked as the
@@ -709,6 +790,7 @@ ReauthorizeReg(who) ==
   /\ UNCHANGED rest                                      \* how it was sent and what was discarded stay
   /\ UNCHANGED <<doc, owedReg, st, chg, receipt, effects, checked, chk, rolled,
                  chainOwner, chainTuples, up, delegOk, crashes, expiries>>
+  /\ UNCHANGED drain                                     \* the journaled drain is not involved
 
 \* The delegation recorded with the registration expires.
 ExpireReg ==
@@ -720,6 +802,7 @@ ExpireReg ==
   /\ UNCHANGED rest                                      \* how it was sent and what was discarded stay
   /\ UNCHANGED <<doc, owedReg, st, chg, receipt, effects, checked, chk, rolled,
                  chainOwner, chainTuples, up, delegOk, crashes>>
+  /\ UNCHANGED drain                                     \* the journaled drain is not involved
 
 \* ---- Settling the changes (the drainer of #2954) ----
 
@@ -752,14 +835,19 @@ Passed(r, s) ==
   /\ r < s /\ chg[r].subj = chg[s].subj                   \* earlier, same tuple,
   /\ st[r] \in {"awaiting", "staged"} /\ ~chk[r]          \* not taken, and unchecked
 
-\* An earlier stored change holds this one back.
-Blocked(s) ==
-  \E r \in Slots :
+\* An earlier stored change outside the request R holds this one back. The
+\* changes of one request go together, in order, so they hold nothing back
+\* among themselves.
+BlockedBy(s, R) ==
+  \E r \in Slots \ R :
     /\ r < s                                              \* an earlier change
     /\ \/ /\ InOrder /\ st[r] \in {"staged", "inflight"}  \* that is still to be delivered
           /\ ~Passed(r, s)                                \* and does not yield,
        \/ Holds(r, s)                                     \* or is parked and holds it,
        \/ ~DrainPastRefused /\ st[r] = "refused"          \* or (bug) was refused
+
+\* An earlier stored change holds this one back.
+Blocked(s) == BlockedBy(s, {})
 
 \* Where a change the provider refused ends. One whose actor was checked at
 \* staging is parked and kept. One staged unchecked is removed: nobody
@@ -777,6 +865,7 @@ Noted(S) == IF ReportFailures THEN tomb \cup S ELSE tomb
 \* The loop marks a change in flight, durably, before anything is sent. A
 \* fresh mark means nothing was sent, so there is no receipt to ask for.
 Mark(s) ==
+  /\ ~Journaled                                           \* the abstract drain
   /\ st[s] = "staged"                                     \* owed and not yet sent
   /\ ~Blocked(s)                                          \* its turn has come
   /\ RegFirst => ~owedReg                                 \* the registration is settled
@@ -791,6 +880,7 @@ Mark(s) ==
   /\ UNCHANGED <<doc, owedReg, chg, receipt, effects, rolled,
                  chainOwner, chainTuples, up, delegOk, crashes, expiries>>
   /\ UNCHANGED chk                                       \* what was checked stays so
+  /\ UNCHANGED drain                                     \* the journaled drain is not involved
 
 \* The provider's tuples after it applied a change.
 Applied(s) ==
@@ -801,6 +891,7 @@ Applied(s) ==
 \* change from the document's owner and refuses any other, and records a
 \* receipt either way. The loop does not learn which: it must ask.
 Land(s) ==
+  /\ ~Journaled                                           \* the abstract drain
   /\ st[s] \in {"inflight", "abandoned"} /\ checked[s]    \* in flight, known not landed
   /\ Valid(s) /\ up                                       \* signable, provider reachable
   /\ IF chg[s].actor = chainOwner                         \* from the owner:
@@ -816,10 +907,12 @@ Land(s) ==
   /\ UNCHANGED <<doc, owedReg, st, chg, rolled, chainOwner, up, delegOk,
                  crashes, expiries>>
   /\ UNCHANGED chk                                       \* what was checked stays so
+  /\ UNCHANGED drain                                     \* the journaled drain is not involved
 
 \* The loop sends the change while the provider cannot be reached: nothing
 \* lands, and the loop cannot know that either.
 SendLost(s) ==
+  /\ ~Journaled                                           \* the abstract drain
   /\ st[s] = "inflight" /\ checked[s]                     \* in flight, known not landed
   /\ Valid(s) /\ ~up                                      \* signable, provider unreachable
   /\ checked' = [checked EXCEPT ![s] = FALSE]             \* the loop must ask again
@@ -827,10 +920,12 @@ SendLost(s) ==
                  chainOwner, chainTuples, up, delegOk, crashes, expiries>>
   /\ UNCHANGED chk                                       \* what was checked stays so
   /\ UNCHANGED more                                      \* and so do the registration's record and what was abandoned
+  /\ UNCHANGED drain                                     \* the journaled drain is not involved
 
 \* The loop asks the provider for the receipt of a change in flight. This is
 \* also the first thing it does with one after a restart.
 Lookup(s) ==
+  /\ ~Journaled                                           \* the abstract drain
   /\ st[s] = "inflight" /\ ~checked[s]                    \* in flight, outcome unknown
   /\ up                                                   \* the provider answers
   /\ CASE receipt[s] = "ok" ->                            \* it landed:
@@ -849,6 +944,215 @@ Lookup(s) ==
   /\ UNCHANGED <<doc, owedReg, chg, receipt, effects, rolled,
                  chainOwner, chainTuples, up, delegOk, crashes, expiries>>
   /\ UNCHANGED chk                                       \* what was checked stays so
+  /\ UNCHANGED drain                                     \* the journaled drain is not involved
+
+\* ---- Settling through the worker's journal (the drainer of #3065) ----
+\*
+\* The code's drainer sends through a provider whose worker keeps one signed
+\* request in a journal on disk until a verified receipt lets it go. A
+\* request may carry several changes of one transaction; the provider
+\* applies them together or not at all. For each request the drainer:
+\*   1. builds it and stores the digest of its bytes with every change it
+\*      carries (JMark);
+\*   2. has the worker put it in its journal (JPrepare);
+\*   3. stores the request's transaction hash with those changes (JHash);
+\*   4. sends it and waits for its receipt (JLand, JResolve).
+\* Whoever finds a request still in the journal sends it and waits for its
+\* receipt: the provider at start, another command before its own
+\* (JRecover). That one keeps a note of the outcome under the digest. A
+\* change still marked when nothing in memory holds its request is decided
+\* by the journal (JAdopt), else by a receipt found by its hash or by the
+\* note found by its digest, else it is sent again (JDecide).
+
+\* The changes in R can go as one request: one change, or (MaxBatch = 2)
+\* changes staged one after the other by one transaction, none of which had
+\* its batch refused before. Each is staged, unmarked, signable, and held
+\* back by nothing outside R.
+Batch(R) ==
+  /\ R # {} /\ Cardinality(R) <= MaxBatch                  \* one change, or a few
+  /\ Cardinality(R) > 1 => R \cap solo = {}                \* none must go alone
+  /\ \A s \in R :
+       /\ st[s] = "staged" /\ flight[s] = "-"             \* owed and not marked
+       /\ Valid(s)                                         \* signable
+       /\ ~BlockedBy(s, R)                                 \* its turn has come
+       /\ \A r \in R : tx[r] = tx[s]                       \* one transaction
+       /\ \A q \in Slots : q < s /\ (\E r \in R : r < q) => q \in R  \* no gap
+
+\* The provider's tuples after it applied every change of R in order: for
+\* each tuple the last change of R on it decides.
+AppliedAll(R) ==
+  {t \in Subjects :
+     LET S == {s \in R : chg[s].subj = t}                  \* the changes of R on it
+     IN IF S = {} THEN t \in chainTuples                  \* untouched: as it was
+        ELSE chg[Last(S)].op = "add"}                     \* else the last one decides
+
+\* The drainer builds the request for R and stores its digest with every
+\* change of R, durably, before anything is put in the journal.
+\* The unchecked changes the request passes are removed as Mark removes
+\* them. Any receipt or note left from an earlier request is not this one's.
+JMark(R) ==
+  /\ Journaled /\ cur = {}                                 \* the journaled drain, idle
+  /\ Batch(R)                                              \* the request may go
+  /\ RegFirst => ~owedReg                                  \* the registration is settled
+  /\ st' = [r \in Slots |-> IF r \in R THEN "inflight"     \* marked,
+                            ELSE IF \E s \in R : Passed(r, s) THEN "dropped"  \* passed: removed,
+                            ELSE st[r]]                    \* the rest stays
+  /\ flight' = [r \in Slots |-> IF r \in R THEN "digest" ELSE flight[r]]  \* with the digest
+  /\ receipt' = [r \in Slots |-> IF r \in R THEN "none" ELSE receipt[r]]  \* a new request:
+  /\ noted' = [r \in Slots |-> IF r \in R THEN "none" ELSE noted[r]]      \* nothing known of it
+  /\ cur' = R                                              \* held in memory
+  /\ tomb' = Noted({r \in Slots \ R : \E s \in R : Passed(r, s)})  \* removals are noted
+  /\ UNCHANGED <<journal, landed, solo, tx>>               \* nothing is journaled yet
+  /\ UNCHANGED <<regAuth, regOk, regBy, regPark, regNote, regFail, gone, late,
+                 regVia, acked>>
+  /\ UNCHANGED <<doc, owedReg, chg, effects, checked, chk, rolled,
+                 chainOwner, chainTuples, up, delegOk, crashes, expiries>>
+
+\* The worker puts the drainer's request in its journal. It holds one
+\* request at a time: one left there must be resolved first.
+JPrepare ==
+  /\ Journaled /\ cur # {} /\ journal = {}                 \* a request held, the journal free
+  /\ \A s \in cur : st[s] = "inflight" /\ flight[s] = "digest"  \* marked with its digest
+  /\ journal' = cur /\ landed' = FALSE                     \* journaled, not yet executed
+  /\ UNCHANGED <<flight, noted, solo, tx, cur>>            \* the marks stay
+  /\ UNCHANGED <<doc, owedReg, st, chg, receipt, effects, checked, chk, rolled,
+                 chainOwner, chainTuples, up, delegOk, crashes, expiries>>
+  /\ UNCHANGED more                                        \* the registration's record stays
+
+\* The drainer stores the journaled request's hash with its changes.
+JHash ==
+  /\ Journaled /\ cur # {} /\ journal = cur                \* its request is journaled
+  /\ \E s \in cur : flight[s] = "digest"                   \* and the hash is not stored yet
+  /\ flight' = [s \in Slots |-> IF s \in cur THEN "hash" ELSE flight[s]]  \* now it is
+  /\ UNCHANGED <<journal, landed, noted, solo, tx, cur>>   \* the rest stays
+  /\ UNCHANGED <<doc, owedReg, st, chg, receipt, effects, checked, chk, rolled,
+                 chainOwner, chainTuples, up, delegOk, crashes, expiries>>
+  /\ UNCHANGED more                                        \* the registration's record stays
+
+\* The request in the journal executes on the provider, once: a request sent
+\* again is the same signed bytes and is executed once (PendingSubmission.tla).
+\* Whoever sends it, the drainer or another, it may do so before the hash is
+\* stored. The provider applies every change of it when all are signable and
+\* from the document's owner, and none otherwise, and receipts the request.
+JLand ==
+  /\ Journaled /\ journal # {} /\ ~landed /\ up            \* journaled, not executed, reachable
+  /\ landed' = TRUE                                        \* it executes once
+  /\ IF \A s \in journal : chg[s].actor = chainOwner /\ Valid(s)
+     THEN /\ chainTuples' = AppliedAll(journal)            \* all applied,
+          /\ effects' = [s \in Slots |->                   \* each counted,
+                IF s \in journal /\ effects[s] < 2 THEN effects[s] + 1 ELSE effects[s]]
+          /\ receipt' = [s \in Slots |-> IF s \in journal THEN "ok" ELSE receipt[s]]
+     ELSE /\ receipt' = [s \in Slots |->                  \* or none, and rejected,
+                IF s \notin journal THEN receipt[s]
+                ELSE IF Valid(s) THEN "rejected"           \*   for what it asks,
+                ELSE "lapsed"]                             \*   or for its credential
+          /\ UNCHANGED <<chainTuples, effects>>            \* and nothing changes
+  /\ late' = late \cup {s \in journal : st[s] = "abandoned"}  \* landed after its abandonment
+  /\ UNCHANGED <<flight, journal, noted, solo, tx, cur>>   \* the rest of the drain stays
+  /\ UNCHANGED <<regAuth, regOk, regBy, regPark, regNote, regFail, gone, rest>>
+  /\ UNCHANGED <<doc, owedReg, st, chg, checked, chk, rolled,
+                 chainOwner, up, delegOk, crashes, expiries>>
+
+\* What a rejected request leaves of change s, sent in a request of n
+\* changes: a batch goes back to be sent one change at a time (Isolate; the
+\* bug parks every change of it as refused); a change sent alone waits for
+\* authority when the credential it was sent with no longer held, and is
+\* refused otherwise. The code asks that of the token the request carried,
+\* not of one handed in since.
+AfterRejection(s, n) ==
+  IF n > 1 /\ Isolate THEN "staged"
+  ELSE IF n = 1 /\ receipt[s] = "lapsed" THEN "awaiting"
+  ELSE Refusal(s)
+
+\* The drainer gets the receipt of its own request and lets the journal go.
+\* An applied change's record is deleted; a rejected one is as
+\* AfterRejection says.
+JResolve ==
+  /\ Journaled /\ cur # {} /\ journal = cur /\ landed /\ up  \* its request executed
+  /\ LET n == Cardinality(cur)                             \* how many changes it carried
+         next == [s \in Slots |->
+                    IF s \notin cur THEN st[s]
+                    ELSE IF receipt[s] = "ok" THEN "settled"
+                    ELSE AfterRejection(s, n)]
+     IN /\ st' = next                                      \* each change ends as its receipt says
+        /\ solo' = IF n > 1 /\ \E s \in cur : receipt[s] # "ok"
+                   THEN solo \cup cur ELSE solo            \* a refused batch goes alone
+        /\ tomb' = Noted({s \in cur : next[s] = "dropped"})  \* removals are noted
+  /\ flight' = [s \in Slots |-> IF s \in cur THEN "-" ELSE flight[s]]  \* no longer in flight
+  /\ journal' = {} /\ cur' = {}                            \* the journal and memory are free
+  /\ UNCHANGED <<landed, noted, tx>>                       \* the rest of the drain stays
+  /\ UNCHANGED <<regAuth, regOk, regBy, regPark, regNote, regFail, gone, late,
+                 regVia, acked>>
+  /\ UNCHANGED <<doc, owedReg, chg, receipt, effects, checked, chk, rolled,
+                 chainOwner, chainTuples, up, delegOk, crashes, expiries>>
+
+\* Someone other than the drainer resolves the request in the journal: the
+\* provider at start, another command before its own, or the drainer's
+\* own pass after a wait for it was dropped. It keeps a note of the
+\* outcome under the request's digest (Note; the bug keeps none). A drainer
+\* that held the request no longer finds it journaled and decides by what is
+\* stored.
+JRecover ==
+  /\ Journaled /\ journal # {} /\ landed /\ up              \* an executed request
+  /\ noted' = IF Note                                      \* its outcome is noted,
+              THEN [s \in Slots |-> IF s \in journal THEN receipt[s] ELSE noted[s]]
+              ELSE noted                                   \* or (bug) forgotten
+  /\ journal' = {}                                         \* the journal is free
+  /\ cur' = IF cur = journal THEN {} ELSE cur              \* the drainer lets it go too
+  /\ UNCHANGED <<flight, landed, solo, tx>>                \* the marks stay
+  /\ UNCHANGED <<doc, owedReg, st, chg, receipt, effects, checked, chk, rolled,
+                 chainOwner, chainTuples, up, delegOk, crashes, expiries>>
+  /\ UNCHANGED more                                        \* the registration's record stays
+
+\* A wait for the drainer's pass is dropped (a commit stops waiting): what
+\* it held in memory is gone, its marks stay. It is a crash of the pass
+\* alone, and counts against the same bound.
+JDrop ==
+  /\ Journaled /\ cur # {}                                 \* a request held
+  /\ crashes < MaxCrashes                                  \* drops are not endless
+  /\ crashes' = crashes + 1                                \* one more
+  /\ cur' = {}                                             \* and forgotten
+  /\ UNCHANGED <<flight, journal, landed, noted, solo, tx>>  \* the rest stays
+  /\ UNCHANGED <<doc, owedReg, st, chg, receipt, effects, checked, chk, rolled,
+                 chainOwner, chainTuples, up, delegOk, expiries>>
+  /\ UNCHANGED more                                        \* the registration's record stays
+
+\* The drainer finds a marked change's request still in the journal, by its
+\* hash or by its digest, and takes it up again: JLand and JResolve follow.
+JAdopt ==
+  /\ Journaled /\ cur = {} /\ journal # {}                 \* idle, a request journaled
+  /\ \E s \in journal : st[s] = "inflight" /\ flight[s] # "-"  \* its own
+  /\ cur' = journal                                        \* held again
+  /\ UNCHANGED <<flight, journal, landed, noted, solo, tx>>  \* the rest stays
+  /\ UNCHANGED <<doc, owedReg, st, chg, receipt, effects, checked, chk, rolled,
+                 chainOwner, chainTuples, up, delegOk, crashes, expiries>>
+  /\ UNCHANGED more                                        \* the registration's record stays
+
+\* What is known of marked change s with its request out of the journal: a
+\* receipt found by the stored hash, else the note found by the digest,
+\* else nothing.
+Known(s) ==
+  IF flight[s] = "hash" /\ receipt[s] # "none" THEN receipt[s]
+  ELSE noted[s]
+
+\* The drainer decides a marked change no request in memory or in the
+\* journal holds. Applied: its record is deleted. Rejected: it had no
+\* effect, and is sent again in a request of its own, where a refusal is
+\* its own. Nothing known: it never landed, as far as the node can tell,
+\* and is sent again. That is where a receipt or note that can no longer
+\* be read gives a second effect.
+JDecide(s) ==
+  /\ Journaled /\ cur = {} /\ up                            \* idle, the provider answers
+  /\ st[s] = "inflight" /\ flight[s] # "-"                  \* a marked change,
+  /\ s \notin journal                                      \* not journaled
+  /\ st' = [st EXCEPT ![s] = IF Known(s) = "ok" THEN "settled" ELSE "staged"]
+  /\ solo' = IF Known(s) \in {"rejected", "lapsed"}       \* rejected: alone next
+             THEN solo \cup {s} ELSE solo
+  /\ flight' = [flight EXCEPT ![s] = "-"]                  \* the mark is cleared
+  /\ UNCHANGED <<journal, landed, noted, tx, cur>>          \* the rest of the drain stays
+  /\ UNCHANGED <<doc, owedReg, chg, receipt, effects, checked, chk, rolled,
+                 chainOwner, chainTuples, up, delegOk, crashes, expiries>>
+  /\ UNCHANGED more                                        \* the registration's record stays
 
 \* A change whose delegation expired waits for a fresh one. One in flight
 \* may do so only when it is known not to have landed.
@@ -861,6 +1165,7 @@ AwaitAuthority(s) ==
                  chainOwner, chainTuples, up, delegOk, crashes, expiries>>
   /\ UNCHANGED chk                                       \* what was checked stays so
   /\ UNCHANGED more                                      \* and so do the registration's record and what was abandoned
+  /\ UNCHANGED drain                                     \* the journaled drain is not involved
 
 \* The change's actor hands the node a fresh delegation, checked as the one
 \* it was staged with: the change is owed again.
@@ -872,6 +1177,7 @@ Reauthorize(s) ==
                  chainOwner, chainTuples, up, crashes, expiries>>
   /\ UNCHANGED chk                                       \* what was checked stays so
   /\ UNCHANGED more                                      \* and so do the registration's record and what was abandoned
+  /\ UNCHANGED drain                                     \* the journaled drain is not involved
 
 \* A change is abandoned: its record is deleted without the provider holding
 \* it. Only a change the provider refused may go (AbandonStates = "refused"):
@@ -897,6 +1203,7 @@ Abandon(s, who) ==
                  regVia, acked>>
   /\ UNCHANGED <<doc, owedReg, chg, receipt, effects, checked, chk, rolled,
                  chainOwner, chainTuples, up, delegOk, crashes, expiries>>
+  /\ UNCHANGED drain                                     \* the journaled drain is not involved
 
 \* The actor of a discarded change is told what became of it (the wait for
 \* its transaction, or the answer to its fresh credential): the note is
@@ -908,6 +1215,7 @@ Acknowledge(s) ==
   /\ UNCHANGED <<regAuth, regOk, regBy, regPark, regNote, regFail, gone, late, regVia>>
   /\ UNCHANGED <<doc, owedReg, st, chg, receipt, effects, checked, chk, rolled,
                  chainOwner, chainTuples, up, delegOk, crashes, expiries>>
+  /\ UNCHANGED drain                                     \* the journaled drain is not involved
 
 \* ---- The world around the node ----
 
@@ -921,6 +1229,7 @@ Expire ==
                  chainOwner, chainTuples, up, crashes>>
   /\ UNCHANGED chk                                       \* what was checked stays so
   /\ UNCHANGED more                                      \* and so do the registration's record and what was abandoned
+  /\ UNCHANGED drain                                     \* the journaled drain is not involved
 
 \* The provider becomes unreachable.
 ProviderDown ==
@@ -929,6 +1238,7 @@ ProviderDown ==
                  chainOwner, chainTuples, delegOk, crashes, expiries>>
   /\ UNCHANGED chk                                       \* what was checked stays so
   /\ UNCHANGED more                                      \* and so do the registration's record and what was abandoned
+  /\ UNCHANGED drain                                     \* the journaled drain is not involved
 
 \* The provider comes back.
 ProviderUp ==
@@ -937,18 +1247,23 @@ ProviderUp ==
                  chainOwner, chainTuples, delegOk, crashes, expiries>>
   /\ UNCHANGED chk                                       \* what was checked stays so
   /\ UNCHANGED more                                      \* and so do the registration's record and what was abandoned
+  /\ UNCHANGED drain                                     \* the journaled drain is not involved
 
 \* The receipt of a landed change can no longer be read (the provider pruned
-\* it, the worker's journal entry is gone) while the node still has the
-\* change in flight. Possible only without AssumeReceiptRetrievable.
+\* it, the note's entry for it was pushed out) while the node still has the
+\* change in flight and its request is out of the worker's journal.
+\* Possible only without AssumeReceiptRetrievable.
 ReceiptLost(s) ==
   /\ ~AssumeReceiptRetrievable                            \* the assumption is off
   /\ st[s] = "inflight" /\ receipt[s] = "ok"              \* landed, not yet noticed
-  /\ receipt' = [receipt EXCEPT ![s] = "none"]            \* and now unreadable
+  /\ s \notin journal                                     \* and no longer journaled
+  /\ receipt' = [receipt EXCEPT ![s] = "none"]            \* and now unreadable,
+  /\ noted' = [noted EXCEPT ![s] = "none"]                \* in the note too
   /\ UNCHANGED <<doc, owedReg, st, chg, effects, checked, rolled,
                  chainOwner, chainTuples, up, delegOk, crashes, expiries>>
   /\ UNCHANGED chk                                       \* what was checked stays so
   /\ UNCHANGED more                                      \* and so do the registration's record and what was abandoned
+  /\ UNCHANGED <<flight, journal, landed, solo, tx, cur>>  \* the rest of the drain stays
 
 \* Someone else takes the document over on the provider, after the node
 \* checked a change against the owner it then had. Possible only without
@@ -962,6 +1277,7 @@ OwnerLost ==
   /\ UNCHANGED <<doc, owedReg, st, chg, receipt, effects, checked, chk, rolled,
                  chainTuples, up, delegOk, crashes, expiries>>
   /\ UNCHANGED more                                      \* and so do the registration's record and what was abandoned
+  /\ UNCHANGED drain                                     \* the journaled drain is not involved
 
 \* Any one thing happens.
 Next ==
@@ -972,7 +1288,12 @@ Next ==
   \/ RegistrationFails \/ ExpireReg                       \* a submission of it fails
   \/ \E who \in Presenters : ReauthorizeReg(who)          \* a fresh credential for it
   \/ \E s \in Slots, who \in Abandoners : Abandon(s, who)  \* giving a change up
-  \/ \E s \in Slots : Mark(s) \/ Land(s) \/ SendLost(s) \/ Lookup(s)  \* settling a change
+  \/ ~Journaled /\ \E s \in Slots :                        \* settling a change
+       Mark(s) \/ Land(s) \/ SendLost(s) \/ Lookup(s)
+  \/ Journaled /\ ((\E R \in SUBSET Slots : JMark(R))     \* or through the journal:
+                   \/ JPrepare \/ JHash \/ JLand          \*   building, sending,
+                   \/ JResolve \/ JRecover \/ JDrop       \*   resolving, resolved by another,
+                   \/ JAdopt \/ \E s \in Slots : JDecide(s))  \*   taken up, and decided
   \/ \E s \in Slots : AwaitAuthority(s) \/ Reauthorize(s)  \* authority
   \/ \E s \in Slots : ReceiptLost(s)                      \* a receipt disappears
   \/ Expire \/ ProviderDown \/ ProviderUp \/ OwnerLost    \* the world
@@ -994,6 +1315,25 @@ SpecLive ==
   /\ \A s \in Slots : WF_vars(Mark(s))                    \* the loop marks,
   /\ \A s \in Slots : SF_vars(Land(s))                    \* a send lands,
   /\ \A s \in Slots : SF_vars(Lookup(s))                  \* a lookup is answered,
+  /\ \A s \in Slots : WF_vars(AwaitAuthority(s))          \* an expired change is parked,
+  /\ \A s \in Slots : WF_vars(Reauthorize(s))             \* and fresh authority arrives
+
+\* Liveness of the journaled drain: the same promises about the provider,
+\* the registration and authority, and the drainer takes its turns by
+\* itself (the drainer task, woken by commits and by its back-off). A
+\* request in the journal lands and is resolved, by the drainer or by
+\* another, and a marked change is decided.
+SpecLiveJournaled ==
+  /\ Spec                                                 \* all of the above
+  /\ WF_vars(ProviderUp)                                  \* the provider comes back
+  /\ SF_vars(RegisterOnChain("record")) /\ SF_vars(ClearOwed)  \* the registration settles
+  /\ WF_vars(RegistrationFails)                           \* one without authority is parked,
+  /\ WF_vars(ReauthorizeReg("c"))                         \* and its creator reauthorizes it
+  /\ \A R \in SUBSET Slots : WF_vars(JMark(R))            \* the drainer builds a request,
+  /\ WF_vars(JPrepare) /\ WF_vars(JHash)                   \* journals it and stores its hash,
+  /\ SF_vars(JLand) /\ SF_vars(JResolve)                   \* it lands and is resolved,
+  /\ SF_vars(JRecover) /\ WF_vars(JAdopt)                  \* or someone else resolves it,
+  /\ \A s \in Slots : SF_vars(JDecide(s))                 \* a marked change is decided,
   /\ \A s \in Slots : WF_vars(AwaitAuthority(s))          \* an expired change is parked,
   /\ \A s \in Slots : WF_vars(Reauthorize(s))             \* and fresh authority arrives
 
@@ -1071,6 +1411,12 @@ INV_FailureReported ==
   /\ (owedReg /\ regFail) => regNote
   /\ \A s \in Slots :
        (st[s] \in {"dropped", "abandoned"} /\ s \notin acked) => s \in tomb
+
+\* A change is parked as refused only when the provider refuses it on its
+\* own: its actor does not own the document. A change that was refused only
+\* because it shared a request with another one is never parked.
+INV_RefusedOnItsOwn ==
+  \A s \in Slots : st[s] = "refused" => chg[s].actor # chainOwner
 
 \* Nothing of an abandoned change reaches the provider afterwards.
 INV_AbandonIsFinal == late = {}
