@@ -22,6 +22,9 @@ mod clock_skew;
 #[path = "embedded_vera/http_staged.rs"]
 mod http_staged;
 
+#[path = "embedded_vera/projection.rs"]
+mod projection;
+
 #[path = "embedded_vera/replica.rs"]
 mod replica;
 
@@ -793,6 +796,115 @@ fn a_grant_staged_beside_its_document_lets_the_grantee_read_after_the_commit() {
             .check_named_permission(&reader, "writer", &policy, "users", &doc)
             .await
             .expect("relation check"));
+        vera.add_actor_relationship(
+            &owner,
+            &identity::Did::wildcard(),
+            &policy,
+            "users",
+            &doc,
+            "reader",
+            &[],
+        )
+        .await
+        .expect("wildcard grant");
+        assert!(vera
+            .observe_actor_relationship(acp::ActorRelationshipObservation {
+                requester: &owner,
+                target: &reader,
+                policy: &policy,
+                resource: "users",
+                document: &doc,
+                relation: "reader",
+            })
+            .await
+            .expect("direct grant"));
+        assert!(!vera
+            .observe_actor_relationship(acp::ActorRelationshipObservation {
+                requester: &owner,
+                target: &owner,
+                policy: &policy,
+                resource: "users",
+                document: &doc,
+                relation: "reader",
+            })
+            .await
+            .expect("exact absence"));
+        // A caller who may not manage the relation is refused alike for a
+        // registered document and for one nobody registered.
+        for document in [doc.as_str(), "bae-never-registered"] {
+            let refused = vera
+                .observe_actor_relationship(acp::ActorRelationshipObservation {
+                    requester: &reader,
+                    target: &reader,
+                    policy: &policy,
+                    resource: "users",
+                    document,
+                    relation: "reader",
+                })
+                .await;
+            assert!(
+                matches!(&refused, Err(acp::Error::NotManager { operation }) if operation == "observe relationship"),
+                "{document}: {refused:?}"
+            );
+        }
+        drop(vera);
+        node.shutdown().await.expect("shutdown");
+    })
+    .unwrap();
+}
+
+/// An exact observation repeated while every write finalizes a block: a block
+/// between the observation's reads is an overtaken observation, asked again,
+/// never a failure (`proofs/tla/ExactRelationshipObservation.tla`).
+#[test]
+fn an_observation_under_writes_is_asked_again_when_a_block_overtakes_it() {
+    const WRITES: usize = 60;
+    const OBSERVATIONS: usize = 120;
+    workers::block_on(async {
+        let directory = tempfile::tempdir().unwrap();
+        let node = node(directory.path()).await;
+        let vera = node.vera_acp().expect("vera.rs document ACP").clone();
+        let owner = identity::Did::new(vera.self_did().expect("actor DID")).unwrap();
+        let reader = identity::Did::new(STRANGER).unwrap();
+        let policy = vera
+            .add_policy(owner.as_str(), POLICY)
+            .await
+            .expect("policy");
+        node.add_collection(&users(&policy))
+            .await
+            .expect("collection");
+        let doc = created(node.execute_request(create_user("observed", &owner)).await);
+        vera.add_actor_relationship(&owner, &reader, &policy, "users", &doc, "reader", &[])
+            .await
+            .expect("grant");
+
+        let writes = |lane: usize| {
+            let (node, owner) = (&node, &owner);
+            async move {
+                for index in 0..WRITES {
+                    created(
+                        node.execute_request(create_user(&format!("write {lane}-{index}"), owner))
+                            .await,
+                    );
+                }
+            }
+        };
+        let observations = async {
+            for _ in 0..OBSERVATIONS {
+                let observed = vera
+                    .observe_actor_relationship(acp::ActorRelationshipObservation {
+                        requester: &owner,
+                        target: &reader,
+                        policy: &policy,
+                        resource: "users",
+                        document: &doc,
+                        relation: "reader",
+                    })
+                    .await;
+                assert!(matches!(observed, Ok(true)), "{observed:?}");
+            }
+        };
+        futures::join!(writes(0), writes(1), observations);
         drop(vera);
         node.shutdown().await.expect("shutdown");
     })

@@ -9,6 +9,16 @@ pub struct ProviderPolicyInfo {
     pub raw_policy: Option<String>,
 }
 
+#[derive(Clone, Copy)]
+pub struct ActorRelationshipQuery<'a> {
+    pub requester: &'a str,
+    pub policy: &'a str,
+    pub resource: &'a str,
+    pub object: &'a str,
+    pub relation: &'a str,
+    pub actor: &'a str,
+}
+
 #[derive(Debug, Clone)]
 pub struct AcpLightClientStatus {
     pub height: u64,
@@ -42,6 +52,13 @@ pub enum ProviderError {
     #[error("unsupported operation: {0}")]
     Unsupported(String),
 
+    #[error("relationship observation is not authorized")]
+    RelationshipObservationDenied,
+    /// Two proofs of one observation were read at different certified
+    /// roots: a block finalized between them. Nothing failed; asked again,
+    /// the observation is answered at one root.
+    #[error("{0} and policy proofs have different roots")]
+    ProofsOvertaken(&'static str),
     /// A delegation does not hold at the provider's time; one issued at
     /// that time is taken.
     #[error("delegation refused: {0}")]
@@ -380,6 +397,15 @@ pub trait VeraProvider: MaybeSendSync {
         resource: &str,
         object_id: &str,
     ) -> Result<(bool, String), ProviderError>;
+
+    async fn query_actor_relationship(
+        &self,
+        _query: ActorRelationshipQuery<'_>,
+    ) -> Result<bool, ProviderError> {
+        Err(ProviderError::Unsupported(
+            "verified exact actor relationship observation".into(),
+        ))
+    }
 
     async fn verify_access(
         &self,

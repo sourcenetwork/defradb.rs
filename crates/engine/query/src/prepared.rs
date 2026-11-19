@@ -103,6 +103,7 @@ pub enum PreparedInputKind {
     Signature,
     Encryption,
     AcpDecision,
+    ProjectionAcp,
     WriteValidation,
     NodePermission,
     ReadValidation,
@@ -135,14 +136,31 @@ pub enum PreparedInputKind {
 #[derive(Clone)]
 pub struct PreparedInputMemo {
     answers: Arc<HopscotchMap<PreparedInputRequest, Arc<[u8]>, RandomState>>,
-    wanted: Arc<SegQueue<PreparedInputRequest>>,
+    wanted: Arc<Wanted>,
 }
 
+/// The misses a pass recorded, and the projection authorities prepared for
+/// the request. The authorities' map is made only when a projection asks for
+/// one, so a request without a projector allocates nothing for it.
+struct Wanted {
+    queue: SegQueue<PreparedInputRequest>,
+    projection_authorities: regolith::sync::OnceCell<ProjectionAuthorities>,
+}
+
+type ProjectionAuthorities =
+    HopscotchMap<PreparedInputRequest, Arc<acp::outbox::PreparedRelationship>, RandomState>;
+
 impl Default for PreparedInputMemo {
+    // A prepared authority holds the document ACP, which wasm32 does not
+    // require to be `Send`; that target runs one thread.
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     fn default() -> Self {
         Self {
             answers: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
-            wanted: Arc::new(SegQueue::new()),
+            wanted: Arc::new(Wanted {
+                queue: SegQueue::new(),
+                projection_authorities: regolith::sync::OnceCell::new(),
+            }),
         }
     }
 }
@@ -158,6 +176,23 @@ impl std::fmt::Debug for PreparedInputMemo {
 }
 
 impl PreparedInputMemo {
+    pub fn projection_authority(
+        &self,
+        request: &PreparedInputRequest,
+    ) -> Option<Arc<acp::outbox::PreparedRelationship>> {
+        self.wanted.projection_authorities.get()?.get(request)
+    }
+
+    pub fn insert_projection_authority(
+        &self,
+        request: PreparedInputRequest,
+        authority: Arc<acp::outbox::PreparedRelationship>,
+    ) {
+        self.wanted
+            .projection_authorities
+            .get_or_init_racy(|| HopscotchMap::with_hasher(RandomState::default()))
+            .get_or_insert(request, authority);
+    }
     pub fn get(&self, request: &PreparedInputRequest) -> Option<Arc<[u8]>> {
         self.answers.get(request)
     }
@@ -174,7 +209,7 @@ impl PreparedInputMemo {
 
     /// Records a request a pass found unanswered and went on past.
     pub fn want(&self, request: PreparedInputRequest) {
-        self.wanted.push(request);
+        self.wanted.queue.push(request);
     }
 
     /// Memoize `response` unless the request is already answered, and return
@@ -238,7 +273,7 @@ impl PreparedInputMemo {
         let mut wave = vec![request.clone()];
         let mut seen = rapidhash::fast::RapidHashSet::default();
         seen.insert(request.clone());
-        while let Some(wanted) = self.wanted.pop() {
+        while let Some(wanted) = self.wanted.queue.pop() {
             if !self.answers.contains_key(&wanted) && seen.insert(wanted.clone()) {
                 wave.push(wanted);
             }

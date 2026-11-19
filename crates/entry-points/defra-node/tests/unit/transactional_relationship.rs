@@ -463,6 +463,44 @@ fn transaction_admission_matches_executed_lean_model() {
     assert_eq!(cases, expected);
 }
 
+/// An exact observation in a transaction sees that transaction's own changes,
+/// while one outside it sees only what is committed.
+#[test]
+fn an_observation_in_a_transaction_sees_its_own_relationship_changes() {
+    workers::block_on(async {
+        let (node, doc) = fixture().await;
+        let context = actor(OWNER);
+        node.add_dac_actor_relationship_as(&context, "Record", &doc, "reader", READER)
+            .await
+            .unwrap();
+        let handle = node.runner().begin_txn_as(&context, false).await.unwrap();
+        let tx = context
+            .clone()
+            .with_txn(Some(handle.as_str().parse().unwrap()));
+        node.delete_dac_actor_relationship_as(&tx, "Record", &doc, "reader", READER)
+            .await
+            .unwrap();
+
+        assert!(!node
+            .observe_dac_actor_relationship_as(&tx, "Record", &doc, "reader", READER)
+            .await
+            .unwrap());
+        assert!(node
+            .observe_dac_actor_relationship_as(&context, "Record", &doc, "reader", READER)
+            .await
+            .unwrap());
+        node.runner()
+            .commit_txn_as(&context, &handle)
+            .await
+            .unwrap();
+        assert!(!node
+            .observe_dac_actor_relationship_as(&context, "Record", &doc, "reader", READER)
+            .await
+            .unwrap());
+    })
+    .unwrap();
+}
+
 /// The same call on a remote provider that cannot join the transaction and
 /// stages the change in it as owed: accepted with every guard holding, and
 /// refused by each guard as on a bound provider.

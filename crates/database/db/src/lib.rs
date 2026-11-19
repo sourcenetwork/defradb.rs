@@ -69,6 +69,7 @@ pub mod search;
 pub mod txn;
 pub(crate) mod view;
 pub mod write;
+pub use datastore::multistore::GenesisReadAccess;
 pub use datastore::NamespaceView as DocumentMutationView;
 pub use document_projection::{DocumentMutationContext, DocumentMutationProjector};
 

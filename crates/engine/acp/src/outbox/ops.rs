@@ -83,9 +83,9 @@ const LIVE_DELETE: &[u8] = &[1];
 
 /// What is unsettled on one tuple, from its live sequences: the first and
 /// last are its oldest and latest, and how many there are, and how many of
-/// them are deletes, are its counts. Only settling passes and reports ask,
-/// in transactions of their own.
-pub(super) async fn tuple_state<R>(reader: &R, tuple: &OwedTuple) -> Result<Option<OwedTupleState>>
+/// them are deletes, are its counts. Only settling passes, reports and exact
+/// relationship observations ask, in transactions of their own.
+pub(crate) async fn tuple_state<R>(reader: &R, tuple: &OwedTuple) -> Result<Option<OwedTupleState>>
 where
     R: Reader + ?Sized,
 {
@@ -122,6 +122,25 @@ where
         });
     }
     Ok(state)
+}
+
+/// Whether `tuple` has a change owed to the provider that this transaction
+/// sees: one it staged itself, or one committed before it and not settled.
+/// The scan is validated, so a change on the tuple that commits first aborts
+/// the decision resting on it, and the re-run decides again.
+pub async fn tuple_unsettled_in<R>(reader: &R, tuple: &OwedTuple) -> Result<bool>
+where
+    R: Reader + ?Sized,
+{
+    let mut iter = reader
+        .iterator(
+            IterOptions::new()
+                .with_prefix(keys::live_prefix(tuple))
+                .with_validation(true),
+        )
+        .await
+        .map_err(storage_error)?;
+    Ok(iter.next().await.map_err(storage_error)?.is_some())
 }
 
 /// How many changes are unsettled on one object: its tuples' live

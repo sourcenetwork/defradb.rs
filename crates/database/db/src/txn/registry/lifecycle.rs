@@ -44,8 +44,23 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
             .txn()
             .ok_or_else(|| TransactionError::operation("an explicit transaction is required"))?;
         let handle = TransactionHandle::new(id.to_string());
-        let job = query::txn::host_source_permission_job(owner.clone(), edge)?;
-        self.run_as(owner, &handle, None, job).await?
+        let inputs = query::prepared::PreparedInputMemo::default();
+        loop {
+            let job = query::txn::host_source_permission_job(
+                owner.clone(),
+                edge.clone(),
+                inputs.clone(),
+            )?;
+            match self.run_as(owner, &handle, None, job).await? {
+                Err(TransactionError::NeedsInput(request)) => inputs
+                    .answer_wave(&request, |wave| {
+                        self.db.resolve_projection_inputs(owner, &inputs, wave)
+                    })
+                    .await
+                    .map_err(|error| TransactionError::operation(error.to_string()))?,
+                done => return done,
+            }
+        }
     }
 }
 

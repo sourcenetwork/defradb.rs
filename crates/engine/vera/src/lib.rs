@@ -9,8 +9,8 @@ pub mod vera_rs;
 
 pub use cosmos::{CosmosProvider, VeraDocumentACP};
 pub use provider::{
-    owed_request_digest, AcpLightClientStatus, OwedCall, OwedRequestOutcome, ProviderError,
-    ProviderPolicyInfo, SubjectRef, VeraProvider,
+    owed_request_digest, AcpLightClientStatus, ActorRelationshipQuery, OwedCall,
+    OwedRequestOutcome, ProviderError, ProviderPolicyInfo, SubjectRef, VeraProvider,
 };
 pub use tuning::AcpTuning;
 pub use vera_delegation::{PolicyAction, PolicyCommand, PolicySubject};

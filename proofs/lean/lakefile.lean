@@ -280,6 +280,15 @@ lean_lib DeferredMerges where
 lean_lib AdministrativeRelationship where
 
 @[default_target]
+lean_lib ProjectionRelationship where
+
+@[default_target]
+lean_lib ExactRelationshipObservation where
+
+@[default_target]
+lean_lib EnrollmentGenesis where
+
+@[default_target]
 lean_lib CommitConflictReceipt where
 
 @[default_target]

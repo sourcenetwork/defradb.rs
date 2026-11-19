@@ -358,15 +358,22 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
     async fn project_host_source_change(
         &self,
         actor: &defra_core::RequestContext,
+        inputs: &query::prepared::PreparedInputMemo,
     ) -> query::error::Result<()> {
         let txn = &*self.shared_txn()?;
         let view = txn
             .datastore()
             .map_err(|error| query::QueryError::execution(error.to_string()))?;
-        view.with_projection_actor(actor.identity())
+        crate::txn::bind_projection(view, actor, Some(inputs))
             .project_host_source_change()
             .await
             .map_err(|error| match error {
+                storage::corekv::Error::ProjectionAcpInput(request) => {
+                    query::QueryError::NeedsInput(query::prepared::PreparedInputRequest::new(
+                        query::prepared::PreparedInputKind::ProjectionAcp,
+                        request.into_bytes(),
+                    ))
+                }
                 storage::corekv::Error::ProjectionPermissionDenied => {
                     query::QueryError::permission_denied(error.to_string())
                 }

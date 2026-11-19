@@ -370,6 +370,10 @@ where
         ))
     }
 
+    fn outbox_authority_provider(&self) -> Option<Arc<dyn DocumentACP>> {
+        Some(Arc::clone(&self.provider))
+    }
+
     fn canonical_actor(&self, did: &Did) -> Did {
         self.provider.canonical_actor(did)
     }
@@ -581,6 +585,77 @@ where
         self.provider
             .check_doc_access(identity, permission, policy_id, resource_name, doc_id)
             .await
+    }
+
+    async fn observe_actor_relationship(
+        &self,
+        observation: crate::ActorRelationshipObservation<'_>,
+    ) -> Result<bool> {
+        // Authority comes first: a caller who may not manage the relation gets
+        // the one refusal whatever is owed on the document.
+        let refused = || Error::NotManager {
+            operation: "observe relationship".into(),
+        };
+        let requester = self.provider.canonical_actor(observation.requester);
+        if let Some(pending) = self
+            .owed(
+                observation.policy,
+                observation.resource,
+                observation.document,
+            )
+            .await?
+        {
+            // Until the provider holds the registration, its creator is the
+            // only authority on the document.
+            return Err(
+                if self.provider.canonical_actor(&pending.creator) == requester {
+                    Error::ProviderUnavailable("document registration is unsettled".into())
+                } else {
+                    refused()
+                },
+            );
+        }
+        // A settlement pass holds this lock while it sends what is owed and
+        // clears its records: held from the provider's answer to the check
+        // below, an owed change of the tuple cannot be settled in between and
+        // so cannot hide that the answer predates it
+        // (`proofs/tla/ObservationSettlement.tla`).
+        let _settling = self.settling.lock().await;
+        let present = match self.provider.observe_actor_relationship(observation).await {
+            Err(Error::NotOwner { .. } | Error::NotManager { .. }) => return Err(refused()),
+            other => other?,
+        };
+        if self
+            .revoked(
+                &Identity::Authenticated(requester),
+                observation.policy,
+                observation.resource,
+                observation.document,
+            )
+            .await?
+        {
+            return Err(refused());
+        }
+        let tuple = crate::outbox::OwedTuple {
+            policy_id: observation.policy.to_owned(),
+            resource: observation.resource.to_owned(),
+            object: observation.document.to_owned(),
+            relation: observation.relation.to_owned(),
+            subject: crate::outbox::OwedSubject::Actor {
+                did: self.provider.canonical_actor(observation.target),
+            },
+        };
+        let transaction = self.store.new_txn(true).await.map_err(storage_error)?;
+        let unsettled = crate::outbox::tuple_state(&transaction, &tuple)
+            .await?
+            .is_some();
+        drop(transaction);
+        if unsettled {
+            return Err(Error::ProviderUnavailable(
+                "relationship change is unsettled".into(),
+            ));
+        }
+        Ok(present)
     }
 
     async fn check_named_permission(

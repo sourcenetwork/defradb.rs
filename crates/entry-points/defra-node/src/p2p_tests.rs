@@ -1768,8 +1768,10 @@ fn live_replicator_filtered_push_respects_predicate() {
     edge::testing::edge().block_on(async {
     init_tracing();
 
+    let mut sender_config = test_p2p_config();
+    sender_config.sync.replicator_retry_intervals = Some(vec![1, 2]);
     let sender = Node::builder()
-        .with_p2p(test_p2p_config())
+        .with_p2p(sender_config)
         .build()
         .await
         .expect("build sender");

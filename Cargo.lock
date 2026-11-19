@@ -3792,6 +3792,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "cid",
+ "defra-core",
  "futures",
  "regolith",
  "storage",

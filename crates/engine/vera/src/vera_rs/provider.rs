@@ -3,7 +3,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::provider::{
-    AcpLightClientStatus, ProviderError, ProviderPolicyInfo, SubjectRef, VeraProvider,
+    AcpLightClientStatus, ActorRelationshipQuery, ProviderError, ProviderPolicyInfo, SubjectRef,
+    VeraProvider,
 };
 use crate::tuning::AcpTuning;
 use acp_light_client::{
@@ -35,6 +36,7 @@ use super::worker::NativeWorker;
 
 #[cfg(test)]
 mod audience_tests;
+mod exact_relationship;
 mod genesis;
 mod owed_request;
 mod reach;
@@ -925,6 +927,27 @@ impl VeraProvider for VeraRsProvider {
             Some(owner) => (true, did_spelling::defra(owner.0.as_str()).into_owned()),
             None => (false, String::new()),
         })
+    }
+
+    async fn query_actor_relationship(
+        &self,
+        query: ActorRelationshipQuery<'_>,
+    ) -> Result<bool, ProviderError> {
+        // An observation overtaken by a block between its reads is asked
+        // again from the policy read, as every overtaken read is.
+        self.admitted_read(async {
+            verified(self.light_client.header_chain(), || async {
+                exact_relationship::query(&self.light_client, query)
+                    .await
+                    .map_err(|error| Box::new(error) as Box<dyn std::error::Error + Send + Sync>)
+            })
+            .await
+            .map_err(|error| match error.downcast::<ProviderError>() {
+                Ok(error) => *error,
+                Err(error) => ProviderError::Query(error.to_string()),
+            })
+        })
+        .await
     }
 
     async fn verify_access(

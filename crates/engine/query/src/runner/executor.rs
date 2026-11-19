@@ -155,7 +155,10 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         prepared: Option<std::sync::Arc<crate::prepared::PreparedMutations>>,
         input: &crate::prepared::PreparedInputRequest,
     ) -> Result<Option<std::sync::Arc<crate::prepared::PreparedMutations>>> {
+        // Inputs are fetched as the identity acting in the request, the one
+        // its attempts act as.
         let runner = self.for_query(request);
+        let runner = runner.for_caller(runner.resolve_identity(request.identity.clone()).as_ref());
         let Some(prepared) = prepared else {
             return Err(crate::error::QueryError::execution(
                 "retry input has no request preparation capsule",
@@ -163,7 +166,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         };
         prepared
             .inputs
-            .answer_wave(input, |wave| runner.resolve_wave(wave))
+            .answer_wave(input, |wave| runner.resolve_wave(&prepared.inputs, wave))
             .await?;
         Ok(Some(prepared))
     }
@@ -801,6 +804,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
     /// in the context of the request this runner serves.
     pub(super) async fn resolve_wave(
         &self,
+        inputs: &crate::prepared::PreparedInputMemo,
         wave: Vec<crate::prepared::PreparedInputRequest>,
     ) -> Result<Vec<std::sync::Arc<[u8]>>> {
         let (own, delegated): (Vec<_>, Vec<_>) =
@@ -835,6 +839,9 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             let mutator = self.mutator.as_ref().ok_or_else(|| {
                 crate::error::QueryError::execution("retry input has no document mutator")
             })?;
+            let mutator = mutator
+                .with_prepared_inputs(inputs.clone())
+                .unwrap_or_else(|| mutator.clone());
             mutator
                 .resolve_prepared_inputs_as(
                     &self.context(),

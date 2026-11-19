@@ -61,6 +61,123 @@ pub struct Staged {
     pub authority_checked: bool,
 }
 
+/// A relationship change for an external provider, decided at the network
+/// edge before the transaction that stages it
+/// ([`TransactionOutbox::stage_prepared`]): the actor owns the object or holds
+/// a relation that manages the changed one, as [`TransactionOutbox::stage`]
+/// asks, and the authority recorded is the one the provider takes for exactly
+/// this change ([`DocumentACP::command_authority`]). Nothing remote is asked
+/// inside the transaction.
+pub struct PreparedRelationship {
+    provider: Arc<dyn DocumentACP>,
+    outbox_provider: Arc<dyn DocumentACP>,
+    actor: Did,
+    tuple: OwedTuple,
+    op: OwedOp,
+    authority: super::record::OwedAuthority,
+    /// The actor owns the object: a denial that spares only the owner does
+    /// not refuse it.
+    owner: bool,
+    /// The provider answered the check; `false` for an add prepared while it
+    /// could not be reached.
+    checked: bool,
+}
+
+/// Decide `request` for the external provider behind `provider`, outside any
+/// transaction. A refusal is the error a local ACP gives; an unreachable
+/// provider lets an add go unchecked and refuses a delete, as staging does.
+pub async fn prepare_relationship(
+    provider: Arc<dyn DocumentACP>,
+    request: &StageRelationship<'_>,
+) -> Result<PreparedRelationship> {
+    let outbox_provider = provider;
+    let provider = outbox_provider.outbox_authority_provider().ok_or_else(|| {
+        Error::ProviderUnavailable("document ACP does not provide an outbox".into())
+    })?;
+    if !provider.submits_subject(&request.subject) {
+        return Err(Error::UnsupportedSubject(request.subject.to_string()));
+    }
+    let actor = provider.canonical_actor(request.actor);
+    let tuple = owed_tuple(&*provider, request)?;
+    let authority = provider.command_authority(
+        request.actor,
+        ProviderCommand::Relationship {
+            tuple: &tuple,
+            op: request.op,
+        },
+    )?;
+    let (owner, checked) = prepared_authority(&*provider, &actor, request).await?;
+    Ok(PreparedRelationship {
+        provider,
+        outbox_provider,
+        actor,
+        tuple,
+        op: request.op,
+        authority,
+        owner,
+        checked,
+    })
+}
+
+/// Whether `actor` owns the object, and whether the provider could be asked:
+/// the owner, or a holder of a relation that manages the changed one.
+async fn prepared_authority(
+    provider: &dyn DocumentACP,
+    actor: &Did,
+    request: &StageRelationship<'_>,
+) -> Result<(bool, bool)> {
+    let (policy_id, resource, object) = (request.policy_id, request.resource, request.object);
+    let owner = match provider.get_doc_owner(policy_id, resource, object).await {
+        Ok(owner) => owner.map(|owner| provider.canonical_actor(&owner)),
+        Err(Error::ProviderUnavailable(reason)) => {
+            return unchecked(actor, request, &reason).map(|checked| (false, checked))
+        }
+        Err(error) => return Err(error),
+    };
+    match owner {
+        Some(owner) if owner == *actor => return Ok((true, true)),
+        None => return Err(refusal(request)),
+        Some(_) => {}
+    }
+    for manager in request.managing_relations {
+        match provider
+            .check_named_permission(actor, manager, policy_id, resource, object)
+            .await
+        {
+            Ok(true) => return Ok((false, true)),
+            Ok(false) => {}
+            Err(Error::ProviderUnavailable(reason)) => {
+                return unchecked(actor, request, &reason).map(|checked| (false, checked))
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Err(refusal(request))
+}
+
+/// The change `request` names, its actor subject in `provider`'s spelling.
+fn owed_tuple(provider: &dyn DocumentACP, request: &StageRelationship<'_>) -> Result<OwedTuple> {
+    let subject = match OwedSubject::try_from(request.subject.clone())? {
+        OwedSubject::Actor { did } => OwedSubject::Actor {
+            did: provider.canonical_actor(&did),
+        },
+        other => other,
+    };
+    Ok(OwedTuple {
+        policy_id: request.policy_id.to_owned(),
+        resource: request.resource.to_owned(),
+        object: request.object.to_owned(),
+        relation: request.relation.to_owned(),
+        subject,
+    })
+}
+
+impl PreparedRelationship {
+    pub fn outbox_provider(&self) -> Arc<dyn DocumentACP> {
+        Arc::clone(&self.outbox_provider)
+    }
+}
+
 /// The relationship changes one transaction owes an external provider, as
 /// the transaction stages them. A savepoint needs the handle dropped, as it
 /// needs every view of the transaction gone.
@@ -72,6 +189,74 @@ pub struct TransactionOutbox {
 }
 
 impl TransactionOutbox {
+    /// Record `request` with the decision `prepared` made for it before the
+    /// transaction. The preparation is taken only for its own provider,
+    /// actor, change and authority; what this transaction or an earlier one
+    /// owes on the object is read here, so a registration another creator
+    /// owes, or a revocation owed against the actor, still refuses it.
+    pub async fn stage_prepared(
+        &self,
+        request: StageRelationship<'_>,
+        prepared: &PreparedRelationship,
+    ) -> Result<Staged> {
+        let actor = self.provider.canonical_actor(request.actor);
+        let tuple = owed_tuple(&*self.provider, &request)?;
+        let authority = self.provider.command_authority(
+            request.actor,
+            ProviderCommand::Relationship {
+                tuple: &tuple,
+                op: request.op,
+            },
+        )?;
+        if !Arc::ptr_eq(&prepared.provider, &self.provider)
+            || prepared.actor != actor
+            || prepared.tuple != tuple
+            || prepared.op != request.op
+            || authority != prepared.authority
+        {
+            return Err(refusal(&request));
+        }
+        if let Some(pending) = self
+            .pending
+            .get(request.policy_id, request.resource, request.object)
+            .await?
+        {
+            if self.provider.canonical_actor(&pending.creator) != actor {
+                return Err(refusal(&request));
+            }
+        }
+        let denial = self
+            .denials
+            .on(
+                &*self.provider,
+                &Identity::Authenticated(actor.clone()),
+                request.policy_id,
+                request.resource,
+                request.object,
+            )
+            .await?;
+        if denial == OwedDenial::Always || (denial == OwedDenial::UnlessOwner && !prepared.owner) {
+            return Err(Error::PermissionDenied(format!(
+                "a revocation owed to the provider denies {actor} on {} {}",
+                request.resource, request.object
+            )));
+        }
+        let change = self
+            .changes
+            .stage(NewOwedChange {
+                txn: request.txn,
+                tuple,
+                op: request.op,
+                actor,
+                authority,
+                authority_checked: prepared.checked,
+            })
+            .await?;
+        Ok(Staged {
+            seq: change.seq,
+            authority_checked: prepared.checked,
+        })
+    }
     /// `provider` is the external provider itself, serving the request that
     /// stages; `view` the transaction's ACP namespace, `sequences` the
     /// store's and `staged` the transaction's count.
@@ -87,6 +272,30 @@ impl TransactionOutbox {
             pending: PendingRegistrations::new(view),
             denials: OwedDenials::new(view),
         }
+    }
+
+    /// Whether `subject`'s `relation` on the object has a change owed to the
+    /// provider that this transaction sees: the provider's answer about that
+    /// tuple does not hold yet.
+    pub async fn relationship_unsettled(
+        &self,
+        policy_id: &str,
+        resource: &str,
+        object: &str,
+        relation: &str,
+        subject: &Did,
+    ) -> Result<bool> {
+        self.changes
+            .tuple_unsettled(&OwedTuple {
+                policy_id: policy_id.to_owned(),
+                resource: resource.to_owned(),
+                object: object.to_owned(),
+                relation: relation.to_owned(),
+                subject: OwedSubject::Actor {
+                    did: self.provider.canonical_actor(subject),
+                },
+            })
+            .await
     }
 
     /// The owed changes as this transaction sees them.

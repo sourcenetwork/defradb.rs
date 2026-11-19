@@ -39,6 +39,7 @@ pub mod pending;
 mod permission;
 mod policy_cache;
 mod policy_lookup;
+pub mod projection;
 mod provider_command;
 pub mod replica;
 // Both persistent stores require `S: Store + Send + Sync`, which the wasm
@@ -55,8 +56,8 @@ pub mod zanzibar;
 
 pub use auth_error::normalize_auth_error;
 pub use dac::{
-    bound_to_request, with_request_bearer, AuthenticatedCaller, DocumentACP, DocumentRelationship,
-    ObjectChangeListener, OwedRefusalListener,
+    bound_to_request, with_request_bearer, ActorRelationshipObservation, AuthenticatedCaller,
+    DocumentACP, DocumentRelationship, ObjectChangeListener, OwedRefusalListener,
 };
 pub use delegation_audience::DelegationAudience;
 pub use delegation_window::{DelegationWindow, WindowRefusal, CLOCK_SKEW_ALLOWANCE};

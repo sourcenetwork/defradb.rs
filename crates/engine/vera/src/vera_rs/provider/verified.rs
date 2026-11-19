@@ -171,9 +171,13 @@ where
 
 fn overtaken<E>(error: &E) -> bool
 where
-    E: Display,
+    E: AsRef<dyn Error + Send + Sync + 'static> + Display,
 {
     error.to_string().starts_with(OVERTAKEN)
+        || matches!(
+            error.as_ref().downcast_ref::<crate::ProviderError>(),
+            Some(crate::ProviderError::ProofsOvertaken(_))
+        )
 }
 
 /// Whether the light client refused to read at a stale revision.

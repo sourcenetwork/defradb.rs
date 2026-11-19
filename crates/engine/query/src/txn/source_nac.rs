@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{txn_job, TxnJob};
 use crate::error::TransactionError;
+use crate::prepared::PreparedInputMemo;
 
 /// One independently removable edge in a node permission's source graph.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,7 +23,13 @@ pub fn source_permission_job(
     edge: SourcePermission,
 ) -> Result<TxnJob<Result<bool, TransactionError>>, TransactionError> {
     let requestor = authenticated_actor(&actor_context)?;
-    source_permission_job_for(actor_context, requestor, edge, SourceCaller::Request)
+    source_permission_job_for(
+        actor_context,
+        requestor,
+        edge,
+        SourceCaller::Request,
+        PreparedInputMemo::default(),
+    )
 }
 
 /// Prepare a source-grant turn for an embedder-authenticated actor on a
@@ -31,13 +38,22 @@ pub fn source_permission_job(
 /// that actor. Like the host turn, it then replays the projector's
 /// descendants of the edge as that actor in the same statement, so a refused
 /// descendant rolls the edge back. Never expose this as an HTTP or GraphQL
-/// request parameter.
+/// request parameter. The projector's remote inputs are answered from
+/// `inputs`; a miss ends the turn with [`TransactionError::NeedsInput`], its
+/// statement undone, to be run again once the caller has answered it.
 pub fn embedded_source_permission_job(
     actor_context: RequestContext,
     edge: SourcePermission,
+    inputs: PreparedInputMemo,
 ) -> Result<TxnJob<Result<bool, TransactionError>>, TransactionError> {
     let requestor = authenticated_actor(&actor_context)?;
-    source_permission_job_for(actor_context, requestor, edge, SourceCaller::Embedder)
+    source_permission_job_for(
+        actor_context,
+        requestor,
+        edge,
+        SourceCaller::Embedder,
+        inputs,
+    )
 }
 
 fn authenticated_actor(actor_context: &RequestContext) -> Result<Did, TransactionError> {
@@ -54,9 +70,12 @@ fn authenticated_actor(actor_context: &RequestContext) -> Result<Did, Transactio
 
 /// Prepare a source-only host transaction turn. The caller must be the trusted
 /// embedded host; the transaction owner also supplies the native authority.
+/// The projector's remote inputs are answered from `inputs`, as for
+/// [`embedded_source_permission_job`].
 pub fn host_source_permission_job(
     owner_context: RequestContext,
     edge: SourcePermission,
+    inputs: PreparedInputMemo,
 ) -> Result<TxnJob<Result<bool, TransactionError>>, TransactionError> {
     if !owner_context.authorization_valid_now() || owner_context.identity().is_none() {
         return Err(TransactionError::operation(
@@ -65,7 +84,7 @@ pub fn host_source_permission_job(
     }
     let actor = Did::new(owner_context.identity().expect("identity checked above"))
         .map_err(|error| TransactionError::operation(error.to_string()))?;
-    source_permission_job_for(owner_context, actor, edge, SourceCaller::Host)
+    source_permission_job_for(owner_context, actor, edge, SourceCaller::Host, inputs)
 }
 
 /// Who admitted the turn. Only a trusted embedder or host may restate an
@@ -90,6 +109,7 @@ fn source_permission_job_for(
     requestor: Did,
     edge: SourcePermission,
     caller: SourceCaller,
+    inputs: PreparedInputMemo,
 ) -> Result<TxnJob<Result<bool, TransactionError>>, TransactionError> {
     let permission = acp::NodePermission::parse(&edge.permission)
         .ok_or_else(|| TransactionError::operation("invalid node permission"))?;
@@ -149,9 +169,12 @@ fn source_permission_job_for(
                 };
                 if caller.trusted() {
                     fetcher
-                        .project_host_source_change(&actor_context)
+                        .project_host_source_change(&actor_context, &inputs)
                         .await
                         .map_err(|error| match error {
+                            crate::error::QueryError::NeedsInput(request) => {
+                                TransactionError::NeedsInput(request)
+                            }
                             crate::error::QueryError::PermissionDenied(_) => {
                                 TransactionError::Storage(
                                     storage::corekv::Error::ProjectionPermissionDenied,

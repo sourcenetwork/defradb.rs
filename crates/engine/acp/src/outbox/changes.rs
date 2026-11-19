@@ -50,6 +50,14 @@ impl StagedCount {
         Self::default()
     }
 
+    pub fn from_shared(count: Arc<AtomicU32>) -> Self {
+        Self(count)
+    }
+
+    pub fn shared(&self) -> Arc<AtomicU32> {
+        Arc::clone(&self.0)
+    }
+
     pub fn get(&self) -> u32 {
         self.0.load(Ordering::Relaxed)
     }
@@ -94,6 +102,13 @@ impl OwedChanges {
     /// How many changes the transaction has staged and kept so far.
     pub fn staged(&self) -> u32 {
         self.staged.get()
+    }
+
+    /// Whether `tuple` has a change owed to the provider that this
+    /// transaction sees, staged by it or committed before it and unsettled;
+    /// read validated ([`super::tuple_unsettled_in`]).
+    pub async fn tuple_unsettled(&self, tuple: &OwedTuple) -> Result<bool> {
+        super::ops::tuple_unsettled_in(&self.active_view()?, tuple).await
     }
 
     fn active_view(&self) -> Result<NamespaceView> {

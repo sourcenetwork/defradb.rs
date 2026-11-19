@@ -440,6 +440,51 @@ pub struct DocRelationshipsQuery {
     pub doc_id: String,
 }
 
+#[derive(Debug, serde::Deserialize)]
+pub struct DocActorRelationshipQuery {
+    pub collection: String,
+    #[serde(rename = "docID")]
+    pub doc_id: String,
+    pub relation: String,
+    #[serde(rename = "targetActor")]
+    pub target: String,
+}
+
+pub async fn observe_doc_actor_relationship(
+    State(state): State<AppState>,
+    identity: ExtractIdentity,
+    axum::extract::Query(query): axum::extract::Query<DocActorRelationshipQuery>,
+) -> Result<Json<bool>, HttpError> {
+    let requestor = identity
+        .did()
+        .ok_or_else(|| HttpError::Unauthorized("identity required for document ACP".into()))?;
+    if [
+        &query.collection,
+        &query.doc_id,
+        &query.relation,
+        &query.target,
+    ]
+    .iter()
+    .any(|value| value.is_empty())
+    {
+        return Err(HttpError::BadRequest(
+            "collection, docID, relation and targetActor are required".into(),
+        ));
+    }
+    let doc_acp = bound(state.require_doc_acp()?, &identity.context());
+    doc_acp
+        .observe_doc_actor_relationship(
+            requestor,
+            &query.collection,
+            &query.doc_id,
+            &query.relation,
+            &query.target,
+        )
+        .await
+        .map(Json)
+        .map_err(http_error_from_backend_message)
+}
+
 /// List a document's ACP relationships.
 ///
 /// `GET /api/v0/acp/document/relationships?collection=<name>&docID=<id>`

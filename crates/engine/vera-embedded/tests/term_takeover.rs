@@ -206,6 +206,24 @@ async fn holds(node: &EmbeddedNode, submission: &Value) -> bool {
     receipt.is_some()
 }
 
+/// Whether `READER` holds `reader` on "kept", as `owner` observes it.
+async fn observe(
+    provider: &VeraRsProvider,
+    owner: &str,
+    policy: &str,
+) -> Result<bool, vera::ProviderError> {
+    provider
+        .query_actor_relationship(vera::ActorRelationshipQuery {
+            requester: owner,
+            actor: READER,
+            policy,
+            resource: "document",
+            object: "kept",
+            relation: "reader",
+        })
+        .await
+}
+
 async fn provider(
     transport: Arc<Following>,
     consensus_key: &str,
@@ -377,12 +395,22 @@ async fn a_provider_follows_a_confirmed_takeover_and_sends_again_what_it_voided(
     assert!(status.height > change.cut.height);
     assert!(named.decision_state().unwrap().starts_with("1:"));
 
-    // Without the genesis identifier, the term above 0 is refused: no read
-    // is answered from the new term.
+    // An exact relationship observation is answered from the new term too.
+    assert!(
+        observe(&named, &owner, &policy).await.unwrap(),
+        "the observation follows the term"
+    );
+
+    // Without the genesis identifier, the term above 0 is refused: no read,
+    // and no observation, is answered from the new term.
     assert!(unnamed
         .verify_access(&policy, "document", "kept", "read", &owner)
         .await
         .is_err());
+    assert!(
+        observe(&unnamed, &owner, &policy).await.is_err(),
+        "an observation is not answered from an unchecked term"
+    );
 
     phone.stop().await.unwrap();
 }
