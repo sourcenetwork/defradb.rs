@@ -19,7 +19,7 @@ use storage::merge::owed::{self, part, Counters};
 
 use super::keys::{self, OwedTupleState};
 use super::record::{
-    NewOwedChange, OwedAuthority, OwedChange, OwedOp, OwedState, OwedSubject, OwedTuple,
+    InFlight, NewOwedChange, OwedAuthority, OwedChange, OwedOp, OwedState, OwedSubject, OwedTuple,
 };
 use crate::error::{Error, Result};
 use crate::relation::OWNER_RELATION;
@@ -205,6 +205,7 @@ pub(super) async fn page<R>(
     reader: &R,
     after: Option<u64>,
     max_bytes: usize,
+    max_changes: usize,
 ) -> Result<Vec<OwedChange>>
 where
     R: Reader + ?Sized,
@@ -218,7 +219,7 @@ where
     let mut iter = reader.iterator(options).await.map_err(storage_error)?;
     let mut page = Vec::new();
     let mut bytes = 0;
-    while bytes < max_bytes {
+    while bytes < max_bytes && page.len() < max_changes {
         let Some(entry) = iter.next().await.map_err(storage_error)? else {
             break;
         };
@@ -360,11 +361,27 @@ where
     Ok(true)
 }
 
+/// The record's bytes, the provider's words kept with it halved until it
+/// fits. A change is admitted only if it fits parked or in flight with
+/// [`super::RESERVED_REASON_BYTES`] of words in each place, so this ends; a
+/// record written with longer words, by this version or an earlier one,
+/// is cut here before anything is added to it.
+fn encode_fitting(change: &mut OwedChange) -> Result<Vec<u8>> {
+    loop {
+        match change.encode() {
+            Ok(record) => return Ok(record),
+            Err(Error::OwedChangeTooLarge { .. }) if change.shorten_reason() => {}
+            Err(error) => return Err(error),
+        }
+    }
+}
+
 /// Record what a submission of change `seq` came to: its state, how many
-/// submissions in a row the provider answered this way, and its words. Only
-/// the change's own record is written; its tuple's state and the counts stay
-/// as they are, since the change is as unsettled as before. `false` when no
-/// such change is owed.
+/// submissions in a row the provider answered this way, and its words. The
+/// answer is known, so the change is no longer in flight. Only the change's
+/// own record is written; its tuple's state and the counts stay as they are,
+/// since the change is as unsettled as before. `false` when no such change
+/// is owed.
 ///
 /// The provider's words are cut until the record fits.
 pub(super) async fn mark<T>(
@@ -383,14 +400,59 @@ where
     marked.attempts = attempts;
     marked.state = state;
     marked.last_error = error;
-    let record = loop {
-        match marked.encode() {
-            Ok(record) => break record,
-            Err(Error::OwedChangeTooLarge { .. }) if marked.shorten_reason() => {}
-            Err(error) => return Err(error),
-        }
-    };
+    marked.in_flight = None;
+    let record = encode_fitting(&mut marked)?;
     put(txn, &keys::queue_key(seq), &record).await?;
+    Ok(true)
+}
+
+/// Store `flight` with every change of `seqs`, before the request it names
+/// is sent: the digest first, then the same digest with the transaction
+/// hash. Each must be owed and staged, and unmarked or marked with the same
+/// digest. Only the changes' own records are written. `false`, with nothing
+/// written, when one is not.
+pub(super) async fn mark_in_flight<T>(txn: &T, seqs: &[u64], flight: &InFlight) -> Result<bool>
+where
+    T: Reader + Writer + ?Sized,
+{
+    let mut marked = Vec::with_capacity(seqs.len());
+    for &seq in seqs {
+        let Some(mut owed) = change(txn, seq).await? else {
+            return Ok(false);
+        };
+        let same = owed
+            .in_flight
+            .as_ref()
+            .is_none_or(|earlier| earlier.digest == flight.digest);
+        if owed.state != OwedState::Staged || !same {
+            return Ok(false);
+        }
+        owed.in_flight = Some(flight.clone());
+        marked.push((seq, encode_fitting(&mut owed)?));
+    }
+    for (seq, record) in marked {
+        put(txn, &keys::queue_key(seq), &record).await?;
+    }
+    Ok(true)
+}
+
+/// Clear the in-flight mark of change `seq`: its request is known not to
+/// have taken effect, or nothing on this node can tell that it did. With
+/// `alone` the change goes in a request of its own from now on. `false`
+/// when no such change is owed or it is not marked with `digest`.
+pub(super) async fn clear_in_flight<T>(txn: &T, seq: u64, digest: &str, alone: bool) -> Result<bool>
+where
+    T: Reader + Writer + ?Sized,
+{
+    let Some(mut owed) = change(txn, seq).await? else {
+        return Ok(false);
+    };
+    if owed.in_flight.as_ref().map(|flight| flight.digest.as_str()) != Some(digest) {
+        return Ok(false);
+    }
+    owed.in_flight = None;
+    owed.alone |= alone;
+    put(txn, &keys::queue_key(seq), &owed.encode()?).await?;
     Ok(true)
 }
 
@@ -431,13 +493,7 @@ where
         return Ok(false);
     }
     let mut note = owed.discarded(reason.to_owned());
-    let record = loop {
-        match note.encode() {
-            Ok(record) => break record,
-            Err(Error::OwedChangeTooLarge { .. }) if note.shorten_reason() => {}
-            Err(error) => return Err(error),
-        }
-    };
+    let record = encode_fitting(&mut note)?;
     let options = IterOptions::new().with_prefix(keys::discard_prefix());
     let mut iter = txn.iterator(options).await.map_err(storage_error)?;
     let mut oldest = None;

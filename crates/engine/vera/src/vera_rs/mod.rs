@@ -4,6 +4,7 @@ mod command_digest;
 #[cfg(test)]
 mod delegation_parity;
 mod follow;
+mod outcome_note;
 mod provider;
 mod provider_commands;
 mod transport;

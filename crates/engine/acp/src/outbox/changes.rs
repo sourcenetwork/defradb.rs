@@ -8,7 +8,7 @@ use storage::corekv::Store;
 
 use super::keys::OwedTupleState;
 use super::ops;
-use super::record::{NewOwedChange, OwedAuthority, OwedChange, OwedState, OwedTuple};
+use super::record::{InFlight, NewOwedChange, OwedAuthority, OwedChange, OwedState, OwedTuple};
 use crate::error::{Error, Result};
 
 /// The most changes one transaction may stage.
@@ -167,7 +167,13 @@ impl OwedChanges {
     /// The next page of the queue in sequence order: the changes after
     /// `after`, or from its start. Empty at the end of the queue.
     pub async fn page(&self, after: Option<u64>) -> Result<Vec<OwedChange>> {
-        ops::page(&self.active_view()?, after, PAGE_BYTES).await
+        ops::page(&self.active_view()?, after, PAGE_BYTES, usize::MAX).await
+    }
+
+    /// At most `count` changes of the queue after `after`, in sequence
+    /// order, within a page's bytes: what a look at the next few needs.
+    pub async fn next(&self, after: u64, count: usize) -> Result<Vec<OwedChange>> {
+        ops::page(&self.active_view()?, Some(after), PAGE_BYTES, count).await
     }
 
     /// Delete the record of the change at `seq` in this transaction: the
@@ -190,6 +196,20 @@ impl OwedChanges {
         error: Option<String>,
     ) -> Result<bool> {
         ops::mark(&self.active_view()?, seq, state, attempts, error).await
+    }
+
+    /// Store, in this transaction, `flight` with every change of `seqs`
+    /// before the request it names is sent. `false`, with nothing written,
+    /// when one is no longer staged or is marked with another request.
+    pub async fn mark_in_flight(&self, seqs: &[u64], flight: &InFlight) -> Result<bool> {
+        ops::mark_in_flight(&self.active_view()?, seqs, flight).await
+    }
+
+    /// Clear, in this transaction, the in-flight mark `digest` of the change
+    /// at `seq`; with `alone` it goes in a request of its own from now on.
+    /// `false` when it is not so marked.
+    pub async fn clear_in_flight(&self, seq: u64, digest: &str, alone: bool) -> Result<bool> {
+        ops::clear_in_flight(&self.active_view()?, seq, digest, alone).await
     }
 
     /// Record, in this transaction, a fresh authority with the change at

@@ -239,6 +239,12 @@ where
         document_acp.check_owed_layout().await.map_err(Error::from),
     )
     .await?;
+    #[cfg(feature = "vera")]
+    acp_setup
+        .document_acp
+        .watch_owed_refusals(Arc::new(crate::owed_drainer::PublishRefusals(
+            event_bus.clone(),
+        )));
     if let Some(projector) = extras.document_projector {
         // The projector is the node's own trusted actor: an identity-only
         // node still gives it the node's DID.

@@ -36,6 +36,7 @@ use super::worker::NativeWorker;
 #[cfg(test)]
 mod audience_tests;
 mod genesis;
+mod owed_request;
 mod reach;
 #[cfg(test)]
 mod signer_tests;
@@ -586,6 +587,34 @@ impl VeraProvider for VeraRsProvider {
     /// was executed and refused.
     fn write_refused(&self, error: &ProviderError) -> bool {
         matches!(error, ProviderError::Transaction(_))
+    }
+
+    fn journals_owed_requests(&self) -> bool {
+        true
+    }
+
+    fn owed_request(
+        &self,
+        calls: &[crate::provider::OwedCall<'_>],
+    ) -> Result<Vec<u8>, ProviderError> {
+        self.prepare_owed_request(calls)
+    }
+
+    async fn owed_request_floor(&self) -> Result<u64, ProviderError> {
+        self.owed_floor().await
+    }
+
+    async fn journal_owed_request(&self, request: &[u8]) -> Result<String, ProviderError> {
+        self.journal_owed(request).await
+    }
+
+    async fn owed_request_outcome(
+        &self,
+        digest: &str,
+        tx: Option<&str>,
+        floor: Option<u64>,
+    ) -> Result<crate::provider::OwedRequestOutcome, ProviderError> {
+        self.owed_outcome(digest, tx, floor).await
     }
 
     async fn create_policy(&self, policy_yaml: &str) -> Result<String, ProviderError> {

@@ -42,6 +42,10 @@ pub enum EventName {
     /// a broadcast slot and was dropped (#2489): peers that only follow
     /// gossip will not get the write unless it is resynced.
     P2PBroadcastDropped,
+    /// The remote ACP provider refused, for good, a relationship change this
+    /// node owed it: the change is parked as refused, or removed when its
+    /// actor was not checked when it was staged.
+    AcpOwedChangeRefused,
 }
 
 impl EventName {
@@ -72,6 +76,7 @@ impl std::fmt::Display for EventName {
             EventName::UniqueIndexConflict => write!(f, "unique-index-conflict"),
             EventName::P2PGossipHeadDropped => write!(f, "p2p-gossip-head-dropped"),
             EventName::P2PBroadcastDropped => write!(f, "p2p-broadcast-dropped"),
+            EventName::AcpOwedChangeRefused => write!(f, "acp-owed-change-refused"),
         }
     }
 }
@@ -162,6 +167,30 @@ pub struct PendingDagQuarantinedData {
     pub collection_id: String,
     /// Human-readable rejection reason (e.g. unique-index violation).
     pub reason: String,
+}
+
+/// A relationship change owed to the remote ACP provider that it refused for
+/// good. Later changes of the same relationship wait behind a parked one;
+/// changes of other relationships go on.
+#[derive(Debug, Clone)]
+pub struct AcpOwedChangeRefusedData {
+    /// The change's place in the node's queue of owed changes.
+    pub seq: u64,
+    /// The DID the change was made as.
+    pub actor: String,
+    pub policy_id: String,
+    pub resource: String,
+    pub object_id: String,
+    pub relation: String,
+    /// The relationship's subject, as the permission engine writes it.
+    pub subject: String,
+    /// `true` for a delete, `false` for an add.
+    pub delete: bool,
+    /// The provider's words.
+    pub reason: String,
+    /// Whether the change stays parked as refused; `false` when it was
+    /// removed because its actor was not checked when it was staged.
+    pub parked: bool,
 }
 
 /// A merge found two documents holding the same unique-index value. Both are
@@ -339,6 +368,8 @@ pub enum MessageData {
     P2PGossipHeadDropped(P2PGossipHeadDroppedData),
     /// A committed write's gossip announcement was dropped.
     P2PBroadcastDropped(P2PBroadcastDroppedData),
+    /// The remote ACP provider refused an owed relationship change.
+    AcpOwedChangeRefused(AcpOwedChangeRefusedData),
 }
 
 impl Message {
@@ -433,6 +464,14 @@ impl Message {
         Self {
             name: EventName::PendingDagQuarantined,
             data: MessageData::PendingDagQuarantined(data),
+        }
+    }
+
+    /// Create a new AcpOwedChangeRefused message.
+    pub fn acp_owed_change_refused(data: AcpOwedChangeRefusedData) -> Self {
+        Self {
+            name: EventName::AcpOwedChangeRefused,
+            data: MessageData::AcpOwedChangeRefused(data),
         }
     }
 
@@ -536,6 +575,14 @@ impl Message {
     pub fn as_pending_dag_quarantined(&self) -> Option<&PendingDagQuarantinedData> {
         match &self.data {
             MessageData::PendingDagQuarantined(d) => Some(d),
+            _ => None,
+        }
+    }
+
+    /// Get the AcpOwedChangeRefusedData if this is an AcpOwedChangeRefused message.
+    pub fn as_acp_owed_change_refused(&self) -> Option<&AcpOwedChangeRefusedData> {
+        match &self.data {
+            MessageData::AcpOwedChangeRefused(data) => Some(data),
             _ => None,
         }
     }

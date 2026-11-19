@@ -56,22 +56,23 @@ pub mod zanzibar;
 pub use auth_error::normalize_auth_error;
 pub use dac::{
     bound_to_request, with_request_bearer, AuthenticatedCaller, DocumentACP, DocumentRelationship,
-    ObjectChangeListener,
+    ObjectChangeListener, OwedRefusalListener,
 };
 pub use delegation_audience::DelegationAudience;
 pub use delegation_window::{DelegationWindow, WindowRefusal, CLOCK_SKEW_ALLOWANCE};
 pub use error::{Error, Result};
 pub use external::{
     ExternalDocumentAcp, OweAgain, OwedScope, OwedSettlement, RedriveReport, VoidedEffect,
+    MAX_CHANGES_PER_REQUEST,
     MAX_FAILED_SUBMISSIONS,
 };
 pub use identity::Identity;
 pub use local::{LocalDocumentACP, MemoryAcpStore};
 pub use outbox::{
-    NewOwedChange, OwedAuthority, OwedAuthorityKind, OwedChange, OwedChanges, OwedDenial,
-    OwedDenials, OwedEntry, OwedFilter, OwedHold, OwedOp, OwedOutcome, OwedRef, OwedState,
-    OwedSubject, OwedTuple, OwedTupleState, OwedWait, OwedWhat, StageRelationship, Staged,
-    StagedCount, Submission, TransactionOutbox,
+    InFlight, NewOwedChange, OwedAuthority, OwedAuthorityKind, OwedChange, OwedChanges, OwedDenial,
+    OwedDenials, OwedEntry, OwedFilter, OwedHold, OwedJournal, OwedOp, OwedOutcome, OwedRef,
+    OwedState, OwedSubject, OwedTuple, OwedTupleState, OwedWait, OwedWhat, PreparedRequest,
+    RequestOutcome, StageRelationship, Staged, StagedCount, Submission, TransactionOutbox,
 };
 pub use pending::{PendingRegistration, PendingRegistrations};
 pub use permission::DocumentPermission;
