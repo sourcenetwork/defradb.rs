@@ -40,7 +40,7 @@ fn target(kind: &str) -> (TargetKind, Subject) {
 fn projection_scope_matches_executed_lean_model() {
     let output = Command::new("lean")
         .args(["--run", "proofs/lean/ProjectionRelationship.lean", "scope"])
-        .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+        .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."))
         .output()
         .unwrap();
     assert!(
