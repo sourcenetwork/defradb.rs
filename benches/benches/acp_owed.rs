@@ -7,8 +7,9 @@
 //!
 //! A remote ACP provider is owed the relationship changes a transaction
 //! stages; a pass settles them after the commit. `stage` and `settle` are one
-//! transaction each, committed, on a document that already has changes owed.
-//! `decide` is the deny overlay's read for one identity on such a document.
+//! transaction each, committed, on a document that already has changes owed;
+//! changes name a fixed pool of subjects, so the store does not grow from one
+//! sample to the next. `decide` is the deny overlay's read for one identity on such a document.
 //! `conflicts` stages one change on a document while a change on the same
 //! document settles, and reports the share of those commits that conflict:
 //! the number #3070 is about.
@@ -33,6 +34,9 @@ const RESOURCE: &str = "file";
 const OWED: usize = 64;
 /// Changes staged, or settled, before the other half of the work.
 const CHUNK: u64 = 500;
+/// The subjects changes name, reused round robin, so the counts a settle
+/// keeps stay this many and every sample runs against the same store size.
+const SUBJECTS: u64 = 64;
 
 fn did(name: &str) -> Did {
     Did::new(format!("did:key:z6Mk{name}")).expect("a well-formed did")
@@ -109,7 +113,6 @@ fn operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("acp_owed");
     // Changes are staged and settled in chunks, so the queue never nears a
     // bound; only the half under test is timed.
-    let mut round = 0u64;
     group.bench_function("stage", |b| {
         b.iter_custom(|iters| {
             rt.block_on(async {
@@ -117,11 +120,10 @@ fn operations(c: &mut Criterion) {
                 let mut left = iters;
                 while left > 0 {
                     let chunk = left.min(CHUNK);
-                    round += 1;
                     let started = std::time::Instant::now();
                     let mut seqs = Vec::new();
                     for index in 0..chunk {
-                        let subject = format!("n{round}-{index}");
+                        let subject = format!("n{}", index % SUBJECTS);
                         seqs.push(outbox.stage(change("doc", &subject, OwedOp::Delete)).await);
                     }
                     timed += started.elapsed();
@@ -141,10 +143,9 @@ fn operations(c: &mut Criterion) {
                 let mut left = iters;
                 while left > 0 {
                     let chunk = left.min(CHUNK);
-                    round += 1;
                     let mut seqs = Vec::new();
                     for index in 0..chunk {
-                        let subject = format!("m{round}-{index}");
+                        let subject = format!("m{}", index % SUBJECTS);
                         seqs.push(outbox.stage(change("doc", &subject, OwedOp::Add)).await);
                     }
                     let started = std::time::Instant::now();
@@ -193,11 +194,19 @@ fn conflicts(c: &mut Criterion) {
         for round in 0..rounds {
             for (object, count) in [("doc", &mut conflicted), ("other", &mut other_document)] {
                 let settled = outbox
-                    .stage(change("doc", &format!("a{round}"), OwedOp::Add))
+                    .stage(change(
+                        "doc",
+                        &format!("a{}", round as u64 % SUBJECTS),
+                        OwedOp::Add,
+                    ))
                     .await;
                 let (txn, changes) = outbox.begin().await;
                 changes
-                    .stage(change(object, &format!("b{round}"), OwedOp::Delete))
+                    .stage(change(
+                        object,
+                        &format!("b{}", round as u64 % SUBJECTS),
+                        OwedOp::Delete,
+                    ))
                     .await
                     .expect("staged");
                 drop(changes);
