@@ -350,6 +350,15 @@ RUNS=(
   "MC_OwnerObservation_Red_RegistrationSnapshot.cfg OwnerObservation.tla RED"
   "MC_OwnerObservation_Red_Visibility.cfg OwnerObservation.tla RED"
   "MC_OwnerObservation_Red_VisibilitySnapshot.cfg OwnerObservation.tla RED"
+  "MC_RemoteOwnerObservation_Green.cfg RemoteOwnerObservation.tla GREEN"
+  "MC_RemoteOwnerObservation_Red_NoConfirm.cfg RemoteOwnerObservation.tla RED"
+  "MC_RemoteOwnerObservation_Red_OwedIgnored.cfg RemoteOwnerObservation.tla RED"
+  "MC_RemoteOwnerObservation_Red_SettleUnchecked.cfg RemoteOwnerObservation.tla RED"
+  "MC_RemoteOwnerObservation_Red_UnreachableCommits.cfg RemoteOwnerObservation.tla RED"
+  "MC_RemoteOwnerObservation_Red_WindowWitness.cfg RemoteOwnerObservation.tla RED"
+  "MC_RemoteOwnerObservation_Red_SplitLook.cfg RemoteOwnerObservation.tla RED"
+  "MC_RemoteOwnerObservation_Red_NoSeal.cfg RemoteOwnerObservation.tla RED"
+  "MC_RemoteOwnerObservation_Red_SlipUnconfirmed.cfg RemoteOwnerObservation.tla RED"
   "MC_PeerConnection_Green.cfg PeerConnection.tla GREEN"
   "MC_PeerConnection_Red_StaleObservation.cfg PeerConnection.tla RED"
   "MC_SharedRpcConnection_Green.cfg SharedRpcConnection.tla GREEN"
@@ -615,6 +624,9 @@ RUNS=(
   "MC_Acp_StaleCache_Red.cfg   MC_Acp_StaleCache_Red.tla   RED"   # stale cache grants revoked permission
   "MC_VerifiedRead_Green.cfg VerifiedRead.tla GREEN" # a proven read a block overtook is asked again and answered at the newest root
   "MC_VerifiedRead_Green_Exhausted.cfg VerifiedRead.tla GREEN" # a block overtakes every ask: the refusal returns only after the last one
+  "MC_VerifiedRead_Green_Stale.cfg VerifiedRead.tla GREEN" # a stale head is waited out within the patience and never read at
+  "MC_VerifiedRead_Red_NoStaleWait.cfg VerifiedRead.tla RED" # a stale refusal fails at once with patience left (INV_StaleFailsOnlyAtPatience)
+  "MC_VerifiedRead_Red_DecideStale.cfg VerifiedRead.tla RED" # a read decided at a head older than the bound (INV_NeverFromStale)
   "MC_VerifiedRead_Red_AcceptStale.cfg VerifiedRead.tla RED" # light client skips the root check: a stale answer is accepted (INV_NeverStale)
   "MC_VerifiedRead_Red_NoRetry.cfg VerifiedRead.tla RED" # refused read never asked again: errors with asks left (INV_FailsOnlyWhenEveryAskOvertaken)
   "MC_VerifiedRead_Red_Uncapped.cfg VerifiedRead.tla RED" # retry without a cap asks past ATTEMPTS (INV_AttemptsBounded)
@@ -622,6 +634,16 @@ RUNS=(
   "MC_VerifiedRead_Red_BusyUncapped.cfg VerifiedRead.tla RED" # busy retry without a patience asks past BUSY_PATIENCE (INV_AttemptsBounded)
   "MC_VerifiedRead_Red_PausesOnly.cfg VerifiedRead.tla RED" # patience counts only the pauses: a slow busy node carries asks past BUSY_PATIENCE (INV_AttemptsBounded)
   "MC_VerifiedRead_Red_UndrawnPause.cfg VerifiedRead.tla RED" # patience checked against the shortest pause, the drawn one slept: an ask past BUSY_PATIENCE (INV_AttemptsBounded)
+  "MC_FollowDeployment_Green.cfg FollowDeployment.tla GREEN" # takeovers void any part of the chain: no void decision, a revocation always denies, nothing lost, owed again settles
+  "MC_FollowDeployment_Green_Window.cfg FollowDeployment.tla GREEN" # a journal of one entry: a takeover that voids the pruned one fails closed
+  "MC_FollowDeployment_Red_KeepsCache.cfg FollowDeployment.tla RED" # decisions cached by revision alone: one from the void chain is served (INV_NoVoidDecision)
+  "MC_FollowDeployment_Red_ForgetsRevocation.cfg FollowDeployment.tla RED" # a refused replay is dropped: a void revocation stops denying (INV_RevocationDenies)
+  "MC_FollowDeployment_Red_NoGate.cfg FollowDeployment.tla RED" # deciding while a term is unchecked: the new chain's grant is served before the revocation is sent again (INV_RevocationDenies)
+  "MC_FollowDeployment_Red_NoTaint.cfg FollowDeployment.tla RED" # only refused replays owed again: the grant overtakes the revocation (INV_RevocationDenies)
+  "MC_FollowDeployment_Red_AssumesWindow.cfg FollowDeployment.tla RED" # pruned entries taken as kept: the replay cannot pass the voided pruned request and the node stalls silently (LIVE_ResubmittedSettles)
+  "MC_FollowDeployment_Red_NoMark.cfg FollowDeployment.tla RED" # replay start not written down: a refused replay cut short is held and its revocation forgotten (INV_RevocationDenies)
+  "MC_FollowDeployment_Red_NoDeliveryGate.cfg FollowDeployment.tla RED" # a checked term admits before its owed changes reach the outbox (INV_RevocationDenies)
+  "MC_FollowDeployment_Red_CollapsesBatch.cfg FollowDeployment.tla RED" # only the first change of an object handed back together is owed: the revocation after it is lost (INV_RevocationDenies)
   "MC_PendingSubmission_Green.cfg PendingSubmission.tla GREEN" # a pending submission is resent until confirmed, takes effect once and stays journaled
   "MC_PendingSubmission_Green_Recalled.cfg PendingSubmission.tla GREEN" # a caller that keeps calling is confirmed though calls end early and the node drops the request
   "MC_PendingSubmission_Red_NoResend.cfg PendingSubmission.tla RED" # a lost send taken as sent waits for a receipt that cannot come
@@ -662,6 +684,26 @@ RUNS=(
   "MC_AcpOutbox_Red_AmbientRecorded.cfg AcpOutbox.tla RED" # a bearer-less create records the token the process holds, and a retry sends it (INV_PresentedAuthority)
   "MC_AcpOutbox_Red_SilentDiscard.cfg AcpOutbox.tla RED" # a change deleted without the provider holding it leaves no note for its actor (INV_FailureReported)
   "MC_AcpOutbox_Red_ReauthorizeUnchecked.cfg AcpOutbox.tla RED" # a fresh credential for the registration is taken from anyone and its signer becomes the owner (INV_NoWidening)
+  "MC_AcpOutbox_Green_Journal.cfg AcpOutbox.tla GREEN" # the drainer through the worker's journal: digest mark, journal, hash mark, batches of one transaction, crashes and dropped waits; each change takes effect once
+  "MC_AcpOutbox_Green_Journal_Registered.cfg AcpOutbox.tla GREEN" # a refused batch is sent one change at a time: the owner's change lands, the unchecked one is removed
+  "MC_AcpOutbox_Green_Journal_Live.cfg AcpOutbox.tla GREEN" # the drainer takes its turns by itself: every committed change ends settled, refused or awaiting authority
+  "MC_AcpOutbox_Red_JournalNoMarker.cfg AcpOutbox.tla RED" # the drainer sends without a durable in-flight mark: a change that landed before a crash is sent again (INV_AtMostOneEffect)
+  "MC_AcpOutbox_Red_JournalNoNote.cfg AcpOutbox.tla RED" # a request resolved by another leaves no note: a change marked with its digest alone is sent again (INV_AtMostOneEffect)
+  "MC_AcpOutbox_Red_JournalReceiptLost.cfg AcpOutbox.tla RED" # receipt and note can no longer be read: the drainer sends a landed change again (INV_AtMostOneEffect)
+  "MC_AcpOutbox_Red_BatchNotIsolated.cfg AcpOutbox.tla RED" # a refused batch is parked whole: the owner's change is parked for another's refusal (INV_RefusedOnItsOwn)
+  "MC_AcpOutbox_Green_JournalSameBytes.cfg AcpOutbox.tla GREEN" # requests with the same bytes: a note counts only from the mark's sequence floor on, so every settled change took effect
+  "MC_AcpOutbox_Red_JournalNoFloor.cfg AcpOutbox.tla RED" # a note of an earlier request with the same bytes settles a change that was never sent (INV_SettledTookEffect)
+  "MC_AcpOutbox_Red_JournalRenewedCredential.cfg AcpOutbox.tla RED" # a fresh delegation renews a request journaled with an expired one (INV_LandsUnderItsCredential)
+  "MC_AcpOutbox_Green_Remote.cfg AcpOutbox.tla GREEN" # clients stage over HTTP under their own delegations: each change acts as its credential's DID, is checked, lapses to awaiting authority, or goes with a rollback
+  "MC_AcpOutbox_Green_Remote_HeldKey.cfg AcpOutbox.tla GREEN" # the node holds the creator's key: the creator's change is staged under it whatever it signed in with, and an identity token for another actor stages nothing
+  "MC_AcpOutbox_Green_Remote_Live.cfg AcpOutbox.tla GREEN" # a client's change, its delegation lapsing or not, ends settled, refused or awaiting authority
+  "MC_AcpOutbox_Red_RemoteActorFromRequest.cfg AcpOutbox.tla RED" # the HTTP route takes the actor from the request: a change goes in under another's credential (INV_ActsAsItsCredential)
+  "MC_AcpOutbox_Red_RemoteUnchecked.cfg AcpOutbox.tla RED" # the HTTP route skips the advisory check: an unvouched revocation denies from the commit (INV_DenialsChecked)
+  "MC_AcpOutbox_Red_RemoteNoAuthority.cfg AcpOutbox.tla RED" # the HTTP route stages a change signed in with an identity token for a DID whose key the node does not hold: it is owed and can never be sent (INV_SendableAuthority)
+  "MC_OwedParts_Green.cfg OwedParts.tla GREEN" # owed counts in a staged and a settled part: a settle aborts no stager or decision, no decision commits past an unseen delete
+  "MC_OwedParts_Red_SettleTouchesStaged.cfg OwedParts.tla RED" # a settle rewrites the staged part too: readers are refused for it (INV_SettleAbortsNobody)
+  "MC_OwedParts_Red_UnvalidatedDecision.cfg OwedParts.tla RED" # the deny decision reads unvalidated: it commits past a delete (INV_NoMissedRevoke)
+  "MC_OwedParts_Red_UnguardedSettle.cfg OwedParts.tla RED" # a settle with nothing owed: settled passes staged (INV_OwedNotNegative)
   "MC_RegisterDocOnce_Green.cfg RegisterDocOnce.tla GREEN" # racing registrations of one document: one owner, the winner owns it, one wins
   "MC_RegisterDocOnce_Red_NoValidation.cfg RegisterDocOnce.tla RED" # deciding scan not validated: two owners (INV_OneOwner)
   "MC_RegisterDocOnce_Red_Sentinel.cfg RegisterDocOnce.tla RED" # main before the fix: the identical sentinel write commits, two owners (INV_OneOwner)

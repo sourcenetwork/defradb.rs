@@ -1,8 +1,14 @@
 import Lean
 
 /-! A relationship mutation belongs to its authenticated, writable transaction.
-The transaction's ACP provider must share its store; the native NAC and DAC
-owners still decide authority. The caller owns commit or discard. -/
+The transaction's ACP provider takes the change in one of two ways: it shares
+the transaction's store and applies the change there (bound), or it is a
+remote provider that cannot join the transaction and stages the change in it
+as owed, to be sent after the commit (owed staging). A provider that does
+neither is refused. Either way the native NAC and DAC owners still decide
+authority, the request must still be fresh and the server able to stage it.
+The caller owns commit or discard: a discarded transaction takes an owed
+change with it. -/
 namespace TransactionalRelationship
 open Lean
 
@@ -13,13 +19,18 @@ structure Input where
   nodeAllowed : Bool
   documentAllowed : Bool
   boundProvider : Bool
+  stagesOwed : Bool
   authorizationFresh : Bool
   transactionBackend : Bool
   deriving FromJson, ToJson
 
+/-- The provider takes an in-transaction change: it applies it in the
+transaction, or it stages it there as owed. -/
+def providerTakes (i : Input) : Bool := i.boundProvider || i.stagesOwed
+
 /-- A mutation may be staged only when every required fact holds. -/
 def mayStage (i : Input) : Bool :=
-  i.sameOwner && i.writable && i.nodeAllowed && i.documentAllowed && i.boundProvider &&
+  i.sameOwner && i.writable && i.nodeAllowed && i.documentAllowed && providerTakes i &&
     i.authorizationFresh && i.transactionBackend
 
 /-- A transaction owned by another actor cannot be changed. -/
@@ -38,9 +49,29 @@ theorem node_denied (i : Input) (h : i.nodeAllowed = false) :
 theorem document_denied (i : Input) (h : i.documentAllowed = false) :
     mayStage i = false := by simp [mayStage, h]
 
-/-- A provider outside this transaction cannot produce an atomic grant. -/
-theorem unbound_refused (i : Input) (h : i.boundProvider = false) :
-    mayStage i = false := by simp [mayStage, h]
+/-- A provider that neither applies the change in the transaction nor stages
+it there as owed is refused. -/
+theorem neither_bound_nor_staging_refused (i : Input)
+    (hb : i.boundProvider = false) (hs : i.stagesOwed = false) :
+    mayStage i = false := by simp [mayStage, providerTakes, hb, hs]
+
+/-- A provider that stages the change as owed is accepted, though it is not
+bound, when every other fact holds. -/
+theorem owed_staging_accepted (i : Input) (hs : i.stagesOwed = true)
+    (ho : i.sameOwner = true) (hw : i.writable = true) (hn : i.nodeAllowed = true)
+    (hd : i.documentAllowed = true) (hf : i.authorizationFresh = true)
+    (ht : i.transactionBackend = true) :
+    mayStage i = true := by simp [mayStage, providerTakes, hs, ho, hw, hn, hd, hf, ht]
+
+/-- A change an owed-staging provider accepts still had every other guard
+hold: staging as owed bypasses no owner, writability, NAC, DAC, freshness or
+backend check. -/
+theorem owed_staging_keeps_guards (i : Input) (h : mayStage i = true) :
+    i.sameOwner = true ∧ i.writable = true ∧ i.nodeAllowed = true ∧
+      i.documentAllowed = true ∧ i.authorizationFresh = true ∧
+      i.transactionBackend = true := by
+  simp [mayStage, providerTakes] at h
+  exact ⟨h.1.1.1.1.1.1, h.1.1.1.1.1.2, h.1.1.1.1.2, h.1.1.1.2, h.1.2, h.2⟩
 
 /-- A request that expired before its transaction turn cannot stage effects. -/
 theorem expired_refused (i : Input) (h : i.authorizationFresh = false) :

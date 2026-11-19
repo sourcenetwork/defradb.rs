@@ -281,7 +281,7 @@ fn answers_that_are_not_classified_park_a_change_once_there_are_enough() {
         staging.remote.down.store(false, Ordering::SeqCst);
         staging.remote.unsendable.store(true, Ordering::SeqCst);
         for _ in 0..MAX_FAILED_SUBMISSIONS {
-            assert_eq!(staging.pass().await, left_only(3));
+            assert_eq!(staging.pass().await, not_sent(2, 1));
         }
         staging.remote.unsendable.store(false, Ordering::SeqCst);
         assert_eq!(staging.queue().await[0].attempts, 1);
@@ -431,7 +431,6 @@ fn a_change_the_provider_cannot_take_at_all_is_discarded() {
     .unwrap()
 }
 
-/// A pass that submits nothing and leaves `left` changes behind parked ones.
 /// A change the node could not send stays staged with the reason and no
 /// attempt counted. One whose acting DID was checked keeps the later changes
 /// of its tuple waiting; one staged unchecked yields to them.
@@ -446,7 +445,7 @@ fn a_change_the_node_could_not_send_holds_its_tuple_only_when_checked() {
         staging.commit_change(add(alice(), &doc, bob())).await;
         staging.commit_change(delete(alice(), &doc, bob())).await;
         for _ in 0..2 {
-            assert_eq!(staging.pass().await, left_only(2));
+            assert_eq!(staging.pass().await, not_sent(1, 1));
             let queue = staging.queue().await;
             assert!(queue[0].authority_checked);
             assert_eq!(queue[0].state, OwedState::Staged);
@@ -473,7 +472,7 @@ fn a_change_the_node_could_not_send_holds_its_tuple_only_when_checked() {
         assert!(!unchecked.authority_checked);
         staging.remote.down.store(false, Ordering::SeqCst);
         staging.remote.can_sign(&mallory(), false);
-        assert_eq!(staging.pass().await, left_only(1));
+        assert_eq!(staging.pass().await, not_sent(1, 0));
         let queue = staging.queue().await;
         assert_eq!(queue[0].state, OwedState::Staged);
         assert_eq!(queue[0].attempts, 0);
@@ -487,7 +486,7 @@ fn a_change_the_node_could_not_send_holds_its_tuple_only_when_checked() {
             OwedSettlement {
                 settled: 1,
                 discarded: 1,
-                left: 1,
+                retry: 1,
                 ..OwedSettlement::default()
             }
         );
@@ -500,8 +499,19 @@ fn a_change_the_node_could_not_send_holds_its_tuple_only_when_checked() {
     .unwrap()
 }
 
+/// A pass that submits nothing and leaves `left` changes behind parked ones.
 fn left_only(left: u64) -> OwedSettlement {
     OwedSettlement {
+        left,
+        ..OwedSettlement::default()
+    }
+}
+
+/// A pass that could not send `retry` changes for an error of the node's
+/// own, to be tried again at once, and left `left` behind them.
+fn not_sent(retry: u64, left: u64) -> OwedSettlement {
+    OwedSettlement {
+        retry,
         left,
         ..OwedSettlement::default()
     }

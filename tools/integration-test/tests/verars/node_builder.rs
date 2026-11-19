@@ -26,6 +26,7 @@ async fn node_built_with_vera_rs_enforces_verified_document_access() {
             .with_vera_rs(defra_node::VeraRsConfig {
                 rpc_address: hub.node(0).rpc_url(),
                 consensus_key,
+                genesis_id: None,
                 deployment_id: 9001,
                 actor: defra_node::VeraRsActor::Secp256k1Key(
                     hex::decode(&owner.private_key_hex).expect("owner key"),
@@ -66,6 +67,7 @@ async fn node_built_with_a_host_provider_enforces_verified_document_access() {
             vera::VeraRsProvider::new(
                 hub.node(0).rpc_url(),
                 &consensus_key,
+                vera::vera_rs::GenesisSource::Unnamed,
                 &hex::decode(&owner.private_key_hex).expect("owner key"),
                 worker,
                 &vera::AcpTuning::default(),

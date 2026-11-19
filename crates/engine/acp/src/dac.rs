@@ -19,6 +19,15 @@ pub trait ObjectChangeListener: MaybeSendSync {
     fn changed(&self, policy_id: &str, resource_name: &str, object_id: &str);
 }
 
+/// Told when the provider refuses an owed relationship change for good
+/// ([`DocumentACP::watch_owed_refusals`]). `kept` says whether the change
+/// stays parked as refused (its actor was checked at staging) or was
+/// removed. Called after the record is written, on the task that wrote it,
+/// which it must not hold up.
+pub trait OwedRefusalListener: MaybeSendSync {
+    fn refused(&self, change: &crate::outbox::OwedChange, reason: &str, kept: bool);
+}
+
 /// A caller and expiration established by a credential's verification owner.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthenticatedCaller {
@@ -73,6 +82,13 @@ pub trait DocumentACP: MaybeSendSync {
         _view: datastore::NamespaceView,
     ) -> Option<std::sync::Arc<dyn DocumentACP>> {
         None
+    }
+
+    /// Whether this provider has a transaction stage the relationship
+    /// changes it makes as owed ([`transaction_outbox`](Self::transaction_outbox)
+    /// gives a place for them), rather than applying them in it or not at all.
+    fn stages_relationship_changes(&self) -> bool {
+        false
     }
 
     /// Where a transaction stages the relationship changes it owes this
@@ -181,6 +197,20 @@ pub trait DocumentACP: MaybeSendSync {
         Ok(crate::outbox::OwedAuthority::NodeKey)
     }
 
+    /// The journal this provider sends owed changes through, when its
+    /// worker keeps each request until a verified receipt lets it go. With
+    /// one, a change is marked in flight before it is sent and decided by
+    /// the journal, a receipt or the provider's note after a crash;
+    /// without, each change goes through
+    /// [`submit_owed_change`](Self::submit_owed_change).
+    fn owed_journal(&self) -> Option<std::sync::Arc<dyn crate::outbox::OwedJournal>> {
+        None
+    }
+
+    /// Tell `listener` of every owed change the provider refuses for good.
+    /// A provider that keeps no outbox has none to tell of.
+    fn watch_owed_refusals(&self, _listener: std::sync::Arc<dyn OwedRefusalListener>) {}
+
     /// Submit one owed relationship change as its acting DID, with the
     /// authority recorded with it and none of the request this provider may
     /// be bound to. Submitting a change the provider already holds is
@@ -199,6 +229,14 @@ pub trait DocumentACP: MaybeSendSync {
         change: &crate::outbox::OwedChange,
     ) -> crate::outbox::Submission {
         crate::outbox::submit_relationship(self, change).await
+    }
+
+    /// Refuse to serve when the store holds what is owed to this provider in
+    /// a layout this version cannot read ([`Error::LegacyOwedChanges`]). A
+    /// node asks once at start. Nothing to refuse for a provider that keeps
+    /// no outbox.
+    async fn check_owed_layout(&self) -> Result<()> {
+        Ok(())
     }
 
     /// Submit the relationship changes owed to this provider that `scope`

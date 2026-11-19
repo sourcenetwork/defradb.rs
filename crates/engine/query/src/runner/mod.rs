@@ -38,6 +38,7 @@ mod json_conflicts;
 mod json_conflicts_tests;
 mod mutation;
 mod mutation_inputs;
+mod owner_confirmation;
 mod owners;
 mod pinned;
 mod plan;

@@ -99,6 +99,14 @@ pub enum HostError {
     Runtime(#[source] edge::EdgeError),
 }
 
+impl HostError {
+    /// Whether the node did not start because the RPC address it was given
+    /// could not be bound.
+    pub const fn is_rpc_bind(&self) -> bool {
+        matches!(self, Self::Start(vera_node::EmbedError::RpcBind { .. }))
+    }
+}
+
 /// A running Vera node and the network runtime its host waits on.
 #[derive(Debug)]
 pub struct HostedNode {

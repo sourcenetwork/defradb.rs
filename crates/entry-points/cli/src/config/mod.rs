@@ -295,6 +295,10 @@ impl Config {
             self.acp.vera_consensus_key = key.clone();
         }
         #[cfg(feature = "vera")]
+        if let Some(ref id) = cli.vera_genesis_id {
+            self.acp.vera_genesis_id = id.clone();
+        }
+        #[cfg(feature = "vera")]
         if let Some(id) = cli.vera_deployment_id {
             self.acp.vera_deployment_id = Some(id);
         }

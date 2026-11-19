@@ -196,6 +196,15 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        family: "vera.rs deployment terms",
+        name: "missing_is_suffix / takeWhile_is_filter / scan_finds_missing / floor_covers_pruned: the submissions a takeover voided are exactly the journal's suffix from the first void one, found by asking newest first, and the newest pruned entry vouches for every older one",
+        axis: Lean,
+        anchor: "crates/engine/vera/src/vera_rs/follow/mod.rs reconcile, uncovered; crates/engine/vera/src/vera_rs/follow/journal.rs Journal::record, Journal::prune, Floor",
+        model_ref: "VeraConfirmationJournal (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         family: "Explicit embedded signing",
         name: "admitted_binds",
         axis: Lean,
@@ -385,7 +394,7 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Transactional document relationships",
-        name: "wrong_owner_refused / readonly_refused / node_denied / document_denied / unbound_refused / expired_refused / unsupported_backend_refused",
+        name: "wrong_owner_refused / readonly_refused / node_denied / document_denied / neither_bound_nor_staging_refused / owed_staging_accepted / owed_staging_keeps_guards / expired_refused / unsupported_backend_refused",
         axis: Lean,
         anchor: "crates/entry-points/defra-node/tests/unit/transactional_relationship.rs transaction_admission_matches_executed_lean_model; crates/entry-points/cli/tests/unit/doc_acp_adapter.rs a_named_transaction_never_falls_back_to_autocommit",
         model_ref: "TransactionalRelationship (lake build)",
@@ -800,6 +809,24 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "MC_OwnerObservation_Green.cfg / MC_OwnerObservation_Red_*.cfg",
         tiers: &[Contract],
         bound_by: "crates/database/db/tests/read/owner_observation.rs owner_observation_rejects_a_claim_without_a_bound_transaction_view; crates/engine/query/src/runner/owners_tests.rs owner_observation_rejects_a_fetcher_without_a_transaction_view",
+    },
+    Property {
+        family: "ACP soundness + revocation + dual-path commits",
+        name: "INV_NoStaleOwner / INV_NoUnconfirmedAnswer / INV_NothingJoinsCommit / INV_OwedNamesCreator / INV_OwedRecordHeld: an owner lookup inside a transaction on a remote provider names an owed registration's creator from the transaction's view and commits on it only while that record is unchanged; any other owner is the provider's, read at the edge and kept; the commit looks for kept answers in the step that commits, and with answers kept no request joins it and every kept answer is confirmed again at a revision no older than the commit's start, an unreachable provider refusing the commit; a change finalized between that confirmation and the local commit is not caught (WindowWitness)",
+        axis: Tla,
+        anchor: "crates/engine/query/src/runner/owners.rs remote_owner, owner_job; crates/engine/query/src/txn/observed_owners.rs ObservedOwners; crates/engine/query/src/runner/owner_confirmation.rs commit_confirming; crates/database/db/src/txn/registry/owned.rs commit_unless_told, commit_confirmed; crates/database/db/src/txn/owner/mod.rs finish_unless; crates/database/db/src/txn/owner/table.rs runs; crates/engine/query/src/txn/context.rs AcpRegistrationProjection",
+        model_ref: "MC_RemoteOwnerObservation_{Green,Red_NoConfirm,Red_SplitLook,Red_NoSeal,Red_SlipUnconfirmed,Red_OwedIgnored,Red_SettleUnchecked,Red_UnreachableCommits,Red_WindowWitness}.cfg",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/entry-points/defra-node/tests/unit/remote_owner_observation.rs an_owner_lookup_in_a_transaction_answers_registered_created_and_owed_documents, an_owner_that_changed_before_the_commit_conflicts_and_commits_nothing, an_unreachable_provider_refuses_the_commit_and_keeps_the_transaction, a_settle_of_the_owed_registration_conflicts_a_decision_made_on_its_creator, a_transaction_that_asked_nobody_commits_without_a_round, a_request_made_during_the_confirmation_round_finds_no_transaction, a_commit_dropped_during_the_round_leaves_the_transaction_to_commit_again, a_commit_dropped_during_the_round_leaves_the_transaction_to_discard, a_guard_dropped_during_the_round_discards_its_transaction; crates/database/db/tests/txn/guard.rs cancellation_after_durable_commit_cannot_undo_it_or_discard_another_transaction; crates/entry-points/defra-node/tests/embedded_vera/owner_in_txn.rs an_owner_lookup_in_a_transaction_answers_on_an_embedded_vera_node, the_is_owner_route_answers_in_a_transaction_on_an_embedded_vera_node",
+    },
+    Property {
+        family: "ACP soundness + revocation + dual-path commits",
+        name: "RemoteOwnerAnswer.owed_names_creator, provider_only_when_not_owed, commit_only_if_confirmed, changed_answer_conflicts, unconfirmed_conflicts and split_answers_conflict",
+        axis: Lean,
+        anchor: "crates/engine/query/src/txn/observed_owners.rs ObservedOwners; crates/engine/query/src/runner/owners.rs remote_owner",
+        model_ref: "RemoteOwnerAnswer",
+        tiers: &[Contract],
+        bound_by: "crates/engine/query/src/txn/observed_owners.rs nothing_recorded_commits, commit_only_if_every_answer_is_confirmed_as_itself, split_answers_to_one_request_never_commit",
     },
     Property {
         family: "ACP soundness + revocation + dual-path commits",
@@ -1702,10 +1729,31 @@ pub const PROPERTIES: &[Property] = &[
         // error reaches a caller only after every overtaken ask, or once no
         // pause fits in the patience, and a stale answer is never accepted.
         family: "ACP soundness + revocation + dual-path commits",
-        name: "INV_NeverStale / INV_FailsOnlyWhenEveryAskOvertaken / INV_AttemptsBounded / LIVE_Answers: a proven read the chain overtook or the node answered busy is asked again, bounded by a count and by elapsed time, never accepted stale",
+        name: "INV_NeverStale / INV_FailsOnlyWhenEveryAskOvertaken / INV_AttemptsBounded / INV_NeverFromStale / INV_StaleFailsOnlyAtPatience / LIVE_Answers: a read at a stale head waits within its patience for the next revision and is never decided there; a proven read the chain overtook or the node answered busy is asked again, bounded by a count and by elapsed time, never accepted stale",
         axis: Tla,
-        anchor: "crates/engine/vera/src/vera_rs/provider/verified.rs verified, verified_within, Pace, WallPace, JITTER, ATTEMPTS, BUSY_PATIENCE, BUSY_PAUSE, busy; crates/building-blocks/inputs/src/retry.rs Jitter, pause; crates/engine/vera/src/vera_rs/provider.rs create_policy, query_policy, query_object_owner, verify_access, create_access_decision; backbone:acp-light-client HeaderChain::accept_response",
-        model_ref: "MC_VerifiedRead_{Green,Green_Exhausted,Red_AcceptStale,Red_NoRetry,Red_Uncapped,Red_NoBusyRetry,Red_BusyUncapped,Red_PausesOnly,Red_UndrawnPause}.cfg",
+        anchor: "crates/engine/vera/src/vera_rs/provider/verified.rs verified, verified_within, Pace, WallPace, JITTER, ATTEMPTS, BUSY_PATIENCE, BUSY_PAUSE, busy, stale; crates/building-blocks/inputs/src/retry.rs Jitter, pause; crates/engine/vera/src/vera_rs/provider.rs create_policy, query_policy, query_object_owner, verify_access, create_access_decision; backbone:acp-light-client HeaderChain::accept_response, HeaderChain::voided",
+        model_ref: "MC_VerifiedRead_{Green,Green_Exhausted,Green_Stale,Red_AcceptStale,Red_NoRetry,Red_Uncapped,Red_NoBusyRetry,Red_BusyUncapped,Red_PausesOnly,Red_UndrawnPause,Red_NoStaleWait,Red_DecideStale}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // An account's Vera deployment runs on every device, one active at a
+        // time; a takeover without a handover voids the blocks above its cut,
+        // and the light client's height goes down. The provider decides and
+        // sends nothing while a certified term is unchecked, caches decisions
+        // under the term it last checked, sends again exactly as signed the
+        // journaled submissions the deployment no longer holds, owes again
+        // through the outbox what a replay does not restore (and everything
+        // after it on the same object), and fails closed for good when the
+        // term may have voided more than the journal keeps. Where a replay
+        // starts is written down before it begins, so one cut short is run
+        // again from there; what it leaves to owe is published with the
+        // checked term and blocks admission until the outbox holds it.
+        family: "ACP soundness + revocation + dual-path commits",
+        name: "INV_NoVoidDecision / INV_RevocationDenies / INV_NothingLost / LIVE_ResubmittedSettles: no decision is served from a voided revision, a revocation confirmed on a void block still denies, nothing a term voided is taken as kept, and what is owed again settles",
+        axis: Tla,
+        anchor: "crates/engine/vera/src/vera_rs/follow/mod.rs Follow::admit, Follow::still, Follow::epoch, reconcile, scan, uncovered; crates/engine/vera/src/vera_rs/follow/journal.rs Journal::record, Journal::begin_replay, Journal::handled, MAX_CONFIRMATIONS, MAX_CONFIRMATION_BYTES; crates/engine/vera/src/vera_rs/follow/lost.rs lost_effects, tainted_by; crates/engine/vera/src/vera_rs/provider/terms.rs Follower::check; crates/engine/vera/src/vera_rs/provider.rs decision_state, admitted_read; crates/engine/vera/src/vera_rs/provider/owed_request.rs locked_worker; crates/engine/acp/src/external/voided.rs OweAgain, VoidedEffect; backbone:acp-light-client HeaderChain::voided",
+        model_ref: "MC_FollowDeployment_{Green,Green_Window,Red_KeepsCache,Red_ForgetsRevocation,Red_NoGate,Red_NoTaint,Red_AssumesWindow,Red_NoMark,Red_NoDeliveryGate,Red_CollapsesBatch}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },
@@ -1740,24 +1788,92 @@ pub const PROPERTIES: &[Property] = &[
         // parked if it was checked and removed if it was not, a parked
         // change holds its tuple only if it was checked, and an unchecked
         // one that waits is removed when a later change of its tuple passes
-        // it. All of that is anchored here. The durable
-        // in-flight mark and the receipt lookup are specification ahead of
-        // code (#2954), so the code matches the model with Marker = FALSE
-        // (Green_NoMarker): INV_AtMostOneEffect does not hold for it, and a
-        // change the provider applied before a crash is sent again
-        // (Red_NoInFlightMarker). The creator's own named grant on a
-        // document still owed, and Reauthorize, are ahead of code too.
-        // INV_AtMostOneEffect also rests on a receipt staying readable
-        // (Red_ReceiptLost), and the creator-only gate on the provider not
+        // it. All of that is anchored here. The node's drainer submits by
+        // itself, after each commit that staged a change and after a
+        // back-off while the provider is away. Through a provider whose
+        // worker journals its requests (vera.rs) a change is marked in
+        // flight with its request's digest, then its hash, before the
+        // request goes; a marked change is decided by the journal, a
+        // verified receipt or the note of whoever resolved the request,
+        // and sent again only when none of them knows it (the Journal
+        // configurations); the changes one transaction staged one after the
+        // other share a request, and a refused one is sent again one change
+        // at a time (INV_RefusedOnItsOwn, Red_BatchNotIsolated). Through a
+        // provider without a journal the code matches the model with
+        // Marker = FALSE (Green_NoMarker): a change the provider applied
+        // before a crash is sent again (Red_NoInFlightMarker). The creator's
+        // own named grant on a document still owed is ahead of code.
+        // INV_AtMostOneEffect also rests on a receipt or note staying
+        // readable (Red_ReceiptLost, Red_JournalReceiptLost) and on the note
+        // (Red_JournalNoNote). A note found by digest counts only from the
+        // mark's sequence floor on (Green_JournalSameBytes, Red_JournalNoFloor:
+        // INV_SettledTookEffect), and a journaled request lands only under the
+        // delegation it carries (Red_JournalRenewedCredential:
+        // INV_LandsUnderItsCredential). A client's change staged over HTTP
+        // acts as its verified credential's DID (Red_RemoteActorFromRequest:
+        // INV_ActsAsItsCredential) and is checked at staging
+        // (Red_RemoteUnchecked: INV_DenialsChecked), and is staged only under
+        // an authority the node can send it with, its own key for that DID or
+        // the delegation presented (Green_Remote_HeldKey, Red_RemoteNoAuthority:
+        // INV_SendableAuthority). The creator-only gate rests on the provider not
         // already holding the document for another owner
         // (Red_ContestedRegistration).
         family: "ACP outbox and owed registrations",
-        name: "INV_NoWidening / INV_RevokedAtCommit / INV_RegistrationFirst / INV_AtMostOneEffect / INV_RollbackLeavesNothing / INV_OwedDocumentNarrow / INV_DenialsChecked / INV_RefusedChecked / INV_UncheckedYields / INV_PresentedAuthority / INV_FailureReported / INV_AbandonIsFinal / LIVE_Drains: what a node owes a remote ACP provider never widens access before it is settled, a committed delete denies at once and until the provider holds it or its own actor abandons it, the registration settles before any change and only on its creator's word (its record, a delegation recorded with a change the creator owes, or the bearer a request carries for the creator), a registration whose submission failed says so and a change deleted without the provider holding it leaves a note until its actor was told, a change takes effect once across a crash and never after it was abandoned, a rollback leaves nothing owed, no delete denies on an unchecked word, no unchecked change is parked as refused or holds a later change of its tuple, and every committed change ends settled, parked or held behind a parked change of its tuple",
+        name: "INV_NoWidening / INV_RevokedAtCommit / INV_RegistrationFirst / INV_AtMostOneEffect / INV_RollbackLeavesNothing / INV_OwedDocumentNarrow / INV_DenialsChecked / INV_RefusedChecked / INV_UncheckedYields / INV_PresentedAuthority / INV_FailureReported / INV_AbandonIsFinal / INV_RefusedOnItsOwn / INV_SettledTookEffect / INV_LandsUnderItsCredential / INV_ActsAsItsCredential / INV_SendableAuthority / LIVE_Drains: what a node owes a remote ACP provider never widens access before it is settled, a committed delete denies at once and until the provider holds it or its own actor abandons it, the registration settles before any change and only on its creator's word (its record, a delegation recorded with a change the creator owes, or the bearer a request carries for the creator), a registration whose submission failed says so and a change deleted without the provider holding it leaves a note until its actor was told, a change takes effect once across a crash while its receipt, journal entry or note can be read and never after it was abandoned, a change is parked as refused only for its own refusal, a rollback leaves nothing owed, no delete denies on an unchecked word, no unchecked change is parked as refused or holds a later change of its tuple, a client's change staged over HTTP acts as its credential's DID and carries an authority the node can send it with, and every committed change ends settled, parked or held behind a parked change of its tuple",
         axis: Tla,
-        anchor: "crates/engine/acp/src/pending.rs PendingRegistration, PendingRegistrations::record, PendingRegistrations::get, PendingRegistrations::clear; crates/engine/acp/src/external/registration.rs settle, settle_with, registrar, recorded_registrar, presenting, note_failure, rewrite, clear; crates/foundation/defra-core/src/request_context.rs RequestContext::bearer_token_for; crates/engine/acp/src/external.rs ExternalDocumentAcp::redrive_owed, ExternalDocumentAcp::check_doc_access, ExternalDocumentAcp::redrive_registration, ExternalDocumentAcp::revoked, ExternalDocumentAcp::transaction_outbox; crates/engine/acp/src/external/settle.rs settle_owed_changes_once, pass, pass_unchecked, settle_change, submittable, register_first, creators_delegation, settle_owed_before, refusal; crates/engine/acp/src/outbox/staging.rs TransactionOutbox::stage, TransactionOutbox::advise, unchecked; crates/engine/acp/src/external/owed.rs entries, await_transaction, reauthorize, abandon_change; crates/engine/acp/src/outbox/ops.rs stage, settle, mark, reauthorize, discard, acknowledge; crates/engine/acp/src/outbox/record.rs run_epoch; crates/engine/acp/src/outbox/deny.rs owed_denial, OwedDenials::on; crates/engine/acp/src/outbox/submission.rs Submission; crates/database/db/src/write/autocommit/helpers.rs register_created_doc, unregister_deleted_doc; crates/database/db/src/write/autocommit/create.rs acp_registration_retry_callback; crates/database/db/src/txn/mod.rs DbTxn::owed_staged, rollback_statement_savepoint; crates/engine/query/src/txn/context.rs AcpRegistrationProjection, denied_by_owed_delete; crates/entry-points/defra-node/src/acp_ops/transactional.rs relationship_in_txn, settle_owed_changes; crates/entry-points/defra-node/src/node_acp.rs gate_external_acp; crates/entry-points/defra-node/src/owed.rs Node::owed_acp_as, Node::await_owed_acp_as, Node::reauthorize_owed_acp_as, Node::abandon_owed_acp_change_as; crates/engine/vera/src/cosmos/dac/owed.rs submit",
-        model_ref: "MC_AcpOutbox_{Green,Green_Registered,Green_Three,Green_Three_Registered,Green_Live,Green_NoMarker,Green_OwnerChanges,Green_Live_OwnerChanges,Red_OwedOutsideTxn,Red_NoDenyOverlay,Red_LatestOpOverlay,Red_RefusedDeleteForgotten,Red_OwedAddGrants,Red_WildcardGrant,Red_ChangeBeforeRegistration,Red_OutOfOrder,Red_DrainPastAwaiting,Red_NoInFlightMarker,Red_ReceiptLost,Red_ContestedRegistration,Red_RefusedBlocksDrain,Red_UncheckedDelete,Red_UncheckedRefusedKept,Red_UncheckedHolds,Red_UncheckedPassedKept,Red_TransferWhileOwed,Red_AbandonByAnyone,Red_AbandonInFlight,Red_SilentFailure,Red_SilentDiscard,Red_AmbientRegistration,Red_AmbientRecorded,Red_ReauthorizeUnchecked}.cfg",
+        anchor: "crates/engine/acp/src/pending.rs PendingRegistration, PendingRegistrations::record, PendingRegistrations::get, PendingRegistrations::clear; crates/engine/acp/src/external/registration.rs settle, settle_with, registrar, recorded_registrar, presenting, note_failure, rewrite, clear; crates/foundation/defra-core/src/request_context.rs RequestContext::bearer_token_for; crates/engine/acp/src/external.rs ExternalDocumentAcp::redrive_owed, ExternalDocumentAcp::check_doc_access, ExternalDocumentAcp::redrive_registration, ExternalDocumentAcp::revoked, ExternalDocumentAcp::transaction_outbox; crates/engine/acp/src/external/settle.rs settle_owed_changes_once, pass, pass_unchecked, settle_change, conclude, submittable, register_first, creators_delegation, settle_owed_before, refusal; crates/engine/acp/src/external/drain.rs recover_marked, send_request, batch, joins_request, settle_applied, MAX_CHANGES_PER_REQUEST; crates/engine/acp/src/outbox/journal.rs OwedJournal, PreparedRequest, RequestOutcome; crates/engine/acp/src/outbox/changes.rs OwedChanges::stage, VALIDATED_WITHIN_OF_NODE_LIMIT; crates/entry-points/defra-node/src/owed_drainer.rs drain, Backoff, PublishRefusals; crates/engine/vera/src/vera_rs/provider/owed_request.rs prepare_owed_request, journal_owed, owed_outcome; crates/engine/vera/src/vera_rs/provider/submission.rs resolve_pending, recover_pending, Note; crates/engine/vera/src/vera_rs/outcome_note.rs OutcomeNote, MAX_NOTED; crates/engine/vera/src/cosmos/dac/owed_journal.rs VeraOwedJournal; crates/engine/acp/src/outbox/staging.rs TransactionOutbox::stage, TransactionOutbox::advise, unchecked; crates/engine/acp/src/external/owed.rs entries, await_transaction, reauthorize, abandon_change; crates/engine/acp/src/outbox/ops.rs stage, settle, mark, mark_in_flight, clear_in_flight, unsettled_validated, reauthorize, discard, acknowledge; crates/engine/acp/src/outbox/record.rs run_epoch, InFlight; crates/engine/acp/src/outbox/deny.rs owed_denial, OwedDenials::on; crates/engine/acp/src/outbox/submission.rs Submission; crates/database/db/src/write/autocommit/helpers.rs register_created_doc, unregister_deleted_doc; crates/database/db/src/write/autocommit/create.rs acp_registration_retry_callback; crates/database/db/src/txn/mod.rs DbTxn::owed_staged, rollback_statement_savepoint; crates/engine/query/src/txn/context.rs AcpRegistrationProjection, denied_by_owed_delete; crates/entry-points/defra-node/src/acp_ops/transactional.rs relationship_in_txn, settle_owed_changes; crates/entry-points/defra-node/src/node_acp.rs gate_external_acp; crates/entry-points/defra-node/src/owed.rs Node::owed_acp_as, Node::await_owed_acp_as, Node::reauthorize_owed_acp_as, Node::abandon_owed_acp_change_as; crates/engine/vera/src/cosmos/dac/owed.rs submit; crates/surfaces/http/src/handlers/acp.rs relationship_operations, add_doc_relationship, remove_doc_relationship; crates/entry-points/defra-node/src/ops/http_ops.rs HttpNodeOps::change_doc_relationship, HttpNodeOps::supports_transactional_relationships; crates/engine/vera/src/cosmos/dac.rs authority",
+        model_ref: "MC_AcpOutbox_{Green,Green_Registered,Green_Three,Green_Three_Registered,Green_Live,Green_NoMarker,Green_OwnerChanges,Green_Live_OwnerChanges,Green_Journal,Green_Journal_Registered,Green_Journal_Live,Green_JournalSameBytes,Green_Remote,Green_Remote_HeldKey,Green_Remote_Live,Red_OwedOutsideTxn,Red_NoDenyOverlay,Red_LatestOpOverlay,Red_RefusedDeleteForgotten,Red_OwedAddGrants,Red_WildcardGrant,Red_ChangeBeforeRegistration,Red_OutOfOrder,Red_DrainPastAwaiting,Red_NoInFlightMarker,Red_ReceiptLost,Red_ContestedRegistration,Red_RefusedBlocksDrain,Red_UncheckedDelete,Red_UncheckedRefusedKept,Red_UncheckedHolds,Red_UncheckedPassedKept,Red_TransferWhileOwed,Red_AbandonByAnyone,Red_AbandonInFlight,Red_SilentFailure,Red_SilentDiscard,Red_AmbientRegistration,Red_AmbientRecorded,Red_ReauthorizeUnchecked,Red_JournalNoMarker,Red_JournalNoNote,Red_JournalReceiptLost,Red_BatchNotIsolated,Red_JournalNoFloor,Red_JournalRenewedCredential,Red_RemoteActorFromRequest,Red_RemoteUnchecked,Red_RemoteNoAuthority}.cfg",
         tiers: &[Boundary, Contract],
-        bound_by: "crates/database/db/tests/access/external_owed.rs a_registration_that_fails_after_its_commit_is_reported_with_its_reason, a_registration_with_no_authority_waits_for_a_credential_and_is_not_sent, changes_behind_a_parked_registration_go_once_it_is_given_a_credential, a_wait_says_pending_while_the_provider_is_away_and_ends_when_a_record_changes, only_the_actor_that_staged_a_refused_delete_lifts_its_denial_by_abandoning_it, an_abandoned_change_lets_the_changes_behind_it_go_and_only_a_refused_one_is_abandoned, a_refused_change_is_submitted_again_under_a_fresh_credential, a_change_the_provider_never_took_is_reported_as_discarded_and_not_as_settled, a_wait_is_for_a_transaction_of_this_run_and_for_its_callers_entries; crates/entry-points/defra-node/tests/unit/owed_report.rs only_the_actor_that_staged_a_refused_revocation_abandons_it, a_retry_of_an_owed_registration_never_reads_the_token_the_process_holds, a_request_that_carries_no_bearer_registers_nothing_under_a_token_the_process_holds, a_pass_sends_a_registration_with_whichever_owed_delegation_the_report_found",
+        bound_by: "crates/database/db/tests/access/external_owed.rs a_registration_that_fails_after_its_commit_is_reported_with_its_reason, a_registration_with_no_authority_waits_for_a_credential_and_is_not_sent, changes_behind_a_parked_registration_go_once_it_is_given_a_credential, a_wait_says_pending_while_the_provider_is_away_and_ends_when_a_record_changes, only_the_actor_that_staged_a_refused_delete_lifts_its_denial_by_abandoning_it, an_abandoned_change_lets_the_changes_behind_it_go_and_only_a_refused_one_is_abandoned, a_refused_change_is_submitted_again_under_a_fresh_credential, a_change_the_provider_never_took_is_reported_as_discarded_and_not_as_settled, a_wait_is_for_a_transaction_of_this_run_and_for_its_callers_entries; crates/entry-points/defra-node/tests/unit/owed_report.rs only_the_actor_that_staged_a_refused_revocation_abandons_it, a_retry_of_an_owed_registration_never_reads_the_token_the_process_holds, a_request_that_carries_no_bearer_registers_nothing_under_a_token_the_process_holds, a_pass_sends_a_registration_with_whichever_owed_delegation_the_report_found; crates/database/db/tests/access/external_drainer.rs a_change_committed_before_a_crash_is_sent_once_after_the_restart, a_change_marked_before_a_crash_is_decided_by_the_note_and_not_sent_again, a_change_marked_before_a_crash_is_decided_by_the_journal_and_not_sent_again, a_change_whose_receipt_was_kept_before_a_crash_is_settled_by_its_hash, an_unavailable_provider_leaves_the_change_marked_until_it_comes_back, a_refused_change_is_parked_and_told_of_and_holds_back_no_other_tuple, the_changes_one_transaction_staged_go_in_one_request, a_refused_request_is_sent_again_one_change_at_a_time, a_change_whose_request_nobody_knows_is_tried_again_without_a_commit, a_marked_change_is_sent_by_a_provider_without_a_journal, transactions_on_a_document_commit_while_the_drainer_settles_there; crates/engine/vera/src/vera_rs/outcome_note.rs an_outcome_of_an_earlier_request_with_the_same_bytes_is_not_the_callers, a_recorded_hash_reads_its_own_outcome_and_no_other; tools/integration-test/tests/verars/owed_note.rs a_command_that_resolves_a_journaled_request_with_its_bytes_notes_the_outcome; crates/database/db/tests/access/external_counts.rs near_the_node_bound_stagers_are_ordered_and_settles_abort_none; crates/entry-points/defra-node/tests/unit/http_staged_relationship.rs a_client_transaction_creates_and_grants_and_the_grant_lands_after_the_commit, a_change_without_authority_is_refused_before_the_commit_and_owes_nothing, a_discarded_or_abandoned_transaction_leaves_nothing_owed, the_acting_identity_comes_from_the_credential_alone, an_identity_token_for_a_did_whose_key_the_node_holds_stages_under_the_node_key; crates/entry-points/defra-node/tests/embedded_vera/http_staged.rs a_client_transaction_that_creates_and_grants_commits_and_the_grantee_reads, a_refused_or_discarded_grant_owes_nothing; crates/entry-points/defra-node/tests/embedded_vera.rs an_idle_node_settles_a_staged_grant_once_its_deployment_is_back, the_grants_one_transaction_stages_land_together, a_restart_settles_a_change_the_chain_could_not_take",
+    },
+    Property {
+        // What the deny overlay and the node's bound decide on is counted
+        // per object (deletes wider than one actor), per actor a delete
+        // names on an object, and for the node, each as one value in a
+        // staged part that only staging merges into and a settled part that
+        // only settling merges into. The deny decision and the bound read
+        // the staged part alone, validated, and stagers of one tuple are
+        // ordered by its head key, which settling never touches; so a settle
+        // aborts none of them, while a delete committed after a decision
+        // refuses it. A fully settled count is never deleted: it stays one
+        // folded operand and reads as nothing owed.
+        family: "ACP outbox and owed registrations",
+        name: "INV_NoMissedRevoke / INV_SettleAbortsNobody / INV_OwedNotNegative: a settle never aborts a stager or a deny decision, a decision never commits past a delete it did not see, and nothing more is settled than was staged",
+        axis: Tla,
+        anchor: "crates/engine/acp/src/outbox/ops.rs owed_at, staged_parts, stage, settle, account, unsettled_validated, tuple_state; crates/engine/acp/src/outbox/deny.rs owed_denial, denial; crates/engine/acp/src/outbox/changes.rs OwedChanges::stage, VALIDATED_WITHIN_OF_NODE_LIMIT; crates/engine/acp/src/outbox/keys.rs head_key, object_key, subject_key, live_key, object_live_prefix, LEGACY_QUEUE_PREFIX; crates/engine/storage/src/backends/regolith/merge/owed.rs touches, fold, full",
+        model_ref: "MC_OwedParts_{Green,Red_SettleTouchesStaged,Red_UnvalidatedDecision,Red_UnguardedSettle}.cfg",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/database/db/tests/access/external_counts.rs staging_another_tuple_of_a_document_while_one_settles_commits, staging_the_same_tuple_while_its_earlier_change_settles_commits, staging_on_another_document_while_one_settles_commits, two_transactions_staging_one_tuple_still_conflict, a_decision_commits_past_a_settle_on_its_document, a_revocation_committed_after_a_decision_refuses_it, a_grant_committed_after_a_decision_does_not_refuse_it, every_kind_of_subject_is_denied_as_its_delete_says, what_is_fully_settled_or_rolled_back_owes_nothing, near_the_node_bound_stagers_are_ordered_and_settles_abort_none",
+    },
+    Property {
+        // The owed-state operand: four counters, each one part, added
+        // counter by counter. Folding is exact, associative and commutative;
+        // a fold touches what either operand touches; settling touches no
+        // staged part; under the write rule nothing settled passes what was
+        // staged; and a reader of the staged part with an older settled part
+        // can only find more owed.
+        family: "ACP outbox and owed registrations",
+        name: "apply_fold / fold_assoc / fold_comm / fold_exact / touches_fold / settle_touches_no_staged_part / stage_touches_staged / settled_le_staged / run_sound / late_settled_over_owes / late_settled_never_misses / fully_settled_owes_nothing: the owed-state counters fold exactly, settling and staging touch disjoint parts, what is owed is never negative, and a late settlement only denies more",
+        axis: Lean,
+        anchor: "crates/engine/storage/src/backends/regolith/merge/owed.rs delta, read, full, fold, touches, part",
+        model_ref: "OwedParts (lake build)",
+        tiers: &[Contract],
+        bound_by: "crates/engine/storage/src/backends/regolith/merge/tests/owed.rs owed_folds_obey_the_engine_contract, owed_touches_obey_the_engine_contract, staging_and_settling_touch_disjoint_parts, a_read_of_the_staged_part_meets_only_staging, a_fully_settled_value_owes_nothing_before_and_after_compaction",
+    },
+    Property {
+        // The live sequences of one owed tuple: one key each, the tuple's
+        // prefix and the sequence as eight big-endian bytes. Byte order of
+        // the keys is numeric order and each reads back as its sequence, so
+        // a prefix scan lists them ascending; the first is the oldest owed
+        // and the last the latest, before and after any one settles, and an
+        // empty index names neither.
+        family: "ACP outbox and owed registrations",
+        name: "decode_encode / order_iff / lex_iff_val / empty_index / oldest_is_min / latest_is_max / settle_index / oldest_after_settle / latest_after_settle / ten_and_twenty: live-sequence keys sort and read back as their sequences, and the first and last key read are the oldest and latest change still owed after any settle",
+        axis: Lean,
+        anchor: "crates/engine/acp/src/outbox/keys.rs live_prefix, live_key, live_seq; crates/engine/acp/src/outbox/ops.rs tuple_state, stage, settle",
+        model_ref: "OwedLive (lake build)",
+        tiers: &[Contract],
+        bound_by: "crates/engine/acp/src/outbox/keys.rs the_live_keys_of_a_tuple_sort_by_sequence_and_name_only_it; crates/database/db/tests/access/external_outbox.rs settling_a_change_leaves_the_later_ones_of_its_tuple_owed, settling_out_of_order_keeps_the_oldest_the_latest_and_the_deletes_true",
     },
     Property {
         // Registrations of one document that race each write their own owner

@@ -103,6 +103,11 @@ pub enum Error {
     #[error("explicit transaction must use force_commit/force_discard")]
     ExplicitTxnMustUseForce,
 
+    /// A document owner a provider that cannot join the transaction told it
+    /// was not confirmed at commit: a conflict, and nothing was committed.
+    #[error(transparent)]
+    OwnerChanged(#[from] query::txn::OwnerChanged),
+
     #[error("serialization error: {0}")]
     Serialization(String),
 
@@ -229,7 +234,8 @@ impl Error {
     }
 
     pub fn is_txn_conflict(&self) -> bool {
-        matches!(self, Error::Storage(source) if source.is_txn_conflict())
+        matches!(self, Error::OwnerChanged(_))
+            || matches!(self, Error::Storage(source) if source.is_txn_conflict())
             || matches!(
                 self,
                 Error::Datastore(datastore::Error::Storage(source))

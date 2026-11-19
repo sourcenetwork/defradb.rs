@@ -5,6 +5,17 @@ use vera_domain::{ExecutionReceipt, NativeTx};
 use vera_modules::acp::types::PolicyCmd;
 
 use super::{policy_cmd, NativeWorker, ProviderError, VeraRsProvider, ACP_ADDRESS};
+use crate::provider::owed_request_digest;
+use crate::vera_rs::outcome_note::Noted;
+
+/// Whether resolving a journaled request notes its outcome.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Note {
+    /// Its caller did not journal it: note it.
+    Keep,
+    /// Its caller journaled it and learns the outcome itself.
+    Skip,
+}
 
 pub(super) struct ConfirmedSubmission {
     pub receipt: ExecutionReceipt,
@@ -31,7 +42,7 @@ impl VeraRsProvider {
     pub(super) async fn recover_pending(&self) -> Result<(), ProviderError> {
         let worker = self.worker.clone().lock_owned().await;
         if let Some(wire) = worker.pending().map(<[u8]>::to_vec) {
-            let (_, confirmed) = self.resolve_pending(worker, wire).await?;
+            let (_, confirmed) = self.resolve_pending(worker, wire, Note::Keep).await?;
             tracing::info!(submission = %confirmed.receipt.tx_hash, success = confirmed.receipt.success(), "Recovered native submission");
         }
         Ok(())
@@ -67,13 +78,20 @@ impl VeraRsProvider {
         &self,
         data: Bytes,
     ) -> Result<ConfirmedSubmission, ProviderError> {
+        self.admitted().await?;
         let mut worker = nuclei::time::timeout(self.sync_timeout, self.worker.clone().lock_owned())
             .await
             .map_err(|_| unavailable("worker is busy"))?;
+        // A term check holds the worker while it runs: one that ran while
+        // this call waited for it may have left the provider closed or with
+        // changes still to owe again.
+        self.follower.admit()?;
         if let Some(wire) = worker.pending().map(<[u8]>::to_vec) {
             let tx = NativeTx::decode_wire(&wire).map_err(unavailable)?;
             let retry = tx.target == ACP_ADDRESS && tx.calldata == data;
-            let (recovered, confirmed) = self.resolve_pending(worker, wire).await?;
+            // Noted even when its bytes are ours: the drainer may have
+            // journaled them and know the request by its digest alone.
+            let (recovered, confirmed) = self.resolve_pending(worker, wire, Note::Keep).await?;
             worker = recovered;
             if retry {
                 return successful(confirmed);
@@ -87,16 +105,21 @@ impl VeraRsProvider {
             })
             .await
             .map_err(unavailable)??;
-        let (_, confirmed) = self.resolve_pending(worker, wire).await?;
+        let (_, confirmed) = self.resolve_pending(worker, wire, Note::Skip).await?;
         successful(confirmed)
     }
 
     /// Drives the journaled request `wire` to its acknowledged receipt.
-    /// Modeled by proofs/tla/PendingSubmission.tla.
-    async fn resolve_pending(
+    /// With [`Note::Keep`] its outcome is noted under its digest before the
+    /// journal lets it go: the caller did not journal it, and the one that
+    /// did may know it by its digest alone (`outcome_note.rs`).
+    /// Modeled by proofs/tla/PendingSubmission.tla, and the note by
+    /// AcpOutbox.tla's JRecover.
+    pub(super) async fn resolve_pending(
         &self,
         worker: OwnedMutexGuard<NativeWorker>,
         wire: Vec<u8>,
+        note: Note,
     ) -> Result<(OwnedMutexGuard<NativeWorker>, ConfirmedSubmission), ProviderError> {
         let tx = NativeTx::decode_wire(&wire).map_err(unavailable)?;
         let hash = tx.tx_id().0;
@@ -136,6 +159,15 @@ impl VeraRsProvider {
         self.edge
             .spawn_blocking(move || {
                 let mut worker = worker;
+                if note == Note::Keep {
+                    let receipt = response.verify(hash, &trusted).map_err(unavailable)?;
+                    worker.note(Noted {
+                        digest: owed_request_digest(&tx.calldata),
+                        tx: format!("{hash:#x}"),
+                        sequence: tx.nonce,
+                        success: receipt.success(),
+                    })?;
+                }
                 let receipt = worker.acknowledge(&response, &trusted)?;
                 Ok((
                     worker,

@@ -26,7 +26,7 @@
 //
 // The deliberate divergences list names go-http tests that fail because
 // defradb.rs deliberately differs from Go. It applies to the go-http client
-// only. Each line is `<binary> <test>`, optionally followed by a reason, and
+// only. Each entry is `<binary> <test>`, with a `#` comment above it saying why, and
 // needs no issue. A listed failure counts as `divergent`; otherwise it is
 // checked like a known failure: a listed test that passes ("converged: remove
 // from the list") fails its shard and warns in `summary`, a listed test a shard

@@ -370,6 +370,7 @@ fn transaction_admission_matches_executed_lean_model() {
 
     let cases = workers::block_on(async {
         let (node, doc) = fixture().await;
+        let stages_owed = node.document_acp().stages_relationship_changes();
         let owner = actor(OWNER);
         let reader = actor(READER);
         let mut results = Vec::<Value>::new();
@@ -397,6 +398,7 @@ fn transaction_admission_matches_executed_lean_model() {
                     "sameOwner": transaction_actor.identity() == Some(caller),
                     "writable": writable, "nodeAllowed": true,
                     "documentAllowed": caller == OWNER, "boundProvider": true,
+                    "stagesOwed": stages_owed,
                     "authorizationFresh": !expired,
                     "transactionBackend": true,
                 },
@@ -410,6 +412,7 @@ fn transaction_admission_matches_executed_lean_model() {
         let unbound = std::sync::Arc::new(acp::LocalDocumentACP::new(std::sync::Arc::new(
             acp::MemoryAcpStore::new(),
         )));
+        let unbound_stages_owed = acp::DocumentACP::stages_relationship_changes(&*unbound);
         let ops = super::acp_ops::DbAcpOps::new(
             node.database.clone(),
             node.txn_registry.clone(),
@@ -427,7 +430,8 @@ fn transaction_admission_matches_executed_lean_model() {
             .is_ok();
         results.push(
             json!({"input":{"sameOwner":true, "writable":true, "nodeAllowed":true,
-            "documentAllowed":true, "boundProvider":false, "authorizationFresh":true,
+            "documentAllowed":true, "boundProvider":false,
+            "stagesOwed":unbound_stages_owed, "authorizationFresh":true,
             "transactionBackend":true},
             "mayStage":accepted}),
         );
@@ -436,6 +440,8 @@ fn transaction_admission_matches_executed_lean_model() {
         results
     })
     .unwrap();
+    #[cfg(feature = "vera")]
+    let cases = [cases, owed_staging_cases()].concat();
     let inputs: Vec<_> = cases.iter().map(|case| case["input"].clone()).collect();
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../proofs/lean");
     let mut child = Command::new("lake")
@@ -455,4 +461,97 @@ fn transaction_admission_matches_executed_lean_model() {
     );
     let expected: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(cases, expected);
+}
+
+/// The same call on a remote provider that cannot join the transaction and
+/// stages the change in it as owed: accepted with every guard holding, and
+/// refused by each guard as on a bound provider.
+#[cfg(feature = "vera")]
+fn owed_staging_cases() -> Vec<serde_json::Value> {
+    use crate::staged_relationship_tests::{node_identity, provision, start, Remote};
+    use serde_json::json;
+
+    workers::block_on(async {
+        let _serial = super::tests::SIGNING_STORE_GUARD.lock().await;
+        let remote = Remote::new();
+        // The node holds the reader's key too, so the reader's change is
+        // refused by the provider's document check and not for want of
+        // authority to send it.
+        remote.keys.insert(READER.to_owned(), ());
+        let node = start(&node_identity(), Some(&remote), None).await;
+        provision(&node).await;
+        let created = node
+            .execute_request(
+                query::QueryRequest::new(
+                    "mutation { add_Record(input: {name: \"owed\"}) { _docID } }",
+                )
+                .with_identity(Some(Did::new(OWNER).unwrap())),
+            )
+            .await;
+        assert!(!created.has_errors(), "{:?}", created.errors);
+        let doc = created.data.unwrap()["add_Record"][0]["_docID"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let provider = node.document_acp();
+        let bound = provider.supports_transactions();
+        let stages_owed = provider.stages_relationship_changes();
+        let owner = actor(OWNER);
+        let reader = actor(READER);
+        let mut results = Vec::new();
+        for (transaction_actor, caller, writable, expired) in [
+            (&owner, OWNER, true, false),
+            (&reader, OWNER, true, false),
+            (&owner, OWNER, false, false),
+            (&reader, READER, true, false),
+            (&owner, OWNER, true, true),
+        ] {
+            let handle = node
+                .runner()
+                .begin_txn_as(transaction_actor, !writable)
+                .await
+                .unwrap();
+            let tx = actor(caller)
+                .with_txn(Some(handle.as_str().parse().unwrap()))
+                .with_authorization_expiration(expired.then_some(0));
+            let change = node
+                .acp_ops
+                .change_dac_actor_relationship(
+                    &tx,
+                    caller,
+                    super::acp_ops::transactional::Relationship {
+                        collection: "Record",
+                        doc_id: &doc,
+                        relation: "reader",
+                        target: READER,
+                    },
+                    false,
+                )
+                .await;
+            if let Ok(change) = &change {
+                assert!(
+                    matches!(change, super::RelationshipChange::Staged { .. }),
+                    "{change:?}"
+                );
+            }
+            results.push(json!({
+                "input": {
+                    "sameOwner": transaction_actor.identity() == Some(caller),
+                    "writable": writable, "nodeAllowed": true,
+                    "documentAllowed": caller == OWNER, "boundProvider": bound,
+                    "stagesOwed": stages_owed,
+                    "authorizationFresh": !expired,
+                    "transactionBackend": true,
+                },
+                "mayStage": change.is_ok(),
+            }));
+            node.runner()
+                .discard_txn_as(transaction_actor, &handle)
+                .await
+                .unwrap();
+        }
+        node.shutdown().await.unwrap();
+        results
+    })
+    .unwrap()
 }

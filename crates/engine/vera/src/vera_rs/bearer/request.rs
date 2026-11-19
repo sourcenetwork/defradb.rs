@@ -10,7 +10,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use vera_crypto::jwt::{DelegationScope, JwtClaims};
-use vera_crypto::operation::OperationClaim;
+use vera_crypto::operation::{OperationClaim, DEFAULT_OPERATION_LEAD};
 
 use super::CallerDelegationError;
 use crate::provider::ProviderError;
@@ -53,7 +53,7 @@ where
         return Err(CallerDelegationError::Kind);
     }
     super::authorize_at(claims, &audience.worker, audience.deployment, now)?;
-    request.id.validate(now)?;
+    request.id.validate(now, DEFAULT_OPERATION_LEAD)?;
     if audience
         .genesis_id
         .is_some_and(|genesis_id| genesis_id != request.genesis_id)
@@ -74,7 +74,7 @@ where
 mod tests {
     use std::time::Duration;
 
-    use vera_crypto::operation::{OperationId, MAX_OPERATION_TTL};
+    use vera_crypto::operation::{OperationId, DEFAULT_OPERATION_LEAD};
 
     use super::*;
     use crate::vera_rs::bearer::{
@@ -290,8 +290,8 @@ mod tests {
     async fn a_request_delegation_lasts_no_longer_than_vera_rs_keeps_a_request_open() {
         let signer = Ed25519Signer::from_slice(&[9; 32]).expect("key");
         let longest_secs = MAX_REQUEST_LIFETIME.as_secs();
-        assert_eq!(longest_secs, MAX_OPERATION_TTL - 30);
-        for lifetime in [0, longest_secs + 1, MAX_OPERATION_TTL] {
+        assert_eq!(longest_secs, DEFAULT_OPERATION_LEAD - 30);
+        for lifetime in [0, longest_secs + 1, DEFAULT_OPERATION_LEAD] {
             assert!(matches!(
                 issue_request_at(&signer, &audience(), &binding(1), lifetime, NOW).await,
                 Err(BearerError::RequestLifetime)
@@ -404,7 +404,7 @@ mod tests {
         let mut long = unset.clone();
         long.nbf = NOW - 10;
         long.iat = NOW - 10;
-        long.exp = NOW + MAX_OPERATION_TTL + 1;
+        long.exp = NOW + DEFAULT_OPERATION_LEAD + 1;
         let mut id = [5; 32];
         id[..8].copy_from_slice(&long.exp.to_be_bytes());
         long.request.as_mut().unwrap().id = OperationId(id);

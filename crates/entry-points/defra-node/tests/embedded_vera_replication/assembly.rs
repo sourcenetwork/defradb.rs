@@ -137,6 +137,7 @@ pub(crate) async fn shared(spec: &PeerSpec, rpc: SocketAddr, trust: &EmbeddedVer
         .with_vera_rs(VeraRsConfig {
             rpc_address: format!("http://{rpc}"),
             consensus_key: trust.consensus_key.clone(),
+            genesis_id: None,
             deployment_id: trust.chain_id,
             actor: VeraRsActor::Signer(signer(spec)),
             worker_dir: spec.home.join("worker"),
@@ -170,9 +171,7 @@ where
             .expect("free loopback port");
         match start(rpc).await {
             Ok(started) => return (started, rpc),
-            Err(defra_node::Error::EmbeddedVera(vera_embedded::HostError::Start(reason)))
-                if attempt < 8 && reason.to_string().contains("failed to bind server") =>
-            {
+            Err(defra_node::Error::EmbeddedVera(host)) if attempt < 8 && host.is_rpc_bind() => {
                 attempt += 1
             }
             Err(error) => panic!("node: {error:?}"),
