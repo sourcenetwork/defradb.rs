@@ -215,6 +215,30 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             .map_err(|error| unavailable(error, handle))?
     }
 
+    async fn commit_confirmed_as(
+        &self,
+        context: &RequestContext,
+        handle: &TransactionHandle,
+        confirmations: Vec<query::txn::OwnerAnswer>,
+    ) -> std::result::Result<(), TransactionError> {
+        let id = TxnId::parse(handle).ok_or_else(|| {
+            TransactionError::not_found(format!("transaction '{handle}' not found"))
+        })?;
+        let label = handle.to_string();
+        self.owners()
+            .map_err(|error| unavailable(error, handle))?
+            .finish(id, &self.caller(context), move |owned| {
+                Box::pin(async move {
+                    owned
+                        .commit_confirmed(&confirmations)
+                        .await
+                        .map_err(|error| commit_error(&label, error))
+                })
+            })
+            .await
+            .map_err(|error| unavailable(error, handle))?
+    }
+
     async fn add_collection_as(
         &self,
         context: &RequestContext,

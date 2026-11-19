@@ -150,6 +150,21 @@ where
         self.take()?.force_commit().await
     }
 
+    /// Commits the transaction when every provider owner answer it kept is
+    /// confirmed as exactly itself by `confirmations`; otherwise rolls it
+    /// back and fails with [`Error::OwnerChanged`].
+    pub(crate) async fn commit_confirmed(
+        mut self,
+        confirmations: &[query::txn::OwnerAnswer],
+    ) -> Result<()> {
+        let txn = self.take()?;
+        if let Err(changed) = txn.observed_owners().confirm(confirmations) {
+            txn.force_discard()?;
+            return Err(changed.into());
+        }
+        txn.force_commit().await
+    }
+
     /// Rolls the transaction back, after every request queued before this.
     pub(crate) fn discard(mut self) -> Result<()> {
         self.take()?.force_discard()

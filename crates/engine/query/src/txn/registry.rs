@@ -124,6 +124,23 @@ pub trait TransactionRegistry: MaybeSendSync + 'static {
         context.mirror(self.commit(handle)).await
     }
 
+    /// [`Self::commit_as`] for a transaction that used provider owner
+    /// answers: it commits only when every one is confirmed as exactly itself
+    /// by `confirmations`, the provider's answers read again at the edge.
+    /// Otherwise it is rolled back and the call fails with a conflict naming
+    /// [`OwnerChanged`](super::OwnerChanged).
+    async fn commit_confirmed_as(
+        &self,
+        context: &RequestContext,
+        handle: &TransactionHandle,
+        confirmations: Vec<super::OwnerAnswer>,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, handle, confirmations);
+        Err(TransactionError::not_supported(
+            "confirming document owners at commit is not supported in this configuration",
+        ))
+    }
+
     /// Rollback a transaction, after every request for it that arrived
     /// earlier.
     ///
