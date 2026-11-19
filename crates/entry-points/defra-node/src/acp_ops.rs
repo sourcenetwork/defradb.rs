@@ -393,6 +393,21 @@ impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
         let requestor = Did::new(identity).map_err(Error::InvalidIdentityDid)?;
         let target = Did::new(relationship.target).map_err(Error::InvalidIdentityDid)?;
         let (_, binding) = self.collection_policy(relationship.collection).await?;
+        if context.txn().is_some() {
+            return self
+                .observe_in_txn(
+                    context,
+                    transactional::Observation {
+                        requester: requestor,
+                        target,
+                        policy: binding.id.clone(),
+                        resource: binding.resource_name.clone(),
+                        document: relationship.doc_id.to_owned(),
+                        relation: relationship.relation.to_owned(),
+                    },
+                )
+                .await;
+        }
         acp::bound_to_request(&self.document_acp, context)
             .observe_actor_relationship(acp::ActorRelationshipObservation {
                 requester: &requestor,
