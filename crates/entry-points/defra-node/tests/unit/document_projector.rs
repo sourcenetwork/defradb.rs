@@ -201,7 +201,7 @@ fn refused_projection_rolls_back_document_and_staged_native_changes() {
 struct ForeignOwnerProjector;
 
 struct ScopedOwnerProjector {
-    reconcile_docs: Arc<std::sync::Mutex<Vec<String>>>,
+    reconcile_docs: Arc<regolith::sync::Atom<Vec<String>>>,
     rules: Vec<acp::projection::Rule>,
 }
 
@@ -214,7 +214,7 @@ impl db::DocumentMutationProjector for ScopedOwnerProjector {
         &self,
         context: &db::DocumentMutationContext<'_>,
     ) -> storage::corekv::Result<()> {
-        let docs = self.reconcile_docs.lock().unwrap().clone();
+        let docs = Vec::clone(&self.reconcile_docs.load());
         for doc in docs {
             context
                 .change_projected_relationship(
@@ -280,7 +280,7 @@ fn scoped_projection_uses_owner_authority_without_read_bypass() {
             remote_signer: None,
             signing_authorization: None,
         };
-        let reconcile_docs = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let reconcile_docs = Arc::new(regolith::sync::Atom::new(Vec::new()));
         let node = Node::builder()
             .with_signing_key(crate::SigningKey::Ed25519(signing.private_key_bytes.clone()))
             .with_node_acp_owner(owner.did().unwrap().to_string())
@@ -312,7 +312,7 @@ fn scoped_projection_uses_owner_authority_without_read_bypass() {
         assert!(!result.has_errors(), "{:?}", result.errors);
         let doc_id = result.data.unwrap()["add_ScopedProjected"][0]["_docID"].as_str().unwrap().to_owned();
         assert!(node.document_acp().check_named_permission(&Did::new("did:key:reader").unwrap(), "read", &policy, "records", &doc_id).await.unwrap());
-        reconcile_docs.lock().unwrap().push(doc_id.clone());
+        reconcile_docs.store(vec![doc_id.clone()]);
         node.database().reconcile_document_projector().await.unwrap();
         assert!(node.document_acp().check_named_permission(&Did::new("did:key:reconciled").unwrap(), "read", &policy, "records", &doc_id).await.unwrap());
         let owner_public = owner_key.public_key();
@@ -329,7 +329,7 @@ fn scoped_projection_uses_owner_authority_without_read_bypass() {
                 .with_identity(Some(owner.did().unwrap())))).await;
         assert!(!foreign.has_errors(), "{:?}", foreign.errors);
         let foreign_doc = foreign.data.unwrap()["add_ScopedProjected"][0]["_docID"].as_str().unwrap().to_owned();
-        *reconcile_docs.lock().unwrap() = vec![foreign_doc.clone()];
+        reconcile_docs.store(vec![foreign_doc.clone()]);
         assert!(node.database().reconcile_document_projector().await.is_err());
         assert!(!node.document_acp().check_named_permission(&Did::new("did:key:reconciled").unwrap(), "read", &policy, "records", &foreign_doc).await.unwrap());
         node.add_dac_actor_relationship_as(&admin, "ScopedProjected", &foreign_doc, "reader_manager", &node_did).await.unwrap();
