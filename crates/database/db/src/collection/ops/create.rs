@@ -283,7 +283,7 @@ impl<S: Store> crate::database::DB<S> {
 
     /// [`Self::create_collection_as`] in [`defra_core::RequestContext::ambient`].
     pub async fn create_collection(&self, schema: CollectionVersion) -> Result<()> {
-        self.create_collection_as(&defra_core::RequestContext::ambient(), schema)
+        self.create_collection_as(&defra_core::RequestContext::ambient(), schema, None, None)
             .await
     }
 
@@ -291,24 +291,13 @@ impl<S: Store> crate::database::DB<S> {
     ///
     /// This creates a new transaction, calls `create_collection_with_txn`, commits,
     /// and updates the process-wide cache.
-    #[instrument(skip(self, schema), fields(collection = %schema.name), name = "db.create_collection_auto")]
-    pub async fn create_collection_as(
-        &self,
-        context: &defra_core::RequestContext,
-        schema: CollectionVersion,
-    ) -> Result<()> {
-        self.create_collection_inner(context, schema, None, None)
-            .await
-            .map(|_| ())
-    }
-
-    async fn create_collection_inner(
+    async fn create_collection_as(
         &self,
         context: &defra_core::RequestContext,
         schema: CollectionVersion,
         document_acp: Option<std::sync::Arc<dyn acp::DocumentACP>>,
         creator: Option<identity::Did>,
-    ) -> Result<CollectionVersion> {
+    ) -> Result<()> {
         self.check_node_access_as(context, acp::nac::NodePermission::CollectionPatch)
             .await?;
         let mut txn = self.new_txn(false).await?;
@@ -343,7 +332,7 @@ impl<S: Store> crate::database::DB<S> {
         txn.commit().await?;
         self.unforbid_collection_id(finalized_schema.collection_id.as_str())?;
 
-        Ok(finalized_schema)
+        Ok(())
     }
 
     /// [`Self::create_collections_atomic_as`] in [`defra_core::RequestContext::ambient`].
