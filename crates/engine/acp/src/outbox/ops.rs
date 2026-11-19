@@ -319,6 +319,21 @@ where
     Ok(true)
 }
 
+/// The record's bytes, the provider's words kept with it halved until it
+/// fits. A change is admitted only if it fits parked or in flight with
+/// [`super::RESERVED_REASON_BYTES`] of words in each place, so this ends; a
+/// record written with longer words, by this version or an earlier one,
+/// is cut here before anything is added to it.
+fn encode_fitting(change: &mut OwedChange) -> Result<Vec<u8>> {
+    loop {
+        match change.encode() {
+            Ok(record) => return Ok(record),
+            Err(Error::OwedChangeTooLarge { .. }) if change.shorten_reason() => {}
+            Err(error) => return Err(error),
+        }
+    }
+}
+
 /// Record what a submission of change `seq` came to: its state, how many
 /// submissions in a row the provider answered this way, and its words. The
 /// answer is known, so the change is no longer in flight. Only the change's
@@ -344,13 +359,7 @@ where
     marked.state = state;
     marked.last_error = error;
     marked.in_flight = None;
-    let record = loop {
-        match marked.encode() {
-            Ok(record) => break record,
-            Err(Error::OwedChangeTooLarge { .. }) if marked.shorten_reason() => {}
-            Err(error) => return Err(error),
-        }
-    };
+    let record = encode_fitting(&mut marked)?;
     put(txn, &keys::queue_key(seq), &record).await?;
     Ok(true)
 }
@@ -377,7 +386,7 @@ where
             return Ok(false);
         }
         owed.in_flight = Some(flight.clone());
-        marked.push((seq, owed.encode()?));
+        marked.push((seq, encode_fitting(&mut owed)?));
     }
     for (seq, record) in marked {
         put(txn, &keys::queue_key(seq), &record).await?;
@@ -442,13 +451,7 @@ where
         return Ok(false);
     }
     let mut note = owed.discarded(reason.to_owned());
-    let record = loop {
-        match note.encode() {
-            Ok(record) => break record,
-            Err(Error::OwedChangeTooLarge { .. }) if note.shorten_reason() => {}
-            Err(error) => return Err(error),
-        }
-    };
+    let record = encode_fitting(&mut note)?;
     let options = IterOptions::new().with_prefix(keys::discard_prefix());
     let mut iter = txn.iterator(options).await.map_err(storage_error)?;
     let mut oldest = None;

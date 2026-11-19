@@ -554,6 +554,43 @@ fn near_the_node_bound_transactions_that_stage_at_once_commit_one_after_the_othe
     .unwrap()
 }
 
+/// A change whose stored error leaves no room in its record is still
+/// marked in flight: the error is cut as the mark is added, as it is when a
+/// state is recorded, so the change is never stuck in front of its tuple.
+#[test]
+fn a_change_with_a_long_error_can_still_be_marked_in_flight() {
+    workers::block_on(async {
+        let outbox = Outbox::new();
+        let reader = tuple("doc-1", "reader", actor(bob()));
+        let seq = outbox.commit(&reader, OwedOp::Add).await;
+
+        // An error that brings the unmarked record to the cap exactly.
+        let (txn, changes) = outbox.begin().await;
+        let staged = changes.get(seq).await.unwrap().expect("the change");
+        let unmarked = acp::OwedChange {
+            last_error: Some(String::new()),
+            ..staged
+        };
+        let room = acp::outbox::MAX_OWED_CHANGE_BYTES - unmarked.encode().unwrap().len();
+        let long = "e".repeat(room);
+        assert!(changes
+            .mark(seq, OwedState::Staged, 1, Some(long.clone()))
+            .await
+            .unwrap());
+        txn.commit().await.unwrap();
+
+        let (txn, changes) = outbox.begin().await;
+        let id = "x".repeat(acp::outbox::MAX_REQUEST_ID_BYTES);
+        let flight = acp::InFlight::new(id.clone(), Some(id), Some(u64::MAX)).unwrap();
+        assert!(changes.mark_in_flight(&[seq], &flight).await.unwrap());
+        let marked = changes.get(seq).await.unwrap().expect("the change");
+        assert_eq!(marked.in_flight, Some(flight));
+        assert!(marked.last_error.unwrap().len() < long.len());
+        txn.commit().await.unwrap();
+    })
+    .unwrap()
+}
+
 #[test]
 fn a_change_over_the_record_cap_is_refused_and_leaves_nothing() {
     workers::block_on(async {
