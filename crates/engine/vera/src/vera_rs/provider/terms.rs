@@ -68,7 +68,13 @@ impl Follower {
             tracing::debug!(term = certified, "Vera term check waits for the worker");
             return;
         };
-        let outcome = follow::reconcile(worker.confirmed(), &self.chain, certified).await;
+        let outcome = {
+            let (journal, note) = worker.confirmed_and_note();
+            let mut revise = |submission: alloy_primitives::B256, executed: bool| {
+                note.revise(&format!("{submission:#x}"), executed)
+            };
+            follow::reconcile(journal, &self.chain, certified, &mut revise).await
+        };
         self.follow.update(worker.confirmed());
         let owed = match outcome {
             Ok(Reconciled::Checked { owed }) => owed,

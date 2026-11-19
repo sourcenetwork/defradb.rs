@@ -32,7 +32,7 @@ impl ProviderChain {
     /// Whether `response`'s revision is one the newest certified term
     /// admits: a block above that term's cut of an earlier term was finalized
     /// by a device the term replaced.
-    fn admitted(&self, response: &ReceiptResponse) -> Result<bool, ProviderError> {
+    pub(crate) fn admitted(&self, response: &ReceiptResponse) -> Result<bool, ProviderError> {
         let block = vera_domain::verify_finalized_block(&response.revision, &self.trusted)
             .map_err(unavailable)?;
         Ok(self

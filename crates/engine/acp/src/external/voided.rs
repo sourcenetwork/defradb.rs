@@ -132,6 +132,8 @@ where
             .await
             .map_err(|error| Error::Storage(error.to_string()))?;
         self.changed.notify_waiters();
+        // The drainer waits for a commit that staged changes; this is one.
+        self.wake.notify_one();
         tracing::warn!(
             target: "acp::audit",
             voided = effects.len(),

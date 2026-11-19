@@ -105,6 +105,12 @@ impl NativeWorker {
     pub(super) fn confirmed(&mut self) -> &mut Journal {
         &mut self.confirmed
     }
+
+    /// The submissions this worker saw confirmed, and the note of outcomes,
+    /// for a term check that revises what it sent again.
+    pub(super) fn confirmed_and_note(&mut self) -> (&mut Journal, &mut OutcomeNote) {
+        (&mut self.confirmed, &mut self.note)
+    }
 }
 
 #[cfg(test)]

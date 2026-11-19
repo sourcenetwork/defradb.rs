@@ -164,16 +164,19 @@ pub(crate) enum Reconciled {
 }
 
 /// Checks term `certified` against `journal` through `chain`: sends again
-/// what the term voided and records what is to be owed again. An error
+/// what the term voided and records what is to be owed again. `revise` is
+/// told what each request sent again came to, before it is recorded. An error
 /// leaves the term unchecked, with what was already learnt recorded, to be
 /// checked again.
-pub(crate) async fn reconcile<C>(
+pub(crate) async fn reconcile<C, R>(
     journal: &mut Journal,
     chain: &C,
     certified: u64,
+    revise: &mut R,
 ) -> Result<Reconciled, ProviderError>
 where
     C: Chain,
+    R: FnMut(B256, bool) -> Result<(), ProviderError>,
 {
     if let Some(reason) = journal.closed() {
         return Ok(Reconciled::Closed(reason.to_owned()));
@@ -221,6 +224,9 @@ where
         for sequence in resent {
             let entry = journal.entry(sequence).map_err(failure)?;
             let replayed = chain.replay(&entry.wire).await?;
+            // Whatever else names this request learns what it came to on
+            // the history the deployment has now.
+            revise(entry.submission, replayed.executed)?;
             lost_effects(
                 &mut losses,
                 &mut tainted,

@@ -89,7 +89,9 @@
 \*                        it is not empty, published with the term (Standing)
 \*   KeepBatch            owe_again keeps every change of a tuple handed back together
 \*   Restage, Taint       lost.rs: refused entries, and later entries of their object
-\*   owed, Confirm        the outbox (#2954) and its settlement; owed again first: in Rust a
+\*   owed, Confirm        the outbox (#2954) and its settlement, sent by send_tx_with_sequence
+\*                        or by the drainer's steps (owed_request.rs locked_worker), both
+\*                        admitted only while Open; owed again first: in Rust a
 \*                        change whose tuple already owes a later one is not owed again, so
 \*                        the later one still decides the tuple (owe_again)
 \*   cache, CacheByTerm   the decision memo (decisions.rs) keyed by decision_state, which

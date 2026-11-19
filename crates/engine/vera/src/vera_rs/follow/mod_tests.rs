@@ -38,6 +38,10 @@ fn lost_registration(object: &str) -> Lost {
     }
 }
 
+fn ignore(_: alloy_primitives::B256, _: bool) -> Result<(), ProviderError> {
+    Ok(())
+}
+
 fn block_on<F>(future: F) -> F::Output
 where
     F: std::future::Future,
@@ -58,7 +62,7 @@ fn a_term_that_voided_nothing_of_this_node_is_checked_at_once() {
     let follow = Follow::from_journal(&journal);
     assert!(follow.admit(1).is_err(), "an unchecked term admits nothing");
 
-    let checked = block_on(reconcile(&mut journal, &deployment, 1)).unwrap();
+    let checked = block_on(reconcile(&mut journal, &deployment, 1, &mut ignore)).unwrap();
     assert_eq!(checked, Reconciled::Checked { owed: Vec::new() });
     assert!(deployment.replayed().is_empty());
     follow.update(&journal);
@@ -81,7 +85,7 @@ fn a_missing_registration_and_grant_are_sent_again_and_what_is_refused_is_owed_i
     // and the registration's delegation has expired since.
     let deployment = Deployment::holding([&kept]).refuse(&registered);
 
-    let checked = block_on(reconcile(&mut journal, &deployment, 1)).unwrap();
+    let checked = block_on(reconcile(&mut journal, &deployment, 1, &mut ignore)).unwrap();
     // Both are sent again in their order; the grant executes, but it comes
     // after a refused registration of its object, so it is owed again too.
     assert_eq!(deployment.replayed(), vec![1, 2]);
@@ -116,7 +120,7 @@ fn a_revocation_on_a_void_block_that_is_refused_again_is_owed_as_a_delete() {
     let mut journal = journal(directory.path(), &[granted.clone(), revoked.clone()]);
     let deployment = Deployment::holding([&granted]).refuse(&revoked);
 
-    let checked = block_on(reconcile(&mut journal, &deployment, 1)).unwrap();
+    let checked = block_on(reconcile(&mut journal, &deployment, 1, &mut ignore)).unwrap();
     assert_eq!(
         checked,
         Reconciled::Checked {
@@ -136,14 +140,14 @@ fn a_replay_cut_short_still_owes_what_it_learnt_and_taints_its_object() {
     let mut deployment = Deployment::holding([&kept]).refuse(&revoked);
     deployment.unreachable_after = Some(1);
 
-    assert!(block_on(reconcile(&mut journal, &deployment, 1)).is_err());
+    assert!(block_on(reconcile(&mut journal, &deployment, 1, &mut ignore)).is_err());
     assert_eq!(journal.handled_term(), 0, "the term is still unchecked");
 
     // Run again, the revocation is held (its replay was refused, and spent
     // its sequence); it is sent again all the same, and the grant after it,
     // which executes, is owed behind it.
     deployment.unreachable_after = None;
-    let checked = block_on(reconcile(&mut journal, &deployment, 1)).unwrap();
+    let checked = block_on(reconcile(&mut journal, &deployment, 1, &mut ignore)).unwrap();
     assert_eq!(
         checked,
         Reconciled::Checked {
@@ -165,12 +169,12 @@ fn a_refused_revocation_whose_answer_was_lost_is_still_owed_after_a_restart() {
     // shows nothing missing.
     let mut deployment = Deployment::holding([&kept]).refuse(&revoked);
     deployment.answer_lost_at = Some(0);
-    assert!(block_on(reconcile(&mut journal, &deployment, 1)).is_err());
+    assert!(block_on(reconcile(&mut journal, &deployment, 1, &mut ignore)).is_err());
     drop(journal);
 
     let mut journal = Journal::open(directory.path(), 0).unwrap();
     deployment.answer_lost_at = None;
-    let checked = block_on(reconcile(&mut journal, &deployment, 1)).unwrap();
+    let checked = block_on(reconcile(&mut journal, &deployment, 1, &mut ignore)).unwrap();
     assert_eq!(
         checked,
         Reconciled::Checked {
@@ -189,11 +193,11 @@ fn a_replay_an_earlier_term_left_unfinished_is_sent_again_under_the_next() {
     let mut journal = journal(directory.path(), &[kept.clone(), revoked.clone()]);
     let mut deployment = Deployment::holding([&kept]).refuse(&revoked);
     deployment.answer_lost_at = Some(0);
-    assert!(block_on(reconcile(&mut journal, &deployment, 1)).is_err());
+    assert!(block_on(reconcile(&mut journal, &deployment, 1, &mut ignore)).is_err());
 
     // A second takeover keeps everything: still the revocation is owed.
     deployment.answer_lost_at = None;
-    let checked = block_on(reconcile(&mut journal, &deployment, 2)).unwrap();
+    let checked = block_on(reconcile(&mut journal, &deployment, 2, &mut ignore)).unwrap();
     assert_eq!(
         checked,
         Reconciled::Checked {
@@ -209,7 +213,13 @@ fn a_read_that_a_term_check_overtook_is_refused() {
     let follow = Follow::from_journal(&journal);
     let epoch = follow.admit(0).unwrap();
     // While the read is on its way a term is certified and checked.
-    block_on(reconcile(&mut journal, &Deployment::default(), 1)).unwrap();
+    block_on(reconcile(
+        &mut journal,
+        &Deployment::default(),
+        1,
+        &mut ignore,
+    ))
+    .unwrap();
     follow.update(&journal);
     follow.admit(1).expect("the checked term admits new reads");
     assert!(
@@ -255,7 +265,8 @@ fn a_void_older_than_the_journal_fails_closed_for_good() {
     // below the newest entry it pruned.
     let deployment = Deployment::holding(&confirmations[..1]);
 
-    let Reconciled::Closed(reason) = block_on(reconcile(&mut journal, &deployment, 1)).unwrap()
+    let Reconciled::Closed(reason) =
+        block_on(reconcile(&mut journal, &deployment, 1, &mut ignore)).unwrap()
     else {
         panic!("a void the journal cannot vouch for must fail closed");
     };
@@ -282,7 +293,7 @@ fn a_void_within_the_journal_after_pruning_is_checked() {
     let held = confirmations.len() - 1;
     let deployment = Deployment::holding(&confirmations[..held]);
 
-    let checked = block_on(reconcile(&mut journal, &deployment, 1)).unwrap();
+    let checked = block_on(reconcile(&mut journal, &deployment, 1, &mut ignore)).unwrap();
     assert_eq!(checked, Reconciled::Checked { owed: Vec::new() });
     assert_eq!(deployment.replayed(), vec![held as u64]);
 }
@@ -295,7 +306,7 @@ fn a_journal_begun_after_the_worker_signed_cannot_vouch_for_a_void_reaching_back
     journal.record(&confirmation).unwrap();
     let deployment = Deployment::default();
 
-    let outcome = block_on(reconcile(&mut journal, &deployment, 1)).unwrap();
+    let outcome = block_on(reconcile(&mut journal, &deployment, 1, &mut ignore)).unwrap();
     assert!(matches!(outcome, Reconciled::Closed(reason) if reason.contains("below 3")));
 }
 
@@ -307,7 +318,7 @@ fn a_void_archive_that_is_refused_again_fails_closed() {
     let mut journal = journal(directory.path(), &[kept.clone(), archived.clone()]);
     let deployment = Deployment::holding([&kept]).refuse(&archived);
 
-    let outcome = block_on(reconcile(&mut journal, &deployment, 1)).unwrap();
+    let outcome = block_on(reconcile(&mut journal, &deployment, 1, &mut ignore)).unwrap();
     assert!(matches!(outcome, Reconciled::Closed(reason) if reason.contains("archive")));
 }
 
@@ -318,9 +329,39 @@ fn every_term_is_a_new_epoch_for_cached_decisions() {
     let follow = Follow::from_journal(&journal);
     assert_eq!(follow.epoch(), 0);
     for term in [1, 3] {
-        block_on(reconcile(&mut journal, &Deployment::default(), term)).unwrap();
+        block_on(reconcile(
+            &mut journal,
+            &Deployment::default(),
+            term,
+            &mut ignore,
+        ))
+        .unwrap();
         follow.update(&journal);
         assert_eq!(follow.epoch(), term);
     }
     assert!(follow.admit(4).is_err());
+}
+
+#[test]
+fn whatever_names_a_request_sent_again_learns_what_it_came_to() {
+    let directory = tempfile::tempdir().unwrap();
+    let reader = reader();
+    let kept = confirmed(wire(0, "bae-0", register()), 5);
+    let granted = confirmed(wire(1, "bae-1", grant(&reader)), 6);
+    let revoked = confirmed(wire(2, "bae-1", revoke(&reader)), 7);
+    let mut journal = journal(
+        directory.path(),
+        &[kept.clone(), granted.clone(), revoked.clone()],
+    );
+    let deployment = Deployment::holding([&kept]).refuse(&revoked);
+    let mut told = Vec::new();
+    let mut revise = |submission, executed| {
+        told.push((submission, executed));
+        Ok(())
+    };
+    block_on(reconcile(&mut journal, &deployment, 1, &mut revise)).unwrap();
+    assert_eq!(
+        told,
+        vec![(granted.submission, true), (revoked.submission, false)]
+    );
 }

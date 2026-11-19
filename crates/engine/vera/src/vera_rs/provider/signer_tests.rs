@@ -173,3 +173,38 @@ async fn a_signature_vera_rs_would_refuse_is_never_sent() {
         assert!(provider.worker.lock().await.pending().is_none());
     }
 }
+
+#[nuclei::test]
+async fn the_drainer_sends_nothing_while_the_provider_is_not_admitted() {
+    let signer = Recording::returning(Returns::Genuine);
+    let rpc = Recorded::answering(Ok(Value::Null));
+    let mut workers = Workers::new();
+    let provider = provider(signer, rpc.clone(), &mut workers).await;
+    {
+        let mut worker = provider.worker.clone().lock_owned().await;
+        worker
+            .confirmed()
+            .close("a term voided more than the journal keeps".into())
+            .expect("closed");
+        provider.follower.follow.update(worker.confirmed());
+    }
+    let floor = provider.owed_request_floor().await;
+    let journaled = provider.journal_owed_request(b"request").await;
+    let outcome = provider
+        .owed_request_outcome("0xdigest", None, Some(0))
+        .await;
+    for refused in [floor.err(), journaled.err(), outcome.err()] {
+        assert!(
+            matches!(refused, Some(ProviderError::Unavailable(ref reason)) if reason.contains("voided more")),
+            "{refused:?}"
+        );
+    }
+    assert!(provider
+        .worker
+        .clone()
+        .lock_owned()
+        .await
+        .pending()
+        .is_none());
+    assert!(rpc.calls.pop().is_none(), "nothing reached the node");
+}

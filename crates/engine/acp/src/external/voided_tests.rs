@@ -269,3 +269,22 @@ fn what_a_term_voided_is_owed_again_past_the_bounds_on_new_changes() {
     })
     .unwrap()
 }
+
+#[test]
+fn what_is_owed_again_wakes_the_drainer() {
+    workers::block_on(async {
+        let (_, gate) = gate();
+        gate.owe_again(&[change("bae-5", OwedOp::Delete)])
+            .await
+            .unwrap();
+        // The drainer, between passes, waits for a commit that staged
+        // changes; owing again left it the permit.
+        workers::timeout(
+            std::time::Duration::from_secs(5),
+            gate.staged_changes_committed(),
+        )
+        .await
+        .expect("the drainer is woken");
+    })
+    .unwrap()
+}
