@@ -1309,3 +1309,56 @@ fn the_http_route_refuses_to_stage_on_a_remote_provider() {
     })
     .unwrap();
 }
+
+/// A node whose store still owes changes in the layout before the owed
+/// counts were split does not start: it would neither submit them nor deny
+/// by an owed revocation among them. One that owes nothing there starts.
+#[test]
+fn a_node_owing_changes_in_the_earlier_layout_does_not_start() {
+    use storage::corekv::Store as _;
+
+    workers::block_on(async {
+        let _serial = super::tests::SIGNING_STORE_GUARD.lock().await;
+        let remote = Remote::new();
+        let node_did = node_identity();
+        for (keys, refused) in [
+            (
+                vec![b"/acp-owed/seq".to_vec(), b"/acp-owed/n".to_vec()],
+                false,
+            ),
+            (
+                vec![[b"/acp-owed/q/".as_slice(), &3u64.to_be_bytes()].concat()],
+                true,
+            ),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let first = start(&node_did, Some(&remote), Some(directory.path())).await;
+            first.shutdown().await.unwrap();
+            drop(first);
+            {
+                let store = Arc::new(storage::RegolithStore::open(directory.path()).unwrap());
+                let acp = storage::namespace::NamespacedStore::new(
+                    store,
+                    storage::namespace::Namespace::Acpstore,
+                );
+                let mut txn = acp.new_txn(false).await.unwrap();
+                for key in &keys {
+                    txn.set(key, b"earlier").await.unwrap();
+                }
+                txn.commit().await.unwrap();
+            }
+            let second = Node::builder()
+                .with_node_identity_did(&node_did)
+                .with_document_acp_provider(DocumentAcpProvider::new(remote.clone()))
+                .data_path(directory.path())
+                .build()
+                .await;
+            match (second, refused) {
+                (Err(crate::Error::Acp(acp::Error::LegacyOwedChanges { count: 1 })), true) => {}
+                (Ok(node), false) => node.shutdown().await.unwrap(),
+                (other, _) => panic!("{keys:?}: {:?}", other.map(|_| "started")),
+            }
+        }
+    })
+    .unwrap()
+}

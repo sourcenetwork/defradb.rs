@@ -75,6 +75,13 @@ where
                 }
                 settlement.wants_another_pass()
             }
+            Err(error) if is_terminal(&error) => {
+                tracing::error!(
+                    %error,
+                    "Owed ACP relationship changes are in a layout this version cannot read; the drainer stops"
+                );
+                return;
+            }
             Err(error) => {
                 tracing::warn!(
                     %error,
@@ -93,6 +100,14 @@ where
             gate.staged_changes_committed().await;
         }
     }
+}
+
+/// Whether `error` from a pass will not pass by itself: the store owes
+/// changes in a layout this version cannot read. Another pass would only
+/// meet it again, so the drainer stops; the node refuses such a store at
+/// start.
+fn is_terminal(error: &acp::Error) -> bool {
+    matches!(error, acp::Error::LegacyOwedChanges { .. })
 }
 
 /// Publishes every owed change the provider refuses for good on the node's
@@ -122,6 +137,12 @@ impl acp::OwedRefusalListener for PublishRefusals {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_earlier_layout_stops_the_drainer_and_other_errors_do_not() {
+        assert!(is_terminal(&acp::Error::LegacyOwedChanges { count: 1 }));
+        assert!(!is_terminal(&acp::Error::Storage("busy".into())));
+    }
 
     #[test]
     fn the_back_off_doubles_up_to_its_cap_and_starts_over_after_a_reset() {

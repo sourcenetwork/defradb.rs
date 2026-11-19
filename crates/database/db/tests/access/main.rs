@@ -6,6 +6,7 @@ mod context_enforcement;
 mod coverage;
 mod dac_policy;
 mod enforcement;
+mod external_counts;
 mod external_drainer;
 mod external_outbox;
 mod external_outbox_gate;

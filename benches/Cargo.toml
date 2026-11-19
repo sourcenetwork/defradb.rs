@@ -73,7 +73,7 @@ name = "acp"
 harness = false
 
 [[bench]]
-name = "acp_owed_drain"
+name = "acp_owed"
 harness = false
 
 [[bench]]

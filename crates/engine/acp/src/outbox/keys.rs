@@ -1,39 +1,56 @@
 //! Where owed relationship changes live in the ACP namespace.
 //!
-//! - `/acp-owed/q/<seq>`: the queue. `seq` is eight big-endian bytes, so the
+//! - `/acp-owed2/q/<seq>`: the queue. `seq` is eight big-endian bytes, so the
 //!   queue reads in sequence order.
-//! - `/acp-owed/t/<policy><resource><object><relation><subject>`: what is
-//!   unsettled on one tuple ([`OwedTupleState`]).
-//! - `/acp-owed/o/<policy><resource><object>`: how many changes are unsettled
-//!   on one object.
-//! - `/acp-owed/a/<actor>`: how many changes are unsettled that one acting
+//! - `/acp-owed2/l/<policy><resource><object><relation><subject><seq>`: the
+//!   sequences still owed on one tuple, each with whether it is a delete, so
+//!   its oldest and latest are the first and last of its keys and its counts
+//!   are theirs.
+//! - `/acp-owed2/h/<policy><resource><object><relation><subject>`: the latest
+//!   sequence staged on one tuple, read and written only by staging, which it
+//!   keeps ordered.
+//! - `/acp-owed2/o/<policy><resource><object>`: the deletes owed on one
+//!   object whose subject is wider than one actor.
+//! - `/acp-owed2/s/<policy><resource><object><subject>`: what is owed on one
+//!   object of deletes naming one actor, all of them and those of the owner
+//!   relation.
+//! - `/acp-owed2/n`: what is owed on the node, changes.
+//! - `/acp-owed2/a/<actor>`: how many changes are unsettled that one acting
 //!   DID staged.
-//! - `/acp-owed/x/<seq>`: what is kept of a change whose record was deleted
+//! - `/acp-owed2/x/<seq>`: what is kept of a change whose record was deleted
 //!   without the provider holding it, until its actor was told.
-//! - `/acp-owed/n`: how many changes are unsettled on the node.
-//! - `/acp-owed/seq`: the counter sequences are allocated from.
+//! - `/acp-owed2/seq`: the counter sequences are allocated from.
 //!
-//! Each named part is preceded by its length as eight big-endian bytes, as an
-//! owed registration's key parts are, so no two tuples and no two objects
-//! share a key, and the keys of one object's tuples are exactly those that
-//! start with its three parts. A subject is one part: a kind byte, then the
-//! actor's DID, or the length-prefixed parts of a set, or a resource.
+//! The `o`, `s` and `n` counts are owed values ([`storage::merge::owed`]),
+//! written only by merges (see `ops.rs`). Each named part is preceded by its
+//! length as eight big-endian bytes, as an owed registration's key parts are,
+//! so no two tuples, objects or subjects share a key. A subject is one part:
+//! a kind byte, then the actor's DID, or the length-prefixed parts of a set,
+//! or a resource.
+//!
+//! The layout before the counts were split lived under `/acp-owed/`.
+//! Nothing reads it as owed state: a store whose queue
+//! there still holds a record ([`LEGACY_QUEUE_PREFIX`]) is refused, so a
+//! revocation it owes can never stop denying unseen.
 
 use identity::Did;
 
 use super::record::{OwedSubject, OwedTuple};
 use crate::error::{Error, Result};
 
-const QUEUE_PREFIX: &[u8] = b"/acp-owed/q/";
-const TUPLE_PREFIX: &[u8] = b"/acp-owed/t/";
-const OBJECT_PREFIX: &[u8] = b"/acp-owed/o/";
-const ACTOR_PREFIX: &[u8] = b"/acp-owed/a/";
-const DISCARD_PREFIX: &[u8] = b"/acp-owed/x/";
-pub(super) const UNSETTLED_KEY: &[u8] = b"/acp-owed/n";
-pub(super) const SEQUENCE_KEY: &[u8] = b"/acp-owed/seq";
+const QUEUE_PREFIX: &[u8] = b"/acp-owed2/q/";
+const LIVE_PREFIX: &[u8] = b"/acp-owed2/l/";
+const HEAD_PREFIX: &[u8] = b"/acp-owed2/h/";
+const OBJECT_PREFIX: &[u8] = b"/acp-owed2/o/";
+const SUBJECT_PREFIX: &[u8] = b"/acp-owed2/s/";
+const ACTOR_PREFIX: &[u8] = b"/acp-owed2/a/";
+const DISCARD_PREFIX: &[u8] = b"/acp-owed2/x/";
+pub(super) const UNSETTLED_KEY: &[u8] = b"/acp-owed2/n";
+pub(super) const SEQUENCE_KEY: &[u8] = b"/acp-owed2/seq";
 
-const INDEX_VERSION: u8 = 1;
-const LENGTH_BYTES: usize = 8;
+/// The queue of the layout before the counts were split, under
+/// `/acp-owed/`: one record per change still owed.
+pub(super) const LEGACY_QUEUE_PREFIX: &[u8] = b"/acp-owed/q/";
 
 const SUBJECT_WILDCARD: u8 = 0;
 const SUBJECT_ACTOR: u8 = 1;
@@ -43,18 +60,6 @@ const SUBJECT_TYPED_WILDCARD: u8 = 3;
 fn push_part(key: &mut Vec<u8>, part: &[u8]) {
     key.extend_from_slice(&(part.len() as u64).to_be_bytes());
     key.extend_from_slice(part);
-}
-
-/// The part `bytes` starts with, and what follows it.
-fn take_part(bytes: &[u8]) -> Option<(&[u8], &[u8])> {
-    let (length, rest) = bytes.split_first_chunk::<LENGTH_BYTES>()?;
-    let length = usize::try_from(u64::from_be_bytes(*length)).ok()?;
-    rest.split_at_checked(length)
-}
-
-fn take_text(bytes: &[u8]) -> Option<(String, &[u8])> {
-    let (part, rest) = take_part(bytes)?;
-    Some((std::str::from_utf8(part).ok()?.to_string(), rest))
 }
 
 fn subject_part(subject: &OwedSubject) -> Vec<u8> {
@@ -78,29 +83,6 @@ fn subject_part(subject: &OwedSubject) -> Vec<u8> {
     }
 }
 
-fn subject_of(part: &[u8]) -> Option<OwedSubject> {
-    let (kind, body) = part.split_first()?;
-    let text = || std::str::from_utf8(body).ok().map(str::to_string);
-    match *kind {
-        SUBJECT_WILDCARD if body.is_empty() => Some(OwedSubject::Wildcard),
-        SUBJECT_ACTOR => Some(OwedSubject::Actor {
-            did: Did::new(text()?).ok()?,
-        }),
-        SUBJECT_ENTITY_SET => {
-            let (resource, rest) = take_text(body)?;
-            let (object, rest) = take_text(rest)?;
-            let (relation, rest) = take_text(rest)?;
-            rest.is_empty().then_some(OwedSubject::EntitySet {
-                resource,
-                object,
-                relation,
-            })
-        }
-        SUBJECT_TYPED_WILDCARD => Some(OwedSubject::TypedWildcard { resource: text()? }),
-        _ => None,
-    }
-}
-
 pub(super) fn queue_prefix() -> Vec<u8> {
     QUEUE_PREFIX.to_vec()
 }
@@ -117,40 +99,63 @@ pub(super) fn discard_key(seq: u64) -> Vec<u8> {
     [DISCARD_PREFIX, &seq.to_be_bytes()].concat()
 }
 
-/// Every key of the tuples of one object starts with this.
-pub(super) fn object_tuples_prefix(policy_id: &str, resource: &str, object: &str) -> Vec<u8> {
-    let mut key = TUPLE_PREFIX.to_vec();
+/// The parts that name one object, each length-prefixed.
+fn object_parts(policy_id: &str, resource: &str, object: &str) -> Vec<u8> {
+    let mut parts = Vec::new();
     for part in [policy_id, resource, object] {
-        push_part(&mut key, part.as_bytes());
+        push_part(&mut parts, part.as_bytes());
     }
-    key
+    parts
 }
 
-pub(super) fn tuple_key(tuple: &OwedTuple) -> Vec<u8> {
-    let mut key = object_tuples_prefix(&tuple.policy_id, &tuple.resource, &tuple.object);
-    push_part(&mut key, tuple.relation.as_bytes());
-    push_part(&mut key, &subject_part(&tuple.subject));
-    key
+/// The parts that name one tuple, each length-prefixed.
+fn tuple_parts(tuple: &OwedTuple) -> Vec<u8> {
+    let mut parts = object_parts(&tuple.policy_id, &tuple.resource, &tuple.object);
+    push_part(&mut parts, tuple.relation.as_bytes());
+    push_part(&mut parts, &subject_part(&tuple.subject));
+    parts
 }
 
-/// The relation and subject a tuple key names after its object's `prefix`.
-pub(super) fn relation_and_subject(key: &[u8], prefix: &[u8]) -> Result<(String, OwedSubject)> {
+/// The latest sequence staged on one tuple, which only staging reads and
+/// writes.
+pub(super) fn head_key(tuple: &OwedTuple) -> Vec<u8> {
+    [HEAD_PREFIX, &tuple_parts(tuple)].concat()
+}
+
+/// Every live sequence of one object's tuples is a key under this.
+pub(super) fn object_live_prefix(policy_id: &str, resource: &str, object: &str) -> Vec<u8> {
+    [LIVE_PREFIX, &object_parts(policy_id, resource, object)].concat()
+}
+
+/// Every live sequence of one tuple is a key under this.
+pub(super) fn live_prefix(tuple: &OwedTuple) -> Vec<u8> {
+    [LIVE_PREFIX, &tuple_parts(tuple)].concat()
+}
+
+pub(super) fn live_key(tuple: &OwedTuple, seq: u64) -> Vec<u8> {
+    [&live_prefix(tuple)[..], &seq.to_be_bytes()].concat()
+}
+
+/// The sequence a live key under `prefix` names.
+pub(super) fn live_seq(key: &[u8], prefix: &[u8]) -> Result<u64> {
     key.strip_prefix(prefix)
-        .and_then(|rest| {
-            let (relation, rest) = take_text(rest)?;
-            let (subject, rest) = take_part(rest)?;
-            rest.is_empty().then_some(())?;
-            Some((relation, subject_of(subject)?))
-        })
-        .ok_or_else(|| Error::Serialization("owed ACP tuple key is malformed".into()))
+        .and_then(|rest| <[u8; 8]>::try_from(rest).ok())
+        .map(u64::from_be_bytes)
+        .ok_or_else(|| Error::Serialization("owed ACP live key is malformed".into()))
+}
+
+/// The count of deletes naming the actor `did` on one object.
+pub(super) fn subject_key(policy_id: &str, resource: &str, object: &str, did: &Did) -> Vec<u8> {
+    let mut key = [SUBJECT_PREFIX, &object_parts(policy_id, resource, object)].concat();
+    push_part(
+        &mut key,
+        &subject_part(&OwedSubject::Actor { did: did.clone() }),
+    );
+    key
 }
 
 pub(super) fn object_key(policy_id: &str, resource: &str, object: &str) -> Vec<u8> {
-    let mut key = OBJECT_PREFIX.to_vec();
-    for part in [policy_id, resource, object] {
-        push_part(&mut key, part.as_bytes());
-    }
-    key
+    [OBJECT_PREFIX, &object_parts(policy_id, resource, object)].concat()
 }
 
 pub(super) fn actor_key(actor: &Did) -> Vec<u8> {
@@ -160,11 +165,9 @@ pub(super) fn actor_key(actor: &Did) -> Vec<u8> {
 }
 
 /// What is unsettled on one tuple. A change is unsettled while it has a
-/// record, whatever its state: one the provider refused still counts.
-///
-/// Stored as one version byte, then `oldest` and `latest` as eight big-endian
-/// bytes each, then `unsettled` and `deletes` as four each. A tuple nothing is
-/// owed on has no state.
+/// record, whatever its state: one the provider refused still counts. Read
+/// from the tuple's count and its live sequences; a tuple nothing is owed on
+/// has none.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OwedTupleState {
     /// The lowest sequence unsettled on the tuple: a change above it has an
@@ -177,49 +180,6 @@ pub struct OwedTupleState {
     /// How many of them are deletes. While any is, the tuple's subject is
     /// denied, whatever was staged after it.
     pub deletes: u32,
-}
-
-impl OwedTupleState {
-    pub(super) fn encode(&self) -> Vec<u8> {
-        let mut bytes = vec![INDEX_VERSION];
-        bytes.extend_from_slice(&self.oldest.to_be_bytes());
-        bytes.extend_from_slice(&self.latest.to_be_bytes());
-        bytes.extend_from_slice(&self.unsettled.to_be_bytes());
-        bytes.extend_from_slice(&self.deletes.to_be_bytes());
-        bytes
-    }
-
-    pub(super) fn decode(bytes: &[u8]) -> Result<Self> {
-        let fields = match bytes {
-            [INDEX_VERSION, fields @ ..] => <&[u8; 24]>::try_from(fields).ok(),
-            _ => None,
-        }
-        .ok_or_else(|| Error::Serialization("owed ACP tuple state is malformed".into()))?;
-        let u64_at =
-            |at: usize| u64::from_be_bytes(fields[at..at + 8].try_into().unwrap_or([0; 8]));
-        let u32_at =
-            |at: usize| u32::from_be_bytes(fields[at..at + 4].try_into().unwrap_or([0; 4]));
-        Ok(Self {
-            oldest: u64_at(0),
-            latest: u64_at(8),
-            unsettled: u32_at(16),
-            deletes: u32_at(20),
-        })
-    }
-}
-
-/// An object's count of unsettled changes: one version byte and the count as
-/// eight big-endian bytes. An object nothing is owed on has no count.
-pub(super) fn encode_count(count: u64) -> Vec<u8> {
-    [&[INDEX_VERSION][..], &count.to_be_bytes()].concat()
-}
-
-pub(super) fn decode_count(bytes: &[u8]) -> Result<u64> {
-    match bytes {
-        [INDEX_VERSION, count @ ..] => count.try_into().ok().map(u64::from_be_bytes),
-        _ => None,
-    }
-    .ok_or_else(|| Error::Serialization("owed ACP object count is malformed".into()))
 }
 
 #[cfg(test)]
@@ -268,7 +228,7 @@ mod tests {
             tuple(["", "", "", ""], OwedSubject::Wildcard),
             tuple(["a/b", "c", "d", "e"], actor("z")),
             tuple(["a", "b/c", "d", "e"], actor("z")),
-            tuple(["/acp-owed/t/", "q", "o", "n"], actor("z")),
+            tuple(["/acp-owed2/h/", "q", "o", "n"], actor("z")),
             tuple([length_like, "", "c", "d"], actor("z")),
             tuple(["", length_like, "c", "d"], actor("z")),
             tuple([&long, "b", "c", "d"], actor("z")),
@@ -301,34 +261,59 @@ mod tests {
         let tuples = adversarial_tuples();
         for (i, left) in tuples.iter().enumerate() {
             for right in &tuples[i + 1..] {
-                assert_ne!(tuple_key(left), tuple_key(right));
+                assert_ne!(head_key(left), head_key(right));
             }
         }
     }
 
     #[test]
-    fn a_tuple_key_names_its_object_relation_and_subject() {
-        for tuple in adversarial_tuples() {
-            let key = tuple_key(&tuple);
-            let prefix = object_tuples_prefix(&tuple.policy_id, &tuple.resource, &tuple.object);
-            assert_eq!(
-                relation_and_subject(&key, &prefix).unwrap(),
-                (tuple.relation.clone(), tuple.subject.clone())
-            );
-        }
-    }
-
-    #[test]
-    fn only_the_tuples_of_an_object_start_with_its_prefix() {
+    fn the_live_keys_of_a_tuple_sort_by_sequence_and_name_only_it() {
         let tuples = adversarial_tuples();
         for owner in &tuples {
-            let prefix = object_tuples_prefix(&owner.policy_id, &owner.resource, &owner.object);
+            let prefix = live_prefix(owner);
+            let seqs = [0, 1, 255, 256, u64::MAX];
+            for pair in seqs.windows(2) {
+                assert!(live_key(owner, pair[0]) < live_key(owner, pair[1]));
+            }
+            for seq in seqs {
+                assert_eq!(live_seq(&live_key(owner, seq), &prefix).unwrap(), seq);
+            }
             for other in &tuples {
-                let same_object = (&owner.policy_id, &owner.resource, &owner.object)
-                    == (&other.policy_id, &other.resource, &other.object);
-                assert_eq!(tuple_key(other).starts_with(&prefix), same_object);
+                assert_eq!(live_key(other, 7).starts_with(&prefix), owner == other);
             }
         }
+        let prefix = live_prefix(&tuples[0]);
+        assert!(live_seq(&prefix, &prefix).is_err());
+        assert!(live_seq(&[prefix.as_slice(), &[0; 9]].concat(), &prefix).is_err());
+    }
+
+    #[test]
+    fn subject_keys_differ_by_object_and_actor() {
+        let mut keys = Vec::new();
+        for tuple in adversarial_tuples() {
+            for name in ["z", "zz"] {
+                let did = Did::new(format!("did:key:{name}")).unwrap();
+                keys.push(subject_key(
+                    &tuple.policy_id,
+                    &tuple.resource,
+                    &tuple.object,
+                    &did,
+                ));
+            }
+        }
+        let count = keys.len();
+        keys.sort();
+        keys.dedup();
+        // The same object appears more than once in the tuples above.
+        let mut objects: Vec<_> = adversarial_tuples()
+            .into_iter()
+            .map(|tuple| (tuple.policy_id, tuple.resource, tuple.object))
+            .collect();
+        objects.sort();
+        objects.dedup();
+        assert_eq!(keys.len(), objects.len() * 2);
+        assert!(count >= keys.len());
+        assert!(keys.iter().all(|key| key.starts_with(SUBJECT_PREFIX)));
     }
 
     #[test]
@@ -350,16 +335,23 @@ mod tests {
 
         for key in &keys {
             assert!(key.starts_with(OBJECT_PREFIX));
-            assert!(!key.starts_with(TUPLE_PREFIX) && !key.starts_with(QUEUE_PREFIX));
+            assert!(!key.starts_with(HEAD_PREFIX) && !key.starts_with(QUEUE_PREFIX));
         }
         for reserved in [UNSETTLED_KEY, SEQUENCE_KEY] {
-            for space in [QUEUE_PREFIX, TUPLE_PREFIX, OBJECT_PREFIX, ACTOR_PREFIX] {
+            for space in [
+                QUEUE_PREFIX,
+                LIVE_PREFIX,
+                HEAD_PREFIX,
+                OBJECT_PREFIX,
+                SUBJECT_PREFIX,
+                ACTOR_PREFIX,
+            ] {
                 assert!(!reserved.starts_with(space));
             }
         }
         let actor = actor_key(&Did::new("did:key:owner").unwrap());
         assert!(actor.starts_with(ACTOR_PREFIX));
-        for space in [QUEUE_PREFIX, TUPLE_PREFIX, OBJECT_PREFIX] {
+        for space in [QUEUE_PREFIX, HEAD_PREFIX, OBJECT_PREFIX] {
             assert!(!actor.starts_with(space));
         }
     }
@@ -373,54 +365,25 @@ mod tests {
         assert!(queue_key(u64::MAX).starts_with(&queue_prefix()));
     }
 
+    /// Where the layout before the counts were split lived.
+    const LEGACY_PREFIX: &[u8] = b"/acp-owed/";
+
     #[test]
-    fn a_malformed_tuple_key_is_refused() {
+    fn no_key_of_the_layout_starts_with_the_legacy_root() {
         let tuple = tuple(["a", "b", "c", "d"], actor("z"));
-        let prefix = object_tuples_prefix("a", "b", "c");
-        let mut key = tuple_key(&tuple);
-        key.push(0);
-        assert!(relation_and_subject(&key, &prefix).is_err());
-        key.truncate(key.len() - 3);
-        assert!(relation_and_subject(&key, &prefix).is_err());
-        assert!(relation_and_subject(&prefix, &prefix).is_err());
-    }
-
-    #[test]
-    fn the_tuple_state_and_the_count_round_trip() {
-        for (oldest, latest, unsettled, deletes) in [
-            (0, 0, 1, 0),
-            (9, 12, 2, 1),
-            (u64::MAX, u64::MAX, u32::MAX, u32::MAX),
+        let did = Did::new("did:key:z").unwrap();
+        for key in [
+            queue_key(1),
+            live_key(&tuple, 1),
+            head_key(&tuple),
+            object_key("a", "b", "c"),
+            subject_key("a", "b", "c", &did),
+            actor_key(&did),
+            discard_key(1),
+            UNSETTLED_KEY.to_vec(),
+            SEQUENCE_KEY.to_vec(),
         ] {
-            let state = OwedTupleState {
-                oldest,
-                latest,
-                unsettled,
-                deletes,
-            };
-            assert_eq!(OwedTupleState::decode(&state.encode()).unwrap(), state);
+            assert!(!key.starts_with(LEGACY_PREFIX), "{key:?}");
         }
-        let state = OwedTupleState {
-            oldest: 258,
-            latest: 259,
-            unsettled: 3,
-            deletes: 2,
-        };
-        let bytes = [
-            1, 0, 0, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 0, 0, 1, 3, 0, 0, 0, 3, 0, 0, 0, 2,
-        ];
-        assert_eq!(state.encode(), bytes);
-        let mut unknown = bytes;
-        unknown[0] = 2;
-        assert!(OwedTupleState::decode(&unknown).is_err());
-        assert!(OwedTupleState::decode(&bytes[..24]).is_err());
-        assert!(OwedTupleState::decode(&[bytes.as_slice(), &[0]].concat()).is_err());
-
-        for count in [1, 256, u64::MAX] {
-            assert_eq!(decode_count(&encode_count(count)).unwrap(), count);
-        }
-        assert_eq!(encode_count(258), [1, 0, 0, 0, 0, 0, 0, 1, 2]);
-        assert!(decode_count(&[1, 0]).is_err());
-        assert!(decode_count(&[2, 0, 0, 0, 0, 0, 0, 0, 1]).is_err());
     }
 }

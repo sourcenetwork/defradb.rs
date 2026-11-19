@@ -43,6 +43,7 @@ pub use changes::{
 pub use deny::{OwedDenial, OwedDenials};
 pub use journal::{OwedJournal, PreparedRequest, RequestOutcome};
 pub use keys::OwedTupleState;
+pub(crate) use ops::legacy_changes;
 pub use ops::MAX_DISCARD_NOTES;
 pub use record::{
     run_epoch, InFlight, NewOwedChange, OwedAuthority, OwedChange, OwedOp, OwedState, OwedSubject,

@@ -18,18 +18,20 @@ pub const MAX_OWED_CHANGES_PER_TRANSACTION: u32 = 256;
 /// [`OwedChanges::with_node_limit`] sets another bound.
 pub const MAX_UNSETTLED_OWED_CHANGES: u64 = 10_000;
 
-/// How close to the node's bound its count is read validated. Below that the
-/// count is read as every staging transaction merges into it, without a
-/// conflict; from there on transactions that stage commit one after another,
-/// each having read the count the one before it left. The bound then holds
-/// unless transactions staging together, each below this margin when it
-/// read, add more than the margin between them.
-pub const VALIDATED_WITHIN_OF_NODE_LIMIT: u64 = 4 * MAX_OWED_CHANGES_PER_TRANSACTION as u64;
-
 /// The most changes one acting DID holds unsettled on a node. A change that
 /// is parked stays unsettled, so without this bound one actor's parked
 /// changes could take the whole of the node's.
 pub const MAX_UNSETTLED_OWED_CHANGES_PER_ACTOR: u64 = 1_000;
+
+/// How close to the node's bound its count is read validated. Below that the
+/// count is read without validation, as every staging and settling
+/// transaction merges into it; from there on it is read validated on what was
+/// staged only, so transactions that stage there commit one after another,
+/// each having read the count the one before it left, while a settle aborts
+/// none of them. The bound then holds unless transactions staging together,
+/// each below this margin when it read, add more than the margin between
+/// them.
+pub const VALIDATED_WITHIN_OF_NODE_LIMIT: u64 = 4 * MAX_OWED_CHANGES_PER_TRANSACTION as u64;
 
 /// Records read into memory per page of the queue, bounded by their encoded
 /// size.
@@ -111,10 +113,10 @@ impl OwedChanges {
     ///
     /// The node's bound and the acting DID's are checked against what this
     /// transaction sees. Near the node's bound its count is read validated
-    /// ([`VALIDATED_WITHIN_OF_NODE_LIMIT`]), so callers acting as many
-    /// identities at once cannot together pass it there; the acting DID's
-    /// bound is read without validation, and transactions staging at once may
-    /// pass it by what they stage together.
+    /// on what was staged ([`VALIDATED_WITHIN_OF_NODE_LIMIT`]), so callers
+    /// acting as many identities at once cannot together pass it there; the
+    /// acting DID's bound is read without validation, and transactions
+    /// staging at once may pass it by what they stage together.
     pub async fn stage(&self, new: NewOwedChange) -> Result<OwedChange> {
         let view = self.active_view()?;
         if self.staged.get() >= MAX_OWED_CHANGES_PER_TRANSACTION {

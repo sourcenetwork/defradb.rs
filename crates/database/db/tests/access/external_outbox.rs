@@ -42,33 +42,33 @@ pub(super) fn owed(tuple: &OwedTuple, op: OwedOp) -> NewOwedChange {
     }
 }
 
-struct Outbox {
-    store: Arc<RegolithStore>,
-    gate: Gate,
+pub(super) struct Outbox {
+    pub(super) store: Arc<RegolithStore>,
+    pub(super) gate: Gate,
 }
 
 impl Outbox {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let gate = gate(&RemoteAcp::new(), store.clone());
         Self { store, gate }
     }
 
-    async fn begin(&self) -> (BasicTxn, OwedChanges) {
+    pub(super) async fn begin(&self) -> (BasicTxn, OwedChanges) {
         let txn = BasicTxn::new(self.store.as_ref(), 0, false).await.unwrap();
         let changes = self.gate.owed_changes(&txn.acpstore(), StagedCount::new());
         (txn, changes)
     }
 
     /// Stage one change in a transaction of its own and commit it.
-    async fn commit(&self, tuple: &OwedTuple, op: OwedOp) -> u64 {
+    pub(super) async fn commit(&self, tuple: &OwedTuple, op: OwedOp) -> u64 {
         let (txn, changes) = self.begin().await;
         let seq = changes.stage(owed(tuple, op)).await.unwrap().seq;
         txn.commit().await.unwrap();
         seq
     }
 
-    async fn settle(&self, seq: u64) -> bool {
+    pub(super) async fn settle(&self, seq: u64) -> bool {
         let (txn, changes) = self.begin().await;
         let settled = changes.settle(seq).await.unwrap();
         txn.commit().await.unwrap();
@@ -76,7 +76,7 @@ impl Outbox {
     }
 
     /// The sequences of the whole queue, read a page at a time.
-    async fn queue(&self) -> Vec<u64> {
+    pub(super) async fn queue(&self) -> Vec<u64> {
         let (txn, changes) = self.begin().await;
         let mut seqs = Vec::new();
         loop {
@@ -92,7 +92,7 @@ impl Outbox {
 
     /// What is committed about one tuple: its state, its object's count and
     /// the node's.
-    async fn committed(&self, tuple: &OwedTuple) -> (Option<OwedTupleState>, u64, u64) {
+    pub(super) async fn committed(&self, tuple: &OwedTuple) -> (Option<OwedTupleState>, u64, u64) {
         let (txn, changes) = self.begin().await;
         let state = (
             changes.tuple(tuple).await.unwrap(),
@@ -118,7 +118,7 @@ fn held(oldest: u64, latest: u64, unsettled: u32, deletes: u32) -> Option<OwedTu
     })
 }
 
-fn is_conflict(error: datastore::Error) -> bool {
+pub(super) fn is_conflict(error: datastore::Error) -> bool {
     matches!(error, datastore::Error::Storage(error) if error.is_txn_conflict())
 }
 
@@ -507,56 +507,6 @@ fn a_node_holds_no_more_unsettled_changes_than_its_bound() {
             .await
             .unwrap();
         txn.commit().await.unwrap();
-        assert_eq!(outbox.queue().await.len(), 3);
-    })
-    .unwrap()
-}
-
-/// Near the node's bound every staging transaction reads the count
-/// validated, so two that stage at once, under identities of their own,
-/// commit one after the other and cannot pass the bound together; far from
-/// it they do not conflict.
-#[test]
-fn near_the_node_bound_transactions_that_stage_at_once_commit_one_after_the_other() {
-    workers::block_on(async {
-        let outbox = Outbox::new();
-        let under = |acting: Did, object: &str| NewOwedChange {
-            actor: acting,
-            ..owed(&tuple(object, "reader", actor(bob())), OwedOp::Add)
-        };
-        let race = |limit: u64| {
-            let outbox = &outbox;
-            async move {
-                let (first, first_changes) = outbox.begin().await;
-                let (second, second_changes) = outbox.begin().await;
-                let suffix = limit.to_string();
-                first_changes
-                    .with_node_limit(limit)
-                    .stage(under(alice(), &format!("one-{suffix}")))
-                    .await
-                    .unwrap();
-                second_changes
-                    .with_node_limit(limit)
-                    .stage(under(mallory(), &format!("two-{suffix}")))
-                    .await
-                    .unwrap();
-                first.commit().await.unwrap();
-                second.commit().await
-            }
-        };
-
-        let far = acp::outbox::VALIDATED_WITHIN_OF_NODE_LIMIT + 2;
-        assert!(
-            race(far).await.is_ok(),
-            "far from the bound nothing conflicts"
-        );
-        assert!(
-            matches!(
-                race(3).await,
-                Err(datastore::Error::Storage(error)) if error.is_txn_conflict()
-            ),
-            "near the bound the later commit conflicts and its re-run reads the count again"
-        );
         assert_eq!(outbox.queue().await.len(), 3);
     })
     .unwrap()

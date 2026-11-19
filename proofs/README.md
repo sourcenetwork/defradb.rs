@@ -57,7 +57,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | JWT issuer / algorithm binding | TLA+ | identity |
 | CID content-addressing determinism + Block canonicalization | Lean | defra-core |
 | Deferred-ACP overlay consistency | TLA+ | query |
-| ACP outbox and owed registrations | TLA+ | acp, db, query, defra-node, vera (the drainer's in-flight mark, journal and batches, #3065; the creator's owed grants specified before the code, #2954) |
+| ACP outbox and owed registrations | TLA+ & Lean | acp, db, query, defra-node, storage, vera (owed relationship changes specified before the code, #2954; owed counts in staged and settled parts, #3070; the drainer's in-flight mark, journal and batches, #3065) |
 | Order-preserving key encoding | Lean | storage |
 | vera.rs actor spelling | Lean | vera |
 | vera.rs delegation signing | Lean | vera |

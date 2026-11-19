@@ -4,8 +4,9 @@
 //! A database has one operator, so [`DefraMergeOperator`] serves every
 //! operand kind: standalone counters and full-text statistics (sums), document
 //! values (part operands, `crdt::stored`), and HNSW nodes and metadata
-//! (link additions and counts, [`vector`]), and head sets (per-name functions on
-//! a set of heads, each name one part, [`head_set`]). Each operand names its
+//! (link additions and counts, [`vector`]), head sets (per-name functions on
+//! a set of heads, each name one part, [`head_set`]), and owed ACP state (four
+//! counters, each one part, [`owed`]). Each operand names its
 //! kind after a versioned magic, so the operator dispatches on the operand
 //! itself. Base values keep their typed big-endian representation; operands
 //! are never exposed as materialized values. The store installs it when it
@@ -25,7 +26,9 @@ const VECTOR_LINKS: u8 = 6;
 const VECTOR_COUNTS: u8 = 7;
 const HEAD_SET: u8 = 8;
 const HEAD_SET_STATE: u8 = 9;
+const OWED: u8 = 10;
 pub mod head_set;
+pub mod owed;
 pub mod vector;
 
 /// What every operand of `kind` starts with.
@@ -136,6 +139,9 @@ impl MergeOperator for DefraMergeOperator {
         if kind == HEAD_SET {
             return head_set::full(base, operands);
         }
+        if kind == OWED {
+            return owed::full(base, operands);
+        }
         if kind == DOCUMENT {
             let mut document = match base {
                 Some(bytes) => StoredDocument::decode(bytes)?,
@@ -191,6 +197,9 @@ impl MergeOperator for DefraMergeOperator {
         if let Some((HEAD_SET, bytes)) = decode(operand) {
             return head_set::touches(bytes, parts);
         }
+        if let Some((OWED, _)) = decode(operand) {
+            return owed::touches(operand, parts);
+        }
         let Some((DOCUMENT, bytes)) = decode(operand) else {
             return true;
         };
@@ -206,6 +215,9 @@ impl MergeOperator for DefraMergeOperator {
         }
         if matches!(decode(left), Some((VECTOR_LINKS, _))) {
             return vector::fold(left, right);
+        }
+        if matches!(decode(left), Some((OWED, _))) {
+            return owed::fold(left, right);
         }
         if let (Some((DOCUMENT, left)), Some((DOCUMENT, right))) = (decode(left), decode(right)) {
             let mut left = StoredDocument::decode(left)?;
