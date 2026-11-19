@@ -84,8 +84,9 @@ impl VeraRsProvider {
         if let Some(wire) = worker.pending().map(<[u8]>::to_vec) {
             let tx = NativeTx::decode_wire(&wire).map_err(unavailable)?;
             let retry = tx.target == ACP_ADDRESS && tx.calldata == data;
-            let note = if retry { Note::Skip } else { Note::Keep };
-            let (recovered, confirmed) = self.resolve_pending(worker, wire, note).await?;
+            // Noted even when its bytes are ours: the drainer may have
+            // journaled them and know the request by its digest alone.
+            let (recovered, confirmed) = self.resolve_pending(worker, wire, Note::Keep).await?;
             worker = recovered;
             if retry {
                 return successful(confirmed);
