@@ -455,6 +455,7 @@ where
     })
 }
 
+#[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
 pub(crate) async fn resolve_inputs_with_projection<S>(
     db: &DB<S>,
     context: &defra_core::RequestContext,

@@ -151,6 +151,9 @@ type ProjectionAuthorities =
     HopscotchMap<PreparedInputRequest, Arc<acp::outbox::PreparedRelationship>, RandomState>;
 
 impl Default for PreparedInputMemo {
+    // A prepared authority holds the document ACP, which wasm32 does not
+    // require to be `Send`; that target runs one thread.
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     fn default() -> Self {
         Self {
             answers: Arc::new(HopscotchMap::with_hasher(RandomState::default())),

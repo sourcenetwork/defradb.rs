@@ -359,6 +359,10 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             prepared.mutations.insert(mutation.output_name(), entry);
         }
         prepared.parsed = Some(Arc::new(parsed));
-        Ok(Some(Arc::new(prepared)))
+        // Its input memo holds prepared authorities that wasm32 does not
+        // require to be `Send`; that target runs one thread.
+        #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
+        let prepared = Arc::new(prepared);
+        Ok(Some(prepared))
     }
 }

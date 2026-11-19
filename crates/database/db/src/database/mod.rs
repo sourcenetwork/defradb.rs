@@ -796,6 +796,7 @@ impl<S: Store> DB<S> {
     }
 
     /// Reconcile a trusted projection before exposing the node to requests.
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     pub async fn reconcile_document_projector(&self) -> Result<()>
     where
         S: 'static,

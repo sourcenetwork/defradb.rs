@@ -29,6 +29,7 @@ pub(crate) struct ProjectionInputs(pub query::prepared::PreparedInputMemo);
 /// Bind the request's context and prepared inputs to `view` for the host's
 /// document projector. Without a projector the view is returned as it is: a
 /// mutation pays nothing for a projection it does not run.
+#[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
 pub(crate) fn bind_projection(
     view: NamespaceView,
     context: &defra_core::RequestContext,
@@ -60,6 +61,7 @@ impl datastore::multistore::ProjectionAcpInputs for ProjectionInputs {
         self.0.get(&request)
     }
 
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     fn authority(
         &self,
         bytes: &[u8],
