@@ -6,7 +6,7 @@
 \* What must never happen: an answer assembled from proofs of different roots.
 \* The code: exact_relationship::query in
 \* crates/engine/vera/src/vera_rs/provider/exact_relationship.rs, which compares
-\* every proof's module_state_root with the policy's and refuses a mismatch.
+\* every proof's module_state_root with the policy's (at_policy_root) and refuses a mismatch.
 EXTENDS Naturals
 \* Bug accepts an answer whatever roots its proofs name.
 CONSTANT Bug

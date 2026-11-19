@@ -106,6 +106,16 @@ theorem unregistered_denied (i : Input) (h : i.registered = false) :
 theorem invalid_relation_denied (i : Input) (h : i.relationValid = false) :
     mayProject i = false := by simp [mayProject, h]
 
+/-- Reconciliation lifts only the same-document guard: any projection that
+may publish, on any document, still acts as the request's actor, under that
+actor's node permission and its own document authority. A projector never
+grants what its requester could not grant directly. -/
+theorem projection_keeps_requester_authority (i : Input) (h : mayProject i = true) :
+    i.actorMatches = true ∧ i.operationAllowed = true ∧ i.dacAllowed = true := by
+  -- `mayProject` is a conjunction; each of the three is one of its conjuncts.
+  simp [mayProject] at h
+  simp_all
+
 /-- An external provider cannot join the document transaction. A projected
 change may be staged only when the transaction retains the actor's own
 authority, the target is supported, and the outbox shares that transaction. -/

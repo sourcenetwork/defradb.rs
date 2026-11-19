@@ -747,6 +747,10 @@ RUNS=(
   "MC_GenesisReadAccess_Red_Address.cfg GenesisReadAccess.tla RED" # INV_OptedIn
   "MC_GenesisReadAccess_Red_Unsigned.cfg GenesisReadAccess.tla RED" # INV_SignedOnly
   "MC_GenesisReadAccess_Red_Config.cfg GenesisReadAccess.tla RED" # INV_OptedIn
+  "MC_ProjectionNoEscalation_Green.cfg ProjectionNoEscalation.tla GREEN" # a projection grants only what its requester could grant directly
+  "MC_ProjectionNoEscalation_Red_Nac.cfg ProjectionNoEscalation.tla RED" # INV_NoEscalation
+  "MC_ProjectionNoEscalation_Red_Authority.cfg ProjectionNoEscalation.tla RED" # INV_NoEscalation
+  "MC_ProjectionNoEscalation_Red_Owner.cfg ProjectionNoEscalation.tla RED" # INV_NoOwner
   "MC_ProjectionRelationship_Green.cfg ProjectionRelationship.tla GREEN"
   "MC_ExactRelationshipObservation_Green.cfg ExactRelationshipObservation.tla GREEN"
   "MC_ExactRelationshipObservation_Red.cfg ExactRelationshipObservation.tla RED"

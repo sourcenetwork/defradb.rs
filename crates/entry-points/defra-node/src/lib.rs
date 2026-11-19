@@ -1750,6 +1750,9 @@ mod document_projector_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 #[path = "../tests/unit/projection_access_notification.rs"]
 mod projection_access_notification_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "../tests/unit/related_projection.rs"]
+mod related_projection_tests;
 #[cfg(test)]
 #[path = "../tests/unit/userset_manager.rs"]
 mod userset_manager_tests;
