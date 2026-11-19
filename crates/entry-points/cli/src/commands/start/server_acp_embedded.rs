@@ -86,6 +86,7 @@ pub(super) async fn setup(
             transport.clone(),
             transport,
             node.consensus_key(),
+            vera::vera_rs::GenesisSource::Hosted,
             actor_key,
             worker,
             &tuning,

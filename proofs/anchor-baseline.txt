@@ -13,6 +13,8 @@
 # no_such_module.rs, no_such_sibling.rs -> proofs/src/anchor.rs break-test fixtures
 # atom.rs, once_cell.rs, range_rule.rs, statistics.rs -> regolith source cited by its models
 # header_sync.rs                        -> acp-light-client source cited by VerifiedRead
+# term.rs                               -> acp-light-client source cited by VerifiedRead
+#                                          and FollowDeployment
 # coop.rs                               -> nuclei's own source (its cooperative budget),
 #                                          cited by proofs/tla/PgWire.tla (#2337)
 claim.rs
@@ -29,6 +31,7 @@ transition.rs
 watcher.rs
 atom.rs
 header_sync.rs
+term.rs
 once_cell.rs
 range_rule.rs
 statistics.rs

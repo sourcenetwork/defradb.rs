@@ -703,6 +703,15 @@ pub struct AcpConfig {
     #[serde(default)]
     pub vera_consensus_key: String,
 
+    /// Identifier of the Vera deployment's genesis block from operator
+    /// configuration (hex). With it the node follows the deployment when
+    /// another of the account's devices becomes the active one; without it
+    /// every term above 0 is refused and, after such a switch, every verified
+    /// read fails until it is set.
+    #[cfg(feature = "vera")]
+    #[serde(default)]
+    pub vera_genesis_id: String,
+
     /// Vera deployment identifier used to bind native submissions.
     #[cfg(feature = "vera")]
     #[serde(default)]
@@ -792,6 +801,8 @@ impl Default for AcpConfig {
             vera_rs_address: String::new(),
             #[cfg(feature = "vera")]
             vera_consensus_key: String::new(),
+            #[cfg(feature = "vera")]
+            vera_genesis_id: String::new(),
             #[cfg(feature = "vera")]
             vera_deployment_id: None,
             #[cfg(feature = "embedded-vera")]

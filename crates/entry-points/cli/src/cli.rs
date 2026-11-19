@@ -139,6 +139,13 @@ pub struct Cli {
     #[arg(long, global = true, env = "DEFRA_VERA_CONSENSUS_KEY")]
     pub vera_consensus_key: Option<String>,
 
+    /// Identifier of the Vera deployment's genesis block from operator
+    /// configuration (hex). Without it a switch of the deployment's active
+    /// device stops every verified read.
+    #[cfg(feature = "vera")]
+    #[arg(long, global = true, env = "DEFRA_VERA_GENESIS_ID")]
+    pub vera_genesis_id: Option<String>,
+
     /// Vera deployment identifier from operator configuration
     #[cfg(feature = "vera")]
     #[arg(long, global = true, env = "DEFRA_VERA_DEPLOYMENT_ID")]

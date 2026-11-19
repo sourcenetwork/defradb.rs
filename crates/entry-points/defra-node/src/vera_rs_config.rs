@@ -14,6 +14,15 @@ pub struct VeraRsConfig {
     /// Hex consensus key that proofs are verified against. It must come from
     /// the deployment's operators, not from the node being asked.
     pub consensus_key: String,
+    /// The identifier of the deployment's genesis block. Like the consensus
+    /// key, it must come from the deployment's operators, not from the node
+    /// being asked. With it the node follows the deployment when another of
+    /// the account's devices becomes the active one: a later term is taken
+    /// under its certificate, and what the switch voided is checked again.
+    /// Without it every term above 0 is refused, as before terms existed:
+    /// after a switch every verified read fails, and access decisions with
+    /// them, until it is configured. The start says so in a warning.
+    pub genesis_id: Option<[u8; 32]>,
     /// The deployment the node's worker signs for.
     pub deployment_id: u64,
     /// The actor that owns this node's policies.
@@ -33,6 +42,7 @@ impl fmt::Debug for VeraRsConfig {
             .debug_struct("VeraRsConfig")
             .field("rpc_address", &self.rpc_address)
             .field("consensus_key", &self.consensus_key)
+            .field("genesis_id", &self.genesis_id.map(hex::encode))
             .field("deployment_id", &self.deployment_id)
             .field("worker_dir", &self.worker_dir)
             .field("tuning", &self.tuning)
@@ -44,6 +54,7 @@ impl PartialEq for VeraRsConfig {
     fn eq(&self, other: &Self) -> bool {
         self.rpc_address == other.rpc_address
             && self.consensus_key == other.consensus_key
+            && self.genesis_id == other.genesis_id
             && self.deployment_id == other.deployment_id
             && self.actor == other.actor
             && self.worker_dir == other.worker_dir
