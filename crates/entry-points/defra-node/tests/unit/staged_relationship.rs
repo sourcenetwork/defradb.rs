@@ -169,6 +169,11 @@ impl Remote {
         }
     }
 
+    /// How many writes reached the provider and were not taken yet.
+    fn pending_writes(&self) -> usize {
+        self.writes.len()
+    }
+
     pub(super) fn take_writes(&self) -> Vec<(bool, String, String)> {
         std::iter::from_fn(|| self.writes.pop()).collect()
     }
@@ -210,12 +215,14 @@ impl Remote {
             _ => "*".to_string(),
         };
         let key = (object.to_string(), relation.to_string(), subject.clone());
+        // Told before the tuple changes: a test that sees the tuple change
+        // finds the write among the notifications.
+        self.writes.push((add, object.to_string(), subject));
         let changed = if add {
             self.tuples.insert(key, ()).is_none()
         } else {
             self.tuples.remove(&key).is_some()
         };
-        self.writes.push((add, object.to_string(), subject));
         Ok(changed)
     }
 }
@@ -844,7 +851,7 @@ fn a_staged_grant_waits_for_the_provider_and_a_staged_revocation_does_not() {
         remote.cut_off(&doc, false);
         eventually(
             "the drainer did not submit what is owed on the document",
-            || async { remote.holds(&doc, CALLER) },
+            || async { remote.pending_writes() == 2 && remote.holds(&doc, CALLER) },
         )
         .await;
         assert_eq!(
@@ -1101,7 +1108,7 @@ fn a_commit_returns_at_the_deadline_with_the_change_still_staged() {
         remote.cut_off(&doc, false);
         eventually(
             "the drainer did not submit what is owed on the document",
-            || async { remote.holds(&doc, CALLER) },
+            || async { remote.pending_writes() == 2 && remote.holds(&doc, CALLER) },
         )
         .await;
         assert_eq!(
