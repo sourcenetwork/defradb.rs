@@ -732,6 +732,11 @@ RUNS=(
   "MC_AdministrativeRelationship_Red_Revocation.cfg AdministrativeRelationship.tla RED" # INV_Revocation
   "MC_AdministrativeRelationship_Red_Rollback.cfg AdministrativeRelationship.tla RED" # INV_Rollback
   "MC_AdministrativeRelationship_Red_Route.cfg AdministrativeRelationship.tla RED" # INV_EmbedderRoute
+  "MC_GenesisReadAccess_Green.cfg GenesisReadAccess.tla GREEN" # a signed genesis grants its opted-in reader once, at the first registration
+  "MC_GenesisReadAccess_Red_Replay.cfg GenesisReadAccess.tla RED" # INV_RevocationStands
+  "MC_GenesisReadAccess_Red_Address.cfg GenesisReadAccess.tla RED" # INV_OptedIn
+  "MC_GenesisReadAccess_Red_Unsigned.cfg GenesisReadAccess.tla RED" # INV_SignedOnly
+  "MC_GenesisReadAccess_Red_Config.cfg GenesisReadAccess.tla RED" # INV_OptedIn
   "MC_ProjectionRelationship_Green.cfg ProjectionRelationship.tla GREEN"
   "MC_ExactRelationshipObservation_Green.cfg ExactRelationshipObservation.tla GREEN"
   "MC_ExactRelationshipObservation_Red.cfg ExactRelationshipObservation.tla RED"

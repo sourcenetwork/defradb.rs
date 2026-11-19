@@ -283,6 +283,9 @@ lean_lib ProjectionRelationship where
 lean_lib ExactRelationshipObservation where
 
 @[default_target]
+lean_lib EnrollmentGenesis where
+
+@[default_target]
 lean_lib CommitConflictReceipt where
 
 @[default_target]

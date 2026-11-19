@@ -152,27 +152,21 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     {
                         state.genesis_reader = context.collection.as_ref().and_then(|collection| {
                             let binding = collection.schema().policy.as_ref()?;
-                            let access = datastore.genesis_read_access(
-                                collection.name(),
-                                &binding.id,
-                                &binding.resource_name,
-                            )?;
-                            let field = match access {
-                                datastore::multistore::GenesisReadAccess::Public => {
-                                    return Some(identity::Did::wildcard())
-                                }
-                                datastore::multistore::GenesisReadAccess::AddressedBy(field) => {
-                                    field
-                                }
-                            };
-                            let data = payload
-                                .fields
-                                .get(field)
-                                .filter(|_| immutable_fields.contains(field))?;
-                            let address: String = ciborium::from_reader(&data[..]).ok()?;
-                            self.db
-                                .node_did()
-                                .filter(|receiver| receiver.as_str() == address)
+                            super::genesis_access::genesis_reader(
+                                datastore.genesis_read_access(
+                                    collection.name(),
+                                    &binding.id,
+                                    &binding.resource_name,
+                                ),
+                                |field| {
+                                    payload
+                                        .fields
+                                        .get(field)
+                                        .filter(|_| immutable_fields.contains(field))
+                                        .map(|data| &data[..])
+                                },
+                                self.db.node_did().as_ref(),
+                            )
                         });
                     }
                     state
