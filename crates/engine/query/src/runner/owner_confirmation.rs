@@ -15,7 +15,7 @@ use defra_core::RequestContext;
 use super::{DocFetcher, QueryRunner};
 use crate::error::TransactionError;
 use crate::prepared::PreparedInputMemo;
-use crate::txn::{txn_job, TransactionHandle, TransactionRegistry};
+use crate::txn::{TransactionHandle, TransactionRegistry};
 
 impl<F, R> QueryRunner<F, R>
 where
@@ -23,9 +23,9 @@ where
     R: TransactionRegistry,
 {
     /// Commit `handle`, confirming first what its transaction was told by the
-    /// provider. A transaction told nothing commits as it always did, after
-    /// one look at what it kept; on a provider that joins transactions there
-    /// is nothing to look at. A
+    /// provider. The look and the commit are one step where the transaction
+    /// lives, so a transaction told nothing commits as it always did; on a
+    /// provider that joins transactions there is nothing to look at. A
     /// provider that cannot be reached refuses the commit retryably, with
     /// nothing committed and the transaction still open.
     pub(super) async fn commit_confirming(
@@ -37,22 +37,9 @@ where
         if self.acp.supports_transactions() {
             return self.registry.commit_as(context, handle).await;
         }
-        let job = txn_job(|turn| {
-            Box::pin(async move {
-                Ok::<_, TransactionError>(
-                    turn.context()?
-                        .observed_owners()
-                        .map(|observed| observed.requests())
-                        .unwrap_or_default(),
-                )
-            })
-        });
-        let requests = self
-            .registry
-            .run_as(context, handle, self.deadline(), job)
-            .await??;
+        let requests = self.registry.commit_unless_told_as(context, handle).await?;
         let Some((first, rest)) = requests.split_first() else {
-            return self.registry.commit_as(context, handle).await;
+            return Ok(());
         };
         // One wave of prepared inputs, keyed by the exact request bytes, as
         // every other input a transaction step waits for at the edge.

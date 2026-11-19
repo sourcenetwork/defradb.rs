@@ -150,6 +150,22 @@ where
         self.take()?.force_commit().await
     }
 
+    /// Commits the transaction, unless a provider told it owners its commit
+    /// must confirm first: then it is kept, and the requests to confirm
+    /// come back.
+    pub(crate) async fn commit_unless_told(
+        mut self,
+    ) -> crate::txn::owner::Ending<Self, Result<Vec<query::prepared::PreparedInputRequest>>> {
+        let requests = match self.alone() {
+            Ok(txn) => txn.observed_owner_requests(),
+            Err(error) => return crate::txn::owner::Ending::Ended(Err(error)),
+        };
+        if requests.is_empty() {
+            return crate::txn::owner::Ending::Ended(self.commit().await.map(|()| requests));
+        }
+        crate::txn::owner::Ending::Kept(self, Ok(requests))
+    }
+
     /// Commits the transaction when every provider owner answer it kept is
     /// confirmed as exactly itself by `confirmations`; otherwise rolls it
     /// back and fails with [`Error::OwnerChanged`].

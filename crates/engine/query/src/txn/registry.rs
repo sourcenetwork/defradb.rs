@@ -124,6 +124,20 @@ pub trait TransactionRegistry: MaybeSendSync + 'static {
         context.mirror(self.commit(handle)).await
     }
 
+    /// [`Self::commit_as`], in one step where the transaction lives, unless
+    /// a provider that cannot join the transaction told it owners
+    /// ([`ObservedOwners`](super::ObservedOwners)): then nothing is
+    /// committed, the transaction stays open, and the requests behind those
+    /// answers come back for the edge to read again and hand to
+    /// [`Self::commit_confirmed_as`]. Empty when it committed.
+    async fn commit_unless_told_as(
+        &self,
+        context: &RequestContext,
+        handle: &TransactionHandle,
+    ) -> std::result::Result<Vec<crate::prepared::PreparedInputRequest>, TransactionError> {
+        self.commit_as(context, handle).await.map(|()| Vec::new())
+    }
+
     /// [`Self::commit_as`] for a transaction that used provider owner
     /// answers: it commits only when every one is confirmed as exactly itself
     /// by `confirmations`, the provider's answers read again at the edge.

@@ -190,7 +190,10 @@ BeginCommit ==
                  confirmed, confirmRev, atCommit, changes>>
 
 \* The edge reads every recorded provider answer again, outside the
-\* transaction. Unreachable: refused, nothing commits.
+\* transaction. Unreachable: refused, nothing commits. A transaction that
+\* recorded no provider answer reads nothing here: its look and its commit are
+\* one step where it lives (commit_unless_told_as), so this action only passes
+\* it on to Commit.
 Confirm ==
   /\ phase = "confirming"
   /\ IF source = "provider" /\ Bug # "no_confirm"

@@ -26,7 +26,7 @@ mod table;
 mod tests;
 
 use std::future::Future;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use defra_core::thread_bounds::MaybeSend;
@@ -324,6 +324,37 @@ where
         ended
     }
 
+    /// [`finish`](Self::finish), where `last` may decide on the transaction
+    /// not to end it ([`Ending::Kept`]): it is put back on its owner for the
+    /// same caller, under the same ID, and later requests find it again.
+    /// Requests that arrived while it was out of the table found none, as for
+    /// any end. Nothing is fenced for a transaction that was kept.
+    pub(crate) async fn finish_unless<R, L>(
+        &self,
+        id: TxnId,
+        key: &K,
+        last: L,
+    ) -> Result<R, Unavailable>
+    where
+        R: MaybeSend + 'static,
+        L: FnOnce(T) -> LocalBoxFuture<'static, Ending<T, R>> + MaybeSend + 'static,
+    {
+        let shared = Arc::downgrade(&self.shared);
+        let keeper = key.clone();
+        self.finish(id, key, move |txn| {
+            Box::pin(async move {
+                match last(txn).await {
+                    Ending::Ended(answer) => answer,
+                    Ending::Kept(txn, answer) => {
+                        reinstate(&shared, id, keeper, txn);
+                        answer
+                    }
+                }
+            })
+        })
+        .await
+    }
+
     /// Lets go of transaction `id` without finishing it, at once and without
     /// waiting: it leaves its owner's table, so no later request finds it and
     /// it no longer counts, and its owner ends it unfinished after the
@@ -444,6 +475,44 @@ fn here() -> Result<usize, Unavailable> {
     workers::current_worker()
         .map(|worker| worker.index)
         .ok_or(Unavailable::Pool(workers::Error::NotOnWorker))
+}
+
+/// How an end that may keep its transaction came out.
+pub(crate) enum Ending<T, R> {
+    /// The transaction ended, with this answer.
+    Ended(R),
+    /// The transaction was not ended: it goes back to its owner, and the
+    /// caller gets the answer.
+    Kept(T, R),
+}
+
+/// Puts `txn` back on the calling worker, its owner, as transaction `id` of
+/// the caller `key`, with a new task and mailbox. A pool that cannot start
+/// the task discards it.
+fn reinstate<T, K>(shared: &Weak<Shared<T, K>>, id: TxnId, key: K, txn: T)
+where
+    T: MaybeSend + 'static,
+    K: Clone + PartialEq + Send + Sync + 'static,
+{
+    let Some(tables) = shared.upgrade() else {
+        return;
+    };
+    let worker = id.owner(tables.tables.len());
+    let (mailbox, inbox) = unbounded();
+    let idle = Arc::new(ArrayQueue::new(1));
+    // The slot is new and holds one: the push cannot find it full.
+    let _ = idle.push(txn);
+    tables.tables[worker].insert(
+        id,
+        Entry {
+            mailbox,
+            idle: Arc::clone(&idle),
+            key,
+        },
+    );
+    if start(actor::own(idle, id, worker, inbox, shared.clone())).is_err() {
+        tables.tables[worker].take(id);
+    }
 }
 
 /// The page's thread is the one worker, whether or not it is driving the

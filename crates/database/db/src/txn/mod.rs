@@ -453,6 +453,15 @@ impl<S: Store> DbTxn<S> {
             .clone()
     }
 
+    /// The requests behind the owners a provider told this transaction, each
+    /// once; none when it was told nothing, without making the record.
+    pub fn observed_owner_requests(&self) -> Vec<query::prepared::PreparedInputRequest> {
+        self.observed_owners
+            .get()
+            .map(|observed| observed.requests())
+            .unwrap_or_default()
+    }
+
     /// The owners a provider that cannot join this transaction told it, kept
     /// for its commit to confirm.
     pub fn observed_owners(&self) -> Arc<query::txn::ObservedOwners> {
