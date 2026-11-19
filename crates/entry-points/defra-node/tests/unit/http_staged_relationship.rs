@@ -143,6 +143,23 @@ impl Served {
         )
     }
 
+    /// An identity token `caller` signs for this node, as a bearer: a sign-in,
+    /// not a delegation.
+    fn identity_token(&self, caller: &identity::RawIdentity) -> String {
+        let address = self
+            .base
+            .trim_start_matches("http://")
+            .trim_end_matches("/api/v0");
+        let token = identity::new_token(
+            caller,
+            Duration::from_secs(60),
+            Some(address.to_owned()),
+            None,
+        )
+        .unwrap();
+        format!("Bearer {}", String::from_utf8(token).unwrap())
+    }
+
     /// Everything `did` still owes the provider, as the node reports it.
     async fn owed_by(&self, did: &str) -> usize {
         self.node
@@ -199,8 +216,9 @@ fn a_client_transaction_creates_and_grants_and_the_grant_lands_after_the_commit(
 }
 
 /// A change its caller has no authority for is refused before the commit,
-/// and so is one by a caller whose credential is no delegation: nothing is
-/// staged, nothing is owed and nothing reaches the provider.
+/// and so is one by a caller whose credential is no delegation and whose key
+/// the node does not hold: nothing is staged, nothing is owed and nothing
+/// reaches the provider.
 #[test]
 fn a_change_without_authority_is_refused_before_the_commit_and_owes_nothing() {
     workers::block_on(async {
@@ -227,22 +245,12 @@ fn a_change_without_authority_is_refused_before_the_commit_and_owes_nothing() {
         }
         assert_eq!(served.owed_by(STRANGER).await, 0);
 
-        // Signed in with an identity token: the node could not send the
-        // change once the request is gone, so it is not staged.
+        // Signed in with an identity token for a DID whose key the node does
+        // not hold: the node could not send the change once the request is
+        // gone, so it is not staged.
         let caller =
             identity::RawIdentity::from_private_key(crypto::generate_ed25519().unwrap()).unwrap();
-        let address = served
-            .base
-            .trim_start_matches("http://")
-            .trim_end_matches("/api/v0");
-        let token = identity::new_token(
-            &caller,
-            Duration::from_secs(60),
-            Some(address.to_owned()),
-            None,
-        )
-        .unwrap();
-        let signed_in = format!("Bearer {}", String::from_utf8(token).unwrap());
+        let signed_in = served.identity_token(&caller);
         let tx = served.begin(&signed_in).await;
         let (status, refused) = served
             .relationship(&signed_in, Some(&tx), &doc, false)
@@ -258,6 +266,75 @@ fn a_change_without_authority_is_refused_before_the_commit_and_owes_nothing() {
         assert_eq!(served.owed_by(caller.did().unwrap().as_str()).await, 0);
 
         assert!(remote.take_writes().is_empty());
+        served.node.shutdown().await.unwrap();
+    })
+    .unwrap();
+}
+
+/// A caller signed in with an identity token for a DID whose key the node
+/// holds has its change staged under the node's key, as the route without a
+/// transaction sends as that DID, and checked at staging all the same: the
+/// owner's grant is staged and lands after the commit, and another such
+/// caller, who owns nothing, is refused and owes nothing.
+#[test]
+fn an_identity_token_for_a_did_whose_key_the_node_holds_stages_under_the_node_key() {
+    workers::block_on(async {
+        let _serial = crate::tests::SIGNING_STORE_GUARD.lock().await;
+        let remote = Remote::new();
+        let served = Served::start(&remote, None).await;
+        let held = |remote: &Remote| {
+            let caller =
+                identity::RawIdentity::from_private_key(crypto::generate_ed25519().unwrap())
+                    .unwrap();
+            let did = caller.did().unwrap().to_string();
+            remote.keys.insert(did.clone(), ());
+            (caller, did)
+        };
+        let (owner, owner_did) = held(&remote);
+        let auth = served.identity_token(&owner);
+        let tx = served.begin(&auth).await;
+        let doc = served.create(&auth, &tx).await;
+        assert_eq!(served.finish(&auth, &tx, true).await, 200);
+        eventually("the registration did not reach the provider", || async {
+            remote.owners.get(&doc).as_deref() == Some(owner_did.as_str())
+        })
+        .await;
+        remote.take_writes();
+
+        let (stranger, stranger_did) = held(&remote);
+        let refused_auth = served.identity_token(&stranger);
+        let tx = served.begin(&refused_auth).await;
+        let (status, refused) = served
+            .relationship(&refused_auth, Some(&tx), &doc, false)
+            .await;
+        assert_eq!(status, 401, "{refused}");
+        assert_eq!(served.finish(&refused_auth, &tx, true).await, 200);
+        assert_eq!(served.owed_by(&stranger_did).await, 0);
+
+        // Cut off, the provider cannot take the grant at the commit, so the
+        // node reports it owed with what it will be sent under.
+        remote.cut_off(&doc, true);
+        let tx = served.begin(&auth).await;
+        let (status, granted) = served.relationship(&auth, Some(&tx), &doc, false).await;
+        assert_eq!(status, 200, "{granted}");
+        assert_eq!(granted["Staged"]["AuthorityChecked"], true, "{granted}");
+        assert_eq!(served.finish(&auth, &tx, true).await, 200);
+        let owed = served
+            .node
+            .owed_acp_as(
+                &crate::staged_relationship_tests::actor(&owner_did),
+                &owner_did,
+            )
+            .await
+            .unwrap();
+        assert_eq!(owed.len(), 1, "{owed:?}");
+        assert_eq!(owed[0].authority, Some(acp::OwedAuthorityKind::NodeKey));
+        remote.cut_off(&doc, false);
+        eventually("the grant did not reach the provider", || async {
+            remote.holds(&doc, READER)
+        })
+        .await;
+        assert_eq!(served.owed_by(&owner_did).await, 0);
         served.node.shutdown().await.unwrap();
     })
     .unwrap();
