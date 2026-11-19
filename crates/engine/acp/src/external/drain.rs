@@ -203,9 +203,13 @@ where
         }
         let mut members = RapidHashSet::new();
         members.insert(head.seq);
-        for change in self.owed_changes_after(Some(head.seq)).await? {
-            let joins = batch.len() + 1 < MAX_CHANGES_PER_REQUEST
-                && change.txn == head.txn
+        // Only the next few can join, and the first that cannot ends the
+        // batch: no more of the queue is read than a request carries.
+        let candidates = self
+            .next_owed_changes(head.seq, MAX_CHANGES_PER_REQUEST - 1)
+            .await?;
+        for change in candidates {
+            let joins = change.txn == head.txn
                 && change.epoch == head.epoch
                 && change.state == OwedState::Staged
                 && change.in_flight.is_none()

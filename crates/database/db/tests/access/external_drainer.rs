@@ -526,6 +526,31 @@ fn the_changes_one_transaction_staged_go_in_one_request() {
     .unwrap()
 }
 
+/// One request carries at most `MAX_CHANGES_PER_REQUEST` changes; the rest
+/// of the transaction's go in the next.
+#[test]
+fn a_transaction_with_more_changes_than_a_request_carries_goes_in_two() {
+    workers::block_on(async {
+        let (staging, journal) = journaled().await;
+        let doc = staging.create(alice(), "shared", None).await;
+        let handle = staging.begin().await;
+        let count = acp::MAX_CHANGES_PER_REQUEST + 1;
+        for index in 0..count {
+            let letter = char::from(b'a' + index as u8);
+            let subject = Did::new(&format!("did:key:z6Mkbatch{letter}")).unwrap();
+            let mut change = add(alice(), &doc, subject);
+            change.txn = Some(STAGED_BY);
+            staging.stage(&handle, change).await.unwrap();
+        }
+        staging.commit(&handle).await;
+
+        assert_eq!(staging.pass_once().await, settled(count as u64));
+        assert_eq!(journal.take_requests(), [acp::MAX_CHANGES_PER_REQUEST, 1]);
+        assert!(staging.queue().await.is_empty());
+    })
+    .unwrap()
+}
+
 /// A request the provider refuses applied nothing: its changes go again
 /// one at a time, so the owner's change lands and only the change the
 /// provider refuses on its own is parked.

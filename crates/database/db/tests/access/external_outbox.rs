@@ -409,6 +409,14 @@ fn the_queue_pages_in_sequence_order() {
         );
         let after = changes.page(Some(staged[10])).await.unwrap();
         assert_eq!(after[0].seq, staged[11]);
+        let next: Vec<u64> = changes
+            .next(staged[10], 3)
+            .await
+            .unwrap()
+            .iter()
+            .map(|change| change.seq)
+            .collect();
+        assert_eq!(next, staged[11..14], "a look at the next few reads no more");
         assert!(changes.page(Some(u64::MAX)).await.unwrap().is_empty());
         txn.discard().unwrap();
 

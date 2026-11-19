@@ -115,6 +115,7 @@ pub(super) async fn page<R>(
     reader: &R,
     after: Option<u64>,
     max_bytes: usize,
+    max_changes: usize,
 ) -> Result<Vec<OwedChange>>
 where
     R: Reader + ?Sized,
@@ -128,7 +129,7 @@ where
     let mut iter = reader.iterator(options).await.map_err(storage_error)?;
     let mut page = Vec::new();
     let mut bytes = 0;
-    while bytes < max_bytes {
+    while bytes < max_bytes && page.len() < max_changes {
         let Some(entry) = iter.next().await.map_err(storage_error)? else {
             break;
         };

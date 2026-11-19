@@ -359,9 +359,25 @@ where
     }
 
     pub(super) async fn owed_changes_after(&self, after: Option<u64>) -> Result<Vec<OwedChange>> {
+        self.read_owed_changes(after, None).await
+    }
+
+    /// At most `count` owed changes after `after`, as committed now.
+    pub(super) async fn next_owed_changes(&self, after: u64, count: usize) -> Result<Vec<OwedChange>> {
+        self.read_owed_changes(Some(after), Some(count)).await
+    }
+
+    async fn read_owed_changes(
+        &self,
+        after: Option<u64>,
+        count: Option<usize>,
+    ) -> Result<Vec<OwedChange>> {
         let txn = self.begin(true).await?;
         let changes = self.owed_changes(&txn.acpstore(), StagedCount::new());
-        let page = changes.page(after).await;
+        let page = match (after, count) {
+            (Some(after), Some(count)) => changes.next(after, count).await,
+            _ => changes.page(after).await,
+        };
         drop(changes);
         txn.discard()
             .map_err(|error| Error::Storage(error.to_string()))?;

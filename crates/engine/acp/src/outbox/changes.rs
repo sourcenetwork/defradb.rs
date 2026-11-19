@@ -153,7 +153,13 @@ impl OwedChanges {
     /// The next page of the queue in sequence order: the changes after
     /// `after`, or from its start. Empty at the end of the queue.
     pub async fn page(&self, after: Option<u64>) -> Result<Vec<OwedChange>> {
-        ops::page(&self.active_view()?, after, PAGE_BYTES).await
+        ops::page(&self.active_view()?, after, PAGE_BYTES, usize::MAX).await
+    }
+
+    /// At most `count` changes of the queue after `after`, in sequence
+    /// order, within a page's bytes: what a look at the next few needs.
+    pub async fn next(&self, after: u64, count: usize) -> Result<Vec<OwedChange>> {
+        ops::page(&self.active_view()?, Some(after), PAGE_BYTES, count).await
     }
 
     /// Delete the record of the change at `seq` in this transaction: the
