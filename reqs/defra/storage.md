@@ -22,6 +22,13 @@ With a unique index on `User.name` and a stored `{"name":"alice","age":1}`, addi
 
 For a field whose CRDT merges by value (text, JSON), the index holds only the current value. After a local edit, or after two nodes edit the field concurrently and replicate to each other, a filter on the merged value fetches one index entry and one document, and a filter on any earlier value fetches none.
 
+# `defra.index.field_removal`: A field an index reads cannot be removed
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["index::remove_indexed_field::removing_an_indexed_field_is_refused_and_writes_go_on", "index::remove_indexed_field::removing_a_field_no_index_reads_is_accepted"]
+
+A collection patch that removes a field an index or an encrypted index reads fails with `cannot remove field '<field>': index '<index>' depends on it, drop the index first`, and the collection keeps its definition, so later creates and indexed queries work. Removing a field no index reads is accepted. Go refuses the patch too, with `the given field does not exist` (https://github.com/sourcenetwork/defradb/issues/4722).
+
 # `defra.index.counter`: An index on a counter follows its total
 
 - **Parents:** ["defra.index"]
