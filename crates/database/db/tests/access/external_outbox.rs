@@ -409,6 +409,14 @@ fn the_queue_pages_in_sequence_order() {
         );
         let after = changes.page(Some(staged[10])).await.unwrap();
         assert_eq!(after[0].seq, staged[11]);
+        let next: Vec<u64> = changes
+            .next(staged[10], 3)
+            .await
+            .unwrap()
+            .iter()
+            .map(|change| change.seq)
+            .collect();
+        assert_eq!(next, staged[11..14], "a look at the next few reads no more");
         assert!(changes.page(Some(u64::MAX)).await.unwrap().is_empty());
         txn.discard().unwrap();
 
@@ -504,6 +512,43 @@ fn a_node_holds_no_more_unsettled_changes_than_its_bound() {
     .unwrap()
 }
 
+/// A change whose stored error leaves no room in its record is still
+/// marked in flight: the error is cut as the mark is added, as it is when a
+/// state is recorded, so the change is never stuck in front of its tuple.
+#[test]
+fn a_change_with_a_long_error_can_still_be_marked_in_flight() {
+    workers::block_on(async {
+        let outbox = Outbox::new();
+        let reader = tuple("doc-1", "reader", actor(bob()));
+        let seq = outbox.commit(&reader, OwedOp::Add).await;
+
+        // An error that brings the unmarked record to the cap exactly.
+        let (txn, changes) = outbox.begin().await;
+        let staged = changes.get(seq).await.unwrap().expect("the change");
+        let unmarked = acp::OwedChange {
+            last_error: Some(String::new()),
+            ..staged
+        };
+        let room = acp::outbox::MAX_OWED_CHANGE_BYTES - unmarked.encode().unwrap().len();
+        let long = "e".repeat(room);
+        assert!(changes
+            .mark(seq, OwedState::Staged, 1, Some(long.clone()))
+            .await
+            .unwrap());
+        txn.commit().await.unwrap();
+
+        let (txn, changes) = outbox.begin().await;
+        let id = "x".repeat(acp::outbox::MAX_REQUEST_ID_BYTES);
+        let flight = acp::InFlight::new(id.clone(), Some(id), Some(u64::MAX)).unwrap();
+        assert!(changes.mark_in_flight(&[seq], &flight).await.unwrap());
+        let marked = changes.get(seq).await.unwrap().expect("the change");
+        assert_eq!(marked.in_flight, Some(flight));
+        assert!(marked.last_error.unwrap().len() < long.len());
+        txn.commit().await.unwrap();
+    })
+    .unwrap()
+}
+
 #[test]
 fn a_change_over_the_record_cap_is_refused_and_leaves_nothing() {
     workers::block_on(async {
@@ -527,10 +572,11 @@ fn a_change_over_the_record_cap_is_refused_and_leaves_nothing() {
     .unwrap()
 }
 
-/// A change is admitted only with room left to park it: the largest record
-/// staging takes is still written as refused and as awaiting authority,
-/// with the provider's words whole up to the reserved length, and a record
-/// one byte larger is refused when it is staged.
+/// A change is admitted only with room left to park it or mark it in flight:
+/// the largest record staging takes is still written as refused and as
+/// awaiting authority, with the provider's words whole up to the reserved
+/// length, and marked in flight with the longest request names after such
+/// an answer; a record one byte larger is refused when it is staged.
 #[test]
 fn the_largest_change_staged_can_still_be_parked() {
     workers::block_on(async {
@@ -552,13 +598,28 @@ fn the_largest_change_staged_can_still_be_parked() {
         let (txn, changes) = outbox.begin().await;
         let small = changes.stage(with_token(0)).await.unwrap();
         txn.discard().unwrap();
+        let id = "x".repeat(acp::outbox::MAX_REQUEST_ID_BYTES);
+        let longest = acp::InFlight::new(id.clone(), Some(id), Some(u64::MAX)).unwrap();
+        let marked = acp::OwedChange {
+            attempts: u32::MAX,
+            last_error: Some(words.clone()),
+            in_flight: Some(longest.clone()),
+            alone: true,
+            ..small.clone()
+        };
         let parked = acp::OwedChange {
             state: refused.clone(),
             attempts: u32::MAX,
             last_error: Some(words.clone()),
+            alone: true,
             ..small
         };
-        let largest = acp::outbox::MAX_OWED_CHANGE_BYTES - parked.encode().unwrap().len();
+        let later = parked
+            .encode()
+            .unwrap()
+            .len()
+            .max(marked.encode().unwrap().len());
+        let largest = acp::outbox::MAX_OWED_CHANGE_BYTES - later;
 
         let (txn, changes) = outbox.begin().await;
         assert!(matches!(
@@ -568,6 +629,19 @@ fn the_largest_change_staged_can_still_be_parked() {
         let staged = changes.stage(with_token(largest)).await.unwrap();
         assert_eq!(staged.seq.to_string().len(), small.seq.to_string().len());
         txn.commit().await.unwrap();
+
+        let (txn, changes) = outbox.begin().await;
+        assert!(changes
+            .mark(staged.seq, OwedState::Staged, u32::MAX, Some(words.clone()))
+            .await
+            .unwrap());
+        assert!(changes
+            .mark_in_flight(&[staged.seq], &longest)
+            .await
+            .unwrap());
+        let in_flight = changes.get(staged.seq).await.unwrap().expect("the change");
+        assert_eq!(in_flight.in_flight, Some(longest));
+        txn.discard().unwrap();
 
         for state in [refused, OwedState::AwaitingAuthority] {
             let (txn, changes) = outbox.begin().await;

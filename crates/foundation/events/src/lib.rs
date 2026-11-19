@@ -43,10 +43,10 @@ pub use channel_bus::{ChannelBus, ChannelBusConfig};
 #[cfg(feature = "channel")]
 pub use document_changes::{DocumentChange, DocumentChangeBatch, DocumentChangeSubscription};
 pub use event::{
-    AcpCacheInvalidatedData, AcpHeightAdvancedData, EventName, MergeCompleteData, Message,
-    MessageData, P2PBroadcastDroppedData, P2PGossipHeadDroppedData, PeerConnectionData,
-    PendingDagQuarantinedData, ReplicatorCompletedData, SEArtifactReceivedData, TopicPeerEventData,
-    UniqueIndexConflictData, Update,
+    AcpCacheInvalidatedData, AcpHeightAdvancedData, AcpOwedChangeRefusedData, EventName,
+    MergeCompleteData, Message, MessageData, P2PBroadcastDroppedData, P2PGossipHeadDroppedData,
+    PeerConnectionData, PendingDagQuarantinedData, ReplicatorCompletedData, SEArtifactReceivedData,
+    TopicPeerEventData, UniqueIndexConflictData, Update,
 };
 pub use noop_bus::NoOpBus;
 pub use subscription::{Subscription, TryRecvError};
