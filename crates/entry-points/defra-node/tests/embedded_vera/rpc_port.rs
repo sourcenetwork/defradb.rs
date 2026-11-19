@@ -1,10 +1,11 @@
 //! A loopback port for an embedded Vera node's JSON-RPC methods.
 //!
-//! The Vera node binds the address it is given and reports no address it
-//! chose, so a test cannot hand it port 0 and learn the port, nor hand it a
-//! listener it already holds. A free port is found here and released before
-//! the node binds it; another test can take it in between. That start fails
-//! to bind and is made again on a new port. No other failure is retried.
+//! The hosted node binds the address it is given and does not tell its host
+//! which address it chose, so a test cannot hand it port 0 and learn the
+//! port, nor hand it a listener it already holds. A free port is found here
+//! and released before the node binds it; another test can take it in
+//! between. That start fails to bind and is made again on a new port. No
+//! other failure is retried.
 
 use std::future::Future;
 use std::net::SocketAddr;
@@ -38,17 +39,12 @@ fn free_port() -> SocketAddr {
 }
 
 /// Whether the start failed because the Vera node could not bind its RPC
-/// address. The node reports that only as text.
+/// address.
 fn lost_the_port(error: &defra_node::Error) -> bool {
-    matches!(
-        error,
-        defra_node::Error::EmbeddedVera(vera_embedded::HostError::Start(reason))
-            if reason.to_string().contains("failed to bind server")
-    )
+    matches!(error, defra_node::Error::EmbeddedVera(host) if host.is_rpc_bind())
 }
 
-/// A start on a port another listener holds fails as a lost port, so the
-/// text matched above still names the Vera node's bind failure.
+/// A start on a port another listener holds fails as a lost port.
 #[test]
 fn a_held_port_is_a_lost_port() {
     workers::block_on(async {

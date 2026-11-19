@@ -170,9 +170,7 @@ where
             .expect("free loopback port");
         match start(rpc).await {
             Ok(started) => return (started, rpc),
-            Err(defra_node::Error::EmbeddedVera(vera_embedded::HostError::Start(reason)))
-                if attempt < 8 && reason.to_string().contains("failed to bind server") =>
-            {
+            Err(defra_node::Error::EmbeddedVera(host)) if attempt < 8 && host.is_rpc_bind() => {
                 attempt += 1
             }
             Err(error) => panic!("node: {error:?}"),
