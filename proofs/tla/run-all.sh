@@ -359,6 +359,7 @@ RUNS=(
   "MC_RemoteOwnerObservation_Red_SplitLook.cfg RemoteOwnerObservation.tla RED"
   "MC_RemoteOwnerObservation_Red_NoSeal.cfg RemoteOwnerObservation.tla RED"
   "MC_RemoteOwnerObservation_Red_SlipUnconfirmed.cfg RemoteOwnerObservation.tla RED"
+  "MC_RemoteOwnerObservation_Red_StaleAdmission.cfg RemoteOwnerObservation.tla RED"
   "MC_PeerConnection_Green.cfg PeerConnection.tla GREEN"
   "MC_PeerConnection_Red_StaleObservation.cfg PeerConnection.tla RED"
   "MC_SharedRpcConnection_Green.cfg SharedRpcConnection.tla GREEN"
