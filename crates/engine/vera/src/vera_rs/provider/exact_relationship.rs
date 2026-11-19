@@ -237,7 +237,8 @@ mod tests {
     /// times, and then at the policy's: asked again through `verified`.
     async fn asked_through_verified(overtaken: usize) -> (Result<bool, Failure>, usize) {
         let asked = std::cell::Cell::new(0);
-        let outcome = super::super::verified::verified(|| {
+        let heads = super::super::transport_tests::silent_heads().await;
+        let outcome = super::super::verified::verified(&heads, || {
             asked.set(asked.get() + 1);
             let ask = asked.get();
             async move {

@@ -63,6 +63,14 @@
 \* is lower. What the provider does about decisions and confirmations that
 \* rested on the void blocks is FollowDeployment.tla.
 \*
+\* The head can also be too old. The light client reads only at a revision
+\* within its age bound (30 seconds); a host starved for longer than that
+\* finalizes no block, and the light client refuses to read at all ("verified
+\* revision is stale"). That refusal is late, not wrong: the read waits, for
+\* as long as its patience lasts, for the header stream to bring the next
+\* revision, and is asked again then. It is never read at the stale head,
+\* and it fails with the stale refusal only once its patience is spent.
+\*
 \* What must never happen:
 \*   * an answer accepted although a newer root existed when it was accepted
 \*     (it could grant an access the newer state revokes);
@@ -78,7 +86,7 @@
 \*
 \* Code this models (defradb.rs, light client at backbone rev 5ca42c8):
 \*   crates/engine/vera/src/vera_rs/provider/verified.rs   verified, ATTEMPTS, overtaken,
-\*       verified_within, Pace, WallPace, JITTER, BUSY_PATIENCE, BUSY_PAUSE, busy
+\*       verified_within, Pace, WallPace, JITTER, BUSY_PATIENCE, BUSY_PAUSE, busy, stale
 \*   crates/building-blocks/inputs/src/retry.rs                     Jitter::pause (a pause drawn
 \*       between half of BUSY_PAUSE and all of it)
 \*   crates/engine/vera/src/vera_rs/provider.rs            create_policy, query_policy,
@@ -121,6 +129,12 @@
 \*                        own time, not only the time slept
 \*   CheckDrawn           the check uses the pause that is then slept, not a
 \*                        shorter one
+\*   fresh, GoStale       HeaderChain::fresh_state: the newest revision within the age
+\*                        bound; a starved host lets it age past the bound
+\*   CheckFresh           acp-light-client freshness.rs: a read at a stale head is refused
+\*   AskStale, Woken,     verified.rs `verified_within`: a `stale` refusal waits on
+\*   WaitOut, WaitFresh   `Pace::fresh` (WallPace: HeaderChain::wait_for_height for the
+\*                        next revision) for what is left of the patience, then asks again
 \*   paused               the time slept in pauses, no Rust counterpart (what a
 \*                        check that forgot the requests' time would read)
 \*   MaxBusy              how many busy answers the node gives in a run, no Rust
@@ -147,7 +161,10 @@ CONSTANTS
     PauseMin,     \* the shortest pause the jitter draws (half of BUSY_PAUSE)
     PauseMax,     \* the longest pause the jitter draws (BUSY_PAUSE)
     CountTook,    \* TRUE: the patience counts the requests' own time, not only the pauses
-    CheckDrawn    \* TRUE: the patience is checked against the pause that is then slept
+    CheckDrawn,   \* TRUE: the patience is checked against the pause that is then slept
+    MaxStale,     \* how many times the head goes stale in a run (keeps the model finite)
+    CheckFresh,   \* TRUE: the light client refuses to read at a head older than its bound
+    WaitFresh     \* TRUE: a read refused for a stale head waits for the next revision (the third fix)
 
 VARIABLES
     root,       \* the newest authenticated state root, numbered in the order the client
@@ -161,9 +178,13 @@ VARIABLES
     busy,       \* how many busy answers the node gave this read
     clock,      \* time since the read's first ask, in steps
     paused,     \* the part of that time spent in pauses
-    late        \* TRUE once a busy read was asked again at or after its patience ran out
+    late,       \* TRUE once a busy read was asked again at or after its patience ran out
+    fresh,      \* TRUE while the newest revision is within the light client's age bound
+    staled,     \* how many times the head went stale so far
+    fromStale   \* TRUE once a read was decided at a head older than the bound
 
-vars == <<root, advances, pc, readAt, attempt, overtaken, stale, busy, clock, paused, late>>
+vars == <<root, advances, pc, readAt, attempt, overtaken, stale, busy, clock, paused, late,
+          fresh, staled, fromStale>>
 
 \* The lengths a request can take: 1 step for a quick node up to MaxTook for a slow one.
 Took == 1..MaxTook
@@ -175,7 +196,7 @@ Pauses == PauseMin..PauseMax
 TypeOK ==
     /\ root \in Nat                                         \* roots are numbers
     /\ advances \in 0..MaxAdvances                          \* never more blocks than the bound
-    /\ pc \in {"idle", "inflight", "answered", "failed"}    \* the read's four places
+    /\ pc \in {"idle", "inflight", "waiting", "answered", "failed"}  \* the read's places
     /\ readAt \in Nat                                       \* a root number
     /\ attempt \in Nat \ {0}                                \* asks are counted from 1
     /\ overtaken \in Nat                                    \* a count
@@ -184,6 +205,8 @@ TypeOK ==
     /\ clock \in Nat                                        \* a time
     /\ paused \in Nat                                       \* a time
     /\ late \in BOOLEAN                                     \* a flag
+    /\ fresh \in BOOLEAN /\ fromStale \in BOOLEAN           \* flags
+    /\ staled \in 0..MaxStale                               \* a count
 
 \* At the start: root 0, no block yet, the read about to be asked for the first time.
 Init ==
@@ -198,6 +221,9 @@ Init ==
     /\ clock = 0         \* the first ask starts the clock
     /\ paused = 0        \* no pause yet
     /\ late = FALSE      \* no ask after the patience yet
+    /\ fresh = TRUE      \* the first revision is fresh
+    /\ staled = 0        \* it has not gone stale yet
+    /\ fromStale = FALSE \* nothing decided yet
 
 \* A block finalizes: the header loop authenticates a newer root. This can
 \* happen at any moment, also while a read is on the wire.
@@ -205,15 +231,54 @@ Advance ==
     /\ advances < MaxAdvances             \* the run still has a block to finalize
     /\ root' = root + 1                   \* the newest root moves on
     /\ advances' = advances + 1           \* one more block finalized
-    /\ UNCHANGED <<pc, readAt, attempt, overtaken, stale, busy, clock, paused, late>>  \* the read does not notice yet
+    /\ fresh' = TRUE                      \* a new revision is within the bound
+    /\ UNCHANGED <<pc, readAt, attempt, overtaken, stale, busy, clock, paused, late,
+                   staled, fromStale>>     \* the read does not notice yet
+
+\* No block finalizes for longer than the light client's age bound (a
+\* starved host): its newest revision is stale.
+GoStale ==
+    /\ fresh /\ staled < MaxStale         \* the head is fresh; the run may still starve it
+    /\ fresh' = FALSE /\ staled' = staled + 1  \* now it is too old to read at
+    /\ UNCHANGED <<root, advances, pc, readAt, attempt, overtaken, stale, busy, clock,
+                   paused, late, fromStale>>  \* nothing else moves
 
 \* The read is asked. The light client takes the newest root's height as the
 \* lowest revision it will accept, and the proof request leaves.
 Ask ==
     /\ pc = "idle"         \* the read is about to be asked
+    /\ fresh \/ ~CheckFresh  \* the head is fresh (or, the planted bug, nobody checks)
     /\ pc' = "inflight"    \* the request is on the wire
     /\ readAt' = root      \* the server cannot answer below the newest root
-    /\ UNCHANGED <<root, advances, attempt, overtaken, stale, busy, clock, paused, late>>  \* nothing else moves
+    /\ fromStale' = (fromStale \/ ~fresh)  \* asked at a head older than the bound?
+    /\ UNCHANGED <<root, advances, attempt, overtaken, stale, busy, clock, paused, late,
+                   fresh, staled>>  \* nothing else moves
+
+\* The read is asked while the head is stale, and the light client refuses
+\* it at once. With WaitFresh it waits for the next revision while its
+\* patience lasts; else the refusal is the read's outcome.
+AskStale ==
+    /\ pc = "idle" /\ ~fresh /\ CheckFresh  \* the head is too old to read at
+    /\ pc' = IF WaitFresh /\ clock < Patience THEN "waiting" ELSE "failed"
+    /\ UNCHANGED <<root, advances, readAt, attempt, overtaken, stale, busy, clock, paused,
+                   late, fresh, staled, fromStale>>  \* nothing else moves
+
+\* A fresh revision arrives while the read waits: it is asked again.
+Woken ==
+    /\ pc = "waiting" /\ fresh            \* the header stream brought a fresh revision
+    /\ pc' = "idle"                        \* ask again
+    /\ UNCHANGED <<root, advances, readAt, attempt, overtaken, stale, busy, clock, paused,
+                   late, fresh, staled, fromStale>>  \* nothing else moves
+
+\* Time passes while the read waits with no fresh revision; once its
+\* patience is spent the stale refusal is its outcome.
+WaitOut ==
+    /\ pc = "waiting" /\ ~fresh           \* still nothing fresh
+    /\ \E took \in Took :                  \* some time passes
+        /\ clock' = clock + took
+        /\ pc' = IF clock + took >= Patience THEN "failed" ELSE "waiting"
+    /\ UNCHANGED <<root, advances, readAt, attempt, overtaken, stale, busy, paused, late,
+                   fresh, staled, fromStale>>  \* nothing else moves
 
 \* The answer comes back, `took` steps after it was asked, and is checked.
 \* The server answered at some root between the one asked for and the newest
@@ -239,7 +304,7 @@ Return ==
                      /\ attempt' = attempt + 1        \* the next ask
                 ELSE /\ pc' = "failed"                \* the refusal goes to the caller
                      /\ attempt' = attempt            \* no further ask
-    /\ UNCHANGED <<root, advances, busy, paused, late>>  \* the chain does not move in this step
+    /\ UNCHANGED <<root, advances, busy, paused, late, fresh, staled, fromStale>>  \* the chain does not move
 
 \* The node answers busy, `took` steps after it was asked, instead of a
 \* proof: the certificate of the block the read asked at was not ready by
@@ -268,19 +333,22 @@ Busy ==
            ELSE /\ pc' = "failed"                     \* the busy answer goes to the caller
                 /\ clock' = now                       \* the clock moves by the request only
                 /\ UNCHANGED <<paused, late>>         \* no pause, no further ask
-    /\ UNCHANGED <<root, advances, readAt, attempt, overtaken, stale>>  \* nothing else moves
+    /\ UNCHANGED <<root, advances, readAt, attempt, overtaken, stale, fresh, staled,
+                   fromStale>>  \* nothing else moves
 
 \* Once the read ended, nothing more happens to it; blocks may still finalize.
 Done ==
     /\ pc \in {"answered", "failed"}   \* the read ended
     /\ UNCHANGED vars                  \* stutter, so a finished run is not a deadlock
 
-Next == Advance \/ Ask \/ Return \/ Busy \/ Done   \* one of these happens at each step
+Next == Advance \/ GoStale \/ Ask \/ AskStale \/ Woken \/ WaitOut \/ Return \/ Busy \/ Done
+        \* one of these happens at each step
 
 \* The read keeps going: a read that can be asked is asked, and an answer on
 \* the wire comes back. Blocks and busy answers need no fairness: they may
 \* stop at any time.
-Spec == Init /\ [][Next]_vars /\ WF_vars(Ask) /\ WF_vars(Return)
+Spec == Init /\ [][Next]_vars /\ WF_vars(Ask) /\ WF_vars(Return) /\ WF_vars(AskStale)
+        /\ WF_vars(Woken) /\ WF_vars(WaitOut)
 
 \* An answer is only ever accepted at the newest authenticated root.
 INV_NeverStale == ~stale
@@ -291,10 +359,22 @@ INV_NeverStale == ~stale
 INV_FailsOnlyWhenEveryAskOvertaken ==
     pc = "failed" => (overtaken = Attempts \/ clock + PauseMax >= Patience)
 
+\* A read refused for a stale head ends in that refusal only once its
+\* patience is spent with no fresh revision.
+INV_StaleFailsOnlyAtPatience ==
+    (pc = "failed" /\ ~fresh) => clock >= Patience \/ overtaken = Attempts
+                                  \/ clock + PauseMax >= Patience
+
+\* No read is decided at a revision older than the light client's bound.
+INV_NeverFromStale == ~fromStale
+
 \* A read is never asked more than Attempts times for overtaken answers, and
 \* a busy read is never asked again at or after its patience ran out.
 INV_AttemptsBounded == attempt <= Attempts /\ ~late
 
+\* (With a head that goes stale, the read is answered only when a block
+\* finalizes within its patience, which no fairness promises: the stale
+\* configurations check the invariants.)
 \* When the chain finalizes fewer blocks than the read may ask, and the node
 \* answers busy few enough times that the patience is never spent, the read
 \* ends with an answer.

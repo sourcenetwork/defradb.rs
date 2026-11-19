@@ -121,9 +121,14 @@ async fn a_remembered_decision_is_not_given_past_the_freshness_limit() {
     let freshness = acp_light_client::FreshnessPolicy::default().max_age;
     nuclei::time::sleep((freshness + Duration::from_secs(2)).saturating_sub(stopped.elapsed()))
         .await;
+    // The read waits for a fresh revision that a stopped node never sends,
+    // until the light client's patience or the decision's own deadline ends.
     let late = reads("asked").await;
     assert!(
-        matches!(&late, Err(error) if error.to_string().contains("stale")),
+        matches!(&late, Err(error) if {
+            let error = error.to_string();
+            error.contains("stale") || error.contains("no answer within")
+        }),
         "a decision repeated past the freshness limit: {late:?}"
     );
 }

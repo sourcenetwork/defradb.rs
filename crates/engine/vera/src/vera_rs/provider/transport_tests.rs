@@ -168,3 +168,19 @@ async fn a_node_that_serves_no_header_fails_as_an_unreachable_url_does() {
     assert_eq!(acp.calls.load(Ordering::Relaxed), 0);
     assert!(rpc.calls.pop().is_none());
 }
+
+/// The header chain of a light client whose node serves nothing.
+pub(super) async fn silent_heads() -> acp_light_client::HeaderChain {
+    edge::compat(async {
+        let proofs =
+            acp_light_client::ProofClient::with_transport(Arc::new(Silent::default()), TRUSTED_KEY)
+                .expect("proof client");
+        acp_light_client::HeaderChain::start(
+            Arc::new(Silent::default()),
+            proofs,
+            acp_light_client::FreshnessPolicy::default(),
+        )
+        .expect("header chain")
+    })
+    .await
+}

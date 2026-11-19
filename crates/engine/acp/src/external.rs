@@ -353,6 +353,10 @@ where
         }))
     }
 
+    fn stages_relationship_changes(&self) -> bool {
+        true
+    }
+
     fn transaction_outbox(
         &self,
         view: &datastore::NamespaceView,

@@ -23,6 +23,10 @@ required-features = ["node"]
 name = "term_takeover"
 required-features = ["node"]
 
+[[test]]
+name = "stale_head"
+required-features = ["node"]
+
 [features]
 # Start and stop the node itself, on the network runtime's cores.
 node = ["dep:vera-node", "dep:commonware-codec", "dep:hex"]
