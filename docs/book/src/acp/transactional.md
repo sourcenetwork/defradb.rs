@@ -280,7 +280,8 @@ with no HTTP route.
   version does not read it as owed state. A store whose queue there still holds a
   change (a `/acp-owed/q/` record; a settled change has none) is refused: the node does
   not start, with `LegacyOwedChanges` naming how many it owes, and a gate opened on such
-  a store refuses every access decision, settling pass and redrive with the same error.
+  a store refuses every access decision, settling pass and redrive with the same error;
+  the node's drainer stops at it instead of trying again.
   An owed revocation in it can therefore never stop denying unseen. Settle those changes
   with the version that staged them, or create the store again. What else that layout
   keeps once everything has settled (counts at zero, the sequence counter, notes of
