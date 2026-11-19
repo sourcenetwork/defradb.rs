@@ -1773,6 +1773,10 @@ mod delegated_relationship_tests;
 #[path = "../tests/unit/staged_relationship.rs"]
 mod staged_relationship_tests;
 
+#[cfg(all(test, feature = "vera", not(target_arch = "wasm32")))]
+#[path = "../tests/unit/remote_owner_observation.rs"]
+mod remote_owner_observation_tests;
+
 #[cfg(all(test, not(target_arch = "wasm32")))]
 #[path = "../tests/unit/verified_create.rs"]
 mod verified_create_tests;

@@ -335,3 +335,6 @@ lean_lib OwedParts where
 
 @[default_target]
 lean_lib OwedLive where
+
+@[default_target]
+lean_lib RemoteOwnerAnswer where

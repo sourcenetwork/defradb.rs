@@ -30,6 +30,9 @@ where
     pub(super) idle: Arc<ArrayQueue<T>>,
     /// Who may use the transaction.
     pub(super) key: K,
+    /// An end began and kept it: only another end (a commit or a discard)
+    /// finds it, never a request.
+    pub(super) ending: bool,
 }
 
 impl<T, K> Clone for Entry<T, K>
@@ -42,6 +45,7 @@ where
             mailbox: self.mailbox.clone(),
             idle: Arc::clone(&self.idle),
             key: self.key.clone(),
+            ending: self.ending,
         }
     }
 }
@@ -74,6 +78,14 @@ where
 
     pub(super) fn insert(&self, id: TxnId, entry: Entry<T, K>) {
         self.entries.insert(id.get(), entry);
+    }
+
+    /// Whether transaction `id` is here, owned by `key`, and takes requests:
+    /// no end kept it.
+    pub(super) fn runs(&self, id: TxnId, key: &K) -> bool {
+        self.entries
+            .get(&id.get())
+            .is_some_and(|entry| entry.key == *key && !entry.ending)
     }
 
     /// Whether transaction `id` is here and owned by `key`.

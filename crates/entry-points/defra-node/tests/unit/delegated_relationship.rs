@@ -193,7 +193,7 @@ fn embedded_delegation_matches_executed_lean_model() {
     use std::io::Write;
     use std::process::{Command, Stdio};
 
-    let mut cases = workers::block_on(async {
+    let cases = workers::block_on(async {
         let _serial = super::tests::SIGNING_STORE_GUARD.lock().await;
         let (node, _, doc) = fixture().await;
         let stages_owed = node.document_acp().stages_relationship_changes();
@@ -248,7 +248,7 @@ fn embedded_delegation_matches_executed_lean_model() {
     })
     .unwrap();
     #[cfg(feature = "vera")]
-    cases.extend(owed_staging_cases());
+    let cases = [cases, owed_staging_cases()].concat();
     let inputs: Vec<_> = cases.iter().map(|case| case["input"].clone()).collect();
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../proofs/lean");
     let mut child = Command::new("lake")
