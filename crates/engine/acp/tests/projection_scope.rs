@@ -38,9 +38,16 @@ fn target(kind: &str) -> (TargetKind, Subject) {
 #[test]
 #[ignore = "Requires Lean; run in the Lean Conformance job"]
 fn projection_scope_matches_executed_lean_model() {
-    let output = Command::new("lean")
-        .args(["--run", "proofs/lean/ProjectionRelationship.lean", "scope"])
-        .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."))
+    // From the Lean project, so its `lean-toolchain` selects the toolchain.
+    let output = Command::new("lake")
+        .args([
+            "env",
+            "lean",
+            "--run",
+            "ProjectionRelationship.lean",
+            "scope",
+        ])
+        .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../proofs/lean"))
         .output()
         .unwrap();
     assert!(

@@ -144,8 +144,9 @@ struct Case {
 #[test]
 #[ignore = "Requires Lean; run in the Lean Conformance job"]
 fn genesis_reader_matches_executed_lean_model() {
-    let output = Command::new("lean")
-        .args(["--run", "EnrollmentGenesis.lean", "cases"])
+    // From the Lean project, so its `lean-toolchain` selects the toolchain.
+    let output = Command::new("lake")
+        .args(["env", "lean", "--run", "EnrollmentGenesis.lean", "cases"])
         .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../proofs/lean"))
         .output()
         .unwrap();
