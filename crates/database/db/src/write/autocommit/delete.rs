@@ -222,11 +222,11 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let datastore = txn.datastore().map_err(|error| {
             query::error::QueryError::execution(format!("failed to get datastore: {error}"))
         })?;
-        let datastore = datastore
-            .with_projection_context(&attempt.context)
-            .with_projection_inputs(Arc::new(crate::txn::ProjectionInputs(
-                attempt.prepared_inputs.clone().unwrap_or_default(),
-            )));
+        let datastore = crate::txn::bind_projection(
+            datastore,
+            &attempt.context,
+            attempt.prepared_inputs.as_ref(),
+        );
         let systemstore = txn.systemstore().map_err(|error| {
             query::error::QueryError::execution(format!("failed to get systemstore: {error}"))
         })?;
@@ -458,11 +458,11 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let datastore = txn.datastore().map_err(|e| {
             query::error::QueryError::execution(format!("failed to get datastore: {e}"))
         })?;
-        let datastore = datastore
-            .with_projection_context(&attempt.context)
-            .with_projection_inputs(Arc::new(crate::txn::ProjectionInputs(
-                attempt.prepared_inputs.clone().unwrap_or_default(),
-            )));
+        let datastore = crate::txn::bind_projection(
+            datastore,
+            &attempt.context,
+            attempt.prepared_inputs.as_ref(),
+        );
         let systemstore = txn.systemstore().map_err(|e| {
             query::error::QueryError::execution(format!("failed to get systemstore: {e}"))
         })?;

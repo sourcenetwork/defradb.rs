@@ -323,13 +323,11 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         })?;
         drop(fetcher);
         if unchanged_skips && modified_fields.is_empty() {
-            let datastore = txn
-                .datastore()
-                .map_err(crate::error::commit_query_error)?
-                .with_projection_context(&attempt.context)
-                .with_projection_inputs(Arc::new(crate::txn::ProjectionInputs(
-                    attempt.prepared_inputs.clone().unwrap_or_default(),
-                )));
+            let datastore = crate::txn::bind_projection(
+                txn.datastore().map_err(crate::error::commit_query_error)?,
+                &attempt.context,
+                attempt.prepared_inputs.as_ref(),
+            );
             datastore
                 .project_document(&attempt.collection_name, &attempt.canonical_doc_id)
                 .await
@@ -349,11 +347,11 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let datastore = txn.datastore().map_err(|error| {
             query::error::QueryError::execution(format!("failed to get datastore: {error}"))
         })?;
-        let datastore = datastore
-            .with_projection_context(&attempt.context)
-            .with_projection_inputs(Arc::new(crate::txn::ProjectionInputs(
-                attempt.prepared_inputs.clone().unwrap_or_default(),
-            )));
+        let datastore = crate::txn::bind_projection(
+            datastore,
+            &attempt.context,
+            attempt.prepared_inputs.as_ref(),
+        );
         let systemstore = txn.systemstore().map_err(|error| {
             query::error::QueryError::execution(format!("failed to get systemstore: {error}"))
         })?;

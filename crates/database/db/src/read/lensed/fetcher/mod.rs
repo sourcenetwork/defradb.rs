@@ -363,10 +363,7 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
         let view = txn
             .datastore()
             .map_err(|error| query::QueryError::execution(error.to_string()))?;
-        view.with_projection_context(actor)
-            .with_projection_inputs(Arc::new(crate::txn::ProjectionInputs(
-                self.prepared_inputs.clone().unwrap_or_default(),
-            )))
+        crate::txn::bind_projection(view, actor, self.prepared_inputs.as_ref())
             .project_host_source_change()
             .await
             .map_err(|error| match error {

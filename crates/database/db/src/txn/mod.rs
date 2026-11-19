@@ -26,6 +26,23 @@ pub mod registry;
 
 pub(crate) struct ProjectionInputs(pub query::prepared::PreparedInputMemo);
 
+/// Bind the request's context and prepared inputs to `view` for the host's
+/// document projector. Without a projector the view is returned as it is: a
+/// mutation pays nothing for a projection it does not run.
+pub(crate) fn bind_projection(
+    view: NamespaceView,
+    context: &defra_core::RequestContext,
+    inputs: Option<&query::prepared::PreparedInputMemo>,
+) -> NamespaceView {
+    if !view.has_document_projector() {
+        return view;
+    }
+    view.with_projection_context(context)
+        .with_projection_inputs(Arc::new(ProjectionInputs(
+            inputs.cloned().unwrap_or_default(),
+        )))
+}
+
 pub(crate) struct ProjectionAuthority(pub Arc<acp::outbox::PreparedOwnerRelationship>);
 
 impl datastore::multistore::ProjectionAuthority for ProjectionAuthority {
@@ -405,8 +422,12 @@ impl<S: Store> DbTxn<S> {
         self.txn
             .as_ref()
             .map(|t| {
-                t.datastore()
-                    .with_projection_staged(self.owed_staged().shared())
+                let view = t.datastore();
+                if view.has_document_projector() {
+                    view.with_projection_staged(self.owed_staged().shared())
+                } else {
+                    view
+                }
             })
             .ok_or(Error::TxnNotActive)
     }
