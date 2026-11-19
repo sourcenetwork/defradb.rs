@@ -62,9 +62,13 @@ its rows, and the provider is sent the change after the commit.
 The node's HTTP relationship routes (`POST` and `DELETE /api/v0/acp/document/relationship`,
 `POST /api/v0/acp/document/relationships`) with `x-defradb-tx` stage the same way, in the
 client's transaction. The acting DID is the one the request's verified credential names,
-never a field of the request, and the authority recorded is the delegation that credential
-is: a caller signed in with an identity token, which is no delegation, is refused with
-401 (`OwedAuthorityUnavailable`) and nothing is staged. The check below runs at staging,
+never a field of the request. The authority recorded is the node's own key when the
+provider holds the key for that DID, whatever the caller signed in with, as the route
+without a transaction sends as a DID whose key the node holds; otherwise it is the
+delegation the credential is. So a caller signed in with an identity token, which is no
+delegation, has its change staged under the node's key when the node holds that DID's
+key, and is otherwise refused with 401 (`OwedAuthorityUnavailable`) with nothing staged.
+The check below runs at staging in both cases,
 so a caller without authority is refused before its commit (401 for a document it does
 not own, 503 for a delete while the provider cannot be asked) and owes nothing. The answer
 keeps Go's field (`ExistedAlready`, `RecordFound`, with a staged change reported as new
