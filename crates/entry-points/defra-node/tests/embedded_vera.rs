@@ -790,6 +790,63 @@ fn a_grant_staged_beside_its_document_lets_the_grantee_read_after_the_commit() {
     .unwrap();
 }
 
+/// The grants one transaction stages go to the Vera node in one request,
+/// which it applies whole: both grantees read once the commit returns.
+#[test]
+fn the_grants_one_transaction_stages_land_together() {
+    use vera::vera_rs::{DelegationSigner, Ed25519Signer};
+
+    workers::block_on(async {
+        let directory = tempfile::tempdir().unwrap();
+        let node = node(directory.path()).await;
+        let vera = node.vera_acp().expect("vera.rs document ACP").clone();
+        let owner = identity::Did::new(vera.self_did().expect("actor DID")).unwrap();
+        let first = identity::Did::new(STRANGER).unwrap();
+        let second =
+            identity::Did::new(Ed25519Signer::from_slice(&[44; 32]).expect("key").did()).unwrap();
+        let policy = vera
+            .add_policy(owner.as_str(), POLICY)
+            .await
+            .expect("policy");
+        node.add_collection(&users(&policy))
+            .await
+            .expect("collection");
+        let acting = defra_core::RequestContext::default().with_identity(Some(owner.to_string()));
+        let doc = created(node.execute_request(create_user("shared", &owner)).await);
+
+        let transaction = node.begin_transaction_guard(false).await.unwrap();
+        for grantee in [&first, &second] {
+            let staged = node
+                .add_dac_actor_relationship_change_for_in_txn(
+                    transaction.handle(),
+                    &acting,
+                    "Users",
+                    &doc,
+                    "reader",
+                    grantee.as_str(),
+                )
+                .await
+                .expect("staged grant");
+            assert!(
+                matches!(staged, RelationshipChange::Staged { .. }),
+                "{staged:?}"
+            );
+        }
+        transaction.commit().await.expect("commit");
+
+        assert!(chain_reads(&node, &first, &policy, &doc).await);
+        assert!(chain_reads(&node, &second, &policy, &doc).await);
+        assert!(node
+            .owed_acp_as(&acting, owner.as_str())
+            .await
+            .expect("what is owed")
+            .is_empty());
+        drop(vera);
+        node.shutdown().await.expect("shutdown");
+    })
+    .unwrap();
+}
+
 /// A revocation staged in a transaction denies its subject through that
 /// transaction at once and on this node from the commit; the Vera node holds
 /// it once it is settled, which the commit waits for when the chain answers.
@@ -981,6 +1038,125 @@ fn a_restart_settles_a_change_the_chain_could_not_take() {
             names(node.execute_request(read_users(&reader)).await),
             ["kept"]
         );
+        node.shutdown().await.expect("shutdown");
+        second_chain.shutdown().await.expect("shutdown");
+    })
+    .unwrap();
+}
+
+/// A grant committed while the Vera deployment cannot be reached is
+/// settled by the node's drainer once the deployment is back, with no
+/// further request to the node and no restart of it: the drainer backs off
+/// while the provider is away and tries again by itself.
+#[test]
+fn an_idle_node_settles_a_staged_grant_once_its_deployment_is_back() {
+    use defra_node::{VeraRsActor, VeraRsConfig};
+    use vera::vera_rs::{DelegationSigner, Ed25519Signer};
+
+    workers::block_on(async {
+        let directory = tempfile::tempdir().unwrap();
+        let chain_signer: Arc<dyn DelegationSigner> =
+            Arc::new(Ed25519Signer::from_slice(&[42; 32]).expect("key"));
+        let signer: Arc<dyn DelegationSigner> =
+            Arc::new(Ed25519Signer::from_slice(&[43; 32]).expect("key"));
+        let chain_owner = identity::Did::new(chain_signer.did()).unwrap();
+        let creator = identity::Did::new(signer.did()).unwrap();
+        let reader = identity::Did::new(STRANGER).unwrap();
+        let acting = defra_core::RequestContext::default().with_identity(Some(creator.to_string()));
+        let chain_dir = directory.path().join("chain");
+        let policies = vec![EmbeddedVeraPolicy {
+            definition: POLICY.to_string(),
+            counter: 0,
+            owner: chain_owner.to_string(),
+        }];
+
+        let (first_chain, rpc) = node_serving(
+            &chain_dir,
+            EmbeddedVeraActor::Signer(Arc::clone(&chain_signer)),
+            policies.clone(),
+        )
+        .await;
+        let trust = first_chain
+            .embedded_vera_trust()
+            .expect("deployment")
+            .clone();
+        let home = directory.path().join("consumer");
+        let keyring: Arc<dyn keyring::Keyring> = Arc::new(
+            keyring::FileKeyring::open(home.join("keys"), b"test-password").expect("keyring"),
+        );
+        let node = Node::builder()
+            .data_path(home.join("data"))
+            .with_vera_rs(VeraRsConfig {
+                rpc_address: format!("http://{rpc}"),
+                consensus_key: trust.consensus_key,
+                deployment_id: trust.chain_id,
+                actor: VeraRsActor::Signer(Arc::clone(&signer)),
+                worker_dir: home.join("worker"),
+                keyring,
+                tuning: vera::AcpTuning::default(),
+            })
+            .build()
+            .await
+            .expect("consumer node");
+        let policy = node
+            .add_dac_policy_with_counter_as(&acting, POLICY, 0)
+            .await
+            .expect("seeded policy");
+        node.add_collection(&users(&policy))
+            .await
+            .expect("collection");
+        first_chain.shutdown().await.expect("shutdown");
+        drop(first_chain);
+
+        let transaction = node.begin_transaction_guard(false).await.unwrap();
+        let doc = created(
+            transaction
+                .execute_request(create_user("kept", &creator))
+                .await,
+        );
+        let staged = node
+            .add_dac_actor_relationship_change_for_in_txn(
+                transaction.handle(),
+                &acting,
+                "Users",
+                &doc,
+                "reader",
+                reader.as_str(),
+            )
+            .await
+            .expect("staged grant");
+        assert!(
+            matches!(staged, RelationshipChange::Staged { .. }),
+            "{staged:?}"
+        );
+        transaction.commit().await.expect("commit");
+
+        // The deployment comes back on the address the node knows. Nothing
+        // is asked of the node from here on.
+        let second_chain = starting(
+            &chain_dir,
+            EmbeddedVeraActor::Signer(Arc::clone(&chain_signer)),
+            policies,
+            Some(rpc),
+        )
+        .await
+        .expect("the deployment back on its address");
+        let deadline = std::time::Instant::now() + Duration::from_secs(150);
+        while !reads_doc(&second_chain, &reader, &policy, &doc).await {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the idle node did not settle its staged grant"
+            );
+            edge::testing::edge()
+                .sleep(Duration::from_millis(500))
+                .await;
+        }
+        let owner = second_chain
+            .document_acp()
+            .get_doc_owner(&policy, "users", &doc)
+            .await
+            .expect("owner");
+        assert_eq!(owner.as_ref(), Some(&creator));
         node.shutdown().await.expect("shutdown");
         second_chain.shutdown().await.expect("shutdown");
     })

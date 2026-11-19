@@ -62,7 +62,7 @@ its rows, and the provider is sent the change after the commit.
 Staging is for embedders that call the node directly. The HTTP relationship route with
 `x-defradb-tx` serves only a provider that joins the transaction; on an external one it
 answers 501, `transaction-bound document relationships are unavailable`, and records
-nothing, until a drainer settles staged changes. The calls that report what is owed, wait
+nothing. The calls that report what is owed, wait
 for it, take a fresh credential and abandon a refused change
 ([What is owed after the commit](#what-is-owed-after-the-commit)) are node calls too,
 with no HTTP route.
@@ -140,6 +140,29 @@ with no HTTP route.
   - *unreachable* (a transport failure, a timeout): the pass stops and nothing is
     written.
 
+  Through a provider whose worker journals its requests (vera.rs) a change is sent with
+  an *in-flight mark*. Before its request is journaled the record stores the request's
+  digest, and before the request is sent its transaction hash too (`in_flight`). A
+  change the node finds marked, after a crash or a commit that stopped waiting, is
+  decided before anything else is done with it: the request still in the worker's
+  journal is sent and waited for; one out of the journal is looked up by its hash, as
+  a verified receipt, and failing that in the worker's note by its digest. Whoever
+  resolves a request it did not journal itself (the provider at start, another command
+  before its own) writes the outcome to that note, `owed-outcomes.json` beside the
+  worker's journal, which keeps the latest 256. Applied, the record is deleted;
+  rejected, the change applied nothing and goes again on its own; known to none of
+  them, it is sent again. So a change takes effect at most once **as long as its
+  journal entry, its receipt or its note can still be read**: a receipt the provider
+  no longer serves and a note pushed out are the one way left to send a change twice.
+  The changes one transaction staged one after the other go in one request, at most 16
+  (`MAX_CHANGES_PER_REQUEST`) and 256 KiB, which vera.rs applies together or not at
+  all (`batchCalls`); each keeps its own credential. A request refused that way applied
+  nothing, and its changes go again one at a time (`alone`), so a change is only ever
+  parked for a refusal of its own. Every refusal is published on the event bus as
+  `acp-owed-change-refused`, with the change, the provider's words and whether it stays
+  parked. A provider without a journal (Cosmos, a host's own) is sent each change on
+  its own with no mark, as below.
+
   A parked change whose acting DID was checked holds every later change of its tuple and
   nothing else: changes of other tuples go on past it. A checked change the node could
   not send holds its tuple the same way, for as long as the node cannot send it: it is
@@ -156,7 +179,11 @@ with no HTTP route.
     waits for it, for at most 10 seconds (`OWED_SETTLE_DEADLINE`): that is the most a
     staged change adds to its commit, and past it the commit returns with the rest still
     owed. With the provider answering, the wait is one round trip per change.
-  - Once at start, after the owed registrations, over everything.
+  - By the node's drainer, over everything: once at start after the owed
+    registrations, after every commit that staged a change, and while the provider is
+    away or answers with errors that may pass, again after a back-off that doubles from
+    1 second up to 60. One drainer runs per node, and every pass takes the same lock,
+    so passes are serial.
   - Before a relationship change made outside a transaction on a tuple that has changes
     owed, over that document.
 
@@ -171,11 +198,9 @@ with no HTTP route.
   different workers are ordered by the provider alone, as they are for changes made
   outside a transaction.
 
-  There is no background drainer, timer or back-off yet. **A change left staged (the
-  provider was down, or the deadline passed) is submitted by the next commit that stages
-  on the same document, by a direct change of its tuple, by a call that waits for its
-  transaction, hands in a credential or abandons a change on its document, or at the
-  next start**; until then an owed add stays ungranted and an owed delete keeps denying.
+  A change left staged (the provider was down, or the deadline passed) is submitted by
+  the drainer without another request, on an idle node too; until then an owed add stays
+  ungranted and an owed delete keeps denying.
 - **A change made outside a transaction.** It goes to the provider at once, as before.
   When changes are owed on its tuple a pass over the document runs first. If a *staged*
   change is still owed on the tuple afterwards (the provider was not reached, or the
@@ -232,9 +257,13 @@ with no HTTP route.
   most 1,000 unsettled (`/acp-owed/a/<actor>` counts them), and a node holds at most
   10,000; each is a typed error before the commit. A parked change stays unsettled, so
   the acting DID's bound is what keeps one actor's parked changes from taking the whole
-  of the node's. The bounds are constants with no configuration key yet. The actor's and
-  the node's are checked against the counts the staging transaction sees, so
-  transactions staging at once can pass either by what they stage together.
+  of the node's. The bounds are constants with no configuration key yet. The actor's is
+  checked against the count the staging transaction sees, so transactions staging at
+  once can pass it by what they stage together. The node's is too while it is far
+  away; within 1,024 of it (`VALIDATED_WITHIN_OF_NODE_LIMIT`) the count is read
+  validated, so transactions that stage there commit one after the other and callers
+  acting as many identities cannot pass it together. They can pass it only by adding
+  more than that margin between them in transactions that each read the count below it.
 - **The gate.** While any delete of a tuple is unsettled, the adapter denies that
   tuple's subject on that object before it asks the provider: on document access, on
   access decisions, and on the authority to add or delete relationships. An add staged

@@ -155,7 +155,7 @@
 \*                                          node calls in
 \*                                          crates/entry-points/defra-node/src/owed.rs;
 \*   the drainer task, woken by commits     crates/entry-points/defra-node/src/
-\*   and backing off while the provider     owed_drainer.rs run_drainer, started by
+\*   and backing off while the provider     owed_drainer.rs drain, started by
 \*   is away                                gate_external_acp;
 \*   the journaled request and its marks    crates/engine/acp/src/external/drain.rs
 \*                                          send_request, recover_marked, batch,
@@ -164,12 +164,13 @@
 \*                                          and the record's InFlight;
 \*   the worker's journal, the receipt by   crates/engine/vera/src/vera_rs/provider/
 \*   hash and the note                      owed_request.rs prepare_owed_request,
-\*                                          journal_owed_request, resolve_owed_request,
-\*                                          owed_request_outcome, with the note in
-\*                                          crates/engine/vera/src/vera_rs/
-\*                                          outcome_note.rs and the start-up
-\*                                          recovery in provider/submission.rs
-\*                                          recover_pending.
+\*                                          journal_owed, owed_outcome, with the
+\*                                          note in crates/engine/vera/src/vera_rs/
+\*                                          outcome_note.rs, written by
+\*                                          resolve_pending in provider/
+\*                                          submission.rs for the start-up recovery
+\*                                          (recover_pending) and every command that
+\*                                          finds another's request journaled.
 \* In the model these are StageCreate, StageChange with its check (CanCheck,
 \* Passes, CheckedDeletes), Commit, Rollback, Crash, RegisterOnChain,
 \* ClearOwed, the deny overlay (DenyRule = "AnyOwedDelete",

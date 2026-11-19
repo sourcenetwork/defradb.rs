@@ -63,6 +63,8 @@ mod node_query_identity_tests;
 mod on_pool_tests;
 mod ops;
 mod owed;
+#[cfg(feature = "vera")]
+mod owed_drainer;
 pub use ops::{EncryptedIndexListing, IndexListing};
 #[cfg(any(feature = "p2p", feature = "libp2p"))]
 mod p2p_runtime;
