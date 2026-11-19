@@ -537,7 +537,7 @@ fn a_transaction_with_more_changes_than_a_request_carries_goes_in_two() {
         let count = acp::MAX_CHANGES_PER_REQUEST + 1;
         for index in 0..count {
             let letter = char::from(b'a' + index as u8);
-            let subject = Did::new(&format!("did:key:z6Mkbatch{letter}")).unwrap();
+            let subject = Did::new(format!("did:key:z6Mkbatch{letter}")).unwrap();
             let mut change = add(alice(), &doc, subject);
             change.txn = Some(STAGED_BY);
             staging.stage(&handle, change).await.unwrap();
