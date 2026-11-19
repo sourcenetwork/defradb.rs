@@ -236,6 +236,7 @@ where
                         mailbox,
                         idle: Arc::clone(&idle),
                         key,
+                        ending: false,
                     },
                 ),
                 None => return Err(Unavailable::NotFound),
@@ -260,7 +261,7 @@ where
         R: MaybeSend + 'static,
         W: for<'t> FnOnce(&'t mut T) -> LocalBoxFuture<'t, R> + MaybeSend + 'static,
     {
-        if !self.table(id).admits(id, key) {
+        if !self.table(id).runs(id, key) {
             return Err(Unavailable::NotFound);
         }
         self.send(id, "txn.request", move |reply| {
@@ -325,10 +326,11 @@ where
     }
 
     /// [`finish`](Self::finish), where `last` may decide on the transaction
-    /// not to end it ([`Ending::Kept`]): it is put back on its owner for the
-    /// same caller, under the same ID, and later requests find it again.
-    /// Requests that arrived while it was out of the table found none, as for
-    /// any end. Nothing is fenced for a transaction that was kept.
+    /// not to end it yet ([`Ending::Kept`]): it is put back on its owner for
+    /// the same caller, under the same ID, for another end only. The end has
+    /// begun, so a request, now as while it was out of the table, finds no
+    /// transaction; a commit or a discard finds it, and an abandon or the idle
+    /// sweep ends it. Nothing is fenced for a transaction that was kept.
     pub(crate) async fn finish_unless<R, L>(
         &self,
         id: TxnId,
@@ -487,8 +489,8 @@ pub(crate) enum Ending<T, R> {
 }
 
 /// Puts `txn` back on the calling worker, its owner, as transaction `id` of
-/// the caller `key`, with a new task and mailbox. A pool that cannot start
-/// the task discards it.
+/// the caller `key`, with a new task and mailbox, taking no further request.
+/// A pool that cannot start the task discards it.
 fn reinstate<T, K>(shared: &Weak<Shared<T, K>>, id: TxnId, key: K, txn: T)
 where
     T: MaybeSend + 'static,
@@ -508,6 +510,7 @@ where
             mailbox,
             idle: Arc::clone(&idle),
             key,
+            ending: true,
         },
     );
     if start(actor::own(idle, id, worker, inbox, shared.clone())).is_err() {

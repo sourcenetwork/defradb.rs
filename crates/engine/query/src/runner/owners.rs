@@ -374,6 +374,9 @@ where
                 .collect();
             let mut result = Vec::with_capacity(doc_ids.len());
             let mut missed = None;
+            // Kept in the transaction only once the whole observation answered:
+            // an attempt that fails or ends for an input gives nobody an owner.
+            let mut staged = Vec::new();
             for doc_id in doc_ids {
                 let readable = visible.contains(doc_id.as_str());
                 let owner = match (&definition.policy, &source) {
@@ -396,14 +399,12 @@ where
                     (
                         Some(policy),
                         OwnerSource::Remote {
-                            acp,
-                            projection,
-                            observed,
+                            acp, projection, ..
                         },
                     ) => match remote_owner(
                         acp.as_ref(),
                         projection.as_deref(),
-                        observed,
+                        &mut staged,
                         requester.as_ref(),
                         policy,
                         &doc_id,
@@ -426,10 +427,15 @@ where
                     owner,
                 });
             }
-            match missed {
-                Some(input) => Err(QueryError::NeedsInput(input)),
-                None => Ok(result),
+            if let Some(input) = missed {
+                return Err(QueryError::NeedsInput(input));
             }
+            if let OwnerSource::Remote { observed, .. } = &source {
+                for (request, answer) in staged {
+                    observed.record(request, answer);
+                }
+            }
+            Ok(result)
         })
     })
 }
@@ -440,7 +446,7 @@ where
 ///   names its creator: the node's own claim, read from the transaction's view
 ///   as a validated point read, so a settle that commits first conflicts;
 /// - otherwise the provider's owner, read at the edge as a prepared input and
-///   kept in `observed`, which the commit confirms with the provider
+///   staged in `staged` for the transaction to keep, which the commit confirms with the provider
 ///   ([`QueryRunner::commit_confirming`]).
 ///
 /// A provider answer this attempt lacks is noted in `inputs` and ends the
@@ -449,7 +455,7 @@ where
 async fn remote_owner(
     acp: &dyn acp::DocumentACP,
     projection: Option<&AcpRegistrationProjection>,
-    observed: &ObservedOwners,
+    staged: &mut Vec<crate::txn::OwnerAnswer>,
     requester: Option<&Did>,
     policy: &schema::PolicyDescription,
     doc_id: &str,
@@ -482,6 +488,6 @@ async fn remote_owner(
     let owner: Option<Did> = serde_json::from_slice(&answer).map_err(|error| {
         QueryError::execution(format!("cached ACP response is invalid: {error}"))
     })?;
-    observed.record(request, answer);
+    staged.push((request, answer));
     Ok(owner)
 }

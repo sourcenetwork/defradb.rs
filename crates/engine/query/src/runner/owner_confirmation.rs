@@ -59,7 +59,8 @@ where
             .map_err(|error| {
                 TransactionError::execution(format!(
                     "the document ACP provider could not confirm the owners this transaction \
-                     was told, so nothing was committed; commit again: {error}"
+                     was told, so nothing was committed and the transaction is still open; \
+                     commit it again: {error}"
                 ))
             })?;
         let confirmations = requests

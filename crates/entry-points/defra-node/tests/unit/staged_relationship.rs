@@ -66,6 +66,11 @@ pub(super) struct Remote {
     /// fails as not delivered.
     stalled: AtomicBool,
     released: regolith::sync::Event,
+    /// An owner read waits, once, until `owner_reads_released`, after
+    /// setting `owner_read_waiting`.
+    pub(super) hold_owner_read: AtomicBool,
+    pub(super) owner_read_waiting: regolith::sync::Event,
+    pub(super) owner_reads_released: regolith::sync::Event,
 }
 
 /// The words a delegation bound to one request names `command` by.
@@ -116,6 +121,9 @@ impl Remote {
             unverifying: AtomicBool::new(false),
             stalled: AtomicBool::new(false),
             released: regolith::sync::Event::new(),
+            hold_owner_read: AtomicBool::new(false),
+            owner_read_waiting: regolith::sync::Event::new(),
+            owner_reads_released: regolith::sync::Event::new(),
         })
     }
 
@@ -439,6 +447,10 @@ impl VeraProvider for Remote {
         _resource: &str,
         object_id: &str,
     ) -> Result<(bool, String), ProviderError> {
+        if self.hold_owner_read.swap(false, Ordering::SeqCst) {
+            self.owner_read_waiting.set();
+            self.owner_reads_released.wait().await;
+        }
         self.reachable()?;
         Ok(match self.owners.get(object_id) {
             Some(owner) => (true, owner),
