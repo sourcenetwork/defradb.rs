@@ -18,6 +18,18 @@ fn rejected(hash: B256) -> OwedRequestOutcome {
     OwedRequestOutcome::Rejected(format!("submission {hash:#x} was rejected"))
 }
 
+/// Whether the journaled request with hash `pending` is the one the caller
+/// names: by its transaction hash when the caller recorded one, and by its
+/// bytes only when the caller knows nothing but the digest. A later request
+/// with the same bytes (a delegation reused for the same command) has
+/// another hash, and its outcome is not the caller's.
+fn is_the_request(recorded: Option<B256>, pending: B256, same_bytes: bool) -> bool {
+    match recorded {
+        Some(recorded) => recorded == pending,
+        None => same_bytes,
+    }
+}
+
 impl VeraRsProvider {
     /// One command alone, or several in one `batchCalls`, which the ACP
     /// precompile applies together or rolls back whole.
@@ -97,10 +109,9 @@ impl VeraRsProvider {
         let worker = self.locked_worker().await?;
         if let Some(wire) = worker.pending().map(<[u8]>::to_vec) {
             let pending = NativeTx::decode_wire(&wire).map_err(unavailable)?;
-            let ours = hash == Some(pending.tx_id().0)
-                || (pending.target == ACP_ADDRESS
-                    && owed_request_digest(&pending.calldata) == digest);
-            if ours {
+            let same_bytes =
+                pending.target == ACP_ADDRESS && owed_request_digest(&pending.calldata) == digest;
+            if is_the_request(hash, pending.tx_id().0, same_bytes) {
                 let note = if hash.is_none() {
                     Note::Keep
                 } else {
@@ -114,7 +125,8 @@ impl VeraRsProvider {
                 });
             }
         }
-        let noted = worker.noted(digest, floor).cloned();
+        let recorded = hash.map(|hash| format!("{hash:#x}"));
+        let noted = worker.noted(digest, recorded.as_deref(), floor).cloned();
         drop(worker);
         if let Some(hash) = hash {
             match self.client.receipt(hash, &self.trusted).await {
@@ -137,5 +149,26 @@ impl VeraRsProvider {
             }
             None => OwedRequestOutcome::Unknown,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_recorded_hash_names_the_request_and_bytes_alone_do_not() {
+        let first = B256::repeat_byte(1);
+        let later = B256::repeat_byte(2);
+        assert!(is_the_request(Some(first), first, true));
+        assert!(!is_the_request(Some(first), later, true));
+        assert!(!is_the_request(Some(first), later, false));
+    }
+
+    #[test]
+    fn without_a_hash_the_bytes_name_the_request() {
+        let pending = B256::repeat_byte(3);
+        assert!(is_the_request(None, pending, true));
+        assert!(!is_the_request(None, pending, false));
     }
 }

@@ -66,10 +66,10 @@ impl NativeWorker {
         self.note.record(outcome)
     }
 
-    /// The outcome noted for the request whose digest is `digest`, among
-    /// those numbered from `floor` on.
-    pub fn noted(&self, digest: &str, floor: Option<u64>) -> Option<&Noted> {
-        self.note.get(digest, floor)
+    /// The outcome noted for the request the caller names: by `tx` when it
+    /// recorded one, else by `digest` among those numbered from `floor` on.
+    pub fn noted(&self, digest: &str, tx: Option<&str>, floor: Option<u64>) -> Option<&Noted> {
+        self.note.get(digest, tx, floor)
     }
 }
 

@@ -85,18 +85,27 @@ impl OutcomeNote {
     /// those signed with a sequence from `floor` on. A request with the same
     /// bytes sent before (a delegation reused for the same command) was
     /// signed with a lower one, and its outcome is not the caller's.
-    pub fn get(&self, digest: &str, floor: Option<u64>) -> Option<&Noted> {
+    ///
+    /// A caller that recorded the request's transaction hash `tx` gets the
+    /// outcome of that transaction only: another request with the same bytes
+    /// is another transaction.
+    pub fn get(&self, digest: &str, tx: Option<&str>, floor: Option<u64>) -> Option<&Noted> {
         self.outcomes.iter().rev().find(|noted| {
-            noted.digest == digest && floor.is_none_or(|floor| noted.sequence >= floor)
+            noted.digest == digest
+                && match tx {
+                    Some(tx) => noted.tx == tx,
+                    None => floor.is_none_or(|floor| noted.sequence >= floor),
+                }
         })
     }
 
     /// Note `outcome` durably, in place of an earlier outcome of the same
-    /// bytes, pushing out the oldest past [`MAX_NOTED`]. Blocking IO: the
-    /// write is synced before this returns.
+    /// transaction, pushing out the oldest past [`MAX_NOTED`]. An outcome of
+    /// another transaction with the same bytes stays: its caller may name it
+    /// by hash. Blocking IO: the write is synced before this returns.
     pub fn record(&mut self, outcome: Noted) -> Result<(), ProviderError> {
         let mut outcomes = self.outcomes.clone();
-        outcomes.retain(|noted| noted.digest != outcome.digest);
+        outcomes.retain(|noted| noted.tx != outcome.tx);
         outcomes.push(outcome);
         let excess = outcomes.len().saturating_sub(MAX_NOTED);
         outcomes.drain(..excess);
@@ -149,18 +158,18 @@ mod tests {
     fn an_outcome_survives_a_reopen_and_the_oldest_is_pushed_out() {
         let directory = tempfile::tempdir().unwrap();
         let mut note = OutcomeNote::open(directory.path()).unwrap();
-        assert!(note.get("0xd0", None).is_none());
+        assert!(note.get("0xd0", None, None).is_none());
         for index in 0..=MAX_NOTED {
             note.record(noted(index)).unwrap();
         }
         let reopened = OutcomeNote::open(directory.path()).unwrap();
         assert!(
-            reopened.get("0xd0", None).is_none(),
+            reopened.get("0xd0", None, None).is_none(),
             "the oldest was pushed out"
         );
-        assert_eq!(reopened.get("0xd1", None), Some(&noted(1)));
+        assert_eq!(reopened.get("0xd1", None, None), Some(&noted(1)));
         assert_eq!(
-            reopened.get(&format!("0xd{MAX_NOTED}"), None),
+            reopened.get(&format!("0xd{MAX_NOTED}"), None, None),
             Some(&noted(MAX_NOTED))
         );
     }
@@ -178,16 +187,45 @@ mod tests {
             ..noted(1)
         };
         note.record(earlier.clone()).unwrap();
-        assert_eq!(note.get("0xd1", Some(3)), Some(&earlier));
-        assert_eq!(note.get("0xd1", Some(4)), None);
+        assert_eq!(note.get("0xd1", None, Some(3)), Some(&earlier));
+        assert_eq!(note.get("0xd1", None, Some(4)), None);
 
         let later = Noted {
+            tx: "0xt9".into(),
             sequence: 9,
             success: false,
             ..noted(1)
         };
         note.record(later.clone()).unwrap();
-        assert_eq!(note.get("0xd1", Some(4)), Some(&later));
+        assert_eq!(note.get("0xd1", None, Some(4)), Some(&later));
+    }
+
+    /// A caller that recorded its request's hash gets that transaction's
+    /// outcome, whether a later request with the same bytes was noted after
+    /// it or not yet at all.
+    #[test]
+    fn a_recorded_hash_reads_its_own_outcome_and_no_other() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut note = OutcomeNote::open(directory.path()).unwrap();
+        let earlier = Noted {
+            sequence: 3,
+            success: true,
+            ..noted(1)
+        };
+        note.record(earlier.clone()).unwrap();
+        assert_eq!(note.get("0xd1", Some("0xt9"), None), None);
+
+        let later = Noted {
+            tx: "0xt9".into(),
+            sequence: 9,
+            success: false,
+            ..noted(1)
+        };
+        note.record(later.clone()).unwrap();
+        let reopened = OutcomeNote::open(directory.path()).unwrap();
+        assert_eq!(reopened.get("0xd1", Some("0xt1"), None), Some(&earlier));
+        assert_eq!(reopened.get("0xd1", Some("0xt9"), None), Some(&later));
+        assert_eq!(reopened.get("0xd1", Some("0xt5"), None), None);
     }
 
     #[test]
@@ -201,7 +239,7 @@ mod tests {
         };
         note.record(again.clone()).unwrap();
         let reopened = OutcomeNote::open(directory.path()).unwrap();
-        assert_eq!(reopened.get("0xd1", None), Some(&again));
+        assert_eq!(reopened.get("0xd1", None, None), Some(&again));
         assert_eq!(reopened.outcomes.len(), 1);
     }
 
