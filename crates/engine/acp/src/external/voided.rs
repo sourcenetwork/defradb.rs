@@ -14,9 +14,15 @@
 //! (`proofs/tla/FollowDeployment.tla`).
 //!
 //! A change is not owed again when a later one of its tuple, or a
-//! registration of its document, is owed already: the later record decides
-//! what the provider is sent, and sending the older one after it would undo
-//! it.
+//! registration of its document, was owed already before the call: the
+//! later record decides what the provider is sent, and sending the older one
+//! after it would undo it. Changes of one tuple handed back together are all
+//! owed, in their order.
+//!
+//! The outbox's bounds on unsettled changes are not applied: they bound what
+//! callers stage, while these changes were committed and confirmed already,
+//! and the provider admits nothing until they are owed, so a full outbox
+//! could never drain (the journal bounds how many one switch hands back).
 
 use async_trait::async_trait;
 use identity::Did;
@@ -25,7 +31,7 @@ use storage::corekv::Store;
 use super::ExternalDocumentAcp;
 use super::OwedScope;
 use crate::error::{Error, Result};
-use crate::outbox::{NewOwedChange, OwedAuthority, StagedCount};
+use crate::outbox::{NewOwedChange, OwedAuthority, OwedTuple, StagedCount};
 use crate::pending::{PendingRegistration, PendingRegistrations};
 
 /// A confirmed submission whose effect the deployment no longer holds.
@@ -75,6 +81,11 @@ where
         let registrations = PendingRegistrations::new(&view);
         let changes = self.owed_changes(&view, StagedCount::new());
         let mut staged = 0u64;
+        // Tuples this call owes again, and tuples that already owed a later
+        // change before it: an effect of the first kind keeps its place
+        // behind the one before it, one of the second kind is passed over.
+        let mut owing: Vec<&OwedTuple> = Vec::new();
+        let mut superseded: Vec<&OwedTuple> = Vec::new();
         for effect in effects {
             match effect {
                 VoidedEffect::Registration {
@@ -98,10 +109,18 @@ where
                     registrations.record(&pending).await?;
                 }
                 VoidedEffect::Change(change) => {
-                    if changes.tuple(&change.tuple).await?.is_some() {
+                    let tuple = &change.tuple;
+                    if superseded.contains(&tuple) {
                         continue;
                     }
-                    changes.stage(change.clone()).await?;
+                    if !owing.contains(&tuple) {
+                        if changes.tuple(tuple).await?.is_some() {
+                            superseded.push(tuple);
+                            continue;
+                        }
+                        owing.push(tuple);
+                    }
+                    changes.stage_restored(change.clone()).await?;
                 }
             }
             staged += 1;

@@ -218,3 +218,54 @@ fn a_change_whose_tuple_already_owes_a_later_one_is_not_owed_again() {
     })
     .unwrap()
 }
+
+#[test]
+fn successive_changes_of_one_tuple_handed_back_together_are_all_owed_in_order() {
+    workers::block_on(async {
+        let (provider, gate) = gate();
+        gate.owe_again(&[
+            change("bae-4", OwedOp::Add),
+            change("bae-4", OwedOp::Delete),
+        ])
+        .await
+        .unwrap();
+        let owed: Vec<_> = gate
+            .owed_changes_after(None)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|change| change.op)
+            .collect();
+        assert_eq!(owed, vec![OwedOp::Add, OwedOp::Delete]);
+        assert!(
+            !reads(&gate, READER, "bae-4").await,
+            "the revocation handed back last denies"
+        );
+        gate.settle_owed().await;
+        assert_eq!(
+            provider.writes(),
+            vec![
+                format!("add reader {READER} on bae-4"),
+                format!("delete reader {READER} on bae-4"),
+            ]
+        );
+    })
+    .unwrap()
+}
+
+#[test]
+fn what_a_term_voided_is_owed_again_past_the_bounds_on_new_changes() {
+    workers::block_on(async {
+        let (_, gate) = gate();
+        // More than one transaction may stage, all as one actor.
+        let many: Vec<_> = (0..crate::outbox::MAX_OWED_CHANGES_PER_TRANSACTION + 10)
+            .map(|index| change(&format!("bae-{index}"), OwedOp::Delete))
+            .collect();
+        gate.owe_again(&many).await.unwrap();
+        assert_eq!(
+            gate.owed_changes_after(None).await.unwrap().len(),
+            many.len()
+        );
+    })
+    .unwrap()
+}
