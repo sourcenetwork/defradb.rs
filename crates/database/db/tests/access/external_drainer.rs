@@ -714,6 +714,61 @@ fn a_marked_change_is_sent_by_a_provider_without_a_journal() {
     .unwrap()
 }
 
+/// The cases a settle used to abort (#3070) still commit with the drainer
+/// sending through the journal: a transaction staging another tuple of a
+/// document, staging the same tuple after the change being settled, or
+/// reading as a denied identity, commits while a drainer pass marks the
+/// document's owed change in flight, sends it and settles it.
+#[test]
+fn transactions_on_a_document_commit_while_the_drainer_settles_there() {
+    workers::block_on(async {
+        let (staging, journal) = journaled().await;
+        let doc = staging.create(alice(), "shared", None).await;
+
+        // Another tuple of the document.
+        staging.commit_change(add(alice(), &doc, bob())).await;
+        let handle = staging.begin().await;
+        staging
+            .stage(&handle, add(alice(), &doc, carol()))
+            .await
+            .unwrap();
+        assert_eq!(staging.pass_once().await, settled(1));
+        // Staging another tuple commits past the drainer's settle.
+        staging.commit(&handle).await;
+
+        // The same tuple, after the change the drainer settles.
+        let handle = staging.begin().await;
+        staging
+            .stage(&handle, Change::new(alice(), &doc, OwedOp::Delete, bob()))
+            .await
+            .unwrap();
+        assert_eq!(staging.pass_once().await, settled(1));
+        // Staging the same tuple commits past the drainer's settle.
+        staging.commit(&handle).await;
+
+        // A decision: Bob is denied by his owed revocation, read in a
+        // transaction that writes, while the drainer settles Carol's grant.
+        staging.commit_change(add(alice(), &doc, carol())).await;
+        let handle = staging.begin().await;
+        assert!(staging.reads_in(&handle, bob()).await.is_empty());
+        staging
+            .stage(&handle, add(alice(), &doc, mallory()))
+            .await
+            .unwrap();
+        let settlement = staging.pass_once().await;
+        assert!(settlement.settled >= 1, "{settlement:?}");
+        // A decision commits past the drainer's settle.
+        staging.commit(&handle).await;
+
+        assert_eq!(staging.pass_once().await, settled(1));
+        assert!(staging.queue().await.is_empty());
+        assert!(!journal.take_requests().is_empty());
+        assert!(!staging.remote.holds(&doc, &bob()));
+        assert!(staging.remote.holds(&doc, &mallory()));
+    })
+    .unwrap()
+}
+
 impl Staging {
     async fn pass_once(&self) -> OwedSettlement {
         pass(&self.gate).await
