@@ -326,3 +326,6 @@ lean_lib KmsChunks where
 
 @[default_target]
 lean_lib SigningOverride where
+
+@[default_target]
+lean_lib OwedParts where
