@@ -19,6 +19,10 @@ required-features = ["node"]
 name = "node_placement"
 required-features = ["node"]
 
+[[test]]
+name = "term_takeover"
+required-features = ["node"]
+
 [features]
 # Start and stop the node itself, on the network runtime's cores.
 node = ["dep:vera-node", "dep:commonware-codec", "dep:hex"]
@@ -54,6 +58,8 @@ acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev 
 # The document ACP layer the stopped-node test asks through.
 acp = { path = "../../engine/acp" }
 identity = { path = "../../building-blocks/identity" }
+# The term certificate the takeover test approves as the deployment's operator.
+vera-client = "0.1.2"
 # The node the tests host in their own process.
 vera-node = { git = "https://github.com/sourcenetwork/vera.rs", rev = "e703d117afc9638777ab1607f03b84632254f2cc" }
 commonware-codec = "=2026.10.0"
