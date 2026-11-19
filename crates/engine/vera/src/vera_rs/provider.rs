@@ -654,9 +654,11 @@ impl VeraProvider for VeraRsProvider {
         let id = hex::encode(event.policyId);
         let record = self
             .admitted_read(async {
-                verified(|| self.light_client.read_policy(&id))
-                    .await
-                    .map_err(|e| ProviderError::Query(format!("created policy proof: {e}")))
+                verified(self.light_client.header_chain(), || {
+                    self.light_client.read_policy(&id)
+                })
+                .await
+                .map_err(|e| ProviderError::Query(format!("created policy proof: {e}")))
             })
             .await?;
         let record: PolicyRecord = serde_json::from_slice(
@@ -875,9 +877,11 @@ impl VeraProvider for VeraRsProvider {
         let id = hex::encode(Self::policy_id_to_bytes32(policy_id)?);
         let proof = self
             .admitted_read(async {
-                verified(|| self.light_client.read_policy(&id))
-                    .await
-                    .map_err(|e| ProviderError::Query(format!("policy proof: {e}")))
+                verified(self.light_client.header_chain(), || {
+                    self.light_client.read_policy(&id)
+                })
+                .await
+                .map_err(|e| ProviderError::Query(format!("policy proof: {e}")))
             })
             .await?;
         let Some(bytes) = proof.value.as_deref() else {
@@ -910,9 +914,11 @@ impl VeraProvider for VeraRsProvider {
         };
         let owner = self
             .admitted_read(async {
-                verified(|| self.light_client.read_object_owner(&policy, &object))
-                    .await
-                    .map_err(|e| reach::read_error(&self.light_client, "owner proof", e))
+                verified(self.light_client.header_chain(), || {
+                    self.light_client.read_object_owner(&policy, &object)
+                })
+                .await
+                .map_err(|e| reach::read_error(&self.light_client, "owner proof", e))
             })
             .await?;
         Ok(match owner {
@@ -931,9 +937,11 @@ impl VeraProvider for VeraRsProvider {
     ) -> Result<bool, ProviderError> {
         let request = access_request(resource, object_id, permission, actor_did)?;
         self.admitted_read(async {
-            verified(|| self.light_client.verify_access(policy_id, &request))
-                .await
-                .map_err(|e| reach::read_error(&self.light_client, "verified permission", e))
+            verified(self.light_client.header_chain(), || {
+                self.light_client.verify_access(policy_id, &request)
+            })
+            .await
+            .map_err(|e| reach::read_error(&self.light_client, "verified permission", e))
         })
         .await
     }
@@ -966,9 +974,11 @@ impl VeraProvider for VeraRsProvider {
         };
         let decision = self
             .admitted_read(async {
-                verified(|| self.light_client.verify_access_decision(&expected))
-                    .await
-                    .map_err(|e| ProviderError::Query(format!("verified access decision: {e}")))
+                verified(self.light_client.header_chain(), || {
+                    self.light_client.verify_access_decision(&expected)
+                })
+                .await
+                .map_err(|e| ProviderError::Query(format!("verified access decision: {e}")))
             })
             .await?;
         Ok(Some(decision.id))

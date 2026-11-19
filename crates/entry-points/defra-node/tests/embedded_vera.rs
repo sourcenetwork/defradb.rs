@@ -18,6 +18,10 @@ mod verified;
 #[path = "embedded_vera/clock_skew.rs"]
 mod clock_skew;
 
+#[cfg(feature = "http")]
+#[path = "embedded_vera/http_staged.rs"]
+mod http_staged;
+
 #[path = "embedded_vera/replica.rs"]
 mod replica;
 

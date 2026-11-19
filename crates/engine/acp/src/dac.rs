@@ -84,6 +84,13 @@ pub trait DocumentACP: MaybeSendSync {
         None
     }
 
+    /// Whether this provider has a transaction stage the relationship
+    /// changes it makes as owed ([`transaction_outbox`](Self::transaction_outbox)
+    /// gives a place for them), rather than applying them in it or not at all.
+    fn stages_relationship_changes(&self) -> bool {
+        false
+    }
+
     /// Where a transaction stages the relationship changes it owes this
     /// provider, for a provider that cannot join a transaction
     /// ([`bind_transaction`](Self::bind_transaction) is `None`) but keeps

@@ -621,6 +621,9 @@ RUNS=(
   "MC_Acp_StaleCache_Red.cfg   MC_Acp_StaleCache_Red.tla   RED"   # stale cache grants revoked permission
   "MC_VerifiedRead_Green.cfg VerifiedRead.tla GREEN" # a proven read a block overtook is asked again and answered at the newest root
   "MC_VerifiedRead_Green_Exhausted.cfg VerifiedRead.tla GREEN" # a block overtakes every ask: the refusal returns only after the last one
+  "MC_VerifiedRead_Green_Stale.cfg VerifiedRead.tla GREEN" # a stale head is waited out within the patience and never read at
+  "MC_VerifiedRead_Red_NoStaleWait.cfg VerifiedRead.tla RED" # a stale refusal fails at once with patience left (INV_StaleFailsOnlyAtPatience)
+  "MC_VerifiedRead_Red_DecideStale.cfg VerifiedRead.tla RED" # a read decided at a head older than the bound (INV_NeverFromStale)
   "MC_VerifiedRead_Red_AcceptStale.cfg VerifiedRead.tla RED" # light client skips the root check: a stale answer is accepted (INV_NeverStale)
   "MC_VerifiedRead_Red_NoRetry.cfg VerifiedRead.tla RED" # refused read never asked again: errors with asks left (INV_FailsOnlyWhenEveryAskOvertaken)
   "MC_VerifiedRead_Red_Uncapped.cfg VerifiedRead.tla RED" # retry without a cap asks past ATTEMPTS (INV_AttemptsBounded)
@@ -688,6 +691,12 @@ RUNS=(
   "MC_AcpOutbox_Green_JournalSameBytes.cfg AcpOutbox.tla GREEN" # requests with the same bytes: a note counts only from the mark's sequence floor on, so every settled change took effect
   "MC_AcpOutbox_Red_JournalNoFloor.cfg AcpOutbox.tla RED" # a note of an earlier request with the same bytes settles a change that was never sent (INV_SettledTookEffect)
   "MC_AcpOutbox_Red_JournalRenewedCredential.cfg AcpOutbox.tla RED" # a fresh delegation renews a request journaled with an expired one (INV_LandsUnderItsCredential)
+  "MC_AcpOutbox_Green_Remote.cfg AcpOutbox.tla GREEN" # clients stage over HTTP under their own delegations: each change acts as its credential's DID, is checked, lapses to awaiting authority, or goes with a rollback
+  "MC_AcpOutbox_Green_Remote_HeldKey.cfg AcpOutbox.tla GREEN" # the node holds the creator's key: the creator's change is staged under it whatever it signed in with, and an identity token for another actor stages nothing
+  "MC_AcpOutbox_Green_Remote_Live.cfg AcpOutbox.tla GREEN" # a client's change, its delegation lapsing or not, ends settled, refused or awaiting authority
+  "MC_AcpOutbox_Red_RemoteActorFromRequest.cfg AcpOutbox.tla RED" # the HTTP route takes the actor from the request: a change goes in under another's credential (INV_ActsAsItsCredential)
+  "MC_AcpOutbox_Red_RemoteUnchecked.cfg AcpOutbox.tla RED" # the HTTP route skips the advisory check: an unvouched revocation denies from the commit (INV_DenialsChecked)
+  "MC_AcpOutbox_Red_RemoteNoAuthority.cfg AcpOutbox.tla RED" # the HTTP route stages a change signed in with an identity token for a DID whose key the node does not hold: it is owed and can never be sent (INV_SendableAuthority)
   "MC_OwedParts_Green.cfg OwedParts.tla GREEN" # owed counts in a staged and a settled part: a settle aborts no stager or decision, no decision commits past an unseen delete
   "MC_OwedParts_Red_SettleTouchesStaged.cfg OwedParts.tla RED" # a settle rewrites the staged part too: readers are refused for it (INV_SettleAbortsNobody)
   "MC_OwedParts_Red_UnvalidatedDecision.cfg OwedParts.tla RED" # the deny decision reads unvalidated: it commits past a delete (INV_NoMissedRevoke)
