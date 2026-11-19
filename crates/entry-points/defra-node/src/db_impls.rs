@@ -203,7 +203,11 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
         let wrapped_query = format!("query {{ {} }}", source_query.trim());
         let selects = query::parse_query_with_limits(&wrapped_query, None, self.query_limits)
             .map_err(Error::ViewQueryParse)?;
-        let select = selects.into_iter().next().ok_or(Error::ViewQueryEmpty)?;
+        let mut selects = selects.into_iter();
+        let select = selects.next().ok_or(Error::ViewQueryEmpty)?;
+        if selects.next().is_some() {
+            return Err(Error::ViewQueryMultipleSources);
+        }
         let mut query_source = schema::QuerySource::new(query::select_to_go_json(&select));
         if let Some(cid) = transform {
             if cid.is_empty() {
