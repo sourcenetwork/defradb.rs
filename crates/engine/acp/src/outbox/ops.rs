@@ -3,7 +3,9 @@
 use storage::corekv::{IterOptions, Reader, Store, Writer};
 
 use super::keys::{self, OwedTupleState};
-use super::record::{NewOwedChange, OwedAuthority, OwedChange, OwedOp, OwedState, OwedTuple};
+use super::record::{
+    InFlight, NewOwedChange, OwedAuthority, OwedChange, OwedOp, OwedState, OwedTuple,
+};
 use crate::error::{Error, Result};
 
 fn storage_error(error: storage::corekv::Error) -> Error {
@@ -51,6 +53,24 @@ where
     merged_count(reader, keys::UNSETTLED_KEY).await
 }
 
+/// The node's count, read validated: a transaction that commits a change to
+/// it after this read aborts the reader, whose re-run reads it again. Every
+/// staging transaction merges into the count, so readers that validate
+/// commit one after another.
+pub(super) async fn unsettled_validated<R>(reader: &R) -> Result<u64>
+where
+    R: Reader + ?Sized,
+{
+    let Some(bytes) = reader
+        .get(keys::UNSETTLED_KEY)
+        .await
+        .map_err(storage_error)?
+    else {
+        return Ok(0);
+    };
+    decode_merged(&bytes)
+}
+
 /// How many changes one acting DID has unsettled, read without validation as
 /// the node's count is.
 pub(super) async fn unsettled_by<R>(reader: &R, actor: &identity::Did) -> Result<u64>
@@ -67,8 +87,11 @@ where
     let Some(bytes) = reader.get_parts(key, &[]).await.map_err(storage_error)? else {
         return Ok(0);
     };
+    decode_merged(&bytes)
+}
+
+fn decode_merged(bytes: &[u8]) -> Result<u64> {
     let count: [u8; 8] = bytes
-        .as_ref()
         .try_into()
         .map_err(|_| Error::Serialization("owed ACP count is malformed".into()))?;
     Ok(u64::try_from(i64::from_be_bytes(count)).unwrap_or(0))
@@ -297,10 +320,11 @@ where
 }
 
 /// Record what a submission of change `seq` came to: its state, how many
-/// submissions in a row the provider answered this way, and its words. Only
-/// the change's own record is written; its tuple's state and the counts stay
-/// as they are, since the change is as unsettled as before. `false` when no
-/// such change is owed.
+/// submissions in a row the provider answered this way, and its words. The
+/// answer is known, so the change is no longer in flight. Only the change's
+/// own record is written; its tuple's state and the counts stay as they are,
+/// since the change is as unsettled as before. `false` when no such change
+/// is owed.
 ///
 /// The provider's words are cut until the record fits.
 pub(super) async fn mark<T>(
@@ -319,6 +343,7 @@ where
     marked.attempts = attempts;
     marked.state = state;
     marked.last_error = error;
+    marked.in_flight = None;
     let record = loop {
         match marked.encode() {
             Ok(record) => break record,
@@ -327,6 +352,56 @@ where
         }
     };
     put(txn, &keys::queue_key(seq), &record).await?;
+    Ok(true)
+}
+
+/// Store `flight` with every change of `seqs`, before the request it names
+/// is sent: the digest first, then the same digest with the transaction
+/// hash. Each must be owed and staged, and unmarked or marked with the same
+/// digest. Only the changes' own records are written. `false`, with nothing
+/// written, when one is not.
+pub(super) async fn mark_in_flight<T>(txn: &T, seqs: &[u64], flight: &InFlight) -> Result<bool>
+where
+    T: Reader + Writer + ?Sized,
+{
+    let mut marked = Vec::with_capacity(seqs.len());
+    for &seq in seqs {
+        let Some(mut owed) = change(txn, seq).await? else {
+            return Ok(false);
+        };
+        let same = owed
+            .in_flight
+            .as_ref()
+            .is_none_or(|earlier| earlier.digest == flight.digest);
+        if owed.state != OwedState::Staged || !same {
+            return Ok(false);
+        }
+        owed.in_flight = Some(flight.clone());
+        marked.push((seq, owed.encode()?));
+    }
+    for (seq, record) in marked {
+        put(txn, &keys::queue_key(seq), &record).await?;
+    }
+    Ok(true)
+}
+
+/// Clear the in-flight mark of change `seq`: its request is known not to
+/// have taken effect, or nothing on this node can tell that it did. With
+/// `alone` the change goes in a request of its own from now on. `false`
+/// when no such change is owed or it is not marked with `digest`.
+pub(super) async fn clear_in_flight<T>(txn: &T, seq: u64, digest: &str, alone: bool) -> Result<bool>
+where
+    T: Reader + Writer + ?Sized,
+{
+    let Some(mut owed) = change(txn, seq).await? else {
+        return Ok(false);
+    };
+    if owed.in_flight.as_ref().map(|flight| flight.digest.as_str()) != Some(digest) {
+        return Ok(false);
+    }
+    owed.in_flight = None;
+    owed.alone |= alone;
+    put(txn, &keys::queue_key(seq), &owed.encode()?).await?;
     Ok(true)
 }
 

@@ -8,7 +8,7 @@ use storage::corekv::Store;
 
 use super::keys::OwedTupleState;
 use super::ops;
-use super::record::{NewOwedChange, OwedAuthority, OwedChange, OwedState, OwedTuple};
+use super::record::{InFlight, NewOwedChange, OwedAuthority, OwedChange, OwedState, OwedTuple};
 use crate::error::{Error, Result};
 
 /// The most changes one transaction may stage.
@@ -17,6 +17,14 @@ pub const MAX_OWED_CHANGES_PER_TRANSACTION: u32 = 256;
 /// The most changes a node holds unsettled, unless
 /// [`OwedChanges::with_node_limit`] sets another bound.
 pub const MAX_UNSETTLED_OWED_CHANGES: u64 = 10_000;
+
+/// How close to the node's bound its count is read validated. Below that the
+/// count is read as every staging transaction merges into it, without a
+/// conflict; from there on transactions that stage commit one after another,
+/// each having read the count the one before it left. The bound then holds
+/// unless transactions staging together, each below this margin when it
+/// read, add more than the margin between them.
+pub const VALIDATED_WITHIN_OF_NODE_LIMIT: u64 = 4 * MAX_OWED_CHANGES_PER_TRANSACTION as u64;
 
 /// The most changes one acting DID holds unsettled on a node. A change that
 /// is parked stays unsettled, so without this bound one actor's parked
@@ -102,8 +110,11 @@ impl OwedChanges {
     /// always the order their transactions commit in.
     ///
     /// The node's bound and the acting DID's are checked against what this
-    /// transaction sees, so transactions staging at once may pass either by
-    /// what they stage together.
+    /// transaction sees. Near the node's bound its count is read validated
+    /// ([`VALIDATED_WITHIN_OF_NODE_LIMIT`]), so callers acting as many
+    /// identities at once cannot together pass it there; the acting DID's
+    /// bound is read without validation, and transactions staging at once may
+    /// pass it by what they stage together.
     pub async fn stage(&self, new: NewOwedChange) -> Result<OwedChange> {
         let view = self.active_view()?;
         if self.staged.get() >= MAX_OWED_CHANGES_PER_TRANSACTION {
@@ -111,7 +122,10 @@ impl OwedChanges {
                 limit: MAX_OWED_CHANGES_PER_TRANSACTION,
             });
         }
-        let unsettled = ops::unsettled(&view).await?;
+        let mut unsettled = ops::unsettled(&view).await?;
+        if unsettled.saturating_add(VALIDATED_WITHIN_OF_NODE_LIMIT) >= self.node_limit {
+            unsettled = ops::unsettled_validated(&view).await?;
+        }
         if unsettled >= self.node_limit {
             return Err(Error::OwedChangesPerNode {
                 unsettled,
@@ -162,6 +176,20 @@ impl OwedChanges {
         error: Option<String>,
     ) -> Result<bool> {
         ops::mark(&self.active_view()?, seq, state, attempts, error).await
+    }
+
+    /// Store, in this transaction, `flight` with every change of `seqs`
+    /// before the request it names is sent. `false`, with nothing written,
+    /// when one is no longer staged or is marked with another request.
+    pub async fn mark_in_flight(&self, seqs: &[u64], flight: &InFlight) -> Result<bool> {
+        ops::mark_in_flight(&self.active_view()?, seqs, flight).await
+    }
+
+    /// Clear, in this transaction, the in-flight mark `digest` of the change
+    /// at `seq`; with `alone` it goes in a request of its own from now on.
+    /// `false` when it is not so marked.
+    pub async fn clear_in_flight(&self, seq: u64, digest: &str, alone: bool) -> Result<bool> {
+        ops::clear_in_flight(&self.active_view()?, seq, digest, alone).await
     }
 
     /// Record, in this transaction, a fresh authority with the change at

@@ -29,13 +29,22 @@
 //! the unchecked one is deleted, so it cannot be submitted after the change
 //! that passed it.
 //!
-//! Nothing here retries or runs by itself: a pass runs after the commit of a
-//! request that staged a change (over that transaction's objects), once at
-//! start, before a change made outside a transaction on a tuple that has
-//! changes owed, and when a caller waits for a transaction's changes, hands
-//! in a fresh credential or abandons a change (see `owed.rs`). A crash
-//! between the provider applying a change and its record being deleted
-//! leaves the change staged, and the next pass submits it again.
+//! A provider that journals its requests is sent changes another way (see
+//! `drain.rs`): a change is marked in flight before its request goes, a
+//! marked change is decided before anything else is done with it, and the
+//! changes one transaction staged one after the other go in one request.
+//! The answers above are what a request's outcome comes to for each change.
+//!
+//! A pass runs after the commit of a request that staged a change (over
+//! that transaction's objects), before a change made outside a transaction
+//! on a tuple that has changes owed, when a caller waits for a
+//! transaction's changes, hands in a fresh credential or abandons a change
+//! (see `owed.rs`), and whenever the node's drainer task runs one: at
+//! start, after every commit that staged a change, and again after a
+//! back-off while the provider is away. Through a provider without a
+//! journal a crash between the provider applying a change and its record
+//! being deleted leaves the change staged, and the next pass submits it
+//! again.
 
 use datastore::BasicTxn;
 use rapidhash::{HashSetExt, RapidHashSet};
@@ -46,7 +55,7 @@ use super::{storage_error, ExternalDocumentAcp};
 use crate::error::{Error, Result};
 use crate::outbox::record::of_this_run;
 use crate::outbox::{
-    OwedAuthority, OwedChange, OwedState, OwedSubject, OwedTuple, StagedCount, Submission,
+    InFlight, OwedAuthority, OwedChange, OwedState, OwedSubject, OwedTuple, StagedCount, Submission,
 };
 use crate::pending::PendingRegistration;
 
@@ -94,7 +103,7 @@ pub struct OwedSettlement {
 }
 
 /// What became of one change in a pass.
-enum Step {
+pub(super) enum Step {
     Settled,
     Refused,
     Discarded,
@@ -116,6 +125,10 @@ enum Registration {
     Unavailable,
 }
 
+/// The changes a pass has already decided while it was at an earlier one:
+/// those that shared its request.
+pub(super) type Handled = RapidHashSet<u64>;
+
 /// Why a change a later one passed was deleted.
 const PASSED: &str = "a later change of its relationship passed it";
 /// Why an abandoned change was deleted.
@@ -133,6 +146,18 @@ pub(super) enum Write {
     /// Delete the record without the provider holding the change, and keep
     /// a note of why.
     Discard(String),
+    /// Store this in-flight mark with the change and with `others`, in one
+    /// transaction, before the request it names is sent.
+    MarkInFlight {
+        others: Vec<u64>,
+        flight: InFlight,
+    },
+    /// Clear the change's in-flight mark of the request with this digest;
+    /// with `alone` it goes in a request of its own from now on.
+    ClearInFlight {
+        digest: String,
+        alone: bool,
+    },
 }
 
 pub(super) type ObjectKey = (String, String, String);
@@ -193,6 +218,7 @@ where
     ) -> Result<OwedSettlement> {
         let mut report = OwedSettlement::default();
         let mut held = RapidHashSet::new();
+        let mut handled = Handled::new();
         let mut after = None;
         loop {
             let page = self.owed_changes_after(after).await?;
@@ -204,18 +230,26 @@ where
                 if objects.is_some_and(|objects| !objects.contains(&object_of(&change.tuple))) {
                     continue;
                 }
+                if handled.remove(&change.seq) {
+                    continue;
+                }
                 report.discarded += self.pass_unchecked(change).await?;
-                match self.settle_change(change, &mut held).await? {
-                    Step::Settled => report.settled += 1,
-                    Step::Refused => report.refused += 1,
-                    Step::Discarded => report.discarded += 1,
-                    Step::Awaiting => report.awaiting_authority += 1,
-                    Step::Failed => report.failed += 1,
-                    Step::Left => report.left += 1,
-                    Step::Skipped => {}
-                    Step::Unavailable => {
-                        report.provider_unavailable = true;
-                        return Ok(report);
+                let steps = self
+                    .settle_change(change, &mut held, objects, &mut handled)
+                    .await?;
+                for step in steps {
+                    match step {
+                        Step::Settled => report.settled += 1,
+                        Step::Refused => report.refused += 1,
+                        Step::Discarded => report.discarded += 1,
+                        Step::Awaiting => report.awaiting_authority += 1,
+                        Step::Failed => report.failed += 1,
+                        Step::Left => report.left += 1,
+                        Step::Skipped => {}
+                        Step::Unavailable => {
+                            report.provider_unavailable = true;
+                            return Ok(report);
+                        }
                     }
                 }
             }
@@ -320,12 +354,14 @@ where
     /// provider, and once passed they must never be submitted after it.
     /// Returns how many were deleted.
     async fn pass_unchecked(&self, change: &OwedChange) -> Result<u64> {
-        if change.state != OwedState::Staged {
+        if change.state != OwedState::Staged || change.in_flight.is_some() {
             return Ok(0);
         }
         let mut passed = 0;
         while let Some(oldest) = self.oldest_on(&change.tuple).await? {
+            // A change in flight may have landed: only its outcome decides it.
             let yields = oldest.seq < change.seq
+                && oldest.in_flight.is_none()
                 && !oldest.authority_checked
                 && match oldest.state {
                     OwedState::AwaitingAuthority => true,
@@ -347,9 +383,9 @@ where
         Ok(passed)
     }
 
-    /// `change` as committed now, when it is staged and the oldest unsettled
-    /// change of its tuple.
-    async fn submittable(&self, change: &OwedChange) -> Result<Option<OwedChange>> {
+    /// `change` as committed now, when it is staged, not in flight and the
+    /// oldest unsettled change of its tuple.
+    pub(super) async fn submittable(&self, change: &OwedChange) -> Result<Option<OwedChange>> {
         let txn = self.begin(true).await?;
         let changes = self.owed_changes(&txn.acpstore(), StagedCount::new());
         let current = changes.get(change.seq).await;
@@ -358,49 +394,73 @@ where
         txn.discard()
             .map_err(|error| Error::Storage(error.to_string()))?;
         let head = tuple?.is_some_and(|state| state.oldest == change.seq);
-        Ok(current?.filter(|current| head && current.state == OwedState::Staged))
+        Ok(current?.filter(|current| {
+            head && current.state == OwedState::Staged && current.in_flight.is_none()
+        }))
     }
 
+    /// Settle `change`, and with it the changes after it that share its
+    /// request: what became of each.
     async fn settle_change(
         &self,
         change: &OwedChange,
         held: &mut RapidHashSet<ObjectKey>,
-    ) -> Result<Step> {
+        objects: Option<&RapidHashSet<ObjectKey>>,
+        handled: &mut Handled,
+    ) -> Result<Vec<Step>> {
         if change.state != OwedState::Staged {
-            return Ok(Step::Skipped);
+            return Ok(vec![Step::Skipped]);
+        }
+        let journal = self.root.owed_journal();
+        if let (Some(journal), true) = (&journal, change.in_flight.is_some()) {
+            if let Some(step) = self.recover_marked(&**journal, change).await? {
+                return Ok(vec![step]);
+            }
         }
         let Some(change) = self.submittable(change).await? else {
-            return Ok(Step::Left);
+            return Ok(vec![Step::Left]);
         };
         let object = object_of(&change.tuple);
         if held.contains(&object) {
-            return Ok(Step::Left);
+            return Ok(vec![Step::Left]);
         }
         match self.register_first(&change).await? {
             Registration::Done => {}
             Registration::Held => {
                 held.insert(object);
-                return Ok(Step::Left);
+                return Ok(vec![Step::Left]);
             }
-            Registration::Unavailable => return Ok(Step::Unavailable),
+            Registration::Unavailable => return Ok(vec![Step::Unavailable]),
         }
+        match journal {
+            Some(journal) => self.send_request(&*journal, change, objects, handled).await,
+            None => {
+                let answer = self.provider.submit_owed_change(&change).await;
+                Ok(vec![self.conclude(&change, answer).await?])
+            }
+        }
+    }
+
+    /// Store what `answer`, the provider's answer to `change` alone, says of
+    /// it, and say what became of it.
+    pub(super) async fn conclude(&self, change: &OwedChange, answer: Submission) -> Result<Step> {
         let attempts = change.attempts.saturating_add(1);
-        let (write, step) = match self.provider.submit_owed_change(&change).await {
+        let (write, step) = match answer {
             Submission::Applied => (Write::Settle, Step::Settled),
-            Submission::Refused { reason } => refusal(&change, attempts, reason),
+            Submission::Refused { reason } => refusal(change, attempts, reason),
             Submission::AwaitingAuthority { reason } => (
                 Write::Mark(OwedState::AwaitingAuthority, attempts, reason),
                 Step::Awaiting,
             ),
             Submission::Failed { reason } if attempts >= MAX_FAILED_SUBMISSIONS => {
-                refusal(&change, attempts, reason)
+                refusal(change, attempts, reason)
             }
             Submission::Failed { reason } => (
                 Write::Mark(OwedState::Staged, attempts, reason),
                 Step::Failed,
             ),
             Submission::Unsupported { reason } => {
-                discarded(&change, &reason);
+                discarded(change, &reason);
                 (Write::Discard(reason), Step::Discarded)
             }
             // The node's own error: kept with the record so the change is
@@ -436,10 +496,18 @@ where
                 return Ok(Step::Unavailable);
             }
         };
+        let refused = match (&write, &step) {
+            (Write::Mark(OwedState::Refused { reason }, ..), _) => Some((reason.clone(), true)),
+            (Write::Discard(reason), Step::Discarded) => Some((reason.clone(), false)),
+            _ => None,
+        };
         Ok(if self.write(change.seq, write).await? {
             if matches!(step, Step::Settled) {
                 let tuple = &change.tuple;
                 self.object_changed(&tuple.policy_id, &tuple.resource, &tuple.object);
+            }
+            if let Some((reason, kept)) = refused {
+                self.told_refused(change, &reason, kept);
             }
             step
         } else {
@@ -550,6 +618,13 @@ where
                 Ok(_) => Ok(false),
                 Err(error) => Err(error),
             },
+            Write::MarkInFlight { others, flight } => {
+                let seqs: Vec<u64> = std::iter::once(seq).chain(others).collect();
+                changes.mark_in_flight(&seqs, &flight).await
+            }
+            Write::ClearInFlight { digest, alone } => {
+                changes.clear_in_flight(seq, &digest, alone).await
+            }
         };
         drop(changes);
         drop(view);

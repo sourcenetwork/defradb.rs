@@ -504,6 +504,56 @@ fn a_node_holds_no_more_unsettled_changes_than_its_bound() {
     .unwrap()
 }
 
+/// Near the node's bound every staging transaction reads the count
+/// validated, so two that stage at once, under identities of their own,
+/// commit one after the other and cannot pass the bound together; far from
+/// it they do not conflict.
+#[test]
+fn near_the_node_bound_transactions_that_stage_at_once_commit_one_after_the_other() {
+    workers::block_on(async {
+        let outbox = Outbox::new();
+        let under = |acting: Did, object: &str| NewOwedChange {
+            actor: acting,
+            ..owed(&tuple(object, "reader", actor(bob())), OwedOp::Add)
+        };
+        let race = |limit: u64| {
+            let outbox = &outbox;
+            async move {
+                let (first, first_changes) = outbox.begin().await;
+                let (second, second_changes) = outbox.begin().await;
+                let suffix = limit.to_string();
+                first_changes
+                    .with_node_limit(limit)
+                    .stage(under(alice(), &format!("one-{suffix}")))
+                    .await
+                    .unwrap();
+                second_changes
+                    .with_node_limit(limit)
+                    .stage(under(mallory(), &format!("two-{suffix}")))
+                    .await
+                    .unwrap();
+                first.commit().await.unwrap();
+                second.commit().await
+            }
+        };
+
+        let far = acp::outbox::VALIDATED_WITHIN_OF_NODE_LIMIT + 2;
+        assert!(
+            race(far).await.is_ok(),
+            "far from the bound nothing conflicts"
+        );
+        assert!(
+            matches!(
+                race(3).await,
+                Err(datastore::Error::Storage(error)) if error.is_txn_conflict()
+            ),
+            "near the bound the later commit conflicts and its re-run reads the count again"
+        );
+        assert_eq!(outbox.queue().await.len(), 3);
+    })
+    .unwrap()
+}
+
 #[test]
 fn a_change_over_the_record_cap_is_refused_and_leaves_nothing() {
     workers::block_on(async {
@@ -527,10 +577,11 @@ fn a_change_over_the_record_cap_is_refused_and_leaves_nothing() {
     .unwrap()
 }
 
-/// A change is admitted only with room left to park it: the largest record
-/// staging takes is still written as refused and as awaiting authority,
-/// with the provider's words whole up to the reserved length, and a record
-/// one byte larger is refused when it is staged.
+/// A change is admitted only with room left to park it or mark it in flight:
+/// the largest record staging takes is still written as refused and as
+/// awaiting authority, with the provider's words whole up to the reserved
+/// length, and marked in flight with the longest request names after such
+/// an answer; a record one byte larger is refused when it is staged.
 #[test]
 fn the_largest_change_staged_can_still_be_parked() {
     workers::block_on(async {
@@ -552,13 +603,28 @@ fn the_largest_change_staged_can_still_be_parked() {
         let (txn, changes) = outbox.begin().await;
         let small = changes.stage(with_token(0)).await.unwrap();
         txn.discard().unwrap();
+        let id = "x".repeat(acp::outbox::MAX_REQUEST_ID_BYTES);
+        let longest = acp::InFlight::new(id.clone(), Some(id), Some(u64::MAX)).unwrap();
+        let marked = acp::OwedChange {
+            attempts: u32::MAX,
+            last_error: Some(words.clone()),
+            in_flight: Some(longest.clone()),
+            alone: true,
+            ..small.clone()
+        };
         let parked = acp::OwedChange {
             state: refused.clone(),
             attempts: u32::MAX,
             last_error: Some(words.clone()),
+            alone: true,
             ..small
         };
-        let largest = acp::outbox::MAX_OWED_CHANGE_BYTES - parked.encode().unwrap().len();
+        let later = parked
+            .encode()
+            .unwrap()
+            .len()
+            .max(marked.encode().unwrap().len());
+        let largest = acp::outbox::MAX_OWED_CHANGE_BYTES - later;
 
         let (txn, changes) = outbox.begin().await;
         assert!(matches!(
@@ -568,6 +634,19 @@ fn the_largest_change_staged_can_still_be_parked() {
         let staged = changes.stage(with_token(largest)).await.unwrap();
         assert_eq!(staged.seq.to_string().len(), small.seq.to_string().len());
         txn.commit().await.unwrap();
+
+        let (txn, changes) = outbox.begin().await;
+        assert!(changes
+            .mark(staged.seq, OwedState::Staged, u32::MAX, Some(words.clone()))
+            .await
+            .unwrap());
+        assert!(changes
+            .mark_in_flight(&[staged.seq], &longest)
+            .await
+            .unwrap());
+        let in_flight = changes.get(staged.seq).await.unwrap().expect("the change");
+        assert_eq!(in_flight.in_flight, Some(longest));
+        txn.discard().unwrap();
 
         for state in [refused, OwedState::AwaitingAuthority] {
             let (txn, changes) = outbox.begin().await;
