@@ -48,7 +48,9 @@
 //! again ([`OwedSettlement::wants_another_pass`]). Through a provider
 //! without a journal a crash between the provider applying a change and its
 //! record being deleted leaves the change staged, and the next pass submits
-//! it again.
+//! it again. A change marked in flight by a provider that journaled its
+//! requests is sent again the same way when the node's provider no longer
+//! journals them: the journal that held its request is not there to ask.
 
 use datastore::BasicTxn;
 use rapidhash::{HashSetExt, RapidHashSet};
@@ -432,9 +434,18 @@ where
             return Ok(vec![Step::Skipped]);
         }
         let journal = self.root.owed_journal();
-        if let (Some(journal), true) = (&journal, change.in_flight.is_some()) {
-            if let Some(step) = self.recover_marked(&**journal, change).await? {
-                return Ok(vec![step]);
+        if let Some(flight) = &change.in_flight {
+            match &journal {
+                Some(journal) => {
+                    if let Some(step) = self.recover_marked(&**journal, change).await? {
+                        return Ok(vec![step]);
+                    }
+                }
+                None => {
+                    if !self.unmark_without_journal(change, flight).await? {
+                        return Ok(vec![Step::Left]);
+                    }
+                }
             }
         }
         let Some(change) = self.submittable(change).await? else {
@@ -459,6 +470,28 @@ where
                 Ok(vec![self.conclude(&change, answer).await?])
             }
         }
+    }
+
+    /// Clear the mark of `change`, marked in flight by a provider that
+    /// journaled its requests, now that the node's provider journals none:
+    /// it is sent again as a provider without a journal sends every change
+    /// (`Marker = FALSE`). Whether the request it names landed is not known.
+    async fn unmark_without_journal(&self, change: &OwedChange, flight: &InFlight) -> Result<bool> {
+        tracing::warn!(
+            target: "acp::audit",
+            seq = change.seq,
+            digest = %flight.digest,
+            tx = ?flight.tx,
+            "An owed ACP change was marked in flight by a provider that journaled its requests; the node's provider journals none, so it is sent again"
+        );
+        self.write(
+            change.seq,
+            Write::ClearInFlight {
+                digest: flight.digest.clone(),
+                alone: change.alone,
+            },
+        )
+        .await
     }
 
     /// Store what `answer`, the provider's answer to `change` alone, says of

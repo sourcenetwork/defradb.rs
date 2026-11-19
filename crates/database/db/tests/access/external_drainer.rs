@@ -639,6 +639,32 @@ fn a_parked_change_asks_for_no_other_pass() {
     }
 }
 
+/// A change marked in flight when the node last ran on a provider that
+/// journals its requests, opened on one that journals none: nothing is left
+/// to ask about its request, so its mark is cleared and it is sent, as that
+/// provider sends every change.
+#[test]
+fn a_marked_change_is_sent_by_a_provider_without_a_journal() {
+    workers::block_on(async {
+        let (staging, journal) = journaled().await;
+        let doc = staging.create(alice(), "shared", None).await;
+        staging.commit_change(add(alice(), &doc, bob())).await;
+        journal.crash_after_journal.store(true, Ordering::SeqCst);
+        assert_eq!(staging.pass_once().await, unavailable());
+        assert!(staging.queue().await[0].in_flight.is_some());
+
+        let plain = RemoteAcp::new();
+        let restarted = gate(&plain, staging.store.clone());
+        assert_eq!(pass(&restarted).await, settled(1));
+        assert_eq!(
+            plain.take_writes(),
+            [(true, doc.clone(), bob().to_string())]
+        );
+        assert!(staging.queue().await.is_empty());
+    })
+    .unwrap()
+}
+
 impl Staging {
     async fn pass_once(&self) -> OwedSettlement {
         pass(&self.gate).await
