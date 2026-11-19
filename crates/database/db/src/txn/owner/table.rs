@@ -95,12 +95,21 @@ where
             .is_some_and(|entry| entry.key == *key)
     }
 
-    /// Queues `message` for transaction `id`; hands it back when the
-    /// transaction is not here.
-    pub(super) fn send(&self, id: TxnId, message: Message<T>) -> Result<(), Message<T>> {
+    /// Queues the request `message` for transaction `id`, owned by `key`;
+    /// hands it back when the transaction is not here, is another caller's,
+    /// or was kept by an end that began. The one lookup that picks the
+    /// mailbox decides admission: an end that puts the transaction back
+    /// between an earlier check and this one is seen here. A request queued
+    /// before an end runs before it, in the mailbox's order.
+    pub(super) fn send_request(
+        &self,
+        id: TxnId,
+        key: &K,
+        message: Message<T>,
+    ) -> Result<(), Message<T>> {
         match self.entries.get(&id.get()) {
-            Some(entry) => entry.mailbox.try_send(message),
-            None => Err(message),
+            Some(entry) if entry.key == *key && !entry.ending => entry.mailbox.try_send(message),
+            _ => Err(message),
         }
     }
 
@@ -137,5 +146,44 @@ where
 
     pub(super) fn len(&self) -> usize {
         self.entries.len()
+    }
+}
+
+#[cfg(test)]
+mod admission_tests {
+    use super::*;
+
+    fn entry(
+        ending: bool,
+    ) -> (
+        Entry<(), &'static str>,
+        regolith::sync::UnboundedReceiver<Message<()>>,
+    ) {
+        let (mailbox, inbox) = regolith::sync::unbounded();
+        (
+            Entry {
+                mailbox,
+                idle: Arc::new(ArrayQueue::new(1)),
+                key: "owner",
+                ending,
+            },
+            inbox,
+        )
+    }
+
+    #[test]
+    fn a_request_reaches_only_an_entry_that_takes_requests() {
+        let table = Table::new();
+        let id = TxnId::from_raw(7);
+        let (open, open_inbox) = entry(false);
+        table.insert(id, open);
+        assert!(table.send_request(id, &"owner", Message::Abandon).is_ok());
+        assert!(open_inbox.try_recv().is_some());
+        assert!(table.send_request(id, &"other", Message::Abandon).is_err());
+        // An end took the entry and put it back for another end only.
+        let (kept, kept_inbox) = entry(true);
+        table.insert(id, kept);
+        assert!(table.send_request(id, &"owner", Message::Abandon).is_err());
+        assert!(kept_inbox.try_recv().is_none());
     }
 }
