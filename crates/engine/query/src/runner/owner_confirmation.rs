@@ -14,6 +14,7 @@ use defra_core::RequestContext;
 
 use super::{DocFetcher, QueryRunner};
 use crate::error::TransactionError;
+use crate::prepared::PreparedInputMemo;
 use crate::txn::{txn_job, TransactionHandle, TransactionRegistry};
 
 impl<F, R> QueryRunner<F, R>
@@ -50,23 +51,36 @@ where
             .registry
             .run_as(context, handle, self.deadline(), job)
             .await??;
-        if requests.is_empty() {
+        let Some((first, rest)) = requests.split_first() else {
             return self.registry.commit_as(context, handle).await;
+        };
+        // One wave of prepared inputs, keyed by the exact request bytes, as
+        // every other input a transaction step waits for at the edge.
+        let inputs = PreparedInputMemo::default();
+        for request in rest {
+            inputs.want(request.clone());
         }
-        let answers = futures::future::try_join_all(
-            requests
-                .iter()
-                .map(|request| self.resolve_acp_decision_input(request)),
-        )
-        .await
-        .map_err(|error| {
-            TransactionError::execution(format!(
-                "the document ACP provider could not confirm the owners this transaction was \
-                 told, so nothing was committed; commit again: {error}"
-            ))
-        })?;
+        inputs
+            .answer_wave(first, |wave| async move {
+                futures::future::try_join_all(
+                    wave.iter()
+                        .map(|request| self.resolve_acp_decision_input(request)),
+                )
+                .await
+            })
+            .await
+            .map_err(|error| {
+                TransactionError::execution(format!(
+                    "the document ACP provider could not confirm the owners this transaction \
+                     was told, so nothing was committed; commit again: {error}"
+                ))
+            })?;
+        let confirmations = requests
+            .into_iter()
+            .filter_map(|request| inputs.get(&request).map(|answer| (request, answer)))
+            .collect();
         self.registry
-            .commit_confirmed_as(context, handle, requests.into_iter().zip(answers).collect())
+            .commit_confirmed_as(context, handle, confirmations)
             .await
     }
 }
