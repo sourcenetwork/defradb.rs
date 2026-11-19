@@ -62,7 +62,7 @@ its rows, and the provider is sent the change after the commit.
 Staging is for embedders that call the node directly. The HTTP relationship route with
 `x-defradb-tx` serves only a provider that joins the transaction; on an external one it
 answers 501, `transaction-bound document relationships are unavailable`, and records
-nothing, until a drainer settles staged changes. The calls that report what is owed, wait
+nothing. The calls that report what is owed, wait
 for it, take a fresh credential and abandon a refused change
 ([What is owed after the commit](#what-is-owed-after-the-commit)) are node calls too,
 with no HTTP route.
@@ -140,6 +140,39 @@ with no HTTP route.
   - *unreachable* (a transport failure, a timeout): the pass stops and nothing is
     written.
 
+  Through a provider whose worker journals its requests (vera.rs) a change is sent with
+  an *in-flight mark*. Before its request is journaled the record stores the request's
+  digest, and before the request is sent its transaction hash too (`in_flight`). A
+  change the node finds marked, after a crash or a commit that stopped waiting, is
+  decided before anything else is done with it: the request still in the worker's
+  journal is sent and waited for; one out of the journal is looked up by its hash, as
+  a verified receipt, and failing that in the worker's note. A record that stores the
+  hash names its request by the hash alone, in the journal and in the note; one that
+  stores only the digest names it by the digest, among the requests signed from the
+  worker sequence stored with the mark on, so an earlier request with the same bytes
+  (a delegation used again for the same command) does not decide it. Whoever resolves
+  a request it did not journal itself (the provider at start, another command before
+  its own, whether its bytes are the same or not) writes the outcome to that note,
+  `owed-outcomes.json` beside the worker's journal, which keeps the latest 256.
+  Applied, the record is deleted; rejected, the change applied nothing and goes again
+  on its own; known to none of them, it is sent again, by the next pass, which the
+  drainer runs after its back-off without waiting for a commit. So a change takes
+  effect at most once **as long as its
+  journal entry, its receipt or its note can still be read**: a receipt the provider
+  no longer serves and a note pushed out are the one way left to send a change twice.
+  The changes one transaction staged one after the other go in one request, at most 16
+  (`MAX_CHANGES_PER_REQUEST`) and 256 KiB, which vera.rs applies together or not at
+  all (`batchCalls`); each keeps its own credential. A request refused that way applied
+  nothing, and its changes go again one at a time (`alone`), so a change is only ever
+  parked for a refusal of its own. Every refusal is published on the event bus as
+  `acp-owed-change-refused`, with the change, the provider's words and whether it stays
+  parked. A change the provider cannot take at all is removed and counted in
+  `discarded`, and is not published: the provider was asked nothing. A provider
+  without a journal (Cosmos, a host's own) is sent each change on its own with no
+  mark, as below. A change a node finds marked once it runs on such a provider has its
+  mark cleared and is sent again: no journal is left to ask about its request, and it
+  can take effect twice.
+
   A parked change whose acting DID was checked holds every later change of its tuple and
   nothing else: changes of other tuples go on past it. A checked change the node could
   not send holds its tuple the same way, for as long as the node cannot send it: it is
@@ -156,7 +189,13 @@ with no HTTP route.
     waits for it, for at most 10 seconds (`OWED_SETTLE_DEADLINE`): that is the most a
     staged change adds to its commit, and past it the commit returns with the rest still
     owed. With the provider answering, the wait is one round trip per change.
-  - Once at start, after the owed registrations, over everything.
+  - By the node's drainer, over everything: once at start after the owed
+    registrations, after every commit that staged a change, and, while the provider is
+    away, answers with errors that may pass, or a pass leaves a change the node may send
+    again at once (the node could not send it, or nobody knows what its request came
+    to; `OwedSettlement::retry`), again after a back-off that doubles from 1 second up
+    to 60. A parked change is no reason for another pass: only its actor moves it. One
+    drainer runs per node, and every pass takes the same lock, so passes are serial.
   - Before a relationship change made outside a transaction on a tuple that has changes
     owed, over that document.
 
@@ -171,11 +210,9 @@ with no HTTP route.
   different workers are ordered by the provider alone, as they are for changes made
   outside a transaction.
 
-  There is no background drainer, timer or back-off yet. **A change left staged (the
-  provider was down, or the deadline passed) is submitted by the next commit that stages
-  on the same document, by a direct change of its tuple, by a call that waits for its
-  transaction, hands in a credential or abandons a change on its document, or at the
-  next start**; until then an owed add stays ungranted and an owed delete keeps denying.
+  A change left staged (the provider was down, or the deadline passed) is submitted by
+  the drainer without another request, on an idle node too; until then an owed add stays
+  ungranted and an owed delete keeps denying.
 - **A change made outside a transaction.** It goes to the provider at once, as before.
   When changes are owed on its tuple a pass over the document runs first. If a *staged*
   change is still owed on the tuple afterwards (the provider was not reached, or the
@@ -184,10 +221,12 @@ with no HTTP route.
   before the staged change it follows, and a revocation would be undone when the staged
   grant lands. If only a *parked* change remains on the tuple, the direct change is sent
   and overtakes it: nothing submits a parked change again by itself.
-- **A change submitted twice.** A record is deleted after the provider applied its
-  change, in a transaction of its own; nothing marks a change as in flight. A crash, a
-  lost answer or a lost commit between the two leaves the change staged, and the next
-  pass submits it again. vera.rs sets a relationship it already holds and deletes one it
+- **A change submitted twice.** Through a provider without a journal a record is
+  deleted after the provider applied its change, in a transaction of its own, and
+  nothing marks a change as in flight. A crash, a lost answer or a lost commit between
+  the two leaves the change staged, and the next pass submits it again. Through
+  vera.rs the in-flight mark above decides such a change, and it is submitted again
+  only when its journal entry, receipt and note can no longer be read. vera.rs sets a relationship it already holds and deletes one it
   does not hold without error (a successful receipt saying the record existed, or was not
   found), so the second submission is read as applied and the record is deleted. Two
   windows remain open. If the acting DID lost its authority in between, the second
@@ -241,7 +280,8 @@ with no HTTP route.
   version does not read it as owed state. A store whose queue there still holds a
   change (a `/acp-owed/q/` record; a settled change has none) is refused: the node does
   not start, with `LegacyOwedChanges` naming how many it owes, and a gate opened on such
-  a store refuses every access decision, settling pass and redrive with the same error.
+  a store refuses every access decision, settling pass and redrive with the same error;
+  the node's drainer stops at it instead of trying again.
   An owed revocation in it can therefore never stop denying unseen. Settle those changes
   with the version that staged them, or create the store again. What else that layout
   keeps once everything has settled (counts at zero, the sequence counter, notes of
@@ -540,9 +580,13 @@ returns a recorded credential.
   outright is kept as `refused` and tried again at start. A provider that already holds
   the document needs no authority: the record is cleared.
 - **Limits.**
-  - Nothing retries by itself between these calls: there is no drainer yet.
-  - No event is published when an entry settles or is parked. A caller learns it from
-    the wait or the report.
+  - The node's drainer sends an owed registration only ahead of a relationship change
+    owed on its document. A registration owed alone is sent again at start and by the
+    calls above, not between them.
+  - Only a relationship change the provider refuses is published
+    (`acp-owed-change-refused`). Nothing is published when an entry settles, when a
+    change is parked as awaiting authority, or when a registration is parked. A caller
+    learns it from the wait or the report.
   - The report reads the whole queue and every owed registration to find one actor's
     entries, and so does every wait each time a record is written.
   - An owed registration cannot be abandoned, parked or not. Its document exists, and

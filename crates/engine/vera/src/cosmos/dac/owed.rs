@@ -19,7 +19,7 @@ use crate::provider::{ProviderError, SubjectRef};
 /// Why `token` no longer lets the node submit `change`, if it does not. A
 /// token bound to one request is checked against the change it is submitted
 /// with.
-fn lapsed(acp: &VeraDocumentACP, change: &OwedChange, token: &str) -> Option<String> {
+pub(super) fn lapsed(acp: &VeraDocumentACP, change: &OwedChange, token: &str) -> Option<String> {
     let actor = change.actor.as_str();
     let command = acp::ProviderCommand::Relationship {
         tuple: &change.tuple,
@@ -48,7 +48,10 @@ fn lapsed(acp: &VeraDocumentACP, change: &OwedChange, token: &str) -> Option<Str
 
 /// The token the change is submitted with, or the answer that ends the
 /// submission before it is sent.
-async fn token(acp: &VeraDocumentACP, change: &OwedChange) -> Result<String, Submission> {
+pub(super) async fn token(
+    acp: &VeraDocumentACP,
+    change: &OwedChange,
+) -> Result<String, Submission> {
     let actor = change.actor.as_str();
     match &change.authority {
         OwedAuthority::Delegation { token } => match lapsed(acp, change, token) {

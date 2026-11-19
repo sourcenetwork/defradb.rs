@@ -78,6 +78,8 @@ pub(super) struct RemoteAcp {
     expired: Set<String>,
     /// Other spellings of an actor, by the one the provider keeps.
     spellings: HopscotchMap<String, Did, rapidhash::fast::RandomState>,
+    /// The journal owed changes go through, when the provider keeps one.
+    pub(super) journal: regolith::sync::OnceCell<Arc<dyn acp::OwedJournal>>,
 }
 
 impl RemoteAcp {
@@ -104,6 +106,7 @@ impl RemoteAcp {
             delegations: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
             expired: set(),
             spellings: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
+            journal: regolith::sync::OnceCell::new(),
         })
     }
 
@@ -161,7 +164,7 @@ impl RemoteAcp {
         self.granted(doc_id, subject.as_str())
     }
 
-    fn manages(&self, requestor: &Did, doc_id: &str) -> bool {
+    pub(super) fn manages(&self, requestor: &Did, doc_id: &str) -> bool {
         self.owners.get(doc_id).as_ref() == Some(requestor)
             || self
                 .managers
@@ -355,6 +358,10 @@ impl DocumentACP for RemoteAcp {
                 reason: "no key and no delegation".into(),
             }),
         }
+    }
+
+    fn owed_journal(&self) -> Option<Arc<dyn acp::OwedJournal>> {
+        self.journal.get().cloned()
     }
 
     async fn submit_owed_change(&self, change: &acp::OwedChange) -> acp::Submission {

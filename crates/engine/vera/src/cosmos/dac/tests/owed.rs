@@ -354,6 +354,8 @@ fn change(actor: &str, authority: OwedAuthority, op: OwedOp) -> OwedChange {
         last_error: None,
         authority_checked: true,
         epoch: None,
+        in_flight: None,
+        alone: false,
     }
 }
 

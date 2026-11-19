@@ -21,9 +21,14 @@
 //! Sequences order the queue. Changes of one tuple are ordered as their
 //! transactions commit; across tuples the order is the one they were staged
 //! in.
+//!
+//! A provider that journals its requests ([`OwedJournal`]) is sent changes
+//! with an in-flight mark ([`InFlight`]) stored before each request goes,
+//! so a change that landed before a crash is not sent again.
 
 mod changes;
 pub(crate) mod deny;
+mod journal;
 mod keys;
 mod ops;
 pub(crate) mod record;
@@ -38,12 +43,13 @@ pub use changes::{
     MAX_UNSETTLED_OWED_CHANGES_PER_ACTOR, VALIDATED_WITHIN_OF_NODE_LIMIT,
 };
 pub use deny::{OwedDenial, OwedDenials};
+pub use journal::{OwedJournal, PreparedRequest, RequestOutcome};
 pub use keys::OwedTupleState;
 pub(crate) use ops::legacy_changes;
 pub use ops::MAX_DISCARD_NOTES;
 pub use record::{
-    run_epoch, NewOwedChange, OwedAuthority, OwedChange, OwedOp, OwedState, OwedSubject, OwedTuple,
-    MAX_OWED_CHANGE_BYTES, RESERVED_REASON_BYTES,
+    run_epoch, InFlight, NewOwedChange, OwedAuthority, OwedChange, OwedOp, OwedState, OwedSubject,
+    OwedTuple, MAX_OWED_CHANGE_BYTES, MAX_REQUEST_ID_BYTES, RESERVED_REASON_BYTES,
 };
 pub use report::{
     OwedAuthorityKind, OwedEntry, OwedFilter, OwedHold, OwedOutcome, OwedRef, OwedWait, OwedWhat,

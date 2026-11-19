@@ -508,6 +508,24 @@ impl DocumentACP for VeraDocumentACP {
         .map_err(provider_err)
     }
 
+    /// The provider's journal, when its worker keeps one, behind this ACP
+    /// bound to no request: owed changes are sent with what was recorded
+    /// with them, never with a request's credentials.
+    fn owed_journal(&self) -> Option<Arc<dyn acp::OwedJournal>> {
+        if !self.provider.journals_owed_requests() {
+            return None;
+        }
+        let acp = Arc::new(Self {
+            provider: Arc::clone(&self.provider),
+            access_cache: self.access_cache.clone(),
+            decisions: self.decisions.clone(),
+            #[cfg(not(target_arch = "wasm32"))]
+            event_subscriber: None,
+            context: None,
+        });
+        Some(Arc::new(owed_journal::VeraOwedJournal { acp }))
+    }
+
     async fn check_named_permission(
         &self,
         subject: &Did,
@@ -979,6 +997,7 @@ impl DocumentACP for VeraDocumentACP {
 }
 
 mod owed;
+mod owed_journal;
 mod request_bound;
 
 #[cfg(test)]
