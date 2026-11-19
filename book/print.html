@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-b5e09575.js";
+            window.path_to_searchindex_js = "searchindex-5efb85a5.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-8198d451.js"></script>
@@ -2040,33 +2040,67 @@ is cleared (<code>AssumeNoTransferWhileOwed</code> in <code>proofs/tla/AcpOutbox
 </li>
 <li>
 <p><strong>The record.</strong> A change is written in the transaction that stages it, under the ACP
-namespace, and commits or rolls back with its rows: <code>/acp-owed/q/&lt;seq&gt;</code> holds the
+namespace, and commits or rolls back with its rows: <code>/acp-owed2/q/&lt;seq&gt;</code> holds the
 change (tuple, add or delete, acting DID, the authority to submit it as that DID,
 whether that DID was checked at staging, its state, attempts and last error; at most
 16 KiB, and staged only if it would still fit parked as refused or awaiting authority
 with 128 bytes of the provider’s words in each place they are kept, so a change that
-was staged can always be parked; longer words are cut), <code>/acp-owed/t/&lt;tuple&gt;</code> what is
-unsettled on that tuple (its oldest and latest sequences, how many changes and how many
-of them deletes), and <code>/acp-owed/o/&lt;object&gt;</code> the number of unsettled changes on that
-object. A change is unsettled while it has a record, a refused one included; a settled
-change has none.</p>
+was staged can always be parked; longer words are cut), and <code>/acp-owed2/l/&lt;tuple&gt;&lt;seq&gt;</code>
+marks it live on its tuple with whether it is a delete, so the tuple’s oldest and
+latest unsettled sequences are the first and last of those keys, and how many are owed
+on it, and how many of them are deletes, are theirs. A change is unsettled while it
+has a record, a refused one included; a settled change has none.</p>
+</li>
+<li>
+<p><strong>The counts.</strong> What the deny overlay and the node’s bound decide on is counted: per
+object, the deletes whose subject is wider than one actor (<code>/acp-owed2/o/&lt;object&gt;</code>); per
+actor a delete names on an object, its deletes and those of the owner relation
+(<code>/acp-owed2/s/&lt;object&gt;&lt;actor&gt;</code>); and for the node, its changes (<code>/acp-owed2/n</code>). Each count is one merged value with a staged part,
+which only staging adds to, and a settled part, which only settling adds to; what is
+owed is the difference. A count is never read and written back, put or deleted, so a
+settle aborts no transaction that read the staged part: not one that stages on the
+same document or the same tuple, and not one whose access decision read the deny
+overlay there (<code>proofs/tla/OwedParts.tla</code>, <code>proofs/lean/OwedParts.lean</code>). A count
+whose changes have all settled reads as nothing owed, exactly as an absent one, but it
+is not removed. <strong>Each object a wider delete was ever owed on, and each actor a delete
+ever named on an object, keeps one small folded value (about 40 bytes and its key),
+and each tuple ever staged on keeps its head key (8 bytes and its key)</strong>, until
+regolith can fold a chain of merges that has no value beneath it, which a compaction
+filter could then drop (sourcenetwork/regolith#314).</p>
+</li>
+<li>
+<p><strong>The layout before the counts were split.</strong> It lived under <code>/acp-owed/</code>, and this
+version does not read it as owed state. A store whose queue there still holds a
+change (a <code>/acp-owed/q/</code> record; a settled change has none) is refused: the node does
+not start, with <code>LegacyOwedChanges</code> naming how many it owes, and a gate opened on such
+a store refuses every access decision, settling pass and redrive with the same error.
+An owed revocation in it can therefore never stop denying unseen. Settle those changes
+with the version that staged them, or create the store again. What else that layout
+keeps once everything has settled (counts at zero, the sequence counter, notes of
+discarded changes) owes nothing, is not counted and does not hold a start back.</p>
 </li>
 <li>
 <p><strong>The order.</strong> A sequence comes from <code>Db::allocate</code> after the staging transaction read
-the tuple’s key, which it also writes. Two transactions that stage the same tuple
-conflict, and the one that commits later holds the higher sequence. Across tuples a
+the tuple’s head key (<code>/acp-owed2/h/&lt;tuple&gt;</code>, the latest sequence staged on it), which it
+then writes. Only staging reads or writes that key: two transactions that stage the
+same tuple conflict, and the one that commits later holds the higher sequence; a
+settle of the tuple meanwhile does not conflict with either. Across tuples a
 sequence follows the order of staging, not of commit, so a lower sequence can appear
 in the queue after a higher one: a reader of the queue starts from its head each time
 instead of keeping a high-water mark.</p>
 </li>
 <li>
 <p><strong>The bounds.</strong> One transaction stages at most 256 changes, one acting DID holds at
-most 1,000 unsettled (<code>/acp-owed/a/&lt;actor&gt;</code> counts them), and a node holds at most
+most 1,000 unsettled (<code>/acp-owed2/a/&lt;actor&gt;</code> counts them), and a node holds at most
 10,000; each is a typed error before the commit. A parked change stays unsettled, so
 the acting DID’s bound is what keeps one actor’s parked changes from taking the whole
-of the node’s. The bounds are constants with no configuration key yet. The actor’s and
-the node’s are checked against the counts the staging transaction sees, so
-transactions staging at once can pass either by what they stage together.</p>
+of the node’s. The bounds are constants with no configuration key yet. The actor’s is
+checked against the count the staging transaction sees, so transactions staging at
+once can pass it by what they stage together. The node’s is too while it is far away;
+within 1,024 of it (<code>VALIDATED_WITHIN_OF_NODE_LIMIT</code>) the staged part of the node’s
+count is read validated, so transactions that stage there commit one after the other,
+and a settle aborts none of them. They can pass it only by adding more than that
+margin between them in transactions that each read the count below it.</p>
 </li>
 <li>
 <p><strong>The gate.</strong> While any delete of a tuple is unsettled, the adapter denies that
@@ -2082,8 +2116,11 @@ node, and other nodes see the revocation once the provider holds it. Inside the
 transaction that staged the delete it starts at once: every read and access check made
 through that transaction applies the same rule to the transaction’s own view, so the
 revoked subject is denied before the commit and a statement that is rolled back
-revokes nothing. An owed add grants nothing, in its own transaction either. With
-nothing owed on an object the gate costs one point read.</p>
+revokes nothing. An owed add grants nothing, in its own transaction either. A decision
+is two point reads, whatever the policy: the object’s count of deletes wider than one
+actor and the count of deletes naming the identity there, each read on its staged
+part. An anonymous decision reads only the object’s count: no delete can name it. A delete that commits after the decision read refuses it at commit; a settle
+never does, and one the read did not see only denies more.</p>
 </li>
 </ul>
 <h3 id="verified-writes-on-an-external-provider"><a class="header" href="#verified-writes-on-an-external-provider">Verified writes on an external provider</a></h3>
@@ -2223,7 +2260,7 @@ here</strong>; the commit returned success.</p>
 deleted without the provider holding the change: the provider refused a change
 nobody had checked, cannot take one of its kind, a later change of the relationship
 passed an unchecked one, or its actor abandoned it. Each leaves a note
-(<code>/acp-owed/x/&lt;seq&gt;</code>: the change and the reason, no credential), shown as an entry
+(<code>/acp-owed2/x/&lt;seq&gt;</code>: the change and the reason, no credential), shown as an entry
 with <code>discarded</code> set. A note is deleted when its actor is told: by the wait for its
 transaction that returns it, or by the answer to a fresh credential for it
 (<code>OwedOutcome::Discarded</code>). A wait by the node’s principal tells the node, and deletes
