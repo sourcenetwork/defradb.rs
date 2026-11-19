@@ -51,6 +51,10 @@ pub(super) struct Remote {
     /// How many access decisions the provider was asked to record.
     pub(super) decisions: std::sync::atomic::AtomicU64,
     pub(super) down: AtomicBool,
+    /// Objects whose relationship writes fail as unreachable while every
+    /// other call answers: what keeps a change owed on them while the
+    /// node's drainer runs.
+    cut_off: Map<String, ()>,
     /// Its newest verified state is past the freshness limit: every decision
     /// fails as the vera.rs light client's does.
     pub(super) stale: AtomicBool,
@@ -107,11 +111,22 @@ impl Remote {
             lapsed: AtomicBool::new(false),
             decisions: std::sync::atomic::AtomicU64::new(0),
             down: AtomicBool::new(false),
+            cut_off: map(),
             stale: AtomicBool::new(false),
             unverifying: AtomicBool::new(false),
             stalled: AtomicBool::new(false),
             released: regolith::sync::Event::new(),
         })
+    }
+
+    /// Fail every relationship write on `object` as unreachable, or take
+    /// them again.
+    pub(super) fn cut_off(&self, object: &str, cut: bool) {
+        if cut {
+            self.cut_off.insert(object.to_string(), ());
+        } else {
+            self.cut_off.remove(object);
+        }
     }
 
     fn reachable(&self) -> Result<(), ProviderError> {
@@ -182,6 +197,11 @@ impl Remote {
         subject: &SubjectRef,
     ) -> Result<bool, ProviderError> {
         self.reachable()?;
+        if self.cut_off.contains_key(object) {
+            return Err(ProviderError::Unavailable(format!(
+                "stub provider is cut off from {object}"
+            )));
+        }
         if self.owners.get(object).as_deref() != Some(Self::actor(token)) {
             return Err(ProviderError::Transaction("submission was rejected".into()));
         }
@@ -452,6 +472,22 @@ impl VeraProvider for Remote {
             "update" | "delete" => writes,
             _ => writes || self.holds(object_id, actor_did) || self.holds(object_id, "*"),
         })
+    }
+}
+
+/// Wait until `holds` does, for at most 90 seconds: the node's drainer
+/// submits what is owed by itself, after a back-off of up to 60 seconds.
+pub(super) async fn eventually<F, Fut>(what: &str, mut holds: F)
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
+    while !holds().await {
+        assert!(std::time::Instant::now() < deadline, "{what}");
+        edge::testing::edge()
+            .sleep(std::time::Duration::from_millis(100))
+            .await;
     }
 }
 
@@ -755,8 +791,11 @@ fn a_staged_grant_waits_for_the_provider_and_a_staged_revocation_does_not() {
         assert_eq!(read_in_txn(OWNER).await, ["fresh"]);
         assert_eq!(reads(&node, READER).await, ["fresh"], "not committed yet");
 
-        // The provider is down at the commit: the revocation holds on this
-        // node all the same, and the provider still holds the grant.
+        // The provider is down at the commit, and stays unable to take a
+        // write on the document after it, so the node's drainer cannot
+        // submit the revocation either: it holds on this node all the same,
+        // and the provider still holds the grant.
+        remote.cut_off(&doc, true);
         remote.down.store(true, Ordering::SeqCst);
         transaction.commit().await.unwrap();
         remote.down.store(false, Ordering::SeqCst);
@@ -765,7 +804,7 @@ fn a_staged_grant_waits_for_the_provider_and_a_staged_revocation_does_not() {
         assert!(remote.take_writes().is_empty());
 
         // A commit submits what is owed on the documents its own
-        // transaction staged on, and leaves the rest.
+        // transaction staged on, and is not held by what is owed elsewhere.
         let other = created(node.execute_request(create("other")).await);
         let transaction = node.begin_transaction_guard(false).await.unwrap();
         node.add_dac_actor_relationship_change_for_in_txn(
@@ -786,8 +825,9 @@ fn a_staged_grant_waits_for_the_provider_and_a_staged_revocation_does_not() {
         assert!(remote.holds(&doc, READER));
         assert_eq!(reads(&node, READER).await, ["other"]);
 
-        // The next commit that stages on the first document submits the
-        // revocation before its own change.
+        // A change committed on the first document after the revocation
+        // goes after it: once the provider takes writes there again, the
+        // revocation is submitted first.
         let transaction = node.begin_transaction_guard(false).await.unwrap();
         node.add_dac_actor_relationship_change_for_in_txn(
             transaction.handle(),
@@ -800,6 +840,13 @@ fn a_staged_grant_waits_for_the_provider_and_a_staged_revocation_does_not() {
         .await
         .unwrap();
         transaction.commit().await.unwrap();
+        assert!(remote.take_writes().is_empty());
+        remote.cut_off(&doc, false);
+        eventually(
+            "the drainer did not submit what is owed on the document",
+            || async { remote.holds(&doc, CALLER) },
+        )
+        .await;
         assert_eq!(
             remote.take_writes(),
             [
@@ -1032,8 +1079,10 @@ fn a_commit_returns_at_the_deadline_with_the_change_still_staged() {
         );
         assert!(!remote.holds(&doc, READER));
 
-        // The stalled submission never lands. The next commit on the
-        // document finds the change still staged and submits it first.
+        // The stalled submission never lands, and the provider takes no
+        // write on the document until the next commit: the change is still
+        // staged, and is submitted before the change committed after it.
+        remote.cut_off(&doc, true);
         remote.stalled.store(false, Ordering::SeqCst);
         remote.released.set();
         let transaction = node.begin_transaction_guard(false).await.unwrap();
@@ -1048,6 +1097,13 @@ fn a_commit_returns_at_the_deadline_with_the_change_still_staged() {
         .await
         .unwrap();
         transaction.commit().await.unwrap();
+        assert!(!remote.holds(&doc, READER));
+        remote.cut_off(&doc, false);
+        eventually(
+            "the drainer did not submit what is owed on the document",
+            || async { remote.holds(&doc, CALLER) },
+        )
+        .await;
         assert_eq!(
             remote.take_writes(),
             [
@@ -1108,6 +1164,17 @@ fn a_userset_grant_is_decided_under_its_own_actors_authority() {
             })
         ));
         remote.down.store(false, Ordering::SeqCst);
+        // The node's drainer submits it once the provider is back; the
+        // owner stages after that, so neither commit races the other.
+        let caller = actor(CALLER);
+        eventually("the drainer did not submit the caller's change", || async {
+            node.owed_acp_as(&caller, CALLER)
+                .await
+                .unwrap()
+                .iter()
+                .all(|entry| entry.state != acp::OwedState::Staged)
+        })
+        .await;
         assert!(matches!(
             stage(actor(OWNER)).await,
             Ok(RelationshipChange::Staged {
