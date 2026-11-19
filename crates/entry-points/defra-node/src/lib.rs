@@ -1796,5 +1796,9 @@ mod http_signing_tests;
 #[path = "../tests/unit/http_acp.rs"]
 mod http_acp_tests;
 
+#[cfg(all(test, feature = "http", feature = "vera", not(target_arch = "wasm32")))]
+#[path = "../tests/unit/http_staged_relationship.rs"]
+mod http_staged_relationship_tests;
+
 #[cfg(all(test, feature = "http"))]
 mod router_transform_tests;
