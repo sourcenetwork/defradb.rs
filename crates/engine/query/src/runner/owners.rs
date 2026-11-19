@@ -257,7 +257,7 @@ where
             {
                 Err(QueryError::NeedsInput(input)) => {
                     inputs
-                        .answer_wave(&input, |wave| runner.resolve_wave(wave))
+                        .answer_wave(&input, |wave| runner.resolve_wave(&inputs, wave))
                         .await?
                 }
                 answered => return answered,
