@@ -103,7 +103,12 @@
 \*  15. the registration is sent under a credential that is not its
 \*      creator's, and the provider registers that signer - INV_NoWidening;
 \*  16. a change is parked as refused because another change it shared a
-\*      request with was refused - INV_RefusedOnItsOwn.
+\*      request with was refused - INV_RefusedOnItsOwn;
+\*  17. a change a client staged over HTTP acts as a DID other than the one
+\*      its verified credential names - INV_ActsAsItsCredential;
+\*  18. a change a client staged over HTTP is owed with no authority the
+\*      node can send it with: neither the node's key for its actor nor a
+\*      delegation the client presented - INV_SendableAuthority.
 \*
 \* What exists in the code today, and what is specification ahead of code.
 \* Exists (the registry anchors these):
@@ -304,6 +309,11 @@ CONSTANTS
   Note,                      \* TRUE: a request resolved by someone else leaves a note of its outcome
   Floor,                     \* TRUE: a note found by digest counts only from the mark's sequence on
   Captured,                  \* TRUE: a journaled request lands under the credential it carries
+  Remote,                    \* TRUE: a client stages changes over HTTP under its own credential
+  ActorFromCredential,       \* TRUE: a client's change acts as the DID its credential names
+  RemoteCheck,               \* TRUE: a client's change is checked at staging as an embedder's is
+  RemoteAuthority,           \* TRUE: a client's change is staged only under an authority the node can send it with
+  HeldKeys,                  \* the actors whose keys the node holds: it signs as them itself
   MaxBatch,                  \* how many changes one request may carry
   Isolate                    \* TRUE: a refused batch is sent again one change at a time
 
@@ -323,12 +333,16 @@ ASSUME AbandonStates \in {"refused", "any"}                \* a known abandon ru
 ASSUME AbandonBy \in {"actor", "anyone"}                   \* a known abandon rule
 ASSUME Journaled \in BOOLEAN /\ Note \in BOOLEAN /\ Isolate \in BOOLEAN  \* switches
 ASSUME Floor \in BOOLEAN /\ Captured \in BOOLEAN                \* switches
+ASSUME Remote \in BOOLEAN /\ ActorFromCredential \in BOOLEAN /\ RemoteCheck \in BOOLEAN  \* switches
+ASSUME RemoteAuthority \in BOOLEAN                         \* a switch
+ASSUME HeldKeys \subseteq Actors                            \* the node holds keys of known actors only
 ASSUME MaxBatch \in {1, 2}                                 \* one change a request, or two
 
 Slots == 1..MaxChanges       \* the sequence numbers
 Readers == {"c", "g", "x"}   \* who asks for access: creator, grantee, stranger
 Presenters == {"c", "o"}     \* who may hand the node a fresh credential for the registration
 Abandoners == Actors \cup {"g"}  \* who may ask to abandon a change: an actor, or the grantee
+Shown == {"deleg", "token"}  \* what a client signs in to HTTP with: a delegation, or an identity token
 
 \* A slot nobody staged holds this placeholder.
 NoChange == [subj |-> "-", op |-> "-", actor |-> "-", auth |-> "-"]
@@ -383,7 +397,11 @@ VARIABLES
                 \* one replaces an expired one
   jfresh,       \* the slots marked when the journaled request was signed: its
                 \* sequence reaches their floors
-  stale         \* the slots that took effect under a delegation that had expired
+  stale,        \* the slots that took effect under a delegation that had expired
+  cred,         \* per slot: the DID whose verified credential a client staged it with,
+                \* "-" for a change an embedder staged
+  bare          \* the slots a client staged signed in with an identity token, which
+                \* is no delegation the node could send a change with
 
 \* How the registration was sent, and what is kept of discarded changes.
 rest == <<regVia, tomb, acked>>
@@ -391,7 +409,7 @@ rest == <<regVia, tomb, acked>>
 more == <<regAuth, regOk, regBy, regPark, regNote, regFail, gone, late, rest>>
 \* What a journaled request names and carries: its digest, its credential,
 \* and the sequence it was signed with.
-keyed == <<dg, cg, gen, jfresh, stale>>
+keyed == <<dg, cg, gen, jfresh, stale, cred, bare>>
 \* What the journaled drain keeps: the marks, the journal, the note, batches.
 drain == <<flight, journal, landed, noted, solo, tx, cur, keyed>>
 
@@ -431,6 +449,8 @@ TypeOK ==
   /\ DOMAIN dg = Slots /\ cg \in [Slots -> 0..MaxExpiries]   \* a digest and a generation each
   /\ gen \in 0..MaxExpiries                                  \* a small count
   /\ jfresh \subseteq Slots /\ stale \subseteq Slots         \* some slots
+  /\ cred \in [Slots -> Actors \cup {"-"}]                  \* a client or none each
+  /\ bare \subseteq Slots                                  \* some slots
   /\ solo \subseteq Slots /\ cur \subseteq Slots            \* some slots
   /\ tx \in [Slots -> 0..MaxChanges]                        \* a transaction each
 
@@ -464,6 +484,8 @@ Init ==
   /\ noted = {}                                           \* the note is empty
   /\ dg = [s \in Slots |-> NoDigest] /\ cg = [s \in Slots |-> 0]  \* nothing is marked
   /\ gen = 0 /\ jfresh = {} /\ stale = {}                  \* the first delegation, nothing signed
+  /\ cred = [s \in Slots |-> "-"]                         \* no client staged anything
+  /\ bare = {}                                            \* so none signed in with a token
   /\ solo = {} /\ cur = {}                                \* no batch refused, no request held
   /\ tx = [s \in Slots |-> 0]                             \* no slot is staged
 
@@ -615,21 +637,58 @@ Passes(c) ==
 \* staged at all. When it cannot (the provider is down), an add is staged
 \* unchecked, and a delete is not staged: it would deny at once on the word
 \* of an actor nobody vouched for.
-StageChange(s, c) ==
+\* Staging change c at s, after the check when `check` holds; without it
+\* (the bug of a route that skips the check) anything is staged unchecked.
+Staged(s, c, check) ==
   /\ doc \in {"open", "exists"}                           \* the transaction sees the document
   /\ st[s] = "free"                                       \* this number is not taken,
   /\ \A r \in Slots : r < s => st[r] # "free"             \* and every lower one is
-  /\ IF CanCheck                                          \* the check can run:
+  /\ IF check /\ CanCheck                                \* the check can run:
      THEN /\ Passes(c)                                    \*   the change must pass it,
           /\ chk' = [chk EXCEPT ![s] = TRUE]              \*   and is recorded as checked
-     ELSE /\ c.op = "add" \/ ~CheckedDeletes              \* else only an add (or, bug, any)
+     ELSE /\ c.op = "add" \/ ~CheckedDeletes \/ ~check   \* else only an add (or, bug, any)
           /\ chk' = [chk EXCEPT ![s] = FALSE]             \*   recorded as unchecked
   /\ st' = [st EXCEPT ![s] = "open"]                      \* staged, uncommitted
   /\ chg' = [chg EXCEPT ![s] = c]                         \* with this change
   /\ UNCHANGED <<doc, owedReg, receipt, effects, checked, rolled,
                  chainOwner, chainTuples, up, delegOk, crashes, expiries>>
   /\ UNCHANGED more                                      \* and so do the registration's record and what was abandoned
+
+\* An embedder's change, always checked.
+StageChange(s, c) ==
+  /\ Staged(s, c, TRUE)                                   \* staged after the check
   /\ UNCHANGED drain                                     \* the journaled drain is not involved
+
+\* What the node can send a client's change c with, for a client signed in
+\* as `who` with `shown`: its own key when it holds `who`'s, whatever the
+\* client signed in with (the code asks for a held key before it looks at
+\* the bearer); otherwise only the delegation the client presented. An
+\* identity token for a DID whose key the node does not hold gives it
+\* nothing to send the change with once the request is gone.
+Sendable(c, who, shown) ==
+  IF who \in HeldKeys THEN c.auth = "node"                 \* the node signs as who itself
+  ELSE shown = "deleg" /\ c.auth = "deleg"                 \* else under the presented delegation
+
+\* A client stages change c over HTTP in its transaction, authenticated by
+\* the verified credential of `who`, a delegation or an identity token
+\* (`shown`). The change acts as `who` (ActorFromCredential; the bug takes
+\* the acting DID from the request, so any actor's change goes in under
+\* another's credential), records an authority the node can send it with
+\* (RemoteAuthority; the bug stages a change with none, such as one signed
+\* in with an identity token for a DID whose key the node does not hold),
+\* and is checked as an embedder's change is (RemoteCheck). A request with
+\* no credential stages nothing, so there is no such step for it. From the
+\* commit on the change is like any other: settled by the commit's pass and
+\* the drainer, parked when its delegation lapses, gone with a rollback.
+StageRemote(s, c, who, shown) ==
+  /\ Remote                                               \* clients stage over HTTP
+  /\ Sendable(c, who, shown) \/ ~RemoteAuthority          \* under an authority the node can send with (or, bug, any)
+  /\ ActorFromCredential => c.actor = who                 \* as the DID it names
+  /\ Staged(s, c, RemoteCheck)                            \* checked as any change is
+  /\ cred' = [cred EXCEPT ![s] = who]                     \* remembered, for the properties
+  /\ bare' = IF shown = "token" THEN bare \cup {s}         \* and how the client signed in
+           ELSE bare \ {s}
+  /\ UNCHANGED <<flight, journal, landed, noted, solo, tx, cur, dg, cg, gen, jfresh, stale>>
 
 \* The first slot the open transaction staged: the name of that transaction.
 FirstOpen == CHOOSE s \in Slots : st[s] = "open" /\ \A r \in Slots : st[r] = "open" => s <= r
@@ -1050,7 +1109,7 @@ JMark(R) ==
   /\ cg' = [r \in Slots |-> IF r \in R THEN gen ELSE cg[r]]  \* and the delegation it carries
   /\ cur' = R                                              \* held in memory
   /\ tomb' = Noted({r \in Slots \ R : \E s \in R : Passed(r, s)})  \* removals are noted
-  /\ UNCHANGED <<journal, landed, solo, tx, gen, jfresh, stale>>  \* nothing is journaled yet
+  /\ UNCHANGED <<journal, landed, solo, tx, gen, jfresh, stale, cred, bare>>  \* nothing is journaled yet
   /\ UNCHANGED <<regAuth, regOk, regBy, regPark, regNote, regFail, gone, late,
                  regVia, acked>>
   /\ UNCHANGED <<doc, owedReg, chg, effects, checked, chk, rolled,
@@ -1063,7 +1122,7 @@ JPrepare ==
   /\ \A s \in cur : st[s] = "inflight" /\ flight[s] = "digest"  \* marked with its digest
   /\ journal' = cur /\ landed' = FALSE                     \* journaled, not yet executed
   /\ jfresh' = {s \in Slots : flight[s] # "-"}            \* signed after every mark stored now
-  /\ UNCHANGED <<flight, noted, solo, tx, cur, dg, cg, gen, stale>>  \* the marks stay
+  /\ UNCHANGED <<flight, noted, solo, tx, cur, dg, cg, gen, stale, cred, bare>>  \* the marks stay
   /\ UNCHANGED <<doc, owedReg, st, chg, receipt, effects, checked, chk, rolled,
                  chainOwner, chainTuples, up, delegOk, crashes, expiries>>
   /\ UNCHANGED more                                        \* the registration's record stays
@@ -1100,7 +1159,7 @@ JLand ==
                 ELSE "lapsed"]                             \*   or for its credential
           /\ UNCHANGED <<chainTuples, effects, stale>>     \* and nothing changes
   /\ late' = late \cup {s \in journal : st[s] = "abandoned"}  \* landed after its abandonment
-  /\ UNCHANGED <<flight, journal, noted, solo, tx, cur, dg, cg, gen, jfresh>>  \* the rest stays
+  /\ UNCHANGED <<flight, journal, noted, solo, tx, cur, dg, cg, gen, jfresh, cred, bare>>  \* the rest stays
   /\ UNCHANGED <<regAuth, regOk, regBy, regPark, regNote, regFail, gone, rest>>
   /\ UNCHANGED <<doc, owedReg, st, chg, checked, chk, rolled,
                  chainOwner, up, delegOk, crashes, expiries>>
@@ -1245,7 +1304,7 @@ Reauthorize(s) ==
                  chainOwner, chainTuples, up, crashes, expiries>>
   /\ UNCHANGED chk                                       \* what was checked stays so
   /\ UNCHANGED more                                      \* and so do the registration's record and what was abandoned
-  /\ UNCHANGED <<flight, journal, landed, noted, solo, tx, cur, dg, cg, jfresh, stale>>
+  /\ UNCHANGED <<flight, journal, landed, noted, solo, tx, cur, dg, cg, jfresh, stale, cred, bare>>
 
 \* A change is abandoned: its record is deleted without the provider holding
 \* it. Only a change the provider refused may go (AbandonStates = "refused"):
@@ -1351,6 +1410,8 @@ OwnerLost ==
 Next ==
   \/ StageCreate \/ Commit \/ Rollback \/ Crash           \* transactions and crashes
   \/ \E s \in Slots, c \in Changes : StageChange(s, c)    \* staging a change
+  \/ \E s \in Slots, c \in Changes, who \in Actors, shown \in Shown :  \* or a client staging one
+       StageRemote(s, c, who, shown)
   \/ (\E via \in Ways : RegisterOnChain(via)) \/ ClearOwed  \* settling the registration
   \/ (\E s \in Slots : Acknowledge(s))                    \* telling an actor of a discard
   \/ RegistrationFails \/ ExpireReg                       \* a submission of it fails
@@ -1492,6 +1553,21 @@ INV_AbandonIsFinal == late = {}
 \* A change whose record was deleted as settled took effect on the provider:
 \* nobody's outcome but its own request's decides it.
 INV_SettledTookEffect == \A s \in Slots : st[s] = "settled" => effects[s] >= 1
+
+\* A change a client staged acts as the DID whose verified credential it
+\* presented: nobody stages a change, or a denial, on another's word.
+INV_ActsAsItsCredential ==
+  \A s \in Slots : Kept(s) /\ cred[s] # "-" => chg[s].actor = cred[s]
+
+\* Every change a client staged carries an authority the node can send it
+\* with: no change is owed that the node can never send.
+\* A change signed with the node's key names an actor whose key the node
+\* holds, and one signed with a delegation was staged by a client that
+\* presented a delegation, not an identity token.
+INV_SendableAuthority ==
+  \A s \in Slots : Kept(s) /\ cred[s] # "-" =>
+    IF chg[s].auth = "node" THEN chg[s].actor \in HeldKeys  \* the node holds the actor's key
+    ELSE s \notin bare                                       \* or the client gave a delegation
 
 \* A journaled request takes effect only under the delegation it carries,
 \* while that one is valid: a fresh delegation handed in later renews no
