@@ -615,6 +615,9 @@ RUNS=(
   "MC_Acp_StaleCache_Red.cfg   MC_Acp_StaleCache_Red.tla   RED"   # stale cache grants revoked permission
   "MC_VerifiedRead_Green.cfg VerifiedRead.tla GREEN" # a proven read a block overtook is asked again and answered at the newest root
   "MC_VerifiedRead_Green_Exhausted.cfg VerifiedRead.tla GREEN" # a block overtakes every ask: the refusal returns only after the last one
+  "MC_VerifiedRead_Green_Stale.cfg VerifiedRead.tla GREEN" # a stale head is waited out within the patience and never read at
+  "MC_VerifiedRead_Red_NoStaleWait.cfg VerifiedRead.tla RED" # a stale refusal fails at once with patience left (INV_StaleFailsOnlyAtPatience)
+  "MC_VerifiedRead_Red_DecideStale.cfg VerifiedRead.tla RED" # a read decided at a head older than the bound (INV_NeverFromStale)
   "MC_VerifiedRead_Red_AcceptStale.cfg VerifiedRead.tla RED" # light client skips the root check: a stale answer is accepted (INV_NeverStale)
   "MC_VerifiedRead_Red_NoRetry.cfg VerifiedRead.tla RED" # refused read never asked again: errors with asks left (INV_FailsOnlyWhenEveryAskOvertaken)
   "MC_VerifiedRead_Red_Uncapped.cfg VerifiedRead.tla RED" # retry without a cap asks past ATTEMPTS (INV_AttemptsBounded)
