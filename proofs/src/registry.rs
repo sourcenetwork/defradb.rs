@@ -394,6 +394,15 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Transactional document relationships",
+        name: "INV_NoStaleHeld: an observation never answers held over an owed revocation",
+        axis: Tla,
+        anchor: "crates/engine/acp/src/external.rs observe_actor_relationship",
+        model_ref: "MC_ObservationSettlement_{Green,Red_Unlocked}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/database/db/tests/access/external_observation.rs a_revocation_owed_when_the_provider_answered_is_not_settled_under_the_observation",
+    },
+    Property {
+        family: "Transactional document relationships",
         name: "INV_NoEscalation / INV_NoOwner / projection_keeps_requester_authority",
         axis: Tla,
         anchor: "crates/database/db/src/document_projection.rs change_projected_relationship, DocumentMutationProjector::project_related",

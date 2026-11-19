@@ -83,7 +83,13 @@ pub(super) struct RemoteAcp {
     spellings: HopscotchMap<String, Did, rapidhash::fast::RandomState>,
     /// The journal owed changes go through, when the provider keeps one.
     pub(super) journal: regolith::sync::OnceCell<Arc<dyn acp::OwedJournal>>,
+    /// Run once an exact observation has its answer, before it returns.
+    pub(super) observing: HopscotchMap<(), ObserveHook, rapidhash::fast::RandomState>,
 }
+
+/// What a test runs inside an exact observation, after the provider answered.
+pub(super) type ObserveHook =
+    Arc<dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync>;
 
 impl RemoteAcp {
     pub(super) fn new() -> Arc<Self> {
@@ -111,6 +117,7 @@ impl RemoteAcp {
             expired: set(),
             spellings: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
             journal: regolith::sync::OnceCell::new(),
+            observing: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
         })
     }
 
@@ -382,11 +389,15 @@ impl DocumentACP for RemoteAcp {
             observation.document.to_string(),
             observation.target.to_string(),
         );
-        Ok(if observation.relation == MANAGER {
+        let held = if observation.relation == MANAGER {
             self.managers.contains_key(&key)
         } else {
             self.grants.contains_key(&key)
-        })
+        };
+        if let Some(hook) = self.observing.get(&()) {
+            hook().await;
+        }
+        Ok(held)
     }
 
     fn canonical_actor(&self, did: &Did) -> Did {

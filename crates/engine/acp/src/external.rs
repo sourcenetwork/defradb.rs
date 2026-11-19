@@ -611,6 +611,12 @@ where
                 },
             );
         }
+        // A settlement pass holds this lock while it sends what is owed and
+        // clears its records: held from the provider's answer to the check
+        // below, an owed change of the tuple cannot be settled in between and
+        // so cannot hide that the answer predates it
+        // (`proofs/tla/ObservationSettlement.tla`).
+        let _settling = self.settling.lock().await;
         let present = match self.provider.observe_actor_relationship(observation).await {
             Err(Error::NotOwner { .. } | Error::NotManager { .. }) => return Err(refused()),
             other => other?,

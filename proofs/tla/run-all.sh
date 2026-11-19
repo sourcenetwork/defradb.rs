@@ -761,6 +761,8 @@ RUNS=(
   "MC_ProjectionNoEscalation_Red_Nac.cfg ProjectionNoEscalation.tla RED" # INV_NoEscalation
   "MC_ProjectionNoEscalation_Red_Authority.cfg ProjectionNoEscalation.tla RED" # INV_NoEscalation
   "MC_ProjectionNoEscalation_Red_Owner.cfg ProjectionNoEscalation.tla RED" # INV_NoOwner
+  "MC_ObservationSettlement_Green.cfg ObservationSettlement.tla GREEN" # an observation holds the settling lock from the provider's answer to its check
+  "MC_ObservationSettlement_Red_Unlocked.cfg ObservationSettlement.tla RED" # INV_NoStaleHeld
   "MC_ProjectionRelationship_Green.cfg ProjectionRelationship.tla GREEN"
   "MC_ExactRelationshipObservation_Green.cfg ExactRelationshipObservation.tla GREEN"
   "MC_ExactRelationshipObservation_Red.cfg ExactRelationshipObservation.tla RED"
