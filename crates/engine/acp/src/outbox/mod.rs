@@ -37,6 +37,7 @@ mod staging;
 mod submission;
 
 pub(crate) use ops::tuple_state;
+pub use ops::tuple_unsettled_in;
 
 pub use changes::{
     OwedChanges, StagedCount, MAX_OWED_CHANGES_PER_TRANSACTION, MAX_UNSETTLED_OWED_CHANGES,
@@ -55,7 +56,6 @@ pub use report::{
     OwedAuthorityKind, OwedEntry, OwedFilter, OwedHold, OwedOutcome, OwedRef, OwedWait, OwedWhat,
 };
 pub use staging::{
-    prepare_owner_relationship, PreparedOwnerRelationship, StageRelationship, Staged,
-    TransactionOutbox,
+    prepare_relationship, PreparedRelationship, StageRelationship, Staged, TransactionOutbox,
 };
 pub use submission::{submit_relationship, Submission};

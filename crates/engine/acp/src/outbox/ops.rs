@@ -124,6 +124,25 @@ where
     Ok(state)
 }
 
+/// Whether `tuple` has a change owed to the provider that this transaction
+/// sees: one it staged itself, or one committed before it and not settled.
+/// The scan is validated, so a change on the tuple that commits first aborts
+/// the decision resting on it, and the re-run decides again.
+pub async fn tuple_unsettled_in<R>(reader: &R, tuple: &OwedTuple) -> Result<bool>
+where
+    R: Reader + ?Sized,
+{
+    let mut iter = reader
+        .iterator(
+            IterOptions::new()
+                .with_prefix(keys::live_prefix(tuple))
+                .with_validation(true),
+        )
+        .await
+        .map_err(storage_error)?;
+    Ok(iter.next().await.map_err(storage_error)?.is_some())
+}
+
 /// How many changes are unsettled on one object: its tuples' live
 /// sequences. Only reports and tests ask; no decision rests on it.
 pub(super) async fn unsettled_on<R>(

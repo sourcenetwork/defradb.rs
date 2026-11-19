@@ -1,14 +1,14 @@
-//! A projection's relationship change for an external provider, staged with
-//! an owner's authority prepared before the transaction
-//! (`acp::outbox::prepare_owner_relationship`) and matched exactly inside it
-//! (`TransactionOutbox::stage_prepared_owner`), as
+//! A projection's relationship change for an external provider, decided
+//! before the transaction (`acp::outbox::prepare_relationship`) and matched
+//! exactly inside it (`TransactionOutbox::stage_prepared`), as
 //! `proofs/lean/ProjectionRelationship.lean`'s `mayStageExternal` requires:
-//! only the owner prepares, and a preparation is taken for its own change of
-//! its own provider and no other.
+//! the owner or a manager of the relation prepares, as staging decides
+//! directly, nobody else does, and a preparation is taken for its own change
+//! of its own provider and no other.
 
 use std::sync::Arc;
 
-use acp::outbox::{prepare_owner_relationship, PreparedOwnerRelationship};
+use acp::outbox::{prepare_relationship, PreparedRelationship};
 use acp::{DocumentACP, OwedOp, StageRelationship, Staged, Subject};
 use defra_core::RequestContext;
 use identity::Did;
@@ -48,9 +48,9 @@ impl Staging {
         actor: &Did,
         doc: &str,
         subject: &Did,
-    ) -> acp::Result<Arc<PreparedOwnerRelationship>> {
+    ) -> acp::Result<Arc<PreparedRelationship>> {
         let managers = [MANAGER.to_string()];
-        prepare_owner_relationship(provider, &change(actor, doc, subject, &managers))
+        prepare_relationship(provider, &change(actor, doc, subject, &managers))
             .await
             .map(Arc::new)
     }
@@ -63,7 +63,7 @@ impl Staging {
         actor: Did,
         doc: String,
         subject: Did,
-        prepared: Arc<PreparedOwnerRelationship>,
+        prepared: Arc<PreparedRelationship>,
     ) -> acp::Result<Staged> {
         let gate: Arc<dyn DocumentACP> = self.gate.clone();
         let job = txn_job(move |turn| {
@@ -79,7 +79,7 @@ impl Staging {
                         .expect("an external provider keeps an outbox");
                     let managers = [MANAGER.to_string()];
                     outbox
-                        .stage_prepared_owner(change(&actor, &doc, &subject, &managers), &prepared)
+                        .stage_prepared(change(&actor, &doc, &subject, &managers), &prepared)
                         .await
                 };
                 turn.end_statement(true).unwrap();
@@ -122,7 +122,7 @@ fn the_owner_stages_its_prepared_change_with_its_authority_checked() {
 }
 
 #[test]
-fn only_the_owner_prepares_a_change() {
+fn a_manager_prepares_as_the_owner_does_and_nobody_else_does() {
     workers::block_on(async {
         let staging = Staging::new().await;
         let doc = staging.create(alice(), "shared", None).await;
@@ -131,15 +131,26 @@ fn only_the_owner_prepares_a_change() {
         staging.on_provider(alice(), manager).await;
         assert!(staging.remote.manages(&mallory(), &doc));
 
-        for actor in [mallory(), bob()] {
-            assert!(
-                staging
-                    .prepare(staging.gate.clone(), &actor, &doc, &carol())
-                    .await
-                    .is_err(),
-                "{actor} is not the owner"
-            );
-        }
+        let prepared = staging
+            .prepare(staging.gate.clone(), &mallory(), &doc, &carol())
+            .await
+            .unwrap();
+        let handle = staging.begin().await;
+        let staged = staging
+            .stage_prepared(&handle, mallory(), doc.clone(), carol(), prepared)
+            .await
+            .unwrap();
+        staging.commit(&handle).await;
+        assert!(staged.authority_checked);
+        assert_eq!(staging.queue().await[0].actor, mallory());
+
+        assert!(
+            staging
+                .prepare(staging.gate.clone(), &bob(), &doc, &carol())
+                .await
+                .is_err(),
+            "bob neither owns the document nor manages the relation"
+        );
     })
     .unwrap()
 }
@@ -191,6 +202,50 @@ fn a_preparation_is_taken_for_its_own_change_and_provider_only() {
         assert!(other_actor.is_err());
         assert!(other_provider.is_err(), "prepared through another provider");
         assert!(staging.queue().await.is_empty());
+    })
+    .unwrap()
+}
+
+/// A caller whose key the node does not hold presents a delegation bound to
+/// the one change it asks for. Preparing and staging that change take the
+/// authority the provider gives for exactly that command; another change
+/// finds none.
+#[test]
+fn a_delegation_bound_to_the_change_authorizes_that_change_only() {
+    workers::block_on(async {
+        let staging = Staging::new().await;
+        let doc = staging.create(alice(), "shared", None).await;
+        staging
+            .remote
+            .credentials
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        staging
+            .remote
+            .bind_delegation(&alice(), &doc, &bob(), false, "bound-token");
+
+        let prepared = staging
+            .prepare(staging.gate.clone(), &alice(), &doc, &bob())
+            .await
+            .unwrap();
+        let handle = staging.begin().await;
+        staging
+            .stage_prepared(&handle, alice(), doc.clone(), bob(), prepared)
+            .await
+            .unwrap();
+        staging.commit(&handle).await;
+        assert_eq!(
+            staging.queue().await[0].authority,
+            acp::OwedAuthority::Delegation {
+                token: "bound-token".into()
+            }
+        );
+
+        assert!(matches!(
+            staging
+                .prepare(staging.gate.clone(), &alice(), &doc, &carol())
+                .await,
+            Err(acp::Error::OwedAuthorityUnavailable { .. })
+        ));
     })
     .unwrap()
 }

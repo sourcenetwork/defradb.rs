@@ -88,9 +88,31 @@ impl DocumentMutationContext<'_> {
                 storage::corekv::errors::ProjectionAcpInput::new(request),
             ));
         };
-        serde_json::from_slice(&response).map_err(|error| {
+        let present: bool = serde_json::from_slice(&response).map_err(|error| {
             storage::corekv::Error::Other(format!("invalid prepared relationship: {error}"))
-        })
+        })?;
+        // The provider answered before this transaction began. A change of
+        // the tuple owed to it since, by this transaction or one committed
+        // first, makes that answer stale: the validated read aborts the
+        // decision, or refuses it while the change is unsettled.
+        let tuple = acp::OwedTuple {
+            policy_id: policy.to_owned(),
+            resource: resource.to_owned(),
+            object: doc.to_owned(),
+            relation: relation.to_owned(),
+            subject: acp::OwedSubject::Actor {
+                did: self.document_acp.canonical_actor(target),
+            },
+        };
+        if acp::outbox::tuple_unsettled_in(&view, &tuple)
+            .await
+            .map_err(|error| storage::corekv::Error::Other(error.to_string()))?
+        {
+            return Err(storage::corekv::Error::Other(
+                "relationship change is unsettled".into(),
+            ));
+        }
+        Ok(present)
     }
 
     pub async fn projected_owner(
@@ -269,15 +291,15 @@ impl DocumentMutationContext<'_> {
             } else {
                 None
             };
-            let prepared_owner = prepared.as_ref().and_then(|authority| {
+            let prepared_change = prepared.as_ref().and_then(|authority| {
                 authority
                     .as_any()
                     .downcast_ref::<crate::txn::ProjectionAuthority>()
             });
-            if prepared.is_some() && prepared_owner.is_none() {
+            if prepared.is_some() && prepared_change.is_none() {
                 return Err(storage::corekv::Error::ProjectionPermissionDenied);
             }
-            let provider = if let Some(prepared) = prepared_owner {
+            let provider = if let Some(prepared) = prepared_change {
                 prepared.0.outbox_provider()
             } else {
                 match self.view.projection_context() {
@@ -316,8 +338,8 @@ impl DocumentMutationContext<'_> {
                 managing_relations: &managers,
                 op,
             };
-            match prepared_owner {
-                Some(prepared) => outbox.stage_prepared_owner(change, &prepared.0).await,
+            match prepared_change {
+                Some(prepared) => outbox.stage_prepared(change, &prepared.0).await,
                 None => outbox.stage(change).await,
             }
             .map_err(|error| storage::corekv::Error::Other(error.to_string()))?;

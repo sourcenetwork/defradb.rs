@@ -104,6 +104,13 @@ impl OwedChanges {
         self.staged.get()
     }
 
+    /// Whether `tuple` has a change owed to the provider that this
+    /// transaction sees, staged by it or committed before it and unsettled;
+    /// read validated ([`super::tuple_unsettled_in`]).
+    pub async fn tuple_unsettled(&self, tuple: &OwedTuple) -> Result<bool> {
+        super::ops::tuple_unsettled_in(&self.active_view()?, tuple).await
+    }
+
     fn active_view(&self) -> Result<NamespaceView> {
         self.view
             .upgrade()

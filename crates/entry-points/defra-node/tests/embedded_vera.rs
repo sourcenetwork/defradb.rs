@@ -18,6 +18,9 @@ mod verified;
 #[path = "embedded_vera/clock_skew.rs"]
 mod clock_skew;
 
+#[path = "embedded_vera/projection.rs"]
+mod projection;
+
 #[path = "embedded_vera/replica.rs"]
 mod replica;
 

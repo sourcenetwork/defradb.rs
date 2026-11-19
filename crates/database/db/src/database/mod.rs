@@ -224,6 +224,8 @@ pub struct DB<S: Store> {
     /// The deferred indexes a commit owes a drain.
     pub(crate) deferred_drains: crate::index::deferred::DrainRequests,
     document_projector: regolith::sync::OnceCell<Arc<dyn datastore::DocumentMutationProjector>>,
+    /// The actor and document ACP the installed projector was bound to.
+    projection_binding: regolith::sync::OnceCell<ProjectionBinding>,
     /// Event bus for subscription notifications.
     event_bus: Option<Arc<dyn Bus>>,
     /// Lens transform store for schema migrations.
@@ -326,6 +328,7 @@ impl<S: Store> DB<S> {
             )),
             vector_codes: Arc::default(),
             document_projector: regolith::sync::OnceCell::new(),
+            projection_binding: regolith::sync::OnceCell::new(),
             event_bus: None,
             lens_store,
             pending_migrations: HopscotchMap::with_hasher(RandomState::default()),
@@ -402,6 +405,7 @@ impl<S: Store> DB<S> {
             )),
             vector_codes: Arc::default(),
             document_projector: regolith::sync::OnceCell::new(),
+            projection_binding: regolith::sync::OnceCell::new(),
             event_bus: None,
             lens_store,
             pending_migrations: HopscotchMap::with_hasher(RandomState::default()),
@@ -764,6 +768,7 @@ impl<S: Store> DB<S> {
     where
         S: 'static,
     {
+        let (bound_did, bound_acp) = (node_did.clone(), Arc::clone(&document_acp));
         #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
         let bound: Arc<dyn datastore::DocumentMutationProjector> =
             Arc::new(crate::document_projection::BoundProjection::new(
@@ -774,7 +779,20 @@ impl<S: Store> DB<S> {
             ));
         self.document_projector
             .set(bound)
-            .map_err(|_| Error::Other("document projector already installed".into()))
+            .map_err(|_| Error::Other("document projector already installed".into()))?;
+        // Set once with the projector, so they cannot disagree.
+        let _ = self.projection_binding.set(ProjectionBinding {
+            node_did: bound_did,
+            document_acp: bound_acp,
+        });
+        Ok(())
+    }
+
+    /// The actor and document ACP the installed projector acts with: what
+    /// its prepared inputs are resolved through, whatever the database's own
+    /// identity and document ACP are.
+    pub(crate) fn projection_binding(&self) -> Option<&ProjectionBinding> {
+        self.projection_binding.get()
     }
 
     /// Reconcile a trusted projection before exposing the node to requests.
@@ -785,10 +803,9 @@ impl<S: Store> DB<S> {
         let Some(projector) = self.document_projector.get() else {
             return Ok(());
         };
+        // Actorless: the projection and its prepared inputs act as the node
+        // the projector was bound to.
         let context = defra_core::RequestContext::default();
-        let node_context = context
-            .clone()
-            .with_identity(self.node_did().map(|did| did.to_string()));
         let inputs = query::prepared::PreparedInputMemo::default();
         loop {
             let txn = self.new_txn(false).await?;
@@ -810,10 +827,7 @@ impl<S: Store> DB<S> {
                     inputs
                         .answer_wave(&request, |wave| {
                             crate::write::prepare::resolve_inputs_with_projection(
-                                self,
-                                &node_context,
-                                &inputs,
-                                wave,
+                                self, &context, &inputs, wave,
                             )
                         })
                         .await
@@ -1088,4 +1102,10 @@ mod vector_cache_tests {
         })
         .unwrap()
     }
+}
+
+/// The actor and document ACP a document projector was installed with.
+pub(crate) struct ProjectionBinding {
+    pub(crate) node_did: identity::Did,
+    pub(crate) document_acp: Arc<dyn acp::DocumentACP>,
 }

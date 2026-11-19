@@ -129,7 +129,10 @@ where
         Fut: std::future::Future<Output = std::result::Result<Turned, TransactionError>>,
     {
         let inputs = PreparedInputMemo::default();
-        let context = self.context();
+        // Inputs are fetched as the identity acting in the request, the one
+        // its runs act as, not the transaction's.
+        let acting = self.for_caller(self.resolve_identity(request.identity.clone()).as_ref());
+        let context = acting.context();
         loop {
             if !request.context.authorization_valid_now() {
                 return Ok(QueryResponse::error(QueryResponseError::from_query_error(
@@ -152,6 +155,11 @@ where
                     QueryError::NeedsInput(input),
                 )));
             };
+            // Answered through the request's memo, as the attempt ran on it: a
+            // prepared projection authority is kept there for the next attempt.
+            let resolver = resolver
+                .with_prepared_inputs(inputs.clone())
+                .unwrap_or(resolver);
             if let Err(error) = inputs
                 .answer_wave(&input, |wave| {
                     resolver.resolve_prepared_inputs_as(&context, wave)

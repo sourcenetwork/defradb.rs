@@ -43,7 +43,7 @@ pub(crate) fn bind_projection(
         )))
 }
 
-pub(crate) struct ProjectionAuthority(pub Arc<acp::outbox::PreparedOwnerRelationship>);
+pub(crate) struct ProjectionAuthority(pub Arc<acp::outbox::PreparedRelationship>);
 
 impl datastore::multistore::ProjectionAuthority for ProjectionAuthority {
     fn as_any(&self) -> &dyn std::any::Any {

@@ -155,7 +155,10 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         prepared: Option<std::sync::Arc<crate::prepared::PreparedMutations>>,
         input: &crate::prepared::PreparedInputRequest,
     ) -> Result<Option<std::sync::Arc<crate::prepared::PreparedMutations>>> {
+        // Inputs are fetched as the identity acting in the request, the one
+        // its attempts act as.
         let runner = self.for_query(request);
+        let runner = runner.for_caller(runner.resolve_identity(request.identity.clone()).as_ref());
         let Some(prepared) = prepared else {
             return Err(crate::error::QueryError::execution(
                 "retry input has no request preparation capsule",

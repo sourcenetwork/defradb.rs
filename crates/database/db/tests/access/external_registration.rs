@@ -75,6 +75,9 @@ pub(super) struct RemoteAcp {
     pub(super) credentials: AtomicBool,
     keys: Set<String>,
     delegations: HopscotchMap<String, String, rapidhash::fast::RandomState>,
+    /// Delegations an actor bound to one relationship command: actor,
+    /// document, subject and whether it deletes.
+    bound: HopscotchMap<(String, String, String, bool), String, rapidhash::fast::RandomState>,
     expired: Set<String>,
     /// Other spellings of an actor, by the one the provider keeps.
     spellings: HopscotchMap<String, Did, rapidhash::fast::RandomState>,
@@ -104,10 +107,32 @@ impl RemoteAcp {
             keys: set(),
             unsigned: set(),
             delegations: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
+            bound: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
             expired: set(),
             spellings: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
             journal: regolith::sync::OnceCell::new(),
         })
+    }
+
+    /// `did` carries `token`, a delegation bound to one change only: `did`'s
+    /// change of `subject` on `doc_id`, an add or a delete.
+    pub(super) fn bind_delegation(
+        &self,
+        did: &Did,
+        doc_id: &str,
+        subject: &Did,
+        delete: bool,
+        token: &str,
+    ) {
+        self.bound.insert(
+            (
+                did.to_string(),
+                doc_id.to_string(),
+                subject.to_string(),
+                delete,
+            ),
+            token.to_string(),
+        );
     }
 
     /// Answer relationship writes with `error`, or apply them again.
@@ -341,6 +366,29 @@ impl DocumentACP for RemoteAcp {
                 .contains_key(&(doc_id.to_string(), subject.to_string())))
     }
 
+    /// A requester who neither owns the document nor manages its relations
+    /// is refused alike, registered or not, as vera.rs refuses one.
+    async fn observe_actor_relationship(
+        &self,
+        observation: acp::ActorRelationshipObservation<'_>,
+    ) -> acp::Result<bool> {
+        self.reachable()?;
+        if !self.manages(observation.requester, observation.document) {
+            return Err(acp::Error::NotManager {
+                operation: "observe relationship".into(),
+            });
+        }
+        let key = (
+            observation.document.to_string(),
+            observation.target.to_string(),
+        );
+        Ok(if observation.relation == MANAGER {
+            self.managers.contains_key(&key)
+        } else {
+            self.grants.contains_key(&key)
+        })
+    }
+
     fn canonical_actor(&self, did: &Did) -> Did {
         self.spellings
             .get(did.as_str())
@@ -358,6 +406,27 @@ impl DocumentACP for RemoteAcp {
                 reason: "no key and no delegation".into(),
             }),
         }
+    }
+
+    fn command_authority(
+        &self,
+        actor: &Did,
+        command: acp::ProviderCommand<'_>,
+    ) -> acp::Result<acp::OwedAuthority> {
+        if let acp::ProviderCommand::Relationship { tuple, op } = command {
+            if let acp::OwedSubject::Actor { did } = &tuple.subject {
+                let key = (
+                    actor.to_string(),
+                    tuple.object.clone(),
+                    did.to_string(),
+                    op == acp::OwedOp::Delete,
+                );
+                if let Some(token) = self.bound.get(&key) {
+                    return Ok(acp::OwedAuthority::Delegation { token });
+                }
+            }
+        }
+        self.owed_authority(actor)
     }
 
     fn owed_journal(&self) -> Option<Arc<dyn acp::OwedJournal>> {

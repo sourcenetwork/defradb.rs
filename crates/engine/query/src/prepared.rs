@@ -137,11 +137,7 @@ pub enum PreparedInputKind {
 pub struct PreparedInputMemo {
     answers: Arc<HopscotchMap<PreparedInputRequest, Arc<[u8]>, RandomState>>,
     projection_authorities: Arc<
-        HopscotchMap<
-            PreparedInputRequest,
-            Arc<acp::outbox::PreparedOwnerRelationship>,
-            RandomState,
-        >,
+        HopscotchMap<PreparedInputRequest, Arc<acp::outbox::PreparedRelationship>, RandomState>,
     >,
     wanted: Arc<SegQueue<PreparedInputRequest>>,
 }
@@ -170,14 +166,14 @@ impl PreparedInputMemo {
     pub fn projection_authority(
         &self,
         request: &PreparedInputRequest,
-    ) -> Option<Arc<acp::outbox::PreparedOwnerRelationship>> {
+    ) -> Option<Arc<acp::outbox::PreparedRelationship>> {
         self.projection_authorities.get(request)
     }
 
     pub fn insert_projection_authority(
         &self,
         request: PreparedInputRequest,
-        authority: Arc<acp::outbox::PreparedOwnerRelationship>,
+        authority: Arc<acp::outbox::PreparedRelationship>,
     ) {
         self.projection_authorities
             .get_or_insert(request, authority);

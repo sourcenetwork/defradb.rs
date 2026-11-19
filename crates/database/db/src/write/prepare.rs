@@ -346,20 +346,12 @@ where
             };
             let actor = field(0)?;
             let operation = field(1)?;
-            if context.identity() != Some(actor)
-                || context.bearer_token_for(actor).as_deref()
-                    != fields.get(5).and_then(serde_json::Value::as_str)
-            {
-                return Err(query::error::QueryError::permission_denied(
-                    "prepared projection ACP request does not match the acting identity",
-                ));
-            }
-            let provider = db.document_acp().ok_or_else(|| {
-                query::error::QueryError::execution("document ACP is unavailable")
-            })?;
-            let provider = provider.bind_request(context).ok_or_else(|| {
-                query::error::QueryError::execution("request-bound document ACP is unavailable")
-            })?;
+            let provider = projection_provider(
+                db,
+                context,
+                actor,
+                fields.get(5).and_then(serde_json::Value::as_str),
+            )?;
             let response = match operation {
                 "owner" => serde_json::to_vec(
                     &provider
@@ -435,6 +427,34 @@ where
     }
 }
 
+/// The document ACP a prepared projection input is resolved through, bound to
+/// the request: the one the projector was installed with. The input names
+/// the projection's actor, which is the request's identity or, for a request
+/// without one, the node the projector acts as; it must match, bearer and
+/// all, so a request cannot resolve an input for another actor.
+fn projection_provider<S>(
+    db: &DB<S>,
+    context: &defra_core::RequestContext,
+    actor: &str,
+    bearer: Option<&str>,
+) -> query::error::Result<Arc<dyn acp::DocumentACP>>
+where
+    S: Store + 'static,
+{
+    let binding = db
+        .projection_binding()
+        .ok_or_else(|| query::error::QueryError::execution("no document projector is installed"))?;
+    let acting = context.identity().unwrap_or(binding.node_did.as_str());
+    if acting != actor || context.bearer_token_for(actor).as_deref() != bearer {
+        return Err(query::error::QueryError::permission_denied(
+            "prepared projection ACP request does not match the acting identity",
+        ));
+    }
+    binding.document_acp.bind_request(context).ok_or_else(|| {
+        query::error::QueryError::execution("request-bound document ACP is unavailable")
+    })
+}
+
 pub(crate) async fn resolve_inputs_with_projection<S>(
     db: &DB<S>,
     context: &defra_core::RequestContext,
@@ -478,22 +498,14 @@ where
         ) = serde_json::from_slice(request.exact_request()).map_err(|_| {
             query::error::QueryError::execution("invalid prepared projection relationship")
         })?;
-        if operation != "stage"
-            || context.identity() != Some(actor.as_str())
-            || context.bearer_token_for(&actor) != bearer
-        {
-            return Err(query::error::QueryError::permission_denied(
-                "projection authority does not match the acting identity",
+        if operation != "stage" {
+            return Err(query::error::QueryError::execution(
+                "invalid prepared projection relationship",
             ));
         }
+        let provider = projection_provider(db, context, &actor, bearer.as_deref())?;
         let actor = identity::Did::new(actor)
             .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
-        let provider = db
-            .document_acp()
-            .and_then(|provider| provider.bind_request(context))
-            .ok_or_else(|| {
-                query::error::QueryError::execution("request-bound document ACP is unavailable")
-            })?;
         let stage = acp::StageRelationship {
             txn: None,
             actor: &actor,
@@ -505,7 +517,7 @@ where
             managing_relations: &managers,
             op,
         };
-        let authority = acp::outbox::prepare_owner_relationship(provider, &stage)
+        let authority = acp::outbox::prepare_relationship(provider, &stage)
             .await
             .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
         memo.insert_projection_authority(request, Arc::new(authority));
