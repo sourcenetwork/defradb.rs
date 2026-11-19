@@ -9,6 +9,7 @@ mod peer_acp_branchable;
 mod peer_branchable_diverged_versions;
 mod peer_multipeer;
 mod peer_nac;
+mod peer_registered_identity;
 mod peer_sec_index;
 mod peer_share;
 mod peer_subscription;

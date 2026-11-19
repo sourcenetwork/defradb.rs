@@ -342,3 +342,10 @@ Signing behaviour beyond what Go's integration suite checks.
 - **Scenarios:** ["signature::per_op_signing::signature_with_per_op_signing_enabled_on_a_node_not_signing_signs_every_commit"]
 
 A node that holds a node identity but was started without signing (`--no-signing`) writes unsigned blocks by default. An add or update sent with `enableSigning: true` (the HTTP `enableSigning` query parameter, the CLI `--enable-signing` flag, or the FFI `enableSigning` option) signs its blocks anyway: every field block and the `_C` block of a new document carry a signature from the request identity's key, or the node identity's when the request has none, as Go's `EnableSigning` option does. A node with no key at all writes unsigned blocks under either choice.
+
+# `defra.encryption.peer.registered_identity`: A peer whose node identity the host registered fetches keys from a node with no identity
+
+- **Parents:** ["go.encryption.peer"]
+- **Scenarios:** ["encryption::peer_registered_identity::a_registered_identity_peer_fetches_an_encrypted_doc_from_a_node_with_no_identity"]
+
+A node can take its node identity from the process's signing registry, where the embedding host registered it before starting the node (the FFI's `identity_ptr`, defradb.rs's `NodeBuilder::with_node_identity_did`), instead of loading it from a key it is given. The key-holding node needs no node identity of its own (started with signing disabled and no key) to serve it, and its KMS authenticates that peer's key request against the registered DID exactly as against a loaded one: on a private `@branchable` collection whose owner grants `reader` on the collection to the peer's node identity, a document the key-holding node creates anonymously with `encrypt: true` reaches the subscribed peer, and the owner reads `{name: "Fred"}` there.
