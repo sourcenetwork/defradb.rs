@@ -50,6 +50,19 @@
 \* pause, asked at 4, busy at 6, ... about four asks. Both stop before an
 \* ask would start at or after step 15.
 \*
+\* The height the light client follows can go DOWN. A deployment runs on
+\* every device of its account, one active at a time; when another device
+\* takes over, the blocks the replaced one finalized above the new term's cut
+\* are void. The light client, built with the deployment's genesis
+\* identifier, takes the new term only under its certificate, drops the head
+\* the term voids and goes on from the new term's blocks, at a lower height.
+\* An answer proven on the void blocks is refused like an overtaken one: the
+\* revision it names is not the newest the client holds. So `root` below
+\* counts the states the client authenticated, one after the other, not
+\* heights: a term that voids the head is one more root, although its height
+\* is lower. What the provider does about decisions and confirmations that
+\* rested on the void blocks is FollowDeployment.tla.
+\*
 \* What must never happen:
 \*   * an answer accepted although a newer root existed when it was accepted
 \*     (it could grant an access the newer state revokes);
@@ -75,10 +88,13 @@
 \*       read_key (minimum = fresh_state height), verify_access_decision
 \*   acp-light-client src/header_sync.rs            run_header_loop (root moves),
 \*       HeaderChain::accept_response (the refusal)
+\*   acp-light-client src/term.rs                   certify, adopt (a term's certificate
+\*       drops the head it voids; the next root may be at a lower height)
 \*
 \* Correspondence table (model -> Rust):
 \*   root, Advance        header_sync.rs run_header_loop / observe_revision: the
-\*                        newest authenticated module_state_root moves on
+\*                        newest authenticated module_state_root moves on; term.rs
+\*                        adopt: a term that voids the head moves it on too
 \*   Ask                  lib.rs: `fresh_state()?.height` is the minimum, the
 \*                        proof request leaves (one call of `read` in verified)
 \*   readAt               the revision the proof server answers at (>= minimum)
@@ -134,7 +150,8 @@ CONSTANTS
     CheckDrawn    \* TRUE: the patience is checked against the pause that is then slept
 
 VARIABLES
-    root,       \* the newest authenticated state root, a number that only grows
+    root,       \* the newest authenticated state root, numbered in the order the client
+                \* took them: it only grows, though the height can go down across a term
     advances,   \* how many blocks finalized so far in this run
     pc,         \* the read: "idle" (about to be asked), "inflight", "answered" or "failed"
     readAt,     \* the root the answer on its way back was proven at
