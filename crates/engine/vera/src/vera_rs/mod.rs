@@ -3,6 +3,7 @@ mod client;
 mod command_digest;
 #[cfg(test)]
 mod delegation_parity;
+mod outcome_note;
 mod provider;
 mod provider_commands;
 mod transport;
