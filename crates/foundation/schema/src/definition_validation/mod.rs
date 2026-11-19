@@ -6,11 +6,13 @@
 mod chunk_validators;
 mod global_validators;
 mod helpers;
+mod index_validators;
 mod new_field_validators;
 mod update_validators;
 
 use chunk_validators::*;
 use global_validators::*;
+use index_validators::*;
 use new_field_validators::*;
 use update_validators::*;
 
@@ -96,6 +98,7 @@ const UPDATE_VALIDATORS: &[Validator] = &[
     validate_policy_not_modified,
     validate_indexes_not_modified,
     validate_encrypted_indexes_not_modified,
+    validate_indexed_field_not_removed,
     validate_sources_not_redefined,
     validate_source_belongs_to_host,
     validate_branchable_not_mutated,

@@ -150,6 +150,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | FFI transaction turns | TLA+ / Lean | ffi |
 | FFI options structs | Lean | ffi |
 | Vector index defaults | Lean | schema |
+| Indexed field removal | Lean | schema, db |
 | Selected collection version | TLA+ / Lean | db, query, ffi |
 | Per-operation signing choice | Lean | defra-core, http, ffi, cli |
 
