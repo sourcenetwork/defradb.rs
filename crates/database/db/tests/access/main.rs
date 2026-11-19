@@ -11,6 +11,7 @@ mod external_drainer;
 mod external_outbox;
 mod external_outbox_gate;
 mod external_owed;
+mod external_prepared_owner;
 mod external_registration;
 mod external_settlement;
 mod external_staging;
