@@ -232,6 +232,13 @@ where
         .document_acp()
         .expect("document ACP was just installed")
         .clone();
+    // A store that owes changes in a layout this version cannot read is
+    // refused before anything is served from it.
+    close_on_error(
+        &database,
+        document_acp.check_owed_layout().await.map_err(Error::from),
+    )
+    .await?;
     if let Some(projector) = extras.document_projector {
         // The projector is the node's own trusted actor: an identity-only
         // node still gives it the node's DID.

@@ -214,6 +214,14 @@ pub trait DocumentACP: MaybeSendSync {
         crate::outbox::submit_relationship(self, change).await
     }
 
+    /// Refuse to serve when the store holds what is owed to this provider in
+    /// a layout this version cannot read ([`Error::LegacyOwedChanges`]). A
+    /// node asks once at start. Nothing to refuse for a provider that keeps
+    /// no outbox.
+    async fn check_owed_layout(&self) -> Result<()> {
+        Ok(())
+    }
+
     /// Submit the relationship changes owed to this provider that `scope`
     /// names, once, in order. Nothing is owed to a provider that keeps no
     /// outbox.

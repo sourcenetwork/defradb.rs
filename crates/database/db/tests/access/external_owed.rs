@@ -552,7 +552,7 @@ fn a_wait_is_for_a_transaction_of_this_run_and_for_its_callers_entries() {
             .unwrap();
         txn.acpstore()
             .set(
-                &[b"/acp-owed/q/".as_slice(), &staged.seq.to_be_bytes()].concat(),
+                &[b"/acp-owed2/q/".as_slice(), &staged.seq.to_be_bytes()].concat(),
                 &stale.encode().unwrap(),
             )
             .await

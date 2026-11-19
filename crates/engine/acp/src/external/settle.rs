@@ -153,6 +153,7 @@ where
     /// head of the queue. One pass runs at a time; a second waits for the
     /// first.
     pub async fn settle_owed_changes_once(&self, scope: OwedScope) -> Result<OwedSettlement> {
+        self.owed_layout().await?;
         let _pass = self.settling.lock().await;
         let objects = match scope {
             OwedScope::All => None,

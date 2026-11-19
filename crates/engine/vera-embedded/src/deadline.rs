@@ -13,7 +13,7 @@ use edge::{Edge, EdgeError};
 use crate::error::{EmbeddedError, Failure};
 
 /// How long a light client read may take: the request timeout of Backbone's
-/// HTTP transport (`HttpWsTransport` in acp-light-client, Backbone 502e604).
+/// HTTP transport (`HttpWsTransport` in acp-light-client, Backbone 5ca42c8).
 pub(crate) const PROOF_READ: Duration = Duration::from_secs(10);
 
 /// How long the node may take to accept the header subscription: the

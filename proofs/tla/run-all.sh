@@ -662,6 +662,10 @@ RUNS=(
   "MC_AcpOutbox_Red_AmbientRecorded.cfg AcpOutbox.tla RED" # a bearer-less create records the token the process holds, and a retry sends it (INV_PresentedAuthority)
   "MC_AcpOutbox_Red_SilentDiscard.cfg AcpOutbox.tla RED" # a change deleted without the provider holding it leaves no note for its actor (INV_FailureReported)
   "MC_AcpOutbox_Red_ReauthorizeUnchecked.cfg AcpOutbox.tla RED" # a fresh credential for the registration is taken from anyone and its signer becomes the owner (INV_NoWidening)
+  "MC_OwedParts_Green.cfg OwedParts.tla GREEN" # owed counts in a staged and a settled part: a settle aborts no stager or decision, no decision commits past an unseen delete
+  "MC_OwedParts_Red_SettleTouchesStaged.cfg OwedParts.tla RED" # a settle rewrites the staged part too: readers are refused for it (INV_SettleAbortsNobody)
+  "MC_OwedParts_Red_UnvalidatedDecision.cfg OwedParts.tla RED" # the deny decision reads unvalidated: it commits past a delete (INV_NoMissedRevoke)
+  "MC_OwedParts_Red_UnguardedSettle.cfg OwedParts.tla RED" # a settle with nothing owed: settled passes staged (INV_OwedNotNegative)
   "MC_RegisterDocOnce_Green.cfg RegisterDocOnce.tla GREEN" # racing registrations of one document: one owner, the winner owns it, one wins
   "MC_RegisterDocOnce_Red_NoValidation.cfg RegisterDocOnce.tla RED" # deciding scan not validated: two owners (INV_OneOwner)
   "MC_RegisterDocOnce_Red_Sentinel.cfg RegisterDocOnce.tla RED" # main before the fix: the identical sentinel write commits, two owners (INV_OneOwner)

@@ -67,6 +67,15 @@ pub enum Error {
     #[error("{unsettled} ACP changes are owed to the provider, at the node's limit of {limit}")]
     OwedChangesPerNode { unsettled: u64, limit: u64 },
 
+    /// The store holds relationship changes owed in the layout before the
+    /// owed counts were split (`/acp-owed/`), which this version neither
+    /// submits nor denies by. Nothing is served until they are settled with
+    /// the version that staged them, or the store is created again.
+    #[error(
+        "the store holds {count} relationship changes owed to the ACP provider in an earlier layout; settle them with the version that staged them, or create the store again, before starting this version"
+    )]
+    LegacyOwedChanges { count: u64 },
+
     /// An owed relationship change does not fit its record.
     #[error("an owed ACP change takes {size} bytes, over the limit of {limit}")]
     OwedChangeTooLarge { size: usize, limit: usize },
