@@ -69,9 +69,9 @@ where
     R: Reader + ?Sized,
 {
     let object_key = keys::object_key(policy_id, resource, object);
-    let wide = ops::owed_at(reader, &object_key, &ops::staged_parts(&[SECOND]))
+    let wide = ops::owed_at(reader, &object_key, &ops::staged_parts(&[FIRST]))
         .await?
-        .second;
+        .first;
     let named = match identity {
         Identity::Authenticated(actor) => {
             let actor = provider.canonical_actor(actor);

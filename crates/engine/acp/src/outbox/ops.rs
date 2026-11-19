@@ -1,7 +1,7 @@
 //! Reads and writes of owed changes, through whatever transaction runs them.
 //!
-//! The counts of what is owed (per tuple, per object, per actor a delete
-//! names on an object, and for the node) are owed values
+//! The counts of what is owed (per object, per actor a delete names on an
+//! object, and for the node) are owed values
 //! ([`storage::merge::owed`]): a staged part that only [`stage`] adds to and
 //! a settled part that only [`settle`] adds to, both by blind merges. What is
 //! owed is the difference. A count is never put or deleted, so a reader of
@@ -9,6 +9,10 @@
 //! (`proofs/tla/OwedParts.tla`, `proofs/lean/OwedParts.lean`). A fully
 //! settled count stays as one small folded operand and reads as nothing
 //! owed, exactly as an absent key does.
+//!
+//! A tuple keeps no count: its live sequences are its record of what is owed
+//! on it (`proofs/lean/OwedLive.lean`), and stagers of one tuple are ordered
+//! by its head key, which only staging reads and writes.
 
 use storage::corekv::{IterOptions, Reader, Store, Writer};
 use storage::merge::owed::{self, part, Counters};
@@ -28,11 +32,11 @@ fn inconsistent(what: &str, seq: u64) -> Error {
     Error::Storage(format!("owed ACP change {seq} has no {what}"))
 }
 
-/// The first counter of a count: changes, on a tuple, an object or the node;
-/// deletes, on an actor a delete names on an object.
+/// The first counter of a count: changes on the node; deletes wider than one
+/// actor on an object; deletes naming an actor on an object.
 pub(super) const FIRST: usize = 0;
-/// The second counter: deletes on a tuple, deletes wider than one actor on
-/// an object, deletes of the owner relation on an actor.
+/// The second counter: deletes of the owner relation naming an actor on an
+/// object. The node's and an object's leave it at zero.
 pub(super) const SECOND: usize = 1;
 /// How far the settled part sits from the staged one.
 const SETTLED: usize = 2;
@@ -73,38 +77,55 @@ where
         .ok_or_else(|| Error::Serialization("owed ACP count is malformed".into()))
 }
 
-/// What is unsettled on one tuple, read without validation: its counts, and
-/// its oldest and latest sequence from the tuple's index of live sequences.
-/// Only settling passes, in transactions of their own, ask.
+/// What a live key holds: whether its change is a delete.
+const LIVE_ADD: &[u8] = &[0];
+const LIVE_DELETE: &[u8] = &[1];
+
+/// What is unsettled on one tuple, from its live sequences: the first and
+/// last are its oldest and latest, and how many there are, and how many of
+/// them are deletes, are its counts. Only settling passes and reports ask,
+/// in transactions of their own.
 pub(super) async fn tuple_state<R>(reader: &R, tuple: &OwedTuple) -> Result<Option<OwedTupleState>>
 where
     R: Reader + ?Sized,
 {
-    let owed = owed_at(reader, &keys::tuple_key(tuple), &[]).await?;
-    if owed.first == 0 {
-        return Ok(None);
-    }
     let prefix = keys::live_prefix(tuple);
     let mut iter = reader
         .iterator(IterOptions::new().with_prefix(prefix.clone()))
         .await
         .map_err(storage_error)?;
-    let mut bounds = None;
+    let mut state: Option<OwedTupleState> = None;
     while let Some(entry) = iter.next().await.map_err(storage_error)? {
         let seq = keys::live_seq(&entry.key, &prefix)?;
-        bounds = Some((bounds.map_or(seq, |(oldest, _)| oldest), seq));
+        let delete = match entry.value.as_ref() {
+            LIVE_ADD => 0,
+            LIVE_DELETE => 1,
+            _ => {
+                return Err(Error::Serialization(
+                    "owed ACP live key is malformed".into(),
+                ))
+            }
+        };
+        state = Some(match state {
+            Some(state) => OwedTupleState {
+                latest: seq,
+                unsettled: state.unsettled.saturating_add(1),
+                deletes: state.deletes.saturating_add(delete),
+                ..state
+            },
+            None => OwedTupleState {
+                oldest: seq,
+                latest: seq,
+                unsettled: 1,
+                deletes: delete,
+            },
+        });
     }
-    let (oldest, latest) =
-        bounds.ok_or_else(|| Error::Storage("an owed ACP tuple has no live sequence".into()))?;
-    Ok(Some(OwedTupleState {
-        oldest,
-        latest,
-        unsettled: u32::try_from(owed.first).unwrap_or(u32::MAX),
-        deletes: u32::try_from(owed.second).unwrap_or(u32::MAX),
-    }))
+    Ok(state)
 }
 
-/// How many changes are unsettled on one object, read without validation.
+/// How many changes are unsettled on one object: its tuples' live
+/// sequences. Only reports and tests ask; no decision rests on it.
 pub(super) async fn unsettled_on<R>(
     reader: &R,
     policy_id: &str,
@@ -114,8 +135,16 @@ pub(super) async fn unsettled_on<R>(
 where
     R: Reader + ?Sized,
 {
-    let key = keys::object_key(policy_id, resource, object);
-    Ok(owed_at(reader, &key, &[]).await?.first)
+    let prefix = keys::object_live_prefix(policy_id, resource, object);
+    let mut iter = reader
+        .iterator(IterOptions::new().with_prefix(prefix))
+        .await
+        .map_err(storage_error)?;
+    let mut count = 0;
+    while iter.next().await.map_err(storage_error)?.is_some() {
+        count += 1;
+    }
+    Ok(count)
 }
 
 /// The node's count, read without validation: every staging and settling
@@ -256,10 +285,10 @@ where
     let tuple = &change.tuple;
     let delete = change.op == OwedOp::Delete;
     let delta = |first, second| owed::delta(amounts(first, second, settled));
-    merge(txn, &keys::tuple_key(tuple), &delta(true, delete)).await?;
-    let wide = delete && !matches!(tuple.subject, OwedSubject::Actor { .. });
-    let object = keys::object_key(&tuple.policy_id, &tuple.resource, &tuple.object);
-    merge(txn, &object, &delta(true, wide)).await?;
+    if delete && !matches!(tuple.subject, OwedSubject::Actor { .. }) {
+        let object = keys::object_key(&tuple.policy_id, &tuple.resource, &tuple.object);
+        merge(txn, &object, &delta(true, false)).await?;
+    }
     if let (true, OwedSubject::Actor { did }) = (delete, &tuple.subject) {
         let subject = keys::subject_key(&tuple.policy_id, &tuple.resource, &tuple.object, did);
         merge(
@@ -274,11 +303,11 @@ where
     merge(txn, &keys::actor_key(&change.actor), &actor).await
 }
 
-/// Record `new` in `txn`. The tuple's count is read validated on what was
-/// staged before the sequence is allocated: a transaction that stages the
-/// same tuple and commits first aborts this one, and the attempt that then
-/// commits read that commit before it took its own, later, sequence. A
-/// settle of the tuple touches no staged counter and aborts nothing.
+/// Record `new` in `txn`. The tuple's head key is read before the sequence
+/// is allocated and written after: a transaction that stages the same tuple
+/// and commits first aborts this one, and the attempt that then commits read
+/// that commit before it took its own, later, sequence. Settling never
+/// touches the head key, so a settle of the tuple aborts nothing.
 pub(super) async fn stage<T>(
     txn: &T,
     sequences: &dyn Store,
@@ -287,8 +316,8 @@ pub(super) async fn stage<T>(
 where
     T: Reader + Writer + ?Sized,
 {
-    let tuple_key = keys::tuple_key(&new.tuple);
-    owed_at(txn, &tuple_key, &staged_parts(&[FIRST])).await?;
+    let head_key = keys::head_key(&new.tuple);
+    txn.get(&head_key).await.map_err(storage_error)?;
     let seq = sequences
         .allocate(keys::SEQUENCE_KEY, 1)
         .await
@@ -298,14 +327,22 @@ where
     let record = change.encode_admitted()?;
 
     put(txn, &keys::queue_key(seq), &record).await?;
-    put(txn, &keys::live_key(&change.tuple, seq), &[]).await?;
+    put(txn, &head_key, &seq.to_be_bytes()).await?;
+    let live = if change.op == OwedOp::Delete {
+        LIVE_DELETE
+    } else {
+        LIVE_ADD
+    };
+    put(txn, &keys::live_key(&change.tuple, seq), live).await?;
     account(txn, &change, false).await?;
     Ok(change)
 }
 
 /// Delete the record of change `seq`, which the provider now holds or its
 /// owner gave up, and merge it into the settled part of every count it is in.
-/// `false` when no such change is owed.
+/// `false` when no such change is owed. The record, read validated, is what
+/// makes a settle count only a change still owed: two settles of one change
+/// conflict on it, and the second finds nothing.
 pub(super) async fn settle<T>(txn: &T, seq: u64) -> Result<bool>
 where
     T: Reader + Writer + ?Sized,
@@ -313,15 +350,12 @@ where
     let Some(settled) = change(txn, seq).await? else {
         return Ok(false);
     };
-    let owed = owed_at(txn, &keys::tuple_key(&settled.tuple), &[]).await?;
-    if owed.first == 0 {
-        return Err(inconsistent("tuple count", seq));
-    }
-    if settled.op == OwedOp::Delete && owed.second == 0 {
-        return Err(inconsistent("delete its tuple counts", seq));
+    let live = keys::live_key(&settled.tuple, seq);
+    if txn.get(&live).await.map_err(storage_error)?.is_none() {
+        return Err(inconsistent("live sequence", seq));
     }
     remove(txn, &keys::queue_key(seq)).await?;
-    remove(txn, &keys::live_key(&settled.tuple, seq)).await?;
+    remove(txn, &live).await?;
     account(txn, &settled, true).await?;
     Ok(true)
 }

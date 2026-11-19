@@ -3,12 +3,14 @@
 //! - `/acp-owed2/q/<seq>`: the queue. `seq` is eight big-endian bytes, so the
 //!   queue reads in sequence order.
 //! - `/acp-owed2/l/<policy><resource><object><relation><subject><seq>`: the
-//!   sequences still owed on one tuple, so its oldest and latest are the
-//!   first and last of its keys.
-//! - `/acp-owed2/t/<policy><resource><object><relation><subject>`: what is
-//!   owed on one tuple, changes and deletes.
-//! - `/acp-owed2/o/<policy><resource><object>`: what is owed on one object,
-//!   changes and deletes whose subject is wider than one actor.
+//!   sequences still owed on one tuple, each with whether it is a delete, so
+//!   its oldest and latest are the first and last of its keys and its counts
+//!   are theirs.
+//! - `/acp-owed2/h/<policy><resource><object><relation><subject>`: the latest
+//!   sequence staged on one tuple, read and written only by staging, which it
+//!   keeps ordered.
+//! - `/acp-owed2/o/<policy><resource><object>`: the deletes owed on one
+//!   object whose subject is wider than one actor.
 //! - `/acp-owed2/s/<policy><resource><object><subject>`: what is owed on one
 //!   object of deletes naming one actor, all of them and those of the owner
 //!   relation.
@@ -19,7 +21,7 @@
 //!   without the provider holding it, until its actor was told.
 //! - `/acp-owed2/seq`: the counter sequences are allocated from.
 //!
-//! The `t`, `o`, `s` and `n` counts are owed values ([`storage::merge::owed`]),
+//! The `o`, `s` and `n` counts are owed values ([`storage::merge::owed`]),
 //! written only by merges (see `ops.rs`). Each named part is preceded by its
 //! length as eight big-endian bytes, as an owed registration's key parts are,
 //! so no two tuples, objects or subjects share a key. A subject is one part:
@@ -38,7 +40,7 @@ use crate::error::{Error, Result};
 
 const QUEUE_PREFIX: &[u8] = b"/acp-owed2/q/";
 const LIVE_PREFIX: &[u8] = b"/acp-owed2/l/";
-const TUPLE_PREFIX: &[u8] = b"/acp-owed2/t/";
+const HEAD_PREFIX: &[u8] = b"/acp-owed2/h/";
 const OBJECT_PREFIX: &[u8] = b"/acp-owed2/o/";
 const SUBJECT_PREFIX: &[u8] = b"/acp-owed2/s/";
 const ACTOR_PREFIX: &[u8] = b"/acp-owed2/a/";
@@ -114,8 +116,15 @@ fn tuple_parts(tuple: &OwedTuple) -> Vec<u8> {
     parts
 }
 
-pub(super) fn tuple_key(tuple: &OwedTuple) -> Vec<u8> {
-    [TUPLE_PREFIX, &tuple_parts(tuple)].concat()
+/// The latest sequence staged on one tuple, which only staging reads and
+/// writes.
+pub(super) fn head_key(tuple: &OwedTuple) -> Vec<u8> {
+    [HEAD_PREFIX, &tuple_parts(tuple)].concat()
+}
+
+/// Every live sequence of one object's tuples is a key under this.
+pub(super) fn object_live_prefix(policy_id: &str, resource: &str, object: &str) -> Vec<u8> {
+    [LIVE_PREFIX, &object_parts(policy_id, resource, object)].concat()
 }
 
 /// Every live sequence of one tuple is a key under this.
@@ -219,7 +228,7 @@ mod tests {
             tuple(["", "", "", ""], OwedSubject::Wildcard),
             tuple(["a/b", "c", "d", "e"], actor("z")),
             tuple(["a", "b/c", "d", "e"], actor("z")),
-            tuple(["/acp-owed2/t/", "q", "o", "n"], actor("z")),
+            tuple(["/acp-owed2/h/", "q", "o", "n"], actor("z")),
             tuple([length_like, "", "c", "d"], actor("z")),
             tuple(["", length_like, "c", "d"], actor("z")),
             tuple([&long, "b", "c", "d"], actor("z")),
@@ -252,7 +261,7 @@ mod tests {
         let tuples = adversarial_tuples();
         for (i, left) in tuples.iter().enumerate() {
             for right in &tuples[i + 1..] {
-                assert_ne!(tuple_key(left), tuple_key(right));
+                assert_ne!(head_key(left), head_key(right));
             }
         }
     }
@@ -326,13 +335,13 @@ mod tests {
 
         for key in &keys {
             assert!(key.starts_with(OBJECT_PREFIX));
-            assert!(!key.starts_with(TUPLE_PREFIX) && !key.starts_with(QUEUE_PREFIX));
+            assert!(!key.starts_with(HEAD_PREFIX) && !key.starts_with(QUEUE_PREFIX));
         }
         for reserved in [UNSETTLED_KEY, SEQUENCE_KEY] {
             for space in [
                 QUEUE_PREFIX,
                 LIVE_PREFIX,
-                TUPLE_PREFIX,
+                HEAD_PREFIX,
                 OBJECT_PREFIX,
                 SUBJECT_PREFIX,
                 ACTOR_PREFIX,
@@ -342,7 +351,7 @@ mod tests {
         }
         let actor = actor_key(&Did::new("did:key:owner").unwrap());
         assert!(actor.starts_with(ACTOR_PREFIX));
-        for space in [QUEUE_PREFIX, TUPLE_PREFIX, OBJECT_PREFIX] {
+        for space in [QUEUE_PREFIX, HEAD_PREFIX, OBJECT_PREFIX] {
             assert!(!actor.starts_with(space));
         }
     }
@@ -366,7 +375,7 @@ mod tests {
         for key in [
             queue_key(1),
             live_key(&tuple, 1),
-            tuple_key(&tuple),
+            head_key(&tuple),
             object_key("a", "b", "c"),
             subject_key("a", "b", "c", &did),
             actor_key(&did),

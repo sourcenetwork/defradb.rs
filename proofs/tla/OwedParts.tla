@@ -13,7 +13,10 @@
 \*     authorizes).
 \* The count is one value in two parts: the staged part, which only stagers
 \* add to, and the settled part, which only settlers add to. What is owed is
-\* staged minus settled. Every write is a merge that adds to one part.
+\* staged minus settled. Every write is a merge that adds to one part. A
+\* stager's own read stands for a read of what only stagers write: in the
+\* code, the tuple's head key (keys.rs head_key), which orders the stagers of
+\* one tuple and which settling never touches.
 \*
 \* The store checks a transaction at commit (regolith's DefraLevel): a
 \* transaction that read some parts of the value is refused when a write that

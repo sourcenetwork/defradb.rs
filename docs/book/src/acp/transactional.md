@@ -218,23 +218,25 @@ with no HTTP route.
   16 KiB, and staged only if it would still fit parked as refused or awaiting authority
   with 128 bytes of the provider's words in each place they are kept, so a change that
   was staged can always be parked; longer words are cut), and `/acp-owed2/l/<tuple><seq>`
-  marks it live on its tuple, so the tuple's oldest and latest unsettled sequences are
-  the first and last of those keys. A change is unsettled while it has a record, a
-  refused one included; a settled change has none.
-- **The counts.** What is owed is counted per tuple (`/acp-owed2/t/<tuple>`: changes,
-  deletes), per object (`/acp-owed2/o/<object>`: changes, deletes whose subject is wider
-  than one actor), per actor a delete names on an object
-  (`/acp-owed2/s/<object><actor>`: deletes, deletes of the owner relation) and for the
-  node (`/acp-owed2/n`: changes). Each count is one merged value with a staged part,
+  marks it live on its tuple with whether it is a delete, so the tuple's oldest and
+  latest unsettled sequences are the first and last of those keys, and how many are owed
+  on it, and how many of them are deletes, are theirs. A change is unsettled while it
+  has a record, a refused one included; a settled change has none.
+- **The counts.** What the deny overlay and the node's bound decide on is counted: per
+  object, the deletes whose subject is wider than one actor (`/acp-owed2/o/<object>`); per
+  actor a delete names on an object, its deletes and those of the owner relation
+  (`/acp-owed2/s/<object><actor>`); and for the node, its changes (`/acp-owed2/n`). Each count is one merged value with a staged part,
   which only staging adds to, and a settled part, which only settling adds to; what is
   owed is the difference. A count is never read and written back, put or deleted, so a
   settle aborts no transaction that read the staged part: not one that stages on the
   same document or the same tuple, and not one whose access decision read the deny
   overlay there (`proofs/tla/OwedParts.tla`, `proofs/lean/OwedParts.lean`). A count
   whose changes have all settled reads as nothing owed, exactly as an absent one, but it
-  is not removed: **each tuple, object and actor ever staged on keeps one small folded
-  value (about 40 bytes and its key)** until regolith can fold a chain of merges that
-  has no value beneath it, which a compaction filter could then drop.
+  is not removed. **Each object a wider delete was ever owed on, and each actor a delete
+  ever named on an object, keeps one small folded value (about 40 bytes and its key),
+  and each tuple ever staged on keeps its head key (8 bytes and its key)**, until
+  regolith can fold a chain of merges that has no value beneath it, which a compaction
+  filter could then drop (sourcenetwork/regolith#314).
 - **The layout before the counts were split.** It lived under `/acp-owed/`, and this
   version does not read it as owed state. A store whose queue there still holds a
   change (a `/acp-owed/q/` record; a settled change has none) is refused: the node does
@@ -245,9 +247,10 @@ with no HTTP route.
   keeps once everything has settled (counts at zero, the sequence counter, notes of
   discarded changes) owes nothing, is not counted and does not hold a start back.
 - **The order.** A sequence comes from `Db::allocate` after the staging transaction read
-  the staged part of the tuple's count, which it also merges into. Two transactions that
-  stage the same tuple conflict, and the one that commits later holds the higher
-  sequence; a settle of the tuple meanwhile does not conflict with either. Across tuples a
+  the tuple's head key (`/acp-owed2/h/<tuple>`, the latest sequence staged on it), which it
+  then writes. Only staging reads or writes that key: two transactions that stage the
+  same tuple conflict, and the one that commits later holds the higher sequence; a
+  settle of the tuple meanwhile does not conflict with either. Across tuples a
   sequence follows the order of staging, not of commit, so a lower sequence can appear
   in the queue after a higher one: a reader of the queue starts from its head each time
   instead of keeping a high-water mark.
