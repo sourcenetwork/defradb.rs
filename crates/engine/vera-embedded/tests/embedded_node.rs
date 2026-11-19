@@ -75,6 +75,7 @@ async fn a_provider_creates_and_reads_back_a_policy_through_the_embedded_node() 
         transport.clone(),
         transport,
         &hex::encode(node.consensus_key().encode()),
+        vera::vera_rs::GenesisSource::Hosted,
         &[42; 32],
         worker,
         &tuning,

@@ -10,7 +10,7 @@ use futures::future::BoxFuture;
 use futures::FutureExt as _;
 use serde_json::Value;
 
-use super::{NativeWorker, ProviderError, VeraRsProvider};
+use super::{GenesisSource, NativeWorker, ProviderError, VeraRsProvider};
 use crate::tuning::AcpTuning;
 use crate::vera_rs::client::tests::{Recorded, TRUSTED_KEY};
 
@@ -90,6 +90,7 @@ async fn an_invalid_trusted_key_is_refused_before_a_transport_is_used() {
             VeraRsProvider::new(
                 UNREACHABLE.into(),
                 key,
+                GenesisSource::Unnamed,
                 &[42; 32],
                 workers.next(),
                 &tuning,
@@ -105,6 +106,7 @@ async fn an_invalid_trusted_key_is_refused_before_a_transport_is_used() {
                 rpc.clone(),
                 acp.clone(),
                 key,
+                GenesisSource::Unnamed,
                 &[42; 32],
                 workers.next(),
                 &tuning,
@@ -133,6 +135,7 @@ async fn a_node_that_serves_no_header_fails_as_an_unreachable_url_does() {
         VeraRsProvider::new(
             UNREACHABLE.into(),
             TRUSTED_KEY,
+            GenesisSource::Unnamed,
             &[42; 32],
             workers.next(),
             &tuning,
@@ -148,6 +151,7 @@ async fn a_node_that_serves_no_header_fails_as_an_unreachable_url_does() {
             rpc.clone(),
             acp.clone(),
             TRUSTED_KEY,
+            GenesisSource::Unnamed,
             &[42; 32],
             workers.next(),
             &tuning,

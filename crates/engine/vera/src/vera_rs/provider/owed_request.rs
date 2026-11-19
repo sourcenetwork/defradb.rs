@@ -55,10 +55,17 @@ impl VeraRsProvider {
         }
     }
 
+    /// The worker, for the drainer's steps. Like any submission they are
+    /// admitted only while no switch of the deployment's active device is
+    /// unchecked and nothing it voided waits to be owed again, checked
+    /// again once the worker is held: a term check holds it while it runs.
     async fn locked_worker(&self) -> Result<OwnedMutexGuard<NativeWorker>, ProviderError> {
-        nuclei::time::timeout(self.sync_timeout, self.worker.clone().lock_owned())
+        self.admitted().await?;
+        let worker = nuclei::time::timeout(self.sync_timeout, self.worker.clone().lock_owned())
             .await
-            .map_err(|_| unavailable("worker is busy"))
+            .map_err(|_| unavailable("worker is busy"))?;
+        self.follower.admit()?;
+        Ok(worker)
     }
 
     /// The worker's next sequence: a request journaled from now on is signed
@@ -130,7 +137,9 @@ impl VeraRsProvider {
         drop(worker);
         if let Some(hash) = hash {
             match self.client.receipt(hash, &self.trusted).await {
-                Ok(Some(response)) => {
+                // A receipt from blocks the newest term voided is no
+                // outcome: the request is not on the deployment's history.
+                Ok(Some(response)) if self.follower.chain.admitted(&response)? => {
                     let receipt = response.verify(hash, &self.trusted).map_err(unavailable)?;
                     return Ok(if receipt.success() {
                         OwedRequestOutcome::Applied
@@ -138,7 +147,7 @@ impl VeraRsProvider {
                         rejected(hash)
                     });
                 }
-                Ok(None) => {}
+                Ok(_) => {}
                 Err(error) => return Err(unavailable(error)),
             }
         }

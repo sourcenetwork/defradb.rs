@@ -52,9 +52,11 @@ mod owed;
 mod registration;
 mod replica;
 mod settle;
+mod voided;
 
 pub use drain::MAX_CHANGES_PER_REQUEST;
 pub use settle::{OwedScope, OwedSettlement, MAX_FAILED_SUBMISSIONS};
+pub use voided::{OweAgain, VoidedEffect};
 
 /// Records read into memory per redrive page, bounded by their encoded size.
 const REDRIVE_PAGE_BYTES: usize = 256 * 1024;

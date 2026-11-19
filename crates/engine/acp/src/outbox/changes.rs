@@ -147,6 +147,18 @@ impl OwedChanges {
         Ok(change)
     }
 
+    /// Record, in this transaction, a change the provider confirmed once and
+    /// a switch of its deployment's active device voided, and give it its
+    /// sequence. It was committed and counted when first staged, so none of
+    /// the bounds on new changes applies to it (`ExternalDocumentAcp`'s
+    /// `owe_again`).
+    pub async fn stage_restored(&self, new: NewOwedChange) -> Result<OwedChange> {
+        let view = self.active_view()?;
+        let change = ops::stage(&view, self.sequences.as_ref(), new).await?;
+        self.staged.0.fetch_add(1, Ordering::Relaxed);
+        Ok(change)
+    }
+
     /// The owed change at `seq`, if it is unsettled.
     pub async fn get(&self, seq: u64) -> Result<Option<OwedChange>> {
         ops::change(&self.active_view()?, seq).await

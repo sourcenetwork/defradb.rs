@@ -72,6 +72,7 @@ async fn a_remembered_decision_is_not_given_past_the_freshness_limit() {
             transport.clone(),
             transport,
             &hex::encode(node.consensus_key().encode()),
+            vera::vera_rs::GenesisSource::Hosted,
             &[42; 32],
             worker,
             &tuning,

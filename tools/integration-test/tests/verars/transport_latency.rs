@@ -89,6 +89,7 @@ async fn measured(setup: &'static str) -> serde_json::Value {
         let daemon = VeraRsProvider::new(
             hub.node(0).rpc_url(),
             &consensus_key,
+            vera::vera_rs::GenesisSource::Unnamed,
             &hex::decode(&owner.private_key_hex).expect("owner key"),
             embedded::worker(root.path()),
             &AcpTuning::default(),

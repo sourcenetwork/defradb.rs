@@ -137,6 +137,7 @@ pub(crate) async fn shared(spec: &PeerSpec, rpc: SocketAddr, trust: &EmbeddedVer
         .with_vera_rs(VeraRsConfig {
             rpc_address: format!("http://{rpc}"),
             consensus_key: trust.consensus_key.clone(),
+            genesis_id: None,
             deployment_id: trust.chain_id,
             actor: VeraRsActor::Signer(signer(spec)),
             worker_dir: spec.home.join("worker"),

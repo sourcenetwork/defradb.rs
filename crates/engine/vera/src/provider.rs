@@ -424,6 +424,11 @@ pub trait VeraProvider: MaybeSendSync {
         ))
     }
 
+    /// Where this provider hands back the registrations and relationship
+    /// changes it confirmed on blocks a switch of its deployment's active
+    /// device voided, to be owed again. A provider without terms takes none.
+    fn owe_voided_to(&self, _sink: std::sync::Weak<dyn acp::OweAgain>) {}
+
     /// What a caller's own delegation must name for this provider to act
     /// under it, with the deployment's genesis identity when the provider
     /// knows it; `None` when the provider takes none.
