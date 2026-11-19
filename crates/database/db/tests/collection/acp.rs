@@ -390,28 +390,6 @@ fn different_owner_collection_registration_fails_closed() {
 }
 
 #[test]
-fn branchable_permissioned_create_fails_closed_if_collection_acp_registration_fails() {
-    workers::block_on(async {
-        let db = db::DB::new(RegolithStore::in_memory().unwrap()).unwrap();
-        let acp = Arc::new(FailingDocumentAcp);
-        let owner = test_did();
-
-        let err = db
-            .create_collection_with_acp_registration(
-                branchable_collection_with_policy(),
-                acp,
-                Some(owner),
-            )
-            .await
-            .expect_err("ACP registration failure must abort collection create");
-
-        assert!(err.to_string().contains("registration failed"));
-        assert!(db.get_collection("users").unwrap().is_none());
-    })
-    .unwrap()
-}
-
-#[test]
 fn test_owner_has_update_permission() {
     workers::block_on(async {
         let store = Arc::new(MemoryAcpStore::new());

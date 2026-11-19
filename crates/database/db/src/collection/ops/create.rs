@@ -302,22 +302,6 @@ impl<S: Store> crate::database::DB<S> {
             .map(|_| ())
     }
 
-    /// [`Self::create_collection_with_acp_registration_as`] in [`defra_core::RequestContext::ambient`].
-    pub async fn create_collection_with_acp_registration(
-        &self,
-        schema: CollectionVersion,
-        document_acp: std::sync::Arc<dyn acp::DocumentACP>,
-        creator: Option<identity::Did>,
-    ) -> Result<CollectionVersion> {
-        self.create_collection_with_acp_registration_as(
-            &defra_core::RequestContext::ambient(),
-            schema,
-            document_acp,
-            creator,
-        )
-        .await
-    }
-
     /// Create a new collection, registering branchable ACP before commit.
     ///
     /// If collection ACP registration fails, the DB transaction is discarded so
