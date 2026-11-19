@@ -4,6 +4,7 @@ use acp_light_client::{AcpLightClient, ModuleId, Object};
 use alloy_primitives::B256;
 use vera_modules::acp::{
     keys, object_state,
+    relation_generations::RelationPair,
     types::{PolicyRecord, RelationshipRecord},
 };
 
@@ -58,11 +59,14 @@ pub(super) async fn query(
             .read_current_object_owner(&policy_id, &owner_object, minimum)
             .await
             .map_err(|e| fail(e.to_string()))?;
-        if owner.is_none() || owner_revision.module_state_root != policy.module_state_root {
-            return Err(fail(
-                "object ownership proof is unavailable at the policy revision".into(),
-            ));
+        if owner.is_none() {
+            return Err(fail("object ownership proof is unavailable".into()));
         }
+        at_policy_root(
+            policy.module_state_root,
+            owner_revision.module_state_root,
+            "ownership",
+        )?;
         let requester = vera_modules::actor::canonical_str(query.requester);
         let is_owner = owner
             .as_ref()
@@ -80,11 +84,11 @@ pub(super) async fn query(
                     .verify_current_permission(&policy_id, &request, minimum)
                     .await
                     .map_err(|e| fail(e.to_string()))?;
-                if revision.module_state_root != policy.module_state_root {
-                    return Err(fail(
-                        "authorization and policy proofs have different roots".into(),
-                    ));
-                }
+                at_policy_root(
+                    policy.module_state_root,
+                    revision.module_state_root,
+                    "authorization",
+                )?;
                 if allowed {
                     authorized = true;
                     break;
@@ -107,9 +111,7 @@ pub(super) async fn query(
             .module_state_root
             .parse::<B256>()
             .map_err(|e| fail(e.to_string()))?;
-        if object_root != policy.module_state_root {
-            return Err(fail("object and policy proofs have different roots".into()));
-        }
+        at_policy_root(policy.module_state_root, object_root, "object")?;
         let current_incarnation = object
             .record
             .value
@@ -140,24 +142,95 @@ pub(super) async fn query(
             .read_relationship(&policy_id, generations, &storage_key)
             .await
             .map_err(|e| fail(e.to_string()))?;
-        if proof.module_state_root != policy.module_state_root {
-            return Err(fail(
-                "relationship and policy proofs have different roots".into(),
-            ));
-        }
-        let Some(value) = proof.value.as_deref() else {
-            return Ok(false);
-        };
-        let found: RelationshipRecord =
-            serde_json::from_slice(value).map_err(|e| fail(e.to_string()))?;
-        if found.policy_id != policy_id
-            || found.relationship != relationship
-            || found.incarnation != incarnation
-            || found.generations != generations
-        {
-            return Err(fail("relationship proof names a different grant".into()));
-        }
-        Ok(!found.archived)
+        at_policy_root(
+            policy.module_state_root,
+            proof.module_state_root,
+            "relationship",
+        )?;
+        granted(
+            proof.value.as_deref(),
+            &policy_id,
+            &relationship,
+            incarnation,
+            generations,
+        )
     })
     .await
+}
+
+/// Every proof of one observation must be taken at the policy's certified
+/// root; proofs of different roots answer nothing
+/// (`proofs/tla/ExactRelationshipObservation.tla`, `INV_SameRoot`).
+fn at_policy_root(policy: B256, found: B256, what: &str) -> Result<(), ProviderError> {
+    if found == policy {
+        return Ok(());
+    }
+    Err(ProviderError::Query(format!(
+        "{what} and policy proofs have different roots"
+    )))
+}
+
+/// What a verified relationship record says about the requested grant: an
+/// absent record is a proven absence, an archived one a revoked grant, and a
+/// record of any other grant is an error, never an absence.
+fn granted(
+    value: Option<&[u8]>,
+    policy_id: &str,
+    relationship: &vera_acp::Relationship,
+    incarnation: u64,
+    generations: RelationPair,
+) -> Result<bool, ProviderError> {
+    let Some(value) = value else {
+        return Ok(false);
+    };
+    let found: RelationshipRecord =
+        serde_json::from_slice(value).map_err(|e| ProviderError::Query(e.to_string()))?;
+    if found.policy_id != policy_id
+        || &found.relationship != relationship
+        || found.incarnation != incarnation
+        || found.generations != generations
+    {
+        return Err(ProviderError::Query(
+            "relationship proof names a different grant".into(),
+        ));
+    }
+    Ok(!found.archived)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn relationship() -> vera_acp::Relationship {
+        serde_json::from_value(serde_json::json!({
+            "resource": "users",
+            "object_id": "doc",
+            "relation": "reader",
+            "subject": { "Entity": "did:key:z6Mkreader" },
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_proof_at_another_root_answers_nothing() {
+        let policy = B256::repeat_byte(1);
+        assert!(at_policy_root(policy, policy, "object").is_ok());
+        for what in ["ownership", "authorization", "object", "relationship"] {
+            let refused = at_policy_root(policy, B256::repeat_byte(2), what);
+            assert!(
+                matches!(&refused, Err(ProviderError::Query(reason)) if reason == &format!("{what} and policy proofs have different roots")),
+                "{refused:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_a_verified_record_of_the_grant_answers() {
+        let pair = RelationPair {
+            target: 1,
+            subject: 0,
+        };
+        assert!(!granted(None, "policy", &relationship(), 0, pair).unwrap());
+        assert!(granted(Some(b"not a record"), "policy", &relationship(), 0, pair).is_err());
+    }
 }

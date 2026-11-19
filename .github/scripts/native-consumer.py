@@ -63,6 +63,8 @@ UNIT_NAMES = (
     "outcome_note::tests::an_outcome_of_an_earlier_request_with_the_same_bytes_is_not_the_callers",
     "outcome_note::tests::an_outcome_survives_a_reopen_and_the_oldest_is_pushed_out",
     "provider::audience_tests::a_provider_checks_the_genesis_identity_it_reports",
+    "provider::exact_relationship::tests::a_proof_at_another_root_answers_nothing",
+    "provider::exact_relationship::tests::only_a_verified_record_of_the_grant_answers",
     "provider::genesis::tests::a_genesis_identity_is_taken_only_from_a_proven_first_block",
     "provider::owed_request::tests::a_recorded_hash_names_the_request_and_bytes_alone_do_not",
     "provider::owed_request::tests::without_a_hash_the_bytes_name_the_request",
