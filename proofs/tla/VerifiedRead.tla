@@ -63,7 +63,7 @@
 \* finalizes fewer blocks than the read may ask, and the node answers busy
 \* few enough times that the read's patience is never spent.
 \*
-\* Code this models (defradb.rs, light client at backbone rev a853cc6):
+\* Code this models (defradb.rs, light client at backbone rev 5ca42c8):
 \*   crates/engine/vera/src/vera_rs/provider/verified.rs   verified, ATTEMPTS, overtaken,
 \*       verified_within, Pace, WallPace, JITTER, BUSY_PATIENCE, BUSY_PAUSE, busy
 \*   crates/building-blocks/inputs/src/retry.rs                     Jitter::pause (a pause drawn
