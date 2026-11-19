@@ -91,6 +91,8 @@ UNIT_NAMES = (
     "provider::audience_tests::a_provider_checks_the_genesis_identity_it_reports",
     "provider::exact_relationship::tests::a_proof_at_another_root_answers_nothing",
     "provider::exact_relationship::tests::an_absent_owner_refuses_as_a_registered_document_does",
+    "provider::exact_relationship::tests::an_observation_overtaken_at_every_ask_ends_in_the_refusal",
+    "provider::exact_relationship::tests::an_overtaken_observation_is_asked_again_at_one_root",
     "provider::exact_relationship::tests::only_a_verified_record_of_the_grant_answers",
     "provider::genesis::tests::a_genesis_identity_is_taken_only_from_a_proven_first_block",
     "provider::owed_request::tests::a_recorded_hash_names_the_request_and_bytes_alone_do_not",

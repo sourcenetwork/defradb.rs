@@ -430,12 +430,12 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Transactional document relationships",
-        name: "INV_SameRoot for exact relationship observations",
+        name: "INV_SameRoot / INV_FailsOnlyWhenEveryAskOvertaken for exact relationship observations",
         axis: Tla,
         anchor: "crates/engine/vera/src/vera_rs/provider/exact_relationship.rs query",
-        model_ref: "MC_ExactRelationshipObservation_{Green,Red}.cfg",
+        model_ref: "MC_ExactRelationshipObservation_{Green,Green_Exhausted,Red,Red_NoRetry}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/engine/vera/src/vera_rs/provider/exact_relationship.rs a_proof_at_another_root_answers_nothing",
+        bound_by: "crates/engine/vera/src/vera_rs/provider/exact_relationship.rs a_proof_at_another_root_answers_nothing, an_overtaken_observation_is_asked_again_at_one_root, an_observation_overtaken_at_every_ask_ends_in_the_refusal; crates/entry-points/defra-node/tests/embedded_vera.rs an_observation_under_writes_is_asked_again_when_a_block_overtakes_it",
     },
     Property {
         family: "Transactional document relationships",

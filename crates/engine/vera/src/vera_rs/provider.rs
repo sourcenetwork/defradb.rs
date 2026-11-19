@@ -927,8 +927,21 @@ impl VeraProvider for VeraRsProvider {
         &self,
         query: ActorRelationshipQuery<'_>,
     ) -> Result<bool, ProviderError> {
-        self.admitted_read(exact_relationship::query(&self.light_client, query))
+        // An observation overtaken by a block between its reads is asked
+        // again from the policy read, as every overtaken read is.
+        self.admitted_read(async {
+            verified(|| async {
+                exact_relationship::query(&self.light_client, query)
+                    .await
+                    .map_err(|error| Box::new(error) as Box<dyn std::error::Error + Send + Sync>)
+            })
             .await
+            .map_err(|error| match error.downcast::<ProviderError>() {
+                Ok(error) => *error,
+                Err(error) => ProviderError::Query(error.to_string()),
+            })
+        })
+        .await
     }
 
     async fn verify_access(

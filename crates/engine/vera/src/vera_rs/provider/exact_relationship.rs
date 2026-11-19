@@ -14,7 +14,7 @@ pub(super) async fn query(
     client: &Arc<AcpLightClient>,
     query: ActorRelationshipQuery<'_>,
 ) -> Result<bool, ProviderError> {
-    edge::compat(async {
+    async {
         let fail = |error: String| ProviderError::Query(error);
         let policy_id = hex::encode(super::VeraRsProvider::policy_id_to_bytes32(query.policy)?);
         let policy = client
@@ -151,7 +151,7 @@ pub(super) async fn query(
             incarnation,
             generations,
         )
-    })
+    }
     .await
 }
 
@@ -167,15 +167,14 @@ fn owner_authorizes(owner: Option<&str>, requester: &str) -> Result<bool, Provid
 }
 
 /// Every proof of one observation must be taken at the policy's certified
-/// root; proofs of different roots answer nothing
+/// root; proofs of different roots are an overtaken observation, which the
+/// provider asks again
 /// (`proofs/tla/ExactRelationshipObservation.tla`, `INV_SameRoot`).
-fn at_policy_root(policy: B256, found: B256, what: &str) -> Result<(), ProviderError> {
+fn at_policy_root(policy: B256, found: B256, what: &'static str) -> Result<(), ProviderError> {
     if found == policy {
         return Ok(());
     }
-    Err(ProviderError::Query(format!(
-        "{what} and policy proofs have different roots"
-    )))
+    Err(ProviderError::ProofsOvertaken(what))
 }
 
 /// What a verified relationship record says about the requested grant: an
@@ -226,10 +225,53 @@ mod tests {
         for what in ["ownership", "authorization", "object", "relationship"] {
             let refused = at_policy_root(policy, B256::repeat_byte(2), what);
             assert!(
-                matches!(&refused, Err(ProviderError::Query(reason)) if reason == &format!("{what} and policy proofs have different roots")),
+                matches!(&refused, Err(ProviderError::ProofsOvertaken(named)) if *named == what),
                 "{refused:?}"
             );
         }
+    }
+
+    type Failure = Box<dyn std::error::Error + Send + Sync>;
+
+    /// An observation whose later proof came back at a newer root, `overtaken`
+    /// times, and then at the policy's: asked again through `verified`.
+    async fn asked_through_verified(overtaken: usize) -> (Result<bool, Failure>, usize) {
+        let asked = std::cell::Cell::new(0);
+        let outcome = super::super::verified::verified(|| {
+            asked.set(asked.get() + 1);
+            let ask = asked.get();
+            async move {
+                let policy = B256::repeat_byte(1);
+                let found = if ask <= overtaken {
+                    B256::repeat_byte(2)
+                } else {
+                    policy
+                };
+                at_policy_root(policy, found, "relationship")
+                    .map(|()| true)
+                    .map_err(|error| Box::new(error) as Failure)
+            }
+        })
+        .await;
+        (outcome, asked.get())
+    }
+
+    #[nuclei::test]
+    async fn an_overtaken_observation_is_asked_again_at_one_root() {
+        let (outcome, asked) = asked_through_verified(1).await;
+        assert!(outcome.unwrap());
+        assert_eq!(asked, 2);
+    }
+
+    #[nuclei::test]
+    async fn an_observation_overtaken_at_every_ask_ends_in_the_refusal() {
+        let (outcome, asked) = asked_through_verified(usize::MAX).await;
+        let error = outcome.unwrap_err();
+        assert!(matches!(
+            error.downcast_ref::<ProviderError>(),
+            Some(ProviderError::ProofsOvertaken("relationship"))
+        ));
+        assert_eq!(asked, 4, "the four asks a verified read has");
     }
 
     #[test]

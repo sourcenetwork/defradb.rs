@@ -9,6 +9,7 @@ pub struct ProviderPolicyInfo {
     pub raw_policy: Option<String>,
 }
 
+#[derive(Clone, Copy)]
 pub struct ActorRelationshipQuery<'a> {
     pub requester: &'a str,
     pub policy: &'a str,
@@ -53,6 +54,11 @@ pub enum ProviderError {
 
     #[error("relationship observation is not authorized")]
     RelationshipObservationDenied,
+    /// Two proofs of one observation were read at different certified
+    /// roots: a block finalized between them. Nothing failed; asked again,
+    /// the observation is answered at one root.
+    #[error("{0} and policy proofs have different roots")]
+    ProofsOvertaken(&'static str),
     /// A delegation does not hold at the provider's time; one issued at
     /// that time is taken.
     #[error("delegation refused: {0}")]
