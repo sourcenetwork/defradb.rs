@@ -108,6 +108,7 @@ jobs:
       matrix:
         include:
           - { family: acp, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { family: acp_owed_drain, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: allocs, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: backup, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: block, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
