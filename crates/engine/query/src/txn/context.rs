@@ -583,6 +583,13 @@ pub trait TransactionContext: MaybeSendSync {
         None
     }
 
+    /// The provider owner answers this transaction used, kept for its commit
+    /// to confirm. `None` where a transaction keeps none: an owner answer from
+    /// a provider that cannot join the transaction is then refused.
+    fn observed_owners(&self) -> Option<Arc<super::ObservedOwners>> {
+        None
+    }
+
     /// Check if the transaction is still active (not yet committed or rolled back).
     ///
     /// Returns `true` if the transaction can still be used for queries.

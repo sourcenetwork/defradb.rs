@@ -95,6 +95,9 @@ pub enum Error {
     /// The source query of a view selects nothing.
     #[error("invalid view query: no selections found")]
     ViewQueryEmpty,
+    /// The source query of a view selects more than one source type.
+    #[error("invalid view query: multiple selections found")]
+    ViewQueryMultipleSources,
     /// A view's lens transform CID is empty, which Go's `cid.Decode` refuses.
     #[error("cid too short")]
     ViewTransformCidEmpty,

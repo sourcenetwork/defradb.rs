@@ -265,7 +265,8 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         &self,
         handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {
-        self.registry.commit(handle).await
+        self.commit_confirming(&RequestContext::ambient(), handle)
+            .await
     }
 
     async fn commit_txn_as(
@@ -273,7 +274,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         context: &RequestContext,
         handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {
-        self.registry.commit_as(context, handle).await
+        self.commit_confirming(context, handle).await
     }
 
     async fn discard_txn(
@@ -801,7 +802,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
     /// One wave of a request's external inputs, each by the resolver of its
     /// kind: the runner's own concurrently, the mutator's as one batch, all
     /// in the context of the request this runner serves.
-    async fn resolve_wave(
+    pub(super) async fn resolve_wave(
         &self,
         inputs: &crate::prepared::PreparedInputMemo,
         wave: Vec<crate::prepared::PreparedInputRequest>,
@@ -912,7 +913,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         Ok(std::sync::Arc::from(b"ok".as_slice()))
     }
 
-    async fn resolve_acp_decision_input(
+    pub(super) async fn resolve_acp_decision_input(
         &self,
         input: &crate::prepared::PreparedInputRequest,
     ) -> Result<std::sync::Arc<[u8]>> {

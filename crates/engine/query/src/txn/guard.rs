@@ -130,6 +130,9 @@ impl<'a, E: crate::QueryExecutor + ?Sized> TransactionGuard<'a, E> {
     /// Commit the transaction and consume the guard.
     ///
     /// After calling this, the guard cannot be used again (compile-time enforced).
+    /// A commit that fails, a retryable refusal included, leaves the
+    /// transaction to the guard, whose drop abandons it: nothing is committed,
+    /// and the caller runs the transaction again in a new one.
     pub async fn commit(mut self) -> std::result::Result<(), TransactionError> {
         let handle = self
             .handle
