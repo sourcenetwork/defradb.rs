@@ -14,7 +14,7 @@ use crate::planner::PlanNode;
 
 use super::super::builder::Planner;
 use super::child_plan::RelationChildPlan;
-use super::shared::can_use_direct_indexed_child_cache;
+use super::shared::{can_use_direct_indexed_child_cache, holds_join};
 
 impl Planner {
     /// Assemble a TypeJoinOne node for a one-to-one selection join.
@@ -164,6 +164,7 @@ impl Planner {
         let should_invert_for_child_index = (parent_order_for_child.is_some()
             || relation_filter.is_some())
             && child_uses_index
+            && !holds_join(plan.as_ref())
             && !((select.exhaustive || ancestor_exhaustive)
                 && depth > 0
                 && is_synthetic_order_relation); // Exhaustive nested order dependencies must preserve the full parent set so orphan merging can happen in the parent relation scope.

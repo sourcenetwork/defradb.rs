@@ -15,6 +15,7 @@ mod explain_scan_node;
 mod get;
 mod group_order;
 mod index_offset_limit;
+mod join_keeps_relation;
 mod json;
 mod json_array;
 mod json_array_filter;

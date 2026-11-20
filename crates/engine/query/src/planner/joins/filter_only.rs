@@ -14,6 +14,7 @@ use crate::plan::{IndexScanNode, JoinSide, RelationFilter, ScanNode, TypeJoinMan
 use crate::planner::PlanNode;
 
 use super::super::builder::Planner;
+use super::shared::holds_join;
 
 impl Planner {
     /// Handle relation filters without corresponding selections.
@@ -194,7 +195,7 @@ impl Planner {
                 // child has index on filtered field AND parent has index on FK field.
                 let parent_fk_field_name =
                     schema::CollectionVersion::relation_id_field_name(&relation_field.name);
-                let parent_fk_index = if child_has_index {
+                let parent_fk_index = if child_has_index && !holds_join(plan.as_ref()) {
                     parent_collection.indexes.iter().find(|idx| {
                         idx.fields
                             .first()

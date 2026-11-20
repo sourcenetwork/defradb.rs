@@ -42,3 +42,16 @@ pub(in crate::planner) fn can_use_direct_indexed_child_cache(nested_select: &Sel
             _ => false,
         })
 }
+
+/// Whether `plan` already holds a relation join. A join that starts from the
+/// child fetches its parents itself, so it would drop that join.
+pub(in crate::planner) fn holds_join(plan: &dyn PlanNode) -> bool {
+    let mut node = Some(plan);
+    while let Some(current) = node {
+        if current.kind() == "typeIndexJoin" {
+            return true;
+        }
+        node = current.source();
+    }
+    false
+}

@@ -14,13 +14,6 @@ const ENTRIES: &[(&str, &str, &[&str], &str)] = &[
          https://github.com/sourcenetwork/defradb/issues/4551",
     ),
     (
-        "tests/integration/query/many_to_many/simple_test.go",
-        "TestManyToMany_QueryFromJoinCollection_ShouldSucceed",
-        SECONDARY_INDEX,
-        "TODO(https://github.com/sourcenetwork/defradb.rs/issues/3042): \
-         the join drops a relation when both foreign keys are indexed.",
-    ),
-    (
         "tests/integration/collection_version/migrations/query/simple_test.go",
         "TestCollectionMigrationQuery_WithMigrationsAcrossMultipleVersions_AppliesAllMigrations",
         SECONDARY_INDEX,
