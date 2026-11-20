@@ -157,3 +157,32 @@ fn a_failed_strict_read_in_a_transaction_leaves_it_usable() {
     })
     .unwrap();
 }
+
+#[test]
+fn a_strict_request_whose_prepared_access_input_cannot_be_answered_fails_classified() {
+    workers::block_on(async {
+        let _serial = super::tests::SIGNING_STORE_GUARD.lock().await;
+        let remote = Remote::new();
+        let node = node(&remote).await;
+        let hidden = created(node.execute_request(create("unchecked")).await);
+        remote.unchecked.insert(hidden.clone(), ());
+        let update = format!(
+            "mutation {{ update_Record(docID: \"{hidden}\", input: {{name: \"changed\"}}) {{ name }} }}"
+        );
+        let default = node
+            .execute_request(
+                query::QueryRequest::new(update.clone())
+                    .with_identity(Some(Did::new(OWNER).unwrap())),
+            )
+            .await;
+        assert!(default.has_errors(), "the default fails as it did");
+        assert_ne!(
+            default.errors[0].code(),
+            Some(query::executor::ACCESS_CHECK_UNAVAILABLE_ERROR_CODE)
+        );
+        let response = node.execute_request(strict(&update, OWNER)).await;
+        assert!(unavailable(&response, &hidden), "{:?}", response.errors);
+        node.shutdown().await.unwrap();
+    })
+    .unwrap();
+}
