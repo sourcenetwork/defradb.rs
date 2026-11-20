@@ -387,10 +387,10 @@ impl Planner {
         //
         // A row rejected above the scan is invisible to it, so these shapes take
         // the exhaustive path, which scores every matching document and is
-        // therefore always right. A filtered similarity query follows the same
-        // path and reports that its vector index went unused.
-        let rows_rejected_above_the_scan = select.filter.is_some()
-            || filter_has_relations
+        // therefore always right. A scalar filter can be served before the
+        // similarity order, so it keeps vector routing when an ordinary index
+        // can supply that narrowed candidate set.
+        let rows_rejected_above_the_scan = filter_has_relations
             || is_complex_filter
             || select.group_by.is_some()
             // prepare_filter removes computed aliases before classifying the filter.
@@ -406,7 +406,9 @@ impl Planner {
             vector_routing::first_indexed_similarity(&sim_query.similarities, &collection.indexes);
 
         let vector_route = if let Some(ref fetcher) = self.fetcher {
-            if rows_rejected_above_the_scan {
+            let scalar_filter_served =
+                select.filter.is_none() || self.try_select_index(select, &collection).is_some();
+            if rows_rejected_above_the_scan || (select.filter.is_some() && !scalar_filter_served) {
                 if let Some(field) = warning_field {
                     warnings.push(vector_routing::vector_index_unused_warning_for_filter(
                         field,

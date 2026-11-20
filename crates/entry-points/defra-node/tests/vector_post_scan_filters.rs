@@ -10,7 +10,7 @@ async fn data(node: &Node, query: &str) -> Value {
 async fn fixture() -> Node {
     let node = Node::builder().build().await.unwrap();
     node.add_collection(
-        "type Note { tag: String embedding: [Float32!] @index(vector: {dimensions: 1, hnsw: {metric: DOT}}) }",
+        "type Note { tag: String @index embedding: [Float32!] @index(vector: {dimensions: 1, hnsw: {metric: DOT}}) }",
     ).await.unwrap();
     for (tag, score) in [
         ("hot", 100),
