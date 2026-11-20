@@ -98,10 +98,17 @@ fn main() {
             .map(|path| path.trim().to_owned())
             .filter(|path| !path.is_empty())
     };
+    let branch_ref = git_output("--symbolic-full-name");
+    let loose_ref = branch_ref
+        .filter(|reference| reference.starts_with("refs/heads/"))
+        .and_then(|reference| {
+            git_output("--git-dir").map(|git_dir| format!("{git_dir}/{reference}"))
+        });
     let watched = [
         git_output("--git-dir").map(|dir| format!("{dir}/HEAD")),
         git_output("--git-dir").map(|dir| format!("{dir}/index")),
         git_output("--git-common-dir").map(|dir| format!("{dir}/packed-refs")),
+        loose_ref,
     ];
     for path in watched.into_iter().flatten() {
         if fs::metadata(&path).is_ok() {
