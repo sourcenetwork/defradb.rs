@@ -332,10 +332,10 @@ impl Eq for ReplicatorInfo {}
 impl ReplicatorInfo {
     /// Create a new replicator info.
     ///
-    /// Requires a non-empty collections list — an empty list would register a
-    /// replicator with nothing to replicate, which is never a valid state.
-    /// Use [`ReplicatorInfo::from_raw`] when reconstructing from storage or
-    /// test fixtures where validation is not desired.
+    /// Requires a non-empty collections list. A stored replicator can still
+    /// have none (Go keeps one added before any collection existed, #2702);
+    /// use [`ReplicatorInfo::from_raw`] for those, for records reconstructed
+    /// from storage, and for test fixtures where validation is not desired.
     pub fn new(peer_id: impl ToString, collections: Vec<String>) -> Result<Self, ReplicatorError> {
         if collections.is_empty() {
             return Err(ReplicatorError::EmptyCollections);
