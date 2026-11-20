@@ -408,7 +408,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/engine/acp/src/outbox/staging.rs advise, stage_prepared, authority_revoked; crates/building-blocks/zanzibar/src/types/policy.rs management_sources",
         model_ref: "MC_OwedStagingAuthority_{Green,Red_Wide,Red_Self,Red_NoOwner}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/database/db/tests/access/external_overlay.rs the_owner_changes_an_object_after_revoking_a_tuple_on_it, a_manager_changes_an_object_after_revoking_a_tuple_its_authority_does_not_rest_on, a_manager_whose_managing_tuple_is_revoked_changes_nothing_more",
+        bound_by: "crates/database/db/tests/access/external_overlay.rs the_owner_changes_an_object_after_revoking_a_tuple_on_it, a_manager_changes_an_object_after_revoking_a_tuple_its_authority_does_not_rest_on, a_manager_whose_managing_tuple_is_revoked_changes_nothing_more; crates/building-blocks/zanzibar/src/types/policy_tests.rs a_direct_manager_is_its_own_only_source, a_computed_manager_reads_the_relation_it_is_computed_from, a_tuple_to_userset_reads_its_tuple_relation_on_this_object_only, unions_intersections_and_differences_read_every_part, a_cycle_ends_with_each_relation_once",
     },
     Property {
         family: "ACP outbox and owed registrations",
@@ -421,12 +421,12 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Transactional document relationships",
-        name: "INV_NotOlderThanOwed / INV_HoldsLatest / INV_EndsInTime: an observation waits, within one deadline, for its owed change",
+        name: "INV_NotOlderThanOwed / INV_HoldsLatest / INV_EndsInTime / INV_ReuseHoldsLatest / INV_BackoffHeld: an observation waits, within one deadline, for its owed change",
         axis: Tla,
-        anchor: "crates/engine/acp/src/external.rs observe_actor_relationship, await_tuple, before, OBSERVATION_PATIENCE; crates/database/db/src/document_projection.rs projected_actor_relationship",
-        model_ref: "MC_SettleBeforeObserving_{Green,Green_Silent,Red_NoWait,Red_EarlierOnly,Red_WakeFirst,Red_LockUnbounded,Red_NoExpiry,Red_NoExpiry_Silent}.cfg",
+        anchor: "crates/engine/acp/src/external.rs observe_actor_relationship, observe_as_manager, await_tuple, before, OBSERVATION_PATIENCE; crates/database/db/src/document_projection/relationship_input.rs RelationshipInput; crates/engine/acp/src/outbox/ops.rs tuple_rest, tuple_head",
+        model_ref: "MC_SettleBeforeObserving_{Green,Green_Silent,Red_NoWait,Red_EarlierOnly,Red_WakeFirst,Red_LockUnbounded,Red_NoExpiry,Red_NoExpiry_Silent,Red_WakeDrainer,Red_NoHead}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/engine/acp/src/external/deadline_tests.rs a_passed_deadline_ends_a_wait_whose_future_is_ready, a_notification_before_the_first_poll_is_not_lost; crates/database/db/tests/access/external_observation.rs an_observation_waits_for_a_change_about_to_settle, an_observation_refuses_a_change_that_cannot_settle, notifications_of_other_records_do_not_extend_the_wait, a_settlement_pass_holding_the_lock_past_the_deadline_refuses_the_observation; crates/entry-points/defra-node/tests/embedded_vera/settle_before_observing.rs creates_updated_at_once_under_load_project_without_refusal",
+        bound_by: "crates/engine/acp/src/external/deadline_tests.rs a_passed_deadline_ends_a_wait_whose_future_is_ready, a_notification_before_the_first_poll_is_not_lost; crates/database/db/tests/access/external_observation.rs an_observation_waits_for_a_change_about_to_settle, an_observation_refuses_a_change_that_cannot_settle; crates/database/db/tests/access/external_observation_wait.rs notifications_of_other_records_do_not_extend_the_wait, a_settlement_pass_holding_the_lock_past_the_deadline_refuses_the_observation, a_caller_who_may_not_manage_is_refused_while_a_pass_holds_the_lock, an_observation_does_not_cut_the_drainers_backoff, the_tuple_head_moves_with_each_change_and_stays_once_it_settles; crates/database/db/src/document_projection/relationship_input.rs a_later_change_on_the_tuple_names_another_input; crates/entry-points/defra-node/tests/embedded_vera/settle_before_observing.rs creates_updated_at_once_under_load_project_without_refusal",
     },
     Property {
         family: "Transactional document relationships",
