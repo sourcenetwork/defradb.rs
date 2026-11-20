@@ -4,8 +4,10 @@
 //! counts as not having reached the chain when its error holds a transport
 //! failure that is no JSON-RPC answer, or an I/O error, or when the light
 //! client has no fresh verified state left, which is how a chain that has
-//! stopped answering shows after the freshness window. Any other failure is
-//! the chain's answer or a proof that did not verify, and stays an error.
+//! stopped answering shows after the freshness window. A read that was late
+//! (overtaken, stale or busy after the waits of `verified`) did not get its
+//! answer in time either, and counts the same. Any other failure is the
+//! chain's answer or a proof that did not verify, and stays an error.
 //!
 //! The light client's HTTP transport reports its HTTP and JSON errors as
 //! themselves, not as transport failures, and their types are not ones this
@@ -40,7 +42,10 @@ where
     E: AsRef<dyn Error + Send + Sync + 'static> + std::fmt::Display,
 {
     let message = format!("{what}: {error}");
-    if transport_failure(error.as_ref()) || light_client.header_chain().fresh_state().is_err() {
+    if transport_failure(error.as_ref())
+        || super::verified::late(&error)
+        || light_client.header_chain().fresh_state().is_err()
+    {
         ProviderError::Unavailable(message)
     } else {
         ProviderError::Query(message)
