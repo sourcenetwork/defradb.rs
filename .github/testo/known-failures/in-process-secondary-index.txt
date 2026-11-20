@@ -1,0 +1,2 @@
+# Failures seen only with the secondary-index multiplier. Keep entries as
+# `<binary> <test> #<issue>`; a listed test that passes must be removed.

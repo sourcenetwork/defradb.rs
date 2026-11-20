@@ -13,6 +13,7 @@ pub mod nodes;
 mod purge;
 mod reserved_port;
 pub mod scenario;
+mod secondary_index;
 mod stub_embedder;
 pub mod test_case;
 
