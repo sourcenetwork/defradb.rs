@@ -20,9 +20,9 @@ async fn storage_stats_prints_aggregates_without_creating_config_or_keys() {
     };
     let db =
         Arc::new(db::DB::new(storage::RegolithStore::open(config.data_path()).unwrap()).unwrap());
-    db.create_collections_atomic_as(
+    db.add_collection(
         &defra_core::RequestContext::ambient(),
-        query::parse_sdl("type Users { name: String }").unwrap(),
+        "type Users { name: String }",
     )
     .await
     .unwrap();
@@ -105,9 +105,9 @@ async fn storage_stats_reads_engine_encryption_without_replacing_key() {
     )
     .unwrap();
     database
-        .create_collections_atomic_as(
+        .add_collection(
             &defra_core::RequestContext::ambient(),
-            query::parse_sdl("type Users { name: String }").unwrap(),
+            "type Users { name: String }",
         )
         .await
         .unwrap();
@@ -192,9 +192,9 @@ async fn storage_stats_reads_a_store_sealed_under_a_previous_key() {
     )
     .unwrap();
     database
-        .create_collections_atomic_as(
+        .add_collection(
             &defra_core::RequestContext::ambient(),
-            query::parse_sdl("type Users { name: String }").unwrap(),
+            "type Users { name: String }",
         )
         .await
         .unwrap();
