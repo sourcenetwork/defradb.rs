@@ -107,6 +107,17 @@ pub fn filter_to_index_scan(
         .and_then(FieldKind::as_scalar)
         .is_some_and(|kind| kind.base_kind() == ScalarKind::NillableJson);
 
+    // An empty array matches `_all` but has no index entry to find it by.
+    if first_field_is_json
+        && conditions.iter().any(|c| {
+            &c.field_name == first_field
+                && c.json_path.is_none()
+                && c.array_op == Some(FilterOp::All)
+        })
+    {
+        return None;
+    }
+
     // Find conditions on the first index field
     // For JSON fields, ensure top-level conditions get an empty json_path
     let first_field_conditions: Vec<_> = conditions

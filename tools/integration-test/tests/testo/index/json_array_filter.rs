@@ -57,3 +57,17 @@ fn all_skips_a_scalar_of_the_same_value() {
         &["Shahzad"],
     );
 }
+
+#[test]
+#[mantra_macros::req_test("go.query.json.array-ops")]
+fn all_keeps_an_empty_array() {
+    case(
+        &[
+            json!({ "name": "Empty", "custom": [] }),
+            json!({ "name": "One", "custom": [1] }),
+            json!({ "name": "Two", "custom": [2] }),
+        ],
+        "{_all: {_eq: 1}}",
+        &["Empty", "One"],
+    );
+}
