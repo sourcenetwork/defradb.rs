@@ -1131,10 +1131,18 @@ impl TypeJoinOne {
     ) -> Result<bool> {
         match child_doc {
             None => {
-                // No child document - relation filter cannot pass
-                // This handles queries like `filter: {author: {verified: true}}`
-                // where if there's no author, the filter fails
-                Ok(false)
+                // A missing relation satisfies only an explicit equality to null
+                // on the relation ID; every other condition needs a child.
+                let Some(id_conditions) = rel_filter
+                    .conditions
+                    .conditions()
+                    .get("_docID")
+                    .and_then(serde_json::Value::as_object)
+                else {
+                    return Ok(false);
+                };
+                Ok(id_conditions.len() == 1
+                    && id_conditions.get("_eq") == Some(&serde_json::Value::Null))
             }
             Some(doc) => {
                 // Evaluate the filter conditions against the child's scan mapping
