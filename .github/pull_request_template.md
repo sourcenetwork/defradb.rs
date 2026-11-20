@@ -12,7 +12,7 @@ Every PR needs an issue that describes the problem simply enough for a human to 
 - [ ] The PR title follows the conventional style checked by [validate-title.sh](https://github.com/sourcenetwork/defradb.rs/blob/main/.github/scripts/validate-title.sh): `label(scope)!: Capitalized summary`, 60 characters or fewer.
 - [ ] `cargo test`, `cargo clippy --all --all-targets -- -D warnings` and `cargo fmt --all` pass.
 - [ ] If this touches core behavior, `cargo test -p integration-test` passes.
-- [ ] Go parity impact is considered (see `CLAUDE.md`).
+- [ ] Go parity impact is considered (see `AGENTS.md`).
 - [ ] Limitations are discussed: threats to validity, misuse, broken assumptions, resource requirements, ...
 
 ## How has this been tested?
