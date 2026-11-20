@@ -369,7 +369,11 @@ impl TestCase {
         }
         trace_from_env();
         let actions = with_stub_embedder(&self.actions);
-        let actions = SecondaryIndex.apply(&actions);
+        let actions = if crate::secondary_index::is_active() {
+            SecondaryIndex.apply(&actions)
+        } else {
+            actions
+        };
         for client_type in clients {
             let actions = client_type.apply(&actions);
             drop(testo::action::execute(State::default(), &actions));

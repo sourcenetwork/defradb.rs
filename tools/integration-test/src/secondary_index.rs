@@ -6,6 +6,17 @@ use crate::scenario::Text;
 /// Adds a secondary index to every scalar field a test schema declares.
 pub struct SecondaryIndex;
 
+/// Whether `DEFRA_MULTIPLIERS` asks for the secondary-index lane.
+pub fn is_active() -> bool {
+    std::env::var("DEFRA_MULTIPLIERS")
+        .map(|names| {
+            names
+                .split(',')
+                .any(|name| name.trim() == SecondaryIndex::NAME)
+        })
+        .unwrap_or(false)
+}
+
 impl Multiplier<Actions> for SecondaryIndex {
     const NAME: &str = "secondary-index";
 
