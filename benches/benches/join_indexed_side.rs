@@ -104,30 +104,36 @@ async fn fixture() -> impl QueryExecutor {
     .with_mutator(mutator as Arc<dyn DocMutator>)
 }
 
-const SHAPES: [(&str, &str, usize); 5] = [
+/// Each shape's name, query, the collection it returns and its row count.
+const SHAPES: [(&str, &str, &str, usize); 5] = [
     (
         "reference_person_index_miss",
         r#"query { Person(filter: {tier: {_eq: "none"}}) { name } }"#,
+        "Person",
         0,
     ),
     (
         "reference_book_full_scan",
         r#"query { Book(filter: {title: {_eq: "nope"}}) { title } }"#,
+        "Book",
         0,
     ),
     (
         "selective_1_author",
         r#"query { Book(filter: {author: {tier: {_eq: "one"}}}) { title } }"#,
+        "Book",
         50,
     ),
     (
         "broad_1k_authors",
         r#"query { Book(filter: {author: {tier: {_eq: "many"}}}) { title } }"#,
+        "Book",
         50_000,
     ),
     (
         "no_author",
         r#"query { Book(filter: {author: {tier: {_eq: "none"}}}) { title } }"#,
+        "Book",
         0,
     ),
 ];
@@ -137,7 +143,7 @@ fn join(c: &mut Criterion) {
     let runner = rt.block_on(fixture());
     let mut group = c.benchmark_group("join_indexed_side");
     group.sample_size(10);
-    for (name, query, rows) in SHAPES {
+    for (name, query, collection, rows) in SHAPES {
         group.bench_with_input(BenchmarkId::new(name, BOOKS), &query, |b, query| {
             b.iter(|| {
                 let response = rt.block_on(runner.execute(QueryRequest::new(black_box(*query))));
@@ -145,8 +151,9 @@ fn join(c: &mut Criterion) {
                 let found = response
                     .data
                     .as_ref()
-                    .and_then(|data| data["Book"].as_array())
-                    .map_or(0, Vec::len);
+                    .and_then(|data| data[collection].as_array())
+                    .unwrap_or_else(|| panic!("{name}: no {collection} array"))
+                    .len();
                 assert_eq!(found, rows, "{name}");
                 black_box(response)
             })
