@@ -28,7 +28,7 @@ pub fn add_indexes(sdl: &str) -> String {
     for object in &objects {
         for field in &object.fields {
             let indexed = if SCALARS.contains(&field.base) {
-                !one_to_one_ids.contains(field.name)
+                !one_to_one_ids.contains(&(object.name, field.name.to_owned()))
             } else {
                 !field.list
                     && defined.contains(field.base)
@@ -86,13 +86,13 @@ fn one_to_one(objects: &[Object<'_>], a: &str, b: &str) -> bool {
     count(a, b) > 0 && count(b, a) > 0
 }
 
-/// The `_<name>ID` field names of every one-to-one relation field.
-fn one_to_one_ids(objects: &[Object<'_>]) -> RapidHashSet<String> {
+/// The object and `_<name>ID` field name of every one-to-one relation field.
+fn one_to_one_ids<'a>(objects: &[Object<'a>]) -> RapidHashSet<(&'a str, String)> {
     let mut ids = RapidHashSet::new();
     for object in objects {
         for field in &object.fields {
             if !field.list && one_to_one(objects, object.name, field.base) {
-                ids.insert(format!("_{}ID", field.name));
+                ids.insert((object.name, format!("_{}ID", field.name)));
             }
         }
     }

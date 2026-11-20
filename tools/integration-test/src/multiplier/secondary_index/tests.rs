@@ -228,6 +228,24 @@ type Author {
 }
 
 #[test]
+fn a_same_named_field_on_another_type_is_indexed() {
+    let result = add_indexes(
+        "type Book {
+	author: Author @primary
+}
+
+type Author {
+	published: Book
+}
+
+type Audit {
+	_authorID: Int
+}",
+    );
+    assert_has(&result, "_authorID: Int @index");
+}
+
+#[test]
 fn one_to_many_id_field_is_indexed() {
     let result = add_indexes(
         "type User {
