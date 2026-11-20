@@ -13,8 +13,7 @@ use crate::types::DefraResult;
 /// # Safety
 ///
 /// `peer_addresses` must be null or a valid null-terminated string.
-#[no_mangle]
-pub unsafe extern "C" fn defra_p2p_connect(
+pub unsafe fn defra_p2p_connect(
     node_ptr: usize,
     peer_addresses: *const c_char,
     identity_ptr: usize,
@@ -32,8 +31,7 @@ pub unsafe extern "C" fn defra_p2p_connect(
 /// # Safety
 ///
 /// `peer_addresses` must be null or a valid null-terminated string.
-#[no_mangle]
-pub unsafe extern "C" fn defra_p2p_disconnect(
+pub unsafe fn defra_p2p_disconnect(
     node_ptr: usize,
     peer_addresses: *const c_char,
     identity_ptr: usize,
@@ -49,8 +47,7 @@ pub unsafe extern "C" fn defra_p2p_disconnect(
 /// Answers with the addresses other peers reach this node at, as a JSON
 /// array: each multiaddr with this node's peer ID appended. A node without
 /// P2P answers `null`, as Go's does, rather than an error.
-#[no_mangle]
-pub extern "C" fn defra_p2p_info(node_ptr: usize, identity_ptr: usize) -> DefraResult {
+pub fn defra_p2p_info(node_ptr: usize, identity_ptr: usize) -> DefraResult {
     ffi_entry! {
         match admit(node_ptr, identity_ptr, NodePermission::P2pPeerInfo) {
             Ok(Some(ops)) => json(drive(ops, None, |ops| async move { peer::peer_info(&*ops).await })),
@@ -61,8 +58,7 @@ pub extern "C" fn defra_p2p_info(node_ptr: usize, identity_ptr: usize) -> DefraR
 }
 
 /// Answers with the peers the node is connected to as a JSON array.
-#[no_mangle]
-pub extern "C" fn defra_p2p_peer_list(node_ptr: usize, identity_ptr: usize) -> DefraResult {
+pub fn defra_p2p_peer_list(node_ptr: usize, identity_ptr: usize) -> DefraResult {
     ffi_entry! {
         json(run(node_ptr, identity_ptr, NodePermission::P2pPeerActive, None, |ops| async move {
             peer::active_peers(&*ops).await

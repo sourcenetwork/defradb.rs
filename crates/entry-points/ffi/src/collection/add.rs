@@ -13,8 +13,7 @@ use crate::{ffi_async, ffi_entry, try_ffi};
 /// # Safety
 ///
 /// `sdl` must be null or a valid null-terminated UTF-8 string.
-#[no_mangle]
-pub unsafe extern "C" fn defra_collection_add(
+pub unsafe fn defra_collection_add(
     node_ptr: usize,
     sdl: *const c_char,
     identity_ptr: usize,

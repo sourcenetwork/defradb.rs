@@ -301,6 +301,9 @@ lean_lib CommitConflictReceipt where
 lean_lib NacToggle where
 
 @[default_target]
+lean_lib FfiOptions where
+
+@[default_target]
 lean_lib NacRelationship where
 
 @[default_target]
