@@ -11,6 +11,21 @@ pub struct Item {
     pub value: Vec<u8>,
 }
 
+impl Item {
+    /// The bytes this item adds to its node's encoding: two `u64` lengths, the
+    /// key and the value.
+    pub fn encoded_len(&self) -> usize {
+        16 + self.key.len() + self.value.len()
+    }
+}
+
+/// The encoded item bytes at which an open chunk closes even without a
+/// boundary, so an open chunk holds less than this, or a single item. A
+/// default-target chunk of items near 100 bytes reaches it with odds near
+/// e^-20, so a chunk that closes on a boundary first keeps its hash
+/// (`tests/golden.rs`).
+pub const MAX_CHUNK_BYTES: usize = 64 * 1024;
+
 /// One chunk of one level, stored under its hash.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Node {
@@ -28,11 +43,7 @@ impl Node {
     /// truncated and distinct nodes never share an encoding
     /// (`ProllyTree.encode_injective`).
     pub fn encode(&self) -> Vec<u8> {
-        let size: usize = self
-            .items
-            .iter()
-            .map(|item| 16 + item.key.len() + item.value.len())
-            .sum();
+        let size: usize = self.items.iter().map(Item::encoded_len).sum();
         let mut bytes = Vec::with_capacity(9 + size);
         bytes.push(self.level);
         bytes.extend_from_slice(&(self.items.len() as u64).to_be_bytes());

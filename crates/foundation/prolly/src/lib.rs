@@ -30,6 +30,6 @@ pub use cursor::Entries;
 pub use diff::{diff, Difference};
 pub use error::{Error, Result};
 pub use hash::Hash;
-pub use node::{Item, Node};
+pub use node::{Item, Node, MAX_CHUNK_BYTES};
 pub use store::{MemStore, Store};
 pub use tree::Tree;
