@@ -49,7 +49,28 @@ const ENTRIES: &[(&str, &str, &[&str], &str)] = &[
         SECONDARY_INDEX,
         "TODO(https://github.com/sourcenetwork/defradb.rs/issues/3052): removing the transform leaves the migrated value the reindex wrote.",
     ),
+    (
+        "tests/integration/collection_version/updates/remove/fields/simple_test.go",
+        "TestCollectionVersionUpdatesRemoveField",
+        SECONDARY_INDEX,
+        INDEXED_FIELD_REMOVAL,
+    ),
+    (
+        "tests/integration/collection_version/updates/remove/fields/simple_test.go",
+        "TestCollectionVersionUpdatesRemoveAllFields",
+        SECONDARY_INDEX,
+        INDEXED_FIELD_REMOVAL,
+    ),
+    (
+        "tests/integration/collection_version/updates/replace/field/simple_test.go",
+        "TestCollectionVersionUpdatesReplaceField",
+        SECONDARY_INDEX,
+        INDEXED_FIELD_REMOVAL,
+    ),
 ];
+
+const INDEXED_FIELD_REMOVAL: &str =
+    "Removing an indexed field is refused, as Go refuses it: https://github.com/sourcenetwork/defradb/issues/4722";
 
 const LENS_3044: &str = "TODO(https://github.com/sourcenetwork/defradb.rs/issues/3044): \
                          with indexes, a query after a migration returns unmigrated fields.";
