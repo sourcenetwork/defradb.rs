@@ -23,20 +23,20 @@ and whether the open chunk is empty; that is what keeps edits local.
 
 What this model trusts. The boundary test (`b`) and the chunk hash (`H`) are any
 functions here: in Rust they are SHA-256 of the item's bytes, and a chunk's hash
-is SHA-256 of its encoding (`Node::encode` in `crates/prolly/src/node.rs`).
+is SHA-256 of its encoding (`Node::encode` in `crates/foundation/prolly/src/node.rs`).
 That the encoding is injective is proved at the end (`encode_injective`); that
 SHA-256 then gives each different chunk a different hash is trusted. Keys and
 values are numbers here; in Rust they are bytes, compared the same way.
 
-Rust anchors: `chunk` in `crates/prolly/src/chunk.rs`; `is_boundary` in
-`crates/prolly/src/hash.rs`; `Tree::build` and `raise` in `crates/prolly/src/tree.rs`;
-`rewrite_level` and `splice` in `crates/prolly/src/edit.rs`; `Node::encode` in
-`crates/prolly/src/node.rs`. One level of the edit path is modelled
+Rust anchors: `chunk` in `crates/foundation/prolly/src/chunk.rs`; `is_boundary` in
+`crates/foundation/prolly/src/hash.rs`; `Tree::build` and `raise` in `crates/foundation/prolly/src/tree.rs`;
+`rewrite_level` and `splice` in `crates/foundation/prolly/src/edit.rs`; `Node::encode` in
+`crates/foundation/prolly/src/node.rs`. One level of the edit path is modelled
 (`rewrite_level_refines`, `rewrite_level_up`), with the window given by
 position; Rust finds it by key in a sorted level. Not modelled: walking those
 levels up to the root, and `raise` dropping a root that holds a single child.
 Those, and the edit as a whole, are checked against a fresh build by the
-proptest in `crates/prolly/tests/history.rs`.
+proptest in `crates/foundation/prolly/tests/history.rs`.
 -/
 
 namespace ProllyTree
@@ -545,7 +545,7 @@ theorem insert_insert (b : Entry → Bool) (H : List Entry → Nat) (xs : List E
 ## The edit path: re-cutting only the chunks around an edit
 
 The story, in plain words. `Tree::insert` and `Tree::remove` do not cut a whole
-level again. At one level (`rewrite_level` in `crates/prolly/src/edit.rs`) they
+level again. At one level (`rewrite_level` in `crates/foundation/prolly/src/edit.rs`) they
 take the old chunks: `P` before the edit, a window `W` that holds the edited
 items, and `S` after it. They replace the window's items by new ones `ys`, cut
 `ys` from an empty cutter, and then keep feeding in whole old chunks of `S`, one
@@ -871,7 +871,7 @@ theorem rewrite_level_up (b : Entry → Bool) (H : List Entry → Nat)
 ## The node encoding is injective
 
 The story, in plain words. A node's hash is SHA-256 of its bytes
-(`Node::encode` in `crates/prolly/src/node.rs`): the level byte, the item
+(`Node::encode` in `crates/foundation/prolly/src/node.rs`): the level byte, the item
 count, then each key and each value behind its length, every number written as
 8 big-endian bytes. What must never happen: two different nodes write the same
 bytes, so that they share a hash without a SHA-256 collision. The theorem below

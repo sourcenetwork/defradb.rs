@@ -27,11 +27,11 @@
 \* Rust tests of `diff` check that against a plain comparison of the entries.
 \*
 \* Rust anchors:
-\* * `crates/prolly/src/tree.rs` `Tree::build` and `Tree::root`: the responder
+\* * `crates/foundation/prolly/src/tree.rs` `Tree::build` and `Tree::root`: the responder
 \*   builds the tree of what the puller may read on the fly, so the root it
 \*   sends is never older than its entries (FreshRoot), and holds only those
 \*   documents (Filter). Modeled by `Pull`'s `Shown` and `SentRoot`.
-\* * `crates/prolly/src/diff.rs` `diff`: the documents whose entries differ.
+\* * `crates/foundation/prolly/src/diff.rs` `diff`: the documents whose entries differ.
 \*   Modeled by `Pull`'s `differ`.
 \* * The pull itself is not wired into `crates/p2p` yet (#2977): this model is
 \*   its contract, written before that code, with the fetch rule (FetchChanged)
