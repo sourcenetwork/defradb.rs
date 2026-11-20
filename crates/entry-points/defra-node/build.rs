@@ -1,5 +1,4 @@
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 fn main() {
@@ -88,43 +87,32 @@ fn main() {
     println!("cargo:rustc-env=DEFRA_NODE_RUSTC={}", rustc.trim());
 
     // Rebuild on git branch / index changes so version metadata tracks commits.
-    // Paths come from git, since in a worktree `.git` is a file and the
-    // branch refs live in the common dir. A watched path that does not exist
-    // counts as changed on every build, so only existing paths are emitted.
-    let git_dir = git_path("--git-dir");
-    let common_dir = git_path("--git-common-dir");
-    let mut watched = Vec::new();
-    if let Some(dir) = &git_dir {
-        watched.push(dir.join("HEAD"));
-        watched.push(dir.join("index"));
-        if let Ok(head) = fs::read_to_string(dir.join("HEAD")) {
-            if let (Some(reference), Some(common)) = (head.strip_prefix("ref: "), &common_dir) {
-                // A branch held only in packed-refs gets a loose file when it
-                // next moves, so watch the nearest directory that exists.
-                let loose = common.join(reference.trim());
-                if let Some(existing) = loose.ancestors().find(|path| path.exists()) {
-                    watched.push(existing.to_path_buf());
-                }
-            }
+    // Resolved as in defra-version's build script: `--git-path` finds each
+    // file in a linked worktree, refs/heads is watched as a directory so a
+    // packed branch that moves is seen, and reftable covers that backend.
+    // `index` is watched too, for the dirty flag.
+    for entry in ["HEAD", "index", "refs/heads", "packed-refs", "reftable"] {
+        if let Some(path) = git(&["rev-parse", "--git-path", entry]) {
+            rerun_if_exists(&path);
         }
     }
-    if let Some(common) = &common_dir {
-        watched.push(common.join("packed-refs"));
-    }
-    for path in watched.iter().filter(|path| path.exists()) {
-        println!("cargo:rerun-if-changed={}", path.display());
+    if let Some(dir) = git(&["rev-parse", "--git-common-dir"]) {
+        rerun_if_exists(&format!("{dir}/reftable"));
     }
 }
 
-/// The path git prints for `flag`, made absolute against the crate directory
-/// git ran in. `--path-format=absolute` would need git 2.31, and an older git
-/// echoes an option it does not know and still exits 0.
-fn git_path(flag: &str) -> Option<PathBuf> {
+fn git(args: &[&str]) -> Option<String> {
     Command::new("git")
-        .args(["rev-parse", flag])
+        .args(args)
         .output()
         .ok()
         .filter(|o| o.status.success())
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|path| Path::new(env!("CARGO_MANIFEST_DIR")).join(path.trim()))
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+}
+
+/// A watched path that does not exist counts as changed on every build.
+fn rerun_if_exists(path: &str) {
+    if Path::new(path).exists() {
+        println!("cargo:rerun-if-changed={path}");
+    }
 }
