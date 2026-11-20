@@ -18,7 +18,8 @@ where
     R: TransactionRegistry,
 {
     /// `error`, the failure of an access check, as this request reports it:
-    /// a missing prepared input stays one; a strict request's is
+    /// a missing prepared input, or a failure already reported so, stays as
+    /// it is; a strict request's is
     /// [`QueryError::AccessCheckUnavailable`], retryable when the provider was
     /// unavailable; any other is `otherwise(error)`.
     pub(super) fn access_check_failure(
@@ -27,7 +28,9 @@ where
         otherwise: impl FnOnce(QueryError) -> QueryError,
     ) -> QueryError {
         match error {
-            error @ QueryError::NeedsInput(_) => error,
+            error @ (QueryError::NeedsInput(_) | QueryError::AccessCheckUnavailable { .. }) => {
+                error
+            }
             error if self.context().strict_access_reads() => {
                 tracing::warn!(%error, "Access check failed, failing the strict request");
                 QueryError::AccessCheckUnavailable {

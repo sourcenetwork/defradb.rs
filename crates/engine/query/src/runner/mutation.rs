@@ -66,6 +66,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
             self.retry_inputs.as_ref(),
         )
         .await
+        .map_err(|error| self.access_check_failure(error, |error| error))
     }
 
     /// Execute a GraphQL mutation and return JSON results.

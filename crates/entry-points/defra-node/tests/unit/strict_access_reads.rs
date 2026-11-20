@@ -186,3 +186,21 @@ fn a_strict_request_whose_prepared_access_input_cannot_be_answered_fails_classif
     })
     .unwrap();
 }
+
+#[test]
+fn a_strict_top_level_aggregate_fails_classified() {
+    workers::block_on(async {
+        let _serial = super::tests::SIGNING_STORE_GUARD.lock().await;
+        let remote = Remote::new();
+        let node = node(&remote).await;
+        created(node.execute_request(create("seen")).await);
+        let hidden = created(node.execute_request(create("unchecked")).await);
+        remote.unchecked.insert(hidden.clone(), ());
+        let response = node
+            .execute_request(strict("{ COUNT(Record: {}) }", OWNER))
+            .await;
+        assert!(unavailable(&response, &hidden), "{:?}", response.errors);
+        node.shutdown().await.unwrap();
+    })
+    .unwrap();
+}
