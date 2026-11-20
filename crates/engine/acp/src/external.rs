@@ -247,7 +247,6 @@ where
         }
     }
 
-    /// Refuse `actor` the authority an owed delete takes from it.
     /// Wait until nothing is owed on `tuple`, woken whenever a record of
     /// something owed is written or deleted, until `deadline`. A change at
     /// rest (refused, or waiting for authority) will not settle by itself,
@@ -270,7 +269,9 @@ where
                 Some(true) => return Err(unsettled_relationship()),
                 Some(false) => {}
             }
-            self.wake.notify_one();
+            // The drainer is not woken from here: a commit already woke it,
+            // and waking it again would cut its back-off and spend the
+            // change's tries while the provider fails.
             if before(deadline.as_mut(), std::pin::pin!(changed))
                 .await
                 .is_none()
@@ -280,6 +281,35 @@ where
         }
     }
 
+    /// The provider's answer to `observation`, refused alike when `requester`
+    /// may not manage the relation or an owed revocation takes that away.
+    async fn observe_as_manager(
+        &self,
+        observation: crate::ActorRelationshipObservation<'_>,
+        requester: &Did,
+    ) -> Result<bool> {
+        let refused = || Error::NotManager {
+            operation: "observe relationship".into(),
+        };
+        let present = match self.provider.observe_actor_relationship(observation).await {
+            Err(Error::NotOwner { .. } | Error::NotManager { .. }) => return Err(refused()),
+            other => other?,
+        };
+        if self
+            .revoked(
+                &Identity::Authenticated(requester.clone()),
+                observation.policy,
+                observation.resource,
+                observation.document,
+            )
+            .await?
+        {
+            return Err(refused());
+        }
+        Ok(present)
+    }
+
+    /// Refuse `actor` the authority an owed delete takes from it.
     async fn refuse_revoked(
         &self,
         actor: &Did,
@@ -703,23 +733,12 @@ where
             let Some(settling) =
                 before(deadline.as_mut(), std::pin::pin!(self.settling.lock())).await
             else {
+                // Out of patience before the lock came free: authority still
+                // decides first, and the answer itself is not used.
+                self.observe_as_manager(observation, &requester).await?;
                 return Err(unsettled_relationship());
             };
-            let present = match self.provider.observe_actor_relationship(observation).await {
-                Err(Error::NotOwner { .. } | Error::NotManager { .. }) => return Err(refused()),
-                other => other?,
-            };
-            if self
-                .revoked(
-                    &Identity::Authenticated(requester.clone()),
-                    observation.policy,
-                    observation.resource,
-                    observation.document,
-                )
-                .await?
-            {
-                return Err(refused());
-            }
+            let present = self.observe_as_manager(observation, &requester).await?;
             let transaction = self.store.new_txn(true).await.map_err(storage_error)?;
             let rest = crate::outbox::tuple_rest(&transaction, &tuple).await?;
             drop(transaction);
