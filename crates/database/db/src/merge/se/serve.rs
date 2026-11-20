@@ -123,8 +123,10 @@ async fn build_reply<S: Store>(
         .await
         .map_err(|e| format!("SE artifact lookup failed: {e}"));
     // A read-only transaction has nothing to keep; discarding it cannot lose
-    // a write.
-    let _ = txn.discard();
+    // a write, so a failure is only traced.
+    if let Err(error) = txn.discard() {
+        tracing::warn!(%error, "failed to discard a read-only transaction");
+    }
     let doc_ids = doc_ids?;
 
     tracing::debug!(
