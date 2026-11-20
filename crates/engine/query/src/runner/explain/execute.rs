@@ -277,6 +277,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 .with_fetcher(Arc::new(fetcher_arc))
                 .with_acp(self.acp.clone(), caller_identity.clone())
                 .with_dac_bypass(self.context().dac_bypass())
+                .with_strict_access(self.context().strict_access_reads())
                 .with_read_validator(self.read_validator.clone())
                 .with_acp_registration_projection(self.acp_registration_projection.clone())
                 .with_retry_inputs(self.retry_inputs.clone())
@@ -304,6 +305,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                             acp: self.acp.clone(),
                             identity: Identity::from(caller_identity),
                             dac_bypass: self.context().dac_bypass(),
+                            strict: self.context().strict_access_reads(),
                             policy_id: policy.id.clone(),
                             resource_name: policy.resource_name.clone(),
                         }),
@@ -373,6 +375,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 acp: self.acp.clone(),
                 identity: Identity::from(caller_identity),
                 dac_bypass: self.context().dac_bypass(),
+                strict: self.context().strict_access_reads(),
                 policy_id: policy.id.clone(),
                 resource_name: policy.resource_name.clone(),
                 retry_inputs: self.retry_inputs.clone(),

@@ -155,7 +155,10 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         prepared: Option<std::sync::Arc<crate::prepared::PreparedMutations>>,
         input: &crate::prepared::PreparedInputRequest,
     ) -> Result<Option<std::sync::Arc<crate::prepared::PreparedMutations>>> {
+        // Inputs are fetched as the identity acting in the request, the one
+        // its attempts act as.
         let runner = self.for_query(request);
+        let runner = runner.for_caller(runner.resolve_identity(request.identity.clone()).as_ref());
         let Some(prepared) = prepared else {
             return Err(crate::error::QueryError::execution(
                 "retry input has no request preparation capsule",
@@ -163,7 +166,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         };
         prepared
             .inputs
-            .answer_wave(input, |wave| runner.resolve_wave(wave))
+            .answer_wave(input, |wave| runner.resolve_wave(&prepared.inputs, wave))
             .await?;
         Ok(Some(prepared))
     }
@@ -429,8 +432,11 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         &self,
         context: &RequestContext,
         policy: &str,
+        nonce: Option<acp::PolicyNonce>,
     ) -> std::result::Result<String, TransactionError> {
-        self.registry.add_dac_policy_as(context, policy).await
+        self.registry
+            .add_dac_policy_as(context, policy, nonce)
+            .await
     }
 
     async fn list_dac_policies_as(
@@ -801,6 +807,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
     /// in the context of the request this runner serves.
     pub(super) async fn resolve_wave(
         &self,
+        inputs: &crate::prepared::PreparedInputMemo,
         wave: Vec<crate::prepared::PreparedInputRequest>,
     ) -> Result<Vec<std::sync::Arc<[u8]>>> {
         let (own, delegated): (Vec<_>, Vec<_>) =
@@ -835,6 +842,9 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             let mutator = self.mutator.as_ref().ok_or_else(|| {
                 crate::error::QueryError::execution("retry input has no document mutator")
             })?;
+            let mutator = mutator
+                .with_prepared_inputs(inputs.clone())
+                .unwrap_or_else(|| mutator.clone());
             mutator
                 .resolve_prepared_inputs_as(
                     &self.context(),
@@ -936,13 +946,13 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 let registered = acp
                     .is_doc_registered(field(2)?, field(3)?, field(4)?)
                     .await
-                    .map_err(|error| crate::error::QueryError::execution(error.to_string()))?;
+                    .map_err(crate::error::QueryError::from_acp)?;
                 serde_json::to_vec(&registered)
             } else if field(1)? == "owner" {
                 let owner = acp
                     .get_doc_owner(field(2)?, field(3)?, field(4)?)
                     .await
-                    .map_err(|error| crate::error::QueryError::execution(error.to_string()))?;
+                    .map_err(crate::error::QueryError::from_acp)?;
                 serde_json::to_vec(&owner)
             } else if field(4)? == "writer" {
                 let decision = acp
@@ -974,13 +984,25 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 let allowed = acp
                     .check_doc_access(&acp_identity, permission, field(2)?, field(3)?, field(4)?)
                     .await
-                    .map_err(|error| crate::error::QueryError::execution(error.to_string()))?;
+                    .map_err(crate::error::QueryError::from_acp)?;
                 serde_json::to_vec(&allowed)
             }
             .map_err(|error| crate::error::QueryError::execution(error.to_string()))?;
             Ok::<_, crate::error::QueryError>(response)
         })
-        .await?;
+        .await
+        .map_err(|error| match error {
+            // A refused create is the provider's answer, not a missing one.
+            error @ crate::error::QueryError::PermissionDenied(_) => error,
+            // A strict request names nothing about the document it could not
+            // check; any other keeps the provider's words, as before.
+            error => self.access_check_failure(error, |error| match error {
+                crate::error::QueryError::AcpProviderUnavailable(message) => {
+                    crate::error::QueryError::Execution(message)
+                }
+                other => other,
+            }),
+        })?;
         Ok(std::sync::Arc::from(response))
     }
 }

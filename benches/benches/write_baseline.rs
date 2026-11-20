@@ -4,7 +4,8 @@
 //! `cargo bench -p benches --bench write_baseline --profile release-fast`
 //! runs 1, 4, 16 and 64 writers, 256 requests each, three times. Override with
 //! DEFRA_BASELINE_WRITERS (comma-separated), DEFRA_BASELINE_OPERATIONS and
-//! DEFRA_BASELINE_REPETITIONS. Raw samples and provenance go to stdout as JSON
+//! DEFRA_BASELINE_REPETITIONS; DEFRA_BASELINE_PROJECTOR=empty installs a document
+//! projector that changes nothing. Raw samples and provenance go to stdout as JSON
 //! lines; dashboard families use DEFRA_BENCH_OUT through the existing emitter.
 
 use defra_perf::emit::{Family, Group, Row, Trust};

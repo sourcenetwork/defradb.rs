@@ -83,9 +83,9 @@ const LIVE_DELETE: &[u8] = &[1];
 
 /// What is unsettled on one tuple, from its live sequences: the first and
 /// last are its oldest and latest, and how many there are, and how many of
-/// them are deletes, are its counts. Only settling passes and reports ask,
-/// in transactions of their own.
-pub(super) async fn tuple_state<R>(reader: &R, tuple: &OwedTuple) -> Result<Option<OwedTupleState>>
+/// them are deletes, are its counts. Only settling passes, reports and exact
+/// relationship observations ask, in transactions of their own.
+pub(crate) async fn tuple_state<R>(reader: &R, tuple: &OwedTuple) -> Result<Option<OwedTupleState>>
 where
     R: Reader + ?Sized,
 {
@@ -122,6 +122,103 @@ where
         });
     }
     Ok(state)
+}
+
+/// The sequence of the latest change ever staged on `tuple`, which settling
+/// leaves in place: what an answer about the tuple must postdate. Read as a
+/// whole value, so a change staged on the tuple that commits first aborts the
+/// decision resting on it.
+pub async fn tuple_head<R>(reader: &R, tuple: &OwedTuple) -> Result<Option<u64>>
+where
+    R: Reader + ?Sized,
+{
+    let Some(bytes) = reader
+        .get(&keys::head_key(tuple))
+        .await
+        .map_err(storage_error)?
+    else {
+        return Ok(None);
+    };
+    <[u8; 8]>::try_from(bytes.as_ref())
+        .map(|seq| Some(u64::from_be_bytes(seq)))
+        .map_err(|_| Error::Serialization("owed ACP head is malformed".into()))
+}
+
+/// Whether `tuple` owes a change, and whether the oldest one it owes is at
+/// rest (refused, or waiting for authority): one that will not settle by
+/// itself. `None` when nothing is owed on it.
+pub(crate) async fn tuple_rest<R>(reader: &R, tuple: &OwedTuple) -> Result<Option<bool>>
+where
+    R: Reader + ?Sized,
+{
+    let Some(state) = tuple_state(reader, tuple).await? else {
+        return Ok(None);
+    };
+    let oldest = change(reader, state.oldest)
+        .await?
+        .ok_or_else(|| inconsistent("record", state.oldest))?;
+    Ok(Some(!matches!(oldest.state, OwedState::Staged)))
+}
+
+/// Whether `tuple` has a change owed to the provider that this transaction
+/// sees: one it staged itself, or one committed before it and not settled.
+/// The scan is validated, so a change on the tuple that commits first aborts
+/// the decision resting on it, and the re-run decides again.
+pub async fn tuple_unsettled_in<R>(reader: &R, tuple: &OwedTuple) -> Result<bool>
+where
+    R: Reader + ?Sized,
+{
+    let mut iter = reader
+        .iterator(
+            IterOptions::new()
+                .with_prefix(keys::live_prefix(tuple))
+                .with_validation(true),
+        )
+        .await
+        .map_err(storage_error)?;
+    Ok(iter.next().await.map_err(storage_error)?.is_some())
+}
+
+/// The deletes owed on one object as this transaction sees them, each its
+/// tuple: from the object's live keys, whose last eight bytes are the
+/// change's sequence, and the change's record.
+pub(super) async fn owed_deletes_on<R>(
+    reader: &R,
+    policy_id: &str,
+    resource: &str,
+    object: &str,
+) -> Result<Vec<OwedTuple>>
+where
+    R: Reader + ?Sized,
+{
+    let prefix = keys::object_live_prefix(policy_id, resource, object);
+    let mut iter = reader
+        .iterator(IterOptions::new().with_prefix(prefix))
+        .await
+        .map_err(storage_error)?;
+    let mut seqs = Vec::new();
+    while let Some(entry) = iter.next().await.map_err(storage_error)? {
+        if entry.value.as_ref() != LIVE_DELETE {
+            continue;
+        }
+        let seq = entry
+            .key
+            .len()
+            .checked_sub(8)
+            .and_then(|at| <[u8; 8]>::try_from(&entry.key[at..]).ok())
+            .map(u64::from_be_bytes)
+            .ok_or_else(|| Error::Serialization("owed ACP live key is malformed".into()))?;
+        seqs.push(seq);
+    }
+    drop(iter);
+    let mut deletes = Vec::with_capacity(seqs.len());
+    for seq in seqs {
+        let change = change(reader, seq)
+            .await?
+            .ok_or_else(|| inconsistent("record", seq))?;
+        deletes.push(change.tuple);
+    }
+    Ok(deletes)
 }
 
 /// How many changes are unsettled on one object: its tuples' live

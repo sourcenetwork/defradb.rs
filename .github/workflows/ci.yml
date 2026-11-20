@@ -541,6 +541,10 @@ jobs:
         run: cargo test -p defra-node --lib owner_observation_tests
       - name: Check collection head set model binding
         run: cargo test -p db --test block head_conformance::head_queries_match_executable_lean -- --exact
+      - name: Check projection scope model binding
+        run: cargo test -p acp --test projection_scope -- --ignored
+      - name: Check genesis read access model binding
+        run: cargo test -p db --test merge genesis_access::genesis_reader_matches_executed_lean_model -- --exact --ignored
       - name: Check Lean-to-Rust conformance
         run: cargo nextest run -p conformance --lib --test lean_conformance
 

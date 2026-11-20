@@ -9,6 +9,16 @@ pub struct ProviderPolicyInfo {
     pub raw_policy: Option<String>,
 }
 
+#[derive(Clone, Copy)]
+pub struct ActorRelationshipQuery<'a> {
+    pub requester: &'a str,
+    pub policy: &'a str,
+    pub resource: &'a str,
+    pub object: &'a str,
+    pub relation: &'a str,
+    pub actor: &'a str,
+}
+
 #[derive(Debug, Clone)]
 pub struct AcpLightClientStatus {
     pub height: u64,
@@ -42,6 +52,13 @@ pub enum ProviderError {
     #[error("unsupported operation: {0}")]
     Unsupported(String),
 
+    #[error("relationship observation is not authorized")]
+    RelationshipObservationDenied,
+    /// Two proofs of one observation were read at different certified
+    /// roots: a block finalized between them. Nothing failed; asked again,
+    /// the observation is answered at one root.
+    #[error("{0} and policy proofs have different roots")]
+    ProofsOvertaken(&'static str),
     /// A delegation does not hold at the provider's time; one issued at
     /// that time is taken.
     #[error("delegation refused: {0}")]
@@ -202,7 +219,16 @@ pub trait VeraProvider: MaybeSendSync {
         ))
     }
 
-    async fn create_policy(&self, policy_yaml: &str) -> Result<String, ProviderError>;
+    /// Create the YAML policy as the provider's actor and return its ID.
+    /// vera.rs derives the ID from the definition, the actor and `nonce`,
+    /// drawing a random nonce when none is given; sent again with the same
+    /// nonce it returns the policy already made and makes no second one.
+    /// A provider whose ACP assigns its own IDs refuses a nonce.
+    async fn create_policy(
+        &self,
+        policy_yaml: &str,
+        nonce: Option<acp::PolicyNonce>,
+    ) -> Result<String, ProviderError>;
 
     async fn register_object(
         &self,
@@ -380,6 +406,15 @@ pub trait VeraProvider: MaybeSendSync {
         resource: &str,
         object_id: &str,
     ) -> Result<(bool, String), ProviderError>;
+
+    async fn query_actor_relationship(
+        &self,
+        _query: ActorRelationshipQuery<'_>,
+    ) -> Result<bool, ProviderError> {
+        Err(ProviderError::Unsupported(
+            "verified exact actor relationship observation".into(),
+        ))
+    }
 
     async fn verify_access(
         &self,

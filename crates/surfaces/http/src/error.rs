@@ -330,7 +330,9 @@ impl From<TransactionError> for HttpError {
             }
             TransactionError::Storage(_) => HttpError::Internal(message),
             TransactionError::Conflict(_) => HttpError::TransactionConflict,
-            TransactionError::LockPoisoned(_) => HttpError::Internal(message),
+            TransactionError::LockPoisoned(_) | TransactionError::NeedsInput(_) => {
+                HttpError::Internal(message)
+            }
             TransactionError::NotSupported(_) => HttpError::BadRequest(message),
         }
     }

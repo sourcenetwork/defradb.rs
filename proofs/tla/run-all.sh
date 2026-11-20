@@ -350,6 +350,15 @@ RUNS=(
   "MC_OwnerObservation_Red_RegistrationSnapshot.cfg OwnerObservation.tla RED"
   "MC_OwnerObservation_Red_Visibility.cfg OwnerObservation.tla RED"
   "MC_OwnerObservation_Red_VisibilitySnapshot.cfg OwnerObservation.tla RED"
+  "MC_StrictAccessRead_Green.cfg StrictAccessRead.tla GREEN"
+  "MC_StrictAccessRead_Red_Partial.cfg StrictAccessRead.tla RED"
+  "MC_StrictAccessRead_Red_DenialErrors.cfg StrictAccessRead.tla RED"
+  "MC_StrictAccessRead_Red_NoWait.cfg StrictAccessRead.tla RED"
+  "MC_StrictAccessRead_Red_Reveal.cfg StrictAccessRead.tla RED"
+  "MC_StrictAccessRead_Red_NamesRow.cfg StrictAccessRead.tla RED"
+  "MC_StrictAccessRead_Red_TxnBroken.cfg StrictAccessRead.tla RED"
+  "MC_StrictAccessRead_Red_PublishEarly.cfg StrictAccessRead.tla RED"
+  "MC_StrictAccessRead_Red_DefaultPartialWitness.cfg StrictAccessRead.tla RED"
   "MC_RemoteOwnerObservation_Green.cfg RemoteOwnerObservation.tla GREEN"
   "MC_RemoteOwnerObservation_Red_NoConfirm.cfg RemoteOwnerObservation.tla RED"
   "MC_RemoteOwnerObservation_Red_OwedIgnored.cfg RemoteOwnerObservation.tla RED"
@@ -535,6 +544,13 @@ RUNS=(
   "MC_DacPolicyAdd_Red_Valid.cfg DacPolicyAdd.tla RED" # policy not checked before the store or the remote create (INV_NoInvalidPolicy)
   "MC_DacPolicyAdd_Red_Mirror.cfg DacPolicyAdd.tla RED" # remote policy not kept locally, as the node's Vera path did (INV_ReturnedIsKeptLocally)
   "MC_DacPolicyAdd_Red_Order.cfg DacPolicyAdd.tla RED" # creator checked before ACP, as the HTTP handler did (INV_GoOrder)
+  "MC_DacPolicyAdd_Red_Seed.cfg DacPolicyAdd.tla RED" # a counter on vera.rs or a nonce on local ACP ignored: the ID is made another way (INV_SeedHonoured)
+  "MC_VeraPolicyCreate_Green.cfg VeraPolicyCreate.tla GREEN" # a vera.rs policy create keeps its nonce across sends and adopts its own policy on "already exists"
+  "MC_VeraPolicyCreate_Red_Reuse.cfg VeraPolicyCreate.tla RED" # every send draws a new nonce: a lost answer leaves two policies (INV_OneRequestOnePolicy)
+  "MC_VeraPolicyCreate_Red_Adopt.cfg VeraPolicyCreate.tla RED" # "already exists" taken as a failure: a lost answer fails the request (INV_NoRefusalOfOwn)
+  "MC_VeraPolicyCreate_Red_Check.cfg VeraPolicyCreate.tla RED" # any policy under the id adopted: an edited one is handed back (INV_ReturnedIsOwn)
+  "MC_VeraPolicyCreate_Red_Creator.cfg VeraPolicyCreate.tla RED" # the creator left out of the id: another creator's policy blocks the request (INV_NoForeignBlock)
+  "MC_VeraPolicyCreate_Red_Caller.cfg VeraPolicyCreate.tla RED" # a nonce taken from a caller that is not the node's actor: its id comes from the actor's DID (INV_SuppliedIdIsCallers)
   "MC_AddViewTransform_Green.cfg AddViewTransform.tla GREEN" # #2724: target design, NAC and the lens config both decided in the view's transaction; the accepted CID is stored as asked
   "MC_AddViewTransform_Red_NoEmpty.cfg AddViewTransform.tla RED" # empty-CID check left out (INV_NoEmptyTransform)
   "MC_AddViewTransform_Red_NoLens.cfg AddViewTransform.tla RED" # lens check left out (INV_StoredTransformExists)
@@ -771,6 +787,62 @@ RUNS=(
   "MC_AdministrativeRelationship_Red_Revocation.cfg AdministrativeRelationship.tla RED" # INV_Revocation
   "MC_AdministrativeRelationship_Red_Rollback.cfg AdministrativeRelationship.tla RED" # INV_Rollback
   "MC_AdministrativeRelationship_Red_Route.cfg AdministrativeRelationship.tla RED" # INV_EmbedderRoute
+  "MC_GenesisReadAccess_Green.cfg GenesisReadAccess.tla GREEN" # a signed genesis grants its opted-in reader once, at the first registration
+  "MC_GenesisReadAccess_Red_Replay.cfg GenesisReadAccess.tla RED" # INV_RevocationStands
+  "MC_GenesisReadAccess_Red_Address.cfg GenesisReadAccess.tla RED" # INV_OptedIn
+  "MC_GenesisReadAccess_Red_Unsigned.cfg GenesisReadAccess.tla RED" # INV_SignedOnly
+  "MC_GenesisReadAccess_Red_Config.cfg GenesisReadAccess.tla RED" # INV_OptedIn
+  "MC_ProjectionNoEscalation_Green.cfg ProjectionNoEscalation.tla GREEN" # a projection grants only what its requester could grant directly
+  "MC_ProjectionNoEscalation_Red_Nac.cfg ProjectionNoEscalation.tla RED" # INV_NoEscalation
+  "MC_ProjectionNoEscalation_Red_Authority.cfg ProjectionNoEscalation.tla RED" # INV_NoEscalation
+  "MC_ProjectionNoEscalation_Red_Owner.cfg ProjectionNoEscalation.tla RED" # INV_NoOwner
+  "MC_ObservationSettlement_Green.cfg ObservationSettlement.tla GREEN" # an observation holds the settling lock from the provider's answer to its check
+  "MC_ObservationSettlement_Red_Unlocked.cfg ObservationSettlement.tla RED" # INV_NoStaleHeld
+  "MC_OwedStagingAuthority_Green.cfg OwedStagingAuthority.tla GREEN" # only an actor whose authority an owed revocation takes away is refused
+  "MC_OwedStagingAuthority_Red_Wide.cfg OwedStagingAuthority.tla RED" # INV_NoOverWideDenial
+  "MC_OwedStagingAuthority_Red_Self.cfg OwedStagingAuthority.tla RED" # INV_RevokedAuthorityDenies
+  "MC_OwedStagingAuthority_Red_NoOwner.cfg OwedStagingAuthority.tla RED" # INV_NoOverWideDenial
+  "MC_SettleBeforeObserving_Green.cfg SettleBeforeObserving.tla GREEN" # an observation waits, within one deadline, for its owed change to settle
+  "MC_SettleBeforeObserving_Green_Silent.cfg SettleBeforeObserving.tla GREEN" # with no notification the deadline alone ends the wait
+  "MC_SettleBeforeObserving_Red_NoWait.cfg SettleBeforeObserving.tla RED" # INV_NotOlderThanOwed
+  "MC_SettleBeforeObserving_Red_EarlierOnly.cfg SettleBeforeObserving.tla RED" # INV_HoldsLatest
+  "MC_SettleBeforeObserving_Red_WakeFirst.cfg SettleBeforeObserving.tla RED" # INV_EndsInTime
+  "MC_SettleBeforeObserving_Red_LockUnbounded.cfg SettleBeforeObserving.tla RED" # INV_EndsInTime
+  "MC_SettleBeforeObserving_Red_NoExpiry.cfg SettleBeforeObserving.tla RED" # INV_EndsInTime
+  "MC_SettleBeforeObserving_Red_NoExpiry_Silent.cfg SettleBeforeObserving.tla RED" # INV_EndsInTime
+  "MC_SettleBeforeObserving_Red_WakeDrainer.cfg SettleBeforeObserving.tla RED" # INV_BackoffHeld
+  "MC_SettleBeforeObserving_Red_NoHead.cfg SettleBeforeObserving.tla RED" # INV_ReuseHoldsLatest
+  "MC_ProjectionRelationship_Green.cfg ProjectionRelationship.tla GREEN"
+  "MC_ExactRelationshipObservation_Green.cfg ExactRelationshipObservation.tla GREEN"
+  "MC_ExactRelationshipObservation_Red.cfg ExactRelationshipObservation.tla RED"
+  "MC_ExactRelationshipObservation_Green_Exhausted.cfg ExactRelationshipObservation.tla GREEN" # refused only once every ask was overtaken
+  "MC_ExactRelationshipObservation_Red_NoRetry.cfg ExactRelationshipObservation.tla RED" # INV_FailsOnlyWhenEveryAskOvertaken
+  "MC_ProjectionActor_Green.cfg ProjectionActor.tla GREEN"
+  "MC_ProjectionActor_Red.cfg ProjectionActor.tla RED"
+  "MC_ProjectionRelationship_Green_context.cfg ProjectionRelationship.tla GREEN"
+  "MC_ProjectionRelationship_Red_context.cfg ProjectionRelationship.tla RED"
+  "MC_ProjectionRelationship_Green_actor.cfg ProjectionRelationship.tla GREEN"
+  "MC_ProjectionRelationship_Red_actor.cfg ProjectionRelationship.tla RED"
+  "MC_ProjectionRelationship_Green_active.cfg ProjectionRelationship.tla GREEN"
+  "MC_ProjectionRelationship_Red_active.cfg ProjectionRelationship.tla RED"
+  "MC_ProjectionRelationship_Green_nacBound.cfg ProjectionRelationship.tla GREEN"
+  "MC_ProjectionRelationship_Red_nacBound.cfg ProjectionRelationship.tla RED"
+  "MC_ProjectionRelationship_Green_operation.cfg ProjectionRelationship.tla GREEN"
+  "MC_ProjectionRelationship_Red_operation.cfg ProjectionRelationship.tla RED"
+  "MC_ProjectionRelationship_Green_dacBound.cfg ProjectionRelationship.tla GREEN"
+  "MC_ProjectionRelationship_Red_dacBound.cfg ProjectionRelationship.tla RED"
+  "MC_ProjectionRelationship_Green_dacAllowed.cfg ProjectionRelationship.tla GREEN"
+  "MC_ProjectionRelationship_Red_dacAllowed.cfg ProjectionRelationship.tla RED"
+  "MC_ProjectionRelationship_Green_document.cfg ProjectionRelationship.tla GREEN"
+  "MC_ProjectionRelationship_Red_document.cfg ProjectionRelationship.tla RED"
+  "MC_ProjectionRelationship_Green_scope.cfg ProjectionRelationship.tla GREEN"
+  "MC_ProjectionRelationship_Red_scope.cfg ProjectionRelationship.tla RED"
+  "MC_ProjectionRelationship_Green_registered.cfg ProjectionRelationship.tla GREEN"
+  "MC_ProjectionRelationship_Red_registered.cfg ProjectionRelationship.tla RED"
+  "MC_ProjectionRelationship_Green_relation.cfg ProjectionRelationship.tla GREEN"
+  "MC_ProjectionRelationship_Red_relation.cfg ProjectionRelationship.tla RED"
+  "MC_ProjectionRelationship_Green_revoke.cfg ProjectionRelationship.tla GREEN"
+  "MC_ProjectionRelationship_Red_revoke.cfg ProjectionRelationship.tla RED"
   "MC_TransactionalRelationship_Green.cfg TransactionalRelationship.tla GREEN" # a grant and marker share the authorized transaction
   "MC_DelegatedRelationship_Green.cfg DelegatedRelationship.tla GREEN" # the embedder owns the transaction and the selected actor passes NAC and DAC
   "MC_DelegatedRelationship_Red_Http.cfg DelegatedRelationship.tla RED" # an HTTP caller reaches the privileged embedding boundary (INV_ActorAuthority)

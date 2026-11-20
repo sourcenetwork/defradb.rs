@@ -47,6 +47,9 @@ use crate::outbox::{OwedChanges, StagedCount, TransactionOutbox};
 use crate::pending::{pending_key, PendingRegistration, PENDING_PREFIX};
 use crate::permission::DocumentPermission;
 
+#[cfg(test)]
+#[path = "external/deadline_tests.rs"]
+mod deadline_tests;
 mod drain;
 mod owed;
 mod registration;
@@ -68,6 +71,35 @@ pub struct RedriveReport {
     pub settled: u64,
     /// Registrations still owed: the provider refused or could not be reached.
     pub failed: u64,
+}
+
+/// How long an observation waits at the edge for an owed change of its tuple
+/// to settle before it refuses: the drainer settles a change moments after
+/// its commit, while the provider can be reached.
+pub const OBSERVATION_PATIENCE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// `future`'s output, unless `deadline` has passed first. The deadline is
+/// polled first on every turn, so a future that is always ready, such as a
+/// stream of notifications, cannot keep a wait going past it.
+async fn before<F>(
+    mut deadline: std::pin::Pin<&mut workers::Delay>,
+    mut future: std::pin::Pin<&mut F>,
+) -> Option<F::Output>
+where
+    F: std::future::Future,
+{
+    std::future::poll_fn(|cx| {
+        if std::future::Future::poll(deadline.as_mut(), cx).is_ready() {
+            return std::task::Poll::Ready(None);
+        }
+        std::future::Future::poll(future.as_mut(), cx).map(Some)
+    })
+    .await
+}
+
+/// The refusal of an observation whose tuple still owes a change.
+fn unsettled_relationship() -> Error {
+    Error::ProviderUnavailable("relationship change is unsettled".into())
 }
 
 /// An external (non-transactional) provider gated by the owed registrations
@@ -213,6 +245,68 @@ where
                 Ok(owner != Some(self.provider.canonical_actor(actor)))
             }
         }
+    }
+
+    /// Wait until nothing is owed on `tuple`, woken whenever a record of
+    /// something owed is written or deleted, until `deadline`. A change at
+    /// rest (refused, or waiting for authority) will not settle by itself,
+    /// and neither does one the deadline outlasts: both refuse as unsettled.
+    async fn await_tuple(
+        &self,
+        tuple: &crate::outbox::OwedTuple,
+        mut deadline: std::pin::Pin<&mut workers::Delay>,
+    ) -> Result<()> {
+        loop {
+            // Asked for before the read: a `Notified` records the count of
+            // notifications when it is made, so a record that changes after
+            // it, even before its first poll, makes that poll ready.
+            let changed = self.changed.notified();
+            let transaction = self.store.new_txn(true).await.map_err(storage_error)?;
+            let rest = crate::outbox::tuple_rest(&transaction, tuple).await?;
+            drop(transaction);
+            match rest {
+                None => return Ok(()),
+                Some(true) => return Err(unsettled_relationship()),
+                Some(false) => {}
+            }
+            // The drainer is not woken from here: a commit already woke it,
+            // and waking it again would cut its back-off and spend the
+            // change's tries while the provider fails.
+            if before(deadline.as_mut(), std::pin::pin!(changed))
+                .await
+                .is_none()
+            {
+                return Err(unsettled_relationship());
+            }
+        }
+    }
+
+    /// The provider's answer to `observation`, refused alike when `requester`
+    /// may not manage the relation or an owed revocation takes that away.
+    async fn observe_as_manager(
+        &self,
+        observation: crate::ActorRelationshipObservation<'_>,
+        requester: &Did,
+    ) -> Result<bool> {
+        let refused = || Error::NotManager {
+            operation: "observe relationship".into(),
+        };
+        let present = match self.provider.observe_actor_relationship(observation).await {
+            Err(Error::NotOwner { .. } | Error::NotManager { .. }) => return Err(refused()),
+            other => other?,
+        };
+        if self
+            .revoked(
+                &Identity::Authenticated(requester.clone()),
+                observation.policy,
+                observation.resource,
+                observation.document,
+            )
+            .await?
+        {
+            return Err(refused());
+        }
+        Ok(present)
     }
 
     /// Refuse `actor` the authority an owed delete takes from it.
@@ -368,6 +462,10 @@ where
             Arc::new(self.store.clone()),
             staged,
         ))
+    }
+
+    fn outbox_authority_provider(&self) -> Option<Arc<dyn DocumentACP>> {
+        Some(Arc::clone(&self.provider))
     }
 
     fn canonical_actor(&self, did: &Did) -> Did {
@@ -581,6 +679,80 @@ where
         self.provider
             .check_doc_access(identity, permission, policy_id, resource_name, doc_id)
             .await
+    }
+
+    async fn observe_actor_relationship(
+        &self,
+        observation: crate::ActorRelationshipObservation<'_>,
+    ) -> Result<bool> {
+        // Authority comes first: a caller who may not manage the relation gets
+        // the one refusal whatever is owed on the document.
+        let refused = || Error::NotManager {
+            operation: "observe relationship".into(),
+        };
+        let requester = self.provider.canonical_actor(observation.requester);
+        if let Some(pending) = self
+            .owed(
+                observation.policy,
+                observation.resource,
+                observation.document,
+            )
+            .await?
+        {
+            // Until the provider holds the registration, its creator is the
+            // only authority on the document.
+            return Err(
+                if self.provider.canonical_actor(&pending.creator) == requester {
+                    Error::ProviderUnavailable("document registration is unsettled".into())
+                } else {
+                    refused()
+                },
+            );
+        }
+        let tuple = crate::outbox::OwedTuple {
+            policy_id: observation.policy.to_owned(),
+            resource: observation.resource.to_owned(),
+            object: observation.document.to_owned(),
+            relation: observation.relation.to_owned(),
+            subject: crate::outbox::OwedSubject::Actor {
+                did: self.provider.canonical_actor(observation.target),
+            },
+        };
+        // One deadline for the whole observation: every wait it makes, for
+        // a notification or for the settling lock, ends with it.
+        let mut deadline = Box::pin(
+            workers::delay(OBSERVATION_PATIENCE)
+                .map_err(|error| Error::Storage(error.to_string()))?,
+        );
+        loop {
+            // A settlement pass holds this lock while it sends what is owed
+            // and clears its records: held from the provider's answer to the
+            // check below, an owed change of the tuple cannot be settled in
+            // between and so cannot hide that the answer predates it
+            // (`proofs/tla/ObservationSettlement.tla`).
+            let Some(settling) =
+                before(deadline.as_mut(), std::pin::pin!(self.settling.lock())).await
+            else {
+                // Out of patience before the lock came free: authority still
+                // decides first, and the answer itself is not used.
+                self.observe_as_manager(observation, &requester).await?;
+                return Err(unsettled_relationship());
+            };
+            let present = self.observe_as_manager(observation, &requester).await?;
+            let transaction = self.store.new_txn(true).await.map_err(storage_error)?;
+            let rest = crate::outbox::tuple_rest(&transaction, &tuple).await?;
+            drop(transaction);
+            match rest {
+                None => return Ok(present),
+                Some(true) => return Err(unsettled_relationship()),
+                Some(false) => {}
+            }
+            drop(settling);
+            // The answer predates a change the drainer is about to settle:
+            // wait for it here, at the edge, and ask again once it has
+            // (`proofs/tla/SettleBeforeObserving.tla`).
+            self.await_tuple(&tuple, deadline.as_mut()).await?;
+        }
     }
 
     async fn check_named_permission(

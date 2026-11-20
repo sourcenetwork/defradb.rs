@@ -609,6 +609,9 @@ fn a_wait_sends_a_parked_registration_that_its_changes_delegation_serves() {
     workers::block_on(async {
         let _serial = super::tests::SIGNING_STORE_GUARD.lock().await;
         let on = Verified::new().await;
+        // This test drives settlement explicitly so the background drainer cannot
+        // use the change's delegation before the wait observes the parked registration.
+        on.node.background_tasks().shutdown().await;
         let Attempt { doc, txn, response } = on.create("shared", |doc| on.registration(doc)).await;
         assert!(!response.has_errors(), "{:?}", response.errors);
         // The grant beside it carries the user's plain delegation.

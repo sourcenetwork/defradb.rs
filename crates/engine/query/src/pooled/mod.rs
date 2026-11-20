@@ -369,8 +369,9 @@ impl QueryExecutor for PooledExecutor {
         &self,
         context: &RequestContext,
         policy: &str,
+        nonce: Option<acp::PolicyNonce>,
     ) -> std::result::Result<String, TransactionError> {
-        self.inner.add_dac_policy_as(context, policy).await
+        self.inner.add_dac_policy_as(context, policy, nonce).await
     }
 
     async fn list_dac_policies_as(

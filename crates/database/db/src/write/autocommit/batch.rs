@@ -386,7 +386,8 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
 
         let (collection, datastore, systemstore, index_manager) =
             get_collection_with_index_manager(&*self.shared_txn()?, collection_name).await?;
-        let datastore = datastore.with_projection_actor(context.identity());
+        let datastore =
+            crate::txn::bind_projection(datastore, context, self.prepared_inputs.as_ref());
         self.db
             .check_node_access_in_txn(
                 context,
@@ -494,7 +495,8 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
 
         let (collection, datastore, systemstore, index_manager) =
             get_collection_with_index_manager(&*self.shared_txn()?, collection_name).await?;
-        let datastore = datastore.with_projection_actor(context.identity());
+        let datastore =
+            crate::txn::bind_projection(datastore, context, self.prepared_inputs.as_ref());
         self.db
             .check_node_access_in_txn(
                 context,
@@ -544,6 +546,10 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
                 .await
                 .map_err(crate::error::commit_query_error)?
         {
+            datastore
+                .project_document(collection_name, &canonical_doc_id.to_string())
+                .await
+                .map_err(|error| crate::error::index_write_query_error("update", error.into()))?;
             doc.clear_write_preparation();
             return Ok(UpdateResult::new(doc, 0));
         }
@@ -647,7 +653,8 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
 
         let (collection, datastore, systemstore, index_manager) =
             get_collection_with_index_manager(&*self.shared_txn()?, collection_name).await?;
-        let datastore = datastore.with_projection_actor(context.identity());
+        let datastore =
+            crate::txn::bind_projection(datastore, context, self.prepared_inputs.as_ref());
         self.db
             .check_node_access_in_txn(
                 context,

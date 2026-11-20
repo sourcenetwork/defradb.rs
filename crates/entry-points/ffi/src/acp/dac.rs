@@ -100,7 +100,7 @@ pub unsafe fn defra_acp_dac_policy_add(
         // node's document ACP, local or Vera.
         ffi_async!(caller, {
             let policy_id = runner
-                .add_dac_policy_as(&context, &policy)
+                .add_dac_policy_as(&context, &policy, None)
                 .await
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::json!({ "PolicyID": policy_id }).to_string())

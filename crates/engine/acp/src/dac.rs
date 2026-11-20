@@ -43,6 +43,16 @@ pub struct DocumentRelationship {
     pub subject: String,
 }
 
+#[derive(Clone, Copy)]
+pub struct ActorRelationshipObservation<'a> {
+    pub requester: &'a Did,
+    pub target: &'a Did,
+    pub policy: &'a str,
+    pub resource: &'a str,
+    pub document: &'a str,
+    pub relation: &'a str,
+}
+
 /// Document ACP interface (matches Go acp/dac/dac.go)
 ///
 /// This trait provides document-level access control operations:
@@ -102,6 +112,10 @@ pub trait DocumentACP: MaybeSendSync {
         _view: &datastore::NamespaceView,
         _staged: crate::outbox::StagedCount,
     ) -> Option<crate::outbox::TransactionOutbox> {
+        None
+    }
+
+    fn outbox_authority_provider(&self) -> Option<std::sync::Arc<dyn DocumentACP>> {
         None
     }
 
@@ -491,6 +505,13 @@ pub trait DocumentACP: MaybeSendSync {
         _resource_name: &str,
         _doc_id: &str,
     ) -> Result<Vec<DocumentRelationship>> {
+        Err(Error::UnsupportedRelationshipListing)
+    }
+
+    async fn observe_actor_relationship(
+        &self,
+        _observation: ActorRelationshipObservation<'_>,
+    ) -> Result<bool> {
         Err(Error::UnsupportedRelationshipListing)
     }
 

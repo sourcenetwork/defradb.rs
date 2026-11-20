@@ -31,11 +31,16 @@ fn successful(result: ConfirmedSubmission) -> Result<ConfirmedSubmission, Provid
     if result.receipt.success() {
         Ok(result)
     } else {
-        Err(ProviderError::Transaction(format!(
-            "submission {:#x} was rejected at revision {}",
-            result.receipt.tx_hash, result.revision,
-        )))
+        Err(rejected(&result))
     }
+}
+
+/// The error a refused submission is reported with.
+pub(super) fn rejected(result: &ConfirmedSubmission) -> ProviderError {
+    ProviderError::Transaction(format!(
+        "submission {:#x} was rejected at revision {}",
+        result.receipt.tx_hash, result.revision,
+    ))
 }
 
 impl VeraRsProvider {
@@ -78,6 +83,15 @@ impl VeraRsProvider {
         &self,
         data: Bytes,
     ) -> Result<ConfirmedSubmission, ProviderError> {
+        successful(self.confirm_tx(data).await?)
+    }
+
+    /// Submits `data` and returns its verified receipt, a refusal included,
+    /// for a caller that answers a refusal itself.
+    pub(super) async fn confirm_tx(
+        &self,
+        data: Bytes,
+    ) -> Result<ConfirmedSubmission, ProviderError> {
         self.admitted().await?;
         let mut worker = nuclei::time::timeout(self.sync_timeout, self.worker.clone().lock_owned())
             .await
@@ -94,7 +108,7 @@ impl VeraRsProvider {
             let (recovered, confirmed) = self.resolve_pending(worker, wire, Note::Keep).await?;
             worker = recovered;
             if retry {
-                return successful(confirmed);
+                return Ok(confirmed);
             }
         }
         let (worker, wire) = self
@@ -106,7 +120,7 @@ impl VeraRsProvider {
             .await
             .map_err(unavailable)??;
         let (_, confirmed) = self.resolve_pending(worker, wire, Note::Skip).await?;
-        successful(confirmed)
+        Ok(confirmed)
     }
 
     /// Drives the journaled request `wire` to its acknowledged receipt.

@@ -15,6 +15,29 @@ archive objects, set and delete relationships, check access. Two implementations
   and submitted through a worker, and the chain state verified by a light client
   (trusted consensus key, height tracking).
 
+**Policy IDs.** vera.rs names a policy by its definition, its creator and a 32-byte
+nonce the creator picks: `SHA-256("acp/policy-id/v2" || policy hash || nonce ||
+u64be(len(creator)) || creator)`. One definition by two creators gets two IDs, and one
+creator gets a new ID for each nonce. The node's actor is the creator, so a nonce from a
+caller that is not that actor is refused: its ID would come from the actor's DID. A caller that
+supplies the nonce (`Node::add_dac_policy_with_nonce_as`, `?nonce=<64 hex>` on
+`POST /api/v0/acp/document/policy`, `defradb client acp document policy add --nonce`)
+knows the ID before the policy exists (`vera::vera_rs::predict_policy_id`,
+`VeraRsProvider::predict_policy_id`), and a create sent again with the same nonce
+returns the policy the first made: vera.rs refuses the duplicate as already existing,
+and the provider reads the policy under the ID and returns it when its definition,
+owner and nonce are the ones asked for. Without a nonce the provider draws one from
+the operating system for each request, once, so its own sends again reuse it, but a
+caller that repeats the request makes a second policy. A local ACP numbers its
+policies as Go's does and refuses a nonce; vera.rs refuses a counter
+(`add_dac_policy_with_counter_as`). An embedded deployment is seeded with
+`EmbeddedVeraPolicy { definition, nonce, creator }`; `EmbeddedVeraPolicy::id` gives the
+ID, which any node of the deployment reads (`get_dac_policy_as`) and the creator's own
+node adopts by creating the definition under the seed's nonce. A collection names its
+policy's ID, so deployments that replicate one collection to each other seed the policy
+under one creator and one nonce. Modeled by
+`proofs/tla/VeraPolicyCreate.tla` and `DacPolicyAdd.tla`.
+
 Both are wrapped as a `DocumentACP` and installed as the node's document ACP. Because
 the provider cannot join local transactions, the node wraps it in the external-ACP
 adapter: owed registrations, gated reads until confirmation, fail-closed

@@ -21,7 +21,9 @@ use regolith::sync::{HopscotchMap, SegQueue};
 use storage::RegolithStore;
 
 use super::external_outbox::Gate;
-use super::external_registration::{alice, bob, gate, mallory, RemoteAcp, MANAGER};
+use super::external_registration::{
+    alice, bob, gate, mallory, RemoteAcp, MANAGER, POLICY, RESOURCE,
+};
 use super::external_staging::{carol, Change, Staging};
 
 type Map<K, V> = HopscotchMap<K, V, rapidhash::fast::RandomState>;
@@ -710,6 +712,54 @@ fn a_marked_change_is_sent_by_a_provider_without_a_journal() {
             [(true, doc.clone(), bob().to_string())]
         );
         assert!(staging.queue().await.is_empty());
+    })
+    .unwrap()
+}
+
+/// An exact observation of a tuple whose change the drainer marked in
+/// flight waits for it, and is refused once its patience is spent with the
+/// request still undecided: the provider's answer could predate the change.
+/// Once settled, the observation goes on to the provider.
+#[test]
+fn an_exact_observation_waits_for_a_change_marked_in_flight() {
+    workers::block_on(async {
+        let (staging, journal) = journaled().await;
+        let doc = staging.create(alice(), "shared", None).await;
+        staging.commit_change(add(alice(), &doc, bob())).await;
+        journal.crash_after_journal.store(true, Ordering::SeqCst);
+        assert_eq!(staging.pass_once().await, unavailable());
+        assert!(staging.queue().await[0].in_flight.is_some());
+
+        let (owner, reader) = (alice(), bob());
+        let observe = || {
+            staging
+                .gate
+                .observe_actor_relationship(acp::ActorRelationshipObservation {
+                    requester: &owner,
+                    target: &reader,
+                    policy: POLICY,
+                    resource: RESOURCE,
+                    document: &doc,
+                    relation: "reader",
+                })
+        };
+        let started = std::time::Instant::now();
+        assert!(
+            matches!(observe().await, Err(acp::Error::ProviderUnavailable(reason)) if reason == "relationship change is unsettled")
+        );
+        assert!(
+            started.elapsed() >= acp::OBSERVATION_PATIENCE,
+            "refused after {:?}, before its patience",
+            started.elapsed()
+        );
+
+        let restarted = staging.restarted();
+        assert_eq!(pass(&restarted).await, settled(1));
+        assert!(staging.queue().await.is_empty());
+        assert!(
+            observe().await.unwrap(),
+            "a settled tuple is observed by the provider"
+        );
     })
     .unwrap()
 }

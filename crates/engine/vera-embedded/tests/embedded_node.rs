@@ -105,7 +105,7 @@ async fn a_provider_creates_and_reads_back_a_policy_through_the_embedded_node() 
         Some(genesis)
     );
 
-    let policy = provider.create_policy(POLICY).await.expect("policy");
+    let policy = provider.create_policy(POLICY, None).await.expect("policy");
     let read = provider
         .query_policy(&policy)
         .await

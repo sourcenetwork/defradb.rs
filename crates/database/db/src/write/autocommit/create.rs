@@ -147,7 +147,9 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 Err(query::error::QueryError::NeedsInput(request)) => {
                     inputs
                         .answer_wave(&request, |wave| {
-                            self.resolve_prepared_inputs_as(context, wave)
+                            crate::write::prepare::resolve_inputs_with_projection(
+                                &self.db, context, &inputs, wave,
+                            )
                         })
                         .await?;
                 }
@@ -307,7 +309,11 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let datastore = txn.datastore().map_err(|error| {
             query::error::QueryError::execution(format!("failed to get datastore: {error}"))
         })?;
-        let datastore = datastore.with_projection_actor(attempt.context.identity());
+        let datastore = crate::txn::bind_projection(
+            datastore,
+            &attempt.context,
+            attempt.prepared_inputs.as_ref(),
+        );
         let systemstore = txn.systemstore().map_err(|error| {
             query::error::QueryError::execution(format!("failed to get systemstore: {error}"))
         })?;

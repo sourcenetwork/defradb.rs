@@ -24,6 +24,59 @@ pub(crate) mod lenses;
 pub(crate) mod owner;
 pub mod registry;
 
+pub(crate) struct ProjectionInputs(pub query::prepared::PreparedInputMemo);
+
+/// Bind the request's context and prepared inputs to `view` for the host's
+/// document projector. Without a projector the view is returned as it is: a
+/// mutation pays nothing for a projection it does not run.
+#[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
+pub(crate) fn bind_projection(
+    view: NamespaceView,
+    context: &defra_core::RequestContext,
+    inputs: Option<&query::prepared::PreparedInputMemo>,
+) -> NamespaceView {
+    if !view.has_document_projector() {
+        return view;
+    }
+    view.with_projection_context(context)
+        .with_projection_inputs(Arc::new(ProjectionInputs(
+            inputs.cloned().unwrap_or_default(),
+        )))
+}
+
+pub(crate) struct ProjectionAuthority(pub Arc<acp::outbox::PreparedRelationship>);
+
+impl datastore::multistore::ProjectionAuthority for ProjectionAuthority {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+impl datastore::multistore::ProjectionAcpInputs for ProjectionInputs {
+    fn get(&self, bytes: &[u8]) -> Option<Arc<[u8]>> {
+        let request = query::prepared::PreparedInputRequest::new(
+            query::prepared::PreparedInputKind::ProjectionAcp,
+            bytes.to_vec(),
+        );
+        self.0.get(&request)
+    }
+
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
+    fn authority(
+        &self,
+        bytes: &[u8],
+    ) -> Option<Arc<dyn datastore::multistore::ProjectionAuthority>> {
+        let request = query::prepared::PreparedInputRequest::new(
+            query::prepared::PreparedInputKind::ProjectionAcp,
+            bytes.to_vec(),
+        );
+        self.0.projection_authority(&request).map(|authority| {
+            Arc::new(ProjectionAuthority(authority))
+                as Arc<dyn datastore::multistore::ProjectionAuthority>
+        })
+    }
+}
+
 #[derive(Clone)]
 struct OwedAcpRegistration {
     acp: Arc<dyn acp::DocumentACP>,
@@ -375,7 +428,14 @@ impl<S: Store> DbTxn<S> {
     pub fn datastore(&self) -> Result<NamespaceView> {
         self.txn
             .as_ref()
-            .map(|t| t.datastore())
+            .map(|t| {
+                let view = t.datastore();
+                if view.has_document_projector() {
+                    view.with_projection_staged(self.owed_staged().shared())
+                } else {
+                    view
+                }
+            })
             .ok_or(Error::TxnNotActive)
     }
 
