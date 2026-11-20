@@ -1,4 +1,4 @@
-mod secondary_index;
+pub(crate) mod secondary_index;
 
 use testo::multiplier::{get_matching_multipliers, SkipReason};
 use testo::prelude::*;

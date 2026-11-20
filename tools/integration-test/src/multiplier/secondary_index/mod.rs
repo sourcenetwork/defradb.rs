@@ -30,7 +30,7 @@ impl SecondaryIndex {
                 Actions::Request(request) if request.request.as_str().contains("@explain") => {
                     Some("the test explains a plan the indexes change")
                 }
-                Actions::AddCollection(add) if has_index_directive(add.sdl.as_str()) => {
+                Actions::AddCollection(add) if has_index_directive(&add.sdl.literal()) => {
                     Some("the test's SDL declares indexes")
                 }
                 Actions::Parallel(group) => Self::skip_reason(&group.actions),
@@ -51,12 +51,20 @@ impl SecondaryIndex {
     }
 }
 
-fn with_indexes(add: &AddCollection) -> AddCollection {
+/// `add` with every field indexed. An SDL that names captures is marked, and
+/// indexed once they resolve.
+pub(crate) fn with_indexes(add: &AddCollection) -> AddCollection {
     let Text::Plain(sdl) = &add.sdl else {
-        return add.clone();
+        return AddCollection {
+            index_every_field: true,
+            ..add.clone()
+        };
     };
     if has_index_directive(sdl) {
-        return add.clone();
+        return AddCollection {
+            index_every_field: false,
+            ..add.clone()
+        };
     }
     let indexed = add_indexes(sdl);
     if indexed != *sdl {
@@ -64,6 +72,7 @@ fn with_indexes(add: &AddCollection) -> AddCollection {
     }
     AddCollection {
         sdl: Text::Plain(indexed),
+        index_every_field: false,
         ..add.clone()
     }
 }

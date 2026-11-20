@@ -50,6 +50,15 @@ impl Text {
         }
     }
 
+    /// The plain pieces of the text joined, without what references name.
+    pub fn literal(&self) -> String {
+        match self {
+            Self::Plain(text) => text.clone(),
+            Self::Ref { .. } => String::new(),
+            Self::Concat { parts } => parts.iter().map(Self::literal).collect(),
+        }
+    }
+
     /// The text of a plain value. References are resolved before an op runs,
     /// so an op only ever sees plain text.
     pub fn as_str(&self) -> &str {

@@ -4,6 +4,7 @@ use testo::prelude::*;
 use super::{add_indexes, has_index_directive, SecondaryIndex};
 use crate::actions::{Actions, AddCollection, DeleteIndex, ListIndexes, NewIndex, Request};
 use crate::multiplier::TestMultiplier;
+use crate::scenario::{Op, Text};
 
 fn add(sdl: &str) -> Actions {
     Actions::AddCollection(AddCollection {
@@ -450,6 +451,43 @@ fn apply_leaves_an_indexed_sdl_unchanged() {
         sdl_of(&SecondaryIndex.apply(&actions)[0]),
         "type User { name: String @index }"
     );
+}
+
+fn add_text(sdl: Text) -> Actions {
+    Actions::AddCollection(AddCollection {
+        sdl,
+        ..Default::default()
+    })
+}
+
+#[test]
+fn a_referenced_sdl_is_indexed_once_resolved() {
+    let sdl = Text::concat([
+        "type User @policy(id: \"".into(),
+        Text::reference("policy"),
+        "\") { name: String }".into(),
+    ]);
+    let result = SecondaryIndex.apply(&instances(vec![add_text(sdl)]));
+    let ActionInstance::Sync(Actions::AddCollection(add)) = &result[0] else {
+        panic!("not an AddCollection");
+    };
+    assert!(add.index_every_field);
+    let resolved = AddCollection {
+        sdl: "type User @policy(id: \"p\") { name: String }".into(),
+        ..add.clone()
+    }
+    .resolved();
+    assert_has(resolved.sdl.as_str(), "name: String @index");
+    assert!(!resolved.index_every_field);
+}
+
+#[test]
+fn a_referenced_sdl_with_indexes_skips() {
+    let sdl = Text::concat([
+        "type User { name: String @index } # ".into(),
+        Text::reference("policy"),
+    ]);
+    assert!(skips(vec![add_text(sdl)]));
 }
 
 #[test]
