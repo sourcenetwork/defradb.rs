@@ -1,6 +1,6 @@
 //! Secondary relation ID condition extraction.
 
-use serde_json::Map;
+use serde_json::{Map, Value};
 
 use super::filter_impl::Filter;
 
@@ -13,20 +13,47 @@ impl Filter {
         &self,
         collection: &schema::CollectionVersion,
     ) -> Filter {
-        let mut conditions = Map::new();
-        for (key, value) in self.conditions() {
-            if let Some(relation_name) = key
-                .strip_prefix('_')
-                .and_then(|name| name.strip_suffix("ID"))
-            {
-                if let Some(relation_field) = collection.field_by_name(relation_name) {
-                    if relation_field.kind.is_relation() && !relation_field.is_primary {
-                        continue;
-                    }
-                }
-            }
-            conditions.insert(key.clone(), value.clone());
-        }
+        let conditions = strip_secondary_relation_ids(self.conditions(), collection);
         Filter::from_conditions_with_max_depth(conditions, self.max_depth())
     }
+}
+
+fn strip_secondary_relation_ids(
+    conditions: &Map<String, Value>,
+    collection: &schema::CollectionVersion,
+) -> Map<String, Value> {
+    let mut stripped = Map::new();
+    for (key, value) in conditions {
+        if let Some(relation_name) = key
+            .strip_prefix('_')
+            .and_then(|name| name.strip_suffix("ID"))
+        {
+            let is_secondary = collection
+                .field_by_name(relation_name)
+                .is_some_and(|field| field.kind.is_relation() && !field.is_primary);
+            if is_secondary {
+                continue;
+            }
+        }
+
+        let value = match (key.as_str(), value) {
+            ("_and" | "_or", Value::Array(branches)) => Value::Array(
+                branches
+                    .iter()
+                    .map(|branch| match branch.as_object() {
+                        Some(conditions) => {
+                            Value::Object(strip_secondary_relation_ids(conditions, collection))
+                        }
+                        None => branch.clone(),
+                    })
+                    .collect(),
+            ),
+            ("_not", Value::Object(conditions)) => {
+                Value::Object(strip_secondary_relation_ids(conditions, collection))
+            }
+            (_, value) => value.clone(),
+        };
+        stripped.insert(key.clone(), value);
+    }
+    stripped
 }

@@ -8,7 +8,7 @@ use integration_test::test_case::TestCase;
 use serde_json::json;
 
 #[test]
-#[mantra_macros::req_test("go.query.one_to_one.filter")]
+#[mantra_macros::req_test("go.query.one_to_one.filter-relation-id")]
 fn query_one_to_one_with_eq_null_filter_on_secondary_relation_id_should_return_orphans() {
     TestCase {
         id: integration_test::scenario_id!(),

@@ -4,6 +4,7 @@
 //! TypeJoinOne for reverse lookups when a secondary relation ID field
 //! is selected but the relation object is not.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use schema::CollectionVersion;
@@ -29,17 +30,21 @@ impl Planner {
         select: &Select,
         parent_collection: &CollectionVersion,
     ) -> Result<Box<dyn PlanNode>> {
-        let mut field_names = select
+        let field_names = select
             .fields
             .iter()
             .filter_map(|requestable| match requestable {
                 Requestable::Field(field) => Some(field.name.clone()),
                 _ => None,
             })
-            .collect::<Vec<_>>();
-        if let Some(filter) = select.filter.as_ref() {
-            field_names.extend(filter.referenced_fields());
-        }
+            .chain(
+                select
+                    .filter
+                    .as_ref()
+                    .map(|filter| filter.referenced_fields())
+                    .unwrap_or_default(),
+            )
+            .collect::<BTreeSet<_>>();
 
         for field_name in field_names {
             // Check if this is a relation ID field (pattern: `_{relationName}ID`)
@@ -73,16 +78,18 @@ impl Planner {
                 }
             });
 
-            if already_joined {
-                continue; // Join already exists, _relID will be populated by merge_child
-            }
-
-            // The relation itself may have been joined for an object filter even
-            // when only its ID is filtered on.
             let filter_conditions = select
                 .filter
                 .as_ref()
                 .and_then(|filter| filter.conditions().get(field_name.as_str()));
+
+            if already_joined && filter_conditions.is_none() {
+                // Join already exists, _relID will be populated by merge_child
+                continue;
+            }
+
+            // The relation itself may have been joined for an object filter even
+            // when only its ID is filtered on.
             if select.fields.iter().all(|requestable| {
                 !matches!(requestable, Requestable::Field(field) if field.name == *field_name)
             }) && filter_conditions.is_none()
