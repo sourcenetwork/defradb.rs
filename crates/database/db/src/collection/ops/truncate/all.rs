@@ -18,11 +18,7 @@ impl<S: Store> crate::database::DB<S> {
             self.truncate_chunk(collection, chunk).await?;
         }
         self.truncate_deferred_indexes(collection).await?;
-        self.truncate_collection_metadata(
-            collection.collection_id(),
-            collection.resolved_root_id(),
-        )
-        .await?;
+        self.truncate_collection_metadata(collection).await?;
         Ok(doc_ids.len())
     }
 
@@ -133,18 +129,24 @@ impl<S: Store> crate::database::DB<S> {
 
     /// Delete collection-level metadata (index entries, collection heads and
     /// the collection DAG) in one engine-retried write transaction.
-    async fn truncate_collection_metadata(
-        self: &Arc<Self>,
-        collection_id: &str,
-        short_id: u32,
-    ) -> Result<()>
+    async fn truncate_collection_metadata(self: &Arc<Self>, collection: &Collection) -> Result<()>
     where
         S: 'static,
     {
-        let collection_id = collection_id.to_owned();
+        let collection_id = collection.collection_id().to_owned();
+        let short_id = collection.resolved_root_id();
+        let ordered_indexes: Vec<u32> = collection
+            .write_indexes()
+            .iter()
+            .filter(|index| !index.is_vector())
+            .map(|index| index.id)
+            .collect();
         self.transact_db(move |txn| {
             let collection_id = collection_id.clone();
-            Box::pin(async move { Self::truncate_metadata_in(txn, &collection_id, short_id).await })
+            let ordered_indexes = ordered_indexes.clone();
+            Box::pin(async move {
+                Self::truncate_metadata_in(txn, &collection_id, short_id, &ordered_indexes).await
+            })
         })
         .await
     }
@@ -153,6 +155,7 @@ impl<S: Store> crate::database::DB<S> {
         txn: &DbTxn<S>,
         collection_id: &str,
         short_id: u32,
+        ordered_indexes: &[u32],
     ) -> Result<()> {
         use storage::keys::datastore::ViewCacheKey;
         use storage::keys::{HeadstoreColPublishedKey, HeadstoreColSetKey, IndexDataStoreKey};
@@ -162,7 +165,16 @@ impl<S: Store> crate::database::DB<S> {
         let blockstore = txn.blockstore()?;
         let systemstore = txn.systemstore()?;
 
-        delete_prefix(&datastore, IndexDataStoreKey::collection_prefix(short_id)).await?;
+        // Index entries go one index at a time: a short ID below 240 is one
+        // raw byte, so the collection's own prefix can be the start of another
+        // family (`/d/` for short ID 100) and cover every collection's keys.
+        for &index_id in ordered_indexes {
+            delete_prefix(
+                &datastore,
+                IndexDataStoreKey::index_prefix(short_id, index_id),
+            )
+            .await?;
+        }
         // A materialized view's rows live in its cache, not as documents.
         delete_prefix(&datastore, ViewCacheKey::collection_prefix(short_id)).await?;
 
