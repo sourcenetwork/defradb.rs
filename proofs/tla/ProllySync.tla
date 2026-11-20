@@ -23,15 +23,20 @@
 \* Lean proof `ProllyTree.build_same_entries` shows a root depends only on the
 \* entries, not on the writes' order, so equal entries give equal roots, and a
 \* chunk hash taken as collision-free makes different entries give different
-\* roots. The walk down finds exactly the documents whose entries differ: the
-\* Lean proofs `ProllyTree.diff_eq` and `ProllyTree.mergeDiff_spec` show it.
+\* roots. A walk down that completes finds exactly the documents whose entries
+\* differ: the Lean proofs `ProllyTree.diff_eq` and `ProllyTree.mergeDiff_spec`
+\* show it. They do not show that the walk ends or that every node read
+\* succeeds, so `Pull` and PulledHolds are about pulls whose walk completes.
 \*
 \* What this model leaves out. A pull is one atomic step: the responder cannot
 \* write between sending its root and the puller finishing, so "caught up"
 \* means caught up with the responder as it was at that step. Who may read what
 \* (CanRead) never changes, so a read revoked between the root reply and a
 \* leaf is not modeled. When the pull is wired (#2977) and either can happen,
-\* the step is split and those cases are checked first.
+\* the step is split and those cases are checked first. A walk that fails (a
+\* node read errors) ends the pull with no "caught up" claim and nothing
+\* fetched, which changes no variable: a stutter step, which every behaviour
+\* may already take, so no action of its own is needed.
 \*
 \* Rust anchors:
 \* * `crates/foundation/prolly/src/tree.rs` `Tree::build` and `Tree::root`: the responder

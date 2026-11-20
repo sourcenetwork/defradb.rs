@@ -34,7 +34,8 @@ impl Tree {
     /// The tree of `entries`, given in ascending key order. A key equal to the
     /// one before replaces its value, so the last value wins; a smaller key is
     /// [`Error::Unsorted`]. It holds one open chunk per level ([`Builder`]),
-    /// never the whole set.
+    /// each under [`MAX_CHUNK_BYTES`](crate::node::MAX_CHUNK_BYTES) or a
+    /// single item.
     pub fn build<S, I>(store: &mut S, target: NonZeroU32, entries: I) -> Result<Self>
     where
         S: Store,

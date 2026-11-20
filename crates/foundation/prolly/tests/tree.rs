@@ -1,6 +1,6 @@
 use std::{cell::Cell, num::NonZeroU32, sync::Arc};
 
-use prolly::{tree::DEFAULT_TARGET, Builder, Item, MemStore, Node, Store, Tree};
+use prolly::{tree::DEFAULT_TARGET, Builder, Item, MemStore, Node, Store, Tree, MAX_CHUNK_BYTES};
 
 fn entry(n: u32) -> (Vec<u8>, Vec<u8>) {
     (n.to_be_bytes().to_vec(), format!("heads-{n}").into_bytes())
@@ -98,18 +98,93 @@ fn a_target_of_one_still_builds_a_tree() {
 
 #[test]
 fn a_build_holds_one_open_chunk_per_level_not_the_whole_set() {
+    let (peak, levels) = build_peak(DEFAULT_TARGET, 100_000);
+    assert!(peak < 32 * 1024, "held {peak} bytes of 100 000 entries");
+    assert!(
+        peak <= levels * 400 * 32,
+        "held {peak} bytes over {levels} levels"
+    );
+}
+
+/// Builds `count` entries through a [`Builder`], returning the most bytes it
+/// held at once and the tree's height.
+fn build_peak(target: NonZeroU32, count: u32) -> (usize, usize) {
     let mut store = MemStore::new();
-    let mut builder = Builder::new(DEFAULT_TARGET);
+    let mut builder = Builder::new(target);
     let mut peak = 0;
-    for n in 0..100_000 {
+    for n in 0..count {
         let (key, value) = entry(n);
         builder.push(&mut store, key, value).unwrap();
-        peak = peak.max(builder.held());
+        peak = peak.max(builder.held_bytes());
     }
     let tree = builder.finish(&mut store).unwrap();
     let levels = usize::from(store.get(&tree.root().unwrap()).unwrap().level) + 1;
-    assert!(peak < 1_000, "held {peak} of 100 000 entries");
-    assert!(peak <= levels * 400, "held {peak} over {levels} levels");
+    (peak, levels)
+}
+
+#[test]
+fn without_boundaries_chunks_close_at_the_byte_cap() {
+    // A target this large makes a boundary about one item in 4 billion, so
+    // only the cap closes chunks.
+    let target = NonZeroU32::MAX;
+    let (peak, levels) = build_peak(target, 100_000);
+    let total: usize = (0..100_000)
+        .map(|n| {
+            let (key, value) = entry(n);
+            16 + key.len() + value.len()
+        })
+        .sum();
+    assert!(levels >= 2, "the cap cuts the leaves into chunks");
+    assert!(
+        peak <= levels * MAX_CHUNK_BYTES,
+        "held {peak} bytes over {levels} levels"
+    );
+    assert!(peak * 10 < total, "held {peak} of {total} bytes");
+
+    let mut store = MemStore::new();
+    let mut edited = Tree::build(&mut store, target, (0..100_000).map(entry)).unwrap();
+    let mut model: Vec<(Vec<u8>, Vec<u8>)> = (0..100_000).map(entry).collect();
+    for n in [7, 50_000, 99_999] {
+        edited.remove(&mut store, &entry(n).0).unwrap();
+        model.retain(|(key, _)| *key != entry(n).0);
+    }
+    assert_eq!(
+        edited,
+        Tree::build(&mut MemStore::new(), target, model).unwrap()
+    );
+    let nodes = edited.iter(&store).count();
+    assert_eq!(nodes, 100_000 - 3);
+}
+
+#[test]
+fn every_stored_node_stays_near_the_byte_cap() {
+    /// A store that records the largest node encoding put into it.
+    #[derive(Default)]
+    struct Largest {
+        inner: MemStore,
+        largest: usize,
+    }
+
+    impl Store for Largest {
+        fn get(&self, hash: &prolly::Hash) -> Option<Arc<Node>> {
+            self.inner.get(hash)
+        }
+
+        fn put(&mut self, node: Node) -> prolly::Hash {
+            self.largest = self.largest.max(node.encode().len());
+            self.inner.put(node)
+        }
+    }
+
+    let mut store = Largest::default();
+    Tree::build(&mut store, NonZeroU32::MAX, (0..100_000).map(entry)).unwrap();
+    // The cap, plus the item that reached it and the node header.
+    let largest = store.largest;
+    assert!(
+        largest <= 9 + MAX_CHUNK_BYTES + 64,
+        "a node of {largest} bytes"
+    );
+    assert!(largest >= MAX_CHUNK_BYTES, "the cap closed the chunks");
 }
 
 #[test]

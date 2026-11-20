@@ -106,7 +106,7 @@ where
     splice(items, low, high, replacement)
         .into_iter()
         .for_each(|item| chunker.push(item));
-    while !chunker.open.is_empty() {
+    while !chunker.is_closed() {
         let Some(next) = seek_after(store, root, level, &last)? else {
             break;
         };

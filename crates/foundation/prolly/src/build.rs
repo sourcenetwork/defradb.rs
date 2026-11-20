@@ -13,8 +13,9 @@ use crate::{
 /// Builds a tree from entries pushed in ascending key order.
 ///
 /// Each level holds only its open chunk: a chunk is stored as soon as it
-/// closes, and its reference goes to the level above. Working memory is one
-/// open chunk per level and the last entry pushed, never the whole set. The
+/// closes, and its reference goes to the level above. An open chunk holds
+/// under [`MAX_CHUNK_BYTES`](crate::node::MAX_CHUNK_BYTES) or a single item, so working memory is at most
+/// that per level plus the last entry pushed, whatever the input. The
 /// chunks are those `raise` cuts from the same entries, level by level, so
 /// the root is the same; `tests/history.rs` checks it against edits, which go
 /// through `raise`.
@@ -60,14 +61,14 @@ impl Builder {
         Ok(())
     }
 
-    /// How many items it holds: every level's open chunk and the last entry.
-    pub fn held(&self) -> usize {
+    /// The encoded bytes it holds: every level's open chunk and the last entry.
+    pub fn held_bytes(&self) -> usize {
         let open: usize = self
             .levels
             .iter()
-            .map(|level| level.chunker.open.len())
+            .map(|level| level.chunker.open_bytes())
             .sum();
-        open + usize::from(self.last.is_some())
+        open + self.last.as_ref().map_or(0, Item::encoded_len)
     }
 
     /// The tree of everything pushed.
@@ -81,7 +82,7 @@ impl Builder {
         }
         let mut level = 0;
         while level < self.levels.len() {
-            let open = std::mem::take(&mut self.levels[level].chunker.open);
+            let open = self.levels[level].chunker.take_open();
             if self.levels[level].closed == 0 {
                 // One chunk is the whole level: it is the root, as in `raise`.
                 let root = collapse(store, level as u8, open)?;

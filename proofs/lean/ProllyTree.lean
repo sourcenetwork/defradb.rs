@@ -16,10 +16,13 @@ an edit that re-cuts only the chunks near it gets a different answer than
 cutting the whole list again, or building the levels never stops.
 
 How an entry list is cut. The cutter walks the list left to right, adding each
-item to the open chunk. After an item whose hash says "boundary" (`b x`), the
-open chunk is closed, unless that item would be the chunk's only item: a chunk
-that closes holds at least two items. A boundary decision reads only the item
-and whether the open chunk is empty; that is what keeps edits local.
+item to the open chunk. After an item that says "close" (`b c x`, for the open
+chunk `c`), the open chunk is closed, unless that item would be the chunk's only
+item: a chunk that closes holds at least two items. A close decision reads only
+the item and the chunk it is joining, which starts fresh after every close;
+that is what keeps edits local. In Rust an item closes its chunk when its hash
+says "boundary" or when the chunk reaches `MAX_CHUNK_BYTES` (`capped`), so an
+open chunk never grows past the cap (`open_bounded`), whatever the input.
 
 What this model trusts. The boundary test (`b`) and the chunk hash (`H`) are any
 functions here: in Rust they are SHA-256 of the item's bytes, and a chunk's hash
@@ -52,17 +55,17 @@ abbrev State (α : Type) := List (List α) × List α
 
 -- One step of the cutter: add item `x` to the open chunk, and close the chunk
 -- when `x` is a boundary and the chunk already held something before `x`.
-def step (b : α → Bool) (s : State α) (x : α) : State α :=
-  -- `b x` says `x` is a boundary; `!s.2.isEmpty` says `x` is not alone.
-  if b x && !s.2.isEmpty then (s.1 ++ [s.2 ++ [x]], []) else (s.1, s.2 ++ [x])
+def step (b : List α → α → Bool) (s : State α) (x : α) : State α :=
+  -- `b s.2 x` says `x` closes the open chunk `s.2`; `!s.2.isEmpty` says `x` is not alone.
+  if b s.2 x && !s.2.isEmpty then (s.1 ++ [s.2 ++ [x]], []) else (s.1, s.2 ++ [x])
 
 -- Run the cutter over a whole list, starting from state `s`.
-def scan (b : α → Bool) (s : State α) (xs : List α) : State α :=
+def scan (b : List α → α → Bool) (s : State α) (xs : List α) : State α :=
   -- Apply `step` to each item, left to right.
   xs.foldl (step b) s
 
 -- The chunks of a list: the closed ones, then the open one if it holds anything.
-def chunks (b : α → Bool) (xs : List α) : List (List α) :=
+def chunks (b : List α → α → Bool) (xs : List α) : List (List α) :=
   -- Start with nothing closed and nothing open.
   match scan b ([], []) xs with
   -- Nothing left open: the closed chunks are all the chunks.
@@ -71,13 +74,54 @@ def chunks (b : α → Bool) (xs : List α) : List (List α) :=
   | (d, c) => d ++ [c]
 
 -- A list "closes" when the cutter ends it with nothing left open.
-def closes (b : α → Bool) (xs : List α) : Prop :=
+def closes (b : List α → α → Bool) (xs : List α) : Prop :=
   -- The open part after the whole list is empty.
   (scan b ([], []) xs).2 = []
 
+-- Rust's close rule (`Chunker::push`): the item's hash says "boundary" (`h x`),
+-- or the open chunk with `x` added weighs at least `cap` (`w` is an item's
+-- encoded bytes, `Item::encoded_len`; `cap` is `MAX_CHUNK_BYTES`).
+def capped (h : α → Bool) (w : α → Nat) (cap : Nat) (c : List α) (x : α) : Bool :=
+  -- A boundary, or the chunk would reach the cap.
+  h x || decide (cap ≤ ((c ++ [x]).map w).sum)
+
+-- An open chunk is "bounded" when it weighs under the cap or holds one item.
+def Bounded (w : α → Nat) (cap : Nat) (c : List α) : Prop :=
+  -- Under the cap, or a single item (which no rule can split).
+  (c.map w).sum < cap ∨ c.length ≤ 1
+
+/-- One step under the capped rule leaves a bounded open chunk, whatever it
+started from. -/
+theorem step_bounded (h : α → Bool) (w : α → Nat) (cap : Nat) (s : State α) (x : α) :
+    Bounded w cap (step (capped h w cap) s x).2 := by
+  -- Did `x` close the chunk?
+  by_cases hc : (capped h w cap s.2 x && !s.2.isEmpty) = true
+  · -- It closed: nothing is open.
+    simp [step, hc, Bounded]
+  · -- It did not: the open chunk is the old one plus `x`.
+    simp only [step, hc]
+    cases hs : s.2 with
+    | nil => simp [Bounded]
+    | cons y ys =>
+      -- The chunk was not empty, so `x` did not reach the cap.
+      left
+      rw [hs] at hc
+      simp only [capped, List.isEmpty_cons, Bool.not_false, Bool.and_true,
+        Bool.or_eq_true, decide_eq_true_eq, not_or, Nat.not_le] at hc
+      exact hc.2
+
+/-- Under the capped rule the open chunk stays bounded for any input, boundary
+hits or none: the cutter holds less than `cap` bytes open, or one item. -/
+theorem open_bounded (h : α → Bool) (w : α → Nat) (cap : Nat) (xs : List α) :
+    ∀ s : State α, Bounded w cap s.2 → Bounded w cap (scan (capped h w cap) s xs).2 := by
+  -- One item at a time.
+  induction xs with
+  | nil => intro s hs; exact hs
+  | cons x xs ih => intro s _; exact ih _ (step_bounded h w cap s x)
+
 -- Running from closed chunks `d` is running from nothing, with `d` kept in front:
 -- what was closed before never changes what comes after.
-theorem scan_shift (b : α → Bool) (ys : List α) :
+theorem scan_shift (b : List α → α → Bool) (ys : List α) :
     ∀ (d : List (List α)) (c : List α),
       scan b (d, c) ys = (d ++ (scan b ([], c) ys).1, (scan b ([], c) ys).2) := by
   -- Walk the list one item at a time.
@@ -90,7 +134,7 @@ theorem scan_shift (b : α → Bool) (ys : List α) :
     -- Unfold one step of the cutter on both sides.
     simp only [scan, List.foldl_cons] at *
     -- Either `y` closes the chunk or it does not.
-    by_cases h : (b y && !c.isEmpty) = true
+    by_cases h : (b c y && !c.isEmpty) = true
     · -- It closes: both sides close the same chunk, then run on from empty.
       simp only [step]
       rw [if_pos h, if_pos h, List.nil_append, ih (d ++ [c ++ [y]]) [], ih [c ++ [y]] []]
@@ -102,7 +146,7 @@ theorem scan_shift (b : α → Bool) (ys : List α) :
 -- Locality: when a list closes, cutting it with more items after it is cutting
 -- each part on its own. So an edit that re-cuts a closed stretch, and stops at a
 -- place where the cutter closes, gets the same chunks as cutting everything.
-theorem chunks_append (b : α → Bool) (xs ys : List α) (h : closes b xs) :
+theorem chunks_append (b : List α → α → Bool) (xs ys : List α) (h : closes b xs) :
     chunks b (xs ++ ys) = chunks b xs ++ chunks b ys := by
   -- Name the state after `xs`: closed chunks `d` and an empty open chunk.
   unfold closes at h
@@ -122,7 +166,7 @@ theorem chunks_append (b : α → Bool) (xs ys : List α) (h : closes b xs) :
     | mk d' c' => cases c' <;> simp
 
 -- Two stretches that each close make a stretch that closes.
-theorem closes_append (b : α → Bool) (xs ys : List α)
+theorem closes_append (b : List α → α → Bool) (xs ys : List α)
     (hx : closes b xs) (hy : closes b ys) : closes b (xs ++ ys) := by
   -- Cutting `xs ++ ys` is cutting `ys` from the closed state after `xs`.
   unfold closes at *
@@ -139,7 +183,7 @@ theorem closes_append (b : α → Bool) (xs ys : List α)
 
 -- Nothing lost, nothing added: the closed chunks, then the open one, read back as
 -- what was there before plus the items just cut.
-theorem scan_flatten (b : α → Bool) (ys : List α) :
+theorem scan_flatten (b : List α → α → Bool) (ys : List α) :
     ∀ (d : List (List α)) (c : List α),
       (scan b (d, c) ys).1.flatten ++ (scan b (d, c) ys).2 = d.flatten ++ c ++ ys := by
   -- Walk the list one item at a time.
@@ -150,12 +194,12 @@ theorem scan_flatten (b : α → Bool) (ys : List α) :
   | cons y ys ih =>
     intro d c
     simp only [scan, List.foldl_cons] at *
-    by_cases h : (b y && !c.isEmpty) = true
+    by_cases h : (b c y && !c.isEmpty) = true
     · simp only [step, h, if_true]; rw [ih]; simp
     · simp only [step, h]; rw [ih]; simp
 
 -- The chunks, put back together, are exactly the list that was cut.
-theorem chunks_flatten (b : α → Bool) (xs : List α) : (chunks b xs).flatten = xs := by
+theorem chunks_flatten (b : List α → α → Bool) (xs : List α) : (chunks b xs).flatten = xs := by
   -- Use the general law from the empty state.
   have h := scan_flatten b xs [] []
   unfold chunks
@@ -163,7 +207,7 @@ theorem chunks_flatten (b : α → Bool) (xs : List α) : (chunks b xs).flatten 
   | mk d c => rw [hs] at h; cases c <;> simpa using h
 
 -- Every chunk the cutter closes holds at least two items.
-theorem scan_closed_two (b : α → Bool) (ys : List α) :
+theorem scan_closed_two (b : List α → α → Bool) (ys : List α) :
     ∀ (d : List (List α)) (c : List α), (∀ ch ∈ d, 2 ≤ ch.length) →
       ∀ ch ∈ (scan b (d, c) ys).1, 2 ≤ ch.length := by
   -- Walk the list one item at a time.
@@ -173,7 +217,7 @@ theorem scan_closed_two (b : α → Bool) (ys : List α) :
   | cons y ys ih =>
     intro d c hd
     simp only [scan, List.foldl_cons] at *
-    by_cases h : (b y && !c.isEmpty) = true
+    by_cases h : (b c y && !c.isEmpty) = true
     · -- A chunk closes: it is `c` plus `y`, and `c` was not empty.
       simp only [step, h, if_true]
       apply ih
@@ -190,7 +234,7 @@ theorem scan_closed_two (b : α → Bool) (ys : List α) :
       exact ih d (c ++ [y]) hd
 
 -- Every chunk holds at least one item: no empty chunk is ever written.
-theorem chunks_nonempty (b : α → Bool) (xs : List α) :
+theorem chunks_nonempty (b : List α → α → Bool) (xs : List α) :
     ∀ ch ∈ chunks b xs, 1 ≤ ch.length := by
   -- Closed chunks hold two or more; the open one is kept only when not empty.
   have hc := scan_closed_two b xs [] [] (by simp)
@@ -220,7 +264,7 @@ theorem length_flatten_ge (k : Nat) (L : List (List α)) (h : ∀ ch ∈ L, k �
     omega
 
 -- There are never more chunks than items.
-theorem chunks_length_le (b : α → Bool) (xs : List α) :
+theorem chunks_length_le (b : List α → α → Bool) (xs : List α) :
     (chunks b xs).length ≤ xs.length := by
   -- Each chunk holds an item, and together they hold all of `xs`.
   have h := length_flatten_ge 1 (chunks b xs) (chunks_nonempty b xs)
@@ -229,7 +273,7 @@ theorem chunks_length_le (b : α → Bool) (xs : List α) :
 
 -- With two items or more, cutting gives strictly fewer chunks than items, so each
 -- level above is shorter than the one below and building the levels stops.
-theorem chunks_shrink (b : α → Bool) (xs : List α) (h2 : 2 ≤ xs.length) :
+theorem chunks_shrink (b : List α → α → Bool) (xs : List α) (h2 : 2 ≤ xs.length) :
     (chunks b xs).length < xs.length := by
   -- Count closed chunks (two items or more each) and the open part.
   have hc := scan_closed_two b xs [] [] (by simp)
@@ -251,12 +295,12 @@ theorem chunks_shrink (b : α → Bool) (xs : List α) (h2 : 2 ≤ xs.length) :
 abbrev Entry := Nat × Nat
 
 -- One level up: each chunk becomes one item, its last key and its hash `H`.
-def up (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry) : List Entry :=
+def up (b : List Entry → Entry → Bool) (H : List Entry → Nat) (xs : List Entry) : List Entry :=
   -- The last key of a chunk is the largest key under it, used to search down.
   (chunks b xs).map (fun c => ((c.getLast?.map Prod.fst).getD 0, H c))
 
 -- The root level: cut and go up until a level is a single chunk.
-def build (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry) : List Entry :=
+def build (b : List Entry → Entry → Bool) (H : List Entry → Nat) (xs : List Entry) : List Entry :=
   -- Two chunks or more: there is another level above.
   if 2 ≤ (chunks b xs).length then build b H (up b H xs) else xs
 termination_by xs.length
@@ -478,14 +522,14 @@ theorem eq_of_same_entries (xs ys : List Entry) (hx : Sorted xs) (hy : Sorted ys
 
 -- History independence: two sorted entry lists that hold the same entries build
 -- the same root, whatever writes produced them.
-theorem build_same_entries (b : Entry → Bool) (H : List Entry → Nat)
+theorem build_same_entries (b : List Entry → Entry → Bool) (H : List Entry → Nat)
     (xs ys : List Entry) (hx : Sorted xs) (hy : Sorted ys)
     (h : ∀ e, e ∈ xs ↔ e ∈ ys) : build b H xs = build b H ys := by
   -- The lists are equal, so everything built from them is.
   rw [eq_of_same_entries xs ys hx hy h]
 
 -- Writes to two different documents, in either order, give the same tree.
-theorem insert_comm (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry)
+theorem insert_comm (b : List Entry → Entry → Bool) (H : List Entry → Nat) (xs : List Entry)
     (hs : Sorted xs) (k₁ v₁ k₂ v₂ : Nat) (hk : k₁ ≠ k₂) :
     build b H (insert k₁ v₁ (insert k₂ v₂ xs)) = build b H (insert k₂ v₂ (insert k₁ v₁ xs)) := by
   -- Both orders hold the same entries.
@@ -507,7 +551,7 @@ theorem insert_comm (b : Entry → Bool) (H : List Entry → Nat) (xs : List Ent
 
 -- A removal and a write to a different document, in either order, give the
 -- same tree.
-theorem erase_insert_comm (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry)
+theorem erase_insert_comm (b : List Entry → Entry → Bool) (H : List Entry → Nat) (xs : List Entry)
     (hs : Sorted xs) (k₁ k₂ v₂ : Nat) (hk : k₁ ≠ k₂) :
     build b H (erase k₁ (insert k₂ v₂ xs)) = build b H (insert k₂ v₂ (erase k₁ xs)) := by
   -- Both orders hold the same entries.
@@ -526,7 +570,7 @@ theorem erase_insert_comm (b : Entry → Bool) (H : List Entry → Nat) (xs : Li
     · exact ⟨Or.inr ⟨h, h'⟩, hne⟩
 
 -- The last write to a document wins: writing it twice is writing it once, last.
-theorem insert_insert (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry)
+theorem insert_insert (b : List Entry → Entry → Bool) (H : List Entry → Nat) (xs : List Entry)
     (hs : Sorted xs) (k v₁ v₂ : Nat) :
     build b H (insert k v₂ (insert k v₁ xs)) = build b H (insert k v₂ xs) := by
   -- Both hold `(k, v₂)` and the other documents' entries.
@@ -570,7 +614,7 @@ def finish (s : State α) : List (List α) :=
   | (d, c) => d ++ [c]
 
 -- The chunks of a list are its cut, finished.
-theorem chunks_eq_finish (b : α → Bool) (xs : List α) :
+theorem chunks_eq_finish (b : List α → α → Bool) (xs : List α) :
     chunks b xs = finish (scan b ([], []) xs) := by
   -- Both read the same state the same way.
   unfold chunks finish
@@ -583,26 +627,26 @@ theorem finish_shift (d e : List (List α)) (c : List α) :
   cases c <;> simp [finish]
 
 -- Cutting a list with no items changes nothing.
-theorem scan_nil (b : α → Bool) (s : State α) : scan b s [] = s := rfl
+theorem scan_nil (b : List α → α → Bool) (s : State α) : scan b s [] = s := rfl
 
 -- Cutting two lists one after the other is cutting them joined.
-theorem scan_append (b : α → Bool) (s : State α) (xs ys : List α) :
+theorem scan_append (b : List α → α → Bool) (s : State α) (xs ys : List α) :
     scan b s (xs ++ ys) = scan b (scan b s xs) ys := by
   -- A fold over a joined list is a fold over each part in turn.
   simp [scan, List.foldl_append]
 
 -- A chunk the cutter closes exactly at its end, and nowhere before.
-def Closed (b : α → Bool) (c : List α) : Prop :=
+def Closed (b : List α → α → Bool) (c : List α) : Prop :=
   -- Cut on its own, it gives itself as one closed chunk and leaves nothing open.
   scan b ([], []) c = ([c], [])
 
 -- A run the cutter never closes: cut on its own, all of it stays open.
-def Pending (b : α → Bool) (c : List α) : Prop :=
+def Pending (b : List α → α → Bool) (c : List α) : Prop :=
   -- Nothing closed, and everything still open.
   scan b ([], []) c = ([], c)
 
 -- What a cut level looks like: closed chunks, then perhaps one open last chunk.
-inductive Canon (b : α → Bool) : List (List α) → Prop
+inductive Canon (b : List α → α → Bool) : List (List α) → Prop
   -- No chunks at all.
   | nil : Canon b []
   -- One last chunk the cutter never closed, holding something.
@@ -611,11 +655,11 @@ inductive Canon (b : α → Bool) : List (List α) → Prop
   | cons (c : List α) (L : List (List α)) : Closed b c → Canon b L → Canon b (c :: L)
 
 -- Nothing open is a run that never closed.
-theorem pending_nil (b : α → Bool) : Pending b ([] : List α) := rfl
+theorem pending_nil (b : List α → α → Bool) : Pending b ([] : List α) := rfl
 
 -- While cutting from an open run that never closed, every chunk closed on the
 -- way is `Closed` and what is left open is `Pending`.
-theorem scan_canon (b : α → Bool) (ys : List α) :
+theorem scan_canon (b : List α → α → Bool) (ys : List α) :
     ∀ (d : List (List α)) (c : List α), Pending b c →
       ∃ e, (scan b (d, c) ys).1 = d ++ e ∧ (∀ ch ∈ e, Closed b ch) ∧
         Pending b (scan b (d, c) ys).2 := by
@@ -628,7 +672,7 @@ theorem scan_canon (b : α → Bool) (ys : List α) :
     -- One step of the cutter, then the rest.
     have hcons : ∀ s, scan b s (y :: ys) = scan b (step b s y) ys := fun _ => rfl
     rw [hcons]
-    by_cases h : (b y && !c.isEmpty) = true
+    by_cases h : (b c y && !c.isEmpty) = true
     · -- `y` closes `c ++ [y]`, which is `Closed`: `c` never closed on its own.
       have hstep : step b (d, c) y = (d ++ [c ++ [y]], []) := by simp [step, h]
       have hcl : Closed b (c ++ [y]) := by
@@ -653,7 +697,7 @@ theorem scan_canon (b : α → Bool) (ys : List α) :
       exact ih d (c ++ [y]) hp
 
 -- Closed chunks, then an open run that never closed, finish into a cut level.
-theorem canon_finish (b : α → Bool) (e : List (List α)) (c : List α)
+theorem canon_finish (b : List α → α → Bool) (e : List (List α)) (c : List α)
     (he : ∀ ch ∈ e, Closed b ch) (hc : Pending b c) : Canon b (finish (e, c)) := by
   -- Add the closed chunks one at a time, from the front.
   induction e with
@@ -670,7 +714,7 @@ theorem canon_finish (b : α → Bool) (e : List (List α)) (c : List α)
     exact Canon.cons ch _ (he ch (by simp)) (ih (fun x hx => he x (by simp [hx])))
 
 -- Every level the cutter makes is a cut level.
-theorem canon_chunks (b : α → Bool) (xs : List α) : Canon b (chunks b xs) := by
+theorem canon_chunks (b : List α → α → Bool) (xs : List α) : Canon b (chunks b xs) := by
   -- Cut from nothing, and read off the closed chunks and the open run.
   obtain ⟨e, he, hall, hp⟩ := scan_canon b xs [] [] (pending_nil b)
   rw [chunks_eq_finish]
@@ -681,13 +725,13 @@ theorem canon_chunks (b : α → Bool) (xs : List α) : Canon b (chunks b xs) :=
   exact canon_finish b d c hall hp
 
 -- A closed chunk ends with nothing open.
-theorem closes_of_closed (b : α → Bool) (c : List α) (h : Closed b c) : closes b c := by
+theorem closes_of_closed (b : List α → α → Bool) (c : List α) (h : Closed b c) : closes b c := by
   -- Its cut leaves nothing open.
   unfold closes
   rw [h]
 
 -- Cutting a cut level again, put back together, gives the same chunks.
-theorem chunks_of_canon (b : α → Bool) (L : List (List α)) (h : Canon b L) :
+theorem chunks_of_canon (b : List α → α → Bool) (L : List (List α)) (h : Canon b L) :
     chunks b L.flatten = L := by
   -- One chunk at a time.
   induction h with
@@ -706,7 +750,7 @@ theorem chunks_of_canon (b : α → Bool) (L : List (List α)) (h : Canon b L) :
     simp [finish]
 
 -- Dropping the first chunk of a cut level leaves a cut level.
-theorem canon_tail (b : α → Bool) (c : List α) (L : List (List α)) (h : Canon b (c :: L)) :
+theorem canon_tail (b : List α → α → Bool) (c : List α) (L : List (List α)) (h : Canon b (c :: L)) :
     Canon b L := by
   -- Either `c` was the open last chunk, or a closed one in front of a cut level.
   cases h with
@@ -714,7 +758,7 @@ theorem canon_tail (b : α → Bool) (c : List α) (L : List (List α)) (h : Can
   | cons _ _ _ hL => exact hL
 
 -- The chunks after any prefix of a cut level form a cut level.
-theorem canon_suffix (b : α → Bool) (P Q : List (List α)) (h : Canon b (P ++ Q)) :
+theorem canon_suffix (b : List α → α → Bool) (P Q : List (List α)) (h : Canon b (P ++ Q)) :
     Canon b Q := by
   -- Drop the prefix one chunk at a time.
   induction P with
@@ -722,7 +766,7 @@ theorem canon_suffix (b : α → Bool) (P Q : List (List α)) (h : Canon b (P ++
   | cons c P ih => exact ih (canon_tail b c (P ++ Q) h)
 
 -- A chunk with more chunks after it is a closed one.
-theorem canon_cons_closed (b : α → Bool) (c : List α) (L : List (List α))
+theorem canon_cons_closed (b : List α → α → Bool) (c : List α) (L : List (List α))
     (h : Canon b (c :: L)) (hL : L ≠ []) : Closed b c := by
   -- Only the last chunk may be left open.
   cases h with
@@ -730,7 +774,7 @@ theorem canon_cons_closed (b : α → Bool) (c : List α) (L : List (List α))
   | cons _ _ hc _ => exact hc
 
 -- Every chunk before a non-empty rest of a cut level is closed.
-theorem canon_prefix_closed (b : α → Bool) (P Q : List (List α)) (h : Canon b (P ++ Q))
+theorem canon_prefix_closed (b : List α → α → Bool) (P Q : List (List α)) (h : Canon b (P ++ Q))
     (hQ : Q ≠ []) : ∀ c ∈ P, Closed b c := by
   -- One chunk of the prefix at a time.
   induction P with
@@ -744,7 +788,7 @@ theorem canon_prefix_closed (b : α → Bool) (P Q : List (List α)) (h : Canon 
     · exact ih (canon_tail b c (P ++ Q) h) x hx
 
 -- Closed chunks only make a cut level.
-theorem canon_of_closed (b : α → Bool) (P : List (List α)) (h : ∀ c ∈ P, Closed b c) :
+theorem canon_of_closed (b : List α → α → Bool) (P : List (List α)) (h : ∀ c ∈ P, Closed b c) :
     Canon b P := by
   -- One closed chunk at a time.
   induction P with
@@ -752,7 +796,7 @@ theorem canon_of_closed (b : α → Bool) (P : List (List α)) (h : ∀ c ∈ P,
   | cons c P ih => exact Canon.cons c P (h c (by simp)) (ih (fun x hx => h x (by simp [hx])))
 
 -- Closed chunks put back together end with nothing open.
-theorem closes_of_all_closed (b : α → Bool) (P : List (List α)) (h : ∀ c ∈ P, Closed b c) :
+theorem closes_of_all_closed (b : List α → α → Bool) (P : List (List α)) (h : ∀ c ∈ P, Closed b c) :
     closes b P.flatten := by
   -- One closed chunk at a time.
   induction P with
@@ -765,7 +809,7 @@ theorem closes_of_all_closed (b : α → Bool) (P : List (List α)) (h : ∀ c �
 -- The re-cut after the new items (`rewrite_level`'s second loop): while the
 -- cutter holds an open run, feed it the next old chunk whole; once nothing is
 -- open, keep the old chunks that are left as they are; at the end, finish.
-def recut (b : α → Bool) (s : State α) : List (List α) → List (List α)
+def recut (b : List α → α → Bool) (s : State α) : List (List α) → List (List α)
   -- No old chunks left: finish the cut (`Chunker::finish`).
   | [] => finish s
   -- An old chunk `ch` is next.
@@ -776,7 +820,7 @@ def recut (b : α → Bool) (s : State α) : List (List α) → List (List α)
     else recut b (scan b s ch) S
 
 -- Re-cutting into a cut level gives what cutting it all through would.
-theorem recut_eq (b : α → Bool) (S : List (List α)) (hS : Canon b S) :
+theorem recut_eq (b : List α → α → Bool) (S : List (List α)) (hS : Canon b S) :
     ∀ s : State α, finish (scan b s S.flatten) = recut b s S := by
   -- One old chunk at a time.
   induction S with
@@ -804,7 +848,7 @@ theorem recut_eq (b : α → Bool) (S : List (List α)) (hS : Canon b S) :
 non-empty window `W`, then replacing the window's items by any `ys` and doing the
 windowed re-cut gives exactly the chunks of the whole edited level: `P` is kept,
 the re-cut makes the middle, and the old chunks it did not need are kept. -/
-theorem rewrite_level_refines (b : α → Bool) (xs ys : List α) (P W S : List (List α))
+theorem rewrite_level_refines (b : List α → α → Bool) (xs ys : List α) (P W S : List (List α))
     (h : chunks b xs = P ++ W ++ S) (hW : W ≠ []) :
     chunks b (P.flatten ++ ys ++ S.flatten) = P ++ recut b (scan b ([], []) ys) S := by
   -- The old level is a cut level, split as `P`, then `W ++ S`.
@@ -821,7 +865,7 @@ theorem rewrite_level_refines (b : α → Bool) (xs ys : List α) (P W S : List 
   rw [chunks_eq_finish, scan_append, recut_eq b S hS]
 
 -- The re-cut keeps a tail `R` of the old chunks `S` as it was, after new chunks `N`.
-theorem recut_keeps_tail (b : α → Bool) (S : List (List α)) :
+theorem recut_keeps_tail (b : List α → α → Bool) (S : List (List α)) :
     ∀ s : State α, ∃ N S₁ R, S = S₁ ++ R ∧ recut b s S = N ++ R := by
   -- One old chunk at a time.
   induction S with
@@ -844,7 +888,7 @@ def ref (H : List Entry → Nat) (c : List Entry) : Entry :=
   ((c.getLast?.map Prod.fst).getD 0, H c)
 
 -- One level up is one reference per chunk.
-theorem up_eq_map (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry) :
+theorem up_eq_map (b : List Entry → Entry → Bool) (H : List Entry → Nat) (xs : List Entry) :
     up b H xs = (chunks b xs).map (ref H) := rfl
 
 /-- One level up, the edit is again a window swap (`splice` in `edit.rs`): the
@@ -853,7 +897,7 @@ references before (`P`) and after (`R`), and differ only in that the old
 window's references (`W` and the old chunks the re-cut used up, `S₁`) give way
 to the new chunks' references (`N`). So the next level is edited the same way,
 and `rewrite_level_refines` applies to it again. -/
-theorem rewrite_level_up (b : Entry → Bool) (H : List Entry → Nat)
+theorem rewrite_level_up (b : List Entry → Entry → Bool) (H : List Entry → Nat)
     (xs ys : List Entry) (P W S : List (List Entry))
     (h : chunks b xs = P ++ W ++ S) (hW : W ≠ []) :
     ∃ N S₁ R : List (List Entry), S = S₁ ++ R ∧
@@ -893,7 +937,7 @@ what history independence (`build_same_entries`) makes every stored tree.
 -/
 
 -- Level `j` of a fresh build of `xs`, counted from the bottom.
-def lvl (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry) : Nat → List Entry
+def lvl (b : List Entry → Entry → Bool) (H : List Entry → Nat) (xs : List Entry) : Nat → List Entry
   -- The bottom level is the entries themselves.
   | 0 => xs
   -- Each level above holds one reference per chunk of the level below.
@@ -902,7 +946,7 @@ def lvl (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry) : Nat �
 /-- What an edit holds after each level, as `Tree::edit` runs it.
 `Walk b H xs xs' i L E` says: the edit has reached level `i`, where the old
 tree's level is `L` and the edit has made the edited level's items `E`. -/
-inductive Walk (b : Entry → Bool) (H : List Entry → Nat) (xs xs' : List Entry) :
+inductive Walk (b : List Entry → Entry → Bool) (H : List Entry → Nat) (xs xs' : List Entry) :
     Nat → List Entry → List Entry → Prop
   -- At the bottom the old level is the old entries, and the edited level the
   -- edited ones.
@@ -920,7 +964,7 @@ inductive Walk (b : Entry → Bool) (H : List Entry → Nat) (xs xs' : List Entr
       Walk b H xs xs' (i + 1) (up b H L) (P.map (ref H) ++ N.map (ref H) ++ R.map (ref H))
 
 -- One level up has one reference per chunk.
-theorem length_up (b : Entry → Bool) (H : List Entry → Nat) (X : List Entry) :
+theorem length_up (b : List Entry → Entry → Bool) (H : List Entry → Nat) (X : List Entry) :
     (up b H X).length = (chunks b X).length := by
   -- `up` maps each chunk to its reference.
   simp [up]
@@ -929,7 +973,7 @@ theorem length_up (b : Entry → Bool) (H : List Entry → Nat) (X : List Entry)
 has at that height, and the old level is the old tree's: at each level the
 windowed re-cut is the cut of the whole edited level (`rewrite_level_refines`),
 so its references are the fresh level above. -/
-theorem walk_levels (b : Entry → Bool) (H : List Entry → Nat) (xs xs' : List Entry)
+theorem walk_levels (b : List Entry → Entry → Bool) (H : List Entry → Nat) (xs xs' : List Entry)
     (i : Nat) (L E : List Entry) (hw : Walk b H xs xs' i L E) :
     L = lvl b H xs i ∧ E = lvl b H xs' i := by
   -- Follow the walk one level at a time.
@@ -947,7 +991,7 @@ theorem walk_levels (b : Entry → Bool) (H : List Entry → Nat) (xs xs' : List
 
 -- `raise` in `tree.rs`, keeping count of the level: while a level cuts into two
 -- chunks or more, go up; stop at the first that is one chunk, or none.
-def raise (b : Entry → Bool) (H : List Entry → Nat) (X : List Entry) (j : Nat) :
+def raise (b : List Entry → Entry → Bool) (H : List Entry → Nat) (X : List Entry) (j : Nat) :
     Nat × List Entry :=
   -- Two chunks or more: there is another level above.
   if 2 ≤ (chunks b X).length then raise b H (up b H X) (j + 1) else (j, X)
@@ -959,7 +1003,7 @@ decreasing_by
   exact chunks_shrink b X (Nat.le_trans h (chunks_length_le b X))
 
 -- `raise` stops at the root level `build` gives.
-theorem raise_snd (b : Entry → Bool) (H : List Entry → Nat) (X : List Entry) (j : Nat) :
+theorem raise_snd (b : List Entry → Entry → Bool) (H : List Entry → Nat) (X : List Entry) (j : Nat) :
     (raise b H X j).2 = build b H X := by
   -- Both take the same steps.
   rw [raise, build]
@@ -975,7 +1019,7 @@ decreasing_by
 
 -- `k` is where `raise`, started at level `j` of the edited entries' fresh build,
 -- stops: the first level from `j` on that cuts into fewer than two chunks.
-def Top (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry) (j k : Nat) : Prop :=
+def Top (b : List Entry → Entry → Bool) (H : List Entry → Nat) (xs : List Entry) (j k : Nat) : Prop :=
   -- It is at or above `j`, it is one chunk or none, and every level between
   -- `j` and it cuts into two chunks or more.
   j ≤ k ∧ (chunks b (lvl b H xs k)).length < 2 ∧
@@ -983,7 +1027,7 @@ def Top (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry) (j k : N
 
 -- Started on a fresh level, `raise` goes up the fresh levels and stops at the
 -- first one that is one chunk.
-theorem raise_lvl (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry) (j : Nat) :
+theorem raise_lvl (b : List Entry → Entry → Bool) (H : List Entry → Nat) (xs : List Entry) (j : Nat) :
     ∃ k, Top b H xs j k ∧ raise b H (lvl b H xs j) j = (k, lvl b H xs k) := by
   rw [raise]
   by_cases hc : 2 ≤ (chunks b (lvl b H xs j)).length
@@ -1007,7 +1051,7 @@ decreasing_by
 
 -- A level that is one chunk or none has one or no reference above it, so the
 -- level above is one chunk or none too.
-theorem one_chunk_up (b : Entry → Bool) (H : List Entry → Nat) (X : List Entry)
+theorem one_chunk_up (b : List Entry → Entry → Bool) (H : List Entry → Nat) (X : List Entry)
     (h : (chunks b X).length < 2) : (chunks b (up b H X)).length < 2 := by
   -- There are never more chunks than items.
   have := chunks_length_le b (up b H X)
@@ -1015,7 +1059,7 @@ theorem one_chunk_up (b : Entry → Bool) (H : List Entry → Nat) (X : List Ent
   omega
 
 -- Once a fresh level is one chunk or none, so is every level above it.
-theorem one_chunk_above (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry)
+theorem one_chunk_above (b : List Entry → Entry → Bool) (H : List Entry → Nat) (xs : List Entry)
     (k : Nat) (h : (chunks b (lvl b H xs k)).length < 2) :
     ∀ d, (chunks b (lvl b H xs (k + d))).length < 2 := by
   -- One level at a time.
@@ -1025,7 +1069,7 @@ theorem one_chunk_above (b : Entry → Bool) (H : List Entry → Nat) (xs : List
   | succ d ih => exact one_chunk_up b H _ ih
 
 -- A list with an item cuts into at least one chunk.
-theorem chunks_ne_nil (b : α → Bool) (X : List α) (h : X ≠ []) : chunks b X ≠ [] := by
+theorem chunks_ne_nil (b : List α → α → Bool) (X : List α) (h : X ≠ []) : chunks b X ≠ [] := by
   -- The chunks hold every item, so none would hold nothing.
   intro hc
   have := chunks_flatten b X
@@ -1033,7 +1077,7 @@ theorem chunks_ne_nil (b : α → Bool) (X : List α) (h : X ≠ []) : chunks b 
   exact h this.symm
 
 -- Every fresh level of entries that are not empty holds an item.
-theorem lvl_ne_nil (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry)
+theorem lvl_ne_nil (b : List Entry → Entry → Bool) (H : List Entry → Nat) (xs : List Entry)
     (h : xs ≠ []) (j : Nat) : lvl b H xs j ≠ [] := by
   -- One level at a time: a level with an item has a chunk, so a reference above.
   induction j with
@@ -1046,7 +1090,7 @@ theorem lvl_ne_nil (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entr
 
 /-- Why `collapse` goes down to the level below: a level holding a single
 reference refers to the whole level below, which is then one chunk. -/
-theorem single_ref (b : Entry → Bool) (H : List Entry → Nat) (X : List Entry)
+theorem single_ref (b : List Entry → Entry → Bool) (H : List Entry → Nat) (X : List Entry)
     (h : (up b H X).length = 1) : up b H X = [ref H X] := by
   -- One reference means one chunk, and a single chunk holds the whole level.
   rw [length_up] at h
@@ -1069,7 +1113,7 @@ def descend (node : Nat → List Entry) : Nat → Nat
 -- From any level at or above a fresh build's root, `collapse` comes down to that
 -- root: above it every level holds a single reference, and the root itself is
 -- the bottom or holds two references or more.
-theorem descend_top (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry)
+theorem descend_top (b : List Entry → Entry → Bool) (H : List Entry → Nat) (xs : List Entry)
     (hne : xs ≠ []) (t : Nat) (ht : Top b H xs 0 t) :
     ∀ d, descend (lvl b H xs) (t + d) = t := by
   intro d
@@ -1100,7 +1144,7 @@ theorem descend_top (b : Entry → Bool) (H : List Entry → Nat) (xs : List Ent
 
 -- The root a `raise` and its `collapse` leave: the level they stop at, and the
 -- node there.
-def rootOf (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry) (r : Nat) :
+def rootOf (b : List Entry → Entry → Bool) (H : List Entry → Nat) (xs : List Entry) (r : Nat) :
     Nat × List Entry :=
   -- Come down from where `raise` stopped, and take that level's node.
   (descend (lvl b H xs) r, lvl b H xs (descend (lvl b H xs) r))
@@ -1108,7 +1152,7 @@ def rootOf (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry) (r : 
 /-- Wherever `raise` stops, as long as that level is one chunk or none,
 `collapse` comes down to the root of a fresh build: every level under the fresh
 root cuts into two chunks or more, so the stop is at or above it. -/
-theorem root_from (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry)
+theorem root_from (b : List Entry → Entry → Bool) (H : List Entry → Nat) (xs : List Entry)
     (hne : xs ≠ []) (k : Nat) (hk : (chunks b (lvl b H xs k)).length < 2) :
     rootOf b H xs k = ((raise b H xs 0).1, build b H xs) := by
   -- Where `raise` stops from the bottom: the fresh root.
@@ -1133,7 +1177,7 @@ theorem root_from (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry
 used and whatever level `h` the old root was at, raising the edited root level
 and collapsing it gives the root of a fresh build of the edited entries: the
 level `raise` reaches from the bottom, with the node `build` gives. -/
-theorem edit_root (b : Entry → Bool) (H : List Entry → Nat) (xs xs' L E : List Entry)
+theorem edit_root (b : List Entry → Entry → Bool) (H : List Entry → Nat) (xs xs' L E : List Entry)
     (h : Nat) (hw : Walk b H xs xs' h L E) (hne : xs' ≠ []) :
     (raise b H E h).2 = lvl b H xs' (raise b H E h).1 ∧
       rootOf b H xs' (raise b H E h).1 = ((raise b H xs' 0).1, build b H xs') := by
@@ -1147,7 +1191,7 @@ theorem edit_root (b : Entry → Bool) (H : List Entry → Nat) (xs xs' L E : Li
 
 /-- A fresh build's own `collapse` changes nothing: its root holds two references
 or more, or is the bottom level. -/
-theorem build_root (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry)
+theorem build_root (b : List Entry → Entry → Bool) (H : List Entry → Nat) (xs : List Entry)
     (hne : xs ≠ []) :
     rootOf b H xs (raise b H xs 0).1 = ((raise b H xs 0).1, build b H xs) :=
   -- The fresh build is the edit that changes nothing.
@@ -1155,7 +1199,7 @@ theorem build_root (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entr
 
 -- Edited to no entries, every level is empty, so `collapse` stores nothing and
 -- the tree is empty, as a fresh build of no entries is.
-theorem lvl_nil (b : Entry → Bool) (H : List Entry → Nat) (j : Nat) : lvl b H [] j = [] := by
+theorem lvl_nil (b : List Entry → Entry → Bool) (H : List Entry → Nat) (j : Nat) : lvl b H [] j = [] := by
   -- No items, no chunks, no references, at every level.
   induction j with
   | zero => rfl
@@ -1166,8 +1210,10 @@ theorem lvl_nil (b : Entry → Bool) (H : List Entry → Nat) (j : Nat) : lvl b 
 ## Building in one pass, one open chunk per level
 
 The story, in plain words. `Builder` in `crates/foundation/prolly/src/build.rs`
-takes the entries in key order and never holds them all. Each level keeps only
-its open chunk. An entry goes into the bottom level; when it closes that
+takes the entries in key order. Each level keeps only its open chunk, which
+under Rust's close rule weighs under `MAX_CHUNK_BYTES` or is one item
+(`open_bounded`), so the builder holds at most that per level, whatever the
+input; the theorems below hold for any close rule. An entry goes into the bottom level; when it closes that
 level's chunk, the chunk is stored and its reference goes into the level above
 the same way, which may close a chunk there too. At the end (`finish`), from
 the bottom up, a level that never closed a chunk is the root, its open chunk
@@ -1185,20 +1231,20 @@ entries are given sorted with each key once, as in `build_same_entries`.
 -- `Builder::feed`: add `x` to the lowest level's open chunk, making the level
 -- when there is none. When `x` closes the chunk (`step`'s rule), the chunk is
 -- stored and its reference fed to the level above, the same way.
-def feed (b : Entry → Bool) (H : List Entry → Nat) :
+def feed (b : List Entry → Entry → Bool) (H : List Entry → Nat) :
     List (State Entry) → Entry → List (State Entry)
   -- No level yet: a new one, holding `x` open.
   | [], x => [step b ([], []) x]
   | s :: rest, x =>
     -- `x` closes the open chunk: store it, and feed its reference up.
-    if b x && !s.2.isEmpty then (s.1 ++ [s.2 ++ [x]], []) :: feed b H rest (ref H (s.2 ++ [x]))
+    if b s.2 x && !s.2.isEmpty then (s.1 ++ [s.2 ++ [x]], []) :: feed b H rest (ref H (s.2 ++ [x]))
     -- Otherwise `x` joins the open chunk.
     else (s.1, s.2 ++ [x]) :: rest
 
 /-- What the levels hold after a level was fed the items `ins`: its cutter state
 is the cut of `ins`, and the level above (there only once a chunk closed) was
 fed the references of the chunks it closed, in order. -/
-inductive Fed (b : Entry → Bool) (H : List Entry → Nat) : List Entry → List (State Entry) → Prop
+inductive Fed (b : List Entry → Entry → Bool) (H : List Entry → Nat) : List Entry → List (State Entry) → Prop
   -- Fed nothing: no level.
   | nil : Fed b H [] []
   -- Fed `ins`: this level is the cut of `ins`, and the levels above were fed
@@ -1209,7 +1255,7 @@ inductive Fed (b : Entry → Bool) (H : List Entry → Nat) : List Entry → Lis
 
 -- Feeding one more item keeps the promise: every level is still the cut of
 -- what it was fed, with `x` added at the bottom.
-theorem feed_fed (b : Entry → Bool) (H : List Entry → Nat) (ins : List Entry)
+theorem feed_fed (b : List Entry → Entry → Bool) (H : List Entry → Nat) (ins : List Entry)
     (L : List (State Entry)) (h : Fed b H ins L) : ∀ x, Fed b H (ins ++ [x]) (feed b H L x) := by
   -- One level at a time, from the bottom.
   induction h with
@@ -1224,7 +1270,7 @@ theorem feed_fed (b : Entry → Bool) (H : List Entry → Nat) (ins : List Entry
     have hs : scan b ([], []) (ins ++ [x]) = step b (scan b ([], []) ins) x := by
       rw [scan_append]; rfl
     rw [feed]
-    by_cases hb : (b x && !(scan b ([], []) ins).2.isEmpty) = true
+    by_cases hb : (b (scan b ([], []) ins).2 x && !(scan b ([], []) ins).2.isEmpty) = true
     · -- `x` closes a chunk: the level above is fed its reference.
       rw [if_pos hb]
       have h' : scan b ([], []) (ins ++ [x]) =
@@ -1245,12 +1291,12 @@ theorem feed_fed (b : Entry → Bool) (H : List Entry → Nat) (ins : List Entry
       exact hrest
 
 -- `Builder::push` over all the entries, from no levels.
-def pushAll (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry) : List (State Entry) :=
+def pushAll (b : List Entry → Entry → Bool) (H : List Entry → Nat) (xs : List Entry) : List (State Entry) :=
   -- Feed each entry in turn.
   xs.foldl (feed b H) []
 
 -- After every push, the bottom level was fed all the entries so far.
-theorem pushAll_fed (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry) :
+theorem pushAll_fed (b : List Entry → Entry → Bool) (H : List Entry → Nat) (xs : List Entry) :
     Fed b H xs (pushAll b H xs) := by
   -- Feeding the entries one at a time keeps the promise from no levels on.
   have key : ∀ (xs ins : List Entry) (L : List (State Entry)), Fed b H ins L →
@@ -1268,7 +1314,7 @@ theorem pushAll_fed (b : Entry → Bool) (H : List Entry → Nat) (xs : List Ent
 -- chunk is the root, its open chunk; any other level stores its open chunk, if
 -- there is one, and feeds the reference up, and `finish` goes up a level.
 -- `none` only when it runs out of levels (`finish_fed` shows it never does).
-def fin (b : Entry → Bool) (H : List Entry → Nat) :
+def fin (b : List Entry → Entry → Bool) (H : List Entry → Nat) :
     Nat → List (State Entry) → Nat → Option (Nat × List Entry)
   -- Out of levels.
   | 0, _, _ => none
@@ -1281,7 +1327,7 @@ def fin (b : Entry → Bool) (H : List Entry → Nat) :
     else fin b H n (if s.2 = [] then rest else feed b H rest (ref H s.2)) (j + 1)
 
 -- A level that closed no chunk holds all its items open, in one chunk or none.
-theorem none_closed (b : Entry → Bool) (X : List Entry) (h : (scan b ([], []) X).1 = []) :
+theorem none_closed (b : List Entry → Entry → Bool) (X : List Entry) (h : (scan b ([], []) X).1 = []) :
     (scan b ([], []) X).2 = X ∧ (chunks b X).length < 2 := by
   -- Nothing was lost, and nothing was closed.
   have hf := scan_flatten b X [] []
@@ -1298,7 +1344,7 @@ theorem none_closed (b : Entry → Bool) (X : List Entry) (h : (scan b ([], []) 
 
 -- Flushing a level's open chunk feeds the level above every reference of the
 -- level's chunks: the fresh level above.
-theorem flush_fed (b : Entry → Bool) (H : List Entry → Nat) (ins : List Entry)
+theorem flush_fed (b : List Entry → Entry → Bool) (H : List Entry → Nat) (ins : List Entry)
     (rest : List (State Entry)) (h : Fed b H ((scan b ([], []) ins).1.map (ref H)) rest) :
     Fed b H (up b H ins) (if (scan b ([], []) ins).2 = [] then rest
       else feed b H rest (ref H (scan b ([], []) ins).2)) := by
@@ -1326,7 +1372,7 @@ theorem length_le_flatten (L : List (List α)) (ch : List α) (h : ch ∈ L) :
     · have := ih h; omega
 
 -- A level that closed a chunk holds two items or more.
-theorem two_of_closed (b : Entry → Bool) (X : List Entry) (h : (scan b ([], []) X).1 ≠ []) :
+theorem two_of_closed (b : List Entry → Entry → Bool) (X : List Entry) (h : (scan b ([], []) X).1 ≠ []) :
     2 ≤ X.length := by
   -- The closed chunk alone holds two, and the closed chunks are part of `X`.
   obtain ⟨ch, hch⟩ := List.exists_mem_of_ne_nil _ h
@@ -1341,7 +1387,7 @@ theorem two_of_closed (b : Entry → Bool) (X : List Entry) (h : (scan b ([], []
 /-- `finish` goes up the fresh levels: started at level `i` with the levels fed
 the fresh level `i`, it returns a fresh level `k ≥ i` that is one chunk or none,
 with that level's node, given more steps than level `i` has items. -/
-theorem finish_fed (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry)
+theorem finish_fed (b : List Entry → Entry → Bool) (H : List Entry → Nat) (xs : List Entry)
     (hne : xs ≠ []) :
     ∀ n i L, Fed b H (lvl b H xs i) L → (lvl b H xs i).length < n →
       ∃ k, i ≤ k ∧ (chunks b (lvl b H xs k)).length < 2 ∧
@@ -1374,7 +1420,7 @@ theorem finish_fed (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entr
 
 /-- `Tree::build` through `Builder`: pushing sorted entries one at a time and
 finishing gives the root of a fresh build, after `collapse`. -/
-theorem builder_root (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry)
+theorem builder_root (b : List Entry → Entry → Bool) (H : List Entry → Nat) (xs : List Entry)
     (hne : xs ≠ []) :
     ∃ k, fin b H (xs.length + 1) (pushAll b H xs) 0 = some (k, lvl b H xs k) ∧
       rootOf b H xs k = ((raise b H xs 0).1, build b H xs) := by
@@ -1385,7 +1431,7 @@ theorem builder_root (b : Entry → Bool) (H : List Entry → Nat) (xs : List En
   exact ⟨k, hfin, root_from b H xs hne k hk⟩
 
 -- No entries: no level, and `finish` gives the empty tree.
-theorem builder_empty (b : Entry → Bool) (H : List Entry → Nat) :
+theorem builder_empty (b : List Entry → Entry → Bool) (H : List Entry → Nat) :
     fin b H 1 (pushAll b H []) 0 = some (0, []) := rfl
 /-!
 ## Diff's walk
