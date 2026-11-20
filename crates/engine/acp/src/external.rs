@@ -258,8 +258,9 @@ where
         mut deadline: std::pin::Pin<&mut workers::Delay>,
     ) -> Result<()> {
         loop {
-            // Asked for before the read, so a record that changes after it
-            // is not missed.
+            // Asked for before the read: a `Notified` records the count of
+            // notifications when it is made, so a record that changes after
+            // it, even before its first poll, makes that poll ready.
             let changed = self.changed.notified();
             let transaction = self.store.new_txn(true).await.map_err(storage_error)?;
             let rest = crate::outbox::tuple_rest(&transaction, tuple).await?;

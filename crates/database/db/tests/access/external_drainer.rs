@@ -743,8 +743,14 @@ fn an_exact_observation_waits_for_a_change_marked_in_flight() {
                     relation: "reader",
                 })
         };
+        let started = std::time::Instant::now();
         assert!(
             matches!(observe().await, Err(acp::Error::ProviderUnavailable(reason)) if reason == "relationship change is unsettled")
+        );
+        assert!(
+            started.elapsed() >= acp::OBSERVATION_PATIENCE,
+            "refused after {:?}, before its patience",
+            started.elapsed()
         );
 
         let restarted = staging.restarted();

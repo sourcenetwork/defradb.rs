@@ -163,7 +163,7 @@ fn an_observation_waits_for_a_change_about_to_settle() {
 }
 
 /// A change that cannot settle refuses the observation: one nothing settles
-/// once the patience is spent, a refused change at once.
+/// only once the patience is spent, one the provider refused at once.
 #[test]
 fn an_observation_refuses_a_change_that_cannot_settle() {
     workers::block_on(async {
@@ -176,9 +176,16 @@ fn an_observation_refuses_a_change_that_cannot_settle() {
         staging
             .commit_change(Change::new(alice(), &doc, OwedOp::Add, bob()))
             .await;
-        // Nothing settles it here: the wait runs out its patience.
+        // Nothing settles it here: the wait runs out its patience, and only
+        // then refuses.
+        let started = std::time::Instant::now();
         let waited = observe(&staging, &alice(), &doc).await;
         assert!(unsettled(&waited), "{waited:?}");
+        assert!(
+            started.elapsed() >= acp::OBSERVATION_PATIENCE,
+            "refused after {:?}, before its patience",
+            started.elapsed()
+        );
         staging
             .gate
             .settle_owed_changes_once(acp::OwedScope::All)
@@ -198,7 +205,14 @@ fn an_observation_refuses_a_change_that_cannot_settle() {
             .settle_owed_changes_once(acp::OwedScope::All)
             .await
             .unwrap();
+        // The provider refused the change: it is at rest and will not settle.
+        assert!(staging
+            .queue()
+            .await
+            .iter()
+            .any(|change| matches!(change.state, acp::OwedState::Refused { .. })));
         let (owner, grantee) = (alice(), carol());
+        let started = std::time::Instant::now();
         let refused = staging
             .gate
             .observe_actor_relationship(ActorRelationshipObservation {
@@ -211,6 +225,11 @@ fn an_observation_refuses_a_change_that_cannot_settle() {
             })
             .await;
         assert!(unsettled(&refused), "{refused:?}");
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "a change at rest refuses at once, not after {:?}",
+            started.elapsed()
+        );
     })
     .unwrap()
 }

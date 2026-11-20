@@ -1,7 +1,10 @@
-//! A document created and then updated at once, on a node whose document ACP
-//! is its own Vera node: the update's projection observes a grant the
-//! create's projection staged, which the drainer is still settling. The
-//! observation waits for it at the edge instead of refusing
+//! Documents created and then updated at once, under concurrent load, on a
+//! node whose document ACP is its own Vera node: the update's projection
+//! observes the grant the create's projection staged. This is a load check
+//! that such updates project without refusal; it does not force the grant to
+//! be unsettled when the update observes it (the create's commit usually
+//! settles it first), so it does not by itself decide the wait. The gate
+//! tests in `db/tests/access/external_observation.rs` do
 //! (`proofs/tla/SettleBeforeObserving.tla`).
 
 use std::sync::Arc;
@@ -71,7 +74,7 @@ fn update_user(doc: &str, name: &str, actor: &Did) -> QueryRequest {
 }
 
 #[test]
-fn documents_updated_right_after_their_creation_are_projected_without_refusal() {
+fn creates_updated_at_once_under_load_project_without_refusal() {
     use crypto::Key as _;
     workers::block_on(async {
         let directory = tempfile::tempdir().unwrap();
