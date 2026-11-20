@@ -17,7 +17,10 @@
 \* the deadline runs out.
 \*
 \* What must never happen: the observation answers from a provider state
-\* older than the change it found owed; or it is still waiting once its
+\* older than the change it found owed, or older than a change staged on the
+\* tuple while it waited (a later change also renames the projection's
+\* prepared input, so an answer about an earlier state is never reused for
+\* it); or it is still waiting once its
 \* deadline has passed, however many notifications arrive and however long a
 \* settlement pass holds the lock.
 \*
@@ -32,7 +35,9 @@
 EXTENDS Naturals
 
 \* Bug: "none"; "nowait" (the provider is asked while the change is owed);
-\* "wakeFirst" (a pending notification is taken before the deadline is
+\* "earlierOnly" (the observation answers once the change it found owed has
+\* settled, not every change staged since); "wakeFirst" (a pending
+\* notification is taken before the deadline is
 \* checked, so a stream of them keeps the wait going); "lockUnbounded" (the
 \* wait for the settling lock has no deadline); "noExpiry" (the deadline
 \* never ends the wait). Patience: the deadline, in ticks of time.
@@ -45,14 +50,15 @@ CONSTANTS Bug, Patience, Notifications
 \* is parked or refused. pending: a notification of some owed record has
 \* arrived and not been taken. locked: a settlement pass holds the settling
 \* lock. phase: where the observation is. needed: the change owed when the
-\* observation began. seen: the change the provider answered at. elapsed:
-\* time since the observation began. answer: the outcome.
+\* observation began. seen: the change the provider answered at. latest: the
+\* latest change staged when it answered. elapsed: time since the
+\* observation began. answer: the outcome.
 VARIABLES staged, settled, up, parked, pending, locked, phase, needed, seen,
-          elapsed, answer
+          latest, elapsed, answer
 
 \* Every variable, for stuttering steps.
 vars == <<staged, settled, up, parked, pending, locked, phase, needed, seen,
-          elapsed, answer>>
+          latest, elapsed, answer>>
 
 \* A change is owed: the provider does not hold the latest staged one.
 Owed == settled < staged
@@ -70,42 +76,47 @@ Due == /\ Active /\ elapsed >= Patience
 \* One change was just committed and is owed; the observation has not begun.
 Init == /\ staged = 1 /\ settled = 0 /\ up \in BOOLEAN /\ parked \in BOOLEAN
         /\ pending = FALSE /\ locked = FALSE
-        /\ phase = "idle" /\ needed = 0 /\ seen = 0 /\ elapsed = 0
+        /\ phase = "idle" /\ needed = 0 /\ seen = 0 /\ latest = 0 /\ elapsed = 0
         /\ answer = "none"
 
 \* Time passes, whatever else happens, but never past a deadline that is due:
 \* the timer ends the wait at its time. One tick past it is the bug showing.
 Tick == /\ Active /\ ~Due /\ elapsed <= Patience
         /\ elapsed' = elapsed + 1
-        /\ UNCHANGED <<staged, settled, up, parked, pending, locked, phase, needed, seen, answer>>
+        /\ UNCHANGED <<staged, settled, up, parked, pending, locked, phase, needed, seen, latest, answer>>
 
 \* Some owed record, of this tuple or any other, is written or deleted.
 Notify == /\ Notifications /\ ~pending /\ pending' = TRUE
-          /\ UNCHANGED <<staged, settled, up, parked, locked, phase, needed, seen, elapsed, answer>>
+          /\ UNCHANGED <<staged, settled, up, parked, locked, phase, needed, seen, latest, elapsed, answer>>
+
+\* A transaction stages a later change on the tuple; its record notifies.
+StageAgain == /\ staged < 2 /\ staged' = staged + 1
+              /\ pending' = (pending \/ Notifications)
+              /\ UNCHANGED <<settled, up, parked, locked, phase, needed, seen, latest, elapsed, answer>>
 
 \* A settlement pass takes the lock, settles the change if it can, and may
 \* hold the lock on for other objects.
 Settle == /\ ~locked /\ locked' = TRUE
           /\ settled' = IF up /\ ~parked THEN staged ELSE settled
           /\ pending' = (pending \/ Notifications)
-          /\ UNCHANGED <<staged, up, parked, phase, needed, seen, elapsed, answer>>
+          /\ UNCHANGED <<staged, up, parked, phase, needed, seen, latest, elapsed, answer>>
 
 \* The settlement pass lets the lock go.
 Release == /\ locked /\ locked' = FALSE
-           /\ UNCHANGED <<staged, settled, up, parked, pending, phase, needed, seen, elapsed, answer>>
+           /\ UNCHANGED <<staged, settled, up, parked, pending, phase, needed, seen, latest, elapsed, answer>>
 
 \* The provider goes down or comes back.
 Toggle == /\ up' = ~up
-          /\ UNCHANGED <<staged, settled, parked, pending, locked, phase, needed, seen, elapsed, answer>>
+          /\ UNCHANGED <<staged, settled, parked, pending, locked, phase, needed, seen, latest, elapsed, answer>>
 
 \* The observation begins: it notes the change owed and sets its deadline.
 Begin == /\ phase = "idle" /\ phase' = "waiting" /\ needed' = staged
-         /\ UNCHANGED <<staged, settled, up, parked, pending, locked, seen, elapsed, answer>>
+         /\ UNCHANGED <<staged, settled, up, parked, pending, locked, seen, latest, elapsed, answer>>
 
 \* The deadline ends the wait, in either phase: refused as unsettled.
 Expire == /\ Due
           /\ answer' = "unsettled" /\ phase' = "done"
-          /\ UNCHANGED <<staged, settled, up, parked, pending, locked, needed, seen, elapsed>>
+          /\ UNCHANGED <<staged, settled, up, parked, pending, locked, needed, seen, latest, elapsed>>
 
 \* A notification is taken while patience remains (with the bug, regardless)
 \* and the tuple is read again: settled, it goes for the lock.
@@ -113,23 +124,31 @@ Wake == /\ phase = "waiting" /\ pending /\ ~parked
         /\ (elapsed < Patience \/ Bug = "wakeFirst")
         /\ pending' = FALSE
         /\ phase' = IF Owed THEN "waiting" ELSE "locking"
-        /\ UNCHANGED <<staged, settled, up, parked, locked, needed, seen, elapsed, answer>>
+        /\ UNCHANGED <<staged, settled, up, parked, locked, needed, seen, latest, elapsed, answer>>
+
+\* With the lock taken, a change staged since sends the observation back to
+\* wait for it.
+Rewait == /\ phase = "locking" /\ ~locked /\ Owed /\ Bug # "earlierOnly"
+          /\ phase' = "waiting"
+          /\ UNCHANGED <<staged, settled, up, parked, pending, locked, needed, seen, latest, elapsed, answer>>
 
 \* A parked change will not settle: the wait gives up at once.
 GiveUp == /\ phase = "waiting" /\ Owed /\ parked
           /\ answer' = "unsettled" /\ phase' = "done"
-          /\ UNCHANGED <<staged, settled, up, parked, pending, locked, needed, seen, elapsed>>
+          /\ UNCHANGED <<staged, settled, up, parked, pending, locked, needed, seen, latest, elapsed>>
 
-\* Nothing is owed and the lock is free (or, with the bug, regardless of what
-\* is owed): the provider is asked.
+\* Nothing is owed and the lock is free (with the bugs: the change it began
+\* waiting for has settled, or regardless of what is owed): the provider is
+\* asked, and the check under the same lock finds nothing staged since.
 Ask == /\ \/ phase = "locking" /\ ~locked /\ ~Owed
+          \/ Bug = "earlierOnly" /\ phase = "locking" /\ ~locked /\ settled >= needed
           \/ Bug = "nowait" /\ phase = "waiting"
-       /\ seen' = settled /\ answer' = "answered" /\ phase' = "done"
+       /\ seen' = settled /\ latest' = staged /\ answer' = "answered" /\ phase' = "done"
        /\ UNCHANGED <<staged, settled, up, parked, pending, locked, needed, elapsed>>
 
 \* Any of these, in any order.
-Next == Tick \/ Notify \/ Settle \/ Release \/ Toggle \/ Begin \/ Expire
-        \/ Wake \/ GiveUp \/ Ask
+Next == Tick \/ Notify \/ StageAgain \/ Settle \/ Release \/ Toggle \/ Begin \/ Expire
+        \/ Wake \/ Rewait \/ GiveUp \/ Ask
 
 \* Steps may also wait.
 Spec == Init /\ [][Next]_vars
@@ -137,6 +156,10 @@ Spec == Init /\ [][Next]_vars
 \* An answer comes from a provider state that holds the change the
 \* observation found owed.
 INV_NotOlderThanOwed == answer = "answered" => seen >= needed
+
+\* An answer comes from a provider state that holds every change staged on
+\* the tuple when it answered, later ones included.
+INV_HoldsLatest == answer = "answered" => seen >= latest
 
 \* Once the deadline has passed, the observation is no longer waiting: time
 \* never runs past it while the observation waits.

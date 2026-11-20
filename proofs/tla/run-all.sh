@@ -785,9 +785,11 @@ RUNS=(
   "MC_OwedStagingAuthority_Green.cfg OwedStagingAuthority.tla GREEN" # only an actor whose authority an owed revocation takes away is refused
   "MC_OwedStagingAuthority_Red_Wide.cfg OwedStagingAuthority.tla RED" # INV_NoOverWideDenial
   "MC_OwedStagingAuthority_Red_Self.cfg OwedStagingAuthority.tla RED" # INV_RevokedAuthorityDenies
+  "MC_OwedStagingAuthority_Red_NoOwner.cfg OwedStagingAuthority.tla RED" # INV_NoOverWideDenial
   "MC_SettleBeforeObserving_Green.cfg SettleBeforeObserving.tla GREEN" # an observation waits, within one deadline, for its owed change to settle
   "MC_SettleBeforeObserving_Green_Silent.cfg SettleBeforeObserving.tla GREEN" # with no notification the deadline alone ends the wait
   "MC_SettleBeforeObserving_Red_NoWait.cfg SettleBeforeObserving.tla RED" # INV_NotOlderThanOwed
+  "MC_SettleBeforeObserving_Red_EarlierOnly.cfg SettleBeforeObserving.tla RED" # INV_HoldsLatest
   "MC_SettleBeforeObserving_Red_WakeFirst.cfg SettleBeforeObserving.tla RED" # INV_EndsInTime
   "MC_SettleBeforeObserving_Red_LockUnbounded.cfg SettleBeforeObserving.tla RED" # INV_EndsInTime
   "MC_SettleBeforeObserving_Red_NoExpiry.cfg SettleBeforeObserving.tla RED" # INV_EndsInTime

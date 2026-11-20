@@ -21,8 +21,8 @@
 EXTENDS Naturals, FiniteSets
 
 \* Bug: "none", "wide" (any owed delete naming the actor or everyone denies,
-\* whatever its relation), or "self" (a delete the actor staged itself is not
-\* counted against it).
+\* whatever its relation), "self" (a delete the actor staged itself is not
+\* counted against it), or "noOwner" (the owner loses its exemption).
 CONSTANT Bug
 
 \* The actors, and "*" for everyone.
@@ -60,7 +60,7 @@ Revoked(a) ==
     [] OTHER -> AtRisk(a)
 
 \* The owner may always change; a manager unless its authority was revoked.
-Admits(a) == a = "owner" \/ (Manages(a) /\ ~Revoked(a))
+Admits(a) == (a = "owner" /\ Bug # "noOwner") \/ (Manages(a) /\ ~Revoked(a))
 
 \* The owner or the manager stages a revocation of a tuple of either
 \* relation, for the manager or everyone (whether it may is not this model's
