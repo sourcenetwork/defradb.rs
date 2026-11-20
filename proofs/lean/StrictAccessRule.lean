@@ -8,7 +8,9 @@ namespace StrictAccessRule
 
 -- What one row's check came to.
 inductive Check where
+  -- The provider answered: this row may be read.
   | allow
+  -- The provider answered: this row may not be read.
   | deny
   -- The provider did not answer in time, after its own waits.
   | late
@@ -18,7 +20,9 @@ inductive Check where
 
 -- What the read does with the row.
 inductive Step where
+  -- The row stays in the read's answer.
   | keep
+  -- The row is filtered out, without turning the read into an error.
   | drop
   -- The request fails, retryable when the provider was late.
   | fail (retryable : Bool)

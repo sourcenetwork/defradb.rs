@@ -87,7 +87,8 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                                 &policy.resource_name,
                                 doc_id,
                             )
-                            .await?;
+                            .await
+                            .map_err(|error| self.access_check_failure(error, |error| error))?;
                         if has_access {
                             filtered.push(doc);
                         }
@@ -99,10 +100,11 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         let mut readable = Vec::with_capacity(plan_docs.len());
         for doc in plan_docs {
             let doc_id = doc.get(0).and_then(|value| value.as_str()).unwrap_or("");
-            if self
+            let may_read = self
                 .app_may_read(app_identity.as_ref(), collection, doc_id)
-                .await?
-            {
+                .await
+                .map_err(|error| self.access_check_failure(error, |error| error))?;
+            if may_read {
                 readable.push(doc);
             }
         }
