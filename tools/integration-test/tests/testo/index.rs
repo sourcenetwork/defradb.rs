@@ -34,6 +34,7 @@ mod new_get;
 mod new_unique;
 mod new_unique_composite;
 mod new_unique_composite_one_to_one;
+mod order_limit_after_scan;
 mod order_limit_offset;
 mod order_query;
 mod patch;
