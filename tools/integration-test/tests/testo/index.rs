@@ -56,6 +56,7 @@ mod query_with_relation_second_order;
 mod query_with_relation_sub_filter;
 mod query_with_relation_sub_order;
 mod query_with_relation_sub_order_complex;
+mod query_with_relation_tie_order;
 mod query_with_unique_composite_index_filter;
 mod query_with_unique_index_on_relation_filter;
 mod query_with_unique_index_only_filter;
