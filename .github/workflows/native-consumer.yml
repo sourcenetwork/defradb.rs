@@ -27,7 +27,7 @@ jobs:
     timeout-minutes: 90
     env:
       CARGO_BUILD_JOBS: '2'
-      VERA_RUNTIME_REVISION: ${{ inputs.vera_revision || '506f2ed65c618674a363dfca8f6aed90e4dbd027' }}
+      VERA_RUNTIME_REVISION: ${{ inputs.vera_revision || '1367a56b2471bc379fd0e5522b8492d4b4b6e5d8' }}
     steps:
       - uses: actions/checkout@v7
         with:
