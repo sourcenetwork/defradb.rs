@@ -71,18 +71,21 @@ impl AcpTransport for EmbeddedTransport {
 
 mod head;
 
-/// The fetched head, then only headers that finalize after it: any queued
-/// header at or below the fetched head is older than the stream's start.
+/// The fetched head, then the queued headers it does not make old. One at or
+/// below the head in a term not above the head's is older than the stream's
+/// start and dropped. One of a later term is passed on wherever it is: a
+/// switch of the deployment's active device voids blocks above its cut, and
+/// the light client reads such a header below its head to learn its head was
+/// voided (`proofs/tla/FirstHeader.tla`, `KeepLaterTerms`).
 fn headers_after(head: GossipHeader, queued: HeaderStream) -> HeaderStream {
-    let head_height = head.height;
-    let head_hash = head.block_hash;
+    let (height, term) = (head.height, head.term);
     futures::stream::once(async move { Ok(head) })
         .chain(queued.filter(move |header| {
-            let stale = matches!(
+            let old = matches!(
                 header,
-                Ok(header) if header.height <= head_height || header.block_hash == head_hash
+                Ok(header) if header.height <= height && header.term <= term
             );
-            futures::future::ready(!stale)
+            futures::future::ready(!old)
         }))
         .boxed()
 }

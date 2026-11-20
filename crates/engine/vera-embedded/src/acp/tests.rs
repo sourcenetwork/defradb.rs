@@ -9,14 +9,18 @@ use crate::error::EmbeddedError;
 const METHOD: &str = "vera_getCurrentPermissionProof";
 
 fn header(height: u64) -> GossipHeader {
-    let hash = format!("{height:064x}");
+    header_in(height, 0)
+}
+
+fn header_in(height: u64, term: u64) -> GossipHeader {
+    let hash = format!("{:064x}", height + (term << 32));
     serde_json::from_value(json!({
         "chain_id": 1,
         "height": height,
         "block_hash": format!("0x{hash}"),
         "parent_hash": format!("0x{:064x}", height.saturating_sub(1)),
         "timestamp": 123,
-        "term": 0,
+        "term": term,
         "state_root": format!("0x{hash}"),
         "module_state_root": format!("0x{hash}"),
         "tx_count": 0,
@@ -48,6 +52,28 @@ fn queued_headers_at_or_below_the_fetched_head_are_not_emitted() {
     let ended = futures::executor::block_on(headers.next());
     assert_eq!((first.height, second.height), (7, 8));
     assert!(ended.is_none());
+}
+
+/// A takeover of the deployment's active device voids blocks above its
+/// cut: the next term's headers may be at or below the fetched head, and the
+/// light client reads them there to learn its head was voided.
+#[test]
+fn a_header_of_a_later_term_at_or_below_the_fetched_head_is_emitted() {
+    let head = header(7);
+    let queued = futures::stream::iter([
+        Ok(header(6)),
+        Ok(header_in(6, 1)),
+        Ok(header_in(7, 1)),
+        Ok(header(7)),
+    ])
+    .boxed();
+    let headers: Vec<(u64, u64)> =
+        futures::executor::block_on(headers_after(head, queued).collect::<Vec<_>>())
+            .into_iter()
+            .map(|header| header.expect("header"))
+            .map(|header| (header.height, header.term))
+            .collect();
+    assert_eq!(headers, [(7, 0), (6, 1), (7, 1)]);
 }
 
 #[test]
