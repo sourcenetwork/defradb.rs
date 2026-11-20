@@ -96,6 +96,12 @@ pub(super) struct RemoteAcp {
     refused_objects: Set<String>,
     /// The next list is applied and its answer lost.
     pub(super) lose_list_answer: AtomicBool,
+    /// Documents another settler registers to the caller just before the
+    /// next registration request reaches the provider.
+    raced: SegQueue<String>,
+    /// A registration of a document already held, even for its own owner,
+    /// is refused, as vera.rs refuses one.
+    pub(super) refuse_held: AtomicBool,
 }
 
 /// What a test runs inside an exact observation, after the provider answered.
@@ -134,6 +140,8 @@ impl RemoteAcp {
             lists: SegQueue::new(),
             refused_objects: set(),
             lose_list_answer: AtomicBool::new(false),
+            raced: SegQueue::new(),
+            refuse_held: AtomicBool::new(false),
         })
     }
 
@@ -206,6 +214,21 @@ impl RemoteAcp {
     /// Refuse the registration of `doc_id`, alone or in a list.
     pub(super) fn refuse_object(&self, doc_id: &str) {
         self.refused_objects.insert(doc_id.to_string(), ());
+    }
+
+    /// Another settler registers `doc_id` to the caller just before the next
+    /// registration request arrives: after this node asked whether it is
+    /// held, before its own request lands.
+    pub(super) fn race_registration(&self, doc_id: &str) {
+        self.raced.push(doc_id.to_string());
+    }
+
+    /// Apply the registrations another settler made meanwhile.
+    fn others_register(&self, identity: &Did) {
+        while let Some(doc) = self.raced.pop() {
+            self.owners.insert(doc, identity.clone());
+            self.registrations.fetch_add(1, Ordering::SeqCst);
+        }
     }
 
     /// The registration lists sent so far, oldest first, taken out.
@@ -296,6 +319,7 @@ impl DocumentACP for RemoteAcp {
     ) -> acp::Result<()> {
         self.submissions.fetch_add(1, Ordering::SeqCst);
         self.reachable()?;
+        self.others_register(identity);
         if self.refused_objects.contains_key(doc_id) {
             return Err(acp::Error::PermissionDenied(format!(
                 "the policy refuses {doc_id}"
@@ -312,6 +336,11 @@ impl DocumentACP for RemoteAcp {
         if let Some(owner) = self.owners.get(doc_id) {
             if owner != *identity {
                 return Err(acp::Error::DocumentAlreadyRegistered(doc_id.into()));
+            }
+            if self.refuse_held.load(Ordering::SeqCst) {
+                return Err(acp::Error::Storage(format!(
+                    "Vera: transaction error: {doc_id} is registered already"
+                )));
             }
             return Ok(());
         }
@@ -349,6 +378,7 @@ impl DocumentACP for RemoteAcp {
         );
         self.reachable()
             .map_err(|error| acp::RegistrationFailure::new(0, error))?;
+        self.others_register(identity);
         let takes = !self.refuse_registration.load(Ordering::SeqCst)
             && !self.garble_registration.load(Ordering::SeqCst)
             && objects.iter().all(|object| {

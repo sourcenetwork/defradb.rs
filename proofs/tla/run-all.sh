@@ -1270,7 +1270,9 @@ RUNS=(
   "MC_EmbeddedVeraStop_Red_NoStartDeadline.cfg EmbeddedVeraStop.tla RED" # the next start waits forever for a directory a hung Vera node holds
   "MC_RegistrationBatch_Green.cfg RegistrationBatch.tla GREEN" # one list per creator, a refused list sent again one at a time, held objects never sent again
   "MC_RegistrationBatch_Green_Lost.cfg RegistrationBatch.tla GREEN" # lists applied whole, at once or after a lost answer, and never sent again once held
-  "MC_RegistrationBatch_Red_NoRecheck.cfg RegistrationBatch.tla RED" # sent again without asking the provider: a held object refuses its list (INV_NoResendOfHeld)
+  "MC_RegistrationBatch_Green_Elsewhere.cfg RegistrationBatch.tla GREEN" # a replica another node holds is cleared yielding to its owner, never sent
+  "MC_RegistrationBatch_Red_NoRecheck.cfg RegistrationBatch.tla RED" # sent again without asking the provider: a held object refuses its list (INV_NoResendOfKnownHeld)
+  "MC_RegistrationBatch_Red_NoAskOnRefusal.cfg RegistrationBatch.tla RED" # a refusal reported unasked: one another settler registered meanwhile is reported failed (INV_HeldNotFailed)
   "MC_RegistrationBatch_Red_NoFallback.cfg RegistrationBatch.tla RED" # a refused list parks every member: a good one is parked for good (INV_RefusedOnlyIfBad)
   "MC_RegistrationBatch_Red_MixedCreators.cfg RegistrationBatch.tla RED" # one list under the first creator's token: another's document is registered to it (INV_OwnerIsCreator)
   "MC_RegistrationBatch_Red_OutOfOrder.cfg RegistrationBatch.tla RED" # a refused list's members go alone in any order (INV_Order)

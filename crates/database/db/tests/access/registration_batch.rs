@@ -279,3 +279,91 @@ fn an_unreachable_provider_keeps_every_registration_owed() {
     })
     .unwrap()
 }
+
+/// Another settler (an access decision, a redrive) registers a document of
+/// the list after this one asked whether the provider holds it and before
+/// the list lands. The provider refuses the list, and that document's
+/// refusal alone: it is held for its creator, and is cleared as held, not
+/// reported as failed.
+#[test]
+fn a_document_another_settler_registered_meanwhile_is_cleared_as_held() {
+    workers::block_on(async {
+        let staging = Staging::new().await;
+        staging.remote.refuse_held.store(true, Ordering::SeqCst);
+        let mut docs = Vec::new();
+        for n in 0..4 {
+            docs.push(
+                staging
+                    .create_unregistered(alice(), &format!("doc {n}"))
+                    .await,
+            );
+        }
+        staging.remote.race_registration(&docs[1]);
+
+        let outcomes = staging.gate.redrive_registrations(&objects(&docs)).await;
+
+        for (doc, outcome) in docs.iter().zip(&outcomes) {
+            assert!(outcome.is_ok(), "{doc}: {outcome:?}");
+            assert_eq!(staging.remote.owner(doc), Some(alice()));
+        }
+        assert!(staging.owed_docs(&alice()).await.is_empty());
+    })
+    .unwrap()
+}
+
+/// The same race for a registration sent alone.
+#[test]
+fn a_registration_another_settler_made_meanwhile_is_cleared_as_held() {
+    workers::block_on(async {
+        let staging = Staging::new().await;
+        staging.remote.refuse_held.store(true, Ordering::SeqCst);
+        let doc = staging.create_unregistered(alice(), "raced").await;
+        staging.remote.race_registration(&doc);
+
+        let outcomes = staging
+            .gate
+            .redrive_registrations(&objects(std::slice::from_ref(&doc)))
+            .await;
+
+        assert!(outcomes[0].is_ok(), "{outcomes:?}");
+        assert_eq!(staging.remote.owner(&doc), Some(alice()));
+        assert!(staging.owed_docs(&alice()).await.is_empty());
+    })
+    .unwrap()
+}
+
+/// A document the provider already holds for another owner (registered
+/// first elsewhere) keeps that owner: its record is cleared without a
+/// request, and only the others go in the list.
+#[test]
+fn a_document_held_for_another_owner_is_cleared_and_left_out_of_the_list() {
+    workers::block_on(async {
+        let staging = Staging::new().await;
+        let mut docs = Vec::new();
+        for n in 0..3 {
+            docs.push(
+                staging
+                    .create_unregistered(alice(), &format!("doc {n}"))
+                    .await,
+            );
+        }
+        staging
+            .remote
+            .register_doc_object(&bob(), POLICY, RESOURCE, &docs[0])
+            .await
+            .unwrap();
+        let before = staging.submissions();
+
+        let outcomes = staging.gate.redrive_registrations(&objects(&docs)).await;
+
+        assert!(outcomes.iter().all(Result::is_ok), "{outcomes:?}");
+        assert_eq!(staging.remote.owner(&docs[0]), Some(bob()));
+        for doc in &docs[1..] {
+            assert_eq!(staging.remote.owner(doc), Some(alice()));
+        }
+        assert_eq!(staging.submissions() - before, 1);
+        assert_eq!(staging.remote.lists(), vec![docs[1..].to_vec()]);
+        assert!(staging.owed_docs(&alice()).await.is_empty());
+    })
+    .unwrap()
+}

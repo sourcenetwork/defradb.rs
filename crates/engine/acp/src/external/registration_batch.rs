@@ -9,7 +9,10 @@
 //! refuses is sent again one registration at a time, so each one is answered
 //! for, and noted, as if it had been sent alone. Nothing is sent again on a
 //! lost answer: the records stay, and the next settlement finds the objects
-//! the list registered held by the provider (`proofs/tla/RegistrationBatch.tla`).
+//! the list registered held by the provider. Another settler can register an
+//! object between this one asking and sending: the provider refuses it, and
+//! the provider is asked again before the refusal is reported, so a held
+//! object is cleared as held (`proofs/tla/RegistrationBatch.tla`).
 
 use std::sync::Arc;
 
@@ -199,9 +202,10 @@ where
                 Error::ProviderUnavailable(reason) => Some(reason.clone()),
                 _ => None,
             };
-            outcomes[*index] = Some(match error {
-                Error::DocumentAlreadyRegistered(_) => self.registered_or_noted(owed, true).await,
-                error => self.failed(owed, error).await,
+            outcomes[*index] = Some(if self.held_after_refusal(owed, &error).await {
+                self.registered_or_noted(owed, true).await
+            } else {
+                self.failed(owed, error).await
             });
             rest = &rest[stop + 1..];
             // An unreachable provider is not asked again for the rest now:

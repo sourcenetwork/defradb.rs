@@ -73,10 +73,33 @@ where
                 .await
             {
                 Ok(()) => false,
-                Err(Error::DocumentAlreadyRegistered(_)) => true,
+                Err(error) if self.held_after_refusal(owed, &error).await => true,
                 Err(error) => return Err(error),
             };
         self.registered(owed, held).await
+    }
+
+    /// Whether the provider holds the object `owed` names after it refused
+    /// its registration with `error`. Another settler (an access decision, a
+    /// redrive, another commit's hook) may register the object between this
+    /// one asking and sending, and the provider then refuses the second
+    /// registration: the object is held, and the record is cleared as held,
+    /// not reported as failed. An unreachable provider is not asked.
+    pub(super) async fn held_after_refusal(
+        &self,
+        owed: &PendingRegistration,
+        error: &Error,
+    ) -> bool {
+        match error {
+            Error::DocumentAlreadyRegistered(_) => true,
+            Error::ProviderUnavailable(_) => false,
+            _ => matches!(
+                self.provider
+                    .is_doc_registered(&owed.policy_id, &owed.resource_name, &owed.doc_id)
+                    .await,
+                Ok(true)
+            ),
+        }
     }
 
     /// The provider holds the object `owed` names: clear the record. One

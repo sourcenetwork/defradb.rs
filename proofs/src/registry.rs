@@ -408,12 +408,24 @@ pub const PROPERTIES: &[Property] = &[
         // none, and a refused list is sent again one registration at a time,
         // first to last, so each is answered as alone.
         family: "ACP outbox and owed registrations",
-        name: "INV_ClearedOnlyHeld / INV_OwnerIsCreator / INV_RefusedOnlyIfBad / INV_NoResendOfHeld / INV_Order: a record is cleared only once its object is held for its creator, a list carries one creator, only a registration refused alone is parked, nothing held is sent again, and a refused list's members go alone in order",
+        name: "INV_ClearedOnlyHeld / INV_OwnerIsCreator / INV_RefusedOnlyIfBad / INV_NoResendOfKnownHeld / INV_HeldNotFailed / INV_Order: a record is cleared only once its object is held (for its creator, or for another node's owner it yields to), a list carries one creator, only a registration refused alone is parked, no request carries an object the settler found held, a refusal of an object another settler registered meanwhile is cleared as held, and a refused list's members go alone in order",
         axis: Tla,
-        anchor: "crates/engine/acp/src/commit_registrations.rs CommitRegistrations::owe, settle, grouped; crates/engine/acp/src/external/registration_batch.rs settle_all_if_owed, to_send, send_group, Sender; crates/engine/vera/src/cosmos/dac/registration_batch.rs register_listed, register_one_by_one; crates/engine/vera/src/vera_rs/provider/registration_list.rs calldata; crates/database/db/src/txn/mod.rs DbTxn::owe_acp_registration, OwedAcpRegistration::run; crates/database/db/src/collection/acp.rs collection_to_register",
-        model_ref: "MC_RegistrationBatch_{Green,Green_Lost,Red_NoRecheck,Red_NoFallback,Red_MixedCreators,Red_OutOfOrder}.cfg",
+        anchor: "crates/engine/acp/src/commit_registrations.rs CommitRegistrations::owe, settle, grouped; crates/engine/acp/src/external/registration_batch.rs settle_all_if_owed, to_send, send_group, Sender; crates/engine/acp/src/external/registration.rs held_after_refusal, registered; crates/engine/acp/src/external/replica.rs yield_replica_if_held_elsewhere; crates/engine/vera/src/cosmos/dac/registration_batch.rs register_listed, register_one_by_one; crates/engine/vera/src/vera_rs/provider/registration_list.rs calldata; crates/database/db/src/txn/mod.rs DbTxn::owe_acp_registration, OwedAcpRegistration::run; crates/database/db/src/collection/acp.rs collection_to_register",
+        model_ref: "MC_RegistrationBatch_{Green,Green_Lost,Green_Elsewhere,Red_NoRecheck,Red_NoAskOnRefusal,Red_NoFallback,Red_MixedCreators,Red_OutOfOrder}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/database/db/tests/access/registration_batch.rs the_creates_of_one_transaction_are_registered_in_one_submission, a_refused_member_is_answered_as_alone_and_the_others_are_registered, a_list_whose_answer_was_lost_is_not_sent_again, each_creator_of_one_transaction_gets_a_list_of_its_own; crates/entry-points/defra-node/tests/embedded_vera/registration_batch.rs ten_creates_in_one_transaction_are_registered_in_one_block",
+        bound_by: "crates/database/db/tests/access/registration_batch.rs the_creates_of_one_transaction_are_registered_in_one_submission, a_refused_member_is_answered_as_alone_and_the_others_are_registered, a_list_whose_answer_was_lost_is_not_sent_again, each_creator_of_one_transaction_gets_a_list_of_its_own, a_document_another_settler_registered_meanwhile_is_cleared_as_held, a_registration_another_settler_made_meanwhile_is_cleared_as_held, a_document_held_for_another_owner_is_cleared_and_left_out_of_the_list; crates/entry-points/defra-node/tests/embedded_vera/registration_batch.rs ten_creates_in_one_transaction_are_registered_in_one_block",
+    },
+    Property {
+        // The request a creator's registrations go to vera.rs in: refused
+        // before sending when empty, longer than vera.rs's list or over the
+        // byte bound; otherwise one command per object, in their order.
+        family: "ACP outbox and owed registrations",
+        name: "request_count / request_order / request_bytes / request_built / commands_objects: a registration list holds 1 to 64 commands within the byte bound, names its objects in their order, and a list within every bound whose policies read is built",
+        axis: Lean,
+        anchor: "crates/engine/vera/src/vera_rs/provider/registration_list.rs calldata; crates/engine/vera/src/provider.rs MAX_REGISTRATIONS_PER_REQUEST",
+        model_ref: "VeraRegistrationList (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "ACP outbox and owed registrations",
