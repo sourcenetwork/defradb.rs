@@ -17,7 +17,7 @@ fn json_index_upon_update_should_use_new_index_values() {
                 sdl: r#"
                     type User {
                         name: String 
-                        custom: JSON @index
+                        custom: JSON @index(direction: DESC)
                     }
                 "#
                 .into(),
@@ -101,6 +101,47 @@ fn json_index_upon_update_should_use_new_index_values() {
                 "#
                 .into(),
                 expected_data: json!(m::explain_scan(json!({ "indexFetches": 1 }))),
+                ..Default::default()
+            }
+            .into(),
+        ],
+        ..Default::default()
+    }
+    .execute();
+}
+
+#[test]
+fn json_index_descending_array_path_any_filter() {
+    TestCase {
+        id: integration_test::scenario_id!(),
+        actions: vec![
+            AddCollection {
+                sdl: r#"
+                    type User {
+                        name: String
+                        custom: JSON @index
+                    }
+                "#
+                .into(),
+                ..Default::default()
+            }
+            .into(),
+            AddDoc {
+                collection: "User".into(),
+                doc_map: Some(json!({ "name": "John", "custom": { "a": [1, 2] } })),
+                ..Default::default()
+            }
+            .into(),
+            Request {
+                request: r#"
+                    query {
+                        User(filter: {custom: {a: {_any: {_gt: 1}}}}) {
+                            name
+                        }
+                    }
+                "#
+                .into(),
+                expected_data: json!({ "User": [{ "name": "John" }] }),
                 ..Default::default()
             }
             .into(),

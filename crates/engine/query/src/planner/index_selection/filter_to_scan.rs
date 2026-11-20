@@ -406,14 +406,21 @@ pub fn filter_to_index_scan(
                 Bound::Exclusive(wrap_value_for_json_path(v, range_json_path.as_ref()))
             }
             Bound::Unbounded => {
-                // For JSON paths with non-empty path, use PathMin to constrain lower bound.
+                // For JSON paths with non-empty path, constrain the lower bound.
+                // On a descending index the bounds are already in byte order, so
+                // the byte-order lower sentinel is PathMax.
                 // For empty paths (top-level JSON), leave unbounded to match Go behavior:
                 // Go scans from value to end of entire index, counting all keys.
                 if let Some(path) = &range_json_path {
                     if !path.is_empty() {
+                        let sentinel = if first_field_descending {
+                            JsonScalarValue::PathMax
+                        } else {
+                            JsonScalarValue::PathMin
+                        };
                         Bound::Inclusive(NormalValue::JsonLeaf(JsonLeafValue::new(
                             path.clone(),
-                            JsonScalarValue::PathMin,
+                            sentinel,
                         )))
                     } else {
                         Bound::Unbounded
@@ -432,13 +439,20 @@ pub fn filter_to_index_scan(
                 Bound::Exclusive(wrap_value_for_json_path(v, range_json_path.as_ref()))
             }
             Bound::Unbounded => {
-                // For JSON paths with non-empty path, use PathMax to constrain upper bound.
+                // For JSON paths with non-empty path, constrain the upper bound.
+                // On a descending index the bounds are already in byte order, so
+                // the byte-order upper sentinel is PathMin.
                 // For empty paths (top-level JSON), leave unbounded to match Go behavior.
                 if let Some(path) = &range_json_path {
                     if !path.is_empty() {
+                        let sentinel = if first_field_descending {
+                            JsonScalarValue::PathMin
+                        } else {
+                            JsonScalarValue::PathMax
+                        };
                         Bound::Exclusive(NormalValue::JsonLeaf(JsonLeafValue::new(
                             path.clone(),
-                            JsonScalarValue::PathMax,
+                            sentinel,
                         )))
                     } else {
                         Bound::Unbounded
