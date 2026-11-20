@@ -115,7 +115,7 @@ impl ReplicatorRegistry {
                         info.filters
                             .retain(|collection, _| collection != collection_id);
                     }
-                    info.collections.is_empty()
+                    info.collections.is_empty() && info.filters.is_empty()
                 }
             };
             if fully_removed {
@@ -131,7 +131,10 @@ impl ReplicatorRegistry {
         self.replicators
             .load()
             .get(peer_id)
-            .map(|info| info.collections.iter().any(|id| id == collection_id))
+            .map(|info| {
+                info.collections.iter().any(|id| id == collection_id)
+                    || info.filters.contains_key(collection_id)
+            })
             .unwrap_or(false)
     }
 
