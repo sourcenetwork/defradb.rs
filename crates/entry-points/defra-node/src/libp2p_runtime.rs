@@ -16,11 +16,13 @@ pub(crate) type NodeMergeHandler<S> = db::merge::AcpMergeHandler<S, NodeBlocksto
 pub(crate) type NodeCoordinator<S> =
     p2p::sync::SyncCoordinator<NodeBlockstore<S>, p2p::Libp2pTransport>;
 
-struct KeyArrivalPromoter<S: storage::corekv::Store + 'static>(Arc<NodeCoordinator<S>>);
+struct KeyArrivalPromoter<S: storage::corekv::Store + 'static>(std::sync::Weak<NodeCoordinator<S>>);
 
 impl<S: storage::corekv::Store + 'static> kms::KeyArrivalListener for KeyArrivalPromoter<S> {
     fn keys_arrived(&self, _cids: &[kms::EncryptionCid]) {
-        self.0.manager().promote_pending_retries();
+        if let Some(coordinator) = self.0.upgrade() {
+            coordinator.manager().promote_pending_retries();
+        }
     }
 }
 
@@ -229,7 +231,7 @@ where
     };
     coordinator.install_kms_transport(kms_transport.clone());
     let merge_handler_inner_for_kms = replication.merge_handler_inner.clone();
-    let coordinator_for_kms = Arc::clone(&coordinator);
+    let coordinator_for_kms = Arc::downgrade(&coordinator);
 
     let coordinator_for_restore = coordinator.clone();
     let pending_dag_resync_task = spawn_node_task(edge, async move {
@@ -466,9 +468,7 @@ where
         kms_transport: kms_transport as Arc<dyn kms::KeyTransport>,
         local_peer_id,
         wire_kms: Some(Box::new(move |kms| {
-            kms.set_key_arrival_listener(Arc::new(KeyArrivalPromoter(Arc::clone(
-                &coordinator_for_kms,
-            ))));
+            kms.set_key_arrival_listener(Arc::new(KeyArrivalPromoter(coordinator_for_kms)));
             merge_handler_inner_for_kms.set_kms(kms);
         })),
         wire_document_acp: Some(Box::new(move |acp, strict| {

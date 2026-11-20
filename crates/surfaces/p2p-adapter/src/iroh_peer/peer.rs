@@ -21,12 +21,14 @@ pub type IrohCoordinator<S> = p2p::sync::IrohSyncCoordinator<IrohBlockstore<S>>;
 pub type IrohReplicationStack<S> = db::merge::ReplicationStack<S, IrohBlockstore<S>, IrohTransport>;
 
 #[cfg(feature = "kms")]
-struct KeyArrivalPromoter<S: storage::Store + 'static>(Arc<IrohCoordinator<S>>);
+struct KeyArrivalPromoter<S: storage::Store + 'static>(std::sync::Weak<IrohCoordinator<S>>);
 
 #[cfg(feature = "kms")]
 impl<S: Store + 'static> kms::KeyArrivalListener for KeyArrivalPromoter<S> {
     fn keys_arrived(&self, _cids: &[kms::EncryptionCid]) {
-        self.0.manager().promote_pending_retries();
+        if let Some(coordinator) = self.0.upgrade() {
+            coordinator.manager().promote_pending_retries();
+        }
     }
 }
 
@@ -409,7 +411,9 @@ impl<S: Store + 'static> IrohPeer<S> {
     /// Bind the KMS built after the peer.
     #[cfg(feature = "kms")]
     pub fn wire_kms(&self, kms: Arc<dyn kms::KmsService>) {
-        kms.set_key_arrival_listener(Arc::new(KeyArrivalPromoter(Arc::clone(&self.coordinator))));
+        kms.set_key_arrival_listener(Arc::new(KeyArrivalPromoter(Arc::downgrade(
+            &self.coordinator,
+        ))));
         self.replication.merge_handler_inner.set_kms(kms);
     }
 
