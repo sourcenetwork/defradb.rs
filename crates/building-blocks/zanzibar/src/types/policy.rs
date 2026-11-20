@@ -78,6 +78,54 @@ impl Policy {
             .unwrap_or_default()
     }
 
+    /// The relations of `resource` that the managers of `relation` are
+    /// computed from on the same object: each manager, and every relation its
+    /// expression reads there, a tuple-to-userset's tuple relation included.
+    /// A revocation of a tuple of any other relation cannot take away an
+    /// actor's authority to change `relation` on that object.
+    pub fn management_sources(&self, resource: &str, relation: &str) -> Vec<String> {
+        let Some(found) = self.get_resource(resource) else {
+            return Vec::new();
+        };
+        let mut sources: Vec<String> = Vec::new();
+        let mut pending: Vec<String> = self
+            .get_managers_for_relation(resource, relation)
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        while let Some(name) = pending.pop() {
+            if sources.contains(&name) {
+                continue;
+            }
+            if let Some(rel) = found.get_relation(&name) {
+                Self::expression_relations(&rel.expression, &mut pending);
+            }
+            sources.push(name);
+        }
+        sources.sort();
+        sources
+    }
+
+    /// The relations of the same object `expression` reads.
+    fn expression_relations(expression: &RelationExpression, into: &mut Vec<String>) {
+        match expression {
+            RelationExpression::ComputedUserset { relation } => into.push(relation.clone()),
+            RelationExpression::TupleToUserset { tuple_relation, .. } => {
+                into.push(tuple_relation.clone())
+            }
+            RelationExpression::Union(parts) | RelationExpression::Intersection(parts) => {
+                for part in parts {
+                    Self::expression_relations(part, into);
+                }
+            }
+            RelationExpression::Difference { base, subtract } => {
+                Self::expression_relations(base, into);
+                Self::expression_relations(subtract, into);
+            }
+            _ => {}
+        }
+    }
+
     pub fn validate(&self) -> Result<()> {
         for resource in self.resources.iter().chain(self.actor.iter()) {
             for relation in &resource.relations {
@@ -288,3 +336,7 @@ impl Relationship {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "policy_tests.rs"]
+mod tests;

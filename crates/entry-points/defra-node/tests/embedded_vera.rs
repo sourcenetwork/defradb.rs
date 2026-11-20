@@ -28,6 +28,9 @@ mod projection;
 #[path = "embedded_vera/replica.rs"]
 mod replica;
 
+#[path = "embedded_vera/settle_before_observing.rs"]
+mod settle_before_observing;
+
 #[path = "embedded_vera/rpc_port.rs"]
 mod rpc_port;
 
