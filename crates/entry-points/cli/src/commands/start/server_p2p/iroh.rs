@@ -78,6 +78,7 @@ impl Node {
             .await
             .map_err(Error::P2P)?;
 
+        let coordinator_for_kms = Arc::downgrade(&peer.coordinator);
         let merge_handler_for_kms = Arc::clone(&peer.replication.merge_handler_inner);
         Ok(P2PSetup {
             host_handle: None,
@@ -92,7 +93,12 @@ impl Node {
             wire_merge_acp: None,
             wire_doc_pusher_acp: None,
             kms_transport: Some(peer.kms_transport.clone() as Arc<dyn kms::KeyTransport>),
-            wire_kms: Some(Box::new(move |kms| merge_handler_for_kms.set_kms(kms))),
+            wire_kms: Some(Box::new(move |kms| {
+                kms.set_key_arrival_listener(Arc::new(KeyArrivalPromoter(
+                    coordinator_for_kms.clone(),
+                )));
+                merge_handler_for_kms.set_kms(kms);
+            })),
             local_peer_id: peer.local_peer_id.clone(),
             se_transport,
             manage_hooks: Some(peer.manage.hooks.clone()),

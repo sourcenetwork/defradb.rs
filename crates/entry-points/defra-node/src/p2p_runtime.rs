@@ -197,6 +197,7 @@ where
     system.set_manage_requester(Arc::clone(&peer.manage.requester));
     system.set_iroh_transport(peer.transport.clone());
 
+    let coordinator_for_kms = Arc::downgrade(&peer.coordinator);
     let merge_handler_for_kms = Arc::clone(&peer.replication.merge_handler_inner);
     Ok(P2PSetup {
         system,
@@ -204,7 +205,10 @@ where
         txn_broadcaster: Arc::clone(&peer.replication.txn_broadcaster),
         kms_transport: peer.kms_transport.clone() as Arc<dyn kms::KeyTransport>,
         local_peer_id: peer.local_peer_id.clone(),
-        wire_kms: Some(Box::new(move |kms| merge_handler_for_kms.set_kms(kms))),
+        wire_kms: Some(Box::new(move |kms| {
+            kms.set_key_arrival_listener(Arc::new(KeyArrivalPromoter(coordinator_for_kms.clone())));
+            merge_handler_for_kms.set_kms(kms);
+        })),
         #[cfg(feature = "libp2p")]
         wire_document_acp: None,
         se_transport,
