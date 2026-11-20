@@ -39,11 +39,12 @@ fn a_patch_waits_for_the_full_predecessor_instead_of_rebuilding_it() {
         txn.commit().await.unwrap();
 
         let payload = CollectionDefinitionDeltaPayload::new(2);
-        let patch = Block::new(
+        let mut patch = Block::new(
             CrdtDelta::CollectionDefinition(payload.clone()),
             vec![previous],
             vec![],
         );
+        patch.heads = Some(vec![previous]);
         let cid = patch.generate_cid().unwrap();
         let metadata = BlockMetadata::normal("", "", "peer", None, false);
         let outcome = handler
@@ -94,6 +95,32 @@ fn a_patch_waits_for_the_full_predecessor_instead_of_rebuilding_it() {
         txn.systemstore()
             .unwrap()
             .set(&key, &full_definition)
+            .await
+            .unwrap();
+        txn.systemstore()
+            .unwrap()
+            .set(
+                &CollectionKey::new(cid.to_string()).bytes(),
+                &serde_json::to_vec(&{
+                    let mut placeholder = schema::CollectionVersion::new(
+                        "Agent",
+                        cid.to_string(),
+                        predecessor.collection_id,
+                        Vec::new(),
+                    );
+                    placeholder.policy = predecessor.policy.clone();
+                    placeholder.indexes = predecessor.indexes.clone();
+                    placeholder.fields = predecessor.fields.clone();
+                    placeholder.is_branchable = predecessor.is_branchable;
+                    placeholder.is_placeholder = true;
+                    placeholder.previous_version = Some(
+                        schema::CollectionSource::new(previous.to_string())
+                            .with_transform(transform_id),
+                    );
+                    placeholder
+                })
+                .unwrap(),
+            )
             .await
             .unwrap();
         txn.commit().await.unwrap();
