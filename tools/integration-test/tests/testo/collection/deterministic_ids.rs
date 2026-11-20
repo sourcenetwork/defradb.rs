@@ -4,7 +4,7 @@
 //! scan read the wrong collection.
 
 use integration_test::actions::{AddCollection, GetCollections};
-
+use integration_test::m;
 use integration_test::test_case::TestCase;
 use serde_json::json;
 
@@ -24,7 +24,8 @@ fn a_collection_beside_a_longer_namesake_gets_one_id() {
             GetCollections {
                 collection_name: Some("Foo".into()),
                 filtered: true,
-                expected_data: json!({ "collections": [{
+                // Indexes, as the secondary-index multiplier adds, keep these IDs.
+                expected_data: json!({ "collections": [m::object(json!({
                     "CollectionID": FOO_VERSION_ID,
                     "Fields": [
                         {
@@ -57,7 +58,7 @@ fn a_collection_beside_a_longer_namesake_gets_one_id() {
                     "PreviousVersion": null,
                     "VectorEmbeddings": [],
                     "VersionID": FOO_VERSION_ID,
-                }] }),
+                }))] }),
                 ..Default::default()
             }
             .into(),

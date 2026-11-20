@@ -28,9 +28,12 @@ impl super::Planner {
             return None;
         }
 
-        // Extract limit/offset from select for passing to index scan
-        let limit = select.limit.as_ref().and_then(|l| l.limit);
-        let offset = select.limit.as_ref().map(|l| l.offset).unwrap_or(0);
+        // Rows dropped or merged after the scan would end the page short.
+        let page_follows_scan = select.filter.is_none() && select.group_by.is_none();
+        let (limit, offset) = match &select.limit {
+            Some(page) if page_follows_scan => (page.limit, page.offset),
+            _ => (None, 0),
+        };
 
         // Try filter-based index selection.
         // Relation fields in the filter (e.g., `owner: {name: {_eq: "X"}}`) are
@@ -111,7 +114,9 @@ impl super::Planner {
             for index in &collection.indexes {
                 let (can_order, needs_reverse) = can_be_ordered_by_index(order_by, index);
                 if can_order {
-                    let params = order_index_scan_params(index, needs_reverse, limit, offset);
+                    // The limit node skips the offset, so the scan only stops early.
+                    let stop = limit.filter(|&l| l > 0).map(|l| l.saturating_add(offset));
+                    let params = order_index_scan_params(index, needs_reverse, stop, 0);
                     return Some((params, true));
                 }
             }
