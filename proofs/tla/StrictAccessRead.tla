@@ -27,19 +27,26 @@
 \*     That the scan found a candidate row is all it can reveal, and it is
 \*     the price of never answering partially;
 \*   - never returns a row the caller may not read.
+\* The rows a strict read kept reach the caller only when it answers: a read
+\* that fails hands back none. The same rule holds wherever a strict
+\* request checks access, not only in the permission filter: a mutation's
+\* authorization, a cid read, commit history and the edge answering a
+\* prepared access input all fail it with "access check unavailable".
 \* In a transaction, a strict read that failed wrote nothing: the request
 \* fails and the transaction stays usable.
 \*
 \* What must never happen:
 \*   - any read returns a row the caller may not read;
 \*   - a strict read answers with fewer rows than the caller may read;
+\*   - a failed strict read hands back any row;
 \*   - a strict read fails on a row the caller is simply denied;
 \*   - a strict read fails before the provider's waits had their turn;
 \*   - the error names the document whose check failed;
 \*   - a failed strict read leaves its transaction unusable.
 \*
 \* Rust owners: crates/engine/query/src/plan/permission_filter.rs
-\* AcpReadCheck::allows; crates/foundation/defra-core/src/request_context.rs
+\* AcpReadCheck::allows; crates/engine/query/src/runner/strict_access.rs
+\* access_check_failure; crates/foundation/defra-core/src/request_context.rs
 \* RequestContext::strict_access_reads; crates/engine/query/src/error.rs
 \* QueryError::AccessCheckUnavailable; crates/engine/vera/src/vera_rs/provider/verified.rs
 \* verified; crates/engine/vera/src/vera_rs/provider/reach.rs read_error.
@@ -62,6 +69,7 @@ VARIABLES
   check,      \* per row: what its check came to, "pending" before it ran
   waited,     \* per row: TRUE once a late check had the provider's waits
   scanned,    \* the rows the scan has decided
+  kept,       \* the rows the scan kept, held until the read answers
   returned,   \* the rows the read hands back
   outcome,    \* "running", "answered" or "failed"
   retryable,  \* TRUE when the failure was a late provider
@@ -69,7 +77,7 @@ VARIABLES
   txnUsable   \* TRUE while the transaction the read ran in can take requests
 
 \* The tuple of all variables, for stuttering steps.
-vars == <<strict, readable, check, waited, scanned, returned, outcome, retryable, told, txnUsable>>
+vars == <<strict, readable, check, waited, scanned, kept, returned, outcome, retryable, told, txnUsable>>
 
 \* The type of every variable.
 TypeOK ==
@@ -83,6 +91,8 @@ TypeOK ==
   /\ waited \in [Docs -> BOOLEAN]
   \* Decided rows are rows.
   /\ scanned \subseteq Docs
+  \* Kept rows are rows.
+  /\ kept \subseteq Docs
   \* Returned rows are rows.
   /\ returned \subseteq Docs
   \* The read is running, answered or failed.
@@ -106,6 +116,8 @@ Init ==
   /\ waited = [d \in Docs |-> FALSE]
   \* Nothing decided.
   /\ scanned = {}
+  \* Nothing kept.
+  /\ kept = {}
   \* Nothing returned.
   /\ returned = {}
   \* The read runs.
@@ -131,7 +143,7 @@ Ask(d) ==
   \* A late answer had its waits, unless the bug skips them.
   /\ waited' = [waited EXCEPT ![d] = (check'[d] = "late" /\ Bug # "no_wait")]
   \* Nothing else changes.
-  /\ UNCHANGED <<strict, readable, scanned, returned, outcome, retryable, told, txnUsable>>
+  /\ UNCHANGED <<strict, readable, scanned, kept, returned, outcome, retryable, told, txnUsable>>
 
 \* After its waits a late check may still get its answer.
 Answered(d) ==
@@ -143,7 +155,7 @@ Answered(d) ==
   \* The provider's true answer arrives.
   /\ check' = [check EXCEPT ![d] = IF readable[d] THEN "allow" ELSE "deny"]
   \* Nothing else changes.
-  /\ UNCHANGED <<strict, readable, waited, scanned, returned, outcome, retryable, told, txnUsable>>
+  /\ UNCHANGED <<strict, readable, waited, scanned, kept, returned, outcome, retryable, told, txnUsable>>
 
 \* Whether a check came to no answer.
 Unanswered(d) == check[d] \in {"late", "broken"}
@@ -157,8 +169,11 @@ Decide(d) ==
   \* The row is decided.
   /\ scanned' = scanned \cup {d}
   \* An allow keeps it (and with the reveal bug, so does no answer).
-  /\ returned' = IF check[d] = "allow" \/ (Unanswered(d) /\ Bug = "reveal")
-                   THEN returned \cup {d} ELSE returned
+  /\ kept' = IF check[d] = "allow" \/ (Unanswered(d) /\ Bug = "reveal")
+               THEN kept \cup {d} ELSE kept
+  \* Kept rows reach the caller only when the read answers; with the bug they
+  \* are handed out as they are decided.
+  /\ returned' = IF Bug = "publish_early" THEN kept' ELSE returned
   \* A strict read fails on no answer, or, with the bug, on a denial too;
   \* with the partial bug it drops the row like the default.
   /\ IF strict /\ Bug # "partial" /\ (Unanswered(d) \/ (check[d] = "deny" /\ Bug = "denial_errors"))
@@ -176,8 +191,10 @@ Finish ==
   /\ scanned = Docs
   \* It answers.
   /\ outcome' = "answered"
+  \* The rows it kept reach the caller.
+  /\ returned' = kept
   \* Nothing else changes.
-  /\ UNCHANGED <<strict, readable, check, waited, scanned, returned, retryable, told, txnUsable>>
+  /\ UNCHANGED <<strict, readable, check, waited, scanned, kept, retryable, told, txnUsable>>
 
 \* A failed read wrote nothing; with the bug it leaves its transaction broken.
 Fail ==
@@ -188,7 +205,7 @@ Fail ==
   \* The bug ends the transaction.
   /\ txnUsable' = FALSE
   \* Nothing else changes.
-  /\ UNCHANGED <<strict, readable, check, waited, scanned, returned, outcome, retryable, told>>
+  /\ UNCHANGED <<strict, readable, check, waited, scanned, kept, returned, outcome, retryable, told>>
 
 \* Every step the read can take.
 Next == Fail \/ Finish \/ \E d \in Docs: Ask(d) \/ Answered(d) \/ Decide(d)
@@ -216,6 +233,9 @@ INV_NamesNothing == told = {}
 
 \* A failed read leaves its transaction usable.
 INV_TxnUsable == txnUsable
+
+\* A failed read hands back no row: the request answers with its error alone.
+INV_FailedReturnsNothing == outcome = "failed" => returned = {}
 
 \* By default no read fails on a check: it fails closed and keeps scanning.
 INV_DefaultNeverFails == ~strict => outcome # "failed"

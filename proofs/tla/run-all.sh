@@ -357,6 +357,7 @@ RUNS=(
   "MC_StrictAccessRead_Red_Reveal.cfg StrictAccessRead.tla RED"
   "MC_StrictAccessRead_Red_NamesRow.cfg StrictAccessRead.tla RED"
   "MC_StrictAccessRead_Red_TxnBroken.cfg StrictAccessRead.tla RED"
+  "MC_StrictAccessRead_Red_PublishEarly.cfg StrictAccessRead.tla RED"
   "MC_StrictAccessRead_Red_DefaultPartialWitness.cfg StrictAccessRead.tla RED"
   "MC_RemoteOwnerObservation_Green.cfg RemoteOwnerObservation.tla GREEN"
   "MC_RemoteOwnerObservation_Red_NoConfirm.cfg RemoteOwnerObservation.tla RED"
