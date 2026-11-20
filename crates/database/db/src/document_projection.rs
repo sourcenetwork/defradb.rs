@@ -6,6 +6,8 @@ use identity::Did;
 use storage::corekv::{MaybeSendSync, OnCommit, Result, Store};
 use storage::namespace::Namespace;
 
+mod relationship_input;
+
 /// Trusted context for projecting an authorized document mutation. The
 /// provider is the node's configured document ACP, and the view belongs to
 /// the same transaction as the mutation. Native ACP remains authoritative.
@@ -85,17 +87,17 @@ impl DocumentMutationContext<'_> {
             .view
             .projection_context()
             .and_then(|context| context.bearer_token_for(actor));
-        let request = serde_json::to_vec(&(
+        let request = relationship_input::RelationshipInput {
             actor,
-            "relationship",
             policy,
             resource,
             doc,
             bearer,
             relation,
-            target.as_str(),
+            target,
             head,
-        ))
+        }
+        .request()
         .map_err(|error| storage::corekv::Error::Other(error.to_string()))?;
         let Some(response) = self
             .view
