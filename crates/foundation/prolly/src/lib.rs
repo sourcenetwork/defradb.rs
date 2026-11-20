@@ -9,8 +9,11 @@
 //! only the chunks around it. [`diff()`] walks two trees down only where their
 //! hashes differ.
 //!
-//! The invariants are proven in `proofs/lean/ProllyTree.lean`; the sync
-//! protocol this tree serves is modeled in `proofs/tla/ProllySync.tla`.
+//! `proofs/lean/ProllyTree.lean` proves chunking, `build`, history
+//! independence, one level of the windowed edit and the node encoding. Walking
+//! an edit up to the root, the single-child root collapse and [`diff()`]'s walk
+//! are checked by the proptests in `tests/`, not proved. The sync protocol this
+//! tree serves is modeled in `proofs/tla/ProllySync.tla`.
 
 mod chunk;
 pub mod diff;
