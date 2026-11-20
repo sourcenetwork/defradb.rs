@@ -105,6 +105,9 @@ pub struct TypeJoinOne {
     parent_collection: Option<schema::CollectionVersion>,
     /// For InvertedIndex mode: parent document mapping for per-child lookups
     parent_scan_mapping: Option<DocumentMapping>,
+    /// Whether `init` opened the parent plan, so `start` and `close` act on it.
+    /// A join no parent can pass ([`Self::no_child_can_pass`]) leaves it closed.
+    parent_open: bool,
     /// For InvertedIndex mode: queue of parent docs to yield
     docs_to_yield: VecDeque<Doc>,
     /// Optional orphan handling for exhaustive joins
@@ -237,6 +240,7 @@ impl TypeJoinOne {
             fetcher: None,
             parent_collection: None,
             parent_scan_mapping: None,
+            parent_open: false,
             docs_to_yield: VecDeque::new(),
             orphan_config: None,
             orphan_phase_active: false,
@@ -1032,6 +1036,7 @@ impl PlanNode for TypeJoinOne {
         self.child_exec_info = ExecInfo::default();
         self.go_child_metrics.reset();
         self.docs_to_yield.clear();
+        self.parent_open = false;
         self.orphan_phase_active = false;
         self.orphan_phase_done = false;
 
@@ -1052,10 +1057,16 @@ impl PlanNode for TypeJoinOne {
             // using the child's FK index. Avoid pre-scanning all child docs so
             // empty FK-index reads are recorded against each parent snapshot.
             self.parent_plan.init().await?;
+            self.parent_open = true;
         } else {
-            // Normal mode: build child cache, then init parent
+            // Normal mode: build child cache, then init parent. A parent plan
+            // that no parent can pass is left closed: an index-ordered one
+            // reads its documents when it starts.
             self.build_child_cache().await?;
-            self.parent_plan.init().await?;
+            if !self.no_child_can_pass() {
+                self.parent_plan.init().await?;
+                self.parent_open = true;
+            }
         }
         self.initialized = true;
         Ok(())
@@ -1068,8 +1079,10 @@ impl PlanNode for TypeJoinOne {
         ) {
             // Child plan already started in init()
             Ok(())
-        } else {
+        } else if self.parent_open {
             self.parent_plan.start().await
+        } else {
+            Ok(())
         }
     }
 
@@ -1174,8 +1187,9 @@ impl PlanNode for TypeJoinOne {
         ) {
             // Inverted/ordered modes: child_plan is still open, parent_plan was never used
             self.child_plan.close().await?;
-        } else {
+        } else if self.parent_open {
             self.parent_plan.close().await?;
+            self.parent_open = false;
             // child_plan was already closed in build_child_cache()
         }
         self.child_cache.clear();
