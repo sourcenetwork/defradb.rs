@@ -23,8 +23,8 @@
 \* Lean proof `ProllyTree.build_same_entries` shows a root depends only on the
 \* entries, not on the writes' order, so equal entries give equal roots, and a
 \* chunk hash taken as collision-free makes different entries give different
-\* roots. The walk down finds exactly the documents whose entries differ; the
-\* Rust tests of `diff` check that against a plain comparison of the entries.
+\* roots. The walk down finds exactly the documents whose entries differ: the
+\* Lean proofs `ProllyTree.diff_eq` and `ProllyTree.mergeDiff_spec` show it.
 \*
 \* What this model leaves out. A pull is one atomic step: the responder cannot
 \* write between sending its root and the puller finishing, so "caught up"

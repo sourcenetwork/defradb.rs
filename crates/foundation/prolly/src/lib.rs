@@ -9,13 +9,14 @@
 //! only the chunks around it. [`diff()`] walks two trees down only where their
 //! hashes differ.
 //!
-//! `proofs/lean/ProllyTree.lean` proves chunking, `build`, history
-//! independence, one level of the windowed edit and the node encoding. Walking
-//! an edit up to the root, the single-child root collapse and [`diff()`]'s walk
-//! are checked by the proptests in `tests/`, not proved. The sync protocol this
-//! tree serves is modeled in `proofs/tla/ProllySync.tla`.
+//! `proofs/lean/ProllyTree.lean` proves chunking, history independence, the
+//! one-pass [`Builder`], the windowed edit walked up to the root with the
+//! single-child collapse, [`diff()`]'s walk and the node encoding. The sync
+//! protocol this tree serves is modeled in `proofs/tla/ProllySync.tla`.
 
+pub mod build;
 mod chunk;
+pub mod cursor;
 pub mod diff;
 mod edit;
 pub mod error;
@@ -24,6 +25,8 @@ pub mod node;
 pub mod store;
 pub mod tree;
 
+pub use build::Builder;
+pub use cursor::Entries;
 pub use diff::{diff, Difference};
 pub use error::{Error, Result};
 pub use hash::Hash;

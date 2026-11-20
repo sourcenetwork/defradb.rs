@@ -3738,16 +3738,16 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
-        // Lean models one-level chunking, `build` over a sorted list, one level
-        // of the windowed edit (`rewrite_level` re-cut and the `splice` one
-        // level up) and the injective node encoding. Walking the edit up to
-        // the root and the single-child root collapse in `raise` are not
-        // modelled; they are checked against a fresh build by the
-        // `crates/foundation/prolly/tests/history.rs` proptest.
+        // Lean models chunking, `build` over a sorted list, the one-pass
+        // `Builder`, the windowed edit level by level and walked up to the
+        // root with the single-child `collapse`, `diff`'s walk against a
+        // per-key comparison, and the injective node encoding. SHA-256 is
+        // trusted collision-free; an edit's window is any run of chunks that
+        // holds the change, where Rust finds it by key.
         family: "Prolly tree catch-up",
-        name: "chunks_append / closes_append / chunks_flatten / chunks_nonempty / chunks_shrink / build / sorted_insert / sorted_erase / eq_of_same_entries / build_same_entries / insert_comm / erase_insert_comm / insert_insert / canon_chunks / rewrite_level_refines / rewrite_level_up / encode_injective",
+        name: "chunks_append / closes_append / chunks_flatten / chunks_nonempty / chunks_shrink / build / sorted_insert / sorted_erase / eq_of_same_entries / build_same_entries / insert_comm / erase_insert_comm / insert_insert / canon_chunks / rewrite_level_refines / rewrite_level_up / walk_levels / edit_root / builder_root / diff_eq / mergeDiff_spec / encode_injective",
         axis: Lean,
-        anchor: "crates/foundation/prolly/src/chunk.rs Chunker::push, Chunker::finish, chunk; crates/foundation/prolly/src/hash.rs is_boundary; crates/foundation/prolly/src/tree.rs Tree::build, raise; crates/foundation/prolly/src/edit.rs rewrite_level, splice; crates/foundation/prolly/src/node.rs Node::encode",
+        anchor: "crates/foundation/prolly/src/chunk.rs Chunker::push, Chunker::finish, chunk; crates/foundation/prolly/src/hash.rs is_boundary; crates/foundation/prolly/src/tree.rs Tree::build, raise, collapse; crates/foundation/prolly/src/build.rs Builder::push, Builder::finish, Builder::feed, Builder::close; crates/foundation/prolly/src/edit.rs Tree::edit, rewrite_level, splice; crates/foundation/prolly/src/diff.rs diff, Walk::open, Walk::take; crates/foundation/prolly/src/node.rs Node::encode",
         model_ref: "ProllyTree (lake build)",
         tiers: &[Boundary],
         bound_by: "",
@@ -3757,7 +3757,8 @@ pub const PROPERTIES: &[Property] = &[
         // Each pull is one atomic step and read access never changes, so
         // "caught up" means caught up with the responder as it was at that
         // step, and a read revoked mid-pull is not checked. `diff`'s walk is
-        // trusted here and checked by the `tests/diff.rs` proptest.
+        // trusted here; the Lean proofs `ProllyTree.diff_eq` and
+        // `ProllyTree.mergeDiff_spec` show it.
         family: "Prolly tree catch-up",
         name: "NoLeak / PulledHolds: a pull never shows a peer a document it may not read, and a pull that ends caught up leaves the puller holding every version the responder could show it at that pull",
         axis: Tla,

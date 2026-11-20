@@ -29,14 +29,17 @@ SHA-256 then gives each different chunk a different hash is trusted. Keys and
 values are numbers here; in Rust they are bytes, compared the same way.
 
 Rust anchors: `chunk` in `crates/foundation/prolly/src/chunk.rs`; `is_boundary` in
-`crates/foundation/prolly/src/hash.rs`; `Tree::build` and `raise` in `crates/foundation/prolly/src/tree.rs`;
-`rewrite_level` and `splice` in `crates/foundation/prolly/src/edit.rs`; `Node::encode` in
-`crates/foundation/prolly/src/node.rs`. One level of the edit path is modelled
-(`rewrite_level_refines`, `rewrite_level_up`), with the window given by
-position; Rust finds it by key in a sorted level. Not modelled: walking those
-levels up to the root, and `raise` dropping a root that holds a single child.
-Those, and the edit as a whole, are checked against a fresh build by the
-proptest in `crates/foundation/prolly/tests/history.rs`.
+`crates/foundation/prolly/src/hash.rs`; `raise` and `collapse` in
+`crates/foundation/prolly/src/tree.rs`; `Builder` in `crates/foundation/prolly/src/build.rs`;
+`Tree::edit`, `rewrite_level` and `splice` in `crates/foundation/prolly/src/edit.rs`;
+`diff` and `Walk` in `crates/foundation/prolly/src/diff.rs`; `Node::encode` in
+`crates/foundation/prolly/src/node.rs`. The edit is proved level by level
+(`rewrite_level_refines`, `rewrite_level_up`) and walked up to the root, the
+single-child collapse included (`edit_root`); `Builder`'s one-pass build gives
+the same root (`builder_root`); and `diff`'s walk reports exactly the keys
+whose values differ (`diff_eq`, `mergeDiff_spec`). Each section below says
+what it trusts. Rust finds an edit's window by key in a sorted level; here
+any window that holds the change will do.
 -/
 
 namespace ProllyTree
@@ -866,6 +869,957 @@ theorem rewrite_level_up (b : Entry → Bool) (H : List Entry → Nat)
   · -- Above the edited level: the references of `P`, `N` and `R`, in order.
     rw [up_eq_map, rewrite_level_refines b xs ys P W S h hW, hr]
     simp [List.map_append, List.append_assoc]
+
+/-!
+## The edit, walked up to the root
+
+The story, in plain words. An edit (`Tree::edit` in
+`crates/foundation/prolly/src/edit.rs`) runs `rewrite_level` once per level
+below the old root, bottom first. Each level hands its new chunks to the level
+above as references, which replace the references of the old chunks it used
+up (`splice`). At the old root's level the references are spliced in, and
+`raise` goes on cutting until a level is one chunk; then it drops every root
+that holds a single child (`collapse` in `crates/foundation/prolly/src/tree.rs`).
+What must never happen: that root differs from the root a fresh build of the
+edited entries gives. The theorems below show it never does, whatever window
+each level uses, and whether the tree grows taller, keeps its height, or
+shrinks.
+
+What this model trusts. Rust finds each level's window by key (the chunks
+whose keys reach the edited run); here a window is any run of chunks outside
+which the old and the edited level agree. Rust reads the old levels from the
+store; here they are the levels of a fresh build of the old entries, which is
+what history independence (`build_same_entries`) makes every stored tree.
+-/
+
+-- Level `j` of a fresh build of `xs`, counted from the bottom.
+def lvl (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry) : Nat → List Entry
+  -- The bottom level is the entries themselves.
+  | 0 => xs
+  -- Each level above holds one reference per chunk of the level below.
+  | j + 1 => up b H (lvl b H xs j)
+
+/-- What an edit holds after each level, as `Tree::edit` runs it.
+`Walk b H xs xs' i L E` says: the edit has reached level `i`, where the old
+tree's level is `L` and the edit has made the edited level's items `E`. -/
+inductive Walk (b : Entry → Bool) (H : List Entry → Nat) (xs xs' : List Entry) :
+    Nat → List Entry → List Entry → Prop
+  -- At the bottom the old level is the old entries, and the edited level the
+  -- edited ones.
+  | start : Walk b H xs xs' 0 xs xs'
+  -- One `rewrite_level` and the `splice` one level up. The old level's chunks
+  -- are `P`, a window `W` (never empty) and `S`; outside the window the old
+  -- and edited levels agree, so the edited level is `P`'s items, new items
+  -- `ys`, then `S`'s items. The re-cut of `ys` into `S` makes new chunks `N`
+  -- and keeps an old tail `R`. One level up, the old level is the references
+  -- of the old chunks, and the edited level is those of `P`, `N` and `R`.
+  | step (i : Nat) (L E ys : List Entry) (P W S N R : List (List Entry))
+      (hw : Walk b H xs xs' i L E) (hc : chunks b L = P ++ W ++ S) (hW : W ≠ [])
+      (hE : E = P.flatten ++ ys ++ S.flatten)
+      (hr : recut b (scan b ([], []) ys) S = N ++ R) :
+      Walk b H xs xs' (i + 1) (up b H L) (P.map (ref H) ++ N.map (ref H) ++ R.map (ref H))
+
+-- One level up has one reference per chunk.
+theorem length_up (b : Entry → Bool) (H : List Entry → Nat) (X : List Entry) :
+    (up b H X).length = (chunks b X).length := by
+  -- `up` maps each chunk to its reference.
+  simp [up]
+
+/-- Every level the edit makes is the level a fresh build of the edited entries
+has at that height, and the old level is the old tree's: at each level the
+windowed re-cut is the cut of the whole edited level (`rewrite_level_refines`),
+so its references are the fresh level above. -/
+theorem walk_levels (b : Entry → Bool) (H : List Entry → Nat) (xs xs' : List Entry)
+    (i : Nat) (L E : List Entry) (hw : Walk b H xs xs' i L E) :
+    L = lvl b H xs i ∧ E = lvl b H xs' i := by
+  -- Follow the walk one level at a time.
+  induction hw with
+  -- At the bottom both are the entries.
+  | start => exact ⟨rfl, rfl⟩
+  | step i L E ys P W S N R _ hc hW hE hr ih =>
+    obtain ⟨hL, hEl⟩ := ih
+    -- The old level above is the references of the old level's chunks.
+    refine ⟨by rw [hL]; rfl, ?_⟩
+    -- The edited level above is the references of the edited level's chunks.
+    show _ = up b H (lvl b H xs' i)
+    rw [← hEl, hE, up_eq_map, rewrite_level_refines b L ys P W S hc hW, hr]
+    simp [List.map_append, List.append_assoc]
+
+-- `raise` in `tree.rs`, keeping count of the level: while a level cuts into two
+-- chunks or more, go up; stop at the first that is one chunk, or none.
+def raise (b : Entry → Bool) (H : List Entry → Nat) (X : List Entry) (j : Nat) :
+    Nat × List Entry :=
+  -- Two chunks or more: there is another level above.
+  if 2 ≤ (chunks b X).length then raise b H (up b H X) (j + 1) else (j, X)
+termination_by X.length
+decreasing_by
+  -- The level above has fewer items than this one, as in `build`.
+  rename_i h
+  simp only [up, List.length_map]
+  exact chunks_shrink b X (Nat.le_trans h (chunks_length_le b X))
+
+-- `raise` stops at the root level `build` gives.
+theorem raise_snd (b : Entry → Bool) (H : List Entry → Nat) (X : List Entry) (j : Nat) :
+    (raise b H X j).2 = build b H X := by
+  -- Both take the same steps.
+  rw [raise, build]
+  by_cases h : 2 ≤ (chunks b X).length
+  · rw [if_pos h, if_pos h]
+    exact raise_snd b H (up b H X) (j + 1)
+  · rw [if_neg h, if_neg h]
+termination_by X.length
+decreasing_by
+  -- The level above is shorter, as in `build`.
+  simp only [up, List.length_map]
+  exact chunks_shrink b X (Nat.le_trans h (chunks_length_le b X))
+
+-- `k` is where `raise`, started at level `j` of the edited entries' fresh build,
+-- stops: the first level from `j` on that cuts into fewer than two chunks.
+def Top (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry) (j k : Nat) : Prop :=
+  -- It is at or above `j`, it is one chunk or none, and every level between
+  -- `j` and it cuts into two chunks or more.
+  j ≤ k ∧ (chunks b (lvl b H xs k)).length < 2 ∧
+    ∀ i, j ≤ i → i < k → 2 ≤ (chunks b (lvl b H xs i)).length
+
+-- Started on a fresh level, `raise` goes up the fresh levels and stops at the
+-- first one that is one chunk.
+theorem raise_lvl (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry) (j : Nat) :
+    ∃ k, Top b H xs j k ∧ raise b H (lvl b H xs j) j = (k, lvl b H xs k) := by
+  rw [raise]
+  by_cases hc : 2 ≤ (chunks b (lvl b H xs j)).length
+  · -- Two chunks or more: it goes on from the next level, which is fresh too.
+    rw [if_pos hc]
+    obtain ⟨k, ⟨hjk, hk, hall⟩, hr⟩ := raise_lvl b H xs (j + 1)
+    refine ⟨k, ⟨by omega, hk, fun i hi hik => ?_⟩, hr⟩
+    -- Every level from `j` up to `k` cuts into two chunks or more.
+    by_cases hij : i = j
+    · subst hij; exact hc
+    · exact hall i (by omega) hik
+  · -- One chunk or none: it stops here.
+    rw [if_neg hc]
+    exact ⟨j, ⟨Nat.le_refl j, by omega, fun i hi hik => by omega⟩, rfl⟩
+termination_by (lvl b H xs j).length
+decreasing_by
+  -- The next level is shorter.
+  show (up b H (lvl b H xs j)).length < _
+  rw [length_up]
+  exact chunks_shrink b _ (Nat.le_trans hc (chunks_length_le b _))
+
+-- A level that is one chunk or none has one or no reference above it, so the
+-- level above is one chunk or none too.
+theorem one_chunk_up (b : Entry → Bool) (H : List Entry → Nat) (X : List Entry)
+    (h : (chunks b X).length < 2) : (chunks b (up b H X)).length < 2 := by
+  -- There are never more chunks than items.
+  have := chunks_length_le b (up b H X)
+  rw [length_up] at this
+  omega
+
+-- Once a fresh level is one chunk or none, so is every level above it.
+theorem one_chunk_above (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry)
+    (k : Nat) (h : (chunks b (lvl b H xs k)).length < 2) :
+    ∀ d, (chunks b (lvl b H xs (k + d))).length < 2 := by
+  -- One level at a time.
+  intro d
+  induction d with
+  | zero => exact h
+  | succ d ih => exact one_chunk_up b H _ ih
+
+-- A list with an item cuts into at least one chunk.
+theorem chunks_ne_nil (b : α → Bool) (X : List α) (h : X ≠ []) : chunks b X ≠ [] := by
+  -- The chunks hold every item, so none would hold nothing.
+  intro hc
+  have := chunks_flatten b X
+  rw [hc] at this
+  exact h this.symm
+
+-- Every fresh level of entries that are not empty holds an item.
+theorem lvl_ne_nil (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry)
+    (h : xs ≠ []) (j : Nat) : lvl b H xs j ≠ [] := by
+  -- One level at a time: a level with an item has a chunk, so a reference above.
+  induction j with
+  | zero => exact h
+  | succ j ih =>
+    intro hn
+    have := congrArg List.length hn
+    simp only [lvl, length_up, List.length_nil] at this
+    exact chunks_ne_nil b _ ih (List.eq_nil_of_length_eq_zero this)
+
+/-- Why `collapse` goes down to the level below: a level holding a single
+reference refers to the whole level below, which is then one chunk. -/
+theorem single_ref (b : Entry → Bool) (H : List Entry → Nat) (X : List Entry)
+    (h : (up b H X).length = 1) : up b H X = [ref H X] := by
+  -- One reference means one chunk, and a single chunk holds the whole level.
+  rw [length_up] at h
+  obtain ⟨c, hc⟩ := List.length_eq_one_iff.mp h
+  have hf := chunks_flatten b X
+  rw [hc] at hf
+  simp only [List.flatten_cons, List.flatten_nil, List.append_nil] at hf
+  rw [up_eq_map, hc, hf]
+  rfl
+
+-- `collapse` in `tree.rs`: from root level `j`, while the root is above the
+-- bottom and holds a single reference, the root becomes the node it refers to,
+-- one level down (`single_ref`). `node j` is the node at level `j`.
+def descend (node : Nat → List Entry) : Nat → Nat
+  -- At the bottom it stops.
+  | 0 => 0
+  -- A single reference: go down; anything else: stop here.
+  | j + 1 => if (node (j + 1)).length = 1 then descend node j else j + 1
+
+-- From any level at or above a fresh build's root, `collapse` comes down to that
+-- root: above it every level holds a single reference, and the root itself is
+-- the bottom or holds two references or more.
+theorem descend_top (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry)
+    (hne : xs ≠ []) (t : Nat) (ht : Top b H xs 0 t) :
+    ∀ d, descend (lvl b H xs) (t + d) = t := by
+  intro d
+  induction d with
+  | zero =>
+    cases t with
+    -- The root is the bottom: it stops there.
+    | zero => rfl
+    | succ j =>
+      -- The level below the root cuts into two chunks or more, so the root holds
+      -- two references or more and is kept.
+      have h2 := ht.2.2 j (Nat.zero_le _) (Nat.lt_succ_self j)
+      have hl : (lvl b H xs (j + 1)).length ≠ 1 := by
+        simp only [lvl, length_up]; omega
+      simp only [Nat.add_zero, descend, if_neg hl]
+  | succ d ih =>
+    -- Above the root: the level below is one chunk, and not empty, so this level
+    -- holds a single reference and `collapse` goes down to it.
+    rw [show t + (d + 1) = (t + d) + 1 by omega, descend]
+    have hk := one_chunk_above b H xs t ht.2.1 d
+    have hpos : (chunks b (lvl b H xs (t + d))).length ≠ 0 := by
+      intro h0
+      exact chunks_ne_nil b _ (lvl_ne_nil b H xs hne _) (List.eq_nil_of_length_eq_zero h0)
+    have hl : (lvl b H xs (t + d + 1)).length = 1 := by
+      simp only [lvl, length_up]; omega
+    rw [if_pos hl]
+    exact ih
+
+-- The root a `raise` and its `collapse` leave: the level they stop at, and the
+-- node there.
+def rootOf (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry) (r : Nat) :
+    Nat × List Entry :=
+  -- Come down from where `raise` stopped, and take that level's node.
+  (descend (lvl b H xs) r, lvl b H xs (descend (lvl b H xs) r))
+
+/-- Wherever `raise` stops, as long as that level is one chunk or none,
+`collapse` comes down to the root of a fresh build: every level under the fresh
+root cuts into two chunks or more, so the stop is at or above it. -/
+theorem root_from (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry)
+    (hne : xs ≠ []) (k : Nat) (hk : (chunks b (lvl b H xs k)).length < 2) :
+    rootOf b H xs k = ((raise b H xs 0).1, build b H xs) := by
+  -- Where `raise` stops from the bottom: the fresh root.
+  obtain ⟨t, ht, hrt⟩ := raise_lvl b H xs 0
+  change raise b H xs 0 = (t, lvl b H xs t) at hrt
+  -- The stop is not below the fresh root.
+  have hkt : t ≤ k := by
+    rcases Nat.lt_or_ge k t with hlt | hge
+    · have := ht.2.2 k (Nat.zero_le _) hlt
+      omega
+    · exact hge
+  -- So `collapse` comes down to the fresh root, whose node is `build`'s.
+  have hd := descend_top b H xs hne t ht (k - t)
+  rw [show t + (k - t) = k by omega] at hd
+  have hb := raise_snd b H xs 0
+  rw [hrt] at hb
+  rw [hrt]
+  simp only [rootOf, hd]
+  exact congrArg _ hb
+
+/-- The edit walked to the root (`Tree::edit`). Whatever windows the levels
+used and whatever level `h` the old root was at, raising the edited root level
+and collapsing it gives the root of a fresh build of the edited entries: the
+level `raise` reaches from the bottom, with the node `build` gives. -/
+theorem edit_root (b : Entry → Bool) (H : List Entry → Nat) (xs xs' L E : List Entry)
+    (h : Nat) (hw : Walk b H xs xs' h L E) (hne : xs' ≠ []) :
+    (raise b H E h).2 = lvl b H xs' (raise b H E h).1 ∧
+      rootOf b H xs' (raise b H E h).1 = ((raise b H xs' 0).1, build b H xs') := by
+  -- The edited root level is the fresh level `h`.
+  obtain ⟨_, hE⟩ := walk_levels b H xs xs' h L E hw
+  subst hE
+  -- `raise` from level `h` goes up the fresh levels to one that is one chunk.
+  obtain ⟨k, hk, hrk⟩ := raise_lvl b H xs' h
+  rw [hrk]
+  exact ⟨rfl, root_from b H xs' hne k hk.2.1⟩
+
+/-- A fresh build's own `collapse` changes nothing: its root holds two references
+or more, or is the bottom level. -/
+theorem build_root (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry)
+    (hne : xs ≠ []) :
+    rootOf b H xs (raise b H xs 0).1 = ((raise b H xs 0).1, build b H xs) :=
+  -- The fresh build is the edit that changes nothing.
+  (edit_root b H xs xs xs xs 0 Walk.start hne).2
+
+-- Edited to no entries, every level is empty, so `collapse` stores nothing and
+-- the tree is empty, as a fresh build of no entries is.
+theorem lvl_nil (b : Entry → Bool) (H : List Entry → Nat) (j : Nat) : lvl b H [] j = [] := by
+  -- No items, no chunks, no references, at every level.
+  induction j with
+  | zero => rfl
+  | succ j ih => simp [lvl, ih, up, chunks, scan]
+
+
+/-!
+## Building in one pass, one open chunk per level
+
+The story, in plain words. `Builder` in `crates/foundation/prolly/src/build.rs`
+takes the entries in key order and never holds them all. Each level keeps only
+its open chunk. An entry goes into the bottom level; when it closes that
+level's chunk, the chunk is stored and its reference goes into the level above
+the same way, which may close a chunk there too. At the end (`finish`), from
+the bottom up, a level that never closed a chunk is the root, its open chunk
+being the whole level; any other level stores its open chunk and feeds that
+reference up. What must never happen: the root differs from a fresh build of
+the same entries. The theorems below show each level is fed exactly the fresh
+level (`lvl`), so the root `collapse` leaves is the fresh one.
+
+What this model leaves out. The model keeps each level's closed chunks, which
+Rust only stores and counts. Rust also drops an entry whose key repeats the
+one before it (the last value wins) and refuses a smaller key; here the
+entries are given sorted with each key once, as in `build_same_entries`.
+-/
+
+-- `Builder::feed`: add `x` to the lowest level's open chunk, making the level
+-- when there is none. When `x` closes the chunk (`step`'s rule), the chunk is
+-- stored and its reference fed to the level above, the same way.
+def feed (b : Entry → Bool) (H : List Entry → Nat) :
+    List (State Entry) → Entry → List (State Entry)
+  -- No level yet: a new one, holding `x` open.
+  | [], x => [step b ([], []) x]
+  | s :: rest, x =>
+    -- `x` closes the open chunk: store it, and feed its reference up.
+    if b x && !s.2.isEmpty then (s.1 ++ [s.2 ++ [x]], []) :: feed b H rest (ref H (s.2 ++ [x]))
+    -- Otherwise `x` joins the open chunk.
+    else (s.1, s.2 ++ [x]) :: rest
+
+/-- What the levels hold after a level was fed the items `ins`: its cutter state
+is the cut of `ins`, and the level above (there only once a chunk closed) was
+fed the references of the chunks it closed, in order. -/
+inductive Fed (b : Entry → Bool) (H : List Entry → Nat) : List Entry → List (State Entry) → Prop
+  -- Fed nothing: no level.
+  | nil : Fed b H [] []
+  -- Fed `ins`: this level is the cut of `ins`, and the levels above were fed
+  -- the references of its closed chunks.
+  | cons (ins : List Entry) (rest : List (State Entry)) (hne : ins ≠ [])
+      (hrest : Fed b H ((scan b ([], []) ins).1.map (ref H)) rest) :
+      Fed b H ins (scan b ([], []) ins :: rest)
+
+-- Feeding one more item keeps the promise: every level is still the cut of
+-- what it was fed, with `x` added at the bottom.
+theorem feed_fed (b : Entry → Bool) (H : List Entry → Nat) (ins : List Entry)
+    (L : List (State Entry)) (h : Fed b H ins L) : ∀ x, Fed b H (ins ++ [x]) (feed b H L x) := by
+  -- One level at a time, from the bottom.
+  induction h with
+  | nil =>
+    -- A new level holding `x` alone, which closes nothing.
+    intro x
+    have h0 : (scan b ([], []) [x]).1 = [] := by simp [scan, step]
+    exact Fed.cons [x] [] (by simp) (by rw [h0]; exact Fed.nil)
+  | cons ins rest hne hrest ih =>
+    intro x
+    -- This level's new state is the cut of `ins` with `x` added.
+    have hs : scan b ([], []) (ins ++ [x]) = step b (scan b ([], []) ins) x := by
+      rw [scan_append]; rfl
+    rw [feed]
+    by_cases hb : (b x && !(scan b ([], []) ins).2.isEmpty) = true
+    · -- `x` closes a chunk: the level above is fed its reference.
+      rw [if_pos hb]
+      have h' : scan b ([], []) (ins ++ [x]) =
+          ((scan b ([], []) ins).1 ++ [(scan b ([], []) ins).2 ++ [x]], []) := by
+        rw [hs, step, if_pos hb]
+      rw [← h']
+      refine Fed.cons _ _ (by simp) ?_
+      rw [h']
+      simpa [List.map_append] using ih (ref H ((scan b ([], []) ins).2 ++ [x]))
+    · -- `x` joins the open chunk: nothing above changes.
+      rw [if_neg hb]
+      have h' : scan b ([], []) (ins ++ [x]) =
+          ((scan b ([], []) ins).1, (scan b ([], []) ins).2 ++ [x]) := by
+        rw [hs, step, if_neg hb]
+      rw [← h']
+      refine Fed.cons _ _ (by simp) ?_
+      rw [h']
+      exact hrest
+
+-- `Builder::push` over all the entries, from no levels.
+def pushAll (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry) : List (State Entry) :=
+  -- Feed each entry in turn.
+  xs.foldl (feed b H) []
+
+-- After every push, the bottom level was fed all the entries so far.
+theorem pushAll_fed (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry) :
+    Fed b H xs (pushAll b H xs) := by
+  -- Feeding the entries one at a time keeps the promise from no levels on.
+  have key : ∀ (xs ins : List Entry) (L : List (State Entry)), Fed b H ins L →
+      Fed b H (ins ++ xs) (xs.foldl (feed b H) L) := by
+    intro xs
+    induction xs with
+    | nil => intro ins L h; simpa using h
+    | cons x xs ih =>
+      intro ins L h
+      have := ih (ins ++ [x]) (feed b H L x) (feed_fed b H ins L h x)
+      simpa [List.foldl_cons, List.append_assoc] using this
+  simpa using key xs [] [] Fed.nil
+
+-- `Builder::finish`, allowed `n` levels: bottom first, a level that closed no
+-- chunk is the root, its open chunk; any other level stores its open chunk, if
+-- there is one, and feeds the reference up, and `finish` goes up a level.
+-- `none` only when it runs out of levels (`finish_fed` shows it never does).
+def fin (b : Entry → Bool) (H : List Entry → Nat) :
+    Nat → List (State Entry) → Nat → Option (Nat × List Entry)
+  -- Out of levels.
+  | 0, _, _ => none
+  -- No level: an empty tree.
+  | _ + 1, [], j => some (j, [])
+  | n + 1, s :: rest, j =>
+    -- Nothing closed here: the open chunk is the root.
+    if s.1 = [] then some (j, s.2)
+    -- Something closed: flush the open chunk up, then go up.
+    else fin b H n (if s.2 = [] then rest else feed b H rest (ref H s.2)) (j + 1)
+
+-- A level that closed no chunk holds all its items open, in one chunk or none.
+theorem none_closed (b : Entry → Bool) (X : List Entry) (h : (scan b ([], []) X).1 = []) :
+    (scan b ([], []) X).2 = X ∧ (chunks b X).length < 2 := by
+  -- Nothing was lost, and nothing was closed.
+  have hf := scan_flatten b X [] []
+  rw [h] at hf
+  simp only [List.flatten_nil, List.nil_append, List.append_nil] at hf
+  refine ⟨hf, ?_⟩
+  unfold chunks
+  cases hs : scan b ([], []) X with
+  | mk d c =>
+    rw [hs] at h
+    simp only at h
+    subst h
+    cases c <;> simp
+
+-- Flushing a level's open chunk feeds the level above every reference of the
+-- level's chunks: the fresh level above.
+theorem flush_fed (b : Entry → Bool) (H : List Entry → Nat) (ins : List Entry)
+    (rest : List (State Entry)) (h : Fed b H ((scan b ([], []) ins).1.map (ref H)) rest) :
+    Fed b H (up b H ins) (if (scan b ([], []) ins).2 = [] then rest
+      else feed b H rest (ref H (scan b ([], []) ins).2)) := by
+  -- The chunks are the closed ones, then the open one if it holds anything.
+  rw [up_eq_map]
+  unfold chunks
+  cases hs : scan b ([], []) ins with
+  | mk d c =>
+    rw [hs] at h
+    cases c with
+    | nil => simpa using h
+    | cons z zs =>
+      simpa [List.map_append] using feed_fed b H _ rest h (ref H (z :: zs))
+
+-- A list among others holds no more items than all of them together.
+theorem length_le_flatten (L : List (List α)) (ch : List α) (h : ch ∈ L) :
+    ch.length ≤ L.flatten.length := by
+  -- Look for `ch` one list at a time.
+  induction L with
+  | nil => cases h
+  | cons l L ih =>
+    rw [List.flatten_cons, List.length_append]
+    rcases List.mem_cons.1 h with rfl | h
+    · omega
+    · have := ih h; omega
+
+-- A level that closed a chunk holds two items or more.
+theorem two_of_closed (b : Entry → Bool) (X : List Entry) (h : (scan b ([], []) X).1 ≠ []) :
+    2 ≤ X.length := by
+  -- The closed chunk alone holds two, and the closed chunks are part of `X`.
+  obtain ⟨ch, hch⟩ := List.exists_mem_of_ne_nil _ h
+  have h2 := scan_closed_two b X [] [] (by simp) ch hch
+  have hf := congrArg List.length (scan_flatten b X [] [])
+  have hle : ch.length ≤ (scan b ([], []) X).1.flatten.length :=
+    length_le_flatten _ ch hch
+  simp only [List.length_append, List.flatten_nil, List.nil_append, List.length_nil,
+    Nat.zero_add] at hf
+  omega
+
+/-- `finish` goes up the fresh levels: started at level `i` with the levels fed
+the fresh level `i`, it returns a fresh level `k ≥ i` that is one chunk or none,
+with that level's node, given more steps than level `i` has items. -/
+theorem finish_fed (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry)
+    (hne : xs ≠ []) :
+    ∀ n i L, Fed b H (lvl b H xs i) L → (lvl b H xs i).length < n →
+      ∃ k, i ≤ k ∧ (chunks b (lvl b H xs k)).length < 2 ∧
+        fin b H n L i = some (k, lvl b H xs k) := by
+  intro n
+  induction n with
+  | zero => intro i L _ hn; omega
+  | succ n ih =>
+    intro i L hF hn
+    generalize hX : lvl b H xs i = X at hF hn
+    cases hF with
+    | nil => exact absurd hX (lvl_ne_nil b H xs hne i)
+    | cons _ rest _ hrest =>
+      subst hX
+      rw [fin]
+      by_cases hc : (scan b ([], []) (lvl b H xs i)).1 = []
+      · -- Nothing closed: this fresh level is the root, one chunk or none.
+        rw [if_pos hc]
+        obtain ⟨hopen, hk⟩ := none_closed b _ hc
+        exact ⟨i, Nat.le_refl i, hk, by rw [hopen]⟩
+      · -- Something closed: the level above was fed the fresh level above,
+        -- which is shorter.
+        rw [if_neg hc]
+        have hF' := flush_fed b H _ rest hrest
+        have hshort : (up b H (lvl b H xs i)).length < (lvl b H xs i).length := by
+          rw [length_up]
+          exact chunks_shrink b _ (two_of_closed b _ hc)
+        obtain ⟨k, hik, hk, hfin⟩ := ih (i + 1) _ hF' (by show (up b H _).length < n; omega)
+        exact ⟨k, by omega, hk, hfin⟩
+
+/-- `Tree::build` through `Builder`: pushing sorted entries one at a time and
+finishing gives the root of a fresh build, after `collapse`. -/
+theorem builder_root (b : Entry → Bool) (H : List Entry → Nat) (xs : List Entry)
+    (hne : xs ≠ []) :
+    ∃ k, fin b H (xs.length + 1) (pushAll b H xs) 0 = some (k, lvl b H xs k) ∧
+      rootOf b H xs k = ((raise b H xs 0).1, build b H xs) := by
+  -- The bottom level was fed every entry, so `finish` stops on a fresh level
+  -- that is one chunk or none, and `collapse` comes down to the fresh root.
+  obtain ⟨k, _, hk, hfin⟩ :=
+    finish_fed b H xs hne (xs.length + 1) 0 _ (pushAll_fed b H xs) (Nat.lt_succ_self _)
+  exact ⟨k, hfin, root_from b H xs hne k hk⟩
+
+-- No entries: no level, and `finish` gives the empty tree.
+theorem builder_empty (b : Entry → Bool) (H : List Entry → Nat) :
+    fin b H 1 (pushAll b H []) 0 = some (0, []) := rfl
+/-!
+## Diff's walk
+
+The story, in plain words. `diff` in `crates/foundation/prolly/src/diff.rs`
+walks two trees side by side, each as a stack of what is left to read, in key
+order: a subtree not opened yet, or an entry. Each step looks at the two tops.
+Two subtrees with the same hash are dropped unread. Otherwise a subtree on top
+is opened into its children (the higher of two, or both at the same level). Two
+entries on top are compared by key: the smaller is reported as missing on the
+other side, and the same key with different values is reported as changed.
+What must never happen: the walk reports a key the trees agree on, misses one
+they disagree on, or reports the wrong values. The theorems below show the
+walk reports exactly `mergeDiff` of the two trees' entries, and that
+`mergeDiff` of two sorted entry lists holds exactly the keys whose values
+differ, each with its value on both sides.
+
+What this model trusts. A subtree is named by its hash. The store gives the
+children under each hash (`kids`) and the entries under it (`content`), and a
+well-formed store has a subtree's entries be its children's, read in order.
+Two subtrees with the same hash are then the same name, so they hold the same
+entries; in Rust that is SHA-256 being collision-free, as above. That the walk
+ends is not proved here: each open goes one level down a finite tree, and the
+Rust tests run it to the end.
+-/
+
+-- One reported key: the key, its value on the left, its value on the right
+-- (`none` when that side lacks it), as `Difference` in `diff.rs`.
+abbrev Diff := Nat × Option Nat × Option Nat
+
+-- The reference report: merge two entry lists by key, reporting a key on one
+-- side only, and a key on both sides with different values.
+def mergeDiff : List Entry → List Entry → List Diff
+  -- Both empty: nothing to report.
+  | [], [] => []
+  -- Only the left has entries left: each is missing on the right.
+  | x :: xs, [] => (x.1, some x.2, none) :: mergeDiff xs []
+  -- Only the right has entries left: each is missing on the left.
+  | [], y :: ys => (y.1, none, some y.2) :: mergeDiff [] ys
+  | x :: xs, y :: ys =>
+    -- The left key is smaller: it is missing on the right.
+    if x.1 < y.1 then (x.1, some x.2, none) :: mergeDiff xs (y :: ys)
+    -- The right key is smaller: it is missing on the left.
+    else if y.1 < x.1 then (y.1, none, some y.2) :: mergeDiff (x :: xs) ys
+    -- The same key: reported only when the values differ.
+    else (if x.2 = y.2 then [] else [(x.1, some x.2, some y.2)]) ++ mergeDiff xs ys
+termination_by xs ys => xs.length + ys.length
+
+-- Entries both sides share at the front are never reported.
+theorem mergeDiff_append_same (P A B : List Entry) :
+    mergeDiff (P ++ A) (P ++ B) = mergeDiff A B := by
+  -- One shared entry at a time: the same key with the same value.
+  induction P with
+  | nil => rfl
+  | cons p P ih => simp [mergeDiff, ih]
+
+-- What is left of a tree to walk: a subtree by its hash and level, or an entry.
+inductive Elem where
+  -- An entry, read already.
+  | entry (e : Entry)
+  -- A subtree not opened yet.
+  | sub (h : Nat) (level : Nat)
+
+-- The entries a stack still holds, in key order: a subtree stands for the
+-- entries under it.
+def flat (content : Nat → List Entry) : List Elem → List Entry
+  -- An empty stack holds nothing.
+  | [] => []
+  -- An entry holds itself.
+  | .entry e :: s => e :: flat content s
+  -- A subtree holds the entries under it.
+  | .sub h _ :: s => content h ++ flat content s
+
+-- The entries of two stacks one after the other.
+theorem flat_append (content : Nat → List Entry) (l r : List Elem) :
+    flat content (l ++ r) = flat content l ++ flat content r := by
+  -- One element at a time.
+  induction l with
+  | nil => rfl
+  | cons e l ih => cases e <;> simp [flat, ih, List.append_assoc]
+
+-- Opening a subtree (`Walk::open`) leaves the entries the stack holds alone,
+-- in a well-formed store.
+theorem flat_open (kids : Nat → List Elem) (content : Nat → List Entry)
+    (hk : ∀ h, flat content (kids h) = content h) (a la : Nat) (l : List Elem) :
+    flat content (kids a ++ l) = flat content (.sub a la :: l) := by
+  -- The children hold what the subtree holds.
+  rw [flat_append, hk]
+  rfl
+
+-- One step of `diff`'s loop: what it reports, and the two stacks after it;
+-- `none` when both stacks are empty and it returns.
+def walkStep (kids : Nat → List Elem) (l r : List Elem) :
+    Option (List Diff × List Elem × List Elem) :=
+  match l, r with
+  -- Both empty: done.
+  | [], [] => none
+  -- Two subtrees: skip both when they are the same, else open the higher, or
+  -- both at the same level.
+  | .sub a la :: l, .sub c lc :: r =>
+    if a = c then some ([], l, r)
+    else some ([], if lc ≤ la then kids a ++ l else .sub a la :: l,
+      if la ≤ lc then kids c ++ r else .sub c lc :: r)
+  -- A subtree on the left only: open it.
+  | .sub a _ :: l, r => some ([], kids a ++ l, r)
+  -- A subtree on the right only: open it.
+  | l, .sub c _ :: r => some ([], l, kids c ++ r)
+  -- Two entries: take the smaller key, or both when the keys are the same.
+  | .entry x :: l, .entry y :: r =>
+    if x.1 < y.1 then some ([(x.1, some x.2, none)], l, .entry y :: r)
+    else if y.1 < x.1 then some ([(y.1, none, some y.2)], .entry x :: l, r)
+    else some (if x.2 = y.2 then [] else [(x.1, some x.2, some y.2)], l, r)
+  -- An entry on the left only: missing on the right.
+  | .entry x :: l, [] => some ([(x.1, some x.2, none)], l, [])
+  -- An entry on the right only: missing on the left.
+  | [], .entry y :: r => some ([(y.1, none, some y.2)], [], r)
+
+-- Whichever subtree a step opens, the stack holds the same entries.
+theorem flat_open_if (kids : Nat → List Elem) (content : Nat → List Entry)
+    (hk : ∀ h, flat content (kids h) = content h) (p : Prop) [Decidable p]
+    (a la : Nat) (l : List Elem) :
+    flat content (if p then kids a ++ l else .sub a la :: l) = flat content (.sub a la :: l) := by
+  -- Opened or not, it holds the same entries.
+  split
+  · exact flat_open kids content hk a la l
+  · rfl
+
+/-- Each step keeps the promise: what it reports, followed by the reference
+report of what is left, is the reference report of what was there before. -/
+theorem walkStep_keeps (kids : Nat → List Elem) (content : Nat → List Entry)
+    (hk : ∀ h, flat content (kids h) = content h) (l r l' r' : List Elem) (out : List Diff)
+    (h : walkStep kids l r = some (out, l', r')) :
+    out ++ mergeDiff (flat content l') (flat content r') =
+      mergeDiff (flat content l) (flat content r) := by
+  -- Look at the step the two tops lead to.
+  unfold walkStep at h
+  split at h
+  · -- Both empty: no step.
+    cases h
+  · -- Two subtrees.
+    rename_i a la l c lc r
+    split at h
+    · -- The same hash: the same entries in front of both, never reported.
+      rename_i hac
+      subst hac
+      simp only [Option.some.injEq, Prod.mk.injEq] at h
+      obtain ⟨rfl, rfl, rfl⟩ := h
+      simp only [flat, List.nil_append, mergeDiff_append_same]
+    · -- Different hashes: an open changes neither side's entries.
+      simp only [Option.some.injEq, Prod.mk.injEq] at h
+      obtain ⟨rfl, rfl, rfl⟩ := h
+      rw [List.nil_append, flat_open_if kids content hk, flat_open_if kids content hk]
+  · -- A subtree on the left: opened.
+    rename_i a la l r _
+    simp only [Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl, rfl⟩ := h
+    rw [List.nil_append, flat_open kids content hk]
+  · -- A subtree on the right: opened.
+    rename_i l c lc r _ _
+    simp only [Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl, rfl⟩ := h
+    rw [List.nil_append, flat_open kids content hk]
+  · -- Two entries: the step reports what the reference report does first.
+    rename_i x l y r
+    split at h
+    · rename_i hxy
+      simp only [Option.some.injEq, Prod.mk.injEq] at h
+      obtain ⟨rfl, rfl, rfl⟩ := h
+      simp [flat, mergeDiff, hxy]
+    · rename_i hxy
+      split at h
+      · rename_i hyx
+        simp only [Option.some.injEq, Prod.mk.injEq] at h
+        obtain ⟨rfl, rfl, rfl⟩ := h
+        simp [flat, mergeDiff, hxy, hyx]
+      · rename_i hyx
+        simp only [Option.some.injEq, Prod.mk.injEq] at h
+        obtain ⟨rfl, rfl, rfl⟩ := h
+        simp only [flat]
+        rw [mergeDiff, if_neg hxy, if_neg hyx]
+  · -- An entry on the left only.
+    rename_i x l
+    simp only [Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl, rfl⟩ := h
+    simp [flat, mergeDiff]
+  · -- An entry on the right only.
+    rename_i y r
+    simp only [Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl, rfl⟩ := h
+    simp [flat, mergeDiff]
+
+-- A step returns only when both stacks are empty.
+theorem walkStep_none (kids : Nat → List Elem) (l r : List Elem)
+    (h : walkStep kids l r = none) : l = [] ∧ r = [] := by
+  -- Every other case takes a step.
+  unfold walkStep at h
+  split at h
+  · exact ⟨rfl, rfl⟩
+  all_goals (try split at h) <;> (try split at h) <;> simp at h
+
+-- `diff`'s loop, run for at most `n` steps: the report once both stacks are
+-- empty, or `none` when it has not finished in `n` steps.
+def walk (kids : Nat → List Elem) : Nat → List Elem → List Elem → Option (List Diff)
+  -- Out of steps.
+  | 0, _, _ => none
+  | n + 1, l, r =>
+    match walkStep kids l r with
+    -- Done: nothing more to report.
+    | none => some []
+    -- A step: its report, then the rest of the loop's.
+    | some (out, l', r') => (walk kids n l' r').map (out ++ ·)
+
+/-- Whenever `diff`'s loop finishes, its report is the reference report of the
+entries the two stacks held. -/
+theorem walk_eq (kids : Nat → List Elem) (content : Nat → List Entry)
+    (hk : ∀ h, flat content (kids h) = content h) :
+    ∀ n l r res, walk kids n l r = some res →
+      res = mergeDiff (flat content l) (flat content r) := by
+  -- One step at a time, keeping the promise of `walkStep_keeps`.
+  intro n
+  induction n with
+  | zero => intro l r res h; cases h
+  | succ n ih =>
+    intro l r res h
+    simp only [walk] at h
+    split at h
+    · -- Done: both stacks are empty, and so is the reference report.
+      rename_i hs
+      obtain ⟨rfl, rfl⟩ := walkStep_none kids l r hs
+      cases h
+      simp [flat, mergeDiff]
+    · -- A step: its report, then the rest, which is the reference report of
+      -- what is left.
+      rename_i out l' r' hs
+      cases hw : walk kids n l' r' with
+      | none => rw [hw] at h; cases h
+      | some rest =>
+        rw [hw] at h
+        cases h
+        rw [ih l' r' rest hw]
+        exact walkStep_keeps kids content hk l r l' r' out hs
+
+-- A tree's stack at the start (`Walk::new`): its root subtree, or nothing.
+def start : Option (Nat × Nat) → List Elem
+  -- An empty tree: nothing to walk.
+  | none => []
+  -- A root: one subtree, by its hash and level.
+  | some (h, level) => [.sub h level]
+
+-- `diff`: the same roots report nothing at once; otherwise walk both trees.
+def diffTrees (kids : Nat → List Elem) (n : Nat) (left right : Option (Nat × Nat)) :
+    Option (List Diff) :=
+  -- `left.root == right.root` returns before reading either store.
+  if left = right then some [] else walk kids n (start left) (start right)
+
+/-- `diff()` reports the reference report of the two trees' entries, whenever it
+finishes, both when the roots are the same and when it walks. -/
+theorem diff_eq (kids : Nat → List Elem) (content : Nat → List Entry)
+    (hk : ∀ h, flat content (kids h) = content h) (n : Nat) (left right : Option (Nat × Nat))
+    (res : List Diff) (h : diffTrees kids n left right = some res) :
+    res = mergeDiff (flat content (start left)) (flat content (start right)) := by
+  unfold diffTrees at h
+  split at h
+  · -- The same roots: the same entries, and nothing to report.
+    rename_i he
+    subst he
+    cases h
+    have := mergeDiff_append_same (flat content (start left)) [] []
+    simp only [List.append_nil] at this
+    rw [this, mergeDiff]
+  · -- Different roots: the walk.
+    exact walk_eq kids content hk n _ _ res h
+
+-- The value of key `k` in an entry list, `none` when it is not there.
+def lookup (k : Nat) : List Entry → Option Nat
+  -- Not there.
+  | [] => none
+  -- This entry, or further on.
+  | e :: t => if e.1 = k then some e.2 else lookup k t
+
+-- A key smaller than every key of a list is not in it.
+theorem lookup_none (k : Nat) (t : List Entry) (h : ∀ e ∈ t, k < e.1) : lookup k t = none := by
+  -- No entry has key `k`.
+  induction t with
+  | nil => rfl
+  | cons e t ih =>
+    have he := h e (by simp)
+    simp only [lookup, if_neg (show e.1 ≠ k by omega)]
+    exact ih (fun e' he' => h e' (by simp [he']))
+
+-- In a sorted list every key after the first is larger than it.
+theorem sorted_head (x : Entry) (t : List Entry) (h : Sorted (x :: t)) :
+    Sorted t ∧ ∀ e ∈ t, x.1 < e.1 := by
+  -- That is what `Pairwise` says of the first entry.
+  unfold Sorted at h ⊢
+  rw [List.pairwise_cons] at h
+  exact ⟨h.2, h.1⟩
+
+/-- The reference report means what `diff` promises: for two sorted entry lists
+it holds a key with its two values exactly when the values differ, `none`
+standing for a side that lacks the key. -/
+theorem mergeDiff_spec (xs ys : List Entry) (hx : Sorted xs) (hy : Sorted ys) (d : Diff) :
+    d ∈ mergeDiff xs ys ↔
+      d.2.1 = lookup d.1 xs ∧ d.2.2 = lookup d.1 ys ∧ d.2.1 ≠ d.2.2 := by
+  -- Follow the merge one step at a time.
+  obtain ⟨k, l, r⟩ := d
+  induction xs, ys using mergeDiff.induct with
+  | case1 => simp only [mergeDiff, lookup, List.not_mem_nil, false_iff]; rintro ⟨rfl, rfl, h⟩; exact h rfl
+  | case2 x xs ih =>
+    -- Only the left: `k` is reported exactly when it is the left's key.
+    obtain ⟨hx', hxl⟩ := sorted_head x xs hx
+    have := ih hx' hy
+    simp only [mergeDiff, List.mem_cons, Prod.mk.injEq, lookup] at this ⊢
+    by_cases hk : x.1 = k
+    · subst hk
+      rw [lookup_none _ xs hxl] at this
+      simp only [if_pos rfl]
+      constructor
+      · rintro (⟨-, rfl, rfl⟩ | hm)
+        · simp
+        · exact absurd ((this.1 hm).1.trans (this.1 hm).2.1.symm) (this.1 hm).2.2
+      · rintro ⟨rfl, rfl, -⟩
+        simp
+    · simp only [if_neg hk]
+      rw [← this]
+      constructor
+      · rintro (⟨rfl, -, -⟩ | hm)
+        · exact absurd rfl hk
+        · exact hm
+      · exact Or.inr
+  | case3 y ys ih =>
+    -- Only the right: `k` is reported exactly when it is the right's key.
+    obtain ⟨hy', hyl⟩ := sorted_head y ys hy
+    have := ih hx hy'
+    simp only [mergeDiff, List.mem_cons, Prod.mk.injEq, lookup] at this ⊢
+    by_cases hk : y.1 = k
+    · subst hk
+      rw [lookup_none _ ys hyl] at this
+      simp only [if_pos rfl]
+      constructor
+      · rintro (⟨-, rfl, rfl⟩ | hm)
+        · simp
+        · exact absurd ((this.1 hm).1.trans (this.1 hm).2.1.symm) (this.1 hm).2.2
+      · rintro ⟨rfl, rfl, -⟩
+        simp
+    · simp only [if_neg hk]
+      rw [← this]
+      constructor
+      · rintro (⟨rfl, -, -⟩ | hm)
+        · exact absurd rfl hk
+        · exact hm
+      · exact Or.inr
+  | case4 x xs y ys hlt ih =>
+    -- The left key is smaller: it is missing on the right; the rest is merged.
+    obtain ⟨hx', hxl⟩ := sorted_head x xs hx
+    obtain ⟨_, hyl⟩ := sorted_head y ys hy
+    have := ih hx' hy
+    rw [mergeDiff, if_pos hlt]
+    simp only [List.mem_cons, Prod.mk.injEq, lookup] at this ⊢
+    by_cases hk : x.1 = k
+    · subst hk
+      rw [lookup_none _ xs hxl] at this
+      have hyn : y.1 ≠ x.1 := by omega
+      have hr : lookup x.1 ys = none := lookup_none _ ys (fun e he => by have := hyl e he; omega)
+      simp only [if_pos rfl, if_neg hyn, hr] at this ⊢
+      constructor
+      · rintro (⟨-, rfl, rfl⟩ | hm)
+        · simp
+        · exact absurd ((this.1 hm).1.trans (this.1 hm).2.1.symm) (this.1 hm).2.2
+      · rintro ⟨rfl, rfl, -⟩
+        simp
+    · simp only [if_neg hk]
+      rw [← this]
+      constructor
+      · rintro (⟨rfl, -, -⟩ | hm)
+        · exact absurd rfl hk
+        · exact hm
+      · exact Or.inr
+  | case5 x xs y ys hlt hgt ih =>
+    -- The right key is smaller: it is missing on the left; the rest is merged.
+    obtain ⟨_, hxl⟩ := sorted_head x xs hx
+    obtain ⟨hy', hyl⟩ := sorted_head y ys hy
+    have := ih hx hy'
+    rw [mergeDiff, if_neg hlt, if_pos hgt]
+    simp only [List.mem_cons, Prod.mk.injEq, lookup] at this ⊢
+    by_cases hk : y.1 = k
+    · subst hk
+      rw [lookup_none _ ys hyl] at this
+      have hxn : x.1 ≠ y.1 := by omega
+      have hl : lookup y.1 xs = none := lookup_none _ xs (fun e he => by have := hxl e he; omega)
+      simp only [if_pos rfl, if_neg hxn, hl] at this ⊢
+      constructor
+      · rintro (⟨-, rfl, rfl⟩ | hm)
+        · simp
+        · exact absurd ((this.1 hm).1.trans (this.1 hm).2.1.symm) (this.1 hm).2.2
+      · rintro ⟨rfl, rfl, -⟩
+        simp
+    · simp only [if_neg hk]
+      rw [← this]
+      constructor
+      · rintro (⟨rfl, -, -⟩ | hm)
+        · exact absurd rfl hk
+        · exact hm
+      · exact Or.inr
+  | case6 x xs y ys hlt hgt ih =>
+    -- The same key: reported when the values differ; the rest is merged.
+    obtain ⟨hx', hxl⟩ := sorted_head x xs hx
+    obtain ⟨hy', hyl⟩ := sorted_head y ys hy
+    have := ih hx' hy'
+    have hxy : x.1 = y.1 := by omega
+    rw [mergeDiff, if_neg hlt, if_neg hgt]
+    simp only [List.mem_append, lookup] at this ⊢
+    by_cases hk : x.1 = k
+    · subst hk
+      rw [lookup_none _ xs hxl, lookup_none _ ys (fun e he => by have := hyl e he; omega)] at this
+      simp only [if_pos rfl, if_pos hxy.symm, if_true]
+      have hm : (x.1, l, r) ∉ mergeDiff xs ys := fun hm => (this.1 hm).2.2 ((this.1 hm).1.trans (this.1 hm).2.1.symm)
+      by_cases hv : x.2 = y.2
+      · rw [if_pos hv]
+        simp only [List.not_mem_nil, false_or]
+        exact ⟨fun h' => absurd h' hm, fun ⟨h1, h2, h3⟩ => (h3 (by rw [h1, h2, hv])).elim⟩
+      · simp only [if_neg hv, List.mem_singleton, Prod.mk.injEq]
+        constructor
+        · rintro (⟨-, rfl, rfl⟩ | h')
+          · simpa using hv
+          · exact absurd h' hm
+        · rintro ⟨rfl, rfl, -⟩
+          simp
+    · have hk' : y.1 ≠ k := by omega
+      simp only [if_neg hk, if_neg hk']
+      rw [← this]
+      have hn : (k, l, r) ∉ (if x.2 = y.2 then [] else [(x.1, some x.2, some y.2)]) := by
+        split <;> simp [Ne.symm hk]
+      exact ⟨fun h' => h'.resolve_left hn, Or.inr⟩
 
 /-!
 ## The node encoding is injective
