@@ -251,9 +251,15 @@ resources:
   - name: users
     relations:
       - name: viewer
+      - name: editor
+      - name: remover
     permissions:
       - name: read
         expr: viewer
+      - name: update
+        expr: editor
+      - name: delete
+        expr: remover
 "#;
 
 /// A new identity's handle.

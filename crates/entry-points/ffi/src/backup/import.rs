@@ -41,7 +41,9 @@ pub unsafe fn defra_backup_import(
             None => return DefraResult::error(ERR_INVALID_NODE_HANDLE),
         };
 
-        let context = request.context();
+        // The caller creates the imported documents, as a GraphQL write's
+        // caller does: document ACP registers the creator as their owner.
+        let context = request.context().with_creator(request.identity.clone());
         ffi_async_ok!(node_ptr, {
             let content = fs::read_to_string(&path_str).map_err(|e| {
                 if e.kind() == std::io::ErrorKind::NotFound {
