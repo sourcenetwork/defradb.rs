@@ -39,6 +39,8 @@ impl Planner {
         let nested_limit = child.nested_limit;
         let nested_offset = child.nested_offset;
         let nested_order_by = child.nested_order_by.clone();
+        let child_scan_provides_order = child.child_scan_provides_order;
+        let child_scan_has_value_filter = child.child_scan_has_value_filter;
         let child_uses_index = child.child_uses_index;
         let has_deferred_scoped_fulltext = child.has_deferred_scoped_fulltext;
         let multi_level_paths_for_relation = &child.multi_level_paths_for_relation;
@@ -184,15 +186,16 @@ impl Planner {
             && nested_order_by
                 .as_ref()
                 .is_some_and(|order| order.has_relation_order())
+            && child_plan_provides_ordering
         {
             join_many = join_many.with_preserve_ordered_orphans();
         }
-        if nested_order_by
-            .as_ref()
-            .is_some_and(|order| order.has_relation_order())
-            && child_plan_provides_ordering
+        if nested_order_by.is_some() && (child_plan_provides_ordering || child_scan_provides_order)
         {
             join_many = join_many.with_child_plan_provides_ordering();
+        }
+        if child_scan_has_value_filter {
+            join_many = join_many.with_child_scan_value_filter();
         }
         if use_per_parent {
             join_many = join_many.with_per_parent_child_scan();
