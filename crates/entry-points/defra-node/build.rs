@@ -87,12 +87,25 @@ fn main() {
     println!("cargo:rustc-env=DEFRA_NODE_RUSTC={}", rustc.trim());
 
     // Rebuild on git branch / index changes so version metadata tracks commits.
-    let git_head = "../../../.git/HEAD";
-    println!("cargo:rerun-if-changed={git_head}");
-    if let Ok(head_contents) = fs::read_to_string(git_head) {
-        if let Some(reference) = head_contents.strip_prefix("ref: ") {
-            println!("cargo:rerun-if-changed=../../../.git/{}", reference.trim());
+    // A worktree's `.git` is a file, so resolve the paths git itself uses.
+    let git_output = |argument: &str| {
+        Command::new("git")
+            .args(["rev-parse", argument])
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .and_then(|output| String::from_utf8(output.stdout).ok())
+            .map(|path| path.trim().to_owned())
+            .filter(|path| !path.is_empty())
+    };
+    let watched = [
+        git_output("--git-dir").map(|dir| format!("{dir}/HEAD")),
+        git_output("--git-dir").map(|dir| format!("{dir}/index")),
+        git_output("--git-common-dir").map(|dir| format!("{dir}/packed-refs")),
+    ];
+    for path in watched.into_iter().flatten() {
+        if fs::metadata(&path).is_ok() {
+            println!("cargo:rerun-if-changed={path}");
         }
     }
-    println!("cargo:rerun-if-changed=../../../.git/index");
 }
