@@ -385,13 +385,12 @@ impl Planner {
         // scalar selection keeps the choice deterministic rather than dependent
         // on which indexes a collection happens to carry.
         //
-        // A row rejected above the scan is invisible to it, and the scan is what
-        // widens the candidate set when a page comes up short. An `OrderNode`
-        // blocks and consumes everything, so widening cannot instead be driven by
-        // the consumer still pulling. Rather than return a short page, these
-        // shapes take the exhaustive path, which scores every matching document
-        // and is therefore always right.
-        let rows_rejected_above_the_scan = filter_has_relations
+        // A row rejected above the scan is invisible to it, so these shapes take
+        // the exhaustive path, which scores every matching document and is
+        // therefore always right. A filtered similarity query follows the same
+        // path and reports that its vector index went unused.
+        let rows_rejected_above_the_scan = select.filter.is_some()
+            || filter_has_relations
             || is_complex_filter
             || select.group_by.is_some()
             // prepare_filter removes computed aliases before classifying the filter.

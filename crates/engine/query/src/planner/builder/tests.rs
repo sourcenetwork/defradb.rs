@@ -1,5 +1,7 @@
 use super::*;
-use crate::mapper::{CursorParams, Field, Filter, OrderBy, OrderCondition, OrderDirection};
+use crate::mapper::{
+    CursorParams, Field, Filter, OrderBy, OrderCondition, OrderDirection, Similarity,
+};
 use crate::planner::index_selection::IndexScanType;
 use schema::{FieldDescription, FieldKind, IndexDescription, IndexedFieldDescription};
 
@@ -120,6 +122,46 @@ fn make_test_collection_with_filter_and_order_indexes() -> CollectionVersion {
         auto_generated: false,
         fields: vec![IndexedFieldDescription {
             name: "age".to_string(),
+            descending: false,
+        }],
+    })
+}
+
+fn make_vector_collection() -> CollectionVersion {
+    CollectionVersion::new(
+        "Users",
+        "v1",
+        "coll-vectors",
+        vec![
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "age", FieldKind::int(), schema::CType::LwwRegister),
+            FieldDescription::new(
+                "3",
+                "embedding",
+                FieldKind::float32_array(),
+                schema::CType::LwwRegister,
+            ),
+        ],
+    )
+    .with_index(IndexDescription {
+        id: 1,
+        name: "embedding_idx".to_string(),
+        unique: false,
+        kind: Some(schema::IndexKind::Vector(schema::VectorIndexDescription {
+            algorithm: schema::VectorAlgorithm::Hnsw,
+            metric: schema::DistanceMetric::Cosine,
+            dimensions: 3,
+            hnsw: Some(schema::HnswParams::default()),
+            ..Default::default()
+        })),
+        auto_generated: false,
+        fields: vec![IndexedFieldDescription {
+            name: "embedding".to_string(),
             descending: false,
         }],
     })
@@ -383,6 +425,34 @@ fn test_plan_no_index_for_non_indexed_field() {
 
         // No indexes available, so shouldn't use index
         assert!(!result.uses_index());
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_filtered_similarity_query_warns_that_its_vector_index_is_unused() {
+    workers::block_on(async {
+        let planner = Planner::new(vec![make_vector_collection()])
+            .with_fetcher(std::sync::Arc::new(crate::test_utils::MockFetcher::new()));
+
+        let filter =
+            Filter::from_conditions(map([("age".to_string(), serde_json::json!({"_gt": 15}))]));
+        let select = Select::new("Users")
+            .with_similarity(Similarity::new("embedding", vec![1.0, 0.0, 0.0]).with_alias("sim"))
+            .with_filter(filter)
+            .with_limit(2)
+            .with_order(
+                OrderBy::new().with_condition(OrderCondition::new("sim", OrderDirection::Desc)),
+            );
+
+        let result = planner.plan_with_index_info(&select).unwrap();
+
+        assert_eq!(result.warnings.len(), 1);
+        let warning = &result.warnings[0];
+        assert_eq!(warning.code, "VECTOR_INDEX_UNUSED");
+        let detail = warning.detail.as_ref().unwrap();
+        assert_eq!(detail["field"], "embedding");
+        assert_eq!(detail["reason"], "filter");
     })
     .unwrap()
 }
