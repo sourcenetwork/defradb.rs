@@ -30,6 +30,11 @@
 \* machine would count twice. The rule: a re-admitted key abstains on every
 \* slot that was already open when it was admitted. Abstaining spends fault
 \* budget, so on those slots the restored validator counts towards F.
+\*
+\* Votes are counted by seat, not by key: VotersFor collects voters, and a
+\* restored validator's new key sits in the same seat as its old one. That
+\* holds only if a real certificate also dedupes its votes by seat (the
+\* validator's group entry), never by signing key.
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS

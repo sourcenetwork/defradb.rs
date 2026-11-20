@@ -1730,7 +1730,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Quorum certificate winner",
         name: "INV_OneCertificate / INV_OneActs / PROP_UncontendedCommits: 2F+1 votes from 3F+1 validators certify at most one proposal, only a certified contender acts, a restored validator abstains on slots open at its re-admission, and an uncontended slot commits without the cheater",
         axis: Tla,
-        anchor: "crates/defra-node/src/ops/block.rs verify_block_signature",
+        anchor: "crates/database/db/src/block/verify.rs verify_block_signature",
         model_ref: "MC_QuorumCertificate_{Green,Green_Restore,Red_LowQuorum,Red_HighQuorum,Red_Revote,Red_Optimistic,Red_RestoreRevote}.cfg",
         tiers: &[Boundary],
         bound_by: "",
