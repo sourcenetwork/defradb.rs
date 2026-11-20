@@ -589,7 +589,7 @@ theorem insert_insert (b : List Entry → Entry → Bool) (H : List Entry → Na
     · exact Or.inr ⟨Or.inr ⟨h, h'⟩, h'⟩
 
 /-!
-## The edit path: re-cutting only the chunks around an edit
+## The edit path: re-cutting from the edit until the cut lines up again
 
 The story, in plain words. `Tree::insert` and `Tree::remove` do not cut a whole
 level again. At one level (`rewrite_level` in `crates/foundation/prolly/src/edit.rs`) they
@@ -597,7 +597,10 @@ take the old chunks: `P` before the edit, a window `W` that holds the edited
 items, and `S` after it. They replace the window's items by new ones `ys`, cut
 `ys` from an empty cutter, and then keep feeding in whole old chunks of `S`, one
 at a time, until the cutter has nothing open (or `S` runs out). Whatever of `S`
-is left is kept as it was. What must never happen: that answer differs from
+is left is kept as it was. The cutter may never end an old chunk with
+nothing open: say every old chunk is two 40 KiB items closed by the byte cap,
+and the edit adds one more in front. Then every old chunk leaves one item open,
+and the edit re-cuts the rest of the level. What must never happen: that answer differs from
 cutting the whole edited level from scratch. The theorems below show it never
 does, for any window and any new items, and that one level up the edit is again
 "swap the old window's references for the new chunks' references".
