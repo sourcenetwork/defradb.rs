@@ -62,6 +62,36 @@ fn books() -> CollectionVersion {
             FieldDescription::new("4", "_authorID", FieldKind::doc_id(), CType::LwwRegister)
                 .with_relation_name("author_books")
                 .as_primary(),
+            FieldDescription::new(
+                "5",
+                "publisher",
+                FieldKind::relation("Publisher", false),
+                CType::LwwRegister,
+            )
+            .with_relation_name("publisher_books")
+            .as_primary(),
+            FieldDescription::new("6", "_publisherID", FieldKind::doc_id(), CType::LwwRegister)
+                .with_relation_name("publisher_books")
+                .as_primary(),
+        ],
+    )
+}
+
+fn publishers() -> CollectionVersion {
+    CollectionVersion::new(
+        "Publisher",
+        "v1",
+        "coll-publisher",
+        vec![
+            FieldDescription::new("1", "_docID", FieldKind::doc_id(), CType::LwwRegister),
+            FieldDescription::new("2", "name", FieldKind::string(), CType::LwwRegister),
+            FieldDescription::new(
+                "3",
+                "published",
+                FieldKind::relation("Book", true),
+                CType::LwwRegister,
+            )
+            .with_relation_name("publisher_books"),
         ],
     )
 }
@@ -78,12 +108,21 @@ fn person(name: &str) -> Document {
     .unwrap()
 }
 
+fn publisher(name: &str) -> Document {
+    Document::from_json_str(
+        &json!({"_docID": doc_id(name), "name": name}).to_string(),
+        publishers(),
+    )
+    .unwrap()
+}
+
 fn book(title: &str, author: &str) -> Document {
     Document::from_json_str(
         &json!({
             "_docID": doc_id(title),
             "title": title,
             "_authorID": doc_id(author),
+            "_publisherID": doc_id("Penguin"),
         })
         .to_string(),
         books(),
@@ -95,6 +134,7 @@ fn book(title: &str, author: &str) -> Document {
 struct IndexedSideFetcher {
     people: Vec<Document>,
     books: Vec<Document>,
+    publishers: Vec<Document>,
 }
 
 impl IndexedSideFetcher {
@@ -102,6 +142,7 @@ impl IndexedSideFetcher {
         Self {
             people: vec![person("David"), person("Other")],
             books: vec![book("David", "David"), book("Other", "Other")],
+            publishers: vec![publisher("Penguin")],
         }
     }
 
@@ -109,6 +150,7 @@ impl IndexedSideFetcher {
         match collection_name {
             "Person" => self.people.clone(),
             "Book" => self.books.clone(),
+            "Publisher" => self.publishers.clone(),
             _ => Vec::new(),
         }
     }
@@ -205,7 +247,7 @@ impl DocFetcher for IndexedSideFetcher {
 fn indexed_side_filter_returns_only_matching_books() {
     workers::block_on(async {
         let fetcher: Arc<dyn DocFetcher> = Arc::new(IndexedSideFetcher::new());
-        let planner = Planner::new(vec![people(), books()]).with_fetcher(fetcher);
+        let planner = Planner::new(vec![people(), books(), publishers()]).with_fetcher(fetcher);
         let select = Select::new("Book")
             .with_field(Field::new("title"))
             .with_filter(Filter::from_conditions(
@@ -227,6 +269,78 @@ fn indexed_side_filter_returns_only_matching_books() {
         plan.close().await.unwrap();
 
         assert_eq!(titles, vec!["David".to_string()]);
+    })
+    .unwrap()
+}
+
+/// A relation already joined into the parent plan, here the selected
+/// publisher, survives the indexed-side join of the filtered author.
+#[test]
+fn indexed_side_filter_keeps_relations_joined_into_the_parent() {
+    workers::block_on(async {
+        let fetcher: Arc<dyn DocFetcher> = Arc::new(IndexedSideFetcher::new());
+        let planner = Planner::new(vec![people(), books(), publishers()]).with_fetcher(fetcher);
+        let select = Select::new("Book")
+            .with_field(Field::new("title"))
+            .with_select(Select::new("publisher").with_field(Field::new("name")))
+            .with_filter(Filter::from_conditions(
+                json!({"author": {"name": {"_eq": "David"}}})
+                    .as_object()
+                    .cloned()
+                    .unwrap(),
+            ));
+
+        let mut plan = planner.plan(&select).unwrap();
+        plan.init().await.unwrap();
+        plan.start().await.unwrap();
+
+        let mut rows = Vec::new();
+        while plan.next().await.unwrap() {
+            rows.push(plan.document_map().render_doc_to_json(plan.value()));
+        }
+        plan.close().await.unwrap();
+
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0]["title"], json!("David"), "{rows:?}");
+        assert_eq!(rows[0]["publisher"]["name"], json!("Penguin"), "{rows:?}");
+    })
+    .unwrap()
+}
+
+/// Explain reports the child scans under the child branch and the one parent
+/// scan under the root: two books are scanned once, and the one matching
+/// person is read by the scan that selects it and by the scan that drives the
+/// output.
+#[test]
+fn indexed_side_explain_reports_child_and_parent_scans_apart() {
+    workers::block_on(async {
+        let fetcher: Arc<dyn DocFetcher> = Arc::new(IndexedSideFetcher::new());
+        let planner = Planner::new(vec![people(), books(), publishers()]).with_fetcher(fetcher);
+        let select = Select::new("Book")
+            .with_field(Field::new("title"))
+            .with_filter(Filter::from_conditions(
+                json!({"author": {"name": {"_eq": "David"}}})
+                    .as_object()
+                    .cloned()
+                    .unwrap(),
+            ));
+        let mut plan = planner.plan(&select).unwrap();
+        plan.init().await.unwrap();
+        plan.start().await.unwrap();
+        while plan.next().await.unwrap() {}
+        plan.close().await.unwrap();
+
+        let explain = plan.explain_execute();
+        let join = &explain["selectNode"]["typeIndexJoin"]["typeJoinOne"];
+        assert_eq!(
+            join["root"]["scanNode"]["docFetches"],
+            json!(2),
+            "{explain}"
+        );
+        let child = &join["subType"]["selectTopNode"]["selectNode"];
+        assert_eq!(child["filterMatches"], json!(1), "{explain}");
+        assert_eq!(child["scanNode"]["docFetches"], json!(2), "{explain}");
+        assert_eq!(child["scanNode"]["indexFetches"], json!(2), "{explain}");
     })
     .unwrap()
 }
