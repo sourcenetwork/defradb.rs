@@ -245,13 +245,17 @@ impl ReindexPage {
                     restamped
                 }
                 ToActive::Identity => doc,
-                ToActive::Migrated(migrated) => {
+                ToActive::Migrated {
+                    document: migrated,
+                    complete,
+                } => {
                     original_keys.insert(
                         doc_short_id,
                         manager.unique_index_keys(&doc, collection.schema())?,
                     );
-                    if cache_migrated_document(datastore, systemstore, collection, &migrated)
-                        .await?
+                    if complete
+                        && cache_migrated_document(datastore, systemstore, collection, &migrated)
+                            .await?
                     {
                         materialized += 1;
                     }

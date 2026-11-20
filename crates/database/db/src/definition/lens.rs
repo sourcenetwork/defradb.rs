@@ -253,3 +253,92 @@ pub fn migration_path_has_transform(
 
     has_transform
 }
+
+/// Whether every transition on the targeted path from `source_version_id` to
+/// `target_version_id` runs a transform.
+pub fn migration_path_is_fully_transformed(
+    history: &RapidHashMap<String, TargetedHistoryLink>,
+    source_version_id: &str,
+    target_version_id: &str,
+) -> bool {
+    if source_version_id == target_version_id {
+        return false;
+    }
+
+    let mut current = source_version_id;
+    let mut visited = rapidhash::RapidHashSet::new();
+    visited.insert(current.to_string());
+
+    while current != target_version_id {
+        let Some(link) = history.get(current) else {
+            return false;
+        };
+
+        if let Some(next) = link.next.as_deref().filter(|next| !visited.contains(*next)) {
+            let Some(next_link) = history.get(next) else {
+                return false;
+            };
+            if next_link.transform.is_none() {
+                return false;
+            }
+            current = next;
+        } else if let Some(previous) = link
+            .previous
+            .as_deref()
+            .filter(|previous| !visited.contains(*previous))
+        {
+            if link.transform.is_none() {
+                return false;
+            }
+            current = previous;
+        } else {
+            return false;
+        }
+
+        visited.insert(current.to_string());
+    }
+
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn targeted_history(
+        first_transform: Option<&str>,
+        second_transform: Option<&str>,
+    ) -> RapidHashMap<String, TargetedHistoryLink> {
+        let mut history = RapidHashMap::new();
+        history.insert(
+            "v1".to_string(),
+            TargetedHistoryLink::new("v1", "collection").with_next("v2"),
+        );
+        history.insert(
+            "v2".to_string(),
+            TargetedHistoryLink::new("v2", "collection")
+                .with_transform(first_transform.map(str::to_string))
+                .with_previous("v1")
+                .with_next("v3"),
+        );
+        history.insert(
+            "v3".to_string(),
+            TargetedHistoryLink::new("v3", "collection")
+                .with_transform(second_transform.map(str::to_string))
+                .with_previous("v2"),
+        );
+        history
+    }
+
+    #[test]
+    fn an_identity_suffix_is_not_fully_transformed() {
+        let history = targeted_history(Some("first"), None);
+        assert!(!migration_path_is_fully_transformed(&history, "v1", "v3"));
+    }
+
+    #[test]
+    fn a_fully_transformed_path_is_complete() {
+        let history = targeted_history(Some("first"), Some("second"));
+        assert!(migration_path_is_fully_transformed(&history, "v1", "v3"));
+    }
+}
