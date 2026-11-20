@@ -1719,7 +1719,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Single-writer chain jail",
         name: "INV_OnlyAdmittedWrite / INV_CheaterWithinBudget / INV_NoMergeAfterProof / INV_NoWrongfulRevocation / PROP_AdmittedWritesLand: only admitted keys write, free keys buy no more than the admission budget, a proven fork revokes with no admin step, a restore mints a new key so it is never a fork, and an early block lands once its admission arrives",
         axis: Tla,
-        anchor: "crates/defra-node/src/ops/block.rs verify_block_signature",
+        anchor: "crates/database/db/src/block/verify.rs verify_block_signature",
         model_ref: "MC_JailRevocation_{Green,Green_Restore,Red_FreeKeys,Red_AclOnly,Red_DropEarly,Red_KeepKey}.cfg",
         tiers: &[Boundary],
         bound_by: "",

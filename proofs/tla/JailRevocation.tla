@@ -21,6 +21,20 @@
 \* is admitted; a node merges a block from a key it holds a fork proof
 \* against. What must always happen: an admitted honest writer's block ends
 \* up merged on every node.
+\*
+\* What this assumes: the admin can tell a real restore from a cheater's
+\* claim. Admit lets the restored writer's new key in without spending Budget
+\* and charges Budget only for cheater keys. A jailed cheater that says "I was
+\* restored, admit my new key" is, in this model, just asking for one more
+\* cheater key, which costs Budget like any other. In the real design that
+\* rests on the admin binding a restore to the member it replaces (the group
+\* entry the old DID held), and on a jailed DID never qualifying for a free
+\* restore. If re-admission after a restore were free for anyone who asks,
+\* the Budget bound here would not hold.
+\*
+\* Out of scope: after a restore the old key stays admitted, so a leaked or
+\* cloned backup can still sign as it. Retiring the old key when the new one
+\* is admitted closes that, and is not modelled here.
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS
