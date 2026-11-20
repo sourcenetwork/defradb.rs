@@ -912,7 +912,7 @@ jobs:
           name: go-defradb
           path: target/go
       - name: Build the lens modules
-        run: cargo build --manifest-path tools/lenses/Cargo.toml --target wasm32-unknown-unknown
+        run: cargo build --manifest-path tools/lenses/Cargo.toml --target wasm32-unknown-unknown --target-dir tools/lenses/target
       - name: Pick the tests
         env:
           CLIENT: ${{ matrix.client }}
