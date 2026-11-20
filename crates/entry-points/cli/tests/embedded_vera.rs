@@ -126,12 +126,18 @@ impl RunningNode {
 
 /// Adds the policy through the node as its identity and returns the output.
 async fn add_policy(node: &RunningNode, root: &Path) -> String {
+    add_policy_with(node, root, &[]).await
+}
+
+/// [`add_policy`] with further arguments to `policy add`.
+async fn add_policy_with(node: &RunningNode, root: &Path, args: &[&str]) -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_defradb"))
         .arg("--rootdir")
         .arg(root)
         .args(["--url", &node.address])
         .args(["client", "--identity", IDENTITY])
         .args(["acp", "document", "policy", "add", POLICY])
+        .args(args)
         .env("DEFRA_KEYRING_SECRET", "embedded-vera-test-secret")
         .stdin(Stdio::null())
         .output()
@@ -171,4 +177,29 @@ async fn start_runs_its_own_vera_node_and_reopens_it_after_a_shutdown() {
     let second = RunningNode::start(root.path()).await;
     let logs = second.stop().await;
     assert!(logs.contains("Embedded Vera node stopped"), "{logs}");
+}
+
+fn policy_id(output: &str) -> String {
+    let parsed: serde_json::Value = serde_json::from_str(output).expect("JSON output");
+    parsed["PolicyID"].as_str().expect("PolicyID").to_owned()
+}
+
+/// `policy add --nonce` hands the nonce to vera.rs, which derives the ID from
+/// it: added again with the same nonce the policy comes back under the same
+/// ID and no second one is made, while an add without a nonce makes a new
+/// policy each time.
+#[nuclei::test]
+async fn policy_add_with_a_nonce_names_one_policy_however_often_it_is_sent() {
+    let root = tempfile::tempdir().unwrap();
+    let node = RunningNode::start(root.path()).await;
+    let nonce = "5a".repeat(32);
+
+    let first = policy_id(&add_policy_with(&node, root.path(), &["--nonce", &nonce]).await);
+    let again = policy_id(&add_policy_with(&node, root.path(), &["--nonce", &nonce]).await);
+    assert_eq!(again, first);
+    let drawn = policy_id(&add_policy(&node, root.path()).await);
+    let drawn_again = policy_id(&add_policy(&node, root.path()).await);
+    assert_ne!(drawn, first);
+    assert_ne!(drawn, drawn_again);
+    node.stop().await;
 }

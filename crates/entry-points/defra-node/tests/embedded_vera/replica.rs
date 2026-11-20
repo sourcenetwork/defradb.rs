@@ -98,7 +98,7 @@ fn a_foreign_creators_row_is_registered_by_the_receiving_node_and_its_changes_fo
         let vera = node.vera_acp().expect("vera.rs document ACP").clone();
         let actor = Did::new(vera.self_did().expect("actor DID")).unwrap();
         let policy = vera
-            .add_policy(actor.as_str(), POLICY)
+            .add_policy(actor.as_str(), POLICY, None)
             .await
             .expect("policy");
         node.add_collection(&users(&policy))

@@ -21,7 +21,33 @@ impl Node {
         let (context, policy) = (context.clone(), policy.to_owned());
         self.on_acp(move || async move {
             runner
-                .add_dac_policy_as(&context, &policy)
+                .add_dac_policy_as(&context, &policy, None)
+                .await
+                .map_err(transaction_error)
+        })
+        .await
+    }
+
+    /// [`Self::add_dac_policy_as`] with the policy ID the remote ACP
+    /// (vera.rs) derives from the definition, the creator and `nonce`, so
+    /// the caller knows it beforehand (`VeraRsProvider::predict_policy_id`,
+    /// `EmbeddedVeraPolicy::id`). Sent
+    /// again with the same nonce, as after an answer that was lost, it
+    /// returns the same policy and makes no second one; a host adopts a
+    /// policy its embedded deployment was seeded with the same way. Without
+    /// a nonce of its own a caller that sends a create again makes a second
+    /// policy. A node on local ACP refuses a nonce.
+    pub async fn add_dac_policy_with_nonce_as(
+        &self,
+        context: &RequestContext,
+        policy: &str,
+        nonce: acp::PolicyNonce,
+    ) -> Result<String> {
+        let runner = Arc::clone(self.runner());
+        let (context, policy) = (context.clone(), policy.to_owned());
+        self.on_acp(move || async move {
+            runner
+                .add_dac_policy_as(&context, &policy, Some(nonce))
                 .await
                 .map_err(transaction_error)
         })
@@ -38,7 +64,9 @@ impl Node {
     /// ID, so every peer joining a policy-bound collection must reproduce the
     /// creator's policy ID. Passing the creator's counter (typically 1, its
     /// first policy) makes the ID reproducible, and storing an existing ID
-    /// overwrites it, so registering again is idempotent. Local ACP only.
+    /// overwrites it, so registering again is idempotent. Local ACP only: a
+    /// node on vera.rs names a policy by its nonce
+    /// ([`Self::add_dac_policy_with_nonce_as`]) and refuses a counter.
     pub async fn add_dac_policy_with_counter_as(
         &self,
         context: &RequestContext,

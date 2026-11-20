@@ -54,7 +54,7 @@ async fn archived_owner_record_does_not_authorize_access() {
 pub(super) async fn archived_owner_record(provider: Arc<VeraRsProvider>) {
     let owner_did = provider.self_did().unwrap();
     let policy = provider
-        .create_policy(USER_ACP_POLICY)
+        .create_policy(USER_ACP_POLICY, None)
         .await
         .expect("policy");
     let token = provider
@@ -327,6 +327,7 @@ resources:
       - name: member
         types: [actor]
 "#,
+            None,
         )
         .await
         .unwrap();
@@ -494,7 +495,7 @@ resources:
       - name: write
         expr: writer
 "#;
-    let spec_policy = provider.create_policy(specification).await.unwrap();
+    let spec_policy = provider.create_policy(specification, None).await.unwrap();
     let stored = provider
         .query_policy(&format!("0x{spec_policy}"))
         .await

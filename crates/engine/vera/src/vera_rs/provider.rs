@@ -11,7 +11,7 @@ use acp_light_client::{
     AcpLightClient, AcpTransport, FreshnessPolicy, HttpWsTransport, ProofClient,
 };
 use alloy_primitives::{Bytes, FixedBytes, B256};
-use alloy_sol_types::{SolCall, SolEvent};
+use alloy_sol_types::SolCall;
 use async_trait::async_trait;
 use commonware_codec::DecodeExt as _;
 use events::{AcpCacheInvalidatedData, AcpHeightAdvancedData, Bus, Message};
@@ -36,6 +36,7 @@ use super::worker::NativeWorker;
 
 #[cfg(test)]
 mod audience_tests;
+mod create_policy;
 mod exact_relationship;
 mod genesis;
 mod owed_request;
@@ -619,69 +620,12 @@ impl VeraProvider for VeraRsProvider {
         self.owed_outcome(digest, tx, floor).await
     }
 
-    async fn create_policy(&self, policy_yaml: &str) -> Result<String, ProviderError> {
-        let token = bearer::create_scoped_bearer_token(
-            self.signer.as_ref(),
-            &did_spelling::wire(&self.actor_did),
-            &self.worker_did,
-            self.deployment,
-            300,
-            vera_client::DelegationScope::CreatePolicy,
-        )
-        .await
-        .map_err(|e| ProviderError::Config(e.to_string()))?;
-        let call = IAcp::bearerCreatePolicyCall {
-            bearerToken: token,
-            policy: policy_yaml.as_bytes().to_vec().into(),
-            marshalType: 1,
-        };
-        let confirmed = self.send_tx_with_sequence(call.abi_encode().into()).await?;
-        let mut events = confirmed.receipt.logs().iter().filter(|log| {
-            log.address == ACP_ADDRESS
-                && log.topics().first() == Some(&IAcp::DelegatedPolicyCreated::SIGNATURE_HASH)
-        });
-        let log = events
-            .next()
-            .ok_or_else(|| ProviderError::Query("creation event missing".into()))?;
-        let event = IAcp::DelegatedPolicyCreated::decode_raw_log_validate(
-            log.topics().iter().copied(),
-            &log.data.data,
-        )
-        .map_err(|e| ProviderError::Query(format!("creation event: {e}")))?;
-        if events.next().is_some() || !did_spelling::same_actor(&event.creator, &self.actor_did) {
-            return Err(ProviderError::Query(
-                "creation event does not match the actor".into(),
-            ));
-        }
-        let id = hex::encode(event.policyId);
-        let record = self
-            .admitted_read(async {
-                verified(self.light_client.header_chain(), || {
-                    self.light_client.read_policy(&id)
-                })
-                .await
-                .map_err(|e| ProviderError::Query(format!("created policy proof: {e}")))
-            })
-            .await?;
-        let record: PolicyRecord = serde_json::from_slice(
-            record
-                .value
-                .as_deref()
-                .ok_or_else(|| ProviderError::Query("created policy absent".into()))?,
-        )
-        .map_err(|e| ProviderError::Query(format!("created policy record: {e}")))?;
-        if record.policy.id != id
-            || record.raw_policy != policy_yaml
-            || !did_spelling::same_actor(&record.metadata.owner_did, &self.actor_did)
-            || record.metadata.tx_signer != self.worker_did
-            || record.metadata.tx_hash != confirmed.receipt.tx_hash.as_slice()
-            || record.metadata.creation_ts.block_height != confirmed.revision
-        {
-            return Err(ProviderError::Query(
-                "created policy does not match the signed request".into(),
-            ));
-        }
-        Ok(id)
+    async fn create_policy(
+        &self,
+        policy_yaml: &str,
+        nonce: Option<acp::PolicyNonce>,
+    ) -> Result<String, ProviderError> {
+        self.create_policy_with(policy_yaml, nonce).await
     }
 
     async fn register_object(

@@ -71,7 +71,7 @@ async fn the_chain_executes_a_request_bound_delegation_for_its_command_only() {
             .in_process(embedded::worker(root.path()))
             .await
             .expect("provider");
-        let policy = provider.create_policy(POLICY).await.expect("policy");
+        let policy = provider.create_policy(POLICY, None).await.expect("policy");
         let audience = provider.delegation_audience().expect("audience");
         let genesis = audience
             .genesis_id

@@ -102,6 +102,7 @@ impl VeraProvider for MockProvider {
     async fn create_policy(
         &self,
         _policy_yaml: &str,
+        _nonce: Option<acp::PolicyNonce>,
     ) -> std::result::Result<String, ProviderError> {
         unreachable!("create_policy is not used in this test")
     }
@@ -531,6 +532,7 @@ impl VeraProvider for NoSubjectProvider {
     async fn create_policy(
         &self,
         _policy_yaml: &str,
+        _nonce: Option<acp::PolicyNonce>,
     ) -> std::result::Result<String, ProviderError> {
         unreachable!()
     }

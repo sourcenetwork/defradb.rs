@@ -203,6 +203,7 @@ impl QueryExecutor for MockQueryExecutor {
         &self,
         _context: &defra_core::RequestContext,
         _policy: &str,
+        _nonce: Option<acp::PolicyNonce>,
     ) -> std::result::Result<String, TransactionError> {
         Ok("mock-policy-id".to_owned())
     }

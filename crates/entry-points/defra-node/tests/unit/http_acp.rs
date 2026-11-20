@@ -1136,3 +1136,49 @@ fn embedded_extra_routes_are_not_node_checked() {
         })
         .unwrap();
 }
+
+/// The add-policy route takes the caller's nonce as `?nonce=`: one that is
+/// not 64 hexadecimal characters is a bad request, and one that is reaches
+/// the core, which a node on local ACP refuses because a nonce makes only a
+/// remote ACP's ID. Without one the route adds the policy as Go's does.
+#[test]
+fn the_add_policy_route_takes_a_nonce_to_the_core() {
+    edge::testing::edge()
+        .block_on(async {
+            let owner = identity();
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let node = Node::builder()
+                .with_http(HttpConfig::with_listener(listener).unwrap())
+                .build()
+                .await
+                .unwrap();
+            let url = format!("http://{address}/api/v0/acp/document/policy");
+            let auth = bearer(&owner, &address.to_string());
+            let post = |query: &str| {
+                http_client()
+                    .post(format!("{url}{query}"))
+                    .header("Authorization", auth.as_str())
+                    .body(POLICY.to_owned())
+                    .send()
+            };
+
+            let malformed = post("?nonce=00").await.unwrap();
+            assert_eq!(malformed.status(), 400);
+            let body = malformed.text().await.unwrap();
+            assert!(body.contains("policy nonce"), "{body}");
+
+            let nonce = "07".repeat(32);
+            let refused = post(&format!("?nonce={nonce}")).await.unwrap();
+            assert!(!refused.status().is_success());
+            let body = refused.text().await.unwrap();
+            assert!(body.contains("remote ACP"), "{body}");
+
+            let added = post("").await.unwrap();
+            assert!(added.status().is_success(), "{}", added.status());
+            let body: Value = serde_json::from_str(&added.text().await.unwrap()).unwrap();
+            assert!(body["PolicyID"].as_str().is_some_and(|id| !id.is_empty()));
+            node.shutdown().await.unwrap();
+        })
+        .unwrap();
+}

@@ -544,6 +544,13 @@ RUNS=(
   "MC_DacPolicyAdd_Red_Valid.cfg DacPolicyAdd.tla RED" # policy not checked before the store or the remote create (INV_NoInvalidPolicy)
   "MC_DacPolicyAdd_Red_Mirror.cfg DacPolicyAdd.tla RED" # remote policy not kept locally, as the node's Vera path did (INV_ReturnedIsKeptLocally)
   "MC_DacPolicyAdd_Red_Order.cfg DacPolicyAdd.tla RED" # creator checked before ACP, as the HTTP handler did (INV_GoOrder)
+  "MC_DacPolicyAdd_Red_Seed.cfg DacPolicyAdd.tla RED" # a counter on vera.rs or a nonce on local ACP ignored: the ID is made another way (INV_SeedHonoured)
+  "MC_VeraPolicyCreate_Green.cfg VeraPolicyCreate.tla GREEN" # a vera.rs policy create keeps its nonce across sends and adopts its own policy on "already exists"
+  "MC_VeraPolicyCreate_Red_Reuse.cfg VeraPolicyCreate.tla RED" # every send draws a new nonce: a lost answer leaves two policies (INV_OneRequestOnePolicy)
+  "MC_VeraPolicyCreate_Red_Adopt.cfg VeraPolicyCreate.tla RED" # "already exists" taken as a failure: a lost answer fails the request (INV_NoRefusalOfOwn)
+  "MC_VeraPolicyCreate_Red_Check.cfg VeraPolicyCreate.tla RED" # any policy under the id adopted: an edited one is handed back (INV_ReturnedIsOwn)
+  "MC_VeraPolicyCreate_Red_Creator.cfg VeraPolicyCreate.tla RED" # the creator left out of the id: another creator's policy blocks the request (INV_NoForeignBlock)
+  "MC_VeraPolicyCreate_Red_Caller.cfg VeraPolicyCreate.tla RED" # a nonce taken from a caller that is not the node's actor: its id comes from the actor's DID (INV_SuppliedIdIsCallers)
   "MC_AddViewTransform_Green.cfg AddViewTransform.tla GREEN" # #2724: target design, NAC and the lens config both decided in the view's transaction; the accepted CID is stored as asked
   "MC_AddViewTransform_Red_NoEmpty.cfg AddViewTransform.tla RED" # empty-CID check left out (INV_NoEmptyTransform)
   "MC_AddViewTransform_Red_NoLens.cfg AddViewTransform.tla RED" # lens check left out (INV_StoredTransformExists)
