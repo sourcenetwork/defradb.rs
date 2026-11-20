@@ -108,6 +108,7 @@ fn a_strict_read_fails_where_the_default_drops_and_only_filters_a_denial() {
             "{ Record { name } }",
             "{ Record(showDeleted: true) { name } }",
             "{ Record(filter: {name: {_eq: \"unchecked\"}}) { name } }",
+            "{ COUNT(Record: {filter: {name: {_eq: \"unchecked\"}}}) }",
         ] {
             let response = node.execute_request(strict(query, OWNER)).await;
             assert!(
