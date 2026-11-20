@@ -64,7 +64,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Policy nonce text | Lean | acp |
 | vera.rs delegation signing | Lean | vera |
 | vera.rs delegation window | Lean | vera, acp |
-| vera.rs embedded transport | Lean | vera-embedded |
+| vera.rs embedded transport | TLA+ / Lean | vera-embedded |
 | vera.rs deployment terms | Lean | vera |
 | DiskANN resident code table | Lean | db-index |
 | DiskANN walk cutoff | Lean | db-index (vector) |

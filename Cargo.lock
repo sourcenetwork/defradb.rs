@@ -13933,6 +13933,7 @@ dependencies = [
  "thiserror 2.0.21",
  "vera",
  "vera-client",
+ "vera-domain",
  "vera-jsonrpc",
  "vera-node",
  "workers",

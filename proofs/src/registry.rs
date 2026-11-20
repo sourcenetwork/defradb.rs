@@ -196,6 +196,21 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // The embedded node streams only headers of blocks that finalize
+        // after a subscription; a fresh deployment's first block finalized
+        // before it, and a lone validator proposes the next only at its
+        // heartbeat. The transport starts the stream with the newest
+        // finalized block, read after the subscription stands, and the light
+        // client checks it as it checks every header.
+        family: "vera.rs embedded transport",
+        name: "INV_OnlyFinalized / INV_Current: the light client takes only a header a finalized block certifies, and once the stream is drained it stands on the newest finalized block without waiting for another",
+        axis: Tla,
+        anchor: "crates/engine/vera-embedded/src/acp.rs subscribe_headers; crates/engine/vera-embedded/src/acp/head.rs finalized, header, recent; backbone:acp-light-client HeaderChain::start",
+        model_ref: "MC_FirstHeader_{Green,Red_NoHead,Red_ReadBeforeSubscribe,Red_Unverified}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/engine/vera-embedded/tests/embedded_node.rs a_fresh_deployments_provider_starts_on_its_first_block; crates/entry-points/defra-node/tests/embedded_vera/first_start.rs a_fresh_deployments_first_start_takes_its_first_block",
+    },
+    Property {
         family: "vera.rs deployment terms",
         name: "missing_is_suffix / takeWhile_is_filter / scan_finds_missing / floor_covers_pruned: the submissions a takeover voided are exactly the journal's suffix from the first void one, found by asking newest first, and the newest pruned entry vouches for every older one",
         axis: Lean,

@@ -4,6 +4,7 @@ use futures::future::BoxFuture;
 use futures::{FutureExt as _, StreamExt as _};
 use serde_json::Value;
 use vera::vera_rs::{AcpTransport, HeaderStream, TransportError};
+use vera_domain::GossipHeader;
 
 use crate::call::call;
 use crate::deadline::{self, bounded};
@@ -49,19 +50,32 @@ impl AcpTransport for EmbeddedTransport {
             .await
             .map_err(header_error)?
             .map_err(|error| header_error(Failure::from_node(SUBSCRIBE_HEADERS, error)))?;
-            let headers: HeaderStream =
-                futures::stream::unfold(subscription, |mut subscription| async move {
-                    let header = subscription.next().await?.map_err(|error| {
-                        header_error(Failure::from_node(SUBSCRIBE_HEADERS, error))
-                    });
-                    Some((header, subscription))
-                })
+            let streamed = futures::stream::unfold(subscription, |mut subscription| async move {
+                let header: Result<GossipHeader, TransportError> = subscription
+                    .next()
+                    .await?
+                    .map_err(|error| header_error(Failure::from_node(SUBSCRIBE_HEADERS, error)));
+                Some((header, subscription))
+            });
+            // Read once the subscription stands, so no block finalizes
+            // unseen between the head and the first streamed header.
+            let Some(head) = head::finalized(self).await else {
+                return Ok(streamed.boxed());
+            };
+            let first = head.block_hash;
+            let headers: HeaderStream = futures::stream::once(async move { Ok(head) })
+                .chain(streamed.filter(move |header| {
+                    let repeat = matches!(header, Ok(header) if header.block_hash == first);
+                    futures::future::ready(!repeat)
+                }))
                 .boxed();
             Ok(headers)
         }
         .boxed()
     }
 }
+
+mod head;
 
 fn header_error(failure: Failure) -> TransportError {
     transport_error(SUBSCRIBE_HEADERS, failure)
