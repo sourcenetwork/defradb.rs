@@ -27,8 +27,7 @@ use super::{
 ///
 /// Every string must be null or a valid null-terminated UTF-8 string;
 /// `operation_name` and `variables` may be null or empty for none.
-#[no_mangle]
-pub unsafe extern "C" fn defra_query_execute(
+pub unsafe fn defra_query_execute(
     node_ptr: usize,
     query: *const c_char,
     identity_ptr: usize,
@@ -62,8 +61,7 @@ pub unsafe extern "C" fn defra_query_execute(
 ///
 /// As for [`defra_query_execute`]; the strings are read only before this
 /// returns.
-#[no_mangle]
-pub unsafe extern "C" fn defra_query_execute_async(
+pub unsafe fn defra_query_execute_async(
     node_ptr: usize,
     query: *const c_char,
     identity_ptr: usize,

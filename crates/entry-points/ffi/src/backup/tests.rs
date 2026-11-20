@@ -36,7 +36,9 @@ fn an_export_of_named_collections_holds_only_those() {
     let file = directory.path().join("backup.json");
     let path = cstr(&file.to_string_lossy());
     let collections = cstr("Address");
-    ok(unsafe { defra_backup_export(node, path.as_ptr(), collections.as_ptr(), ptr::null(), 0) });
+    ok(unsafe {
+        defra_backup_export(node, path.as_ptr(), collections.as_ptr(), ptr::null(), 0, 0)
+    });
 
     let exported: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
     assert!(exported.get("Address").is_some(), "{exported}");
@@ -51,7 +53,7 @@ fn an_export_of_named_collections_holds_only_those() {
 fn an_import_refuses_a_missing_file() {
     let node = node();
     let path = cstr("/nonexistent/path/file.json");
-    let error = err(unsafe { defra_backup_import(node, path.as_ptr()) });
+    let error = err(unsafe { defra_backup_import(node, path.as_ptr(), 0) });
     assert!(error.contains("failed to open file"), "{error}");
     close(node);
 }
@@ -62,7 +64,7 @@ fn an_import_refuses_a_file_that_is_not_an_object_of_collections() {
     add_collection(node, "type User { name: String }");
     for content in ["[]", "not json", r#"{"User": {"name": "x"}}"#] {
         let (_directory, path) = file_with(content);
-        err(unsafe { defra_backup_import(node, path.as_ptr()) });
+        err(unsafe { defra_backup_import(node, path.as_ptr(), 0) });
     }
     assert_eq!(
         query(node, "{ User { name } }")["data"]["User"],
@@ -76,7 +78,7 @@ fn an_import_refuses_a_collection_the_node_does_not_have() {
     let node = node();
     add_collection(node, "type User { name: String }");
     let (_directory, path) = file_with(r#"{"Missing": [{"name": "x"}]}"#);
-    err(unsafe { defra_backup_import(node, path.as_ptr()) });
+    err(unsafe { defra_backup_import(node, path.as_ptr(), 0) });
     close(node);
 }
 
@@ -86,8 +88,8 @@ fn backup_refuses_a_transaction_handle() {
     let txn = crate::txn::defra_transaction_create(node, 0);
     assert_eq!(txn.status, 0);
     let (_directory, path) = file_with("{}");
-    err(unsafe { defra_backup_import(txn.txn_ptr, path.as_ptr()) });
-    err(unsafe { defra_backup_export(txn.txn_ptr, path.as_ptr(), ptr::null(), ptr::null(), 0) });
+    err(unsafe { defra_backup_import(txn.txn_ptr, path.as_ptr(), 0) });
+    err(unsafe { defra_backup_export(txn.txn_ptr, path.as_ptr(), ptr::null(), ptr::null(), 0, 0) });
     crate::txn::defra_transaction_discard(txn.txn_ptr);
     close(node);
 }

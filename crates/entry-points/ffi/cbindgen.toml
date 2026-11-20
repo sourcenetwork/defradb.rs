@@ -8,12 +8,304 @@ header = """
  *
  * The functions cover the calls of Go DefraDB's cbindings (libdefradb.h),
  * named defra_<noun>_<verb>. Names and types are prefixed and
- * NodeInitOptions adds fields after Go's, so this header is not a drop-in
- * for libdefradb.h. A call that works on a store takes a handle
- * naming a node or one of its transactions, and an identity handle naming
- * the caller (0 for none). Free every result a call returns with its free
- * function: defra_result_free, or defra_new_<kind>_result_free.
+ * DefraNodeInitOptions adds fields after Go's, so this header is not a
+ * drop-in for libdefradb.h. A call that works on a store takes a handle
+ * naming a node or one of its transactions. Each call that can grow takes
+ * its options as a struct, by value, whose zero value is every default; the
+ * caller's identity (0 for none) is one of its fields. Fields are only ever
+ * appended, so code built against an older header keeps working. A field
+ * whose name starts with _reserved fills what would be padding: leave it
+ * zero; it never becomes a field. Free every result a call returns with its
+ * free function: defra_result_free, or
+ * defra_new_<kind>_result_free.
  */
+"""
+# Every call that takes options is exported as defra_<name>_sized(...,
+# opts, opts_size); these wrappers are the API callers use, passing the
+# options by value. The library reads the caller's opts_size bytes, so a
+# struct that grows keeps working with older callers. The ffi test
+# api::header_tests checks them against the _sized calls and, when they
+# drift, prints the wrappers to paste here.
+trailer = """
+static inline struct DefraResult defra_acp_dac_policy_add(uintptr_t target, const char *policy, DefraDacPolicyAddOptions opts) {
+    return defra_acp_dac_policy_add_sized(target, policy, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_acp_dac_relationship_add(uintptr_t target, const char *collection, const char *doc_id, const char *relation, const char *actor, DefraDacRelationshipOptions opts) {
+    return defra_acp_dac_relationship_add_sized(target, collection, doc_id, relation, actor, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_acp_dac_relationship_delete(uintptr_t target, const char *collection, const char *doc_id, const char *relation, const char *actor, DefraDacRelationshipOptions opts) {
+    return defra_acp_dac_relationship_delete_sized(target, collection, doc_id, relation, actor, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_acp_nac_status(uintptr_t target, DefraNacOptions opts) {
+    return defra_acp_nac_status_sized(target, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_acp_nac_disable(uintptr_t target, DefraNacOptions opts) {
+    return defra_acp_nac_disable_sized(target, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_acp_nac_re_enable(uintptr_t target, DefraNacOptions opts) {
+    return defra_acp_nac_re_enable_sized(target, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_acp_nac_purge(uintptr_t target, DefraNacOptions opts) {
+    return defra_acp_nac_purge_sized(target, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_acp_nac_relationship_add(uintptr_t target, const char *relation, const char *actor, DefraNacRelationshipOptions opts) {
+    return defra_acp_nac_relationship_add_sized(target, relation, actor, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_acp_nac_relationship_delete(uintptr_t target, const char *relation, const char *actor, DefraNacRelationshipOptions opts) {
+    return defra_acp_nac_relationship_delete_sized(target, relation, actor, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_action_list(uintptr_t target, DefraActionListOptions opts) {
+    return defra_action_list_sized(target, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_batch_start(uintptr_t target, DefraBatchOptions opts) {
+    return defra_batch_start_sized(target, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_batch_sign(uintptr_t target, DefraBatchOptions opts) {
+    return defra_batch_sign_sized(target, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_block_verify(uintptr_t target, const char *cid, const char *key_type, const char *public_key, DefraBlockVerifyOptions opts) {
+    return defra_block_verify_sized(target, cid, key_type, public_key, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_collection_add(uintptr_t target, const char *sdl, DefraCollectionAddOptions opts) {
+    return defra_collection_add_sized(target, sdl, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_collection_delete(uintptr_t target, const char *names, DefraCollectionDeleteOptions opts) {
+    return defra_collection_delete_sized(target, names, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_collection_describe(uintptr_t target, DefraCollectionDescribeOptions opts) {
+    return defra_collection_describe_sized(target, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_collection_patch(uintptr_t target, const char *patch, DefraCollectionPatchOptions opts) {
+    return defra_collection_patch_sized(target, patch, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_collection_set_active(uintptr_t target, const char *version_id, DefraCollectionSetActiveOptions opts) {
+    return defra_collection_set_active_sized(target, version_id, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_collection_truncate(uintptr_t target, DefraCollectionTruncateOptions opts) {
+    return defra_collection_truncate_sized(target, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_document_add(uintptr_t target, const char *json, DefraDocumentAddOptions opts) {
+    return defra_document_add_sized(target, json, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_document_save_many(uintptr_t target, const char *json, DefraDocumentAddOptions opts) {
+    return defra_document_save_many_sized(target, json, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_document_get(uintptr_t target, const char *doc_id, DefraDocumentGetOptions opts) {
+    return defra_document_get_sized(target, doc_id, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_document_update(uintptr_t target, const char *updater, DefraDocumentUpdateOptions opts) {
+    return defra_document_update_sized(target, updater, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_document_delete(uintptr_t target, DefraDocumentDeleteOptions opts) {
+    return defra_document_delete_sized(target, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_document_purge(uintptr_t target, const char *doc_ids, DefraDocumentPurgeOptions opts) {
+    return defra_document_purge_sized(target, doc_ids, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraNewIdentityResult defra_identity_new(DefraIdentityNewOptions opts) {
+    return defra_identity_new_sized(&opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraNewIdentityResult defra_identity_new_from_private_key(const char *private_key_hex, DefraIdentityNewOptions opts) {
+    return defra_identity_new_from_private_key_sized(private_key_hex, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraNewIdentityResult defra_identity_new_from_bearer_token(const char *did, const char *bearer_token, DefraIdentityBearerOptions opts) {
+    return defra_identity_new_from_bearer_token_sized(did, bearer_token, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraNewIdentityResult defra_identity_new_remote(const char *did, DefraRemoteIdentityOptions opts) {
+    return defra_identity_new_remote_sized(did, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_index_new(uintptr_t target, const char *fields, DefraIndexNewOptions opts) {
+    return defra_index_new_sized(target, fields, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_index_delete(uintptr_t target, const char *name, DefraIndexDeleteOptions opts) {
+    return defra_index_delete_sized(target, name, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_index_list(uintptr_t target, DefraIndexListOptions opts) {
+    return defra_index_list_sized(target, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_encrypted_index_new(uintptr_t target, const char *field, DefraEncryptedIndexNewOptions opts) {
+    return defra_encrypted_index_new_sized(target, field, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_encrypted_index_delete(uintptr_t target, const char *field, DefraEncryptedIndexDeleteOptions opts) {
+    return defra_encrypted_index_delete_sized(target, field, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_encrypted_index_list(uintptr_t target, DefraEncryptedIndexListOptions opts) {
+    return defra_encrypted_index_list_sized(target, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraNewNodeResult defra_node_new(DefraNodeInitOptions opts) {
+    return defra_node_new_sized(&opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraNewTxnResult defra_transaction_create(uintptr_t node, DefraTransactionOptions opts) {
+    return defra_transaction_create_sized(node, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_version_get(DefraVersionOptions opts) {
+    return defra_version_get_sized(&opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_p2p_connect(uintptr_t target, const char *peer_addresses, DefraP2POptions opts) {
+    return defra_p2p_connect_sized(target, peer_addresses, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_p2p_disconnect(uintptr_t target, const char *peer_addresses, DefraP2POptions opts) {
+    return defra_p2p_disconnect_sized(target, peer_addresses, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_p2p_info(uintptr_t target, DefraP2POptions opts) {
+    return defra_p2p_info_sized(target, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_p2p_peer_list(uintptr_t target, DefraP2POptions opts) {
+    return defra_p2p_peer_list_sized(target, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_p2p_collection_add(uintptr_t target, const char *collections, DefraP2POptions opts) {
+    return defra_p2p_collection_add_sized(target, collections, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_p2p_collection_delete(uintptr_t target, const char *collections, DefraP2POptions opts) {
+    return defra_p2p_collection_delete_sized(target, collections, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_p2p_collection_list(uintptr_t target, DefraP2POptions opts) {
+    return defra_p2p_collection_list_sized(target, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_p2p_document_add(uintptr_t target, const char *doc_ids, DefraP2POptions opts) {
+    return defra_p2p_document_add_sized(target, doc_ids, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_p2p_document_delete(uintptr_t target, const char *doc_ids, DefraP2POptions opts) {
+    return defra_p2p_document_delete_sized(target, doc_ids, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_p2p_document_list(uintptr_t target, DefraP2POptions opts) {
+    return defra_p2p_document_list_sized(target, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_p2p_replicator_retry(uintptr_t target, DefraP2POptions opts) {
+    return defra_p2p_replicator_retry_sized(target, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_p2p_replicator_list(uintptr_t target, DefraP2POptions opts) {
+    return defra_p2p_replicator_list_sized(target, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_mobile_shareable_address(uintptr_t target, DefraP2POptions opts) {
+    return defra_mobile_shareable_address_sized(target, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_mobile_sync_status(uintptr_t target, DefraP2POptions opts) {
+    return defra_mobile_sync_status_sized(target, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_mobile_notify_network_change(uintptr_t target, DefraP2POptions opts) {
+    return defra_mobile_notify_network_change_sized(target, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_mobile_peer_details(uintptr_t target, const char *peer_id, DefraP2POptions opts) {
+    return defra_mobile_peer_details_sized(target, peer_id, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_p2p_collection_sync_branchable(uintptr_t target, const char *collection_id, DefraP2PSyncOptions opts) {
+    return defra_p2p_collection_sync_branchable_sized(target, collection_id, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_p2p_collection_sync_versions(uintptr_t target, const char *version_ids, DefraP2PSyncOptions opts) {
+    return defra_p2p_collection_sync_versions_sized(target, version_ids, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_p2p_document_sync(uintptr_t target, const char *collection, const char *doc_ids, DefraP2PSyncOptions opts) {
+    return defra_p2p_document_sync_sized(target, collection, doc_ids, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_p2p_replicator_add(uintptr_t target, const char *collections, const char *addresses, DefraReplicatorAddOptions opts) {
+    return defra_p2p_replicator_add_sized(target, collections, addresses, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_p2p_replicator_delete(uintptr_t target, const char *id, DefraReplicatorDeleteOptions opts) {
+    return defra_p2p_replicator_delete_sized(target, id, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_query_execute(uintptr_t target, const char *query, DefraQueryOptions opts) {
+    return defra_query_execute_sized(target, query, &opts, (uint32_t)sizeof opts);
+}
+
+static inline void defra_query_execute_async(uintptr_t target, const char *query, DefraResultCallback callback, uintptr_t context, DefraQueryOptions opts) {
+    defra_query_execute_async_sized(target, query, callback, context, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_event_subscribe(uintptr_t target, const char *names, DefraEventSubscribeOptions opts) {
+    return defra_event_subscribe_sized(target, names, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_view_add(uintptr_t target, const char *query, const char *sdl, DefraViewAddOptions opts) {
+    return defra_view_add_sized(target, query, sdl, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_view_refresh(uintptr_t target, DefraViewRefreshOptions opts) {
+    return defra_view_refresh_sized(target, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_lens_add(uintptr_t target, const char *config, DefraLensOptions opts) {
+    return defra_lens_add_sized(target, config, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_lens_list(uintptr_t target, DefraLensOptions opts) {
+    return defra_lens_list_sized(target, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_lens_set(uintptr_t target, const char *src, const char *dst, const char *config, DefraLensOptions opts) {
+    return defra_lens_set_sized(target, src, dst, config, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_backup_export(uintptr_t target, const char *filepath, DefraBackupExportOptions opts) {
+    return defra_backup_export_sized(target, filepath, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_backup_import(uintptr_t target, const char *filepath, DefraBackupImportOptions opts) {
+    return defra_backup_import_sized(target, filepath, &opts, (uint32_t)sizeof opts);
+}
+
+static inline struct DefraResult defra_print_dump(uintptr_t target, DefraPrintDumpOptions opts) {
+    return defra_print_dump_sized(target, &opts, (uint32_t)sizeof opts);
+}
 """
 include_guard = "DEFRA_H"
 cpp_compat = true
@@ -26,7 +318,6 @@ include = [
     "DefraRemoteSignCallback",
     "DefraReplicationFilterCallback",
     "DefraResultCallback",
-    "CollectionOptions",
     "DefraResult",
     "DefraNewIdentityResult",
     "DefraNewNodeResult",
@@ -34,11 +325,17 @@ include = [
     "NodeInitOptions",
 ]
 
+[export.rename]
+"NodeInitOptions" = "DefraNodeInitOptions"
+
 [fn]
 rename_args = "SnakeCase"
 
 [struct]
-rename_fields = "SnakeCase"
+# The Rust field names are already snake_case. Renaming to SnakeCase would
+# also strip the leading underscore that marks a _reserved field as not for
+# callers.
+rename_fields = "None"
 
 [enum]
 rename_variants = "ScreamingSnakeCase"

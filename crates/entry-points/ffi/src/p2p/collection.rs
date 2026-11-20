@@ -14,8 +14,7 @@ use crate::{ffi_entry, try_ffi};
 /// # Safety
 ///
 /// `collections` must be null or a valid null-terminated string.
-#[no_mangle]
-pub unsafe extern "C" fn defra_p2p_collection_add(
+pub unsafe fn defra_p2p_collection_add(
     node_ptr: usize,
     collections: *const c_char,
     identity_ptr: usize,
@@ -34,8 +33,7 @@ pub unsafe extern "C" fn defra_p2p_collection_add(
 /// # Safety
 ///
 /// `collections` must be null or a valid null-terminated string.
-#[no_mangle]
-pub unsafe extern "C" fn defra_p2p_collection_delete(
+pub unsafe fn defra_p2p_collection_delete(
     node_ptr: usize,
     collections: *const c_char,
     identity_ptr: usize,
@@ -49,8 +47,7 @@ pub unsafe extern "C" fn defra_p2p_collection_delete(
 }
 
 /// Answers with the collections the node replicates as a JSON array.
-#[no_mangle]
-pub extern "C" fn defra_p2p_collection_list(node_ptr: usize, identity_ptr: usize) -> DefraResult {
+pub fn defra_p2p_collection_list(node_ptr: usize, identity_ptr: usize) -> DefraResult {
     ffi_entry! {
         json(run(node_ptr, identity_ptr, NodePermission::P2pCollectionList, None, |ops| async move {
             peer::list_p2p_collections(&*ops).await
@@ -65,8 +62,7 @@ pub extern "C" fn defra_p2p_collection_list(node_ptr: usize, identity_ptr: usize
 ///
 /// `collection_id` and `timeout_str` must be null or valid null-terminated
 /// strings.
-#[no_mangle]
-pub unsafe extern "C" fn defra_p2p_collection_sync_branchable(
+pub unsafe fn defra_p2p_collection_sync_branchable(
     node_ptr: usize,
     collection_id: *const c_char,
     timeout_str: *const c_char,
@@ -93,8 +89,7 @@ pub unsafe extern "C" fn defra_p2p_collection_sync_branchable(
 ///
 /// `version_ids` and `timeout_str` must be null or valid null-terminated
 /// strings.
-#[no_mangle]
-pub unsafe extern "C" fn defra_p2p_collection_sync_versions(
+pub unsafe fn defra_p2p_collection_sync_versions(
     node_ptr: usize,
     version_ids: *const c_char,
     timeout_str: *const c_char,
