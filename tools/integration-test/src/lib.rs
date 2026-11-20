@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 pub mod actions;
+mod cli_command;
 mod client_type;
 pub mod clients;
 mod cross_runtime;
@@ -16,6 +17,7 @@ pub mod scenario;
 mod stub_embedder;
 pub mod test_case;
 
+pub use cli_command::cli_command;
 pub use client_type::ClientType;
 pub use scenario::m;
 
