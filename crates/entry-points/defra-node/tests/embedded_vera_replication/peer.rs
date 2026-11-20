@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use defra_node::{EmbeddedVeraTrust, Node};
 
 use super::actor::Actor;
-use super::assembly::{own, own_serving, shared, POLICY};
+use super::assembly::{own, own_serving, seed, shared};
 
 /// How a peer writes its blocks.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -120,14 +120,10 @@ impl Peer {
             }
             Provider::Shared { rpc, trust } => (shared(&spec, *rpc, trust).await, None),
         };
-        let owner = &spec.owner;
-        let policy = node
-            .add_dac_policy_with_counter_as(
-                &defra_core::RequestContext::default().with_identity(Some(owner.did.to_string())),
-                POLICY,
-                0,
-            )
+        let policy = seed().id().expect("policy ID");
+        node.get_dac_policy_as(&defra_core::RequestContext::default(), &policy)
             .await
+            .expect("policy read")
             .expect("seeded policy");
         if node.get_collection("Users").expect("collections").is_none() {
             node.add_collection(&format!(

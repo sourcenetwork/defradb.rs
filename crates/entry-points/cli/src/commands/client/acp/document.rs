@@ -50,6 +50,13 @@ pub struct AcpPolicyAddArgs {
     /// Read policy from file
     #[arg(long, short = 'f', value_name = "FILE")]
     pub file: Option<PathBuf>,
+
+    /// The nonce a remote ACP (vera.rs) derives the policy ID from, as 64
+    /// hexadecimal characters, so the ID is known beforehand. Adding the
+    /// policy again with the same nonce returns the same policy and makes
+    /// no second one; without a nonce each add makes a new policy.
+    #[arg(long, value_name = "HEX")]
+    pub nonce: Option<acp::PolicyNonce>,
 }
 
 /// ACP document relationship subcommands
@@ -135,7 +142,7 @@ impl AcpPolicyAddArgs {
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 
-        let response = client.acp_add_policy(&policy).await?;
+        let response = client.acp_add_policy(&policy, self.nonce).await?;
         println!("{}", serde_json::to_string_pretty(&response)?);
         Ok(())
     }

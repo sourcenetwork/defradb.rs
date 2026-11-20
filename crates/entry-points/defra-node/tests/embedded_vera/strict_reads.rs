@@ -5,10 +5,10 @@
 use std::sync::Arc;
 
 use defra_core::RequestContext;
-use defra_node::{EmbeddedVeraActor, EmbeddedVeraPolicy, Node};
+use defra_node::{EmbeddedVeraActor, Node};
 use vera::vera_rs::{DelegationSigner, Ed25519Signer};
 
-use super::{create_user, created, names, node_serving, read_users, users, POLICY};
+use super::{create_user, created, names, node_serving, read_users, users};
 
 #[test]
 fn a_strict_read_fails_while_the_deployment_cannot_be_reached() {
@@ -27,11 +27,7 @@ fn a_strict_read_fails_while_the_deployment_cannot_be_reached() {
         let (chain, rpc) = node_serving(
             &directory.path().join("chain"),
             EmbeddedVeraActor::Signer(Arc::clone(&chain_signer)),
-            vec![EmbeddedVeraPolicy {
-                definition: POLICY.to_string(),
-                counter: 0,
-                owner: chain_owner.to_string(),
-            }],
+            vec![super::seed(chain_owner.as_str())],
         )
         .await;
         let trust = chain.embedded_vera_trust().expect("deployment").clone();
@@ -54,10 +50,7 @@ fn a_strict_read_fails_while_the_deployment_cannot_be_reached() {
             .build()
             .await
             .expect("consumer node");
-        let policy = node
-            .add_dac_policy_with_counter_as(&acting, POLICY, 0)
-            .await
-            .expect("seeded policy");
+        let policy = super::seeded_policy(&node, chain_owner.as_str()).await;
         node.add_collection(&users(&policy))
             .await
             .expect("collection");

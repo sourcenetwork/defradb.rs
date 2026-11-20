@@ -219,7 +219,16 @@ pub trait VeraProvider: MaybeSendSync {
         ))
     }
 
-    async fn create_policy(&self, policy_yaml: &str) -> Result<String, ProviderError>;
+    /// Create the YAML policy as the provider's actor and return its ID.
+    /// vera.rs derives the ID from the definition, the actor and `nonce`,
+    /// drawing a random nonce when none is given; sent again with the same
+    /// nonce it returns the policy already made and makes no second one.
+    /// A provider whose ACP assigns its own IDs refuses a nonce.
+    async fn create_policy(
+        &self,
+        policy_yaml: &str,
+        nonce: Option<acp::PolicyNonce>,
+    ) -> Result<String, ProviderError>;
 
     async fn register_object(
         &self,

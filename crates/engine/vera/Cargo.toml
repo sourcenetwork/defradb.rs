@@ -75,7 +75,7 @@ alloy-sol-types.workspace = true
 alloy-primitives.workspace = true
 
 # Authenticated ACP records and permission evaluation
-acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "5ca42c830489deb442ed4671f7de71e3e2b68f48" }
+acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "df6515f71901d9b4ebfe56f221de412e849e43f9" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # HTTP for REST/LCD and CometBFT JSON-RPC, and the gRPC channel, on nuclei

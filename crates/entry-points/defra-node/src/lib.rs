@@ -90,7 +90,7 @@ pub use access_hooks::AccessHooks;
 /// [`Node::document_acp`] returns) without depending on `acp` directly.
 pub use acp::nac::NodePermission;
 pub use acp::ReplicaGrant;
-pub use acp::{DocumentACP, DocumentPermission, Identity as AcpIdentity};
+pub use acp::{DocumentACP, DocumentPermission, Identity as AcpIdentity, PolicyNonce};
 pub use acp_ops::transactional::RelationshipChange;
 #[cfg(feature = "vera")]
 pub use acp_provider::DocumentAcpProvider;
