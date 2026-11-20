@@ -306,6 +306,9 @@ pub struct P2PHost<S: Store> {
     /// `ActivePeers` after `Disconnect` no longer lists it, as in Go.
     pub(super) pending_disconnects:
         RapidHashMap<PeerId, Vec<crate::rt::oneshot::Sender<Result<()>>>>,
+    /// Peers disconnected by an explicit operator request. Background discovery
+    /// must not redial them until an explicit dial names them again.
+    pub(super) explicitly_disconnected: RapidHashSet<PeerId>,
     /// Peers that dialed us and have not identified yet: their address is
     /// still the connection's source port, which nothing listens on.
     pub(super) unidentified: RapidHashSet<PeerId>,
@@ -630,6 +633,7 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
             )),
             peer_addrs: RapidHashMap::new(),
             pending_disconnects: RapidHashMap::new(),
+            explicitly_disconnected: RapidHashSet::new(),
             unidentified: RapidHashSet::new(),
             pending_peer_addresses: Vec::new(),
             node_identity,
@@ -776,6 +780,12 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
     }
 
     fn run_kademlia_bootstrap(&mut self, reason: &'static str) {
+        // Discovery is not allowed to undo an explicit disconnect. Remove any
+        // sticky disconnects from the routing table before every refresh; a
+        // later explicit dial clears the marker and restores ordinary behavior.
+        for peer_id in self.explicitly_disconnected.clone() {
+            self.swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
+        }
         for (network, result) in self.swarm.behaviour_mut().kademlia.bootstrap() {
             match result {
                 Ok(query_id) => {
