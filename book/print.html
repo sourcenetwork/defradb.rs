@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-7d3b17d9.js";
+            window.path_to_searchindex_js = "searchindex-b8b66ffb.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-8198d451.js"></script>
@@ -2492,6 +2492,27 @@ and a WebSocket subscriber for cache invalidation.</li>
 and submitted through a worker, and the chain state verified by a light client
 (trusted consensus key, height tracking).</li>
 </ul>
+<p><strong>Policy IDs.</strong> vera.rs names a policy by its definition, its creator and a 32-byte
+nonce the creator picks: <code>SHA-256("acp/policy-id/v2" || policy hash || nonce || u64be(len(creator)) || creator)</code>. One definition by two creators gets two IDs, and one
+creator gets a new ID for each nonce. The node’s actor is the creator, so a nonce from a
+caller that is not that actor is refused: its ID would come from the actor’s DID. A caller that
+supplies the nonce (<code>Node::add_dac_policy_with_nonce_as</code>, <code>?nonce=&lt;64 hex&gt;</code> on
+<code>POST /api/v0/acp/document/policy</code>, <code>defradb client acp document policy add --nonce</code>)
+knows the ID before the policy exists (<code>vera::vera_rs::predict_policy_id</code>,
+<code>VeraRsProvider::predict_policy_id</code>), and a create sent again with the same nonce
+returns the policy the first made: vera.rs refuses the duplicate as already existing,
+and the provider reads the policy under the ID and returns it when its definition,
+owner and nonce are the ones asked for. Without a nonce the provider draws one from
+the operating system for each request, once, so its own sends again reuse it, but a
+caller that repeats the request makes a second policy. A local ACP numbers its
+policies as Go’s does and refuses a nonce; vera.rs refuses a counter
+(<code>add_dac_policy_with_counter_as</code>). An embedded deployment is seeded with
+<code>EmbeddedVeraPolicy { definition, nonce, creator }</code>; <code>EmbeddedVeraPolicy::id</code> gives the
+ID, which any node of the deployment reads (<code>get_dac_policy_as</code>) and the creator’s own
+node adopts by creating the definition under the seed’s nonce. A collection names its
+policy’s ID, so deployments that replicate one collection to each other seed the policy
+under one creator and one nonce. Modeled by
+<code>proofs/tla/VeraPolicyCreate.tla</code> and <code>DacPolicyAdd.tla</code>.</p>
 <p>Both are wrapped as a <code>DocumentACP</code> and installed as the node’s document ACP. Because
 the provider cannot join local transactions, the node wraps it in the external-ACP
 adapter: owed registrations, gated reads until confirmation, fail-closed
