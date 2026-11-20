@@ -134,10 +134,10 @@ fn tokens(sdl: &str) -> Vec<Token> {
                 }
                 continue;
             }
-            b'"' if sdl[i..].starts_with("\"\"\"") => {
+            b'"' if bytes[i..].starts_with(b"\"\"\"") => {
                 i += 3;
-                while i < bytes.len() && !sdl[i..].starts_with("\"\"\"") {
-                    i += if sdl[i..].starts_with("\\\"\"\"") {
+                while i < bytes.len() && !bytes[i..].starts_with(b"\"\"\"") {
+                    i += if bytes[i..].starts_with(b"\\\"\"\"") {
                         4
                     } else {
                         1

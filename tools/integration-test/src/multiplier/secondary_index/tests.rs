@@ -421,6 +421,12 @@ type User {
 }
 
 #[test]
+fn a_block_string_with_multibyte_text_is_skipped() {
+    let result = add_indexes(r#""""é \""" é""" type User { name: String }"#);
+    assert_has(&result, "name: String @index");
+}
+
+#[test]
 fn sdl_that_does_not_parse_is_unchanged() {
     let sdl = "type User { name: String";
     assert_eq!(add_indexes(sdl), sdl);
