@@ -353,3 +353,6 @@ lean_lib OwedLive where
 
 @[default_target]
 lean_lib RemoteOwnerAnswer where
+
+@[default_target]
+lean_lib StrictAccessRule where

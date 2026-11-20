@@ -5,7 +5,7 @@ use std::time::Duration;
 use acp_light_client::TransportError;
 use inputs::Jitter;
 
-use super::{verified, verified_within, Pace, ATTEMPTS, BUSY_PATIENCE, BUSY_PAUSE};
+use super::{verified, verified_within, Pace, ATTEMPTS, BUSY, BUSY_PATIENCE, BUSY_PAUSE};
 
 /// More than the late answers below take to give way.
 const PATIENT: Duration = Duration::from_secs(10);
@@ -392,4 +392,26 @@ async fn a_read_at_a_stale_revision_fails_once_the_patience_is_spent() {
     assert_eq!(outcome.unwrap_err().to_string(), STALE);
     assert_eq!(asked.get(), 1, "asked once, then waited out");
     assert_eq!(pace.elapsed(), BUSY_PATIENCE);
+}
+
+#[test]
+fn a_late_read_is_told_from_a_wrong_one() {
+    let busy: Failure = Box::new(TransportError::Rpc {
+        method: "vera_getCurrentRecordProof",
+        code: BUSY,
+        message: "current record evidence deadline exceeded".into(),
+    });
+    assert!(super::late(&busy));
+    let overtaken: Failure = REFUSAL.into();
+    assert!(super::late(&overtaken));
+    let stale: Failure = "verified revision is stale; wait for a fresh finalized revision".into();
+    assert!(super::late(&stale));
+    let answered: Failure = Box::new(TransportError::Rpc {
+        method: "vera_getCurrentRecordProof",
+        code: -32000,
+        message: "no such policy".into(),
+    });
+    assert!(!super::late(&answered));
+    let unverified: Failure = "proof does not verify".into();
+    assert!(!super::late(&unverified));
 }

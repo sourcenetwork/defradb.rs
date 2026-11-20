@@ -51,6 +51,13 @@ pub const SECONDARY_RELATION_ERROR_CODE: &str = "SECONDARY_RELATION_INPUT";
 /// A mutation named a collection that does not exist. The collection API
 /// reports it in Go's collection words rather than GraphQL's.
 pub const UNKNOWN_MUTATION_COLLECTION_ERROR_CODE: &str = "UNKNOWN_MUTATION_COLLECTION";
+/// A strict read met a document whose access check the ACP provider did not
+/// answer in time (unreachable, stale, busy or overtaken after its waits):
+/// it returned nothing, and the same read may answer later.
+pub const ACCESS_CHECK_UNAVAILABLE_ERROR_CODE: &str = "ACCESS_CHECK_UNAVAILABLE";
+/// A strict read met a document whose access check failed for another reason
+/// and returned nothing; reading again does not help until the cause is fixed.
+pub const ACCESS_CHECK_FAILED_ERROR_CODE: &str = "ACCESS_CHECK_FAILED";
 /// A subscription sent without `Accept: text/event-stream`; HTTP answers it with 406.
 pub const SUBSCRIPTION_NEEDS_SSE_ERROR_CODE: &str = "SUBSCRIPTION_NEEDS_SSE";
 
@@ -400,6 +407,10 @@ impl QueryResponseError {
             crate::error::QueryError::UnknownMutationCollection(_)
         );
         let needs_sse = matches!(&error, crate::error::QueryError::SubscriptionNeedsSse);
+        let access_check = match &error {
+            crate::error::QueryError::AccessCheckUnavailable { retryable } => Some(*retryable),
+            _ => None,
+        };
         let retry_input = match &error {
             crate::error::QueryError::NeedsInput(request) => Some(request.clone()),
             _ => None,
@@ -425,6 +436,11 @@ impl QueryResponseError {
             response_error.with_code(UNKNOWN_MUTATION_COLLECTION_ERROR_CODE)
         } else if needs_sse {
             response_error.with_code(SUBSCRIPTION_NEEDS_SSE_ERROR_CODE)
+        } else if let Some(retryable) = access_check {
+            response_error.with_code(match retryable {
+                true => ACCESS_CHECK_UNAVAILABLE_ERROR_CODE,
+                false => ACCESS_CHECK_FAILED_ERROR_CODE,
+            })
         } else {
             response_error
         };
