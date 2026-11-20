@@ -243,6 +243,30 @@ impl DocFetcher for IndexedSideFetcher {
     }
 }
 
+/// The direction of the join on `relation` in `explain`: the fallback join
+/// of a relation whose parent holds the FK is "primary"; the indexed-side
+/// join is "secondary".
+fn join_direction(explain: &serde_json::Value, relation: &str) -> Option<String> {
+    match explain {
+        serde_json::Value::Object(map) => {
+            if let Some(join) = map.get("typeIndexJoin") {
+                if join.get("subTypeName").and_then(serde_json::Value::as_str) == Some(relation) {
+                    return join
+                        .get("direction")
+                        .and_then(serde_json::Value::as_str)
+                        .map(String::from);
+                }
+            }
+            map.values()
+                .find_map(|value| join_direction(value, relation))
+        }
+        serde_json::Value::Array(items) => items
+            .iter()
+            .find_map(|value| join_direction(value, relation)),
+        _ => None,
+    }
+}
+
 #[test]
 fn indexed_side_filter_returns_only_matching_books() {
     workers::block_on(async {
@@ -258,6 +282,12 @@ fn indexed_side_filter_returns_only_matching_books() {
             ));
 
         let mut plan = planner.plan(&select).unwrap();
+        assert_eq!(
+            join_direction(&plan.explain(), "author").as_deref(),
+            Some("secondary"),
+            "{}",
+            plan.explain()
+        );
         plan.init().await.unwrap();
         plan.start().await.unwrap();
 
@@ -291,6 +321,12 @@ fn indexed_side_filter_keeps_relations_joined_into_the_parent() {
             ));
 
         let mut plan = planner.plan(&select).unwrap();
+        assert_eq!(
+            join_direction(&plan.explain(), "author").as_deref(),
+            Some("secondary"),
+            "{}",
+            plan.explain()
+        );
         plan.init().await.unwrap();
         plan.start().await.unwrap();
 
