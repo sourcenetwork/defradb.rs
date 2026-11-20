@@ -258,6 +258,8 @@ RUNS=(
   "MC_ReplicatorIncarnation_Red_ReplayMarker.cfg ReplicatorIncarnation.tla RED"
   "MC_ReplicatorIncarnation_Red_ReplaySuperseded.cfg ReplicatorIncarnation.tla RED"
   "MC_ReplicatorIncarnation_Red_ReplayCompare.cfg ReplicatorIncarnation.tla RED" # a read-then-compare flip skips after a same-incarnation rewrite (ACT_FlipNotSkipped)
+  "MC_LiveMarkerGeneration_Green.cfg LiveMarkerGeneration.tla GREEN"
+  "MC_LiveMarkerGeneration_Red_Superseded.cfg LiveMarkerGeneration.tla RED" # a live write superseded by a replay's newer marker is reported undurable (INV_NoFalseFailure)
   "MC_ReplicatorInstall_Green.cfg ReplicatorInstall.tla GREEN"
   "MC_ReplicatorInstall_Red_Validation.cfg ReplicatorInstall.tla RED"
   "MC_ReplicatorInstall_Red_Active.cfg ReplicatorInstall.tla RED"

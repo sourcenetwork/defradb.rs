@@ -839,6 +839,15 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "A live write whose marker a replay's newer generation supersedes reruns with a fresh generation: it is never reported undurable, and its head stays delivered or marked",
+        axis: Tla,
+        anchor: "crates/engine/storage/src/stores/peerstore.rs register_scope_marker_at; crates/database/db/src/merge/push_docs.rs push_existing_docs_with_config_and_allowlist",
+        model_ref: "MC_LiveMarkerGeneration_{Green,Red_Superseded}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
         name: "defer_preserves_incarnation / defer_does_not_resurrect / stale_defer_leaves_replacement / fenced_preserves_incarnation / create_changes_incarnation / create_resurrects / stale_mark_writes_nothing / deleted_mark_writes_nothing / mark_owned / only_replacement_stops / superseded_continues",
         axis: Lean,
         anchor: "crates/database/db/src/merge/push_docs_replay.rs persist_replay_failures; crates/engine/storage/src/stores/peerstore.rs record_push_failure_for_incarnation",

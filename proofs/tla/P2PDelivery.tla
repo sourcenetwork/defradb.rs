@@ -316,9 +316,10 @@ Register(e, hd) ==
   /\ owed' = [owed EXCEPT ![e] = @ \cup {hd}]             \* the marker exists
   /\ UNCHANGED <<merged, pendDur, known, poolVars, envVars>>  \* nothing else moves
 
-\* The recorder fails to register the marker for edge e (a storage error or a
-\* replicator row changing under it). Its own intent is kept to be tried
-\* again, or dropped (main: the error is logged and nobody retries). Per peer,
+\* The recorder fails to register the marker for edge e (a storage error, a
+\* replicator row changing under it, or newer markers outrunning its rerun
+\* budget; a single newer marker is rerun past, LiveMarkerGeneration.tla). Its
+\* own intent is kept to be tried again, or dropped (main: the error is logged and nobody retries). Per peer,
 \* the other edges' intents are untouched; abort on first fail (main): the
 \* fan-out returns its error and the intents of the other edges not registered
 \* yet are dropped (F5).
