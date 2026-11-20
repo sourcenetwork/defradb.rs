@@ -756,6 +756,14 @@ fn stale_scope_registration_cannot_replace_newer_marker_or_schedule() {
     .unwrap()
 }
 
+/// Whether this test owns the process, so a process-wide telemetry counter
+/// moves only for it. nextest (CI) runs one test per process; `cargo test`
+/// runs tests on parallel threads that bump the same counters, so an
+/// unchanged-counter check holds only under nextest.
+fn owns_process_counters() -> bool {
+    std::env::var("NEXTEST_EXECUTION_MODE").as_deref() == Ok("process-per-test")
+}
+
 /// A live registration whose first allocated generation a replay's marker
 /// has already superseded. Returns what the live registration wrote, the
 /// replay's generation, and the PushMarker conflict-retry attempts counted
@@ -825,11 +833,13 @@ fn live_registration_superseded_by_replay_marker_takes_a_newer_generation() {
             telemetry::storage_event_count(telemetry::StorageEvent::LiveMarkerRerun)
                 > reruns_before
         );
-        assert_eq!(
-            telemetry::conflict_metrics_snapshot().push_marker.attempts,
-            conflict_attempts_before,
-            "a supersede rerun is not a transaction-conflict retry"
-        );
+        if owns_process_counters() {
+            assert_eq!(
+                telemetry::conflict_metrics_snapshot().push_marker.attempts,
+                conflict_attempts_before,
+                "a supersede rerun is not a transaction-conflict retry"
+            );
+        }
         let markers = peerstore.get_retry_documents("peer").await.unwrap();
         assert_eq!(markers.len(), 1);
         assert_eq!(markers[0].generation, live);
@@ -888,10 +898,12 @@ fn live_registration_superseded_past_rerun_bound_is_counted_undurable() {
             telemetry::storage_event_count(telemetry::StorageEvent::LiveMarkerRerunExhausted)
                 > exhausted_before
         );
-        assert_eq!(
-            telemetry::storage_event_count(telemetry::StorageEvent::LiveMarkerRerun),
-            reruns_before
-        );
+        if owns_process_counters() {
+            assert_eq!(
+                telemetry::storage_event_count(telemetry::StorageEvent::LiveMarkerRerun),
+                reruns_before
+            );
+        }
         let markers = peerstore.get_retry_documents("peer").await.unwrap();
         assert_eq!(markers.len(), 1);
         assert_eq!(markers[0].generation, replay_generation);
