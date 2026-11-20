@@ -22,6 +22,9 @@ lean_lib VeraActorSpelling where
 lean_lib VeraPolicyNonce where
 
 @[default_target]
+lean_lib VeraRegistrationList where
+
+@[default_target]
 lean_lib VeraDelegationSigner where
 
 @[default_target]

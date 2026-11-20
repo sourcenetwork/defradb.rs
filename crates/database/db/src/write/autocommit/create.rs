@@ -24,31 +24,6 @@ struct CreateRetryAttempt<S: Store> {
     prepared_inputs: Option<query::prepared::PreparedInputMemo>,
 }
 
-pub(super) fn acp_registration_retry_callback(
-    acp: Arc<dyn acp::DocumentACP>,
-    creator: identity::Did,
-    policy_id: String,
-    resource_name: String,
-    doc_id: String,
-    bearer_token: Option<String>,
-) -> storage::corekv::CommitHook {
-    Box::new(move || {
-        Box::pin(async move {
-            acp::with_request_bearer(
-                &acp,
-                Some(creator.to_string()),
-                bearer_token,
-                |acp| async move {
-                    acp.redrive_registration(&policy_id, &resource_name, &doc_id)
-                        .await
-                        .map_err(|error| error.to_string())
-                },
-            )
-            .await
-        })
-    })
-}
-
 impl<S> storage::corekv::RetryAttemptFn for CreateRetryAttempt<S>
 where
     S: Store + 'static,
@@ -382,14 +357,14 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         };
         for created in &created {
             if let Some(registration) = attempt.acp_registration.as_ref() {
-                txn.on_commit(OnCommit::OrderedAsync(acp_registration_retry_callback(
+                txn.owe_acp_registration(acp::CommitRegistration::new(
                     Arc::clone(&registration.acp),
                     registration.creator.clone(),
+                    registration.bearer_token.clone(),
                     registration.policy_id.clone(),
                     registration.resource_name.clone(),
                     created.doc_id.to_string(),
-                    registration.bearer_token.clone(),
-                )))
+                ))
                 .map_err(crate::error::commit_query_error)?;
             }
             if let Some(bus) = self.db.event_bus().cloned() {
