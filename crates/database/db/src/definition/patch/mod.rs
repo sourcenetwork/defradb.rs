@@ -219,6 +219,32 @@ impl<S: Store> crate::database::DB<S> {
                 old_schema.name, old_schema.version_id
             )));
         }
+        for index in &new_schema.indexes {
+            for field in &index.fields {
+                if !new_schema
+                    .fields
+                    .iter()
+                    .any(|schema_field| schema_field.name == field.name)
+                {
+                    return Err(Error::InvalidPatch(format!(
+                        "index '{}' references field '{}' which does not exist in schema",
+                        index.name, field.name
+                    )));
+                }
+            }
+        }
+        for index in &new_schema.fulltext_indexes {
+            if !new_schema
+                .fields
+                .iter()
+                .any(|schema_field| schema_field.name == index.field_name)
+            {
+                return Err(Error::InvalidPatch(format!(
+                    "full-text index '{}' references field '{}' which does not exist in schema",
+                    index.field_name, index.field_name
+                )));
+            }
+        }
         Ok(())
     }
 }
