@@ -9,3 +9,4 @@ mod tx;
 
 pub use cosmos_provider::CosmosProvider;
 pub use dac::VeraDocumentACP;
+pub(crate) use dac::MAX_OWED_REQUEST_BYTES;

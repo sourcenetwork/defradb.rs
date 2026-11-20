@@ -296,8 +296,11 @@ async fn a_call_the_node_answers_too_late_ends_at_the_deadline_and_may_be_asked_
     let node = start(directory.path()).await;
     let edge = edge::testing::edge();
     // A proof at a height the chain has not reached: the node waits two
-    // seconds for it and then answers that it is busy.
-    let proof = || json!(["acp", "0x00", 1_000_000_000u64]);
+    // seconds for it and then answers that it is busy. The height leads the
+    // head by less than the node's waiting lead (256 revisions): a larger one
+    // is refused at once as soon as a block is indexed, which would race the
+    // deadline below.
+    let proof = || json!(["acp", "0x00", 200u64]);
 
     let deadline = Duration::from_millis(100);
     let hurried = EmbeddedTransport::new(node.rpc().clone(), deadline, &edge);
