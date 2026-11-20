@@ -106,6 +106,14 @@ fn relation_filter_with_limit_returns_the_first_matching_rows() {
         }"#,
         json!({ "Book": [{ "title": "d" }] }),
     ));
+    actions.push(request(
+        r#"query {
+            Book(filter: {author: {name: {_eq: "Ann"}}}, order: {title: ASC}, limit: 1) {
+                title
+            }
+        }"#,
+        json!({ "Book": [{ "title": "b" }] }),
+    ));
     TestCase {
         id: integration_test::scenario_id!(),
         actions,
