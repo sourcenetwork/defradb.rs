@@ -6,6 +6,8 @@ use identity::Did;
 use storage::corekv::{MaybeSendSync, OnCommit, Result, Store};
 use storage::namespace::Namespace;
 
+mod relationship_input;
+
 /// Trusted context for projecting an authorized document mutation. The
 /// provider is the node's configured document ACP, and the view belongs to
 /// the same transaction as the mutation. Native ACP remains authoritative.
@@ -60,6 +62,23 @@ impl DocumentMutationContext<'_> {
         if self.registration_pending(policy, resource, doc).await? {
             return Ok(false);
         }
+        let tuple = acp::OwedTuple {
+            policy_id: policy.to_owned(),
+            resource: resource.to_owned(),
+            object: doc.to_owned(),
+            relation: relation.to_owned(),
+            subject: acp::OwedSubject::Actor {
+                did: self.document_acp.canonical_actor(target),
+            },
+        };
+        // The answer must postdate the latest change staged on the tuple: its
+        // sequence names the input, so a later change asks again, and the
+        // edge waits for the change to settle before it asks the provider
+        // (`proofs/tla/SettleBeforeObserving.tla`). Read as a whole value, a
+        // change staged on the tuple that commits first aborts the decision.
+        let head = acp::outbox::tuple_head(&view, &tuple)
+            .await
+            .map_err(|error| storage::corekv::Error::Other(error.to_string()))?;
         let actor = self
             .view
             .projection_actor()
@@ -68,16 +87,17 @@ impl DocumentMutationContext<'_> {
             .view
             .projection_context()
             .and_then(|context| context.bearer_token_for(actor));
-        let request = serde_json::to_vec(&(
+        let request = relationship_input::RelationshipInput {
             actor,
-            "relationship",
             policy,
             resource,
             doc,
             bearer,
             relation,
-            target.as_str(),
-        ))
+            target,
+            head,
+        }
+        .request()
         .map_err(|error| storage::corekv::Error::Other(error.to_string()))?;
         let Some(response) = self
             .view
@@ -91,19 +111,9 @@ impl DocumentMutationContext<'_> {
         let present: bool = serde_json::from_slice(&response).map_err(|error| {
             storage::corekv::Error::Other(format!("invalid prepared relationship: {error}"))
         })?;
-        // The provider answered before this transaction began. A change of
-        // the tuple owed to it since, by this transaction or one committed
-        // first, makes that answer stale: the validated read aborts the
-        // decision, or refuses it while the change is unsettled.
-        let tuple = acp::OwedTuple {
-            policy_id: policy.to_owned(),
-            resource: resource.to_owned(),
-            object: doc.to_owned(),
-            relation: relation.to_owned(),
-            subject: acp::OwedSubject::Actor {
-                did: self.document_acp.canonical_actor(target),
-            },
-        };
+        // An answer the edge gave once the tuple's changes had settled; a
+        // change still owed in this view (staged by this transaction itself)
+        // keeps it stale.
         if acp::outbox::tuple_unsettled_in(&view, &tuple)
             .await
             .map_err(|error| storage::corekv::Error::Other(error.to_string()))?

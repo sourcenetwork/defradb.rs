@@ -64,7 +64,7 @@ pub use delegation_window::{DelegationWindow, WindowRefusal, CLOCK_SKEW_ALLOWANC
 pub use error::{Error, Result};
 pub use external::{
     ExternalDocumentAcp, OweAgain, OwedScope, OwedSettlement, RedriveReport, VoidedEffect,
-    MAX_CHANGES_PER_REQUEST, MAX_FAILED_SUBMISSIONS,
+    MAX_CHANGES_PER_REQUEST, MAX_FAILED_SUBMISSIONS, OBSERVATION_PATIENCE,
 };
 pub use identity::Identity;
 pub use local::{LocalDocumentACP, MemoryAcpStore};

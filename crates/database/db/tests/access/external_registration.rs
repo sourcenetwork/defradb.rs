@@ -85,6 +85,9 @@ pub(super) struct RemoteAcp {
     pub(super) journal: regolith::sync::OnceCell<Arc<dyn acp::OwedJournal>>,
     /// Run once an exact observation has its answer, before it returns.
     pub(super) observing: HopscotchMap<(), ObserveHook, rapidhash::fast::RandomState>,
+    /// How long a submission of an owed change on each document takes.
+    pub(super) slow_submits:
+        HopscotchMap<String, std::time::Duration, rapidhash::fast::RandomState>,
 }
 
 /// What a test runs inside an exact observation, after the provider answered.
@@ -118,6 +121,7 @@ impl RemoteAcp {
             spellings: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
             journal: regolith::sync::OnceCell::new(),
             observing: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
+            slow_submits: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
         })
     }
 
@@ -462,6 +466,9 @@ impl DocumentACP for RemoteAcp {
                     reason: "the recorded authority no longer holds".into(),
                 };
             }
+        }
+        if let Some(took) = self.slow_submits.get(&change.tuple.object) {
+            workers::delay(took).unwrap().await.unwrap();
         }
         acp::outbox::submit_relationship(self, change).await
     }
