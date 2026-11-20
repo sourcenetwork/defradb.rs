@@ -8,28 +8,38 @@ namespace StrictAccessRule
 
 -- What one row's check came to.
 inductive Check where
+  -- The provider answered that the caller may read the row.
   | allow
+  -- The provider answered that the caller may not read the row.
   | deny
   -- The provider did not answer in time, after its own waits.
   | late
   -- No answer for another reason (storage, a malformed answer).
   | broken
+  -- Both are compared and printed in the proofs below.
   deriving DecidableEq, Repr
 
 -- What the read does with the row.
 inductive Step where
+  -- The row reaches the caller.
   | keep
+  -- The row is left out and the read goes on.
   | drop
   -- The request fails, retryable when the provider was late.
   | fail (retryable : Bool)
+  -- Both are compared and printed in the proofs below.
   deriving DecidableEq, Repr
 
 -- The rule: an answer decides the row in both modes; no answer drops it by
 -- default and fails a strict read.
 def step (strict : Bool) : Check → Step
+  -- An allowed row is kept.
   | .allow => .keep
+  -- A denied row is left out.
   | .deny => .drop
+  -- A late provider fails a strict read, retryably; the default leaves the row out.
   | .late => if strict then .fail true else .drop
+  -- A broken check fails a strict read, not retryably; the default leaves the row out.
   | .broken => if strict then .fail false else .drop
 
 -- A denial only ever filters the row, in both modes.
