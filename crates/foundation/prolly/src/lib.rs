@@ -15,6 +15,7 @@
 //! protocol this tree serves is modeled in `proofs/tla/ProllySync.tla`.
 
 pub mod build;
+pub mod cache;
 mod chunk;
 pub mod cursor;
 pub mod diff;
@@ -26,6 +27,7 @@ pub mod store;
 pub mod tree;
 
 pub use build::Builder;
+pub use cache::{CacheStats, Cached};
 pub use cursor::Entries;
 pub use diff::{diff, Difference};
 pub use error::{Error, Result};

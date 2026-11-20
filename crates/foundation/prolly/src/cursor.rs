@@ -37,9 +37,18 @@ where
         self.path.len()
     }
 
-    fn step(&mut self) -> Result<Option<Item>> {
+    /// The next entry, `None` once every entry has been read or after an error.
+    pub async fn next(&mut self) -> Option<Result<Item>> {
+        let step = self.step().await;
+        if step.is_err() {
+            self.path.clear();
+        }
+        step.transpose()
+    }
+
+    async fn step(&mut self) -> Result<Option<Item>> {
         if let Some(root) = self.root.take() {
-            self.path.push((load(self.store, &root)?, 0));
+            self.path.push((load(self.store, &root).await?, 0));
         }
         while let Some((node, next)) = self.path.last_mut() {
             let Some(item) = node.items.get(*next) else {
@@ -50,24 +59,10 @@ where
             if node.level == 0 {
                 return Ok(Some(item.clone()));
             }
-            let child = load(self.store, &Hash::from_slice(&item.value)?)?;
+            let hash = Hash::from_slice(&item.value)?;
+            let child = load(self.store, &hash).await?;
             self.path.push((child, 0));
         }
         Ok(None)
-    }
-}
-
-impl<S> Iterator for Entries<'_, S>
-where
-    S: Store,
-{
-    type Item = Result<Item>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let step = self.step();
-        if step.is_err() {
-            self.path.clear();
-        }
-        step.transpose()
     }
 }

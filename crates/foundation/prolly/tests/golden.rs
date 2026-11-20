@@ -2,14 +2,17 @@
 //! input whose chunks all close on a boundary under the cap keeps every chunk,
 //! so its root, and every node hash under it, is the same.
 
+mod common;
+
 use std::num::NonZeroU32;
 
+use common::run;
 use prolly::{MemStore, Tree};
 
 fn root(target: u32, count: u32) -> String {
     let entries = (0..count).map(|n| (n.to_be_bytes().to_vec(), format!("heads-{n}").into_bytes()));
     let target = NonZeroU32::new(target).unwrap();
-    let tree = Tree::build(&mut MemStore::new(), target, entries).unwrap();
+    let tree = run(Tree::build(&mut MemStore::new(), target, entries)).unwrap();
     tree.root().unwrap().to_string()
 }
 

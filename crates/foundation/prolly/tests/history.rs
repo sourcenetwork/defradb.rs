@@ -1,8 +1,11 @@
 //! History independence: however the writes are ordered, the same entries give
 //! the same root as building the tree from them at once.
 
+mod common;
+
 use std::{collections::BTreeMap, num::NonZeroU32};
 
+use common::{entries, run};
 use prolly::{MemStore, Tree};
 use proptest::prelude::*;
 
@@ -24,12 +27,13 @@ fn op() -> impl Strategy<Value = Op> {
     ]
 }
 
-fn built(store: &mut MemStore, target: NonZeroU32, model: &BTreeMap<u16, u8>) -> Tree {
+async fn built(store: &mut MemStore, target: NonZeroU32, model: &BTreeMap<u16, u8>) -> Tree {
     Tree::build(
         store,
         target,
         model.iter().map(|(k, v)| (key(*k), vec![*v])),
     )
+    .await
     .unwrap()
 }
 
@@ -41,35 +45,38 @@ proptest! {
         target in 1u32..8,
         ops in prop::collection::vec(op(), 1..600),
     ) {
-        let target = NonZeroU32::new(target).unwrap();
-        let mut store = MemStore::new();
-        let mut tree = Tree::empty(target);
-        let mut model = BTreeMap::new();
-        for (step, op) in ops.iter().enumerate() {
-            match op {
-                Op::Insert(k, v) => {
-                    tree.insert(&mut store, key(*k), vec![*v]).unwrap();
-                    model.insert(*k, *v);
+        run(async {
+            let target = NonZeroU32::new(target).unwrap();
+            let mut store = MemStore::new();
+            let mut tree = Tree::empty(target);
+            let mut model = BTreeMap::new();
+            for (step, op) in ops.iter().enumerate() {
+                match op {
+                    Op::Insert(k, v) => {
+                        tree.insert(&mut store, key(*k), vec![*v]).await.unwrap();
+                        model.insert(*k, *v);
+                    }
+                    Op::Remove(k) => {
+                        tree.remove(&mut store, &key(*k)).await.unwrap();
+                        model.remove(k);
+                    }
                 }
-                Op::Remove(k) => {
-                    tree.remove(&mut store, &key(*k)).unwrap();
-                    model.remove(k);
+                if step % 37 == 0 {
+                    prop_assert_eq!(tree, built(&mut store, target, &model).await);
                 }
             }
-            if step % 37 == 0 {
-                prop_assert_eq!(tree, built(&mut store, target, &model));
-            }
-        }
-        prop_assert_eq!(tree, built(&mut store, target, &model));
-        let entries: Vec<(Vec<u8>, Vec<u8>)> = tree
-            .iter(&store)
-            .collect::<prolly::Result<Vec<_>>>()
-            .unwrap()
-            .into_iter()
-            .map(|item| (item.key, item.value))
-            .collect();
-        let expected: Vec<(Vec<u8>, Vec<u8>)> = model.iter().map(|(k, v)| (key(*k), vec![*v])).collect();
-        prop_assert_eq!(entries, expected);
+            prop_assert_eq!(tree, built(&mut store, target, &model).await);
+            let read: Vec<(Vec<u8>, Vec<u8>)> = entries(&tree, &store)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|item| (item.key, item.value))
+                .collect();
+            let expected: Vec<(Vec<u8>, Vec<u8>)> =
+                model.iter().map(|(k, v)| (key(*k), vec![*v])).collect();
+            prop_assert_eq!(read, expected);
+            Ok(())
+        })?;
     }
 
 }
@@ -131,21 +138,24 @@ proptest! {
             }),
     ) {
         let (sorted, shuffled) = entries;
-        let target = NonZeroU32::new(4).unwrap();
-        let mut store = MemStore::new();
-        let mut forward = Tree::empty(target);
-        for (k, v) in &sorted {
-            forward.insert(&mut store, key(*k), vec![*v]).unwrap();
-        }
-        let mut other = Tree::empty(target);
-        for (k, v) in &shuffled {
-            other.insert(&mut store, key(*k), vec![*v]).unwrap();
-        }
-        let mut backward = Tree::empty(target);
-        for (k, v) in sorted.iter().rev() {
-            backward.insert(&mut store, key(*k), vec![*v]).unwrap();
-        }
-        prop_assert_eq!(forward, other);
-        prop_assert_eq!(forward, backward);
+        run(async {
+            let target = NonZeroU32::new(4).unwrap();
+            let mut store = MemStore::new();
+            let mut forward = Tree::empty(target);
+            for (k, v) in &sorted {
+                forward.insert(&mut store, key(*k), vec![*v]).await.unwrap();
+            }
+            let mut other = Tree::empty(target);
+            for (k, v) in &shuffled {
+                other.insert(&mut store, key(*k), vec![*v]).await.unwrap();
+            }
+            let mut backward = Tree::empty(target);
+            for (k, v) in sorted.iter().rev() {
+                backward.insert(&mut store, key(*k), vec![*v]).await.unwrap();
+            }
+            prop_assert_eq!(forward, other);
+            prop_assert_eq!(forward, backward);
+            Ok(())
+        })?;
     }
 }

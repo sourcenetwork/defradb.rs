@@ -1974,4 +1974,96 @@ theorem encode_injective (l l' : Nat) (is js : List (List Nat × List Nat))
   have h' : encItems is ++ [] = encItems js ++ [] := by simpa using h
   exact ⟨hlv, (encItems_cancel is js [] [] hc hi hj h').1⟩
 
+/-!
+## Decoding reads back what encoding writes
+
+The story, in plain words. A node read back from regolith arrives as bytes
+(`Node::decode` in `crates/foundation/prolly/src/node.rs`). The reader takes
+the level byte, the 8-byte count, then that many items, each a length and a
+key and a length and a value, and refuses any bytes left over. What must never
+happen: the bytes of a node read back as some other node, or as a node with
+bytes after it. The theorems below show a node's bytes always read back as that
+node, and that a byte added after them is refused.
+-/
+
+-- Reads 8 big-endian bytes off the front as a number, and returns the rest;
+-- nothing when fewer than 8 bytes remain.
+def take8 : List Nat → Option (Nat × List Nat)
+  -- Each byte shifts the number up one byte and adds itself.
+  | a :: b :: c :: d :: e :: f :: g :: h :: r =>
+    some (((((((a * 256 + b) * 256 + c) * 256 + d) * 256 + e) * 256 + f) * 256 + g) * 256 + h, r)
+  -- Too short: refused.
+  | _ => none
+
+-- The 8 bytes of a number that fits in 64 bits read back as that number.
+theorem take8_be64 (n : Nat) (r : List Nat) (hn : n < 18446744073709551616) :
+    take8 (be64 n ++ r) = some (n, r) := by
+  -- Put the 8 digits back together; the arithmetic undoes the division.
+  simp only [be64, take8, List.cons_append, List.nil_append, Option.some.injEq, Prod.mk.injEq,
+    and_true]
+  omega
+
+-- Reads a length, then that many bytes; nothing when the bytes run out.
+def takePart (bs : List Nat) : Option (List Nat × List Nat) :=
+  -- The length first, then the part it names.
+  (take8 bs).bind fun (n, r) => if n ≤ r.length then some (r.take n, r.drop n) else none
+
+-- A part written behind its length reads back as that part.
+theorem takePart_enc (p r : List Nat) (h : p.length < 18446744073709551616) :
+    takePart (be64 p.length ++ (p ++ r)) = some (p, r) := by
+  -- The length reads back, it fits, and taking it gives the part.
+  simp [takePart, take8_be64 _ _ h]
+
+-- Reads `c` items, each a key part and a value part, and returns the rest.
+def decItems : Nat → List Nat → Option (List (List Nat × List Nat) × List Nat)
+  -- No items left to read: everything else is the rest.
+  | 0, bs => some ([], bs)
+  -- A key, a value, then the other items.
+  | c + 1, bs =>
+    (takePart bs).bind fun (k, r) =>
+      (takePart r).bind fun (v, r') =>
+        (decItems c r').map fun (is, rest) => ((k, v) :: is, rest)
+
+-- Items written one after the other read back as those items, leaving what
+-- came after them.
+theorem decItems_enc (is : List (List Nat × List Nat)) (r : List Nat) (hi : Fits is) :
+    decItems is.length (encItems is ++ r) = some (is, r) := by
+  -- One item at a time, from the front.
+  induction is with
+  | nil => rfl
+  | cons i is ih =>
+    obtain ⟨hk, hv⟩ := hi i (by simp)
+    have hrest := ih (fun x hx => hi x (by simp [hx]))
+    -- The key reads back, then the value, then the other items.
+    simp only [List.length_cons, decItems, encItems, encItem, List.append_assoc]
+    rw [takePart_enc _ _ hk]
+    simp only [Option.bind]
+    rw [takePart_enc _ _ hv]
+    simp [hrest]
+
+-- Reads a whole node: level, count, items, and nothing after them.
+def decode : List Nat → Option (Nat × List (List Nat × List Nat))
+  -- No level byte: refused.
+  | [] => none
+  -- The level, the count, the items, then the rest must be empty.
+  | l :: bs =>
+    (take8 bs).bind fun (c, r) =>
+      (decItems c r).bind fun (is, rest) => if rest = [] then some (l, is) else none
+
+/-- A node's bytes read back as that node. -/
+theorem decode_encode (l : Nat) (is : List (List Nat × List Nat))
+    (hn : is.length < 18446744073709551616) (hi : Fits is) :
+    decode (encode l is) = some (l, is) := by
+  -- The count reads back, then the items with nothing after.
+  have h := decItems_enc is [] hi
+  simp only [List.append_nil] at h
+  simp [decode, encode, take8_be64 _ _ hn, h]
+
+/-- A node's bytes with anything after them are refused. -/
+theorem decode_refuses_trailing (l : Nat) (is : List (List Nat × List Nat)) (x : Nat)
+    (xs : List Nat) (hn : is.length < 18446744073709551616) (hi : Fits is) :
+    decode (encode l is ++ x :: xs) = none := by
+  -- The items read back and leave the extra bytes, which are not empty.
+  simp [decode, encode, List.append_assoc, take8_be64 _ _ hn, decItems_enc is _ hi]
+
 end ProllyTree

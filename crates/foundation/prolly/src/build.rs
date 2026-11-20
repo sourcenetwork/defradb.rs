@@ -43,7 +43,7 @@ impl Builder {
 
     /// Adds `key`. A key equal to the last one replaces its value, so the last
     /// value wins; a smaller key is [`Error::Unsorted`].
-    pub fn push<S>(&mut self, store: &mut S, key: Vec<u8>, value: Vec<u8>) -> Result<()>
+    pub async fn push<S>(&mut self, store: &mut S, key: Vec<u8>, value: Vec<u8>) -> Result<()>
     where
         S: Store,
     {
@@ -56,7 +56,7 @@ impl Builder {
             _ => {}
         }
         if let Some(previous) = self.last.replace(Item { key, value }) {
-            self.feed(store, 0, previous);
+            self.feed(store, 0, previous).await?;
         }
         Ok(())
     }
@@ -72,54 +72,60 @@ impl Builder {
     }
 
     /// The tree of everything pushed.
-    pub fn finish<S>(mut self, store: &mut S) -> Result<Tree>
+    pub async fn finish<S>(mut self, store: &mut S) -> Result<Tree>
     where
         S: Store,
     {
         let target = NonZeroU32::new(self.target).unwrap_or(NonZeroU32::MIN);
         if let Some(last) = self.last.take() {
-            self.feed(store, 0, last);
+            self.feed(store, 0, last).await?;
         }
         let mut level = 0;
         while level < self.levels.len() {
             let open = self.levels[level].chunker.take_open();
             if self.levels[level].closed == 0 {
                 // One chunk is the whole level: it is the root, as in `raise`.
-                let root = collapse(store, level as u8, open)?;
+                let root = collapse(store, level as u8, open).await?;
                 return Ok(Tree { root, target });
             }
             if !open.is_empty() {
-                self.close(store, level, open);
+                self.close(store, level, open).await?;
             }
             level += 1;
         }
         Ok(Tree::empty(target))
     }
 
-    /// Adds `item` to `level`, storing the chunk it closes.
-    fn feed<S>(&mut self, store: &mut S, level: usize, item: Item)
+    /// Adds `item` to `level`; each chunk that closes is stored and its
+    /// reference fed to the level above, and so on up.
+    async fn feed<S>(&mut self, store: &mut S, mut level: usize, mut item: Item) -> Result<()>
     where
         S: Store,
     {
-        if level == self.levels.len() {
-            self.levels.push(Level {
-                chunker: Chunker::new(self.target),
-                closed: 0,
-            });
-        }
-        self.levels[level].chunker.push(item);
-        if let Some(chunk) = self.levels[level].chunker.closed.pop() {
-            self.close(store, level, chunk);
+        loop {
+            if level == self.levels.len() {
+                self.levels.push(Level {
+                    chunker: Chunker::new(self.target),
+                    closed: 0,
+                });
+            }
+            self.levels[level].chunker.push(item);
+            let Some(chunk) = self.levels[level].chunker.closed.pop() else {
+                return Ok(());
+            };
+            self.levels[level].closed += 1;
+            item = child(store, level as u8, chunk).await?;
+            level += 1;
         }
     }
 
     /// Stores `chunk` of `level` and gives its reference to the level above.
-    fn close<S>(&mut self, store: &mut S, level: usize, chunk: Vec<Item>)
+    async fn close<S>(&mut self, store: &mut S, level: usize, chunk: Vec<Item>) -> Result<()>
     where
         S: Store,
     {
         self.levels[level].closed += 1;
-        let reference = child(store, level as u8, chunk);
-        self.feed(store, level + 1, reference);
+        let reference = child(store, level as u8, chunk).await?;
+        self.feed(store, level + 1, reference).await
     }
 }

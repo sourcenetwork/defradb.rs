@@ -17,6 +17,12 @@ pub enum Error {
     /// A build got a key smaller than the one before it.
     #[error("prolly tree build needs entries in ascending key order")]
     Unsorted,
+    /// Stored bytes are not exactly one node's encoding.
+    #[error("prolly tree node bytes are not a node encoding")]
+    BadEncoding,
+    /// The store behind the tree failed.
+    #[error("prolly tree store: {0}")]
+    Store(String),
 }
 
 /// The crate's result.
