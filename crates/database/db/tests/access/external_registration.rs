@@ -88,6 +88,14 @@ pub(super) struct RemoteAcp {
     /// How long a submission of an owed change on each document takes.
     pub(super) slow_submits:
         HopscotchMap<String, std::time::Duration, rapidhash::fast::RandomState>,
+    /// Registration requests: each list and each registration sent alone.
+    pub(super) submissions: AtomicUsize,
+    /// Each registration list sent, its documents in order.
+    lists: SegQueue<Vec<String>>,
+    /// Documents whose registration is refused, alone or in a list.
+    refused_objects: Set<String>,
+    /// The next list is applied and its answer lost.
+    pub(super) lose_list_answer: AtomicBool,
 }
 
 /// What a test runs inside an exact observation, after the provider answered.
@@ -122,6 +130,10 @@ impl RemoteAcp {
             journal: regolith::sync::OnceCell::new(),
             observing: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
             slow_submits: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
+            submissions: AtomicUsize::new(0),
+            lists: SegQueue::new(),
+            refused_objects: set(),
+            lose_list_answer: AtomicBool::new(false),
         })
     }
 
@@ -189,6 +201,16 @@ impl RemoteAcp {
     /// `other` is another spelling of the actor the provider keeps as `kept`.
     pub(super) fn respell(&self, other: &Did, kept: &Did) {
         self.spellings.insert(other.to_string(), kept.clone());
+    }
+
+    /// Refuse the registration of `doc_id`, alone or in a list.
+    pub(super) fn refuse_object(&self, doc_id: &str) {
+        self.refused_objects.insert(doc_id.to_string(), ());
+    }
+
+    /// The registration lists sent so far, oldest first, taken out.
+    pub(super) fn lists(&self) -> Vec<Vec<String>> {
+        std::iter::from_fn(|| self.lists.pop()).collect()
     }
 
     /// The relationship writes applied so far, oldest first, taken out.
@@ -272,7 +294,13 @@ impl DocumentACP for RemoteAcp {
         _resource_name: &str,
         doc_id: &str,
     ) -> acp::Result<()> {
+        self.submissions.fetch_add(1, Ordering::SeqCst);
         self.reachable()?;
+        if self.refused_objects.contains_key(doc_id) {
+            return Err(acp::Error::PermissionDenied(format!(
+                "the policy refuses {doc_id}"
+            )));
+        }
         if self.refuse_registration.load(Ordering::SeqCst) {
             return Err(acp::Error::PermissionDenied(
                 "no credentials for the creator".into(),
@@ -289,6 +317,68 @@ impl DocumentACP for RemoteAcp {
         }
         self.owners.insert(doc_id.to_string(), identity.clone());
         self.registrations.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    /// A list applied all or none, as vera.rs applies one; a refused list is
+    /// sent again one registration at a time, as the vera.rs provider does.
+    async fn register_objects(
+        &self,
+        identity: &Did,
+        objects: &[acp::AcpObject<'_>],
+    ) -> std::result::Result<(), acp::RegistrationFailure> {
+        if objects.len() < 2 {
+            for (index, object) in objects.iter().enumerate() {
+                self.register_doc_object(
+                    identity,
+                    object.policy_id,
+                    object.resource,
+                    object.object_id,
+                )
+                .await
+                .map_err(|error| acp::RegistrationFailure::new(index, error))?;
+            }
+            return Ok(());
+        }
+        self.submissions.fetch_add(1, Ordering::SeqCst);
+        self.lists.push(
+            objects
+                .iter()
+                .map(|object| object.object_id.to_string())
+                .collect(),
+        );
+        self.reachable()
+            .map_err(|error| acp::RegistrationFailure::new(0, error))?;
+        let takes = !self.refuse_registration.load(Ordering::SeqCst)
+            && !self.garble_registration.load(Ordering::SeqCst)
+            && objects.iter().all(|object| {
+                !self.refused_objects.contains_key(object.object_id)
+                    && !self.owners.contains_key(object.object_id)
+            });
+        if takes {
+            for object in objects {
+                self.owners
+                    .insert(object.object_id.to_string(), identity.clone());
+                self.registrations.fetch_add(1, Ordering::SeqCst);
+            }
+            if self.lose_list_answer.swap(false, Ordering::SeqCst) {
+                return Err(acp::RegistrationFailure::new(
+                    0,
+                    acp::Error::ProviderUnavailable("the answer was lost".into()),
+                ));
+            }
+            return Ok(());
+        }
+        for (index, object) in objects.iter().enumerate() {
+            self.register_doc_object(
+                identity,
+                object.policy_id,
+                object.resource,
+                object.object_id,
+            )
+            .await
+            .map_err(|error| acp::RegistrationFailure::new(index, error))?;
+        }
         Ok(())
     }
 

@@ -1081,42 +1081,16 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
                             continue;
                         }
 
-                        let acp = self.acp.clone();
-                        let identity = identity_did.clone();
-                        let policy_id = policy.id.clone();
-                        let resource_name = policy.resource_name.clone();
-                        let doc_id = doc_id.to_string();
-                        let token = self.acp.bearer_token_for(identity_did.as_str());
-                        let callback: storage::corekv::CommitHook = Box::new(move || {
-                            let acp = acp.clone();
-                            let identity = identity.clone();
-                            let policy_id = policy_id.clone();
-                            let resource_name = resource_name.clone();
-                            let doc_id = doc_id.clone();
-                            let token = token.clone();
-                            Box::pin(async move {
-                                acp::with_request_bearer(
-                                    &acp,
-                                    Some(identity.to_string()),
-                                    token,
-                                    |acp| async move {
-                                        acp.redrive_registration(
-                                            &policy_id,
-                                            &resource_name,
-                                            &doc_id,
-                                        )
-                                        .await
-                                        .map_err(|error| {
-                                            format!(
-                                                "failed to register ACP document {doc_id}: {error}"
-                                            )
-                                        })
-                                    },
-                                )
-                                .await
-                            })
-                        });
-                        mutator.register_ordered_async_hook(callback).await?;
+                        mutator
+                            .owe_acp_registration(acp::CommitRegistration::new(
+                                self.acp.clone(),
+                                identity_did.clone(),
+                                self.acp.bearer_token_for(identity_did.as_str()),
+                                policy.id.clone(),
+                                policy.resource_name.clone(),
+                                doc_id.to_string(),
+                            ))
+                            .await?;
                     }
                 }
             } else if let (Some(policy), Some(identity_did), MutationType::Add) = (

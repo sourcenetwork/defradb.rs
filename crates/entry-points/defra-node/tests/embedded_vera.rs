@@ -25,6 +25,9 @@ mod http_staged;
 #[path = "embedded_vera/projection.rs"]
 mod projection;
 
+#[path = "embedded_vera/registration_batch.rs"]
+mod registration_batch;
+
 #[path = "embedded_vera/replica.rs"]
 mod replica;
 
