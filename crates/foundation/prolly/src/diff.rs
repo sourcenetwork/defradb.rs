@@ -45,10 +45,10 @@ impl<'a, S> Walk<'a, S>
 where
     S: Store,
 {
-    fn new(store: &'a S, tree: &Tree) -> Result<Self> {
+    async fn new(store: &'a S, tree: &Tree) -> Result<Self> {
         let mut stack = Vec::new();
         if let Some(hash) = tree.root {
-            let node = load(store, &hash)?;
+            let node = load(store, &hash).await?;
             stack.push(Elem::Subtree {
                 hash,
                 level: node.level,
@@ -59,13 +59,13 @@ where
     }
 
     /// Replaces the subtree on top with its children.
-    fn open(&mut self) -> Result<()> {
+    async fn open(&mut self) -> Result<()> {
         let Some(Elem::Subtree { hash, node, .. }) = self.stack.pop() else {
             return Ok(());
         };
         let node = match node {
             Some(node) => node,
-            None => load(self.store, &hash)?,
+            None => load(self.store, &hash).await?,
         };
         for item in node.items.iter().rev() {
             self.stack.push(match node.level {
@@ -101,7 +101,7 @@ enum Step {
 /// same hash at the same place in both walks hold the same entries and are
 /// skipped unopened, so the nodes read grow with the difference, not with the
 /// trees. Equal roots return at once, without reading either store.
-pub fn diff<A, B>(
+pub async fn diff<A, B>(
     left_store: &A,
     left: &Tree,
     right_store: &B,
@@ -114,8 +114,8 @@ where
     if left.root == right.root {
         return Ok(Vec::new());
     }
-    let mut lhs = Walk::new(left_store, left)?;
-    let mut rhs = Walk::new(right_store, right)?;
+    let mut lhs = Walk::new(left_store, left).await?;
+    let mut rhs = Walk::new(right_store, right).await?;
     let mut differences = Vec::new();
     loop {
         let step = match (lhs.stack.last(), rhs.stack.last()) {
@@ -157,10 +157,10 @@ where
             }
             Step::Open { left, right } => {
                 if left {
-                    lhs.open()?;
+                    lhs.open().await?;
                 }
                 if right {
-                    rhs.open()?;
+                    rhs.open().await?;
                 }
             }
             Step::Take(Ordering::Less) => differences.extend(lhs.take().map(|item| Difference {

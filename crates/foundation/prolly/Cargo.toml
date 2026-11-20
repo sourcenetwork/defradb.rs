@@ -18,6 +18,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+workers = { path = "../workers" }
 
 [lints]
 workspace = true
