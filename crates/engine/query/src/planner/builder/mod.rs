@@ -406,8 +406,9 @@ impl Planner {
             vector_routing::first_indexed_similarity(&sim_query.similarities, &collection.indexes);
 
         let vector_route = if let Some(ref fetcher) = self.fetcher {
-            let scalar_filter_served =
-                select.filter.is_none() || self.try_select_index(select, &collection).is_some();
+            let scalar_filter_served = select.filter.as_ref().is_none_or(|filter| {
+                filter.has_alias_filter() || self.try_select_index(select, &collection).is_some()
+            });
             if rows_rejected_above_the_scan || (select.filter.is_some() && !scalar_filter_served) {
                 if let Some(field) = warning_field {
                     warnings.push(vector_routing::vector_index_unused_warning_for_filter(
