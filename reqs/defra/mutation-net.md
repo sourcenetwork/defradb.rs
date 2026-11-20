@@ -218,6 +218,23 @@ Setting `_authorID` or `author` on a `Book` links it, visible as `Author { publi
 
 Disconnecting from one or several connected peers leaves the active peer list empty; disconnecting an empty list fails with `addresses cannot be empty`.
 
+# `defra.net.peers.disconnect_sticks`: An explicit disconnect sticks
+
+- **Parents:** ["defra"]
+
+After `DisconnectPeers` names a peer, the node's discovery (Kademlia, peer exchange) never dials that peer again until an explicit dial reaches it: `ConnectPeers`, `AddReplicator`, or the replicator retry's redial of a replicator target. A replicator is a standing instruction to reach its peer, so disconnecting from a replicator target holds only until the next retry pass; removing the replicator is what stops it. Other protocols (PushLog, requests) still dial it. A dropped connection or a restarted peer is not a disconnect: discovery reconnects it as before.
+
+The node keeps its disconnects in memory, as Go's `Disconnect` clears only its in-memory peerstore: a restart of the node forgets them, and discovery may reach those peers again.
+
+On libp2p only the node that disconnected stays away. libp2p's close carries no reason, so the peer it disconnected may still discover and dial it back, and no libp2p scenario can show the node's own discovery staying away without racing the peer's. The libp2p half is checked by the unit test `kademlia_never_dials_a_quiet_peer_but_an_explicit_dial_does` (crates/database/p2p) and the TLA+ model `proofs/tla/StickyDisconnect.tla`. The vinc transport carries the reason, so #3000 shows the stick on both sides in testo scenarios, under the child requirement `defra.net.peers.disconnect_sticks.discovery`.
+
+# `defra.net.peers.disconnect_sticks.explicit_connect`: `ConnectPeers` undoes a disconnect
+
+- **Parents:** ["defra.net.peers.disconnect_sticks"]
+- **Scenarios:** ["net::sticky_disconnect::an_explicit_connect_undoes_a_disconnect"]
+
+`ConnectPeers` to a peer the node disconnected reaches it again: `ActivePeers` lists it next to the peers the node stayed connected to. It also lets the node's discovery reach the peer again, so a later drop of that connection is mended. On libp2p the disconnected peer rediscovers the node itself, so no scenario can tell that apart; the unit test `an_explicit_dial_lets_kademlia_dial_a_disconnected_peer_again` (crates/database/p2p) checks it.
+
 # `go.net.subscribe.collection_list`: Listing collection subscriptions
 
 - **Parents:** ["go.net.subscribe"]
