@@ -88,6 +88,56 @@ async fn persisted_backpressure_denies_live_push_before_transport_send() {
     backlog.close();
 }
 
+/// An offline target parks its push instead of counting expected absence as a
+/// transport failure. The retry ladder keeps the obligation until reconnect.
+#[nuclei::test]
+async fn an_offline_peer_parks_its_push_without_transport_failure() {
+    let backlog = PushBacklog::new(64, usize::MAX, 1, 1, edge::testing::edge());
+    let transport = TestTransport::new(Vec::new());
+    let (context, mut failures) = test_context(
+        transport.clone(),
+        Arc::clone(&backlog),
+        Duration::from_secs(1),
+    );
+    let job = job("offline", b"offline");
+    assert_eq!(
+        backlog.try_enqueue(job.clone()).await,
+        EnqueueOutcome::Enqueued
+    );
+    let active = backlog.next_job().await.unwrap();
+
+    let completion = run_push_job(&context, &active).await;
+
+    assert_eq!(completion, JobCompletion::Parked);
+    assert!(transport.sent().is_empty());
+    assert!(
+        crate::rt::time::timeout(Duration::from_millis(50), failures.recv())
+            .await
+            .is_err()
+    );
+    let snapshot = backlog.snapshot().await;
+    assert_eq!(snapshot.head_hints_parked_offline, 1);
+    assert_eq!(snapshot.head_hints_failed_transport, 0);
+    let peer = snapshot
+        .per_peer
+        .iter()
+        .find(|entry| entry.peer_id == "offline")
+        .expect("offline peer is reported");
+    assert!(peer.cooldown_remaining_ms > 0);
+    backlog.job_done(&active, completion).await;
+    let snapshot = backlog.snapshot().await;
+    assert_eq!(snapshot.parked_total, 1);
+    assert_eq!(snapshot.failed_total, 0);
+    let peer = snapshot
+        .per_peer
+        .iter()
+        .find(|entry| entry.peer_id == "offline")
+        .expect("offline peer is reported");
+    assert_eq!(peer.parked_total, 1);
+    assert_eq!(peer.failed_total, 0);
+    backlog.close();
+}
+
 fn job(peer: &str, cid_seed: &[u8]) -> PushJobSpec {
     PushJobSpec::new(
         PeerId::new(peer.to_string()),

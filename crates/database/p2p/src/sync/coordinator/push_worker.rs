@@ -240,6 +240,30 @@ where
         return JobCompletion::Retired;
     }
 
+    // An offline target is expected absence, not a transport failure. Keep its
+    // retry obligation on the ladder and leave queued work for the reconnect
+    // window; only a live send's transport error counts as failed.
+    if !context.peer_state.is_connected(job.peer_id.as_str()) {
+        let _ = report_push_event(
+            &context.failure_tx,
+            &job.peer_id,
+            job.doc_id.clone(),
+            job.collection_id.clone(),
+            Some(job.root_cid),
+            job.head_priority(),
+            false,
+            false,
+            None,
+            true,
+            job.marker_generation,
+            false,
+        )
+        .await;
+        context.backlog.record_head_hint_parked_offline();
+        context.backlog.park_peer_unreachable(job).await;
+        return JobCompletion::Parked;
+    }
+
     // The recorder reads the persisted peer floor, so replay-installed hints
     // and process restarts cannot be bypassed by the volatile live queue.
     if context.failure_tx.load().is_some()

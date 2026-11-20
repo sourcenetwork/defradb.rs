@@ -190,6 +190,7 @@ pub enum JobCompletion {
     Succeeded,
     Failed,
     Retired,
+    Parked,
 }
 
 /// Peer-wide parking state for a saturated or unreachable receiver. The entry
@@ -203,6 +204,14 @@ struct PeerCooldown {
     /// and it has not answered since. Until it answers again, the peer stays
     /// within the unreachable peers' shared cap.
     unreachable: Option<u64>,
+}
+
+/// A peer's push accounting, kept beside its queue and cooldown state.
+#[derive(Debug, Default, Clone, Copy)]
+struct PeerMetrics {
+    failed: u64,
+    parked: u64,
+    last_success_ms: u64,
 }
 
 #[derive(Default)]
@@ -222,6 +231,7 @@ struct Inner {
     /// per-CID cooldown gave each distinct CID its own fresh burst and provided
     /// essentially no protection (defradb#1112).
     peer_cooldowns: RapidHashMap<String, PeerCooldown>,
+    metrics: RapidHashMap<String, PeerMetrics>,
     /// Numbers each new unreachable spell (`PeerCooldown::unreachable`).
     unreachable_spells: u64,
     queued_items: usize,
@@ -244,6 +254,9 @@ pub struct PeerBacklogSnapshot {
     pub active_jobs: usize,
     pub consecutive_failures: u32,
     pub cooldown_remaining_ms: u64,
+    pub failed_total: u64,
+    pub parked_total: u64,
+    pub last_success_at_ms: u64,
 }
 
 /// Point-in-time view of the backlog for diagnostics and conformance tests.
@@ -262,6 +275,7 @@ pub struct PushBacklogSnapshot {
     pub rejected_bytes_total: u64,
     pub completed_total: u64,
     pub failed_total: u64,
+    pub parked_total: u64,
     pub stale_head_retirements_total: u64,
     pub head_hints_enqueued_document: u64,
     pub head_hints_enqueued_collection: u64,
@@ -273,6 +287,7 @@ pub struct PushBacklogSnapshot {
     pub head_hints_nacked_other: u64,
     pub head_hints_failed_transport: u64,
     pub head_hints_failed_local: u64,
+    pub head_hints_parked_offline: u64,
     /// Times a peer was parked because its receiver reported saturation. Proves
     /// sender-side backpressure is engaging instead of storming (defradb#1112).
     pub peer_capacity_parks_total: u64,
@@ -297,6 +312,7 @@ struct Counters {
     rejected_bytes_total: AtomicU64,
     completed_total: AtomicU64,
     failed_total: AtomicU64,
+    parked_total: AtomicU64,
     stale_head_retirements_total: AtomicU64,
     head_hints_enqueued_document: AtomicU64,
     head_hints_enqueued_collection: AtomicU64,
@@ -308,6 +324,7 @@ struct Counters {
     head_hints_nacked_other: AtomicU64,
     head_hints_failed_transport: AtomicU64,
     head_hints_failed_local: AtomicU64,
+    head_hints_parked_offline: AtomicU64,
 }
 
 /// The queue-owned half of a snapshot, produced by the owner task.
@@ -336,6 +353,7 @@ impl Counters {
             rejected_bytes_total: self.rejected_bytes_total.load(Ordering::Relaxed),
             completed_total: self.completed_total.load(Ordering::Relaxed),
             failed_total: self.failed_total.load(Ordering::Relaxed),
+            parked_total: self.parked_total.load(Ordering::Relaxed),
             stale_head_retirements_total: self.stale_head_retirements_total.load(Ordering::Relaxed),
             head_hints_enqueued_document: self.head_hints_enqueued_document.load(Ordering::Relaxed),
             head_hints_enqueued_collection: self
@@ -349,6 +367,7 @@ impl Counters {
             head_hints_nacked_other: self.head_hints_nacked_other.load(Ordering::Relaxed),
             head_hints_failed_transport: self.head_hints_failed_transport.load(Ordering::Relaxed),
             head_hints_failed_local: self.head_hints_failed_local.load(Ordering::Relaxed),
+            head_hints_parked_offline: self.head_hints_parked_offline.load(Ordering::Relaxed),
             peer_capacity_parks_total: state.peer_capacity_parks_total,
             per_peer: state.per_peer,
         }
@@ -552,6 +571,12 @@ impl PushBacklog {
             HeadHintFailureReason::Local => &self.counters.head_hints_failed_local,
         };
         counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_head_hint_parked_offline(&self) {
+        self.counters
+            .head_hints_parked_offline
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     /// Next job whose peer is below its active cap and not cooling down,
@@ -1121,6 +1146,21 @@ impl BacklogOwner {
             JobCompletion::Failed => {
                 self.counters.failed_total.fetch_add(1, Ordering::Relaxed);
             }
+            JobCompletion::Parked => {
+                self.counters.parked_total.fetch_add(1, Ordering::Relaxed);
+            }
+            JobCompletion::Retired => {}
+        }
+        let metrics = self.inner.metrics.entry(peer_key).or_default();
+        match completion {
+            JobCompletion::Succeeded => {
+                metrics.last_success_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+            }
+            JobCompletion::Failed => metrics.failed = metrics.failed.saturating_add(1),
+            JobCompletion::Parked => metrics.parked = metrics.parked.saturating_add(1),
             JobCompletion::Retired => {}
         }
         let _ = reply.send(true);
@@ -1142,6 +1182,7 @@ impl BacklogOwner {
         let mut peers: rapidhash::RapidHashSet<&String> = inner.queues.keys().collect();
         peers.extend(inner.active.keys());
         peers.extend(inner.peer_cooldowns.keys());
+        peers.extend(inner.metrics.keys());
         let mut per_peer: Vec<PeerBacklogSnapshot> = peers
             .into_iter()
             .map(|peer| {
@@ -1157,6 +1198,21 @@ impl BacklogOwner {
                     consecutive_failures: cooldown.map(|value| value.consecutive).unwrap_or(0),
                     cooldown_remaining_ms: cooldown
                         .map(|value| value.until.saturating_duration_since(now).as_millis() as u64)
+                        .unwrap_or(0),
+                    failed_total: inner
+                        .metrics
+                        .get(peer)
+                        .map(|metrics| metrics.failed)
+                        .unwrap_or(0),
+                    parked_total: inner
+                        .metrics
+                        .get(peer)
+                        .map(|metrics| metrics.parked)
+                        .unwrap_or(0),
+                    last_success_at_ms: inner
+                        .metrics
+                        .get(peer)
+                        .map(|metrics| metrics.last_success_ms)
                         .unwrap_or(0),
                 }
             })
