@@ -38,6 +38,25 @@ fn ten_new_peers_start_one_bootstrap_per_table() {
     assert_eq!(bootstraps(&dual, KademliaNetwork::Lan), 1);
 }
 
+/// Go's WAN table takes a peer reached through a public DNS name: its
+/// address filter keeps the name (`manet.IsPublicAddr`) and the peerstore
+/// holds the IP it resolved to. A bootstrap configured only as
+/// `/dns4/<host>` must land in our WAN table too, and a special-use name
+/// must not.
+#[test]
+fn a_public_dns_address_enters_the_wan_table() {
+    let mut dual = DualKademlia::new(PeerId::random());
+    let (public, private) = (PeerId::random(), PeerId::random());
+    let (_, wan) = dual.add_address(&public, "/dns4/node.example.com/tcp/4001".parse().unwrap());
+    assert!(
+        !matches!(wan, kad::RoutingUpdate::Failed),
+        "a public DNS name is refused by the WAN table"
+    );
+    let (lan, wan) = dual.add_address(&private, "/dns4/printer.local/tcp/4001".parse().unwrap());
+    assert!(matches!(wan, kad::RoutingUpdate::Failed));
+    assert!(!matches!(lan, kad::RoutingUpdate::Failed));
+}
+
 #[derive(NetworkBehaviour)]
 #[behaviour(prelude = "libp2p::swarm::derive_prelude")]
 struct Node {

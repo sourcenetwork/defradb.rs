@@ -26,7 +26,7 @@ const KAD_PARALLELISM: NonZeroUsize = match NonZeroUsize::new(10) {
     None => unreachable!(),
 };
 
-/// Go's `minRTRefreshThreshold` (go-libp2p-kad-dht v0.38 `dht_bootstrap.go:17`):
+/// Go's `minRTRefreshThreshold` (go-libp2p-kad-dht v0.40.0 `dht_bootstrap.go:17`):
 /// a routing table this small refreshes on every new peer.
 pub const LOW_PEERS: usize = 10;
 
@@ -149,7 +149,7 @@ impl DefraKademlia {
 
     /// Refresh the table now if it holds at most `LOW_PEERS` peers. Go runs
     /// one refresh at a time and queues at most one more (`fixLowPeers`,
-    /// go-libp2p-kad-dht v0.38 `dht.go:473-553`, `RefreshNoWait`), so while
+    /// go-libp2p-kad-dht v0.40.0 `dht.go:473-553`, `RefreshNoWait`), so while
     /// a bootstrap runs this only marks a re-run, started when it ends.
     fn refresh_if_low(&mut self) -> Option<Result<kad::QueryId, kad::NoKnownPeers>> {
         if self.peers() > LOW_PEERS {
@@ -163,7 +163,7 @@ impl DefraKademlia {
     }
 
     /// Keep only `peer`'s public addresses in the WAN table, as Go's WAN
-    /// routing-table and address filters do (go-libp2p-kad-dht v0.38
+    /// routing-table and address filters do (go-libp2p-kad-dht v0.40.0
     /// `dual/dual.go:103-107`). Kademlia inserts a peer it dialed at the
     /// dialed address without asking `add_address`, so the check runs on
     /// every insert. Returns false when nothing public was left and the peer
@@ -356,7 +356,7 @@ impl DualKademlia {
 
     /// Insert an address into the LAN routing table, and into the WAN one
     /// only when it is public, as Go's dual DHT filters its WAN side
-    /// (go-libp2p-kad-dht v0.38 `dual/dual.go:103-107`). A WAN table of
+    /// (go-libp2p-kad-dht v0.40.0 `dual/dual.go:103-107`). A WAN table of
     /// private peers ran its own refreshes, which redialed a peer after a
     /// `DisconnectPeers` (#2992). Kademlia's own inserts pass the same test
     /// in `DefraKademlia::poll`.
@@ -400,7 +400,7 @@ impl DualKademlia {
 
     /// Refresh `network`'s routing table if it holds at most `LOW_PEERS`
     /// peers, as Go's kad-dht does on every new routing-table peer
-    /// (`fixLowPeers`, go-libp2p-kad-dht v0.38 `dht.go:498-553`). This links
+    /// (`fixLowPeers`, go-libp2p-kad-dht v0.40.0 `dht.go:498-553`). This links
     /// a node to the peers of its peers at once. At most one bootstrap runs
     /// per table: a request while one runs is folded into a single re-run
     /// when it ends. Starting a bootstrap also cancels the one rust-libp2p

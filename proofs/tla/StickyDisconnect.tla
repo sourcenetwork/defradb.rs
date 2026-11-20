@@ -27,7 +27,7 @@
 \* naming the peer that was just hung up on. Without a memory of the hang-up
 \* the reader dials it straight back (#2992).
 \*
-\* Correspondence with the Rust code (crates/p2p/src):
+\* Correspondence with the Rust code (crates/database/p2p/src):
 \*
 \*   | Model             | Rust                                                     |
 \*   |-------------------|----------------------------------------------------------|
