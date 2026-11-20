@@ -32,17 +32,24 @@ impl WasmLens {
         BUILD.get_or_init_racy(|| self.do_build()).clone()
     }
 
+    /// The `cargo build` that puts the module at [`Self::wasm_file_path`].
+    fn build_command(&self) -> Command {
+        let mut cmd = Command::new("cargo");
+        cmd.args([
+            "build",
+            "--target",
+            "wasm32-unknown-unknown",
+            "--manifest-path",
+        ])
+        .arg(self.source_dir.join("Cargo.toml"))
+        .arg("--target-dir")
+        .arg(self.source_dir.join("target"));
+        cmd
+    }
+
     fn do_build(&self) -> Result<(), String> {
-        let status = Command::new("cargo")
-            .args([
-                "build",
-                "--target",
-                "wasm32-unknown-unknown",
-                "--manifest-path",
-            ])
-            .arg(self.source_dir.join("Cargo.toml"))
-            .arg("--target-dir")
-            .arg(self.source_dir.join("target"))
+        let status = self
+            .build_command()
             .status()
             .map_err(|e| format!("failed to run cargo build for WASM lens: {e}"))?;
         if !status.success() {
@@ -91,4 +98,34 @@ impl WasmLens {
 /// The `set_default` lens in `tools/integration-test/test-lenses`.
 pub fn wasm_lens_defra() -> WasmLens {
     WasmLens::new(workspace_root().join("tools/integration-test/test-lenses/set_default"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #2350: an inherited `CARGO_TARGET_DIR` (VMs, agent worktrees) must not
+    /// move the module away from where the tests read it.
+    #[test]
+    fn build_ignores_an_inherited_cargo_target_dir() {
+        let lens = wasm_lens_defra();
+        let stray = lens.source_dir.join("target/stray-cargo-target-dir");
+        let _ = std::fs::remove_dir_all(&stray);
+        let status = lens
+            .build_command()
+            .env("CARGO_TARGET_DIR", &stray)
+            .status()
+            .expect("run cargo build for the WASM lens");
+        let strayed = stray
+            .join("wasm32-unknown-unknown/debug/set_default_lens.wasm")
+            .exists();
+        let _ = std::fs::remove_dir_all(&stray);
+        assert!(status.success(), "cargo build failed: {status}");
+        assert!(!strayed, "the module was built into CARGO_TARGET_DIR");
+        assert!(
+            lens.wasm_file_path().exists(),
+            "no module at {}",
+            lens.wasm_file_path().display()
+        );
+    }
 }
