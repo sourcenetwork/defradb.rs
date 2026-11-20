@@ -26,6 +26,13 @@
 \* roots. The walk down finds exactly the documents whose entries differ; the
 \* Rust tests of `diff` check that against a plain comparison of the entries.
 \*
+\* What this model leaves out. A pull is one atomic step: the responder cannot
+\* write between sending its root and the puller finishing, so "caught up"
+\* means caught up with the responder as it was at that step. Who may read what
+\* (CanRead) never changes, so a read revoked between the root reply and a
+\* leaf is not modeled. When the pull is wired (#2977) and either can happen,
+\* the step is split and those cases are checked first.
+\*
 \* Rust anchors:
 \* * `crates/foundation/prolly/src/tree.rs` `Tree::build` and `Tree::root`: the responder
 \*   builds the tree of what the puller may read on the fly, so the root it
@@ -43,7 +50,9 @@ EXTENDS Naturals, FiniteSets
 \* FreshRoot: the responder builds its root when asked, not from a cache (TRUE in GREEN).
 \* FetchChanged: the puller fetches a document whose versions differ, not only
 \* a document it lacks altogether (TRUE in GREEN).
-CONSTANTS MaxVersion, Filter, FreshRoot, FetchChanged
+\* InvalidateOnMerge: a pull that changes the puller ends every "caught up"
+\* claim made against it (TRUE in GREEN).
+CONSTANTS MaxVersion, Filter, FreshRoot, FetchChanged, InvalidateOnMerge
 
 \* The three nodes, by number.
 Nodes == 1..3
@@ -84,8 +93,12 @@ Owed(b, a) == [d \in Docs |-> IF <<a, d>> \in CanRead THEN held[b][d] ELSE {}]
 \* The root of a tree is its entries (history independence, see above).
 Root(v) == v
 
-\* The root b sends to a: built now from what it shows, or the cached one.
-SentRoot(b, a) == IF FreshRoot THEN Root(Shown(b, a)) ELSE cached[b][a]
+\* The tree b answers a with: built now from what it shows, or the cached one.
+\* The root comparison, the walk and the fetch all read this one tree.
+Sent(b, a) == IF FreshRoot THEN Shown(b, a) ELSE cached[b][a]
+
+\* The root b sends to a: the root of the tree it answers with.
+SentRoot(b, a) == Root(Sent(b, a))
 
 \* Nothing held, seen, cached or pulled yet; no writes.
 Init ==
@@ -132,23 +145,24 @@ Pull(a, b) ==
        THEN /\ pulled' = [pulled EXCEPT ![a][b] = TRUE]
             /\ UNCHANGED <<held, seen, cached, written>>
        \* Different roots: walk down to the documents whose entries differ.
-       ELSE LET differ == {d \in Docs : Shown(b, a)[d] # held[a][d]}
+       \* The walk reads the tree b sent, not b's current state.
+       ELSE LET differ == {d \in Docs : Sent(b, a)[d] # held[a][d]}
                 \* The documents a fetches: those where b has a version a
                 \* lacks, or, with the bug, only those a lacks entirely.
                 fetch == IF FetchChanged
-                           THEN {d \in differ : ~(Shown(b, a)[d] \subseteq held[a][d])}
+                           THEN {d \in differ : ~(Sent(b, a)[d] \subseteq held[a][d])}
                            ELSE {d \in differ : held[a][d] = {}}
                 \* What a holds after merging what it fetched.
-                after == [d \in Docs |-> IF d \in fetch THEN held[a][d] \cup Shown(b, a)[d]
+                after == [d \in Docs |-> IF d \in fetch THEN held[a][d] \cup Sent(b, a)[d]
                                                          ELSE held[a][d]]
             IN /\ held' = [held EXCEPT ![a] = after]
                \* a now knows of every differing document b has an entry for.
-               /\ seen' = [seen EXCEPT ![a] = @ \cup {d \in differ : Shown(b, a)[d] # {}}]
+               /\ seen' = [seen EXCEPT ![a] = @ \cup {d \in differ : Sent(b, a)[d] # {}}]
                \* The pull ends "caught up" with b; if a changed, nobody is
-               \* caught up with a any more.
+               \* caught up with a any more (unless the bug keeps old claims).
                /\ pulled' = [x \in Nodes |-> [y \in Nodes |->
                                IF x = a /\ y = b THEN TRUE
-                               ELSE IF y = a /\ after # held[a] THEN FALSE
+                               ELSE IF InvalidateOnMerge /\ y = a /\ after # held[a] THEN FALSE
                                ELSE pulled[x][y]]]
                /\ UNCHANGED <<cached, written>>
 

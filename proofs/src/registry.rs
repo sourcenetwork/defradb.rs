@@ -3754,11 +3754,15 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         // The pull is not wired into p2p yet (#2977); the model is its contract.
+        // Each pull is one atomic step and read access never changes, so
+        // "caught up" means caught up with the responder as it was at that
+        // step, and a read revoked mid-pull is not checked. `diff`'s walk is
+        // trusted here and checked by the `tests/diff.rs` proptest.
         family: "Prolly tree catch-up",
-        name: "NoLeak / PulledHolds: a pull never shows a peer a document it may not read, and a pull that ends caught up leaves the puller holding every version the responder may show it",
+        name: "NoLeak / PulledHolds: a pull never shows a peer a document it may not read, and a pull that ends caught up leaves the puller holding every version the responder could show it at that pull",
         axis: Tla,
         anchor: "crates/foundation/prolly/src/tree.rs Tree::build, Tree::root; crates/foundation/prolly/src/diff.rs diff",
-        model_ref: "MC_ProllySync_Green.cfg (GREEN) / MC_ProllySync_{Red_NoFilter,Red_StaleRoot,Red_MissingOnly}.cfg (RED)",
+        model_ref: "MC_ProllySync_Green.cfg (GREEN) / MC_ProllySync_{Red_NoFilter,Red_StaleRoot,Red_MissingOnly,Red_KeepClaim}.cfg (RED)",
         tiers: &[Boundary],
         bound_by: "",
     },
