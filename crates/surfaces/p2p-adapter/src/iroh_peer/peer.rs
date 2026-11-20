@@ -65,7 +65,7 @@ impl<S: Store + 'static> IrohPeer<S> {
         database: Arc<db::DB<S>>,
         event_bus: Arc<dyn events::Bus>,
         config: IrohPeerConfig,
-    ) -> p2p::Result<Self> {
+    ) -> p2p::Result<Arc<Self>> {
         let edge = config.edge.clone();
         edge.spawn(Self::assemble(store, database, event_bus, config))
             .await
@@ -84,7 +84,7 @@ impl<S: Store + 'static> IrohPeer<S> {
         database: Arc<db::DB<S>>,
         event_bus: Arc<dyn events::Bus>,
         config: IrohPeerConfig,
-    ) -> p2p::Result<Self> {
+    ) -> p2p::Result<Arc<Self>> {
         let IrohPeerConfig {
             endpoint,
             edge,
@@ -384,7 +384,7 @@ impl<S: Store + 'static> IrohPeer<S> {
         };
 
         tracing::info!(peer_id = %local_peer_id, "iroh peer started");
-        Ok(Self {
+        let peer = Arc::new(Self {
             shutdown: IrohPeerShutdown::new(
                 transport.clone(),
                 coordinator.shutdown_handle(),
@@ -405,7 +405,8 @@ impl<S: Store + 'static> IrohPeer<S> {
             local_peer_id,
             #[cfg(not(target_arch = "wasm32"))]
             se_correlator,
-        })
+        });
+        Ok(peer)
     }
 
     /// Bind the KMS built after the peer.
