@@ -66,6 +66,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
             self.retry_inputs.as_ref(),
         )
         .await
+        .map_err(|error| self.access_check_failure(error, |error| error))
     }
 
     /// Execute a GraphQL mutation and return JSON results.
@@ -360,7 +361,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
                     .acp
                     .check_doc_access(identity, permission, policy_id, resource_name, doc_id)
                     .await
-                    .map_err(|error| QueryError::execution(error.to_string()))?;
+                    .map_err(QueryError::from_acp)?;
                 let Some(inputs) = prepared_inputs else {
                     return Ok(allowed);
                 };
@@ -502,7 +503,11 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
                                     strict_attempt,
                                 )
                                 .await
-                                .map_err(|error| preserve_acp_input_error("read", doc_id, error))?;
+                                .map_err(|error| {
+                                    self.access_check_failure(error, |error| {
+                                        preserve_acp_input_error("read", doc_id, error)
+                                    })
+                                })?;
 
                             if !can_read {
                                 // Document is invisible to this identity -- skip silently
@@ -521,9 +526,10 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
                                     strict_attempt,
                                 )
                                 .await
-                                .map_err(|error| match error {
-                                    error @ QueryError::NeedsInput(_) => error,
-                                    error => QueryError::acp_check_failed("update", doc_id, error),
+                                .map_err(|error| {
+                                    self.access_check_failure(error, |error| {
+                                        QueryError::acp_check_failed("update", doc_id, error)
+                                    })
                                 })?;
 
                             if !can_update {
@@ -559,7 +565,11 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
                                     strict_attempt,
                                 )
                                 .await
-                                .map_err(|error| preserve_acp_input_error("read", doc_id, error))?;
+                                .map_err(|error| {
+                                    self.access_check_failure(error, |error| {
+                                        preserve_acp_input_error("read", doc_id, error)
+                                    })
+                                })?;
 
                             if !can_read {
                                 // Document is invisible to this identity -- skip silently
@@ -578,9 +588,10 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
                                     strict_attempt,
                                 )
                                 .await
-                                .map_err(|error| match error {
-                                    error @ QueryError::NeedsInput(_) => error,
-                                    error => QueryError::acp_check_failed("delete", doc_id, error),
+                                .map_err(|error| {
+                                    self.access_check_failure(error, |error| {
+                                        QueryError::acp_check_failed("delete", doc_id, error)
+                                    })
                                 })?;
 
                             if !can_delete {

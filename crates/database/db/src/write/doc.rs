@@ -262,7 +262,13 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         context: &RequestContext,
         requests: Vec<query::prepared::PreparedInputRequest>,
     ) -> query::error::Result<Vec<Arc<[u8]>>> {
-        crate::write::prepare::resolve_inputs(&self.db, context, requests).await
+        crate::write::prepare::resolve_inputs_with_projection(
+            &self.db,
+            context,
+            &self.prepared_inputs,
+            requests,
+        )
+        .await
     }
 
     fn set_document_acp(&self, provider: Arc<dyn acp::DocumentACP>) {
@@ -300,7 +306,8 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
 
         let (collection, datastore, systemstore, index_manager) =
             get_collection_with_index_manager(&*self.shared_txn()?, collection_name).await?;
-        let datastore = datastore.with_projection_actor(context.identity());
+        let datastore =
+            crate::txn::bind_projection(datastore, context, Some(&self.prepared_inputs));
         self.db
             .check_node_access_in_txn(
                 context,
@@ -401,7 +408,8 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
 
         let (collection, datastore, systemstore, index_manager) =
             get_collection_with_index_manager(&*self.shared_txn()?, collection_name).await?;
-        let datastore = datastore.with_projection_actor(context.identity());
+        let datastore =
+            crate::txn::bind_projection(datastore, context, Some(&self.prepared_inputs));
         self.db
             .check_node_access_in_txn(
                 context,
@@ -450,6 +458,10 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
                 .await
                 .map_err(crate::error::commit_query_error)?
         {
+            datastore
+                .project_document(collection_name, &canonical_doc_id.to_string())
+                .await
+                .map_err(|error| crate::error::index_write_query_error("update", error.into()))?;
             return Ok(UpdateResult::new(doc, 0));
         }
 
@@ -546,7 +558,8 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
 
         let (collection, datastore, systemstore, index_manager) =
             get_collection_with_index_manager(&*self.shared_txn()?, collection_name).await?;
-        let datastore = datastore.with_projection_actor(context.identity());
+        let datastore =
+            crate::txn::bind_projection(datastore, context, Some(&self.prepared_inputs));
         self.db
             .check_node_access_in_txn(
                 context,

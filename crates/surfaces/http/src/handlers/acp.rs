@@ -48,17 +48,34 @@ impl From<&acp::Policy> for PolicyInfo {
     }
 }
 
-/// Add a DAC policy. Go's `acpHandler.AddDACPolicy`.
+/// The add-policy route's query: the caller's nonce, which a remote ACP
+/// (vera.rs) derives the policy ID from. Go sends none.
+#[derive(Debug, Default, Deserialize)]
+pub struct AddPolicyQuery {
+    /// 64 hexadecimal characters.
+    #[serde(default)]
+    pub nonce: Option<String>,
+}
+
+/// Add a DAC policy. Go's `acpHandler.AddDACPolicy`, with an optional
+/// `?nonce=` the remote ACP derives the ID from; sent again with the same
+/// nonce, the request returns the same policy and makes no second one.
 ///
 /// POST /api/v1/acp/document/policy
 pub async fn add_policy(
     State(state): State<AppState>,
     identity: ExtractIdentity,
+    axum::extract::Query(query): axum::extract::Query<AddPolicyQuery>,
     body: String,
 ) -> Result<Json<AddPolicyResponse>, HttpError> {
+    let nonce = query
+        .nonce
+        .map(|nonce| nonce.parse::<acp::PolicyNonce>())
+        .transpose()
+        .map_err(|e| HttpError::BadRequest(e.to_string()))?;
     let policy_id = state
         .executor
-        .add_dac_policy_as(&identity.context(), &body)
+        .add_dac_policy_as(&identity.context(), &body, nonce)
         .await?;
     Ok(Json(AddPolicyResponse { policy_id }))
 }
@@ -438,6 +455,51 @@ pub struct DocRelationshipsQuery {
     pub collection: String,
     #[serde(rename = "docID", alias = "doc_id")]
     pub doc_id: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct DocActorRelationshipQuery {
+    pub collection: String,
+    #[serde(rename = "docID")]
+    pub doc_id: String,
+    pub relation: String,
+    #[serde(rename = "targetActor")]
+    pub target: String,
+}
+
+pub async fn observe_doc_actor_relationship(
+    State(state): State<AppState>,
+    identity: ExtractIdentity,
+    axum::extract::Query(query): axum::extract::Query<DocActorRelationshipQuery>,
+) -> Result<Json<bool>, HttpError> {
+    let requestor = identity
+        .did()
+        .ok_or_else(|| HttpError::Unauthorized("identity required for document ACP".into()))?;
+    if [
+        &query.collection,
+        &query.doc_id,
+        &query.relation,
+        &query.target,
+    ]
+    .iter()
+    .any(|value| value.is_empty())
+    {
+        return Err(HttpError::BadRequest(
+            "collection, docID, relation and targetActor are required".into(),
+        ));
+    }
+    let doc_acp = bound(state.require_doc_acp()?, &identity.context());
+    doc_acp
+        .observe_doc_actor_relationship(
+            requestor,
+            &query.collection,
+            &query.doc_id,
+            &query.relation,
+            &query.target,
+        )
+        .await
+        .map(Json)
+        .map_err(http_error_from_backend_message)
 }
 
 /// List a document's ACP relationships.

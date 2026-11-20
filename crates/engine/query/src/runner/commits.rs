@@ -197,9 +197,8 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                             doc_id,
                         )
                         .await
-                        .map_err(|error| match error {
-                            error @ QueryError::NeedsInput(_) => error,
-                            error => QueryError::commit_access_check_failed(error),
+                        .map_err(|error| {
+                            self.access_check_failure(error, QueryError::commit_access_check_failed)
                         })?,
                     Some(collection) => match &collection.policy {
                         None => true,
@@ -216,9 +215,8 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                             self.retry_inputs.as_ref(),
                         )
                         .await
-                        .map_err(|error| match error {
-                            error @ QueryError::NeedsInput(_) => error,
-                            error => QueryError::commit_access_check_failed(error),
+                        .map_err(|error| {
+                            self.access_check_failure(error, QueryError::commit_access_check_failed)
                         })?,
                     },
                 };

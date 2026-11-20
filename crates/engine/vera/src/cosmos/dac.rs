@@ -16,7 +16,9 @@ use acp::{DocumentACP, DocumentPermission, Identity, Result, Subject};
 
 use crate::access_cache::AccessCache;
 use crate::decisions::{DecisionKey, RemoteDecisions};
-use crate::provider::{AcpLightClientStatus, ProviderError, SubjectRef, VeraProvider};
+use crate::provider::{
+    AcpLightClientStatus, ActorRelationshipQuery, ProviderError, SubjectRef, VeraProvider,
+};
 use crate::{PolicyAction, PolicyCommand, PolicySubject};
 
 /// DocumentACP backed by Vera's on-chain x/acp module.
@@ -143,14 +145,30 @@ impl VeraDocumentACP {
         self.provider.self_did()
     }
 
-    /// Create a policy on Vera. Returns the policy ID.
+    /// Create a policy on Vera, its ID derived from `nonce` where the
+    /// provider derives one. Returns the policy ID.
+    ///
+    /// The provider creates as its own actor, which owns the policy. A
+    /// nonce names the policy that actor gets, so one supplied by another
+    /// caller is refused: the ID that caller computed from its own DID is
+    /// not the one it would get. Without a nonce any permitted caller adds
+    /// a policy the actor owns.
     pub async fn add_policy(
         &self,
-        _creator_did: &str,
+        creator_did: &str,
         policy_yaml: &str,
+        nonce: Option<acp::PolicyNonce>,
     ) -> std::result::Result<String, ProviderError> {
+        if let (Some(_), Some(actor)) = (nonce, self.provider.self_did()) {
+            if !crate::vera_rs::did_spelling::same_actor(creator_did, &actor) {
+                return Err(ProviderError::Config(format!(
+                    "a policy nonce names the policy the node's actor {actor} creates; \
+                     {creator_did} is not that actor"
+                )));
+            }
+        }
         let yaml = policy_yaml.to_owned();
-        self.remote(move |provider| async move { provider.create_policy(&yaml).await })
+        self.remote(move |provider| async move { provider.create_policy(&yaml, nonce).await })
             .await
     }
 
@@ -371,6 +389,9 @@ fn owned<const N: usize>(parts: [&str; N]) -> [String; N] {
 fn provider_err(error: impl std::borrow::Borrow<ProviderError>) -> acp::Error {
     match error.borrow() {
         ProviderError::Unavailable(reason) => acp::Error::ProviderUnavailable(reason.clone()),
+        ProviderError::RelationshipObservationDenied => acp::Error::NotManager {
+            operation: "observe relationship".into(),
+        },
         other => acp::Error::Storage(format!("Vera: {other}")),
     }
 }
@@ -378,8 +399,13 @@ fn provider_err(error: impl std::borrow::Borrow<ProviderError>) -> acp::Error {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl acp::RemotePolicies for VeraDocumentACP {
-    async fn add_policy(&self, creator: &str, policy: &str) -> std::result::Result<String, String> {
-        VeraDocumentACP::add_policy(self, creator, policy)
+    async fn add_policy(
+        &self,
+        creator: &str,
+        policy: &str,
+        nonce: Option<acp::PolicyNonce>,
+    ) -> std::result::Result<String, String> {
+        VeraDocumentACP::add_policy(self, creator, policy, nonce)
             .await
             .map_err(|e| e.to_string())
     }
@@ -468,6 +494,39 @@ impl DocumentACP for VeraDocumentACP {
 
     async fn submit_owed_change(&self, change: &acp::OwedChange) -> acp::Submission {
         owed::submit(self, change).await
+    }
+
+    async fn observe_actor_relationship(
+        &self,
+        observation: acp::ActorRelationshipObservation<'_>,
+    ) -> Result<bool> {
+        if observation.requester.is_wildcard() || observation.target.is_wildcard() {
+            return Err(acp::Error::PermissionDenied(
+                "an explicit actor DID is required".into(),
+            ));
+        }
+        let [requester, actor, policy, resource, object, relation] = owned([
+            observation.requester.as_str(),
+            observation.target.as_str(),
+            observation.policy,
+            observation.resource,
+            observation.document,
+            observation.relation,
+        ]);
+        self.remote(move |provider| async move {
+            provider
+                .query_actor_relationship(ActorRelationshipQuery {
+                    requester: &requester,
+                    actor: &actor,
+                    policy: &policy,
+                    resource: &resource,
+                    object: &object,
+                    relation: &relation,
+                })
+                .await
+        })
+        .await
+        .map_err(provider_err)
     }
 
     /// The provider's journal, when its worker keeps one, behind this ACP

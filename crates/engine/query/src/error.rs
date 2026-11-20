@@ -44,6 +44,11 @@ pub enum TransactionError {
     /// The transaction registry lock is poisoned (indicates a panic elsewhere).
     #[error("lock poisoned: {0}")]
     LockPoisoned(String),
+
+    /// A step needs a remote input fetched at the network edge: its
+    /// statement was undone, and it runs again once the input is answered.
+    #[error("a prepared input is required")]
+    NeedsInput(crate::prepared::PreparedInputRequest),
 }
 
 impl TransactionError {
@@ -101,6 +106,8 @@ impl TransactionError {
     /// - `Conflict`: Retryable - another commit won a write conflict.
     /// - `LockPoisoned`: Not retryable - indicates a panic occurred and the system
     ///   may be in a corrupted state.
+    /// - `NeedsInput`: Not retryable as it is - the turn runs again only once
+    ///   its caller has answered the input.
     pub fn is_retryable(&self) -> bool {
         match self {
             Self::NotFound(_) => false,
@@ -111,6 +118,7 @@ impl TransactionError {
             Self::Storage(source) => source.is_retriable(),
             Self::Conflict(_) => true,
             Self::LockPoisoned(_) => false,
+            Self::NeedsInput(_) => false,
         }
     }
 }
@@ -180,6 +188,19 @@ pub enum QueryError {
     /// Engine-owned retries reached their limit; this request is final.
     #[error("{0}")]
     TransactionRetryExhausted(String),
+
+    /// The document ACP provider could not be reached or did not answer in
+    /// time, after its own waits. Nothing is known about what was asked.
+    #[error("{0}")]
+    AcpProviderUnavailable(String),
+
+    /// A strict read (`RequestContext::with_strict_access_reads`) met a
+    /// document whose access check could not be answered, and returns no
+    /// rows rather than fewer than the caller may read. It names nothing
+    /// about that document. `retryable` when the provider was unavailable or
+    /// late: the same read may answer later.
+    #[error("access check unavailable: a document's access could not be checked, so the read returned nothing")]
+    AccessCheckUnavailable { retryable: bool },
 
     /// A transaction attempt needs a remote input. The caller must end the
     /// attempt, resolve this exact request outside the transaction, memoize
@@ -317,6 +338,16 @@ impl QueryError {
     /// Create an execution error
     pub fn execution(msg: impl Into<String>) -> Self {
         Self::Execution(msg.into())
+    }
+
+    /// A document ACP error as a query error: an unavailable provider stays
+    /// [`Self::AcpProviderUnavailable`], so a caller can tell late from
+    /// wrong; anything else is an execution error with the ACP's words.
+    pub fn from_acp(error: acp::Error) -> Self {
+        match error {
+            acp::Error::ProviderUnavailable(_) => Self::AcpProviderUnavailable(error.to_string()),
+            other => Self::Execution(other.to_string()),
+        }
     }
 
     /// Create a retryable transaction conflict error.

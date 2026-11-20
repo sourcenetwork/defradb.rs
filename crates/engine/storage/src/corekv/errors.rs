@@ -159,6 +159,28 @@ pub enum Error {
     /// Used for errors that don't fit other categories.
     #[error("{0}")]
     Other(String),
+
+    #[error("projection requires a prepared ACP observation")]
+    ProjectionAcpInput(ProjectionAcpInput),
+}
+
+#[derive(Clone, PartialEq)]
+pub struct ProjectionAcpInput(Vec<u8>);
+
+impl ProjectionAcpInput {
+    pub fn new(request: Vec<u8>) -> Self {
+        Self(request)
+    }
+
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.0
+    }
+}
+
+impl std::fmt::Debug for ProjectionAcpInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ProjectionAcpInput([redacted])")
+    }
 }
 
 impl Error {

@@ -375,6 +375,7 @@ fn owner_visibility_distinguishes_public_rows_from_denied_and_missing_rows() {
 /// skipping it.
 fn lake_runs() -> bool {
     let runs = std::process::Command::new("lake")
+        .current_dir(lean_project())
         .arg("--version")
         .output()
         .is_ok_and(|output| output.status.success());
@@ -385,16 +386,14 @@ fn lake_runs() -> bool {
     runs
 }
 
+/// The Lean project: `lake` picks its toolchain from the directory it runs in.
+fn lean_project() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../proofs/lean")
+}
+
 fn modeled_access(mode: &str, facts: [bool; 13]) -> super::DocumentAccessDecision {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
     let output = std::process::Command::new("lake")
-        .current_dir(root.join("proofs/lean"))
+        .current_dir(lean_project())
         .args(["env", "lean", "--run", "AccessOracle.lean", mode])
         .args(facts.map(|value| if value { "1" } else { "0" }))
         .output()

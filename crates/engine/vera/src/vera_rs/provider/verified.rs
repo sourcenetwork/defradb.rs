@@ -171,9 +171,23 @@ where
 
 fn overtaken<E>(error: &E) -> bool
 where
-    E: Display,
+    E: AsRef<dyn Error + Send + Sync + 'static> + Display,
 {
     error.to_string().starts_with(OVERTAKEN)
+        || matches!(
+            error.as_ref().downcast_ref::<crate::ProviderError>(),
+            Some(crate::ProviderError::ProofsOvertaken(_))
+        )
+}
+
+/// Whether a read failed late, not wrong: overtaken by a newer block, refused
+/// at a stale revision, or answered with the node's busy code. A read that
+/// still fails so after [`verified`]'s waits did not get its answer in time.
+pub(super) fn late<E>(error: &E) -> bool
+where
+    E: AsRef<dyn Error + Send + Sync + 'static> + Display,
+{
+    overtaken(error) || stale(error) || busy(error.as_ref())
 }
 
 /// Whether the light client refused to read at a stale revision.

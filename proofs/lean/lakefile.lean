@@ -19,6 +19,9 @@ lean_lib EmbeddedSigner where
 lean_lib VeraActorSpelling where
 
 @[default_target]
+lean_lib VeraPolicyNonce where
+
+@[default_target]
 lean_lib VeraDelegationSigner where
 
 @[default_target]
@@ -280,6 +283,18 @@ lean_lib DeferredMerges where
 lean_lib AdministrativeRelationship where
 
 @[default_target]
+lean_lib ProjectionRelationship where
+
+@[default_target]
+lean_lib ExactRelationshipObservation where
+
+@[default_target]
+lean_lib EnrollmentGenesis where
+
+@[default_target]
+lean_lib OwedStagingAuthority where
+
+@[default_target]
 lean_lib CommitConflictReceipt where
 
 @[default_target]
@@ -341,3 +356,6 @@ lean_lib OwedLive where
 
 @[default_target]
 lean_lib RemoteOwnerAnswer where
+
+@[default_target]
+lean_lib StrictAccessRule where

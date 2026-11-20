@@ -13,6 +13,8 @@ use storage::corekv::Store;
 use storage::{RegolithStore, RegolithStoreOptions};
 use telemetry::ConflictMetricsSnapshot;
 
+#[path = "projector.rs"]
+mod projector;
 #[cfg(test)]
 #[path = "verification_tests.rs"]
 mod verification_tests;
@@ -109,6 +111,9 @@ impl Fixture {
                 .unwrap(),
         );
         let db = Arc::new(DB::open_from_arc(store.clone()).await.unwrap());
+        if projector::requested() {
+            projector::install(&db);
+        }
         let collection = CollectionVersion::new(
             COLLECTION,
             "write-baseline-v1",

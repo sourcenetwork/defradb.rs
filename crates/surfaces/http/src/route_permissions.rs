@@ -202,6 +202,7 @@ pub fn route_permission(path: &str, method: &Method) -> RoutePermission {
         // Reads the documents in the caller's transaction, as a query does.
         "/api/v0/acp/document/is-owner" => RoutePermission::Required(NodePermission::DocumentRead),
         "/api/v0/acp/document/relationship" => match *method {
+            Method::GET => RoutePermission::Dynamic,
             Method::POST => RoutePermission::Required(NodePermission::DacRelationAdd),
             Method::DELETE => RoutePermission::Required(NodePermission::DacRelationDelete),
             _ => RoutePermission::Required(NodePermission::DacRelationAdd),

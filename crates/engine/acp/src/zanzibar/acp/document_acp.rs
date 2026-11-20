@@ -321,6 +321,81 @@ impl<S: ZanzibarStore + ?Sized + 'static> DocumentACP for ZanzibarDocumentACP<S>
         Ok(relationships)
     }
 
+    async fn observe_actor_relationship(
+        &self,
+        observation: crate::ActorRelationshipObservation<'_>,
+    ) -> Result<bool> {
+        if observation.requester.is_wildcard() || observation.target.is_wildcard() {
+            return Err(Error::PermissionDenied(
+                "an explicit actor DID is required".into(),
+            ));
+        }
+        if let Some(scope) = self.store.begin_scope(true).await? {
+            let scoped = self.scoped(scope.store());
+            let result = scoped.observe_actor_relationship(observation).await?;
+            drop(scoped);
+            scope.commit().await?;
+            return Ok(result);
+        }
+        // Authority comes first: a caller who may not manage the relation
+        // learns nothing, not even whether the document is registered.
+        match self
+            .check_manage_relation(
+                observation.requester,
+                observation.policy,
+                observation.resource,
+                observation.document,
+                observation.relation,
+                "observe",
+            )
+            .await
+        {
+            Ok(()) => {}
+            Err(Error::NotOwner { .. } | Error::NotManager { .. }) => {
+                return Err(Error::NotManager {
+                    operation: "observe relationship".into(),
+                });
+            }
+            Err(error) => return Err(error),
+        }
+        if !self
+            .is_doc_registered(
+                observation.policy,
+                observation.resource,
+                observation.document,
+            )
+            .await?
+        {
+            return Err(Error::DocumentNotRegistered(
+                observation.document.to_owned(),
+            ));
+        }
+        let policy = self
+            .store
+            .get_policy(observation.policy)
+            .await?
+            .ok_or_else(|| Error::PolicyNotFound(observation.policy.to_owned()))?;
+        if policy
+            .get_relation(observation.resource, observation.relation)
+            .is_none()
+        {
+            return Err(Error::RelationNotFound {
+                resource: observation.resource.to_owned(),
+                relation: observation.relation.to_owned(),
+            });
+        }
+        Ok(self
+            .store
+            .has_relationship(
+                observation.policy,
+                observation.resource,
+                observation.document,
+                observation.relation,
+                &Subject::entity(observation.target.clone()),
+            )
+            .await?)
+    }
+
     async fn check_named_permission(
         &self,
         subject: &Did,
