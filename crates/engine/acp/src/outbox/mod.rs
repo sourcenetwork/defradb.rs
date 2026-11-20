@@ -36,8 +36,8 @@ mod report;
 mod staging;
 mod submission;
 
-pub(crate) use ops::tuple_state;
-pub use ops::tuple_unsettled_in;
+pub(crate) use ops::tuple_rest;
+pub use ops::{tuple_head, tuple_unsettled_in};
 
 pub use changes::{
     OwedChanges, StagedCount, MAX_OWED_CHANGES_PER_TRANSACTION, MAX_UNSETTLED_OWED_CHANGES,

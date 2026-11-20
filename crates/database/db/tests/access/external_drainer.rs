@@ -717,9 +717,9 @@ fn a_marked_change_is_sent_by_a_provider_without_a_journal() {
 }
 
 /// An exact observation of a tuple whose change the drainer marked in
-/// flight is refused at the gate: the change is unsettled until its request
-/// is decided, and the provider's answer could predate it. Once settled, the
-/// observation goes on to the provider.
+/// flight waits for it, and is refused once its patience is spent with the
+/// request still undecided: the provider's answer could predate the change.
+/// Once settled, the observation goes on to the provider.
 #[test]
 fn an_exact_observation_waits_for_a_change_marked_in_flight() {
     workers::block_on(async {
@@ -743,8 +743,14 @@ fn an_exact_observation_waits_for_a_change_marked_in_flight() {
                     relation: "reader",
                 })
         };
+        let started = std::time::Instant::now();
         assert!(
             matches!(observe().await, Err(acp::Error::ProviderUnavailable(reason)) if reason == "relationship change is unsettled")
+        );
+        assert!(
+            started.elapsed() >= acp::OBSERVATION_PATIENCE,
+            "refused after {:?}, before its patience",
+            started.elapsed()
         );
 
         let restarted = staging.restarted();
