@@ -38,7 +38,8 @@ caller that supplies the nonce (`VeraProvider::create_policy`,
 `policy add --nonce`) knows the ID beforehand (`vera_rs::predict_policy_id`):
 a create sent again with that nonce is refused as already existing, and the
 provider returns the existing policy when its definition, owner and nonce are
-the ones asked for, so no second policy is made. Without a nonce the provider
+the ones asked for, so no second policy is made. The ID comes from the node's
+actor, so a nonce from a caller that is not that actor is refused. Without a nonce the provider
 draws one per call, and a retried create makes another policy. Replicas sharing
 an actor identity retain independent worker identities and submission
 sequences.

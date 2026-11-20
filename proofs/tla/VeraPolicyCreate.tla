@@ -6,7 +6,8 @@
 \* policy already there is kept.
 \*
 \* Who acts:
-\*   - each request: a creator (the node's actor), a definition, and either a
+\*   - each request: the identity that asks (the caller), the node's actor
+\*     the provider signs as (the creator), a definition, and either a
 \*     nonce its caller supplied or none, in which case the provider draws one
 \*     from the operating system's randomness, once for the request;
 \*   - the network: a submission may never reach vera.rs, and the answer to
@@ -26,7 +27,10 @@
 \*   - a request is refused although its own policy, as it asked for it, is
 \*     there (a lost answer, then "already exists" read as a failure);
 \*   - another creator's policy blocks a request (the creator is part of the
-\*     id, so two creators never meet on one id).
+\*     id, so two creators never meet on one id);
+\*   - a caller that supplied its nonce gets back an id derived from another
+\*     creator than itself (the node's actor), so the id it computed is not
+\*     the one it got and a policy seeded under it is never found.
 \*
 \* Code it models:
 \*   crates/engine/vera/src/vera_rs/provider/create_policy.rs
@@ -36,6 +40,7 @@
 \*   crates/engine/vera/src/vera_rs/provider/submission.rs
 \*     VeraRsProvider::confirm_tx            a send whose refusal is returned
 \*   crates/engine/vera/src/cosmos/dac.rs VeraDocumentACP::add_policy
+\*                                          the "caller" guard
 \*   vera.rs vera_client::predict_policy_id  the id itself (abstract here)
 EXTENDS Naturals, FiniteSets   \* numbers, and counting the policies a request made
 
@@ -52,16 +57,19 @@ CONSTANTS
 \*   "adopt"    "already exists" is answered by reading the policy there;
 \*   "check"    the policy read is adopted only if it is the request's own
 \*              definition and creator;
-\*   "creator"  the creator is part of the id.
-ASSUME Enforced \subseteq {"reuse", "adopt", "check", "creator"}
+\*   "creator"  the creator is part of the id;
+\*   "caller"   a caller's own nonce is taken only from the node's actor.
+ASSUME Enforced \subseteq {"reuse", "adopt", "check", "creator", "caller"}
 \* A request is sent at least once.
 ASSUME MaxSends \in Nat /\ MaxSends >= 1
 
 \* No nonce: the caller left it to the provider.
 NoNonce == "none"
 
-\* What a request asks: its creator, its definition and its caller's nonce.
-Asks == [creator : Creators, def : Defs, supplied : Nonces \cup {NoNonce}]
+\* What a request asks: who asks, the creator the provider signs as, its
+\* definition and its caller's nonce.
+Asks == [caller : Creators, creator : Creators, def : Defs,
+         supplied : Nonces \cup {NoNonce}]
 
 \* The id vera.rs gives a definition, nonce and creator. Without the
 \* "creator" guard it leaves the creator out.
@@ -104,7 +112,7 @@ TypeOK ==
   /\ ask \in [Requests -> Asks]
   /\ nonce \in [Requests -> Nonces \cup {NoNonce}]
   /\ sends \in [Requests -> 0..MaxSends]
-  /\ status \in [Requests -> {"idle", "sending", "done", "refused"}]
+  /\ status \in [Requests -> {"idle", "sending", "done", "refused", "mismatch"}]
   /\ made \in [Requests -> SUBSET (Defs \X Nonces \X (Creators \cup {"anyone"}))]
 
 \* Any requests can arrive, and the deployment may start with one seeded
@@ -120,10 +128,26 @@ Init ==
      \/ \E d \in Defs, n \in Nonces, c \in Creators : chain = {Record(d, n, c)}
   /\ made = [r \in Requests |-> {}]
 
+\* A caller's own nonce names the policy its creator gets, and the provider
+\* creates as the node's actor: with the "caller" guard a caller that is not
+\* that actor and supplied a nonce is refused before anything is sent.
+Mismatched(r) ==
+  /\ "caller" \in Enforced
+  /\ ask[r].supplied # NoNonce
+  /\ ask[r].caller # ask[r].creator
+
+\* The refusal of a mismatched request: nothing is sent.
+Mismatch(r) ==
+  /\ status[r] = "idle"
+  /\ Mismatched(r)
+  /\ status' = [status EXCEPT ![r] = "mismatch"]
+  /\ UNCHANGED <<ask, nonce, sends, result, seen, chain, made>>
+
 \* A request starts with its caller's nonce, or one the provider draws: any
 \* nonce may come out of the draw.
 Start(r) ==
   /\ status[r] = "idle"
+  /\ ~Mismatched(r)
   /\ status' = [status EXCEPT ![r] = "sending"]
   /\ IF ask[r].supplied # NoNonce
        THEN nonce' = [nonce EXCEPT ![r] = ask[r].supplied]
@@ -191,7 +215,7 @@ Edit ==
 
 \* Each step is one of these.
 Next ==
-  \/ \E r \in Requests : Start(r) \/ SendLost(r) \/ SendExecuted(r)
+  \/ \E r \in Requests : Mismatch(r) \/ Start(r) \/ SendLost(r) \/ SendExecuted(r)
   \/ Edit
 
 \* Requests start in Init and then only take these steps.
@@ -217,4 +241,11 @@ INV_NoRefusalOfOwn ==
 INV_NoForeignBlock ==
   \A r \in Requests :
     status[r] = "refused" => seen[r].owner = ask[r].creator
+
+\* A caller that supplied its own nonce gets back the id its own DID, the
+\* definition and that nonce derive: the one it computed beforehand.
+INV_SuppliedIdIsCallers ==
+  \A r \in Requests :
+    (status[r] = "done" /\ ask[r].supplied # NoNonce) =>
+      result[r] = Id(ask[r].def, ask[r].supplied, ask[r].caller)
 ====

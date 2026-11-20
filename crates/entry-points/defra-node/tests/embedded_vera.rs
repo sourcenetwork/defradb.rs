@@ -343,6 +343,15 @@ fn a_node_adopts_a_policy_its_vera_node_was_seeded_with() {
             .add_dac_policy_with_counter_as(&context, POLICY, 0)
             .await
             .is_err());
+        // The node creates as its actor, so another caller's nonce would name
+        // a policy derived from the actor's DID, not the caller's own.
+        let as_stranger =
+            defra_core::RequestContext::default().with_identity(Some(STRANGER.into()));
+        let refused = first
+            .add_dac_policy_with_nonce_as(&as_stranger, POLICY, seeded.nonce)
+            .await
+            .expect_err("a nonce from a caller that is not the node's actor");
+        assert!(refused.to_string().contains("node's actor"), "{refused}");
         first
             .document_acp()
             .register_doc_object(&owner, &adopted, "users", "first")

@@ -147,12 +147,26 @@ impl VeraDocumentACP {
 
     /// Create a policy on Vera, its ID derived from `nonce` where the
     /// provider derives one. Returns the policy ID.
+    ///
+    /// The provider creates as its own actor, which owns the policy. A
+    /// nonce names the policy that actor gets, so one supplied by another
+    /// caller is refused: the ID that caller computed from its own DID is
+    /// not the one it would get. Without a nonce any permitted caller adds
+    /// a policy the actor owns.
     pub async fn add_policy(
         &self,
-        _creator_did: &str,
+        creator_did: &str,
         policy_yaml: &str,
         nonce: Option<acp::PolicyNonce>,
     ) -> std::result::Result<String, ProviderError> {
+        if let (Some(_), Some(actor)) = (nonce, self.provider.self_did()) {
+            if !crate::vera_rs::did_spelling::same_actor(creator_did, &actor) {
+                return Err(ProviderError::Config(format!(
+                    "a policy nonce names the policy the node's actor {actor} creates; \
+                     {creator_did} is not that actor"
+                )));
+            }
+        }
         let yaml = policy_yaml.to_owned();
         self.remote(move |provider| async move { provider.create_policy(&yaml, nonce).await })
             .await

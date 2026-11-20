@@ -541,6 +541,7 @@ RUNS=(
   "MC_VeraPolicyCreate_Red_Adopt.cfg VeraPolicyCreate.tla RED" # "already exists" taken as a failure: a lost answer fails the request (INV_NoRefusalOfOwn)
   "MC_VeraPolicyCreate_Red_Check.cfg VeraPolicyCreate.tla RED" # any policy under the id adopted: an edited one is handed back (INV_ReturnedIsOwn)
   "MC_VeraPolicyCreate_Red_Creator.cfg VeraPolicyCreate.tla RED" # the creator left out of the id: another creator's policy blocks the request (INV_NoForeignBlock)
+  "MC_VeraPolicyCreate_Red_Caller.cfg VeraPolicyCreate.tla RED" # a nonce taken from a caller that is not the node's actor: its id comes from the actor's DID (INV_SuppliedIdIsCallers)
   "MC_AddViewTransform_Green.cfg AddViewTransform.tla GREEN" # #2724: target design, NAC and the lens config both decided in the view's transaction; the accepted CID is stored as asked
   "MC_AddViewTransform_Red_NoEmpty.cfg AddViewTransform.tla RED" # empty-CID check left out (INV_NoEmptyTransform)
   "MC_AddViewTransform_Red_NoLens.cfg AddViewTransform.tla RED" # lens check left out (INV_StoredTransformExists)

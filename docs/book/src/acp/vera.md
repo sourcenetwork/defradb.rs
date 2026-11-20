@@ -18,7 +18,8 @@ archive objects, set and delete relationships, check access. Two implementations
 **Policy IDs.** vera.rs names a policy by its definition, its creator and a 32-byte
 nonce the creator picks: `SHA-256("acp/policy-id/v2" || policy hash || nonce ||
 u64be(len(creator)) || creator)`. One definition by two creators gets two IDs, and one
-creator gets a new ID for each nonce. The node's actor is the creator. A caller that
+creator gets a new ID for each nonce. The node's actor is the creator, so a nonce from a
+caller that is not that actor is refused: its ID would come from the actor's DID. A caller that
 supplies the nonce (`Node::add_dac_policy_with_nonce_as`, `?nonce=<64 hex>` on
 `POST /api/v0/acp/document/policy`, `defradb client acp document policy add --nonce`)
 knows the ID before the policy exists (`vera::vera_rs::predict_policy_id`,
