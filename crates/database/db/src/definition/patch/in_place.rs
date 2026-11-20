@@ -82,6 +82,25 @@ impl<S: Store> crate::database::DB<S> {
             }
         }
         if new_schema.is_active || old_schema.is_active {
+            let removed_transform = old_schema
+                .previous_version
+                .as_ref()
+                .and_then(|previous| previous.transform.as_ref())
+                .is_some()
+                && new_schema
+                    .previous_version
+                    .as_ref()
+                    .and_then(|previous| previous.transform.as_ref())
+                    .is_none();
+            if is_transform_only_change && removed_transform && !new_schema.indexes.is_empty() {
+                crate::definition::migration::owe_reindex(
+                    &txn.systemstore()?,
+                    &self.collections,
+                    new_schema.collection_id.as_str(),
+                    None,
+                )
+                .await?;
+            }
             let cached_collection = match new_schema.is_active {
                 true => Some(
                     Collection::load_index_actions(new_schema.clone(), &txn.systemstore()?).await?,
