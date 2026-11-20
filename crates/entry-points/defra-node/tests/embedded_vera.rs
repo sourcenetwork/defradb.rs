@@ -34,6 +34,9 @@ mod settle_before_observing;
 #[path = "embedded_vera/rpc_port.rs"]
 mod rpc_port;
 
+#[path = "embedded_vera/strict_reads.rs"]
+mod strict_reads;
+
 #[cfg(feature = "http")]
 #[path = "embedded_vera/verified_edit.rs"]
 mod verified_edit;
