@@ -20,6 +20,16 @@ pub type IrohBlockstore<S> = blockstore::DefraBlockstore<S>;
 pub type IrohCoordinator<S> = p2p::sync::IrohSyncCoordinator<IrohBlockstore<S>>;
 pub type IrohReplicationStack<S> = db::merge::ReplicationStack<S, IrohBlockstore<S>, IrohTransport>;
 
+#[cfg(feature = "kms")]
+struct KeyArrivalPromoter<S: storage::Store + 'static>(Arc<IrohCoordinator<S>>);
+
+#[cfg(feature = "kms")]
+impl<S: Store + 'static> kms::KeyArrivalListener for KeyArrivalPromoter<S> {
+    fn keys_arrived(&self, _cids: &[kms::EncryptionCid]) {
+        self.0.manager().promote_pending_retries();
+    }
+}
+
 /// The management channel: inbound requests are served once `hooks` is
 /// populated, and `requester` relays outbound ones.
 pub struct ManageChannel {
@@ -399,6 +409,7 @@ impl<S: Store + 'static> IrohPeer<S> {
     /// Bind the KMS built after the peer.
     #[cfg(feature = "kms")]
     pub fn wire_kms(&self, kms: Arc<dyn kms::KmsService>) {
+        kms.set_key_arrival_listener(Arc::new(KeyArrivalPromoter(Arc::clone(&self.coordinator))));
         self.replication.merge_handler_inner.set_kms(kms);
     }
 

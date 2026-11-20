@@ -41,6 +41,8 @@ pub(crate) struct RemoteKeys {
     pub(crate) node_identity: Did,
     /// Test-only deterministic ephemeral. `None` in prod: fresh per request.
     pub(crate) test_ephemeral: Arc<AtomOption<x25519_dalek::StaticSecret>>,
+    /// Edge listener for keys this request made usable.
+    pub(crate) arrivals: Arc<AtomOption<Arc<dyn crate::service::KeyArrivalListener>>>,
 }
 
 impl inputs::Source for RemoteKeys {
@@ -254,6 +256,9 @@ impl RemoteKeys {
                 );
             })?;
         tracing::debug!(cid = %cid, "KMS key request: DEK unwrapped and stored");
+        if let Some(listener) = self.arrivals.load() {
+            listener.keys_arrived(std::slice::from_ref(&cid));
+        }
         Ok(key)
     }
 }

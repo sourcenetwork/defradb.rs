@@ -11,6 +11,12 @@ use crate::results::KeyResults;
 use crate::types::{EncryptionCid, KeyScope};
 use crate::wire::{FetchEncryptionKeyReply, FetchEncryptionKeyRequest};
 
+/// Told which encryption keys became usable after a key request. Called after
+/// the answers are returned, on the requesting task, which it must not hold up.
+pub trait KeyArrivalListener: defra_core::thread_bounds::MaybeSendSync {
+    fn keys_arrived(&self, cids: &[EncryptionCid]);
+}
+
 /// Identity of an incoming peer established at the transport boundary.
 #[derive(Debug, Clone)]
 pub struct PeerIdentity {
@@ -114,6 +120,9 @@ pub trait KmsService: MaybeSendSync {
     /// served replies (per Go's `makeAssociatedData`). Default no-op for
     /// implementations that don't serve over a transport (e.g. `NoopKms`).
     fn set_local_peer_id(&self, _id: String) {}
+
+    /// Tell `listener` which requested keys became usable. First call wins.
+    fn set_key_arrival_listener(&self, _listener: std::sync::Arc<dyn KeyArrivalListener>) {}
 }
 
 #[cfg(test)]

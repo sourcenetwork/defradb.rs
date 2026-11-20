@@ -808,6 +808,27 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         }
     }
 
+    /// Make every pending root due for the next receiver-clock pass, without
+    /// advancing its backoff rung. A newly available key can resolve any of
+    /// them, and this caller carries no root-to-key map.
+    pub fn promote_pending_retries(&self) {
+        let changed = self.pending_dags.update(|pending| {
+            let now = crate::rt::time::Instant::now();
+            let roots: Vec<Cid> = pending.keys().copied().collect();
+            let mut changed = false;
+            for root_cid in roots {
+                if let Some(dag) = pending.get_mut(&root_cid) {
+                    dag.next_retry_at = dag.next_retry_at.min(now);
+                    changed = true;
+                }
+            }
+            changed
+        });
+        if changed {
+            self.pending_dag_ready.notify_one();
+        }
+    }
+
     /// Return due receiver obligations in oldest-due order without claiming
     /// them. The coordinator reserves bounded ownership before advancing a
     /// root's retry rung, so neither fetches nor merge re-drive can accumulate
