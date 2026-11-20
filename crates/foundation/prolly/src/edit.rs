@@ -1,8 +1,13 @@
-//! Inserting and removing one entry, re-cutting only the chunks around it.
+//! Inserting and removing one entry, re-cutting the chunks from it on until
+//! the cut lines up with the old chunks again.
 //!
 //! At each level the edit replaces a run of items with new ones. The chunks
 //! holding that run are cut again, from the start of the first, and the cut
-//! goes on into the next chunks until it closes a chunk. Everything before the
+//! goes on one whole old chunk at a time until it ends an old chunk with
+//! nothing open. Usually that is the next chunk or two. It need not happen at
+//! all: chunks of two large items closed by the byte cap, with one more such
+//! item added in front, leave one item open after every old chunk, and the
+//! edit re-cuts the rest of the level. Everything before the
 //! first chunk closed before it, and everything after the last starts from a
 //! closed chunk, so the result is the cut of the whole level
 //! (`ProllyTree.rewrite_level_refines`). The new chunks then replace the old
