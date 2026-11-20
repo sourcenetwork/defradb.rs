@@ -14,6 +14,9 @@ pub enum Error {
     /// A node holds no item; the tree never writes one.
     #[error("prolly tree holds an empty node at level {0}")]
     EmptyNode(u8),
+    /// A build got a key smaller than the one before it.
+    #[error("prolly tree build needs entries in ascending key order")]
+    Unsorted,
 }
 
 /// The crate's result.

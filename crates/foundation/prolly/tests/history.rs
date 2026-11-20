@@ -62,7 +62,8 @@ proptest! {
         }
         prop_assert_eq!(tree, built(&mut store, target, &model));
         let entries: Vec<(Vec<u8>, Vec<u8>)> = tree
-            .entries(&store)
+            .iter(&store)
+            .collect::<prolly::Result<Vec<_>>>()
             .unwrap()
             .into_iter()
             .map(|item| (item.key, item.value))

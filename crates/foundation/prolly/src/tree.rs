@@ -1,9 +1,11 @@
 //! A tree: its root, and building and reading it.
 
-use std::{collections::BTreeMap, num::NonZeroU32, sync::Arc};
+use std::{num::NonZeroU32, sync::Arc};
 
 use crate::{
+    build::Builder,
     chunk::chunk,
+    cursor::Entries,
     error::{Error, Result},
     hash::Hash,
     node::{Item, Node},
@@ -29,19 +31,20 @@ impl Tree {
         Self { root: None, target }
     }
 
-    /// The tree of `entries`; for a repeated key the last value wins.
+    /// The tree of `entries`, given in ascending key order. A key equal to the
+    /// one before replaces its value, so the last value wins; a smaller key is
+    /// [`Error::Unsorted`]. It holds one open chunk per level ([`Builder`]),
+    /// never the whole set.
     pub fn build<S, I>(store: &mut S, target: NonZeroU32, entries: I) -> Result<Self>
     where
         S: Store,
         I: IntoIterator<Item = (Vec<u8>, Vec<u8>)>,
     {
-        let sorted: BTreeMap<Vec<u8>, Vec<u8>> = entries.into_iter().collect();
-        let items = sorted
-            .into_iter()
-            .map(|(key, value)| Item { key, value })
-            .collect();
-        let root = raise(store, items, 0, target.get())?;
-        Ok(Self { root, target })
+        let mut builder = Builder::new(target);
+        for (key, value) in entries {
+            builder.push(store, key, value)?;
+        }
+        builder.finish(store)
     }
 
     /// The root hash, `None` for an empty tree.
@@ -75,24 +78,12 @@ impl Tree {
         }
     }
 
-    /// Every entry, in key order.
-    pub fn entries<S>(&self, store: &S) -> Result<Vec<Item>>
+    /// Every entry, in key order, read one node per level at a time.
+    pub fn iter<'s, S>(&self, store: &'s S) -> Entries<'s, S>
     where
         S: Store,
     {
-        let mut entries = Vec::new();
-        let mut pending: Vec<Hash> = self.root.into_iter().collect();
-        while let Some(hash) = pending.pop() {
-            let node = load(store, &hash)?;
-            if node.level == 0 {
-                entries.extend(node.items.iter().cloned());
-                continue;
-            }
-            for item in node.items.iter().rev() {
-                pending.push(Hash::from_slice(&item.value)?);
-            }
-        }
-        Ok(entries)
+        Entries::new(store, self.root)
     }
 }
 
@@ -121,8 +112,7 @@ where
 }
 
 /// Cuts `items` of `level` and goes up until a level is one chunk
-/// (`ProllyTree.build`), then drops any root above it that holds a single
-/// child, so the root is the lowest level that is one chunk.
+/// (`ProllyTree.build`), then stores that chunk as the root ([`collapse`]).
 pub(crate) fn raise<S>(
     store: &mut S,
     mut items: Vec<Item>,
@@ -135,14 +125,7 @@ where
     loop {
         let mut chunks = chunk(items, target);
         if chunks.len() <= 1 {
-            let Some(items) = chunks.pop() else {
-                return Ok(None);
-            };
-            let mut node = Arc::new(Node { level, items });
-            while node.level > 0 && node.items.len() == 1 {
-                node = load(store, &Hash::from_slice(&node.items[0].value)?)?;
-            }
-            return Ok(Some(store.put(Arc::unwrap_or_clone(node))));
+            return collapse(store, level, chunks.pop().unwrap_or_default());
         }
         items = chunks
             .into_iter()
@@ -150,4 +133,21 @@ where
             .collect();
         level += 1;
     }
+}
+
+/// Stores `items` as the root of `level`, after dropping every root above it
+/// that holds a single child, so the root is the lowest level that is one
+/// chunk (`ProllyTree.collapse`); `None` when there are no items.
+pub(crate) fn collapse<S>(store: &mut S, level: u8, items: Vec<Item>) -> Result<Option<Hash>>
+where
+    S: Store,
+{
+    if items.is_empty() {
+        return Ok(None);
+    }
+    let mut node = Arc::new(Node { level, items });
+    while node.level > 0 && node.items.len() == 1 {
+        node = load(store, &Hash::from_slice(&node.items[0].value)?)?;
+    }
+    Ok(Some(store.put(Arc::unwrap_or_clone(node))))
 }
