@@ -17,6 +17,7 @@ mod json;
 mod json_array;
 mod json_array_filter;
 mod json_composite;
+mod json_descending_range;
 mod json_unique;
 mod json_unique_array;
 mod like_nil;
