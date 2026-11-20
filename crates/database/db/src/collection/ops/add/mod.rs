@@ -85,21 +85,9 @@ where
             .into_iter()
             .collect();
         let collections = self.prepare_new_collections(sdl, known_types).await?;
-        match self.document_acp().cloned() {
-            Some(document_acp) => {
-                self.create_collections_atomic_with_acp_registration_as(
-                    context,
-                    collections,
-                    document_acp,
-                    creator,
-                )
-                .await
-            }
-            None => {
-                self.create_collections_atomic_as(context, collections)
-                    .await
-            }
-        }
-        .map_err(|e| AddCollectionError::Create(e.to_string()))
+
+        self.create_collections_atomic(context, collections, self.document_acp().cloned(), creator)
+            .await
+            .map_err(|e| AddCollectionError::Create(e.to_string()))
     }
 }
