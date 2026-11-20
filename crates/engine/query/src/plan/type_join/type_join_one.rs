@@ -84,6 +84,8 @@ pub struct TypeJoinOne {
     /// For Primary joins: key is child's _docID
     /// For Inverted joins: key is child's FK field value
     child_cache: RapidHashMap<String, Doc>,
+    /// For field-lookup joins: parent document IDs indexed by their FK value.
+    parent_ids_by_fk: RapidHashMap<String, Vec<String>>,
     /// Optional relation filter to apply during join.
     /// This filter is evaluated against the child document and determines
     /// whether the parent document should be included in results.
@@ -229,6 +231,7 @@ impl TypeJoinOne {
             direction,
             initialized: false,
             child_cache: RapidHashMap::new(),
+            parent_ids_by_fk: RapidHashMap::new(),
             relation_filter: None,
             exec_info: ExecInfo::default(),
             child_exec_info: ExecInfo::default(),
@@ -273,6 +276,33 @@ impl TypeJoinOne {
         }
     }
 
+    async fn next_orphan_in_phase(&mut self, phase: OrderDirection) -> Result<Option<()>> {
+        let Some(config) = self.orphan_config.as_mut() else {
+            return Ok(None);
+        };
+        if config.direction != phase || self.orphan_phase_done {
+            return Ok(None);
+        }
+
+        if !self.orphan_phase_active {
+            self.orphan_phase_active = true;
+            config.orphan_node.init().await?;
+            config.orphan_node.start().await?;
+        }
+        if config.orphan_node.next().await? {
+            let mut orphan_doc = config.orphan_node.value().deep_clone();
+            orphan_doc.set(
+                self.parent_side.relation_field_index(),
+                serde_json::Value::Null,
+            );
+            self.current_doc = orphan_doc;
+            return Ok(Some(()));
+        }
+
+        self.orphan_phase_done = true;
+        Ok(None)
+    }
+
     /// Set a relation filter to apply during the join.
     ///
     /// When set, parent documents will only be included if their child
@@ -305,6 +335,51 @@ impl TypeJoinOne {
         self.parent_scan_mapping = Some(parent_scan_mapping);
         self.fetcher = fetcher;
         self
+    }
+
+    /// Configure an inverted join that looks parents up by FK field.
+    ///
+    /// This is the child-index-driven path for schemas where the parent's FK
+    /// has no secondary index: the filtered child collection still drives the
+    /// loop, and each child looks up the parents referencing it.
+    pub fn with_inverted_field_lookup(mut self, fetcher: Option<Arc<dyn DocFetcher>>) -> Self {
+        self.direction = JoinDirection::InvertedFieldLookup;
+        self.fetcher = fetcher;
+        self
+    }
+
+    /// Build the parent-side lookup used when only the child side is indexed.
+    ///
+    /// The child index scan remains the driving plan. One parent scan builds
+    /// the compact FK-to-parent grouping, so each indexed child can find its
+    /// parents without materializing the full matching-child set.
+    async fn build_parent_ids_by_fk(&mut self) -> Result<()> {
+        let Some(parent_fk_index) = self.parent_side.relation_id_field_index() else {
+            return Err(QueryError::internal(
+                "inverted field lookup join: parent side has no FK field",
+            ));
+        };
+
+        self.parent_plan.init().await?;
+        self.parent_plan.start().await?;
+
+        while self.parent_plan.next().await? {
+            let parent_doc = self.parent_plan.value().deep_clone();
+            if let (Some(parent_doc_id), Some(fk)) = (
+                parent_doc.doc_id().map(String::from),
+                parent_doc
+                    .get(parent_fk_index)
+                    .and_then(|value| value.as_str()),
+            ) {
+                self.parent_ids_by_fk
+                    .entry(fk.to_string())
+                    .or_default()
+                    .push(parent_doc_id);
+            }
+        }
+
+        self.parent_plan.close().await?;
+        Ok(())
     }
 
     /// Set a residual scalar filter for parent docs fetched in inverted index mode.
@@ -409,7 +484,9 @@ impl TypeJoinOne {
     /// Logs a warning if the FK field has an unexpected type or is missing.
     fn extract_fk(&self, parent_doc: &Doc) -> Option<String> {
         match &self.direction {
-            JoinDirection::InvertedIndex { .. } | JoinDirection::OrderedInvertedPrimary { .. } => {
+            JoinDirection::InvertedIndex { .. }
+            | JoinDirection::InvertedFieldLookup
+            | JoinDirection::OrderedInvertedPrimary { .. } => {
                 // Not used in inverted index / ordered inverted modes (child drives the loop)
                 None
             }
@@ -540,6 +617,7 @@ impl TypeJoinOne {
                     fk_value.and_then(|v| v.as_str().map(String::from))
                 }
                 JoinDirection::InvertedIndex { .. }
+                | JoinDirection::InvertedFieldLookup
                 | JoinDirection::OrderedInvertedPrimary { .. } => {
                     // build_child_cache is not called in inverted/ordered modes
                     unreachable!()
@@ -578,26 +656,12 @@ impl TypeJoinOne {
     /// the outer loop. For each child, we look up the parent by creating an
     /// IndexScanNode on the parent's FK field (FK == child._docID).
     async fn next_inverted_index(&mut self) -> Result<bool> {
-        // For ASC with primary-side orphans: yield orphans first since
-        // FK IS NULL scan is independent of the join.
-        if let Some(ref mut config) = self.orphan_config {
-            if config.direction == OrderDirection::Asc && !self.orphan_phase_done {
-                if !self.orphan_phase_active {
-                    self.orphan_phase_active = true;
-                    config.orphan_node.init().await?;
-                    config.orphan_node.start().await?;
-                }
-                if config.orphan_node.next().await? {
-                    let mut orphan_doc = config.orphan_node.value().deep_clone();
-                    orphan_doc.set(
-                        self.parent_side.relation_field_index(),
-                        serde_json::Value::Null,
-                    );
-                    self.current_doc = orphan_doc;
-                    return Ok(true);
-                }
-                self.orphan_phase_done = true;
-            }
+        if self
+            .next_orphan_in_phase(OrderDirection::Asc)
+            .await?
+            .is_some()
+        {
+            return Ok(true);
         }
 
         // If we have queued parent docs from a previous child, yield one (FIFO)
@@ -709,28 +773,80 @@ impl TypeJoinOne {
             }
         }
 
-        // Yield orphans after join results exhausted
-        if let Some(ref mut config) = self.orphan_config {
-            if !self.orphan_phase_done {
-                if !self.orphan_phase_active {
-                    self.orphan_phase_active = true;
-                    config.orphan_node.init().await?;
-                    config.orphan_node.start().await?;
+        Ok(self
+            .next_orphan_in_phase(OrderDirection::Desc)
+            .await?
+            .is_some())
+    }
+
+    /// Execute one step of the child-index-driven field lookup join.
+    async fn next_inverted_field_lookup(&mut self) -> Result<bool> {
+        if self
+            .next_orphan_in_phase(OrderDirection::Asc)
+            .await?
+            .is_some()
+        {
+            return Ok(true);
+        }
+
+        if !self.docs_to_yield.is_empty() {
+            let doc = self.docs_to_yield.remove(0);
+            self.current_doc = doc;
+            return Ok(true);
+        }
+
+        while self.child_plan.next().await? {
+            let child_doc = self.child_plan.value().deep_clone();
+            let Some(child_doc_id) = child_doc.doc_id().map(String::from) else {
+                continue;
+            };
+            let Some(parent_doc_ids) = self.parent_ids_by_fk.get(&child_doc_id) else {
+                continue;
+            };
+
+            let Some(fetcher) = self.fetcher.as_ref() else {
+                return Err(QueryError::execution(
+                    "inverted field lookup join requires a document fetcher",
+                ));
+            };
+            let fetched = fetcher
+                .get_by_ids(&self.parent_side.collection().name, parent_doc_ids)
+                .await?;
+            let parent_docs =
+                documents_to_plan_docs(fetched.docs(), self.parent_plan.document_map())?;
+            self.go_child_metrics.iterations += 1;
+            self.go_child_metrics.doc_fetches += parent_docs.len() as u64;
+            self.go_child_metrics.field_fetches += parent_docs
+                .iter()
+                .map(|doc| doc.stored_field_count as u64)
+                .sum::<u64>();
+
+            for parent_doc in parent_docs {
+                if let Some(ref rel_filter) = self.relation_filter {
+                    if !self.check_relation_filter(&Some(child_doc.deep_clone()), rel_filter)? {
+                        continue;
+                    }
                 }
-                if config.orphan_node.next().await? {
-                    let mut orphan_doc = config.orphan_node.value().deep_clone();
-                    orphan_doc.set(
-                        self.parent_side.relation_field_index(),
-                        serde_json::Value::Null,
-                    );
-                    self.current_doc = orphan_doc;
-                    return Ok(true);
+
+                let mut merged_parent = parent_doc.deep_clone();
+                self.merge_child(&mut merged_parent, Some(child_doc.deep_clone()));
+                self.docs_to_yield.push(merged_parent);
+            }
+
+            if !self.docs_to_yield.is_empty() {
+                let doc = self.docs_to_yield.remove(0);
+                if let Some(parent_doc_id) = doc.doc_id() {
+                    self.record_yielded_id(parent_doc_id);
                 }
-                self.orphan_phase_done = true;
+                self.current_doc = doc;
+                return Ok(true);
             }
         }
 
-        Ok(false)
+        Ok(self
+            .next_orphan_in_phase(OrderDirection::Desc)
+            .await?
+            .is_some())
     }
 
     /// Execute one step of the ordered inverted primary join.
@@ -891,6 +1007,7 @@ impl TypeJoinOne {
             self.direction,
             JoinDirection::Inverted
                 | JoinDirection::InvertedIndex { .. }
+                | JoinDirection::InvertedFieldLookup
                 | JoinDirection::OrderedInvertedPrimary { .. }
         ) {
             let rel_id_field_name = schema::CollectionVersion::relation_id_field_name(
@@ -940,6 +1057,7 @@ impl TypeJoinOne {
             JoinDirection::Primary { .. } => "primary",
             JoinDirection::Inverted
             | JoinDirection::InvertedIndex { .. }
+            | JoinDirection::InvertedFieldLookup
             | JoinDirection::OrderedInvertedPrimary { .. } => "secondary",
         };
         obj.insert("direction".to_string(), serde_json::json!(direction));
@@ -1025,10 +1143,16 @@ impl PlanNode for TypeJoinOne {
         self.child_exec_info = ExecInfo::default();
         self.go_child_metrics.reset();
         self.docs_to_yield.clear();
+        self.parent_ids_by_fk.clear();
         self.orphan_phase_active = false;
         self.orphan_phase_done = false;
 
-        if matches!(
+        if matches!(self.direction, JoinDirection::InvertedFieldLookup) {
+            self.build_parent_ids_by_fk().await?;
+            self.child_plan.init().await?;
+            self.child_plan.start().await?;
+            self.child_exec_info = self.child_plan.exec_info();
+        } else if matches!(
             self.direction,
             JoinDirection::InvertedIndex { .. } | JoinDirection::OrderedInvertedPrimary { .. }
         ) {
@@ -1057,7 +1181,9 @@ impl PlanNode for TypeJoinOne {
     async fn start(&mut self) -> Result<()> {
         if matches!(
             self.direction,
-            JoinDirection::InvertedIndex { .. } | JoinDirection::OrderedInvertedPrimary { .. }
+            JoinDirection::InvertedIndex { .. }
+                | JoinDirection::InvertedFieldLookup
+                | JoinDirection::OrderedInvertedPrimary { .. }
         ) {
             // Child plan already started in init()
             Ok(())
@@ -1078,6 +1204,9 @@ impl PlanNode for TypeJoinOne {
 
         if matches!(self.direction, JoinDirection::InvertedIndex { .. }) {
             return self.next_inverted_index().await;
+        }
+        if matches!(self.direction, JoinDirection::InvertedFieldLookup) {
+            return self.next_inverted_field_lookup().await;
         }
         if matches!(self.direction, JoinDirection::OrderedInvertedPrimary { .. }) {
             return self.next_ordered_primary().await;
@@ -1125,6 +1254,7 @@ impl PlanNode for TypeJoinOne {
                     // InvertedIndex and OrderedInvertedPrimary early-return
                     // via next_inverted_index() / next_ordered_primary() above
                     JoinDirection::InvertedIndex { .. }
+                    | JoinDirection::InvertedFieldLookup
                     | JoinDirection::OrderedInvertedPrimary { .. } => unreachable!(),
                 }
                 self.go_child_metrics.doc_fetches += 1;
@@ -1158,7 +1288,9 @@ impl PlanNode for TypeJoinOne {
     async fn close(&mut self) -> Result<()> {
         if matches!(
             self.direction,
-            JoinDirection::InvertedIndex { .. } | JoinDirection::OrderedInvertedPrimary { .. }
+            JoinDirection::InvertedIndex { .. }
+                | JoinDirection::InvertedFieldLookup
+                | JoinDirection::OrderedInvertedPrimary { .. }
         ) {
             // Inverted/ordered modes: child_plan is still open, parent_plan was never used
             self.child_plan.close().await?;
@@ -1167,6 +1299,7 @@ impl PlanNode for TypeJoinOne {
             // child_plan was already closed in build_child_cache()
         }
         self.child_cache.clear();
+        self.parent_ids_by_fk.clear();
         self.docs_to_yield.clear();
         if let Some(ref mut config) = self.orphan_config {
             config.orphan_node.close().await?;
@@ -1260,6 +1393,14 @@ impl PlanNode for TypeJoinOne {
                 info
             }
             JoinDirection::InvertedIndex { .. } => self.child_plan.exec_info(),
+            JoinDirection::InvertedFieldLookup => {
+                let mut info = self.child_plan.exec_info();
+                info.iterations = self.go_child_metrics.iterations;
+                info.docs_fetched = self.go_child_metrics.doc_fetches;
+                info.fields_fetched = self.go_child_metrics.field_fetches;
+                info.indexes_fetched = self.go_child_metrics.index_fetches;
+                info
+            }
             _ => ExecInfo {
                 iterations: self.go_child_metrics.iterations,
                 docs_fetched: self.go_child_metrics.doc_fetches,
@@ -1279,7 +1420,9 @@ impl PlanNode for TypeJoinOne {
 
         if matches!(
             self.direction,
-            JoinDirection::InvertedIndex { .. } | JoinDirection::OrderedInvertedPrimary { .. }
+            JoinDirection::InvertedIndex { .. }
+                | JoinDirection::InvertedFieldLookup
+                | JoinDirection::OrderedInvertedPrimary { .. }
         ) {
             // Inverted/ordered modes: child drives the loop, parent is looked up per-child.
             // Go always shows parentPlan for root, childPlan for subType.
