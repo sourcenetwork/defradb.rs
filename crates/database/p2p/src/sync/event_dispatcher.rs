@@ -59,9 +59,9 @@ macro_rules! classify_p2p_event {
 
             $event_type::PeerConnected(_)
             | $event_type::PeerDisconnected(_)
-            | $event_type::BitswapProgress { .. }
-            | $event_type::BitswapComplete { .. }
-            | $event_type::BitswapBlockReceived { .. }
+            | $event_type::BlockSyncProgress { .. }
+            | $event_type::BlockSyncComplete { .. }
+            | $event_type::BlockSyncBlockReceived { .. }
             | $event_type::DocSyncReply { .. }
             | $event_type::BranchableSyncReply { .. }
             | $event_type::CarFetchResponse { .. }

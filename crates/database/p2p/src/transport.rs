@@ -177,11 +177,11 @@ pub enum TransportEvent<ResponseToken> {
         peer_id: PeerId,
         topic: String,
     },
-    BitswapProgress {
+    BlockSyncProgress {
         query_id: QueryId,
         missing_count: usize,
     },
-    BitswapComplete {
+    BlockSyncComplete {
         query_id: QueryId,
         success: bool,
         /// Why a failed query failed; `None` on success.
@@ -190,7 +190,7 @@ pub enum TransportEvent<ResponseToken> {
         /// Every provider shed the request with a busy reply.
         provider_busy: bool,
     },
-    BitswapBlockReceived {
+    BlockSyncBlockReceived {
         query_id: QueryId,
         cid: Cid,
         data: Vec<u8>,
@@ -281,9 +281,9 @@ impl<ResponseToken> TransportEvent<ResponseToken> {
             Self::GossipRawMessage { .. } => "gossip_raw_message",
             Self::PeerSubscribed { .. } => "peer_subscribed",
             Self::PeerUnsubscribed { .. } => "peer_unsubscribed",
-            Self::BitswapProgress { .. } => "bitswap_progress",
-            Self::BitswapComplete { .. } => "bitswap_complete",
-            Self::BitswapBlockReceived { .. } => "bitswap_block_received",
+            Self::BlockSyncProgress { .. } => "block_sync_progress",
+            Self::BlockSyncComplete { .. } => "block_sync_complete",
+            Self::BlockSyncBlockReceived { .. } => "block_sync_block_received",
             Self::TwoStreamRequest { .. } => "two_stream_request",
             Self::DocSyncRequest { .. } => "doc_sync_request",
             Self::DocSyncReply { .. } => "doc_sync_reply",
@@ -654,7 +654,7 @@ pub trait P2PTransport: Clone + Send + Sync + 'static {
 
     /// Whether `sync_blocks(root, providers, [])` is a cancellable recursive
     /// CAR request.  The iroh transport provides that contract; libp2p's
-    /// implementation is exact-CID Bitswap, where an empty set is a no-op.
+    /// implementation is exact-CID block sync, where an empty set is a no-op.
     fn supports_cancellable_rooted_sync(&self) -> bool {
         false
     }

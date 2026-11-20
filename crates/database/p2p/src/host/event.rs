@@ -69,14 +69,14 @@ pub enum HostEvent {
     /// A peer unsubscribed from a topic.
     PeerUnsubscribed { peer_id: PeerId, topic: String },
 
-    /// Bitswap sync progress update.
-    BitswapProgress {
+    /// Block-sync progress update.
+    BlockSyncProgress {
         query_id: QueryId,
         missing_count: usize,
     },
 
-    /// Bitswap sync completed (success or failure).
-    BitswapComplete {
+    /// Block-sync completed (success or failure).
+    BlockSyncComplete {
         query_id: QueryId,
         success: bool,
         /// Why a failed sync failed; `None` on success.
@@ -84,8 +84,8 @@ pub enum HostEvent {
         error: Option<String>,
     },
 
-    /// Block received via Bitswap - needs to be stored and processed.
-    BitswapBlockReceived {
+    /// Block received via block sync - needs to be stored and processed.
+    BlockSyncBlockReceived {
         query_id: QueryId,
         cid: Cid,
         data: Vec<u8>,

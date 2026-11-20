@@ -438,30 +438,30 @@ pub fn convert_host_event(event: crate::host::HostEvent) -> TransportEvent<Respo
             peer_id: PeerId::from(peer_id),
             topic,
         },
-        HostEvent::BitswapProgress {
+        HostEvent::BlockSyncProgress {
             query_id,
             missing_count,
-        } => TransportEvent::BitswapProgress {
+        } => TransportEvent::BlockSyncProgress {
             query_id,
             missing_count,
         },
-        HostEvent::BitswapComplete {
+        HostEvent::BlockSyncComplete {
             query_id,
             success,
             cause,
             error,
-        } => TransportEvent::BitswapComplete {
+        } => TransportEvent::BlockSyncComplete {
             query_id,
             success,
             cause,
             error,
             provider_busy: false,
         },
-        HostEvent::BitswapBlockReceived {
+        HostEvent::BlockSyncBlockReceived {
             query_id,
             cid,
             data,
-        } => TransportEvent::BitswapBlockReceived {
+        } => TransportEvent::BlockSyncBlockReceived {
             query_id,
             cid,
             data,

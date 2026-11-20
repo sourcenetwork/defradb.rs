@@ -84,7 +84,7 @@ impl<S: Store> P2PHost<S> {
 
                             // Send block to coordinator for storage
                             if let Err(e) = event_tx
-                                .send(HostEvent::BitswapBlockReceived {
+                                .send(HostEvent::BlockSyncBlockReceived {
                                     query_id,
                                     cid: *block.cid(),
                                     data: block.data().to_vec(),
@@ -94,7 +94,7 @@ impl<S: Store> P2PHost<S> {
                                 tracing::warn!(
                                     query_id = query_id.0,
                                     error = %e,
-                                    "Failed to send BitswapBlockReceived event"
+                                    "Failed to send BlockSyncBlockReceived event"
                                 );
                             }
 
@@ -131,7 +131,7 @@ impl<S: Store> P2PHost<S> {
                 drop(receiver);
 
                 let _ = event_tx
-                    .send(HostEvent::BitswapComplete {
+                    .send(HostEvent::BlockSyncComplete {
                         query_id,
                         success,
                         cause: (!success).then_some(if timed_out {
