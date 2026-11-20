@@ -839,12 +839,12 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
-        name: "A live write whose marker a replay's newer generation supersedes reruns with a fresh generation: it is never reported undurable, and its head stays delivered or marked",
+        name: "A live write whose marker a replay's newer generation supersedes reruns with a fresh generation, up to a fixed LIVE_MARKER_RERUNS bound independent of max_txn_retries: against one competing replay it is never reported undurable, and its head stays delivered or marked",
         axis: Tla,
         anchor: "crates/engine/storage/src/stores/peerstore.rs register_scope_marker_at; crates/database/db/src/merge/push_docs.rs push_existing_docs_with_config_and_allowlist",
-        model_ref: "MC_LiveMarkerGeneration_{Green,Red_Superseded}.cfg",
+        model_ref: "MC_LiveMarkerGeneration_{Green,Red_Superseded,Red_NoReruns}.cfg",
         tiers: &[Boundary],
-        bound_by: "",
+        bound_by: "crates/engine/storage/src/stores/peerstore_tests.rs live_registration_superseded_reruns_with_zero_txn_retries; crates/engine/storage/src/stores/peerstore_tests.rs live_registration_superseded_past_rerun_bound_is_counted_undurable",
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",

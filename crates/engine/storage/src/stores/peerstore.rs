@@ -20,6 +20,13 @@ mod selected_car;
 
 const RETRY_MARKER_GENERATION_MAGIC: &[u8] = b"DFRGMARKER1";
 
+/// Reruns a live scope-marker registration takes past newer markers before
+/// it reports the head undurable. Independent of `max_txn_retries`: a rerun
+/// is not a conflict retry, since a fresh allocation beats every marker
+/// already committed and only another writer committing in between can
+/// supersede it again.
+const LIVE_MARKER_RERUNS: u32 = 16;
+
 /// Encode the shared peer-incarnation and retry-generation value format.
 pub fn encode_retry_marker_generation(generation: u64) -> Vec<u8> {
     let mut bytes = RETRY_MARKER_GENERATION_MAGIC.to_vec();
@@ -68,6 +75,8 @@ pub struct Peerstore<S: Store> {
     store: NamespacedStore<S>,
     retry_schedule: super::RetrySchedule,
     retry: RetryOptions,
+    /// [`LIVE_MARKER_RERUNS`], lowered only by tests.
+    live_marker_reruns: u32,
     /// The pool [`run`](Self::run) runs calls on (`peerstore_placed.rs`).
     pool: Option<workers::Pool>,
 }
@@ -777,8 +786,16 @@ impl<S: Store> Peerstore<S> {
             store: NamespacedStore::new(store, Namespace::Peerstore),
             retry_schedule: super::RetrySchedule::default(),
             retry: crate::corekv::engine_retry_options(crate::corekv::DEFAULT_MAX_TXN_RETRIES),
+            live_marker_reruns: LIVE_MARKER_RERUNS,
             pool: None,
         }
+    }
+
+    /// Lower the live scope-marker rerun bound so a test can exhaust it.
+    #[cfg(test)]
+    fn with_live_marker_reruns(mut self, reruns: u32) -> Self {
+        self.live_marker_reruns = reruns;
+        self
     }
 
     /// Re-run a conflicting transaction up to `max_txn_retries` times, the
@@ -977,7 +994,7 @@ impl<S: Store> Peerstore<S> {
 
     /// Register a live head's scope marker and return its generation. A
     /// marker newer than this call's allocation reruns the write with a fresh
-    /// generation, up to `max_txn_retries` times, so the live head ends up
+    /// generation, up to [`LIVE_MARKER_RERUNS`] times, so the live head ends up
     /// holding the scope's newest marker (#2902). Replay registrations
     /// (`*_for_incarnation`) keep a superseded write as already owed.
     async fn register_scope_marker(
@@ -1032,9 +1049,6 @@ impl<S: Store> Peerstore<S> {
                 )
                 .await?;
             if !(scoped && written == ReplayMarkerWrite::Superseded) {
-                if reruns > 0 {
-                    telemetry::record_retry_success(telemetry::RetryLayer::PushMarker);
-                }
                 return Ok(written.generation());
             }
             // A newer marker committed between this allocation and the
@@ -1042,13 +1056,17 @@ impl<S: Store> Peerstore<S> {
             // first, and its marker can stand for an older head. The live
             // head must hold the newest marker, or the replay's ack clears
             // the scope with this head undelivered. A fresh allocation is
-            // newer than the competing marker.
-            if reruns + 1 >= self.retry.max_attempts {
-                telemetry::record_retry_exhaustion(telemetry::RetryLayer::PushMarker);
+            // newer than the competing marker. This is not a conflict
+            // retry, so it is counted apart from the PushMarker layer.
+            if reruns >= self.live_marker_reruns {
+                telemetry::record_storage_event(
+                    telemetry::StorageEvent::LiveMarkerRerunExhausted,
+                    0,
+                );
                 return Ok(None);
             }
             reruns += 1;
-            telemetry::record_retry_attempt(telemetry::RetryLayer::PushMarker);
+            telemetry::record_storage_event(telemetry::StorageEvent::LiveMarkerRerun, 0);
             generation = self
                 .allocate_scope_generation(doc_id, collection_id)
                 .await?;

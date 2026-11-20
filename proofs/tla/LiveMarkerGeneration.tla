@@ -23,7 +23,8 @@ EXTENDS Naturals
 \* (the fix); "fail" reports a superseded live write as undurable (main
 \* before #2902); "covered" treats a superseded live write as owed by the
 \* newer marker and sends nothing of its own.
-\* MaxReruns: the live path's rerun budget (max_txn_retries).
+\* MaxReruns: the live path's rerun budget (LIVE_MARKER_RERUNS, fixed at 16
+\* in the code and independent of max_txn_retries).
 CONSTANTS LiveMode, MaxReruns
 \* next: the shared marker-generation allocator.
 \* heads: "old" until the live write commits, then "new".
