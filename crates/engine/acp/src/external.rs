@@ -47,6 +47,9 @@ use crate::outbox::{OwedChanges, StagedCount, TransactionOutbox};
 use crate::pending::{pending_key, PendingRegistration, PENDING_PREFIX};
 use crate::permission::DocumentPermission;
 
+#[cfg(test)]
+#[path = "external/deadline_tests.rs"]
+mod deadline_tests;
 mod drain;
 mod owed;
 mod registration;
@@ -74,6 +77,25 @@ pub struct RedriveReport {
 /// to settle before it refuses: the drainer settles a change moments after
 /// its commit, while the provider can be reached.
 pub const OBSERVATION_PATIENCE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// `future`'s output, unless `deadline` has passed first. The deadline is
+/// polled first on every turn, so a future that is always ready, such as a
+/// stream of notifications, cannot keep a wait going past it.
+async fn before<F>(
+    mut deadline: std::pin::Pin<&mut workers::Delay>,
+    mut future: std::pin::Pin<&mut F>,
+) -> Option<F::Output>
+where
+    F: std::future::Future,
+{
+    std::future::poll_fn(|cx| {
+        if std::future::Future::poll(deadline.as_mut(), cx).is_ready() {
+            return std::task::Poll::Ready(None);
+        }
+        std::future::Future::poll(future.as_mut(), cx).map(Some)
+    })
+    .await
+}
 
 /// The refusal of an observation whose tuple still owes a change.
 fn unsettled_relationship() -> Error {
@@ -248,18 +270,10 @@ where
                 Some(false) => {}
             }
             self.wake.notify_one();
-            let mut changed = std::pin::pin!(changed);
-            let woken = std::future::poll_fn(|cx| {
-                if std::future::Future::poll(changed.as_mut(), cx).is_ready() {
-                    return std::task::Poll::Ready(true);
-                }
-                match std::future::Future::poll(deadline.as_mut(), cx) {
-                    std::task::Poll::Ready(_) => std::task::Poll::Ready(false),
-                    std::task::Poll::Pending => std::task::Poll::Pending,
-                }
-            })
-            .await;
-            if !woken {
+            if before(deadline.as_mut(), std::pin::pin!(changed))
+                .await
+                .is_none()
+            {
                 return Err(unsettled_relationship());
             }
         }
@@ -673,16 +687,23 @@ where
                 did: self.provider.canonical_actor(observation.target),
             },
         };
-        // Set by the first wait, so every wait of this observation shares one
-        // patience.
-        let mut patience: Option<std::pin::Pin<Box<workers::Delay>>> = None;
+        // One deadline for the whole observation: every wait it makes, for
+        // a notification or for the settling lock, ends with it.
+        let mut deadline = Box::pin(
+            workers::delay(OBSERVATION_PATIENCE)
+                .map_err(|error| Error::Storage(error.to_string()))?,
+        );
         loop {
             // A settlement pass holds this lock while it sends what is owed
             // and clears its records: held from the provider's answer to the
             // check below, an owed change of the tuple cannot be settled in
             // between and so cannot hide that the answer predates it
             // (`proofs/tla/ObservationSettlement.tla`).
-            let settling = self.settling.lock().await;
+            let Some(settling) =
+                before(deadline.as_mut(), std::pin::pin!(self.settling.lock())).await
+            else {
+                return Err(unsettled_relationship());
+            };
             let present = match self.provider.observe_actor_relationship(observation).await {
                 Err(Error::NotOwner { .. } | Error::NotManager { .. }) => return Err(refused()),
                 other => other?,
@@ -710,13 +731,6 @@ where
             // The answer predates a change the drainer is about to settle:
             // wait for it here, at the edge, and ask again once it has
             // (`proofs/tla/SettleBeforeObserving.tla`).
-            let deadline = match &mut patience {
-                Some(deadline) => deadline,
-                None => patience.insert(Box::pin(
-                    workers::delay(OBSERVATION_PATIENCE)
-                        .map_err(|error| Error::Storage(error.to_string()))?,
-                )),
-            };
             self.await_tuple(&tuple, deadline.as_mut()).await?;
         }
     }

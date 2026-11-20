@@ -214,3 +214,95 @@ fn an_observation_refuses_a_change_that_cannot_settle() {
     })
     .unwrap()
 }
+
+/// The longest an observation may take past its patience in these tests:
+/// scheduling, not waiting.
+const SLACK: Duration = Duration::from_millis(1500);
+
+/// A stream of notifications of other owed records does not keep a wait
+/// going past its deadline (`MC_SettleBeforeObserving_Red_WakeFirst`).
+#[test]
+fn notifications_of_other_records_do_not_extend_the_wait() {
+    workers::block_on(async {
+        let staging = staging_on().await;
+        let doc = staging.create(alice(), "shared", None).await;
+        staging
+            .commit_change(Change::new(alice(), &doc, OwedOp::Add, bob()))
+            .await;
+        // Another thread notifies without pause, as commits of other owed
+        // records would under load: a notification is nearly always pending
+        // when the wait looks.
+        let done = Arc::new(AtomicBool::new(false));
+        let notifier = {
+            let (gate, done) = (staging.gate.clone(), Arc::clone(&done));
+            std::thread::spawn(move || {
+                while !done.load(Ordering::SeqCst) {
+                    gate.owed_changed();
+                    std::thread::yield_now();
+                }
+            })
+        };
+        let started = std::time::Instant::now();
+        let observed = observe(&staging, &alice(), &doc).await;
+        done.store(true, Ordering::SeqCst);
+        notifier.join().unwrap();
+        assert!(
+            started.elapsed() < acp::OBSERVATION_PATIENCE + SLACK,
+            "waited {:?}",
+            started.elapsed()
+        );
+        assert!(
+            matches!(&observed, Err(acp::Error::ProviderUnavailable(reason)) if reason == "relationship change is unsettled"),
+            "{observed:?}"
+        );
+    })
+    .unwrap()
+}
+
+/// A settlement pass that clears the observed tuple and then holds the
+/// settling lock past the deadline makes the observation refuse at its
+/// deadline (`MC_SettleBeforeObserving_Red_LockUnbounded`).
+#[test]
+fn a_settlement_pass_holding_the_lock_past_the_deadline_refuses_the_observation() {
+    workers::block_on(async {
+        let staging = staging_on().await;
+        let doc = staging.create(alice(), "shared", None).await;
+        let other = staging.create(alice(), "other", None).await;
+        staging
+            .commit_change(Change::new(alice(), &doc, OwedOp::Add, bob()))
+            .await;
+        staging
+            .commit_change(Change::new(alice(), &other, OwedOp::Add, bob()))
+            .await;
+        staging.remote.slow_submits.insert(
+            other.clone(),
+            acp::OBSERVATION_PATIENCE + Duration::from_secs(2),
+        );
+
+        let settle = async {
+            workers::delay(Duration::from_millis(200))
+                .unwrap()
+                .await
+                .unwrap();
+            staging
+                .gate
+                .settle_owed_changes_once(acp::OwedScope::All)
+                .await
+                .unwrap();
+        };
+        let owner = alice();
+        let started = std::time::Instant::now();
+        let observe = async {
+            let observed = observe(&staging, &owner, &doc).await;
+            (observed, started.elapsed())
+        };
+        let ((observed, took), ()) = futures::join!(observe, settle);
+        assert!(staging.remote.holds(&doc, &bob()), "the tuple was settled");
+        assert!(took < acp::OBSERVATION_PATIENCE + SLACK, "waited {took:?}");
+        assert!(
+            matches!(&observed, Err(acp::Error::ProviderUnavailable(reason)) if reason == "relationship change is unsettled"),
+            "{observed:?}"
+        );
+    })
+    .unwrap()
+}

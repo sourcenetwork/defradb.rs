@@ -22,7 +22,7 @@
 \* settlement pass holds the lock.
 \*
 \* The code: ExternalDocumentAcp::observe_actor_relationship,
-\* ExternalDocumentAcp::await_tuple and next_wake in
+\* ExternalDocumentAcp::await_tuple and before in
 \* crates/engine/acp/src/external.rs, with OBSERVATION_PATIENCE; the
 \* projection's prepared relationship input is resolved through it at the
 \* edge (crates/database/db/src/write/prepare.rs), and
