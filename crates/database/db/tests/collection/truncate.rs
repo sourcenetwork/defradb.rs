@@ -6,7 +6,7 @@ use document::{DocID, Document, NormalValue};
 use query::documents::Filter;
 use query::{DocFetcher, DocMutator};
 use schema::{CollectionVersion, FieldDescription, FieldKind, IndexDescription};
-use storage::corekv::Key;
+use storage::corekv::{IterOptions, Key};
 use storage::keys::DatastoreSE;
 use storage::RegolithStore;
 
@@ -294,6 +294,111 @@ fn truncating_a_missing_collection_names_it() {
             error,
             TruncateError::Db(db::Error::CollectionNotFound(name)) if name == "Users"
         ));
+    })
+    .unwrap()
+}
+
+fn named_schema(name: &str) -> CollectionVersion {
+    CollectionVersion::new(
+        name,
+        format!("{name}-v1"),
+        format!("{name}-collection"),
+        vec![
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+        ],
+    )
+    .with_index(IndexDescription::new(format!("{name}_name")).with_field("name", false))
+}
+
+async fn create_named(db: &Arc<DB<RegolithStore>>, collection: &str) {
+    let mut doc = Document::new(named_schema(collection));
+    doc.set("name", NormalValue::String(collection.to_owned()))
+        .unwrap();
+    AutoCommitMutator::new(db.clone())
+        .create(collection, doc)
+        .await
+        .unwrap();
+}
+
+async fn datastore_keys(db: &Arc<DB<RegolithStore>>, prefix: &str) -> usize {
+    let txn = db.new_txn(true).await.unwrap();
+    let datastore = txn.datastore().unwrap();
+    let mut iter = datastore
+        .iterator(IterOptions::new().with_prefix(prefix.as_bytes().to_vec()))
+        .await
+        .unwrap();
+    let mut count = 0;
+    while iter.next().await.unwrap().is_some() {
+        count += 1;
+    }
+    iter.close().await.unwrap();
+    count
+}
+
+/// A collection whose short ID is written as the byte of a family other
+/// collections keep their keys in (100 is `d`, the documents; 118 is `v`,
+/// their schema versions) is truncated without touching those keys.
+#[test]
+fn truncating_a_collection_whose_short_id_spells_a_family_keeps_other_collections() {
+    workers::block_on(async {
+        let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+        db.create_collection(named_schema("Kept")).await.unwrap();
+        create_named(&db, "Kept").await;
+        let mut spelled = Vec::new();
+        for n in 0..200 {
+            let name = format!("Filler{n}");
+            db.create_collection(named_schema(&name)).await.unwrap();
+            let short_id = db
+                .get_collection(&name)
+                .unwrap()
+                .unwrap()
+                .resolved_root_id();
+            if short_id == u32::from(b'd') || short_id == u32::from(b'v') {
+                create_named(&db, &name).await;
+                spelled.push(name);
+            }
+            if short_id > u32::from(b'v') {
+                break;
+            }
+        }
+        assert_eq!(spelled.len(), 2, "no collection got short ID 100 or 118");
+        let kept_documents = datastore_keys(&db, "/d/Kept-collection/").await;
+        let kept_versions = datastore_keys(&db, "/v/Kept-collection/").await;
+        assert!(kept_documents > 0 && kept_versions > 0);
+
+        for name in &spelled {
+            db.truncate_collection_as(&RequestContext::ambient(), name, None)
+                .await
+                .unwrap();
+            assert!(AutoCommitFetcher::new(db.clone())
+                .get_all(name)
+                .await
+                .unwrap()
+                .is_empty());
+        }
+
+        assert_eq!(
+            datastore_keys(&db, "/d/Kept-collection/").await,
+            kept_documents
+        );
+        assert_eq!(
+            datastore_keys(&db, "/v/Kept-collection/").await,
+            kept_versions
+        );
+        assert_eq!(
+            AutoCommitFetcher::new(db)
+                .get_all("Kept")
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
     })
     .unwrap()
 }
