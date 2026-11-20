@@ -11,6 +11,9 @@ use crate::error::{Error, Result};
 /// How long shutdown waits for the HTTP requests in flight, as long as the
 /// network runtime's own drain.
 const HTTP_DRAIN: Duration = Duration::from_secs(30);
+/// How long shutdown waits for PostgreSQL requests in flight.
+#[cfg(feature = "postgres")]
+const PG_DRAIN: Duration = Duration::from_secs(30);
 
 impl Node {
     /// Run the node until shutdown
@@ -54,15 +57,13 @@ impl Node {
         };
 
         // Start PG wire protocol server
-        #[cfg(not(feature = "postgres"))]
-        let pg_task: Option<edge::Service> = None;
         #[cfg(feature = "postgres")]
         let pg_task: Option<edge::Service> = if let Some(server) = self.pg_server.take() {
             info!(
                 "Starting Postgres wire protocol server on {}",
                 server.address()
             );
-            Some(self.edge.spawn_service(async move {
+            Some(self.pg_scope.edge().spawn_service(async move {
                 if let Err(e) = server.run().await {
                     error!("PG server error: {}", e);
                 }
@@ -160,10 +161,19 @@ impl Node {
                     );
                 }
             }
-            if let Some(task) = pg_task {
+            #[cfg(feature = "postgres")]
+            if pg_task.is_some() {
                 info!("Stopping PG server...");
-                let _ = timeout(std::time::Duration::from_secs(1), task.stopped()).await;
-                info!("PG server stopped");
+                let drained = self.pg_scope.drain(PG_DRAIN).await;
+                if drained.is_complete() {
+                    info!("PG server stopped");
+                } else {
+                    warn!(
+                        remaining = drained.remaining,
+                        timeout_secs = PG_DRAIN.as_secs(),
+                        "PostgreSQL requests still running at the shutdown deadline were stopped"
+                    );
+                }
             }
         }
 
