@@ -1271,6 +1271,7 @@ RUNS=(
   "MC_FirstHeader_Green.cfg FirstHeader.tla GREEN" # the header stream starts with the newest finalized block, read after subscribing, and every header is checked
   "MC_FirstHeader_Red_NoHead.cfg FirstHeader.tla RED" # only blocks finalized after subscribing are streamed: a fresh deployment's first start waits for the heartbeat (INV_Current)
   "MC_FirstHeader_Red_ReadBeforeSubscribe.cfg FirstHeader.tla RED" # the head is read before subscribing: a block finalized in between is missed (INV_Current)
+  "MC_FirstHeader_Red_StaleHead.cfg FirstHeader.tla RED" # a stale head is not queued: a fresh deployment waits for the next block (INV_Current)
   "MC_FirstHeader_Red_Unverified.cfg FirstHeader.tla RED" # the transport's header is taken unchecked: a forged head is accepted (INV_OnlyFinalized)
   "MC_NodeStartup_Green.cfg NodeStartup.tla GREEN" # every config starts as asked or fails holding nothing; startup ends
   "MC_NodeStartup_Red_IrohDefaultLadder.cfg NodeStartup.tla RED" # iroh keeps the default retry ladder (INV_OneSchedule)

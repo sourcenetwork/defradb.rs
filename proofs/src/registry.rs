@@ -206,7 +206,7 @@ pub const PROPERTIES: &[Property] = &[
         name: "INV_OnlyFinalized / INV_Current: the light client takes only a header a finalized block certifies, and once the stream is drained it stands on the newest finalized block without waiting for another",
         axis: Tla,
         anchor: "crates/engine/vera-embedded/src/acp.rs subscribe_headers; crates/engine/vera-embedded/src/acp/head.rs finalized, header, recent; backbone:acp-light-client HeaderChain::start",
-        model_ref: "MC_FirstHeader_{Green,Red_NoHead,Red_ReadBeforeSubscribe,Red_Unverified}.cfg",
+        model_ref: "MC_FirstHeader_{Green,Red_NoHead,Red_ReadBeforeSubscribe,Red_StaleHead,Red_Unverified}.cfg",
         tiers: &[Boundary],
         bound_by: "crates/engine/vera-embedded/tests/embedded_node.rs a_fresh_deployments_provider_starts_on_its_first_block; crates/entry-points/defra-node/tests/embedded_vera/first_start.rs a_fresh_deployments_first_start_takes_its_first_block",
     },

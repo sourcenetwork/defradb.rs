@@ -97,6 +97,7 @@ ignore = [
     { id = "RUSTSEC-2026-0489", reason = "hickory-proto 0.25 via libp2p 0.56; zone-file text parsing only; #2813" },
     { id = "RUSTSEC-2026-0490", reason = "hickory-proto 0.25 via libp2p 0.56; zone-file lexer only; #2813" },
     { id = "RUSTSEC-2026-0491", reason = "hickory-proto 0.25 via libp2p 0.56; reachable via DNS answers; fix needs libp2p 0.57; #2813" },
+    { id = "RUSTSEC-2026-0504", reason = "hickory-proto 0.25 via libp2p 0.56; no safe upgrade until libp2p 0.57; #2813" },
 ]
 
 [licenses]

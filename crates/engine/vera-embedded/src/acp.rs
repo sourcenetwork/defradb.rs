@@ -62,13 +62,7 @@ impl AcpTransport for EmbeddedTransport {
             let Some(head) = head::finalized(self).await else {
                 return Ok(streamed.boxed());
             };
-            let first = head.block_hash;
-            let headers: HeaderStream = futures::stream::once(async move { Ok(head) })
-                .chain(streamed.filter(move |header| {
-                    let repeat = matches!(header, Ok(header) if header.block_hash == first);
-                    futures::future::ready(!repeat)
-                }))
-                .boxed();
+            let headers = headers_after(head, streamed.boxed());
             Ok(headers)
         }
         .boxed()
@@ -76,6 +70,22 @@ impl AcpTransport for EmbeddedTransport {
 }
 
 mod head;
+
+/// The fetched head, then only headers that finalize after it: any queued
+/// header at or below the fetched head is older than the stream's start.
+fn headers_after(head: GossipHeader, queued: HeaderStream) -> HeaderStream {
+    let head_height = head.height;
+    let head_hash = head.block_hash;
+    futures::stream::once(async move { Ok(head) })
+        .chain(queued.filter(move |header| {
+            let stale = matches!(
+                header,
+                Ok(header) if header.height <= head_height || header.block_hash == head_hash
+            );
+            futures::future::ready(!stale)
+        }))
+        .boxed()
+}
 
 fn header_error(failure: Failure) -> TransportError {
     transport_error(SUBSCRIBE_HEADERS, failure)

@@ -23,6 +23,11 @@
 \* checks the first header exactly as it checks the others (acp-light-client
 \* header_sync.rs run_header_loop, authenticate_header).
 \*
+\* The head is queued only when it is fresh: `finalized` in
+\* crates/engine/vera-embedded/src/acp/head.rs refuses a head older than the
+\* light client's freshness limit (30 seconds by default) and leaves the
+\* subscription to the node's next block.
+\*
 \* What must never happen:
 \*   1. the light client takes as its head a header no finalized block
 \*      certifies - INV_OnlyFinalized;
@@ -40,17 +45,12 @@
 \*                       its trusted key (acp-light-client header_sync.rs
 \*                       authenticate_header, term::certify).
 \*
-\* Not modelled: the head older than the light client's freshness limit is
-\* not sent (head.rs recent). The light client refuses such a head anyway,
-\* and the next block after a restart brings a fresh one; skipping it only
-\* saves the refused read.
-
 EXTENDS Naturals, Sequences
 
 \* MaxHeight: the most blocks the Vera node finalizes in one behaviour.
-\* HeadFirst, SubscribeFirst, Verify: the three guards above; a RED
+\* HeadFirst, FreshHead, SubscribeFirst, Verify: the guards above; a RED
 \* configuration turns one off.
-CONSTANTS MaxHeight, HeadFirst, SubscribeFirst, Verify
+CONSTANTS MaxHeight, HeadFirst, FreshHead, SubscribeFirst, Verify
 
 \* finalized: the height of the Vera node's newest finalized block (0: none).
 \* pc:        where the transport is: "idle" before it subscribes, "read" once
@@ -105,11 +105,12 @@ Subscribe ==
     /\ pc' = "subscribed"                           \* the subscription stands
     /\ UNCHANGED <<finalized, head, queue, lc>>     \* nothing else moves
 
-\* The planted wrong order: the head is read before the subscription.
+\* The planted wrong order: the head is read before the subscription. A stale
+\* head is not read at all, just as in the right order.
 ReadEarly ==
     /\ pc = "idle"                                  \* not subscribed yet
     /\ ~SubscribeFirst                              \* the planted order
-    /\ head' = Header(finalized, TRUE)              \* the head as it is now
+    /\ head' = IF FreshHead THEN Header(finalized, TRUE) ELSE None \* fresh only
     /\ pc' = "read"                                 \* read, not yet subscribed
     /\ UNCHANGED <<finalized, queue, lc>>           \* nothing else moves
 
@@ -125,7 +126,7 @@ SubscribeLate ==
 QueueHead ==
     /\ pc = "subscribed"                                              \* the subscription stands
     /\ LET read == IF SubscribeFirst THEN Header(finalized, TRUE) ELSE head \* the head it has
-       IN queue' = IF HeadFirst /\ read.height > 0                    \* a block to start with:
+       IN queue' = IF HeadFirst /\ FreshHead /\ read.height > 0        \* fresh head to start with:
                      THEN <<read>> \o queue                           \* it goes first
                      ELSE queue                                        \* else nothing is added
     /\ pc' = "streaming"                                              \* the stream is handed over
