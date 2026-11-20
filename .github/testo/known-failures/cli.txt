@@ -14,9 +14,7 @@ testo acp::dac::subscription::acp_subscription_anonymous_subscriber_receives_not
 testo acp::dac::subscription::acp_subscription_authenticated_owner_receives_events #2708
 testo acp::nac::add_p2p_replicator::nac_gates_add_p2_p_replicator_wrong_identity_not_authorized_error #2708
 testo acp::dac::subscription::acp_subscription_authenticated_reader_receives_events #2708
-testo acp::nac::list_p2p_replicator::nac_gates_list_p2_p_replicator_authorized_identity_allow_access #2702
 testo acp::nac::relation_admin::add_p2p_replicator::nac_admin_relation_can_add_p2_p_replicator #2709
-testo acp::nac::relation_admin::list_p2p_replicator::nac_admin_relation_can_list_p2_p_replicator #2702
 testo subscription::subscription::subscription_with_add_mutations #2708
 testo subscription::subscription::subscription_with_counter_crdt_should_succeed #2708
 testo issues::t_2569::p2_p_update_with_pn_counter_float_overflow_decrement_prevents_querying #2711
