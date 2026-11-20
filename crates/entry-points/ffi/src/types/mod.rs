@@ -23,7 +23,8 @@ pub use node_init_options::NodeInitOptions;
 pub struct DefraResult {
     /// Status code: 0=success, 1=error, 2=subscription
     pub status: c_int,
-    /// Reserved, so the struct has no padding: always zero.
+    /// Reserved, so the struct has no padding: always zero. It never
+    /// becomes a field.
     pub reserved: u32,
     /// Error message; empty, never null, on success. Freed with the result.
     pub error: *mut c_char,
@@ -134,7 +135,8 @@ impl From<Result<(), String>> for DefraResult {
 pub struct DefraNewNodeResult {
     /// Status code: 0=success, 1=error
     pub status: c_int,
-    /// Reserved, so the struct has no padding: always zero.
+    /// Reserved, so the struct has no padding: always zero. It never
+    /// becomes a field.
     pub reserved: u32,
     /// Error message; empty, never null, on success. Freed with the result.
     pub error: *mut c_char,
@@ -175,7 +177,8 @@ impl DefraNewNodeResult {
 pub struct DefraNewTxnResult {
     /// Status code: 0=success, 1=error
     pub status: c_int,
-    /// Reserved, so the struct has no padding: always zero.
+    /// Reserved, so the struct has no padding: always zero. It never
+    /// becomes a field.
     pub reserved: u32,
     /// Error message; empty, never null, on success. Freed with the result.
     pub error: *mut c_char,
@@ -213,7 +216,8 @@ impl DefraNewTxnResult {
 pub struct DefraNewIdentityResult {
     /// Status code: 0=success, 1=error
     pub status: c_int,
-    /// Reserved, so the struct has no padding: always zero.
+    /// Reserved, so the struct has no padding: always zero. It never
+    /// becomes a field.
     pub reserved: u32,
     /// Error message; empty, never null, on success. Freed with the result.
     pub error: *mut c_char,

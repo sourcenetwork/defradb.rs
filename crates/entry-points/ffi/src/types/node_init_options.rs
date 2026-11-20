@@ -59,7 +59,8 @@ pub struct NodeInitOptions {
     pub searchable_encryption_key: *const u8,
     /// Length of `searchable_encryption_key` in bytes.
     pub searchable_encryption_key_len: c_int,
-    /// Reserved, so the struct has no padding: leave it zero.
+    /// Reserved, so the struct has no padding: leave it zero. It never
+    /// becomes a field; new fields go after the struct's last one.
     pub reserved0: u32,
     /// Milliseconds a P2P block sync may take. 0 keeps the default.
     pub p2p_block_sync_timeout_ms: i64,
@@ -75,7 +76,8 @@ pub struct NodeInitOptions {
     /// Clear dial backoff before retrying a replicator. Not supported yet:
     /// must be 0.
     pub enable_clear_backoff_on_retry: c_int,
-    /// Reserved, so the struct has no padding: leave it zero.
+    /// Reserved, so the struct has no padding: leave it zero. It never
+    /// becomes a field; new fields go after the struct's last one.
     pub reserved1: u32,
     /// The Ed25519 private key the node's peer identity uses for this start
     /// (its 32-byte seed, or seed and public key), or null for the node's
@@ -85,7 +87,8 @@ pub struct NodeInitOptions {
     pub p2p_private_key: *const u8,
     /// Length of `p2p_private_key` in bytes.
     pub p2p_private_key_len: c_int,
-    /// Reserved, so the struct has no padding: leave it zero.
+    /// Reserved, so the struct has no padding: leave it zero. It never
+    /// becomes a field; new fields go after the struct's last one.
     pub reserved2: u32,
 
     /// HTTP API address. Not supported yet: must be null or empty.
@@ -126,7 +129,8 @@ pub struct NodeInitOptions {
     pub vera_signer_key: *const u8,
     /// Length of `vera_signer_key` in bytes.
     pub vera_signer_key_len: c_int,
-    /// Reserved, so the struct has no padding: leave it zero.
+    /// Reserved, so the struct has no padding: leave it zero. It never
+    /// becomes a field; new fields go after the struct's last one.
     pub reserved3: u32,
     /// P2P transport: "libp2p" (default) or "iroh".
     pub p2p_transport: *const c_char,
@@ -140,7 +144,8 @@ pub struct NodeInitOptions {
     pub iroh_bind_addr: *const c_char,
     /// Optional iroh bind UDP port. 0 means OS-assigned/unspecified.
     pub iroh_bind_port: u16,
-    /// Reserved, so the struct has no padding: leave it zero.
+    /// Reserved, so the struct has no padding: leave it zero. It never
+    /// becomes a field; new fields go after the struct's last one.
     pub reserved4: u16,
     /// Run iroh without discovery (1=true, 0=false).
     pub iroh_disable_discovery: c_int,
@@ -159,7 +164,8 @@ pub struct NodeInitOptions {
     pub max_doc_sync_request_doc_ids: usize,
     /// Per-peer rate limit burst capacity. 0 means use default (500).
     pub rate_limit_burst: u32,
-    /// Reserved, so the struct has no padding: leave it zero.
+    /// Reserved, so the struct has no padding: leave it zero. It never
+    /// becomes a field; new fields go after the struct's last one.
     pub reserved5: u32,
     /// Per-peer rate limit refill rate (tokens/sec). 0 means use default (50).
     pub rate_limit_rate: f64,
@@ -190,7 +196,8 @@ pub struct NodeInitOptions {
     /// mobile embedder runs it. Several such nodes run in one process without
     /// competing for a port. Refused together with `listening_addresses`.
     pub disable_p2p_listen: c_int,
-    /// Reserved, so the struct has no padding: leave it zero.
+    /// Reserved, so the struct has no padding: leave it zero. It never
+    /// becomes a field; new fields go after the struct's last one.
     pub reserved6: u32,
 }
 

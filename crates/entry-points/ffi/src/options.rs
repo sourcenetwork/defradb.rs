@@ -19,6 +19,12 @@
 //! with a reserved field. Otherwise an appended field could sit in an older
 //! struct's tail padding, ignored instead of refused, and the bytes past the
 //! library's struct could be padding nobody set.
+//!
+//! A reserved field never becomes a field. The library reads reserved fields
+//! and drops them, so an older library would ignore a caller who set a
+//! reserved field that a later version had turned into an option, where the
+//! size rule refuses a field it does not know. New fields only ever go after
+//! a struct's last field.
 
 use std::mem::{size_of, MaybeUninit};
 
