@@ -25,7 +25,7 @@ pub struct DefraResult {
     pub status: c_int,
     /// Reserved, so the struct has no padding: always zero. It never
     /// becomes a field.
-    pub reserved: u32,
+    pub _reserved0: u32,
     /// Error message; empty, never null, on success. Freed with the result.
     pub error: *mut c_char,
     /// JSON value; empty, never null, on error or when there is none. Freed
@@ -41,7 +41,7 @@ impl DefraResult {
     pub fn success(value: impl Into<String>) -> Self {
         Self {
             status: 0,
-            reserved: 0,
+            _reserved0: 0,
             error: empty_c_string(),
             value: sanitize_to_cstring(value, "{}").into_raw(),
         }
@@ -62,7 +62,7 @@ impl DefraResult {
         match CString::from_vec_with_nul(std::mem::take(&mut *text)) {
             Ok(value) => Self {
                 status: 0,
-                reserved: 0,
+                _reserved0: 0,
                 error: empty_c_string(),
                 value: value.into_raw(),
             },
@@ -80,7 +80,7 @@ impl DefraResult {
     pub fn error(message: impl Into<String>) -> Self {
         Self {
             status: 1,
-            reserved: 0,
+            _reserved0: 0,
             error: sanitize_to_cstring(message, "unknown error").into_raw(),
             value: empty_c_string(),
         }
@@ -90,7 +90,7 @@ impl DefraResult {
     pub fn ok() -> Self {
         Self {
             status: 0,
-            reserved: 0,
+            _reserved0: 0,
             error: empty_c_string(),
             value: empty_c_string(),
         }
@@ -100,7 +100,7 @@ impl DefraResult {
     pub fn subscription(id: impl Into<String>) -> Self {
         Self {
             status: 2,
-            reserved: 0,
+            _reserved0: 0,
             error: empty_c_string(),
             value: sanitize_to_cstring(id, "0").into_raw(),
         }
@@ -137,7 +137,7 @@ pub struct DefraNewNodeResult {
     pub status: c_int,
     /// Reserved, so the struct has no padding: always zero. It never
     /// becomes a field.
-    pub reserved: u32,
+    pub _reserved0: u32,
     /// Error message; empty, never null, on success. Freed with the result.
     pub error: *mut c_char,
     /// Handle to the node (0 on error).
@@ -149,7 +149,7 @@ impl DefraNewNodeResult {
     pub fn success(handle: usize) -> Self {
         Self {
             status: 0,
-            reserved: 0,
+            _reserved0: 0,
             error: ptr::null_mut(),
             node_ptr: handle,
         }
@@ -162,7 +162,7 @@ impl DefraNewNodeResult {
     pub fn error(message: impl Into<String>) -> Self {
         Self {
             status: 1,
-            reserved: 0,
+            _reserved0: 0,
             error: sanitize_to_cstring(message, "unknown error").into_raw(),
             node_ptr: 0,
         }
@@ -179,7 +179,7 @@ pub struct DefraNewTxnResult {
     pub status: c_int,
     /// Reserved, so the struct has no padding: always zero. It never
     /// becomes a field.
-    pub reserved: u32,
+    pub _reserved0: u32,
     /// Error message; empty, never null, on success. Freed with the result.
     pub error: *mut c_char,
     /// Handle to the transaction (0 on error).
@@ -191,7 +191,7 @@ impl DefraNewTxnResult {
     pub fn success(handle: usize) -> Self {
         Self {
             status: 0,
-            reserved: 0,
+            _reserved0: 0,
             error: ptr::null_mut(),
             txn_ptr: handle,
         }
@@ -201,7 +201,7 @@ impl DefraNewTxnResult {
     pub fn error(message: impl Into<String>) -> Self {
         Self {
             status: 1,
-            reserved: 0,
+            _reserved0: 0,
             error: sanitize_to_cstring(message, "unknown error").into_raw(),
             txn_ptr: 0,
         }
@@ -218,7 +218,7 @@ pub struct DefraNewIdentityResult {
     pub status: c_int,
     /// Reserved, so the struct has no padding: always zero. It never
     /// becomes a field.
-    pub reserved: u32,
+    pub _reserved0: u32,
     /// Error message; empty, never null, on success. Freed with the result.
     pub error: *mut c_char,
     /// Handle to the identity (0 on error).
@@ -230,7 +230,7 @@ impl DefraNewIdentityResult {
     pub fn success(handle: usize) -> Self {
         Self {
             status: 0,
-            reserved: 0,
+            _reserved0: 0,
             error: ptr::null_mut(),
             identity_ptr: handle,
         }
@@ -240,7 +240,7 @@ impl DefraNewIdentityResult {
     pub fn error(message: impl Into<String>) -> Self {
         Self {
             status: 1,
-            reserved: 0,
+            _reserved0: 0,
             error: sanitize_to_cstring(message, "unknown error").into_raw(),
             identity_ptr: 0,
         }

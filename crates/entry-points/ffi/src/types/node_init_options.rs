@@ -61,7 +61,7 @@ pub struct NodeInitOptions {
     pub searchable_encryption_key_len: c_int,
     /// Reserved, so the struct has no padding: leave it zero. It never
     /// becomes a field; new fields go after the struct's last one.
-    pub reserved0: u32,
+    pub _reserved0: u32,
     /// Milliseconds a P2P block sync may take. 0 keeps the default.
     pub p2p_block_sync_timeout_ms: i64,
     /// Lens runtime pool size. Not supported yet: must be 0.
@@ -78,7 +78,7 @@ pub struct NodeInitOptions {
     pub enable_clear_backoff_on_retry: c_int,
     /// Reserved, so the struct has no padding: leave it zero. It never
     /// becomes a field; new fields go after the struct's last one.
-    pub reserved1: u32,
+    pub _reserved1: u32,
     /// The Ed25519 private key the node's peer identity uses for this start
     /// (its 32-byte seed, or seed and public key), or null for the node's
     /// stored key. As Go's `P2PPrivateKey`, it applies to this start only: it
@@ -89,7 +89,7 @@ pub struct NodeInitOptions {
     pub p2p_private_key_len: c_int,
     /// Reserved, so the struct has no padding: leave it zero. It never
     /// becomes a field; new fields go after the struct's last one.
-    pub reserved2: u32,
+    pub _reserved2: u32,
 
     /// HTTP API address. Not supported yet: must be null or empty.
     pub http_address: *const c_char,
@@ -131,7 +131,7 @@ pub struct NodeInitOptions {
     pub vera_signer_key_len: c_int,
     /// Reserved, so the struct has no padding: leave it zero. It never
     /// becomes a field; new fields go after the struct's last one.
-    pub reserved3: u32,
+    pub _reserved3: u32,
     /// P2P transport: "libp2p" (default) or "iroh".
     pub p2p_transport: *const c_char,
     /// Optional iroh relay URL.
@@ -146,7 +146,7 @@ pub struct NodeInitOptions {
     pub iroh_bind_port: u16,
     /// Reserved, so the struct has no padding: leave it zero. It never
     /// becomes a field; new fields go after the struct's last one.
-    pub reserved4: u16,
+    pub _reserved4: u16,
     /// Run iroh without discovery (1=true, 0=false).
     pub iroh_disable_discovery: c_int,
     /// Optional custom DNS origin domain for iroh discovery.
@@ -166,7 +166,7 @@ pub struct NodeInitOptions {
     pub rate_limit_burst: u32,
     /// Reserved, so the struct has no padding: leave it zero. It never
     /// becomes a field; new fields go after the struct's last one.
-    pub reserved5: u32,
+    pub _reserved5: u32,
     /// Per-peer rate limit refill rate (tokens/sec). 0 means use default (50).
     pub rate_limit_rate: f64,
     /// Optional replication filter, asked whether to keep each replicated
@@ -198,7 +198,7 @@ pub struct NodeInitOptions {
     pub disable_p2p_listen: c_int,
     /// Reserved, so the struct has no padding: leave it zero. It never
     /// becomes a field; new fields go after the struct's last one.
-    pub reserved6: u32,
+    pub _reserved6: u32,
 }
 
 impl Default for NodeInitOptions {
@@ -221,17 +221,17 @@ impl Default for NodeInitOptions {
             disable_signing: 0,
             searchable_encryption_key: ptr::null(),
             searchable_encryption_key_len: 0,
-            reserved0: 0,
+            _reserved0: 0,
             p2p_block_sync_timeout_ms: 0,
             lens_pool_size: 0,
             chunk_size: 0,
             enable_pub_sub: 0,
             enable_relay: 0,
             enable_clear_backoff_on_retry: 0,
-            reserved1: 0,
+            _reserved1: 0,
             p2p_private_key: ptr::null(),
             p2p_private_key_len: 0,
-            reserved2: 0,
+            _reserved2: 0,
             http_address: ptr::null(),
             http_allowed_origins: ptr::null(),
             tls_cert_path: ptr::null(),
@@ -248,14 +248,14 @@ impl Default for NodeInitOptions {
             vera_chain_id: ptr::null(),
             vera_signer_key: ptr::null(),
             vera_signer_key_len: 0,
-            reserved3: 0,
+            _reserved3: 0,
             p2p_transport: ptr::null(),
             iroh_relay_url: ptr::null(),
             iroh_relay_mode: ptr::null(),
             iroh_relay_urls_json: ptr::null(),
             iroh_bind_addr: ptr::null(),
             iroh_bind_port: 0,
-            reserved4: 0,
+            _reserved4: 0,
             iroh_disable_discovery: 0,
             iroh_discovery_origin_domain: ptr::null(),
             iroh_pkarr_relay_url: ptr::null(),
@@ -264,7 +264,7 @@ impl Default for NodeInitOptions {
             max_concurrent_push_tasks: 0,
             max_doc_sync_request_doc_ids: 0,
             rate_limit_burst: 0,
-            reserved5: 0,
+            _reserved5: 0,
             rate_limit_rate: 0.0,
             replication_filter: None,
             replication_filter_context: 0,
@@ -272,7 +272,7 @@ impl Default for NodeInitOptions {
             p2p_resource_file_descriptors: 0,
             p2p_max_streams_per_peer: 0,
             disable_p2p_listen: 0,
-            reserved6: 0,
+            _reserved6: 0,
         }
     }
 }

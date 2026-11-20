@@ -14,9 +14,9 @@ header = """
  * its options as a struct, by value, whose zero value is every default; the
  * caller's identity (0 for none) is one of its fields. Fields are only ever
  * appended, so code built against an older header keeps working. A field
- * named reserved fills what would be padding: leave it zero; it never
- * becomes a field. Free every
- * result a call returns with its free function: defra_result_free, or
+ * whose name starts with _reserved fills what would be padding: leave it
+ * zero; it never becomes a field. Free every result a call returns with its
+ * free function: defra_result_free, or
  * defra_new_<kind>_result_free.
  */
 """
@@ -332,7 +332,10 @@ include = [
 rename_args = "SnakeCase"
 
 [struct]
-rename_fields = "SnakeCase"
+# The Rust field names are already snake_case. Renaming to SnakeCase would
+# also strip the leading underscore that marks a _reserved field as not for
+# callers.
+rename_fields = "None"
 
 [enum]
 rename_variants = "ScreamingSnakeCase"

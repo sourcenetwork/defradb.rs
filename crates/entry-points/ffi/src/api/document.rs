@@ -28,7 +28,7 @@ pub struct DefraDocumentAddOptions {
     pub signing: c_int,
     /// Reserved, so the struct has no padding: leave it zero. It never
     /// becomes a field; new fields go after the struct's last one.
-    pub reserved: u32,
+    pub _reserved0: u32,
 }
 
 /// Options of `defra_document_get`.
@@ -66,7 +66,7 @@ pub struct DefraDocumentUpdateOptions {
     pub collection_get_inactive: c_int,
     /// Reserved, so the struct has no padding: leave it zero. It never
     /// becomes a field; new fields go after the struct's last one.
-    pub reserved0: u32,
+    pub _reserved0: u32,
     /// The document to update.
     pub doc_id: *const c_char,
     /// A GraphQL filter choosing the documents to update, as JSON.
@@ -75,7 +75,7 @@ pub struct DefraDocumentUpdateOptions {
     pub signing: c_int,
     /// Reserved, so the struct has no padding: leave it zero. It never
     /// becomes a field; new fields go after the struct's last one.
-    pub reserved1: u32,
+    pub _reserved1: u32,
 }
 
 /// Options of `defra_document_delete`: the documents are `doc_id`, or those
@@ -95,7 +95,7 @@ pub struct DefraDocumentDeleteOptions {
     pub collection_get_inactive: c_int,
     /// Reserved, so the struct has no padding: leave it zero. It never
     /// becomes a field; new fields go after the struct's last one.
-    pub reserved0: u32,
+    pub _reserved0: u32,
     /// The document to delete.
     pub doc_id: *const c_char,
     /// A GraphQL filter choosing the documents to delete, as JSON.
@@ -104,7 +104,7 @@ pub struct DefraDocumentDeleteOptions {
     pub signing: c_int,
     /// Reserved, so the struct has no padding: leave it zero. It never
     /// becomes a field; new fields go after the struct's last one.
-    pub reserved1: u32,
+    pub _reserved1: u32,
 }
 
 /// Options of `defra_document_purge`.
@@ -123,7 +123,7 @@ pub struct DefraDocumentPurgeOptions {
     pub collection_get_inactive: c_int,
     /// Reserved, so the struct has no padding: leave it zero. It never
     /// becomes a field; new fields go after the struct's last one.
-    pub reserved: u32,
+    pub _reserved0: u32,
 }
 
 zero_default!(

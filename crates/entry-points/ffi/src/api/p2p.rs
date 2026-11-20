@@ -21,7 +21,8 @@ pub struct DefraP2POptions {
 pub struct DefraP2PSyncOptions {
     /// The caller's identity (0 for none).
     pub identity: usize,
-    /// How long the sync may take, in milliseconds (0 for no limit).
+    /// How long the sync may take, in milliseconds (0 for no limit). A value
+    /// beyond about 292 years, `i64::MAX` included, is that longest timeout.
     pub timeout_ms: i64,
 }
 

@@ -73,8 +73,14 @@ pub(crate) fn collection(
     }
 }
 
+/// The longest timeout a Go duration holds: `i64::MAX` nanoseconds, about
+/// 292 years, in whole milliseconds.
+const MAX_TIMEOUT_MS: i64 = i64::MAX / 1_000_000;
+
 /// A timeout in milliseconds as the Go duration string the sync calls
-/// parse; zero is none, and a negative one is refused.
+/// parse; zero is none, and a negative one is refused. One longer than a Go
+/// duration holds is that longest duration, so a caller may pass `i64::MAX`
+/// for no practical limit instead of having it refused as an overflow.
 pub(crate) fn timeout(milliseconds: i64) -> Result<Option<CString>, DefraResult> {
     match milliseconds {
         0 => Ok(None),
@@ -82,7 +88,7 @@ pub(crate) fn timeout(milliseconds: i64) -> Result<Option<CString>, DefraResult>
             "timeout_ms must not be negative, got {ms}"
         ))),
         ms => Ok(Some(
-            CString::new(format!("{ms}ms")).expect("a number has no NUL"),
+            CString::new(format!("{}ms", ms.min(MAX_TIMEOUT_MS))).expect("a number has no NUL"),
         )),
     }
 }

@@ -23,7 +23,7 @@ pub struct DefraIdentityNewOptions {
 pub struct DefraIdentityBearerOptions {
     /// Reserved, so the struct has room to grow: leave it zero. It never
     /// becomes a field; options go after it.
-    pub reserved: u64,
+    pub _reserved0: u64,
 }
 
 /// Options of `defra_identity_new_remote`: the public key as hex or as

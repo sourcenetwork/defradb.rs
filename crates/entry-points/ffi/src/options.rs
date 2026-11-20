@@ -18,7 +18,9 @@
 //! has no implicit padding, and its size is a multiple of 8: a gap is filled
 //! with a reserved field. Otherwise an appended field could sit in an older
 //! struct's tail padding, ignored instead of refused, and the bytes past the
-//! library's struct could be padding nobody set.
+//! library's struct could be padding nobody set. No field is wider than 8
+//! bytes, so none crosses an 8-byte boundary: a size that is not a multiple
+//! of 8 ends inside a field, and is refused rather than read as half of one.
 //!
 //! A reserved field never becomes a field. The library reads reserved fields
 //! and drops them, so an older library would ignore a caller who set a
@@ -40,9 +42,14 @@ use std::mem::{size_of, MaybeUninit};
 /// zero discriminant.
 pub unsafe trait ZeroDefault: Sized + Copy {}
 
+/// Every options struct's size, and so every size that ends between two of
+/// its fields, is a multiple of this.
+const FIELD_BOUNDARY: usize = 8;
+
 /// The caller's options, as this library's struct: the caller's first
-/// `size` bytes, then zero. Null `opts` is every option at its default. The
-/// error is the message to answer the call with.
+/// `size` bytes, then zero. Null `opts` is every option at its default. A
+/// `size` that is not a multiple of 8 ends inside a field and is refused.
+/// The error is the message to answer the call with.
 ///
 /// # Safety
 ///
@@ -57,6 +64,14 @@ where
         return Ok(unsafe { value.assume_init() });
     }
     let given = size as usize;
+    // Every struct is a whole number of 8-byte words and no field crosses a
+    // word, so any other size ends inside a field: half a pointer, read.
+    if !given.is_multiple_of(FIELD_BOUNDARY) {
+        return Err(format!(
+            "opts_size {given} ends inside a field (the options are a multiple of \
+             {FIELD_BOUNDARY} bytes); pass sizeof the options struct"
+        ));
+    }
     let known = size_of::<T>();
     let source = opts.cast::<u8>();
     if given > known {

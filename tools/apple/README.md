@@ -86,9 +86,10 @@ results with `defra_new_node_result_free`, `defra_new_txn_result_free` and
 A call that can grow takes its options as a struct, passed by value, whose
 zero value is every default; the caller's identity handle (`0` for none) is
 its `identity` field. Fields are only ever appended, so an app built against
-an older header keeps working with a newer library. A field named `reserved`
-fills what would otherwise be padding: leave it zero. It never becomes a
-field. In Swift, start from the zero value and set what you need:
+an older header keeps working with a newer library. A field whose name
+starts with `_reserved` (`_reserved0`, `_reserved1`, ...) fills what would
+otherwise be padding: leave it zero. It never becomes a field. In Swift, start
+from the zero value and set what you need:
 
 ```swift
 var opts = DefraQueryOptions()

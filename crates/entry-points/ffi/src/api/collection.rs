@@ -24,7 +24,7 @@ pub struct DefraCollectionDeleteOptions {
     pub active_only: c_int,
     /// Reserved, so the struct has no padding: leave it zero. It never
     /// becomes a field; new fields go after the struct's last one.
-    pub reserved: u32,
+    pub _reserved0: u32,
 }
 
 /// Options of `defra_collection_describe`. With no collection chosen,
@@ -44,7 +44,7 @@ pub struct DefraCollectionDescribeOptions {
     pub collection_get_inactive: c_int,
     /// Reserved, so the struct has no padding: leave it zero. It never
     /// becomes a field; new fields go after the struct's last one.
-    pub reserved: u32,
+    pub _reserved0: u32,
 }
 
 /// Options of `defra_collection_patch`.
@@ -82,7 +82,7 @@ pub struct DefraCollectionTruncateOptions {
     pub collection_get_inactive: c_int,
     /// Reserved, so the struct has no padding: leave it zero. It never
     /// becomes a field; new fields go after the struct's last one.
-    pub reserved: u32,
+    pub _reserved0: u32,
     /// A GraphQL filter as a JSON object; null removes every document.
     pub filter_json: *const c_char,
 }

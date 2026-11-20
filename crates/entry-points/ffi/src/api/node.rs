@@ -14,7 +14,7 @@ pub struct DefraTransactionOptions {
     pub read_only: c_int,
     /// Reserved, so the struct has no padding: leave it zero. It never
     /// becomes a field; new fields go after the struct's last one.
-    pub reserved: u32,
+    pub _reserved0: u32,
 }
 
 /// Options of `defra_version_get`.

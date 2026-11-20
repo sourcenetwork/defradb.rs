@@ -33,7 +33,7 @@ pub struct DefraViewRefreshOptions {
     pub collection_get_inactive: c_int,
     /// Reserved, so the struct has no padding: leave it zero. It never
     /// becomes a field; new fields go after the struct's last one.
-    pub reserved: u32,
+    pub _reserved0: u32,
 }
 
 /// Options of the three lens calls.
@@ -58,7 +58,7 @@ pub struct DefraBackupExportOptions {
     pub pretty: c_int,
     /// Reserved, so the struct has no padding: leave it zero. It never
     /// becomes a field; new fields go after the struct's last one.
-    pub reserved: u32,
+    pub _reserved0: u32,
 }
 
 /// Options of `defra_backup_import`.

@@ -67,15 +67,17 @@ fn a_set_field_the_library_does_not_know_is_refused() {
 }
 
 #[test]
-fn a_size_that_stops_inside_a_field_keeps_only_the_given_bytes() {
+fn a_size_that_stops_inside_a_field_is_refused() {
     let given = V2 {
         a: u64::MAX,
         b: u64::MAX,
         c: u64::MAX,
     };
-    let read = unsafe { read::<V2>(&given, 12) }.unwrap();
-    assert_eq!(read.a, u64::MAX);
-    assert_eq!(read.b.to_ne_bytes()[..4], u64::MAX.to_ne_bytes()[..4]);
-    assert_eq!(read.b.to_ne_bytes()[4..], [0; 4]);
-    assert_eq!(read.c, 0);
+    for size in [1, 4, 12, 20, 23] {
+        let error = unsafe { read::<V2>(&given, size) }.unwrap_err();
+        assert!(error.contains("ends inside a field"), "{size}: {error}");
+    }
+    for size in [0, 8, 16, 24] {
+        assert!(unsafe { read::<V2>(&given, size) }.is_ok(), "{size}");
+    }
 }
