@@ -21,7 +21,6 @@ use schema::FieldDescription;
 use schema::FieldKind;
 use schema::PolicyDescription;
 use std::sync::Arc;
-use storage::RegolithStore;
 
 fn test_did() -> Did {
     Did::new("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK").unwrap()
@@ -77,85 +76,6 @@ fn branchable_collection_without_policy() -> CollectionVersion {
     let mut col = collection_without_policy();
     col.is_branchable = true;
     col
-}
-
-struct FailingDocumentAcp;
-
-#[async_trait::async_trait]
-impl DocumentACP for FailingDocumentAcp {
-    async fn register_doc_object(
-        &self,
-        _identity: &Did,
-        _policy_id: &str,
-        _resource_name: &str,
-        _doc_id: &str,
-    ) -> acp::Result<()> {
-        Err(acp::Error::Storage("registration failed".into()))
-    }
-
-    async fn is_doc_registered(
-        &self,
-        _policy_id: &str,
-        _resource_name: &str,
-        _doc_id: &str,
-    ) -> acp::Result<bool> {
-        Ok(false)
-    }
-
-    async fn get_doc_owner(
-        &self,
-        _policy_id: &str,
-        _resource_name: &str,
-        _doc_id: &str,
-    ) -> acp::Result<Option<Did>> {
-        Ok(None)
-    }
-
-    async fn check_doc_access(
-        &self,
-        _identity: &Identity,
-        _permission: DocumentPermission,
-        _policy_id: &str,
-        _resource_name: &str,
-        _doc_id: &str,
-    ) -> acp::Result<bool> {
-        Ok(true)
-    }
-
-    async fn add_actor_relationship(
-        &self,
-        _requestor: &Did,
-        _target: &Did,
-        _policy_id: &str,
-        _collection_id: &str,
-        _doc_id: &str,
-        _relation: &str,
-        _managing_relations: &[String],
-    ) -> acp::Result<bool> {
-        Ok(false)
-    }
-
-    async fn delete_actor_relationship(
-        &self,
-        _requestor: &Did,
-        _target: &Did,
-        _policy_id: &str,
-        _collection_id: &str,
-        _doc_id: &str,
-        _relation: &str,
-        _managing_relations: &[String],
-    ) -> acp::Result<bool> {
-        Ok(false)
-    }
-
-    async fn unregister_doc_object(
-        &self,
-        _policy_id: &str,
-        _resource_name: &str,
-        _doc_id: &str,
-    ) -> acp::Result<()> {
-        Ok(())
-    }
 }
 
 #[test]
