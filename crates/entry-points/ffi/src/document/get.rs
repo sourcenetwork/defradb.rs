@@ -16,8 +16,7 @@ use crate::{ffi_async, ffi_entry, try_ffi};
 ///
 /// `doc_id` must be null or a valid null-terminated string; every non-null
 /// string in `opts` must be one too.
-#[no_mangle]
-pub unsafe extern "C" fn defra_document_get(
+pub unsafe fn defra_document_get(
     node_ptr: usize,
     doc_id: *const c_char,
     show_deleted: c_int,

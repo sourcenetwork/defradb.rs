@@ -21,8 +21,7 @@ use crate::{ffi_async, ffi_entry, try_ffi, ERR_INVALID_NODE_HANDLE};
 ///
 /// `doc_ids` must be null or a valid null-terminated string; every non-null
 /// string in `opts` must be one too.
-#[no_mangle]
-pub unsafe extern "C" fn defra_document_purge(
+pub unsafe fn defra_document_purge(
     node_ptr: usize,
     doc_ids: *const c_char,
     opts: CollectionOptions,

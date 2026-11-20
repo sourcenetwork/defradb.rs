@@ -265,6 +265,15 @@ jobs:
       - name: Generate header
         run: cbindgen --config crates/entry-points/ffi/cbindgen.toml --crate ffi --output defra.h
 
+      - name: Install just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just
+
+      # The same check as `just build-ffi-header`, so its flags live in one place.
+      - name: Compile header
+        run: just check-ffi-header defra.h
+
       - name: Package
         shell: bash
         run: |
