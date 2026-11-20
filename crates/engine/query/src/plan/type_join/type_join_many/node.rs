@@ -95,9 +95,6 @@ pub struct TypeJoinMany {
     /// When true, the child plan itself yields documents in the requested child
     /// order, so per-parent scans can stop once the child limit is satisfied.
     pub(super) child_plan_provides_ordering: bool,
-    /// When true, the child scan applies a value filter such as `_like`, so a
-    /// stopped scan counts one extra index entry to know the page is complete.
-    pub(super) child_scan_has_value_filter: bool,
     /// Child documents in storage scan order: (fk_value, stored_field_count).
     /// Used to simulate Go's per-parent filteredFetcher behavior for explain metrics
     /// when a child limit is set.
@@ -193,7 +190,6 @@ impl TypeJoinMany {
             per_parent_child_scan: false,
             preserve_ordered_orphans: false,
             child_plan_provides_ordering: false,
-            child_scan_has_value_filter: false,
             child_scan_order: Vec::new(),
             filter_child_plan: None,
             filter_child_cache: RapidHashMap::new(),
@@ -290,12 +286,6 @@ impl TypeJoinMany {
     /// Mark that the child plan is already streaming in child order.
     pub fn with_child_plan_provides_ordering(mut self) -> Self {
         self.child_plan_provides_ordering = true;
-        self
-    }
-
-    /// Record that the child scan applies a value filter.
-    pub fn with_child_scan_value_filter(mut self) -> Self {
-        self.child_scan_has_value_filter = true;
         self
     }
 

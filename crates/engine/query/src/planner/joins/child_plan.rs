@@ -25,7 +25,6 @@ pub(super) struct RelationChildPlan {
     pub nested_offset: u64,
     pub nested_order_by: Option<OrderBy>,
     pub child_scan_provides_order: bool,
-    pub child_scan_has_value_filter: bool,
     pub parent_order_for_child: Option<OrderBy>,
     pub parent_relation_filter_for_child: Option<Filter>,
     pub child_uses_index: bool,
@@ -295,11 +294,6 @@ impl Planner {
             .as_ref()
             .map(|(_, provides_ordering)| *provides_ordering)
             .unwrap_or(false);
-        let child_scan_has_value_filter = child_index_result
-            .as_ref()
-            .map(|(params, _)| params.value_filter.is_some())
-            .unwrap_or(false);
-
         // Create the child scan plan with scan_mapping (includes FK fields for joins)
         let child_plan: Box<dyn PlanNode> = if let Some((params, _)) = child_index_result {
             let mut index_scan = IndexScanNode::new(
@@ -482,7 +476,6 @@ impl Planner {
             nested_offset,
             nested_order_by,
             child_scan_provides_order,
-            child_scan_has_value_filter,
             parent_order_for_child,
             parent_relation_filter_for_child,
             child_uses_index,

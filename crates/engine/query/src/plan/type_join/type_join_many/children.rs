@@ -582,12 +582,9 @@ impl TypeJoinMany {
             // If limit was reached early, override index fetches with actual entries scanned.
             // Go stops scanning when limit reached, counting ALL index entries examined
             // (including those filtered out by residual filters like _like).
-            // child_info.docs_fetched counts entries iterated in IndexScanNode.next(),
-            // including those skipped by the residual filter, which matches Go's behavior.
             if limit_reached {
                 self.go_child_metrics.index_fetches -= child_info.indexes_fetched;
-                self.go_child_metrics.index_fetches +=
-                    child_info.docs_fetched + u64::from(self.child_scan_has_value_filter);
+                self.go_child_metrics.index_fetches += child_info.indexes_fetched;
             }
 
             self.child_plan.close().await?;
