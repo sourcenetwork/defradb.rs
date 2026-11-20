@@ -21,8 +21,7 @@ fn parse_lens(config: &str) -> Result<LensConfig, String> {
 /// # Safety
 ///
 /// `cfg` must be null or a valid null-terminated string.
-#[no_mangle]
-pub unsafe extern "C" fn defra_lens_add(
+pub unsafe fn defra_lens_add(
     node_ptr: usize,
     identity_ptr: usize,
     cfg: *const c_char,
@@ -43,8 +42,7 @@ pub unsafe extern "C" fn defra_lens_add(
 }
 
 /// Answers with the node's lenses as JSON, on a node or in a transaction.
-#[no_mangle]
-pub extern "C" fn defra_lens_list(node_ptr: usize, identity_ptr: usize) -> DefraResult {
+pub fn defra_lens_list(node_ptr: usize, identity_ptr: usize) -> DefraResult {
     ffi_entry! {
         let request = try_ffi!(Request::begin(node_ptr, identity_ptr, NodePermission::LensList));
         let context = request.context();
@@ -64,8 +62,7 @@ pub extern "C" fn defra_lens_list(node_ptr: usize, identity_ptr: usize) -> Defra
 /// # Safety
 ///
 /// `src`, `dst` and `cfg` must be null or valid null-terminated strings.
-#[no_mangle]
-pub unsafe extern "C" fn defra_lens_set(
+pub unsafe fn defra_lens_set(
     node_ptr: usize,
     identity_ptr: usize,
     src: *const c_char,

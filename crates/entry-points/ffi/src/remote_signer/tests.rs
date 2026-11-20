@@ -97,13 +97,29 @@ impl TestHost {
 
     fn register_async(&'static self) -> Arc<dyn RemoteSigner> {
         self.register(|did, key, len, key_type, handle| {
-            defra_identity_new_remote_bytes_async(did, key, len, key_type, handle, async_callback)
+            crate::test_support::register_remote_bytes(
+                did,
+                key,
+                len,
+                key_type,
+                handle,
+                None,
+                Some(async_callback),
+            )
         })
     }
 
     fn register_sync(&'static self) -> Arc<dyn RemoteSigner> {
         self.register(|did, key, len, key_type, handle| {
-            defra_identity_new_remote_bytes(did, key, len, key_type, handle, sync_callback)
+            crate::test_support::register_remote_bytes(
+                did,
+                key,
+                len,
+                key_type,
+                handle,
+                Some(sync_callback),
+                None,
+            )
         })
     }
 }

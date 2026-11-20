@@ -6234,6 +6234,7 @@ dependencies = [
  "async-channel",
  "async-trait",
  "base64 0.23.1",
+ "blockstore",
  "chrono",
  "ciborium",
  "cid",

@@ -11,7 +11,7 @@ const SDL: &str = r#"
 fn chunked_schema_is_accepted_with_its_generated_collection() {
     workers::block_on(async {
         let (db, _bus) = make_test_db_with_bus().await;
-        db.create_collections_atomic(query::parse_sdl(SDL).unwrap())
+        db.add_collection(&defra_core::RequestContext::ambient(), SDL)
             .await
             .expect("schema");
         let article = db.get_collection("Article").unwrap().expect("parent");

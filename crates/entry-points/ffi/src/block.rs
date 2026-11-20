@@ -29,8 +29,7 @@ fn key_type_name(key_type: crypto::KeyType) -> &'static str {
 /// # Safety
 ///
 /// Every string must be null or a valid null-terminated string.
-#[no_mangle]
-pub unsafe extern "C" fn defra_block_verify(
+pub unsafe fn defra_block_verify(
     node_ptr: usize,
     key_type: *const c_char,
     public_key: *const c_char,

@@ -13,8 +13,7 @@ use crate::{ffi_async_ok, ffi_entry, try_ffi};
 /// # Safety
 ///
 /// `names` must be null or a valid null-terminated string.
-#[no_mangle]
-pub unsafe extern "C" fn defra_collection_delete(
+pub unsafe fn defra_collection_delete(
     node_ptr: usize,
     names: *const c_char,
     active_only: c_int,

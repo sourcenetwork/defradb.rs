@@ -142,6 +142,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Cursor tokens | Lean | cursor |
 | Peer key loading | TLA+ / Lean | defra-node, ffi |
 | FFI transaction turns | TLA+ / Lean | ffi |
+| FFI options structs | Lean | ffi |
 | Vector index defaults | Lean | schema |
 | Selected collection version | TLA+ / Lean | db, query, ffi |
 | Per-operation signing choice | Lean | defra-core, http, ffi, cli |

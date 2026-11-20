@@ -16,6 +16,7 @@
 
 pub mod acp;
 pub mod action;
+pub mod api;
 pub mod backup;
 pub mod batch;
 pub mod block;
@@ -35,6 +36,7 @@ pub mod nac_check;
 pub mod node;
 #[cfg(test)]
 mod node_settings_tests;
+pub mod options;
 pub mod p2p;
 #[cfg(feature = "profiling")]
 pub mod profiling;

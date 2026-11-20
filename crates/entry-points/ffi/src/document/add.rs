@@ -16,8 +16,7 @@ use crate::{ffi_async, ffi_entry, try_ffi};
 ///
 /// `json_data` and `encrypted_fields` must be null or valid null-terminated
 /// strings; every non-null string in `opts` must be one too.
-#[no_mangle]
-pub unsafe extern "C" fn defra_document_add(
+pub unsafe fn defra_document_add(
     node_ptr: usize,
     json_data: *const c_char,
     is_encrypted: c_int,

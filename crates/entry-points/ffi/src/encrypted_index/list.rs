@@ -14,8 +14,7 @@ use crate::{ffi_async, ffi_entry, try_ffi};
 /// # Safety
 ///
 /// `collection_name` must be null or a valid null-terminated string.
-#[no_mangle]
-pub unsafe extern "C" fn defra_encrypted_index_list(
+pub unsafe fn defra_encrypted_index_list(
     node_ptr: usize,
     collection_name: *const c_char,
     identity_ptr: usize,

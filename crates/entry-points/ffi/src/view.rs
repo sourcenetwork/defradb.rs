@@ -18,8 +18,7 @@ use crate::{ffi_async, ffi_async_ok, ffi_entry, try_ffi};
 ///
 /// `query`, `sdl` and `transform_cid` must be null or valid null-terminated
 /// strings.
-#[no_mangle]
-pub unsafe extern "C" fn defra_view_add(
+pub unsafe fn defra_view_add(
     node_ptr: usize,
     query: *const c_char,
     sdl: *const c_char,
@@ -50,8 +49,7 @@ pub unsafe extern "C" fn defra_view_add(
 /// # Safety
 ///
 /// Every non-null string in `opts` must be a valid null-terminated string.
-#[no_mangle]
-pub unsafe extern "C" fn defra_view_refresh(
+pub unsafe fn defra_view_refresh(
     node_ptr: usize,
     opts: CollectionOptions,
     identity_ptr: usize,

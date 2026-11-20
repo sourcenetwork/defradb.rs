@@ -22,7 +22,7 @@ const SDL: &str = r#"
 
 async fn db_with(sdl: &str) -> Arc<DB<RegolithStore>> {
     let (db, _bus) = make_test_db_with_bus().await;
-    db.create_collections_atomic(query::parse_sdl(sdl).unwrap())
+    db.add_collection(&defra_core::RequestContext::ambient(), sdl)
         .await
         .expect("schema");
     db
