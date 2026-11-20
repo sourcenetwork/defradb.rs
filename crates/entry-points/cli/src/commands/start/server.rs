@@ -191,8 +191,11 @@ impl Node {
 
         // Wire the NAC manager into the DB so DB-layer `check_node_access` calls
         // go live (first-call-wins via the DB's OnceCell). A node NAC was never
-        // configured on allows every check, as the defra-node assembly does.
-        database.set_nac_manager(Arc::clone(&nac.manager));
+        // configured on gets none: it serves no NAC routes, so every check
+        // would allow for the whole run.
+        if let Some(manager) = nac.enforced() {
+            database.set_nac_manager(manager);
+        }
 
         // Populate the manage-channel serve deps now that the controller exists;
         // until this fires the event loop drops inbound manage requests rather
@@ -236,7 +239,9 @@ impl Node {
                 acp_setup.document_acp.clone(),
                 doc_lookup,
             ));
-            policy.set_node_acp(Arc::new(db::DbNodeAcpRead::new(Arc::clone(&nac.manager))));
+            if let Some(manager) = nac.enforced() {
+                policy.set_node_acp(Arc::new(db::DbNodeAcpRead::new(manager)));
+            }
 
             // Node identity used for cross-peer DEK requests. Anonymous nodes
             // use a stable placeholder DID.
@@ -293,7 +298,7 @@ impl Node {
             config,
             user_did.as_ref(),
             acp_setup.document_acp.clone(),
-            Arc::clone(&nac.adapter),
+            nac.configured.then(|| Arc::clone(&nac.adapter)),
             p2p_setup.mutator.clone(),
             p2p_setup.txn_broadcaster.clone(),
             p2p_setup.se_transport.take(),

@@ -20,14 +20,25 @@ pub(super) struct DocumentAcpSetup {
     pub(super) embedded_vera: Option<vera_embedded::HostedNode>,
 }
 
-/// The node's NAC: its manager, which every check goes through, and whether
-/// the NAC routes are served.
+/// The node's NAC: its manager, and whether it is configured, which decides
+/// both whether the NAC routes are served and whether the hot paths check it.
 pub(super) struct NacSetup {
     pub(super) manager: Arc<dyn db::NacManagerApi>,
     pub(super) adapter: Arc<defra_http::nac_adapter::NacAdapter>,
     /// Enabled by the flag, or by a previous run on this store (disabled
     /// since included).
     pub(super) configured: bool,
+}
+
+impl NacSetup {
+    /// The manager the hot paths check (DB writes, queries, KMS), or `None`
+    /// on a node NAC was never configured on. Such a node serves no NAC
+    /// routes, so its NAC stays not configured for the whole run and every
+    /// check would allow: skipping it spares each write and query a store
+    /// read of the NAC state.
+    pub(super) fn enforced(&self) -> Option<Arc<dyn db::NacManagerApi>> {
+        self.configured.then(|| Arc::clone(&self.manager))
+    }
 }
 
 impl Node {
@@ -439,6 +450,10 @@ mod nac_tests {
             assert_eq!(restarted.manager.status().await, NacStatus::Enabled);
             assert!(restarted.configured, "the NAC routes went unserved");
             assert!(
+                restarted.enforced().is_some(),
+                "the stored NAC went unchecked"
+            );
+            assert!(
                 !restarted
                     .manager
                     .check_permission(&stranger(), NodePermission::CollectionGet)
@@ -458,6 +473,10 @@ mod nac_tests {
             let setup = fixture.start(false, None).await;
             assert_eq!(setup.manager.status().await, NacStatus::NotConfigured);
             assert!(!setup.configured);
+            assert!(
+                setup.enforced().is_none(),
+                "a never-configured NAC is checked on every write and query"
+            );
             assert!(setup
                 .manager
                 .check_permission(&stranger(), NodePermission::CollectionGet)
@@ -490,6 +509,10 @@ mod nac_tests {
                 NacStatus::DisabledTemporarily
             );
             assert!(restarted.configured, "re-enable went unserved");
+            assert!(
+                restarted.enforced().is_some(),
+                "the disabled NAC went unchecked"
+            );
         })
         .unwrap();
         fixture.pool.shutdown_blocking().unwrap();
