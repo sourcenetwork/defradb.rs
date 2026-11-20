@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn main() {
@@ -116,12 +116,15 @@ fn main() {
     }
 }
 
+/// The path git prints for `flag`, made absolute against the crate directory
+/// git ran in. `--path-format=absolute` would need git 2.31, and an older git
+/// echoes an option it does not know and still exits 0.
 fn git_path(flag: &str) -> Option<PathBuf> {
     Command::new("git")
-        .args(["rev-parse", "--path-format=absolute", flag])
+        .args(["rev-parse", flag])
         .output()
         .ok()
         .filter(|o| o.status.success())
         .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|path| PathBuf::from(path.trim()))
+        .map(|path| Path::new(env!("CARGO_MANIFEST_DIR")).join(path.trim()))
 }
