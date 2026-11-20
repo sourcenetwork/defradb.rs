@@ -93,6 +93,9 @@ impl DefraKademlia {
         kad_config.set_record_filtering(kad::StoreInserts::FilterBoth);
 
         let mut inner = kad::Behaviour::with_config(local_peer_id, kad_store, kad_config);
+        // The host owns bootstrap scheduling. Let it skip a bootless startup
+        // instead of libp2p's internal timer logging through the swarm.
+        inner.set_periodic_bootstrap_interval(None);
         // Go's dual DHT forces the LAN side into server mode whenever the WAN
         // side is not explicitly client-only.
         match network {
@@ -101,6 +104,12 @@ impl DefraKademlia {
         }
 
         Self { network, inner }
+    }
+
+    fn has_known_peers(&mut self) -> bool {
+        self.inner
+            .kbuckets()
+            .any(|bucket| bucket.iter().next().is_some())
     }
 }
 
@@ -257,6 +266,10 @@ impl DualKademlia {
             (KademliaNetwork::Lan, self.lan.bootstrap()),
             (KademliaNetwork::Wan, self.wan.bootstrap()),
         ]
+    }
+
+    pub fn has_known_peers(&mut self) -> bool {
+        self.lan.has_known_peers() || self.wan.has_known_peers()
     }
 
     pub fn store_mut(&mut self, network: KademliaNetwork) -> &mut MemoryStore {

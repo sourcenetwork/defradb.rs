@@ -1,8 +1,9 @@
-//! The durable registrations' transitions run on the database's worker pool:
-//! the resync sweep, the receiver's registrations and their discharges call
-//! the store from the network edge, and each call crosses to a worker once,
-//! runs its engine transaction there and hands its result back. Called on a
-//! worker, or without a pool, a call runs where it is made.
+//! The durable registrations' transitions run on the database's worker pool,
+//! except the periodic sweep, which runs on the pool's blocking threads.
+//! The receiver's registrations and their discharges call the store from the
+//! network edge, and each call crosses to a worker once, runs its engine
+//! transaction there and hands its result back. Called on a worker, or
+//! without a pool, a call runs where it is made.
 
 use std::sync::Arc;
 
@@ -36,7 +37,8 @@ pub fn pooled_pending_store(
     inner
 }
 
-/// `inner`'s transitions, run on a pool's workers.
+/// `inner`'s transitions, run on a pool's workers; the sweep uses blocking
+/// threads.
 #[cfg(not(target_arch = "wasm32"))]
 struct PooledPendingStore {
     inner: Arc<dyn PendingDagStorage>,
@@ -58,6 +60,35 @@ impl PooledPendingStore {
         })
         .await
         .map_err(|error| Error::Storage(error.report("pending DAG transition").to_string()))?
+    }
+
+    /// Runs `call` off the worker pool on its blocking threads. The periodic
+    /// pending-DAG sweep is long enough to starve the worker-poll limit, so
+    /// it belongs there.
+    async fn on_blocking<T, F, Fut>(&self, call: F) -> Result<T>
+    where
+        F: FnOnce(Arc<dyn PendingDagStorage>) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<T>> + 'static,
+        T: Send + 'static,
+    {
+        let inner = Arc::clone(&self.inner);
+        match self
+            .pool
+            .spawn_blocking(move || workers::block_on(call(inner)))
+            .await
+        {
+            Ok(completion) => match completion.await {
+                Ok(result) => result.map_err(|error| {
+                    Error::Storage(error.report("pending DAG transition").to_string())
+                })?,
+                Err(error) => Err(Error::Storage(
+                    error.report("pending DAG transition").to_string(),
+                )),
+            },
+            Err(error) => Err(Error::Storage(
+                error.report("pending DAG transition").to_string(),
+            )),
+        }
     }
 }
 
@@ -105,7 +136,7 @@ impl PendingDagStorage for PooledPendingStore {
 
     async fn sweep(&self, view: &Arc<PersistedView>) -> Result<Vec<(Cid, PersistedPendingDag)>> {
         let view = Arc::clone(view);
-        self.on_pool(move |inner| async move { inner.sweep(&view).await })
+        self.on_blocking(move |inner| async move { inner.sweep(&view).await })
             .await
     }
 
@@ -144,13 +175,28 @@ mod tests {
 
     use super::*;
 
-    /// Records whether its last call ran on a pool worker.
-    #[derive(Default)]
-    struct WhereCalled(AtomicBool);
+    /// Records whether its calls ran on a pool worker, and where the sweep ran.
+    struct WhereCalled {
+        worker: AtomicBool,
+        sweep_worker: AtomicBool,
+    }
 
     impl WhereCalled {
+        fn new() -> Self {
+            Self {
+                worker: AtomicBool::new(false),
+                sweep_worker: AtomicBool::new(false),
+            }
+        }
+
         fn note(&self) {
-            self.0.store(workers::on_worker(), Ordering::SeqCst);
+            self.worker.store(workers::on_worker(), Ordering::SeqCst);
+        }
+
+        fn note_sweep(&self) {
+            let on_worker = workers::on_worker();
+            self.worker.store(on_worker, Ordering::SeqCst);
+            self.sweep_worker.store(on_worker, Ordering::SeqCst);
         }
     }
 
@@ -174,7 +220,7 @@ mod tests {
             Ok(false)
         }
         async fn sweep(&self, _: &Arc<PersistedView>) -> Result<Vec<(Cid, PersistedPendingDag)>> {
-            self.note();
+            self.note_sweep();
             Ok(Vec::new())
         }
         async fn put(&self, _: &Cid, _: &PersistedPendingDag) -> Result<()> {
@@ -200,23 +246,26 @@ mod tests {
     }
 
     #[test]
-    fn a_sweep_called_off_the_pool_runs_on_a_worker() {
+    fn a_sweep_runs_on_blocking_threads_and_other_calls_run_on_workers() {
         let pool = workers::Pool::start(workers::Config::unplaced(1)).unwrap();
-        let inner = Arc::new(WhereCalled::default());
+        let inner = Arc::new(WhereCalled::new());
         let store = pooled_pending_store(inner.clone(), Some(&pool));
         let view = Arc::new(PersistedView::default());
         workers::block_on(async {
             store.sweep(&view).await.unwrap();
         })
         .unwrap();
-        assert!(inner.0.load(Ordering::SeqCst), "the sweep ran on a worker");
+        assert!(
+            !inner.sweep_worker.load(Ordering::SeqCst),
+            "the sweep ran off worker polls"
+        );
         workers::block_on(async {
             store.remove_quarantined(&Cid::default()).await.unwrap();
         })
         .unwrap();
         assert!(
-            inner.0.load(Ordering::SeqCst),
-            "every call runs on a worker"
+            inner.worker.load(Ordering::SeqCst),
+            "non-sweep calls run on workers"
         );
         pool.shutdown_blocking().unwrap();
     }
