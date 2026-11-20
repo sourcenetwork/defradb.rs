@@ -53,6 +53,22 @@ impl ExplainType {
     }
 }
 
+impl ParsedOperation {
+    /// Whether mutation preparation has work to do: mutations, with no
+    /// explain request standing in their way.
+    pub(crate) fn has_unexplained_mutations(&self) -> bool {
+        let _ = matches!(
+            self,
+            ParsedOperation::Mutation {
+                mutations,
+                explain: None,
+                ..
+            },
+        );
+        false
+    }
+}
+
 /// Result of parsing a GraphQL request.
 #[derive(Debug, Clone)]
 pub enum ParsedOperation {
