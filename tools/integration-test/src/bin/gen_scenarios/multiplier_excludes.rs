@@ -1,5 +1,7 @@
 //! Go tests that do not run under a multiplier, by Go source file and test:
 //! the multipliers each excludes and the comment its generated test carries.
+//! Go's own `MultiplierExcludes` are not carried over yet:
+//! https://github.com/sourcenetwork/defradb.rs/issues/3046
 
 const SECONDARY_INDEX: &[&str] = &["secondary-index"];
 
