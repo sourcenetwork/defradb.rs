@@ -121,7 +121,8 @@ impl Planner {
             let child_has_index = child_index_result.is_some();
             let child_plan: Box<dyn PlanNode> = if let Some((params, _)) = child_index_result {
                 let mut index_scan =
-                    IndexScanNode::new((*target_collection).clone(), child_mapping.clone(), params);
+                    IndexScanNode::new((*target_collection).clone(), child_mapping.clone(), params)
+                        .with_explain_filter(nested_conditions.clone());
                 if let Some(ref fetcher) = self.fetcher {
                     index_scan = index_scan.with_fetcher(fetcher.clone());
                 }

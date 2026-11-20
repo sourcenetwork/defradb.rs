@@ -11,6 +11,7 @@ mod backfill_unique;
 mod backfill_unique_txn;
 mod crdt;
 mod delete;
+mod explain_scan_node;
 mod get;
 mod group_order;
 mod index_offset_limit;

@@ -37,6 +37,8 @@ pub struct IndexScanNode {
     index_params: IndexScanParams,
     /// Residual filter for conditions not covered by index
     residual_filter: Option<Filter>,
+    /// The filter explain shows, the index conditions included, as Go's scan node does.
+    explain_filter: Option<Filter>,
     /// Whether to show deleted documents
     show_deleted: bool,
     /// Current document
@@ -70,6 +72,7 @@ impl IndexScanNode {
             document_mapping,
             index_params,
             residual_filter: None,
+            explain_filter: None,
             show_deleted: false,
             current_doc: Doc::default(),
             docs: Vec::new(),
@@ -93,6 +96,12 @@ impl IndexScanNode {
         self.index_params.limit = None;
         self.index_params.offset = 0;
         self.residual_filter = Some(filter);
+        self
+    }
+
+    /// Set the filter explain shows when the index covers some of it.
+    pub fn with_explain_filter(mut self, filter: Filter) -> Self {
+        self.explain_filter = Some(filter);
         self
     }
 
@@ -289,47 +298,36 @@ impl PlanNode for IndexScanNode {
     }
 
     fn kind(&self) -> &'static str {
-        // Use "scanNode" for explain compatibility with Go DefraDB asserter.
-        // The index-specific info (indexName) distinguishes this from a regular scan.
         "scanNode"
+    }
+
+    fn index_params(&self) -> Option<&IndexScanParams> {
+        Some(&self.index_params)
     }
 
     fn explain_inner(&self) -> serde_json::Value {
         let mut obj = serde_json::Map::new();
 
-        // Go DefraDB uses "collectionName" and "collectionID"
+        let filter = self
+            .explain_filter
+            .as_ref()
+            .or(self.residual_filter.as_ref());
+        obj.insert(
+            "filter".to_string(),
+            filter.map_or(serde_json::Value::Null, Filter::to_explain_json),
+        );
         obj.insert(
             "collectionName".to_string(),
             serde_json::Value::String(self.collection.name.clone()),
         );
         obj.insert(
             "collectionID".to_string(),
-            serde_json::Value::String(self.collection.collection_id.clone()),
-        );
-
-        // Index-specific info - presence of indexName indicates this is an index scan
-        obj.insert(
-            "indexName".to_string(),
-            serde_json::Value::String(self.index_params.index_name.clone()),
+            serde_json::Value::String(self.collection.version_id.clone()),
         );
         obj.insert(
-            "indexLimit".into(),
-            serde_json::json!(self.index_params.limit),
+            "prefixes".to_string(),
+            serde_json::json!([format!("/{}", self.collection.resolved_root_id())]),
         );
-        obj.insert(
-            "indexOffset".into(),
-            serde_json::json!(self.index_params.offset),
-        );
-
-        // Index fetch count (set during init, used by explain metrics)
-        obj.insert(
-            "indexFetches".to_string(),
-            serde_json::json!(self.index_fetches),
-        );
-
-        if let Some(ref filter) = self.residual_filter {
-            obj.insert("filter".to_string(), serde_json::json!(filter.conditions()));
-        }
 
         if self.show_deleted {
             obj.insert("showDeleted".to_string(), serde_json::Value::Bool(true));

@@ -935,11 +935,11 @@ impl TypeJoinOne {
     fn explain_join_one_inner(&self) -> JsonValue {
         let mut obj = serde_json::Map::new();
 
-        let direction = match self.direction {
-            JoinDirection::Primary { .. } => "primary",
-            JoinDirection::Inverted
-            | JoinDirection::InvertedIndex { .. }
-            | JoinDirection::OrderedInvertedPrimary { .. } => "secondary",
+        // Go names the side the parent is on, whichever side the join starts from.
+        let direction = if self.parent_side.relation_field().is_primary {
+            "primary"
+        } else {
+            "secondary"
         };
         obj.insert("direction".to_string(), serde_json::json!(direction));
         obj.insert("joinType".to_string(), serde_json::json!("typeJoinOne"));

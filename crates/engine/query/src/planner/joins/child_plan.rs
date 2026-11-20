@@ -298,6 +298,9 @@ impl Planner {
                 params,
             )
             .with_show_deleted(select.show_deleted);
+            if let Some(filter) = &child_filter_for_index {
+                index_scan = index_scan.with_explain_filter(filter.clone());
+            }
             if let Some(ref fetcher) = self.fetcher {
                 index_scan = index_scan.with_fetcher(fetcher.clone());
             }
@@ -388,7 +391,8 @@ impl Planner {
                             (*target_collection).clone(),
                             filter_mapping,
                             params,
-                        );
+                        )
+                        .with_explain_filter(rel_filter.clone());
                         if let Some(ref fetcher) = self.fetcher {
                             index_scan = index_scan.with_fetcher(fetcher.clone());
                         }

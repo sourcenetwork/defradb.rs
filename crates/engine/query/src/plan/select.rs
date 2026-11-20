@@ -32,14 +32,8 @@ pub struct SelectNode {
 }
 
 impl SelectNode {
-    fn is_relation_id_index_explain(explain: &serde_json::Value) -> bool {
-        let Some(index_name) = explain
-            .as_object()
-            .and_then(|obj| obj.get("scanNode"))
-            .and_then(|value| value.as_object())
-            .and_then(|obj| obj.get("indexName"))
-            .and_then(|value| value.as_str())
-        else {
+    fn reads_relation_id_index(&self) -> bool {
+        let Some(index_name) = self.source.index_params().map(|p| p.index_name.as_str()) else {
             return false;
         };
 
@@ -428,14 +422,13 @@ impl PlanNode for SelectNode {
         // Execute mode uses a different flattening strategy since the explain
         // structure differs (no root/typeJoinOne wrappers).
         let child_explain = self.source.explain_execute();
-        let child_debug_explain = self.source.explain();
         let flattened = Self::flatten_execute_join_chain(&child_explain);
         let explain_to_merge = flattened.as_ref().unwrap_or(&child_explain);
         let relation_id_wrapped = if flattened.is_none()
             && explain_to_merge
                 .as_object()
                 .is_some_and(|obj| obj.contains_key("scanNode"))
-            && Self::is_relation_id_index_explain(&child_debug_explain)
+            && self.reads_relation_id_index()
         {
             Some(serde_json::json!({
                 "typeIndexJoin": {

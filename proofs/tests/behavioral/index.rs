@@ -121,33 +121,28 @@ fn indexed_lww_state(node: &DefraClient) -> (i64, usize, usize, usize) {
     )
 }
 
-fn contains_indexed_user_scan(value: &Value) -> bool {
+fn contains_index_read(value: &Value) -> bool {
     match value {
         Value::Object(obj) => {
-            if let Some(scan) = obj.get("scanNode").and_then(Value::as_object) {
-                let scans_user = scan.get("collectionName").and_then(Value::as_str) == Some("User");
-                let has_index = scan
-                    .get("indexName")
-                    .and_then(Value::as_str)
-                    .is_some_and(|name| !name.is_empty());
-                if scans_user && has_index {
-                    return true;
-                }
-            }
-            obj.values().any(contains_indexed_user_scan)
+            let reads_index = obj
+                .get("scanNode")
+                .and_then(|scan| scan.get("indexFetches"))
+                .and_then(Value::as_u64)
+                .is_some_and(|fetches| fetches > 0);
+            reads_index || obj.values().any(contains_index_read)
         }
-        Value::Array(items) => items.iter().any(contains_indexed_user_scan),
+        Value::Array(items) => items.iter().any(contains_index_read),
         _ => false,
     }
 }
 
 fn assert_age_filter_uses_index(node: &DefraClient, context: &str) {
     let explain = node
-        .query("query @explain(type: simple) { User(filter: {age: {_eq: 99}}) { name } }")
+        .query("query @explain(type: execute) { User(filter: {age: {_ge: 0}}) { name } }")
         .expect("explain indexed age filter");
     assert!(
-        contains_indexed_user_scan(&explain),
-        "{context} age filter must plan a User scanNode with indexName; explain={explain}"
+        contains_index_read(&explain),
+        "{context} age filter must read the User age index; explain={explain}"
     );
 }
 

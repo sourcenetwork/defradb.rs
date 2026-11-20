@@ -8,7 +8,7 @@ use crate::document::DocumentMapping;
 use crate::error::Result;
 
 use crate::plan::CursorPageInfo;
-use crate::planner::index_selection::CursorSeek;
+use crate::planner::index_selection::{CursorSeek, IndexScanParams};
 
 // Re-exported from planner/mod.rs for backwards compatibility.
 use crate::doc::Doc;
@@ -67,6 +67,17 @@ pub trait PlanNode: MaybeSend {
 
     /// Get the node type name (for debugging/explain).
     fn kind(&self) -> &'static str;
+
+    /// The index read this node does, if it reads its documents through an index.
+    fn index_params(&self) -> Option<&IndexScanParams> {
+        None
+    }
+
+    /// The plan a join runs for each parent's related documents.
+    #[cfg(test)]
+    fn child_plan(&self) -> Option<&dyn PlanNode> {
+        None
+    }
 
     /// Get the documents in the current group (for GROUP BY aggregation).
     ///

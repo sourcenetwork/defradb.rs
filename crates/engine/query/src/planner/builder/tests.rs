@@ -2,7 +2,7 @@ use super::*;
 use crate::mapper::{
     CursorParams, Field, Filter, OrderBy, OrderCondition, OrderDirection, Similarity,
 };
-use crate::planner::index_selection::IndexScanType;
+use crate::planner::index_selection::{IndexScanParams, IndexScanType};
 use schema::{FieldDescription, FieldKind, IndexDescription, IndexedFieldDescription};
 
 fn map<const N: usize>(
@@ -788,10 +788,12 @@ fn test_plan_one_to_many_child_limit_does_not_bound_index_scan() {
 
         let result = planner.plan_with_index_info(&select).unwrap();
         let join = result.plan.source().unwrap();
-        let explain = join.explain();
-        let index_scan = find_index_scan(&explain).expect("indexed child scan expected");
-        assert_eq!(index_scan["indexLimit"], serde_json::Value::Null);
-        assert_eq!(index_scan["indexOffset"], 0);
+        let index_scan = join
+            .child_plan()
+            .and_then(find_index_scan)
+            .expect("indexed child scan expected");
+        assert_eq!(index_scan.limit, None);
+        assert_eq!(index_scan.offset, 0);
     })
     .unwrap()
 }
@@ -816,13 +818,9 @@ fn ordered_index_scan_reserves_offset_for_limit_node() {
     .unwrap()
 }
 
-fn find_index_scan(value: &serde_json::Value) -> Option<&serde_json::Value> {
-    if value.get("indexName").is_some() {
-        return Some(value);
-    }
-    value
-        .as_object()
-        .and_then(|object| object.values().find_map(find_index_scan))
+fn find_index_scan(node: &dyn PlanNode) -> Option<&IndexScanParams> {
+    node.index_params()
+        .or_else(|| node.source().and_then(find_index_scan))
 }
 // ========================================================================
 // Nested Relation Filter Tests

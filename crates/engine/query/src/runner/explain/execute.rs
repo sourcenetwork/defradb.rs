@@ -440,7 +440,6 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
     }
 
     /// Recursively find and add metrics to scanNode.
-    /// If the scanNode has an indexName field, it's an index scan and gets indexFetches.
     #[allow(dead_code)]
     pub(crate) fn add_metrics_to_scan_node(
         value: &mut JsonValue,
@@ -461,9 +460,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                     let field_fetches = (field_count * doc_fetches) as u64;
                     scan_obj.insert("fieldFetches".to_string(), serde_json::json!(field_fetches));
 
-                    // indexFetches is set by IndexScanNode::explain_inner() with
-                    // the actual index key lookup count. For regular scans without an
-                    // index, default to 0 (Go always includes this property).
+                    // Go always includes this property.
                     if !scan_obj.contains_key("indexFetches") {
                         scan_obj.insert("indexFetches".to_string(), serde_json::json!(0u64));
                     }
