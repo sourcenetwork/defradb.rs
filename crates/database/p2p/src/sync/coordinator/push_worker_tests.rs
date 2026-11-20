@@ -70,6 +70,10 @@ fn test_context_with_admission(
     (context, rx)
 }
 
+fn connect_job_peer<T>(context: &PushWorkerContext<T>, job: &PushJobSpec) {
+    context.peer_state.peer_connected(job.peer_id.as_str());
+}
+
 #[nuclei::test]
 async fn persisted_backpressure_denies_live_push_before_transport_send() {
     let backlog = PushBacklog::new(64, usize::MAX, 1, 1, edge::testing::edge());
@@ -82,6 +86,7 @@ async fn persisted_backpressure_denies_live_push_before_transport_send() {
     );
     backlog.try_enqueue(job("peer", b"active")).await;
     let active = backlog.next_job().await.unwrap();
+    connect_job_peer(&context, &active);
     assert_eq!(run_push_job(&context, &active).await, JobCompletion::Failed);
     assert!(transport.sent().is_empty());
     backlog.job_done(&active, JobCompletion::Failed).await;
@@ -186,6 +191,8 @@ async fn slow_peer_does_not_starve_healthy_peers() {
         Arc::clone(&backlog),
         Duration::from_secs(60),
     );
+    context.peer_state.peer_connected("slow");
+    context.peer_state.peer_connected("healthy");
     let shutdown = SyncShutdownHandle::new(4, crate::network::test_network());
     spawn_push_workers(context, &shutdown);
 
@@ -254,6 +261,9 @@ fn two_stalled_replicators_do_not_starve_healthy_peer() {
         );
         crate::rt::spawn(async move { while failures.recv().await.is_some() {} }).detach();
         let shutdown = SyncShutdownHandle::new(4, crate::network::Network::on(edge.clone()));
+        for peer in ["dead-1", "dead-2", "healthy"] {
+            context.peer_state.peer_connected(peer);
+        }
         spawn_push_workers(context, &shutdown);
         crate::rt::yield_now().await;
 
@@ -327,6 +337,7 @@ fn transient_transport_failure_keeps_queued_jobs_live() {
         })
         .detach();
         let shutdown = SyncShutdownHandle::new(4, crate::network::Network::on(edge.clone()));
+        context.peer_state.peer_connected("flaky");
         spawn_push_workers(context, &shutdown);
         crate::rt::yield_now().await;
 
@@ -371,6 +382,7 @@ async fn stalled_send_times_out_and_reports_push_failure() {
     let transport = TestTransport::new(Vec::new()).with_stalled_peer("slow");
     let (context, mut failure_rx) =
         test_context(transport, Arc::clone(&backlog), Duration::from_millis(50));
+    context.peer_state.peer_connected("slow");
     let shutdown = SyncShutdownHandle::new(4, crate::network::test_network());
     spawn_push_workers(context, &shutdown);
 
@@ -417,6 +429,7 @@ async fn capacity_nack_demotes_queued_peer_work_to_persisted_retry() {
         assert_eq!(backlog.try_enqueue(job).await, EnqueueOutcome::Enqueued);
     }
     let active = backlog.next_job().await.expect("active job");
+    connect_job_peer(&context, &active);
 
     let completion = run_push_job(&context, &active).await;
 
@@ -454,6 +467,7 @@ async fn retry_after_rate_nack_parks_live_peer_and_hands_off_queued_hints() {
     backlog.try_enqueue(job("peer", b"active")).await;
     backlog.try_enqueue(job("peer", b"queued")).await;
     let active = backlog.next_job().await.unwrap();
+    connect_job_peer(&context, &active);
     assert_eq!(run_push_job(&context, &active).await, JobCompletion::Failed);
     for _ in 0..2 {
         let failure = failures.recv().await.unwrap();
@@ -501,6 +515,7 @@ async fn head_hint_signing_failure_sends_no_dependency_pushlogs() {
     );
     assert_eq!(backlog.try_enqueue(job).await, EnqueueOutcome::Enqueued);
     let active = backlog.next_job().await.unwrap();
+    connect_job_peer(&context, &active);
 
     let completion = run_push_job(&context, &active).await;
 
@@ -552,6 +567,7 @@ async fn root_only_push_installs_receiver_pull_authority() {
     );
     assert_eq!(backlog.try_enqueue(job).await, EnqueueOutcome::Enqueued);
     let active = backlog.next_job().await.unwrap();
+    connect_job_peer(&context, &active);
 
     let completion = run_push_job(&context, &active).await;
 
@@ -640,6 +656,7 @@ async fn run_ownership_arm(expand_dag: bool) -> OwnershipArm {
     );
     assert_eq!(backlog.try_enqueue(job).await, EnqueueOutcome::Enqueued);
     let active = backlog.next_job().await.unwrap();
+    connect_job_peer(&context, &active);
     let completion = run_push_job(&context, &active).await;
     assert_eq!(completion, JobCompletion::Succeeded);
     backlog.job_done(&active, completion).await;
@@ -694,6 +711,7 @@ async fn superseded_active_failure_never_enters_persisted_retry() {
         Arc::clone(&backlog),
         Duration::from_secs(1),
     );
+    context.peer_state.peer_connected("peer");
     let shutdown = SyncShutdownHandle::new(4, crate::network::test_network());
     spawn_push_workers(context, &shutdown);
 
@@ -730,6 +748,7 @@ async fn superseded_acknowledged_push_reports_its_delivery() {
     older.marker_generation = Some(7);
     backlog.try_enqueue(older).await;
     let active = backlog.next_job().await.unwrap();
+    connect_job_peer(&context, &active);
     let push = {
         let (context, active) = (Arc::clone(&context), active.clone());
         crate::rt::spawn(async move { run_push_job(&context, &active).await })
@@ -899,6 +918,7 @@ async fn acknowledged_push_records_head_acked() {
     );
     backlog.try_enqueue(job("peer", b"acked")).await;
     let active = backlog.next_job().await.unwrap();
+    connect_job_peer(&context, &active);
 
     assert_eq!(
         run_push_job(&context, &active).await,
@@ -922,6 +942,7 @@ async fn rejected_push_records_the_peer_error() {
     );
     backlog.try_enqueue(job("peer", b"rejected")).await;
     let active = backlog.next_job().await.unwrap();
+    connect_job_peer(&context, &active);
 
     assert_eq!(run_push_job(&context, &active).await, JobCompletion::Failed);
     let pushed = heads_pushed(&context, "peer");
