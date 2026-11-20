@@ -19,8 +19,8 @@ use super::schema::{
 use super::timeout;
 use crate::identities::{defra_identity_free, defra_identity_new};
 use crate::test_support::{
-    add_collection, close, cstr, err, local_options, node, node_with, ok, ok_json, query,
-    query_as, take,
+    add_collection, close, cstr, err, local_options, node, node_with, ok, ok_json, query, query_as,
+    take,
 };
 
 fn size_of_val<T>(_: &T) -> u32 {
@@ -267,7 +267,8 @@ fn new_identity() -> usize {
 fn node_with_owned_users(owner: usize) -> usize {
     let node = node_with(local_options());
     let policy = cstr(OWNER_POLICY);
-    let added = ok_json(unsafe { crate::acp::defra_acp_dac_policy_add(node, owner, policy.as_ptr()) });
+    let added =
+        ok_json(unsafe { crate::acp::defra_acp_dac_policy_add(node, owner, policy.as_ptr()) });
     let policy_id = added["PolicyID"].as_str().expect("the policy has an ID");
     let sdl = cstr(&format!(
         r#"type User @policy(id: "{policy_id}", resource: "users") {{ name: String }}"#
@@ -291,7 +292,11 @@ fn export_as(node: usize, file: &std::path::Path, identity: usize) -> serde_json
 fn a_backup_export_runs_as_the_caller() {
     let owner = new_identity();
     let node = node_with_owned_users(owner);
-    query_as(node, r#"mutation { add_User(input: {name: "Ada"}) { _docID } }"#, owner);
+    query_as(
+        node,
+        r#"mutation { add_User(input: {name: "Ada"}) { _docID } }"#,
+        owner,
+    );
     let directory = tempfile::tempdir().unwrap();
 
     let as_owner = export_as(node, &directory.path().join("owner.json"), owner);
@@ -299,7 +304,10 @@ fn a_backup_export_runs_as_the_caller() {
 
     let as_nobody = export_as(node, &directory.path().join("nobody.json"), 0);
     let exported = as_nobody["User"].as_array().map_or(0, Vec::len);
-    assert_eq!(exported, 0, "a caller with no identity exports no owned document: {as_nobody}");
+    assert_eq!(
+        exported, 0,
+        "a caller with no identity exports no owned document: {as_nobody}"
+    );
 
     close(node);
     defra_identity_free(owner);
@@ -310,7 +318,11 @@ fn a_backup_import_runs_as_the_caller() {
     let owner = new_identity();
     let other = new_identity();
     let source = node_with_owned_users(owner);
-    query_as(source, r#"mutation { add_User(input: {name: "Ada"}) { _docID } }"#, owner);
+    query_as(
+        source,
+        r#"mutation { add_User(input: {name: "Ada"}) { _docID } }"#,
+        owner,
+    );
     let directory = tempfile::tempdir().unwrap();
     let file = directory.path().join("backup.json");
     export_as(source, &file, owner);
