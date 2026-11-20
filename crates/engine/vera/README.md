@@ -31,9 +31,17 @@ not absence. Definitions retain actor roles, descriptions, metadata and Defra
 specification rules when reconstructed through the document ACP provider.
 
 Receipt recovery is distinct from caller-level operation idempotency. Retrying
-a completed operation can issue a new request, including creating another
-policy. Replicas sharing an actor identity retain independent worker identities
-and submission sequences.
+a completed operation can issue a new request. vera.rs derives a policy's ID
+from its definition, its creator (the node's actor) and a 32-byte nonce, so a
+caller that supplies the nonce (`VeraProvider::create_policy`,
+`Node::add_dac_policy_with_nonce_as`, `?nonce=` on the add-policy route,
+`policy add --nonce`) knows the ID beforehand (`vera_rs::predict_policy_id`):
+a create sent again with that nonce is refused as already existing, and the
+provider returns the existing policy when its definition, owner and nonce are
+the ones asked for, so no second policy is made. Without a nonce the provider
+draws one per call, and a retried create makes another policy. Replicas sharing
+an actor identity retain independent worker identities and submission
+sequences.
 
 The native provider module is `vera::vera_rs`, and its integration suite is
 `cargo test -p integration-test --test verars`. Configure it with the `verars`

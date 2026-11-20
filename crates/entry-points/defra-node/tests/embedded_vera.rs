@@ -7,7 +7,7 @@ use std::time::Duration;
 use acp::{DocumentACP as _, DocumentPermission, Identity};
 use defra_node::{
     EmbeddedVeraActor, EmbeddedVeraConfig, EmbeddedVeraDeployment, EmbeddedVeraPolicy, Node,
-    QueryRequest, RelationshipChange,
+    PolicyNonce, QueryRequest, RelationshipChange,
 };
 
 #[cfg(feature = "http")]
@@ -175,7 +175,7 @@ fn a_node_decides_document_access_through_its_own_vera_node_across_a_restart() {
         let vera = first.vera_acp().expect("vera.rs document ACP").clone();
         let owner = identity::Did::new(vera.self_did().expect("actor DID")).unwrap();
         let policy = vera
-            .add_policy(owner.as_str(), POLICY)
+            .add_policy(owner.as_str(), POLICY, None)
             .await
             .expect("policy");
         first
@@ -232,7 +232,7 @@ fn a_node_acts_for_a_signer_of_another_key_type() {
 
             let owner = identity::Did::new(&actor).unwrap();
             let policy = vera
-                .add_policy(owner.as_str(), POLICY)
+                .add_policy(owner.as_str(), POLICY, None)
                 .await
                 .expect("policy");
             node.document_acp()
@@ -252,6 +252,28 @@ fn a_node_acts_for_a_signer_of_another_key_type() {
     .unwrap();
 }
 
+/// [`POLICY`] seeded under `creator`, with the zero nonce.
+fn seed(creator: &str) -> EmbeddedVeraPolicy {
+    EmbeddedVeraPolicy {
+        definition: POLICY.to_string(),
+        nonce: PolicyNonce::default(),
+        creator: creator.to_string(),
+    }
+}
+
+/// The policy `creator`'s deployment was seeded with, found by `node` under
+/// the ID computed beforehand and kept in its own store.
+async fn seeded_policy(node: &Node, creator: &str) -> String {
+    let id = seed(creator).id().expect("policy ID");
+    let found = node
+        .get_dac_policy_as(&defra_core::RequestContext::default(), &id)
+        .await
+        .expect("policy read")
+        .expect("seeded policy");
+    assert_eq!(found.id, id);
+    id
+}
+
 fn now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -269,8 +291,8 @@ fn a_refused_seed_leaves_the_directory_free_for_a_corrected_one() {
         let seed = |definition: &str| {
             vec![EmbeddedVeraPolicy {
                 definition: definition.to_string(),
-                counter: 0,
-                owner: STRANGER.to_string(),
+                nonce: PolicyNonce::default(),
+                creator: STRANGER.to_string(),
             }]
         };
 
@@ -283,8 +305,10 @@ fn a_refused_seed_leaves_the_directory_free_for_a_corrected_one() {
     .unwrap();
 }
 
-/// A host that already names its policy by the ID a local ACP derives finds
-/// it under that ID on its own Vera node, across a restart.
+/// A host computes the ID of a policy it seeds its Vera node with before the
+/// deployment exists; the node's own create of the definition under the
+/// seed's nonce returns that policy and makes no second one, across a
+/// restart, and another nonce makes a policy of its own.
 #[test]
 fn a_node_adopts_a_policy_its_vera_node_was_seeded_with() {
     use vera::vera_rs::{DelegationSigner, Ed25519Signer};
@@ -296,33 +320,27 @@ fn a_node_adopts_a_policy_its_vera_node_was_seeded_with() {
         let owner = identity::Did::new(signer.did()).unwrap();
         let stranger = identity::Did::new(STRANGER).unwrap();
         let context = defra_core::RequestContext::default().with_identity(Some(owner.to_string()));
-        let local = acp::policy_yaml::build_policy(
-            &acp::policy_yaml::parse_policy_yaml(POLICY).unwrap(),
-            0,
-        )
-        .unwrap()
-        .id;
-        let seeded = || {
-            vec![EmbeddedVeraPolicy {
-                definition: POLICY.to_string(),
-                counter: 0,
-                owner: owner.to_string(),
-            }]
-        };
+        let seeded = seed(owner.as_str());
+        let predicted = seeded.id().expect("policy ID");
 
         let first = node_with(
             directory.path(),
             EmbeddedVeraActor::Signer(Arc::clone(&signer)),
-            seeded(),
+            vec![seeded.clone()],
         )
         .await;
         let adopted = first
-            .add_dac_policy_with_counter_as(&context, POLICY, 0)
+            .add_dac_policy_with_nonce_as(&context, POLICY, seeded.nonce)
             .await
             .expect("seeded policy");
-        assert_eq!(adopted, local);
+        assert_eq!(adopted, predicted);
+        let another = first
+            .add_dac_policy_with_nonce_as(&context, POLICY, PolicyNonce([1; 32]))
+            .await
+            .expect("a policy of its own");
+        assert_ne!(another, adopted);
         assert!(first
-            .add_dac_policy_with_counter_as(&context, POLICY, 1)
+            .add_dac_policy_with_counter_as(&context, POLICY, 0)
             .await
             .is_err());
         first
@@ -338,15 +356,15 @@ fn a_node_adopts_a_policy_its_vera_node_was_seeded_with() {
         let second = node_with(
             directory.path(),
             EmbeddedVeraActor::Signer(signer),
-            seeded(),
+            vec![seeded.clone()],
         )
         .await;
         assert_eq!(
             second
-                .add_dac_policy_with_counter_as(&context, POLICY, 0)
+                .add_dac_policy_with_nonce_as(&context, POLICY, seeded.nonce)
                 .await
                 .expect("seeded policy"),
-            local
+            predicted
         );
         assert!(reads(&second, &owner, &adopted).await);
         second.shutdown().await.expect("shutdown");
@@ -374,11 +392,7 @@ fn a_second_node_shares_the_first_nodes_vera_deployment() {
         let (first, rpc) = node_serving(
             &directory.path().join("first"),
             EmbeddedVeraActor::Signer(first_signer),
-            vec![EmbeddedVeraPolicy {
-                definition: POLICY.to_string(),
-                counter: 0,
-                owner: owner.to_string(),
-            }],
+            vec![seed(owner.as_str())],
         )
         .await;
         let trust = first.embedded_vera_trust().expect("deployment").clone();
@@ -403,24 +417,14 @@ fn a_second_node_shares_the_first_nodes_vera_deployment() {
             .expect("second node");
 
         let policy = first
-            .add_dac_policy_with_counter_as(
+            .add_dac_policy_with_nonce_as(
                 &defra_core::RequestContext::default().with_identity(Some(owner.to_string())),
                 POLICY,
-                0,
+                PolicyNonce::default(),
             )
             .await
             .expect("seeded policy");
-        assert_eq!(
-            second
-                .add_dac_policy_with_counter_as(
-                    &defra_core::RequestContext::default().with_identity(Some(peer.to_string())),
-                    POLICY,
-                    0,
-                )
-                .await
-                .expect("seeded policy"),
-            policy
-        );
+        assert_eq!(seeded_policy(&second, owner.as_str()).await, policy);
 
         first
             .document_acp()
@@ -500,7 +504,7 @@ fn a_caller_that_keeps_its_key_writes_through_its_own_delegation() {
             .expect("node");
         let vera = node.vera_acp().expect("vera.rs document ACP").clone();
         let owner = vera.self_did().expect("actor DID");
-        let policy = vera.add_policy(&owner, POLICY).await.expect("policy");
+        let policy = vera.add_policy(&owner, POLICY, None).await.expect("policy");
         node.add_collection(&format!(
             "type Users @policy(id: \"{policy}\", resource: \"users\") {{ name: String }}"
         ))
@@ -745,7 +749,7 @@ fn a_grant_staged_beside_its_document_lets_the_grantee_read_after_the_commit() {
         let owner = identity::Did::new(vera.self_did().expect("actor DID")).unwrap();
         let reader = identity::Did::new(STRANGER).unwrap();
         let policy = vera
-            .add_policy(owner.as_str(), POLICY)
+            .add_policy(owner.as_str(), POLICY, None)
             .await
             .expect("policy");
         node.add_collection(&users(&policy))
@@ -870,7 +874,7 @@ fn an_observation_under_writes_is_asked_again_when_a_block_overtakes_it() {
         let owner = identity::Did::new(vera.self_did().expect("actor DID")).unwrap();
         let reader = identity::Did::new(STRANGER).unwrap();
         let policy = vera
-            .add_policy(owner.as_str(), POLICY)
+            .add_policy(owner.as_str(), POLICY, None)
             .await
             .expect("policy");
         node.add_collection(&users(&policy))
@@ -929,7 +933,7 @@ fn the_grants_one_transaction_stages_land_together() {
         let second =
             identity::Did::new(Ed25519Signer::from_slice(&[44; 32]).expect("key").did()).unwrap();
         let policy = vera
-            .add_policy(owner.as_str(), POLICY)
+            .add_policy(owner.as_str(), POLICY, None)
             .await
             .expect("policy");
         node.add_collection(&users(&policy))
@@ -983,7 +987,7 @@ fn a_revocation_staged_in_a_transaction_denies_at_the_commit_and_the_chain_follo
         let owner = identity::Did::new(vera.self_did().expect("actor DID")).unwrap();
         let reader = identity::Did::new(STRANGER).unwrap();
         let policy = vera
-            .add_policy(owner.as_str(), POLICY)
+            .add_policy(owner.as_str(), POLICY, None)
             .await
             .expect("policy");
         drop(vera);
@@ -1062,11 +1066,7 @@ fn a_restart_settles_a_change_the_chain_could_not_take() {
             node_serving(
                 &chain_dir,
                 EmbeddedVeraActor::Signer(Arc::clone(&chain_signer)),
-                vec![EmbeddedVeraPolicy {
-                    definition: POLICY.to_string(),
-                    counter: 0,
-                    owner: chain_owner.to_string(),
-                }],
+                vec![seed(chain_owner.as_str())],
             )
         };
         let consumer = |trust: defra_node::EmbeddedVeraTrust, rpc: std::net::SocketAddr| {
@@ -1101,10 +1101,7 @@ fn a_restart_settles_a_change_the_chain_could_not_take() {
             .expect("deployment")
             .clone();
         let node = consumer(trust, rpc).await;
-        let policy = node
-            .add_dac_policy_with_counter_as(&acting, POLICY, 0)
-            .await
-            .expect("seeded policy");
+        let policy = seeded_policy(&node, chain_owner.as_str()).await;
         node.add_collection(&users(&policy))
             .await
             .expect("collection");
@@ -1189,11 +1186,7 @@ fn an_idle_node_settles_a_staged_grant_once_its_deployment_is_back() {
         let reader = identity::Did::new(STRANGER).unwrap();
         let acting = defra_core::RequestContext::default().with_identity(Some(creator.to_string()));
         let chain_dir = directory.path().join("chain");
-        let policies = vec![EmbeddedVeraPolicy {
-            definition: POLICY.to_string(),
-            counter: 0,
-            owner: chain_owner.to_string(),
-        }];
+        let policies = vec![seed(chain_owner.as_str())];
 
         let (first_chain, rpc) = node_serving(
             &chain_dir,
@@ -1224,10 +1217,7 @@ fn an_idle_node_settles_a_staged_grant_once_its_deployment_is_back() {
             .build()
             .await
             .expect("consumer node");
-        let policy = node
-            .add_dac_policy_with_counter_as(&acting, POLICY, 0)
-            .await
-            .expect("seeded policy");
+        let policy = seeded_policy(&node, chain_owner.as_str()).await;
         node.add_collection(&users(&policy))
             .await
             .expect("collection");
@@ -1364,7 +1354,7 @@ impl Grouped {
         let vera = node.vera_acp().expect("vera.rs document ACP").clone();
         let actor = identity::Did::new(vera.self_did().expect("actor DID")).unwrap();
         let policy = vera
-            .add_policy(actor.as_str(), GROUPS_POLICY)
+            .add_policy(actor.as_str(), GROUPS_POLICY, None)
             .await
             .expect("policy");
         drop(vera);
@@ -1595,7 +1585,7 @@ fn a_key_registered_under_another_spelling_signs_its_staged_changes() {
         let vera = node.vera_acp().expect("vera.rs document ACP").clone();
         let actor = identity::Did::new(vera.self_did().expect("actor DID")).unwrap();
         let policy = vera
-            .add_policy(actor.as_str(), POLICY)
+            .add_policy(actor.as_str(), POLICY, None)
             .await
             .expect("policy");
         drop(vera);

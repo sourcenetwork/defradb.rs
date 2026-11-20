@@ -432,8 +432,11 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         &self,
         context: &RequestContext,
         policy: &str,
+        nonce: Option<acp::PolicyNonce>,
     ) -> std::result::Result<String, TransactionError> {
-        self.registry.add_dac_policy_as(context, policy).await
+        self.registry
+            .add_dac_policy_as(context, policy, nonce)
+            .await
     }
 
     async fn list_dac_policies_as(

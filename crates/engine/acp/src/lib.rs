@@ -39,6 +39,7 @@ pub mod pending;
 mod permission;
 mod policy_cache;
 mod policy_lookup;
+mod policy_nonce;
 pub mod projection;
 mod provider_command;
 pub mod replica;
@@ -79,6 +80,7 @@ pub use permission::DocumentPermission;
 #[cfg(not(target_arch = "wasm32"))]
 pub use persistent::PersistentAcpStore;
 pub use policy_lookup::{LightClientStatus, PolicyLookup, RemotePolicies, StorePolicies};
+pub use policy_nonce::{PolicyNonce, PolicyNonceError, POLICY_NONCE_BYTES};
 pub use provider_command::ProviderCommand;
 pub use read_access::{check_doc_read_access, DirectChecker, DocAccess, ObjectAccessChecker};
 pub use relation::{

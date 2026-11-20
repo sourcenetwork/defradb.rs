@@ -145,14 +145,16 @@ impl VeraDocumentACP {
         self.provider.self_did()
     }
 
-    /// Create a policy on Vera. Returns the policy ID.
+    /// Create a policy on Vera, its ID derived from `nonce` where the
+    /// provider derives one. Returns the policy ID.
     pub async fn add_policy(
         &self,
         _creator_did: &str,
         policy_yaml: &str,
+        nonce: Option<acp::PolicyNonce>,
     ) -> std::result::Result<String, ProviderError> {
         let yaml = policy_yaml.to_owned();
-        self.remote(move |provider| async move { provider.create_policy(&yaml).await })
+        self.remote(move |provider| async move { provider.create_policy(&yaml, nonce).await })
             .await
     }
 
@@ -383,8 +385,13 @@ fn provider_err(error: impl std::borrow::Borrow<ProviderError>) -> acp::Error {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl acp::RemotePolicies for VeraDocumentACP {
-    async fn add_policy(&self, creator: &str, policy: &str) -> std::result::Result<String, String> {
-        VeraDocumentACP::add_policy(self, creator, policy)
+    async fn add_policy(
+        &self,
+        creator: &str,
+        policy: &str,
+        nonce: Option<acp::PolicyNonce>,
+    ) -> std::result::Result<String, String> {
+        VeraDocumentACP::add_policy(self, creator, policy, nonce)
             .await
             .map_err(|e| e.to_string())
     }

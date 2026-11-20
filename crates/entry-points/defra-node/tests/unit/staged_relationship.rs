@@ -321,7 +321,11 @@ impl VeraProvider for Remote {
         })
     }
 
-    async fn create_policy(&self, policy_yaml: &str) -> Result<String, ProviderError> {
+    async fn create_policy(
+        &self,
+        policy_yaml: &str,
+        _nonce: Option<acp::PolicyNonce>,
+    ) -> Result<String, ProviderError> {
         let parsed = acp::policy_yaml::parse_policy_yaml(policy_yaml)
             .map_err(|error| ProviderError::Config(error.to_string()))?;
         let id = acp::policy_yaml::build_policy(&parsed, 0)

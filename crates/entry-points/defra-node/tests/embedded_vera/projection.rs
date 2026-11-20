@@ -179,7 +179,7 @@ fn a_projection_stages_through_vera_for_a_manager_in_a_transaction_and_for_the_n
         let vera = node.vera_acp().expect("vera.rs document ACP").clone();
         let actor = Did::new(vera.self_did().expect("actor DID")).unwrap();
         let policy = vera
-            .add_policy(actor.as_str(), MANAGED_POLICY)
+            .add_policy(actor.as_str(), MANAGED_POLICY, None)
             .await
             .expect("policy");
         node.add_collection(&users(&policy))

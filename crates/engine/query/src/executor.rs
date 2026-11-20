@@ -856,8 +856,9 @@ pub trait QueryExecutor: MaybeSendSync {
         &self,
         context: &RequestContext,
         policy: &str,
+        nonce: Option<acp::PolicyNonce>,
     ) -> std::result::Result<String, TransactionError> {
-        let _ = (context, policy);
+        let _ = (context, policy, nonce);
         Err(TransactionError::not_supported(
             "DAC policies are not supported by this executor",
         ))

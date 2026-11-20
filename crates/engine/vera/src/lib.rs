@@ -7,6 +7,7 @@ mod provider;
 mod tuning;
 pub mod vera_rs;
 
+pub use acp::PolicyNonce;
 pub use cosmos::{CosmosProvider, VeraDocumentACP};
 pub use provider::{
     owed_request_digest, AcpLightClientStatus, ActorRelationshipQuery, OwedCall,
