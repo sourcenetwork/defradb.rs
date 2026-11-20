@@ -794,6 +794,8 @@ RUNS=(
   "MC_SettleBeforeObserving_Red_LockUnbounded.cfg SettleBeforeObserving.tla RED" # INV_EndsInTime
   "MC_SettleBeforeObserving_Red_NoExpiry.cfg SettleBeforeObserving.tla RED" # INV_EndsInTime
   "MC_SettleBeforeObserving_Red_NoExpiry_Silent.cfg SettleBeforeObserving.tla RED" # INV_EndsInTime
+  "MC_SettleBeforeObserving_Red_WakeDrainer.cfg SettleBeforeObserving.tla RED" # INV_BackoffHeld
+  "MC_SettleBeforeObserving_Red_NoHead.cfg SettleBeforeObserving.tla RED" # INV_ReuseHoldsLatest
   "MC_ProjectionRelationship_Green.cfg ProjectionRelationship.tla GREEN"
   "MC_ExactRelationshipObservation_Green.cfg ExactRelationshipObservation.tla GREEN"
   "MC_ExactRelationshipObservation_Red.cfg ExactRelationshipObservation.tla RED"
