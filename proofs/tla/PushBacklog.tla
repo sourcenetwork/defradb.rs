@@ -7,7 +7,8 @@
 \*     unreachable state and its spells), BacklogOwner::take_queued_for_peer,
 \*     BacklogOwner::job_done;
 \*   crates/database/p2p/src/sync/coordinator/push_worker.rs: spawn_push_workers (the fixed
-\*     pool) and run_push_job (send, park on a timeout, demote the peer's queue).
+\*     pool) and run_push_job (send, park on a timeout, demote the peer's queue,
+\*     or park an already-offline peer without a send).
 \*
 \* THE STORY. A node pushes every write to each replicator peer; one (write, peer)
 \* push is a job. Jobs wait in one bounded queue, and a fixed pool of Workers worker
@@ -283,6 +284,16 @@ Timeout(p) ==
   /\ unreachable' = unreachable \cup {p}
   /\ UNCHANGED <<arrivals, sent, coalesced, rejected>>
 
+\* The transport already reports p offline. The current job is parked in the retry
+\* ledger without a send and without demoting p's queued jobs; those wait for the
+\* reconnect window. This is the offline branch of run_push_job, not a timeout.
+OfflinePark(p) ==
+  /\ JobEnds(p)
+  /\ \E k \in {0, 1} : ProbeEnds(p, k)
+  /\ failed' = failed + 1
+  /\ unreachable' = unreachable \cup {p}
+  /\ UNCHANGED <<arrivals, backlog, sent, coalesced, rejected>>
+
 \* An unreachable peer with nothing queued or running loses its parking state
 \* (retire_idle_cooldowns): its next job is an ordinary job again.
 Retire(p) ==
@@ -301,6 +312,7 @@ Next ==
     \/ StartJob(p)
     \/ Complete(p)
     \/ Timeout(p)
+    \/ OfflinePark(p)
     \/ Retire(p)
 
 \* Arrivals exhausted and every healthy peer's work drained: stutter so TLC does not
@@ -319,7 +331,7 @@ Spec == Init /\ [][Next \/ Terminating]_vars
 FairSpec ==
   /\ Spec
   /\ WF_vars(\E p \in Peers : StartJob(p))
-  /\ \A p \in Peers : WF_vars(Complete(p) \/ Timeout(p))
+  /\ \A p \in Peers : WF_vars(Complete(p) \/ Timeout(p) \/ OfflinePark(p))
 
 INV_TypeOK == TypeOK
 

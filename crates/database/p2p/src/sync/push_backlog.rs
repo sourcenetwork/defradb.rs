@@ -212,6 +212,7 @@ struct PeerMetrics {
     failed: u64,
     parked: u64,
     last_success_ms: u64,
+    last_activity_ms: u64,
 }
 
 #[derive(Default)]
@@ -962,6 +963,33 @@ impl BacklogOwner {
         }
     }
 
+    /// Keep `metrics` within `item_capacity + worker_count` entries. A peer
+    /// with no queue, active work, or cooldown gives its accounting up first;
+    /// among those, the least recently active entry is evicted.
+    fn retire_idle_metrics(&mut self) {
+        let bound = self
+            .limits
+            .item_capacity
+            .saturating_add(self.limits.worker_count);
+        let inner = &mut self.inner;
+        while inner.metrics.len() > bound {
+            let Some(idle) = inner
+                .metrics
+                .iter()
+                .filter(|(peer_key, _)| {
+                    !inner.queues.contains_key(*peer_key)
+                        && !inner.active.contains_key(*peer_key)
+                        && !inner.peer_cooldowns.contains_key(*peer_key)
+                })
+                .min_by_key(|(_, metrics)| metrics.last_activity_ms)
+                .map(|(peer_key, _)| peer_key.clone())
+            else {
+                return;
+            };
+            inner.metrics.remove(&idle);
+        }
+    }
+
     /// Only a failed probe of the peer's current unreachable spell demotes its
     /// queue: the failures of the round that started the spell do not.
     fn park_peer_unreachable(
@@ -1152,6 +1180,10 @@ impl BacklogOwner {
             JobCompletion::Retired => {}
         }
         let metrics = self.inner.metrics.entry(peer_key).or_default();
+        metrics.last_activity_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
         match completion {
             JobCompletion::Succeeded => {
                 metrics.last_success_ms = std::time::SystemTime::now()
@@ -1163,6 +1195,7 @@ impl BacklogOwner {
             JobCompletion::Parked => metrics.parked = metrics.parked.saturating_add(1),
             JobCompletion::Retired => {}
         }
+        self.retire_idle_metrics();
         let _ = reply.send(true);
     }
 
@@ -1852,6 +1885,22 @@ mod tests {
             .expect("peer b present");
         assert_eq!(b.queued_items, 1);
         backlog.job_done(&active, JobCompletion::Succeeded).await;
+    }
+
+    /// Idle peer accounting is bounded like queue and cooldown state; a
+    /// long-running node cannot retain an unbounded map of every peer seen.
+    #[nuclei::test(threads = 0)]
+    async fn idle_peer_metrics_are_bounded() {
+        let backlog = PushBacklog::new(1, usize::MAX, 1, 1, edge::testing::edge());
+        for peer in ["a", "b", "c"] {
+            backlog.try_enqueue(job(peer, peer.as_bytes())).await;
+            let active = backlog.next_job().await.unwrap();
+            backlog.job_done(&active, JobCompletion::Succeeded).await;
+        }
+
+        let snapshot = backlog.snapshot().await;
+        assert!(snapshot.per_peer.len() <= 2);
+        assert!(snapshot.per_peer.iter().any(|entry| entry.peer_id == "c"));
     }
 
     #[nuclei::test(threads = 0)]
