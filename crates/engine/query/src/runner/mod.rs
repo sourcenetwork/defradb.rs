@@ -55,6 +55,7 @@ mod remote_authority;
 mod se_transport;
 #[cfg(test)]
 mod similarity_validation_tests;
+mod strict_access;
 mod turn;
 mod version;
 

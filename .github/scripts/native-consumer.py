@@ -108,6 +108,7 @@ UNIT_NAMES = (
     "provider::transport_tests::a_node_that_serves_no_header_fails_as_an_unreachable_url_does",
     "provider::transport_tests::an_invalid_trusted_key_is_refused_before_a_transport_is_used",
     "provider::verified::tests::a_decision_the_chain_overtook_is_asked_again",
+    "provider::verified::tests::a_late_read_is_told_from_a_wrong_one",
     "provider::verified::tests::a_read_at_a_stale_revision_fails_once_the_patience_is_spent",
     "provider::verified::tests::a_read_at_a_stale_revision_waits_for_the_next_and_is_answered",
     "provider::verified::tests::a_read_overtaken_at_every_ask_returns_the_refusal_after_the_last",
