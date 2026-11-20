@@ -92,12 +92,24 @@ ignore = [
     # (0.26.2) needs libp2p 0.57. 0487, 0489 and 0490 panic only when parsing
     # the text (zone file) form, which a resolver never does. 0491 is reachable:
     # a hostile DNS server answering a /dns multiaddr lookup can inflate
-    # allocations. Remove all four with the libp2p 0.57 bump (#2813).
+    # allocations. Remove all hickory IDs with the libp2p 0.57 bump (#2813).
     { id = "RUSTSEC-2026-0487", reason = "hickory-proto 0.25 via libp2p 0.56; zone-file text parsing only; #2813" },
     { id = "RUSTSEC-2026-0489", reason = "hickory-proto 0.25 via libp2p 0.56; zone-file text parsing only; #2813" },
     { id = "RUSTSEC-2026-0490", reason = "hickory-proto 0.25 via libp2p 0.56; zone-file lexer only; #2813" },
     { id = "RUSTSEC-2026-0491", reason = "hickory-proto 0.25 via libp2p 0.56; reachable via DNS answers; fix needs libp2p 0.57; #2813" },
     { id = "RUSTSEC-2026-0504", reason = "hickory-proto 0.25 via libp2p 0.56; no safe upgrade until libp2p 0.57; #2813" },
+    { id = "RUSTSEC-2026-0505", reason = "hickory-proto 0.25 via libp2p 0.56; no safe upgrade until libp2p 0.57; #2813" },
+    { id = "RUSTSEC-2026-0511", reason = "hickory-proto 0.25 via libp2p 0.56; no safe upgrade until libp2p 0.57; #2813" },
+    { id = "RUSTSEC-2026-0512", reason = "hickory-proto 0.25 via libp2p 0.56; no safe upgrade until libp2p 0.57; #2813" },
+    { id = "RUSTSEC-2026-0514", reason = "hickory-proto 0.25 via libp2p 0.56; no safe upgrade until libp2p 0.57; #2813" },
+    { id = "RUSTSEC-2026-0530", reason = "hickory-proto 0.25 via libp2p 0.56; no safe upgrade until libp2p 0.57; #2813" },
+    { id = "RUSTSEC-2026-0531", reason = "hickory-proto 0.25 via libp2p 0.56; no safe upgrade until libp2p 0.57; #2813" },
+    { id = "RUSTSEC-2026-0532", reason = "hickory-proto 0.25 via libp2p 0.56; no safe upgrade until libp2p 0.57; #2813" },
+    { id = "RUSTSEC-2026-0534", reason = "libp2p-gossipsub 0.49 via libp2p 0.56; PRUNE backoff fix needs libp2p 0.57; #2813" },
+    { id = "RUSTSEC-2026-0543", reason = "chrono 0.4 is unmaintained and pulled by the current schema/date ecosystem; migration tracked separately" },
+    { id = "RUSTSEC-2026-0549", reason = "hickory-proto 0.25 via libp2p 0.56; no safe upgrade until libp2p 0.57; #2813" },
+    { id = "RUSTSEC-2026-0550", reason = "hickory-proto 0.25 via libp2p 0.56; no safe upgrade until libp2p 0.57; #2813" },
+    { id = "RUSTSEC-2026-0551", reason = "hickory-proto 0.25 via libp2p 0.56; no safe upgrade until libp2p 0.57; #2813" },
 ]
 
 [licenses]
