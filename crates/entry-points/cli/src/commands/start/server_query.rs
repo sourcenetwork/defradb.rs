@@ -25,7 +25,7 @@ impl Node {
         config: &Config,
         user_did: Option<&Did>,
         document_acp: Arc<dyn acp::DocumentACP>,
-        nac_adapter: Option<Arc<defra_http::nac_adapter::NacAdapter>>,
+        nac_adapter: Arc<defra_http::nac_adapter::NacAdapter>,
         mutator: Arc<dyn query::mutator::DocMutator>,
         txn_broadcaster: Option<Arc<dyn db::event::emission::TxnBroadcaster>>,
         se_transport: Option<Arc<dyn query::SeQueryTransport>>,
@@ -76,9 +76,9 @@ impl Node {
             }
         }
 
-        if let Some(adapter) = &nac_adapter {
-            query_runner = query_runner.with_nac(adapter.clone() as Arc<dyn query::NacChecker>);
-        }
+        // Every query checks the node's NAC, which allows all while it is not
+        // enabled: one a previous run enabled is enforced without the flag.
+        query_runner = query_runner.with_nac(nac_adapter as Arc<dyn query::NacChecker>);
 
         if let Some(transport) = se_transport {
             info!("Query runner configured with SE remote query transport");
