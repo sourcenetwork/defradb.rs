@@ -1708,7 +1708,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Single-writer chain jail",
         name: "INV_NoWrongfulJail / INV_NoForkMerged / PROP_EveryoneJails: only a signed fork jails an author, a jailed fork is never merged, and the proof reaches every honest node",
         axis: Tla,
-        anchor: "crates/defra-node/src/ops/block.rs verify_block_signature",
+        anchor: "crates/database/db/src/block/verify.rs verify_block_signature",
         model_ref: "MC_ChainJail_{Green,Red_Hearsay,Red_NoJail,Red_NoGossip}.cfg",
         tiers: &[Boundary],
         bound_by: "",

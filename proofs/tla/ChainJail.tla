@@ -24,6 +24,12 @@
 \* admitted validator or member may write a contended resource, so a new key
 \* has no rights until it is admitted again. Admission is outside this model.
 \*
+\* Honest nodes never sign here, so INV_NoWrongfulJail can only break when a
+\* node jails without checking the evidence (Red_Hearsay). An honest key that
+\* looks like a fork, such as an instance restored from a backup and signing
+\* again at a height it already used, is not in this model; JailRevocation's
+\* Red_KeepKey covers that case.
+\*
 \* How this maps onto DefraDB. A block's heads are the document's previous
 \* heads, not its author's last block, so "two versions at one height" stands
 \* for two blocks signed by one key on one document where neither is an
