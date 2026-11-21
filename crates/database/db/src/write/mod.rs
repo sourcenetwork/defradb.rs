@@ -2,6 +2,7 @@
 pub mod autocommit;
 pub(crate) mod create;
 pub mod doc;
+pub(crate) mod genesis_reader;
 pub(crate) mod prepare;
 pub(crate) mod update;
 
