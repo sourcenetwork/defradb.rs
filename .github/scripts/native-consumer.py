@@ -126,6 +126,9 @@ UNIT_NAMES = (
     "provider::verified::tests::late_and_overtaken_answers_are_counted_apart",
     "provider_commands::request_bearer_tests::a_remote_identity_acts_with_the_token_its_request_carries",
     "provider_commands::request_bearer_tests::the_node_holds_a_registered_local_key_and_not_a_request_token",
+    "receipt_wait::tests::a_header_verified_while_the_request_is_sent_still_ends_the_wait",
+    "receipt_wait::tests::a_receipt_is_asked_for_at_the_next_verified_height_and_not_after_a_sleep",
+    "receipt_wait::tests::with_no_header_each_wait_ends_at_its_fallback_and_an_unheard_send_is_sent_again",
     "worker::tests::pending_request_and_identity_survive_reopen",
 )
 UNIT_TESTS = tuple("vera_rs::" + name for name in UNIT_NAMES)

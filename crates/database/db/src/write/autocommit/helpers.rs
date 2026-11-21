@@ -146,13 +146,17 @@ pub(crate) async fn load_update_heads(
 /// request `context` serves is gone: the node's key for the creator, or the
 /// delegation the request itself carries, asked about this registration as
 /// a verified create is asked when it is admitted. With neither, the record
-/// says the registration waits for authority.
+/// says the registration waits for authority. The same transaction owes the
+/// reader `doc`'s genesis asks for, when its collection opted in
+/// ([`crate::write::genesis_reader`]).
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn register_created_doc(
     acp: Option<&Arc<dyn acp::DocumentACP>>,
     context: &defra_core::RequestContext,
     systemstore: &NamespaceView,
     datastore: &NamespaceView,
     collection: &Collection,
+    doc: &Document,
     doc_short_id: u64,
     block_result: &BlockResult,
 ) -> query::error::Result<DocID> {
@@ -223,7 +227,7 @@ pub(crate) async fn register_created_doc(
                 acp::PendingRegistrations::new(&acpstore)
                     .record(
                         &acp::PendingRegistration::new(
-                            creator,
+                            creator.clone(),
                             &policy.id,
                             &policy.resource_name,
                             doc_id_str,
@@ -232,7 +236,11 @@ pub(crate) async fn register_created_doc(
                         .in_transaction(context.txn().map(|txn| txn.0)),
                     )
                     .await
-                    .map_err(|e| query::error::QueryError::execution(e.to_string()))?
+                    .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
+                crate::write::genesis_reader::stage_genesis_reader(
+                    provider, context, datastore, collection, doc, &creator, doc_id_str,
+                )
+                .await?
             }
         }
     }

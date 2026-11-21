@@ -8,6 +8,7 @@ mod outcome_note;
 mod policy_id;
 mod provider;
 mod provider_commands;
+mod receipt_wait;
 mod transport;
 mod worker;
 
