@@ -902,6 +902,15 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "A live write whose marker a newer generation supersedes (a replay's or a second live writer's) is owed by that marker and never reported undurable, and its head stays delivered or marked, because a live ack completes the marker only at its own generation and only while its head is the whole frontier, on the retired branch too",
+        axis: Tla,
+        anchor: "crates/engine/storage/src/stores/peerstore.rs register_scope_marker, register_scope_marker_at; crates/database/db/src/merge/push_docs.rs push_existing_docs_with_config_and_allowlist; crates/database/p2p/src/sync/coordinator/push_worker.rs run_push_job, is_whole_frontier",
+        model_ref: "MC_LiveMarkerGeneration_{Green,Red_Superseded,Red_NoFence,Red_NoHeadFence}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/engine/storage/src/stores/peerstore_tests.rs live_registration_superseded_by_replay_marker_is_owed_by_it; crates/database/p2p/src/sync/coordinator/push_worker_tests.rs retired_older_head_with_newer_generation_leaves_the_marker",
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
         name: "defer_preserves_incarnation / defer_does_not_resurrect / stale_defer_leaves_replacement / fenced_preserves_incarnation / create_changes_incarnation / create_resurrects / stale_mark_writes_nothing / deleted_mark_writes_nothing / mark_owned / only_replacement_stops / superseded_continues",
         axis: Lean,
         anchor: "crates/database/db/src/merge/push_docs_replay.rs persist_replay_failures; crates/engine/storage/src/stores/peerstore.rs record_push_failure_for_incarnation",
