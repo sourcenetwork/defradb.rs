@@ -314,6 +314,97 @@ fn collection_migration_query_applying_migration_between_old_versions_should_rei
 
 #[test]
 #[mantra_macros::req_test("go.collection_version.migrations.query.index.reindex")]
+fn collection_migration_query_identity_settlement_before_transform_should_apply_later_migration() {
+    TestCase {
+        id: integration_test::scenario_id!(),
+        actions: vec![
+            AddCollection {
+                sdl: r#"
+                    type Users {
+                        name: String
+                        age: Int @index
+                    }
+                "#
+                .into(),
+                ..Default::default()
+            }
+            .into(),
+            AddDoc {
+                collection: "Users".into(),
+                doc_map: Some(json!({ "age": 20, "name": "Andy" })),
+                ..Default::default()
+            }
+            .into(),
+            AddDoc {
+                collection: "Users".into(),
+                doc_map: Some(json!({ "age": 25, "name": "Fred" })),
+                ..Default::default()
+            }
+            .into(),
+            AddDoc {
+                collection: "Users".into(),
+                doc_map: Some(json!({ "age": 30, "name": "John" })),
+                ..Default::default()
+            }
+            .into(),
+            PatchCollection {
+                patch: r#"
+				[
+					{ "op": "add", "path": "/Users/Fields/-", "value": {"Name": "level", "Kind": "Int"} }
+				]
+			"#
+                .into(),
+                ..Default::default()
+            }
+            .into(),
+            ConfigureMigration {
+                source_version_id: "bafyreidmsarf4ac4eihxk3ocqfort3e3pxhb7eumatvkanjsxxkjrn3h6a"
+                    .into(),
+                destination_version_id:
+                    "bafyreidptieeo3tckkyi6jnomavo3noy2mxuv7dfuc76pf2vgxm6ilfazq".into(),
+                lens: Lens {
+                    lenses: Some(vec![LensModule {
+                        arguments: json!({ "field": "age", "value": 5 }),
+                        path: "bin/lenses/increment.wasm".into(),
+                    }]),
+                },
+                ..Default::default()
+            }
+            .into(),
+            Request {
+                request: r#"
+                    query {
+                        Users(filter: {age: {_eq: 30}}) {
+                            name
+                        }
+                    }
+                "#
+                .into(),
+                expected_data: json!({ "Users": [{ "name": "Fred" }] }),
+                ..Default::default()
+            }
+            .into(),
+            Request {
+                request: r#"
+                    query {
+                        Users(filter: {age: {_eq: 35}}) {
+                            name
+                        }
+                    }
+                "#
+                .into(),
+                expected_data: json!({ "Users": [{ "name": "John" }] }),
+                ..Default::default()
+            }
+            .into(),
+        ],
+        ..Default::default()
+    }
+    .execute();
+}
+
+#[test]
+#[mantra_macros::req_test("go.collection_version.migrations.query.index.reindex")]
 fn collection_migration_query_applying_migration_to_unknown_versions_then_patch_should_reindex() {
     TestCase {
         id: integration_test::scenario_id!(),

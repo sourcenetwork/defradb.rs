@@ -79,7 +79,7 @@ where
 
     /// Rebuild a collection's indexes for the reindex owed to it under `token`.
     pub(super) async fn rebuild_settling(&self, collection_name: &str, token: u64) -> Result<()> {
-        self.reindex_in_pages(collection_name, Some(token), true, None)
+        self.reindex_in_pages(collection_name, Some(token), false, None)
             .await
             .map(|_| ())
     }
