@@ -80,16 +80,21 @@ async fn matching_doc_ids_in_attempt<S>(
 where
     S: Store + 'static,
 {
-    let fetcher =
-        LensedDocFetcher::lent(db.clone(), txn, db.lens_store().clone(), Default::default());
+    let fetcher = Arc::new(LensedDocFetcher::lent(
+        db.clone(),
+        txn,
+        db.lens_store().clone(),
+        Default::default(),
+    ));
     fetcher.set_scans_validated(true);
     let provider = Arc::new(TxnCollectionProvider::new(db.clone(), txn));
-    let runner = query::QueryRunner::with_provider(fetcher, provider)
+    let runner = query::QueryRunner::with_provider(fetcher.clone(), provider)
         .with_lens_store(db.lens_store().clone());
 
     let found = runner
         .matching_doc_ids(collection.name(), filter.clone(), limit, true)
         .await;
     drop(runner);
+    fetcher.set_scans_validated(false);
     Ok(found?)
 }
