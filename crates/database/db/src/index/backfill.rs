@@ -523,6 +523,9 @@ fn ensure_backfill_index_unchanged(expected: &BackfillPlan, current: &Collection
     let current_index = current
         .get_index(index_name)
         .ok_or_else(|| Error::Other(format!("index '{index_name}' disappeared during backfill")))?;
+    // Index IDs are never reused: a retired ID raises the collection's
+    // sequence floor, and schema validation rejects index mutations on an
+    // existing version. An unchanged ID therefore names the same definition.
     if current_index.id != expected.index_id {
         return Err(Error::Other(format!(
             "index '{index_name}' changed during backfill"

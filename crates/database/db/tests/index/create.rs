@@ -993,6 +993,139 @@ fn index_backfill_resumes_after_a_restart() {
     .unwrap()
 }
 
+/// The cache can lag the committed definition when a backfill starts: a
+/// restart reloads from the stored schema, and finishing the index must
+/// compare that definition rather than the stale cache's index map.
+#[test]
+fn index_backfill_finishes_from_a_reloaded_stale_definition() {
+    workers::block_on(async {
+        const COLLECTION_ID: &str = "col-index-reloaded";
+        let total = 300;
+        let first_batch = 100;
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let db = Arc::new(DB::open_from_arc(store.clone()).await.unwrap());
+        db.create_collection(users_schema("Reloaded", "reloaded-v1", COLLECTION_ID))
+            .await
+            .unwrap();
+        let mutator = AutoCommitMutator::new(db.clone());
+        for i in 0..total {
+            create_user(&mutator, "Reloaded", &format!("user-{i}")).await;
+        }
+        drop(mutator);
+
+        let collection = db.require_collection("Reloaded").unwrap();
+        let mut stale = collection.schema().clone();
+        let (fields, kind) = by_name();
+        let index = {
+            let txn = db.new_txn(false).await.unwrap();
+            let index = {
+                let datastore = txn.datastore().unwrap();
+                let systemstore = txn.systemstore().unwrap();
+                let mut manager = IndexManager::from_collection(
+                    stale.resolved_root_id(),
+                    &stale,
+                    &crdt::Crdts::default(),
+                )
+                .unwrap();
+                let index = manager
+                    .create_index_of_kind(
+                        &datastore,
+                        "Reloaded",
+                        "by_name".to_string(),
+                        fields,
+                        kind,
+                    )
+                    .await
+                    .unwrap();
+                stale.indexes.push(index.clone());
+                systemstore
+                    .set(
+                        &CollectionKey::new(&stale.version_id).bytes(),
+                        &serde_json::to_vec(&stale).unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                systemstore
+                    .set(
+                        &CollectionNameKey::new("Reloaded").bytes(),
+                        stale.version_id.as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+                let lease = db
+                    .stage_action(
+                        &systemstore,
+                        COLLECTION_ID,
+                        defra_core::Action::BACKFILL_INDEX,
+                        &index.id.to_string(),
+                    )
+                    .await
+                    .unwrap();
+                drop(lease);
+                index
+            };
+            txn.commit().await.unwrap();
+            index
+        };
+
+        let cached = Collection::new(stale.clone(), crdt::Crdts::default());
+        let manager = IndexManager::from_collection(
+            stale.resolved_root_id(),
+            &stale,
+            &crdt::Crdts::default(),
+        )
+        .unwrap();
+        let fence = db.next_doc_short_id().await.unwrap();
+        let progress_key = ActionProgressKey::new(
+            COLLECTION_ID,
+            defra_core::Action::BACKFILL_INDEX,
+            index.id.to_string(),
+        )
+        .bytes();
+        let txn = db.new_txn(false).await.unwrap();
+        {
+            let datastore = txn.datastore().unwrap();
+            let systemstore = txn.systemstore().unwrap();
+            let mut source = BackfillSource::open_range(
+                cached.clone(),
+                datastore.clone(),
+                systemstore.clone(),
+                None,
+                Some(fence),
+            )
+            .await
+            .unwrap();
+            let batch = manager
+                .index_batch_from(&datastore, "by_name", &mut source, &stale, first_batch)
+                .await
+                .unwrap();
+            assert_eq!(batch.indexed, first_batch);
+            assert!(!batch.exhausted);
+            systemstore
+                .set(
+                    &progress_key,
+                    &encode_progress(fence, batch.last_doc_short_id.unwrap()),
+                )
+                .await
+                .unwrap();
+        }
+        txn.commit().await.unwrap();
+
+        let db = DB::open_from_arc(store).await.unwrap();
+        assert_eq!(index_entries(&db, "Reloaded", index.id).await, first_batch);
+        db.resume_index_backfills().await.unwrap();
+        assert_eq!(index_entries(&db, "Reloaded", index.id).await, total);
+        assert_eq!(entries_for(&db, "Reloaded", "user-0").await, 1);
+        assert_eq!(entries_for(&db, "Reloaded", "user-299").await, 1);
+        assert!(!db
+            .list_index_actions(COLLECTION_ID)
+            .await
+            .unwrap()
+            .contains_key(&index.id));
+    })
+    .unwrap()
+}
+
 #[test]
 fn ensure_ordinary_index_is_idempotent_and_preserves_collection_identity() {
     workers::block_on(async {
