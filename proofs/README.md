@@ -111,6 +111,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Custom CRDT types | TLA+ & Lean | crdt, schema, db-merge, p2p (#2183) |
 | Document write pipeline | TLA+ | db, db-block-builder |
 | Text chunking | TLA+ / Lean | chunk-split, schema, db, query |
+| Prolly tree catch-up | TLA+ / Lean | prolly (the p2p pull is not wired yet, #2977) |
 | Postgres wire connection loop | TLA+ | pg-compat |
 | HTTP client redirects and body deadline | Lean | net |
 | Connect fallback race | TLA+ | net |
