@@ -3,11 +3,11 @@
 
 use integration_test::actions::shared::{IndexField, IndexSpec, Lens, LensModule};
 use integration_test::actions::{
-    AddCollection, AddDoc, ConfigureMigration, NewIndex, PatchCollection, Request,
+    AddCollection, AddDoc, ConfigureMigration, GetCollections, NewIndex, PatchCollection, Request,
     SetActiveCollectionVersion,
 };
 use integration_test::m;
-use integration_test::scenario::{captures, Common};
+use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
 use serde_json::json;
 
@@ -114,10 +114,10 @@ fn collection_migration_query_applying_migration_between_new_versions_should_not
             }
             .into(),
             ConfigureMigration {
-                source_version_id: "bafyreihuyovjl5ezgpud5xyqnouzsgx25x3ssrx3ncdv5p3guocc3laqna"
+                source_version_id: "bafyreidmsarf4ac4eihxk3ocqfort3e3pxhb7eumatvkanjsxxkjrn3h6a"
                     .into(),
                 destination_version_id:
-                    "bafyreigvzkfdc4y2ppvvpmmdw3t7kv4nd5dgfh5jfytef3kbzem6po55zu".into(),
+                    "bafyreidptieeo3tckkyi6jnomavo3noy2mxuv7dfuc76pf2vgxm6ilfazq".into(),
                 lens: Lens {
                     lenses: Some(vec![LensModule {
                         arguments: json!({ "field": "age", "value": 5 }),
@@ -329,6 +329,15 @@ fn collection_migration_query_identity_settlement_before_transform_should_apply_
                 ..Default::default()
             }
             .into(),
+            GetCollections {
+                filtered: true,
+                common: Common {
+                    capture: captures([("version1", "/collections/0/VersionID")]),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
             AddDoc {
                 collection: "Users".into(),
                 doc_map: Some(json!({ "age": 20, "name": "Andy" })),
@@ -357,11 +366,18 @@ fn collection_migration_query_identity_settlement_before_transform_should_apply_
                 ..Default::default()
             }
             .into(),
+            GetCollections {
+                filtered: true,
+                common: Common {
+                    capture: captures([("version2", "/collections/0/VersionID")]),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
             ConfigureMigration {
-                source_version_id: "bafyreidmsarf4ac4eihxk3ocqfort3e3pxhb7eumatvkanjsxxkjrn3h6a"
-                    .into(),
-                destination_version_id:
-                    "bafyreidptieeo3tckkyi6jnomavo3noy2mxuv7dfuc76pf2vgxm6ilfazq".into(),
+                source_version_id: Text::reference("version1"),
+                destination_version_id: Text::reference("version2"),
                 lens: Lens {
                     lenses: Some(vec![LensModule {
                         arguments: json!({ "field": "age", "value": 5 }),
