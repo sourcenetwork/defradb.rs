@@ -14,7 +14,7 @@
 //!
 //! Nothing deletes a node yet: the `t` family only grows, by every edit's new
 //! nodes, until reclaiming the nodes no live root names lands with the wiring
-//! under #2977. `t` is a key family, not a [`Namespace`](crate::Namespace), so
+//! under #3197. `t` is a key family, not a [`Namespace`](crate::namespace::Namespace), so
 //! the namespace walks (dump, purge) do not see it either.
 
 use std::sync::Arc;
