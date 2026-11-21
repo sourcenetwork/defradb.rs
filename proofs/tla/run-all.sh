@@ -530,6 +530,8 @@ RUNS=(
   "MC_Truncate_Red_Txn.cfg Truncate.tla RED" # transaction check left out, as before: a filter on the txn view removes an uncommitted match (INV_FilteredRemovesOnlyCommittedMatches)
   "MC_Truncate_Red_Shape.cfg Truncate.tla RED" # filter shape check left out: a non-filter removes everything (INV_BadFilterRemovesNothing)
   "MC_Truncate_Red_ViewCache.cfg Truncate.tla RED" # #2703: view cache clear left out: a truncated view still shows its rows (INV_UnfilteredEmptiesView)
+  "MC_Truncate_Red_SearchRecords.cfg Truncate.tla RED" # #2728: /se/ prefix delete left out: an encrypted search still finds truncated documents (INV_UnfilteredClearsSearchRecords)
+  "MC_Truncate_Red_SearchNamespace.cfg Truncate.tla RED" # #2728: received search records in the raw root store survive the prefix delete (INV_UnfilteredClearsSearchRecords)
   "MC_NacOrder_Green.cfg NacOrder.tla GREEN" # #2680/#2700: a document write checks get-collection then its own permission, in its transaction, and a call with no identity acts as no one
   "MC_NacOrder_Red_SkipGet.cfg NacOrder.tla RED" # get-collection left out: a caller without it writes (INV_NoEffectWithoutPermission)
   "MC_NacOrder_Red_OwnFirst.cfg NacOrder.tla RED" # the write's own permission checked first: the refusal names it, not get-collection (INV_RefusalNamesGoFirst)
