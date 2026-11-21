@@ -203,28 +203,20 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             .and_then(|heads| heads.first())
             .map(|head| head.to_string())
         {
-            let placeholder_transform = previous
-                .as_ref()
-                .filter(|previous| previous.is_placeholder)
-                .and_then(|previous| previous.previous_version.as_ref())
-                .and_then(|source| source.transform.clone());
-            let placeholder_transform = if placeholder_transform.is_some() {
-                placeholder_transform
-            } else {
-                self.db
-                    .get_collection_by_version_id_full(&version_id)
-                    .await
-                    .ok()
-                    .flatten()
-                    .filter(|existing| existing.schema().is_placeholder)
-                    .and_then(|existing| {
-                        existing
-                            .schema()
-                            .previous_version
-                            .as_ref()
-                            .and_then(|source| source.transform.clone())
-                    })
+            let transform_for_head = |source: Option<&schema::CollectionSource>| {
+                source
+                    .filter(|source| source.source_collection_id == head_cid)
+                    .and_then(|source| source.transform.clone())
             };
+            let placeholder_transform = self
+                .db
+                .get_collection_by_version_id_full(&version_id)
+                .await
+                .map_err(MergeError::Database)?
+                .filter(|existing| existing.schema().is_placeholder)
+                .and_then(|existing| {
+                    transform_for_head(existing.schema().previous_version.as_ref())
+                });
             let mut source = CollectionSource::new(head_cid);
             source.transform = placeholder_transform;
             schema.previous_version = Some(source);
