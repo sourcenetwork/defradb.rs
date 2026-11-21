@@ -88,9 +88,9 @@ fn main() {
 
     // Rebuild on git branch / index changes so version metadata tracks commits.
     // A worktree's `.git` is a file, so resolve the paths git itself uses.
-    let git_output = |argument: &str| {
+    let git_output = |arguments: &[&str]| {
         Command::new("git")
-            .args(["rev-parse", argument])
+            .args(arguments)
             .output()
             .ok()
             .filter(|output| output.status.success())
@@ -98,16 +98,15 @@ fn main() {
             .map(|path| path.trim().to_owned())
             .filter(|path| !path.is_empty())
     };
-    let branch_ref = git_output("--symbolic-full-name");
+    let git_dir = git_output(&["rev-parse", "--git-dir"]);
+    let branch_ref = git_output(&["rev-parse", "--symbolic-full-name", "HEAD"]);
     let loose_ref = branch_ref
         .filter(|reference| reference.starts_with("refs/heads/"))
-        .and_then(|reference| {
-            git_output("--git-dir").map(|git_dir| format!("{git_dir}/{reference}"))
-        });
+        .and_then(|reference| git_output(&["rev-parse", "--git-path", reference.as_str()]));
     let watched = [
-        git_output("--git-dir").map(|dir| format!("{dir}/HEAD")),
-        git_output("--git-dir").map(|dir| format!("{dir}/index")),
-        git_output("--git-common-dir").map(|dir| format!("{dir}/packed-refs")),
+        git_dir.clone().map(|dir| format!("{dir}/HEAD")),
+        git_dir.map(|dir| format!("{dir}/index")),
+        git_output(&["rev-parse", "--git-common-dir"]).map(|dir| format!("{dir}/packed-refs")),
         loose_ref,
     ];
     for path in watched.into_iter().flatten() {
