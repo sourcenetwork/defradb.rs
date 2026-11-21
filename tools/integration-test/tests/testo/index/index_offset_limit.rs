@@ -5,6 +5,7 @@ use integration_test::test_case::TestCase;
 use serde_json::json;
 
 #[test]
+#[mantra_macros::req_test("defra.index.offset_limit")]
 fn ordered_index_offset_limit_returns_the_requested_page() {
     TestCase {
         id: integration_test::scenario_id!(),
