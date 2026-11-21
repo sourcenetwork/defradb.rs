@@ -32,6 +32,25 @@ where
     }
 }
 
+/// The reader a creator grants for its own genesis when its provider cannot
+/// join the create's transaction. Receivers share that provider and cannot
+/// grant themselves, so the creator stages what the addressed node would
+/// have granted itself (`creator_matches_addressed_receiver` in
+/// `proofs/lean/EnrollmentGenesis.lean`). `address` returns the created
+/// document's addressed field only when the collection holds it immutable;
+/// an address that is not a DID, or is spelled as everyone, names nobody.
+pub fn creator_reader<'a, F>(access: Option<GenesisReadAccess>, address: F) -> Option<Did>
+where
+    F: FnOnce(&str) -> Option<&'a str>,
+{
+    match access? {
+        GenesisReadAccess::Public => Some(Did::wildcard()),
+        GenesisReadAccess::AddressedBy(field) => Did::new(address(field)?)
+            .ok()
+            .filter(|did| !did.is_wildcard()),
+    }
+}
+
 /// Register a signed genesis's author as owner and, only when this is the
 /// document's first registration here, grant the initial `reader`. A genesis
 /// that arrives again finds the document registered and grants nothing, so a

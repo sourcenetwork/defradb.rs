@@ -89,6 +89,67 @@ theorem unsigned_grants_nothing (first : Bool) (reader : Option String) :
   -- `_ && false` is `false`, so the guard fails.
   simp [initialReader]
 
+/-- The reader a creator grants for its own genesis when its node's provider
+cannot join the create's transaction (a remote provider, such as Vera): the
+receivers share that provider and cannot grant themselves anything, so the
+creator stages the grant in the create's transaction, with its registration.
+`address` is the created document's addressed field (none when it is absent,
+mutable or not a string). -/
+def creatorReader (access : Access) (address : Option String) : Option String :=
+  -- Look at what the host asked for.
+  match access with
+  -- Nothing was asked: nobody.
+  | .off => none
+  -- A public collection: everyone.
+  | .public => some wildcard
+  -- An addressed collection: exactly the node the document names, if any.
+  -- An address spelled as the wildcard names no node, as no node's DID is
+  -- the wildcard on the receiving side either.
+  | .addressedBy =>
+    match address with
+    -- An address: that node, unless it is spelled as everyone.
+    | some a => if a = wildcard then none else some a
+    -- No address: nobody.
+    | none => none
+
+/-- A collection the host did not opt in makes the creator grant nothing. -/
+theorem creator_off_grants_nothing (address : Option String) :
+    creatorReader .off address = none := by
+  -- The `off` branch is `none`.
+  rfl
+
+/-- An addressed grant by the creator names exactly the address, and so no
+other node. -/
+theorem creator_addressed_names_only_address (address : Option String) (r : String)
+    (h : creatorReader .addressedBy address = some r) : address = some r := by
+  -- Split on the address and on the wildcard test; the only `some` returned
+  -- is the address itself.
+  unfold creatorReader at h
+  split at h <;> (try split at h) <;> simp_all
+
+/-- An addressed collection never makes the creator grant everyone. -/
+theorem creator_addressed_never_grants_everyone (address : Option String) :
+    creatorReader .addressedBy address ≠ some wildcard := by
+  -- Split on the address and on the wildcard test; the wildcard is never
+  -- returned.
+  unfold creatorReader
+  split <;> (try split) <;> simp_all
+
+/-- Without an address, an addressed collection stays private on the provider. -/
+theorem creator_without_address_grants_nothing :
+    creatorReader .addressedBy none = none := by
+  -- The address is the answer, and it is absent.
+  rfl
+
+/-- The creator grants exactly what the addressed node would grant itself
+when it registers the genesis on a provider of its own: on a shared provider
+the node the document names reads it as it would have locally. -/
+theorem creator_matches_addressed_receiver (access : Access) (a : String) (h : a ≠ wildcard) :
+    creatorReader access (some a) = genesisReader access (some a) (some a) := by
+  -- Every access kind gives the same answer on both sides, the address not
+  -- being the wildcard.
+  cases access <;> simp [creatorReader, genesisReader, h]
+
 -- The access kinds as the conformance test names them.
 def accessName : Access → String
   -- No access.
@@ -112,12 +173,27 @@ def cases : Json :=
       [("access", toJson (accessName access)), ("address", toJson address),
        ("receiver", toJson receiver), ("reader", toJson (genesisReader access address receiver))]
 
+/-- The executable cases for the creator's grant: every access kind against
+an address and no address. -/
+def creatorCases : Json :=
+  -- The two inputs, each over its interesting values.
+  let accesses := [Access.off, .public, .addressedBy]
+  let addresses : List (Option String) := [some "did:key:receiver", some wildcard, none]
+  -- Every combination, with the reader the model decides.
+  toJson <| accesses.flatMap fun access => addresses.map fun address =>
+    Json.mkObj
+      [("access", toJson (accessName access)), ("address", toJson address),
+       ("reader", toJson (creatorReader access address))]
+
 end EnrollmentGenesis
 
-/-- `lean --run EnrollmentGenesis.lean cases` prints the cases as JSON. -/
+/-- `lean --run EnrollmentGenesis.lean cases` prints the receiver's cases as
+JSON, `creator-cases` the creator's. -/
 def main (args : List String) : IO Unit := do
-  -- Only one command is defined.
+  -- Pick the command.
   if args == ["cases"] then
     IO.println EnrollmentGenesis.cases.compress
+  else if args == ["creator-cases"] then
+    IO.println EnrollmentGenesis.creatorCases.compress
   else
-    throw <| IO.userError "usage: EnrollmentGenesis cases"
+    throw <| IO.userError "usage: EnrollmentGenesis cases | creator-cases"
