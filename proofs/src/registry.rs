@@ -2672,7 +2672,7 @@ pub const PROPERTIES: &[Property] = &[
         name: "asc_strictly_order_preserving_* — encoding is a strict-order embedding",
         axis: Lean,
         anchor: "crates/engine/storage/src/encoding/mod.rs type-marker constants",
-        model_ref: "OrderEncoding (lake build)",
+        model_ref: "OrderEncoding.JsonPath (lake build)",
         tiers: &[Boundary],
         bound_by: "",
     },

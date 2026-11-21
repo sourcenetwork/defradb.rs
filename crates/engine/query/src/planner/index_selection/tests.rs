@@ -551,6 +551,42 @@ fn test_filter_to_scan_json_path_range() {
 }
 
 #[test]
+fn test_filter_to_scan_descending_json_path_range_swaps_path_bounds() {
+    let filter = make_filter(map([(
+        "custom".to_string(),
+        json!({"height": {"_gt": 170}}),
+    )]));
+    let mut index = single_field_index("custom");
+    index.fields[0].descending = true;
+
+    let params = filter_to_index_scan(&filter, &index, None, &[], None, 0).unwrap();
+
+    match params.scan_type {
+        IndexScanType::RangeScan { lower, upper, .. } => {
+            match lower {
+                Bound::Inclusive(v) => match v {
+                    NormalValue::JsonLeaf(leaf) => {
+                        assert_eq!(leaf.value, JsonScalarValue::PathMax);
+                    }
+                    _ => panic!("expected JsonLeaf value, got {:?}", v),
+                },
+                _ => panic!("expected inclusive lower bound"),
+            }
+            match upper {
+                Bound::Exclusive(v) => match v {
+                    NormalValue::JsonLeaf(leaf) => {
+                        assert_eq!(leaf.value, JsonScalarValue::Number(170.0));
+                    }
+                    _ => panic!("expected JsonLeaf value, got {:?}", v),
+                },
+                _ => panic!("expected exclusive upper bound"),
+            }
+        }
+        _ => panic!("expected RangeScan scan type"),
+    }
+}
+
+#[test]
 fn test_filter_to_scan_top_level_json_lte_null_uses_index() {
     // Go uses the JSON index for top-level {custom: {_leq: null}} because
     // explicit nulls and missing JSON fields are both indexed as null.
