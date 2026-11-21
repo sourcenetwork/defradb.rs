@@ -114,12 +114,36 @@ impl Planner {
             child_relation_index,
         )?;
 
-        // Build RelationFilter from the already-extracted parent relation filter
+        // A secondary relation ID condition names the child's `_docID`, even when
+        // the relation object is also selected. Attach it to this existing join
+        // instead of wrapping the joined plan in another one.
+        let secondary_id_filter = select
+            .filter
+            .as_ref()
+            .and_then(|filter| {
+                filter
+                    .conditions()
+                    .get(&schema::CollectionVersion::relation_id_field_name(
+                        relation_field_name,
+                    ))
+            })
+            .map(|condition| {
+                Filter::from_conditions(serde_json::Map::from_iter([(
+                    "_docID".to_string(),
+                    condition.clone(),
+                )]))
+            });
         let relation_filter = parent_relation_filter_for_child
             .as_ref()
             .map(|nested_filter| RelationFilter {
                 relation_field: relation_field_name.to_string(),
                 conditions: nested_filter.clone(),
+            })
+            .or_else(|| {
+                secondary_id_filter.map(|conditions| RelationFilter {
+                    relation_field: relation_field_name.to_string(),
+                    conditions,
+                })
             });
 
         // One-to-one: TypeJoinOne

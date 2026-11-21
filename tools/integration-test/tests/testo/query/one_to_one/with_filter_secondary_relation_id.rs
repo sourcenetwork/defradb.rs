@@ -173,7 +173,7 @@ fn query_one_to_one_with_neq_null_filter_on_secondary_relation_id_should_return_
 }
 
 #[test]
-#[mantra_macros::req_test("go.query.one_to_one.filter")]
+#[mantra_macros::req_test("go.query.one_to_one.filter-relation-id")]
 fn query_one_to_one_with_eq_filter_on_secondary_relation_id_should_return_related() {
     TestCase {
         id: integration_test::scenario_id!(),
@@ -251,7 +251,7 @@ fn query_one_to_one_with_eq_filter_on_secondary_relation_id_should_return_relate
 }
 
 #[test]
-#[mantra_macros::req_test("go.query.one_to_one.filter")]
+#[mantra_macros::req_test("go.query.one_to_one.filter-relation-id")]
 fn query_one_to_one_with_eq_null_filter_on_secondary_relation_id_and_other_field_should_return_matching_orphan(
 ) {
     TestCase {
@@ -318,6 +318,81 @@ fn query_one_to_one_with_eq_null_filter_on_secondary_relation_id_and_other_field
                 .into(),
                 expected_data: json!({
                     "Book": [{ "title": "Orphan Book 2" }],
+                }),
+                common: Common {
+                    compare: Some(true),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+        ],
+        ..Default::default()
+    }
+    .execute();
+}
+
+#[test]
+#[mantra_macros::req_test("go.query.one_to_one.filter-relation-id")]
+fn query_one_to_one_with_eq_filter_on_secondary_relation_id_and_relation_selection_should_filter() {
+    TestCase {
+        id: integration_test::scenario_id!(),
+        actions: vec![
+            AddCollection {
+                sdl: r#"
+                    type Book {
+                        title: String
+                        publisher: Publisher
+                    }
+                    type Publisher {
+                        name: String
+                        book: Book @primary
+                    }
+                "#
+                .into(),
+                ..Default::default()
+            }
+            .into(),
+            AddDoc {
+                collection: "Book".into(),
+                doc_map: Some(json!({ "title": "Book With Publisher" })),
+                common: Common {
+                    capture: captures([("doc0_0", "/docID")]),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            AddDoc {
+                collection: "Book".into(),
+                doc_map: Some(json!({ "title": "Orphan Book" })),
+                ..Default::default()
+            }
+            .into(),
+            AddDoc {
+                collection: "Publisher".into(),
+                doc_map: Some(json!({
+                    "name": "Publisher2020",
+                    "_bookID": m::r("doc0_0"),
+                })),
+                common: Common {
+                    capture: captures([("doc1_0", "/docID")]),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            Request {
+                request: Text::concat([
+                    Text::from("query { Book(filter: {_publisherID: {_eq: \""),
+                    Text::reference("doc1_0"),
+                    Text::from("\"}}) { title publisher { name } } }"),
+                ]),
+                expected_data: json!({
+                    "Book": [{
+                        "title": "Book With Publisher",
+                        "publisher": { "name": "Publisher2020" },
+                    }],
                 }),
                 common: Common {
                     compare: Some(true),

@@ -83,8 +83,10 @@ impl Planner {
                 .as_ref()
                 .and_then(|filter| filter.conditions().get(field_name.as_str()));
 
-            if already_joined && filter_conditions.is_none() {
-                // Join already exists, _relID will be populated by merge_child
+            if already_joined {
+                // The selection join owns this relation. A secondary ID condition
+                // on it is attached there, so a second join would discard the
+                // relation's selected fields.
                 continue;
             }
 
