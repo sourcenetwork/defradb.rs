@@ -1,3 +1,5 @@
+mod common;
+
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
@@ -20,14 +22,13 @@ impl Drop for RunningNode {
 
 impl RunningNode {
     async fn start(root: &Path, key_type: &str, flags: &[&str]) -> Self {
-        let port = portpicker::pick_unused_port().expect("unused HTTP port");
-        let address = format!("127.0.0.1:{port}");
         let log_path = root.join("node.log");
-        let log = std::fs::File::create(&log_path).unwrap();
+        let (log, output) = common::NodeLog::create(log_path.clone());
         let child = Command::new(env!("CARGO_BIN_EXE_defradb"))
             .arg("--rootdir")
             .arg(root)
-            .args(["--url", &address])
+            .args(["--url", common::ANY_PORT])
+            .args(common::LOG_FLAGS)
             .args([
                 "start",
                 "--store",
@@ -38,20 +39,25 @@ impl RunningNode {
             ])
             .args(flags)
             .env("DEFRA_KEYRING_SECRET", "node-identity-test-secret")
+            // The bound address is logged at info.
+            .env("RUST_LOG", "info")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(log)
+            .stderr(output)
             .spawn()
             .expect("start node");
         let mut node = Self {
             child,
-            url: format!("http://{address}"),
+            url: String::new(),
             client: net::http::Client::builder(edge::testing::edge())
                 .no_proxy()
                 .timeout(Duration::from_secs(5))
                 .build()
                 .unwrap(),
         };
+        // `node` owns the child from here, so a failed wait still kills it.
+        let address = log.http_address(Duration::from_secs(15));
+        node.url = format!("http://{address}");
         nuclei::time::timeout(Duration::from_secs(15), async {
             loop {
                 assert!(
