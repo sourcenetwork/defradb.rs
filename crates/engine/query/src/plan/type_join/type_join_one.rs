@@ -160,6 +160,20 @@ impl std::fmt::Debug for TypeJoinOne {
 }
 
 impl TypeJoinOne {
+    fn scan_node_with_index_name(scan_node: Option<&JsonValue>, metrics: JsonValue) -> JsonValue {
+        let mut result = metrics.as_object().cloned().unwrap_or_default();
+        if let Some(index_name) = scan_node
+            .and_then(|value| value.get("indexName"))
+            .and_then(|value| value.as_str())
+        {
+            result.insert(
+                "indexName".to_string(),
+                JsonValue::String(index_name.to_string()),
+            );
+        }
+        JsonValue::Object(result)
+    }
+
     fn override_nested_type_index_join_metrics(
         value: &mut serde_json::Value,
         metrics: &ExecInfo,
@@ -180,14 +194,18 @@ impl TypeJoinOne {
                         if let Some(root) = type_join_one_obj.get_mut("root") {
                             if let Some(root_obj) = root.as_object_mut() {
                                 if root_obj.contains_key("scanNode") {
+                                    let scan_node = root_obj.get("scanNode").cloned();
                                     root_obj.insert(
                                         "scanNode".to_string(),
-                                        serde_json::json!({
-                                            "iterations": metrics.iterations,
-                                            "docFetches": metrics.docs_fetched,
-                                            "fieldFetches": metrics.fields_fetched,
-                                            "indexFetches": metrics.indexes_fetched,
-                                        }),
+                                        Self::scan_node_with_index_name(
+                                            scan_node.as_ref(),
+                                            serde_json::json!({
+                                                "iterations": metrics.iterations,
+                                                "docFetches": metrics.docs_fetched,
+                                                "fieldFetches": metrics.fields_fetched,
+                                                "indexFetches": metrics.indexes_fetched,
+                                            }),
+                                        ),
                                     );
                                 }
                             }
@@ -1309,13 +1327,30 @@ impl PlanNode for TypeJoinOne {
         ) {
             // Inverted/ordered modes: child drives the loop, parent is looked up per-child.
             // Go always shows parentPlan for root, childPlan for subType.
-            // root = parent lookup metrics (accumulated per-child)
-            inner_obj.insert(
-                "root".to_string(),
-                serde_json::json!({
-                    "scanNode": self.go_child_metrics.scan_node_json()
-                }),
-            );
+            // root = the parent work: the one parent scan of the field-lookup
+            // mode, else the per-child parent lookups.
+            let parent_index_name = match &self.direction {
+                JoinDirection::InvertedIndex {
+                    parent_fk_index_name,
+                    ..
+                } => Some(parent_fk_index_name.clone()),
+                _ => None,
+            };
+            let root = if matches!(self.direction, JoinDirection::InvertedFieldLookup) {
+                self.parent_plan.explain_execute()
+            } else {
+                let mut scan_node = self.go_child_metrics.scan_node_json();
+                if let Some(index_name) = &parent_index_name {
+                    if let Some(scan_node_obj) = scan_node.as_object_mut() {
+                        scan_node_obj.insert(
+                            "indexName".to_string(),
+                            serde_json::Value::String(index_name.clone()),
+                        );
+                    }
+                }
+                serde_json::json!({ "scanNode": scan_node })
+            };
+            inner_obj.insert("root".to_string(), root);
 
             // subType = child plan's execute explain (the driving scan)
             // Wrap in selectTopNode > selectNode with iterations + filterMatches
@@ -1335,14 +1370,18 @@ impl PlanNode for TypeJoinOne {
                     select_node.insert(k.clone(), v.clone());
                 }
                 if child_obj.contains_key("scanNode") {
+                    let scan_node = child_obj.get("scanNode").cloned();
                     select_node.insert(
                         "scanNode".to_string(),
-                        serde_json::json!({
-                            "iterations": child_scan_metrics.iterations,
-                            "docFetches": child_scan_metrics.docs_fetched,
-                            "fieldFetches": child_scan_metrics.fields_fetched,
-                            "indexFetches": child_scan_metrics.indexes_fetched,
-                        }),
+                        Self::scan_node_with_index_name(
+                            scan_node.as_ref(),
+                            serde_json::json!({
+                                "iterations": child_scan_metrics.iterations,
+                                "docFetches": child_scan_metrics.docs_fetched,
+                                "fieldFetches": child_scan_metrics.fields_fetched,
+                                "indexFetches": child_scan_metrics.indexes_fetched,
+                            }),
+                        ),
                     );
                 }
             }
@@ -1378,14 +1417,18 @@ impl PlanNode for TypeJoinOne {
                         serde_json::json!(child_scan_metrics.docs_fetched),
                     );
                     if obj.contains_key("scanNode") {
+                        let scan_node = obj.get("scanNode").cloned();
                         obj.insert(
                             "scanNode".to_string(),
-                            serde_json::json!({
-                                "iterations": scan_node_iterations,
-                                "docFetches": child_scan_metrics.docs_fetched,
-                                "fieldFetches": child_scan_metrics.fields_fetched,
-                                "indexFetches": child_scan_metrics.indexes_fetched,
-                            }),
+                            Self::scan_node_with_index_name(
+                                scan_node.as_ref(),
+                                serde_json::json!({
+                                    "iterations": scan_node_iterations,
+                                    "docFetches": child_scan_metrics.docs_fetched,
+                                    "fieldFetches": child_scan_metrics.fields_fetched,
+                                    "indexFetches": child_scan_metrics.indexes_fetched,
+                                }),
+                            ),
                         );
                     }
                     Self::override_nested_type_index_join_metrics(
@@ -1412,14 +1455,18 @@ impl PlanNode for TypeJoinOne {
                         select_inner.insert(key.clone(), value.clone());
                     }
                     if child_obj.contains_key("scanNode") {
+                        let scan_node = child_obj.get("scanNode").cloned();
                         select_inner.insert(
                             "scanNode".to_string(),
-                            serde_json::json!({
-                                "iterations": scan_node_iterations,
-                                "docFetches": child_scan_metrics.docs_fetched,
-                                "fieldFetches": child_scan_metrics.fields_fetched,
-                                "indexFetches": child_scan_metrics.indexes_fetched,
-                            }),
+                            Self::scan_node_with_index_name(
+                                scan_node.as_ref(),
+                                serde_json::json!({
+                                    "iterations": scan_node_iterations,
+                                    "docFetches": child_scan_metrics.docs_fetched,
+                                    "fieldFetches": child_scan_metrics.fields_fetched,
+                                    "indexFetches": child_scan_metrics.indexes_fetched,
+                                }),
+                            ),
                         );
                     }
                 }

@@ -53,7 +53,7 @@ One-to-one joins (single, two in parallel, two levels deep, and from the seconda
 - **Parents:** ["go.explain.execute"]
 - **Scenarios:** ["explain.execute.execute-explain-with-index-on-filter", "explain.execute.execute-explain-with-index-on-order", "explain.execute.execute-explain-with-index-on-relation-order", "explain.execute.execute-explain-with-index-on-subquery-nested-relation-order"]
 
-With `@index` on `age`, filtering `age: {_eq: 30}` over three docs reports `scanNode{iterations: 3, docFetches: 2, fieldFetches: 4, indexFetches: 2}`; ordering by the indexed field, by an indexed relation field with `@exhaustive`, and a child ordered by an indexed related field report index fetches instead of a sort.
+With `@index` on `age`, filtering `age: {_eq: 30}` over three docs reports `scanNode{iterations: 3, docFetches: 2, fieldFetches: 4, indexFetches: 2, indexName: "User_age_ASC"}`; ordering by the indexed field, by an indexed relation field with `@exhaustive`, and a child ordered by an indexed related field report index fetches instead of a sort. Every index-backed `scanNode` reports the name of the index it uses.
 
 # `go.explain.execute.orphan`: Orphan node counters
 
