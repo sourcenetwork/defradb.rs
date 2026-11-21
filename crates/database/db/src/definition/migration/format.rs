@@ -10,7 +10,8 @@
 //! their entries, and a unique index stops rejecting duplicates. Before 1.0,
 //! refusing an older store keeps those incompatible entries invisible.
 
-use storage::corekv::Store;
+use storage::corekv::{IterOptions, Iterator as _, Store};
+use storage::keys::systemstore::CollectionKey;
 use tracing::{info, warn};
 
 use crate::error::{Error, Result};
@@ -26,7 +27,67 @@ pub const CURRENT_INDEX_FORMAT: u32 = 4;
 /// Systemstore key holding the format the indexes on disk were written with.
 pub use storage::keys::systemstore::INDEX_FORMAT_KEY;
 
+fn index_format_error(stored: Option<u32>) -> Error {
+    Error::UnsupportedIndexFormat {
+        stored,
+        current: CURRENT_INDEX_FORMAT,
+    }
+}
+
+/// Stamp a fresh store in the transaction that creates its first collection.
+/// A collection made through a constructor that does not run the open sequence
+/// must still be reopenable.
+pub(crate) async fn ensure_index_format_for_collection_creation(
+    systemstore: &datastore::NamespaceView,
+) -> Result<()> {
+    let raw = systemstore
+        .get(INDEX_FORMAT_KEY)
+        .await
+        .map_err(Error::Storage)?;
+    let stored = raw
+        .and_then(|bytes| <[u8; 4]>::try_from(bytes.as_ref()).ok())
+        .map(u32::from_be_bytes);
+    match stored {
+        Some(format) if format == CURRENT_INDEX_FORMAT => return Ok(()),
+        Some(_) => return Err(index_format_error(stored)),
+        None => {}
+    }
+
+    let mut existing = systemstore
+        .iterator(IterOptions::new().with_prefix(CollectionKey::collection_prefix()))
+        .await
+        .map_err(Error::Storage)?;
+    let has_collections = existing.next().await.map_err(Error::Storage)?.is_some();
+    existing.close().await.map_err(Error::Storage)?;
+    if has_collections {
+        return Err(index_format_error(stored));
+    }
+
+    systemstore
+        .set(INDEX_FORMAT_KEY, &CURRENT_INDEX_FORMAT.to_be_bytes())
+        .await
+        .map_err(Error::Storage)
+}
+
 impl<S: Store> DB<S> {
+    /// Refuse an incompatible index layout before any startup migration writes.
+    pub(crate) async fn check_index_format(&self) -> Result<()>
+    where
+        S: 'static,
+    {
+        let stored = self.stored_index_format().await?;
+        let has_collections = !self.get_all_active_collections_internal()?.is_empty();
+        let compatible = match stored {
+            Some(format) => format == CURRENT_INDEX_FORMAT,
+            None => !has_collections,
+        };
+        if compatible {
+            Ok(())
+        } else {
+            Err(index_format_error(stored))
+        }
+    }
+
     /// Refuse secondary indexes written by an older encoding, and, at every
     /// open, rebuild the indexes kept the other way on an earlier start.
     ///
@@ -38,18 +99,7 @@ impl<S: Store> DB<S> {
         S: 'static,
     {
         let stored = self.stored_index_format().await?;
-        if stored.is_some_and(|format| format != CURRENT_INDEX_FORMAT) {
-            return Err(Error::UnsupportedIndexFormat {
-                stored,
-                current: CURRENT_INDEX_FORMAT,
-            });
-        }
-        if stored.is_none() && !self.get_all_active_collections_internal()?.is_empty() {
-            return Err(Error::UnsupportedIndexFormat {
-                stored,
-                current: CURRENT_INDEX_FORMAT,
-            });
-        }
+        self.check_index_format().await?;
         if stored.is_some_and(|format| format >= 2) {
             self.rebuild_indexes_kept_the_other_way().await?;
         } else {

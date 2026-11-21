@@ -10,7 +10,9 @@
 use db::definition::migration::format::CURRENT_INDEX_FORMAT;
 use db::Error;
 use schema::{CollectionVersion, FieldDescription, FieldKind};
-use storage::RegolithStore;
+use storage::corekv::{Key, Reader as _};
+use storage::keys::systemstore::CollectionKey;
+use storage::{RegolithStore, Store};
 
 /// The marker byte every encoded time key starts with, per `encoding::mod`.
 const TIME_MARKER: u8 = 8;
@@ -115,10 +117,26 @@ fn an_older_index_format_is_refused() {
         txn.commit().await.expect("commit");
         drop(db);
 
-        let error = match db::DB::open(store).await {
+        let schema_key = CollectionKey::new("tallies-collection").bytes();
+        let system_schema_key = [b"s".as_slice(), schema_key.as_slice()].concat();
+        let before = {
+            let txn = store.new_txn(true).await.expect("read before refusal");
+            let value = txn.get(&system_schema_key).await.expect("read the schema");
+            txn.discard();
+            value
+        };
+
+        let error = match db::DB::open(store.clone()).await {
             Err(error) => error,
             Ok(_) => panic!("older store refuses"),
         };
+        let after = {
+            let txn = store.new_txn(true).await.expect("read after refusal");
+            let value = txn.get(&system_schema_key).await.expect("read the schema");
+            txn.discard();
+            value
+        };
+        assert_eq!(before, after, "a refusal must not rewrite the schema");
         assert!(matches!(
             error,
             Error::UnsupportedIndexFormat {
@@ -157,6 +175,27 @@ fn an_unstamped_store_with_collections_is_refused() {
                 current: CURRENT_INDEX_FORMAT,
             }
         ));
+    })
+    .unwrap()
+}
+
+/// A collection created through a constructor that skips the open sequence is
+/// stamped in its creation transaction, so a later open does not mistake it
+/// for a legacy unstamped store.
+#[test]
+fn a_collection_created_without_open_is_reopenable() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let db = db::DB::new(store.clone()).expect("construct");
+        db.create_collection(simple_schema()).await.expect("schema");
+        drop(db);
+
+        let db = db::DB::open(store).await.expect("reopen");
+        assert_eq!(
+            db.stored_index_format().await.expect("read the stamp"),
+            Some(CURRENT_INDEX_FORMAT)
+        );
+        assert!(db.require_collection("Tallies").is_ok());
     })
     .unwrap()
 }

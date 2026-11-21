@@ -346,6 +346,9 @@ lean_lib CatalogPin where
 lean_lib IndexEqualKeyOrder where
 
 @[default_target]
+lean_lib IndexKeyspace where
+
+@[default_target]
 lean_lib KmsChunks where
 
 @[default_target]

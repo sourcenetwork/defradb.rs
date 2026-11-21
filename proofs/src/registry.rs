@@ -2829,6 +2829,24 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/database/db/tests/index/merged_crdt.rs",
     },
     Property {
+        family: "Index-maintenance consistency",
+        name: "INV_OpenCompatible / INV_RefusalReadOnly / INV_FreshStoreOpens — only the current index format opens (or a new empty store is stamped first), and a refusal writes nothing",
+        axis: Tla,
+        anchor: "crates/database/db/src/definition/migration/format.rs CURRENT_INDEX_FORMAT, DB::stored_index_format, DB::migrate_index_format; crates/database/db/src/database/mod.rs DB::finish_open",
+        model_ref: "MC_IndexFormatGuard_{Green,Red_AcceptOld,Red_AcceptUnstamped,Red_MutatesOnRefusal,Red_NoFreshStamp}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/database/db/tests/definition/format.rs an_older_index_format_is_refused, an_unstamped_store_with_collections_is_refused, a_fresh_store_opens_clean, a_collection_created_without_open_is_reopenable",
+    },
+    Property {
+        family: "Index-maintenance consistency",
+        name: "IndexKeyspace.short_id_bytes_prefix_eq / key_not_in_document_family / key_not_in_version_family — tagged index keys do not enter the document or version families, and short-ID encodings are prefix-free through the byte boundary",
+        axis: Lean,
+        anchor: "crates/engine/storage/src/keys/datastore/index_key.rs INDEX_KEYSPACE_PREFIX, IndexDataStoreKey::index_prefix, IndexDataStoreKey::collection_prefix, IndexDataStoreKey::try_bytes",
+        model_ref: "IndexKeyspace.short_id_bytes_prefix_eq / key_not_in_document_family / key_not_in_version_family",
+        tiers: &[Contract],
+        bound_by: "crates/database/db/tests/definition/keyspace.rs index_keyspace_scans_stay_per_collection_across_short_ids; crates/engine/storage/src/keys/datastore/index_key.rs index_keyspace_is_tagged_across_the_byte_boundary, index_integer_encodings_are_prefix_free",
+    },
+    Property {
         // Every write that owes a deferred index asks for its drain; the
         // drain task keeps a failed index for the sweep, and the sweep runs
         // on a fixed deadline that requests cannot push back.
