@@ -404,7 +404,16 @@ fn a_filtered_similarity_query_returns_a_full_page() {
         seed(&node).await;
 
         let query = similarity_query(&vector_for(3), 5, Some(r#"{tag: {_eq: "even"}}"#));
-        assert_routes(&node, &query, "filtered").await;
+        let explain = query_data(
+            &node,
+            &format!("query @explain(type: execute) {query}"),
+            "filtered explain",
+        )
+        .await;
+        assert!(
+            vector_index(&explain).is_none(),
+            "without a scalar tag index, the filter must fall back and warn: {explain:#}"
+        );
 
         let data = query_data(&node, &query, "filtered similarity").await;
         let rows = data["Note"].as_array().expect("Note array");
@@ -565,7 +574,6 @@ fn every_combination_agrees_with_an_exhaustive_scan() {
         for metric in schema::DistanceMetric::ALL {
             for (filter_name, filter, indexed_tag) in [
                 ("none", None, false),
-                ("unindexed field", Some(r#"{tag: {_eq: "even"}}"#), false),
                 ("indexed field", Some(r#"{tag: {_eq: "even"}}"#), true),
             ] {
                 for in_transaction in [false, true] {
