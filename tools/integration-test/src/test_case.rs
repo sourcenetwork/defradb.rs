@@ -14,7 +14,6 @@ use crate::client_type::ClientType;
 use crate::export;
 use crate::nodes::{NodeSpec, TestNode};
 use crate::scenario::{Bindings, Failure};
-
 /// What every action sees: the test's nodes, reached through its client type.
 #[derive(Clone, Default)]
 pub struct State {
