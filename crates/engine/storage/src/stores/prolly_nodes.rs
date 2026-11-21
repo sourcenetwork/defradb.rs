@@ -40,7 +40,7 @@ pub struct ProllyNodes<S> {
     store: Arc<S>,
     retry: RetryOptions,
     pending_budget: usize,
-    pending: RapidHashMap<Hash, Vec<u8>>,
+    pending: Arc<RapidHashMap<Hash, Vec<u8>>>,
     pending_bytes: usize,
 }
 
@@ -52,7 +52,7 @@ impl<S> ProllyNodes<S> {
             store,
             retry,
             pending_budget,
-            pending: RapidHashMap::new(),
+            pending: Arc::new(RapidHashMap::new()),
             pending_bytes: 0,
         }
     }
@@ -97,7 +97,7 @@ where
         let hash = Hash::of(&bytes);
         if !self.pending.contains_key(&hash) {
             self.pending_bytes += bytes.len();
-            self.pending.insert(hash, bytes);
+            Arc::make_mut(&mut self.pending).insert(hash, bytes);
         }
         if self.pending_bytes >= self.pending_budget {
             prolly::Store::flush(self).await?;
@@ -109,23 +109,17 @@ where
         if self.pending.is_empty() {
             return Ok(());
         }
-        let writes = Arc::new(std::mem::take(&mut self.pending));
+        // The attempt shares the pending set instead of taking it, so a flush
+        // that fails or is dropped before its commit leaves every node pending
+        // and readable; only a commit clears them.
         let attempt = Box::new(WriteNodes {
-            writes: Arc::clone(&writes),
+            writes: Arc::clone(&self.pending),
         });
         let written: Result<(), _> = transact(&*self.store, self.retry, None, attempt).await;
-        match written {
-            Ok(()) => {
-                self.pending_bytes = 0;
-                Ok(())
-            }
-            Err(error) => {
-                // Not written: the nodes stay pending, still readable, and
-                // the next flush writes them.
-                self.pending = Arc::unwrap_or_clone(writes);
-                Err(store_error(error.into_storage()))
-            }
-        }
+        written.map_err(|error| store_error(error.into_storage()))?;
+        self.pending = Arc::new(RapidHashMap::new());
+        self.pending_bytes = 0;
+        Ok(())
     }
 }
 

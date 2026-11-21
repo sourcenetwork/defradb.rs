@@ -46,21 +46,28 @@ where
         step.transpose()
     }
 
+    // The position moves only after a load returns, so a `next` dropped while
+    // a load is pending loses nothing: the next call loads it again.
     async fn step(&mut self) -> Result<Option<Item>> {
-        if let Some(root) = self.root.take() {
-            self.path.push((load(self.store, &root).await?, 0));
+        if let Some(root) = self.root {
+            let node = load(self.store, &root).await?;
+            self.root = None;
+            self.path.push((node, 0));
         }
         while let Some((node, next)) = self.path.last_mut() {
             let Some(item) = node.items.get(*next) else {
                 self.path.pop();
                 continue;
             };
-            *next += 1;
             if node.level == 0 {
+                *next += 1;
                 return Ok(Some(item.clone()));
             }
             let hash = Hash::from_slice(&item.value)?;
             let child = load(self.store, &hash).await?;
+            if let Some((_, next)) = self.path.last_mut() {
+                *next += 1;
+            }
             self.path.push((child, 0));
         }
         Ok(None)

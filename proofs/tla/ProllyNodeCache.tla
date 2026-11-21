@@ -94,8 +94,10 @@ FlushCommits ==
   /\ UNCHANGED <<put, cache, published, found, dropped, lastRead>>
   /\ UNCHANGED buildVars
 
-\* A flush's transaction fails: nothing is stored. The nodes stay pending, so
-\* they can still be read and the next flush writes them.
+\* A flush's transaction fails, or the flush is dropped before it commits:
+\* nothing is stored. The nodes stay pending, so they can still be read and the
+\* next flush writes them. The attempt shares the pending set instead of taking
+\* it, so a dropped flush has nothing to put back.
 FlushFails ==
   /\ pending # {}
   \* Without KeepOnFail the nodes taken for the write are dropped.
@@ -149,13 +151,15 @@ Crash ==
   /\ UNCHANGED <<stored, published>>
 
 \* A put inside the running build returns an error (in `ProllyNodes`, a put
-\* whose budget flush fails). The node may still be pending, but the
-\* reference `child` was to hand the level above is gone.
+\* whose budget flush fails), or the push is dropped while the put waits. The
+\* node may still be pending, but the reference `child` was to hand the level
+\* above is gone.
 BuildPutFails ==
   /\ finished = "no"
   /\ ~buildFailed
   /\ lostRef' = TRUE
-  \* With RefuseAfterFail the builder remembers the failure.
+  \* With RefuseAfterFail the builder remembers the failure: `push` marks it
+  \* failed before it waits on the put and clears that only once the put returns.
   /\ buildFailed' = RefuseAfterFail
   /\ UNCHANGED <<finished, put, pending, stored, cache, published, found, dropped, lastRead>>
 

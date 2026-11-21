@@ -1,6 +1,12 @@
 mod common;
 
-use std::{num::NonZeroU32, sync::Arc};
+use std::{
+    cell::Cell,
+    future::Future,
+    num::NonZeroU32,
+    sync::Arc,
+    task::{Context, Poll, Waker},
+};
 
 use common::{entries, run, Counting};
 use prolly::{tree::DEFAULT_TARGET, Builder, Item, MemStore, Node, Store, Tree, MAX_CHUNK_BYTES};
@@ -305,4 +311,118 @@ fn a_build_refuses_to_finish_after_a_failed_put() {
             "a tree from this build would miss the chunk whose put failed"
         );
     })
+}
+
+/// Polls `future` once, then drops it: a caller that gave up while it waited.
+fn poll_once<F>(future: F) -> Poll<F::Output>
+where
+    F: Future,
+{
+    let mut future = std::pin::pin!(future);
+    future
+        .as_mut()
+        .poll(&mut Context::from_waker(Waker::noop()))
+}
+
+/// A store whose read number `stall_at` waits forever the first time.
+struct StallRead<'a> {
+    inner: &'a MemStore,
+    reads: Cell<usize>,
+    stall_at: usize,
+}
+
+impl Store for StallRead<'_> {
+    async fn get(&self, hash: &prolly::Hash) -> prolly::Result<Option<Arc<Node>>> {
+        let read = self.reads.get();
+        self.reads.set(read + 1);
+        if read == self.stall_at {
+            std::future::pending::<()>().await;
+        }
+        self.inner.get(hash).await
+    }
+
+    async fn put(&mut self, _node: Node) -> prolly::Result<prolly::Hash> {
+        unreachable!("reading only")
+    }
+
+    async fn flush(&mut self) -> prolly::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn a_cursor_dropped_mid_load_skips_nothing() {
+    let (store, tree) = run(async {
+        let mut store = MemStore::new();
+        let tree = Tree::build(&mut store, NonZeroU32::new(4).unwrap(), (0..200).map(entry))
+            .await
+            .unwrap();
+        (store, tree)
+    });
+    let expected: Vec<Item> = run(entries(&tree, &store)).unwrap();
+    assert!(store.len() > 3, "a tree of several levels");
+    for stall_at in 0..store.len() {
+        let stalling = StallRead {
+            inner: &store,
+            reads: Cell::new(0),
+            stall_at,
+        };
+        let mut cursor = tree.iter(&stalling);
+        let mut items = Vec::new();
+        loop {
+            match poll_once(cursor.next()) {
+                Poll::Pending => continue,
+                Poll::Ready(Some(item)) => items.push(item.unwrap()),
+                Poll::Ready(None) => break,
+            }
+        }
+        assert_eq!(items, expected, "the load of node {stall_at} was dropped");
+    }
+}
+
+/// A store whose first `put` waits forever.
+struct StallFirstPut {
+    inner: MemStore,
+    stalled: bool,
+}
+
+impl Store for StallFirstPut {
+    async fn get(&self, hash: &prolly::Hash) -> prolly::Result<Option<Arc<Node>>> {
+        self.inner.get(hash).await
+    }
+
+    async fn put(&mut self, node: Node) -> prolly::Result<prolly::Hash> {
+        if !self.stalled {
+            self.stalled = true;
+            std::future::pending::<()>().await;
+        }
+        self.inner.put(node).await
+    }
+
+    async fn flush(&mut self) -> prolly::Result<()> {
+        self.inner.flush().await
+    }
+}
+
+#[test]
+fn a_build_refuses_to_finish_after_a_dropped_put() {
+    let mut store = StallFirstPut {
+        inner: MemStore::new(),
+        stalled: false,
+    };
+    let mut builder = Builder::new(NonZeroU32::new(1).unwrap());
+    let mut n = 0;
+    loop {
+        let (key, value) = entry(n);
+        n += 1;
+        match poll_once(builder.push(&mut store, key, value)) {
+            Poll::Pending => break,
+            Poll::Ready(pushed) => pushed.unwrap(),
+        }
+    }
+    assert_eq!(
+        run(builder.finish(&mut store)),
+        Err(prolly::Error::BuildFailed),
+        "a tree from this build would miss the chunk whose put was dropped"
+    );
 }
