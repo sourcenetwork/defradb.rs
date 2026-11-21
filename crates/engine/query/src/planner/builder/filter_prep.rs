@@ -27,15 +27,17 @@ impl super::Planner {
         select: &Select,
         collection: &CollectionVersion,
         computed_field_names: &[&str],
-    ) -> FilterParts {
+    ) -> crate::error::Result<FilterParts> {
         // Relation ID conditions must be evaluated after the join that computes
         // them, so they are stripped from the plan-level filter below.
         let filter_for_plan = select.filter.as_ref().map(|f| {
             let (stripped, _) = f.strip_aggregate_alias_conditions(computed_field_names);
             stripped
         });
-        let filter_for_plan =
-            filter_for_plan.map(|filter| filter.without_secondary_relation_ids(collection));
+        let filter_for_plan = match filter_for_plan {
+            Some(filter) => Some(filter.without_secondary_relation_ids(collection)?),
+            None => None,
+        };
 
         // Convert doc_ids to a _docID filter and merge with the explicit filter.
         // The docID parameter (e.g., User(docID: "...")) must be applied as a real
@@ -175,11 +177,11 @@ impl super::Planner {
             scalar_filter
         };
 
-        FilterParts {
+        Ok(FilterParts {
             scalar_filter,
             relation_filter,
             filter_for_plan,
             is_complex_filter,
-        }
+        })
     }
 }

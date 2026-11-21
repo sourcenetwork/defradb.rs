@@ -12,16 +12,20 @@ impl Filter {
     pub(crate) fn without_secondary_relation_ids(
         &self,
         collection: &schema::CollectionVersion,
-    ) -> Filter {
-        let conditions = strip_secondary_relation_ids(self.conditions(), collection);
-        Filter::from_conditions_with_max_depth(conditions, self.max_depth())
+    ) -> crate::error::Result<Filter> {
+        let conditions = strip_secondary_relation_ids(self.conditions(), collection, false)?;
+        Ok(Filter::from_conditions_with_max_depth(
+            conditions,
+            self.max_depth(),
+        ))
     }
 }
 
 fn strip_secondary_relation_ids(
     conditions: &Map<String, Value>,
     collection: &schema::CollectionVersion,
-) -> Map<String, Value> {
+    nested: bool,
+) -> crate::error::Result<Map<String, Value>> {
     let mut stripped = Map::new();
     for (key, value) in conditions {
         if let Some(relation_name) = key
@@ -32,6 +36,11 @@ fn strip_secondary_relation_ids(
                 .field_by_name(relation_name)
                 .is_some_and(|field| field.kind.is_relation() && !field.is_primary);
             if is_secondary {
+                if nested {
+                    return Err(crate::error::QueryError::invalid_filter(
+                        "secondary relation ID filters are supported only at the top level",
+                    ));
+                }
                 continue;
             }
         }
@@ -41,19 +50,19 @@ fn strip_secondary_relation_ids(
                 branches
                     .iter()
                     .map(|branch| match branch.as_object() {
-                        Some(conditions) => {
-                            Value::Object(strip_secondary_relation_ids(conditions, collection))
-                        }
-                        None => branch.clone(),
+                        Some(conditions) => Ok(Value::Object(strip_secondary_relation_ids(
+                            conditions, collection, true,
+                        )?)),
+                        None => Ok(branch.clone()),
                     })
-                    .collect(),
+                    .collect::<crate::error::Result<Vec<_>>>()?,
             ),
             ("_not", Value::Object(conditions)) => {
-                Value::Object(strip_secondary_relation_ids(conditions, collection))
+                Value::Object(strip_secondary_relation_ids(conditions, collection, true)?)
             }
             (_, value) => value.clone(),
         };
         stripped.insert(key.clone(), value);
     }
-    stripped
+    Ok(stripped)
 }
