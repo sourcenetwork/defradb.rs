@@ -105,6 +105,44 @@ pub(super) async fn report_push_ack(
     .is_some()
 }
 
+/// Asks the durable recorder whether an offline push may park. `None` from
+/// the recorder is a denial, not an accepted marker; a gone recorder fails.
+async fn offline_push_admitted<T>(context: &PushWorkerContext<T>, job: &PushJobSpec) -> bool
+where
+    T: P2PTransport,
+{
+    let Some(tx) = context.failure_tx.load().as_deref().cloned() else {
+        return false;
+    };
+    let (durable_tx, durable_rx) = crate::rt::oneshot::channel();
+    let failure = PushFailure {
+        peer_id: job.peer_id.to_string(),
+        doc_id: job.doc_id.clone(),
+        collection_id: job.collection_id.clone(),
+        cid: job.root_cid.to_string(),
+        head_priority: job.head_priority(),
+        create_retry: false,
+        initial_registration: false,
+        acknowledged: false,
+        marker_generation: job.marker_generation,
+        retry_after: None,
+        admission_only: true,
+        durable_tx: Some(durable_tx),
+    };
+    let mut send = std::pin::pin!(tx.send(failure));
+    loop {
+        match workers::timeout(Duration::from_secs(5), &mut send).await {
+            Ok(_) => break,
+            Err(_) => tracing::warn!(
+                peer_id = %job.peer_id,
+                doc_id = %job.doc_id,
+                "Push failure recorder is backlogged; still waiting to admit an offline push"
+            ),
+        }
+    }
+    matches!(durable_rx.await, Ok(Some(_)))
+}
+
 /// Whether `job`'s head is the whole current frontier of its scope. A marker
 /// stands for every head registered under it, and the live path sends only
 /// the latest; with a sibling head beside this one, only the retry ladder,
@@ -238,6 +276,18 @@ where
 {
     if !context.backlog.is_current(job).await {
         return JobCompletion::Retired;
+    }
+
+    // An offline target is expected absence, not a transport failure. Keep its
+    // retry obligation on the ladder and leave queued work for the reconnect
+    // window; only a live send's transport error counts as failed.
+    if !context.peer_state.is_connected(job.peer_id.as_str()) {
+        if !offline_push_admitted(context, job).await {
+            return JobCompletion::Failed;
+        }
+        context.backlog.record_head_hint_parked_offline();
+        context.backlog.park_peer_offline(job);
+        return JobCompletion::Parked;
     }
 
     // The recorder reads the persisted peer floor, so replay-installed hints

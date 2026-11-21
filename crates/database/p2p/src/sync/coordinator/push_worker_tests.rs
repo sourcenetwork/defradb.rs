@@ -70,6 +70,10 @@ fn test_context_with_admission(
     (context, rx)
 }
 
+fn connect_job_peer<T>(context: &PushWorkerContext<T>, job: &PushJobSpec) {
+    context.peer_state.peer_connected(job.peer_id.as_str());
+}
+
 #[nuclei::test]
 async fn persisted_backpressure_denies_live_push_before_transport_send() {
     let backlog = PushBacklog::new(64, usize::MAX, 1, 1, edge::testing::edge());
@@ -82,9 +86,120 @@ async fn persisted_backpressure_denies_live_push_before_transport_send() {
     );
     backlog.try_enqueue(job("peer", b"active")).await;
     let active = backlog.next_job().await.unwrap();
+    connect_job_peer(&context, &active);
     assert_eq!(run_push_job(&context, &active).await, JobCompletion::Failed);
     assert!(transport.sent().is_empty());
     backlog.job_done(&active, JobCompletion::Failed).await;
+    backlog.close();
+}
+
+/// An offline target parks its push instead of counting expected absence as a
+/// transport failure. The retry ladder keeps the obligation until reconnect.
+#[nuclei::test]
+async fn an_offline_peer_parks_its_push_without_transport_failure() {
+    let backlog = PushBacklog::new(64, usize::MAX, 1, 1, edge::testing::edge());
+    let transport = TestTransport::new(Vec::new());
+    let (context, mut failures) = test_context(
+        transport.clone(),
+        Arc::clone(&backlog),
+        Duration::from_secs(1),
+    );
+    let job = job("offline", b"offline");
+    assert_eq!(
+        backlog.try_enqueue(job.clone()).await,
+        EnqueueOutcome::Enqueued
+    );
+    let active = backlog.next_job().await.unwrap();
+
+    let completion = run_push_job(&context, &active).await;
+
+    assert_eq!(completion, JobCompletion::Parked);
+    assert!(transport.sent().is_empty());
+    assert!(
+        crate::rt::time::timeout(Duration::from_millis(50), failures.recv())
+            .await
+            .is_err()
+    );
+    let snapshot = backlog.snapshot().await;
+    assert_eq!(snapshot.head_hints_parked_offline, 1);
+    assert_eq!(snapshot.head_hints_failed_transport, 0);
+    let peer = snapshot
+        .per_peer
+        .iter()
+        .find(|entry| entry.peer_id == "offline")
+        .expect("offline peer is reported");
+    assert!(peer.cooldown_remaining_ms > 0);
+    backlog.job_done(&active, completion).await;
+    let snapshot = backlog.snapshot().await;
+    assert_eq!(snapshot.parked_total, 1);
+    assert_eq!(snapshot.failed_total, 0);
+    let peer = snapshot
+        .per_peer
+        .iter()
+        .find(|entry| entry.peer_id == "offline")
+        .expect("offline peer is reported");
+    assert_eq!(peer.parked_total, 1);
+    assert_eq!(peer.failed_total, 0);
+    backlog.close();
+}
+
+/// An offline probe parks without demoting the peer's queued jobs; they wait
+/// for the reconnect window instead of moving to the durable retry ledger.
+#[test]
+fn an_offline_probe_keeps_queued_jobs() {
+    edge::testing::paused(|edge| async move {
+        let backlog = PushBacklog::new(64, usize::MAX, 4, 8, edge.clone());
+        let transport = TestTransport::new(Vec::new());
+        let (context, _failures) = test_context(
+            transport.clone(),
+            Arc::clone(&backlog),
+            Duration::from_secs(1),
+        );
+        for seed in [b"1", b"2", b"3"] {
+            assert_eq!(
+                backlog.try_enqueue(job("offline", seed)).await,
+                EnqueueOutcome::Enqueued
+            );
+        }
+        let first = backlog.next_job().await.unwrap();
+        assert_eq!(run_push_job(&context, &first).await, JobCompletion::Parked);
+        backlog.job_done(&first, JobCompletion::Parked).await;
+        nuclei::time::advance(Duration::from_secs(60)).await;
+
+        let probe = backlog.next_job().await.unwrap();
+        assert_eq!(run_push_job(&context, &probe).await, JobCompletion::Parked);
+        backlog.job_done(&probe, JobCompletion::Parked).await;
+        assert_eq!(
+            backlog.snapshot().await.queued_items,
+            1,
+            "an offline probe must leave the peer's queued job in the backlog"
+        );
+        backlog.close();
+    })
+}
+
+/// A durable recorder that denies an offline push still fails the job; it is
+/// not counted as parked and does not park the peer.
+#[nuclei::test]
+async fn a_denied_offline_push_is_failed_not_parked() {
+    let backlog = PushBacklog::new(64, usize::MAX, 1, 1, edge::testing::edge());
+    let transport = TestTransport::new(Vec::new());
+    let (context, _failures) = test_context_with_admission(
+        transport.clone(),
+        backlog.clone(),
+        Duration::from_secs(1),
+        false,
+    );
+    backlog.try_enqueue(job("offline", b"offline")).await;
+    let active = backlog.next_job().await.unwrap();
+
+    assert_eq!(run_push_job(&context, &active).await, JobCompletion::Failed);
+    assert!(transport.sent().is_empty());
+    backlog.job_done(&active, JobCompletion::Failed).await;
+    let snapshot = backlog.snapshot().await;
+    assert_eq!(snapshot.head_hints_parked_offline, 0);
+    assert_eq!(snapshot.parked_total, 0);
+    assert_eq!(snapshot.failed_total, 1);
     backlog.close();
 }
 
@@ -136,6 +251,8 @@ async fn slow_peer_does_not_starve_healthy_peers() {
         Arc::clone(&backlog),
         Duration::from_secs(60),
     );
+    context.peer_state.peer_connected("slow");
+    context.peer_state.peer_connected("healthy");
     let shutdown = SyncShutdownHandle::new(4, crate::network::test_network());
     spawn_push_workers(context, &shutdown);
 
@@ -204,6 +321,9 @@ fn two_stalled_replicators_do_not_starve_healthy_peer() {
         );
         crate::rt::spawn(async move { while failures.recv().await.is_some() {} }).detach();
         let shutdown = SyncShutdownHandle::new(4, crate::network::Network::on(edge.clone()));
+        for peer in ["dead-1", "dead-2", "healthy"] {
+            context.peer_state.peer_connected(peer);
+        }
         spawn_push_workers(context, &shutdown);
         crate::rt::yield_now().await;
 
@@ -277,6 +397,7 @@ fn transient_transport_failure_keeps_queued_jobs_live() {
         })
         .detach();
         let shutdown = SyncShutdownHandle::new(4, crate::network::Network::on(edge.clone()));
+        context.peer_state.peer_connected("flaky");
         spawn_push_workers(context, &shutdown);
         crate::rt::yield_now().await;
 
@@ -321,6 +442,7 @@ async fn stalled_send_times_out_and_reports_push_failure() {
     let transport = TestTransport::new(Vec::new()).with_stalled_peer("slow");
     let (context, mut failure_rx) =
         test_context(transport, Arc::clone(&backlog), Duration::from_millis(50));
+    context.peer_state.peer_connected("slow");
     let shutdown = SyncShutdownHandle::new(4, crate::network::test_network());
     spawn_push_workers(context, &shutdown);
 
@@ -367,6 +489,7 @@ async fn capacity_nack_demotes_queued_peer_work_to_persisted_retry() {
         assert_eq!(backlog.try_enqueue(job).await, EnqueueOutcome::Enqueued);
     }
     let active = backlog.next_job().await.expect("active job");
+    connect_job_peer(&context, &active);
 
     let completion = run_push_job(&context, &active).await;
 
@@ -404,6 +527,7 @@ async fn retry_after_rate_nack_parks_live_peer_and_hands_off_queued_hints() {
     backlog.try_enqueue(job("peer", b"active")).await;
     backlog.try_enqueue(job("peer", b"queued")).await;
     let active = backlog.next_job().await.unwrap();
+    connect_job_peer(&context, &active);
     assert_eq!(run_push_job(&context, &active).await, JobCompletion::Failed);
     for _ in 0..2 {
         let failure = failures.recv().await.unwrap();
@@ -451,6 +575,7 @@ async fn head_hint_signing_failure_sends_no_dependency_pushlogs() {
     );
     assert_eq!(backlog.try_enqueue(job).await, EnqueueOutcome::Enqueued);
     let active = backlog.next_job().await.unwrap();
+    connect_job_peer(&context, &active);
 
     let completion = run_push_job(&context, &active).await;
 
@@ -502,6 +627,7 @@ async fn root_only_push_installs_receiver_pull_authority() {
     );
     assert_eq!(backlog.try_enqueue(job).await, EnqueueOutcome::Enqueued);
     let active = backlog.next_job().await.unwrap();
+    connect_job_peer(&context, &active);
 
     let completion = run_push_job(&context, &active).await;
 
@@ -590,6 +716,7 @@ async fn run_ownership_arm(expand_dag: bool) -> OwnershipArm {
     );
     assert_eq!(backlog.try_enqueue(job).await, EnqueueOutcome::Enqueued);
     let active = backlog.next_job().await.unwrap();
+    connect_job_peer(&context, &active);
     let completion = run_push_job(&context, &active).await;
     assert_eq!(completion, JobCompletion::Succeeded);
     backlog.job_done(&active, completion).await;
@@ -644,6 +771,7 @@ async fn superseded_active_failure_never_enters_persisted_retry() {
         Arc::clone(&backlog),
         Duration::from_secs(1),
     );
+    context.peer_state.peer_connected("peer");
     let shutdown = SyncShutdownHandle::new(4, crate::network::test_network());
     spawn_push_workers(context, &shutdown);
 
@@ -680,6 +808,7 @@ async fn superseded_acknowledged_push_reports_its_delivery() {
     older.marker_generation = Some(7);
     backlog.try_enqueue(older).await;
     let active = backlog.next_job().await.unwrap();
+    connect_job_peer(&context, &active);
     let push = {
         let (context, active) = (Arc::clone(&context), active.clone());
         crate::rt::spawn(async move { run_push_job(&context, &active).await })
@@ -849,6 +978,7 @@ async fn acknowledged_push_records_head_acked() {
     );
     backlog.try_enqueue(job("peer", b"acked")).await;
     let active = backlog.next_job().await.unwrap();
+    connect_job_peer(&context, &active);
 
     assert_eq!(
         run_push_job(&context, &active).await,
@@ -872,6 +1002,7 @@ async fn rejected_push_records_the_peer_error() {
     );
     backlog.try_enqueue(job("peer", b"rejected")).await;
     let active = backlog.next_job().await.unwrap();
+    connect_job_peer(&context, &active);
 
     assert_eq!(run_push_job(&context, &active).await, JobCompletion::Failed);
     let pushed = heads_pushed(&context, "peer");
