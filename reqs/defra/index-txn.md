@@ -138,6 +138,13 @@ Filtering on an indexed field of a one-to-one related document, from the primary
 
 Scalar and relation conditions at the top level apply as an AND; `_and`, `_or` and `_not` over an indexed one-to-many relation return the right documents or none; filters on two relations, `groupBy` with a filter on an indexed relation, and a composite index on several indexed child fields all return correct results.
 
+# `defra.index.relation.filter_keeps_joined_parent`: An indexed FK filter keeps joined relations
+
+- **Parents:** ["go.index.relation"]
+- **Scenarios:** ["query::one_to_many::with_relation_filter_indexed_fk::relation_filter_through_an_indexed_fk_keeps_another_joined_relation"]
+
+When a parent-side foreign key is indexed and the query filters through it, a relation already joined into the parent plan—such as a selected publisher—survives the raw FK lookups and is rendered with the matching parent.
+
 # `go.index.relation.sub-filter`: Child sub-filters through indexes
 
 - **Parents:** ["go.index.relation"]

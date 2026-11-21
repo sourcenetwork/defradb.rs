@@ -24,8 +24,8 @@ fn many_to_many_query_from_join_collection_should_succeed() {
                     }
 
                     type Enrollment {
-                        student: Student @relation(name: "student_enrollments")
-                        course: Course @relation(name: "course_enrollments")
+                        student: Student @relation(name: "student_enrollments") @index
+                        course: Course @relation(name: "course_enrollments") @index
                     }
                 "#
                 .into(),

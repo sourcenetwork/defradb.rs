@@ -128,6 +128,13 @@ pub struct TypeJoinOne {
     /// child's FK index. This mirrors Go's one-to-one secondary-side lookup and
     /// records empty FK-index reads for SSI conflict detection.
     indexed_inverted_child_fetch: Option<IndexedInvertedChildFetch>,
+    /// Whether the wrapped parent plan has already joined relations that must
+    /// survive the parent-index lookups made by this join.
+    preserve_parent_plan: bool,
+    /// Parent documents produced by the wrapped plan, keyed by document ID.
+    /// Inverted-index lookups fetch raw parents, so these docs restore relation
+    /// values joined before this join was assembled.
+    pre_joined_parent_docs: RapidHashMap<String, Doc>,
 }
 
 /// A filter condition on a relation field.
@@ -248,6 +255,8 @@ impl TypeJoinOne {
             shared_yielded_ids: None,
             parent_residual_filter: None,
             indexed_inverted_child_fetch: None,
+            preserve_parent_plan: false,
+            pre_joined_parent_docs: RapidHashMap::new(),
         }
     }
 
@@ -336,7 +345,35 @@ impl TypeJoinOne {
         self.parent_collection = Some(parent_collection);
         self.parent_scan_mapping = Some(parent_scan_mapping);
         self.fetcher = fetcher;
+        self.preserve_parent_plan = self.parent_plan.kind() != "scanNode";
         self
+    }
+
+    /// Scan the wrapped parent plan once and keep its relation-joined documents.
+    async fn load_pre_joined_parent_docs(&mut self) -> Result<()> {
+        self.parent_plan.init().await?;
+        self.parent_plan.start().await?;
+        while self.parent_plan.next().await? {
+            let parent_doc = self.parent_plan.value().deep_clone();
+            if let Some(doc_id) = parent_doc.doc_id() {
+                self.pre_joined_parent_docs
+                    .insert(doc_id.to_string(), parent_doc);
+            }
+        }
+        self.parent_plan.close().await?;
+        Ok(())
+    }
+
+    /// Restore relations joined into the wrapped parent plan before its raw
+    /// document was fetched again by the parent FK index.
+    fn with_pre_joined_relations(&self, parent_doc: Doc) -> Doc {
+        let Some(doc_id) = parent_doc.doc_id() else {
+            return parent_doc;
+        };
+        self.pre_joined_parent_docs
+            .get(doc_id)
+            .cloned()
+            .unwrap_or(parent_doc)
     }
 
     /// Set a residual scalar filter for parent docs fetched in inverted index mode.
@@ -640,7 +677,6 @@ impl TypeJoinOne {
                 Some(id) => id.to_string(),
                 None => continue,
             };
-
             // The relation filter reads only the child, so a child that fails
             // it is skipped before its parents are looked up.
             if let Some(ref rel_filter) = self.relation_filter {
@@ -697,7 +733,6 @@ impl TypeJoinOne {
             while index_scan.next().await? {
                 parent_docs.push(index_scan.value().deep_clone());
             }
-
             let scan_info = index_scan.exec_info();
             index_scan.close().await?;
 
@@ -712,7 +747,8 @@ impl TypeJoinOne {
             }
 
             // Merge child into each parent and queue for yielding
-            for mut parent_doc in parent_docs {
+            for parent_doc in parent_docs {
+                let mut parent_doc = self.with_pre_joined_relations(parent_doc);
                 self.merge_child(&mut parent_doc, Some(child_doc.deep_clone()));
                 self.docs_to_yield.push_back(parent_doc);
             }
@@ -1046,6 +1082,9 @@ impl PlanNode for TypeJoinOne {
         ) {
             // Inverted/ordered mode: only init the child plan (index scan on child).
             // Parent lookups happen per-child in next_inverted_index() / next_ordered_primary().
+            if self.preserve_parent_plan {
+                self.load_pre_joined_parent_docs().await?;
+            }
             self.child_plan.init().await?;
             self.child_plan.start().await?;
             // Capture child's index fetches from init (the initial index scan)
@@ -1194,6 +1233,7 @@ impl PlanNode for TypeJoinOne {
         }
         self.child_cache.clear();
         self.docs_to_yield.clear();
+        self.pre_joined_parent_docs.clear();
         if let Some(ref mut config) = self.orphan_config {
             config.orphan_node.close().await?;
         }

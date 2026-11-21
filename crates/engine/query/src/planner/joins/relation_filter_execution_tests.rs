@@ -89,6 +89,20 @@ fn books() -> CollectionVersion {
     })
 }
 
+fn books_with_parent_fk_index() -> CollectionVersion {
+    books().with_index(IndexDescription {
+        id: 1,
+        name: "Book__authorID_ASC".to_string(),
+        unique: false,
+        kind: None,
+        auto_generated: false,
+        fields: vec![IndexedFieldDescription {
+            name: "_authorID".to_string(),
+            descending: false,
+        }],
+    })
+}
+
 fn publishers() -> CollectionVersion {
     CollectionVersion::new(
         "Publisher",
@@ -239,18 +253,43 @@ impl DocFetcher for IndexedSideFetcher {
         params: &IndexScanParams,
     ) -> Result<IndexScanResult> {
         if collection_name == "Book" {
-            // The title index, read whole for an order it provides.
-            let mut books: Vec<_> = self.books.iter().collect();
-            books.sort_by_key(|book| {
-                book.get("title")
-                    .and_then(|value| value.as_str().map(String::from))
-            });
-            return Ok(IndexScanResult::new(
-                books
-                    .into_iter()
-                    .filter_map(|book| book.id().map(|id| id.to_string()))
-                    .collect(),
-            ));
+            if params.index_name == "Book_title_ASC" {
+                // The title index, read whole for an order it provides.
+                let mut books: Vec<_> = self.books.iter().collect();
+                books.sort_by_key(|book| {
+                    book.get("title")
+                        .and_then(|value| value.as_str().map(String::from))
+                });
+                return Ok(IndexScanResult::new(
+                    books
+                        .into_iter()
+                        .filter_map(|book| book.id().map(|id| id.to_string()))
+                        .collect(),
+                ));
+            }
+            if params.index_name == "Book__authorID_ASC" {
+                let IndexScanType::ExactMatch { values } = &params.scan_type else {
+                    panic!("unexpected author index scan type: {:?}", params.scan_type);
+                };
+                let author_ids: Vec<&str> = values
+                    .iter()
+                    .filter_map(|value| match value {
+                        NormalValue::String(value) => Some(value.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                return Ok(IndexScanResult::new(
+                    self.books
+                        .iter()
+                        .filter(|book| {
+                            book.get("_authorID")
+                                .and_then(|value| value.as_str())
+                                .is_some_and(|author_id| author_ids.contains(&author_id))
+                        })
+                        .filter_map(|book| book.id().map(|id| id.to_string()))
+                        .collect(),
+                ));
+            }
         }
         let IndexScanType::ExactMatch { values } = &params.scan_type else {
             panic!("unexpected index scan type in test: {:?}", params.scan_type);
@@ -354,6 +393,48 @@ fn filter_on_an_indexed_child_reads_the_parents_once() {
         let (rows, _) = run(plan).await;
         let titles: Vec<_> = rows.iter().map(|row| row["title"].clone()).collect();
         assert_eq!(titles, vec![json!("David")]);
+    })
+    .unwrap()
+}
+
+/// A parent-side FK index switches the join to parent-index lookups. A relation
+/// already joined into the parent plan must still survive those raw lookups.
+#[test]
+fn indexed_side_filter_keeps_relation_when_parent_fk_is_indexed() {
+    workers::block_on(async {
+        let fetcher = Arc::new(IndexedSideFetcher::new());
+        let planner = Planner::new(vec![people(), books_with_parent_fk_index(), publishers()])
+            .with_fetcher(fetcher.clone());
+        let select = Select::new("Book")
+            .with_field(Field::new("title"))
+            .with_select(Select::new("publisher").with_field(Field::new("name")))
+            .with_filter(Filter::from_conditions(
+                json!({"author": {"name": {"_eq": "David"}}})
+                    .as_object()
+                    .cloned()
+                    .unwrap(),
+            ));
+
+        let mut plan = planner.plan(&select).unwrap();
+        assert_eq!(
+            join_direction(&plan.explain(), "author").as_deref(),
+            Some("secondary"),
+            "{}",
+            plan.explain()
+        );
+        plan.init().await.unwrap();
+        plan.start().await.unwrap();
+
+        let mut rows = Vec::new();
+        while plan.next().await.unwrap() {
+            rows.push(plan.document_map().render_doc_to_json(plan.value()));
+        }
+        plan.close().await.unwrap();
+
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0]["title"], json!("David"), "{rows:?}");
+        assert_eq!(rows[0]["publisher"]["name"], json!("Penguin"), "{rows:?}");
+        assert_eq!(fetcher.book_reads.load(Ordering::SeqCst), 3);
     })
     .unwrap()
 }
