@@ -715,6 +715,15 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Peer connection observation",
+        name: "INV_NoRedialAfterDeliberateClose / INV_RemoteExplicitDialAccepted",
+        axis: Tla,
+        anchor: "crates/database/p2p/src/host/p2p_host/mod.rs explicitly_disconnected, run_kademlia_bootstrap; crates/database/p2p/src/host/command_handler/network.rs handle_dial, handle_explicit_dial; crates/database/p2p/src/host/command_handler/mod.rs handle_command; crates/database/p2p/src/host/p2p_host/swarm.rs handle_swarm_event; tools/integration-test/tests/testo/net/info/disconnect_reconnect.rs",
+        model_ref: "MC_ExplicitDisconnect_{Green_Libp2p,Green_Vinc,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/net/info/disconnect_reconnect.rs net_info_disconnect_sticks_until_explicit_reconnect",
+    },
+    Property {
+        family: "Peer connection observation",
         name: "ExplicitOnly / ExactAddress / RequestedPort / DefaultPreserved / UnavailableRefused / MappingScope / MappingDefaultsPreserved",
         axis: Tla,
         anchor: "crates/database/p2p/src/iroh/endpoint_config.rs apply_bind_config; endpoint_config/bind_tests.rs native_bindings_match_executed_model, native_port_mapping_configuration_matches_executed_model, loopback_endpoint_does_not_open_wildcard_gateway_discovery_listeners",

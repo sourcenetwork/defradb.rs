@@ -783,8 +783,8 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
         // Discovery is not allowed to undo an explicit disconnect. Remove any
         // sticky disconnects from the routing table before every refresh; a
         // later explicit dial clears the marker and restores ordinary behavior.
-        for peer_id in self.explicitly_disconnected.clone() {
-            self.swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
+        for peer_id in &self.explicitly_disconnected {
+            self.swarm.behaviour_mut().kademlia.remove_peer(peer_id);
         }
         for (network, result) in self.swarm.behaviour_mut().kademlia.bootstrap() {
             match result {

@@ -27,6 +27,13 @@ impl<S: Store> P2PHost<S> {
             } => {
                 self.handle_dial(peer_id, addrs, response);
             }
+            HostCommand::ExplicitDial {
+                peer_id,
+                addrs,
+                response,
+            } => {
+                self.handle_explicit_dial(peer_id, addrs, response);
+            }
             HostCommand::Disconnect { peer_id, response } => {
                 self.handle_disconnect(peer_id, response);
             }
@@ -202,6 +209,7 @@ impl<S: Store> P2PHost<S> {
                 info,
                 response,
             } => {
+                self.explicitly_disconnected.remove(&peer_id);
                 self.handle_create_replicator(peer_id, info, response);
             }
             HostCommand::DeleteReplicator { peer_id, response } => {

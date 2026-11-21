@@ -55,10 +55,22 @@ impl<S: Store> P2PHost<S> {
         addrs: Vec<Multiaddr>,
         response: crate::rt::oneshot::Sender<Result<()>>,
     ) {
-        self.explicitly_disconnected.remove(&peer_id);
         let result = self.dial_peer(peer_id, addrs);
         if response.send(result).is_err() {
             debug!(peer_id = %peer_id, "Dial command response dropped - caller cancelled");
+        }
+    }
+
+    pub(super) fn handle_explicit_dial(
+        &mut self,
+        peer_id: PeerId,
+        addrs: Vec<Multiaddr>,
+        response: crate::rt::oneshot::Sender<Result<()>>,
+    ) {
+        self.explicitly_disconnected.remove(&peer_id);
+        let result = self.dial_peer(peer_id, addrs);
+        if response.send(result).is_err() {
+            debug!(peer_id = %peer_id, "Explicit dial command response dropped - caller cancelled");
         }
     }
 
