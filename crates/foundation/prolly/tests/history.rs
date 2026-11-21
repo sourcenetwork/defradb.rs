@@ -99,30 +99,34 @@ proptest! {
             1..40,
         ),
     ) {
-        let target = NonZeroU32::new(target).unwrap();
-        let mut store = MemStore::new();
-        let mut tree = Tree::empty(target);
-        let mut model = BTreeMap::new();
-        for (k, len) in ops {
-            match len {
-                Some(len) => {
-                    let value = vec![k as u8; len];
-                    tree.insert(&mut store, key(k), value.clone()).unwrap();
-                    model.insert(k, value);
+        run(async {
+            let target = NonZeroU32::new(target).unwrap();
+            let mut store = MemStore::new();
+            let mut tree = Tree::empty(target);
+            let mut model = BTreeMap::new();
+            for (k, len) in ops {
+                match len {
+                    Some(len) => {
+                        let value = vec![k as u8; len];
+                        tree.insert(&mut store, key(k), value.clone()).await.unwrap();
+                        model.insert(k, value);
+                    }
+                    None => {
+                        tree.remove(&mut store, &key(k)).await.unwrap();
+                        model.remove(&k);
+                    }
                 }
-                None => {
-                    tree.remove(&mut store, &key(k)).unwrap();
-                    model.remove(&k);
-                }
+                let fresh = Tree::build(
+                    &mut store,
+                    target,
+                    model.iter().map(|(k, v)| (key(*k), v.clone())),
+                )
+                .await
+                .unwrap();
+                prop_assert_eq!(tree, fresh);
             }
-            let fresh = Tree::build(
-                &mut store,
-                target,
-                model.iter().map(|(k, v)| (key(*k), v.clone())),
-            )
-            .unwrap();
-            prop_assert_eq!(tree, fresh);
-        }
+            Ok(())
+        })?;
     }
 }
 
