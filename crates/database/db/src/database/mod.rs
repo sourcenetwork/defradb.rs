@@ -4,6 +4,7 @@
 /// It manages the root store, creates transactions, and provides
 /// access to collections.
 use crate::error::{Error, Result};
+use crate::index::backfill::BACKFILL_BATCH_DOCS;
 pub use crate::search::EmbeddingClientConfig;
 use crate::txn::DbTxn;
 use crate::NacManagerApi;
@@ -60,6 +61,9 @@ pub struct DbOptions {
     /// The gate every index backfill passes before each batch. `None` lets
     /// every batch run.
     pub index_build_gate: Option<Arc<dyn crate::index::build_gate::IndexBuildGate>>,
+    /// Documents an index backfill may index in one transaction. `None` uses
+    /// the built-in page size.
+    pub backfill_batch_size: Option<usize>,
 }
 
 impl std::fmt::Debug for DbOptions {
@@ -85,6 +89,7 @@ impl std::fmt::Debug for DbOptions {
             .field("replication_filter", &self.replication_filter.is_some())
             .field("deferred_index_sweep", &self.deferred_index_sweep)
             .field("index_build_gate", &self.index_build_gate.is_some())
+            .field("backfill_batch_size", &self.backfill_batch_size)
             .finish()
     }
 }
@@ -146,6 +151,17 @@ impl DbOptions {
     ) -> Self {
         self.index_build_gate = Some(gate);
         self
+    }
+
+    /// Indexes at most `docs` documents per backfill transaction.
+    pub fn with_backfill_batch_docs(mut self, docs: usize) -> Self {
+        self.backfill_batch_size = Some(docs.max(1));
+        self
+    }
+
+    /// Documents an index backfill may index in one transaction.
+    pub(crate) fn backfill_batch_docs(&self) -> usize {
+        self.backfill_batch_size.unwrap_or(BACKFILL_BATCH_DOCS)
     }
 
     /// The engine retry policy every write of this database runs under.

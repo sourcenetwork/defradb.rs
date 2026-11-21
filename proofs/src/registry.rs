@@ -81,6 +81,19 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // `execute_as` signs a node's writes through the shared signed-query
+        // context while keeping its caller's identity and DAC bypass; a
+        // missing signer fails closed. Boundary, bound by the focused node
+        // signing test.
+        family: "Node identity and signing",
+        name: "NodeSigningChoice.execute_as_keeps_the_caller / execute_as_signs_as_the_caller / execute_as_unsigned_without_signing / execute_as_refuses_a_missing_signer",
+        axis: Lean,
+        anchor: "crates/entry-points/defra-node/src/lib.rs Node::execute_as; crates/entry-points/defra-node/src/signed_query/mod.rs execute_with_signing_context; crates/foundation/defra-core/src/request_context.rs RequestContext::with_signing_session",
+        model_ref: "NodeSigningChoice (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/entry-points/defra-node/tests/execute_as_signing.rs execute_as_signs_writes_and_keeps_the_caller_identity",
+    },
+    Property {
         // A node's identity and its signing are separate choices, as in Go:
         // an identity-only node runs each request as its caller and never
         // signs, and a node built without `with_identity_only` runs requests
@@ -196,6 +209,21 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // The embedded node streams only headers of blocks that finalize
+        // after a subscription; a fresh deployment's first block finalized
+        // before it, and a lone validator proposes the next only at its
+        // heartbeat. The transport starts the stream with the newest
+        // finalized block, read after the subscription stands, and the light
+        // client checks it as it checks every header.
+        family: "vera.rs embedded transport",
+        name: "INV_OnlyFinalized / INV_Current / INV_SentHeadFresh: the light client takes only a header a finalized block certifies, once the stream is drained it stands on the newest fresh finalized block in its term without waiting for another, and the transport never sends a head too old to take",
+        axis: Tla,
+        anchor: "crates/engine/vera-embedded/src/acp.rs subscribe_headers, headers_after; crates/engine/vera-embedded/src/acp/head.rs finalized, header, recent; backbone:acp-light-client HeaderChain::start",
+        model_ref: "MC_FirstHeader_{Green,Red_NoHead,Red_ReadBeforeSubscribe,Red_SendStale,Red_DropLaterTerms,Red_Unverified}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/engine/vera-embedded/src/acp/tests.rs queued_headers_at_or_below_the_fetched_head_are_not_emitted, a_header_of_a_later_term_at_or_below_the_fetched_head_is_emitted; crates/engine/vera-embedded/tests/embedded_node.rs a_fresh_deployments_provider_starts_on_its_first_block; crates/entry-points/defra-node/tests/embedded_vera/first_start.rs a_fresh_deployments_first_start_takes_its_first_block",
+    },
+    Property {
         family: "vera.rs deployment terms",
         name: "missing_is_suffix / takeWhile_is_filter / scan_finds_missing / floor_covers_pruned: the submissions a takeover voided are exactly the journal's suffix from the first void one, found by asking newest first, and the newest pruned entry vouches for every older one",
         axis: Lean,
@@ -257,6 +285,15 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "MC_ReplicaRegistration_{Green,Green_Live,Red_RegisterOwn,Red_RegisterAfterMerge,Red_RejectWhileOwed,Red_GrantsSeparate,Red_AdoptDrops,Red_NoAdoptOnArrival,Red_OwnedDenies,Red_StaleDecision,Red_ArchiveOnDelete,Red_DeleteClears}.cfg",
         tiers: &[Boundary, Contract],
         bound_by: "crates/database/db/tests/merge/replica_registration.rs a_foreign_creators_row_merges_once_the_receiver_registers_it_and_its_changes_follow, the_creators_update_while_the_unit_is_owed_is_put_back_and_then_merges, another_signers_change_waits_while_the_receivers_registration_is_owed, a_same_deployment_creators_row_is_never_registered_by_the_receiver, an_unlisted_collection_waits_for_a_registration_as_before, an_update_reaching_the_receiver_before_its_genesis_registers_through_the_genesis, a_revoked_writers_later_update_is_parked, a_second_receiver_waits_for_the_owners_grants_and_never_refuses_the_creator, a_receiver_that_sees_the_genesis_after_another_registered_it_waits_for_the_owners_grant, a_local_provider_registers_the_genesis_signer_as_before; crates/database/db/tests/access/external_owed.rs a_document_deleted_before_its_registration_settles_is_still_registered",
+    },
+    Property {
+        family: "Verified client graph transaction",
+        name: "INV_OnlyGranted / INV_SettledFirst / INV_RevokedStops / INV_RegisteredFirst / INV_ValidBatchCommits / INV_OrdinaryAdmitted / INV_CountBalanced / LIVE_AddressedMerges: on a remote provider the reader a created document's genesis asks for is owed by its creator from the create's own transaction behind the document's registration and counted with it, so no batch its registrations allow is refused and it takes no ordinary change's place in an admission count, and a node of the deployment merges the document only once its provider holds both, only if it is named, and nothing more of it once it has seen the reader revoked",
+        axis: Tla,
+        anchor: "crates/database/db/src/write/genesis_reader.rs stage_genesis_reader; crates/engine/acp/src/outbox/staging.rs TransactionOutbox::stage_with_registration; crates/engine/acp/src/outbox/changes.rs OwedChanges::stage_with_registration; crates/engine/acp/src/outbox/ops.rs account; crates/database/db/src/write/autocommit/helpers.rs register_created_doc; crates/engine/acp/src/external/settle.rs register_first; crates/database/db/src/merge/acp_merge_handler.rs AcpCompositeMergeHook::on_protected_composite, AcpCompositeMergeHook::node_reads",
+        model_ref: "MC_RemoteGenesisReader_{Green,Green_Live,Red_Address,Red_Ungated,Red_Staged,Red_Memo,Red_Unregistered,Red_Separate,Red_Order,Red_Counted,Red_Admitted,Red_Unbalanced}.cfg",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/database/db/tests/access/external_genesis_reader.rs an_addressed_create_owes_its_reader_and_the_provider_takes_it_after_the_registration, a_public_create_owes_everyone_as_its_reader, a_mutable_address_or_a_collection_not_opted_in_owes_no_reader, a_batch_past_the_transactions_change_bound_owes_every_reader_and_takes_another_grant, a_batch_past_the_actors_unsettled_bound_owes_every_reader, owed_readers_leave_their_actor_room_to_revoke, owed_readers_take_nothing_of_the_nodes_bound_and_settle_without_a_trace; crates/entry-points/defra-node/tests/embedded_vera_replication/addressed.rs a_note_addressed_to_a_node_of_the_home_reaches_that_node_only",
     },
     Property {
         family: "Verified client graph transaction",
@@ -474,12 +511,12 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Transactional document relationships",
-        name: "genesisReader / addressed_names_only_receiver / replay_keeps_revocation",
+        name: "genesisReader / addressed_names_only_receiver / replay_keeps_revocation / creatorReader / creator_addressed_names_only_address / creator_matches_addressed_receiver",
         axis: Lean,
-        anchor: "crates/database/db/src/merge/merge_handler/genesis_access.rs genesis_reader",
+        anchor: "crates/database/db/src/merge/merge_handler/genesis_access.rs genesis_reader, creator_reader",
         model_ref: "EnrollmentGenesis (lake build)",
         tiers: &[Boundary, Contract],
-        bound_by: "crates/database/db/tests/merge/genesis_access.rs genesis_reader_matches_executed_lean_model, only_an_immutable_address_naming_this_node_selects_it",
+        bound_by: "crates/database/db/tests/merge/genesis_access.rs genesis_reader_matches_executed_lean_model, only_an_immutable_address_naming_this_node_selects_it, creator_reader_matches_executed_lean_model, a_creator_grants_exactly_the_address_its_document_names",
     },
     Property {
         family: "Transactional document relationships",
@@ -1939,10 +1976,27 @@ pub const PROPERTIES: &[Property] = &[
         family: "ACP soundness + revocation + dual-path commits",
         name: "INV_AtMostOneEffect / INV_ConfirmedHasEffect / INV_NoEarlyGiveUp / INV_RetainedUntilConfirmed / LIVE_UndisturbedCallConfirms / LIVE_RecalledConfirms: a pending submission is resent until confirmed, takes effect once, is given up only at its deadline or on a failure that cannot pass, stays journaled until confirmed, and is confirmed by a later call when an earlier one was cut short",
         axis: Tla,
-        anchor: "crates/engine/vera/src/vera_rs/provider/submission.rs resolve_pending, recover_pending, send_tx_with_sequence; crates/engine/vera/src/vera_rs/client.rs retryable; crates/engine/vera/src/vera_rs/worker.rs acknowledge; crates/engine/vera-embedded/src/submission.rs",
+        anchor: "crates/engine/vera/src/vera_rs/provider/submission.rs resolve_pending, recover_pending, send_tx_with_sequence; crates/engine/vera/src/vera_rs/receipt_wait.rs until_receipt; crates/engine/vera/src/vera_rs/client.rs retryable; crates/engine/vera/src/vera_rs/worker.rs acknowledge; crates/engine/vera-embedded/src/submission.rs",
         model_ref: "MC_PendingSubmission_{Green,Green_Recalled,Red_NoResend,Red_NoDedupe,Red_GivesUpEarly,Red_ForgetsOnTimeout,Red_Recalled_Forgets}.cfg",
         tiers: &[Boundary],
         bound_by: "",
+    },
+    Property {
+        // Between asks for a receipt the provider waits for the light
+        // client to verify a height above the one it read before it asked
+        // and sent, at most a fallback interval. The node serves a receipt
+        // from the moment it publishes its block's header, so the receipt
+        // is asked for as soon as it can be there; a header verified while
+        // the ask or the send was on its way still ends the wait; and a
+        // header stream that is down delays the receipt by the fallback,
+        // never for good.
+        family: "vera.rs receipt wait",
+        name: "INV_Prompt / LIVE_Confirms: a receipt is asked for at the verified height that holds it, with no wait on a timer, and is read in the end when no header comes",
+        axis: Tla,
+        anchor: "crates/engine/vera/src/vera_rs/receipt_wait.rs until_receipt, Heads, Fallback, MIN_FALLBACK; crates/engine/vera/src/vera_rs/provider.rs receipt_fallbacks; crates/engine/vera/src/vera_rs/provider/submission.rs resolve_pending; crates/engine/vera/src/vera_rs/follow/chain.rs ProviderChain::send_and_confirm; crates/engine/vera/src/tuning.rs receipt_fallback",
+        model_ref: "MC_ReceiptWait_{Green,Red_TimerOnly,Red_SeenAfterSend,Red_Unbounded}.cfg",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/engine/vera/src/vera_rs/receipt_wait_tests.rs a_receipt_is_asked_for_at_the_next_verified_height_and_not_after_a_sleep, a_header_verified_while_the_request_is_sent_still_ends_the_wait, with_no_header_each_wait_ends_at_its_fallback_and_an_unheard_send_is_sent_again; crates/engine/vera-embedded/tests/receipt_wait.rs writes_are_confirmed_at_their_blocks_header_and_not_at_the_fallback",
     },
     Property {
         // A remote provider cannot join the row transaction, so a create
@@ -2698,6 +2752,15 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "JsonSubPathCut.leafOk_false_iff / newValidate_false_iff / newValidate_of_main / newRun_eq_mainRun",
         tiers: &[Contract],
         bound_by: "crates/engine/query/src/planner/joins/relation_paths_tests.rs sub_selection_on_json_field_is_go_validation_error, json_sub_path_filter_plans_without_index",
+    },
+    Property {
+        family: "Relation filter with no matching child",
+        name: "empty_cache_keeps_nothing / shortcut_same_rows / orphans_need_the_walk — a primary relation-filter join whose child cache is empty returns the rows of the full parent walk without reading a parent, and an exhaustive join, which also returns orphans, must not take that short cut",
+        axis: Lean,
+        anchor: "crates/engine/query/src/plan/type_join/type_join_one.rs TypeJoinOne::no_child_can_pass, TypeJoinOne::init, TypeJoinOne::next",
+        model_ref: "RelationFilterNoChild.empty_cache_keeps_nothing / shortcut_same_rows / orphans_need_the_walk",
+        tiers: &[Contract],
+        bound_by: "crates/engine/query/src/planner/joins/relation_filter_execution_tests.rs no_matching_child_reads_no_parent, no_matching_child_reads_no_parent_of_an_index_ordered_scan",
     },
     Property {
         family: "PQ distance four sums",

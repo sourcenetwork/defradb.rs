@@ -157,9 +157,20 @@ impl OwedChanges {
                 limit: MAX_UNSETTLED_OWED_CHANGES_PER_ACTOR,
             });
         }
-        let change = ops::stage(&view, self.sequences.as_ref(), new).await?;
+        let change = ops::stage(&view, self.sequences.as_ref(), new, false).await?;
         self.staged.0.fetch_add(1, Ordering::Relaxed);
         Ok(change)
+    }
+
+    /// Record, in this transaction, the one reader a create's genesis asks
+    /// for, owed with the document's registration. It is counted with that
+    /// registration, which no bound on new changes limits, so none of those
+    /// bounds applies to it: it leaves the transaction's count of staged
+    /// changes as it was, and its record keeps it out of the node's and its
+    /// actor's admission counts when it is staged and when it settles
+    /// (`TransactionOutbox::stage_with_registration`).
+    pub async fn stage_with_registration(&self, new: NewOwedChange) -> Result<OwedChange> {
+        ops::stage(&self.active_view()?, self.sequences.as_ref(), new, true).await
     }
 
     /// Record, in this transaction, a change the provider confirmed once and
@@ -169,7 +180,7 @@ impl OwedChanges {
     /// `owe_again`).
     pub async fn stage_restored(&self, new: NewOwedChange) -> Result<OwedChange> {
         let view = self.active_view()?;
-        let change = ops::stage(&view, self.sequences.as_ref(), new).await?;
+        let change = ops::stage(&view, self.sequences.as_ref(), new, false).await?;
         self.staged.0.fetch_add(1, Ordering::Relaxed);
         Ok(change)
     }

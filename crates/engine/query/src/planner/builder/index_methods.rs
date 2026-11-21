@@ -28,9 +28,18 @@ impl super::Planner {
             return None;
         }
 
-        // Extract limit/offset from select for passing to index scan
         let limit = select.limit.as_ref().and_then(|l| l.limit);
         let offset = select.limit.as_ref().map(|l| l.offset).unwrap_or(0);
+
+        // A relation filter is joined after the parent scan. Do not stop that
+        // scan at the requested limit: the first ordered rows may not match
+        // the relation and would be rejected only after the limit node.
+        let has_relation_filter = select
+            .filter
+            .as_ref()
+            .is_some_and(Filter::has_relation_filters);
+        let scan_limit = if has_relation_filter { None } else { limit };
+        let scan_offset = if has_relation_filter { 0 } else { offset };
 
         // Try filter-based index selection.
         // Relation fields in the filter (e.g., `owner: {name: {_eq: "X"}}`) are
@@ -84,8 +93,8 @@ impl super::Planner {
                     best_index,
                     select.order_by.as_ref(),
                     &collection.fields,
-                    limit,
-                    offset,
+                    scan_limit,
+                    scan_offset,
                 ) {
                     let provides_ordering = select
                         .order_by
@@ -111,7 +120,8 @@ impl super::Planner {
             for index in &collection.indexes {
                 let (can_order, needs_reverse) = can_be_ordered_by_index(order_by, index);
                 if can_order {
-                    let params = order_index_scan_params(index, needs_reverse, limit, offset);
+                    let params =
+                        order_index_scan_params(index, needs_reverse, scan_limit, scan_offset);
                     return Some((params, true));
                 }
             }

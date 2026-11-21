@@ -130,7 +130,7 @@ impl<S: Store + 'static> DefraBlockstore<S> {
             move || call(store),
         )
         .await
-        .map_err(|error| Error::Internal(format!("the block store call did not run: {error}")))?
+        .map_err(|error| Error::Internal(error.report("block store call").to_string()))?
     }
 
     /// A browser's one worker is the page's thread: the call runs in place.
