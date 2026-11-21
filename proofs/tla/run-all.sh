@@ -1268,6 +1268,12 @@ RUNS=(
   "MC_EmbeddedVeraStop_Red_NoStopDeadline.cfg EmbeddedVeraStop.tla RED" # a Vera node that hangs while stopping keeps shutdown waiting forever
   "MC_EmbeddedVeraStop_Red_LinkStaysOpen.cfg EmbeddedVeraStop.tla RED" # a transport left open keeps the stopped Vera node's directory locked
   "MC_EmbeddedVeraStop_Red_NoStartDeadline.cfg EmbeddedVeraStop.tla RED" # the next start waits forever for a directory a hung Vera node holds
+  "MC_FirstHeader_Green.cfg FirstHeader.tla GREEN" # the header stream starts with the newest finalized block, read after subscribing, and every header is checked
+  "MC_FirstHeader_Red_NoHead.cfg FirstHeader.tla RED" # only blocks finalized after subscribing are streamed: a fresh deployment's first start waits for the heartbeat (INV_Current)
+  "MC_FirstHeader_Red_ReadBeforeSubscribe.cfg FirstHeader.tla RED" # the head is read before subscribing: a block finalized in between is missed (INV_Current)
+  "MC_FirstHeader_Red_SendStale.cfg FirstHeader.tla RED" # a head past the freshness limit is sent: the light client must refuse it (INV_SentHeadFresh)
+  "MC_FirstHeader_Red_DropLaterTerms.cfg FirstHeader.tla RED" # queued headers at or below the head are dropped whatever their term: a switch's block is lost (INV_Current)
+  "MC_FirstHeader_Red_Unverified.cfg FirstHeader.tla RED" # the transport's header is taken unchecked: a forged head is accepted (INV_OnlyFinalized)
   "MC_RegistrationBatch_Green.cfg RegistrationBatch.tla GREEN" # one list per creator, a refused list sent again one at a time, held objects never sent again
   "MC_RegistrationBatch_Green_Lost.cfg RegistrationBatch.tla GREEN" # lists applied whole, at once or after a lost answer, and never sent again once held
   "MC_RegistrationBatch_Green_Elsewhere.cfg RegistrationBatch.tla GREEN" # a replica another node holds is cleared yielding to its owner, never sent
