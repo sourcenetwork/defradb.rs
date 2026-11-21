@@ -277,7 +277,7 @@ fn execute_explain_with_index_on_relation_order() {
                                                                 "fieldFetches": 4,
                                                                 "indexFetches": 2,
                                                                 "iterations": 4,
-                                                                "indexName": "Book_rating_ASC",
+                                                                "indexName": "Publisher__bookID_ASC",
                                                             },
                                                         },
                                                         "subType": {
@@ -422,7 +422,7 @@ fn execute_explain_with_index_on_subquery_nested_relation_order() {
                                                         "fieldFetches": 1,
                                                         "indexFetches": 0,
                                                         "iterations": 2,
-                                                        "indexName": "Book_author_ASC",
+                                                        "iterations": 2,
                                                     },
                                                 },
                                                 "subType": {
@@ -441,7 +441,7 @@ fn execute_explain_with_index_on_subquery_nested_relation_order() {
                                                                                 "fieldFetches": 4,
                                                                                 "indexFetches": 0,
                                                                                 "iterations": 2,
-                                                                                "indexName": "Book_publisher_ASC",
+                                                                                "iterations": 2,
                                                                             },
                                                                         },
                                                                         "subType": {
@@ -454,7 +454,6 @@ fn execute_explain_with_index_on_subquery_nested_relation_order() {
                                                                                         "fieldFetches": 6,
                                                                                         "indexFetches": 2,
                                                                                         "iterations": 2,
-                                                                                        "indexName": "Publisher_establishedYear_ASC",
                                                                                     },
                                                                                 },
                                                                             },

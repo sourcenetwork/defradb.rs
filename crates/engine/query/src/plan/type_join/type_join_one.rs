@@ -1327,8 +1327,7 @@ impl PlanNode for TypeJoinOne {
         ) {
             // Inverted/ordered modes: child drives the loop, parent is looked up per-child.
             // Go always shows parentPlan for root, childPlan for subType.
-            // root = the parent work: the one parent scan of the field-lookup
-            // mode, else the per-child parent lookups.
+            // root = the per-child parent lookups.
             let parent_index_name = match &self.direction {
                 JoinDirection::InvertedIndex {
                     parent_fk_index_name,
@@ -1336,20 +1335,16 @@ impl PlanNode for TypeJoinOne {
                 } => Some(parent_fk_index_name.clone()),
                 _ => None,
             };
-            let root = if matches!(self.direction, JoinDirection::InvertedFieldLookup) {
-                self.parent_plan.explain_execute()
-            } else {
-                let mut scan_node = self.go_child_metrics.scan_node_json();
-                if let Some(index_name) = &parent_index_name {
-                    if let Some(scan_node_obj) = scan_node.as_object_mut() {
-                        scan_node_obj.insert(
-                            "indexName".to_string(),
-                            serde_json::Value::String(index_name.clone()),
-                        );
-                    }
+            let mut scan_node = self.go_child_metrics.scan_node_json();
+            if let Some(index_name) = &parent_index_name {
+                if let Some(scan_node_obj) = scan_node.as_object_mut() {
+                    scan_node_obj.insert(
+                        "indexName".to_string(),
+                        serde_json::Value::String(index_name.clone()),
+                    );
                 }
-                serde_json::json!({ "scanNode": scan_node })
             };
+            let root = serde_json::json!({ "scanNode": scan_node });
             inner_obj.insert("root".to_string(), root);
 
             // subType = child plan's execute explain (the driving scan)
