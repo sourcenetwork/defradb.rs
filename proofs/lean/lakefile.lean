@@ -368,3 +368,6 @@ lean_lib StrictAccessRule where
 
 @[default_target]
 lean_lib SeTruncatePrefix where
+
+@[default_target]
+lean_lib ReplicatorEmptyCollections where
