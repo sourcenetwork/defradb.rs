@@ -115,24 +115,27 @@ impl Planner {
         )?;
 
         // A secondary relation ID condition names the child's `_docID`, even when
-        // the relation object is also selected. Attach it to this existing join
-        // instead of wrapping the joined plan in another one.
-        let secondary_id_filter = select
-            .filter
-            .as_ref()
-            .and_then(|filter| {
-                filter
-                    .conditions()
-                    .get(&schema::CollectionVersion::relation_id_field_name(
-                        relation_field_name,
-                    ))
-            })
-            .map(|condition| {
-                Filter::from_conditions(serde_json::Map::from_iter([(
-                    "_docID".to_string(),
-                    condition.clone(),
-                )]))
-            });
+        // the relation object is also selected. A primary foreign-key condition
+        // remains a parent-scan filter. Attach only secondary conditions to this
+        // existing join instead of wrapping the joined plan in another one.
+        let secondary_id_filter = (!relation_field.is_primary).then_some(()).and_then(|()| {
+            select
+                .filter
+                .as_ref()
+                .and_then(|filter| {
+                    filter
+                        .conditions()
+                        .get(&schema::CollectionVersion::relation_id_field_name(
+                            relation_field_name,
+                        ))
+                })
+                .map(|condition| {
+                    Filter::from_conditions(serde_json::Map::from_iter([(
+                        "_docID".to_string(),
+                        condition.clone(),
+                    )]))
+                })
+        });
         let relation_conditions = secondary_id_filter.into_iter().fold(
             parent_relation_filter_for_child.clone(),
             |conditions, secondary_id| {
