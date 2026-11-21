@@ -332,6 +332,14 @@ impl RequestContext {
         self
     }
 
+    /// This context signing with `signing` and collecting the blocks it
+    /// commits into that signer's batch session.
+    #[must_use]
+    pub fn with_signing_session(self, signing: Option<SigningConfig>) -> Self {
+        let batch_session = signing.as_ref().map(|config| config.public_key_hex.clone());
+        self.with_signing(signing).with_batch_session(batch_session)
+    }
+
     /// The batch signing session the CIDs of the blocks this request commits
     /// are collected into (see [`crate::batch_signing`]), if it runs in one.
     pub fn batch_session(&self) -> Option<&str> {
@@ -511,6 +519,25 @@ mod tests {
             .signing()
             .is_some());
         assert!(signed.with_signing_override(None).signing().is_some());
+    }
+
+    #[test]
+    fn signing_session_sets_and_clears_the_batch_session() {
+        let signing = SigningConfig {
+            key_type: crate::signing::SigningKeyType::Ed25519,
+            private_key_bytes: vec![0xAB; 32],
+            public_key_bytes: Vec::new(),
+            public_key_hex: "public".to_string(),
+            remote_signer: None,
+            signing_authorization: None,
+        };
+        let signed = RequestContext::default().with_signing_session(Some(signing));
+        assert!(signed.signing().is_some());
+        assert_eq!(signed.batch_session(), Some("public"));
+
+        let unsigned = signed.with_signing_session(None);
+        assert!(unsigned.signing().is_none());
+        assert!(unsigned.batch_session().is_none());
     }
 
     #[test]

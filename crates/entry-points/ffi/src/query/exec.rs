@@ -214,8 +214,6 @@ async fn prepare(args: ExecArgs) -> Result<Prepared, DefraResult> {
         node_did.as_deref(),
         signing_enabled,
     );
-    let session_key = signing.as_ref().map(|s| s.public_key_hex.clone());
-
     // The caller acts in the request's context, so DB-layer NAC checks
     // resolve it; a NAC admin/owner can read all documents.
     let context = caller.present(
@@ -223,8 +221,7 @@ async fn prepare(args: ExecArgs) -> Result<Prepared, DefraResult> {
             .with_txn(target.txn_id())
             .with_identity(identity_str.clone())
             .with_dac_bypass(dac_bypass(node_ptr, identity_str.as_deref()).await)
-            .with_signing(signing)
-            .with_batch_session(session_key),
+            .with_signing_session(signing),
     );
 
     let variables = match vars_str {

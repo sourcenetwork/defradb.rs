@@ -124,6 +124,18 @@ RUNS=(
   "MC_ReplicaRegistration_Red_StaleDecision.cfg ReplicaRegistration.tla RED" # a decision remembered from before a revocation admits the revoked writer (INV_RevokedWriterDenied)
   "MC_ReplicaRegistration_Red_ArchiveOnDelete.cfg ReplicaRegistration.tla RED" # merging a delete archives the object on the provider (INV_RegisteredStays)
   "MC_ReplicaRegistration_Red_DeleteClears.cfg ReplicaRegistration.tla RED" # a local delete drops the creator's owed registration and replicas wait for ever (LIVE_RowMerges)
+  "MC_RemoteGenesisReader_Green.cfg RemoteGenesisReader.tla GREEN" # on a shared remote provider the reader a genesis names is owed by its creator with the registration, and a node merges only once its provider holds both
+  "MC_RemoteGenesisReader_Green_Live.cfg RemoteGenesisReader.tla GREEN" # the addressed node merges the genesis unless revoked, even across a crash of the creating node
+  "MC_RemoteGenesisReader_Red_Address.cfg RemoteGenesisReader.tla RED" # the creator grants every node (INV_OnlyGranted)
+  "MC_RemoteGenesisReader_Red_Ungated.cfg RemoteGenesisReader.tla RED" # a receiver merges without asking whether it may read (INV_OnlyGranted)
+  "MC_RemoteGenesisReader_Red_Staged.cfg RemoteGenesisReader.tla RED" # a grant still owed is counted as held (INV_SettledFirst)
+  "MC_RemoteGenesisReader_Red_Memo.cfg RemoteGenesisReader.tla RED" # a later frame merges on the genesis's earlier answer after the revocation (INV_RevokedStops)
+  "MC_RemoteGenesisReader_Red_Unregistered.cfg RemoteGenesisReader.tla RED" # an unregistered document is treated as public (INV_RegisteredFirst)
+  "MC_RemoteGenesisReader_Red_Separate.cfg RemoteGenesisReader.tla RED" # the grant is staged after the commit and a crash loses it (LIVE_AddressedMerges)
+  "MC_RemoteGenesisReader_Red_Counted.cfg RemoteGenesisReader.tla RED" # the grant counts against the bounds on ordinary owed changes and refuses a valid batch of creates (INV_ValidBatchCommits)
+  "MC_RemoteGenesisReader_Red_Admitted.cfg RemoteGenesisReader.tla RED" # the owed grant is added to its actor's admission count and the actor's own revocation is refused (INV_OrdinaryAdmitted)
+  "MC_RemoteGenesisReader_Red_Unbalanced.cfg RemoteGenesisReader.tla RED" # the grant is taken from a count it was never added to (INV_CountBalanced)
+  "MC_RemoteGenesisReader_Red_Order.cfg RemoteGenesisReader.tla RED" # the grant is sent before the registration and refused for good (LIVE_AddressedMerges)
   "MC_ParkedMerge_Green.cfg ParkedMerge.tla GREEN" # a refused replicated change is parked by document, never rejected for good, never merged before its history or without its signer's write, within the index bound
   "MC_ParkedMerge_Green_Live.cfg ParkedMerge.tla GREEN" # a parked change and its descendant merge once the signer holds write, and a change on another branch always merges
   "MC_ParkedMerge_Red_Quarantine.cfg ParkedMerge.tla RED" # a refused change is rejected for good (INV_NeverQuarantined)
@@ -669,6 +681,10 @@ RUNS=(
   "MC_PendingSubmission_Red_GivesUpEarly.cfg PendingSubmission.tla RED" # a failure that may pass ends the loop before its deadline
   "MC_PendingSubmission_Red_ForgetsOnTimeout.cfg PendingSubmission.tla RED" # the journal drops the request when the deadline passes
   "MC_PendingSubmission_Red_Recalled_Forgets.cfg PendingSubmission.tla RED" # with the journal emptied at a deadline, a later call has nothing to send again
+  "MC_ReceiptWait_Green.cfg ReceiptWait.tla GREEN" # a receipt is asked for at the verified head that holds it, and in the end without headers
+  "MC_ReceiptWait_Red_TimerOnly.cfg ReceiptWait.tla RED" # a wait that ends only on its timer sleeps past a verified receipt
+  "MC_ReceiptWait_Red_SeenAfterSend.cfg ReceiptWait.tla RED" # the height read after the send misses a header verified in between
+  "MC_ReceiptWait_Red_Unbounded.cfg ReceiptWait.tla RED" # a wait with no fallback never reads a receipt when no header comes
   "MC_AcpOutbox_Green.cfg AcpOutbox.tla GREEN" # a new document: owed registration and two owed changes never widen access, across crashes
   "MC_AcpOutbox_Green_Registered.cfg AcpOutbox.tla GREEN" # a registered document: deletes of tuples the provider holds deny from the commit on
   "MC_AcpOutbox_Green_Three.cfg AcpOutbox.tla GREEN" # three changes on one tuple in every order, with an actor the provider refuses
