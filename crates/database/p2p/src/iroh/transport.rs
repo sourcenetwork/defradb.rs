@@ -442,7 +442,7 @@ impl P2PTransport for IrohTransport {
     }
 
     async fn publish_raw(&self, topic: String, data: Vec<u8>) -> Result<MessageId> {
-        let limit = super::gossip::raw_origin::MAX_RAW_PAYLOAD;
+        let limit = super::MAX_RAW_PAYLOAD;
         if data.len() > limit {
             return Err(Error::GossipTooLarge {
                 size: data.len(),
@@ -456,7 +456,7 @@ impl P2PTransport for IrohTransport {
     }
 
     fn max_raw_publish(&self) -> Option<usize> {
-        Some(super::gossip::raw_origin::MAX_RAW_PAYLOAD)
+        Some(super::MAX_RAW_PAYLOAD)
     }
 
     async fn register_pubsub_rpc_topic(&self, topic: String) -> Result<()> {

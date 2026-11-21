@@ -14,16 +14,26 @@ impl<S: Store> crate::database::DB<S> {
         S: 'static,
     {
         let doc_ids = self.collect_doc_short_ids(collection).await?;
-        for chunk in doc_ids.chunks(CHUNK_SIZE) {
-            self.truncate_chunk(collection, chunk).await?;
+        let result: Result<usize> = async {
+            for chunk in doc_ids.chunks(CHUNK_SIZE) {
+                self.truncate_chunk(collection, chunk).await?;
+            }
+            self.truncate_deferred_indexes(collection).await?;
+            self.truncate_collection_metadata(
+                collection.collection_id(),
+                collection.resolved_root_id(),
+            )
+            .await?;
+            Ok(doc_ids.len())
         }
-        self.truncate_deferred_indexes(collection).await?;
-        self.truncate_collection_metadata(
-            collection.collection_id(),
-            collection.resolved_root_id(),
-        )
-        .await?;
-        Ok(doc_ids.len())
+        .await;
+        match result {
+            Ok(count) => Ok(count),
+            Err(error) if error.is_txn_retry_exhausted() => Err(Error::Other(
+                "collection truncate could not complete while writes continue".into(),
+            )),
+            Err(error) => Err(error),
+        }
     }
 
     /// Collect all doc short IDs for a collection using a read-only transaction.
