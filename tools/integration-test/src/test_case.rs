@@ -14,8 +14,6 @@ use crate::client_type::ClientType;
 use crate::export;
 use crate::nodes::{NodeSpec, TestNode};
 use crate::scenario::{Bindings, Failure};
-use crate::secondary_index::SecondaryIndex;
-
 /// What every action sees: the test's nodes, reached through its client type.
 #[derive(Clone, Default)]
 pub struct State {
@@ -369,11 +367,6 @@ impl TestCase {
         }
         trace_from_env();
         let actions = with_stub_embedder(&self.actions);
-        let actions = if crate::secondary_index::is_active() {
-            SecondaryIndex.apply(&actions)
-        } else {
-            actions
-        };
         for client_type in clients {
             let actions = client_type.apply(&actions);
             drop(testo::action::execute(State::default(), &actions));
