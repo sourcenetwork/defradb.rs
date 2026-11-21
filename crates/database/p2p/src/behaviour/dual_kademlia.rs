@@ -105,12 +105,6 @@ impl DefraKademlia {
 
         Self { network, inner }
     }
-
-    fn has_known_peers(&mut self) -> bool {
-        self.inner
-            .kbuckets()
-            .any(|bucket| bucket.iter().next().is_some())
-    }
 }
 
 // Deref is only for ergonomic access to kad methods; swarm dispatch uses the
