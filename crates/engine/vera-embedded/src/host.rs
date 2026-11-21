@@ -160,6 +160,9 @@ impl HostedNode {
         let directory = config.data_dir.clone();
         let mut settings = EmbeddedConfig::new(config.data_dir, genesis, config.listen);
         settings.rpc_listen = rpc_listen;
+        if let Some(pacing) = settings.pacing.as_mut() {
+            pacing.batch = Duration::ZERO;
+        }
         // The node runs no more worker or verification threads than the
         // network runtime runs, pinned or not.
         let threads = edge.threads().max(1);

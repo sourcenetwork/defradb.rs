@@ -29,6 +29,7 @@ use super::provider_commands::resolve_registered_or_passthrough_bearer_token;
 use super::provider_commands::{
     holds_registered_key, resolve_registered_or_passthrough_bearer_token_as,
 };
+use super::receipt_wait::MIN_FALLBACK;
 use super::request_digest;
 use super::signer::{admission, DelegationSigner, Secp256k1Signer};
 use super::transport::RpcTransport;
@@ -69,6 +70,8 @@ pub struct VeraRsProvider {
     trusted: ConsensusPublicKey,
     signer: Arc<dyn DelegationSigner>,
     sync_timeout: Duration,
+    /// Longest wait between two asks for a receipt with no new header.
+    receipt_fallback: Duration,
     light_client_observability: Arc<AtomicU64>,
     _light_client_observer: edge::Service,
     edge: edge::Edge,
@@ -313,6 +316,7 @@ impl VeraRsProvider {
         })
         .await?;
         let light_client_observability = Arc::new(AtomicU64::new(0));
+        let receipt_fallback = tuning.receipt_fallback.max(MIN_FALLBACK);
 
         let client = Arc::new(VeraRsClient::with_transport(rpc));
         let signer = actor.signer()?;
@@ -332,6 +336,7 @@ impl VeraRsProvider {
                 light_client: light_client.clone(),
                 trusted,
                 timeout: tuning.receipt_timeout,
+                fallback: receipt_fallback,
             },
             worker: worker.clone(),
             follow,
@@ -362,6 +367,7 @@ impl VeraRsProvider {
             trusted,
             signer,
             sync_timeout: tuning.receipt_timeout,
+            receipt_fallback,
             light_client_observability,
             _light_client_observer,
             edge: edge.clone(),
