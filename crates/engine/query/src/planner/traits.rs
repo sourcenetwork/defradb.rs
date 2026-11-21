@@ -126,6 +126,11 @@ pub trait PlanNode: MaybeSend {
         None
     }
 
+    /// Whether this scalar index is on a relation-ID field.
+    fn is_relation_id_index_scan(&self) -> bool {
+        false
+    }
+
     /// Generate an explanation of this node for EXPLAIN queries.
     ///
     /// Returns a JSON object in Go DefraDB format where the node kind is the key:

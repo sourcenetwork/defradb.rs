@@ -59,7 +59,9 @@ fn reconcile_indexes_preserves_documents_and_uses_completed_composite() {
     );
     let explain = node.execute(&format!("query @explain {filtered}")).await;
     assert!(!explain.has_errors(), "{:?}", explain.errors);
-    assert!(explain.data.unwrap().to_string().contains("node_session"));
+    let explained = explain.data.unwrap().to_string();
+    assert!(explained.contains("\"prefixes\""));
+    assert!(!explained.contains("indexName"));
     node.shutdown().await.unwrap();
 })
     .unwrap()
