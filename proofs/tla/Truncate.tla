@@ -28,7 +28,9 @@
 \* write that is later discarded, yet the delete is already durable. Outside a
 \* transaction the filter sees only what is committed.
 \*
-\* Who acts: the caller's request moving through the checks, then the delete.
+\* Who acts: the caller's request moving through the checks, then the chunked
+\* delete. A later chunk may exhaust its retry budget after earlier chunks
+\* committed; those documents stay removed and the request ends refused.
 \* Which documents the filter matches in committed state, and which it would
 \* match in the transaction's own view, is chosen up front, as is every check's
 \* answer, so the model explores every combination.
@@ -36,7 +38,8 @@
 \* What must never happen: a document removed for a caller without permission;
 \* a document removed from a chunk collection; a filtered truncate removing anything from a branchable collection; a
 \* filtered truncate removing a document that does not match in committed
-\* state; a filter that is not one removing anything; a view still showing rows
+\* state; a bounded retry losing committed partial progress; a filter that is
+\* not one removing anything; a view still showing rows
 \* after an unfiltered truncate.
 \*
 \* Code it models (crates/database/db/src/collection/ops/truncate/mod.rs):
@@ -51,12 +54,13 @@ EXTENDS Naturals, FiniteSets   \* numbers to compare, and Cardinality to count d
 
 CONSTANTS
   Docs,      \* the documents in the collection
-  Enforced   \* which checks and steps the database really runs (a subset of the six)
+  Enforced   \* which checks and steps the database really runs (a subset of the eight)
 
 \* At least two documents, so a filter can match some and not others.
 ASSUME Cardinality(Docs) >= 2
-\* Only the five named checks, and the view cache clear, can be enforced.
-ASSUME Enforced \subseteq {"nac", "chunk", "branchable", "txn", "shape", "viewcache"}
+\* Only the named checks, the view cache clear and the chunk retry guards can
+\* be enforced.
+ASSUME Enforced \subseteq {"nac", "chunk", "branchable", "txn", "shape", "viewcache", "retry", "progress"}
 
 VARIABLES
   permitted,       \* the caller holds the truncate permission
@@ -68,6 +72,7 @@ VARIABLES
   committedMatch,  \* the documents the filter matches in committed state
   txnMatch,        \* the documents it matches in the transaction's own view
   step,            \* "check", then "delete", then "done"
+  contention,      \* a later chunk meets a writer that conflicts with every retry
   removed,         \* the documents this request removed
   refused,         \* the request ended with an error
   isView,          \* the collection is a materialized view
@@ -75,7 +80,7 @@ VARIABLES
 
 \* Every variable, for saying a step leaves them all as they are.
 vars == <<permitted, chunks, branchable, filtered, inTxn, shapeOk,
-          committedMatch, txnMatch, step, removed, refused, isView, viewRows>>
+          committedMatch, txnMatch, step, contention, removed, refused, isView, viewRows>>
 
 \* Every variable holds a value of the shape it should.
 TypeOK ==
@@ -88,6 +93,7 @@ TypeOK ==
   /\ committedMatch \subseteq Docs
   /\ txnMatch \subseteq Docs
   /\ step \in {"check", "delete", "done"}
+  /\ contention \in BOOLEAN
   /\ removed \subseteq Docs
   /\ refused \in BOOLEAN
   /\ isView \in BOOLEAN
@@ -104,6 +110,7 @@ Init ==
   /\ committedMatch \in SUBSET Docs
   /\ txnMatch \in SUBSET Docs
   /\ step = "check"
+  /\ contention \in BOOLEAN
   /\ removed = {}
   /\ refused = FALSE
   /\ isView \in BOOLEAN
@@ -129,7 +136,7 @@ Check ==
        THEN /\ refused' = TRUE /\ step' = "done"
        ELSE /\ refused' = refused /\ step' = "delete"
   /\ UNCHANGED <<permitted, chunks, branchable, filtered, inTxn, shapeOk,
-                 committedMatch, txnMatch, removed, isView, viewRows>>
+                 committedMatch, txnMatch, contention, removed, isView, viewRows>>
 
 \* The documents the delete takes. Without a filter, all of them. A filter that
 \* is not one, let through, is read as no conditions and matches everything. A
@@ -141,19 +148,39 @@ Targets ==
   ELSE IF inTxn THEN txnMatch
   ELSE committedMatch
 
-\* The delete: durable at once, outside any transaction. An unfiltered delete
-\* also clears the view cache when that step runs; left out, the cache keeps
-\* every row it had (the bug a RED config plants).
+\* The chunked delete: durable at once, outside any transaction. Each step
+\* removes one still-selected document. Only after every chunk commits does an
+\* unfiltered delete clear the view cache; left out, the cache keeps every row
+\* it had (the bug a RED config plants).
 Delete ==
   /\ step = "delete"
-  /\ removed' = Targets
-  /\ step' = "done"
-  /\ viewRows' = IF ~filtered /\ "viewcache" \in Enforced THEN {} ELSE viewRows
+  /\ removed # Targets
+  /\ removed' = removed \cup {CHOOSE doc \in Targets \ removed : TRUE}
+  /\ step' = IF removed' = Targets THEN "done" ELSE "delete"
+  /\ viewRows' =
+       IF removed' = Targets /\ ~filtered /\ "viewcache" \in Enforced
+         THEN {}
+         ELSE viewRows
   /\ UNCHANGED <<permitted, chunks, branchable, filtered, inTxn, shapeOk,
-                 committedMatch, txnMatch, refused, isView>>
+                 committedMatch, txnMatch, contention, refused, isView>>
+
+\* A later chunk can exhaust its retry budget after earlier chunks committed.
+\* The committed chunks stay removed; the rest is refused. With "retry" left
+\* out, exhaustion may happen before any chunk commits; with "progress" left
+\* out, it may report no progress at all.
+Exhaust ==
+  /\ step = "delete"
+  /\ removed # Targets
+  /\ contention
+  /\ IF "retry" \in Enforced THEN removed # {} ELSE TRUE
+  /\ removed' = IF "progress" \in Enforced THEN removed ELSE {}
+  /\ refused' = TRUE
+  /\ step' = "done"
+  /\ UNCHANGED <<permitted, chunks, branchable, filtered, inTxn, shapeOk,
+                 committedMatch, txnMatch, contention, isView, viewRows>>
 
 \* Each step of a request is one of the two.
-Next == Check \/ Delete
+Next == Check \/ Delete \/ Exhaust
 
 \* A finished request stays finished.
 Done == step = "done" /\ UNCHANGED vars
@@ -175,6 +202,11 @@ INV_FilteredRemovesOnlyCommittedMatches == filtered => removed \subseteq committ
 
 \* A filter that is not one removes nothing.
 INV_BadFilterRemovesNothing == (filtered /\ ~shapeOk) => removed = {}
+
+\* A bounded chunk retry keeps the documents its earlier chunks committed.
+INV_RetryExhaustionKeepsProgress ==
+  (step = "done" /\ refused /\ ~Refuse /\ contention /\ "retry" \in Enforced) =>
+    removed # {}
 
 \* An unfiltered truncate that was allowed removes every document, in a
 \* transaction or not.
