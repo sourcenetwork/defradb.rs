@@ -89,6 +89,89 @@ theorem unsigned_grants_nothing (first : Bool) (reader : Option String) :
   -- `_ && false` is `false`, so the guard fails.
   simp [initialReader]
 
+-- A lowercase hexadecimal digit, as a provider actor's digest is written.
+def isLowerHex (c : Char) : Bool := c.isDigit || ('a' ≤ c && c ≤ 'f')
+
+/-- Whether `s` is a DID a node can be named by: a `did:key` identity, or a
+`did:opk` provider actor whose digest is 64 lowercase hexadecimal digits
+(`Did::new` in `crates/building-blocks/identity/src/did.rs`). -/
+def isDid (s : String) : Bool :=
+  -- A key identity, or a provider actor with a well-formed digest.
+  s.startsWith "did:key:" ||
+    (s.startsWith "did:opk:" && ((s.drop 8).length == 64 && (s.drop 8).all isLowerHex))
+
+/-- The wildcard is not a DID. -/
+theorem wildcard_is_not_a_did : isDid wildcard = false := by
+  -- Evaluate both prefix tests on "*".
+  decide
+
+/-- The reader a creator grants for its own genesis when its node's provider
+cannot join the create's transaction (a remote provider, such as Vera): the
+receivers share that provider and cannot grant themselves anything, so the
+creator stages the grant in the create's transaction, with its registration.
+`address` is the created document's addressed field (none when it is absent,
+mutable or not a string). -/
+def creatorReader (access : Access) (address : Option String) : Option String :=
+  -- Look at what the host asked for.
+  match access with
+  -- Nothing was asked: nobody.
+  | .off => none
+  -- A public collection: everyone.
+  | .public => some wildcard
+  -- An addressed collection: exactly the node the document names, when the
+  -- address is a DID; anything else, the wildcard included, names no node.
+  | .addressedBy =>
+    match address with
+    -- An address: that node, if it is spelled as a DID.
+    | some a => if isDid a then some a else none
+    -- No address: nobody.
+    | none => none
+
+/-- A collection the host did not opt in makes the creator grant nothing. -/
+theorem creator_off_grants_nothing (address : Option String) :
+    creatorReader .off address = none := by
+  -- The `off` branch is `none`.
+  rfl
+
+/-- An addressed grant by the creator names exactly the address, and so no
+other node. -/
+theorem creator_addressed_names_only_address (address : Option String) (r : String)
+    (h : creatorReader .addressedBy address = some r) : address = some r := by
+  -- Split on the address and on the DID test; the only `some` returned is
+  -- the address itself.
+  unfold creatorReader at h
+  split at h <;> (try split at h) <;> simp_all
+
+/-- An addressed collection never makes the creator grant everyone. -/
+theorem creator_addressed_never_grants_everyone (address : Option String) :
+    creatorReader .addressedBy address ≠ some wildcard := by
+  -- The only address returned is a DID, and the wildcard is not one.
+  intro h
+  have hd := creator_addressed_names_only_address address wildcard h
+  subst hd
+  simp [creatorReader, wildcard_is_not_a_did] at h
+
+/-- An address that is not a DID names nobody. -/
+theorem creator_non_did_grants_nothing (a : String) (h : isDid a = false) :
+    creatorReader .addressedBy (some a) = none := by
+  -- The DID test fails.
+  simp [creatorReader, h]
+
+/-- Without an address, an addressed collection stays private on the provider. -/
+theorem creator_without_address_grants_nothing :
+    creatorReader .addressedBy none = none := by
+  -- The address is the answer, and it is absent.
+  rfl
+
+/-- The creator grants exactly what the addressed node would grant itself
+when it registers the genesis on a provider of its own: on a shared provider
+the node the document names reads it as it would have locally. -/
+theorem creator_matches_addressed_receiver (access : Access) (a : String) (h : isDid a = true) :
+    creatorReader access (some a) = genesisReader access (some a) (some a) := by
+  -- Every access kind gives the same answer on both sides, the address being
+  -- a DID as the receiving node's own name is.
+  cases access <;> simp [creatorReader, genesisReader, h]
+
 -- The access kinds as the conformance test names them.
 def accessName : Access → String
   -- No access.
@@ -112,12 +195,31 @@ def cases : Json :=
       [("access", toJson (accessName access)), ("address", toJson address),
        ("receiver", toJson receiver), ("reader", toJson (genesisReader access address receiver))]
 
+/-- The executable cases for the creator's grant: every access kind against
+an address and no address. -/
+def creatorCases : Json :=
+  -- The two inputs, each over its interesting values.
+  let accesses := [Access.off, .public, .addressedBy]
+  let addresses : List (Option String) :=
+    [some "did:key:receiver", some wildcard, some "not a did",
+     some ("did:opk:" ++ String.mk (List.replicate 64 'a')),
+     some ("did:opk:" ++ String.mk (List.replicate 63 'a')),
+     some ("did:opk:" ++ String.mk (List.replicate 64 'A')), none]
+  -- Every combination, with the reader the model decides.
+  toJson <| accesses.flatMap fun access => addresses.map fun address =>
+    Json.mkObj
+      [("access", toJson (accessName access)), ("address", toJson address),
+       ("reader", toJson (creatorReader access address))]
+
 end EnrollmentGenesis
 
-/-- `lean --run EnrollmentGenesis.lean cases` prints the cases as JSON. -/
+/-- `lean --run EnrollmentGenesis.lean cases` prints the receiver's cases as
+JSON, `creator-cases` the creator's. -/
 def main (args : List String) : IO Unit := do
-  -- Only one command is defined.
+  -- Pick the command.
   if args == ["cases"] then
     IO.println EnrollmentGenesis.cases.compress
+  else if args == ["creator-cases"] then
+    IO.println EnrollmentGenesis.creatorCases.compress
   else
-    throw <| IO.userError "usage: EnrollmentGenesis cases"
+    throw <| IO.userError "usage: EnrollmentGenesis cases | creator-cases"

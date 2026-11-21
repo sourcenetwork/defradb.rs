@@ -172,6 +172,37 @@ impl MergeError {
 /// panicked) stays retryable: nothing of it was applied.
 impl From<workers::Error> for MergeError {
     fn from(error: workers::Error) -> Self {
-        MergeError::Storage(format!("the merge did not run: {error}"))
+        MergeError::Storage(error.report("merge").to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_shutdown_merge_reports_a_retry_without_pool_details() {
+        let error = MergeError::from(workers::Error::ShutDown);
+
+        assert_eq!(
+            error.to_string(),
+            "storage error: the node is shutting down; try again"
+        );
+        assert_eq!(error.disposition(), MergeErrorDisposition::Retryable);
+    }
+
+    #[test]
+    fn a_panicked_merge_reports_an_internal_error_without_task_details() {
+        let error = MergeError::from(workers::Error::Panicked {
+            task: "merge",
+            message: "secret".into(),
+        });
+
+        assert_eq!(
+            error.to_string(),
+            "storage error: the request failed on an internal error; see the node's log"
+        );
+        assert!(!error.to_string().contains("secret"));
+        assert_eq!(error.disposition(), MergeErrorDisposition::Retryable);
     }
 }

@@ -31,6 +31,10 @@ required-features = ["node"]
 name = "policy_ids"
 required-features = ["node"]
 
+[[test]]
+name = "receipt_wait"
+required-features = ["node"]
+
 [features]
 # Start and stop the node itself, on the network runtime's cores.
 node = ["dep:vera-node"]
