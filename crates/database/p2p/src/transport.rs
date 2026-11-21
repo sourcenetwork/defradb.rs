@@ -304,7 +304,13 @@ impl<ResponseToken> TransportEvent<ResponseToken> {
 
     /// Assign every transport event to the shared bounded scheduler.
     pub fn dispatch_class(&self) -> crate::sync::DispatchClass {
-        crate::sync::classify_p2p_event!(self, TransportEvent)
+        crate::sync::classify_p2p_event!(
+            self,
+            TransportEvent,
+            BlockSyncProgress,
+            BlockSyncComplete,
+            BlockSyncBlockReceived
+        )
     }
 }
 

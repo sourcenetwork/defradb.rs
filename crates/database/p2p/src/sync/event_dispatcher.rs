@@ -42,7 +42,13 @@ pub enum DispatchClass {
 /// adding a variant to either enum now fails to compile until its ownership
 /// class is chosen here.
 macro_rules! classify_p2p_event {
-    ($event:expr, $event_type:ident) => {
+    (
+        $event:expr,
+        $event_type:ident,
+        $block_sync_progress:ident,
+        $block_sync_complete:ident,
+        $block_sync_block_received:ident
+    ) => {
         match $event {
             $event_type::CarFetchRequest { .. } => $crate::sync::DispatchClass::Recovery,
 
@@ -59,9 +65,9 @@ macro_rules! classify_p2p_event {
 
             $event_type::PeerConnected(_)
             | $event_type::PeerDisconnected(_)
-            | $event_type::BlockSyncProgress { .. }
-            | $event_type::BlockSyncComplete { .. }
-            | $event_type::BlockSyncBlockReceived { .. }
+            | $event_type::$block_sync_progress { .. }
+            | $event_type::$block_sync_complete { .. }
+            | $event_type::$block_sync_block_received { .. }
             | $event_type::DocSyncReply { .. }
             | $event_type::BranchableSyncReply { .. }
             | $event_type::CarFetchResponse { .. }
