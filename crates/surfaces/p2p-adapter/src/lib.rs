@@ -417,13 +417,13 @@ mod resolve_remove_collections_tests {
 
 /// Convert a p2p `ReplicatorInfo` into the HTTP-facing `ReplicatorInfo`.
 pub(crate) fn to_http_replicator_info(info: p2p::ReplicatorInfo) -> ReplicatorInfo {
-    let address = info.addresses_str().first().map(|addr| addr.to_string());
+    let addresses = info.addresses_str().to_vec();
     let status = Some(info.status.into());
     let last_status_change = Some(info.last_status_change_go_string());
     ReplicatorInfo {
         id: Some(info.peer_id_str().to_string()),
         collections: info.collections,
-        address,
+        addresses,
         status,
         last_status_change,
         filters: info

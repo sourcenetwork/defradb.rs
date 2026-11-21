@@ -418,7 +418,7 @@ pub struct ReplicatorInfo {
     #[serde(rename = "CollectionIDs")]
     pub collections: Vec<String>,
     #[serde(rename = "Addresses")]
-    pub address: Option<String>,
+    pub addresses: Vec<String>,
     #[serde(rename = "Status")]
     pub status: Option<u8>,
     #[serde(rename = "LastStatusChange")]
