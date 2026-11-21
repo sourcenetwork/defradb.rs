@@ -15,7 +15,8 @@
 \* What must never happen: a read misses a node that was put and not lost in
 \* a crash (GetFinds); the cache holds more than its budget (CacheBounded); a
 \* node too big for the budget pushes the others out (HugeEvictsNothing); a
-\* published root names a node regolith does not hold (PublishedStored).
+\* published root names a node regolith does not hold (PublishedStored); a
+\* build finishes with a tree that misses a chunk whose put failed (BuildWhole).
 \*
 \* What this model trusts. A node is named by the hash of its bytes, so the
 \* node under a name never changes: a cached or pending copy is never stale,
@@ -29,7 +30,8 @@ CONSTANTS
   Evict,            \* the cache evicts once over budget
   SkipHuge,         \* a node larger than the budget is never cached
   KeepOnFail,       \* a failed write leaves the nodes pending
-  FlushFirst        \* a root is published only once nothing is pending
+  FlushFirst,       \* a root is published only once nothing is pending
+  RefuseAfterFail   \* a build whose put failed refuses to finish
 
 \* The nodes: a, b and c are one byte each, h is three bytes; the budget is two.
 Nodes == {"a", "b", "c", "h"}
@@ -50,20 +52,30 @@ VARIABLES
   published,  \* nodes published as a root
   found,      \* whether the last read found its node (TRUE before any read)
   dropped,    \* the nodes the last read's cache fill evicted
-  lastRead    \* the node the last read asked for ("none" before any read)
+  lastRead,   \* the node the last read asked for ("none" before any read)
+  lostRef,    \* a put in the running build failed, so the reference it was
+              \* to hand the level above is gone (`Builder::feed`)
+  buildFailed, \* the builder remembers that failure (`Builder::failed`)
+  finished    \* how the build ended: "no" (still running), "whole" or "short"
 
-vars == <<put, pending, stored, cache, published, found, dropped, lastRead>>
+\* The build's variables, which only the build steps and a crash change.
+buildVars == <<lostRef, buildFailed, finished>>
+
+vars == <<put, pending, stored, cache, published, found, dropped, lastRead, lostRef, buildFailed, finished>>
 
 \* Every variable holds what its comment says.
 TypeOK ==
   /\ put \subseteq Nodes /\ pending \subseteq Nodes /\ stored \subseteq Nodes
   /\ cache \subseteq Nodes /\ published \subseteq Nodes
   /\ found \in BOOLEAN /\ dropped \subseteq Nodes /\ lastRead \in Nodes \cup {"none"}
+  /\ lostRef \in BOOLEAN /\ buildFailed \in BOOLEAN /\ finished \in {"no", "whole", "short"}
 
 \* Nothing put, stored or cached yet.
 Init ==
   /\ put = {} /\ pending = {} /\ stored = {} /\ cache = {} /\ published = {}
   /\ found = TRUE /\ dropped = {} /\ lastRead = "none"
+  \* A build is running and nothing has failed in it.
+  /\ lostRef = FALSE /\ buildFailed = FALSE /\ finished = "no"
 
 \* The worker puts node n: it waits, pending (`ProllyNodes::put`).
 Put(n) ==
@@ -71,6 +83,7 @@ Put(n) ==
   /\ put' = put \cup {n}
   /\ pending' = pending \cup {n}
   /\ UNCHANGED <<stored, cache, published, found, dropped, lastRead>>
+  /\ UNCHANGED buildVars
 
 \* A flush's transaction commits: every pending node is stored, and only now
 \* is the pending set cleared (`ProllyNodes::flush`).
@@ -79,6 +92,7 @@ FlushCommits ==
   /\ stored' = stored \cup pending
   /\ pending' = {}
   /\ UNCHANGED <<put, cache, published, found, dropped, lastRead>>
+  /\ UNCHANGED buildVars
 
 \* A flush's transaction fails: nothing is stored. The nodes stay pending, so
 \* they can still be read and the next flush writes them.
@@ -87,6 +101,7 @@ FlushFails ==
   \* Without KeepOnFail the nodes taken for the write are dropped.
   /\ pending' = IF KeepOnFail THEN pending ELSE {}
   /\ UNCHANGED <<put, stored, cache, published, found, dropped, lastRead>>
+  /\ UNCHANGED buildVars
 
 \* The worker publishes node n as a root (`collapse` flushes first).
 Publish(n) ==
@@ -95,6 +110,7 @@ Publish(n) ==
   /\ FlushFirst => pending = {}
   /\ published' = published \cup {n}
   /\ UNCHANGED <<put, pending, stored, cache, found, dropped, lastRead>>
+  /\ UNCHANGED buildVars
 
 \* Where a read finds node n: the cache, the pending nodes, or regolith.
 Finds(n) == n \in cache \/ (ReadPending /\ n \in pending) \/ n \in stored
@@ -117,6 +133,7 @@ Read(n) ==
        THEN /\ cache' = cache /\ dropped' = {}
        ELSE \E S \in Fills(n) : /\ cache' = S /\ dropped' = cache \ S
   /\ UNCHANGED <<put, pending, stored, published>>
+  /\ UNCHANGED buildVars
 
 \* The process crashes: memory is lost, regolith is not. Nodes never stored
 \* were never published by a correct worker, so they are simply gone.
@@ -127,12 +144,34 @@ Crash ==
   /\ found' = TRUE
   /\ dropped' = {}
   /\ lastRead' = "none"
+  \* The builder was in memory too: the build starts over, nothing failed.
+  /\ lostRef' = FALSE /\ buildFailed' = FALSE /\ finished' = "no"
   /\ UNCHANGED <<stored, published>>
+
+\* A put inside the running build returns an error (in `ProllyNodes`, a put
+\* whose budget flush fails). The node may still be pending, but the
+\* reference `child` was to hand the level above is gone.
+BuildPutFails ==
+  /\ finished = "no"
+  /\ ~buildFailed
+  /\ lostRef' = TRUE
+  \* With RefuseAfterFail the builder remembers the failure.
+  /\ buildFailed' = RefuseAfterFail
+  /\ UNCHANGED <<finished, put, pending, stored, cache, published, found, dropped, lastRead>>
+
+\* The build finishes (`Builder::finish`). A builder that remembers a failure
+\* returns `BuildFailed` instead, so this step cannot run; otherwise the tree
+\* is whole only if no reference was lost.
+FinishBuild ==
+  /\ finished = "no"
+  /\ ~buildFailed
+  /\ finished' = IF lostRef THEN "short" ELSE "whole"
+  /\ UNCHANGED <<lostRef, buildFailed, put, pending, stored, cache, published, found, dropped, lastRead>>
 
 \* Any of the steps above, in any order.
 Next ==
   \/ \E n \in Nodes : Put(n) \/ Publish(n) \/ Read(n)
-  \/ FlushCommits \/ FlushFails \/ Crash
+  \/ FlushCommits \/ FlushFails \/ Crash \/ BuildPutFails \/ FinishBuild
 
 Spec == Init /\ [][Next]_vars
 
@@ -147,4 +186,7 @@ HugeEvictsNothing == (lastRead # "none" /\ Size(lastRead) > Budget) => dropped =
 
 \* Every published root is a node regolith holds, crash or not.
 PublishedStored == published \subseteq stored
+
+\* A finished build's tree holds every entry pushed: it never ends short.
+BuildWhole == finished # "short"
 ================================================================================
