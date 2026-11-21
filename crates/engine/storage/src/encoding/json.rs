@@ -64,8 +64,8 @@ pub fn encode_json_ascending(buf: Vec<u8>, leaf: &JsonLeafValue) -> Vec<u8> {
 /// Encode a JSON leaf value with path in descending order.
 ///
 /// Special sentinel values for range bounds:
-/// - PathMin: In descending order, this comes AFTER all values (inverted byte order)
-/// - PathMax: In descending order, this comes BEFORE all values (inverted byte order)
+/// - PathMax: the path terminator alone, before every value of that path
+/// - PathMin: the next separator byte and a descending null, after every value
 pub fn encode_json_descending(buf: Vec<u8>, leaf: &JsonLeafValue) -> Vec<u8> {
     let mut buf = buf;
     buf.push(JSON_MARKER);
@@ -78,15 +78,17 @@ pub fn encode_json_descending(buf: Vec<u8>, leaf: &JsonLeafValue) -> Vec<u8> {
     // Note: For descending, byte order is inverted, so PathMax becomes lower bound
     match &leaf.value {
         JsonScalarValue::PathMax => {
-            // PathMax: in descending, use inverted (PATH_END + 1) to sort before all values
-            buf.push(!ESCAPED_TERM);
-            buf.push(!(JSON_PATH_END + 1));
+            // PathMax ends at the separator, so it sorts before every value
+            // whose body continues after that separator.
+            buf.push(ESCAPED_TERM);
+            buf.push(JSON_PATH_END);
             buf
         }
         JsonScalarValue::PathMin => {
-            // PathMin: in descending, encode null (which becomes highest after inversion)
-            buf.push(!ESCAPED_TERM);
-            buf.push(!JSON_PATH_END);
+            // The next separator byte is above every normal value marker, and a
+            // descending null is above every normal value that shares it.
+            buf.push(ESCAPED_TERM);
+            buf.push(JSON_PATH_END + 1);
             encode_scalar_descending(buf, &JsonScalarValue::Null)
         }
         _ => {
@@ -221,11 +223,9 @@ pub fn decode_json_descending(buf: &[u8]) -> Result<(&[u8], JsonLeafValue)> {
             return Err(Error::Other("unexpected end of JSON path".into()));
         }
 
-        // The path stays ascending. Normal values use the ascending separator;
-        // sentinel bounds retain their descending ordering marker.
-        if (rest[0] == ESCAPED_TERM && rest[1] == JSON_PATH_END)
-            || (rest[0] == !ESCAPED_TERM && rest[1] == !JSON_PATH_END)
-        {
+        // The path stays ascending. Normal values and both sentinels use the
+        // ascending separator; PathMin uses the next separator byte.
+        if rest[0] == ESCAPED_TERM && (rest[1] == JSON_PATH_END || rest[1] == JSON_PATH_END + 1) {
             rest = &rest[2..];
             break;
         }
@@ -241,6 +241,16 @@ pub fn decode_json_descending(buf: &[u8]) -> Result<(&[u8], JsonLeafValue)> {
             path = path.append_property(&name);
             rest = remaining;
         }
+    }
+
+    if rest.is_empty() {
+        return Ok((rest, JsonLeafValue::new(path, JsonScalarValue::PathMax)));
+    }
+    if rest == [super::ENCODED_NULL_DESC] {
+        return Ok((
+            &rest[1..],
+            JsonLeafValue::new(path, JsonScalarValue::PathMin),
+        ));
     }
 
     let (rest, value) = decode_scalar_descending(rest)?;

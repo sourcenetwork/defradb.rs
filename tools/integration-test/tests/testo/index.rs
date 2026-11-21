@@ -14,6 +14,7 @@ mod get;
 mod json;
 mod json_array;
 mod json_composite;
+mod json_descending;
 mod json_unique;
 mod json_unique_array;
 mod list_actions;
