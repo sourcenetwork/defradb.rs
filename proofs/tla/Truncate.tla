@@ -29,14 +29,17 @@
 \* transaction the filter sees only what is committed.
 \*
 \* Who acts: the caller's request moving through the checks, then the delete.
-\* Which documents the filter matches in committed state, and which it would
-\* match in the transaction's own view, is chosen up front, as is every check's
-\* answer, so the model explores every combination.
+\* Which documents the filter matched on its first read, and which it would
+\* match in the transaction's own view, is chosen up front, as is every
+\* check's answer, so the model explores every combination. A filtered page
+\* may also conflict with a write that has since moved a matched document out;
+\* when it rereads, that document is no longer a target.
 \*
 \* What must never happen: a document removed for a caller without permission;
 \* a document removed from a chunk collection; a filtered truncate removing anything from a branchable collection; a
 \* filtered truncate removing a document that does not match in committed
-\* state; a filter that is not one removing anything; a view still showing rows
+\* state; a filtered page removing a document a concurrent write moved out
+\* without rereading; a filter that is not one removing anything; a view still showing rows
 \* after an unfiltered truncate.
 \*
 \* Code it models (crates/database/db/src/collection/ops/truncate/mod.rs):
@@ -51,12 +54,12 @@ EXTENDS Naturals, FiniteSets   \* numbers to compare, and Cardinality to count d
 
 CONSTANTS
   Docs,      \* the documents in the collection
-  Enforced   \* which checks and steps the database really runs (a subset of the six)
+  Enforced   \* which checks and steps the database really runs (a subset of the seven)
 
 \* At least two documents, so a filter can match some and not others.
 ASSUME Cardinality(Docs) >= 2
-\* Only the five named checks, and the view cache clear, can be enforced.
-ASSUME Enforced \subseteq {"nac", "chunk", "branchable", "txn", "shape", "viewcache"}
+\* Only the named checks, the view cache clear and the page reread can be enforced.
+ASSUME Enforced \subseteq {"nac", "chunk", "branchable", "txn", "shape", "viewcache", "reread"}
 
 VARIABLES
   permitted,       \* the caller holds the truncate permission
@@ -65,7 +68,8 @@ VARIABLES
   filtered,        \* the request carries a filter
   inTxn,           \* the request runs inside an explicit transaction
   shapeOk,         \* the filter is a filter
-  committedMatch,  \* the documents the filter matches in committed state
+  committedMatch,  \* the documents the filter matched on its first read
+  movedOut,        \* those a concurrent write moved out after that read
   txnMatch,        \* the documents it matches in the transaction's own view
   step,            \* "check", then "delete", then "done"
   removed,         \* the documents this request removed
@@ -75,7 +79,7 @@ VARIABLES
 
 \* Every variable, for saying a step leaves them all as they are.
 vars == <<permitted, chunks, branchable, filtered, inTxn, shapeOk,
-          committedMatch, txnMatch, step, removed, refused, isView, viewRows>>
+          committedMatch, movedOut, txnMatch, step, removed, refused, isView, viewRows>>
 
 \* Every variable holds a value of the shape it should.
 TypeOK ==
@@ -86,6 +90,7 @@ TypeOK ==
   /\ inTxn \in BOOLEAN
   /\ shapeOk \in BOOLEAN
   /\ committedMatch \subseteq Docs
+  /\ movedOut \subseteq Docs
   /\ txnMatch \subseteq Docs
   /\ step \in {"check", "delete", "done"}
   /\ removed \subseteq Docs
@@ -102,6 +107,7 @@ Init ==
   /\ inTxn \in BOOLEAN
   /\ shapeOk \in BOOLEAN
   /\ committedMatch \in SUBSET Docs
+  /\ movedOut \in SUBSET Docs
   /\ txnMatch \in SUBSET Docs
   /\ step = "check"
   /\ removed = {}
@@ -129,16 +135,18 @@ Check ==
        THEN /\ refused' = TRUE /\ step' = "done"
        ELSE /\ refused' = refused /\ step' = "delete"
   /\ UNCHANGED <<permitted, chunks, branchable, filtered, inTxn, shapeOk,
-                 committedMatch, txnMatch, removed, isView, viewRows>>
+                 committedMatch, movedOut, txnMatch, removed, isView, viewRows>>
 
 \* The documents the delete takes. Without a filter, all of them. A filter that
 \* is not one, let through, is read as no conditions and matches everything. A
 \* filter run inside a transaction, let through, matches on the transaction's
-\* own view. Otherwise the filter matches on what is committed.
+\* own view. Otherwise it takes the first read's matches, less any document a
+\* concurrent write moved out if the page rereads after its conflict.
 Targets ==
   IF ~filtered THEN Docs
   ELSE IF ~shapeOk THEN Docs
   ELSE IF inTxn THEN txnMatch
+  ELSE IF "reread" \in Enforced THEN committedMatch \ movedOut
   ELSE committedMatch
 
 \* The delete: durable at once, outside any transaction. An unfiltered delete
@@ -150,7 +158,7 @@ Delete ==
   /\ step' = "done"
   /\ viewRows' = IF ~filtered /\ "viewcache" \in Enforced THEN {} ELSE viewRows
   /\ UNCHANGED <<permitted, chunks, branchable, filtered, inTxn, shapeOk,
-                 committedMatch, txnMatch, refused, isView>>
+                 committedMatch, movedOut, txnMatch, refused, isView>>
 
 \* Each step of a request is one of the two.
 Next == Check \/ Delete
@@ -172,6 +180,11 @@ INV_FilteredNeverOnBranchable == (filtered /\ branchable) => removed = {}
 
 \* A filtered truncate removes only documents that match in committed state.
 INV_FilteredRemovesOnlyCommittedMatches == filtered => removed \subseteq committedMatch
+
+\* Outside a transaction, a page rereads after its conflict: a document moved
+\* out since its first read is not removed.
+INV_FilteredRemovesOnlyCurrentMatches ==
+  (filtered /\ ~inTxn) => removed \cap movedOut = {}
 
 \* A filter that is not one removes nothing.
 INV_BadFilterRemovesNothing == (filtered /\ ~shapeOk) => removed = {}

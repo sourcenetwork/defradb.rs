@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use db::{AutoCommitFetcher, AutoCommitMutator, TruncateError, DB};
@@ -7,6 +8,7 @@ use query::documents::Filter;
 use query::{DocFetcher, DocMutator};
 use schema::{CollectionVersion, FieldDescription, FieldKind, IndexDescription};
 use storage::corekv::Key;
+use storage::corekv::RetryAttemptFuture;
 use storage::keys::DatastoreSE;
 use storage::RegolithStore;
 
@@ -43,6 +45,122 @@ async fn create_user(mutator: &AutoCommitMutator<RegolithStore>, name: &str, age
         .unwrap();
     doc.set("age", NormalValue::Int(age)).unwrap();
     mutator.create("Users", doc).await.unwrap().doc_id
+}
+
+async fn set_age(db: &Arc<DB<RegolithStore>>, doc_id: &DocID, age: i64) {
+    let mut doc = Document::new(users_schema());
+    doc.set_id(doc_id.clone());
+    doc.set("age", NormalValue::Int(age)).unwrap();
+    AutoCommitMutator::new(Arc::clone(db))
+        .update("Users", doc, ["age".to_string()].into_iter().collect())
+        .await
+        .unwrap();
+}
+
+struct FilterMovingStore {
+    inner: Arc<RegolithStore>,
+    racer: Arc<DB<RegolithStore>>,
+    doc_id: DocID,
+    armed: Arc<AtomicBool>,
+    attempts: Arc<AtomicUsize>,
+}
+
+impl storage::corekv::private::Sealed for FilterMovingStore {}
+
+#[async_trait::async_trait]
+impl storage::corekv::Store for FilterMovingStore {
+    fn crdts(&self) -> &storage::Crdts {
+        self.inner.crdts()
+    }
+
+    async fn allocate(
+        &self,
+        key: &[u8],
+        count: u64,
+    ) -> storage::corekv::Result<std::ops::Range<u64>> {
+        self.inner.allocate(key, count).await
+    }
+
+    async fn new_txn(
+        &self,
+        readonly: bool,
+    ) -> storage::corekv::Result<Box<dyn storage::corekv::Txn>> {
+        self.inner.new_txn(readonly).await
+    }
+
+    async fn transact_retry(
+        &self,
+        options: storage::corekv::RetryOptions,
+        attempt: storage::corekv::RetryAttempt,
+    ) -> std::result::Result<storage::corekv::RetryAttemptValue, storage::corekv::RetryAttemptError>
+    {
+        let attempt = Box::new(FilterMovingAttempt {
+            inner: attempt,
+            racer: Arc::clone(&self.racer),
+            doc_id: self.doc_id.clone(),
+            armed: Arc::clone(&self.armed),
+            attempts: Arc::clone(&self.attempts),
+        });
+        self.inner.transact_retry(options, attempt).await
+    }
+
+    async fn close(&self) -> storage::corekv::Result<()> {
+        self.inner.close().await
+    }
+}
+
+struct FilterMovingAttempt {
+    inner: storage::corekv::RetryAttempt,
+    racer: Arc<DB<RegolithStore>>,
+    doc_id: DocID,
+    armed: Arc<AtomicBool>,
+    attempts: Arc<AtomicUsize>,
+}
+
+impl storage::corekv::RetryAttemptFn for FilterMovingAttempt {
+    fn run<'a>(&'a mut self, txn: &'a mut dyn storage::corekv::RetryTxn) -> RetryAttemptFuture<'a> {
+        Box::pin(async move {
+            self.attempts.fetch_add(1, Ordering::SeqCst);
+            let output = self.inner.run(txn).await?;
+            if self.armed.swap(false, Ordering::SeqCst) {
+                set_age(&self.racer, &self.doc_id, 31).await;
+            }
+            Ok(output)
+        })
+    }
+}
+
+#[test]
+fn a_conflicted_filtered_truncate_rereads_its_matches() {
+    workers::block_on(async {
+        let inner = Arc::new(RegolithStore::in_memory().unwrap());
+        let racer = Arc::new(DB::open((*inner).clone()).await.unwrap());
+        racer.create_collection(users_schema()).await.unwrap();
+        let alice = create_user(&AutoCommitMutator::new(Arc::clone(&racer)), "Alice", 30).await;
+        let armed = Arc::new(AtomicBool::new(true));
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let store = FilterMovingStore {
+            inner: Arc::clone(&inner),
+            racer: Arc::clone(&racer),
+            doc_id: alice,
+            armed: Arc::clone(&armed),
+            attempts: Arc::clone(&attempts),
+        };
+        let db = Arc::new(DB::open(store).await.unwrap());
+
+        db.truncate_collection_as(&RequestContext::ambient(), "Users", Some(&age_filter(30)))
+            .await
+            .unwrap();
+
+        assert!(
+            attempts.load(Ordering::SeqCst) >= 2,
+            "the first page conflicted and ran again"
+        );
+        let docs = AutoCommitFetcher::new(db).get_all("Users").await.unwrap();
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0].get("age"), Some(&NormalValue::Int(31)));
+    })
+    .unwrap()
 }
 
 #[test]
