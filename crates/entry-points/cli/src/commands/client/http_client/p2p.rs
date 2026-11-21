@@ -3,7 +3,7 @@
 use defra_p2p_adapter::{
     ExplicitReplayCapabilityInput, RemoteManageOp, RemoteManageQueryOp, ReplicationFilters,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use super::HttpClient;
 use crate::error::Result;
@@ -46,8 +46,14 @@ pub struct P2pReplicatorInfo {
     )]
     pub collections: Vec<String>,
 
-    /// Peer addresses
-    #[serde(rename = "Addresses", alias = "address", alias = "Address", default)]
+    /// Peer addresses. Older Rust responses use a singular string or null.
+    #[serde(
+        rename = "Addresses",
+        alias = "address",
+        alias = "Address",
+        default,
+        deserialize_with = "deserialize_addresses"
+    )]
     pub addresses: Vec<String>,
 
     /// Active=0, Inactive=1.
@@ -72,6 +78,25 @@ pub struct P2pReplicatorInfo {
         skip_serializing_if = "ReplicationFilters::is_empty"
     )]
     pub filters: ReplicationFilters,
+}
+
+/// Accept the current address array and the older singular string or null.
+fn deserialize_addresses<'de, D>(deserializer: D) -> std::result::Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::Null => Ok(Vec::new()),
+        serde_json::Value::String(address) => Ok(vec![address]),
+        serde_json::Value::Array(_) => {
+            serde_json::from_value(value).map_err(serde::de::Error::custom)
+        }
+        _ => Err(serde::de::Error::invalid_type(
+            serde::de::Unexpected::Other("address value"),
+            &"an address array, string or null",
+        )),
+    }
 }
 
 /// P2P replicator request (Go-compatible format).
@@ -249,6 +274,17 @@ mod tests {
             info.last_status_change.as_deref(),
             Some("2026-04-26T10:00:00Z")
         );
+    }
+
+    #[test]
+    fn replicator_info_accepts_singular_and_null_addresses() {
+        let singular = r#"{"id":"peer-1","collections":["Users"],"address":"/ip4/127.0.0.1/tcp/9000","status":0}"#;
+        let info: P2pReplicatorInfo = serde_json::from_str(singular).unwrap();
+        assert_eq!(info.addresses, vec!["/ip4/127.0.0.1/tcp/9000".to_string()]);
+
+        let null = r#"{"id":"peer-1","collections":["Users"],"address":null,"status":0}"#;
+        let info: P2pReplicatorInfo = serde_json::from_str(null).unwrap();
+        assert!(info.addresses.is_empty());
     }
 
     #[test]
