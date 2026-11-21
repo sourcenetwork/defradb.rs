@@ -312,7 +312,7 @@ impl<S: Store> DB<S> {
 
         let attempt = FinishIndexAttempt {
             collection: self.require_collection(&plan.collection_name)?,
-            index_name: plan.index_name.clone(),
+            plan: plan.clone(),
         };
         match self
             .store()
@@ -350,7 +350,7 @@ impl<S: Store> DB<S> {
 /// Publish the completed index against the same definition snapshot as its build.
 struct FinishIndexAttempt {
     collection: Collection,
-    index_name: String,
+    plan: BackfillPlan,
 }
 
 impl storage::corekv::RetryAttemptFn for FinishIndexAttempt {
@@ -371,13 +371,15 @@ impl storage::corekv::RetryAttemptFn for FinishIndexAttempt {
                     &self.collection,
                 )
                 .await?;
-                ensure_backfill_index_unchanged(&self.collection, &collection, &self.index_name)?;
+                ensure_backfill_index_unchanged(&self.plan, &collection)?;
                 let manager = IndexManager::from_collection(
                     collection.schema().resolved_root_id(),
                     collection.schema(),
                     collection.crdts(),
                 )?;
-                manager.build_index(&datastore, &self.index_name).await?;
+                manager
+                    .build_index(&datastore, &self.plan.index_name)
+                    .await?;
                 Ok(())
             }
             .await;
@@ -482,7 +484,7 @@ impl BackfillPage {
             &self.collection,
         )
         .await?;
-        ensure_backfill_index_unchanged(&self.collection, &collection, &self.plan.index_name)?;
+        ensure_backfill_index_unchanged(&self.plan, &collection)?;
         let versions =
             get_collections_by_collection_id(&systemstore, &self.plan.collection_id).await?;
         let history = build_collection_history(&versions, collection.version_id())
@@ -516,18 +518,12 @@ impl BackfillPage {
     }
 }
 
-fn ensure_backfill_index_unchanged(
-    expected: &Collection,
-    current: &Collection,
-    index_name: &str,
-) -> Result<()> {
-    let expected_index = expected
-        .get_index(index_name)
-        .ok_or_else(|| Error::Other(format!("index '{index_name}' disappeared during backfill")))?;
+fn ensure_backfill_index_unchanged(expected: &BackfillPlan, current: &Collection) -> Result<()> {
+    let index_name = &expected.index_name;
     let current_index = current
         .get_index(index_name)
-        .ok_or_else(|| Error::Other(format!("index '{index_name}' changed during backfill")))?;
-    if expected_index != current_index {
+        .ok_or_else(|| Error::Other(format!("index '{index_name}' disappeared during backfill")))?;
+    if current_index.id != expected.index_id {
         return Err(Error::Other(format!(
             "index '{index_name}' changed during backfill"
         )));
