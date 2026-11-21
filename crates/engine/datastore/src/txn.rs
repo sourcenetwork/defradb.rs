@@ -212,6 +212,11 @@ impl BasicTxn {
             .set_document_projector(projector);
     }
 
+    /// Whether scans opened from now validate their range at commit.
+    pub fn set_scans_validated(&self, validated: bool) {
+        self.shared_txn.set_scans_validated(validated);
+    }
+
     pub fn set_savepoint(&mut self) -> Result<()> {
         if self.state != TxnState::Active || self.readonly {
             return Err(Error::Storage(if self.readonly {
