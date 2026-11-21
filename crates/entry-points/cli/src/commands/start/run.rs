@@ -58,12 +58,12 @@ impl Node {
 
         // Start PG wire protocol server
         #[cfg(feature = "postgres")]
-        let pg_task: Option<edge::Service> = if let Some(server) = self.pg_server.take() {
+        let pg_task: Option<edge::Task<()>> = if let Some(server) = self.pg_server.take() {
             info!(
                 "Starting Postgres wire protocol server on {}",
                 server.address()
             );
-            Some(self.pg_scope.edge().spawn_service(async move {
+            Some(self.edge.spawn(async move {
                 if let Err(e) = server.run().await {
                     error!("PG server error: {}", e);
                 }
@@ -144,6 +144,9 @@ impl Node {
 
         if http_crashed {
             info!("Initiating shutdown due to HTTP server failure...");
+            if let Some(task) = pg_task {
+                task.abort();
+            }
         } else {
             info!("Shutting down DefraDB node...");
             // Only drain if we're shutting down normally (not due to crash)
@@ -162,12 +165,13 @@ impl Node {
                 }
             }
             #[cfg(feature = "postgres")]
-            if pg_task.is_some() {
+            if let Some(task) = pg_task {
                 info!("Stopping PG server...");
                 let drained = self.pg_scope.drain(PG_DRAIN).await;
                 if drained.is_complete() {
                     info!("PG server stopped");
                 } else {
+                    task.abort();
                     warn!(
                         remaining = drained.remaining,
                         timeout_secs = PG_DRAIN.as_secs(),
