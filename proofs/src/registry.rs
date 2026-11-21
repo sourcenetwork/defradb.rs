@@ -81,6 +81,19 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // `execute_as` signs a node's writes through the shared signed-query
+        // context while keeping its caller's identity and DAC bypass; a
+        // missing signer fails closed. Boundary, bound by the focused node
+        // signing test.
+        family: "Node identity and signing",
+        name: "NodeSigningChoice.execute_as_keeps_the_caller / execute_as_signs_as_the_caller / execute_as_unsigned_without_signing / execute_as_refuses_a_missing_signer",
+        axis: Lean,
+        anchor: "crates/entry-points/defra-node/src/lib.rs Node::execute_as; crates/entry-points/defra-node/src/signed_query/mod.rs execute_with_signing_context; crates/foundation/defra-core/src/request_context.rs RequestContext::with_signing_session",
+        model_ref: "NodeSigningChoice (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/entry-points/defra-node/tests/execute_as_signing.rs execute_as_signs_writes_and_keeps_the_caller_identity",
+    },
+    Property {
         // A node's identity and its signing are separate choices, as in Go:
         // an identity-only node runs each request as its caller and never
         // signs, and a node built without `with_identity_only` runs requests
