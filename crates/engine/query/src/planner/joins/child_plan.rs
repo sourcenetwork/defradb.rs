@@ -291,14 +291,19 @@ impl Planner {
                 )
             };
         let child_uses_index = child_index_result.is_some();
-        // A filter-only index can service the scan without ordering it. Only an
-        // index that orders the child's page may stop that page before a sort.
-        let child_scan_provides_order = combined_child_order.as_ref().is_some_and(|order| {
-            target_collection
-                .indexes
-                .iter()
-                .any(|index| can_be_ordered_by_index(order, index).0)
-        });
+        // A filter-only index can service the scan without ordering it. Only
+        // the selected index may stop the child's page before a sort; another
+        // index on the same collection cannot order a scan it is not serving.
+        let child_scan_provides_order = child_index_result
+            .as_ref()
+            .zip(combined_child_order.as_ref())
+            .is_some_and(|((params, _), order)| {
+                target_collection
+                    .indexes
+                    .iter()
+                    .find(|index| index.name == params.index_name)
+                    .is_some_and(|index| can_be_ordered_by_index(order, index).0)
+            });
         // Create the child scan plan with scan_mapping (includes FK fields for joins)
         let child_plan: Box<dyn PlanNode> = if let Some((params, _)) = child_index_result {
             let mut index_scan = IndexScanNode::new(
