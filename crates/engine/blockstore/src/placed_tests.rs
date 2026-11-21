@@ -39,3 +39,25 @@ fn a_placed_blockstore_reads_and_writes_on_the_pool() {
     );
     pool.shutdown_blocking().unwrap();
 }
+
+#[test]
+fn a_blockstore_call_after_shutdown_reports_the_caller_sentence_without_task_details() {
+    let pool = workers::Pool::start(storage::with_worker_io(workers::Config::unplaced(1))).unwrap();
+    let options = storage::RegolithStoreOptions::memory().placed_on(&pool);
+    let store =
+        Arc::new(storage::RegolithStore::open_with_options("regolith-memory", options).unwrap());
+    let blocks = DefraBlockstore::new(store, true).placed_on(Some(&pool));
+    let cid = Cid::new_v1(0x71, Code::Sha2_256.digest(b"block"));
+
+    pool.shutdown_blocking().unwrap();
+
+    let error = workers::block_on(async { blocks.get(&cid).await })
+        .unwrap()
+        .unwrap_err()
+        .to_string();
+
+    assert_eq!(
+        error,
+        "internal error: the node is shutting down; try again"
+    );
+}
