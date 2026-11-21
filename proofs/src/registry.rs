@@ -196,6 +196,21 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // The embedded node streams only headers of blocks that finalize
+        // after a subscription; a fresh deployment's first block finalized
+        // before it, and a lone validator proposes the next only at its
+        // heartbeat. The transport starts the stream with the newest
+        // finalized block, read after the subscription stands, and the light
+        // client checks it as it checks every header.
+        family: "vera.rs embedded transport",
+        name: "INV_OnlyFinalized / INV_Current / INV_SentHeadFresh: the light client takes only a header a finalized block certifies, once the stream is drained it stands on the newest fresh finalized block in its term without waiting for another, and the transport never sends a head too old to take",
+        axis: Tla,
+        anchor: "crates/engine/vera-embedded/src/acp.rs subscribe_headers, headers_after; crates/engine/vera-embedded/src/acp/head.rs finalized, header, recent; backbone:acp-light-client HeaderChain::start",
+        model_ref: "MC_FirstHeader_{Green,Red_NoHead,Red_ReadBeforeSubscribe,Red_SendStale,Red_DropLaterTerms,Red_Unverified}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/engine/vera-embedded/src/acp/tests.rs queued_headers_at_or_below_the_fetched_head_are_not_emitted, a_header_of_a_later_term_at_or_below_the_fetched_head_is_emitted; crates/engine/vera-embedded/tests/embedded_node.rs a_fresh_deployments_provider_starts_on_its_first_block; crates/entry-points/defra-node/tests/embedded_vera/first_start.rs a_fresh_deployments_first_start_takes_its_first_block",
+    },
+    Property {
         family: "vera.rs deployment terms",
         name: "missing_is_suffix / takeWhile_is_filter / scan_finds_missing / floor_covers_pruned: the submissions a takeover voided are exactly the journal's suffix from the first void one, found by asking newest first, and the newest pruned entry vouches for every older one",
         axis: Lean,
@@ -2698,6 +2713,15 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "JsonSubPathCut.leafOk_false_iff / newValidate_false_iff / newValidate_of_main / newRun_eq_mainRun",
         tiers: &[Contract],
         bound_by: "crates/engine/query/src/planner/joins/relation_paths_tests.rs sub_selection_on_json_field_is_go_validation_error, json_sub_path_filter_plans_without_index",
+    },
+    Property {
+        family: "Relation filter with no matching child",
+        name: "empty_cache_keeps_nothing / shortcut_same_rows / orphans_need_the_walk — a primary relation-filter join whose child cache is empty returns the rows of the full parent walk without reading a parent, and an exhaustive join, which also returns orphans, must not take that short cut",
+        axis: Lean,
+        anchor: "crates/engine/query/src/plan/type_join/type_join_one.rs TypeJoinOne::no_child_can_pass, TypeJoinOne::init, TypeJoinOne::next",
+        model_ref: "RelationFilterNoChild.empty_cache_keeps_nothing / shortcut_same_rows / orphans_need_the_walk",
+        tiers: &[Contract],
+        bound_by: "crates/engine/query/src/planner/joins/relation_filter_execution_tests.rs no_matching_child_reads_no_parent, no_matching_child_reads_no_parent_of_an_index_ordered_scan",
     },
     Property {
         family: "PQ distance four sums",

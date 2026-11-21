@@ -1,4 +1,4 @@
-use std::fs;
+use std::path::Path;
 use std::process::Command;
 
 fn main() {
@@ -87,12 +87,32 @@ fn main() {
     println!("cargo:rustc-env=DEFRA_NODE_RUSTC={}", rustc.trim());
 
     // Rebuild on git branch / index changes so version metadata tracks commits.
-    let git_head = "../../../.git/HEAD";
-    println!("cargo:rerun-if-changed={git_head}");
-    if let Ok(head_contents) = fs::read_to_string(git_head) {
-        if let Some(reference) = head_contents.strip_prefix("ref: ") {
-            println!("cargo:rerun-if-changed=../../../.git/{}", reference.trim());
+    // Resolved as in defra-version's build script: `--git-path` finds each
+    // file in a linked worktree, refs/heads is watched as a directory so a
+    // packed branch that moves is seen, and reftable covers that backend.
+    // `index` is watched too, for the dirty flag.
+    for entry in ["HEAD", "index", "refs/heads", "packed-refs", "reftable"] {
+        if let Some(path) = git(&["rev-parse", "--git-path", entry]) {
+            rerun_if_exists(&path);
         }
     }
-    println!("cargo:rerun-if-changed=../../../.git/index");
+    if let Some(dir) = git(&["rev-parse", "--git-common-dir"]) {
+        rerun_if_exists(&format!("{dir}/reftable"));
+    }
+}
+
+fn git(args: &[&str]) -> Option<String> {
+    Command::new("git")
+        .args(args)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+}
+
+/// A watched path that does not exist counts as changed on every build.
+fn rerun_if_exists(path: &str) {
+    if Path::new(path).exists() {
+        println!("cargo:rerun-if-changed={path}");
+    }
 }

@@ -1,5 +1,3 @@
-use std::process::Command;
-
 use integration_test::{DefraClient, TestCluster};
 use serde_json::{json, Value};
 
@@ -183,7 +181,7 @@ fn migration_config() -> String {
 }
 
 fn patch_with_migration(client: &DefraClient, url: &str, patch: &str, migration: &str) {
-    let output = Command::new(client.binary_path())
+    let output = integration_test::cli_command(client.binary_path())
         .arg("--url")
         .arg(url.strip_prefix("http://").unwrap_or(url))
         .args(["client", "collection", "patch", patch, migration])

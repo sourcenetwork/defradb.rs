@@ -235,6 +235,9 @@ lean_lib DocStoreTarget where
 lean_lib JsonSubPathCut where
 
 @[default_target]
+lean_lib RelationFilterNoChild where
+
+@[default_target]
 lean_lib CarClosureDepth where
 
 @[default_target]
