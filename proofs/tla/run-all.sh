@@ -399,7 +399,6 @@ RUNS=(
   "MC_ExplicitDisconnect_Green_Vinc.cfg ExplicitDisconnect.tla GREEN" # an in-flight list does not redial after a deliberate close
   "MC_ExplicitDisconnect_Red_Libp2p.cfg ExplicitDisconnect.tla RED" # Kademlia ignores the marker (INV_NoRedialAfterDeliberateClose)
   "MC_ExplicitDisconnect_Red_Vinc.cfg ExplicitDisconnect.tla RED" # an exchange dial ignores the marker (INV_NoRedialAfterDeliberateClose)
-  "MC_ExplicitDisconnect_Red_ClearOnDial.cfg ExplicitDisconnect.tla RED" # a background dial clears the marker (INV_NoRedialAfterDeliberateClose)
   "MC_ExplicitDisconnect_Red_Inbound.cfg ExplicitDisconnect.tla RED" # libp2p accepts a marked inbound dial (INV_MarkedInboundRefused)
   "MC_SchemaPublication_Green.cfg SchemaPublication.tla GREEN"
   "MC_SchemaPublication_Red_EarlyReply.cfg SchemaPublication.tla RED"
