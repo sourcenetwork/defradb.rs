@@ -47,6 +47,10 @@
 \*                                        jobs to the ledger, probe or not, so one
 \*                                        transient failure costs a peer that answers
 \*                                        again its live queue. [RED]
+\*   OfflineMode   = "KeepQueue"          - an offline park leaves the peer's queued
+\*                                        jobs in the backlog for reconnect. [GREEN]
+\*                 = "DropQueue"        - it discards them instead, losing live work
+\*                                        at the first offline probe. [RED]
 \*
 \* Every variable is state the code holds; the properties are stated over that state,
 \* as invariants or as properties of each step, and nothing is recorded only to state
@@ -91,7 +95,8 @@ CONSTANTS
   ReleaseMode,   \* "Release" | "Leak"
   HandleMode,    \* "FixedWorkers" | "RetainAll"
   FairnessMode,  \* "PerPeerCap" | "Unfair"
-  ParkMode       \* "ParkUnreachable" | "RetryUnreachable" | "DemoteEveryTimeout"
+  ParkMode,      \* "ParkUnreachable" | "RetryUnreachable" | "DemoteEveryTimeout"
+  OfflineMode    \* "KeepQueue" | "DropQueue"
 
 \* At least one peer is healthy, so the liveness promise is about someone.
 ASSUME Peers # {} /\ SlowPeers \subseteq Peers /\ SlowPeers # Peers
@@ -110,6 +115,7 @@ ASSUME ReleaseMode \in {"Release", "Leak"}
 ASSUME HandleMode \in {"FixedWorkers", "RetainAll"}
 ASSUME FairnessMode \in {"PerPeerCap", "Unfair"}
 ASSUME ParkMode \in {"ParkUnreachable", "RetryUnreachable", "DemoteEveryTimeout"}
+ASSUME OfflineMode \in {"KeepQueue", "DropQueue"}
 
 VARIABLES
   arrivals,    \* arrivals so far
@@ -285,14 +291,19 @@ Timeout(p) ==
   /\ UNCHANGED <<arrivals, sent, coalesced, rejected>>
 
 \* The transport already reports p offline. The current job is parked in the retry
-\* ledger without a send and without demoting p's queued jobs; those wait for the
-\* reconnect window. This is the offline branch of run_push_job, not a timeout.
+\* ledger without a send. KeepQueue leaves p's queued jobs in the backlog for the
+\* reconnect window; DropQueue loses them instead. This is the offline branch of
+\* run_push_job, not a timeout.
 OfflinePark(p) ==
   /\ JobEnds(p)
   /\ \E k \in {0, 1} : ProbeEnds(p, k)
-  /\ failed' = failed + 1
+  /\ IF OfflineMode = "KeepQueue"
+       THEN /\ failed' = failed + 1
+            /\ UNCHANGED backlog
+       ELSE /\ failed' = failed + 1 + backlog[p]
+            /\ backlog' = [backlog EXCEPT ![p] = 0]
   /\ unreachable' = unreachable \cup {p}
-  /\ UNCHANGED <<arrivals, backlog, sent, coalesced, rejected>>
+  /\ UNCHANGED <<arrivals, sent, coalesced, rejected>>
 
 \* An unreachable peer with nothing queued or running loses its parking state
 \* (retire_idle_cooldowns): its next job is an ordinary job again.
@@ -361,6 +372,11 @@ INV_PeerLeavesAWorker == \A p \in Peers : active[p] < Workers
 \* however many such peers there are. RetryUnreachable breaks it: two dead peers whose
 \* sends timed out take the freed workers straight back.
 INV_UnreachableLeaveAWorker == ProbeJobs < Workers
+
+\* An offline park is expected absence, not a reason to demote the peer's live
+\* queue. DropQueue breaks it at the first offline probe.
+ACT_OfflineParkKeepsQueue ==
+  [][\A p \in Peers : OfflinePark(p) => UNCHANGED backlog]_vars
 
 \* p's queued jobs leave the queue in this step without a worker taking one: they move
 \* to the retry ledger.

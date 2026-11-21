@@ -143,6 +143,66 @@ async fn an_offline_peer_parks_its_push_without_transport_failure() {
     backlog.close();
 }
 
+/// An offline probe parks without demoting the peer's queued jobs; they wait
+/// for the reconnect window instead of moving to the durable retry ledger.
+#[test]
+fn an_offline_probe_keeps_queued_jobs() {
+    edge::testing::paused(|edge| async move {
+        let backlog = PushBacklog::new(64, usize::MAX, 4, 8, edge.clone());
+        let transport = TestTransport::new(Vec::new());
+        let (context, _failures) = test_context(
+            transport.clone(),
+            Arc::clone(&backlog),
+            Duration::from_secs(1),
+        );
+        for seed in [b"1", b"2", b"3"] {
+            assert_eq!(
+                backlog.try_enqueue(job("offline", seed)).await,
+                EnqueueOutcome::Enqueued
+            );
+        }
+        let first = backlog.next_job().await.unwrap();
+        assert_eq!(run_push_job(&context, &first).await, JobCompletion::Parked);
+        backlog.job_done(&first, JobCompletion::Parked).await;
+        nuclei::time::advance(Duration::from_secs(60)).await;
+
+        let probe = backlog.next_job().await.unwrap();
+        assert_eq!(run_push_job(&context, &probe).await, JobCompletion::Parked);
+        backlog.job_done(&probe, JobCompletion::Parked).await;
+        assert_eq!(
+            backlog.snapshot().await.queued_items,
+            1,
+            "an offline probe must leave the peer's queued job in the backlog"
+        );
+        backlog.close();
+    })
+}
+
+/// A durable recorder that denies an offline push still fails the job; it is
+/// not counted as parked and does not park the peer.
+#[nuclei::test]
+async fn a_denied_offline_push_is_failed_not_parked() {
+    let backlog = PushBacklog::new(64, usize::MAX, 1, 1, edge::testing::edge());
+    let transport = TestTransport::new(Vec::new());
+    let (context, _failures) = test_context_with_admission(
+        transport.clone(),
+        backlog.clone(),
+        Duration::from_secs(1),
+        false,
+    );
+    backlog.try_enqueue(job("offline", b"offline")).await;
+    let active = backlog.next_job().await.unwrap();
+
+    assert_eq!(run_push_job(&context, &active).await, JobCompletion::Failed);
+    assert!(transport.sent().is_empty());
+    backlog.job_done(&active, JobCompletion::Failed).await;
+    let snapshot = backlog.snapshot().await;
+    assert_eq!(snapshot.head_hints_parked_offline, 0);
+    assert_eq!(snapshot.parked_total, 0);
+    assert_eq!(snapshot.failed_total, 1);
+    backlog.close();
+}
+
 fn job(peer: &str, cid_seed: &[u8]) -> PushJobSpec {
     PushJobSpec::new(
         PeerId::new(peer.to_string()),

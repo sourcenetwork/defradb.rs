@@ -403,6 +403,9 @@ enum Command {
         probe_of: Option<u64>,
         reply: oneshot::Sender<Vec<PushJobSpec>>,
     },
+    ParkPeerOffline {
+        peer_key: String,
+    },
     PeerAnswered {
         peer_key: String,
     },
@@ -520,6 +523,15 @@ impl PushBacklog {
             reply,
         });
         jobs.await.unwrap_or_default()
+    }
+
+    /// Park the peer of a job the transport already reported offline. Unlike
+    /// a failed probe, this keeps its queued jobs in the backlog for the
+    /// reconnect window.
+    pub(crate) fn park_peer_offline(&self, job: &PushJobSpec) {
+        self.commands.send(Command::ParkPeerOffline {
+            peer_key: job.peer_id.to_string(),
+        });
     }
 
     /// The peer replied to a send, so it is no longer treated as unreachable.
@@ -677,6 +689,9 @@ impl BacklogOwner {
             } => {
                 let jobs = self.park_peer_unreachable(peer_key, probe_of);
                 let _ = reply.send(jobs);
+            }
+            Command::ParkPeerOffline { peer_key } => {
+                self.park_peer(peer_key, None, true);
             }
             Command::PeerAnswered { peer_key } => self.peer_answered(&peer_key),
             Command::TakeQueuedForPeer { peer_key, reply } => {
