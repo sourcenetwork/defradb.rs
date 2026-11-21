@@ -19,7 +19,7 @@ fn on(node: &str) -> Common {
 }
 
 #[test]
-#[mantra_macros::req_test("go.net.replicator.push")]
+#[mantra_macros::req_test("defra.net.replicator.list")]
 fn a_replicator_with_no_collections_is_listed_after_a_restart() {
     TestCase {
         id: integration_test::scenario_id!(),
