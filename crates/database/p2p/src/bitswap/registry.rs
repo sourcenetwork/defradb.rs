@@ -29,7 +29,7 @@ pub struct ReplicatorRegistry {
 
 fn store_info(replicators: &mut Replicators, info: ReplicatorInfo) {
     let peer_id = info.peer_id_str().to_string();
-    if info.collections.is_empty() {
+    if info.collections.is_empty() && info.filters.is_empty() {
         replicators.remove(&peer_id);
     } else {
         replicators.insert(peer_id, info);
@@ -81,8 +81,14 @@ impl ReplicatorRegistry {
             return;
         }
         self.replicators.rcu(|current| {
+            let mut info = info.clone();
+            if let Some(existing) = current.get(info.peer_id_str()) {
+                info.addresses = existing.addresses.clone();
+                info.status = existing.status;
+                info.last_status_change = existing.last_status_change;
+            }
             let mut replicators = current.clone();
-            store_info(&mut replicators, info.clone());
+            store_info(&mut replicators, info);
             replicators
         });
     }
@@ -115,7 +121,7 @@ impl ReplicatorRegistry {
                         info.filters
                             .retain(|collection, _| collection != collection_id);
                     }
-                    info.collections.is_empty()
+                    info.collections.is_empty() && info.filters.is_empty()
                 }
             };
             if fully_removed {
@@ -131,7 +137,10 @@ impl ReplicatorRegistry {
         self.replicators
             .load()
             .get(peer_id)
-            .map(|info| info.collections.iter().any(|id| id == collection_id))
+            .map(|info| {
+                info.collections.iter().any(|id| id == collection_id)
+                    || info.filters.contains_key(collection_id)
+            })
             .unwrap_or(false)
     }
 
@@ -193,7 +202,7 @@ impl ReplicatorRegistry {
                 continue;
             }
 
-            if !info.collections.is_empty() {
+            if !info.collections.is_empty() || !info.filters.is_empty() {
                 replicators.insert(peer_id_str.to_string(), info.clone());
             }
             loaded += 1;
@@ -534,6 +543,77 @@ mod tests {
 
         assert!(!registry.is_any_replicator(&peer));
         assert!(registry.get_all_peer_ids().is_empty());
+    }
+
+    #[test]
+    fn restored_filtered_replicators_keep_their_filters() {
+        let registry = ReplicatorRegistry::new();
+        let peer = random_peer_id();
+        let mut filters = ReplicationFilters::new();
+        filters.insert(
+            "users".to_string(),
+            ReplicationFilter::new("agent_did", serde_json::json!("did:key:z6M")),
+        );
+
+        let infos = vec![ReplicatorInfo::from_raw_with_filters(
+            peer.clone(),
+            vec!["users".to_string()],
+            vec!["/ip4/127.0.0.1".to_string()],
+            filters.clone(),
+        )];
+        let (loaded, skipped) = registry.load_from_infos(&infos);
+        assert_eq!((loaded, skipped), (1, 0));
+
+        let restored = registry.get_replicator_info(&peer).unwrap();
+        assert_eq!(restored.filters, filters);
+        assert_eq!(restored.addresses, vec!["/ip4/127.0.0.1".to_string()]);
+        assert!(registry.is_replicator("users", &peer));
+        assert!(registry.is_filtered_replicator("users", &peer));
+    }
+
+    #[test]
+    fn a_filtered_only_replicator_record_is_retained() {
+        let registry = ReplicatorRegistry::new();
+        let peer = random_peer_id();
+        let mut filters = ReplicationFilters::new();
+        filters.insert(
+            "users".to_string(),
+            ReplicationFilter::new("agent_did", serde_json::json!("did:key:z6M")),
+        );
+
+        registry.set_replicator_info(ReplicatorInfo::from_raw_with_filters(
+            peer.clone(),
+            Vec::new(),
+            Vec::new(),
+            filters.clone(),
+        ));
+
+        assert!(registry.is_replicator("users", &peer));
+        assert!(registry.is_filtered_replicator("users", &peer));
+        assert_eq!(
+            registry.get_replicator_info(&peer).unwrap().filters,
+            filters
+        );
+    }
+
+    #[test]
+    fn replacing_replicator_info_keeps_runtime_state() {
+        let registry = ReplicatorRegistry::new();
+        let peer = random_peer_id();
+        registry.add_replicator("users", &peer);
+        let existing = registry.get_replicator_info(&peer).unwrap();
+
+        registry.set_replicator_info(ReplicatorInfo::from_raw(
+            peer.clone(),
+            vec!["posts".to_string()],
+            Vec::new(),
+        ));
+
+        let replaced = registry.get_replicator_info(&peer).unwrap();
+        assert_eq!(replaced.collections, vec!["posts".to_string()]);
+        assert_eq!(replaced.addresses, existing.addresses);
+        assert_eq!(replaced.status, existing.status);
+        assert_eq!(replaced.last_status_change, existing.last_status_change);
     }
 
     #[test]
