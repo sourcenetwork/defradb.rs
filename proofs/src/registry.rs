@@ -839,12 +839,12 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
-        name: "A live write whose marker a replay's newer generation supersedes reruns with a fresh generation, up to a fixed LIVE_MARKER_RERUNS bound independent of max_txn_retries: against one competing replay it is never reported undurable, and its head stays delivered or marked",
+        name: "A live write whose marker a replay's newer generation supersedes reruns with a fresh generation, up to a fixed LIVE_MARKER_RERUNS bound independent of max_txn_retries: against a competing replay and a second live writer it is never reported undurable, and its head stays delivered or marked, because a live ack completes the marker only at its own generation and only while its head is the whole frontier, on the retired branch too",
         axis: Tla,
-        anchor: "crates/engine/storage/src/stores/peerstore.rs register_scope_marker_at; crates/database/db/src/merge/push_docs.rs push_existing_docs_with_config_and_allowlist",
-        model_ref: "MC_LiveMarkerGeneration_{Green,Red_Superseded,Red_NoReruns}.cfg",
+        anchor: "crates/engine/storage/src/stores/peerstore.rs register_scope_marker_at; crates/database/db/src/merge/push_docs.rs push_existing_docs_with_config_and_allowlist; crates/database/p2p/src/sync/coordinator/push_worker.rs run_push_job, is_whole_frontier",
+        model_ref: "MC_LiveMarkerGeneration_{Green,Green_Covered,Red_Superseded,Red_NoReruns,Red_NoFence,Red_NoHeadFence}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/engine/storage/src/stores/peerstore_tests.rs live_registration_superseded_reruns_with_zero_txn_retries; crates/engine/storage/src/stores/peerstore_tests.rs live_registration_superseded_past_rerun_bound_is_counted_undurable",
+        bound_by: "crates/engine/storage/src/stores/peerstore_tests.rs live_registration_superseded_reruns_with_zero_txn_retries; crates/engine/storage/src/stores/peerstore_tests.rs live_registration_superseded_past_rerun_bound_is_counted_undurable; crates/database/p2p/src/sync/coordinator/push_worker_tests.rs retired_older_head_with_newer_generation_leaves_the_marker",
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
