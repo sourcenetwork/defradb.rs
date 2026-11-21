@@ -1,4 +1,4 @@
-//! Rebuild secondary indexes whose on-disk key encoding changed.
+//! Refuse secondary indexes whose on-disk key encoding changed.
 //!
 //! DateTime index keys were one varint of nanoseconds and are now a marker plus
 //! separate seconds and nanos varints, so entries written by an older build are
@@ -7,9 +7,8 @@
 //!
 //! Left alone, an upgraded store answers a range query from bounds in the new
 //! format against entries in the old one, so rows go missing, deletes orphan
-//! their entries, and a unique index stops rejecting duplicates. A stamped
-//! version and a rebuild on open is the only thing that keeps those queries
-//! honest.
+//! their entries, and a unique index stops rejecting duplicates. Before 1.0,
+//! refusing an older store keeps those incompatible entries invisible.
 
 use storage::corekv::Store;
 use tracing::{info, warn};
@@ -20,25 +19,37 @@ use crate::DB;
 /// Bumped whenever an index key encoding changes. Version 1 is the original
 /// single-varint DateTime encoding; version 2 splits seconds from nanos;
 /// version 3 gives each deferred index entry its position record, which the
-/// check at every open does for the deferred indexes alone.
-pub const CURRENT_INDEX_FORMAT: u32 = 3;
+/// check at every open does for the deferred indexes alone; version 4 tags the
+/// index keyspace so collection short IDs cannot collide with another family.
+pub const CURRENT_INDEX_FORMAT: u32 = 4;
 
 /// Systemstore key holding the format the indexes on disk were written with.
 pub use storage::keys::systemstore::INDEX_FORMAT_KEY;
 
 impl<S: Store> DB<S> {
-    /// Rebuild secondary indexes when the store predates the current encoding,
-    /// and, at every open, the indexes kept the other way on an earlier start.
+    /// Refuse secondary indexes written by an older encoding, and, at every
+    /// open, rebuild the indexes kept the other way on an earlier start.
     ///
-    /// A store with no stamp is either brand new, where the rebuild is a no-op
-    /// because there are no documents, or written before the stamp existed, in
-    /// which case it needs the rebuild. Both are handled by rebuilding and then
-    /// stamping.
+    /// A store with no stamp is either brand new, where it has no collections,
+    /// or written before the stamp existed. The latter is refused, rather than
+    /// guessed at, because its key layout is incompatible.
     pub(crate) async fn migrate_index_format(&self) -> Result<()>
     where
         S: 'static,
     {
         let stored = self.stored_index_format().await?;
+        if stored.is_some_and(|format| format != CURRENT_INDEX_FORMAT) {
+            return Err(Error::UnsupportedIndexFormat {
+                stored,
+                current: CURRENT_INDEX_FORMAT,
+            });
+        }
+        if stored.is_none() && !self.get_all_active_collections_internal()?.is_empty() {
+            return Err(Error::UnsupportedIndexFormat {
+                stored,
+                current: CURRENT_INDEX_FORMAT,
+            });
+        }
         if stored.is_some_and(|format| format >= 2) {
             self.rebuild_indexes_kept_the_other_way().await?;
         } else {

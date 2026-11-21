@@ -7,4 +7,5 @@ mod counter_migration;
 mod document_parts;
 mod format;
 mod helpers;
+mod keyspace;
 mod loader;
