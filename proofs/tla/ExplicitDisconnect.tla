@@ -25,7 +25,7 @@ EXTENDS Naturals, FiniteSets
 CONSTANTS
   Nodes,    \* the three peers in the network
   Half,     \* "Libp2p" or "Vinc": which redial path is under test
-  Bug       \* "None", "IgnoresSticky", or "ClearsSticky"
+  Bug       \* "None", "IgnoresSticky", "ClearsSticky", or "AcceptsInbound"
 
 NodePairs == Nodes \X Nodes
 
@@ -75,7 +75,7 @@ RemoteExplicitDial(a, b) ==
   /\ a # b
   /\ ~Linked(a, b)
   /\ Cardinality(remoteDials) < 1
-  /\ IF Half = "Libp2p" THEN ~Marked(b, a) ELSE TRUE
+  /\ IF Half = "Libp2p" /\ Bug # "AcceptsInbound" THEN ~Marked(b, a) ELSE TRUE
   /\ links' = links \cup {<<a, b>>, <<b, a>>}
   /\ markers' = markers
   /\ known' = [known EXCEPT ![a] = known[a] \cup {b}, ![b] = known[b] \cup {a}]
@@ -160,5 +160,11 @@ INV_NoRedialAfterDeliberateClose ==
 INV_RemoteExplicitDialAccepted ==
   \A dial \in remoteDials :
      Linked(dial[1], dial[2])
+
+\* Libp2p refuses an inbound explicit dial while the local marker stands. The
+\* bug configuration lets that dial through, so the refusal invariant fails.
+INV_MarkedInboundRefused ==
+  \A a, b \in Nodes :
+     Marked(b, a) => <<a, b>> \notin remoteDials
 
 ====
