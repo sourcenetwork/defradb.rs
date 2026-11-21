@@ -25,6 +25,7 @@ pub(crate) mod doc;
 pub mod document;
 pub mod documents;
 pub mod error;
+pub mod explain_asserter;
 pub mod json_convert;
 pub mod limits;
 pub mod mapper;
