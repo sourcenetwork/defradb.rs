@@ -207,35 +207,38 @@ pub fn build_collection_history(
     result
 }
 
-/// Return whether the targeted path from `source_version_id` crosses a transform.
+/// Return whether the targeted path from `source_version_id` crosses a transform and
+/// whether every transition runs one.
 ///
 /// The walk mirrors the lens pipeline's forward-first navigation and is used by reindexing to
 /// avoid stamping transform-less paths before an application has explicitly requested eager
 /// identity materialization.
-pub fn migration_path_has_transform(
+pub(crate) fn migration_path_transforms(
     history: &RapidHashMap<String, TargetedHistoryLink>,
     source_version_id: &str,
     target_version_id: &str,
-) -> bool {
+) -> (bool, bool) {
     if source_version_id == target_version_id {
-        return false;
+        return (false, false);
     }
 
     let mut current = source_version_id;
     let mut visited = rapidhash::RapidHashSet::new();
     visited.insert(current.to_string());
     let mut has_transform = false;
+    let mut fully_transformed = true;
 
     while current != target_version_id {
         let Some(link) = history.get(current) else {
-            return false;
+            return (false, false);
         };
 
         if let Some(next) = link.next.as_deref().filter(|next| !visited.contains(*next)) {
             let Some(next_link) = history.get(next) else {
-                return false;
+                return (false, false);
             };
             has_transform |= next_link.transform.is_some();
+            fully_transformed &= next_link.transform.is_some();
             current = next;
         } else if let Some(previous) = link
             .previous
@@ -243,15 +246,25 @@ pub fn migration_path_has_transform(
             .filter(|previous| !visited.contains(*previous))
         {
             has_transform |= link.transform.is_some();
+            fully_transformed &= link.transform.is_some();
             current = previous;
         } else {
-            return false;
+            return (false, false);
         }
 
         visited.insert(current.to_string());
     }
 
-    has_transform
+    (has_transform, fully_transformed)
+}
+
+/// Return whether the targeted path from `source_version_id` crosses a transform.
+pub fn migration_path_has_transform(
+    history: &RapidHashMap<String, TargetedHistoryLink>,
+    source_version_id: &str,
+    target_version_id: &str,
+) -> bool {
+    migration_path_transforms(history, source_version_id, target_version_id).0
 }
 
 /// Whether every transition on the targeted path from `source_version_id` to
@@ -261,44 +274,7 @@ pub fn migration_path_is_fully_transformed(
     source_version_id: &str,
     target_version_id: &str,
 ) -> bool {
-    if source_version_id == target_version_id {
-        return false;
-    }
-
-    let mut current = source_version_id;
-    let mut visited = rapidhash::RapidHashSet::new();
-    visited.insert(current.to_string());
-
-    while current != target_version_id {
-        let Some(link) = history.get(current) else {
-            return false;
-        };
-
-        if let Some(next) = link.next.as_deref().filter(|next| !visited.contains(*next)) {
-            let Some(next_link) = history.get(next) else {
-                return false;
-            };
-            if next_link.transform.is_none() {
-                return false;
-            }
-            current = next;
-        } else if let Some(previous) = link
-            .previous
-            .as_deref()
-            .filter(|previous| !visited.contains(*previous))
-        {
-            if link.transform.is_none() {
-                return false;
-            }
-            current = previous;
-        } else {
-            return false;
-        }
-
-        visited.insert(current.to_string());
-    }
-
-    true
+    migration_path_transforms(history, source_version_id, target_version_id).1
 }
 
 #[cfg(test)]

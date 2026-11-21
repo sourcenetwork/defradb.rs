@@ -178,7 +178,9 @@ pub(crate) async fn migrate_to_active(
         );
         return Ok(ToActive::Current);
     }
-    if !crate::definition::lens::migration_path_has_transform(history, version, target) {
+    let (has_transform, fully_transformed) =
+        crate::definition::lens::migration_path_transforms(history, version, target);
+    if !has_transform {
         return Ok(ToActive::Identity);
     }
     let lens_doc = crate::definition::lens::doc_to_lens_doc(doc).ok_or_else(|| {
@@ -195,11 +197,9 @@ pub(crate) async fn migrate_to_active(
     )
     .await
     .map_err(|error| Error::Lens(error.to_string()))?;
-    let complete =
-        crate::definition::lens::migration_path_is_fully_transformed(history, version, target);
     Ok(ToActive::Migrated {
         document: lens_doc_to_document(migrated, doc, collection),
-        complete,
+        complete: fully_transformed,
     })
 }
 
