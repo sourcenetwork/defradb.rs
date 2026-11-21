@@ -192,6 +192,8 @@ impl<S: Store> crate::database::DB<S> {
         }
         txn.commit().await?;
 
+        self.settle_owed_reindexes_after_commit().await;
+
         for deleted in &deleted {
             self.after_version_deleted(deleted)?;
         }
