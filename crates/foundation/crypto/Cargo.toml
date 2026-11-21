@@ -26,8 +26,8 @@ p256 = "0.14"              # secp256r1 (P-256) support
 
 # Additional crypto primitives
 x25519-dalek = { version = "3.0", features = ["static_secrets"] }     # X25519 ECDH for ECIES
-hkdf = "0.12"             # HKDF key derivation for ECIES
-hmac = "0.12"             # HMAC authentication for ECIES
+hkdf = "0.13"             # HKDF key derivation for ECIES
+hmac = "0.13"             # HMAC authentication for ECIES
 rand.workspace = true     # Random number generation for keys and nonces
 subtle = "2.5"            # Constant-time operations for key comparison
 zeroize = "1.8"           # Secure memory zeroing for sensitive data

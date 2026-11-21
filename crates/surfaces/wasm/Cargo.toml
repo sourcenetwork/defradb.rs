@@ -47,7 +47,7 @@ document = { path = "../../building-blocks/document" }
 defra-core = { path = "../../foundation/defra-core" }
 crypto = { path = "../../foundation/crypto" }
 zeroize = "1.8"
-hkdf = "0.12"
+hkdf = "0.13"
 
 # IPLD
 cid.workspace = true
