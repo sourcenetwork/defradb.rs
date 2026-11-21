@@ -51,7 +51,7 @@ fn a_synced_migration_transform_stays_attached_to_its_definition() {
                 collection: "Users".into(),
                 doc_map: Some(json!({ "name": "John" })),
                 common: Common {
-                    capture: captures([("doc0", "/docID")]),
+                    capture: captures([("doc0", "/docID"), ("head0", "/cid")]),
                     ..on("db0")
                 },
                 ..Default::default()
@@ -126,15 +126,6 @@ fn a_synced_migration_transform_stays_attached_to_its_definition() {
             WaitForPeersEvents {
                 start: true,
                 common: on("db1"),
-                ..Default::default()
-            }
-            .into(),
-            WaitForSync {
-                doc_id: Some(Text::reference("doc0")),
-                common: Common {
-                    capture: captures([("head0", "/cid")]),
-                    ..on("db0")
-                },
                 ..Default::default()
             }
             .into(),
