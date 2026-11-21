@@ -8,6 +8,7 @@ use crate::document::DocumentMapping;
 use crate::error::{QueryError, Result};
 use crate::mapper::{Filter, OrderBy, OrderCondition, Requestable, Select};
 use crate::plan::{IndexScanNode, ScanNode};
+use crate::planner::index_selection::can_be_ordered_by_index;
 use crate::planner::PlanNode;
 
 use super::super::builder::Planner;
@@ -24,6 +25,7 @@ pub(super) struct RelationChildPlan {
     pub nested_limit: Option<u64>,
     pub nested_offset: u64,
     pub nested_order_by: Option<OrderBy>,
+    pub child_scan_provides_order: bool,
     pub parent_order_for_child: Option<OrderBy>,
     pub parent_relation_filter_for_child: Option<Filter>,
     pub child_uses_index: bool,
@@ -268,20 +270,35 @@ impl Planner {
             None
         };
 
+        // A child limit/offset applies to each parent. Passing either into the
+        // scan bounds the whole relation once and shortchanges later parents,
+        // so TypeJoinMany applies the page while streaming per-parent scans.
         let child_index_result =
             if force_child_full_scan_for_relation_order || vector_route.is_some() {
                 None
             } else {
+                let (scan_limit, scan_offset) = if relation_field.kind.is_array() {
+                    (None, 0)
+                } else {
+                    (nested_limit, nested_offset)
+                };
                 self.try_select_child_index(
                     child_filter_for_index.as_ref(),
                     combined_child_order.as_ref(),
                     &target_collection,
-                    nested_limit,
-                    nested_offset,
+                    scan_limit,
+                    scan_offset,
                 )
             };
         let child_uses_index = child_index_result.is_some();
-
+        // A filter-only index can service the scan without ordering it. Only an
+        // index that orders the child's page may stop that page before a sort.
+        let child_scan_provides_order = combined_child_order.as_ref().is_some_and(|order| {
+            target_collection
+                .indexes
+                .iter()
+                .any(|index| can_be_ordered_by_index(order, index).0)
+        });
         // Create the child scan plan with scan_mapping (includes FK fields for joins)
         let child_plan: Box<dyn PlanNode> = if let Some((params, _)) = child_index_result {
             let mut index_scan = IndexScanNode::new(
@@ -463,6 +480,7 @@ impl Planner {
             nested_limit,
             nested_offset,
             nested_order_by,
+            child_scan_provides_order,
             parent_order_for_child,
             parent_relation_filter_for_child,
             child_uses_index,
