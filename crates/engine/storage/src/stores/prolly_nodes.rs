@@ -11,6 +11,11 @@
 //! tree flushes, and are then written in one `transact`. A read finds a
 //! pending node before it looks in regolith, and the pending set is cleared
 //! only after its transaction commits, so a node put is always readable.
+//!
+//! Nothing deletes a node yet: the `t` family only grows, by every edit's new
+//! nodes, until reclaiming the nodes no live root names lands with the wiring
+//! under #2977. `t` is a key family, not a [`Namespace`](crate::Namespace), so
+//! the namespace walks (dump, purge) do not see it either.
 
 use std::sync::Arc;
 
@@ -118,7 +123,7 @@ where
                 // Not written: the nodes stay pending, still readable, and
                 // the next flush writes them.
                 self.pending = Arc::unwrap_or_clone(writes);
-                Err(prolly::Error::Store(format!("{error:?}")))
+                Err(store_error(error.into_storage()))
             }
         }
     }

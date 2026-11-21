@@ -173,3 +173,87 @@ fn bench_build_and_get_at_a_size_that_misses_the_cache() {
     })
     .unwrap()
 }
+
+/// A regolith store whose first `transact_retry` fails with an I/O error.
+struct FailFirstWrite {
+    inner: Arc<RegolithStore>,
+    failed: std::sync::atomic::AtomicBool,
+}
+
+impl crate::corekv::private::Sealed for FailFirstWrite {}
+
+#[async_trait::async_trait]
+impl crate::corekv::Store for FailFirstWrite {
+    fn crdts(&self) -> &crdt::Crdts {
+        self.inner.crdts()
+    }
+
+    async fn allocate(
+        &self,
+        key: &[u8],
+        count: u64,
+    ) -> crate::corekv::Result<std::ops::Range<u64>> {
+        self.inner.allocate(key, count).await
+    }
+
+    async fn new_txn(&self, readonly: bool) -> crate::corekv::Result<Box<dyn crate::corekv::Txn>> {
+        self.inner.new_txn(readonly).await
+    }
+
+    async fn transact_retry(
+        &self,
+        options: crate::corekv::RetryOptions,
+        attempt: crate::corekv::RetryAttempt,
+    ) -> Result<crate::corekv::RetryAttemptValue, crate::corekv::RetryAttemptError> {
+        if !self.failed.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return Err(crate::corekv::RetryAttemptError::Storage(
+                crate::corekv::Error::Other("injected write failure".into()),
+            ));
+        }
+        self.inner.transact_retry(options, attempt).await
+    }
+
+    async fn close(&self) -> crate::corekv::Result<()> {
+        self.inner.close().await
+    }
+}
+
+#[test]
+fn a_failed_flush_keeps_its_nodes_pending_and_the_next_flush_writes_them() {
+    workers::block_on(async {
+        let regolith = Arc::new(RegolithStore::in_memory().unwrap());
+        let store = Arc::new(FailFirstWrite {
+            inner: Arc::clone(&regolith),
+            failed: std::sync::atomic::AtomicBool::new(false),
+        });
+        let mut nodes = ProllyNodes::new(store, engine_retry_options(5), usize::MAX);
+        let node = prolly::Node {
+            level: 0,
+            items: vec![Item {
+                key: b"k".to_vec(),
+                value: b"v".to_vec(),
+            }],
+        };
+        let hash = nodes.put(node.clone()).await.unwrap();
+        let pending = nodes.pending_bytes();
+        assert!(pending > 0);
+
+        let error = nodes.flush().await.unwrap_err();
+        assert!(
+            error.to_string().contains("injected write failure"),
+            "{error}"
+        );
+        assert_eq!(nodes.pending_bytes(), pending, "nothing was written");
+        assert_eq!(nodes.get(&hash).await.unwrap().as_deref(), Some(&node));
+
+        nodes.flush().await.unwrap();
+        assert_eq!(nodes.pending_bytes(), 0);
+        let txn = crate::corekv::Store::new_txn(&*regolith, true)
+            .await
+            .unwrap();
+        let stored = txn.get(&node_key(&hash)).await.unwrap();
+        txn.discard();
+        assert_eq!(stored.as_deref(), Some(node.encode().as_slice()));
+    })
+    .unwrap()
+}

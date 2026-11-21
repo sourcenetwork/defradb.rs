@@ -252,3 +252,57 @@ fn reading_entries_holds_one_node_per_level_and_reads_each_once() {
         assert_eq!(counting.reads.get(), store.len(), "every node read once");
     })
 }
+
+/// A store whose first `put` fails.
+struct FailFirstPut {
+    inner: MemStore,
+    failed: bool,
+}
+
+impl Store for FailFirstPut {
+    async fn get(&self, hash: &prolly::Hash) -> prolly::Result<Option<Arc<Node>>> {
+        self.inner.get(hash).await
+    }
+
+    async fn put(&mut self, node: Node) -> prolly::Result<prolly::Hash> {
+        if !self.failed {
+            self.failed = true;
+            return Err(prolly::Error::Store("injected".into()));
+        }
+        self.inner.put(node).await
+    }
+
+    async fn flush(&mut self) -> prolly::Result<()> {
+        self.inner.flush().await
+    }
+}
+
+#[test]
+fn a_build_refuses_to_finish_after_a_failed_put() {
+    run(async {
+        let mut store = FailFirstPut {
+            inner: MemStore::new(),
+            failed: false,
+        };
+        let mut builder = Builder::new(NonZeroU32::new(1).unwrap());
+        let mut n = 0;
+        let error = loop {
+            let (key, value) = entry(n);
+            n += 1;
+            if let Err(error) = builder.push(&mut store, key, value).await {
+                break error;
+            }
+        };
+        assert_eq!(error, prolly::Error::Store("injected".into()));
+        let (key, value) = entry(n);
+        assert_eq!(
+            builder.push(&mut store, key, value).await,
+            Err(prolly::Error::BuildFailed)
+        );
+        assert_eq!(
+            builder.finish(&mut store).await,
+            Err(prolly::Error::BuildFailed),
+            "a tree from this build would miss the chunk whose put failed"
+        );
+    })
+}

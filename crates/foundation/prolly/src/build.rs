@@ -23,6 +23,9 @@ pub struct Builder {
     target: u32,
     levels: Vec<Level>,
     last: Option<Item>,
+    /// A store call failed: the chunk it carried is gone, so every later call
+    /// is [`Error::BuildFailed`] rather than a tree missing those entries.
+    failed: bool,
 }
 
 /// One level being cut: its open chunk, and how many chunks it has closed.
@@ -38,15 +41,20 @@ impl Builder {
             target: target.get(),
             levels: Vec::new(),
             last: None,
+            failed: false,
         }
     }
 
     /// Adds `key`. A key equal to the last one replaces its value, so the last
-    /// value wins; a smaller key is [`Error::Unsorted`].
+    /// value wins; a smaller key is [`Error::Unsorted`]. After a store error,
+    /// this and [`finish`](Self::finish) return [`Error::BuildFailed`].
     pub async fn push<S>(&mut self, store: &mut S, key: Vec<u8>, value: Vec<u8>) -> Result<()>
     where
         S: Store,
     {
+        if self.failed {
+            return Err(Error::BuildFailed);
+        }
         match &mut self.last {
             Some(last) if last.key == key => {
                 last.value = value;
@@ -56,7 +64,9 @@ impl Builder {
             _ => {}
         }
         if let Some(previous) = self.last.replace(Item { key, value }) {
-            self.feed(store, 0, previous).await?;
+            let fed = self.feed(store, 0, previous).await;
+            self.failed = fed.is_err();
+            fed?;
         }
         Ok(())
     }
@@ -76,6 +86,9 @@ impl Builder {
     where
         S: Store,
     {
+        if self.failed {
+            return Err(Error::BuildFailed);
+        }
         let target = NonZeroU32::new(self.target).unwrap_or(NonZeroU32::MIN);
         if let Some(last) = self.last.take() {
             self.feed(store, 0, last).await?;

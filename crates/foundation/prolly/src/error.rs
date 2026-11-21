@@ -20,6 +20,10 @@ pub enum Error {
     /// Stored bytes are not exactly one node's encoding.
     #[error("prolly tree node bytes are not a node encoding")]
     BadEncoding,
+    /// A build whose store failed earlier: the chunk that failed is gone, so
+    /// finishing would give a tree missing entries. Start a new build.
+    #[error("prolly tree build failed earlier; start a new build")]
+    BuildFailed,
     /// The store behind the tree failed.
     #[error("prolly tree store: {0}")]
     Store(String),
