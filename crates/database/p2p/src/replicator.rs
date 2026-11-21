@@ -238,7 +238,7 @@ fn go_time_zero() -> DateTime<Utc> {
 /// Go distinguishes `nil` (emits `null`) from empty `[]string{}` (emits `[]`);
 /// Rust's `Vec<String>` collapses both into an empty Vec. On decode we accept
 /// either so Rust-side parsing is tolerant of both Go-side cases.
-fn null_as_empty_vec<'de, D>(d: D) -> Result<Vec<String>, D::Error>
+pub fn null_as_empty_vec<'de, D>(d: D) -> Result<Vec<String>, D::Error>
 where
     D: Deserializer<'de>,
 {
