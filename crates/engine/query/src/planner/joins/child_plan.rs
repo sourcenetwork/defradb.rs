@@ -293,6 +293,13 @@ impl Planner {
             if let Some(ref fetcher) = self.fetcher {
                 index_scan = index_scan.with_fetcher(fetcher.clone());
             }
+            if let Some(filter) = child_filter_for_index
+                .as_ref()
+                .cloned()
+                .or_else(|| agg_scan_filter.clone())
+            {
+                index_scan = index_scan.with_explain_filter(filter);
+            }
             if let Some(filter) = agg_scan_filter {
                 index_scan = index_scan.with_residual_filter(filter);
             }
@@ -384,6 +391,7 @@ impl Planner {
                         if let Some(ref fetcher) = self.fetcher {
                             index_scan = index_scan.with_fetcher(fetcher.clone());
                         }
+                        let index_scan = index_scan.with_explain_filter(rel_filter.clone());
                         Some(Box::new(index_scan) as Box<dyn PlanNode>)
                     } else {
                         None // No index for filter, use in-memory evaluation
