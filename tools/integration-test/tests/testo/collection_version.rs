@@ -22,6 +22,7 @@ mod group;
 mod input_type;
 mod migrations {
     mod add_lens;
+    mod identity_settlement;
     mod query {
         mod simple;
         mod with_collection_branch;
