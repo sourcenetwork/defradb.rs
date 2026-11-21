@@ -269,6 +269,21 @@ mod tests {
     }
 
     #[test]
+    fn test_build_targeted_history_keeps_every_transform_on_the_path() {
+        let history = create_linear_history();
+        let targeted = build_targeted_history(&history, "v3").unwrap();
+
+        assert_eq!(
+            targeted.get("v2").unwrap().transform,
+            Some("transform_v1_v2".to_string())
+        );
+        assert_eq!(
+            targeted.get("v3").unwrap().transform,
+            Some("transform_v2_v3".to_string())
+        );
+    }
+
+    #[test]
     fn test_build_targeted_history_unknown_target() {
         let history = create_linear_history();
         let targeted = build_targeted_history(&history, "v_unknown");

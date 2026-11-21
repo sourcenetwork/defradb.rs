@@ -148,8 +148,10 @@ pub(crate) enum ToActive {
     /// Stored with no version, or at one whose path to the active version
     /// runs no transform: its values stand, only its version would move.
     Identity,
-    /// The document as the transforms on its path make it.
-    Migrated(Document),
+    /// The document as the transforms on its path make it. `complete` is
+    /// false when the path ends in transform-less transitions; such a read may
+    /// index the result, but must not stamp it as the active version.
+    Migrated { document: Document, complete: bool },
 }
 
 /// Reads `doc` at `collection`'s active version, through the transforms
@@ -176,7 +178,9 @@ pub(crate) async fn migrate_to_active(
         );
         return Ok(ToActive::Current);
     }
-    if !crate::definition::lens::migration_path_has_transform(history, version, target) {
+    let (has_transform, fully_transformed) =
+        crate::definition::lens::migration_path_transforms(history, version, target);
+    if !has_transform {
         return Ok(ToActive::Identity);
     }
     let lens_doc = crate::definition::lens::doc_to_lens_doc(doc).ok_or_else(|| {
@@ -193,9 +197,10 @@ pub(crate) async fn migrate_to_active(
     )
     .await
     .map_err(|error| Error::Lens(error.to_string()))?;
-    Ok(ToActive::Migrated(lens_doc_to_document(
-        migrated, doc, collection,
-    )))
+    Ok(ToActive::Migrated {
+        document: lens_doc_to_document(migrated, doc, collection),
+        complete: fully_transformed,
+    })
 }
 
 /// Persist a lensed document directly to the datastore without creating CRDT commits.
