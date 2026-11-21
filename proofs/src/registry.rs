@@ -81,6 +81,19 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // `execute_as` signs a node's writes through the shared signed-query
+        // context while keeping its caller's identity and DAC bypass; a
+        // missing signer fails closed. Boundary, bound by the focused node
+        // signing test.
+        family: "Node identity and signing",
+        name: "NodeSigningChoice.execute_as_keeps_the_caller / execute_as_signs_as_the_caller / execute_as_unsigned_without_signing / execute_as_refuses_a_missing_signer",
+        axis: Lean,
+        anchor: "crates/entry-points/defra-node/src/lib.rs Node::execute_as; crates/entry-points/defra-node/src/signed_query/mod.rs execute_with_signing_context; crates/foundation/defra-core/src/request_context.rs RequestContext::with_signing_session",
+        model_ref: "NodeSigningChoice (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/entry-points/defra-node/tests/execute_as_signing.rs execute_as_signs_writes_and_keeps_the_caller_identity",
+    },
+    Property {
         // A node's identity and its signing are separate choices, as in Go:
         // an identity-only node runs each request as its caller and never
         // signs, and a node built without `with_identity_only` runs requests
@@ -272,6 +285,15 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "MC_ReplicaRegistration_{Green,Green_Live,Red_RegisterOwn,Red_RegisterAfterMerge,Red_RejectWhileOwed,Red_GrantsSeparate,Red_AdoptDrops,Red_NoAdoptOnArrival,Red_OwnedDenies,Red_StaleDecision,Red_ArchiveOnDelete,Red_DeleteClears}.cfg",
         tiers: &[Boundary, Contract],
         bound_by: "crates/database/db/tests/merge/replica_registration.rs a_foreign_creators_row_merges_once_the_receiver_registers_it_and_its_changes_follow, the_creators_update_while_the_unit_is_owed_is_put_back_and_then_merges, another_signers_change_waits_while_the_receivers_registration_is_owed, a_same_deployment_creators_row_is_never_registered_by_the_receiver, an_unlisted_collection_waits_for_a_registration_as_before, an_update_reaching_the_receiver_before_its_genesis_registers_through_the_genesis, a_revoked_writers_later_update_is_parked, a_second_receiver_waits_for_the_owners_grants_and_never_refuses_the_creator, a_receiver_that_sees_the_genesis_after_another_registered_it_waits_for_the_owners_grant, a_local_provider_registers_the_genesis_signer_as_before; crates/database/db/tests/access/external_owed.rs a_document_deleted_before_its_registration_settles_is_still_registered",
+    },
+    Property {
+        family: "Verified client graph transaction",
+        name: "INV_OnlyGranted / INV_SettledFirst / INV_RevokedStops / INV_RegisteredFirst / INV_ValidBatchCommits / INV_OrdinaryAdmitted / INV_CountBalanced / LIVE_AddressedMerges: on a remote provider the reader a created document's genesis asks for is owed by its creator from the create's own transaction behind the document's registration and counted with it, so no batch its registrations allow is refused and it takes no ordinary change's place in an admission count, and a node of the deployment merges the document only once its provider holds both, only if it is named, and nothing more of it once it has seen the reader revoked",
+        axis: Tla,
+        anchor: "crates/database/db/src/write/genesis_reader.rs stage_genesis_reader; crates/engine/acp/src/outbox/staging.rs TransactionOutbox::stage_with_registration; crates/engine/acp/src/outbox/changes.rs OwedChanges::stage_with_registration; crates/engine/acp/src/outbox/ops.rs account; crates/database/db/src/write/autocommit/helpers.rs register_created_doc; crates/engine/acp/src/external/settle.rs register_first; crates/database/db/src/merge/acp_merge_handler.rs AcpCompositeMergeHook::on_protected_composite, AcpCompositeMergeHook::node_reads",
+        model_ref: "MC_RemoteGenesisReader_{Green,Green_Live,Red_Address,Red_Ungated,Red_Staged,Red_Memo,Red_Unregistered,Red_Separate,Red_Order,Red_Counted,Red_Admitted,Red_Unbalanced}.cfg",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/database/db/tests/access/external_genesis_reader.rs an_addressed_create_owes_its_reader_and_the_provider_takes_it_after_the_registration, a_public_create_owes_everyone_as_its_reader, a_mutable_address_or_a_collection_not_opted_in_owes_no_reader, a_batch_past_the_transactions_change_bound_owes_every_reader_and_takes_another_grant, a_batch_past_the_actors_unsettled_bound_owes_every_reader, owed_readers_leave_their_actor_room_to_revoke, owed_readers_take_nothing_of_the_nodes_bound_and_settle_without_a_trace; crates/entry-points/defra-node/tests/embedded_vera_replication/addressed.rs a_note_addressed_to_a_node_of_the_home_reaches_that_node_only",
     },
     Property {
         family: "Verified client graph transaction",
@@ -489,12 +511,12 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Transactional document relationships",
-        name: "genesisReader / addressed_names_only_receiver / replay_keeps_revocation",
+        name: "genesisReader / addressed_names_only_receiver / replay_keeps_revocation / creatorReader / creator_addressed_names_only_address / creator_matches_addressed_receiver",
         axis: Lean,
-        anchor: "crates/database/db/src/merge/merge_handler/genesis_access.rs genesis_reader",
+        anchor: "crates/database/db/src/merge/merge_handler/genesis_access.rs genesis_reader, creator_reader",
         model_ref: "EnrollmentGenesis (lake build)",
         tiers: &[Boundary, Contract],
-        bound_by: "crates/database/db/tests/merge/genesis_access.rs genesis_reader_matches_executed_lean_model, only_an_immutable_address_naming_this_node_selects_it",
+        bound_by: "crates/database/db/tests/merge/genesis_access.rs genesis_reader_matches_executed_lean_model, only_an_immutable_address_naming_this_node_selects_it, creator_reader_matches_executed_lean_model, a_creator_grants_exactly_the_address_its_document_names",
     },
     Property {
         family: "Transactional document relationships",
