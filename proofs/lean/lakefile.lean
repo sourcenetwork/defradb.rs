@@ -365,3 +365,6 @@ lean_lib RemoteOwnerAnswer where
 
 @[default_target]
 lean_lib StrictAccessRule where
+
+@[default_target]
+lean_lib ReplicatorEmptyCollections where

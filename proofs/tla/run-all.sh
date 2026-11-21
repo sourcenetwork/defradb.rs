@@ -768,6 +768,10 @@ RUNS=(
   "MC_ReplicationAckScope_Green.cfg ReplicationAckScope.tla GREEN" # push and read pick one ack scope: an acknowledged document reads acknowledged, a never-pushed one never does
   "MC_ReplicationAckScope_Red_MainRule.cfg ReplicationAckScope.tla RED" # main before the fix: collection scope for a filtered replicator, its acks never read (INV_AckedReadsAcked)
   "MC_ReplicationAckScope_Red_PushToFiltered.cfg ReplicationAckScope.tla RED" # collection heads pushed to a filtered replicator: it gets unmatched documents (INV_FilterRespected)
+  "MC_ReplicatorEmptyCollections_Green.cfg ReplicatorEmptyCollections.tla GREEN" # a replicator added with no collections is listed, restored, and pushed nothing (#2702)
+  "MC_ReplicatorEmptyCollections_Red_DropOnStore.cfg ReplicatorEmptyCollections.tla RED" # main before #2702: store_info drops the empty record, never listed (INV_ListedAsAdded)
+  "MC_ReplicatorEmptyCollections_Red_DropOnLoad.cfg ReplicatorEmptyCollections.tla RED" # load_from_infos skips the empty row, gone after a restart (INV_ListedAsAdded)
+  "MC_ReplicatorEmptyCollections_Red_EmptyMeansAll.cfg ReplicatorEmptyCollections.tla RED" # an empty list read as every collection: pushed every write (INV_NoPushOutsideCollections)
   "MC_Capability_Green.cfg         MC_Capability_Common.tla   GREEN" # capability: only legit tokens authorized
   "MC_Capability_Red_Forge.cfg     MC_Capability_Common.tla   RED"   # capability: forged token accepted (INV_OnlyLegitAccepted)
   "MC_Capability_Red_Ttl.cfg       MC_Capability_Common.tla   RED"   # capability: over-cap TTL accepted (INV_TtlCapped)

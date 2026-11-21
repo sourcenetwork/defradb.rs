@@ -10,8 +10,6 @@ testo collection_version::introspection_golden::introspection_matches_golden_rel
 testo collection_version::introspection_golden::introspection_matches_golden_related_many #2649
 testo acp::dac::delete_with_index::acp_dac_delete_doc_by_id_with_reader_only_access_does_not_orphan_index #2708
 testo signature::txn_acp::an_anonymous_caller_cannot_verify_a_block_the_txn_created #2704
-testo acp::nac::list_p2p_replicator::nac_gates_list_p2_p_replicator_authorized_identity_allow_access #2702
-testo acp::nac::relation_admin::list_p2p_replicator::nac_admin_relation_can_list_p2_p_replicator #2702
 testo issues::t_2569::p2_p_update_with_pn_counter_float_overflow_decrement_prevents_querying #2711
 testo issues::t_2569::p2_p_update_with_pn_counter_float_overflow_increment_prevents_querying #2711
 testo issues::t_2569::p2_p_update_with_pn_counter_float_overflow_prevents_collection_get #2711
