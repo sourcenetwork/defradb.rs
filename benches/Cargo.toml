@@ -205,6 +205,10 @@ name = "query_e2e"
 harness = false
 
 [[bench]]
+name = "join_indexed_side"
+harness = false
+
+[[bench]]
 name = "replication_filter"
 harness = false
 

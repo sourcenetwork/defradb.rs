@@ -124,6 +124,18 @@ RUNS=(
   "MC_ReplicaRegistration_Red_StaleDecision.cfg ReplicaRegistration.tla RED" # a decision remembered from before a revocation admits the revoked writer (INV_RevokedWriterDenied)
   "MC_ReplicaRegistration_Red_ArchiveOnDelete.cfg ReplicaRegistration.tla RED" # merging a delete archives the object on the provider (INV_RegisteredStays)
   "MC_ReplicaRegistration_Red_DeleteClears.cfg ReplicaRegistration.tla RED" # a local delete drops the creator's owed registration and replicas wait for ever (LIVE_RowMerges)
+  "MC_RemoteGenesisReader_Green.cfg RemoteGenesisReader.tla GREEN" # on a shared remote provider the reader a genesis names is owed by its creator with the registration, and a node merges only once its provider holds both
+  "MC_RemoteGenesisReader_Green_Live.cfg RemoteGenesisReader.tla GREEN" # the addressed node merges the genesis unless revoked, even across a crash of the creating node
+  "MC_RemoteGenesisReader_Red_Address.cfg RemoteGenesisReader.tla RED" # the creator grants every node (INV_OnlyGranted)
+  "MC_RemoteGenesisReader_Red_Ungated.cfg RemoteGenesisReader.tla RED" # a receiver merges without asking whether it may read (INV_OnlyGranted)
+  "MC_RemoteGenesisReader_Red_Staged.cfg RemoteGenesisReader.tla RED" # a grant still owed is counted as held (INV_SettledFirst)
+  "MC_RemoteGenesisReader_Red_Memo.cfg RemoteGenesisReader.tla RED" # a later frame merges on the genesis's earlier answer after the revocation (INV_RevokedStops)
+  "MC_RemoteGenesisReader_Red_Unregistered.cfg RemoteGenesisReader.tla RED" # an unregistered document is treated as public (INV_RegisteredFirst)
+  "MC_RemoteGenesisReader_Red_Separate.cfg RemoteGenesisReader.tla RED" # the grant is staged after the commit and a crash loses it (LIVE_AddressedMerges)
+  "MC_RemoteGenesisReader_Red_Counted.cfg RemoteGenesisReader.tla RED" # the grant counts against the bounds on ordinary owed changes and refuses a valid batch of creates (INV_ValidBatchCommits)
+  "MC_RemoteGenesisReader_Red_Admitted.cfg RemoteGenesisReader.tla RED" # the owed grant is added to its actor's admission count and the actor's own revocation is refused (INV_OrdinaryAdmitted)
+  "MC_RemoteGenesisReader_Red_Unbalanced.cfg RemoteGenesisReader.tla RED" # the grant is taken from a count it was never added to (INV_CountBalanced)
+  "MC_RemoteGenesisReader_Red_Order.cfg RemoteGenesisReader.tla RED" # the grant is sent before the registration and refused for good (LIVE_AddressedMerges)
   "MC_ParkedMerge_Green.cfg ParkedMerge.tla GREEN" # a refused replicated change is parked by document, never rejected for good, never merged before its history or without its signer's write, within the index bound
   "MC_ParkedMerge_Green_Live.cfg ParkedMerge.tla GREEN" # a parked change and its descendant merge once the signer holds write, and a change on another branch always merges
   "MC_ParkedMerge_Red_Quarantine.cfg ParkedMerge.tla RED" # a refused change is rejected for good (INV_NeverQuarantined)
@@ -673,6 +685,10 @@ RUNS=(
   "MC_PendingSubmission_Red_GivesUpEarly.cfg PendingSubmission.tla RED" # a failure that may pass ends the loop before its deadline
   "MC_PendingSubmission_Red_ForgetsOnTimeout.cfg PendingSubmission.tla RED" # the journal drops the request when the deadline passes
   "MC_PendingSubmission_Red_Recalled_Forgets.cfg PendingSubmission.tla RED" # with the journal emptied at a deadline, a later call has nothing to send again
+  "MC_ReceiptWait_Green.cfg ReceiptWait.tla GREEN" # a receipt is asked for at the verified head that holds it, and in the end without headers
+  "MC_ReceiptWait_Red_TimerOnly.cfg ReceiptWait.tla RED" # a wait that ends only on its timer sleeps past a verified receipt
+  "MC_ReceiptWait_Red_SeenAfterSend.cfg ReceiptWait.tla RED" # the height read after the send misses a header verified in between
+  "MC_ReceiptWait_Red_Unbounded.cfg ReceiptWait.tla RED" # a wait with no fallback never reads a receipt when no header comes
   "MC_AcpOutbox_Green.cfg AcpOutbox.tla GREEN" # a new document: owed registration and two owed changes never widen access, across crashes
   "MC_AcpOutbox_Green_Registered.cfg AcpOutbox.tla GREEN" # a registered document: deletes of tuples the provider holds deny from the commit on
   "MC_AcpOutbox_Green_Three.cfg AcpOutbox.tla GREEN" # three changes on one tuple in every order, with an actor the provider refuses
@@ -1273,6 +1289,20 @@ RUNS=(
   "MC_EmbeddedVeraStop_Red_NoStopDeadline.cfg EmbeddedVeraStop.tla RED" # a Vera node that hangs while stopping keeps shutdown waiting forever
   "MC_EmbeddedVeraStop_Red_LinkStaysOpen.cfg EmbeddedVeraStop.tla RED" # a transport left open keeps the stopped Vera node's directory locked
   "MC_EmbeddedVeraStop_Red_NoStartDeadline.cfg EmbeddedVeraStop.tla RED" # the next start waits forever for a directory a hung Vera node holds
+  "MC_FirstHeader_Green.cfg FirstHeader.tla GREEN" # the header stream starts with the newest finalized block, read after subscribing, and every header is checked
+  "MC_FirstHeader_Red_NoHead.cfg FirstHeader.tla RED" # only blocks finalized after subscribing are streamed: a fresh deployment's first start waits for the heartbeat (INV_Current)
+  "MC_FirstHeader_Red_ReadBeforeSubscribe.cfg FirstHeader.tla RED" # the head is read before subscribing: a block finalized in between is missed (INV_Current)
+  "MC_FirstHeader_Red_SendStale.cfg FirstHeader.tla RED" # a head past the freshness limit is sent: the light client must refuse it (INV_SentHeadFresh)
+  "MC_FirstHeader_Red_DropLaterTerms.cfg FirstHeader.tla RED" # queued headers at or below the head are dropped whatever their term: a switch's block is lost (INV_Current)
+  "MC_FirstHeader_Red_Unverified.cfg FirstHeader.tla RED" # the transport's header is taken unchecked: a forged head is accepted (INV_OnlyFinalized)
+  "MC_RegistrationBatch_Green.cfg RegistrationBatch.tla GREEN" # one list per creator, a refused list sent again one at a time, held objects never sent again
+  "MC_RegistrationBatch_Green_Lost.cfg RegistrationBatch.tla GREEN" # lists applied whole, at once or after a lost answer, and never sent again once held
+  "MC_RegistrationBatch_Green_Elsewhere.cfg RegistrationBatch.tla GREEN" # a replica another node holds is cleared yielding to its owner, never sent
+  "MC_RegistrationBatch_Red_NoRecheck.cfg RegistrationBatch.tla RED" # sent again without asking the provider: a held object refuses its list (INV_NoResendOfKnownHeld)
+  "MC_RegistrationBatch_Red_NoAskOnRefusal.cfg RegistrationBatch.tla RED" # a refusal reported unasked: one another settler registered meanwhile is reported failed (INV_HeldNotFailed)
+  "MC_RegistrationBatch_Red_NoFallback.cfg RegistrationBatch.tla RED" # a refused list parks every member: a good one is parked for good (INV_RefusedOnlyIfBad)
+  "MC_RegistrationBatch_Red_MixedCreators.cfg RegistrationBatch.tla RED" # one list under the first creator's token: another's document is registered to it (INV_OwnerIsCreator)
+  "MC_RegistrationBatch_Red_OutOfOrder.cfg RegistrationBatch.tla RED" # a refused list's members go alone in any order (INV_Order)
   "MC_NodeStartup_Green.cfg NodeStartup.tla GREEN" # every config starts as asked or fails holding nothing; startup ends
   "MC_NodeStartup_Red_IrohDefaultLadder.cfg NodeStartup.tla RED" # iroh keeps the default retry ladder (INV_OneSchedule)
   "MC_NodeStartup_Red_ListenLeak.cfg NodeStartup.tla RED" # failed listen leaves the host running (INV_FailedHoldsNothing)

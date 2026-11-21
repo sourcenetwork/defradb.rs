@@ -12,7 +12,9 @@ use defra_p2p_adapter::{
 
 use crate::commands::client::http_client::HttpClient;
 use crate::commands::client::http_client::{mint_manage_token, ManageQueryResultResponse};
-use crate::commands::client::{generate_auth_token, validate_identifier, ClientContext};
+use crate::commands::client::{
+    generate_auth_token_from_key_bytes, validate_identifier, ClientContext,
+};
 use crate::error::{Error, Result};
 
 /// Manage a remote P2P-only peer via this node's HTTP relay
@@ -83,13 +85,11 @@ impl ManageTarget {
     /// (actor token, `aud` = target peer-id). Both come from the same resolved
     /// key.
     fn resolve(&self, ctx: &ClientContext) -> Result<ManageAuth> {
-        let key_hex = if let Some(ref identity_hex) = self.identity {
-            // Validate it is hex up-front for a clear error message.
+        let key_bytes = if let Some(ref identity_hex) = self.identity {
             hex::decode(identity_hex)
-                .map_err(|e| Error::InvalidIdentity(format!("invalid hex: {e}")))?;
-            identity_hex.clone()
+                .map_err(|e| Error::InvalidIdentity(format!("invalid hex: {e}")))?
         } else if let Some(ref bytes) = ctx.identity_key_bytes {
-            hex::encode(bytes)
+            bytes.clone()
         } else {
             return Err(Error::MissingInput(
                 "an identity is required: pass --identity <hex> or the global --identity/--identity-name".to_string(),
@@ -97,12 +97,19 @@ impl ManageTarget {
         };
 
         let target_peer_id = extract_peer_id(&self.target)?;
+        let key_hex = hex::encode(&key_bytes);
         let actor_token = mint_manage_token(&key_hex, &target_peer_id)?;
 
         let bearer = if self.identity.is_some() {
             // The local override also authenticates the request to the
-            // controller node, mirroring the global bearer (aud = url).
-            Some(generate_auth_token(&key_hex, &ctx.url)?)
+            // controller node through the same client-token path as every
+            // other command (aud = url).
+            Some(generate_auth_token_from_key_bytes(
+                "manage identity",
+                &key_bytes,
+                &ctx.url,
+                ctx.authorized_account.as_deref(),
+            )?)
         } else {
             // The global identity already minted the controller bearer.
             ctx.auth_token.clone()
@@ -534,11 +541,12 @@ mod tests {
         assert!(extract_peer_id("/ip4/127.0.0.1/tcp/9000").is_err());
     }
 
-    fn ctx_without_global_identity() -> ClientContext {
+    fn ctx(authorized_account: Option<&str>) -> ClientContext {
         ClientContext {
             url: "http://localhost:9181".to_string(),
             auth_token: None,
             identity_key_bytes: None,
+            authorized_account: authorized_account.map(str::to_string),
             tx_id: None,
             development: false,
             verbose: false,
@@ -562,7 +570,7 @@ mod tests {
             identity: Some(key_hex),
         };
 
-        let auth = target.resolve(&ctx_without_global_identity()).unwrap();
+        let auth = target.resolve(&ctx(None)).unwrap();
 
         let bearer = auth.bearer.expect("local identity must mint a bearer");
         assert!(!bearer.is_empty());
@@ -576,6 +584,44 @@ mod tests {
             target: random_target(),
             identity: None,
         };
-        assert!(target.resolve(&ctx_without_global_identity()).is_err());
+        assert!(target.resolve(&ctx(None)).is_err());
+    }
+
+    #[test]
+    fn local_identity_bearer_includes_the_configured_acp_address() {
+        use crypto::keys::Key;
+
+        let key_hex = crypto::generate_ed25519().unwrap().to_hex_string();
+        let target = ManageTarget {
+            target: random_target(),
+            identity: Some(key_hex),
+        };
+
+        let auth = target.resolve(&ctx(Some("acct-1"))).unwrap();
+        let bearer = auth.bearer.expect("local identity mints a bearer");
+        let identity = identity::from_token(bearer.as_bytes()).unwrap();
+
+        assert_eq!(identity.authorized_account(), Some("acct-1"));
+        assert_eq!(
+            identity.claims.aud,
+            Some(vec!["localhost:9181".to_string()])
+        );
+    }
+
+    #[test]
+    fn local_identity_bearer_omits_an_unset_acp_address() {
+        use crypto::keys::Key;
+
+        let key_hex = crypto::generate_ed25519().unwrap().to_hex_string();
+        let target = ManageTarget {
+            target: random_target(),
+            identity: Some(key_hex),
+        };
+
+        let auth = target.resolve(&ctx(None)).unwrap();
+        let bearer = auth.bearer.expect("local identity mints a bearer");
+        let identity = identity::from_token(bearer.as_bytes()).unwrap();
+
+        assert_eq!(identity.authorized_account(), None);
     }
 }

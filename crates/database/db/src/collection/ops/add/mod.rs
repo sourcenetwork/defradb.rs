@@ -26,7 +26,7 @@ where
                 other => AddCollectionError::Parse(other.to_string()),
             })?;
         schema::definition_validation::validate_new_collections(&collections)
-            .map_err(|e| AddCollectionError::Validation(e.to_string()))?;
+            .map_err(|e| AddCollectionError::Validation(format!("schema error: {e}")))?;
         self.check_policies(&collections).await?;
         Ok(collections)
     }

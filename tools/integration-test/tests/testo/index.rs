@@ -45,6 +45,7 @@ mod query_with_index_on_datetime;
 mod query_with_index_only_field_order;
 mod query_with_index_only_filter;
 mod query_with_relation_filter;
+mod query_with_relation_filter_unindexed_fk;
 mod query_with_relation_sub_filter;
 mod query_with_relation_sub_order;
 mod query_with_relation_sub_order_complex;

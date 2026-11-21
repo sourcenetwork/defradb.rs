@@ -284,6 +284,15 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
             .map_err(|error| query::error::QueryError::execution(error.to_string()))
     }
 
+    async fn owe_acp_registration(
+        &self,
+        registration: acp::CommitRegistration,
+    ) -> query::error::Result<()> {
+        let txn = &*self.shared_txn()?;
+        txn.owe_acp_registration(registration)
+            .map_err(|error| query::error::QueryError::execution(error.to_string()))
+    }
+
     async fn create(
         &self,
         collection_name: &str,
