@@ -2,8 +2,8 @@
 # - each line is `<binary> <test> #<issue>`, and the issue must be open;
 # - a listed test that passes fails the job ("fixed: remove from the list"), so the list only shrinks;
 # - an entry a pull request adds is printed as a warning naming that pull request.
-testo index::async_backfill_migration::async_backfill_restart_after_non_zero_watermark_resumes_to_ready #2757
-testo index::query_with_composite_index_field_order::query_with_composite_index_with_in_filter_on_first_field_with_reverted_order_should_fetch #2411
+testo index::async_backfill_migration::async_backfill_restart_after_non_zero_watermark_resumes_to_ready #3198
+testo index::query_with_composite_index_field_order::query_with_composite_index_with_in_filter_on_first_field_with_reverted_order_should_fetch #3199
 testo issues::t_2569::p2_p_update_with_pn_counter_float_overflow_decrement_prevents_querying #2711
 testo issues::t_2569::p2_p_update_with_pn_counter_float_overflow_increment_prevents_querying #2711
 testo issues::t_2569::p2_p_update_with_pn_counter_float_overflow_prevents_collection_get #2711
