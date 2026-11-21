@@ -323,9 +323,14 @@ fn nac_state_survives_restart_without_flag() {
             .unwrap();
         let code = response.status();
         let body = response.text().await.unwrap();
+        assert_eq!(
+            code,
+            net::http::StatusCode::UNAUTHORIZED,
+            "an anonymous caller was not refused by NAC: {body}"
+        );
         assert!(
-            !code.is_success(),
-            "an anonymous caller added a collection: {code} {body}"
+            body.contains("not authorized to perform operation"),
+            "the refusal is not a NAC denial: {body}"
         );
 
         let token = cli::commands::client::generate_auth_token(&owner_hex, &node.url).unwrap();
