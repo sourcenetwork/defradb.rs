@@ -661,6 +661,15 @@ pub trait DocMutator: MaybeSendSync {
         ))
     }
 
+    /// Settle `registration`, owed to an external document ACP by a create
+    /// of this mutation, once its transaction commits, as an ordered hook
+    /// ([`Self::register_ordered_async_hook`]). A mutator over a transaction
+    /// settles the registrations that transaction owes together.
+    async fn owe_acp_registration(&self, registration: acp::CommitRegistration) -> Result<()> {
+        self.register_ordered_async_hook(registration.into_hook())
+            .await
+    }
+
     /// Begin a request-scoped mutation batch.
     ///
     /// Implementations can override this to provide a shared transaction for

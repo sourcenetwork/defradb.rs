@@ -12,11 +12,7 @@ use crate::{ffi_async_ok, try_ffi};
 /// The returned handle stands in for the node in any call that takes a node
 /// or a transaction, which then runs in the transaction. It is released by
 /// [`defra_transaction_commit`] or [`defra_transaction_discard`].
-#[no_mangle]
-pub extern "C" fn defra_transaction_create(
-    node_ptr: usize,
-    is_read_only: c_int,
-) -> DefraNewTxnResult {
+pub fn defra_transaction_create(node_ptr: usize, is_read_only: c_int) -> DefraNewTxnResult {
     ffi_entry! {
         let node = match resolve_node(node_ptr) {
             Ok(node) => node,

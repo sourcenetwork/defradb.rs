@@ -35,27 +35,9 @@ async fn replay_install_through_pooled_db_pusher(replace: bool) {
 
         let db = Arc::new(db::DB::new(storage::RegolithStore::in_memory().unwrap()).unwrap());
         db.set_network(edge::testing::edge());
-        db.create_collection(
-            schema::CollectionVersion::new(
-                "Users",
-                "version-users",
-                "collection-users",
-                vec![
-                    schema::FieldDescription::new(
-                        "1",
-                        "_docID",
-                        schema::FieldKind::doc_id(),
-                        schema::CType::LwwRegister,
-                    ),
-                    schema::FieldDescription::new(
-                        "2",
-                        "name",
-                        schema::FieldKind::string(),
-                        schema::CType::LwwRegister,
-                    ),
-                ],
-            )
-            .as_branchable(),
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            "type Users @branchable { name: String }",
         )
         .await
         .unwrap();

@@ -122,9 +122,10 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                             "CID time-travel query: document excluded by ACP"
                         );
                     }
-                    Err(e @ QueryError::NeedsInput(_)) => return Err(e),
                     Err(e) => {
-                        return Err(QueryError::acp_check_failed("read", doc_id, e.to_string()));
+                        return Err(self.access_check_failure(e, |e| {
+                            QueryError::acp_check_failed("read", doc_id, e.to_string())
+                        }));
                     }
                 }
             }

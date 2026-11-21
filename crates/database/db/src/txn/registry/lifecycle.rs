@@ -457,11 +457,17 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         &self,
         context: &RequestContext,
         policy: &str,
+        nonce: Option<acp::PolicyNonce>,
     ) -> std::result::Result<String, TransactionError> {
-        self.db
-            .add_dac_policy_as(context, policy)
-            .await
-            .map_err(|error| TransactionError::operation(error.to_string()))
+        let added = match nonce {
+            Some(nonce) => {
+                self.db
+                    .add_dac_policy_with_nonce_as(context, policy, nonce)
+                    .await
+            }
+            None => self.db.add_dac_policy_as(context, policy).await,
+        };
+        added.map_err(|error| TransactionError::operation(error.to_string()))
     }
 
     async fn list_dac_policies_as(

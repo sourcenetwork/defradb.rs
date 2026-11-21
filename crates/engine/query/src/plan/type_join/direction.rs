@@ -32,10 +32,6 @@ pub enum JoinDirection {
         /// Sort direction for orphan placement in sequenceNode debug explain
         sort_direction: OrderDirection,
     },
-    /// Inverted field lookup join: child scanned first with index, parents
-    /// grouped once by FK. Used when only the child's filtered field is
-    /// indexed.
-    InvertedFieldLookup,
     /// Ordered inverted join (primary-first): child has FK and drives iteration
     /// in sorted order via index. Parent is looked up by docID for each child.
     /// Used when ordering by a child field that has an index and the child

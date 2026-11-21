@@ -110,7 +110,7 @@ fn creates_updated_at_once_under_load_project_without_refusal() {
         let vera = node.vera_acp().expect("vera.rs document ACP").clone();
         let actor = Did::new(vera.self_did().expect("actor DID")).unwrap();
         let policy = vera
-            .add_policy(actor.as_str(), super::POLICY)
+            .add_policy(actor.as_str(), super::POLICY, None)
             .await
             .expect("policy");
         drop(vera);

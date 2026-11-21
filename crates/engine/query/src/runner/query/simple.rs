@@ -121,6 +121,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             acp: self.acp.clone(),
             identity: Identity::from(identity),
             dac_bypass: self.context().dac_bypass(),
+            strict: self.context().strict_access_reads(),
             policy_id: policy.id.clone(),
             resource_name: policy.resource_name.clone(),
             retry_inputs: self.retry_inputs.clone(),

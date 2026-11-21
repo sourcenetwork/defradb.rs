@@ -239,20 +239,6 @@ impl Planner {
                         join = join.with_parent_residual_filter(sf);
                     }
                     plan = Box::new(join);
-                } else if child_has_index && parent_side.relation_id_field_index().is_some() {
-                    // The child index can drive the join even when the parent
-                    // FK is unindexed: one parent scan keeps the parents of the
-                    // matching children.
-                    let join = TypeJoinOne::new(
-                        plan,
-                        child_plan,
-                        parent_side,
-                        child_side,
-                        mapping.clone(),
-                    )
-                    .with_relation_filter(rel_filter)
-                    .with_inverted_field_lookup();
-                    plan = Box::new(join);
                 } else {
                     let join = TypeJoinOne::new(
                         plan,

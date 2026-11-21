@@ -46,6 +46,9 @@ pub struct NodeSpec {
     pub iroh_network: bool,
     /// The node's own identity, Go's `NodeIdentity(seed)`; the node signs as it.
     pub node_identity: Option<u64>,
+    /// The node takes `node_identity` from the process's signing registry,
+    /// registered there before it starts, as an FFI host does.
+    pub registered_identity: bool,
     /// The node's index in its test, which picks the key Go's harness signs
     /// with when the node has no `node_identity`.
     pub go_index: Option<u64>,
@@ -360,7 +363,9 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
     if let Some(gate) = &spec.index_gate {
         builder = builder.with_index_build_gate(gate.clone());
     }
-    if spec.node_identity.is_some() || spec.signing.is_some() {
+    if spec.registered_identity {
+        builder = builder.with_node_identity_did(register_node_identity(spec)?);
+    } else if spec.node_identity.is_some() || spec.signing.is_some() {
         builder = builder.with_signing_key(signing_key(spec));
     }
     // Go keeps the identity and the signing apart: a node with an identity
@@ -403,6 +408,41 @@ fn signing_key(spec: &NodeSpec) -> defra_node::SigningKey {
                 .expect("any 32 bytes are an Ed25519 seed"),
         ),
     }
+}
+
+/// Registers the key a node started as `spec` signs with in the process's
+/// signing registry, as an FFI host registers an identity before
+/// `defra_node_new`, and answers its DID. The registration is pinned for the
+/// process, so a restart registers the same signer again.
+fn register_node_identity(spec: &NodeSpec) -> Result<String, String> {
+    use defra_core::signing::{SigningConfig, SigningKeyType};
+    let seed = spec.node_identity.or(spec.go_index).unwrap_or(u64::MAX);
+    let (key_type, signing_key_type) = match spec.signing.unwrap_or_default() {
+        KeyType::Secp256k1 => (::identity::KeyType::Secp256k1, SigningKeyType::Secp256k1),
+        KeyType::Ed25519 => (::identity::KeyType::Ed25519, SigningKeyType::Ed25519),
+    };
+    let raw = ::identity::RawIdentity::from_bytes(
+        key_type,
+        &crate::scenario::identity::node_private_key(seed),
+    )
+    .map_err(|error| error.to_string())?;
+    let did = ::identity::Identity::did(&raw)
+        .map_err(|error| error.to_string())?
+        .to_string();
+    let public_key_bytes = raw.public_key_bytes();
+    defra_core::signing::store_identity(
+        &did,
+        SigningConfig {
+            key_type: signing_key_type,
+            private_key_bytes: SigningConfig::private_key_bytes_from_vec(raw.private_key_bytes()),
+            public_key_hex: hex::encode(&public_key_bytes),
+            public_key_bytes,
+            remote_signer: None,
+            signing_authorization: None,
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(did)
 }
 
 /// The node identity a Go node started as `spec` loads from its keyring: the

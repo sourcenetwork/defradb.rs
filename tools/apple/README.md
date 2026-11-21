@@ -75,64 +75,79 @@ The generated C module is named after `FRAMEWORK_NAME` and defaults to `DefraFFI
 
 The FFI covers the calls of Go DefraDB's cbindings (`libdefradb.h`), named
 `defra_<noun>_<verb>`. It matches Go's API, not its ABI: names and types are
-prefixed (`DefraResult` for Go's `Result`), and `NodeInitOptions` adds fields
-after Go's, so code built against Go's header needs these names. Every call that works on a store takes a handle naming
-a node, or one of its transactions, and an identity handle naming the caller
-(`0` for none). Results are `DefraResult` structs (`status`, `value`,
-`error`); free each one with `defra_result_free`, and the node, transaction
-and identity results with `defra_new_node_result_free`,
-`defra_new_txn_result_free` and `defra_new_identity_result_free`.
+prefixed (`DefraResult` for Go's `Result`), and `DefraNodeInitOptions` adds
+fields after Go's, so code built against Go's header needs these names. Every
+call that works on a store takes a handle naming a node, or one of its
+transactions. Results are `DefraResult` structs (`status`, `value`, `error`);
+free each one with `defra_result_free`, and the node, transaction and identity
+results with `defra_new_node_result_free`, `defra_new_txn_result_free` and
+`defra_new_identity_result_free`.
+
+A call that can grow takes its options as a struct, passed by value, whose
+zero value is every default; the caller's identity handle (`0` for none) is
+its `identity` field. Fields are only ever appended, so an app built against
+an older header keeps working with a newer library. A field whose name
+starts with `_reserved` (`_reserved0`, `_reserved1`, ...) fills what would
+otherwise be padding: leave it zero. It never becomes a field. In Swift, start
+from the zero value and set what you need:
+
+```swift
+var opts = DefraQueryOptions()
+opts.identity = identity
+let result = defra_query_execute(node, query, opts)
+```
 
 The entry points a mobile app typically needs:
 
-- `defra_node_new(options)` / `defra_node_close(node)`
-- `defra_collection_add(node, sdl, identity)`
-- `defra_query_execute(node_or_txn, query, identity, operation_name, variables)`
-  and `defra_query_execute_async(..., callback, context)`
-- `defra_transaction_create(node, read_only)`, `defra_transaction_commit(txn)`,
-  `defra_transaction_discard(txn)`
-- `defra_p2p_info(node, identity)`
-- `defra_p2p_connect(node, addresses, identity)` /
-  `defra_p2p_disconnect(node, addresses, identity)`
-- `defra_p2p_replicator_add(node, collections, addresses, identity)` (or
-  `defra_p2p_replicator_add_with_filter(..., filters_json, identity)` to push
-  only matching documents), and
-  `defra_p2p_replicator_retry(node, identity)` to re-push what a replicator
-  missed, for example after a reconnect
-- `defra_p2p_collection_sync_versions(node, version_ids, timeout, identity)`
-  and `defra_p2p_document_sync(node, collection, doc_ids, timeout, identity)`
-- `defra_identity_new_remote(...)` / `defra_identity_new_remote_bytes(...)`
-- `defra_identity_new_from_bearer_token(did, bearer_token)`
+- `defra_node_new(DefraNodeInitOptions)` / `defra_node_close(node)`
+- `defra_collection_add(node, sdl, DefraCollectionAddOptions)`
+- `defra_query_execute(node_or_txn, query, DefraQueryOptions)` (`identity`,
+  `operation_name`, `variables`) and
+  `defra_query_execute_async(node_or_txn, query, callback, context, DefraQueryOptions)`
+- `defra_transaction_create(node, DefraTransactionOptions)` (`read_only`),
+  `defra_transaction_commit(txn)`, `defra_transaction_discard(txn)`
+- `defra_p2p_info(node, DefraP2POptions)`
+- `defra_p2p_connect(node, addresses, DefraP2POptions)` /
+  `defra_p2p_disconnect(node, addresses, DefraP2POptions)`
+- `defra_p2p_replicator_add(node, collections, addresses, DefraReplicatorAddOptions)`
+  (set `filters_json` to push only matching documents), and
+  `defra_p2p_replicator_retry(node, DefraP2POptions)` to re-push what a
+  replicator missed, for example after a reconnect
+- `defra_p2p_collection_sync_versions(node, version_ids, DefraP2PSyncOptions)`
+  and `defra_p2p_document_sync(node, collection, doc_ids, DefraP2PSyncOptions)`
+- `defra_identity_new_remote(did, DefraRemoteIdentityOptions)`
+- `defra_identity_new_from_bearer_token(did, bearer_token, DefraIdentityBearerOptions)`
 - `defra_node_set_identity(node, identity)`
 
 List arguments (`addresses`, `collections`, `doc_ids`, `version_ids`) are
-comma-separated strings, and timeouts are Go duration strings such as `"30s"`
-(null or empty for none).
+comma-separated strings. The sync calls take `timeout_ms`, in milliseconds
+(`0` for none).
 
-Mobile-only calls, which Go's cbindings have no counterpart for:
+Mobile-only calls, which Go's cbindings have no counterpart for, each taking
+`DefraP2POptions`:
 
-- `defra_mobile_sync_status(node, identity)`
-- `defra_mobile_peer_details(node, peer_id, identity)`
-- `defra_mobile_shareable_address(node, identity)`
-- `defra_mobile_notify_network_change(node, identity)`
+- `defra_mobile_sync_status(node, opts)`
+- `defra_mobile_peer_details(node, peer_id, opts)`
+- `defra_mobile_shareable_address(node, opts)`
+- `defra_mobile_notify_network_change(node, opts)`
 
 Rebuild the XCFramework after updating the FFI crate so the generated header
 includes newly added symbols.
 
-A node is configured with `NodeInitOptions` fields rather than JSON. For an
-iroh node with a persistent store, set for example `db_path`,
+A node is configured with `DefraNodeInitOptions` fields rather than JSON. For
+an iroh node with a persistent store, set for example `db_path`,
 `p2p_transport = "iroh"`, `iroh_relay_url`, and `identity_ptr` (an identity
 handle the node signs as). Leave `disable_p2p` at `0` to run P2P; a libp2p
 node listens on the comma-separated `listening_addresses`.
 
 For device-bound or delegated identities:
 
-- register the device signing DID with `defra_identity_new_remote` or
-  `defra_identity_new_remote_bytes`, which answer with an identity handle
+- register the device signing DID with `defra_identity_new_remote`, which
+  answers with an identity handle
 - optionally bind a delegated bearer token to a logical DID with
   `defra_identity_new_from_bearer_token`, which answers with a handle too
 - set the effective identity as the node default via `defra_node_set_identity`,
-  or pass its handle to each call
+  or pass its handle in each call's options
 
 ## Device-Bound DID Flow
 
@@ -140,11 +155,13 @@ For Secure Enclave-backed P-256 (`secp256r1`) identities on iOS:
 
 1. Generate or load the Secure Enclave private key in the host app.
 2. Export or derive the public key bytes, then derive the matching `did:key`.
-3. Call one of:
-   - `defra_identity_new_remote(did, public_key_hex, "secp256r1", signer_handle, callback)`
-   - `defra_identity_new_remote_bytes(did, public_key_ptr, public_key_len, "secp256r1", signer_handle, callback)`
+3. Call `defra_identity_new_remote(did, opts)` with a
+   `DefraRemoteIdentityOptions` that sets `key_type = "secp256r1"`,
+   `signer_handle`, one signing callback (`sign`, or `sign_async`; see below),
+   and the public key: `public_key_hex`, or `public_key` and `public_key_len`
+   for raw bytes.
 4. If the app uses a logical DID with delegated ACP authorization, call
-   `defra_identity_new_from_bearer_token(logical_did, bearer_token)`.
+   `defra_identity_new_from_bearer_token(logical_did, bearer_token, DefraIdentityBearerOptions())`.
 5. Call `defra_node_set_identity(node, identity_ptr)` with the handle of either
    the device identity or the logical one that should back GraphQL and
    block-signing requests.
@@ -156,13 +173,24 @@ node keeps its hold on the identity after the handle is freed and goes on
 signing through the callback, so freeing the signing context together with
 the handle leaves that node calling into freed memory.
 
-`defra_identity_new_remote_bytes` is the most direct Swift path when the app
-already has the public key as `Data`. For `secp256r1`, pass the uncompressed
-X9.63 / SEC1 public key bytes (`0x04 || X || Y`).
+While a DID has live identity handles, its signer is fixed. Registering the DID
+again with another `signer_handle` or callback fails until every handle for it
+is freed; registering it with the same `signer_handle` and callback gives
+another handle for the same signer.
+
+Setting `public_key` and `public_key_len` is the most direct Swift path when
+the app already has the public key as `Data`. The public key formats:
+
+- `secp256r1` / `secp256k1`: uncompressed SEC1 / X9.63 bytes (`0x04 || X || Y`)
+- `ed25519`: the raw 32-byte public key
+
+`public_key_hex` is the same bytes, hex-encoded. An empty or null `key_type`
+means `secp256r1`.
 
 ## Callback Contract
 
-`DefraRemoteSignCallback` is the host signing hook for non-exportable keys.
+`DefraRemoteSignCallback`, set as `sign`, is the host signing hook for
+non-exportable keys.
 
 - The host app keeps the private key. Defra never receives or persists it.
 - `signer_handle` is an opaque host context value passed back on every sign.
@@ -174,9 +202,10 @@ X9.63 / SEC1 public key bytes (`0x04 || X || Y`).
 - For Secure Enclave P-256 signing, use
   `SecKeyCreateSignature(..., .ecdsaSignatureMessageX962SHA256, ...)`.
 
-`DefraRemoteSignAsyncCallback`, registered with `defra_identity_new_remote_async`
-or `defra_identity_new_remote_bytes_async`, is the form for a signer that
-answers later (its own queue, a network round trip):
+`DefraRemoteSignAsyncCallback`, set as `sign_async` instead of `sign`, is the
+form for a signer that answers later (its own queue, a network round trip). No
+Defra thread waits while the host signs, so it also suits a node running a
+single worker. Set exactly one of `sign` and `sign_async`:
 
 - The callback receives the same values plus a `completion` value, and returns
   `0` once the signature is under way (any other value fails the request).

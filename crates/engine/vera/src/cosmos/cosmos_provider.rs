@@ -255,7 +255,16 @@ impl VeraProvider for CosmosProvider {
         holds_local_key(did)
     }
 
-    async fn create_policy(&self, policy_yaml: &str) -> Result<String, ProviderError> {
+    async fn create_policy(
+        &self,
+        policy_yaml: &str,
+        nonce: Option<acp::PolicyNonce>,
+    ) -> Result<String, ProviderError> {
+        if nonce.is_some() {
+            return Err(ProviderError::Unsupported(
+                "SourceHub assigns its own policy IDs; a nonce cannot make one".into(),
+            ));
+        }
         self.signer
             .create_policy(&self.client, policy_yaml)
             .await

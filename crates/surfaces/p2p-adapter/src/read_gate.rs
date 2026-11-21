@@ -264,36 +264,41 @@ mod tests {
 
     use acp::{DocumentACP, Identity, LocalDocumentACP, MemoryAcpStore};
     use p2p::bitswap::{BlockAcpMeta, BlockClass, BlockClassifier, BlockReadGate};
-    use schema::{CollectionVersion, FieldDescription, FieldKind, PolicyDescription};
+    use schema::CollectionVersion;
     use storage::RegolithStore;
 
     use super::{DbBlockClassifier, DbBlockReadGate};
 
-    fn test_collection() -> CollectionVersion {
-        CollectionVersion::new(
-            "User",
-            "version-1",
-            "collection-1",
-            vec![
-                FieldDescription::new(
-                    "1",
-                    "_docID",
-                    FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                ),
-                FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
-            ],
+    /// `name`'s version as `get_collections_as` reports it.
+    async fn collection(db: &db::DB<RegolithStore>, name: &str) -> CollectionVersion {
+        db.get_collections_as(
+            &defra_core::RequestContext::ambient(),
+            &db::CollectionSelector::with_names(vec![name.into()]),
         )
-        .with_policy(PolicyDescription::new("policy1", "users"))
-        .as_branchable()
+        .await
+        .unwrap()
+        .remove(0)
     }
 
-    fn data_block(_doc_id: &str) -> (cid::Cid, Vec<u8>) {
+    /// A database holding `User`, branchable under `policy1`, and its version.
+    async fn user_db() -> (Arc<db::DB<RegolithStore>>, CollectionVersion) {
+        let db = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            r#"type User @branchable @policy(id: "policy1", resource: "users") { name: String }"#,
+        )
+        .await
+        .unwrap();
+        let user = collection(&db, "User").await;
+        (db, user)
+    }
+
+    fn data_block(collection_version_id: &str) -> (cid::Cid, Vec<u8>) {
         let block = defra_core::Block::new(
             defra_core::CrdtDelta::Lww(defra_core::LwwDeltaPayload {
                 field_name: "name".to_string(),
                 priority: 1,
-                collection_version_id: "version-1".to_string(),
+                collection_version_id: collection_version_id.to_string(),
                 data: b"Alice".to_vec(),
             }),
             vec![],
@@ -306,9 +311,8 @@ mod tests {
 
     #[nuclei::test]
     async fn classifier_uses_serving_cid_owner_metadata() {
-        let db = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        db.create_collection(test_collection()).await.unwrap();
-        let (cid, bytes) = data_block("doc-from-delta");
+        let (db, user) = user_db().await;
+        let (cid, bytes) = data_block(&user.version_id);
 
         let txn = db.new_txn(false).await.unwrap();
         {
@@ -328,7 +332,7 @@ mod tests {
 
         match class {
             BlockClass::Data(meta) => {
-                assert_eq!(meta.collection_id, "collection-1");
+                assert_eq!(meta.collection_id, user.collection_id);
                 assert!(meta.is_branchable);
                 assert_eq!(
                     meta.policy,
@@ -342,9 +346,8 @@ mod tests {
 
     #[nuclei::test]
     async fn classifier_denies_field_block_without_owner_metadata() {
-        let db = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        db.create_collection(test_collection()).await.unwrap();
-        let (cid, bytes) = data_block("doc-from-delta");
+        let (db, user) = user_db().await;
+        let (cid, bytes) = data_block(&user.version_id);
 
         let classifier = DbBlockClassifier::new(db);
 
@@ -353,25 +356,14 @@ mod tests {
 
     #[nuclei::test]
     async fn indexed_classification_refuses_cross_collection_co_ownership() {
-        let db = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        db.create_collection(test_collection()).await.unwrap();
-        db.create_collection(
-            CollectionVersion::new(
-                "Other",
-                "version-2",
-                "collection-2",
-                vec![FieldDescription::new(
-                    "1",
-                    "_docID",
-                    FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                )],
-            )
-            .with_policy(PolicyDescription::new("policy2", "others")),
+        let (db, user) = user_db().await;
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            r#"type Other @policy(id: "policy2", resource: "others") { name: String }"#,
         )
         .await
         .unwrap();
-        let (cid, _bytes) = data_block("doc-from-delta");
+        let (cid, _bytes) = data_block(&user.version_id);
         let first = db
             .get_collection("User")
             .unwrap()
@@ -411,9 +403,8 @@ mod tests {
 
     #[nuclei::test]
     async fn indexed_classification_resolves_metadata_without_the_payload() {
-        let db = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        db.create_collection(test_collection()).await.unwrap();
-        let (cid, _bytes) = data_block("doc-from-delta");
+        let (db, user) = user_db().await;
+        let (cid, _bytes) = data_block(&user.version_id);
         let collection_short_id = db
             .get_collection("User")
             .unwrap()
@@ -436,7 +427,7 @@ mod tests {
 
         match classifier.classify_indexed(&cid).await {
             Some(BlockClass::Data(meta)) => {
-                assert_eq!(meta.collection_id, "collection-1");
+                assert_eq!(meta.collection_id, user.collection_id);
                 assert!(meta.is_branchable);
                 assert_eq!(
                     meta.policy,

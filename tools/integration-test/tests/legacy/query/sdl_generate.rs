@@ -1,5 +1,6 @@
 use std::path::PathBuf;
-use std::process::Command;
+
+use integration_test::cli_command;
 
 fn defra_binary() -> PathBuf {
     integration_test::rust_binary()
@@ -15,7 +16,7 @@ fn sdl_generate_basic() {
     std::fs::write(&input_path, "type User { name: String  age: Int }").unwrap();
 
     // Run sdl generate
-    let output = Command::new(defra_binary())
+    let output = cli_command(defra_binary())
         .args([
             "sdl",
             "generate",
@@ -54,7 +55,7 @@ fn sdl_generate_stdout() {
     std::fs::write(&input_path, "type Book { title: String  author: String }").unwrap();
 
     // Output to stdout with -o -
-    let output = Command::new(defra_binary())
+    let output = cli_command(defra_binary())
         .args(["sdl", "generate", input_path.to_str().unwrap(), "-o", "-"])
         .output()
         .expect("failed to run defra binary");
@@ -82,7 +83,7 @@ fn sdl_generate_no_overwrite() {
     std::fs::write(&output_path, "existing content").unwrap();
 
     // Should fail without --overwrite
-    let output = Command::new(defra_binary())
+    let output = cli_command(defra_binary())
         .args([
             "sdl",
             "generate",
