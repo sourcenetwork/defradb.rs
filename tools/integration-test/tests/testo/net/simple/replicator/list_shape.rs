@@ -1,6 +1,8 @@
 //! A replicator list reports Go's response shape through both HTTP clients.
 
-use integration_test::actions::{AddCollection, AddReplicator, ListReplicators, NewNode, PeerInfo};
+use integration_test::actions::{
+    AddCollection, AddReplicator, GetCollections, ListReplicators, NewNode, PeerInfo,
+};
 use integration_test::m;
 use integration_test::scenario::{captures, Common};
 use integration_test::test_case::TestCase;
@@ -37,6 +39,15 @@ fn a_replicator_list_reports_go_shape() {
                 ..Default::default()
             }
             .into(),
+            GetCollections {
+                filtered: true,
+                common: Common {
+                    capture: captures([("collection0", "/collections/0/CollectionID")]),
+                    ..on("db0")
+                },
+                ..Default::default()
+            }
+            .into(),
             AddCollection {
                 sdl: "type Users { name: String }".into(),
                 common: on("db1"),
@@ -65,7 +76,7 @@ fn a_replicator_list_reports_go_shape() {
                     {
                         "ID": m::r("peer0"),
                         "Addresses": [m::unique("replicator_address")],
-                        "CollectionIDs": ["Users"],
+                        "CollectionIDs": [m::r("collection0")],
                         "Status": 0,
                         "LastStatusChange": "0001-01-01T00:00:00Z",
                     },
