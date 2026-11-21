@@ -84,7 +84,7 @@ impl<S: Store> P2PHost<S> {
 
                             // Send block to coordinator for storage
                             if let Err(e) = event_tx
-                                .send(HostEvent::BlockSyncBlockReceived {
+                                .send(HostEvent::BitswapBlockReceived {
                                     query_id,
                                     cid: *block.cid(),
                                     data: block.data().to_vec(),
@@ -131,7 +131,7 @@ impl<S: Store> P2PHost<S> {
                 drop(receiver);
 
                 let _ = event_tx
-                    .send(HostEvent::BlockSyncComplete {
+                    .send(HostEvent::BitswapComplete {
                         query_id,
                         success,
                         cause: (!success).then_some(if timed_out {
