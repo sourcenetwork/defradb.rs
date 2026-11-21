@@ -67,6 +67,7 @@ mod simple {
             mod text;
         }
         mod cross_version;
+        mod list_shape;
         mod with_add;
         mod with_add_add_field;
         mod with_add_restart;
