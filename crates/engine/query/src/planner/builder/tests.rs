@@ -458,6 +458,31 @@ fn a_filtered_similarity_query_warns_that_its_vector_index_is_unused() {
 }
 
 #[test]
+fn an_empty_filter_is_not_treated_as_a_scalar_filter() {
+    workers::block_on(async {
+        let planner = Planner::new(vec![make_vector_collection()])
+            .with_fetcher(std::sync::Arc::new(crate::test_utils::MockFetcher::new()));
+
+        let select = Select::new("Users")
+            .with_similarity(Similarity::new("embedding", vec![1.0, 0.0, 0.0]).with_alias("sim"))
+            .with_filter(Filter::from_conditions(map([])))
+            .with_limit(2)
+            .with_order(
+                OrderBy::new().with_condition(OrderCondition::new("sim", OrderDirection::Desc)),
+            );
+
+        let result = planner.plan_with_index_info(&select).unwrap();
+
+        assert_eq!(result.warnings.len(), 1);
+        assert_eq!(
+            result.warnings[0].detail.as_ref().unwrap()["reason"],
+            "unsupportedFetcher"
+        );
+    })
+    .unwrap()
+}
+
+#[test]
 fn test_plan_uses_index_for_ne_filter() {
     workers::block_on(async {
         let planner = Planner::new(vec![make_test_collection_with_index()]);

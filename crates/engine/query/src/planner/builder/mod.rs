@@ -409,7 +409,11 @@ impl Planner {
             let scalar_filter_served = select.filter.as_ref().is_none_or(|filter| {
                 filter.has_alias_filter() || self.try_select_index(select, &collection).is_some()
             });
-            if rows_rejected_above_the_scan || (select.filter.is_some() && !scalar_filter_served) {
+            let filter_has_conditions = select
+                .filter
+                .as_ref()
+                .is_some_and(|filter| filter.has_field_conditions());
+            if rows_rejected_above_the_scan || (filter_has_conditions && !scalar_filter_served) {
                 if let Some(field) = warning_field {
                     warnings.push(vector_routing::vector_index_unused_warning_for_filter(
                         field,
