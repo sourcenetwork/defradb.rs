@@ -203,13 +203,29 @@ impl ReindexPage {
     ) -> Result<Walked> {
         let versions =
             get_collections_by_collection_id(systemstore, collection.collection_id()).await?;
-        let history =
+        let mut history =
             build_collection_history(&versions, collection.version_id()).ok_or_else(|| {
                 Error::Lens(format!(
                     "failed to build migration history for collection '{}'",
                     collection.name()
                 ))
             })?;
+        // A removed transform is no longer part of the collection's migration
+        // path. Reindexing reads the historical values unchanged instead of
+        // asking for a transform the node no longer holds.
+        for link in history.values_mut() {
+            if link.transform.as_ref().is_some_and(|transform| {
+                !self
+                    .lens_store
+                    .has_transform(&lens::TransformId::new(transform))
+            }) {
+                tracing::debug!(
+                    transform = %link.transform.as_deref().unwrap_or_default(),
+                    "a reindex history transform is no longer held; reading through it as identity"
+                );
+                link.transform = None;
+            }
+        }
         let mut source = BackfillSource::open_range(
             collection.clone(),
             datastore.clone(),
