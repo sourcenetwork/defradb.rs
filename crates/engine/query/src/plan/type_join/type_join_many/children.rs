@@ -535,13 +535,11 @@ impl TypeJoinMany {
 
             let mut all_children = Vec::new();
             let mut matching_count = 0u64;
-            let mut total_scanned = 0u64;
             let can_stop_at_limit = self.relation_filter.is_none()
                 && (self.child_order_by.is_none()
                     || (self.child_plan_provides_ordering && !self.preserve_ordered_orphans));
 
             while self.child_plan.next().await? {
-                total_scanned += 1;
                 let child_doc = self.child_plan.value();
                 let child_fk_value = child_doc.get(self.child_fk_index);
 
@@ -572,7 +570,7 @@ impl TypeJoinMany {
 
             // Capture child plan metrics for this parent scan
             let child_info = self.child_plan.exec_info();
-            self.go_child_metrics.iterations += total_scanned + 1; // scanned entries + 1 false
+            self.go_child_metrics.iterations += child_info.indexes_fetched;
             self.go_child_metrics.doc_fetches += child_info.docs_fetched;
             self.go_child_metrics.field_fetches += child_info.fields_fetched;
             self.go_child_metrics.index_fetches += child_info.indexes_fetched;
