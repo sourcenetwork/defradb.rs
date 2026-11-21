@@ -91,6 +91,9 @@ impl DefraKademlia {
         // inbound records so the host can apply the pk namespace validator
         // before explicitly storing accepted records.
         kad_config.set_record_filtering(kad::StoreInserts::FilterBoth);
+        // The host owns bootstrap scheduling. Let it skip a bootless startup
+        // instead of libp2p's internal timer logging through the swarm.
+        kad_config.set_periodic_bootstrap_interval(None);
 
         let mut inner = kad::Behaviour::with_config(local_peer_id, kad_store, kad_config);
         // Go's dual DHT forces the LAN side into server mode whenever the WAN
@@ -101,6 +104,12 @@ impl DefraKademlia {
         }
 
         Self { network, inner }
+    }
+
+    fn has_known_peers(&mut self) -> bool {
+        self.inner
+            .kbuckets()
+            .any(|bucket| bucket.iter().next().is_some())
     }
 }
 
