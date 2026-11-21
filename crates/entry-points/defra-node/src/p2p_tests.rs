@@ -1589,7 +1589,7 @@ fn filtered_p2p_replicator_metadata_survives_embedded_restart() {
             .expect("replicator restored into live registry");
 
         assert_eq!(restored.collections, expected.collections);
-        assert_eq!(restored.address, expected.address);
+        assert_eq!(restored.addresses, expected.addresses);
         assert_eq!(
             restored.filters, expected.filters,
             "startup must preserve filters so an idempotent add does not trigger full replay"
