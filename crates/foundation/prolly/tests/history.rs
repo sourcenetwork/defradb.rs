@@ -72,6 +72,56 @@ proptest! {
         prop_assert_eq!(entries, expected);
     }
 
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(16))]
+
+    /// Values up to 45 000 bytes make `MAX_CHUNK_BYTES` close chunks, so the
+    /// byte cap's effect on edits, including a re-cut that runs to the end of a
+    /// level, is checked against a fresh build. `u32::MAX` all but disables
+    /// boundaries, leaving the cap as the only thing that closes a chunk.
+    #[test]
+    fn edits_with_large_values_reach_the_root_a_fresh_build_gives(
+        target in prop_oneof![1u32..8, Just(u32::MAX)],
+        ops in prop::collection::vec(
+            prop_oneof![
+                3 => (0u16..80, 0usize..45_000).prop_map(|(k, len)| (k, Some(len))),
+                1 => (0u16..80).prop_map(|k| (k, None)),
+            ],
+            1..40,
+        ),
+    ) {
+        let target = NonZeroU32::new(target).unwrap();
+        let mut store = MemStore::new();
+        let mut tree = Tree::empty(target);
+        let mut model = BTreeMap::new();
+        for (k, len) in ops {
+            match len {
+                Some(len) => {
+                    let value = vec![k as u8; len];
+                    tree.insert(&mut store, key(k), value.clone()).unwrap();
+                    model.insert(k, value);
+                }
+                None => {
+                    tree.remove(&mut store, &key(k)).unwrap();
+                    model.remove(&k);
+                }
+            }
+            let fresh = Tree::build(
+                &mut store,
+                target,
+                model.iter().map(|(k, v)| (key(*k), v.clone())),
+            )
+            .unwrap();
+            prop_assert_eq!(tree, fresh);
+        }
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(64))]
+
     #[test]
     fn insert_order_does_not_change_the_root(
         entries in prop::collection::btree_map(any::<u16>(), any::<u8>(), 0..500)

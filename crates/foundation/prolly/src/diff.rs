@@ -1,9 +1,16 @@
 //! The entries two trees disagree on, found by walking down only where their
 //! hashes differ.
 
-use std::cmp::Ordering;
+use std::{cmp::Ordering, sync::Arc};
 
-use crate::{error::Result, hash::Hash, node::Item, store::Store, tree::load, tree::Tree};
+use crate::{
+    error::Result,
+    hash::Hash,
+    node::{Item, Node},
+    store::Store,
+    tree::load,
+    tree::Tree,
+};
 
 /// One key the two trees disagree on.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -17,9 +24,14 @@ pub struct Difference {
 }
 
 /// What is left to walk of one tree, in key order: a subtree not opened yet,
-/// or an entry.
+/// or an entry. A root keeps the node read for its level, so opening it reads
+/// nothing more.
 enum Elem {
-    Subtree { hash: Hash, level: u8 },
+    Subtree {
+        hash: Hash,
+        level: u8,
+        node: Option<Arc<Node>>,
+    },
     Entry(Item),
 }
 
@@ -36,24 +48,32 @@ where
     fn new(store: &'a S, tree: &Tree) -> Result<Self> {
         let mut stack = Vec::new();
         if let Some(hash) = tree.root {
-            let level = load(store, &hash)?.level;
-            stack.push(Elem::Subtree { hash, level });
+            let node = load(store, &hash)?;
+            stack.push(Elem::Subtree {
+                hash,
+                level: node.level,
+                node: Some(node),
+            });
         }
         Ok(Self { store, stack })
     }
 
     /// Replaces the subtree on top with its children.
     fn open(&mut self) -> Result<()> {
-        let Some(Elem::Subtree { hash, .. }) = self.stack.pop() else {
+        let Some(Elem::Subtree { hash, node, .. }) = self.stack.pop() else {
             return Ok(());
         };
-        let node = load(self.store, &hash)?;
+        let node = match node {
+            Some(node) => node,
+            None => load(self.store, &hash)?,
+        };
         for item in node.items.iter().rev() {
             self.stack.push(match node.level {
                 0 => Elem::Entry(item.clone()),
                 level => Elem::Subtree {
                     hash: Hash::from_slice(&item.value)?,
                     level: level - 1,
+                    node: None,
                 },
             });
         }
@@ -101,8 +121,12 @@ where
         let step = match (lhs.stack.last(), rhs.stack.last()) {
             (None, None) => Step::Done,
             (
-                Some(Elem::Subtree { hash: a, level: la }),
-                Some(Elem::Subtree { hash: b, level: lb }),
+                Some(Elem::Subtree {
+                    hash: a, level: la, ..
+                }),
+                Some(Elem::Subtree {
+                    hash: b, level: lb, ..
+                }),
             ) => {
                 if a == b {
                     Step::SkipBoth
