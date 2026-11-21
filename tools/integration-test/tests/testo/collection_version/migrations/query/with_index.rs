@@ -114,10 +114,10 @@ fn collection_migration_query_applying_migration_between_new_versions_should_not
             }
             .into(),
             ConfigureMigration {
-                source_version_id: "bafyreidmsarf4ac4eihxk3ocqfort3e3pxhb7eumatvkanjsxxkjrn3h6a"
+                source_version_id: "bafyreihuyovjl5ezgpud5xyqnouzsgx25x3ssrx3ncdv5p3guocc3laqna"
                     .into(),
                 destination_version_id:
-                    "bafyreidptieeo3tckkyi6jnomavo3noy2mxuv7dfuc76pf2vgxm6ilfazq".into(),
+                    "bafyreigvzkfdc4y2ppvvpmmdw3t7kv4nd5dgfh5jfytef3kbzem6po55zu".into(),
                 lens: Lens {
                     lenses: Some(vec![LensModule {
                         arguments: json!({ "field": "age", "value": 5 }),
