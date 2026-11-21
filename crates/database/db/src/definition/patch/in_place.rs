@@ -92,7 +92,7 @@ impl<S: Store> crate::database::DB<S> {
                     .as_ref()
                     .and_then(|previous| previous.transform.as_ref())
                     .is_none();
-            if is_transform_only_change && removed_transform && !new_schema.indexes.is_empty() {
+            if removed_transform && !new_schema.indexes.is_empty() {
                 crate::definition::migration::owe_reindex(
                     &txn.systemstore()?,
                     &self.collections,
