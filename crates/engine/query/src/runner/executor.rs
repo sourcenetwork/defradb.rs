@@ -635,6 +635,12 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         };
 
         if matches!(&parsed, ParsedOperation::Query { .. }) {
+            let graphql_text = request.parsed.is_none();
+            if let Err(error) =
+                validate_operation(&parsed, self.effective_provider().as_ref(), graphql_text).await
+            {
+                return QueryResponse::error(error.to_string());
+            }
             // A standalone query reads a snapshot of its own on a worker,
             // which nothing registers. Its first run takes a copy of this
             // parse; a registry that runs none leaves the query to the path

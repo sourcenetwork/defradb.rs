@@ -169,6 +169,7 @@ mod one_to_one {
     mod with_count_filter;
     mod with_filter;
     mod with_filter_order;
+    mod with_filter_secondary_relation_id;
     mod with_fragments;
     mod with_group_related_id;
     mod with_group_related_id_alias;
