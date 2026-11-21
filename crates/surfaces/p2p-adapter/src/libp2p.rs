@@ -372,7 +372,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             return Ok(());
         }
         self.handle
-            .dial(parsed.peer_id, vec![parsed.transport_addr])
+            .dial_explicit(parsed.peer_id, vec![parsed.transport_addr])
             .await
             .map_err(|error| P2PError::transport(error.to_string()))?;
         self.handle

@@ -29,6 +29,14 @@ pub enum HostCommand {
         response: oneshot::Sender<Result<()>>,
     },
 
+    /// Dial a peer on behalf of an explicit caller, undoing an explicit
+    /// disconnect.
+    ExplicitDial {
+        peer_id: PeerId,
+        addrs: Vec<Multiaddr>,
+        response: oneshot::Sender<Result<()>>,
+    },
+
     /// Disconnect from a peer, hanging up any live connection.
     Disconnect {
         peer_id: PeerId,

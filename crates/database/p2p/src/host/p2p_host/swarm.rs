@@ -61,6 +61,15 @@ impl<S: Store> P2PHost<S> {
                 );
 
                 let mut superseded = false;
+                if self.explicitly_disconnected.contains(&peer_id) && endpoint.is_listener() {
+                    debug!(
+                        peer_id = %peer_id,
+                        connection_id = %connection_id,
+                        "Rejecting inbound reconnect to an explicitly disconnected peer"
+                    );
+                    self.swarm.close_connection(connection_id);
+                    return false;
+                }
                 for redundant in self
                     .connection_manager
                     .redundant_connections(local_peer_id, peer_id)
@@ -99,15 +108,17 @@ impl<S: Store> P2PHost<S> {
                     self.unidentified.insert(peer_id);
                 }
 
-                // Add peer to Kademlia before any scheduled bootstrap. Kademlia's own
-                // ConnectionEstablished handler doesn't add peers to the
-                // routing table until protocol negotiation completes (async).
-                // We add the address now so the initial or periodic
-                // bootstrap has at least one peer to query.
-                self.swarm
-                    .behaviour_mut()
-                    .kademlia
-                    .add_address(&peer_id, peer_addr);
+                // Add peer to Kademlia before any scheduled bootstrap.
+                // Kademlia's own ConnectionEstablished handler doesn't add
+                // peers to the routing table until protocol negotiation
+                // completes (async). We add the address now so the initial or
+                // periodic bootstrap has at least one peer to query.
+                if !self.explicitly_disconnected.contains(&peer_id) {
+                    self.swarm
+                        .behaviour_mut()
+                        .kademlia
+                        .add_address(&peer_id, peer_addr);
+                }
 
                 // A Bitswap fetch can start before Identify finishes (GossipSub
                 // notifications after a restart), and the client needs the peer's
