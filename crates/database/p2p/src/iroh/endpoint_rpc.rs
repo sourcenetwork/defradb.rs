@@ -1904,6 +1904,38 @@ mod tests {
     }
 
     #[nuclei::test]
+    async fn restoring_a_closed_displaced_handle_leaves_an_empty_slot_empty() {
+        edge::compat(async {
+            let accept_ep = localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
+            let accept_task = crate::rt::spawn(edge::compat({
+                let ep = accept_ep.clone();
+                async move {
+                    while let Some(connection) = ep.accept().await {
+                        let _ = connection.await.expect("accepted connection");
+                    }
+                }
+            }));
+
+            let dial_ep = localhost_endpoint(vec![]).await;
+            let displaced = dial_ep
+                .connect(accept_ep.addr(), protocols::ALPN_MUX)
+                .await
+                .expect("connect displaced");
+            let peer = PeerId::new(accept_ep.id().to_string());
+            let endpoint_id = parse_endpoint_id(&peer).expect("parse endpoint id");
+            let cache = new_connection_cache(GossipHandle::new());
+
+            displaced.close(0u32.into(), b"closed before restore");
+            restore_displaced_connection(&cache, &displaced, Some(displaced.clone()));
+
+            assert!(cache.connections.get(&endpoint_id).is_none());
+
+            accept_task.abort();
+        })
+        .await
+    }
+
+    #[nuclei::test]
     async fn concurrent_requests_share_one_connection_dial() {
         edge::compat(async {
             const CALLERS: usize = 16;

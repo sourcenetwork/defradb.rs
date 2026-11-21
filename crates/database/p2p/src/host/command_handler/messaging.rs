@@ -382,9 +382,7 @@ impl<S: Store> P2PHost<S> {
         debug!(peer_id = %peer_id, collections = ?info.collections, filters = ?info.filters, "Creating replicator");
         let peer_str = peer_id.to_string();
         info.id = peer_str;
-        for collection_id in info.collections.iter().chain(info.filters.keys()) {
-            self.replicators.add_replicator(collection_id, &info.id);
-        }
+        self.replicators.set_replicator_info(info);
         if response.send(Ok(())).is_err() {
             debug!(peer_id = %peer_id, "CreateReplicator command response dropped - caller cancelled");
         }

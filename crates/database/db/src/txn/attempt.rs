@@ -1,7 +1,6 @@
 //! One engine-retried write as a closure over a fresh [`DbTxn`]: the closure
 //! runs once per attempt, and a conflict runs it again on fresh reads.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use defra_core::thread_bounds::{MaybeBoxFuture, MaybeSend};
@@ -18,7 +17,6 @@ where
 {
     db: Arc<crate::database::DB<S>>,
     run: F,
-    attempt: Arc<AtomicUsize>,
 }
 
 impl<S, F, T> RetryAttemptFn for DbAttempt<S, F>
@@ -37,7 +35,6 @@ where
                     0,
                     self.db.crdts().clone(),
                 ));
-            self.attempt.fetch_add(1, Ordering::SeqCst);
             let value = (self.run)(&txn)
                 .await
                 .map_err(|error| RetryAttemptError::Abort(Box::new(error)))?;
@@ -59,11 +56,9 @@ where
         F: MaybeSend + 'static + for<'t> FnMut(&'t DbTxn<S>) -> MaybeBoxFuture<'t, Result<T>>,
         T: Send + 'static,
     {
-        let retry_count = Arc::new(AtomicUsize::new(0));
         let attempt = DbAttempt {
             db: Arc::clone(self),
             run,
-            attempt: Arc::clone(&retry_count),
         };
         let value = self
             .store()
@@ -77,14 +72,5 @@ where
             .downcast::<T>()
             .map(|value| *value)
             .map_err(|_| Error::Other("invalid retried attempt result".into()))
-            .map_err(|error| {
-                if retry_count.load(Ordering::SeqCst) == 0 {
-                    error
-                } else {
-                    Error::Other(
-                        "collection truncate could not complete while writes continue".into(),
-                    )
-                }
-            })
     }
 }

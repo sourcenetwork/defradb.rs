@@ -29,7 +29,7 @@ pub struct ReplicatorRegistry {
 
 fn store_info(replicators: &mut Replicators, info: ReplicatorInfo) {
     let peer_id = info.peer_id_str().to_string();
-    if info.collections.is_empty() {
+    if info.collections.is_empty() && info.filters.is_empty() {
         replicators.remove(&peer_id);
     } else {
         replicators.insert(peer_id, info);
@@ -157,7 +157,10 @@ impl ReplicatorRegistry {
         self.replicators
             .load()
             .iter()
-            .filter(|(_, info)| info.collections.iter().any(|id| id == collection_id))
+            .filter(|(_, info)| {
+                info.collections.iter().any(|id| id == collection_id)
+                    || info.filters.contains_key(collection_id)
+            })
             .map(|(peer_id, _)| peer_id.clone())
             .collect()
     }
@@ -196,7 +199,7 @@ impl ReplicatorRegistry {
                 continue;
             }
 
-            if !info.collections.is_empty() {
+            if !info.collections.is_empty() || !info.filters.is_empty() {
                 replicators.insert(peer_id_str.to_string(), info.clone());
             }
             loaded += 1;
@@ -451,6 +454,69 @@ mod tests {
         let info = registry.get_replicator_info(&peer).unwrap();
         assert!(info.filters.is_empty());
         assert!(registry.is_replicator("posts", &peer));
+    }
+
+    #[test]
+    fn test_replicator_registry_keeps_filter_only_records() {
+        let registry = ReplicatorRegistry::new();
+        let peer = random_peer_id();
+        let mut filters = ReplicationFilters::new();
+        filters.insert(
+            "users".to_string(),
+            ReplicationFilter::new("agent_did", serde_json::json!("did:key:z6M")),
+        );
+
+        registry.set_replicator_info(ReplicatorInfo::from_raw_with_filters(
+            peer.clone(),
+            Vec::new(),
+            Vec::new(),
+            filters.clone(),
+        ));
+
+        assert!(registry.is_replicator("users", &peer));
+        assert!(registry.get_replicators("users").contains(&peer));
+
+        let (loaded, skipped) =
+            registry.load_from_infos(&[registry.get_replicator_info(&peer).unwrap()]);
+        assert_eq!((loaded, skipped), (1, 0));
+        assert!(registry.is_replicator("users", &peer));
+    }
+
+    #[test]
+    fn test_replicator_registry_replaces_the_full_record() {
+        let registry = ReplicatorRegistry::new();
+        let peer = random_peer_id();
+        let mut old_filters = ReplicationFilters::new();
+        old_filters.insert(
+            "posts".to_string(),
+            ReplicationFilter::new("agent_did", serde_json::json!("did:key:old")),
+        );
+
+        registry.set_replicator_info(ReplicatorInfo::from_raw_with_filters(
+            peer.clone(),
+            vec!["posts".to_string()],
+            vec!["/ip4/127.0.0.1/tcp/9000".to_string()],
+            old_filters,
+        ));
+
+        let mut new_filters = ReplicationFilters::new();
+        new_filters.insert(
+            "users".to_string(),
+            ReplicationFilter::new("agent_did", serde_json::json!("did:key:new")),
+        );
+        registry.set_replicator_info(ReplicatorInfo::from_raw_with_filters(
+            peer.clone(),
+            vec!["users".to_string()],
+            vec!["/ip4/127.0.0.1/tcp/9001".to_string()],
+            new_filters.clone(),
+        ));
+
+        let info = registry.get_replicator_info(&peer).unwrap();
+        assert_eq!(info.collections, vec!["users".to_string()]);
+        assert_eq!(info.addresses, vec!["/ip4/127.0.0.1/tcp/9001".to_string()]);
+        assert_eq!(info.filters, new_filters);
+        assert!(!registry.is_replicator("posts", &peer));
+        assert!(registry.is_replicator("users", &peer));
     }
 
     #[test]
