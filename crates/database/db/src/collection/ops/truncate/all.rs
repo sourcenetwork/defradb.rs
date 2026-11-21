@@ -133,45 +133,44 @@ impl<S: Store> crate::database::DB<S> {
     where
         S: 'static,
     {
-        let collection_id = collection.collection_id().to_owned();
-        let short_id = collection.resolved_root_id();
-        let ordered_indexes: Vec<u32> = collection
-            .write_indexes()
-            .iter()
-            .filter(|index| !index.is_vector())
-            .map(|index| index.id)
-            .collect();
+        let collection = collection.clone();
         self.transact_db(move |txn| {
-            let collection_id = collection_id.clone();
-            let ordered_indexes = ordered_indexes.clone();
-            Box::pin(async move {
-                Self::truncate_metadata_in(txn, &collection_id, short_id, &ordered_indexes).await
-            })
+            let collection = collection.clone();
+            Box::pin(async move { Self::truncate_metadata_in(txn, &collection).await })
         })
         .await
     }
 
-    async fn truncate_metadata_in(
-        txn: &DbTxn<S>,
-        collection_id: &str,
-        short_id: u32,
-        ordered_indexes: &[u32],
-    ) -> Result<()> {
+    async fn truncate_metadata_in(txn: &DbTxn<S>, collection: &Collection) -> Result<()> {
         use storage::keys::datastore::ViewCacheKey;
         use storage::keys::{HeadstoreColPublishedKey, HeadstoreColSetKey, IndexDataStoreKey};
+
+        // The definition is read in this transaction, so an index whose
+        // definition commits before this one is either listed here or makes
+        // the attempt run again (proofs/tla/TruncateIndexCleanup.tla).
+        let current = txn
+            .load_collection_for_write_attempt(collection.name(), collection)
+            .await?;
+        let collection_id = current.collection_id();
+        let short_id = current.resolved_root_id();
 
         let datastore = txn.datastore()?;
         let headstore = txn.headstore()?;
         let blockstore = txn.blockstore()?;
         let systemstore = txn.systemstore()?;
 
-        // Index entries go one index at a time: a short ID below 240 is one
-        // raw byte, so the collection's own prefix can be the start of another
-        // family (`/d/` for short ID 100) and cover every collection's keys.
-        for &index_id in ordered_indexes {
+        // Index entries go one declared index at a time, failed builds
+        // included: a short ID below 240 is one raw byte, so the collection's
+        // own prefix can be the start of another family (`/d/` for short ID
+        // 100) and cover every collection's keys (proofs/lean/IndexPrefix.lean).
+        for index in current
+            .get_indexes()
+            .iter()
+            .filter(|index| !index.is_vector())
+        {
             delete_prefix(
                 &datastore,
-                IndexDataStoreKey::index_prefix(short_id, index_id),
+                IndexDataStoreKey::index_prefix(short_id, index.id),
             )
             .await?;
         }

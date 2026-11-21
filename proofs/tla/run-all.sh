@@ -518,6 +518,11 @@ RUNS=(
   "MC_Truncate_Red_Txn.cfg Truncate.tla RED" # transaction check left out, as before: a filter on the txn view removes an uncommitted match (INV_FilteredRemovesOnlyCommittedMatches)
   "MC_Truncate_Red_Shape.cfg Truncate.tla RED" # filter shape check left out: a non-filter removes everything (INV_BadFilterRemovesNothing)
   "MC_Truncate_Red_ViewCache.cfg Truncate.tla RED" # #2703: view cache clear left out: a truncated view still shows its rows (INV_UnfilteredEmptiesView)
+  "MC_TruncateIndexCleanup_Green.cfg TruncateIndexCleanup.tla GREEN" # #3172: the cleanup reads the definition after the chunks and cleans every declared index, one prefix each
+  "MC_TruncateIndexCleanup_Red_Captured.cfg TruncateIndexCleanup.tla RED" # indexes taken from the collection the truncate began with: an index created mid-truncate keeps entries (INV_NoEntryForTruncatedDoc)
+  "MC_TruncateIndexCleanup_Red_Writable.cfg TruncateIndexCleanup.tla RED" # only writable indexes cleaned: a failed build keeps entries (INV_NoEntryForTruncatedDoc)
+  "MC_TruncateIndexCleanup_Red_SnapshotBackfill.cfg TruncateIndexCleanup.tla RED" # backfill pages read documents unvalidated: an entry commits after the cleanup (INV_NoEntryForTruncatedDoc)
+  "MC_TruncateIndexCleanup_Red_CollectionPrefix.cfg TruncateIndexCleanup.tla RED" # the collection-wide prefix: short ID 100 sweeps every collection's documents (INV_OtherCollectionIntact)
   "MC_NacOrder_Green.cfg NacOrder.tla GREEN" # #2680/#2700: a document write checks get-collection then its own permission, in its transaction, and a call with no identity acts as no one
   "MC_NacOrder_Red_SkipGet.cfg NacOrder.tla RED" # get-collection left out: a caller without it writes (INV_NoEffectWithoutPermission)
   "MC_NacOrder_Red_OwnFirst.cfg NacOrder.tla RED" # the write's own permission checked first: the refusal names it, not get-collection (INV_RefusalNamesGoFirst)

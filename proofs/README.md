@@ -125,7 +125,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Index changes in a transaction | TLA+ | db, defra-node, http, cli |
 | Encrypted index changes outside a transaction | TLA+ | db, defra-node, cli |
 | Gossip announcement audience | TLA+ | p2p |
-| Collection truncate | TLA+ | db |
+| Collection truncate | TLA+ & Lean | db, storage |
 | Relation-filtered mutation | TLA+ | query, datastore, db |
 | Add DAC policy | TLA+ | db, acp, vera, http, cli, ffi, defra-node |
 | Add view with a lens transform | TLA+ & Lean | defra-node, db, schema, lens (#2724; NAC before the create transaction is a known gap, #2736) |
