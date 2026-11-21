@@ -57,15 +57,14 @@ impl ParsedOperation {
     /// Whether mutation preparation has work to do: mutations, with no
     /// explain request standing in their way.
     pub(crate) fn has_unexplained_mutations(&self) -> bool {
-        let _ = matches!(
+        matches!(
             self,
             ParsedOperation::Mutation {
                 mutations,
                 explain: None,
                 ..
-            },
-        );
-        false
+            } if !mutations.is_empty()
+        )
     }
 }
 

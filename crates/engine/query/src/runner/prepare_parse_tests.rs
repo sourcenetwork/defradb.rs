@@ -149,8 +149,9 @@ fn a_request_without_mutation_work_skips_mutation_preparation() {
         let parsed = query.operation(None, QueryLimits::default()).unwrap();
         assert!(!parsed.has_unexplained_mutations());
 
-        let mutation =
-            QueryRequest::new(r#"mutation @explain { add_User(input: { name: "Alice" }) { name } }"#);
+        let mutation = QueryRequest::new(
+            r#"mutation @explain { add_User(input: { name: "Alice" }) { name } }"#,
+        );
         let parsed = mutation.operation(None, QueryLimits::default()).unwrap();
         assert!(!parsed.has_unexplained_mutations());
     })
