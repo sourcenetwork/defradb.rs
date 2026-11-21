@@ -174,10 +174,12 @@ fn bench_build_and_get_at_a_size_that_misses_the_cache() {
     .unwrap()
 }
 
-/// A regolith store whose first `transact_retry` fails with an I/O error.
+/// A regolith store whose first `transact_retry` fails with an I/O error, or,
+/// with `stall`, waits forever.
 struct FailFirstWrite {
     inner: Arc<RegolithStore>,
     failed: std::sync::atomic::AtomicBool,
+    stall: bool,
 }
 
 impl crate::corekv::private::Sealed for FailFirstWrite {}
@@ -206,6 +208,9 @@ impl crate::corekv::Store for FailFirstWrite {
         attempt: crate::corekv::RetryAttempt,
     ) -> Result<crate::corekv::RetryAttemptValue, crate::corekv::RetryAttemptError> {
         if !self.failed.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            if self.stall {
+                std::future::pending::<()>().await;
+            }
             return Err(crate::corekv::RetryAttemptError::Storage(
                 crate::corekv::Error::Other("injected write failure".into()),
             ));
@@ -225,6 +230,7 @@ fn a_failed_flush_keeps_its_nodes_pending_and_the_next_flush_writes_them() {
         let store = Arc::new(FailFirstWrite {
             inner: Arc::clone(&regolith),
             failed: std::sync::atomic::AtomicBool::new(false),
+            stall: false,
         });
         let mut nodes = ProllyNodes::new(store, engine_retry_options(5), usize::MAX);
         let node = prolly::Node {
@@ -245,6 +251,53 @@ fn a_failed_flush_keeps_its_nodes_pending_and_the_next_flush_writes_them() {
         );
         assert_eq!(nodes.pending_bytes(), pending, "nothing was written");
         assert_eq!(nodes.get(&hash).await.unwrap().as_deref(), Some(&node));
+
+        nodes.flush().await.unwrap();
+        assert_eq!(nodes.pending_bytes(), 0);
+        let txn = crate::corekv::Store::new_txn(&*regolith, true)
+            .await
+            .unwrap();
+        let stored = txn.get(&node_key(&hash)).await.unwrap();
+        txn.discard();
+        assert_eq!(stored.as_deref(), Some(node.encode().as_slice()));
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_flush_dropped_before_its_commit_keeps_its_nodes_pending() {
+    use std::future::Future as _;
+    use std::task::{Context, Waker};
+
+    workers::block_on(async {
+        let regolith = Arc::new(RegolithStore::in_memory().unwrap());
+        let store = Arc::new(FailFirstWrite {
+            inner: Arc::clone(&regolith),
+            failed: std::sync::atomic::AtomicBool::new(false),
+            stall: true,
+        });
+        let mut nodes = ProllyNodes::new(store, engine_retry_options(5), usize::MAX);
+        let node = prolly::Node {
+            level: 0,
+            items: vec![Item {
+                key: b"k".to_vec(),
+                value: b"v".to_vec(),
+            }],
+        };
+        let hash = nodes.put(node.clone()).await.unwrap();
+        let pending = nodes.pending_bytes();
+
+        {
+            let mut flush = std::pin::pin!(nodes.flush());
+            let polled = flush.as_mut().poll(&mut Context::from_waker(Waker::noop()));
+            assert!(polled.is_pending(), "the commit waits");
+        }
+        assert_eq!(nodes.pending_bytes(), pending, "nothing was written");
+        assert_eq!(
+            nodes.get(&hash).await.unwrap().as_deref(),
+            Some(&node),
+            "a dropped flush loses no put"
+        );
 
         nodes.flush().await.unwrap();
         assert_eq!(nodes.pending_bytes(), 0);

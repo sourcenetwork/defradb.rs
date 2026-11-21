@@ -64,9 +64,11 @@ impl Builder {
             _ => {}
         }
         if let Some(previous) = self.last.replace(Item { key, value }) {
-            let fed = self.feed(store, 0, previous).await;
-            self.failed = fed.is_err();
-            fed?;
+            // Failed until `feed` returns, so a push dropped while a put is
+            // pending, its chunk already taken, leaves the builder failed too.
+            self.failed = true;
+            self.feed(store, 0, previous).await?;
+            self.failed = false;
         }
         Ok(())
     }
