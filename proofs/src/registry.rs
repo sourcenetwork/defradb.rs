@@ -1954,10 +1954,27 @@ pub const PROPERTIES: &[Property] = &[
         family: "ACP soundness + revocation + dual-path commits",
         name: "INV_AtMostOneEffect / INV_ConfirmedHasEffect / INV_NoEarlyGiveUp / INV_RetainedUntilConfirmed / LIVE_UndisturbedCallConfirms / LIVE_RecalledConfirms: a pending submission is resent until confirmed, takes effect once, is given up only at its deadline or on a failure that cannot pass, stays journaled until confirmed, and is confirmed by a later call when an earlier one was cut short",
         axis: Tla,
-        anchor: "crates/engine/vera/src/vera_rs/provider/submission.rs resolve_pending, recover_pending, send_tx_with_sequence; crates/engine/vera/src/vera_rs/client.rs retryable; crates/engine/vera/src/vera_rs/worker.rs acknowledge; crates/engine/vera-embedded/src/submission.rs",
+        anchor: "crates/engine/vera/src/vera_rs/provider/submission.rs resolve_pending, recover_pending, send_tx_with_sequence; crates/engine/vera/src/vera_rs/receipt_wait.rs until_receipt; crates/engine/vera/src/vera_rs/client.rs retryable; crates/engine/vera/src/vera_rs/worker.rs acknowledge; crates/engine/vera-embedded/src/submission.rs",
         model_ref: "MC_PendingSubmission_{Green,Green_Recalled,Red_NoResend,Red_NoDedupe,Red_GivesUpEarly,Red_ForgetsOnTimeout,Red_Recalled_Forgets}.cfg",
         tiers: &[Boundary],
         bound_by: "",
+    },
+    Property {
+        // Between asks for a receipt the provider waits for the light
+        // client to verify a height above the one it read before it asked
+        // and sent, at most a fallback interval. The node serves a receipt
+        // from the moment it publishes its block's header, so the receipt
+        // is asked for as soon as it can be there; a header verified while
+        // the ask or the send was on its way still ends the wait; and a
+        // header stream that is down delays the receipt by the fallback,
+        // never for good.
+        family: "vera.rs receipt wait",
+        name: "INV_Prompt / LIVE_Confirms: a receipt is asked for at the verified height that holds it, with no wait on a timer, and is read in the end when no header comes",
+        axis: Tla,
+        anchor: "crates/engine/vera/src/vera_rs/receipt_wait.rs until_receipt, Heads, Fallback, MIN_FALLBACK; crates/engine/vera/src/vera_rs/provider.rs receipt_fallbacks; crates/engine/vera/src/vera_rs/provider/submission.rs resolve_pending; crates/engine/vera/src/vera_rs/follow/chain.rs ProviderChain::send_and_confirm; crates/engine/vera/src/tuning.rs receipt_fallback",
+        model_ref: "MC_ReceiptWait_{Green,Red_TimerOnly,Red_SeenAfterSend,Red_Unbounded}.cfg",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/engine/vera/src/vera_rs/receipt_wait_tests.rs a_receipt_is_asked_for_at_the_next_verified_height_and_not_after_a_sleep, a_header_verified_while_the_request_is_sent_still_ends_the_wait, with_no_header_each_wait_ends_at_its_fallback_and_an_unheard_send_is_sent_again; crates/engine/vera-embedded/tests/receipt_wait.rs writes_are_confirmed_at_their_blocks_header_and_not_at_the_fallback",
     },
     Property {
         // A remote provider cannot join the row transaction, so a create
