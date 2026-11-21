@@ -644,7 +644,7 @@ async fn complete_sourceless_root_merges_without_block_sync() {
     let result = ReplicationLoop::process_next(&coordinator, &mut events, &MergeAll, &config).await;
     if let ReplicationResult::BitswapFetchStarted { query_id, .. } = result {
         coordinator
-            .handle_bitswap_complete(query_id, Ok(()), None)
+            .handle_block_sync_complete(query_id, Ok(()), None)
             .await
             .unwrap();
     }
