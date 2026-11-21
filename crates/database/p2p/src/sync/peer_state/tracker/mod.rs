@@ -122,8 +122,8 @@ pub struct PeerStateTracker {
     pub(super) peers: PeerTable,
     /// Origin of every `last_seen` timestamp
     pub(super) epoch: Instant,
-    /// Wall-clock time of `epoch`, in milliseconds since the Unix epoch
-    pub(super) epoch_unix_ms: u64,
+    /// Wall-clock time of `epoch`, in nanoseconds since the Unix epoch.
+    pub(super) epoch_unix_ns: u128,
     /// CIDs known across all peers, kept as an upper bound: a peer removed
     /// while still receiving CIDs leaves the count high, never low, and the
     /// next limit sweep recomputes it exactly.
@@ -220,9 +220,9 @@ impl PeerStateTracker {
         Self {
             peers: HopscotchMap::with_hasher(RandomState::default()),
             epoch: Instant::now(),
-            epoch_unix_ms: SystemTime::now()
+            epoch_unix_ns: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .map_or(0, |elapsed| elapsed.as_millis() as u64),
+                .map_or(0, |elapsed| elapsed.as_nanos()),
             total_cids: AtomicUsize::new(0),
             peer_ttl,
             max_cids_per_peer: max_cids,
@@ -236,9 +236,10 @@ impl PeerStateTracker {
     }
 
     /// Wall-clock milliseconds for a tracker timestamp. Derived from the
-    /// monotonic clock, so it does not follow wall-clock steps after start.
+    /// monotonic clock, so it does not follow wall-clock steps after start;
+    /// the one rounding happens only after the elapsed time is added.
     pub(super) fn unix_ms(&self, at: u64) -> u64 {
-        self.epoch_unix_ms + at / 1_000_000
+        ((self.epoch_unix_ns + u128::from(at)) / 1_000_000) as u64
     }
 
     /// Mark the peer seen now, returning now in Unix milliseconds.
