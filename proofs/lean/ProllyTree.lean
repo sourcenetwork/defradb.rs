@@ -1678,6 +1678,9 @@ theorem walk_eq (kids : Nat → List Elem) (content : Nat → List Entry)
         exact walkStep_keeps kids content hk l r l' r' out hs
 
 -- A tree's stack at the start (`Walk::new`): its root subtree, or nothing.
+-- Rust keeps the root node it read for the level and reuses it in the first
+-- `Walk::open`; `kids` depends only on the hash, so that saved read changes
+-- nothing here.
 def start : Option (Nat × Nat) → List Elem
   -- An empty tree: nothing to walk.
   | none => []

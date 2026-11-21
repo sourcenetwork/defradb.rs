@@ -78,6 +78,29 @@ proptest! {
 }
 
 #[test]
+fn unequal_roots_are_each_read_once() {
+    let mut store = MemStore::new();
+    let left = build(
+        &mut store,
+        DEFAULT_TARGET,
+        &(0..4).map(|k| (k, 0)).collect(),
+    );
+    let right = build(
+        &mut store,
+        DEFAULT_TARGET,
+        &(0..4).map(|k| (k, 1)).collect(),
+    );
+    assert_eq!(store.get(&left.root().unwrap()).unwrap().level, 0);
+    assert_eq!(store.get(&right.root().unwrap()).unwrap().level, 0);
+    let counting = Counting {
+        inner: &store,
+        reads: std::cell::Cell::new(0),
+    };
+    assert_eq!(diff(&counting, &left, &counting, &right).unwrap().len(), 4);
+    assert_eq!(counting.reads.get(), 2, "one read per root");
+}
+
+#[test]
 fn equal_trees_differ_nowhere_and_read_nothing() {
     let mut store = MemStore::new();
     let map: BTreeMap<u16, u8> = (0..5_000).map(|k| (k, (k % 7) as u8)).collect();
