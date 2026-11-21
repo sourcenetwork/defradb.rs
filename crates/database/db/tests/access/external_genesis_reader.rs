@@ -259,3 +259,71 @@ fn a_batch_past_the_actors_unsettled_bound_owes_every_reader() {
     })
     .unwrap()
 }
+
+impl Staging {
+    /// The node's and `actor`'s counts of unsettled changes, as admission
+    /// reads them.
+    async fn admission_counts(&self, actor: &Did) -> (u64, u64) {
+        let txn = datastore::BasicTxn::new(self.store.as_ref(), 0, true)
+            .await
+            .unwrap();
+        let changes = self
+            .gate
+            .owed_changes(&txn.acpstore(), acp::StagedCount::new());
+        let counts = (
+            changes.unsettled().await.unwrap(),
+            changes.unsettled_by(actor).await.unwrap(),
+        );
+        drop(changes);
+        txn.discard().unwrap();
+        counts
+    }
+}
+
+/// As many creates by one actor as it may hold changes unsettled, while the
+/// provider cannot be reached: its owed readers take nothing of its
+/// allowance, and a revocation it then makes is still staged.
+#[test]
+fn owed_readers_leave_their_actor_room_to_revoke() {
+    workers::block_on(async {
+        let staging = host().await;
+        staging.remote.down.store(true, Ordering::SeqCst);
+        let count = acp::outbox::MAX_UNSETTLED_OWED_CHANGES_PER_ACTOR as usize;
+        let docs = staging.create_board_batch(alice(), count, None).await;
+        assert_eq!(staging.admission_counts(&alice()).await, (0, 0));
+
+        let handle = staging.begin().await;
+        staging
+            .stage(
+                &handle,
+                super::external_staging::Change::new(alice(), &docs[0], OwedOp::Delete, bob()),
+            )
+            .await
+            .expect("a revocation by the actor whose readers are owed");
+        staging.commit(&handle).await;
+        assert_eq!(staging.admission_counts(&alice()).await, (1, 1));
+    })
+    .unwrap()
+}
+
+/// Owed readers count toward neither the node's bound nor their actor's, so
+/// no actor on the node is refused for them; settling them leaves both
+/// counts where they were.
+#[test]
+fn owed_readers_take_nothing_of_the_nodes_bound_and_settle_without_a_trace() {
+    workers::block_on(async {
+        let staging = host().await;
+        staging.remote.down.store(true, Ordering::SeqCst);
+        staging.create_board_batch(alice(), 3, None).await;
+        assert_eq!(staging.admission_counts(&alice()).await, (0, 0));
+        staging.remote.down.store(false, Ordering::SeqCst);
+        staging
+            .gate
+            .settle_owed_changes_once(OwedScope::All)
+            .await
+            .unwrap();
+        assert!(staging.queue().await.is_empty());
+        assert_eq!(staging.admission_counts(&alice()).await, (0, 0));
+    })
+    .unwrap()
+}

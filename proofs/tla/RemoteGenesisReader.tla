@@ -17,7 +17,9 @@
 \* node merges on a grant the provider does not hold yet; a node merges more
 \* of the document after it has seen the reader revoked; a node merges a
 \* document whose registration its provider does not hold; a create its
-\* registrations allow is refused for the grants it owes. And what must
+\* registrations allow is refused for the grants it owes; an owed grant takes
+\* an ordinary change's place in its actor's or the node's admission bound,
+\* or settling it takes from a count it never added to. And what must
 \* happen: unless the reader is revoked, the addressed node ends up merging
 \* the genesis.
 \*
@@ -31,7 +33,7 @@
 \* receiver's gate AcpCompositeMergeHook::on_protected_composite in
 \* crates/database/db/src/merge/acp_merge_handler.rs.
 \* Only the standard operators on numbers and finite sets are used.
-EXTENDS Naturals, FiniteSets
+EXTENDS Integers, FiniteSets
 
 \* Bug names the one guard a RED configuration breaks; "none" breaks nothing.
 CONSTANT Bug
@@ -62,13 +64,16 @@ Frames == {1, 2}
 \* overBound: the create's transaction makes more documents than it may stage
 \*   ordinary owed changes, or than their actor may hold unsettled.
 \* createRefused: a create its registrations allow was refused for its grants.
-VARIABLES overBound, createRefused, access, created, owedReg, owedGrant, postCommit, crashed,
+\* ordinaryOwed: the creator owes an ordinary change of its own (a revocation).
+\* ordinaryRefused: that ordinary change was refused at admission.
+\* count: the creator's admission count of unsettled changes, against Limit.
+VARIABLES ordinaryOwed, ordinaryRefused, count, overBound, createRefused, access, created, owedReg, owedGrant, postCommit, crashed,
           reg, grant, refused, revoked, everGranted,
           seenReg, seenGrant, seenRevoked,
           written, delivered, merged, early, afterRevoked
 
 \* Every variable, for stuttering steps and fairness.
-vars == <<overBound, createRefused, access, created, owedReg, owedGrant, postCommit, crashed,
+vars == <<ordinaryOwed, ordinaryRefused, count, overBound, createRefused, access, created, owedReg, owedGrant, postCommit, crashed,
           reg, grant, refused, revoked, everGranted,
           seenReg, seenGrant, seenRevoked,
           written, delivered, merged, early, afterRevoked>>
@@ -76,6 +81,7 @@ vars == <<overBound, createRefused, access, created, owedReg, owedGrant, postCom
 \* Either kind of opted-in collection; nothing written, owed or held yet.
 Init == /\ access \in {"addressed", "public"}
         /\ overBound \in BOOLEAN /\ createRefused = FALSE
+        /\ ordinaryOwed = FALSE /\ ordinaryRefused = FALSE /\ count = 0
         /\ created = FALSE /\ owedReg = FALSE /\ owedGrant = FALSE
         /\ postCommit = FALSE /\ crashed = FALSE
         /\ reg = FALSE /\ grant = FALSE /\ refused = FALSE
@@ -97,6 +103,16 @@ Named(n) == access = "public" \/ n = "b" \/ Bug = "address"
 \* cannot stage it.
 Counted == Bug = "counted" /\ overBound
 
+\* How many unsettled changes admission lets the creator hold, scaled down
+\* from the code's bounds: one.
+Limit == 1
+
+\* Staging the grant adds to the admission count only under the "admitted"
+\* bug; settling it takes from the count under that bug and under the
+\* "unbalanced" bug, which takes away what staging never added.
+AddsGrant == IF Bug = "admitted" THEN 1 ELSE 0
+TakesGrant == IF Bug \in {"admitted", "unbalanced"} THEN 1 ELSE 0
+
 \* The create commits: its genesis frame, its owed registration and, in the
 \* same transaction, its owed grant. The "separate" bug leaves the grant to
 \* a step after the commit instead.
@@ -104,7 +120,8 @@ Create == /\ ~created /\ ~Counted
           /\ created' = TRUE /\ written' = {1} /\ owedReg' = TRUE
           /\ owedGrant' = (Bug /= "separate")
           /\ postCommit' = (Bug = "separate")
-          /\ UNCHANGED <<overBound, createRefused, access, crashed, reg, grant, refused, revoked, everGranted,
+          /\ count' = count + (IF Bug /= "separate" THEN AddsGrant ELSE 0)
+          /\ UNCHANGED <<ordinaryOwed, ordinaryRefused, overBound, createRefused, access, crashed, reg, grant, refused, revoked, everGranted,
                          seenReg, seenGrant, seenRevoked, delivered, merged,
                          early, afterRevoked>>
 
@@ -112,7 +129,7 @@ Create == /\ ~created /\ ~Counted
 \* which its registrations allow, is refused.
 RefuseCreate == /\ ~created /\ ~createRefused /\ Counted
                 /\ createRefused' = TRUE
-                /\ UNCHANGED <<overBound, access, created, owedReg, owedGrant, postCommit,
+                /\ UNCHANGED <<ordinaryOwed, ordinaryRefused, count, overBound, access, created, owedReg, owedGrant, postCommit,
                                crashed, reg, grant, refused, revoked, everGranted,
                                seenReg, seenGrant, seenRevoked, written, delivered,
                                merged, early, afterRevoked>>
@@ -120,7 +137,8 @@ RefuseCreate == /\ ~created /\ ~createRefused /\ Counted
 \* The "separate" bug's step after the commit: it stages the grant then.
 StageAfterCommit == /\ postCommit
                     /\ owedGrant' = TRUE /\ postCommit' = FALSE
-                    /\ UNCHANGED <<overBound, createRefused, access, created, owedReg, crashed, reg, grant, refused,
+                    /\ count' = count + AddsGrant
+                    /\ UNCHANGED <<ordinaryOwed, ordinaryRefused, overBound, createRefused, access, created, owedReg, crashed, reg, grant, refused,
                                    revoked, everGranted, seenReg, seenGrant,
                                    seenRevoked, written, delivered, merged,
                                    early, afterRevoked>>
@@ -129,14 +147,14 @@ StageAfterCommit == /\ postCommit
 \* meant to do after the commit is lost.
 Crash == /\ ~crashed
          /\ crashed' = TRUE /\ postCommit' = FALSE
-         /\ UNCHANGED <<overBound, createRefused, access, created, owedReg, owedGrant, reg, grant, refused,
+         /\ UNCHANGED <<ordinaryOwed, ordinaryRefused, count, overBound, createRefused, access, created, owedReg, owedGrant, reg, grant, refused,
                         revoked, everGranted, seenReg, seenGrant, seenRevoked,
                         written, delivered, merged, early, afterRevoked>>
 
 \* The provider takes the owed registration.
 SettleReg == /\ owedReg
              /\ reg' = TRUE /\ owedReg' = FALSE
-             /\ UNCHANGED <<overBound, createRefused, access, created, owedGrant, postCommit, crashed, grant,
+             /\ UNCHANGED <<ordinaryOwed, ordinaryRefused, count, overBound, createRefused, access, created, owedGrant, postCommit, crashed, grant,
                             refused, revoked, everGranted, seenReg, seenGrant,
                             seenRevoked, written, delivered, merged, early,
                             afterRevoked>>
@@ -147,17 +165,39 @@ SettleReg == /\ owedReg
 SettleGrant == /\ owedGrant
                /\ (~owedReg \/ Bug = "order")
                /\ owedGrant' = FALSE
+               /\ count' = count - TakesGrant
                /\ IF reg
                     THEN grant' = TRUE /\ everGranted' = TRUE /\ UNCHANGED refused
-                    ELSE refused' = TRUE /\ UNCHANGED <<overBound, createRefused, grant, everGranted>>
-               /\ UNCHANGED <<overBound, createRefused, access, created, owedReg, postCommit, crashed, reg,
+                    ELSE refused' = TRUE /\ UNCHANGED <<grant, everGranted>>
+               /\ UNCHANGED <<ordinaryOwed, ordinaryRefused, overBound, createRefused, access, created, owedReg, postCommit, crashed, reg,
                               revoked, seenReg, seenGrant, seenRevoked, written,
                               delivered, merged, early, afterRevoked>>
+
+\* The creator stages an ordinary change of its own, such as a revocation:
+\* admission refuses it when the creator's count has reached the bound.
+StageOrdinary == /\ created /\ ~ordinaryOwed /\ ~ordinaryRefused
+                 /\ IF count >= Limit
+                      THEN ordinaryRefused' = TRUE /\ UNCHANGED <<ordinaryOwed, count>>
+                      ELSE ordinaryOwed' = TRUE /\ count' = count + 1
+                           /\ UNCHANGED ordinaryRefused
+                 /\ UNCHANGED <<overBound, createRefused, access, created, owedReg,
+                                owedGrant, postCommit, crashed, reg, grant, refused,
+                                revoked, everGranted, seenReg, seenGrant, seenRevoked,
+                                written, delivered, merged, early, afterRevoked>>
+
+\* The provider takes the ordinary change; its count is settled.
+SettleOrdinary == /\ ordinaryOwed /\ ~owedReg
+                  /\ ordinaryOwed' = FALSE /\ count' = count - 1
+                  /\ UNCHANGED <<ordinaryRefused, overBound, createRefused, access,
+                                 created, owedReg, owedGrant, postCommit, crashed, reg,
+                                 grant, refused, revoked, everGranted, seenReg,
+                                 seenGrant, seenRevoked, written, delivered, merged,
+                                 early, afterRevoked>>
 
 \* The creator revokes the reader the provider holds.
 Revoke == /\ grant
           /\ grant' = FALSE /\ revoked' = TRUE
-          /\ UNCHANGED <<overBound, createRefused, access, created, owedReg, owedGrant, postCommit, crashed,
+          /\ UNCHANGED <<ordinaryOwed, ordinaryRefused, count, overBound, createRefused, access, created, owedReg, owedGrant, postCommit, crashed,
                          reg, refused, everGranted, seenReg, seenGrant,
                          seenRevoked, written, delivered, merged, early,
                          afterRevoked>>
@@ -165,7 +205,7 @@ Revoke == /\ grant
 \* The creator writes again on a.
 Write == /\ created /\ 2 \notin written
          /\ written' = written \cup {2}
-         /\ UNCHANGED <<overBound, createRefused, access, created, owedReg, owedGrant, postCommit, crashed,
+         /\ UNCHANGED <<ordinaryOwed, ordinaryRefused, count, overBound, createRefused, access, created, owedReg, owedGrant, postCommit, crashed,
                         reg, grant, refused, revoked, everGranted, seenReg,
                         seenGrant, seenRevoked, delivered, merged, early,
                         afterRevoked>>
@@ -174,14 +214,14 @@ Write == /\ created /\ 2 \notin written
 Observe(n) == /\ seenReg' = [seenReg EXCEPT ![n] = reg]
               /\ seenGrant' = [seenGrant EXCEPT ![n] = grant]
               /\ seenRevoked' = [seenRevoked EXCEPT ![n] = revoked]
-              /\ UNCHANGED <<overBound, createRefused, access, created, owedReg, owedGrant, postCommit, crashed,
+              /\ UNCHANGED <<ordinaryOwed, ordinaryRefused, count, overBound, createRefused, access, created, owedReg, owedGrant, postCommit, crashed,
                              reg, grant, refused, revoked, everGranted, written,
                              delivered, merged, early, afterRevoked>>
 
 \* Replication brings a written frame to a receiver.
 Deliver(n, f) == /\ f \in written /\ f \notin delivered[n]
                  /\ delivered' = [delivered EXCEPT ![n] = @ \cup {f}]
-                 /\ UNCHANGED <<overBound, createRefused, access, created, owedReg, owedGrant, postCommit,
+                 /\ UNCHANGED <<ordinaryOwed, ordinaryRefused, count, overBound, createRefused, access, created, owedReg, owedGrant, postCommit,
                                 crashed, reg, grant, refused, revoked, everGranted,
                                 seenReg, seenGrant, seenRevoked, written, merged,
                                 early, afterRevoked>>
@@ -207,13 +247,13 @@ Merge(n, f) == /\ f \in delivered[n] /\ f \notin merged[n]
                /\ merged' = [merged EXCEPT ![n] = @ \cup {f}]
                /\ early' = (early \/ ~everGranted)
                /\ afterRevoked' = (afterRevoked \/ seenRevoked[n])
-               /\ UNCHANGED <<overBound, createRefused, access, created, owedReg, owedGrant, postCommit,
+               /\ UNCHANGED <<ordinaryOwed, ordinaryRefused, count, overBound, createRefused, access, created, owedReg, owedGrant, postCommit,
                               crashed, reg, grant, refused, revoked, everGranted,
                               seenReg, seenGrant, seenRevoked, written, delivered>>
 
 \* Every step any actor can take.
 Next == \/ Create \/ RefuseCreate \/ StageAfterCommit \/ Crash \/ SettleReg \/ SettleGrant
-        \/ Revoke \/ Write
+        \/ Revoke \/ Write \/ StageOrdinary \/ SettleOrdinary
         \/ \E n \in Receivers : Observe(n)
         \/ \E n \in Receivers, f \in Frames : Deliver(n, f) \/ Merge(n, f)
 
@@ -241,6 +281,14 @@ INV_RevokedStops == ~afterRevoked
 
 \* No node merges a document whose registration the provider never held.
 INV_RegisteredFirst == \A n \in Receivers : merged[n] /= {} => reg
+
+\* The owed grant never takes an ordinary change's place: the creator's
+\* ordinary change is admitted.
+INV_OrdinaryAdmitted == ~ordinaryRefused
+
+\* The admission count is exactly the ordinary changes owed: the grant is
+\* neither added nor taken away.
+INV_CountBalanced == count = IF ordinaryOwed THEN 1 ELSE 0
 
 \* A create its registrations allow is never refused for the grants it owes.
 INV_ValidBatchCommits == ~createRefused
