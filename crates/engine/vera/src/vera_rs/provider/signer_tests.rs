@@ -22,6 +22,7 @@ use super::{
 use crate::vera_rs::client::tests::{Recorded, TRUSTED_KEY};
 use crate::vera_rs::client::VeraRsClient;
 use crate::vera_rs::did_spelling;
+use crate::vera_rs::receipt_wait::Fallback;
 use crate::vera_rs::signer::admission;
 use crate::vera_rs::signer::DelegationSigner as _;
 use vera_delegation::testing::{Recording, Returns};
@@ -57,7 +58,7 @@ pub(super) async fn provider(
             light_client: light_client.clone(),
             trusted: trusted_key(TRUSTED_KEY).expect("trusted key"),
             timeout: Duration::from_secs(5),
-            fallback: Duration::from_millis(200),
+            fallback: Arc::new(Fallback::new(Duration::from_millis(200))),
         },
         worker: worker.clone(),
         follow,
@@ -77,7 +78,7 @@ pub(super) async fn provider(
         trusted: trusted_key(TRUSTED_KEY).expect("trusted key"),
         signer,
         sync_timeout: Duration::from_secs(5),
-        receipt_fallback: Duration::from_millis(200),
+        receipt_fallback: Arc::new(Fallback::new(Duration::from_millis(200))),
         light_client_observability: Arc::new(AtomicU64::new(0)),
         _light_client_observer: edge.spawn_service(std::future::pending()),
         edge,

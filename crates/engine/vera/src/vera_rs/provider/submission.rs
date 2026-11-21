@@ -152,7 +152,7 @@ impl VeraRsProvider {
             self.sync_timeout,
             until_receipt(
                 self.light_client.as_ref(),
-                self.receipt_fallback,
+                &self.receipt_fallback,
                 start,
                 move || async move {
                     match client.receipt(hash, trusted).await {

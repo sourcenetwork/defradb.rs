@@ -5,6 +5,7 @@
 //! proofs/tla/ReceiptWait.tla.
 
 use std::future::Future;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use acp_light_client::AcpLightClient;
@@ -12,14 +13,15 @@ use defra_core::thread_bounds::MaybeBoxFuture;
 
 /// The shortest fallback a wait is given: an ask the node cannot answer
 /// costs it a lookup of its finalized history.
-pub(crate) const MIN_FALLBACK: Duration = Duration::from_millis(5);
+const MIN_FALLBACK: Duration = Duration::from_millis(5);
 
 /// The newest verified height, and a wait for a higher one.
 pub(crate) trait Heads: Send + Sync {
     fn height(&self) -> u64;
 
-    /// Ends once a height above `seen` is verified, or after `bound`.
-    fn above(&self, seen: u64, bound: Duration) -> MaybeBoxFuture<'_, ()>;
+    /// Ends once a height above `seen` is verified, answering `true`, or
+    /// after `bound`, answering `false`.
+    fn above(&self, seen: u64, bound: Duration) -> MaybeBoxFuture<'_, bool>;
 }
 
 impl Heads for AcpLightClient {
@@ -27,11 +29,34 @@ impl Heads for AcpLightClient {
         self.header_chain().latest_height()
     }
 
-    fn above(&self, seen: u64, bound: Duration) -> MaybeBoxFuture<'_, ()> {
+    fn above(&self, seen: u64, bound: Duration) -> MaybeBoxFuture<'_, bool> {
         Box::pin(async move {
-            // A wait that ends unmet asks all the same: the bound is the fallback.
-            let _ = edge::compat(self.wait_for_height(seen.saturating_add(1), bound)).await;
+            edge::compat(self.wait_for_height(seen.saturating_add(1), bound))
+                .await
+                .is_ok()
         })
+    }
+}
+
+/// How long a wait lasts with no new header, and how many waits ran that long.
+#[derive(Debug)]
+pub(crate) struct Fallback {
+    bound: Duration,
+    expired: AtomicU64,
+}
+
+impl Fallback {
+    /// A fallback of `bound`, at least [`MIN_FALLBACK`].
+    pub(crate) fn new(bound: Duration) -> Self {
+        Self {
+            bound: bound.max(MIN_FALLBACK),
+            expired: AtomicU64::new(0),
+        }
+    }
+
+    /// How many waits ended at the bound rather than at a new header.
+    pub(crate) fn expired(&self) -> u64 {
+        self.expired.load(Ordering::Relaxed)
     }
 }
 
@@ -50,10 +75,10 @@ pub(crate) enum Start {
 /// either ends the loop with an error that cannot pass. Between turns the
 /// loop waits for a height above the one it read before its ask and send, so
 /// a header verified while either was on its way ends the wait at once, and
-/// at most `fallback` when no header comes.
+/// at most `fallback`'s bound when no header comes, which `fallback` counts.
 pub(crate) async fn until_receipt<T, E, Ask, Asked, Send, Sent>(
     heads: &dyn Heads,
-    fallback: Duration,
+    fallback: &Fallback,
     start: Start,
     mut ask: Ask,
     mut send: Send,
@@ -77,7 +102,9 @@ where
         if !sent {
             sent = send().await?;
         }
-        heads.above(seen, fallback).await;
+        if !heads.above(seen, fallback.bound).await {
+            fallback.expired.fetch_add(1, Ordering::Relaxed);
+        }
     }
 }
 

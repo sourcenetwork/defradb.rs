@@ -5,7 +5,7 @@ use std::time::Duration;
 use defra_core::thread_bounds::MaybeBoxFuture;
 use regolith::sync::SegQueue;
 
-use super::{until_receipt, Heads, Start};
+use super::{until_receipt, Fallback, Heads, Start};
 
 /// Longer than any test runs: a loop that waits it out never finishes.
 const HOUR: Duration = Duration::from_secs(3600);
@@ -47,17 +47,18 @@ impl Heads for Script {
         self.height.load(Ordering::SeqCst)
     }
 
-    fn above(&self, seen: u64, bound: Duration) -> MaybeBoxFuture<'_, ()> {
+    fn above(&self, seen: u64, bound: Duration) -> MaybeBoxFuture<'_, bool> {
         self.steps.push(Step::Wait { seen, bound });
         Box::pin(async move {
             if self.height() > seen {
-                return;
+                return true;
             }
             if self.next_header {
                 self.height.store(seen + 1, Ordering::SeqCst);
-                return;
+                return true;
             }
             nuclei::time::sleep(bound).await;
+            false
         })
     }
 }
@@ -66,11 +67,12 @@ impl Heads for Script {
 async fn a_receipt_is_asked_for_at_the_next_verified_height_and_not_after_a_sleep() {
     let script = Script::new(5, true);
     let heads = &script;
+    let fallback = Fallback::new(HOUR);
     let receipt = nuclei::time::timeout(
         STUCK,
         until_receipt(
             heads,
-            HOUR,
+            &fallback,
             Start::Send,
             move || async move {
                 heads.steps.push(Step::Ask);
@@ -85,6 +87,7 @@ async fn a_receipt_is_asked_for_at_the_next_verified_height_and_not_after_a_slee
     .await
     .expect("the loop asked at the next header, not after its fallback");
     assert_eq!(receipt, Ok("receipt"));
+    assert_eq!(fallback.expired(), 0);
     assert_eq!(
         script.steps(),
         [
@@ -102,11 +105,12 @@ async fn a_receipt_is_asked_for_at_the_next_verified_height_and_not_after_a_slee
 async fn a_header_verified_while_the_request_is_sent_still_ends_the_wait() {
     let script = Script::new(5, false);
     let heads = &script;
+    let fallback = Fallback::new(HOUR);
     let receipt = nuclei::time::timeout(
         STUCK,
         until_receipt(
             heads,
-            HOUR,
+            &fallback,
             Start::Send,
             move || async move {
                 heads.steps.push(Step::Ask);
@@ -124,6 +128,7 @@ async fn a_header_verified_while_the_request_is_sent_still_ends_the_wait() {
     .await
     .expect("a header verified during the send ended the wait");
     assert_eq!(receipt, Ok("receipt"));
+    assert_eq!(fallback.expired(), 0);
     assert_eq!(
         script.steps(),
         [
@@ -141,7 +146,8 @@ async fn a_header_verified_while_the_request_is_sent_still_ends_the_wait() {
 async fn with_no_header_each_wait_ends_at_its_fallback_and_an_unheard_send_is_sent_again() {
     let script = Script::new(5, false);
     let heads = &script;
-    let fallback = Duration::from_millis(20);
+    let bound = Duration::from_millis(20);
+    let fallback = Fallback::new(bound);
     let asks = &AtomicU64::new(0);
     let sends = &AtomicU64::new(0);
     let started = std::time::Instant::now();
@@ -149,7 +155,7 @@ async fn with_no_header_each_wait_ends_at_its_fallback_and_an_unheard_send_is_se
         STUCK,
         until_receipt(
             heads,
-            fallback,
+            &fallback,
             Start::Ask,
             move || async move {
                 heads.steps.push(Step::Ask);
@@ -165,11 +171,9 @@ async fn with_no_header_each_wait_ends_at_its_fallback_and_an_unheard_send_is_se
     .await
     .expect("each wait ended at its fallback");
     assert_eq!(receipt, Ok("receipt"));
-    assert!(started.elapsed() >= 2 * fallback);
-    let wait = || Step::Wait {
-        seen: 5,
-        bound: fallback,
-    };
+    assert!(started.elapsed() >= 2 * bound);
+    assert_eq!(fallback.expired(), 2);
+    let wait = || Step::Wait { seen: 5, bound };
     assert_eq!(
         script.steps(),
         [

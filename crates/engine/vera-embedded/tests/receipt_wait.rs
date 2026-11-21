@@ -1,9 +1,12 @@
 //! A write through the provider is confirmed when the node publishes the
 //! header of the block that holds it, not when the wait's fallback runs out.
+//! The fallback is set out of reach, so a write that needed it never ends:
+//! the test has no wall-clock bound of its own, and CI's nextest profile
+//! ends a test still running after 20 minutes.
 
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use vera::vera_rs::{GenesisSource, NativeWorker, VeraRsProvider};
 use vera::{AcpTuning, VeraProvider};
@@ -24,9 +27,8 @@ resources:
           - actor
 ";
 
-/// Far longer than a write takes: writes that end before it never waited
-/// for it.
-const FALLBACK: Duration = Duration::from_secs(30);
+/// Longer than any run lasts.
+const OUT_OF_REACH: Duration = Duration::from_secs(24 * 60 * 60);
 
 fn config(directory: &Path) -> HostConfig {
     HostConfig {
@@ -55,8 +57,8 @@ async fn writes_are_confirmed_at_their_blocks_header_and_not_at_the_fallback() {
         .await
         .expect("hosted node");
     let tuning = AcpTuning {
-        receipt_fallback: FALLBACK,
-        receipt_timeout: 4 * FALLBACK,
+        receipt_fallback: OUT_OF_REACH,
+        receipt_timeout: OUT_OF_REACH,
         ..AcpTuning::default()
     };
     let transport = Arc::new(node.transport(tuning.request_timeout));
@@ -78,7 +80,6 @@ async fn writes_are_confirmed_at_their_blocks_header_and_not_at_the_fallback() {
     .await
     .expect("provider");
 
-    let started = Instant::now();
     let policy = provider.create_policy(POLICY, None).await.expect("policy");
     let owner = provider.self_did().expect("actor DID");
     let delegation = provider
@@ -91,11 +92,7 @@ async fn writes_are_confirmed_at_their_blocks_header_and_not_at_the_fallback() {
             .await
             .expect("registration");
     }
-    let elapsed = started.elapsed();
-    assert!(
-        elapsed < FALLBACK,
-        "four writes took {elapsed:?}: one waited for the fallback, not its header"
-    );
+    assert_eq!(provider.receipt_fallbacks(), 0);
     assert!(provider
         .verify_access(&policy, "document", "third", "read", &owner)
         .await

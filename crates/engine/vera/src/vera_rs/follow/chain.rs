@@ -12,7 +12,7 @@ use vera_domain::{ConsensusPublicKey, NativeTx, ReceiptResponse};
 use super::{Chain, Replayed};
 use crate::provider::ProviderError;
 use crate::vera_rs::client::{ClientError, VeraRsClient};
-use crate::vera_rs::receipt_wait::{until_receipt, Start};
+use crate::vera_rs::receipt_wait::{until_receipt, Fallback, Start};
 
 pub(crate) struct ProviderChain {
     pub client: Arc<VeraRsClient>,
@@ -21,7 +21,7 @@ pub(crate) struct ProviderChain {
     /// How long one replay waits for its receipt.
     pub timeout: Duration,
     /// Longest wait between two asks for a receipt with no new header.
-    pub fallback: Duration,
+    pub fallback: Arc<Fallback>,
 }
 
 fn unavailable(cause: impl std::fmt::Display) -> ProviderError {
@@ -56,7 +56,7 @@ impl ProviderChain {
         let submission = NativeTx::decode_wire(wire).map_err(unavailable)?.tx_id().0;
         let response = until_receipt(
             self.light_client.as_ref(),
-            self.fallback,
+            &self.fallback,
             Start::Ask,
             || async move {
                 match self.receipt(submission).await? {
