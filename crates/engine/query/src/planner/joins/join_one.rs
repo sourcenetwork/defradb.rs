@@ -133,18 +133,19 @@ impl Planner {
                     condition.clone(),
                 )]))
             });
-        let relation_filter = parent_relation_filter_for_child
-            .as_ref()
-            .map(|nested_filter| RelationFilter {
-                relation_field: relation_field_name.to_string(),
-                conditions: nested_filter.clone(),
-            })
-            .or_else(|| {
-                secondary_id_filter.map(|conditions| RelationFilter {
-                    relation_field: relation_field_name.to_string(),
-                    conditions,
+        let relation_conditions = secondary_id_filter.into_iter().fold(
+            parent_relation_filter_for_child.clone(),
+            |conditions, secondary_id| {
+                Some(match conditions {
+                    Some(conditions) => conditions.and(secondary_id),
+                    None => secondary_id,
                 })
-            });
+            },
+        );
+        let relation_filter = relation_conditions.map(|conditions| RelationFilter {
+            relation_field: relation_field_name.to_string(),
+            conditions,
+        });
 
         // One-to-one: TypeJoinOne
         //

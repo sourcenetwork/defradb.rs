@@ -92,7 +92,7 @@ fn query_one_to_one_with_eq_null_filter_on_secondary_relation_id_should_return_o
 }
 
 #[test]
-#[mantra_macros::req_test("go.query.one_to_one.filter")]
+#[mantra_macros::req_test("go.query.one_to_one.filter-relation-id")]
 fn query_one_to_one_with_neq_null_filter_on_secondary_relation_id_should_return_related() {
     TestCase {
         id: integration_test::scenario_id!(),
