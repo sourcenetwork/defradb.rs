@@ -13,7 +13,6 @@ impl<S: Store> Clone for Peerstore<S> {
             store: self.store.clone(),
             retry_schedule: self.retry_schedule.clone(),
             retry: self.retry,
-            live_marker_reruns: self.live_marker_reruns,
             pool: self.pool.clone(),
         }
     }

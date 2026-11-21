@@ -258,12 +258,10 @@ RUNS=(
   "MC_ReplicatorIncarnation_Red_ReplayMarker.cfg ReplicatorIncarnation.tla RED"
   "MC_ReplicatorIncarnation_Red_ReplaySuperseded.cfg ReplicatorIncarnation.tla RED"
   "MC_ReplicatorIncarnation_Red_ReplayCompare.cfg ReplicatorIncarnation.tla RED" # a read-then-compare flip skips after a same-incarnation rewrite (ACT_FlipNotSkipped)
-  "MC_LiveMarkerGeneration_Green.cfg LiveMarkerGeneration.tla GREEN"
+  "MC_LiveMarkerGeneration_Green.cfg LiveMarkerGeneration.tla GREEN" # #2902/#3114: a superseded live write is owed by the newer marker; acks fenced on generation and frontier
   "MC_LiveMarkerGeneration_Red_Superseded.cfg LiveMarkerGeneration.tla RED" # a live write superseded by a replay's newer marker is reported undurable (INV_NoFalseFailure)
-  "MC_LiveMarkerGeneration_Red_NoReruns.cfg LiveMarkerGeneration.tla RED" # a zero rerun budget still reports a superseded live write undurable (INV_NoFalseFailure)
   "MC_LiveMarkerGeneration_Red_NoFence.cfg LiveMarkerGeneration.tla RED" # an ack clears whatever marker holds the scope: an older head clears a newer head's marker (INV_LiveOwed)
   "MC_LiveMarkerGeneration_Red_NoHeadFence.cfg LiveMarkerGeneration.tla RED" # #3114: retired ack on the generation alone; with post-commit allocation the older head holds the newer generation and clears it (INV_LiveOwed)
-  "MC_LiveMarkerGeneration_Green_Covered.cfg LiveMarkerGeneration.tla GREEN" # with the head fence, a superseded live write may count as owed by the newer marker
   "MC_ReplicatorInstall_Green.cfg ReplicatorInstall.tla GREEN"
   "MC_ReplicatorInstall_Red_Validation.cfg ReplicatorInstall.tla RED"
   "MC_ReplicatorInstall_Red_Active.cfg ReplicatorInstall.tla RED"

@@ -192,16 +192,10 @@ pub enum StorageEvent {
     PostCommitHookCancelled,
     PostCommitEventPanicked,
     PostCommitCallbackPanicked,
-    /// A live head's scope marker rewritten with a fresh generation because
-    /// a newer marker (a replay's) committed first. Not a conflict retry.
-    LiveMarkerRerun,
-    /// A live head's scope marker left unwritten after newer markers kept
-    /// committing past the rerun bound; the caller reports it undurable.
-    LiveMarkerRerunExhausted,
 }
 
 impl StorageEvent {
-    const COUNT: usize = 20;
+    const COUNT: usize = 18;
 
     /// The `event` label of `defradb.storage.events`.
     pub const fn label(self) -> &'static str {
@@ -224,8 +218,6 @@ impl StorageEvent {
             Self::PostCommitHookCancelled => "post_commit_hook_cancelled",
             Self::PostCommitEventPanicked => "post_commit_event_panicked",
             Self::PostCommitCallbackPanicked => "post_commit_callback_panicked",
-            Self::LiveMarkerRerun => "live_marker_rerun",
-            Self::LiveMarkerRerunExhausted => "live_marker_rerun_exhausted",
         }
     }
 }
@@ -442,8 +434,6 @@ mod tests {
             StorageEvent::PostCommitHookCancelled,
             StorageEvent::PostCommitEventPanicked,
             StorageEvent::PostCommitCallbackPanicked,
-            StorageEvent::LiveMarkerRerun,
-            StorageEvent::LiveMarkerRerunExhausted,
         ];
         assert_eq!(events.len(), StorageEvent::COUNT);
         let labels: std::collections::BTreeSet<_> = events.iter().map(|e| e.label()).collect();

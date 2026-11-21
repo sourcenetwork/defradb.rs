@@ -756,154 +756,64 @@ fn stale_scope_registration_cannot_replace_newer_marker_or_schedule() {
     .unwrap()
 }
 
-/// Whether this test owns the process, so a process-wide telemetry counter
-/// moves only for it. nextest (CI) runs one test per process; `cargo test`
-/// runs tests on parallel threads that bump the same counters, so an
-/// unchanged-counter check holds only under nextest.
-fn owns_process_counters() -> bool {
-    std::env::var("NEXTEST_EXECUTION_MODE").as_deref() == Ok("process-per-test")
-}
-
-/// A live registration whose first allocated generation a replay's marker
-/// has already superseded. Returns what the live registration wrote, the
-/// replay's generation, and the PushMarker conflict-retry attempts counted
-/// before the live write.
-async fn register_live_after_replay_supersedes(
-    peerstore: &Peerstore<RegolithStore>,
-) -> (Option<u64>, u64, u64) {
-    peerstore
-        .create_replicator("peer", b"replicator")
-        .await
-        .unwrap();
-    let incarnation_txn = peerstore.store.new_txn(true).await.unwrap();
-    let incarnation = decode_retry_marker_generation(
-        &incarnation_txn
-            .get(&crate::keys::peerstore::ReplicatorIncarnationKey::new("peer").bytes())
-            .await
-            .unwrap()
-            .unwrap(),
-    )
-    .unwrap();
-    incarnation_txn.discard();
-
-    let live_generation = peerstore
-        .allocate_scope_generation("doc", "collection")
-        .await
-        .unwrap();
-    let replay_generation = peerstore
-        .observe_push_head_for_incarnation("peer", "doc", "collection", incarnation)
-        .await
-        .unwrap()
-        .generation()
-        .expect("the replay writes its marker");
-    assert!(replay_generation > live_generation);
-    let conflict_attempts_before = telemetry::conflict_metrics_snapshot().push_marker.attempts;
-
-    let live = peerstore
-        .register_scope_marker_at(
-            "peer",
-            "doc",
-            "collection",
-            &super::super::RetryInfo::new_initial().to_bytes().unwrap(),
-            live_generation,
-        )
-        .await
-        .unwrap();
-    (live, replay_generation, conflict_attempts_before)
-}
-
 /// #2902/#2791: a replay that allocates after a live write but commits its
 /// marker first must not turn the committed live write into an undurable
-/// one. The live registration reruns with a newer generation, and the
-/// replay's acknowledgment of its own older generation leaves it in place.
-/// An uncontended rerun is not a transaction-conflict retry, so the
-/// PushMarker conflict counters stay put.
+/// one. The live registration returns its own, older generation: the
+/// replay's marker owes the head, and the live push's ack at the older
+/// generation cannot complete it (`LiveMarkerGeneration.tla`).
 #[test]
-fn live_registration_superseded_by_replay_marker_takes_a_newer_generation() {
+fn live_registration_superseded_by_replay_marker_is_owed_by_it() {
     workers::block_on(async {
         let peerstore = Peerstore::new(Arc::new(RegolithStore::in_memory().unwrap()));
-        let reruns_before =
-            telemetry::storage_event_count(telemetry::StorageEvent::LiveMarkerRerun);
-        let (live, replay_generation, conflict_attempts_before) =
-            register_live_after_replay_supersedes(&peerstore).await;
-        let live = live.expect("a superseded live registration still writes a marker");
+        peerstore
+            .create_replicator("peer", b"replicator")
+            .await
+            .unwrap();
+        let incarnation_txn = peerstore.store.new_txn(true).await.unwrap();
+        let incarnation = decode_retry_marker_generation(
+            &incarnation_txn
+                .get(&crate::keys::peerstore::ReplicatorIncarnationKey::new("peer").bytes())
+                .await
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        incarnation_txn.discard();
 
-        assert!(live > replay_generation);
-        assert!(
-            telemetry::storage_event_count(telemetry::StorageEvent::LiveMarkerRerun)
-                > reruns_before
-        );
-        if owns_process_counters() {
-            assert_eq!(
-                telemetry::conflict_metrics_snapshot().push_marker.attempts,
-                conflict_attempts_before,
-                "a supersede rerun is not a transaction-conflict retry"
-            );
-        }
-        let markers = peerstore.get_retry_documents("peer").await.unwrap();
-        assert_eq!(markers.len(), 1);
-        assert_eq!(markers[0].generation, live);
-        assert!(!peerstore
-            .complete_retry_scope("peer", "doc", "collection", false, replay_generation, &[])
+        let live_generation = peerstore
+            .allocate_scope_generation("doc", "collection")
             .await
-            .unwrap());
-        let markers = peerstore.get_retry_documents("peer").await.unwrap();
-        assert_eq!(markers.len(), 1);
-        assert_eq!(markers[0].generation, live);
-        assert!(peerstore
-            .complete_retry_scope("peer", "doc", "collection", false, live, &[])
-            .await
-            .unwrap());
-        assert!(peerstore
-            .get_retry_documents("peer")
+            .unwrap();
+        let replay_generation = peerstore
+            .observe_push_head_for_incarnation("peer", "doc", "collection", incarnation)
             .await
             .unwrap()
-            .is_empty());
-    })
-    .unwrap()
-}
+            .generation()
+            .expect("the replay writes its marker");
+        assert!(replay_generation > live_generation);
 
-/// The supersede rerun does not depend on `datastore.max_txn_retries`: a
-/// node that disables conflict retries still reruns past a newer marker.
-#[test]
-fn live_registration_superseded_reruns_with_zero_txn_retries() {
-    workers::block_on(async {
-        let peerstore =
-            Peerstore::new(Arc::new(RegolithStore::in_memory().unwrap())).with_max_txn_retries(0);
-        let (live, replay_generation, _) = register_live_after_replay_supersedes(&peerstore).await;
-        let live = live.expect("a superseded live registration still writes a marker");
-        assert!(live > replay_generation);
+        let live = peerstore
+            .register_scope_marker_at(
+                "peer",
+                "doc",
+                "collection",
+                &super::super::RetryInfo::new_initial().to_bytes().unwrap(),
+                live_generation,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            live,
+            Some(live_generation),
+            "a superseded live registration is durable"
+        );
         let markers = peerstore.get_retry_documents("peer").await.unwrap();
         assert_eq!(markers.len(), 1);
-        assert_eq!(markers[0].generation, live);
-    })
-    .unwrap()
-}
-
-/// Newer markers outrunning the rerun bound leave the live write unmarked:
-/// it returns `None`, which the caller reports undurable, and the exhaustion
-/// is counted instead of looping without bound.
-#[test]
-fn live_registration_superseded_past_rerun_bound_is_counted_undurable() {
-    workers::block_on(async {
-        let peerstore = Peerstore::new(Arc::new(RegolithStore::in_memory().unwrap()))
-            .with_live_marker_reruns(0);
-        let exhausted_before =
-            telemetry::storage_event_count(telemetry::StorageEvent::LiveMarkerRerunExhausted);
-        let reruns_before =
-            telemetry::storage_event_count(telemetry::StorageEvent::LiveMarkerRerun);
-        let (live, replay_generation, _) = register_live_after_replay_supersedes(&peerstore).await;
-        assert_eq!(live, None);
-        assert!(
-            telemetry::storage_event_count(telemetry::StorageEvent::LiveMarkerRerunExhausted)
-                > exhausted_before
-        );
-        if owns_process_counters() {
-            assert_eq!(
-                telemetry::storage_event_count(telemetry::StorageEvent::LiveMarkerRerun),
-                reruns_before
-            );
-        }
+        assert_eq!(markers[0].generation, replay_generation);
+        assert!(!peerstore
+            .complete_retry_scope("peer", "doc", "collection", false, live_generation, &[])
+            .await
+            .unwrap());
         let markers = peerstore.get_retry_documents("peer").await.unwrap();
         assert_eq!(markers.len(), 1);
         assert_eq!(markers[0].generation, replay_generation);
