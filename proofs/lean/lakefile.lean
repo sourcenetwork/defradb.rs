@@ -22,6 +22,9 @@ lean_lib VeraActorSpelling where
 lean_lib VeraPolicyNonce where
 
 @[default_target]
+lean_lib VeraRegistrationList where
+
+@[default_target]
 lean_lib VeraDelegationSigner where
 
 @[default_target]
@@ -232,6 +235,9 @@ lean_lib DocStoreTarget where
 lean_lib JsonSubPathCut where
 
 @[default_target]
+lean_lib RelationFilterNoChild where
+
+@[default_target]
 lean_lib CarClosureDepth where
 
 @[default_target]
@@ -299,6 +305,9 @@ lean_lib CommitConflictReceipt where
 
 @[default_target]
 lean_lib NacToggle where
+
+@[default_target]
+lean_lib FfiOptions where
 
 @[default_target]
 lean_lib NacRelationship where

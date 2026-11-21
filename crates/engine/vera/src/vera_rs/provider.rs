@@ -41,6 +41,7 @@ mod exact_relationship;
 mod genesis;
 mod owed_request;
 mod reach;
+mod registration_list;
 #[cfg(test)]
 mod signer_tests;
 mod submission;
@@ -649,6 +650,22 @@ impl VeraProvider for VeraRsProvider {
             "vera.rs register_object send_tx completed"
         );
 
+        Ok(())
+    }
+
+    async fn register_objects(
+        &self,
+        bearer_token: &str,
+        objects: &[acp::AcpObject<'_>],
+    ) -> Result<(), ProviderError> {
+        let calldata = registration_list::calldata(bearer_token, objects)?;
+        let send_tx_start = Instant::now();
+        self.send_tx(calldata).await?;
+        tracing::info!(
+            objects = objects.len(),
+            elapsed = ?send_tx_start.elapsed(),
+            "vera.rs register_objects send_tx completed"
+        );
         Ok(())
     }
 

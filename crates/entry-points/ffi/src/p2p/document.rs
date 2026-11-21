@@ -14,8 +14,7 @@ use crate::{ffi_entry, try_ffi};
 /// # Safety
 ///
 /// `doc_ids` must be null or a valid null-terminated string.
-#[no_mangle]
-pub unsafe extern "C" fn defra_p2p_document_add(
+pub unsafe fn defra_p2p_document_add(
     node_ptr: usize,
     doc_ids: *const c_char,
     identity_ptr: usize,
@@ -34,8 +33,7 @@ pub unsafe extern "C" fn defra_p2p_document_add(
 /// # Safety
 ///
 /// `doc_ids` must be null or a valid null-terminated string.
-#[no_mangle]
-pub unsafe extern "C" fn defra_p2p_document_delete(
+pub unsafe fn defra_p2p_document_delete(
     node_ptr: usize,
     doc_ids: *const c_char,
     identity_ptr: usize,
@@ -50,8 +48,7 @@ pub unsafe extern "C" fn defra_p2p_document_delete(
 
 /// Answers with the IDs of the documents the node replicates as a JSON
 /// array.
-#[no_mangle]
-pub extern "C" fn defra_p2p_document_list(node_ptr: usize, identity_ptr: usize) -> DefraResult {
+pub fn defra_p2p_document_list(node_ptr: usize, identity_ptr: usize) -> DefraResult {
     ffi_entry! {
         json(run(node_ptr, identity_ptr, NodePermission::P2pDocumentList, None, |ops| async move {
             peer::list_p2p_documents(&*ops).await
@@ -66,8 +63,7 @@ pub extern "C" fn defra_p2p_document_list(node_ptr: usize, identity_ptr: usize) 
 /// # Safety
 ///
 /// Every string must be null or a valid null-terminated string.
-#[no_mangle]
-pub unsafe extern "C" fn defra_p2p_document_sync(
+pub unsafe fn defra_p2p_document_sync(
     node_ptr: usize,
     collection: *const c_char,
     doc_ids: *const c_char,

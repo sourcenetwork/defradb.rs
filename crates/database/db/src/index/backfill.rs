@@ -287,7 +287,7 @@ impl<S: Store> DB<S> {
     async fn backfill_batches(&self, plan: &BackfillPlan) -> Result<usize> {
         let mut last = plan.last;
         let mut indexed = 0;
-        let mut max_docs = BACKFILL_BATCH_DOCS;
+        let mut max_docs = self.options().backfill_batch_docs();
         loop {
             if let Some(gate) = &self.options().index_build_gate {
                 // A close stops the wait, as Go's gate honours its context:

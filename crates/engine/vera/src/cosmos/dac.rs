@@ -611,6 +611,14 @@ impl DocumentACP for VeraDocumentACP {
         Ok(())
     }
 
+    async fn register_objects(
+        &self,
+        identity: &Did,
+        objects: &[acp::AcpObject<'_>],
+    ) -> std::result::Result<(), acp::RegistrationFailure> {
+        self.register_listed(identity, objects).await
+    }
+
     async fn is_doc_registered(
         &self,
         policy_id: &str,
@@ -1019,7 +1027,10 @@ impl DocumentACP for VeraDocumentACP {
 
 mod owed;
 mod owed_journal;
+mod registration_batch;
 mod request_bound;
+
+pub(crate) use owed_journal::MAX_OWED_REQUEST_BYTES;
 
 #[cfg(test)]
 mod tests;

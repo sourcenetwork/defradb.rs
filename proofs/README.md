@@ -64,7 +64,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Policy nonce text | Lean | acp |
 | vera.rs delegation signing | Lean | vera |
 | vera.rs delegation window | Lean | vera, acp |
-| vera.rs embedded transport | Lean | vera-embedded |
+| vera.rs embedded transport | TLA+ / Lean | vera-embedded |
 | vera.rs deployment terms | Lean | vera |
 | DiskANN resident code table | Lean | db-index |
 | DiskANN walk cutoff | Lean | db-index (vector) |
@@ -132,6 +132,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Verify block signature | TLA+ | defra-node, db, acp (#2724) |
 | Node access control operations | TLA+ & Lean | db, acp, http, cli, ffi, defra-node |
 | Filter relation paths and scalar leaves | Lean | query (#2427, #2430) |
+| Relation filter with no matching child | Lean | query (#3087) |
 | Orphan block sweep | TLA+ & Lean | db, storage |
 | Per-peer stream cap | TLA+ | p2p |
 | Receive gate | TLA+ | p2p, db |
@@ -141,6 +142,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Cursor tokens | Lean | cursor |
 | Peer key loading | TLA+ / Lean | defra-node, ffi |
 | FFI transaction turns | TLA+ / Lean | ffi |
+| FFI options structs | Lean | ffi |
 | Vector index defaults | Lean | schema |
 | Selected collection version | TLA+ / Lean | db, query, ffi |
 | Per-operation signing choice | Lean | defra-core, http, ffi, cli |
