@@ -1268,6 +1268,20 @@ RUNS=(
   "MC_EmbeddedVeraStop_Red_NoStopDeadline.cfg EmbeddedVeraStop.tla RED" # a Vera node that hangs while stopping keeps shutdown waiting forever
   "MC_EmbeddedVeraStop_Red_LinkStaysOpen.cfg EmbeddedVeraStop.tla RED" # a transport left open keeps the stopped Vera node's directory locked
   "MC_EmbeddedVeraStop_Red_NoStartDeadline.cfg EmbeddedVeraStop.tla RED" # the next start waits forever for a directory a hung Vera node holds
+  "MC_FirstHeader_Green.cfg FirstHeader.tla GREEN" # the header stream starts with the newest finalized block, read after subscribing, and every header is checked
+  "MC_FirstHeader_Red_NoHead.cfg FirstHeader.tla RED" # only blocks finalized after subscribing are streamed: a fresh deployment's first start waits for the heartbeat (INV_Current)
+  "MC_FirstHeader_Red_ReadBeforeSubscribe.cfg FirstHeader.tla RED" # the head is read before subscribing: a block finalized in between is missed (INV_Current)
+  "MC_FirstHeader_Red_SendStale.cfg FirstHeader.tla RED" # a head past the freshness limit is sent: the light client must refuse it (INV_SentHeadFresh)
+  "MC_FirstHeader_Red_DropLaterTerms.cfg FirstHeader.tla RED" # queued headers at or below the head are dropped whatever their term: a switch's block is lost (INV_Current)
+  "MC_FirstHeader_Red_Unverified.cfg FirstHeader.tla RED" # the transport's header is taken unchecked: a forged head is accepted (INV_OnlyFinalized)
+  "MC_RegistrationBatch_Green.cfg RegistrationBatch.tla GREEN" # one list per creator, a refused list sent again one at a time, held objects never sent again
+  "MC_RegistrationBatch_Green_Lost.cfg RegistrationBatch.tla GREEN" # lists applied whole, at once or after a lost answer, and never sent again once held
+  "MC_RegistrationBatch_Green_Elsewhere.cfg RegistrationBatch.tla GREEN" # a replica another node holds is cleared yielding to its owner, never sent
+  "MC_RegistrationBatch_Red_NoRecheck.cfg RegistrationBatch.tla RED" # sent again without asking the provider: a held object refuses its list (INV_NoResendOfKnownHeld)
+  "MC_RegistrationBatch_Red_NoAskOnRefusal.cfg RegistrationBatch.tla RED" # a refusal reported unasked: one another settler registered meanwhile is reported failed (INV_HeldNotFailed)
+  "MC_RegistrationBatch_Red_NoFallback.cfg RegistrationBatch.tla RED" # a refused list parks every member: a good one is parked for good (INV_RefusedOnlyIfBad)
+  "MC_RegistrationBatch_Red_MixedCreators.cfg RegistrationBatch.tla RED" # one list under the first creator's token: another's document is registered to it (INV_OwnerIsCreator)
+  "MC_RegistrationBatch_Red_OutOfOrder.cfg RegistrationBatch.tla RED" # a refused list's members go alone in any order (INV_Order)
   "MC_NodeStartup_Green.cfg NodeStartup.tla GREEN" # every config starts as asked or fails holding nothing; startup ends
   "MC_NodeStartup_Red_IrohDefaultLadder.cfg NodeStartup.tla RED" # iroh keeps the default retry ladder (INV_OneSchedule)
   "MC_NodeStartup_Red_ListenLeak.cfg NodeStartup.tla RED" # failed listen leaves the host running (INV_FailedHoldsNothing)

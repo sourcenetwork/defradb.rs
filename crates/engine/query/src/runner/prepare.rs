@@ -29,6 +29,9 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         }
         let variables = super::executor::convert_variables(&request.variables);
         let parsed = request.operation(variables.as_ref(), self.query_limits)?;
+        if !parsed.has_unexplained_mutations() {
+            return Ok(None);
+        }
         let ParsedOperation::Mutation {
             mutations,
             explain: None,

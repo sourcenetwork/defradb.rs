@@ -33,7 +33,7 @@ required-features = ["node"]
 
 [features]
 # Start and stop the node itself, on the network runtime's cores.
-node = ["dep:vera-node", "dep:commonware-codec", "dep:hex"]
+node = ["dep:vera-node"]
 
 [dependencies]
 # The two transports the vera.rs provider is built on, and their errors.
@@ -50,9 +50,12 @@ vera-jsonrpc = { git = "https://github.com/sourcenetwork/vera.rs", rev = "1367a5
 
 # The node a host starts with the `node` feature, at the same revision.
 vera-node = { git = "https://github.com/sourcenetwork/vera.rs", rev = "1367a56b2471bc379fd0e5522b8492d4b4b6e5d8", optional = true }
-# The encoding of the node's consensus key.
-commonware-codec = { version = "=2026.10.0", optional = true }
-hex = { workspace = true, optional = true }
+# The encoding of the node's consensus key, and of the newest block a
+# header subscription starts with.
+commonware-codec = "=2026.10.0"
+hex.workspace = true
+# The block and header types of that newest block.
+vera-domain = "0.1.2"
 
 futures.workspace = true
 # The atom a host closes its transports through.

@@ -19,3 +19,4 @@ mod external_registration;
 mod external_settlement;
 mod external_staging;
 mod nac_toggle_race;
+mod registration_batch;

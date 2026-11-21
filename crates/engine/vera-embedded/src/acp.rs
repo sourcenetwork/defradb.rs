@@ -4,6 +4,7 @@ use futures::future::BoxFuture;
 use futures::{FutureExt as _, StreamExt as _};
 use serde_json::Value;
 use vera::vera_rs::{AcpTransport, HeaderStream, TransportError};
+use vera_domain::GossipHeader;
 
 use crate::call::call;
 use crate::deadline::{self, bounded};
@@ -49,18 +50,44 @@ impl AcpTransport for EmbeddedTransport {
             .await
             .map_err(header_error)?
             .map_err(|error| header_error(Failure::from_node(SUBSCRIBE_HEADERS, error)))?;
-            let headers: HeaderStream =
-                futures::stream::unfold(subscription, |mut subscription| async move {
-                    let header = subscription.next().await?.map_err(|error| {
-                        header_error(Failure::from_node(SUBSCRIBE_HEADERS, error))
-                    });
-                    Some((header, subscription))
-                })
-                .boxed();
+            let streamed = futures::stream::unfold(subscription, |mut subscription| async move {
+                let header: Result<GossipHeader, TransportError> = subscription
+                    .next()
+                    .await?
+                    .map_err(|error| header_error(Failure::from_node(SUBSCRIBE_HEADERS, error)));
+                Some((header, subscription))
+            });
+            // Read once the subscription stands, so no block finalizes
+            // unseen between the head and the first streamed header.
+            let Some(head) = head::finalized(self).await else {
+                return Ok(streamed.boxed());
+            };
+            let headers = headers_after(head, streamed.boxed());
             Ok(headers)
         }
         .boxed()
     }
+}
+
+mod head;
+
+/// The fetched head, then the queued headers it does not make old. One at or
+/// below the head in a term not above the head's is older than the stream's
+/// start and dropped. One of a later term is passed on wherever it is: a
+/// switch of the deployment's active device voids blocks above its cut, and
+/// the light client reads such a header below its head to learn its head was
+/// voided (`proofs/tla/FirstHeader.tla`, `KeepLaterTerms`).
+fn headers_after(head: GossipHeader, queued: HeaderStream) -> HeaderStream {
+    let (height, term) = (head.height, head.term);
+    futures::stream::once(async move { Ok(head) })
+        .chain(queued.filter(move |header| {
+            let old = matches!(
+                header,
+                Ok(header) if header.height <= height && header.term <= term
+            );
+            futures::future::ready(!old)
+        }))
+        .boxed()
 }
 
 fn header_error(failure: Failure) -> TransportError {
