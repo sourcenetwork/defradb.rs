@@ -1,6 +1,9 @@
 //! Tree nodes: one chunk of one level.
 
-use crate::hash::Hash;
+use crate::{
+    error::{Error, Result},
+    hash::Hash,
+};
 
 /// One item of a level: an entry at level 0, a child reference above it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -43,8 +46,7 @@ impl Node {
     /// truncated and distinct nodes never share an encoding
     /// (`ProllyTree.encode_injective`).
     pub fn encode(&self) -> Vec<u8> {
-        let size: usize = self.items.iter().map(Item::encoded_len).sum();
-        let mut bytes = Vec::with_capacity(9 + size);
+        let mut bytes = Vec::with_capacity(self.encoded_len());
         bytes.push(self.level);
         bytes.extend_from_slice(&(self.items.len() as u64).to_be_bytes());
         for item in &self.items {
@@ -54,6 +56,35 @@ impl Node {
             bytes.extend_from_slice(&item.value);
         }
         bytes
+    }
+
+    /// The length of [`encode`](Self::encode)'s bytes: the level byte, the
+    /// count and every item.
+    pub fn encoded_len(&self) -> usize {
+        9 + self.items.iter().map(Item::encoded_len).sum::<usize>()
+    }
+
+    /// The node `bytes` encode, the inverse of [`encode`](Self::encode)
+    /// (`ProllyTree.decode_encode`). Bytes that are not exactly one node's
+    /// encoding are [`Error::BadEncoding`].
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let (&level, mut rest) = bytes.split_first().ok_or(Error::BadEncoding)?;
+        let count = take_len(&mut rest)?;
+        // Every item takes at least 16 bytes, so a count the bytes cannot
+        // hold allocates nothing.
+        if count > rest.len() / 16 {
+            return Err(Error::BadEncoding);
+        }
+        let mut items = Vec::with_capacity(count);
+        for _ in 0..count {
+            let key = take_bytes(&mut rest)?;
+            let value = take_bytes(&mut rest)?;
+            items.push(Item { key, value });
+        }
+        if !rest.is_empty() {
+            return Err(Error::BadEncoding);
+        }
+        Ok(Self { level, items })
     }
 
     /// The node's hash.
@@ -67,9 +98,54 @@ impl Node {
     }
 }
 
+/// Reads a big-endian `u64` length off the front of `rest`.
+fn take_len(rest: &mut &[u8]) -> Result<usize> {
+    let (head, tail) = rest.split_first_chunk::<8>().ok_or(Error::BadEncoding)?;
+    *rest = tail;
+    usize::try_from(u64::from_be_bytes(*head)).map_err(|_| Error::BadEncoding)
+}
+
+/// Reads a length and that many bytes off the front of `rest`.
+fn take_bytes(rest: &mut &[u8]) -> Result<Vec<u8>> {
+    let len = take_len(rest)?;
+    let (bytes, tail) = rest.split_at_checked(len).ok_or(Error::BadEncoding)?;
+    *rest = tail;
+    Ok(bytes.to_vec())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Item, Node};
+    use crate::error::Error;
+
+    #[test]
+    fn decode_reads_back_what_encode_writes_and_refuses_the_rest() {
+        let node = Node {
+            level: 3,
+            items: vec![
+                Item {
+                    key: b"a".to_vec(),
+                    value: vec![],
+                },
+                Item {
+                    key: b"bc".to_vec(),
+                    value: b"xyz".to_vec(),
+                },
+            ],
+        };
+        let bytes = node.encode();
+        assert_eq!(bytes.len(), node.encoded_len());
+        assert_eq!(Node::decode(&bytes), Ok(node));
+        for len in 0..bytes.len() {
+            assert_eq!(Node::decode(&bytes[..len]), Err(Error::BadEncoding));
+        }
+        let mut longer = bytes.clone();
+        longer.push(0);
+        assert_eq!(Node::decode(&longer), Err(Error::BadEncoding));
+        let mut huge = vec![0];
+        huge.extend_from_slice(&u64::MAX.to_be_bytes());
+        assert_eq!(Node::decode(&huge), Err(Error::BadEncoding));
+    }
 
     #[test]
     fn encode_prefixes_every_length_with_a_u64() {
