@@ -275,6 +275,15 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Verified client graph transaction",
+        name: "INV_OnlyGranted / INV_SettledFirst / INV_RevokedStops / INV_RegisteredFirst / INV_ValidBatchCommits / INV_OrdinaryAdmitted / INV_CountBalanced / LIVE_AddressedMerges: on a remote provider the reader a created document's genesis asks for is owed by its creator from the create's own transaction behind the document's registration and counted with it, so no batch its registrations allow is refused and it takes no ordinary change's place in an admission count, and a node of the deployment merges the document only once its provider holds both, only if it is named, and nothing more of it once it has seen the reader revoked",
+        axis: Tla,
+        anchor: "crates/database/db/src/write/genesis_reader.rs stage_genesis_reader; crates/engine/acp/src/outbox/staging.rs TransactionOutbox::stage_with_registration; crates/engine/acp/src/outbox/changes.rs OwedChanges::stage_with_registration; crates/engine/acp/src/outbox/ops.rs account; crates/database/db/src/write/autocommit/helpers.rs register_created_doc; crates/engine/acp/src/external/settle.rs register_first; crates/database/db/src/merge/acp_merge_handler.rs AcpCompositeMergeHook::on_protected_composite, AcpCompositeMergeHook::node_reads",
+        model_ref: "MC_RemoteGenesisReader_{Green,Green_Live,Red_Address,Red_Ungated,Red_Staged,Red_Memo,Red_Unregistered,Red_Separate,Red_Order,Red_Counted,Red_Admitted,Red_Unbalanced}.cfg",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/database/db/tests/access/external_genesis_reader.rs an_addressed_create_owes_its_reader_and_the_provider_takes_it_after_the_registration, a_public_create_owes_everyone_as_its_reader, a_mutable_address_or_a_collection_not_opted_in_owes_no_reader, a_batch_past_the_transactions_change_bound_owes_every_reader_and_takes_another_grant, a_batch_past_the_actors_unsettled_bound_owes_every_reader, owed_readers_leave_their_actor_room_to_revoke, owed_readers_take_nothing_of_the_nodes_bound_and_settle_without_a_trace; crates/entry-points/defra-node/tests/embedded_vera_replication/addressed.rs a_note_addressed_to_a_node_of_the_home_reaches_that_node_only",
+    },
+    Property {
+        family: "Verified client graph transaction",
         name: "INV_NeverQuarantined / INV_MergeAuthorized / INV_HistoryFirst / INV_Bounded / LIVE_RedrivenOnGrant / LIVE_OtherBranchMerges: a replicated change whose signer a remote provider refuses is parked by its document, never rejected for good, re-driven with a fresh decision when this node changes the document's relationships or by the bounded sweep, never merged before its history, within the index bound, and a change on another branch is not held behind it",
         axis: Tla,
         anchor: "crates/database/db/src/merge/merge_handler/composite.rs prepare_composite_merge; crates/database/db/src/merge/merge_handler/protected_update.rs Refusal, check_protected_update; crates/database/db/src/merge/governance/awaited.rs WaitKey::AcpObject; crates/database/db/src/merge/governance/deferred.rs DeferredMerges::park, DeferredMerges::release_parked, MAX_WAITERS_PER_DEPENDENCY, MAX_DEFERRED_COMPOSITES; crates/database/db/src/merge/merge_handler/parked_acp.rs ParkedRelease, watch_parked_acp, sweep_parked_acp; crates/database/db/src/merge/acp_merge_handler.rs AcpCompositeMergeHook::parks_refusals; crates/engine/acp/src/dac.rs ObjectChangeListener; crates/engine/acp/src/external.rs ExternalDocumentAcp::object_changed",
@@ -489,12 +498,12 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Transactional document relationships",
-        name: "genesisReader / addressed_names_only_receiver / replay_keeps_revocation",
+        name: "genesisReader / addressed_names_only_receiver / replay_keeps_revocation / creatorReader / creator_addressed_names_only_address / creator_matches_addressed_receiver",
         axis: Lean,
-        anchor: "crates/database/db/src/merge/merge_handler/genesis_access.rs genesis_reader",
+        anchor: "crates/database/db/src/merge/merge_handler/genesis_access.rs genesis_reader, creator_reader",
         model_ref: "EnrollmentGenesis (lake build)",
         tiers: &[Boundary, Contract],
-        bound_by: "crates/database/db/tests/merge/genesis_access.rs genesis_reader_matches_executed_lean_model, only_an_immutable_address_naming_this_node_selects_it",
+        bound_by: "crates/database/db/tests/merge/genesis_access.rs genesis_reader_matches_executed_lean_model, only_an_immutable_address_naming_this_node_selects_it, creator_reader_matches_executed_lean_model, a_creator_grants_exactly_the_address_its_document_names",
     },
     Property {
         family: "Transactional document relationships",
@@ -1954,10 +1963,27 @@ pub const PROPERTIES: &[Property] = &[
         family: "ACP soundness + revocation + dual-path commits",
         name: "INV_AtMostOneEffect / INV_ConfirmedHasEffect / INV_NoEarlyGiveUp / INV_RetainedUntilConfirmed / LIVE_UndisturbedCallConfirms / LIVE_RecalledConfirms: a pending submission is resent until confirmed, takes effect once, is given up only at its deadline or on a failure that cannot pass, stays journaled until confirmed, and is confirmed by a later call when an earlier one was cut short",
         axis: Tla,
-        anchor: "crates/engine/vera/src/vera_rs/provider/submission.rs resolve_pending, recover_pending, send_tx_with_sequence; crates/engine/vera/src/vera_rs/client.rs retryable; crates/engine/vera/src/vera_rs/worker.rs acknowledge; crates/engine/vera-embedded/src/submission.rs",
+        anchor: "crates/engine/vera/src/vera_rs/provider/submission.rs resolve_pending, recover_pending, send_tx_with_sequence; crates/engine/vera/src/vera_rs/receipt_wait.rs until_receipt; crates/engine/vera/src/vera_rs/client.rs retryable; crates/engine/vera/src/vera_rs/worker.rs acknowledge; crates/engine/vera-embedded/src/submission.rs",
         model_ref: "MC_PendingSubmission_{Green,Green_Recalled,Red_NoResend,Red_NoDedupe,Red_GivesUpEarly,Red_ForgetsOnTimeout,Red_Recalled_Forgets}.cfg",
         tiers: &[Boundary],
         bound_by: "",
+    },
+    Property {
+        // Between asks for a receipt the provider waits for the light
+        // client to verify a height above the one it read before it asked
+        // and sent, at most a fallback interval. The node serves a receipt
+        // from the moment it publishes its block's header, so the receipt
+        // is asked for as soon as it can be there; a header verified while
+        // the ask or the send was on its way still ends the wait; and a
+        // header stream that is down delays the receipt by the fallback,
+        // never for good.
+        family: "vera.rs receipt wait",
+        name: "INV_Prompt / LIVE_Confirms: a receipt is asked for at the verified height that holds it, with no wait on a timer, and is read in the end when no header comes",
+        axis: Tla,
+        anchor: "crates/engine/vera/src/vera_rs/receipt_wait.rs until_receipt, Heads, Fallback, MIN_FALLBACK; crates/engine/vera/src/vera_rs/provider.rs receipt_fallbacks; crates/engine/vera/src/vera_rs/provider/submission.rs resolve_pending; crates/engine/vera/src/vera_rs/follow/chain.rs ProviderChain::send_and_confirm; crates/engine/vera/src/tuning.rs receipt_fallback",
+        model_ref: "MC_ReceiptWait_{Green,Red_TimerOnly,Red_SeenAfterSend,Red_Unbounded}.cfg",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/engine/vera/src/vera_rs/receipt_wait_tests.rs a_receipt_is_asked_for_at_the_next_verified_height_and_not_after_a_sleep, a_header_verified_while_the_request_is_sent_still_ends_the_wait, with_no_header_each_wait_ends_at_its_fallback_and_an_unheard_send_is_sent_again; crates/engine/vera-embedded/tests/receipt_wait.rs writes_are_confirmed_at_their_blocks_header_and_not_at_the_fallback",
     },
     Property {
         // A remote provider cannot join the row transaction, so a create

@@ -52,6 +52,7 @@ impl Node {
                 ),
                 cache_ttl: std::time::Duration::from_secs(config.acp.cache_ttl),
                 receipt_timeout: std::time::Duration::from_secs(config.acp.receipt_timeout),
+                ..vera::AcpTuning::default()
             };
 
             info!(
@@ -259,6 +260,7 @@ pub(super) fn vera_rs_tuning(config: &Config) -> vera::AcpTuning {
         ),
         cache_ttl: std::time::Duration::from_secs(config.acp.cache_ttl),
         receipt_timeout: std::time::Duration::from_secs(config.acp.receipt_timeout),
+        ..vera::AcpTuning::default()
     }
 }
 
