@@ -1,4 +1,4 @@
-//! A store written with the old DateTime index encoding is rebuilt on open.
+//! A store written by an older index encoding is refused on open.
 //!
 //! The encoding changed from one varint of nanoseconds to a marker plus
 //! separate seconds and nanos varints. Nothing rebuilt those entries before:
@@ -8,7 +8,11 @@
 //! orphaned their entries, and unique indexes stopped rejecting duplicates.
 
 use db::definition::migration::format::CURRENT_INDEX_FORMAT;
-use storage::RegolithStore;
+use db::Error;
+use schema::{CollectionVersion, FieldDescription, FieldKind};
+use storage::corekv::{Key, Reader as _};
+use storage::keys::systemstore::CollectionKey;
+use storage::{RegolithStore, Store};
 
 /// The marker byte every encoded time key starts with, per `encoding::mod`.
 const TIME_MARKER: u8 = 8;
@@ -35,8 +39,8 @@ fn the_old_and_new_encodings_differ() {
     assert_ne!(new, old, "a rebuild is only needed if the bytes differ");
 }
 
-/// Opening a store with no format stamp rebuilds and then stamps it, so the
-/// second open finds the store current instead of rebuilding again.
+/// Opening a new store with no format stamp stamps it, so the second open
+/// finds the store current.
 #[test]
 fn an_unstamped_store_is_stamped_on_open() {
     workers::block_on(async {
@@ -72,6 +76,126 @@ fn a_fresh_store_opens_clean() {
             db.stored_index_format().await.unwrap(),
             Some(CURRENT_INDEX_FORMAT)
         );
+    })
+    .unwrap()
+}
+
+fn simple_schema() -> CollectionVersion {
+    CollectionVersion::new(
+        "Tallies",
+        "tallies-v1",
+        "tallies-collection",
+        vec![
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "count", FieldKind::int(), schema::CType::LwwRegister),
+        ],
+    )
+}
+
+/// Refuses the last index encoding before the keyspace tag rather than
+/// misreading its entries with the new layout.
+#[test]
+fn an_older_index_format_is_refused() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let db = db::DB::open(store.clone()).await.expect("fresh open");
+        db.create_collection(simple_schema()).await.expect("schema");
+        let txn = db.new_txn(false).await.expect("txn");
+        txn.systemstore()
+            .expect("systemstore")
+            .set(
+                db::definition::migration::format::INDEX_FORMAT_KEY,
+                &3u32.to_be_bytes(),
+            )
+            .await
+            .expect("stamp the older format");
+        txn.commit().await.expect("commit");
+        drop(db);
+
+        let schema_key = CollectionKey::new("tallies-collection").bytes();
+        let system_schema_key = [b"s".as_slice(), schema_key.as_slice()].concat();
+        let before = {
+            let txn = store.new_txn(true).await.expect("read before refusal");
+            let value = txn.get(&system_schema_key).await.expect("read the schema");
+            txn.discard();
+            value
+        };
+
+        let error = match db::DB::open(store.clone()).await {
+            Err(error) => error,
+            Ok(_) => panic!("older store refuses"),
+        };
+        let after = {
+            let txn = store.new_txn(true).await.expect("read after refusal");
+            let value = txn.get(&system_schema_key).await.expect("read the schema");
+            txn.discard();
+            value
+        };
+        assert_eq!(before, after, "a refusal must not rewrite the schema");
+        assert!(matches!(
+            error,
+            Error::UnsupportedIndexFormat {
+                stored: Some(3),
+                current: CURRENT_INDEX_FORMAT,
+            }
+        ));
+    })
+    .unwrap()
+}
+
+/// A store with collections but no stamp predates the format marker itself.
+#[test]
+fn an_unstamped_store_with_collections_is_refused() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let db = db::DB::open(store.clone()).await.expect("fresh open");
+        db.create_collection(simple_schema()).await.expect("schema");
+        let txn = db.new_txn(false).await.expect("txn");
+        txn.systemstore()
+            .expect("systemstore")
+            .delete(db::definition::migration::format::INDEX_FORMAT_KEY)
+            .await
+            .expect("remove the stamp");
+        txn.commit().await.expect("commit");
+        drop(db);
+
+        let error = match db::DB::open(store).await {
+            Err(error) => error,
+            Ok(_) => panic!("old store refuses"),
+        };
+        assert!(matches!(
+            error,
+            Error::UnsupportedIndexFormat {
+                stored: None,
+                current: CURRENT_INDEX_FORMAT,
+            }
+        ));
+    })
+    .unwrap()
+}
+
+/// A collection created through a constructor that skips the open sequence is
+/// stamped in its creation transaction, so a later open does not mistake it
+/// for a legacy unstamped store.
+#[test]
+fn a_collection_created_without_open_is_reopenable() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let db = db::DB::new(store.clone()).expect("construct");
+        db.create_collection(simple_schema()).await.expect("schema");
+        drop(db);
+
+        let db = db::DB::open(store).await.expect("reopen");
+        assert_eq!(
+            db.stored_index_format().await.expect("read the stamp"),
+            Some(CURRENT_INDEX_FORMAT)
+        );
+        assert!(db.require_collection("Tallies").is_ok());
     })
     .unwrap()
 }
