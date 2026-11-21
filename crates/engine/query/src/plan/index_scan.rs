@@ -309,11 +309,6 @@ impl PlanNode for IndexScanNode {
 
         // Index-specific info - presence of indexName indicates this is an index scan
         obj.insert(
-            "indexName".to_string(),
-            serde_json::Value::String(self.index_params.index_name.clone()),
-        );
-
-        obj.insert(
             "indexLimit".into(),
             serde_json::json!(self.index_params.limit),
         );
