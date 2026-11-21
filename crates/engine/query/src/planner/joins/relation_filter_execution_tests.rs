@@ -402,9 +402,9 @@ fn filter_on_an_indexed_child_reads_the_parents_once() {
 #[test]
 fn indexed_side_filter_keeps_relation_when_parent_fk_is_indexed() {
     workers::block_on(async {
-        let fetcher: Arc<dyn DocFetcher> = Arc::new(IndexedSideFetcher::new());
+        let fetcher = Arc::new(IndexedSideFetcher::new());
         let planner = Planner::new(vec![people(), books_with_parent_fk_index(), publishers()])
-            .with_fetcher(fetcher);
+            .with_fetcher(fetcher.clone());
         let select = Select::new("Book")
             .with_field(Field::new("title"))
             .with_select(Select::new("publisher").with_field(Field::new("name")))
@@ -434,6 +434,7 @@ fn indexed_side_filter_keeps_relation_when_parent_fk_is_indexed() {
         assert_eq!(rows.len(), 1, "{rows:?}");
         assert_eq!(rows[0]["title"], json!("David"), "{rows:?}");
         assert_eq!(rows[0]["publisher"]["name"], json!("Penguin"), "{rows:?}");
+        assert_eq!(fetcher.book_reads.load(Ordering::SeqCst), 3);
     })
     .unwrap()
 }
