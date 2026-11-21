@@ -38,16 +38,15 @@ where
 /// have granted itself (`creator_matches_addressed_receiver` in
 /// `proofs/lean/EnrollmentGenesis.lean`). `address` returns the created
 /// document's addressed field only when the collection holds it immutable;
-/// an address that is not a DID, or is spelled as everyone, names nobody.
+/// an address that is not a DID (the wildcard included) names nobody
+/// (`isDid` in the same Lean file).
 pub fn creator_reader<'a, F>(access: Option<GenesisReadAccess>, address: F) -> Option<Did>
 where
     F: FnOnce(&str) -> Option<&'a str>,
 {
     match access? {
         GenesisReadAccess::Public => Some(Did::wildcard()),
-        GenesisReadAccess::AddressedBy(field) => Did::new(address(field)?)
-            .ok()
-            .filter(|did| !did.is_wildcard()),
+        GenesisReadAccess::AddressedBy(field) => Did::new(address(field)?).ok(),
     }
 }
 

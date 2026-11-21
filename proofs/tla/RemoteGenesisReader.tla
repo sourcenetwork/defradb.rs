@@ -16,12 +16,15 @@
 \* What must never happen: a node merges a document it was never granted; a
 \* node merges on a grant the provider does not hold yet; a node merges more
 \* of the document after it has seen the reader revoked; a node merges a
-\* document whose registration its provider does not hold. And what must
+\* document whose registration its provider does not hold; a create its
+\* registrations allow is refused for the grants it owes. And what must
 \* happen: unless the reader is revoked, the addressed node ends up merging
 \* the genesis.
 \*
 \* The code: stage_genesis_reader in
-\* crates/database/db/src/write/genesis_reader.rs, called by
+\* crates/database/db/src/write/genesis_reader.rs, staging through
+\* TransactionOutbox::stage_with_registration
+\* (crates/engine/acp/src/outbox/staging.rs) and called by
 \* register_created_doc (crates/database/db/src/write/autocommit/helpers.rs)
 \* in the create's transaction; the settlement of an owed change behind its
 \* object's registration in crates/engine/acp/src/external/settle.rs; the
@@ -56,19 +59,23 @@ Frames == {1, 2}
 \* delivered, merged: the frames each receiver holds, and has merged.
 \* early: a receiver merged while the provider had never held the grant.
 \* afterRevoked: a receiver merged after its light client saw the revocation.
-VARIABLES access, created, owedReg, owedGrant, postCommit, crashed,
+\* overBound: the create's transaction makes more documents than it may stage
+\*   ordinary owed changes, or than their actor may hold unsettled.
+\* createRefused: a create its registrations allow was refused for its grants.
+VARIABLES overBound, createRefused, access, created, owedReg, owedGrant, postCommit, crashed,
           reg, grant, refused, revoked, everGranted,
           seenReg, seenGrant, seenRevoked,
           written, delivered, merged, early, afterRevoked
 
 \* Every variable, for stuttering steps and fairness.
-vars == <<access, created, owedReg, owedGrant, postCommit, crashed,
+vars == <<overBound, createRefused, access, created, owedReg, owedGrant, postCommit, crashed,
           reg, grant, refused, revoked, everGranted,
           seenReg, seenGrant, seenRevoked,
           written, delivered, merged, early, afterRevoked>>
 
 \* Either kind of opted-in collection; nothing written, owed or held yet.
 Init == /\ access \in {"addressed", "public"}
+        /\ overBound \in BOOLEAN /\ createRefused = FALSE
         /\ created = FALSE /\ owedReg = FALSE /\ owedGrant = FALSE
         /\ postCommit = FALSE /\ crashed = FALSE
         /\ reg = FALSE /\ grant = FALSE /\ refused = FALSE
@@ -84,21 +91,36 @@ Init == /\ access \in {"addressed", "public"}
 \* only for b. The "address" bug grants every node whatever the address.
 Named(n) == access = "public" \/ n = "b" \/ Bug = "address"
 
+\* The grant is counted with its registration, one per created document,
+\* which no bound on new changes limits. The "counted" bug counts it against
+\* the bounds on ordinary owed changes instead, so a transaction past them
+\* cannot stage it.
+Counted == Bug = "counted" /\ overBound
+
 \* The create commits: its genesis frame, its owed registration and, in the
 \* same transaction, its owed grant. The "separate" bug leaves the grant to
 \* a step after the commit instead.
-Create == /\ ~created
+Create == /\ ~created /\ ~Counted
           /\ created' = TRUE /\ written' = {1} /\ owedReg' = TRUE
           /\ owedGrant' = (Bug /= "separate")
           /\ postCommit' = (Bug = "separate")
-          /\ UNCHANGED <<access, crashed, reg, grant, refused, revoked, everGranted,
+          /\ UNCHANGED <<overBound, createRefused, access, crashed, reg, grant, refused, revoked, everGranted,
                          seenReg, seenGrant, seenRevoked, delivered, merged,
                          early, afterRevoked>>
+
+\* Under the "counted" bug, staging the grant fails and the whole create,
+\* which its registrations allow, is refused.
+RefuseCreate == /\ ~created /\ ~createRefused /\ Counted
+                /\ createRefused' = TRUE
+                /\ UNCHANGED <<overBound, access, created, owedReg, owedGrant, postCommit,
+                               crashed, reg, grant, refused, revoked, everGranted,
+                               seenReg, seenGrant, seenRevoked, written, delivered,
+                               merged, early, afterRevoked>>
 
 \* The "separate" bug's step after the commit: it stages the grant then.
 StageAfterCommit == /\ postCommit
                     /\ owedGrant' = TRUE /\ postCommit' = FALSE
-                    /\ UNCHANGED <<access, created, owedReg, crashed, reg, grant, refused,
+                    /\ UNCHANGED <<overBound, createRefused, access, created, owedReg, crashed, reg, grant, refused,
                                    revoked, everGranted, seenReg, seenGrant,
                                    seenRevoked, written, delivered, merged,
                                    early, afterRevoked>>
@@ -107,14 +129,14 @@ StageAfterCommit == /\ postCommit
 \* meant to do after the commit is lost.
 Crash == /\ ~crashed
          /\ crashed' = TRUE /\ postCommit' = FALSE
-         /\ UNCHANGED <<access, created, owedReg, owedGrant, reg, grant, refused,
+         /\ UNCHANGED <<overBound, createRefused, access, created, owedReg, owedGrant, reg, grant, refused,
                         revoked, everGranted, seenReg, seenGrant, seenRevoked,
                         written, delivered, merged, early, afterRevoked>>
 
 \* The provider takes the owed registration.
 SettleReg == /\ owedReg
              /\ reg' = TRUE /\ owedReg' = FALSE
-             /\ UNCHANGED <<access, created, owedGrant, postCommit, crashed, grant,
+             /\ UNCHANGED <<overBound, createRefused, access, created, owedGrant, postCommit, crashed, grant,
                             refused, revoked, everGranted, seenReg, seenGrant,
                             seenRevoked, written, delivered, merged, early,
                             afterRevoked>>
@@ -127,15 +149,15 @@ SettleGrant == /\ owedGrant
                /\ owedGrant' = FALSE
                /\ IF reg
                     THEN grant' = TRUE /\ everGranted' = TRUE /\ UNCHANGED refused
-                    ELSE refused' = TRUE /\ UNCHANGED <<grant, everGranted>>
-               /\ UNCHANGED <<access, created, owedReg, postCommit, crashed, reg,
+                    ELSE refused' = TRUE /\ UNCHANGED <<overBound, createRefused, grant, everGranted>>
+               /\ UNCHANGED <<overBound, createRefused, access, created, owedReg, postCommit, crashed, reg,
                               revoked, seenReg, seenGrant, seenRevoked, written,
                               delivered, merged, early, afterRevoked>>
 
 \* The creator revokes the reader the provider holds.
 Revoke == /\ grant
           /\ grant' = FALSE /\ revoked' = TRUE
-          /\ UNCHANGED <<access, created, owedReg, owedGrant, postCommit, crashed,
+          /\ UNCHANGED <<overBound, createRefused, access, created, owedReg, owedGrant, postCommit, crashed,
                          reg, refused, everGranted, seenReg, seenGrant,
                          seenRevoked, written, delivered, merged, early,
                          afterRevoked>>
@@ -143,7 +165,7 @@ Revoke == /\ grant
 \* The creator writes again on a.
 Write == /\ created /\ 2 \notin written
          /\ written' = written \cup {2}
-         /\ UNCHANGED <<access, created, owedReg, owedGrant, postCommit, crashed,
+         /\ UNCHANGED <<overBound, createRefused, access, created, owedReg, owedGrant, postCommit, crashed,
                         reg, grant, refused, revoked, everGranted, seenReg,
                         seenGrant, seenRevoked, delivered, merged, early,
                         afterRevoked>>
@@ -152,14 +174,14 @@ Write == /\ created /\ 2 \notin written
 Observe(n) == /\ seenReg' = [seenReg EXCEPT ![n] = reg]
               /\ seenGrant' = [seenGrant EXCEPT ![n] = grant]
               /\ seenRevoked' = [seenRevoked EXCEPT ![n] = revoked]
-              /\ UNCHANGED <<access, created, owedReg, owedGrant, postCommit, crashed,
+              /\ UNCHANGED <<overBound, createRefused, access, created, owedReg, owedGrant, postCommit, crashed,
                              reg, grant, refused, revoked, everGranted, written,
                              delivered, merged, early, afterRevoked>>
 
 \* Replication brings a written frame to a receiver.
 Deliver(n, f) == /\ f \in written /\ f \notin delivered[n]
                  /\ delivered' = [delivered EXCEPT ![n] = @ \cup {f}]
-                 /\ UNCHANGED <<access, created, owedReg, owedGrant, postCommit,
+                 /\ UNCHANGED <<overBound, createRefused, access, created, owedReg, owedGrant, postCommit,
                                 crashed, reg, grant, refused, revoked, everGranted,
                                 seenReg, seenGrant, seenRevoked, written, merged,
                                 early, afterRevoked>>
@@ -185,12 +207,12 @@ Merge(n, f) == /\ f \in delivered[n] /\ f \notin merged[n]
                /\ merged' = [merged EXCEPT ![n] = @ \cup {f}]
                /\ early' = (early \/ ~everGranted)
                /\ afterRevoked' = (afterRevoked \/ seenRevoked[n])
-               /\ UNCHANGED <<access, created, owedReg, owedGrant, postCommit,
+               /\ UNCHANGED <<overBound, createRefused, access, created, owedReg, owedGrant, postCommit,
                               crashed, reg, grant, refused, revoked, everGranted,
                               seenReg, seenGrant, seenRevoked, written, delivered>>
 
 \* Every step any actor can take.
-Next == \/ Create \/ StageAfterCommit \/ Crash \/ SettleReg \/ SettleGrant
+Next == \/ Create \/ RefuseCreate \/ StageAfterCommit \/ Crash \/ SettleReg \/ SettleGrant
         \/ Revoke \/ Write
         \/ \E n \in Receivers : Observe(n)
         \/ \E n \in Receivers, f \in Frames : Deliver(n, f) \/ Merge(n, f)
@@ -219,6 +241,9 @@ INV_RevokedStops == ~afterRevoked
 
 \* No node merges a document whose registration the provider never held.
 INV_RegisteredFirst == \A n \in Receivers : merged[n] /= {} => reg
+
+\* A create its registrations allow is never refused for the grants it owes.
+INV_ValidBatchCommits == ~createRefused
 
 \* Unless the reader is revoked, the addressed node merges the genesis.
 LIVE_AddressedMerges == <>(revoked \/ 1 \in merged["b"])

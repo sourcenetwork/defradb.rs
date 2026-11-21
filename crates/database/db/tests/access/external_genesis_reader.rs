@@ -170,3 +170,92 @@ fn a_mutable_address_or_a_collection_not_opted_in_owes_no_reader() {
     })
     .unwrap()
 }
+
+impl Staging {
+    /// Create `count` public `Board` rows as `creator` in one mutation, in
+    /// `handle`'s transaction or one of its own.
+    async fn create_board_batch(
+        &self,
+        creator: Did,
+        count: usize,
+        handle: Option<&query::TransactionHandle>,
+    ) -> Vec<String> {
+        let inputs: Vec<String> = (0..count)
+            .map(|n| format!(r#"{{name: "row {n}", addressee: "{}"}}"#, bob()))
+            .collect();
+        let mutation = request(
+            &format!(
+                "mutation {{ add_Board(input: [{}]) {{ _docID }} }}",
+                inputs.join(", ")
+            ),
+            Some(creator),
+        );
+        let created = match handle {
+            Some(handle) => self.node.runner.execute_in_txn(mutation, handle).await,
+            None => self.node.runner.execute(mutation).await,
+        };
+        assert!(!created.has_errors(), "{:?}", created.errors);
+        created.data.unwrap()["add_Board"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|doc| doc["_docID"].as_str().unwrap().to_string())
+            .collect()
+    }
+}
+
+/// More creates in one transaction than it may stage changes, then an
+/// ordinary grant in the same transaction: every create owes its reader
+/// and the grant is still staged, as the readers are counted with their
+/// registrations.
+#[test]
+fn a_batch_past_the_transactions_change_bound_owes_every_reader_and_takes_another_grant() {
+    workers::block_on(async {
+        let staging = host().await;
+        staging.remote.down.store(true, Ordering::SeqCst);
+        let count = acp::outbox::MAX_OWED_CHANGES_PER_TRANSACTION as usize + 1;
+        let handle = staging.begin().await;
+        let docs = staging
+            .create_board_batch(alice(), count, Some(&handle))
+            .await;
+        assert_eq!(docs.len(), count);
+        staging
+            .stage(
+                &handle,
+                super::external_staging::Change::new(alice(), &docs[0], OwedOp::Add, bob()),
+            )
+            .await
+            .expect("an ordinary grant after the batch");
+        staging.commit(&handle).await;
+
+        let queue = staging.queue().await;
+        let readers = queue
+            .iter()
+            .filter(|change| change.tuple.subject == OwedSubject::Wildcard)
+            .count();
+        assert_eq!(readers, count);
+        assert_eq!(queue.len(), count + 1);
+    })
+    .unwrap()
+}
+
+/// More creates by one actor than it may hold changes unsettled: the batch
+/// commits, every create owing its reader.
+#[test]
+fn a_batch_past_the_actors_unsettled_bound_owes_every_reader() {
+    workers::block_on(async {
+        let staging = host().await;
+        staging.remote.down.store(true, Ordering::SeqCst);
+        let count = acp::outbox::MAX_UNSETTLED_OWED_CHANGES_PER_ACTOR as usize + 1;
+        let docs = staging.create_board_batch(alice(), count, None).await;
+        assert_eq!(docs.len(), count);
+        let readers = staging
+            .queue()
+            .await
+            .iter()
+            .filter(|change| change.tuple.subject == OwedSubject::Wildcard)
+            .count();
+        assert_eq!(readers, count);
+    })
+    .unwrap()
+}

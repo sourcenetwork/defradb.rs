@@ -7,7 +7,10 @@
 //! the document and its creator owns it, so a receiver cannot grant itself:
 //! the creator owes the grant from the create's own transaction, behind the
 //! document's owed registration, and the receivers' strict merge gate lets
-//! the document in once their provider holds both. The model is
+//! the document in once their provider holds both. The grant is counted
+//! with the registration, one per created document, so a batch of creates is
+//! never refused for its grants (`acp::TransactionOutbox::stage_with_registration`).
+//! The model is
 //! `proofs/tla/RemoteGenesisReader.tla`; the choice of reader is
 //! `creatorReader` in `proofs/lean/EnrollmentGenesis.lean`.
 
@@ -25,9 +28,8 @@ use crate::merge::merge_handler::genesis_access::{creator_reader, GENESIS_READER
 
 /// Stage, as `creator` and in the create's transaction, the reader `doc`'s
 /// genesis asks for, when its collection opted in. `datastore` is the
-/// transaction's document view, which carries the host's opt-in and the
-/// transaction's count of staged changes; its ACP sibling already holds the
-/// document's owed registration.
+/// transaction's document view, which carries the host's opt-in; its ACP
+/// sibling already holds the document's owed registration.
 pub(crate) async fn stage_genesis_reader(
     provider: &Arc<dyn acp::DocumentACP>,
     context: &RequestContext,
@@ -65,7 +67,6 @@ pub(crate) async fn stage_genesis_reader(
         .projection_staged()
         .map(acp::StagedCount::from_shared)
         .unwrap_or_default();
-    let first = staged.get() == 0;
     let acpstore = datastore.sibling(storage::namespace::Namespace::Acpstore);
     let outbox = acp::bound_to_request(provider, context)
         .transaction_outbox(&acpstore, staged)
@@ -78,7 +79,7 @@ pub(crate) async fn stage_genesis_reader(
         })?;
     let txn = context.txn().map(|txn| txn.0);
     outbox
-        .stage(acp::StageRelationship {
+        .stage_with_registration(acp::StageRelationship {
             txn,
             actor: creator,
             subject,
@@ -95,40 +96,20 @@ pub(crate) async fn stage_genesis_reader(
                 "the reader document {doc_id}'s genesis asks for could not be owed: {error}"
             ))
         })?;
-    if first {
-        settle_after_commit(provider, datastore, txn).await?;
-    }
-    Ok(())
+    wake_after_commit(provider, datastore).await
 }
 
-/// Once the transaction commits, send what it owes: the provider takes the
-/// document's registration first, as every owed change waits behind its
-/// object's registration. A failure is reported and the changes stay owed
-/// for the next pass.
-async fn settle_after_commit(
+/// Once the transaction commits, wake the node's drainer, which sends the
+/// document's registration and then its grant, as every owed change waits
+/// behind its object's registration. A batch wakes it once per create; the
+/// wakes coalesce, so it takes one pass for the batch, not one per create.
+async fn wake_after_commit(
     provider: &Arc<dyn acp::DocumentACP>,
     view: &NamespaceView,
-    txn: Option<u64>,
 ) -> query::error::Result<()> {
     let provider = Arc::clone(provider);
     view.on_commit(OnCommit::Async(Box::new(move || {
-        Box::pin(async move {
-            let scope = txn.map_or(acp::OwedScope::All, acp::OwedScope::Transaction);
-            match workers::timeout(
-                std::time::Duration::from_secs(10),
-                provider.settle_owed_changes(scope),
-            )
-            .await
-            {
-                Ok(Ok(_)) => {}
-                Ok(Err(error)) => {
-                    tracing::warn!(%error, "Owed genesis reader not settled; it stays owed");
-                }
-                Err(error) => {
-                    tracing::warn!(%error, "Owed genesis reader settlement did not finish; it stays owed");
-                }
-            }
-        })
+        Box::pin(async move { provider.owed_changed() })
     })))
     .await
     .map_err(|error| query::error::QueryError::execution(error.to_string()))

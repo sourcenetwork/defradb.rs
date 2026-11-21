@@ -162,6 +162,15 @@ impl OwedChanges {
         Ok(change)
     }
 
+    /// Record, in this transaction, the one reader a create's genesis asks
+    /// for, owed with the document's registration. It is counted with that
+    /// registration, which no bound on new changes limits, so none of those
+    /// bounds applies to it and it leaves the transaction's count of staged
+    /// changes as it was (`TransactionOutbox::stage_with_registration`).
+    pub async fn stage_with_registration(&self, new: NewOwedChange) -> Result<OwedChange> {
+        ops::stage(&self.active_view()?, self.sequences.as_ref(), new).await
+    }
+
     /// Record, in this transaction, a change the provider confirmed once and
     /// a switch of its deployment's active device voided, and give it its
     /// sequence. It was committed and counted when first staged, so none of

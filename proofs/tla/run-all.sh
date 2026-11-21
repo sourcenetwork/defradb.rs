@@ -132,6 +132,7 @@ RUNS=(
   "MC_RemoteGenesisReader_Red_Memo.cfg RemoteGenesisReader.tla RED" # a later frame merges on the genesis's earlier answer after the revocation (INV_RevokedStops)
   "MC_RemoteGenesisReader_Red_Unregistered.cfg RemoteGenesisReader.tla RED" # an unregistered document is treated as public (INV_RegisteredFirst)
   "MC_RemoteGenesisReader_Red_Separate.cfg RemoteGenesisReader.tla RED" # the grant is staged after the commit and a crash loses it (LIVE_AddressedMerges)
+  "MC_RemoteGenesisReader_Red_Counted.cfg RemoteGenesisReader.tla RED" # the grant counts against the bounds on ordinary owed changes and refuses a valid batch of creates (INV_ValidBatchCommits)
   "MC_RemoteGenesisReader_Red_Order.cfg RemoteGenesisReader.tla RED" # the grant is sent before the registration and refused for good (LIVE_AddressedMerges)
   "MC_ParkedMerge_Green.cfg ParkedMerge.tla GREEN" # a refused replicated change is parked by document, never rejected for good, never merged before its history or without its signer's write, within the index bound
   "MC_ParkedMerge_Green_Live.cfg ParkedMerge.tla GREEN" # a parked change and its descendant merge once the signer holds write, and a change on another branch always merges

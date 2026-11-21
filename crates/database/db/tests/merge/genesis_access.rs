@@ -231,7 +231,7 @@ fn creator_reader_matches_executed_lean_model() {
         String::from_utf8_lossy(&output.stderr)
     );
     let cases: Vec<CreatorCase> = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(cases.len(), 9);
+    assert_eq!(cases.len(), 21);
     for case in cases {
         let decided = creator_reader(access(&case.access), named(case.address.as_deref()));
         assert_eq!(
