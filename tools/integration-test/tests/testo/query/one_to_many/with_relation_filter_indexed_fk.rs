@@ -16,7 +16,7 @@ fn relation_filter_through_an_indexed_fk_keeps_another_joined_relation() {
             AddCollection {
                 sdl: r#"
                     type Author {
-                        name: String
+                        name: String @index
                         books: [Book]
                     }
                     type Publisher {
