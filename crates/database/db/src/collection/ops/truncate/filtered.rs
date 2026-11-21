@@ -88,13 +88,11 @@ where
     ));
     fetcher.set_scans_validated(true);
     let provider = Arc::new(TxnCollectionProvider::new(db.clone(), txn));
-    let runner = query::QueryRunner::with_provider(fetcher.clone(), provider)
+    let runner = query::QueryRunner::with_provider(fetcher, provider)
         .with_lens_store(db.lens_store().clone());
 
     let found = runner
         .matching_doc_ids(collection.name(), filter.clone(), limit, true)
         .await;
-    drop(runner);
-    fetcher.set_scans_validated(false);
     Ok(found?)
 }
