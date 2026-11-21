@@ -34,30 +34,31 @@ struct ManageQueryRequestBody<'a> {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct P2pReplicatorInfo {
     /// Peer ID
-    #[serde(rename = "id", alias = "ID", default)]
+    #[serde(rename = "ID", alias = "id", default)]
     pub id: Option<String>,
 
     /// Collections being replicated
     #[serde(
-        rename = "collections",
+        rename = "CollectionIDs",
+        alias = "collections",
         alias = "Collections",
-        alias = "CollectionIDs",
         default
     )]
     pub collections: Vec<String>,
 
-    /// Peer address
-    #[serde(rename = "address", alias = "Address", default)]
-    pub address: Option<String>,
+    /// Peer addresses
+    #[serde(rename = "Addresses", alias = "address", alias = "Address", default)]
+    pub addresses: Vec<String>,
 
     /// Active=0, Inactive=1.
-    #[serde(rename = "status", alias = "Status", default)]
+    #[serde(rename = "Status", alias = "status", default)]
     pub status: Option<u8>,
 
     /// Last time the replicator status changed.
     #[serde(
-        rename = "lastStatusChange",
+        rename = "LastStatusChange",
         alias = "LastStatusChange",
+        alias = "lastStatusChange",
         alias = "last_status_change",
         default
     )]
@@ -240,10 +241,8 @@ mod tests {
     }
 
     #[test]
-    fn replicator_info_accepts_snake_case_last_status_change() {
-        // The manage-query (ReplicatorList) path embeds the raw http
-        // `ReplicatorInfo`, which serializes `last_status_change` as snake_case.
-        let json = r#"{"id":"peer-1","collections":["Users"],"status":0,"last_status_change":"2026-04-26T10:00:00Z"}"#;
+    fn replicator_info_accepts_manage_query_go_fields() {
+        let json = r#"{"ID":"peer-1","CollectionIDs":["Users"],"Addresses":["/ip4/127.0.0.1/tcp/9000"],"Status":0,"LastStatusChange":"2026-04-26T10:00:00Z"}"#;
         let info: P2pReplicatorInfo = serde_json::from_str(json).unwrap();
 
         assert_eq!(

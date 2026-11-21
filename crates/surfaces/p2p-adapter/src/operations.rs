@@ -413,10 +413,15 @@ pub trait P2POperations: defra_core::thread_bounds::MaybeSendSync {
 /// Replicator information for HTTP responses.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ReplicatorInfo {
+    #[serde(rename = "ID")]
     pub id: Option<String>,
+    #[serde(rename = "CollectionIDs")]
     pub collections: Vec<String>,
+    #[serde(rename = "Addresses")]
     pub address: Option<String>,
+    #[serde(rename = "Status")]
     pub status: Option<u8>,
+    #[serde(rename = "LastStatusChange")]
     pub last_status_change: Option<String>,
     pub filters: ReplicationFilters,
 }
