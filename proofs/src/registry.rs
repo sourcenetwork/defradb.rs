@@ -2228,6 +2228,30 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // A replicator added with no collections is stored, listed, and
+        // restored on start, as in Go, and receives no pushes until it has a
+        // collection (#2702).
+        family: "B3 filtered replication",
+        name: "INV_ListedAsAdded / INV_NoPushOutsideCollections: a replicator with no collections is listed and pushed nothing",
+        axis: Tla,
+        anchor: "crates/database/p2p/src/bitswap/registry.rs store_info, ReplicatorRegistry::load_from_infos, remove_peer_collections; crates/database/p2p/src/sync/coordinator/broadcast.rs replicator_in_collection",
+        model_ref: "MC_ReplicatorEmptyCollections_{Green,Red_DropOnStore,Red_DropOnLoad,Red_EmptyMeansAll}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // Storing or loading a replicator record always leaves its entry, the
+        // one with no collections included; an empty entry grants nothing and
+        // is picked for no collection's pushes.
+        family: "B3 filtered replication",
+        name: "ReplicatorEmptyCollections.stored_is_listed / restart_lists_every_record / empty_grants_nothing / empty_gets_no_push / push_only_to_members",
+        axis: Lean,
+        anchor: "crates/database/p2p/src/bitswap/registry.rs store_info, ReplicatorRegistry::load_from_infos, ReplicatorRegistry::is_any_replicator; crates/database/p2p/src/sync/coordinator/broadcast.rs replicator_in_collection",
+        model_ref: "ReplicatorEmptyCollections (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         // A transaction ID travels in the request context. Only the caller
         // that opened the transaction runs in it, a read-only transaction
         // refuses writes, a finished transaction runs nothing, a discard
