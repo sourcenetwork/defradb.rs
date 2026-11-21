@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use super::PendingDagStorage;
+#[cfg(not(target_arch = "wasm32"))]
 use {
     super::{Admission, PersistedPendingDag, PersistedQuarantinedDag, PersistedView, Registration},
     crate::error::{Error, Result},
@@ -143,24 +144,13 @@ mod tests {
 
     use super::*;
 
-    /// Records whether its calls ran on a pool worker.
-    struct WhereCalled {
-        worker: AtomicBool,
-    }
+    /// Records whether its last call ran on a pool worker.
+    #[derive(Default)]
+    struct WhereCalled(AtomicBool);
 
     impl WhereCalled {
-        fn new() -> Self {
-            Self {
-                worker: AtomicBool::new(false),
-            }
-        }
-
         fn note(&self) {
-            self.worker.store(workers::on_worker(), Ordering::SeqCst);
-        }
-
-        fn note_sweep(&self) {
-            self.note();
+            self.0.store(workers::on_worker(), Ordering::SeqCst);
         }
     }
 
@@ -184,7 +174,7 @@ mod tests {
             Ok(false)
         }
         async fn sweep(&self, _: &Arc<PersistedView>) -> Result<Vec<(Cid, PersistedPendingDag)>> {
-            self.note_sweep();
+            self.note();
             Ok(Vec::new())
         }
         async fn put(&self, _: &Cid, _: &PersistedPendingDag) -> Result<()> {
@@ -210,26 +200,23 @@ mod tests {
     }
 
     #[test]
-    fn a_sweep_runs_on_workers_with_other_calls() {
+    fn a_sweep_called_off_the_pool_runs_on_a_worker() {
         let pool = workers::Pool::start(workers::Config::unplaced(1)).unwrap();
-        let inner = Arc::new(WhereCalled::new());
+        let inner = Arc::new(WhereCalled::default());
         let store = pooled_pending_store(inner.clone(), Some(&pool));
         let view = Arc::new(PersistedView::default());
         workers::block_on(async {
             store.sweep(&view).await.unwrap();
         })
         .unwrap();
-        assert!(
-            inner.worker.load(Ordering::SeqCst),
-            "the sweep ran on a worker poll"
-        );
+        assert!(inner.0.load(Ordering::SeqCst), "the sweep ran on a worker");
         workers::block_on(async {
             store.remove_quarantined(&Cid::default()).await.unwrap();
         })
         .unwrap();
         assert!(
-            inner.worker.load(Ordering::SeqCst),
-            "non-sweep calls run on workers"
+            inner.0.load(Ordering::SeqCst),
+            "every call runs on a worker"
         );
         pool.shutdown_blocking().unwrap();
     }
