@@ -3,7 +3,9 @@
 
 use std::sync::Arc;
 
-use acp::{LightClientStatus, MemoryZanzibarStore, Policy, RemotePolicies, ZanzibarStore};
+use acp::{
+    LightClientStatus, MemoryZanzibarStore, Policy, PolicyNonce, RemotePolicies, ZanzibarStore,
+};
 use db::{DacPolicies, DacPolicyError, NacConfig, NacManager, DB};
 use defra_core::RequestContext;
 use identity::Did;
@@ -37,28 +39,32 @@ fn local_db() -> (DB<RegolithStore>, Arc<MemoryZanzibarStore>) {
 }
 
 /// A remote ACP that creates every policy under one ID and remembers who
-/// asked.
+/// asked, with which nonce.
 #[derive(Default)]
 struct Remote {
     creators: Atom<Vec<String>>,
-    seeded: Atom<Vec<Policy>>,
+    nonces: Atom<Vec<Option<PolicyNonce>>>,
 }
 
 #[async_trait::async_trait]
 impl RemotePolicies for Remote {
-    async fn add_policy(&self, creator: &str, _policy: &str) -> Result<String, String> {
+    async fn add_policy(
+        &self,
+        creator: &str,
+        _policy: &str,
+        nonce: Option<PolicyNonce>,
+    ) -> Result<String, String> {
         let mut creators = self.creators.load_clone();
         creators.push(creator.to_owned());
         self.creators.store(creators);
+        let mut nonces = self.nonces.load_clone();
+        nonces.push(nonce);
+        self.nonces.store(nonces);
         Ok("remote-policy".to_owned())
     }
 
-    async fn get_policy(&self, policy_id: &str) -> Result<Option<Policy>, String> {
-        Ok(self
-            .seeded
-            .load_clone()
-            .into_iter()
-            .find(|policy| policy.id == policy_id))
+    async fn get_policy(&self, _policy_id: &str) -> Result<Option<Policy>, String> {
+        Ok(None)
     }
 
     fn light_client_status(&self) -> Result<LightClientStatus, String> {
@@ -69,38 +75,85 @@ impl RemotePolicies for Remote {
     }
 }
 
-/// Two definitions can derive one ID, so the ID alone does not show that
-/// the remote policy is the caller's.
-#[test]
-fn a_seeded_policy_under_the_same_id_and_another_definition_is_not_adopted() {
-    workers::block_on(async {
-        let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
-        let remote = Arc::new(Remote::default());
-        let mirror = Arc::new(MemoryZanzibarStore::new());
-        db.set_dac_policies(Arc::new(DacPolicies::remote(
-            remote.clone(),
-            mirror.clone(),
-        )));
-        let seeded = acp::policy_yaml::build_policy(
-            &acp::policy_yaml::parse_policy_yaml("name: ab\nresources:\n  - name: c\n").unwrap(),
-            1,
-        )
-        .unwrap();
-        remote.seeded.store(vec![seeded.clone()]);
+fn remote_db() -> (DB<RegolithStore>, Arc<Remote>, Arc<MemoryZanzibarStore>) {
+    let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
+    let remote = Arc::new(Remote::default());
+    let mirror = Arc::new(MemoryZanzibarStore::new());
+    db.set_dac_policies(Arc::new(DacPolicies::remote(
+        remote.clone(),
+        mirror.clone(),
+    )));
+    (db, remote, mirror)
+}
 
+/// vera.rs derives a policy's ID from its definition, creator and nonce, so
+/// a counter names none of its policies: the request is refused before the
+/// remote ACP is asked, and nothing is kept.
+#[test]
+fn a_counter_names_no_policy_on_a_remote_acp() {
+    workers::block_on(async {
+        let (db, remote, mirror) = remote_db();
         let err = db
-            .add_dac_policy_with_counter_as(
+            .add_dac_policy_with_counter_as(&acting(OWNER_DID), POLICY, 1)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, DacPolicyError::CounterNeedsLocalAcp), "{err}");
+        assert!(remote.creators.load_clone().is_empty());
+        assert!(mirror.list_policies().await.unwrap().is_empty());
+    })
+    .unwrap()
+}
+
+/// The caller's nonce reaches the remote ACP, which derives the ID from it,
+/// and the policy it names is kept locally.
+#[test]
+fn a_callers_nonce_reaches_the_remote_acp_and_its_policy_is_kept() {
+    workers::block_on(async {
+        let (db, remote, mirror) = remote_db();
+        let nonce = PolicyNonce([7; 32]);
+        let id = db
+            .add_dac_policy_with_nonce_as(&acting(OWNER_DID), POLICY, nonce)
+            .await
+            .unwrap();
+        assert_eq!(id, "remote-policy");
+        assert_eq!(remote.nonces.load_clone(), vec![Some(nonce)]);
+        assert_eq!(remote.creators.load_clone(), vec![OWNER_DID.to_owned()]);
+        assert!(mirror.get_policy(&id).await.unwrap().is_some());
+    })
+    .unwrap()
+}
+
+/// A local ACP numbers its policies, as Go's does: a nonce cannot make its
+/// ID, so the request is refused rather than given an ID made another way.
+#[test]
+fn a_nonce_is_refused_by_a_local_acp() {
+    workers::block_on(async {
+        let (db, store) = local_db();
+        let err = db
+            .add_dac_policy_with_nonce_as(&acting(OWNER_DID), POLICY, PolicyNonce([7; 32]))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, DacPolicyError::NonceNeedsRemoteAcp), "{err}");
+        assert!(store.list_policies().await.unwrap().is_empty());
+    })
+    .unwrap()
+}
+
+/// Go's order still holds for a request with a nonce: the policy is checked
+/// before the nonce is.
+#[test]
+fn an_invalid_policy_with_a_nonce_is_refused_for_the_policy() {
+    workers::block_on(async {
+        let (db, _) = local_db();
+        let err = db
+            .add_dac_policy_with_nonce_as(
                 &acting(OWNER_DID),
-                "name: a\nresources:\n  - name: bc\n",
-                1,
+                "resources:\n  - name: users\n",
+                PolicyNonce::default(),
             )
             .await
             .unwrap_err();
-        assert!(
-            matches!(&err, DacPolicyError::RemotePolicyDiffers { policy_id } if *policy_id == seeded.id),
-            "{err}"
-        );
-        assert!(mirror.get_policy(&seeded.id).await.unwrap().is_none());
+        assert!(err.to_string().contains("name required"), "{err}");
     })
     .unwrap()
 }
@@ -227,41 +280,15 @@ fn a_remote_policy_gets_the_caller_as_creator_and_a_local_copy() {
         let id = db.add_dac_policy_as(&context, POLICY).await.unwrap();
         assert_eq!(id, "remote-policy");
         assert_eq!(remote.creators.load_clone(), vec![OWNER_DID.to_owned()]);
+        assert_eq!(
+            remote.nonces.load_clone(),
+            vec![None],
+            "without a nonce the remote ACP draws its own"
+        );
         let kept = mirror.get_policy(&id).await.unwrap().expect("a local copy");
         assert_eq!(kept.name, "Sensitive Rows");
         db.validate_resource_interface(&id, "users").await.unwrap();
 
-        let seeded = acp::policy_yaml::build_policy(
-            &acp::policy_yaml::parse_policy_yaml(POLICY).unwrap(),
-            1,
-        )
-        .unwrap();
-        let err = db
-            .add_dac_policy_with_counter_as(&context, POLICY, 1)
-            .await
-            .unwrap_err();
-        assert!(
-            matches!(&err, DacPolicyError::RemotePolicyAbsent { policy_id } if *policy_id == seeded.id),
-            "{err}"
-        );
-        assert!(mirror.get_policy(&seeded.id).await.unwrap().is_none());
-
-        remote.seeded.store(vec![seeded.clone()]);
-        let adopted = db
-            .add_dac_policy_with_counter_as(&context, POLICY, 1)
-            .await
-            .unwrap();
-        assert_eq!(adopted, seeded.id);
-        assert_eq!(remote.creators.load_clone(), vec![OWNER_DID.to_owned()]);
-        let kept = mirror
-            .get_policy(&adopted)
-            .await
-            .unwrap()
-            .expect("a local copy");
-        assert_eq!(kept.name, "Sensitive Rows");
-        db.validate_resource_interface(&adopted, "users")
-            .await
-            .unwrap();
         let status = db.acp_light_client_status_as(&context).await.unwrap();
         assert_eq!(status.height, 7);
     })

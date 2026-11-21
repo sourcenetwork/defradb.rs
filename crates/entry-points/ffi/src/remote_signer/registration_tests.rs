@@ -8,10 +8,11 @@ use std::time::Duration;
 use crypto::{PrivateKey, PublicKey};
 use identity::{Identity, RawIdentity};
 
-use super::{defra_identity_new_remote, defra_identity_new_remote_bytes};
 use crate::acp::{defra_identity_new_from_bearer_token, defra_node_set_identity};
 use crate::identities::{defra_identity_did, defra_identity_free, defra_node_identity};
-use crate::test_support::{close, cstr, node, ok, ok_json, text};
+use crate::test_support::{
+    close, cstr, node, ok, ok_json, register_remote_bytes, register_remote_hex, text,
+};
 use crate::types::{defra_new_identity_result_free, DefraNewIdentityResult};
 
 /// A secp256r1 key the host keeps. Its address is the signer handle the
@@ -99,7 +100,7 @@ fn register_hex(key: &'static HostKey) -> usize {
     let did = cstr(&key.did);
     let public = cstr(&hex::encode(&key.public));
     let key_type = cstr("secp256r1");
-    registered(defra_identity_new_remote(
+    registered(register_remote_hex(
         did.as_ptr(),
         public.as_ptr(),
         key_type.as_ptr(),
@@ -160,7 +161,7 @@ fn a_second_registration_of_a_held_did_is_refused_until_the_first_is_freed() {
     let did = cstr(&key.did);
     let public = cstr(&hex::encode(&key.public));
     let key_type = cstr("secp256r1");
-    let error = refused(defra_identity_new_remote(
+    let error = refused(register_remote_hex(
         did.as_ptr(),
         public.as_ptr(),
         key_type.as_ptr(),
@@ -227,13 +228,14 @@ fn a_bytes_registration_stores_the_public_key() {
     let key = HostKey::new();
     let did = cstr(&key.did);
     let key_type = cstr("secp256r1");
-    let identity = registered(defra_identity_new_remote_bytes(
+    let identity = registered(register_remote_bytes(
         did.as_ptr(),
         key.public.as_ptr(),
         key.public.len(),
         key_type.as_ptr(),
         key.handle(),
-        sign,
+        Some(sign),
+        None,
     ));
 
     let config = defra_core::signing::get_identity(&key.did).expect("the identity is stored");
@@ -245,13 +247,49 @@ fn a_bytes_registration_stores_the_public_key() {
 }
 
 #[test]
+fn an_empty_key_type_is_secp256r1_as_a_null_one_is() {
+    for form in ["hex", "bytes"] {
+        let key = HostKey::new();
+        let did = cstr(&key.did);
+        let public = cstr(&hex::encode(&key.public));
+        let empty = cstr("");
+        let identity = registered(match form {
+            "hex" => register_remote_hex(
+                did.as_ptr(),
+                public.as_ptr(),
+                empty.as_ptr(),
+                key.handle(),
+                sign,
+            ),
+            _ => register_remote_bytes(
+                did.as_ptr(),
+                key.public.as_ptr(),
+                key.public.len(),
+                empty.as_ptr(),
+                key.handle(),
+                Some(sign),
+                None,
+            ),
+        });
+
+        let config = defra_core::signing::get_identity(&key.did).expect("the identity is stored");
+        assert_eq!(
+            config.key_type,
+            defra_core::signing::SigningKeyType::Secp256r1,
+            "{form}"
+        );
+        defra_identity_free(identity);
+    }
+}
+
+#[test]
 fn a_registration_refuses_an_unknown_key_type_and_a_key_that_is_not_the_dids() {
     let key = HostKey::new();
     let did = cstr(&key.did);
     let public = cstr(&hex::encode(&key.public));
     let unknown = cstr("not-a-key");
     assert_eq!(
-        refused(defra_identity_new_remote(
+        refused(register_remote_hex(
             did.as_ptr(),
             public.as_ptr(),
             unknown.as_ptr(),
@@ -264,7 +302,7 @@ fn a_registration_refuses_an_unknown_key_type_and_a_key_that_is_not_the_dids() {
     let other = HostKey::new();
     let other_public = cstr(&hex::encode(&other.public));
     let key_type = cstr("secp256r1");
-    refused(defra_identity_new_remote(
+    refused(register_remote_hex(
         did.as_ptr(),
         other_public.as_ptr(),
         key_type.as_ptr(),
@@ -274,15 +312,16 @@ fn a_registration_refuses_an_unknown_key_type_and_a_key_that_is_not_the_dids() {
     assert!(defra_core::signing::get_identity(&key.did).is_none());
 
     let empty: CString = cstr("");
-    refused(defra_identity_new_remote_bytes(
+    refused(register_remote_bytes(
         did.as_ptr(),
         std::ptr::null(),
         0,
         key_type.as_ptr(),
         key.handle(),
-        sign,
+        Some(sign),
+        None,
     ));
-    refused(defra_identity_new_remote(
+    refused(register_remote_hex(
         empty.as_ptr(),
         public.as_ptr(),
         key_type.as_ptr(),

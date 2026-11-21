@@ -299,7 +299,7 @@ async fn a_provider_follows_a_confirmed_takeover_and_sends_again_what_it_voided(
     .await;
     let owner = named.self_did().unwrap();
     let delegation = named.create_bearer_token(&owner).await.unwrap();
-    let policy = named.create_policy(POLICY).await.unwrap();
+    let policy = named.create_policy(POLICY, None).await.unwrap();
     named
         .register_object(&delegation, &policy, "document", "kept")
         .await

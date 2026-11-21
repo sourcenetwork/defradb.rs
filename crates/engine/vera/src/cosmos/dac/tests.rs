@@ -9,6 +9,7 @@ mod cache_mutations;
 #[path = "../../../tests/unit/access_cache_race.rs"]
 mod cache_race;
 mod owed;
+mod registration_batch;
 
 /// Which relationship-emitting provider method a routing test drove, plus
 /// the structured-subject codec tuple for the EntitySet path. Each field
@@ -102,6 +103,7 @@ impl VeraProvider for MockProvider {
     async fn create_policy(
         &self,
         _policy_yaml: &str,
+        _nonce: Option<acp::PolicyNonce>,
     ) -> std::result::Result<String, ProviderError> {
         unreachable!("create_policy is not used in this test")
     }
@@ -531,6 +533,7 @@ impl VeraProvider for NoSubjectProvider {
     async fn create_policy(
         &self,
         _policy_yaml: &str,
+        _nonce: Option<acp::PolicyNonce>,
     ) -> std::result::Result<String, ProviderError> {
         unreachable!()
     }

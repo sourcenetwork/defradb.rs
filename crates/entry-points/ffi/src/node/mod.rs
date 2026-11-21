@@ -27,8 +27,7 @@ use options::{NodeSetup, StoreLocation};
 ///
 /// Every non-null pointer in `options` must be valid for the call: strings
 /// null-terminated, byte buffers at least their stated length.
-#[no_mangle]
-pub unsafe extern "C" fn defra_node_new(options: NodeInitOptions) -> DefraNewNodeResult {
+pub unsafe fn defra_node_new(options: NodeInitOptions) -> DefraNewNodeResult {
     ffi_entry! {
         let Some(rt) = crate::runtime::edge() else {
             return DefraNewNodeResult::error(crate::helpers::ERR_RUNTIME_NOT_INITIALIZED);

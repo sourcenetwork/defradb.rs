@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use db::DB;
 use regolith::sync::Event;
-use schema::{CollectionVersion, FieldDescription, FieldKind};
 use storage::corekv::{Key, OnCommit};
 use storage::keys::systemstore::CollectionNameKey;
 use storage::RegolithStore;
@@ -33,26 +32,8 @@ fn schema_success_waits_for_its_ordered_cache_publication() {
 
         let create = async {
             entered.wait().await;
-            let schema = CollectionVersion::new(
-                "Note",
-                "note-v1",
-                "note-id",
-                vec![
-                    FieldDescription::new(
-                        "1",
-                        "_docID",
-                        FieldKind::doc_id(),
-                        schema::CType::LwwRegister,
-                    ),
-                    FieldDescription::new(
-                        "2",
-                        "text",
-                        FieldKind::string(),
-                        schema::CType::LwwRegister,
-                    ),
-                ],
-            );
-            let pending = db.create_collections_atomic(vec![schema]);
+            let context = defra_core::RequestContext::ambient();
+            let pending = db.add_collection(&context, "type Note { text: String }");
             futures::pin_mut!(pending);
             assert!(
                 futures::poll!(&mut pending).is_pending(),

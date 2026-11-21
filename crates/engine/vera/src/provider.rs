@@ -77,6 +77,10 @@ impl From<vera_delegation::CommandError> for ProviderError {
     }
 }
 
+/// The most registrations one request carries: the most commands vera.rs
+/// applies in one ordered list.
+pub const MAX_REGISTRATIONS_PER_REQUEST: usize = vera_modules::acp::MAX_POLICY_COMMAND_LIST;
+
 /// One command of a request built for owed changes, under the bearer token
 /// it is submitted with.
 pub struct OwedCall<'a> {
@@ -219,7 +223,16 @@ pub trait VeraProvider: MaybeSendSync {
         ))
     }
 
-    async fn create_policy(&self, policy_yaml: &str) -> Result<String, ProviderError>;
+    /// Create the YAML policy as the provider's actor and return its ID.
+    /// vera.rs derives the ID from the definition, the actor and `nonce`,
+    /// drawing a random nonce when none is given; sent again with the same
+    /// nonce it returns the policy already made and makes no second one.
+    /// A provider whose ACP assigns its own IDs refuses a nonce.
+    async fn create_policy(
+        &self,
+        policy_yaml: &str,
+        nonce: Option<acp::PolicyNonce>,
+    ) -> Result<String, ProviderError>;
 
     async fn register_object(
         &self,
@@ -228,6 +241,22 @@ pub trait VeraProvider: MaybeSendSync {
         resource: &str,
         object_id: &str,
     ) -> Result<(), ProviderError>;
+
+    /// Register each of `objects` under `bearer_token` in one request the
+    /// provider applies in order, all or none, at most
+    /// [`MAX_REGISTRATIONS_PER_REQUEST`] of them. A provider that applies no
+    /// such list refuses it as unsupported, and its registrations are sent
+    /// one at a time ([`Self::register_object`]).
+    async fn register_objects(
+        &self,
+        bearer_token: &str,
+        objects: &[acp::AcpObject<'_>],
+    ) -> Result<(), ProviderError> {
+        let _ = (bearer_token, objects);
+        Err(ProviderError::Unsupported(
+            "this provider registers one object per request".into(),
+        ))
+    }
 
     async fn archive_object(
         &self,

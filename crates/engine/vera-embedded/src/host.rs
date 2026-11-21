@@ -44,16 +44,31 @@ pub struct Deployment {
     pub policies: Vec<SeededPolicy>,
 }
 
-/// A policy a deployment holds from its first block, under the ID a local
-/// ACP derives from the same definition and counter.
+/// A policy a deployment holds from its first block. vera.rs derives its ID
+/// from the definition, the creator and the nonce ([`SeededPolicy::id`]), so
+/// the host knows the ID before the deployment exists, and a deployment of
+/// another creator gets another ID for the same definition.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SeededPolicy {
     /// The policy as YAML.
     pub definition: String,
-    /// The counter its ID is derived from.
-    pub counter: u64,
-    /// The DID recorded as its owner.
-    pub owner: String,
+    /// The nonce its ID is derived from. Zeroes are fine: the creator
+    /// already tells one host's policies from another's.
+    pub nonce: vera::PolicyNonce,
+    /// The DID that created and owns the policy, part of its ID.
+    pub creator: String,
+}
+
+impl SeededPolicy {
+    /// The ID vera.rs gives the policy; the same ID the creator's own create
+    /// of the definition under the nonce names, which then returns this
+    /// policy and makes no second one.
+    ///
+    /// # Errors
+    /// The definition does not compile.
+    pub fn id(&self) -> Result<String, vera::ProviderError> {
+        vera::vera_rs::predict_policy_id(&self.definition, self.nonce, &self.creator)
+    }
 }
 
 /// Where a hosted node keeps its state and how long its host waits for it.
@@ -271,8 +286,8 @@ fn genesis(deployment: Deployment) -> Result<SoloGenesis, HostError> {
                 serde_json::from_value(serde_json::json!({
                     "definition": policy.definition,
                     "marshal_type": "ShortYaml",
-                    "counter": policy.counter,
-                    "owner": policy.owner,
+                    "nonce": policy.nonce,
+                    "owner": vera::vera_rs::did_spelling::wire(&policy.creator),
                 }))
                 .map_err(HostError::Policies)
             })

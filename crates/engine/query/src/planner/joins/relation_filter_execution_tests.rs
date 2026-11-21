@@ -5,11 +5,12 @@ use schema::{
     IndexedFieldDescription,
 };
 use serde_json::json;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use crate::error::Result;
 use crate::fetcher::{DocFetcher, FetchByIdsResult, IndexScanResult};
-use crate::mapper::{Field, Filter, Select};
+use crate::mapper::{Field, Filter, OrderBy, OrderCondition, OrderDirection, Select};
 use crate::planner::builder::Planner;
 use crate::planner::{IndexScanParams, IndexScanType};
 
@@ -75,6 +76,17 @@ fn books() -> CollectionVersion {
                 .as_primary(),
         ],
     )
+    .with_index(IndexDescription {
+        id: 2,
+        name: "Book_title_ASC".to_string(),
+        unique: false,
+        kind: None,
+        auto_generated: false,
+        fields: vec![IndexedFieldDescription {
+            name: "title".to_string(),
+            descending: false,
+        }],
+    })
 }
 
 fn publishers() -> CollectionVersion {
@@ -135,6 +147,8 @@ struct IndexedSideFetcher {
     people: Vec<Document>,
     books: Vec<Document>,
     publishers: Vec<Document>,
+    /// Every Book document this fetcher has handed out, by any route.
+    book_reads: AtomicUsize,
 }
 
 impl IndexedSideFetcher {
@@ -143,13 +157,18 @@ impl IndexedSideFetcher {
             people: vec![person("David"), person("Other")],
             books: vec![book("David", "David"), book("Other", "Other")],
             publishers: vec![publisher("Penguin")],
+            book_reads: AtomicUsize::new(0),
         }
     }
 
     fn all(&self, collection_name: &str) -> Vec<Document> {
         match collection_name {
             "Person" => self.people.clone(),
-            "Book" => self.books.clone(),
+            "Book" => {
+                self.book_reads
+                    .fetch_add(self.books.len(), Ordering::SeqCst);
+                self.books.clone()
+            }
             "Publisher" => self.publishers.clone(),
             _ => Vec::new(),
         }
@@ -188,11 +207,16 @@ impl DocFetcher for IndexedSideFetcher {
         collection_name: &str,
         doc_ids: &[String],
     ) -> Result<FetchByIdsResult> {
-        let docs = self
+        let docs: Vec<_> = self
             .all(collection_name)
             .into_iter()
             .filter(|doc| doc.id().is_some_and(|id| doc_ids.contains(&id.to_string())))
             .collect();
+        if collection_name == "Book" {
+            // Only the Books returned are read, not every one `all` counted.
+            self.book_reads
+                .fetch_sub(self.books.len() - docs.len(), Ordering::SeqCst);
+        }
         Ok(FetchByIdsResult::all_found(docs))
     }
 
@@ -211,9 +235,23 @@ impl DocFetcher for IndexedSideFetcher {
 
     async fn get_by_index_scan(
         &self,
-        _collection_name: &str,
+        collection_name: &str,
         params: &IndexScanParams,
     ) -> Result<IndexScanResult> {
+        if collection_name == "Book" {
+            // The title index, read whole for an order it provides.
+            let mut books: Vec<_> = self.books.iter().collect();
+            books.sort_by_key(|book| {
+                book.get("title")
+                    .and_then(|value| value.as_str().map(String::from))
+            });
+            return Ok(IndexScanResult::new(
+                books
+                    .into_iter()
+                    .filter_map(|book| book.id().map(|id| id.to_string()))
+                    .collect(),
+            ));
+        }
         let IndexScanType::ExactMatch { values } = &params.scan_type else {
             panic!("unexpected index scan type in test: {:?}", params.scan_type);
         };
@@ -243,9 +281,7 @@ impl DocFetcher for IndexedSideFetcher {
     }
 }
 
-/// The direction of the join on `relation` in `explain`: the fallback join
-/// of a relation whose parent holds the FK is "primary"; the indexed-side
-/// join is "secondary".
+/// The direction of the join on `relation` in `explain`.
 fn join_direction(explain: &serde_json::Value, relation: &str) -> Option<String> {
     match explain {
         serde_json::Value::Object(map) => {
@@ -267,75 +303,71 @@ fn join_direction(explain: &serde_json::Value, relation: &str) -> Option<String>
     }
 }
 
+fn author_named(name: &str) -> Filter {
+    Filter::from_conditions(
+        json!({"author": {"name": {"_eq": name}}})
+            .as_object()
+            .cloned()
+            .unwrap(),
+    )
+}
+
+/// Every row of `plan`, rendered, and the plan's execute explain.
+async fn run(
+    mut plan: Box<dyn crate::planner::PlanNode>,
+) -> (Vec<serde_json::Value>, serde_json::Value) {
+    plan.init().await.unwrap();
+    plan.start().await.unwrap();
+    let mut rows = Vec::new();
+    while plan.next().await.unwrap() {
+        rows.push(plan.document_map().render_doc_to_json(plan.value()));
+    }
+    plan.close().await.unwrap();
+    (rows, plan.explain_execute())
+}
+
+fn planner() -> Planner {
+    planner_over(Arc::new(IndexedSideFetcher::new()))
+}
+
+fn planner_over(fetcher: Arc<IndexedSideFetcher>) -> Planner {
+    let fetcher: Arc<dyn DocFetcher> = fetcher;
+    Planner::new(vec![people(), books(), publishers()]).with_fetcher(fetcher)
+}
+
+/// With no index on the parent FK, the Books are read once, in their own
+/// order, and each is kept when the indexed author matches.
 #[test]
-fn indexed_side_filter_returns_only_matching_books() {
+fn filter_on_an_indexed_child_reads_the_parents_once() {
     workers::block_on(async {
-        let fetcher: Arc<dyn DocFetcher> = Arc::new(IndexedSideFetcher::new());
-        let planner = Planner::new(vec![people(), books(), publishers()]).with_fetcher(fetcher);
         let select = Select::new("Book")
             .with_field(Field::new("title"))
-            .with_filter(Filter::from_conditions(
-                json!({"author": {"name": {"_eq": "David"}}})
-                    .as_object()
-                    .cloned()
-                    .unwrap(),
-            ));
-
-        let mut plan = planner.plan(&select).unwrap();
+            .with_filter(author_named("David"));
+        let plan = planner().plan(&select).unwrap();
         assert_eq!(
             join_direction(&plan.explain(), "author").as_deref(),
-            Some("secondary"),
+            Some("primary"),
             "{}",
             plan.explain()
         );
-        plan.init().await.unwrap();
-        plan.start().await.unwrap();
 
-        let mut titles = Vec::new();
-        while plan.next().await.unwrap() {
-            let rendered = plan.document_map().render_doc_to_json(plan.value());
-            titles.push(rendered["title"].as_str().unwrap().to_string());
-        }
-        plan.close().await.unwrap();
-
-        assert_eq!(titles, vec!["David".to_string()]);
+        let (rows, _) = run(plan).await;
+        let titles: Vec<_> = rows.iter().map(|row| row["title"].clone()).collect();
+        assert_eq!(titles, vec![json!("David")]);
     })
     .unwrap()
 }
 
 /// A relation already joined into the parent plan, here the selected
-/// publisher, survives the indexed-side join of the filtered author.
+/// publisher, is kept on a Book the author filter keeps.
 #[test]
-fn indexed_side_filter_keeps_relations_joined_into_the_parent() {
+fn filter_on_an_indexed_child_keeps_relations_joined_into_the_parent() {
     workers::block_on(async {
-        let fetcher: Arc<dyn DocFetcher> = Arc::new(IndexedSideFetcher::new());
-        let planner = Planner::new(vec![people(), books(), publishers()]).with_fetcher(fetcher);
         let select = Select::new("Book")
             .with_field(Field::new("title"))
             .with_select(Select::new("publisher").with_field(Field::new("name")))
-            .with_filter(Filter::from_conditions(
-                json!({"author": {"name": {"_eq": "David"}}})
-                    .as_object()
-                    .cloned()
-                    .unwrap(),
-            ));
-
-        let mut plan = planner.plan(&select).unwrap();
-        assert_eq!(
-            join_direction(&plan.explain(), "author").as_deref(),
-            Some("secondary"),
-            "{}",
-            plan.explain()
-        );
-        plan.init().await.unwrap();
-        plan.start().await.unwrap();
-
-        let mut rows = Vec::new();
-        while plan.next().await.unwrap() {
-            rows.push(plan.document_map().render_doc_to_json(plan.value()));
-        }
-        plan.close().await.unwrap();
-
+            .with_filter(author_named("David"));
+        let (rows, _) = run(planner().plan(&select).unwrap()).await;
         assert_eq!(rows.len(), 1, "{rows:?}");
         assert_eq!(rows[0]["title"], json!("David"), "{rows:?}");
         assert_eq!(rows[0]["publisher"]["name"], json!("Penguin"), "{rows:?}");
@@ -343,40 +375,71 @@ fn indexed_side_filter_keeps_relations_joined_into_the_parent() {
     .unwrap()
 }
 
-/// Explain reports the child scans under the child branch and the one parent
-/// scan under the root: two books are scanned once, and the one matching
-/// person is read by the scan that selects it and by the scan that drives the
-/// output.
+/// When no author matches, no Book can pass the filter, and none is read.
+/// Explain reports the parent scan under the root and the child lookups under
+/// the child branch.
 #[test]
-fn indexed_side_explain_reports_child_and_parent_scans_apart() {
+fn no_matching_child_reads_no_parent() {
     workers::block_on(async {
-        let fetcher: Arc<dyn DocFetcher> = Arc::new(IndexedSideFetcher::new());
-        let planner = Planner::new(vec![people(), books(), publishers()]).with_fetcher(fetcher);
         let select = Select::new("Book")
             .with_field(Field::new("title"))
-            .with_filter(Filter::from_conditions(
-                json!({"author": {"name": {"_eq": "David"}}})
-                    .as_object()
-                    .cloned()
-                    .unwrap(),
-            ));
-        let mut plan = planner.plan(&select).unwrap();
-        plan.init().await.unwrap();
-        plan.start().await.unwrap();
-        while plan.next().await.unwrap() {}
-        plan.close().await.unwrap();
-
-        let explain = plan.explain_execute();
-        let join = &explain["selectNode"]["typeIndexJoin"]["typeJoinOne"];
-        assert_eq!(
-            join["root"]["scanNode"]["docFetches"],
-            json!(2),
-            "{explain}"
-        );
-        let child = &join["subType"]["selectTopNode"]["selectNode"];
+            .with_filter(author_named("David"));
+        let (_, explain) = run(planner().plan(&select).unwrap()).await;
+        let root = &explain["selectNode"]["typeIndexJoin"]["typeJoinOne"]["root"];
+        assert_eq!(root["scanNode"]["docFetches"], json!(2), "{explain}");
+        let child = &explain["selectNode"]["typeIndexJoin"]["typeJoinOne"]["subType"]
+            ["selectTopNode"]["selectNode"];
         assert_eq!(child["filterMatches"], json!(1), "{explain}");
-        assert_eq!(child["scanNode"]["docFetches"], json!(2), "{explain}");
-        assert_eq!(child["scanNode"]["indexFetches"], json!(2), "{explain}");
+        assert_eq!(child["scanNode"]["docFetches"], json!(1), "{explain}");
+        assert_eq!(child["scanNode"]["indexFetches"], json!(1), "{explain}");
+
+        let select = Select::new("Book")
+            .with_field(Field::new("title"))
+            .with_filter(author_named("Nobody"));
+        let (rows, explain) = run(planner().plan(&select).unwrap()).await;
+        assert!(rows.is_empty(), "{rows:?}");
+        let root = &explain["selectNode"]["typeIndexJoin"]["typeJoinOne"]["root"];
+        assert_eq!(root["scanNode"]["docFetches"], json!(0), "{explain}");
+        let child = &explain["selectNode"]["typeIndexJoin"]["typeJoinOne"]["subType"]
+            ["selectTopNode"]["selectNode"];
+        assert_eq!(child["filterMatches"], json!(0), "{explain}");
+        assert_eq!(child["scanNode"]["docFetches"], json!(0), "{explain}");
+    })
+    .unwrap()
+}
+
+/// When no author matches and a parent index provides the order, the
+/// index-ordered Book scan reads no Book either: a scan that loads its
+/// documents when it starts is not started.
+#[test]
+fn no_matching_child_reads_no_parent_of_an_index_ordered_scan() {
+    workers::block_on(async {
+        let ordered = |name: &str| {
+            Select::new("Book")
+                .with_field(Field::new("title"))
+                .with_filter(author_named(name))
+                .with_order(
+                    OrderBy::new()
+                        .with_condition(OrderCondition::new("title", OrderDirection::Asc)),
+                )
+        };
+
+        let fetcher = Arc::new(IndexedSideFetcher::new());
+        let (rows, _) = run(planner_over(fetcher.clone())
+            .plan(&ordered("David"))
+            .unwrap())
+        .await;
+        let titles: Vec<_> = rows.iter().map(|row| row["title"].clone()).collect();
+        assert_eq!(titles, vec![json!("David")]);
+        assert!(fetcher.book_reads.load(Ordering::SeqCst) > 0);
+
+        let fetcher = Arc::new(IndexedSideFetcher::new());
+        let (rows, _) = run(planner_over(fetcher.clone())
+            .plan(&ordered("Nobody"))
+            .unwrap())
+        .await;
+        assert!(rows.is_empty(), "{rows:?}");
+        assert_eq!(fetcher.book_reads.load(Ordering::SeqCst), 0);
     })
     .unwrap()
 }

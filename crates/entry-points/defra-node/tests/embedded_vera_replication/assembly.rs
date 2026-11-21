@@ -112,11 +112,7 @@ pub(crate) async fn own(
                 threshold: 1,
                 operator_keys: vec![ACCOUNT_KEY.to_string()],
                 created: now(),
-                policies: vec![EmbeddedVeraPolicy {
-                    definition: POLICY.to_string(),
-                    counter: 0,
-                    owner: spec.owner.did.to_string(),
-                }],
+                policies: vec![seed()],
             },
             listen: "127.0.0.1:0".parse().expect("address"),
             start_deadline: Duration::from_secs(60),
@@ -129,6 +125,20 @@ pub(crate) async fn own(
         })
         .build()
         .await
+}
+
+/// The DID every deployment's [`POLICY`] is seeded under. A collection
+/// names its policy's ID, so deployments that replicate one collection to
+/// each other hold the policy under one ID: one creator and one nonce.
+const POLICY_CREATOR: &str = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
+
+/// [`POLICY`] as every deployment is seeded with it.
+pub(crate) fn seed() -> EmbeddedVeraPolicy {
+    EmbeddedVeraPolicy {
+        definition: POLICY.to_string(),
+        nonce: defra_node::PolicyNonce::default(),
+        creator: POLICY_CREATOR.to_string(),
+    }
 }
 
 /// A peer that verifies against another peer's deployment.

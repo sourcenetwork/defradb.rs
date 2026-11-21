@@ -1,5 +1,7 @@
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
+
+use integration_test::cli_command;
 
 fn defra_binary() -> PathBuf {
     integration_test::rust_binary()
@@ -7,7 +9,7 @@ fn defra_binary() -> PathBuf {
 
 /// Run a `defra identity` subcommand with the file keyring pointed at `keyring_dir`.
 fn defra_identity(keyring_dir: &std::path::Path, args: &[&str]) -> std::process::Output {
-    Command::new(defra_binary())
+    cli_command(defra_binary())
         .arg("--keyring-backend")
         .arg("file")
         .arg("--keyring-path")
@@ -28,7 +30,7 @@ fn defra_identity_stdin(
     input: &str,
 ) -> std::process::Output {
     use std::io::Write;
-    let mut child = Command::new(defra_binary())
+    let mut child = cli_command(defra_binary())
         .arg("--keyring-backend")
         .arg("file")
         .arg("--keyring-path")

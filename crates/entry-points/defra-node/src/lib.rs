@@ -90,7 +90,7 @@ pub use access_hooks::AccessHooks;
 /// [`Node::document_acp`] returns) without depending on `acp` directly.
 pub use acp::nac::NodePermission;
 pub use acp::ReplicaGrant;
-pub use acp::{DocumentACP, DocumentPermission, Identity as AcpIdentity};
+pub use acp::{DocumentACP, DocumentPermission, Identity as AcpIdentity, PolicyNonce};
 pub use acp_ops::transactional::RelationshipChange;
 #[cfg(feature = "vera")]
 pub use acp_provider::DocumentAcpProvider;
@@ -1779,6 +1779,10 @@ mod staged_relationship_tests;
 #[cfg(all(test, feature = "vera", not(target_arch = "wasm32")))]
 #[path = "../tests/unit/remote_owner_observation.rs"]
 mod remote_owner_observation_tests;
+
+#[cfg(all(test, feature = "vera", not(target_arch = "wasm32")))]
+#[path = "../tests/unit/strict_access_reads.rs"]
+mod strict_access_reads_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 #[path = "../tests/unit/verified_create.rs"]

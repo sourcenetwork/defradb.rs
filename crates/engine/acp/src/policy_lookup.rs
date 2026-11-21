@@ -35,8 +35,16 @@ impl PolicyLookup for StorePolicies {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait RemotePolicies: MaybeSendSync {
     /// Create the YAML `policy` on the remote ACP for `creator`, a DID, and
-    /// return the ID the remote ACP gave it.
-    async fn add_policy(&self, creator: &str, policy: &str) -> Result<String, String>;
+    /// return the ID the remote ACP gave it. vera.rs derives the ID from the
+    /// definition, the creator and `nonce`; without one it draws its own.
+    /// Sent again with the same nonce, it returns the policy the first call
+    /// made and makes no second one.
+    async fn add_policy(
+        &self,
+        creator: &str,
+        policy: &str,
+        nonce: Option<crate::PolicyNonce>,
+    ) -> Result<String, String>;
 
     /// The remote ACP's policy `policy_id`; `Ok(None)` when it has none.
     async fn get_policy(&self, policy_id: &str) -> Result<Option<Policy>, String>;

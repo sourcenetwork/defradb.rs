@@ -32,6 +32,9 @@ pub struct AcpRead {
     pub identity: Identity,
     /// The request's DAC bypass (`RequestContext::dac_bypass`).
     pub dac_bypass: bool,
+    /// The request asked for strict access reads
+    /// (`RequestContext::strict_access_reads`).
+    pub strict: bool,
     pub policy_id: String,
     pub resource_name: String,
 }
@@ -41,6 +44,7 @@ pub(crate) struct AcpReadCheck {
     acp: Arc<dyn DocumentACP>,
     identity: Arc<Identity>,
     dac_bypass: bool,
+    strict: bool,
     policy_id: Arc<str>,
     resource_name: Arc<str>,
     retry_inputs: Option<crate::prepared::PreparedInputMemo>,
@@ -57,6 +61,7 @@ impl AcpReadCheck {
             acp: read.acp,
             identity: Arc::new(read.identity),
             dac_bypass: read.dac_bypass,
+            strict: read.strict,
             policy_id: Arc::from(read.policy_id),
             resource_name: Arc::from(read.resource_name),
             retry_inputs,
@@ -64,8 +69,15 @@ impl AcpReadCheck {
         }
     }
 
-    /// Whether the reader may read `doc_id`. A failed check denies, except a missing
-    /// prepared input, which ends the attempt so the input can be fetched.
+    /// Whether the reader may read `doc_id`. A missing prepared input ends the
+    /// attempt so the input can be fetched. Any other failed check is no
+    /// answer: by default it denies, so the row is left out and the read goes
+    /// on; a strict read fails with [`QueryError::AccessCheckUnavailable`],
+    /// naming nothing about the document. A denial is an answer and only
+    /// leaves the row out, in both modes (`proofs/lean/StrictAccessRule.lean`,
+    /// `proofs/tla/StrictAccessRead.tla`).
+    ///
+    /// [`QueryError::AccessCheckUnavailable`]: crate::error::QueryError::AccessCheckUnavailable
     pub(crate) async fn allows(&self, doc_id: &str) -> Result<bool> {
         if self.identity.is_authenticated() && self.dac_bypass {
             return Ok(true);
@@ -84,6 +96,19 @@ impl AcpReadCheck {
         {
             Ok(allowed) => Ok(allowed),
             Err(error @ crate::error::QueryError::NeedsInput(_)) => Err(error),
+            Err(error) if self.strict => {
+                tracing::warn!(
+                    %doc_id,
+                    policy_id = %self.policy_id,
+                    resource_name = %self.resource_name,
+                    identity = %self.identity,
+                    %error,
+                    "Permission check failed, failing the strict read"
+                );
+                Err(crate::error::QueryError::AccessCheckUnavailable {
+                    retryable: matches!(error, crate::error::QueryError::AcpProviderUnavailable(_)),
+                })
+            }
             Err(error) => {
                 tracing::warn!(
                     %doc_id,
@@ -160,6 +185,7 @@ impl PermissionFilterNode {
                 acp,
                 identity: Arc::new(identity),
                 dac_bypass: defra_core::RequestContext::ambient().dac_bypass(),
+                strict: false,
                 policy_id: Arc::from(policy_id.into()),
                 resource_name: Arc::from(resource_name.into()),
                 retry_inputs: None,
@@ -191,6 +217,15 @@ impl PermissionFilterNode {
     pub fn with_dac_bypass(mut self, bypass: bool) -> Self {
         if let Some(acp) = &mut self.acp {
             acp.dac_bypass = bypass;
+        }
+        self
+    }
+
+    /// Fail the read on a document whose access check could not be answered,
+    /// instead of leaving the row out (`RequestContext::strict_access_reads`).
+    pub fn with_strict_access(mut self, strict: bool) -> Self {
+        if let Some(acp) = &mut self.acp {
+            acp.strict = strict;
         }
         self
     }
@@ -295,6 +330,7 @@ impl PermissionFilterNode {
                     read.resource_name,
                 )
                 .with_dac_bypass(read.dac_bypass)
+                .with_strict_access(read.strict)
                 .with_app_check(app)
                 .with_projection(projection)
                 .with_retry_inputs(retry_inputs),
@@ -583,10 +619,13 @@ mod tests {
             }
 
             self.active.fetch_sub(1, Ordering::SeqCst);
-            if doc_id == "error" {
-                Err(acp::Error::Storage("injected failure".to_string()))
-            } else {
-                Ok(true)
+            match doc_id {
+                "error" => Err(acp::Error::Storage("injected failure".to_string())),
+                "late" => Err(acp::Error::ProviderUnavailable(
+                    "injected delay".to_string(),
+                )),
+                "denied" => Ok(false),
+                _ => Ok(true),
             }
         }
 
@@ -751,5 +790,46 @@ mod tests {
             assert!(!node.next().await.unwrap());
         })
         .unwrap()
+    }
+
+    /// The rows a strict permission filter over `doc_ids` yields, or the
+    /// error that ends it.
+    fn strict_rows(doc_ids: &[&str]) -> crate::error::Result<Vec<String>> {
+        workers::block_on(async {
+            let doc_ids: Vec<String> = doc_ids.iter().map(|id| id.to_string()).collect();
+            let acp = Arc::new(MockAcp::new(None, RapidHashMap::new()));
+            let mut node = permission_filter(&doc_ids, Arc::new(AtomicUsize::new(0)), acp)
+                .with_strict_access(true);
+            node.init().await?;
+            node.start().await?;
+            let mut rows = Vec::new();
+            while node.next().await? {
+                rows.push(node.value().doc_id().unwrap().to_owned());
+            }
+            Ok(rows)
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn a_strict_read_fails_on_an_unanswered_check_and_only_filters_a_denial() {
+        assert_eq!(
+            strict_rows(&["allowed", "denied"]).unwrap(),
+            ["allowed"],
+            "a denial is an answer: it filters the row, it is no error"
+        );
+        assert!(matches!(
+            strict_rows(&["allowed", "late", "denied"]),
+            Err(crate::error::QueryError::AccessCheckUnavailable { retryable: true })
+        ));
+        assert!(matches!(
+            strict_rows(&["error", "allowed"]),
+            Err(crate::error::QueryError::AccessCheckUnavailable { retryable: false })
+        ));
+        let error = strict_rows(&["late"]).unwrap_err().to_string();
+        assert!(
+            !error.contains("late"),
+            "the error names the document: {error}"
+        );
     }
 }

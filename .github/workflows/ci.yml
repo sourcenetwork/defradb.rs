@@ -306,8 +306,9 @@ jobs:
         uses: actions/setup-go@v7
         with:
           # The pinned GO_COMPAT_COMMIT declares `go 1.26.10`, so an older
-          # toolchain cannot build it.
-          go-version: '1.26'
+          # toolchain cannot build it. Held at 1.26.10: Go 1.26.11 refuses the
+          # LTO section in wasmtime-go's prebuilt libwasmtime.a
+          go-version: '1.26.10'
       - name: Prepare Go DefraDB binary
         id: prepare
         run: |
@@ -920,7 +921,11 @@ jobs:
           name: go-defradb
           path: target/go
       - name: Build the lens modules
-        run: cargo build --manifest-path tools/lenses/Cargo.toml --target wasm32-unknown-unknown
+        # A stray CARGO_TARGET_DIR keeps --target-dir honest (#2350): without
+        # the flag the modules land there and the lens tests can't find them.
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/stray-lens-target
+        run: cargo build --manifest-path tools/lenses/Cargo.toml --target wasm32-unknown-unknown --target-dir tools/lenses/target
       - name: Pick the tests
         env:
           CLIENT: ${{ matrix.client }}

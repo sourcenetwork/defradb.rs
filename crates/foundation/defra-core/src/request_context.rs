@@ -67,9 +67,32 @@ struct Fields {
     /// (possibly inactive): its turn pins that version for every lookup of
     /// the collection's name.
     collection_version: Option<String>,
+    /// The caller decides on what this request reads: a document access
+    /// check that could not be answered fails the request instead of
+    /// hiding the row.
+    strict_access_reads: bool,
 }
 
 impl RequestContext {
+    /// This context with strict access reads: a read that meets a document
+    /// whose access check could not be answered (the ACP provider was
+    /// unreachable, late, busy or stale after its waits, or the check broke)
+    /// fails with `query::QueryError::AccessCheckUnavailable` and returns no
+    /// rows, instead of leaving the row out. A denied document is still only
+    /// left out. For a caller that decides on what it reads; the default
+    /// hides the row and keeps reading.
+    #[must_use]
+    pub fn with_strict_access_reads(mut self) -> Self {
+        Arc::make_mut(&mut self.0).strict_access_reads = true;
+        self
+    }
+
+    /// Whether this request asked for strict access reads
+    /// ([`with_strict_access_reads`](Self::with_strict_access_reads)).
+    pub fn strict_access_reads(&self) -> bool {
+        self.0.strict_access_reads
+    }
+
     /// Require each active native authority to be bound to the write transaction.
     pub fn with_transactional_authority_required(mut self) -> Self {
         Arc::make_mut(&mut self.0).require_transactional_authority = true;
@@ -420,6 +443,7 @@ impl fmt::Debug for RequestContext {
         f.debug_struct("RequestContext")
             .field("identity", &self.0.identity)
             .field("dac_bypass", &self.0.dac_bypass)
+            .field("strict_access_reads", &self.0.strict_access_reads)
             .field("encryption", &self.0.encryption)
             .field(
                 "signing",

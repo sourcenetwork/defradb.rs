@@ -94,15 +94,26 @@ impl OwedAcpRegistration {
             Some(creator.to_string()),
             self.request_bearer_token,
             |acp| async move {
+                // Each collection is decided first, then those still owed are
+                // registered together: an external provider applies them as
+                // one list. One that two schemas name is registered once.
+                let mut owed: Vec<acp::AcpObject<'_>> = Vec::new();
                 for schema in &schemas {
-                    crate::collection::acp::register_collection_if_needed(
+                    if let Some(object) = crate::collection::acp::collection_to_register(
                         acp.as_ref(),
                         Some(&creator),
                         schema,
                     )
-                    .await?;
+                    .await?
+                    {
+                        if !owed.contains(&object) {
+                            owed.push(object);
+                        }
+                    }
                 }
-                Ok::<_, acp::Error>(())
+                acp.register_objects(&creator, &owed)
+                    .await
+                    .map_err(|failure| failure.error)
             },
         )
         .await
@@ -164,6 +175,10 @@ pub struct DbTxn<S: Store> {
     /// for its commit to confirm (see [`query::txn::ObservedOwners`]). Made
     /// when the first one is kept.
     observed_owners: regolith::sync::OnceCell<Arc<query::txn::ObservedOwners>>,
+    /// The registrations this transaction's creates owe an external document
+    /// ACP, settled together by the first of their commit hooks to run. Made
+    /// when the first one is owed.
+    commit_registrations: regolith::sync::OnceCell<Arc<acp::CommitRegistrations>>,
     /// The CRDT types of the node whose store the transaction runs on, kept
     /// past the commit for the collections it hands out.
     crdts: crdt::Crdts,
@@ -234,6 +249,7 @@ impl<S: Store> DbTxn<S> {
             statement_savepoint: None,
             owed_staged: regolith::sync::OnceCell::new(),
             observed_owners: regolith::sync::OnceCell::new(),
+            commit_registrations: regolith::sync::OnceCell::new(),
             store: None,
         }
     }
@@ -538,6 +554,17 @@ impl<S: Store> DbTxn<S> {
             .as_ref()
             .map(|t| t.rootstore())
             .ok_or(Error::TxnNotActive)
+    }
+
+    /// Owe `registration` at this transaction's commit: its hook settles it
+    /// with every other registration this transaction owes by then
+    /// ([`acp::CommitRegistrations`]). A statement rolled back to its
+    /// savepoint drops its hooks as it drops its records.
+    pub fn owe_acp_registration(&self, registration: acp::CommitRegistration) -> Result<()> {
+        let owed = self
+            .commit_registrations
+            .get_or_init_racy(|| Arc::new(acp::CommitRegistrations::default()));
+        self.on_commit(OnCommit::OrderedAsync(owed.owe(registration)))
     }
 
     /// Register `callback` to run once if the transaction commits. A

@@ -189,6 +189,19 @@ pub enum QueryError {
     #[error("{0}")]
     TransactionRetryExhausted(String),
 
+    /// The document ACP provider could not be reached or did not answer in
+    /// time, after its own waits. Nothing is known about what was asked.
+    #[error("{0}")]
+    AcpProviderUnavailable(String),
+
+    /// A strict read (`RequestContext::with_strict_access_reads`) met a
+    /// document whose access check could not be answered, and returns no
+    /// rows rather than fewer than the caller may read. It names nothing
+    /// about that document. `retryable` when the provider was unavailable or
+    /// late: the same read may answer later.
+    #[error("access check unavailable: a document's access could not be checked, so the read returned nothing")]
+    AccessCheckUnavailable { retryable: bool },
+
     /// A transaction attempt needs a remote input. The caller must end the
     /// attempt, resolve this exact request outside the transaction, memoize
     /// the response for the logical request, and execute again.
@@ -325,6 +338,16 @@ impl QueryError {
     /// Create an execution error
     pub fn execution(msg: impl Into<String>) -> Self {
         Self::Execution(msg.into())
+    }
+
+    /// A document ACP error as a query error: an unavailable provider stays
+    /// [`Self::AcpProviderUnavailable`], so a caller can tell late from
+    /// wrong; anything else is an execution error with the ACP's words.
+    pub fn from_acp(error: acp::Error) -> Self {
+        match error {
+            acp::Error::ProviderUnavailable(_) => Self::AcpProviderUnavailable(error.to_string()),
+            other => Self::Execution(other.to_string()),
+        }
     }
 
     /// Create a retryable transaction conflict error.
