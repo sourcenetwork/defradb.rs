@@ -268,10 +268,6 @@ impl DualKademlia {
         ]
     }
 
-    pub fn has_known_peers(&mut self) -> bool {
-        self.lan.has_known_peers() || self.wan.has_known_peers()
-    }
-
     pub fn store_mut(&mut self, network: KademliaNetwork) -> &mut MemoryStore {
         match network {
             KademliaNetwork::Lan => self.lan.store_mut(),

@@ -776,10 +776,6 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
     }
 
     fn run_kademlia_bootstrap(&mut self, reason: &'static str) {
-        if !self.swarm.behaviour_mut().kademlia.has_known_peers() {
-            debug!(reason, "Skipped Kademlia bootstrap: no known peers");
-            return;
-        }
         for (network, result) in self.swarm.behaviour_mut().kademlia.bootstrap() {
             match result {
                 Ok(query_id) => {
