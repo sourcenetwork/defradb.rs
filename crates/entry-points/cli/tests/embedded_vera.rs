@@ -197,7 +197,7 @@ fn policy_id(output: &str) -> String {
 #[nuclei::test]
 async fn policy_add_with_a_nonce_names_one_policy_however_often_it_is_sent() {
     let root = tempfile::tempdir().unwrap();
-    let node = RunningNode::start(root.path()).await;
+    let node = RunningNode::start(root.path(), "node").await;
     let nonce = "5a".repeat(32);
 
     let first = policy_id(&add_policy_with(&node, root.path(), &["--nonce", &nonce]).await);
