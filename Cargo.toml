@@ -126,7 +126,7 @@ libp2p-stream = "0.4.0-alpha"
 
 # Iroh P2P transport (alternative to libp2p)
 iroh = "1.3.0"
-iroh-gossip = { version = "0.102.0", default-features = false }
+iroh-gossip = { version = "0.103.0", default-features = false }
 iroh-relay = { version = "1.3.0", features = ["server"] }
 iroh-tickets = "1.0.0"
 postcard = { version = "1.0", features = ["alloc"] }
