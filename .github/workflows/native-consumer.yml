@@ -65,7 +65,8 @@ jobs:
   native-consumer:
     name: Native ACP consumer
     needs: scope
-    if: needs.scope.outputs.run == 'true'
+    # A failed scope job leaves `run` empty, so the qualification runs rather than being skipped.
+    if: ${{ !cancelled() && needs.scope.outputs.run != 'false' }}
     # Fat LTO with one codegen unit links each release binary in one rustc, so more cores
     # stop helping past 16; 64 GB leaves room for that link beside a full -j build. Only pull
     # requests take a spot runner, so a reclaim never fails a main push or a manual run.
