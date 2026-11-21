@@ -17,6 +17,7 @@ use crate::error::{Error, Result};
 use crate::policy::AccessPolicy;
 use crate::remote::{RemoteKey, RemoteKeys};
 use crate::results::KeyResults;
+use crate::service::KeyArrivalListener;
 use crate::service::{KmsService, PeerIdentity};
 use crate::store::KeyStore;
 use crate::tier::KeyTier;
@@ -80,6 +81,7 @@ pub struct DefraKms {
     remote: inputs::Service<RemoteKeys>,
     policy: Arc<dyn AccessPolicy>,
     doc_resolver: Arc<dyn BlockDocIDResolver>,
+    arrivals: Arc<AtomOption<Arc<dyn KeyArrivalListener>>>,
     /// This node's transport-level peer id, bound into the ECIES AAD of
     /// served replies (Go's `makeAssociatedData`). Empty until the node
     /// wiring sets it from the P2P transport.
@@ -123,6 +125,7 @@ impl DefraKms {
     ) -> Self {
         let tier = Arc::new(KeyTier::new(store, inputs.key_tier_bytes));
         let test_ephemeral = Arc::new(AtomOption::none());
+        let arrivals = Arc::new(AtomOption::none());
         let mut remote_config = inputs.remote;
         // A transport that carries fewer keys per request than a batch holds
         // (iroh gossip, #2842) gets the batch as chunks, each its own round
@@ -141,6 +144,7 @@ impl DefraKms {
                 transports,
                 node_identity,
                 test_ephemeral: Arc::clone(&test_ephemeral),
+                arrivals: Arc::clone(&arrivals),
             },
             remote_config,
             inputs.runtime,
@@ -150,6 +154,7 @@ impl DefraKms {
             remote,
             policy,
             doc_resolver,
+            arrivals,
             local_peer_id: Atom::new(String::new()),
             #[cfg(test)]
             test_ephemeral,
@@ -480,6 +485,10 @@ impl KmsService for DefraKms {
 
     fn set_local_peer_id(&self, id: String) {
         self.local_peer_id.store(id);
+    }
+
+    fn set_key_arrival_listener(&self, listener: Arc<dyn KeyArrivalListener>) {
+        self.arrivals.store_some(listener);
     }
 }
 

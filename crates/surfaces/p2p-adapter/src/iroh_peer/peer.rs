@@ -20,6 +20,18 @@ pub type IrohBlockstore<S> = blockstore::DefraBlockstore<S>;
 pub type IrohCoordinator<S> = p2p::sync::IrohSyncCoordinator<IrohBlockstore<S>>;
 pub type IrohReplicationStack<S> = db::merge::ReplicationStack<S, IrohBlockstore<S>, IrohTransport>;
 
+#[cfg(feature = "kms")]
+struct KeyArrivalPromoter<S: storage::Store + 'static>(std::sync::Weak<IrohCoordinator<S>>);
+
+#[cfg(feature = "kms")]
+impl<S: Store + 'static> kms::KeyArrivalListener for KeyArrivalPromoter<S> {
+    fn keys_arrived(&self, _cids: &[kms::EncryptionCid]) {
+        if let Some(coordinator) = self.0.upgrade() {
+            coordinator.manager().promote_pending_retries();
+        }
+    }
+}
+
 /// The management channel: inbound requests are served once `hooks` is
 /// populated, and `requester` relays outbound ones.
 pub struct ManageChannel {
@@ -53,7 +65,7 @@ impl<S: Store + 'static> IrohPeer<S> {
         database: Arc<db::DB<S>>,
         event_bus: Arc<dyn events::Bus>,
         config: IrohPeerConfig,
-    ) -> p2p::Result<Self> {
+    ) -> p2p::Result<Arc<Self>> {
         let edge = config.edge.clone();
         edge.spawn(Self::assemble(store, database, event_bus, config))
             .await
@@ -72,7 +84,7 @@ impl<S: Store + 'static> IrohPeer<S> {
         database: Arc<db::DB<S>>,
         event_bus: Arc<dyn events::Bus>,
         config: IrohPeerConfig,
-    ) -> p2p::Result<Self> {
+    ) -> p2p::Result<Arc<Self>> {
         let IrohPeerConfig {
             endpoint,
             edge,
@@ -372,7 +384,7 @@ impl<S: Store + 'static> IrohPeer<S> {
         };
 
         tracing::info!(peer_id = %local_peer_id, "iroh peer started");
-        Ok(Self {
+        let peer = Arc::new(Self {
             shutdown: IrohPeerShutdown::new(
                 transport.clone(),
                 coordinator.shutdown_handle(),
@@ -393,12 +405,16 @@ impl<S: Store + 'static> IrohPeer<S> {
             local_peer_id,
             #[cfg(not(target_arch = "wasm32"))]
             se_correlator,
-        })
+        });
+        Ok(peer)
     }
 
     /// Bind the KMS built after the peer.
     #[cfg(feature = "kms")]
     pub fn wire_kms(&self, kms: Arc<dyn kms::KmsService>) {
+        kms.set_key_arrival_listener(Arc::new(KeyArrivalPromoter(Arc::downgrade(
+            &self.coordinator,
+        ))));
         self.replication.merge_handler_inner.set_kms(kms);
     }
 

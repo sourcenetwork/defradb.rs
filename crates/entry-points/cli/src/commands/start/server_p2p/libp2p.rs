@@ -8,6 +8,20 @@ use super::P2PSetup;
 use crate::config::Config;
 use crate::error::{Error, Result};
 
+struct KeyArrivalPromoter<S: storage::corekv::Store + 'static>(
+    std::sync::Weak<
+        p2p::sync::SyncCoordinator<blockstore::DefraBlockstore<S>, p2p::Libp2pTransport>,
+    >,
+);
+
+impl<S: storage::corekv::Store + 'static> kms::KeyArrivalListener for KeyArrivalPromoter<S> {
+    fn keys_arrived(&self, _cids: &[kms::EncryptionCid]) {
+        if let Some(coordinator) = self.0.upgrade() {
+            coordinator.manager().promote_pending_retries();
+        }
+    }
+}
+
 impl Node {
     #[allow(clippy::too_many_arguments)]
     pub(super) async fn setup_libp2p_p2p(
@@ -155,6 +169,7 @@ impl Node {
         let merge_handler_for_loop = replication.merge_handler_on_pool();
         let merge_handler_inner_for_syncer = replication.merge_handler_inner.clone();
         let merge_handler_inner_for_kms = replication.merge_handler_inner.clone();
+        let coordinator_for_kms = Arc::downgrade(&coordinator);
         let broadcast_mutator = replication.broadcast_mutator.clone();
         let broadcast_mutator_for_acp = replication.broadcast_mutator.clone();
         let merge_handler_for_acp = replication.merge_handler.clone();
@@ -558,6 +573,7 @@ impl Node {
             txn_broadcaster: Some(txn_broadcaster),
             kms_transport: Some(kms_transport as Arc<dyn kms::KeyTransport>),
             wire_kms: Some(Box::new(move |kms| {
+                kms.set_key_arrival_listener(Arc::new(KeyArrivalPromoter(coordinator_for_kms)));
                 merge_handler_inner_for_kms.set_kms(kms);
             })),
             local_peer_id,

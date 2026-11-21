@@ -916,6 +916,15 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "INV_KeyArrivalPromotes / LIVE_PromotedBackoffDrains: a verified key arrival empties every retry backoff into the due queue, and the promoted roots remain available to the clock",
+        axis: Tla,
+        anchor: "crates/database/p2p/src/sync/manager/process/pending_dag.rs promote_pending_retries; crates/database/kms/src/service.rs set_key_arrival_listener",
+        model_ref: "MC_PendingKeyArrival_{Green,Red_NoPromotion}.cfg",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/database/p2p/src/sync/manager/process/pending_dag_tests.rs key_arrival_promotes_pending_retries",
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
         name: "INV_Capacity / INV_OwnedSlot / INV_NoIdleCapacity / INV_RollbackNeedsCause — only an owner's own generation releases its pending-DAG slot, the release wakes the retry clock, and a full-lane rollback does not",
         axis: Tla,
         anchor: "crates/database/p2p/src/sync/coordinator/mod.rs PendingDagWorkOwner, claim_pending_dag_merge, spawn_pending_dag_fetch, dispatch_due_pending_dag_fetches and run_pending_dag_retry_clock; crates/database/p2p/tests/unit/pending_capacity_wake.rs",
