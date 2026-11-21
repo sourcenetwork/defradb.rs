@@ -181,6 +181,8 @@ impl Planner {
         if let Some(order_by) = nested_order_by.clone() {
             join_many = join_many.with_order_by(order_by);
         }
+        // Ordered orphans only matter when the join itself orders the parent;
+        // `child_plan_provides_ordering` is the guard that says it does.
         if (select.exhaustive || ancestor_exhaustive)
             && nested_order_by
                 .as_ref()
