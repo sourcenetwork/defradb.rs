@@ -57,9 +57,10 @@ fn every_entity_ends_where_its_key_builder_ends_it() {
 /// with is the key's family.
 #[test]
 fn the_first_family_a_key_starts_with_is_its_family() {
-    let cases: [(&[u8], Class); 16] = [
+    let cases: [(&[u8], Class); 17] = [
         (b"bm\x01\x55", Class::Ordinary),
         (b"b\x01\x55", Class::ContentAddressed),
+        (b"t\x01\x55", Class::ContentAddressed),
         (b"s/arrival/7/head", Class::Log),
         (b"h/hd/\x01", Class::Ordinary),
         (b"h/hc/1", Class::Ordinary),

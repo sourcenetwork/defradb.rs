@@ -51,6 +51,48 @@ pub trait RemotePolicies: MaybeSendSync {
 
     /// Where the node's light client of the remote ACP stands.
     fn light_client_status(&self) -> Result<LightClientStatus, String>;
+
+    async fn certified_assignments(
+        &self,
+        _query: &AssignmentQuery,
+    ) -> Result<CertifiedAssignments, AssignmentReadError> {
+        Err(AssignmentReadError::Unsupported)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum AssignmentReadError {
+    #[error("certified assignment discovery is not available")]
+    Unsupported,
+    #[error("certified assignment read is temporarily unavailable: {0}")]
+    Unavailable(String),
+    #[error("certified assignment read failed: {0}")]
+    Invalid(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AssignmentPosition {
+    pub term: u64,
+    pub height: u64,
+    pub block_hash: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct AssignmentQuery {
+    pub policy: String,
+    pub resource: String,
+    pub relation: String,
+    pub subject: String,
+    pub issuer: String,
+    pub not_before: Option<AssignmentPosition>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CertifiedAssignments {
+    pub object_ids: Vec<String>,
+    pub position: AssignmentPosition,
+    pub timestamp: u64,
+    pub module_state_root: String,
 }
 
 /// The state of a node's light client of its remote ACP.

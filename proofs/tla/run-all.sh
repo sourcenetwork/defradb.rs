@@ -270,6 +270,10 @@ RUNS=(
   "MC_ReplicatorIncarnation_Red_ReplayMarker.cfg ReplicatorIncarnation.tla RED"
   "MC_ReplicatorIncarnation_Red_ReplaySuperseded.cfg ReplicatorIncarnation.tla RED"
   "MC_ReplicatorIncarnation_Red_ReplayCompare.cfg ReplicatorIncarnation.tla RED" # a read-then-compare flip skips after a same-incarnation rewrite (ACT_FlipNotSkipped)
+  "MC_LiveMarkerGeneration_Green.cfg LiveMarkerGeneration.tla GREEN" # #2902/#3114: a superseded live write is owed by the newer marker; acks fenced on generation and frontier
+  "MC_LiveMarkerGeneration_Red_Superseded.cfg LiveMarkerGeneration.tla RED" # a live write superseded by a replay's newer marker is reported undurable (INV_NoFalseFailure)
+  "MC_LiveMarkerGeneration_Red_NoFence.cfg LiveMarkerGeneration.tla RED" # an ack clears whatever marker holds the scope: an older head clears a newer head's marker (INV_LiveOwed)
+  "MC_LiveMarkerGeneration_Red_NoHeadFence.cfg LiveMarkerGeneration.tla RED" # #3114: retired ack on the generation alone; with post-commit allocation the older head holds the newer generation and clears it (INV_LiveOwed)
   "MC_ReplicatorInstall_Green.cfg ReplicatorInstall.tla GREEN"
   "MC_ReplicatorInstall_Red_Validation.cfg ReplicatorInstall.tla RED"
   "MC_ReplicatorInstall_Red_Active.cfg ReplicatorInstall.tla RED"
@@ -415,6 +419,18 @@ RUNS=(
   "MC_ChunkSettingsSync_Red_NoMergeGuard.cfg ChunkSettingsSync.tla RED"
   "MC_ChunkSettingsSync_Red_NoActivateGuard.cfg ChunkSettingsSync.tla RED"
   "MC_ChunkSettingsSync_Red_NoNameCheck.cfg ChunkSettingsSync.tla RED"
+  "MC_ProllySync_Green.cfg ProllySync.tla GREEN"
+  "MC_ProllySync_Red_NoFilter.cfg ProllySync.tla RED"
+  "MC_ProllySync_Red_StaleRoot.cfg ProllySync.tla RED"
+  "MC_ProllySync_Red_MissingOnly.cfg ProllySync.tla RED"
+  "MC_ProllySync_Red_KeepClaim.cfg ProllySync.tla RED"
+  "MC_ProllyNodeCache_Green.cfg ProllyNodeCache.tla GREEN" # nodes put are readable, the cache stays under budget, roots name stored nodes
+  "MC_ProllyNodeCache_Red_SkipPending.cfg ProllyNodeCache.tla RED" # a read skips the pending nodes (GetFinds)
+  "MC_ProllyNodeCache_Red_NoEvict.cfg ProllyNodeCache.tla RED" # the cache never evicts (CacheBounded)
+  "MC_ProllyNodeCache_Red_CacheHuge.cfg ProllyNodeCache.tla RED" # a node over budget empties the cache (HugeEvictsNothing)
+  "MC_ProllyNodeCache_Red_DropOnFail.cfg ProllyNodeCache.tla RED" # a failed write drops its nodes (GetFinds)
+  "MC_ProllyNodeCache_Red_PublishBeforeFlush.cfg ProllyNodeCache.tla RED" # a root goes out before its node is stored (PublishedStored)
+  "MC_ProllyNodeCache_Red_FinishAfterFail.cfg ProllyNodeCache.tla RED" # a build finishes after a failed put (BuildWhole)
   "MC_RetryPreparedInputs_Green.cfg RetryPreparedInputs.tla GREEN" # exact-context external answer survives commit retry
   "MC_RetryPreparedInputs_Red_Recompute.cfg RetryPreparedInputs.tla RED" # clearing prepared memo repeats provider work
   "MC_RetryPreparedInputs_Red_InAttempt.cfg RetryPreparedInputs.tla RED" # provider work runs under active transaction
@@ -530,6 +546,8 @@ RUNS=(
   "MC_Truncate_Red_Txn.cfg Truncate.tla RED" # transaction check left out, as before: a filter on the txn view removes an uncommitted match (INV_FilteredRemovesOnlyCommittedMatches)
   "MC_Truncate_Red_Shape.cfg Truncate.tla RED" # filter shape check left out: a non-filter removes everything (INV_BadFilterRemovesNothing)
   "MC_Truncate_Red_ViewCache.cfg Truncate.tla RED" # #2703: view cache clear left out: a truncated view still shows its rows (INV_UnfilteredEmptiesView)
+  "MC_Truncate_Red_SearchRecords.cfg Truncate.tla RED" # #2728: /se/ prefix delete left out: an encrypted search still finds truncated documents (INV_UnfilteredClearsSearchRecords)
+  "MC_Truncate_Red_SearchNamespace.cfg Truncate.tla RED" # #2728: received search records in the raw root store survive the prefix delete (INV_UnfilteredClearsSearchRecords)
   "MC_NacOrder_Green.cfg NacOrder.tla GREEN" # #2680/#2700: a document write checks get-collection then its own permission, in its transaction, and a call with no identity acts as no one
   "MC_NacOrder_Red_SkipGet.cfg NacOrder.tla RED" # get-collection left out: a caller without it writes (INV_NoEffectWithoutPermission)
   "MC_NacOrder_Red_OwnFirst.cfg NacOrder.tla RED" # the write's own permission checked first: the refusal names it, not get-collection (INV_RefusalNamesGoFirst)
@@ -768,6 +786,10 @@ RUNS=(
   "MC_ReplicationAckScope_Green.cfg ReplicationAckScope.tla GREEN" # push and read pick one ack scope: an acknowledged document reads acknowledged, a never-pushed one never does
   "MC_ReplicationAckScope_Red_MainRule.cfg ReplicationAckScope.tla RED" # main before the fix: collection scope for a filtered replicator, its acks never read (INV_AckedReadsAcked)
   "MC_ReplicationAckScope_Red_PushToFiltered.cfg ReplicationAckScope.tla RED" # collection heads pushed to a filtered replicator: it gets unmatched documents (INV_FilterRespected)
+  "MC_ReplicatorEmptyCollections_Green.cfg ReplicatorEmptyCollections.tla GREEN" # a replicator added with no collections is listed, restored, and pushed nothing (#2702)
+  "MC_ReplicatorEmptyCollections_Red_DropOnStore.cfg ReplicatorEmptyCollections.tla RED" # main before #2702: store_info drops the empty record, never listed (INV_ListedAsAdded)
+  "MC_ReplicatorEmptyCollections_Red_DropOnLoad.cfg ReplicatorEmptyCollections.tla RED" # load_from_infos skips the empty row, gone after a restart (INV_ListedAsAdded)
+  "MC_ReplicatorEmptyCollections_Red_EmptyMeansAll.cfg ReplicatorEmptyCollections.tla RED" # an empty list read as every collection: pushed every write (INV_NoPushOutsideCollections)
   "MC_Capability_Green.cfg         MC_Capability_Common.tla   GREEN" # capability: only legit tokens authorized
   "MC_Capability_Red_Forge.cfg     MC_Capability_Common.tla   RED"   # capability: forged token accepted (INV_OnlyLegitAccepted)
   "MC_Capability_Red_Ttl.cfg       MC_Capability_Common.tla   RED"   # capability: over-cap TTL accepted (INV_TtlCapped)

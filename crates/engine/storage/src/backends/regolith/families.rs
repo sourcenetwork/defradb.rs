@@ -116,11 +116,14 @@ const fn family(start: &'static [u8], entity: &'static [Part], class: Class) -> 
 /// stable as a key grows: a key still shorter than one of the longer starts
 /// falls to the shorter family, which names no entity in so few bytes (`b`
 /// names none, and `d/` needs six).
-static FAMILIES: [Family; 20] = [
+static FAMILIES: [Family; 21] = [
     // Block merge markers: decision keys, not blocks.
     family(b"bm", &[], Class::Ordinary),
     // Blocks, keyed by the CID of their bytes (`keys::BlockstoreKey`).
     family(b"b", &[], Class::ContentAddressed),
+    // Prolly tree nodes, keyed by the CID of their encoding
+    // (`stores::prolly_nodes`). Content addressed: a node never changes.
+    family(b"t", &[], Class::ContentAddressed),
     // The arrival journal: one collection's head, rows and once keys.
     family(b"s/arrival/", &[], Class::Log),
     // A document's and a collection's head sets, one key each, written only
