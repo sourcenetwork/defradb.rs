@@ -10164,6 +10164,7 @@ dependencies = [
  "kovan-map",
  "kovan-queue",
  "lens",
+ "query",
  "rapidhash",
  "regex",
  "regolith",

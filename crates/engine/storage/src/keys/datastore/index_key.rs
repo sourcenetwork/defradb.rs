@@ -115,14 +115,6 @@ impl IndexDataStoreKey {
         buf
     }
 
-    /// Create a prefix for all entries in a collection's indexes
-    pub fn collection_prefix(collection_short_id: u32) -> Vec<u8> {
-        let mut buf = INDEX_KEYSPACE_PREFIX.to_vec();
-        buf = encode_uvarint_ascending(buf, collection_short_id as u64);
-        buf.push(SEPARATOR);
-        buf
-    }
-
     /// Convert the key to bytes, returning an error if encoding fails.
     ///
     /// Use this method when you need to handle encoding errors (e.g., unsupported

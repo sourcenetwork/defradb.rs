@@ -68,6 +68,7 @@ path = "src/bin/gen_scenarios/main.rs"
 required-features = ["generator"]
 
 [dev-dependencies]
+query = { path = "../../crates/engine/query", features = ["testing"] }
 vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "177783a896068e26d4223c0a0835199870f88d3c" }
 mantra-macros = "0.9"
 keyring = { path = "../../crates/foundation/keyring" }
