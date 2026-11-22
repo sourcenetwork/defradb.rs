@@ -5,8 +5,9 @@ use serde::Serialize;
 /// Past `c34052cb` (sourcenetwork/defradb#5253), which rewrote the SIMILARITY
 /// argument shape and descriptions that the introspection tests expect, and
 /// past `f73a903f`, the first baseline whose Go binary understands a vector
-/// index at all. #5342 is the change this baseline follows.
-pub const GO_COMPAT_COMMIT: &str = "89cc88cf5";
+/// index at all. Go development ends this cycle, so this is the newest develop
+/// commit.
+pub const GO_COMPAT_COMMIT: &str = "307364d9d";
 /// Go upstream branch.
 pub const GO_COMPAT_BRANCH: &str = "develop";
 /// Go release tag; empty when CI should build the pinned commit from source.
@@ -21,7 +22,7 @@ pub const GO_COMPAT_TAG: &str = "";
 /// client: it moves only when we retarget the parity claim or the client
 /// changes with the FFI. CI fails when the pinned commit does not resolve on
 /// sourcenetwork/defradb.
-pub const GO_FFI_CLIENT_COMMIT: &str = "a2611895547f522341dd6c662a422dd0a73d15f0";
+pub const GO_FFI_CLIENT_COMMIT: &str = "4c25eaa073c6cfe4e6cae05d443195da57ee0e75";
 
 /// Go compatibility metadata.
 #[derive(Debug, Clone, Serialize)]

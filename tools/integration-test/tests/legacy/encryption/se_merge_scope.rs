@@ -32,10 +32,8 @@ fn go_binary() -> PathBuf {
     if let Ok(p) = std::env::var("DEFRA_GO_BIN") {
         return PathBuf::from(p);
     }
-    PathBuf::from(std::env::var("HOME").expect("HOME")).join(format!(
-        ".cache/defra-harness/{}/defradb",
-        defra_version::GO_COMPAT_COMMIT
-    ))
+    PathBuf::from(std::env::var("HOME").expect("HOME"))
+        .join(".cache/defra-harness/307364d9d/defradb")
 }
 
 fn p2p_addr(cluster: &TestCluster, idx: usize) -> String {
