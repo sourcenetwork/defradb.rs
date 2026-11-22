@@ -159,7 +159,55 @@ impl Node {
             }
         } else {
             info!("Shutting down DefraDB node...");
-            // Only drain if we're shutting down normally (not due to crash)
+            #[cfg(feature = "postgres")]
+            {
+                let http_scope = &self.http_scope;
+                let pg_scope = &self.pg_scope;
+                let (http_stopped, pg_stopped) = nuclei::join!(
+                    async {
+                        let Some(task) = http_task else {
+                            return true;
+                        };
+                        info!("Stopping HTTP server...");
+                        let drained = http_scope.drain(HTTP_DRAIN).await;
+                        if drained.is_complete() {
+                            info!("HTTP server stopped");
+                            true
+                        } else {
+                            task.abort();
+                            warn!(
+                                remaining = drained.remaining,
+                                timeout_secs = HTTP_DRAIN.as_secs(),
+                                "HTTP requests still running at the shutdown deadline were stopped"
+                            );
+                            false
+                        }
+                    },
+                    async {
+                        let Some(task) = pg_task else {
+                            return true;
+                        };
+                        info!("Stopping PG server...");
+                        let drained = pg_scope.drain(PG_DRAIN).await;
+                        if drained.is_complete() {
+                            info!("PG server stopped");
+                            true
+                        } else {
+                            task.abort();
+                            warn!(
+                                remaining = drained.remaining,
+                                timeout_secs = PG_DRAIN.as_secs(),
+                                "PostgreSQL requests still running at the shutdown deadline were stopped"
+                            );
+                            false
+                        }
+                    }
+                );
+                if !(http_stopped && pg_stopped) {
+                    warn!("Some HTTP or PostgreSQL requests were stopped at the shutdown deadline");
+                }
+            }
+            #[cfg(not(feature = "postgres"))]
             if let Some(task) = http_task {
                 info!("Stopping HTTP server...");
                 let drained = self.http_scope.drain(HTTP_DRAIN).await;
@@ -171,21 +219,6 @@ impl Node {
                         remaining = drained.remaining,
                         timeout_secs = HTTP_DRAIN.as_secs(),
                         "HTTP requests still running at the shutdown deadline were stopped"
-                    );
-                }
-            }
-            #[cfg(feature = "postgres")]
-            if let Some(task) = pg_task {
-                info!("Stopping PG server...");
-                let drained = self.pg_scope.drain(PG_DRAIN).await;
-                if drained.is_complete() {
-                    info!("PG server stopped");
-                } else {
-                    task.abort();
-                    warn!(
-                        remaining = drained.remaining,
-                        timeout_secs = PG_DRAIN.as_secs(),
-                        "PostgreSQL requests still running at the shutdown deadline were stopped"
                     );
                 }
             }
