@@ -55,7 +55,10 @@
 \*   conditions                  check 4: the filter's shape
 \*   DB::truncate                the delete, all (all.rs truncate_all) or matching (filtered.rs truncate_matching)
 \*   DB::truncate_parsed_as      the same sequence for the GraphQL truncate mutation, its filter already parsed
-\*   DB::truncate_metadata_in    (all.rs) the view cache cleared with the collection's metadata
+\*   DB::truncate_metadata_in    (all.rs) the view cache and `/se/` prefix cleared
+\*   store_artifacts, delete_artifacts, owns_recipient_share, merge_share
+\*                              (crates/database/db/src/merge/se/serve.rs) the
+\*                              held and received search records
 EXTENDS Naturals, FiniteSets   \* numbers to compare, and Cardinality to count documents
 
 CONSTANTS
@@ -149,18 +152,6 @@ Refuse ==
   \/ filtered /\ "txn" \in Enforced /\ inTxn
   \/ filtered /\ "shape" \in Enforced /\ ~shapeOk
 
-\* The checks run before anything is deleted. A failing enforced check ends the
-\* request with an error; otherwise the request goes on to the delete, even if
-\* a check it skips would have failed (that is the bug a RED config plants).
-Check ==
-  /\ step = "check"
-  /\ IF Refuse
-       THEN /\ refused' = TRUE /\ step' = "done"
-       ELSE /\ refused' = refused /\ step' = "delete"
-  /\ UNCHANGED <<permitted, chunks, branchable, filtered, inTxn, shapeOk,
-                 committedMatch, txnMatch, contention, removed, committedChunks,
-                 isView, viewRows, seRecords>>
-
 \* The documents the delete takes. Without a filter, all of them. A filter that
 \* is not one, let through, is read as no conditions and matches everything. A
 \* filter run inside a transaction, let through, matches on the transaction's
@@ -170,6 +161,21 @@ Targets ==
   ELSE IF ~shapeOk THEN Docs
   ELSE IF inTxn THEN txnMatch
   ELSE committedMatch
+
+\* The checks run before anything is deleted. A failing enforced check ends the
+\* request with an error; otherwise the request goes on to the delete, even if
+\* a check it skips would have failed (that is the bug a RED config plants).
+Check ==
+  /\ step = "check"
+  /\ IF Refuse
+       THEN /\ refused' = TRUE /\ step' = "done"
+       ELSE /\ refused' = refused /\ step' = IF Targets = {} THEN "done" ELSE "delete"
+  /\ UNCHANGED <<permitted, chunks, branchable, filtered, inTxn, shapeOk,
+                 committedMatch, txnMatch, contention, removed, committedChunks,
+                 isView, viewRows, seRecords>>
+
+\* A filter matching no documents finishes without entering the delete loop.
+INV_EmptyFinishes == step = "delete" => Targets # {}
 
 \* The chunked delete: durable at once, outside any transaction. Each step
 \* removes one still-selected document. Only after every chunk commits does an
@@ -204,7 +210,6 @@ Exhaust ==
   /\ step = "delete"
   /\ removed # Targets
   /\ contention
-  /\ IF "retry" \in Enforced THEN removed # {} ELSE TRUE
   /\ removed' = IF "progress" \in Enforced THEN removed ELSE {}
   /\ refused' = TRUE
   /\ step' = "done"
@@ -220,6 +225,11 @@ Done == step = "done" /\ UNCHANGED vars
 
 \* A request starts in Init and then only checks, deletes or stays finished.
 Spec == Init /\ [][Next \/ Done]_vars
+
+\* This intentionally false invariant witnesses a first-chunk exhaustion:
+\* checks passed, work existed, contention exhausted the first retry budget.
+INV_NoFirstExhaust == ~(step = "done" /\ refused /\ ~Refuse /\ contention
+                        /\ Targets # {} /\ removed = {})
 
 \* No document is removed for a caller without the truncate permission.
 INV_NoRemovalWithoutPermission == removed # {} => permitted
