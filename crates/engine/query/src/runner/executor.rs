@@ -665,20 +665,22 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
 
         // Validate that all referenced collections exist before execution
         let graphql_text = request.parsed.is_none();
-        if let Err(e) =
-            validate_operation(&parsed, self.effective_provider().as_ref(), graphql_text).await
-        {
-            return QueryResponse {
-                data: None,
-                errors: vec![QueryResponseError {
-                    message: e.to_string(),
-                    path: None,
-                    locations: None,
+        if !matches!(&parsed, ParsedOperation::Query { .. }) {
+            if let Err(e) =
+                validate_operation(&parsed, self.effective_provider().as_ref(), graphql_text).await
+            {
+                return QueryResponse {
+                    data: None,
+                    errors: vec![QueryResponseError {
+                        message: e.to_string(),
+                        path: None,
+                        locations: None,
+                        extensions: None,
+                        retry_input: None,
+                    }],
                     extensions: None,
-                    retry_input: None,
-                }],
-                extensions: None,
-            };
+                };
+            }
         }
 
         // NAC check uses the raw request identity (not default fallback).

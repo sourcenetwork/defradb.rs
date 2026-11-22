@@ -490,3 +490,45 @@ fn query_one_to_one_with_negated_secondary_relation_id_filter_refuses() {
     }
     .execute();
 }
+
+#[test]
+#[mantra_macros::req_test("defra.query.one_to_one.null_relation_id")]
+fn missing_relation_checks_all_conditions_against_null() {
+    TestCase::from_actions(vec![
+        AddCollection {
+            sdl: "type Book { title: String publisher: Publisher } type Publisher { name: String book: Book @primary }".into(),
+            ..Default::default()
+        }.into(),
+        AddDoc {
+            collection: "Book".into(),
+            doc_map: Some(json!({"title": "linked"})),
+            common: Common { capture: captures([("book", "/docID")]), ..Default::default() },
+            ..Default::default()
+        }.into(),
+        AddDoc {
+            collection: "Book".into(),
+            doc_map: Some(json!({"title": "orphan"})),
+            ..Default::default()
+        }.into(),
+        AddDoc {
+            collection: "Publisher".into(),
+            doc_map: Some(json!({"name": "Alice", "_bookID": m::r("book")})),
+            common: Common { capture: captures([("publisher", "/docID")]), ..Default::default() },
+            ..Default::default()
+        }.into(),
+        Request {
+            request: r#"query { Book(filter: {publisher: {_docID: {_eq: null}, name: {_eq: "Alice"}}}) { title } }"#.into(),
+            expected_data: json!({"Book": []}),
+            ..Default::default()
+        }.into(),
+        Request {
+            request: Text::concat([
+                Text::from(r#"query { Book(filter: {_publisherID: {_neq: ""#),
+                Text::reference("publisher"),
+                Text::from(r#""}}) { title } }"#),
+            ]),
+            expected_data: json!({"Book": [{"title": "orphan"}]}),
+            ..Default::default()
+        }.into(),
+    ]).execute();
+}

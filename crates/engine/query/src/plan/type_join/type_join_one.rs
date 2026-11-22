@@ -1131,18 +1131,15 @@ impl TypeJoinOne {
     ) -> Result<bool> {
         match child_doc {
             None => {
-                // A missing relation satisfies only an explicit equality to null
-                // on the relation ID; every other condition needs a child.
-                let Some(id_conditions) = rel_filter
-                    .conditions
-                    .conditions()
-                    .get("_docID")
-                    .and_then(serde_json::Value::as_object)
-                else {
+                // Only an explicit ID condition can match a missing relation.
+                // Evaluate the complete filter with null fields, including any
+                // sibling conditions, using the normal scalar semantics.
+                if !rel_filter.conditions.conditions().contains_key("_docID") {
                     return Ok(false);
-                };
-                Ok(id_conditions.len() == 1
-                    && id_conditions.get("_eq") == Some(&serde_json::Value::Null))
+                }
+                rel_filter
+                    .conditions
+                    .matches(&[], self.child_plan.document_map())
             }
             Some(doc) => {
                 // Evaluate the filter conditions against the child's scan mapping
