@@ -44,6 +44,10 @@ pub enum DacPolicyError {
     /// The light client could not report its status.
     #[error("failed to get ACP light client status: {0}")]
     LightClient(String),
+    #[error("certified assignment discovery requires the subject's identity")]
+    AssignmentSubject,
+    #[error("failed to read certified assignments: {0}")]
+    Assignments(#[source] acp::AssignmentReadError),
     /// The caller may not run the operation.
     #[error(transparent)]
     Db(#[from] Error),

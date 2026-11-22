@@ -175,7 +175,7 @@ where
     })
 }
 
-/// Handle a DagNeedsFetch event by initiating a Bitswap sync.
+/// Handle a DagNeedsFetch event by initiating a block sync.
 pub(super) async fn handle_dag_needs_fetch<B, T>(
     coordinator: &SyncCoordinator<B, T>,
     request: DagFetchRequest,
@@ -201,7 +201,7 @@ where
         cid = %root_cid,
         missing_count = missing.len(),
         provider_count = providers.len(),
-        "Initiating Bitswap fetch for missing blocks"
+        "Initiating block-sync fetch for missing blocks"
     );
 
     if let Some(source_peer) = sender_peer {
@@ -273,7 +273,7 @@ where
                 tracing::warn!(
                     cid = %root_cid,
                     error = %e,
-                    "Failed to list connected peers as Bitswap fetch providers"
+                    "Failed to list connected peers as block-sync fetch providers"
                 );
                 Vec::new()
             }
@@ -285,7 +285,7 @@ where
             .collect()
     };
 
-    // Start Bitswap sync via transport
+    // Start block sync via transport
     match coordinator
         .transport()
         .sync_blocks(root_cid, transport_providers, missing)
@@ -297,19 +297,19 @@ where
                 let result = match completion {
                     crate::sync::manager::FetchCompletion::Success => {
                         coordinator
-                            .handle_bitswap_complete(query_id, Ok(()), None)
+                            .handle_block_sync_complete(query_id, Ok(()), None)
                             .await
                     }
                     crate::sync::manager::FetchCompletion::Failure(cause) => {
                         coordinator
-                            .handle_bitswap_complete(query_id, Err(cause), None)
+                            .handle_block_sync_complete(query_id, Err(cause), None)
                             .await
                     }
                     crate::sync::manager::FetchCompletion::Deferred => {
-                        coordinator.handle_bitswap_deferred(query_id).await
+                        coordinator.handle_block_sync_deferred(query_id).await
                     }
                     crate::sync::manager::FetchCompletion::ProviderBusy => {
-                        coordinator.handle_bitswap_provider_busy(query_id).await
+                        coordinator.handle_block_sync_provider_busy(query_id).await
                     }
                     crate::sync::manager::FetchCompletion::SizeLimit(cid) => {
                         coordinator.handle_car_size_limit(query_id, cid).await
@@ -330,11 +330,11 @@ where
             tracing::warn!(
                 cid = %root_cid,
                 error = %e,
-                "Failed to start Bitswap fetch"
+                "Failed to start block-sync fetch"
             );
             ReplicationResult::Failed {
                 cid: root_cid,
-                error: format!("Failed to start Bitswap fetch: {}", e),
+                error: format!("Failed to start block-sync fetch: {}", e),
             }
         }
     }
@@ -1120,11 +1120,11 @@ where
             is_explicit_replicator,
             explicit_replay_authorization,
         } => {
-            // DAG is complete after Bitswap fetch - process as block received
+            // DAG is complete after block-sync fetch - process as block received
             tracing::info!(
                 cid = %root_cid,
                 doc_id = %doc_id,
-                "DAG ready for merge after Bitswap fetch"
+                "DAG ready for merge after block-sync fetch"
             );
             handle_block_received(
                 coordinator,

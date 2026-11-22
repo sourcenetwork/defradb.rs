@@ -5,7 +5,7 @@ async fn version_json_has_all_fields() {
     edge::compat(async move {
         let binary = integration_test::rust_binary();
 
-        let output = std::process::Command::new(&binary)
+        let output = integration_test::cli_command(&binary)
             .args(["version", "--format", "json"])
             .output()
             .expect("defra binary not found - set DEFRA_RUST_BINARY or run `cargo build -p cli`");

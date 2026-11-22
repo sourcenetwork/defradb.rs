@@ -54,6 +54,9 @@ mod bearer_hook_tests;
 pub struct AutoCommitMutator<S: Store> {
     pub(super) db: Arc<DB<S>>,
     pub(super) prepared_inputs: Option<query::prepared::PreparedInputMemo>,
+    /// Creates this attempt has made: the ordinal that names a create's
+    /// short ID in the memo.
+    pub(super) creates: std::sync::atomic::AtomicU64,
 }
 
 impl<S: Store + 'static> AutoCommitMutator<S> {
@@ -62,6 +65,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         Self {
             db,
             prepared_inputs: None,
+            creates: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -72,6 +76,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         Self {
             db: self.db.clone(),
             prepared_inputs: Some(inputs),
+            creates: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -233,6 +238,7 @@ impl<S: Store + 'static> DocMutator for AutoCommitMutator<S> {
         Some(Arc::new(Self {
             db: self.db.clone(),
             prepared_inputs: Some(inputs),
+            creates: std::sync::atomic::AtomicU64::new(0),
         }))
     }
 

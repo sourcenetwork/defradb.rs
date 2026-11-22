@@ -66,6 +66,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | vera.rs delegation window | Lean | vera, acp |
 | vera.rs embedded transport | TLA+ / Lean | vera-embedded |
 | vera.rs deployment terms | Lean | vera |
+| vera.rs receipt wait | Boundary + Contract | over the loop's turns, the node's finalized height and the light client's verified height, with time counted only while the loop waits; that the node serves a receipt from the moment it publishes its block's header is vera.rs's property; unit tests in `crates/engine/vera/src/vera_rs/receipt_wait_tests.rs`, in-process node test `crates/engine/vera-embedded/tests/receipt_wait.rs`; the temporal side is `ReceiptWait.tla` |
 | DiskANN resident code table | Lean | db-index |
 | DiskANN walk cutoff | Lean | db-index (vector) |
 | PQ distance four sums | Lean | db-index (vector) |
@@ -111,6 +112,8 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Custom CRDT types | TLA+ & Lean | crdt, schema, db-merge, p2p (#2183) |
 | Document write pipeline | TLA+ | db, db-block-builder |
 | Text chunking | TLA+ / Lean | chunk-split, schema, db, query |
+| Prolly tree catch-up | TLA+ / Lean | prolly (the p2p pull is not wired yet, #2977) |
+| Prolly tree node store and cache | TLA+ / Lean | prolly, storage |
 | Postgres wire connection loop | TLA+ | pg-compat |
 | HTTP client redirects and body deadline | Lean | net |
 | Connect fallback race | TLA+ | net |

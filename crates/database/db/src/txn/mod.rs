@@ -567,6 +567,7 @@ impl<S: Store> DbTxn<S> {
     /// with every other registration this transaction owes by then
     /// ([`acp::CommitRegistrations`]). A statement rolled back to its
     /// savepoint drops its hooks as it drops its records.
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     pub fn owe_acp_registration(&self, registration: acp::CommitRegistration) -> Result<()> {
         let owed = self
             .commit_registrations
