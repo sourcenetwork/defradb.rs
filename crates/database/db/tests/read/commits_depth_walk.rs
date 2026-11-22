@@ -11,6 +11,8 @@ use storage::RegolithStore;
 use db::read::commits::{CommitsFetcher, CommitsQueryOptions};
 use db::DB;
 
+use crate::common::counting_store::CountingStore;
+
 fn block(value: &str, priority: u64, heads: Vec<Cid>) -> Block {
     let mut data = Vec::new();
     ciborium::into_writer(&NormalValue::String(value.to_string()), &mut data).unwrap();
@@ -56,8 +58,14 @@ impl History {
     /// Stores the blocks and returns the CIDs `_commits(cid: top, depth:)`
     /// lists, in order.
     fn walk(&self, top: Cid, depth: u64) -> Vec<Cid> {
+        self.walk_counted(top, depth).0
+    }
+
+    /// `walk`, plus how many point reads of block keys the walk made.
+    fn walk_counted(&self, top: Cid, depth: u64) -> (Vec<Cid>, usize) {
         workers::block_on(async {
-            let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+            let db =
+                Arc::new(DB::new(CountingStore::new(RegolithStore::in_memory().unwrap())).unwrap());
             let doc_id =
                 DocID::new_v0(defra_core::block::generate_cid_from_bytes(b"owner").unwrap())
                     .to_string();
@@ -77,6 +85,7 @@ impl History {
             }
             txn.commit().await.unwrap();
 
+            db.store().take_point_keys();
             let read = db.new_txn(true).await.unwrap();
             let rows = CommitsFetcher::new(Arc::new(read))
                 .fetch_commits(&CommitsQueryOptions {
@@ -86,7 +95,16 @@ impl History {
                 })
                 .await
                 .unwrap();
-            rows.iter()
+            let block_keys: Vec<Vec<u8>> =
+                self.blocks.iter().map(|(cid, _)| cid.to_bytes()).collect();
+            let block_reads = db
+                .store()
+                .take_point_keys()
+                .iter()
+                .filter(|key| block_keys.iter().any(|block| key.ends_with(block)))
+                .count();
+            let rows = rows
+                .iter()
                 .map(|row| {
                     assert_eq!(
                         row.get("docID").and_then(NormalValue::as_str),
@@ -98,7 +116,8 @@ impl History {
                         .parse()
                         .unwrap()
                 })
-                .collect()
+                .collect();
+            (rows, block_reads)
         })
         .unwrap()
     }
@@ -181,4 +200,73 @@ fn commits_depth_walk_lists_a_long_history_at_unlimited_depth() {
     cids.reverse();
     assert_eq!(rows.len(), updates + 1);
     assert_eq!(rows, cids);
+}
+
+/// `k` merges stacked: `tops[i]` has two heads, a one-commit branch and a
+/// `long`-commit branch, both on `tops[i - 1]`. With `long_last` the long
+/// branch is stored last, so the walk takes it first and later meets
+/// `tops[i - 1]` again, with more depth left, through the short branch;
+/// without it the short branch is taken first and nothing is met again.
+fn ladder(k: usize, long: usize, long_last: bool) -> (History, Vec<Cid>) {
+    let mut history = History::new();
+    let mut tops = vec![history.add("ladder-root", 1, vec![])];
+    for i in 1..=k {
+        let below = tops[i - 1];
+        let height = ((long + 1) * (i - 1) + 2) as u64;
+        let short = history.add(&format!("ladder-s{i}"), height, vec![below]);
+        let mut chain = below;
+        for j in 0..long - 1 {
+            chain = history.add(&format!("ladder-x{i}-{j}"), height + j as u64, vec![chain]);
+        }
+        let last = (0..)
+            .map(|n| {
+                block(
+                    &format!("ladder-x{i}-top{n}"),
+                    height + long as u64,
+                    vec![chain],
+                )
+            })
+            .find(|last| {
+                (last.generate_cid().unwrap().to_string() > short.to_string()) == long_last
+            })
+            .unwrap();
+        let last = history.add_block(last);
+        let top = history.add(
+            &format!("ladder-t{i}"),
+            height + long as u64 + 1,
+            vec![short, last],
+        );
+        assert_eq!(history.heads(top)[usize::from(long_last)], last);
+        tops.push(top);
+    }
+    (history, tops)
+}
+
+#[test]
+fn commits_depth_walk_reads_each_block_once_at_unlimited_depth() {
+    // At unlimited depth a commit reached again with more depth left leads to
+    // nothing new, so walking it again only reads blocks again. Long branch
+    // first, each short branch reaches the merge below with more depth than
+    // the long branch did: re-walking it reads every block below each merge
+    // again, quadratic in the merges. Short branch first, the same shape
+    // meets nothing twice, so it is the count to match.
+    let k = 40;
+    let (long_first, long_first_tops) = ladder(k, 10, true);
+    let (short_first, short_first_tops) = ladder(k, 10, false);
+    let blocks = long_first.blocks.len();
+
+    // `depth: -1` casts to u64::MAX, and `depth: -2^63`, the least any
+    // negative depth casts to, to 2^63.
+    for depth in [u64::MAX, 1 << 63] {
+        let (rows, long_first_reads) = long_first.walk_counted(long_first_tops[k], depth);
+        let (_, short_first_reads) = short_first.walk_counted(short_first_tops[k], depth);
+
+        let unique: rapidhash::RapidHashSet<Cid> = rows.iter().copied().collect();
+        assert_eq!(rows.len(), blocks);
+        assert_eq!(unique.len(), blocks);
+        assert_eq!(
+            long_first_reads, short_first_reads,
+            "at depth {depth}, walking each long branch first reads no block more often"
+        );
+    }
 }

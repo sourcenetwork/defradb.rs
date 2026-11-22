@@ -19,6 +19,12 @@ use crate::txn::{DbTxn, LentTxn};
 /// Blocks a commit walk loads between yields to the other tasks on its core.
 const TRAVERSE_YIELD_BLOCKS: u32 = 256;
 
+/// A commit walked with at least this much depth left was walked to the
+/// bottom of its history, since no history is 2^62 commits deep: walking it
+/// again with more depth cannot reach anything new. A negative `depth` casts
+/// to at least 2^63, so every commit its walk reaches has at least this left.
+const UNLIMITED_DEPTH: u64 = 1 << 62;
+
 /// Options for commits queries
 #[derive(Debug, Clone, Default)]
 pub struct CommitsQueryOptions {
@@ -308,8 +314,9 @@ impl<S: Store> CommitsFetcher<S> {
     /// commit is decided when popped, against the most depth it was already
     /// walked with: never walked, it is listed and its heads pushed; walked
     /// with less, its heads are pushed again without listing it, so nothing a
-    /// shorter path reaches is lost; otherwise it is skipped
-    /// (`proofs/lean/CommitsDepthCast.lean`).
+    /// shorter path reaches is lost; otherwise it is skipped. A commit already
+    /// walked with [`UNLIMITED_DEPTH`] or more is always skipped, so an
+    /// unlimited walk reads each block once (`proofs/lean/CommitsDepthCast.lean`).
     async fn traverse_depth(
         &self,
         txn: &DbTxn<S>,
@@ -329,7 +336,7 @@ impl<S: Store> CommitsFetcher<S> {
         while let Some((cid, remaining)) = stack.pop() {
             let list = match deepest.get(&cid) {
                 None => true,
-                Some(&walked) if walked < remaining => false,
+                Some(&walked) if walked < remaining && walked < UNLIMITED_DEPTH => false,
                 Some(_) => continue,
             };
             deepest.insert(cid, remaining);

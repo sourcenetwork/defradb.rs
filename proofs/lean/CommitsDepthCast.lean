@@ -19,7 +19,10 @@ What the walk does: it pushes a commit's heads in order and pops the last one
 first. When it pops a commit it looks at the most remaining depth that commit
 was already walked with: never walked, it lists the commit and walks its
 heads; walked with less depth, it walks its heads again without listing it;
-otherwise it skips it.
+otherwise it skips it. One guard: a commit already walked with at least
+`UNLIMITED_DEPTH` (2^62) left reached the bottom of its history, so it is
+always skipped; a negative depth leaves at least that everywhere
+(`negative_clears_cap`).
 
 What must never happen:
 - a negative depth limiting the walk (`negative_is_huge`, `walk_unlimited`);
@@ -30,7 +33,10 @@ What must never happen:
 - an order other than Go's: the commit, then everything reached through its
   last head, then through each earlier head, skipping what is already listed
   (`walk_eq_fresh`, `go_scan_merged`, `go_scan_diamond`). Deciding at push
-  time instead of pop time lists the heads first (`push_time_differs`).
+  time instead of pop time lists the heads first (`push_time_differs`);
+- an unlimited walk loading a block more than once, which it does without
+  the guard each time a short branch reaches a merge the long branch already
+  walked (`ladder_loads_once`; RED `no_guard_loads_again`).
 
 Rust anchors: `parse_field_to_select` in
 `crates/engine/query/src/query_parse/parser.rs`, and
@@ -64,6 +70,15 @@ theorem nonnegative_is_itself (v : Int) (nonneg : 0 ≤ v) (hi : v < 92233720368
 theorem minus_one_is_max : asU64 (-1) = 18446744073709551615 := by
   unfold asU64 two64   -- open the cast
   omega                -- -1 % 2^64 = 2^64 - 1
+
+-- Promise: below a negative depth's start (`asU64 d - 1` left), every commit
+-- fewer than 2^62 heads down still has at least `UNLIMITED_DEPTH` (2^62)
+-- left, so the walk's guard holds for all of them.
+theorem negative_clears_cap (v : Int) (k : Nat) (lo : -9223372036854775808 ≤ v) (neg : v < 0)
+    (near : k < 4611686018427387904) :
+    4611686018427387904 ≤ asU64 v - 1 - k := by
+  have := negative_is_huge v lo neg   -- the start is at least 2^63 - 1
+  omega                               -- 2^63 - 1 - k is at least 2^62
 
 /-! ## 2. The walk below a commit -/
 
@@ -106,6 +121,10 @@ def push (v : Nat) : Nat → List (Nat × Nat)
   | 0 => []                                                      -- no depth left
   | r + 1 => (heads v).reverse.map (fun h => (h, r))             -- last head on top
 
+-- `UNLIMITED_DEPTH` (2^62): a commit walked with at least this much left was
+-- walked to the bottom, so it is never walked again.
+variable (cap : Nat)
+
 -- The stack loop, as `traverse_depth` runs it, with `fuel` bounding its steps
 -- (none: the fuel ran out). The stack's top is the list's front. The Rust
 -- code starts it after the first pop: `start` noted, its heads pushed.
@@ -118,7 +137,8 @@ def run : Nat → List (Nat × Nat) → Best → Option (List Nat × Best)
           (run f (push heads v r ++ rest) (note m v r)).map      --   walk its heads
             (fun p => (v :: p.1, p.2))                           --   and list it
       | some b =>                                                -- walked with b left:
-          if b < r then run f (push heads v r ++ rest) (note m v r)  -- more now: walk again
+          if b < r ∧ b < cap then                                -- more now, and b not unlimited:
+            run f (push heads v r ++ rest) (note m v r)          --   walk again
           else run f rest m                                      -- otherwise skip it
 
 -- The same walk written recursively: `proc v r m` handles one popped entry
@@ -139,26 +159,26 @@ def proc : Nat → Nat → Best → List Nat × Best
       let w := walkHeads (proc · r) (heads v).reverse (note m v (r + 1))  -- walk the heads
       match m v with                                             -- decide on v
       | none => (v :: w.1, w.2)                                  -- new: list it, then them
-      | some b => if b < r + 1 then w else ([], m)               -- more depth, or skip
+      | some b => if b < r + 1 ∧ b < cap then w else ([], m)     -- more depth, or skip
 
 /-! ### The stack loop is the recursive walk -/
 
 -- Promise: running the heads' entries, then the rest, gives the heads' walk,
 -- then the rest (given that one entry does).
 theorem run_walkHeads (r : Nat)
-    (ih : ∀ v m rest o m', (∃ f, run heads f rest (proc heads v r m).2 = some (o, m')) →
-      ∃ f, run heads f ((v, r) :: rest) m = some ((proc heads v r m).1 ++ o, m')) :
+    (ih : ∀ v m rest o m', (∃ f, run heads cap f rest (proc heads cap v r m).2 = some (o, m')) →
+      ∃ f, run heads cap f ((v, r) :: rest) m = some ((proc heads cap v r m).1 ++ o, m')) :
     ∀ (hs : List Nat) m rest o m',
-      (∃ f, run heads f rest (walkHeads (proc heads · r) hs m).2 = some (o, m')) →
-      ∃ f, run heads f (hs.map (fun h => (h, r)) ++ rest) m =
-        some ((walkHeads (proc heads · r) hs m).1 ++ o, m') := by
+      (∃ f, run heads cap f rest (walkHeads (proc heads cap · r) hs m).2 = some (o, m')) →
+      ∃ f, run heads cap f (hs.map (fun h => (h, r)) ++ rest) m =
+        some ((walkHeads (proc heads cap · r) hs m).1 ++ o, m') := by
   intro hs                                                       -- the heads
   induction hs with                                              -- one head at a time
   | nil => intro m rest o m' h; simpa [walkHeads] using h        -- no heads: just the rest
   | cons h hs ihs =>                                             -- head h, then hs
     intro m rest o m' hrun                                       -- the rest runs to o
     -- the other heads, then the rest, from the first head's result
-    obtain ⟨f, hf⟩ := ihs (proc heads h r m).2 rest o m' (by simpa [walkHeads] using hrun)
+    obtain ⟨f, hf⟩ := ihs (proc heads cap h r m).2 rest o m' (by simpa [walkHeads] using hrun)
     -- then the first head in front of them
     obtain ⟨g, hg⟩ := ih h m _ _ _ ⟨f, hf⟩
     exact ⟨g, by simpa [walkHeads, List.append_assoc] using hg⟩  -- the lists line up
@@ -166,8 +186,8 @@ theorem run_walkHeads (r : Nat)
 -- Promise: one popped entry, then the rest, runs as the recursive walk of
 -- that entry followed by the rest.
 theorem run_proc : ∀ r v m rest o m',
-    (∃ f, run heads f rest (proc heads v r m).2 = some (o, m')) →
-    ∃ f, run heads f ((v, r) :: rest) m = some ((proc heads v r m).1 ++ o, m') := by
+    (∃ f, run heads cap f rest (proc heads cap v r m).2 = some (o, m')) →
+    ∃ f, run heads cap f ((v, r) :: rest) m = some ((proc heads cap v r m).1 ++ o, m') := by
   intro r                                                        -- the depth left
   induction r with                                               -- on the depth left
   | zero =>                                                      -- no depth: no heads pushed
@@ -176,7 +196,7 @@ theorem run_proc : ∀ r v m rest o m',
     cases hv : m v <;> simp_all [run, proc, push]                -- list it, or skip it
   | succ r ih =>                                                 -- depth left: heads pushed
     intro v m rest o m' ⟨f, hf⟩                                  -- the rest runs in f steps
-    have hw := run_walkHeads heads r ih (heads v).reverse (note m v (r + 1)) rest o m'
+    have hw := run_walkHeads heads cap r ih (heads v).reverse (note m v (r + 1)) rest o m'
     cases hv : m v with                                          -- what v's mark says
     | none =>                                                    -- never walked
       simp only [proc, hv] at hf                                 -- the rest, after the heads
@@ -184,12 +204,12 @@ theorem run_proc : ∀ r v m rest o m',
       refine ⟨g + 1, ?_⟩                                         -- one more step for v
       simp only [run, proc, hv, push, hg]; rfl                   -- v listed in front
     | some b =>                                                  -- walked with b left
-      by_cases hb : b < r + 1                                    -- less than now, or not
-      · simp only [proc, hv, hb, if_true] at hf                  -- walked with less depth
+      by_cases hb : b < r + 1 ∧ b < cap                          -- walk again, or not
+      · simp only [proc, hv, hb, and_self, if_true] at hf        -- walked with less depth
         obtain ⟨g, hg⟩ := hw ⟨f, hf⟩                             -- the heads, then the rest
         refine ⟨g + 1, ?_⟩                                       -- one more step for v
-        simp only [run, proc, hv, hb, if_true, push, hg]         -- walked again, not listed
-      · simp only [proc, hv, hb, if_false] at hf                 -- walked deep enough: skip
+        simp only [run, proc, hv, hb, and_self, if_true, push, hg]  -- walked again, not listed
+      · simp only [proc, hv, hb, if_false] at hf                 -- deep enough, or unlimited: skip
         exact ⟨f + 1, by simp [run, proc, hv, hb, hf]⟩           -- just the rest
 
 /-! ### What the recursive walk lists -/
@@ -298,17 +318,55 @@ def Spec (rank : Nat → Nat) (p : Nat → Best → List Nat × Best) (v r : Nat
 -- Each commit's height: every head sits strictly lower than its commit.
 variable (rank : Nat → Nat)
 
+-- Promise: walking each item the same way gives the same concatenation.
+theorem flatMap_congr {L : List Nat} {f g : Nat → List Nat} (h : ∀ x ∈ L, f x = g x) :
+    L.flatMap f = L.flatMap g := by
+  induction L with                               -- one item at a time
+  | nil => rfl                                   -- no items: both empty
+  | cons y ys ih =>                              -- the first item, then the rest
+    simp only [List.flatMap_cons]                -- split off the first item
+    rw [h y (List.mem_cons_self _ _), ih (fun x hx => h x (List.mem_cons_of_mem _ hx))]
+
+-- Promise: with at least as much depth as the commit's height, more depth
+-- changes nothing, because the walk already reaches the first commit.
+theorem pathLast_stable (dag : ∀ v h, h ∈ heads v → rank h < rank v) :
+    ∀ r r' v, rank v ≤ r → rank v ≤ r' → pathLast heads v r = pathLast heads v r' := by
+  intro r                                        -- one depth
+  induction r with                               -- on that depth
+  | zero =>                                      -- depth 0: v has height 0
+    intro r' v hr _                              -- the other depth
+    have : heads v = [] := by                    -- so v has no heads
+      cases hh : heads v with                    -- look at its heads
+      | nil => rfl                               -- none: done
+      | cons h _ => have := dag v h (by simp [hh]); omega  -- a head would sit below 0
+    cases r' <;> simp [pathLast, this]           -- both walks are [v]
+  | succ r ih =>                                 -- depth r + 1
+    intro r' v hr hr'                            -- the other depth
+    cases r' with                                -- 0, or more
+    | zero =>                                    -- 0: v has height 0
+      have : heads v = [] := by                  -- so v has no heads
+        cases hh : heads v with                  -- look at its heads
+        | nil => rfl                             -- none: done
+        | cons h _ => have := dag v h (by simp [hh]); omega  -- a head would sit below 0
+      simp [pathLast, this]                      -- both walks are [v]
+    | succ r' =>                                 -- both have depth left
+      simp only [pathLast, List.cons.injEq, true_and]  -- v, then the heads
+      apply flatMap_congr                        -- each head's walk is unchanged:
+      intro h hh                                 -- a head h
+      have := dag v h (List.mem_reverse.mp hh)   -- sits lower than v,
+      exact ih r' h (by omega) (by omega)        -- so it has enough depth either way
+
 -- Promise: walking a list of heads, each meeting its spec, lists what their
 -- path walks list, in order, each once.
 theorem walkHeads_spec (r : Nat) (u : Nat) :
     ∀ (hs : List Nat), (∀ h ∈ hs, rank h < rank u) →
-      (∀ h ∈ hs, Spec heads rank (proc heads · r) h r) →
+      (∀ h ∈ hs, Spec heads rank (proc heads cap · r) h r) →
     ∀ (X : Nat → Prop) m, (∀ x, X x → rank u ≤ rank x) → Inv heads X m →
-      (walkHeads (proc heads · r) hs m).1 = fresh (seen m) (hs.flatMap (pathLast heads · r)) ∧
-      (∀ x, seen (walkHeads (proc heads · r) hs m).2 x =
+      (walkHeads (proc heads cap · r) hs m).1 = fresh (seen m) (hs.flatMap (pathLast heads · r)) ∧
+      (∀ x, seen (walkHeads (proc heads cap · r) hs m).2 x =
         (seen m x || decide (x ∈ hs.flatMap (pathLast heads · r)))) ∧
-      Inv heads X (walkHeads (proc heads · r) hs m).2 ∧
-      (∀ w, rank u ≤ rank w → (walkHeads (proc heads · r) hs m).2 w = m w) := by
+      Inv heads X (walkHeads (proc heads cap · r) hs m).2 ∧
+      (∀ w, rank u ≤ rank w → (walkHeads (proc heads cap · r) hs m).2 w = m w) := by
   intro hs                                                       -- the heads
   induction hs with                                              -- one head at a time
   | nil =>                                                       -- no heads:
@@ -333,9 +391,10 @@ theorem walkHeads_spec (r : Nat) (u : Nat) :
       simp only [walkHeads]                                      -- through h and the others
       rw [f2 w hw, f1 w (Nat.lt_of_lt_of_le (hrank h (List.mem_cons_self _ _)) hw)]
 
--- Promise: on a DAG, every entry's walk meets its spec.
-theorem proc_spec (dag : ∀ v h, h ∈ heads v → rank h < rank v) :
-    ∀ r v, Spec heads rank (proc heads · r) v r := by
+-- Promise: on a DAG whose heights all lie below `cap`, every entry's walk
+-- meets its spec.
+theorem proc_spec (dag : ∀ v h, h ∈ heads v → rank h < rank v) (hcap : ∀ v, rank v < cap) :
+    ∀ r v, Spec heads rank (proc heads cap · r) v r := by
   intro r                                                        -- the depth left
   induction r with                                               -- on the depth left
   | zero =>                                                      -- no depth: only v
@@ -376,15 +435,15 @@ theorem proc_spec (dag : ∀ v h, h ∈ heads v → rank h < rank v) :
       simp [note, hwv] at hw                                     -- so its mark is unchanged
       have := hinv w b hw (fun h => hnx (Or.inl h)) y hy         -- it held before
       by_cases hyv : y = v <;> simp_all [seen, note]             -- and marks only grow
-    have hw := walkHeads_spec heads rank r v (heads v).reverse   -- v's heads, last first
+    have hw := walkHeads_spec heads cap rank r v (heads v).reverse   -- v's heads, last first
       (fun h hh => dag v h (List.mem_reverse.mp hh)) (fun h _ => ih h) X' _ hX' hinv'
     obtain ⟨o, d, i, f⟩ := hw                                    -- what the heads' walk gives
     -- v keeps its new mark while its heads are walked
-    have fv : (walkHeads (proc heads · r) (heads v).reverse (note m v (r + 1))).2 v =
+    have fv : (walkHeads (proc heads cap · r) (heads v).reverse (note m v (r + 1))).2 v =
         some (r + 1) := by
       rw [f v (Nat.le_refl _)]; simp [note]                      -- v sits above its heads
     -- after its heads, v is no longer open
-    have closed : Inv heads X (walkHeads (proc heads · r) (heads v).reverse (note m v (r + 1))).2 := by
+    have closed : Inv heads X (walkHeads (proc heads cap · r) (heads v).reverse (note m v (r + 1))).2 := by
       intro w b hwb hnx y hy                                     -- a closed commit w
       by_cases hwv : w = v                                       -- v, or another
       · subst hwv                                                -- v, walked with r + 1:
@@ -395,7 +454,7 @@ theorem proc_spec (dag : ∀ v h, h ∈ heads v → rank h < rank v) :
         · rw [d]; simp [hy]                                      -- the heads' walk marked y
       · exact i w b hwb (fun h => by rcases h with h | h; exact hnx h; exact hwv h) y hy
     have frame : ∀ w, rank v < rank w →                          -- above v nothing changed
-        (walkHeads (proc heads · r) (heads v).reverse (note m v (r + 1))).2 w = m w := by
+        (walkHeads (proc heads cap · r) (heads v).reverse (note m v (r + 1))).2 w = m w := by
       intro w hw                                                 -- a commit above v
       have : w ≠ v := fun h => by subst h; omega                 -- not v itself
       rw [f w (Nat.le_of_lt hw)]; simp [note, this]              -- untouched by the heads
@@ -411,19 +470,27 @@ theorem proc_spec (dag : ∀ v h, h ∈ heads v → rank h < rank v) :
       · simpa [proc, hv] using closed                            -- the invariant holds
       · intro w hw; simpa [proc, hv] using frame w hw            -- nothing above changed
     | some b =>                                                  -- walked with b left
-      by_cases hb : b < r + 1                                    -- less than now, or not
+      by_cases hb : b < r + 1 ∧ b < cap                          -- walk again, or not
       · refine ⟨?_, ?_, ?_, ?_⟩                                  -- walked again, not listed:
-        · simp only [proc, hv, hb, if_true, pathLast, fresh, seen, Option.isSome_some, if_true]
+        · simp only [proc, hv, hb, and_self, if_true, pathLast, fresh, seen, Option.isSome_some]
           rw [o]; exact fresh_congr _ _ _ (fun y => by by_cases hy : y = v <;> simp [seen, note, hy, hv])
         · intro x                                                -- the marks:
-          simp only [proc, hv, hb, if_true, d, pathLast, List.mem_cons]
+          simp only [proc, hv, hb, and_self, if_true, d, pathLast, List.mem_cons]
           by_cases hx : x = v <;> simp [seen, note, hx, hv]      -- v was marked already
         · simpa [proc, hv, hb] using closed                      -- the invariant holds
         · intro w hw; simpa [proc, hv, hb] using frame w hw      -- nothing above changed
-      · -- walked with at least this depth: everything below is listed
+      · -- walked with at least this depth, or with at least `cap`, which is
+        -- more than v's height: either way everything below is listed
         have hvx : ¬ X v := fun h => Nat.lt_irrefl _ (hX v h)    -- v is not open
+        have reach : ∀ x ∈ pathLast heads v (r + 1), x ∈ pathLast heads v b := by
+          intro x hx                                             -- reached with r + 1 left
+          by_cases hrb : r + 1 ≤ b                               -- b is at least r + 1:
+          · exact pathLast_mono heads (r + 1) v b x hrb hx       --   b reaches more
+          · have hvb : rank v ≤ b := by                          -- otherwise b ≥ cap > v's height
+              have := hcap v; omega
+            rw [← pathLast_stable heads rank dag (r + 1) b v (by omega) hvb]; exact hx  -- both reach all
         have all : ∀ x ∈ pathLast heads v (r + 1), seen m x = true :=  -- all already marked
-          fun x hx => hinv v b hv hvx x (pathLast_mono heads (r + 1) v b x (by omega) hx)
+          fun x hx => hinv v b hv hvx x (reach x hx)
         refine ⟨?_, ?_, ?_, ?_⟩                                  -- the four promises:
         · simp only [proc, hv, hb, if_false]; exact (fresh_seen _ _ all).symm  -- nothing new
         · intro x                                                -- the marks:
@@ -437,16 +504,18 @@ theorem proc_spec (dag : ∀ v h, h ∈ heads v → rank h < rank v) :
 /-! ### The theorems -/
 
 -- Promise: the stack loop, from commit `v` with `r` left, lists exactly the
--- path walk with the last head first, each commit at its first occurrence.
-theorem walk_eq_fresh (dag : ∀ v h, h ∈ heads v → rank h < rank v) (v r : Nat) :
-    ∃ f m', run heads f [(v, r)] (fun _ => none) =
+-- path walk with the last head first, each commit at its first occurrence,
+-- on any history whose heights lie below `cap` (2^62 in the Rust code).
+theorem walk_eq_fresh (dag : ∀ v h, h ∈ heads v → rank h < rank v) (hcap : ∀ v, rank v < cap)
+    (v r : Nat) :
+    ∃ f m', run heads cap f [(v, r)] (fun _ => none) =
       some (fresh (fun _ => false) (pathLast heads v r), m') := by
-  have hs := proc_spec heads rank dag r v (fun _ => False) (fun _ => none)  -- nothing open
+  have hs := proc_spec heads cap rank dag hcap r v (fun _ => False) (fun _ => none)  -- nothing open
     (fun _ h => False.elim h) (by intro w b hw; simp at hw)      -- an empty map is fine
   obtain ⟨o, _, _, _⟩ := hs                                      -- what it lists
-  obtain ⟨f, hf⟩ := run_proc heads r v (fun _ => none) [] [] (proc heads v r (fun _ => none)).2
+  obtain ⟨f, hf⟩ := run_proc heads cap r v (fun _ => none) [] [] (proc heads cap v r (fun _ => none)).2
     ⟨0, by simp [run]⟩                                           -- the stack loop runs it
-  refine ⟨f, (proc heads v r (fun _ => none)).2, ?_⟩             -- with that final map
+  refine ⟨f, (proc heads cap v r (fun _ => none)).2, ?_⟩             -- with that final map
   rw [hf, List.append_nil, o, fresh_congr _ (seen _) (fun _ => false) (fun y => by simp [seen])]
 
 -- Promise: the forward and last-first path walks reach the same commits.
@@ -470,43 +539,6 @@ theorem walk_nodup (v r : Nat) : (fresh (fun _ => false) (pathLast heads v r)).N
 
 /-! ## 3. A negative depth is unlimited -/
 
--- Promise: walking each item the same way gives the same concatenation.
-theorem flatMap_congr {L : List Nat} {f g : Nat → List Nat} (h : ∀ x ∈ L, f x = g x) :
-    L.flatMap f = L.flatMap g := by
-  induction L with                               -- one item at a time
-  | nil => rfl                                   -- no items: both empty
-  | cons y ys ih =>                              -- the first item, then the rest
-    simp only [List.flatMap_cons]                -- split off the first item
-    rw [h y (List.mem_cons_self _ _), ih (fun x hx => h x (List.mem_cons_of_mem _ hx))]
-
--- Promise: with at least as much depth as the commit's height, more depth
--- changes nothing, because the walk already reaches the first commit.
-theorem pathLast_stable (dag : ∀ v h, h ∈ heads v → rank h < rank v) :
-    ∀ r r' v, rank v ≤ r → rank v ≤ r' → pathLast heads v r = pathLast heads v r' := by
-  intro r                                        -- one depth
-  induction r with                               -- on that depth
-  | zero =>                                      -- depth 0: v has height 0
-    intro r' v hr _                              -- the other depth
-    have : heads v = [] := by                    -- so v has no heads
-      cases hh : heads v with                    -- look at its heads
-      | nil => rfl                               -- none: done
-      | cons h _ => have := dag v h (by simp [hh]); omega  -- a head would sit below 0
-    cases r' <;> simp [pathLast, this]           -- both walks are [v]
-  | succ r ih =>                                 -- depth r + 1
-    intro r' v hr hr'                            -- the other depth
-    cases r' with                                -- 0, or more
-    | zero =>                                    -- 0: v has height 0
-      have : heads v = [] := by                  -- so v has no heads
-        cases hh : heads v with                  -- look at its heads
-        | nil => rfl                             -- none: done
-        | cons h _ => have := dag v h (by simp [hh]); omega  -- a head would sit below 0
-      simp [pathLast, this]                      -- both walks are [v]
-    | succ r' =>                                 -- both have depth left
-      simp only [pathLast, List.cons.injEq, true_and]  -- v, then the heads
-      apply flatMap_congr                        -- each head's walk is unchanged:
-      intro h hh                                 -- a head h
-      have := dag v h (List.mem_reverse.mp hh)   -- sits lower than v,
-      exact ih r' h (by omega) (by omega)        -- so it has enough depth either way
 
 -- Promise: `_commits(cid: v, depth: d)` with a negative `d` walks with
 -- `asU64 d - 1` left below `v`; on any history below 2^63 commits high, that
@@ -520,6 +552,9 @@ theorem walk_unlimited (dag : ∀ v h, h ∈ heads v → rank h < rank v) (v : N
 end Walk
 
 /-! ## 4. Go's order, and the guards it needs -/
+
+-- `UNLIMITED_DEPTH` in the Rust code: 2^62, more than any history's height.
+abbrev unlimited : Nat := 4611686018427387904
 
 -- Go's DAG scan at no depth limit: take the queue's front; skip it if visited;
 -- otherwise list it, mark it, and put its heads in front, last head first.
@@ -565,7 +600,7 @@ theorem go_scan_merged : goScan merged 20 [6] (fun _ => false) = [6, 5, 3, 0, 4,
 -- Promise: the stack loop with pop-time marking lists the same at the depth
 -- a negative `depth` gives.
 theorem walk_merged :
-    (run merged 20 [(6, 9223372036854775807)] (fun _ => none)).map Prod.fst =
+    (run merged unlimited 20 [(6, 9223372036854775807)] (fun _ => none)).map Prod.fst =
       some [6, 5, 3, 0, 4, 2] := by
   decide                                                         -- run it
 
@@ -584,7 +619,7 @@ def diamond : Nat → List Nat
 -- first side, and the stack loop does too.
 theorem go_scan_diamond :
     goScan diamond 10 [3] (fun _ => false) = [3, 2, 0, 1] ∧
-      (run diamond 10 [(3, 5)] (fun _ => none)).map Prod.fst = some [3, 2, 0, 1] := by
+      (run diamond unlimited 10 [(3, 5)] (fun _ => none)).map Prod.fst = some [3, 2, 0, 1] := by
   decide                                                         -- run both
 
 -- Promise (RED): marking at push time lists both sides before the bottom:
@@ -607,7 +642,7 @@ def shortLong : Nat → List Nat
 -- Promise: at `depth: 5` (4 left below the top) the walk reaches 0 through
 -- the short head, though the long head is walked first.
 theorem walk_short_long :
-    (run shortLong 30 [(6, 4)] (fun _ => none)).map Prod.fst = some [6, 5, 3, 2, 1, 4, 0] := by
+    (run shortLong unlimited 30 [(6, 4)] (fun _ => none)).map Prod.fst = some [6, 5, 3, 2, 1, 4, 0] := by
   decide                                                         -- run it
 
 -- Promise (RED): a plain seen set loses 0, which only the short head reaches
@@ -615,5 +650,54 @@ theorem walk_short_long :
 theorem seen_only_loses_a_commit :
     runSeen shortLong 30 [(6, 4)] (fun _ => false) = [6, 5, 3, 2, 1, 4] := by
   decide                                                         -- run it
+
+/-! ## 5. An unlimited walk loads each block once -/
+
+-- How many blocks the stack loop loads: one per pop it does not skip, the
+-- same decisions as `run`.
+def loads (heads : Nat → List Nat) (cap : Nat) : Nat → List (Nat × Nat) → Best → Nat
+  | _, [], _ => 0                                                -- empty stack: done
+  | 0, _ :: _, _ => 0                                            -- out of fuel
+  | f + 1, (v, r) :: rest, m =>                                  -- pop v with r left
+      match m v with                                             -- decide at pop time
+      | none => 1 + loads heads cap f (push heads v r ++ rest) (note m v r)  -- new: load it
+      | some b =>                                                -- walked with b left:
+          if b < r ∧ b < cap then                                -- walk again: load it again
+            1 + loads heads cap f (push heads v r ++ rest) (note m v r)
+          else loads heads cap f rest m                          -- skipped: no load
+
+-- Three merges stacked, the shape of the Rust ladder test: each merge's heads
+-- are [short, long], the short branch one commit, the long one three, both
+-- on the merge below. The long head is last, so it is walked first, and the
+-- short branch then reaches the merge below with more depth left.
+def ladder : Nat → List Nat
+  | 15 => [11, 14]                                               -- third merge
+  | 11 => [10]                                                   -- its short branch
+  | 14 => [13] | 13 => [12] | 12 => [10]                         -- its long branch
+  | 10 => [6, 9]                                                 -- second merge
+  | 6 => [5]                                                     -- its short branch
+  | 9 => [8] | 8 => [7] | 7 => [5]                               -- its long branch
+  | 5 => [1, 4]                                                  -- first merge
+  | 1 => [0]                                                     -- its short branch
+  | 4 => [3] | 3 => [2] | 2 => [0]                               -- its long branch
+  | _ => []                                                      -- the create, 0
+
+-- Promise: at a negative depth the ladder's 16 commits are listed, each once,
+-- and each block is loaded once. The walk starts with 2^63 - 1 left, the
+-- least a negative depth gives (`depth: -2^63`).
+theorem ladder_loads_once :
+    (run ladder unlimited 100 [(15, 9223372036854775807)] (fun _ => none)).map (·.1.length) = some 16 ∧
+      loads ladder unlimited 100 [(15, 9223372036854775807)] (fun _ => none) = 16 := by
+  decide                                                         -- run both
+
+-- Promise (RED): without the guard (a cap above every depth), the walk lists
+-- the same commits but loads blocks again each time a short branch reaches a
+-- merge with more depth left: 34 loads for 16 commits, growing with the
+-- square of the merges.
+theorem no_guard_loads_again :
+    (run ladder 18446744073709551616 100 [(15, 9223372036854775807)] (fun _ => none)).map Prod.fst =
+        (run ladder unlimited 100 [(15, 9223372036854775807)] (fun _ => none)).map Prod.fst ∧
+      loads ladder 18446744073709551616 100 [(15, 9223372036854775807)] (fun _ => none) = 34 := by
+  decide                                                         -- run both
 
 end CommitsDepthCast
