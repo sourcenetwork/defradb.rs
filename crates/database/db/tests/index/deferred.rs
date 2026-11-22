@@ -681,6 +681,38 @@ async fn migrated(options: db::DbOptions) -> (Node, String, Arc<TimesTen>) {
     (node, v1, lenses)
 }
 
+#[test]
+#[mantra_macros::req_test("go.collection_version.migrations.patch_transform")]
+fn removing_a_transform_preserves_materialized_and_native_values() {
+    workers::block_on(async {
+        let (node, source_version, _) = migrated(db::DbOptions::default()).await;
+        seed_owed_at(&node.db, &source_version, "materialized", 1).await;
+        assert_eq!(node.db.materialize_collection(COLLECTION).await.unwrap(), 1);
+
+        let node = Node::on_db(Arc::clone(&node.db)).await;
+        node.create("native", 40).await;
+        node.db
+            .patch_collection(
+                &defra_core::RequestContext::default(),
+                r#"[{"op":"remove","path":"/Tallies/PreviousVersion/Transform"}]"#,
+                None,
+            )
+            .await
+            .unwrap();
+
+        let node = Node::on_db(Arc::clone(&node.db)).await;
+        assert_eq!(
+            node.names("{count: {_eq: 10}}", "{count: ASC}").await,
+            ["materialized"]
+        );
+        assert_eq!(
+            node.names("{count: {_eq: 40}}", "{count: ASC}").await,
+            ["native"]
+        );
+    })
+    .unwrap();
+}
+
 impl Node {
     /// Waits until one stored entry holds `value`.
     async fn settled_at(&self, value: i64) {
