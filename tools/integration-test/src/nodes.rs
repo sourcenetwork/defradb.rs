@@ -62,6 +62,8 @@ pub struct NodeSpec {
     /// The gate the node's index backfills pass before each batch; it lives
     /// across a restart, as Go's package-level hook does.
     pub index_gate: Option<Arc<crate::index_gate::TestIndexGate>>,
+    /// Documents an index backfill may index in one transaction.
+    pub backfill_batch_docs: Option<usize>,
     /// An in-process iroh node serving these stream protocols, in place of
     /// the libp2p one `network` starts.
     pub iroh: Option<crate::actions::stream::IrohSpec>,
@@ -362,6 +364,9 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
     }
     if let Some(gate) = &spec.index_gate {
         builder = builder.with_index_build_gate(gate.clone());
+    }
+    if let Some(docs) = spec.backfill_batch_docs {
+        builder = builder.with_backfill_batch_docs(docs);
     }
     if spec.registered_identity {
         builder = builder.with_node_identity_did(register_node_identity(spec)?);

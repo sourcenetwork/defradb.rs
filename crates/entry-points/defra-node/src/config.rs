@@ -436,6 +436,9 @@ pub struct NodeConfig {
     pub replication_filter: Option<ReplicationFilterHandle>,
     /// The gate index backfills pass before each batch; `None` holds none.
     pub index_build_gate: Option<IndexBuildGateHandle>,
+    /// Documents an index backfill may index in one transaction; `None`
+    /// uses the built-in page size.
+    pub backfill_batch_docs: Option<usize>,
 }
 
 /// An embedder's [`db::index::build_gate::IndexBuildGate`], compared by

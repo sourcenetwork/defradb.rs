@@ -35,6 +35,12 @@ pub struct GoCreateIndexRequest {
     /// Vector index config. Present iff this is a vector index request.
     #[serde(rename = "Vector", default)]
     pub vector: Option<schema::VectorIndexDescription>,
+    /// Build in the background. Go's `NewIndex` defaults to this; the HTTP
+    /// route defaults to synchronous for its current wire contract. The
+    /// unusual field name preserves the existing wire encoding while it is
+    /// repurposed for the build mode.
+    #[serde(rename = "IsExhaustive", default)]
+    pub build_in_background: bool,
 }
 
 /// Go-compatible indexed field description.
@@ -221,7 +227,11 @@ pub async fn go_create_index(
             field_names,
             name.as_deref(),
             request.unique,
-            request.vector,
+            if request.build_in_background {
+                None
+            } else {
+                request.vector
+            },
         )
         .await
         .map_err(http_error_from_backend_message)?;
@@ -372,6 +382,7 @@ mod tests {
         assert_eq!(request.fields[0].name, "email");
         assert!(!request.fields[0].descending);
         assert!(request.unique);
+        assert!(!request.build_in_background);
     }
 
     #[test]

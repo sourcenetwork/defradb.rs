@@ -125,10 +125,7 @@ impl NewIndex {
     fn check_remote_arguments(&self) -> Result<(), Failure> {
         self.check_arguments()?;
         let descending = self.index.fields.iter().any(|field| field.descending);
-        unsupported_argument(&[
-            ("index.fields.descending", descending),
-            ("async", self.r#async),
-        ])
+        unsupported_argument(&[("index.fields.descending", descending)])
     }
 
     fn name_of() -> &'static str {
@@ -169,6 +166,7 @@ impl HttpRun for NewIndex {
             let created = collection.clone();
             let txn = state.txn_id(action.txn);
             let in_txn = txn.is_some();
+            let wait_for_build = !action.r#async && !in_txn;
             state
                 .http_as(
                     action.common.node(),
@@ -181,14 +179,19 @@ impl HttpRun for NewIndex {
                                 &fields,
                                 name.as_deref(),
                                 unique,
-                                None,
+                                if wait_for_build {
+                                    None
+                                } else {
+                                    Some(schema::VectorIndexDescription::default())
+                                },
                             )
                             .await
                     },
                 )?
                 .map_err(|e| Failure::operation(e.to_string()))?;
-            // In a transaction the backfill runs once it commits.
-            if !in_txn {
+            // In a transaction the backfill runs once it commits; an async
+            // build is left to the scenario's own wait actions.
+            if wait_for_build {
                 wait_until_built(state, action, &collection)?;
             }
             Ok(json!({}))

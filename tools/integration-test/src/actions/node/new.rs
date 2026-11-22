@@ -55,6 +55,8 @@ pub struct NewNode {
     pub client_type: Option<NodeClient>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub index_gate: Option<IndexGate>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backfill_batch_docs: Option<usize>,
     /// Kept so corpus scenarios that set it still parse. It changes nothing:
     /// every node gets Go's `NodeIdentity(i)` and runs identity-only unless
     /// it signs.
@@ -122,6 +124,7 @@ impl Op for NewNode {
         probe.kms = false;
         (probe.ttl_millis, probe.tick_millis, probe.buckets) = (None, None, None);
         probe.index_gate = None;
+        probe.backfill_batch_docs = None;
         if probe != Self::default() {
             let options = serde_json::to_string(&probe).unwrap_or_default();
             return Err(Failure::unsupported(format!("{} {options}", Self::name())));
@@ -159,6 +162,7 @@ impl Op for NewNode {
             txn_ttl,
             se_key: self.searchable_encryption_key()?,
             index_gate,
+            backfill_batch_docs: self.backfill_batch_docs,
             ..Default::default()
         };
         state.start_node(self.common.node(), spec);

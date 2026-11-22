@@ -1332,6 +1332,7 @@ fn async_backfill_restart_after_non_zero_watermark_resumes_to_ready_actions_0(
     vec![
         NewNode {
             index_gate: Some(IndexGate::Watermark),
+            backfill_batch_docs: Some(100),
             database_dir: Some("".into()),
             ..Default::default()
         }

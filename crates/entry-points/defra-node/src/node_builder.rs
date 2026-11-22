@@ -349,6 +349,12 @@ impl NodeBuilder {
         self
     }
 
+    /// Indexes at most `docs` documents per backfill transaction.
+    pub fn with_backfill_batch_docs(mut self, docs: usize) -> Self {
+        self.config.backfill_batch_docs = Some(docs.max(1));
+        self
+    }
+
     /// Enable the HTTP GraphQL server.
     #[cfg(feature = "http")]
     pub fn with_http(mut self, config: HttpConfig) -> Self {
