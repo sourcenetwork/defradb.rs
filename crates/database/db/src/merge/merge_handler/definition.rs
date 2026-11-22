@@ -192,18 +192,11 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             );
         }
 
-        // For patched versions, set previous_version to point to the head
-        // (previous version CID). A placeholder created by an earlier
-        // migration registration may name that same head and carry the
-        // transform between them; the incoming block does not, so keep the
-        // transform when the predecessor agrees.
-        if let Some(head_cid) = block
-            .heads
-            .as_ref()
-            .and_then(|heads| heads.first())
-            .map(|head| head.to_string())
-        {
-            schema.previous_version = Some(CollectionSource::new(head_cid));
+        // For patched versions, set previous_version to point to the head (previous version CID)
+        if let Some(heads) = &block.heads {
+            if let Some(head_cid) = heads.first() {
+                schema.previous_version = Some(CollectionSource::new(head_cid.to_string()));
+            }
         }
 
         // Views (collections with a query_select) are non-materialized and carry query metadata.
@@ -254,32 +247,6 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         let txn = self.db.new_txn(false).await.map_err(MergeError::Database)?;
         {
             let systemstore = txn.systemstore().map_err(MergeError::Database)?;
-            if let Some(head_cid) = schema
-                .previous_version
-                .as_ref()
-                .map(|source| source.source_collection_id.clone())
-            {
-                if let Some(existing) = crate::definition::loader::get_collection_by_version_id(
-                    &systemstore,
-                    &version_id,
-                )
-                .await
-                .map_err(MergeError::Database)?
-                .filter(|existing| existing.is_placeholder)
-                {
-                    if let Some(source) = existing
-                        .previous_version
-                        .as_ref()
-                        .filter(|source| source.source_collection_id == head_cid)
-                    {
-                        if let Some(transform) = source.transform.clone() {
-                            if let Some(previous_version) = schema.previous_version.as_mut() {
-                                previous_version.transform = Some(transform);
-                            }
-                        }
-                    }
-                }
-            }
             if let Some(error) = self.chunk_parent_error(&systemstore, &schema).await? {
                 return Ok(definition_chunks::reject_chunk_settings(&schema, &error));
             }

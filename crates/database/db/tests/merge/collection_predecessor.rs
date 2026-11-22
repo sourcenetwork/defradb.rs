@@ -33,18 +33,16 @@ fn a_patch_waits_for_the_full_predecessor_instead_of_rebuilding_it() {
         let full_definition = systemstore.get(&key).await.unwrap().unwrap();
         let predecessor: schema::CollectionVersion =
             serde_json::from_slice(&full_definition).unwrap();
-        let transform_id = "s/migration/agent-v2";
         systemstore.delete(&key).await.unwrap();
         drop(systemstore);
         txn.commit().await.unwrap();
 
         let payload = CollectionDefinitionDeltaPayload::new(2);
-        let mut patch = Block::new(
+        let patch = Block::new(
             CrdtDelta::CollectionDefinition(payload.clone()),
             vec![previous],
             vec![],
         );
-        patch.heads = Some(vec![previous]);
         let cid = patch.generate_cid().unwrap();
         let metadata = BlockMetadata::normal("", "", "peer", None, false);
         let outcome = handler
@@ -71,8 +69,6 @@ fn a_patch_waits_for_the_full_predecessor_instead_of_rebuilding_it() {
 
         let mut placeholder = predecessor.clone();
         placeholder.is_placeholder = true;
-        placeholder.previous_version =
-            Some(schema::CollectionSource::new(previous.to_string()).with_transform(transform_id));
         let txn = db.new_txn(false).await.unwrap();
         txn.systemstore()
             .unwrap()
@@ -97,32 +93,6 @@ fn a_patch_waits_for_the_full_predecessor_instead_of_rebuilding_it() {
             .set(&key, &full_definition)
             .await
             .unwrap();
-        txn.systemstore()
-            .unwrap()
-            .set(
-                &CollectionKey::new(cid.to_string()).bytes(),
-                &serde_json::to_vec(&{
-                    let mut placeholder = schema::CollectionVersion::new(
-                        "Agent",
-                        cid.to_string(),
-                        predecessor.collection_id,
-                        Vec::new(),
-                    );
-                    placeholder.policy = predecessor.policy.clone();
-                    placeholder.indexes = predecessor.indexes.clone();
-                    placeholder.fields = predecessor.fields.clone();
-                    placeholder.is_branchable = predecessor.is_branchable;
-                    placeholder.is_placeholder = true;
-                    placeholder.previous_version = Some(
-                        schema::CollectionSource::new(previous.to_string())
-                            .with_transform(transform_id),
-                    );
-                    placeholder
-                })
-                .unwrap(),
-            )
-            .await
-            .unwrap();
         txn.commit().await.unwrap();
         assert_eq!(
             handler
@@ -145,14 +115,6 @@ fn a_patch_waits_for_the_full_predecessor_instead_of_rebuilding_it() {
         assert_eq!(patched.indexes, predecessor.indexes);
         assert_eq!(patched.is_branchable, predecessor.is_branchable);
         assert_eq!(patched.fields, predecessor.fields);
-        assert_eq!(
-            patched
-                .previous_version
-                .as_ref()
-                .map(|source| source.transform.as_deref()),
-            Some(Some(transform_id)),
-            "the synced definition must keep the migration's transform"
-        );
         txn.discard().unwrap();
     })
     .unwrap()
