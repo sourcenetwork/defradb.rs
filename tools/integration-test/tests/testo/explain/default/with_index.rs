@@ -38,6 +38,36 @@ fn default_explain_with_index_on_filter() {
                 ..Default::default()
             }
             .into(),
+            Request {
+                request: r#"
+                    query @explain {
+                        User(filter: {age: {_eq: 30}}) {
+                            name
+                        }
+                    }
+                "#
+                .into(),
+                expected_data: json!({
+                    "explain": {
+                        "operationNode": [{
+                            "selectTopNode": {
+                                "selectNode": {
+                                    "docID": null,
+                                    "filter": null,
+                                    "scanNode": {
+                                        "collectionName": "User",
+                                        "collectionID": m::nonempty_string(),
+                                        "filter": { "age": { "_eq": 30 } },
+                                        "prefixes": [m::nonempty_string()],
+                                    },
+                                },
+                            },
+                        }],
+                    },
+                }),
+                ..Default::default()
+            }
+            .into(),
         ],
         ..Default::default()
     }
