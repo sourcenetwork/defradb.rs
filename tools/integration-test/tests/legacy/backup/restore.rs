@@ -1,5 +1,3 @@
-use std::process::Command;
-
 use integration_test::{for_each_runtime, DefraClient, NodeKind, TestCluster};
 use serde_json::json;
 
@@ -187,7 +185,7 @@ fn exec_with_development(
     node_url: &str,
     args: &[&str],
 ) -> Result<String, String> {
-    let mut command = Command::new(client.binary_path());
+    let mut command = integration_test::cli_command(client.binary_path());
     command.arg("--url").arg(node_url);
     if client.kind() == NodeKind::Rust {
         command.arg("--development");

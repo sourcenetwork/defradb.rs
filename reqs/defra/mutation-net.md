@@ -299,3 +299,10 @@ A node that holds none of a document with 31 updates, told of its next head, fet
 - **Scenarios:** ["net::simple::replicator::list_shape::a_replicator_list_reports_go_shape"]
 
 Listing replicators returns each entry as `{ID, Addresses, CollectionIDs, Status, LastStatusChange}`, with `Addresses` as an array and `Status` as Go's numeric status.
+
+# `defra.net.replicator.list`: A replicator with no collections is listed
+
+- **Parents:** ["go.net.replicator"]
+- **Scenarios:** ["net::simple::replicator::with_no_collections::a_replicator_with_no_collections_is_listed_after_a_restart"]
+
+`AddReplicator` naming no collections, on a node that has none, succeeds, and `ListReplicators` then returns the target's peer ID, right after the add and again after the node closes keeping its data and starts. Go stores such a replicator with an empty collection list and restores it on start. It is pushed no documents until it has a collection (`go.net.replicator.push`).

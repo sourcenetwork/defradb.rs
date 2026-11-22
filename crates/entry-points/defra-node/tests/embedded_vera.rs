@@ -22,6 +22,9 @@ mod clock_skew;
 #[path = "embedded_vera/http_staged.rs"]
 mod http_staged;
 
+#[path = "embedded_vera/first_start.rs"]
+mod first_start;
+
 #[path = "embedded_vera/projection.rs"]
 mod projection;
 
