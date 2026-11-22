@@ -301,6 +301,104 @@ fn query_one_to_many_with_child_limit_keeps_a_filtered_child_order() {
 }
 #[test]
 #[mantra_macros::req_test("go.query.one_to_many.child-order-paging")]
+fn query_one_to_many_with_child_limit_uses_the_selected_order_index() {
+    TestCase {
+        id: integration_test::scenario_id!(),
+        actions: vec![
+            AddCollection {
+                sdl: r#"
+                    type Book {
+                        name: String @index
+                        rating: Int @index
+                        author: Author
+                    }
+
+                    type Author {
+                        name: String
+                        published: [Book]
+                    }
+                "#
+                .into(),
+                ..Default::default()
+            }
+            .into(),
+            AddDoc {
+                collection: "Author".into(),
+                doc_map: Some(json!({ "name": "A" })),
+                common: Common {
+                    capture: captures([("author", "/docID")]),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            AddDoc {
+                collection: "Book".into(),
+                doc_map: Some(json!({
+                    "name": "b",
+                    "rating": 1,
+                    "_authorID": m::r("author")
+                })),
+                ..Default::default()
+            }
+            .into(),
+            AddDoc {
+                collection: "Book".into(),
+                doc_map: Some(json!({
+                    "name": "a",
+                    "rating": 2,
+                    "_authorID": m::r("author")
+                })),
+                ..Default::default()
+            }
+            .into(),
+            AddDoc {
+                collection: "Book".into(),
+                doc_map: Some(json!({
+                    "name": "c",
+                    "rating": 3,
+                    "_authorID": m::r("author")
+                })),
+                ..Default::default()
+            }
+            .into(),
+            Request {
+                request: r#"
+                    query {
+                        Author {
+                            name
+                            published(
+                                filter: {rating: {_gt: 0}},
+                                order: {name: ASC},
+                                limit: 1
+                            ) {
+                                name
+                            }
+                        }
+                    }
+                "#
+                .into(),
+                expected_data: json!({
+                    "Author": [{
+                        "name": "A",
+                        "published": [{ "name": "a" }],
+                    }],
+                }),
+                common: Common {
+                    compare: Some(true),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+        ],
+        ..Default::default()
+    }
+    .execute();
+}
+
+#[test]
+#[mantra_macros::req_test("go.query.one_to_many.child-order-paging")]
 fn query_one_to_many_with_child_limit_keeps_a_two_parent_page() {
     TestCase {
         id: integration_test::scenario_id!(),
