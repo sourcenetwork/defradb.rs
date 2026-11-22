@@ -7,6 +7,7 @@ members = [
     "crates/engine/blockstore",
     "crates/foundation/schema",
     "crates/building-blocks/chunk-split",
+    "crates/foundation/prolly",
     "crates/engine/query",
     "crates/building-blocks/document",
     "crates/database/p2p",
