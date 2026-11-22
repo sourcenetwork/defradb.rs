@@ -3,7 +3,7 @@
 //! A hub success-acks a PushLog whose DAG has missing links on the strength of
 //! its pending-DAG registration; the pusher then deletes its persisted retry
 //! record. If the registration lived only in process memory, a crash between
-//! the ack and Bitswap completion would silently lose the document (modeled in
+//! the ack and block-sync completion would silently lose the document (modeled in
 //! `proofs/tla/PendingDagRestart.tla`). Each push-originated registration is
 //! therefore durable: written before the success reply, deleted only when the
 //! root is merged or quarantined (#1128, a deterministic content rejection
