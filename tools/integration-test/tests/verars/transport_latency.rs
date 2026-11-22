@@ -34,7 +34,7 @@ fn summary(mut samples: Vec<Duration>) -> serde_json::Value {
 async fn measure(setup: &str, provider: Arc<VeraRsProvider>) -> serde_json::Value {
     let owner = provider.self_did().expect("actor DID");
     let policy = provider
-        .create_policy(USER_ACP_POLICY)
+        .create_policy(USER_ACP_POLICY, None)
         .await
         .expect("policy");
     let token = provider

@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use document::{Document, NormalValue};
 use p2p::bitswap::{BlockClass, BlockClassifier};
-use schema::PolicyDescription;
 use storage::RegolithStore;
 
 use super::DbBlockClassifier;
@@ -11,14 +10,15 @@ const CHUNKS: &str = "Article__body_chunk";
 
 async fn chunked_db() -> Arc<db::DB<RegolithStore>> {
     let db = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-    let mut collections =
-        query::parse_sdl("type Article { body: String @chunk(maxChars: 64) }").unwrap();
-    for collection in &mut collections {
-        if collection.chunk_of.is_none() {
-            collection.policy = Some(PolicyDescription::new("chunk-policy", "articles"));
-        }
-    }
-    db.create_collections_atomic(collections).await.unwrap();
+    // The parent is under the policy; its chunk collection takes none.
+    db.add_collection(
+        &defra_core::RequestContext::ambient(),
+        r#"type Article @policy(id: "chunk-policy", resource: "articles") {
+            body: String @chunk(maxChars: 64)
+        }"#,
+    )
+    .await
+    .unwrap();
     db
 }
 

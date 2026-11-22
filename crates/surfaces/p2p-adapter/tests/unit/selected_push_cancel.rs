@@ -38,25 +38,10 @@ fn fixture(count: usize) -> Fixture {
         .block_on({
             let db = db.clone();
             async move {
-                db.create_collection(schema::CollectionVersion::new(
-                    "Users",
-                    "version-users",
-                    "collection-users",
-                    vec![
-                        schema::FieldDescription::new(
-                            "1",
-                            "_docID",
-                            schema::FieldKind::doc_id(),
-                            schema::CType::LwwRegister,
-                        ),
-                        schema::FieldDescription::new(
-                            "2",
-                            "name",
-                            schema::FieldKind::string(),
-                            schema::CType::LwwRegister,
-                        ),
-                    ],
-                ))
+                db.add_collection(
+                    &defra_core::RequestContext::ambient(),
+                    "type Users { name: String }",
+                )
                 .await
                 .unwrap();
                 let schema = db.get_collection("Users").unwrap().unwrap().schema_arc();

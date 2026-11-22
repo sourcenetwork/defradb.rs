@@ -16,7 +16,7 @@ use acp::nac::NodePermission::*;
 /// The operation's raw DB method(s) call `check_node_access`, so even a direct
 /// `DB<S>` handle holder is gated (no bypass). Verified locations:
 /// - `CollectionPatch`: gated on the raw DB methods (`create_collection`/
-///   `create_collections_atomic`/`delete_collection`/`delete_collections`/
+///   `add_collection`/`delete_collection`/`delete_collections`/
 ///   `delete_collection_version`/`delete_collection_versions_batch`/
 ///   `set_active_collection_version`/`patch_collection` in `collection_ops/` +
 ///   `patch/mod.rs`); `add_collection_in_txn` also gates on the registry.

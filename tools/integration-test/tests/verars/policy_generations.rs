@@ -154,6 +154,7 @@ async fn exercise_policy_generations(replicated: bool) {
         IAcp::createPolicyCall {
             policy: USER_ACP_POLICY.as_bytes().to_vec().into(),
             marshalType: 1,
+            nonce: Default::default(),
         },
     )
     .await;

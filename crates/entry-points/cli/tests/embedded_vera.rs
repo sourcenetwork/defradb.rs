@@ -2,6 +2,8 @@
 
 #![cfg(unix)]
 
+mod common;
+
 use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
@@ -34,18 +36,18 @@ resources:
 struct RunningNode {
     child: Child,
     address: String,
-    log: std::path::PathBuf,
+    log: common::NodeLog,
 }
 
 impl RunningNode {
-    async fn start(root: &Path) -> Self {
-        let port = portpicker::pick_unused_port().expect("unused HTTP port");
-        let address = format!("127.0.0.1:{port}");
-        let log = root.join(format!("node-{port}.log"));
+    /// Starts a node on `root` that logs to `node-{name}.log` there.
+    async fn start(root: &Path, name: &str) -> Self {
+        let (log, output) = common::NodeLog::create(root.join(format!("node-{name}.log")));
         let child = Command::new(env!("CARGO_BIN_EXE_defradb"))
             .arg("--rootdir")
             .arg(root)
-            .args(["--url", &address])
+            .args(["--url", common::ANY_PORT])
+            .args(common::LOG_FLAGS)
             .args([
                 "start",
                 "--identity",
@@ -62,9 +64,12 @@ impl RunningNode {
             .env("RUST_LOG", "info")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(std::fs::File::create(&log).unwrap())
+            .stderr(output)
             .spawn()
             .expect("start node");
+        // Startup includes the Vera node's, so it gets the same deadline as
+        // the health check below.
+        let address = log.http_address(Duration::from_secs(90));
         let mut node = Self {
             child,
             address,
@@ -100,7 +105,7 @@ impl RunningNode {
     }
 
     fn logs(&self) -> String {
-        std::fs::read_to_string(&self.log).unwrap_or_default()
+        self.log.text()
     }
 
     /// Asks the node to shut down as an operator does and waits for it.
@@ -120,18 +125,25 @@ impl RunningNode {
             "node exited with {status}: {}",
             self.logs()
         );
-        self.logs()
+        // The node has exited, so this returns once the last line is copied.
+        self.log.closed()
     }
 }
 
 /// Adds the policy through the node as its identity and returns the output.
 async fn add_policy(node: &RunningNode, root: &Path) -> String {
+    add_policy_with(node, root, &[]).await
+}
+
+/// [`add_policy`] with further arguments to `policy add`.
+async fn add_policy_with(node: &RunningNode, root: &Path, args: &[&str]) -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_defradb"))
         .arg("--rootdir")
         .arg(root)
         .args(["--url", &node.address])
         .args(["client", "--identity", IDENTITY])
         .args(["acp", "document", "policy", "add", POLICY])
+        .args(args)
         .env("DEFRA_KEYRING_SECRET", "embedded-vera-test-secret")
         .stdin(Stdio::null())
         .output()
@@ -150,7 +162,7 @@ async fn add_policy(node: &RunningNode, root: &Path) -> String {
 async fn start_runs_its_own_vera_node_and_reopens_it_after_a_shutdown() {
     let root = tempfile::tempdir().unwrap();
 
-    let first = RunningNode::start(root.path()).await;
+    let first = RunningNode::start(root.path(), "first").await;
     assert!(
         root.path().join("vera").is_dir(),
         "the Vera node's directory"
@@ -168,7 +180,32 @@ async fn start_runs_its_own_vera_node_and_reopens_it_after_a_shutdown() {
 
     // The first node let go of the Vera directory, and the second reopens
     // the deployment it finds there.
-    let second = RunningNode::start(root.path()).await;
+    let second = RunningNode::start(root.path(), "second").await;
     let logs = second.stop().await;
     assert!(logs.contains("Embedded Vera node stopped"), "{logs}");
+}
+
+fn policy_id(output: &str) -> String {
+    let parsed: serde_json::Value = serde_json::from_str(output).expect("JSON output");
+    parsed["PolicyID"].as_str().expect("PolicyID").to_owned()
+}
+
+/// `policy add --nonce` hands the nonce to vera.rs, which derives the ID from
+/// it: added again with the same nonce the policy comes back under the same
+/// ID and no second one is made, while an add without a nonce makes a new
+/// policy each time.
+#[nuclei::test]
+async fn policy_add_with_a_nonce_names_one_policy_however_often_it_is_sent() {
+    let root = tempfile::tempdir().unwrap();
+    let node = RunningNode::start(root.path(), "node").await;
+    let nonce = "5a".repeat(32);
+
+    let first = policy_id(&add_policy_with(&node, root.path(), &["--nonce", &nonce]).await);
+    let again = policy_id(&add_policy_with(&node, root.path(), &["--nonce", &nonce]).await);
+    assert_eq!(again, first);
+    let drawn = policy_id(&add_policy(&node, root.path()).await);
+    let drawn_again = policy_id(&add_policy(&node, root.path()).await);
+    assert_ne!(drawn, first);
+    assert_ne!(drawn, drawn_again);
+    node.stop().await;
 }

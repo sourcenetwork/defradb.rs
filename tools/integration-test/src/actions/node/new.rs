@@ -68,6 +68,16 @@ pub struct NewNode {
     /// A Rust node whose network is iroh rather than libp2p.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub iroh: bool,
+    /// A Rust node that takes its node identity from the process's signing
+    /// registry, where the test registers it first as an FFI host does,
+    /// rather than loading it from a key it is given.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub registered_identity: bool,
+    /// A Rust node with no node identity at all, neither one of Go's
+    /// `NodeIdentity(i)` nor a key of its own, so it neither signs nor
+    /// authenticates as a node.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub without_node_identity: bool,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -99,6 +109,8 @@ impl Op for NewNode {
         probe.database_dir = None;
         probe.admission = None;
         probe.iroh = false;
+        probe.registered_identity = false;
+        probe.without_node_identity = false;
         probe.node_identity_seed = None;
         probe.enable_signing = false;
         probe.key_type = None;
@@ -119,11 +131,15 @@ impl Op for NewNode {
         // and counts every node it starts, one with its own seed included.
         // `withIdentity` asks for no more than that.
         let go_index = state.next_go_node_index();
-        let node_identity = self.node_identity_seed.or(Some(go_index));
+        let node_identity = match self.without_node_identity(state.client_type())? {
+            true => None,
+            false => self.node_identity_seed.or(Some(go_index)),
+        };
         let signing = (self.enable_signing || self.key_type.is_some())
             .then(|| self.key_type.unwrap_or_default());
         let txn_ttl = self.txn_ttl(state.client_type())?;
         let index_gate = self.index_gate(state.client_type())?;
+        let registered_identity = self.registered_identity(state.client_type())?;
         let dir = match self.database_dir {
             Some(_) => Some(Arc::new(tempfile::tempdir().map_err(|e| {
                 Failure::operation(format!("could not make the node's directory: {e}"))
@@ -137,6 +153,7 @@ impl Op for NewNode {
             admission: self.admission.clone(),
             iroh_network: self.iroh,
             node_identity,
+            registered_identity,
             go_index: Some(go_index),
             signing,
             txn_ttl,
@@ -179,6 +196,47 @@ impl NewNode {
             )));
         }
         Ok(Some(Arc::new(crate::index_gate::TestIndexGate::new(kind))))
+    }
+
+    /// Whether the node takes its identity from the signing registry. The
+    /// registry is the node's process's, so a Go node cannot.
+    fn registered_identity(&self, client: ClientType) -> Result<bool, Failure> {
+        if self.registered_identity && client == ClientType::GoHttp {
+            return Err(Failure::unsupported(format!(
+                "{} argument registeredIdentity under {client:?}: the signing registry is the \
+                 node's process's",
+                Self::name()
+            )));
+        }
+        Ok(self.registered_identity)
+    }
+
+    /// Whether the node starts with no node identity. Go's harness gives
+    /// every node one, and an identity is what signing and a registered
+    /// identity are made from, so it takes neither.
+    fn without_node_identity(&self, client: ClientType) -> Result<bool, Failure> {
+        if !self.without_node_identity {
+            return Ok(false);
+        }
+        if client == ClientType::GoHttp {
+            return Err(Failure::unsupported(format!(
+                "{} argument withoutNodeIdentity under {client:?}: Go's harness gives every node \
+                 an identity",
+                Self::name()
+            )));
+        }
+        if self.node_identity_seed.is_some()
+            || self.enable_signing
+            || self.key_type.is_some()
+            || self.registered_identity
+        {
+            return Err(Failure::operation(format!(
+                "{} argument withoutNodeIdentity with nodeIdentitySeed, enableSigning, keyType \
+                 or registeredIdentity: each needs a node identity",
+                Self::name()
+            )));
+        }
+        Ok(true)
     }
 
     /// How long an idle explicit transaction lives and how often the node

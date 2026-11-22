@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 pub mod actions;
+mod cli_command;
 mod client_type;
 pub mod clients;
 mod cross_runtime;
@@ -15,7 +16,9 @@ mod reserved_port;
 pub mod scenario;
 mod stub_embedder;
 pub mod test_case;
+pub mod wasm_lens;
 
+pub use cli_command::cli_command;
 pub use client_type::ClientType;
 pub use scenario::m;
 
@@ -57,17 +60,6 @@ pub use defra_harness::sse::{
     open_events_sse, open_merge_events_sse, open_peer_events_sse, wait_for_merge_events,
     wait_for_peer_events,
 };
-pub use defra_harness::WasmLens;
-
-/// Provides a `WasmLens` configured for the defradb.rs test-lenses directory.
-pub mod wasm_lens {
-    use crate::workspace_root;
-    use defra_harness::WasmLens;
-
-    pub fn wasm_lens_defra() -> WasmLens {
-        WasmLens::new(workspace_root().join("tools/integration-test/test-lenses/set_default"))
-    }
-}
 
 #[ctor::ctor(unsafe)]
 fn init_workspace_root() {

@@ -11,8 +11,7 @@ use crate::{ffi_async_ok, ffi_entry, try_ffi};
 /// # Safety
 ///
 /// Every non-null string in `opts` must be a valid null-terminated string.
-#[no_mangle]
-pub unsafe extern "C" fn defra_collection_set_active(
+pub unsafe fn defra_collection_set_active(
     node_ptr: usize,
     opts: CollectionOptions,
     identity_ptr: usize,

@@ -78,7 +78,7 @@ async fn raw(store: &RegolithStore, prefix: &[u8]) -> Vec<(Vec<u8>, Vec<u8>)> {
 async fn legacy_store(path: &Path) -> (Vec<DocID>, Reads) {
     let store = RegolithStore::open(path).unwrap();
     let db = Arc::new(DB::open(store.clone()).await.unwrap());
-    db.create_collections_atomic(query::parse_sdl(SDL).unwrap())
+    db.add_collection(&defra_core::RequestContext::ambient(), SDL)
         .await
         .unwrap();
     let mutator = AutoCommitMutator::new(db.clone());
@@ -278,7 +278,7 @@ fn a_document_that_would_read_differently_stays_whole() {
         let (key, value) = raw(&store, b"d/d/").await.remove(0);
         let scratch = DB::open(RegolithStore::in_memory().unwrap()).await.unwrap();
         scratch
-            .create_collections_atomic(query::parse_sdl(SDL).unwrap())
+            .add_collection(&defra_core::RequestContext::ambient(), SDL)
             .await
             .unwrap();
         let users = scratch

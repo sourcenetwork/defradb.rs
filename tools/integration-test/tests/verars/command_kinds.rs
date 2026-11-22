@@ -65,7 +65,7 @@ async fn reads(provider: &VeraRsProvider, policy: &str, actor: &str) -> bool {
 /// reaches.
 async fn every_command_and_subject_kind(provider: Arc<VeraRsProvider>) {
     let owner = provider.self_did().unwrap();
-    let policy = provider.create_policy(POLICY).await.expect("policy");
+    let policy = provider.create_policy(POLICY, None).await.expect("policy");
     let bearer = provider.create_bearer_token(&owner).await.unwrap();
     for (resource, object) in [("file", "report"), ("group", "editors")] {
         provider

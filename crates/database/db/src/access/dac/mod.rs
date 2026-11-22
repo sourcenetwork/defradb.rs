@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use acp::nac::NodePermission;
 use acp::policy_yaml::{self, ParsedPolicy};
-use acp::{LightClientStatus, Policy};
+use acp::{LightClientStatus, Policy, PolicyNonce};
 use defra_core::RequestContext;
 use storage::corekv::Store;
 
@@ -21,6 +21,18 @@ pub use policies::DacPolicies;
 /// The counter a policy is built with before a remote ACP names it: the
 /// remote ACP assigns the ID, so this value never reaches storage.
 const UNASSIGNED_ID_COUNTER: u64 = 1;
+
+/// What a caller's policy ID is made from, beyond the definition.
+#[derive(Clone, Copy)]
+enum IdSeed {
+    /// The ACP's own choice: the local store's next counter, or the remote
+    /// ACP's random nonce.
+    Next,
+    /// A local ACP's counter.
+    Counter(u64),
+    /// A remote ACP's nonce.
+    Nonce(PolicyNonce),
+}
 
 impl<S> DB<S>
 where
@@ -44,29 +56,46 @@ where
         context: &RequestContext,
         policy: &str,
     ) -> Result<String, DacPolicyError> {
-        self.add_policy(context, policy, None).await
+        self.add_policy(context, policy, IdSeed::Next).await
     }
 
     /// [`Self::add_dac_policy_as`] with the local policy ID built from
     /// `counter`, so nodes with different histories derive the same ID for
-    /// the same policy. Local ACP only.
+    /// the same policy. Local ACP only: a remote ACP refuses it.
     pub async fn add_dac_policy_with_counter_as(
         &self,
         context: &RequestContext,
         policy: &str,
         counter: u64,
     ) -> Result<String, DacPolicyError> {
-        self.add_policy(context, policy, Some(counter)).await
+        self.add_policy(context, policy, IdSeed::Counter(counter))
+            .await
     }
 
-    /// Checked in Go's order: node access, an ACP, a creator, a policy. A
-    /// remote ACP creates the policy and the node keeps a copy, so the
-    /// collections and documents that name it are checked locally.
+    /// [`Self::add_dac_policy_as`] with the remote ACP's policy ID derived
+    /// from `nonce`: vera.rs names a policy by its definition, its creator
+    /// and the nonce, so the caller knows the ID before it exists. Sent again
+    /// with the same nonce, it returns the same policy and makes no second
+    /// one; that is how a host adopts a policy its deployment was seeded
+    /// with. Remote ACP only: a local ACP refuses it.
+    pub async fn add_dac_policy_with_nonce_as(
+        &self,
+        context: &RequestContext,
+        policy: &str,
+        nonce: PolicyNonce,
+    ) -> Result<String, DacPolicyError> {
+        self.add_policy(context, policy, IdSeed::Nonce(nonce)).await
+    }
+
+    /// Checked in Go's order: node access, an ACP, a creator, a policy;
+    /// then whether the ACP can make the ID from `seed`. A remote ACP
+    /// creates the policy and the node keeps a copy, so the collections and
+    /// documents that name it are checked locally.
     async fn add_policy(
         &self,
         context: &RequestContext,
         policy: &str,
-        counter: Option<u64>,
+        seed: IdSeed,
     ) -> Result<String, DacPolicyError> {
         self.check_node_access_as(context, NodePermission::DacPolicyAdd)
             .await?;
@@ -86,44 +115,31 @@ where
         let parsed = parse(policy).map_err(failed)?;
 
         let Some(remote) = policies.remote_policies() else {
-            let counter = match counter {
-                Some(counter) => counter,
-                None => policies
+            let counter = match seed {
+                IdSeed::Counter(counter) => counter,
+                IdSeed::Next => policies
                     .store()
                     .next_policy_counter()
                     .await
                     .map_err(|e| failed(e.to_string()))?,
+                IdSeed::Nonce(_) => return Err(DacPolicyError::NonceNeedsRemoteAcp),
             };
             let built = build(&parsed, counter).map_err(failed)?;
             policies.keep(&built).await.map_err(failed)?;
             return Ok(built.id);
         };
-        if let Some(counter) = counter {
-            // A remote ACP assigns its own counters, so a caller's counter
-            // can only name a policy that ACP already holds: one it was
-            // seeded with under the ID this definition and counter derive.
-            let built = build(&parsed, counter).map_err(failed)?;
-            let seeded = remote
-                .get_policy(&built.id)
-                .await
-                .map_err(failed)?
-                .ok_or_else(|| DacPolicyError::RemotePolicyAbsent {
-                    policy_id: built.id.clone(),
-                })?;
-            // The ID hashes names without separators and leaves fields out,
-            // so two definitions can share one.
-            if !same_definition(&seeded, &built) {
-                return Err(DacPolicyError::RemotePolicyDiffers {
-                    policy_id: built.id,
-                });
-            }
-            policies.keep(&built).await.map_err(failed)?;
-            return Ok(built.id);
-        }
         let mut built = build(&parsed, UNASSIGNED_ID_COUNTER).map_err(failed)?;
         built.validate().map_err(|e| failed(e.to_string()))?;
         built.validate_dpi().map_err(|e| failed(e.to_string()))?;
-        let policy_id = remote.add_policy(creator, policy).await.map_err(failed)?;
+        let nonce = match seed {
+            IdSeed::Next => None,
+            IdSeed::Nonce(nonce) => Some(nonce),
+            IdSeed::Counter(_) => return Err(DacPolicyError::CounterNeedsLocalAcp),
+        };
+        let policy_id = remote
+            .add_policy(creator, policy, nonce)
+            .await
+            .map_err(failed)?;
         built.id = policy_id.clone();
         policies.keep(&built).await.map_err(failed)?;
         Ok(policy_id)
@@ -172,6 +188,28 @@ where
             .map_err(DacPolicyError::LightClient)
     }
 
+    /// Return assignments only for the authenticated subject.
+    pub async fn certified_assignments_as(
+        &self,
+        context: &RequestContext,
+        query: &acp::AssignmentQuery,
+    ) -> Result<acp::CertifiedAssignments, DacPolicyError> {
+        self.check_node_access_as(context, NodePermission::DacStatus)
+            .await?;
+        if context.identity().filter(|identity| !identity.is_empty())
+            != Some(query.subject.as_str())
+        {
+            return Err(DacPolicyError::AssignmentSubject);
+        }
+        self.dac_policies()
+            .ok_or(DacPolicyError::AcpNotAvailable)?
+            .remote_policies()
+            .ok_or(DacPolicyError::NoLightClient)?
+            .certified_assignments(query)
+            .await
+            .map_err(DacPolicyError::Assignments)
+    }
+
     /// Whether resource `resource_name` of policy `policy_id` can guard a
     /// collection: the policy exists and the resource has the permissions
     /// documents need. Go's `ValidateResourceInterface`.
@@ -199,13 +237,6 @@ fn parse(policy: &str) -> Result<ParsedPolicy, String> {
     }
     policy_yaml::validate_policy_expressions(&parsed)?;
     Ok(parsed)
-}
-
-fn same_definition(left: &Policy, right: &Policy) -> bool {
-    match (serde_json::to_value(left), serde_json::to_value(right)) {
-        (Ok(left), Ok(right)) => left == right,
-        _ => false,
-    }
 }
 
 fn build(parsed: &ParsedPolicy, counter: u64) -> Result<Policy, String> {

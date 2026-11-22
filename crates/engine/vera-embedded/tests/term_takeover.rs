@@ -55,6 +55,12 @@ const READER: &str = "did:key:z6MkfXG2FkNy3u7Eg3jm8e2YQpGz7Z1JqWgHDAP1hLk9r2bR";
 /// The in-process channel to whichever device the test points it at.
 struct Following {
     current: Atom<EmbeddedTransport>,
+    proof_gate: std::sync::Mutex<Option<ProofGate>>,
+}
+
+struct ProofGate {
+    started: futures::channel::oneshot::Sender<()>,
+    release: futures::channel::oneshot::Receiver<()>,
 }
 
 impl Following {
@@ -84,7 +90,19 @@ impl AcpTransport for Following {
         max_bytes: usize,
     ) -> BoxFuture<'_, Result<Value, TransportError>> {
         let current = self.current.load_clone();
-        Box::pin(async move { AcpTransport::call(&current, method, params, max_bytes).await })
+        let gate = if method == "vera_getCurrentPolicyPrefixProof" {
+            self.proof_gate.lock().unwrap().take()
+        } else {
+            None
+        };
+        Box::pin(async move {
+            let result = AcpTransport::call(&current, method, params, max_bytes).await;
+            if let Some(gate) = gate.filter(|_| result.is_ok()) {
+                let _ = gate.started.send(());
+                let _ = gate.release.await;
+            }
+            result
+        })
     }
 
     fn subscribe_headers(&self) -> BoxFuture<'_, Result<HeaderStream, TransportError>> {
@@ -280,6 +298,7 @@ async fn a_provider_follows_a_confirmed_takeover_and_sends_again_what_it_voided(
             timeout(),
             &edge,
         )),
+        proof_gate: std::sync::Mutex::new(None),
     });
     let named = provider(
         transport.clone(),
@@ -299,7 +318,7 @@ async fn a_provider_follows_a_confirmed_takeover_and_sends_again_what_it_voided(
     .await;
     let owner = named.self_did().unwrap();
     let delegation = named.create_bearer_token(&owner).await.unwrap();
-    let policy = named.create_policy(POLICY).await.unwrap();
+    let policy = named.create_policy(POLICY, None).await.unwrap();
     named
         .register_object(&delegation, &policy, "document", "kept")
         .await
@@ -335,6 +354,31 @@ async fn a_provider_follows_a_confirmed_takeover_and_sends_again_what_it_voided(
         .verify_access(&policy, "document", "kept", "read", READER)
         .await
         .unwrap());
+    let query = vera::AssignmentQuery {
+        policy: &policy,
+        resource: "document",
+        relation: "reader",
+        subject: READER,
+        issuer: &owner,
+        not_before: None,
+    };
+    let before = named.read_certified_assignments(query).await.unwrap();
+    assert_eq!(before.object_ids, ["kept"]);
+    assert_eq!(before.position.term, 0);
+    let (started, started_rx) = futures::channel::oneshot::channel();
+    let (release, release_rx) = futures::channel::oneshot::channel();
+    *transport.proof_gate.lock().unwrap() = Some(ProofGate {
+        started,
+        release: release_rx,
+    });
+    let in_flight = named.read_certified_assignments(query);
+    futures::pin_mut!(in_flight);
+    match futures::future::select(in_flight.as_mut(), started_rx).await {
+        futures::future::Either::Left((answer, _)) => {
+            panic!("assignment read completed before takeover: {answer:?}")
+        }
+        futures::future::Either::Right((started, _)) => started.unwrap(),
+    }
     let laptop_head = height(&laptop).await;
     laptop.stop().await.unwrap();
 
@@ -400,6 +444,32 @@ async fn a_provider_follows_a_confirmed_takeover_and_sends_again_what_it_voided(
         observe(&named, &owner, &policy).await.unwrap(),
         "the observation follows the term"
     );
+
+    let after = named.read_certified_assignments(query).await.unwrap();
+    assert_eq!(after.object_ids, ["kept"]);
+    assert_eq!(after.position.term, 1);
+    assert_ne!(after.position.block_hash, before.position.block_hash);
+    release.send(()).unwrap();
+    assert!(
+        in_flight.await.is_err(),
+        "a read overtaken by a term change must not be accepted"
+    );
+    assert!(unnamed.read_certified_assignments(query).await.is_err());
+
+    assert!(named
+        .delete_relationship(&delegation, &policy, "document", "kept", "reader", &reader)
+        .await
+        .unwrap());
+    let empty = named
+        .read_certified_assignments(vera::AssignmentQuery {
+            not_before: Some(&after.position),
+            ..query
+        })
+        .await
+        .unwrap();
+    assert!(empty.object_ids.is_empty());
+    assert_eq!(empty.position.term, 1);
+    assert!(empty.position.height > after.position.height);
 
     // Without the genesis identifier, the term above 0 is refused: no read,
     // and no observation, is answered from the new term.

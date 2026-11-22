@@ -12,9 +12,7 @@ use vera_domain::{ConsensusPublicKey, NativeTx, ReceiptResponse};
 use super::{Chain, Replayed};
 use crate::provider::ProviderError;
 use crate::vera_rs::client::{ClientError, VeraRsClient};
-
-/// How long a replayed request's receipt is waited for between asks.
-const RECEIPT_POLL: Duration = Duration::from_millis(200);
+use crate::vera_rs::receipt_wait::{until_receipt, Fallback, Start};
 
 pub(crate) struct ProviderChain {
     pub client: Arc<VeraRsClient>,
@@ -22,6 +20,8 @@ pub(crate) struct ProviderChain {
     pub trusted: ConsensusPublicKey,
     /// How long one replay waits for its receipt.
     pub timeout: Duration,
+    /// Longest wait between two asks for a receipt with no new header.
+    pub fallback: Arc<Fallback>,
 }
 
 fn unavailable(cause: impl std::fmt::Display) -> ProviderError {
@@ -49,32 +49,39 @@ impl ProviderChain {
             .map_err(unavailable)
     }
 
+    /// Sends `wire` until it is confirmed at a revision the newest certified
+    /// term admits, asking at each newly verified height
+    /// (`receipt_wait.rs`).
     async fn send_and_confirm(&self, wire: &[u8]) -> Result<Replayed, ProviderError> {
         let submission = NativeTx::decode_wire(wire).map_err(unavailable)?.tx_id().0;
-        let mut sent = false;
-        loop {
-            if let Some(response) = self.receipt(submission).await? {
-                if self.admitted(&response)? {
-                    let receipt = response
-                        .verify(submission, &self.trusted)
-                        .map_err(unavailable)?;
-                    return Ok(Replayed {
-                        executed: receipt.success(),
-                        height: response.revision.height,
-                    });
+        let response = until_receipt(
+            self.light_client.as_ref(),
+            &self.fallback,
+            Start::Ask,
+            || async move {
+                match self.receipt(submission).await? {
+                    Some(response) if self.admitted(&response)? => Ok(Some(response)),
+                    _ => Ok(None),
                 }
-            }
-            if !sent {
+            },
+            || async move {
                 match self.client.send(wire).await {
-                    Ok(_) => sent = true,
-                    Err(error) if error.retryable() => {}
+                    Ok(_) => Ok(true),
+                    Err(error) if error.retryable() => Ok(false),
                     // An admission error cannot disprove an earlier send.
-                    Err(ClientError::Rpc { .. }) => sent = true,
-                    Err(error) => return Err(unavailable(error)),
+                    Err(ClientError::Rpc { .. }) => Ok(true),
+                    Err(error) => Err(unavailable(error)),
                 }
-            }
-            nuclei::time::sleep(RECEIPT_POLL).await;
-        }
+            },
+        )
+        .await?;
+        let receipt = response
+            .verify(submission, &self.trusted)
+            .map_err(unavailable)?;
+        Ok(Replayed {
+            executed: receipt.success(),
+            height: response.revision.height,
+        })
     }
 }
 

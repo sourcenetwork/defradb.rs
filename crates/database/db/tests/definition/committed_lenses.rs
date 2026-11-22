@@ -20,9 +20,12 @@ async fn node() -> (Arc<DB<RegolithStore>>, Arc<RefusingStore>) {
     let store = RefusingStore::refusing();
     let mut db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
     db.set_lens_store(store.clone());
-    db.create_collections_atomic(query::parse_sdl("type Users { name: String }").unwrap())
-        .await
-        .unwrap();
+    db.add_collection(
+        &defra_core::RequestContext::ambient(),
+        "type Users { name: String }",
+    )
+    .await
+    .unwrap();
     (Arc::new(db), store)
 }
 

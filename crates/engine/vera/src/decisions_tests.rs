@@ -45,7 +45,11 @@ impl VeraProvider for CountingProvider {
     fn self_did(&self) -> Option<String> {
         None
     }
-    async fn create_policy(&self, _: &str) -> Result<String, ProviderError> {
+    async fn create_policy(
+        &self,
+        _: &str,
+        _: Option<acp::PolicyNonce>,
+    ) -> Result<String, ProviderError> {
         unreachable!("decisions only")
     }
     async fn register_object(

@@ -121,10 +121,12 @@
 \*                                          ExternalDocumentAcp::check_doc_access;
 \*   register, then clear                   settle, clear in crates/engine/acp/src/
 \*                                          external/registration.rs;
-\*   settling after the commit              acp_registration_retry_callback in
-\*                                          crates/database/db/src/write/autocommit/
-\*                                          create.rs, DocumentACP::
-\*                                          redrive_registration;
+\*   settling after the commit              DbTxn::owe_acp_registration in
+\*                                          crates/database/db/src/txn/mod.rs,
+\*                                          CommitRegistrations::owe in
+\*                                          crates/engine/acp/src/commit_registrations.rs,
+\*                                          DocumentACP::redrive_registrations
+\*                                          (several at once: RegistrationBatch.tla);
 \*   the redrive at start                   ExternalDocumentAcp::redrive_owed,
 \*                                          started by gate_external_acp in
 \*                                          crates/entry-points/defra-node/src/node_acp.rs;

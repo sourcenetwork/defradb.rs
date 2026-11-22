@@ -11,20 +11,20 @@ use blockstore::Blockstore;
 use crate::error::{Error, Result};
 
 /// Parse IPLD block data and return the referenced CIDs that participate in
-/// Bitswap DAG transfer.
+/// Block-sync DAG transfer.
 ///
 /// This mirrors Go DefraDB's `Block.AllLinks()` semantics for the purpose of
 /// DAG completion: the `encryption` link is deliberately excluded. Go stores
 /// encryption-metadata blocks in a separate `Encstore` and serves them ONLY
-/// over the KMS `encryption` pubsub topic (ECIES-wrapped), never via Bitswap —
+/// over the KMS `encryption` pubsub topic (ECIES-wrapped), never via block sync —
 /// see `internal/db/p2p/sync_dag.go:loadBlockLinks`, which fetches the
 /// encryption block via `kms.GetKeys` and then walks only `block.AllLinks()`.
 ///
-/// Including the encryption CID here makes a Rust reader Bitswap-request a
+/// Including the encryption CID here makes a Rust reader block-sync a
 /// block that a Go provider never serves, hanging the DAG fetch forever
 /// (issue #976). The encryption block is obtained instead during merge via
 /// `decrypt_block_data` (KMS DEK fetch). Signature links are kept, matching
-/// Go's `hasAccess`, which serves signature blocks over Bitswap.
+/// Go's `hasAccess`, which serves signature blocks over block sync.
 pub(crate) fn extract_ipld_links(block_data: &[u8]) -> Result<Vec<Cid>> {
     use ipld_core::codec::Links;
     use serde_ipld_dagcbor::codec::DagCborCodec;
@@ -43,7 +43,7 @@ pub(crate) fn extract_ipld_links(block_data: &[u8]) -> Result<Vec<Cid>> {
     };
 
     // Drop the encryption-metadata link if this is a DefraDB block. It is never
-    // served over Bitswap (KMS-only), so requesting it stalls cross-runtime DAG
+    // served over block sync (KMS-only), so requesting it stalls cross-runtime DAG
     // fetches. Non-Block payloads (e.g. Lens) won't decode and are left as-is.
     if let Ok(defra_block) = defra_core::Block::from_dag_cbor(block_data) {
         if let Some(enc_cid) = defra_block.encryption {
@@ -128,7 +128,7 @@ mod tests {
 
     /// An encrypted block's `encryption` link must NOT be reported as a missing
     /// DAG block, because Go serves encryption-metadata blocks via the KMS
-    /// `encryption` topic, never over Bitswap (issue #976). Named field links
+    /// `encryption` topic, never over block sync (issue #976). Named field links
     /// are still reported.
     #[test]
     fn extract_ipld_links_excludes_encryption_link() {
@@ -156,7 +156,7 @@ mod tests {
         );
         assert!(
             !links.contains(&enc_cid),
-            "encryption link must be excluded from Bitswap DAG walk"
+            "encryption link must be excluded from block-sync DAG walk"
         );
     }
 }

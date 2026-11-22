@@ -95,7 +95,7 @@ async fn exercise(node: &defra_node::Node, rpc_url: &str) {
     let vera = node.vera_acp().expect("vera.rs document ACP").clone();
     let owner_did = identity::Did::new(vera.self_did().expect("actor DID")).unwrap();
     let policy = vera
-        .add_policy(owner_did.as_str(), USER_ACP_POLICY)
+        .add_policy(owner_did.as_str(), USER_ACP_POLICY, None)
         .await
         .expect("policy");
     assert!(helpers::policy_exists(rpc_url, &policy).await);
