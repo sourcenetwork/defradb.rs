@@ -299,10 +299,10 @@ pub(super) fn restore_displaced_connection(
     refused: &iroh::endpoint::Connection,
     displaced: Option<iroh::endpoint::Connection>,
 ) {
+    evict_connection(cache, refused.remote_id(), refused);
     let Some(displaced) = displaced.filter(|displaced| displaced.close_reason().is_none()) else {
         return;
     };
-    evict_connection(cache, refused.remote_id(), refused);
     let connections = match displaced.alpn() {
         protocols::ALPN_MUX => &cache.connections,
         protocols::ALPN_MUX_V1 => &cache.legacy_connections,
@@ -1857,7 +1857,7 @@ mod tests {
     }
 
     #[nuclei::test]
-    async fn restoring_a_closed_displaced_connection_is_skipped() {
+    async fn a_closed_displaced_restore_spares_a_concurrent_replacement() {
         edge::compat(async {
             let accept_ep = localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
             let dial_ep = localhost_endpoint(vec![]).await;
@@ -1904,7 +1904,7 @@ mod tests {
     }
 
     #[nuclei::test]
-    async fn restoring_a_closed_displaced_handle_leaves_an_empty_slot_empty() {
+    async fn a_closed_displaced_handle_evicts_the_refused_connection() {
         edge::compat(async {
             let accept_ep = localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
             let accept_task = crate::rt::spawn(edge::compat({
@@ -1921,12 +1921,17 @@ mod tests {
                 .connect(accept_ep.addr(), protocols::ALPN_MUX)
                 .await
                 .expect("connect displaced");
+            let refused = dial_ep
+                .connect(accept_ep.addr(), protocols::ALPN_MUX)
+                .await
+                .expect("connect refused");
             let peer = PeerId::new(accept_ep.id().to_string());
             let endpoint_id = parse_endpoint_id(&peer).expect("parse endpoint id");
             let cache = new_connection_cache(GossipHandle::new());
 
             displaced.close(0u32.into(), b"closed before restore");
-            restore_displaced_connection(&cache, &displaced, Some(displaced.clone()));
+            remember_connection(&cache, &refused);
+            restore_displaced_connection(&cache, &refused, Some(displaced.clone()));
 
             assert!(cache.connections.get(&endpoint_id).is_none());
 
