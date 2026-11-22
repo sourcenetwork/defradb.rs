@@ -29,7 +29,7 @@ fn truncate_preserves_other_collections() {
         );
         actions.push(
             AddDoc {
-                collection: name.clone().into(),
+                collection: name.clone(),
                 doc_map: Some(json!({ "name": "removed" })),
                 ..Default::default()
             }
@@ -37,7 +37,7 @@ fn truncate_preserves_other_collections() {
         );
         actions.push(
             Truncate {
-                collection: name.into(),
+                collection: name,
                 ..Default::default()
             }
             .into(),
