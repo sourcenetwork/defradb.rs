@@ -53,6 +53,7 @@ mod deadline_tests;
 mod drain;
 mod owed;
 mod registration;
+mod registration_batch;
 mod replica;
 mod settle;
 mod voided;
@@ -604,6 +605,18 @@ where
         doc_id: &str,
     ) -> Result<()> {
         self.settle_if_owed(policy_id, resource_name, doc_id).await
+    }
+
+    async fn redrive_registrations(&self, objects: &[crate::AcpObject<'_>]) -> Vec<Result<()>> {
+        self.settle_all_if_owed(objects).await
+    }
+
+    async fn register_objects(
+        &self,
+        identity: &Did,
+        objects: &[crate::AcpObject<'_>],
+    ) -> std::result::Result<(), crate::RegistrationFailure> {
+        self.provider.register_objects(identity, objects).await
     }
 
     async fn register_doc_object(

@@ -54,6 +54,9 @@ pub struct ClientContext {
     pub auth_token: Option<String>,
     /// Raw identity private key bytes, when provided by the caller.
     pub identity_key_bytes: Option<Vec<u8>>,
+    /// The configured remote ACP account, carried for commands that mint a
+    /// controller token after the shared client-token setup has run.
+    pub authorized_account: Option<String>,
     /// Transaction ID
     pub tx_id: Option<String>,
     /// Development mode
@@ -160,6 +163,8 @@ impl ClientArgs {
         } else {
             None
         };
+        let authorized_account =
+            (!config.acp.remote_address.is_empty()).then(|| config.acp.remote_address.clone());
 
         let auth_token = if let Some(ref key_bytes) = identity_key_bytes {
             let identity_name = self.identity_name.as_deref().unwrap_or("inline identity");
@@ -167,7 +172,7 @@ impl ClientArgs {
                 identity_name,
                 key_bytes,
                 &url,
-                Some(config.acp.remote_address.as_str()).filter(|a| !a.is_empty()),
+                authorized_account.as_deref(),
             )?)
         } else {
             None
@@ -177,6 +182,7 @@ impl ClientArgs {
             url,
             auth_token,
             identity_key_bytes,
+            authorized_account,
             tx_id: self.tx.map(|id| id.to_string()),
             development: config.development,
             verbose: self.verbose,
@@ -245,7 +251,7 @@ pub(crate) fn raw_identity_from_key_bytes(
         .map_err(|e| Error::InvalidIdentity(format!("invalid key '{}': {}", name, e)))
 }
 
-fn generate_auth_token_from_key_bytes(
+pub(crate) fn generate_auth_token_from_key_bytes(
     name: &str,
     key_bytes: &[u8],
     audience: &str,

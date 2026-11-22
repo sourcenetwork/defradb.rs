@@ -144,6 +144,57 @@ async fn a_provider_creates_and_reads_back_a_policy_through_the_embedded_node() 
     node.stop().await.expect("stop");
 }
 
+/// How long a lone validator waits for a request before it proposes anyway.
+const HEARTBEAT: Duration = Duration::from_secs(10);
+
+/// A fresh deployment finalizes its first block as it starts, before any
+/// light client subscribes, and proposes the next only on a request or at its
+/// heartbeat. The provider takes that first block from the stream as it takes
+/// any header, verified, and does not wait for the next one.
+#[nuclei::test]
+async fn a_fresh_deployments_provider_starts_on_its_first_block() {
+    let directory = tempfile::tempdir().unwrap();
+    let node = start(&directory.path().join("vera")).await;
+    let tuning = AcpTuning::default();
+    let edge = edge::testing::edge();
+    let transport = Arc::new(EmbeddedTransport::new(
+        node.rpc().clone(),
+        tuning.request_timeout,
+        &edge,
+    ));
+    // Settled past the start: the first block is finalized, and nothing
+    // asks the node for another.
+    nuclei::time::sleep(Duration::from_millis(500)).await;
+    let keyring = keyring::FileKeyring::open(directory.path().join("keys"), b"test-password")
+        .expect("keyring");
+    let worker =
+        NativeWorker::open(&directory.path().join("worker"), &keyring, DEPLOYMENT).expect("worker");
+
+    let started = std::time::Instant::now();
+    let provider = VeraRsProvider::with_transport(
+        transport.clone(),
+        transport,
+        &hex::encode(node.consensus_key().encode()),
+        vera::vera_rs::GenesisSource::Hosted,
+        &[42; 32],
+        worker,
+        &tuning,
+        None,
+        &edge,
+    )
+    .await
+    .expect("provider");
+    let took = started.elapsed();
+    assert!(
+        took < HEARTBEAT / 2,
+        "the provider waited {took:?}, as for the heartbeat's block"
+    );
+    assert!(provider.acp_light_client_status().expect("status").height >= 1);
+
+    drop(provider);
+    node.stop().await.expect("stop");
+}
+
 #[nuclei::test]
 async fn answers_limits_and_failures_arrive_as_they_do_over_the_network() {
     let directory = tempfile::tempdir().unwrap();
@@ -245,8 +296,11 @@ async fn a_call_the_node_answers_too_late_ends_at_the_deadline_and_may_be_asked_
     let node = start(directory.path()).await;
     let edge = edge::testing::edge();
     // A proof at a height the chain has not reached: the node waits two
-    // seconds for it and then answers that it is busy.
-    let proof = || json!(["acp", "0x00", 1_000_000_000u64]);
+    // seconds for it and then answers that it is busy. The height leads the
+    // head by less than the node's waiting lead (256 revisions): a larger one
+    // is refused at once as soon as a block is indexed, which would race the
+    // deadline below.
+    let proof = || json!(["acp", "0x00", 200u64]);
 
     let deadline = Duration::from_millis(100);
     let hurried = EmbeddedTransport::new(node.rpc().clone(), deadline, &edge);

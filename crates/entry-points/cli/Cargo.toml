@@ -166,7 +166,7 @@ edge = { path = "../../foundation/edge", features = ["testing"] }
 axum.workspace = true
 tower = { workspace = true, features = ["util"] }
 defra-http = { path = "../../surfaces/http", features = ["test-utils"] }
-kovan.workspace = true
+kovan-channel.workspace = true
 rcgen = "0.14"
 toml = "1.1"
 tempfile = "3.17"
