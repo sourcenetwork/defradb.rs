@@ -4,7 +4,8 @@
 use integration_test::actions::shared::{Lens, LensModule};
 use integration_test::actions::{
     AddCollection, AddDoc, AddReplicator, ConfigureMigration, ConnectPeers, GetCollections,
-    NewNode, PatchCollection, Request, SyncCollectionVersions, WaitForPeersEvents, WaitForSync,
+    NewNode, PatchCollection, Request, SetActiveCollectionVersion, SyncCollectionVersions,
+    WaitForPeersEvents, WaitForSync,
 };
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
@@ -44,16 +45,6 @@ fn a_synced_migration_transform_stays_attached_to_its_definition() {
             AddCollection {
                 sdl: "type Users { name: String }".into(),
                 common: on("db1"),
-                ..Default::default()
-            }
-            .into(),
-            AddDoc {
-                collection: "Users".into(),
-                doc_map: Some(json!({ "name": "John" })),
-                common: Common {
-                    capture: captures([("doc0", "/docID"), ("head0", "/cid")]),
-                    ..on("db0")
-                },
                 ..Default::default()
             }
             .into(),
@@ -105,8 +96,45 @@ fn a_synced_migration_transform_stays_attached_to_its_definition() {
                 ..Default::default()
             }
             .into(),
+            ConfigureMigration {
+                source_version_id: Text::reference("version1"),
+                destination_version_id: Text::reference("version2"),
+                lens: Lens {
+                    lenses: Some(vec![LensModule {
+                        arguments: json!({ "dst": "nickname", "src": "name" }),
+                        path: "bin/lenses/copy.wasm".into(),
+                    }]),
+                },
+                common: on("db1"),
+                ..Default::default()
+            }
+            .into(),
             SyncCollectionVersions {
                 version_ids: vec![Text::reference("version1"), Text::reference("version2")],
+                common: on("db1"),
+                ..Default::default()
+            }
+            .into(),
+            SetActiveCollectionVersion {
+                version_id: Text::reference("version2"),
+                common: on("db1"),
+                ..Default::default()
+            }
+            .into(),
+            SetActiveCollectionVersion {
+                version_id: Text::reference("version1"),
+                common: on("db0"),
+                ..Default::default()
+            }
+            .into(),
+            WaitForPeersEvents {
+                start: true,
+                common: on("db0"),
+                ..Default::default()
+            }
+            .into(),
+            WaitForPeersEvents {
+                start: true,
                 common: on("db1"),
                 ..Default::default()
             }
@@ -117,15 +145,22 @@ fn a_synced_migration_transform_stays_attached_to_its_definition() {
                 ..Default::default()
             }
             .into(),
-            WaitForPeersEvents {
-                start: true,
-                common: on("db0"),
+            AddDoc {
+                collection: "Users".into(),
+                doc_map: Some(json!({ "name": "John" })),
+                common: Common {
+                    capture: captures([("doc0", "/docID")]),
+                    ..on("db0")
+                },
                 ..Default::default()
             }
             .into(),
-            WaitForPeersEvents {
-                start: true,
-                common: on("db1"),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0")),
+                common: Common {
+                    capture: captures([("head0", "/cid")]),
+                    ..on("db0")
+                },
                 ..Default::default()
             }
             .into(),
