@@ -47,6 +47,9 @@ pub struct NodeSpec {
     pub resolv_conf: Option<String>,
     /// The node's network is iroh rather than libp2p.
     pub iroh_network: bool,
+    /// The node was configured from a Go-written `config.yaml` through the
+    /// Rust CLI's loader, so it is a Rust node under every client.
+    pub go_config: bool,
     /// The node's own identity, Go's `NodeIdentity(seed)`; the node signs as it.
     pub node_identity: Option<u64>,
     /// The node takes `node_identity` from the process's signing registry,
@@ -112,12 +115,15 @@ impl TestNode {
             Some(address) => address.clone(),
             None => "/ip4/127.0.0.1/tcp/0".to_owned(),
         };
-        // Admission limits, iroh and a resolv.conf are a Rust node's options:
-        // under go-http the node is a Rust node reached over HTTP, as
-        // rust-http does.
+        // Admission limits, iroh, a resolv.conf and a loaded Go config are a
+        // Rust node's options: under go-http the node is a Rust node reached
+        // over HTTP, as rust-http does.
         let client_type = match client_type {
             ClientType::GoHttp
-                if spec.admission.is_some() || spec.iroh_network || spec.resolv_conf.is_some() =>
+                if spec.admission.is_some()
+                    || spec.iroh_network
+                    || spec.resolv_conf.is_some()
+                    || spec.go_config =>
             {
                 ClientType::RustHttp
             }
