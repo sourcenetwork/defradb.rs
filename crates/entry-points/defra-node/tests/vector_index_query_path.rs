@@ -514,11 +514,11 @@ fn a_cosine_index_routes_and_agrees_with_the_exhaustive_scan() {
     .unwrap()
 }
 
-/// A scalar index on the filtered field must not displace the vector index.
-/// Only the vector index can serve `ORDER BY similarity` with a limit; a scalar
-/// index narrows the filter and then leaves every match to be scored.
+/// A scalar filter takes the exhaustive path, even when an index could narrow
+/// its candidate set: only an unfiltered similarity query routes to the vector
+/// index.
 #[test]
-fn a_scalar_index_on_the_filter_does_not_displace_the_vector_index() {
+fn a_scalar_filter_takes_the_exhaustive_path() {
     workers::block_on(async {
     let node = Node::builder().build().await.unwrap();
     node.add_collection(&format!(
@@ -539,11 +539,9 @@ fn a_scalar_index_on_the_filter_does_not_displace_the_vector_index() {
     // The vector path reads exactly the candidates it asked for. A scalar index
     // scan instead reads every matching entry, so the document count separates
     // the two.
-    let doc_fetches = total(&explain, "docFetches");
-
     assert!(
-        doc_fetches < CORPUS as u64,
-        "the vector index must bound the read; {doc_fetches} of {CORPUS} documents were fetched\n{explain:#}"
+        vector_index(&explain).is_none(),
+        "a filtered similarity query must not use the vector index\n{explain:#}"
     );
 
     let rows = query_data(&node, &query, "scalar index present rows").await;
@@ -555,8 +553,8 @@ fn a_scalar_index_on_the_filter_does_not_displace_the_vector_index() {
 }
 
 /// Every combination that reaches the read path, checked against one invariant:
-/// the answer must be the same one an exhaustive scan gives, and the index must
-/// be used whatever the metric.
+/// the answer must be the same one an exhaustive scan gives. An unfiltered
+/// query uses the vector index; a filtered query takes the exhaustive path.
 ///
 /// The scan scores by the index's own metric, so the two rank identically by
 /// construction. Before that, only a `DOT` index routed and the other metrics
@@ -574,6 +572,7 @@ fn every_combination_agrees_with_an_exhaustive_scan() {
         for metric in schema::DistanceMetric::ALL {
             for (filter_name, filter, indexed_tag) in [
                 ("none", None, false),
+                ("bare field", Some(r#"{tag: {_eq: "even"}}"#), false),
                 ("indexed field", Some(r#"{tag: {_eq: "even"}}"#), true),
             ] {
                 for in_transaction in [false, true] {
@@ -609,10 +608,17 @@ fn every_combination_agrees_with_an_exhaustive_scan() {
                         &case,
                     )
                     .await;
-                    assert!(
-                        vector_index(&explain).is_some(),
-                        "{case}: every metric must route\n{explain:#}"
-                    );
+                    if filter.is_none() {
+                        assert!(
+                            vector_index(&explain).is_some(),
+                            "{case}: every metric must route\n{explain:#}"
+                        );
+                    } else {
+                        assert!(
+                            vector_index(&explain).is_none(),
+                            "{case}: a filtered query must take the exhaustive path\n{explain:#}"
+                        );
+                    }
 
                     let data = if in_transaction {
                         let handle = node
