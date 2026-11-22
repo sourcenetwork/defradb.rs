@@ -36,6 +36,13 @@ A counter field can be indexed. After local increments, or after two nodes incre
 
 An ordered query over an indexed field with `limit: 3, offset: 2` reads `limit + offset` index entries, returns exactly the page after skipping two, and leaves the query offset to the limit node so it is not applied twice. The same paging is correct when the ordered field is not indexed.
 
+# `defra.index.patch_indexed_field`: A patch refuses to remove an indexed field
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["index::remove_indexed_field::removing_an_indexed_field_names_the_index_and_keeps_the_collection_usable", "index::remove_indexed_field::removing_a_fulltext_field_names_the_field_and_keeps_the_collection_usable"]
+
+Removing a field named by an index or full-text index fails with an error naming that field; the collection keeps the field and index and documents can still be written.
+
 # `defra.collection`: Collection-wide operations
 
 - **Parents:** ["defra"]

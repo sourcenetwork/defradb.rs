@@ -83,9 +83,9 @@ fn removing_a_fulltext_field_is_refused_with_the_index_name() {
             .unwrap_err();
 
         assert!(
-            error
-                .to_string()
-                .contains("full-text index 'body' references field 'body'"),
+            error.to_string().contains(
+                "full-text index on field 'body' references a field which does not exist in schema",
+            ),
             "unexpected error: {error}"
         );
     })
