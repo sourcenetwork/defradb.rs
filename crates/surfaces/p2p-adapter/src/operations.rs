@@ -382,7 +382,7 @@ pub trait P2POperations: defra_core::thread_bounds::MaybeSendSync {
     /// Sync a branchable collection from connected peers.
     async fn sync_branchable_collection(&self, collection_id: &str) -> P2PResult<()>;
 
-    /// Sync collection versions (schema definitions) from connected peers via Bitswap.
+    /// Sync collection versions (schema definitions) from connected peers via block sync.
     async fn sync_collection_versions(&self, version_ids: Vec<String>) -> P2PResult<()>;
 
     /// Send an explicit document set to one peer, without a subscription.

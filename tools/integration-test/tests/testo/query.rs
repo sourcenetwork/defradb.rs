@@ -170,6 +170,7 @@ mod one_to_one {
     mod with_count_filter;
     mod with_filter;
     mod with_filter_order;
+    mod with_filter_secondary_relation_id;
     mod with_fragments;
     mod with_group_related_id;
     mod with_group_related_id_alias;
@@ -214,6 +215,7 @@ mod simple {
         mod with_eq_blob;
         mod with_eq_datetime;
         mod with_eq_float;
+        mod with_eq_float_zero;
         mod with_eq_int;
         mod with_eq_string;
         mod with_geq_datetime;

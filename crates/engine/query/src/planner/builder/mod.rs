@@ -372,7 +372,7 @@ impl Planner {
         computed_field_names.dedup();
 
         // Prepare filter components: scalar, relation, plan-level, complexity flag
-        let filter_parts = self.prepare_filter(select, &collection, &computed_field_names);
+        let filter_parts = self.prepare_filter(select, &collection, &computed_field_names)?;
         let scalar_filter = filter_parts.scalar_filter;
         let relation_filter = filter_parts.relation_filter;
         let filter_for_plan = filter_parts.filter_for_plan;

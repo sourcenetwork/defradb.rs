@@ -756,6 +756,71 @@ fn stale_scope_registration_cannot_replace_newer_marker_or_schedule() {
     .unwrap()
 }
 
+/// #2902/#2791: a replay that allocates after a live write but commits its
+/// marker first must not turn the committed live write into an undurable
+/// one. The live registration returns its own, older generation: the
+/// replay's marker owes the head, and the live push's ack at the older
+/// generation cannot complete it (`LiveMarkerGeneration.tla`).
+#[test]
+fn live_registration_superseded_by_replay_marker_is_owed_by_it() {
+    workers::block_on(async {
+        let peerstore = Peerstore::new(Arc::new(RegolithStore::in_memory().unwrap()));
+        peerstore
+            .create_replicator("peer", b"replicator")
+            .await
+            .unwrap();
+        let incarnation_txn = peerstore.store.new_txn(true).await.unwrap();
+        let incarnation = decode_retry_marker_generation(
+            &incarnation_txn
+                .get(&crate::keys::peerstore::ReplicatorIncarnationKey::new("peer").bytes())
+                .await
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        incarnation_txn.discard();
+
+        let live_generation = peerstore
+            .allocate_scope_generation("doc", "collection")
+            .await
+            .unwrap();
+        let replay_generation = peerstore
+            .observe_push_head_for_incarnation("peer", "doc", "collection", incarnation)
+            .await
+            .unwrap()
+            .generation()
+            .expect("the replay writes its marker");
+        assert!(replay_generation > live_generation);
+
+        let live = peerstore
+            .register_scope_marker_at(
+                "peer",
+                "doc",
+                "collection",
+                &super::super::RetryInfo::new_initial().to_bytes().unwrap(),
+                live_generation,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            live,
+            Some(live_generation),
+            "a superseded live registration is durable"
+        );
+        let markers = peerstore.get_retry_documents("peer").await.unwrap();
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].generation, replay_generation);
+        assert!(!peerstore
+            .complete_retry_scope("peer", "doc", "collection", false, live_generation, &[])
+            .await
+            .unwrap());
+        let markers = peerstore.get_retry_documents("peer").await.unwrap();
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].generation, replay_generation);
+    })
+    .unwrap()
+}
+
 #[test]
 fn stale_scope_registration_cannot_cross_peer_forget_and_readd() {
     workers::block_on(async {

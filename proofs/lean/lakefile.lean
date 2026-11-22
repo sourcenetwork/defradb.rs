@@ -109,6 +109,9 @@ lean_lib OrderEncoding where
 lean_lib IndexMaintenance where
 
 @[default_target]
+lean_lib IndexPrefix where
+
+@[default_target]
 lean_lib Conformance where
 
 @[default_target]
@@ -218,6 +221,9 @@ lean_lib RetrySchedule where
 
 @[default_target]
 lean_lib ChunkSplit where
+
+@[default_target]
+lean_lib ProllyTree where
 
 @[default_target]
 lean_lib TxnId where
@@ -355,6 +361,9 @@ lean_lib KmsChunks where
 lean_lib SigningOverride where
 
 @[default_target]
+lean_lib FloatEquality where
+
+@[default_target]
 lean_lib OwedParts where
 
 @[default_target]
@@ -365,3 +374,9 @@ lean_lib RemoteOwnerAnswer where
 
 @[default_target]
 lean_lib StrictAccessRule where
+
+@[default_target]
+lean_lib SeTruncatePrefix where
+
+@[default_target]
+lean_lib ReplicatorEmptyCollections where

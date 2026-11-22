@@ -1967,10 +1967,14 @@ async fn committed_head_admission_does_not_wait_for_a_batching_timer() {
     let root = block.generate_cid().unwrap();
     for paired in [false, true] {
         if paired {
+            let paired_peer = random_peer_id();
             transport
-                .create_replicator(&random_peer_id(), vec!["collection1".to_string()])
+                .create_replicator(&paired_peer, vec!["collection1".to_string()])
                 .await
                 .unwrap();
+            coordinator
+                .peer_state()
+                .peer_connected(paired_peer.as_str());
         }
         let started = crate::rt::time::Instant::now();
         coordinator
@@ -2038,10 +2042,12 @@ async fn live_ack_of_a_sibling_head_does_not_clear_the_scope_marker() {
         .unwrap();
         let (failure_tx, mut failure_rx) = crate::rt::mpsc::channel::<super::PushFailure>(16);
         coordinator.set_failure_channel(failure_tx);
+        let replicator = random_peer_id();
         transport
-            .create_replicator(&random_peer_id(), vec!["collection1".to_string()])
+            .create_replicator(&replicator, vec!["collection1".to_string()])
             .await
             .unwrap();
+        coordinator.peer_state().peer_connected(replicator.as_str());
 
         let (acks_tx, mut acks) = crate::rt::mpsc::unbounded_channel();
         let recorder = crate::rt::spawn(async move {
@@ -2269,6 +2275,7 @@ async fn filtered_car_authority_is_rederived_after_sender_restart() {
     })
     .detach();
     let coordinator = Arc::new(coordinator);
+    coordinator.peer_state().peer_connected(receiver.as_str());
 
     let receiver_blocks: Arc<HopscotchMap<Cid, (), rapidhash::fast::RandomState>> = Arc::new(
         HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
@@ -2928,6 +2935,7 @@ async fn committed_head_marker_failure_is_returned_before_queue_admission() {
         .create_replicator(&peer, vec!["collection1".to_string()], false)
         .await
         .unwrap();
+    coordinator.peer_state().peer_connected(peer.as_str());
 
     let block = defra_core::Block::new(
         defra_core::CrdtDelta::Composite(defra_core::CompositeDeltaPayload {
@@ -4362,7 +4370,7 @@ async fn busy_replies_complete_rooted_and_block_sync_waiters_as_busy() {
             root_cid: root,
             car_data: crate::sync::car::encode_car_busy(&root).unwrap(),
         },
-        TransportEvent::BitswapComplete {
+        TransportEvent::BlockSyncComplete {
             query_id: query,
             success: false,
             cause: Some(crate::transport::FetchFailureCause::Refused),
