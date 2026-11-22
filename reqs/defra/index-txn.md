@@ -281,7 +281,7 @@ A collection patch that adds, removes or modifies a secondary index, or changes 
 # `defra.txn.indexes.concurrent-encrypted-changes`: Concurrent encrypted index changes outside a transaction
 
 - **Parents:** ["go.txn.indexes"]
-- **Scenarios:** ["txn::new_encrypted_index_concurrent::concurrent_encrypted_index_adds_all_land", "txn::new_encrypted_index_concurrent::a_concurrent_encrypted_index_delete_and_adds_all_land"]
+- **Scenarios:** ["txn::new_encrypted_index_concurrent::concurrent_encrypted_index_adds_all_land", "txn::new_encrypted_index_concurrent::a_concurrent_encrypted_index_delete_and_adds_all_land", "txn::new_encrypted_index_concurrent::concurrent_encrypted_index_adds_out_of_retries_fail"]
 
 Encrypted index changes made outside a transaction (`NewEncryptedIndex` and `DeleteEncryptedIndex` with no transaction), at the same time, on different fields of one collection, all succeed and none is lost, as long as no more of them run at once than the node's retry budget allows (`max_txn_retries` + 1 attempts, 6 by default). A change that loses the race runs again on the committed definition, so `ListEncryptedIndexes` afterwards lists every added index and none of the deleted ones. A change that runs out of retries fails with the storage error `transaction retry attempts exhausted: ` followed by the race it last lost (such as `a read lost to a newer put`), and changes nothing.
 

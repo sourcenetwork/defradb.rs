@@ -1,14 +1,17 @@
 //! Encrypted index changes outside a transaction, run at the same time on
 //! different fields of one collection. Six contenders fit the default retry
 //! budget of six attempts, since a change loses at most once to each of the
-//! others, so every change succeeds and none is lost.
+//! others, so every change succeeds and none is lost. Past the budget, a
+//! change that loses fails with the exhaustion error.
 
 use integration_test::actions::{
-    Actions, AddCollection, DeleteEncryptedIndex, ListEncryptedIndexes, NewEncryptedIndex, Parallel,
+    Actions, AddCollection, DeleteEncryptedIndex, ListEncryptedIndexes, NewEncryptedIndex, NewNode,
+    Parallel,
 };
 use integration_test::m;
 use integration_test::scenario::Common;
 use integration_test::test_case::TestCase;
+use integration_test::ClientType;
 use serde_json::{json, Value};
 
 const SDL: &str = r#"
@@ -122,6 +125,74 @@ fn a_concurrent_encrypted_index_delete_and_adds_all_land() {
             }
             .into(),
         ],
+        ..Default::default()
+    }
+    .execute();
+}
+
+/// Adds racing past the retry budget: the node re-runs none, so every add
+/// that loses the race fails with the exhaustion error. At least one loses,
+/// since they overlap. The CLI client starts one process per add, which
+/// spreads them out: with 12 adds, 2 runs in about 400 had none overlap.
+#[test]
+#[mantra_macros::req_test("defra.txn.indexes.concurrent-encrypted-changes")]
+fn concurrent_encrypted_index_adds_out_of_retries_fail() {
+    const CONTENDERS: u64 = 24;
+    let fields: Vec<String> = (0..CONTENDERS).map(|field| format!("f{field}")).collect();
+    let sdl = format!(
+        "type User {{ {} }}",
+        fields
+            .iter()
+            .map(|field| format!("{field}: String"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+    let add_or_exhaust = |field: &String| -> Actions {
+        NewEncryptedIndex {
+            collection: "User".into(),
+            field_name: field.clone(),
+            index_type: "".into(),
+            expected_data: m::object(json!({
+                "error": m::any_of(json!([
+                    "",
+                    m::substring("storage error: transaction retry attempts exhausted: "),
+                ])),
+            })),
+            common: Common {
+                envelope: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+        .into()
+    };
+    let fewer_than_all: Vec<Value> = (1..CONTENDERS).map(m::length).collect();
+    TestCase {
+        id: integration_test::scenario_id!(),
+        actions: vec![
+            NewNode {
+                max_txn_retries: Some(0),
+                ..Default::default()
+            }
+            .into(),
+            AddCollection {
+                sdl: sdl.into(),
+                ..Default::default()
+            }
+            .into(),
+            Parallel {
+                actions: fields.iter().map(add_or_exhaust).collect(),
+                ..Default::default()
+            }
+            .into(),
+            ListEncryptedIndexes {
+                collection: "User".into(),
+                expected_data: json!({ "indexes": m::any_of(Value::Array(fewer_than_all)) }),
+                ..Default::default()
+            }
+            .into(),
+        ],
+        client_types: Some(&[ClientType::InProcess, ClientType::RustHttp, ClientType::Cli]),
         ..Default::default()
     }
     .execute();
