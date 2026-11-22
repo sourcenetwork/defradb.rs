@@ -16,6 +16,16 @@ a value or to nothing. The Rust code walks nested YAML mappings, after
 lowercasing section names and their keys; a path here is that section and
 key joined by a dot.
 
+What this model covers: the table step (keys.rs KEYS through `apply`), and
+nothing before or after it. Lowercasing (mod.rs `lowercase_keys`), dropping
+the Go-only keys (keys.rs GO_ONLY) and the `acp.document` rewrite (acp.rs) run
+outside it. Lowercasing leaves a file Rust wrote as it was, since every key
+Rust writes is already lowercase; on a hand-written file with two keys that
+differ only in case, the later one wins.
+
+Planted bug: making `step` let the Go key overwrite a Rust key that is
+already there breaks `step_keeps`, and with it `rust_key_wins`.
+
 Rust owners:
   crates/entry-points/cli/src/config/go_layout/keys.rs   KEYS, apply, take, put_default
   crates/entry-points/cli/src/config/go_layout/mod.rs    apply, set_default
@@ -154,7 +164,7 @@ theorem rust_key_wins {α : Type} (m : Config α) (r : String) (v : α)
   intro row mem same
   exact go_keys_are_not_rust_keys row.1 (List.mem_map_of_mem _ mem) r isRust same
 
--- A config Rust wrote, with no Go key of the table, loads unchanged.
+-- A config with no Go key of the table comes out of the table step unchanged.
 theorem rust_config_unchanged {α : Type} (m : Config α)
     (noGo : ∀ row ∈ table, m row.1 = none) : apply table m = m :=
   -- the general fact, for this table

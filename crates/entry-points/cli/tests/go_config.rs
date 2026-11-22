@@ -1,3 +1,5 @@
+mod common;
+
 use clap::Parser;
 use cli::cli::Cli;
 use cli::config::Config;
@@ -253,4 +255,131 @@ fn a_go_csv_log_format_still_fails() {
     .unwrap();
     let error = Config::load(&cli).unwrap_err().to_string();
     assert!(error.contains("csv"), "{error}");
+}
+
+/// Runs `defradb --rootdir <root> version` and returns everything it printed.
+fn run_version(root: &std::path::Path) -> String {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_defradb"))
+        .arg("--rootdir")
+        .arg(root)
+        .arg("version")
+        .output()
+        .expect("run defradb");
+    assert!(
+        output.status.success(),
+        "defradb version failed: {output:?}"
+    );
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
+#[test]
+fn the_binary_warns_about_each_ignored_go_key() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(
+        root.path().join("config.yaml"),
+        "api:\n  audience: someone\nlog:\n  caller: true\nnet:\n  p2pblocksynctimeout: 5\n\
+         acp:\n  document:\n    remote:\n      keyname: signer\n",
+    )
+    .unwrap();
+    let printed = run_version(root.path());
+    for key in [
+        "api.audience",
+        "log.caller",
+        "net.p2pblocksynctimeout",
+        "acp.document.remote.keyname",
+    ] {
+        assert_eq!(
+            printed.matches(&format!("{key} is ignored")).count(),
+            1,
+            "one warning for {key} in:\n{printed}"
+        );
+    }
+}
+
+#[test]
+fn the_binary_says_nothing_about_go_only_keys_at_go_defaults() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(
+        root.path().join("config.yaml"),
+        "api:\n  audience: \"\"\nlog:\n  caller: false\nnet:\n  p2pblocksynctimeout: 30\n",
+    )
+    .unwrap();
+    let printed = run_version(root.path());
+    assert!(
+        !printed.contains("is ignored"),
+        "no warning expected in:\n{printed}"
+    );
+}
+
+/// `defradb start` on a Go-written config listens for P2P where its
+/// `net.p2paddresses` says, and logs the Go-only key it ignores.
+#[nuclei::test]
+async fn start_runs_a_go_config() {
+    let root = tempfile::tempdir().unwrap();
+    let port = portpicker::pick_unused_port().expect("free p2p port");
+    let address = format!("/ip4/127.0.0.1/tcp/{port}");
+    std::fs::write(
+        root.path().join("config.yaml"),
+        format!(
+            "keyring:\n    disabled: true\nnet:\n    p2paddresses:\n        - {address}\n    \
+             p2pdisabled: false\n    p2pblocksynctimeout: 5\n    relay: false\n"
+        ),
+    )
+    .unwrap();
+    let (log, output) = common::NodeLog::create(root.path().join("node.log"));
+    let _child = KillOnDrop(
+        std::process::Command::new(env!("CARGO_BIN_EXE_defradb"))
+            .arg("--rootdir")
+            .arg(root.path())
+            .args(["--url", common::ANY_PORT])
+            .args(common::LOG_FLAGS)
+            .args(["start", "--store", "memory"])
+            .env("RUST_LOG", "info")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(output)
+            .spawn()
+            .expect("start defradb"),
+    );
+    let http = log.http_address(std::time::Duration::from_secs(15));
+    let client = net::http::Client::builder(edge::testing::edge())
+        .no_proxy()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap();
+    let info: serde_json::Value = client
+        .get(format!("http://{http}/api/v0/p2p/info"))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let listed = info.to_string();
+    assert!(
+        listed.contains(&format!("{address}/p2p/")),
+        "peer info {listed} does not list {address}"
+    );
+    let text = log.text();
+    assert_eq!(
+        text.matches("net.p2pblocksynctimeout is ignored").count(),
+        1,
+        "one warning for net.p2pblocksynctimeout in:\n{text}"
+    );
+}
+
+/// Kills the child when the test ends, whether it passed or panicked.
+struct KillOnDrop(std::process::Child);
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
 }

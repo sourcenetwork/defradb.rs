@@ -57,9 +57,9 @@ const GO_ONLY: &[(&str, GoDefault)] = &[
 ];
 
 /// Moves every Go key in `root`, whose sections' keys are lowercased, onto its
-/// Rust key, unless the Rust key is already there, and warns about each
-/// Go-only key set to something other than Go's default.
-pub(super) fn apply(root: &mut Mapping) {
+/// Rust key, unless the Rust key is already there, and pushes a warning onto
+/// `warnings` for each Go-only key set to something other than Go's default.
+pub(super) fn apply(root: &mut Mapping, warnings: &mut Vec<String>) {
     for (go, rust) in KEYS {
         if let Some(value) = take(root, go) {
             put_default(root, rust, value);
@@ -68,7 +68,7 @@ pub(super) fn apply(root: &mut Mapping) {
     for (go, default) in GO_ONLY {
         if let Some(value) = take(root, go) {
             if !default.is(&value) {
-                tracing::warn!("{go} is ignored: defradb.rs has no such setting");
+                warnings.push(format!("{go} is ignored: defradb.rs has no such setting"));
             }
         }
     }

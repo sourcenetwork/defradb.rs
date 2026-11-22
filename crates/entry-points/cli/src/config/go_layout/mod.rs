@@ -11,10 +11,13 @@ mod keys;
 
 use serde_yaml::{Mapping, Value};
 
-/// Rewrites a parsed `config.yaml` so Go's keys land on Rust's.
-pub(super) fn apply(root: &mut Value) {
+/// Rewrites a parsed `config.yaml` so Go's keys land on Rust's, and returns one
+/// warning for each Go key it drops that the operator set. They are returned,
+/// not logged, because no subscriber is installed until the config is loaded.
+pub(super) fn apply(root: &mut Value) -> Vec<String> {
+    let mut warnings = Vec::new();
     let Some(root) = root.as_mapping_mut() else {
-        return;
+        return warnings;
     };
     *root = lowercase_keys(std::mem::take(root))
         .into_iter()
@@ -23,8 +26,9 @@ pub(super) fn apply(root: &mut Value) {
             value => (key, value),
         })
         .collect();
-    acp::apply(root);
-    keys::apply(root);
+    acp::apply(root, &mut warnings);
+    keys::apply(root, &mut warnings);
+    warnings
 }
 
 fn lowercase_keys(map: Mapping) -> Mapping {

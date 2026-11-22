@@ -14,8 +14,9 @@ const REMOTE_KEYS: &[(&str, &str)] = &[
 
 /// Moves Go's `document.type` and `document.remote.*` onto Rust's keys in
 /// `root`'s `acp` section, whose keys are already lowercased.
-/// Go's `document.remote.keyname` has no Rust equivalent: it is dropped with a warning.
-pub(super) fn apply(root: &mut Mapping) {
+/// Go's `document.remote.keyname` has no Rust equivalent: it is dropped, with a
+/// warning pushed onto `warnings`.
+pub(super) fn apply(root: &mut Mapping, warnings: &mut Vec<String>) {
     let Some(Value::Mapping(acp)) = root.get_mut("acp") else {
         return;
     };
@@ -29,8 +30,9 @@ pub(super) fn apply(root: &mut Mapping) {
     if let Some(Value::Mapping(remote)) = document.remove("remote") {
         let mut remote = lowercase_keys(remote);
         if remote.remove("keyname").is_some() {
-            tracing::warn!(
+            warnings.push(
                 "acp.document.remote.keyname is ignored: the Vera signer comes from --identity"
+                    .into(),
             );
         }
         for (go, rust) in REMOTE_KEYS {
