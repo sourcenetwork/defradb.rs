@@ -12,14 +12,16 @@
 //! The actual CRDT merge is performed by the database layer.
 //! This matches Go's architecture where p2p calls db.Merge().
 
-mod bitswap;
+mod block_sync;
 mod estimates;
 mod gossip_deferral;
 mod join;
 mod pending_dag;
 mod pushlog;
 
-pub(crate) use bitswap::{BlockSyncCompletionTracker, FetchCompletion, RootedCarCompletionTracker};
+pub(crate) use block_sync::{
+    BlockSyncCompletionTracker, FetchCompletion, RootedCarCompletionTracker,
+};
 pub(crate) use pending_dag::PendingDagLease;
 
 use crate::rt::mpsc;
@@ -86,7 +88,7 @@ pub struct SyncManager<B: Blockstore> {
     /// Peer state tracker for finding providers
     pub(super) peer_state: Arc<PeerStateTracker>,
 
-    /// Pending DAGs waiting for Bitswap to complete, indexed by root and each
+    /// Pending DAGs waiting for block sync to complete, indexed by root and each
     /// missing CID.
     pub(super) pending_dags: Arc<SharedPendingDags>,
 
@@ -98,7 +100,7 @@ pub struct SyncManager<B: Blockstore> {
     /// How much of the pending map each source peer holds, over minutes.
     pub(super) pending_occupancy: crate::sync::arbitration::PendingOccupancy,
 
-    /// Maps Bitswap QueryId → root CID for tracking completions.
+    /// Maps block-sync QueryId → root CID for tracking completions.
     pub(super) query_to_root: HopscotchMap<QueryId, Cid, RandomState>,
 
     /// Completion waiters for poll-owned exact-CID queries.

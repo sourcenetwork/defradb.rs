@@ -719,6 +719,26 @@ fn test_plan_relation_with_limit() {
     .unwrap()
 }
 
+#[test]
+fn ordered_index_scan_reserves_offset_for_limit_node() {
+    workers::block_on(async {
+        let planner = Planner::new(vec![make_test_collection_with_index()]);
+        let collection = planner.collection("Users").unwrap();
+        let order = OrderBy::new().with_condition(OrderCondition::new("age", OrderDirection::Asc));
+        let select = Select::new("Users")
+            .with_field(Field::new("name"))
+            .with_order(order)
+            .with_limit_offset(3, 2);
+
+        let (params, provides_ordering) = planner.try_select_index(&select, collection).unwrap();
+
+        assert!(provides_ordering);
+        assert_eq!(params.limit, Some(5));
+        assert_eq!(params.offset, 0);
+    })
+    .unwrap()
+}
+
 // ========================================================================
 // Nested Relation Filter Tests
 // ========================================================================
