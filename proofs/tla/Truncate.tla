@@ -67,13 +67,13 @@ CONSTANTS
 
 \* At least two documents, so a filter can match some and not others.
 ASSUME Cardinality(Docs) >= 2
-\* Only the five named checks, the view cache clear, the chunk retry guards and
+\* Only the five named checks, the view cache clear, the retry progress guard and
 \* the two search-record steps can be enforced: "seprefix" deletes the
 \* collection's `/se/` prefix on an unfiltered truncate, and "sesamespace"
 \* stores received records under that same datastore prefix rather than in the
 \* raw root store.
 ASSUME Enforced \subseteq {"nac", "chunk", "branchable", "txn", "shape", "viewcache",
-                            "retry", "progress", "seprefix", "sesamespace"}
+                            "progress", "seprefix", "sesamespace"}
 
 \* A document the node holds no copy of but received search records for.
 Unheld == {"unheld"}
