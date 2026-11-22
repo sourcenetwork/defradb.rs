@@ -273,6 +273,13 @@ When `SyncCollectionVersions` fetches a view version whose query source names a 
 
 When a peer still at a collection's source version increments a counter and the receiving node has migrated that counter with a lens, the receiving node applies the increment to the source-version projection, then migrates the result once. Later increments from the peer remain visible. With an increment-by-one lens, a source value of one reads as two after migration and three and four after the peer's next two increments; the peer reads two and three.
 
+# `defra.net.sync.migration_transform_is_kept`: A synced migration transform stays attached
+
+- **Parents:** ["go.net.sync"]
+- **Scenarios:** ["net::sync::collection_version::migration_transform::a_synced_migration_transform_stays_attached_to_its_definition"]
+
+A migration transform registered on one node stays attached to the definition a second node syncs, so a document at the source version read through that synced definition has the destination version's transformed fields.
+
 # `defra.net.sync.exact_fetch`: A DAG fetch is sent only what the receiver lacks
 
 - **Parents:** ["defra"]
@@ -306,3 +313,10 @@ A node that holds none of a document with 31 updates, told of its next head, fet
 - **Scenarios:** ["net::simple::replicator::with_no_collections::a_replicator_with_no_collections_is_listed_after_a_restart"]
 
 `AddReplicator` naming no collections, on a node that has none, succeeds, and `ListReplicators` then returns the target's peer ID, right after the add and again after the node closes keeping its data and starts. Go stores such a replicator with an empty collection list and restores it on start. It is pushed no documents until it has a collection (`go.net.replicator.push`).
+
+# `defra.net.push.parked_offline`: A push to a stopped peer is parked and delivered on its return
+
+- **Parents:** ["defra"]
+- **Scenarios:** ["net::simple::replicator::with_offline_push::a_push_to_a_stopped_peer_is_parked_until_it_restarts"]
+
+A replicator pushes a document to a stopped target without treating the offline target as a failed job: before the target starts again, the source's `push_backlog.failed_total` is no more than zero and `push_backlog.parked_total` is at least one. When the target restarts with its data, it receives the document.
