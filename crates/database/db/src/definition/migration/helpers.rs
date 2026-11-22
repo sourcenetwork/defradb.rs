@@ -149,8 +149,8 @@ pub(crate) enum ToActive {
     /// runs no transform: its values stand, only its version would move.
     Identity,
     /// The document as the transforms on its path make it. `complete` is
-    /// false when the path ends in transform-less transitions; such a read may
-    /// index the result, but must not stamp it as the active version.
+    /// false when any transition on the path runs no transform; such a read
+    /// may index the result, but must not stamp it as the active version.
     Migrated { document: Document, complete: bool },
 }
 

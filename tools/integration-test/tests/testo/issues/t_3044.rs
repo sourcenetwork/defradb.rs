@@ -7,6 +7,7 @@ use integration_test::test_case::TestCase;
 use serde_json::json;
 
 #[test]
+#[mantra_macros::req_test("defra.index.partial_lens_read")]
 fn indexed_collection_query_after_two_lenses_returns_migrated_fields() {
     TestCase {
         id: integration_test::scenario_id!(),
