@@ -124,7 +124,9 @@ impl super::Planner {
             for index in &collection.indexes {
                 let (can_order, needs_reverse) = can_be_ordered_by_index(order_by, index);
                 if can_order {
-                    let stop = scan_limit.filter(|&l| l > 0).map(|l| l.saturating_add(scan_offset));
+                    let stop = scan_limit
+                        .filter(|&l| l > 0)
+                        .map(|l| l.saturating_add(scan_offset));
                     let params = order_index_scan_params(index, needs_reverse, stop, 0);
                     return Some((params, true));
                 }
@@ -182,10 +184,7 @@ impl super::Planner {
                 let (can_order, needs_reverse) = can_be_ordered_by_index(order_by, index);
                 if can_order {
                     let stop = limit.filter(|&l| l > 0).map(|l| l.saturating_add(offset));
-                    return Some((
-                        order_index_scan_params(index, needs_reverse, stop, 0),
-                        true,
-                    ));
+                    return Some((order_index_scan_params(index, needs_reverse, stop, 0), true));
                 }
             }
         }
