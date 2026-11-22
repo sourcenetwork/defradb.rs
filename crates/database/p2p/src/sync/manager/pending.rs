@@ -1,4 +1,4 @@
-//! Pending DAG tracking for Bitswap synchronization.
+//! Pending DAG tracking for block synchronization.
 
 use rapidhash::{RapidHashMap, RapidHashSet};
 use std::ops::Deref;
@@ -35,7 +35,7 @@ pub enum PendingOrigin {
     LocalContinuation,
 }
 
-/// Metadata for a pending DAG sync waiting for Bitswap to complete.
+/// Metadata for a pending DAG sync waiting for block sync to complete.
 #[derive(Debug, Clone)]
 pub struct PendingDag {
     /// Document ID from the original PushLog message
@@ -47,11 +47,11 @@ pub struct PendingDag {
     pub head_priority: Option<u64>,
     /// Creator from the original PushLog message
     pub creator: String,
-    /// CIDs still missing (gets smaller as blocks arrive via Bitswap)
-    #[allow(dead_code)] // Used for tracking Bitswap progress
+    /// CIDs still missing (gets smaller as blocks arrive via block sync)
+    #[allow(dead_code)] // Used for tracking block-sync progress
     pub missing: RapidHashSet<Cid>,
     /// The peer that originally provided this DAG (e.g. DocSync reply sender).
-    /// Always included in the Bitswap provider list during retries so the
+    /// Always included in the block-sync provider list during retries so the
     /// blocks can be fetched even if the peer isn't in connected_peers().
     pub source_peer: Option<String>,
     /// Authenticated same-root announcers retained as recovery alternates.
@@ -70,7 +70,7 @@ pub struct PendingDag {
     /// Surfaced in diagnostic logs so the single aggregated WARN on terminal
     /// failure can carry an attempt count without scraping intermediate noise.
     pub attempts: u32,
-    /// Number of Bitswap/CAR fetch rounds that exhausted providers without
+    /// Number of block-sync/CAR fetch rounds that exhausted providers without
     /// yielding a complete DAG for this root.
     pub fetch_failures: u32,
     /// Most recent provider-exhaustion error for this root, if any.

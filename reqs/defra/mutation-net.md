@@ -292,3 +292,10 @@ Two nodes share 20 updates of a document, then lose touch. One makes 40 more upd
 - **Scenarios:** ["net::sync::exact_fetch::a_receiver_holding_nothing_still_gets_the_whole_document"]
 
 A node that holds none of a document with 31 updates, told of its next head, fetches the whole DAG and converges on it. It is sent no block it holds besides the head it asked for (`car_received_already_held` zero), however many of the writer's heads gossip delivered before the fetch.
+
+# `defra.net.replicator.list`: A replicator with no collections is listed
+
+- **Parents:** ["go.net.replicator"]
+- **Scenarios:** ["net::simple::replicator::with_no_collections::a_replicator_with_no_collections_is_listed_after_a_restart"]
+
+`AddReplicator` naming no collections, on a node that has none, succeeds, and `ListReplicators` then returns the target's peer ID, right after the add and again after the node closes keeping its data and starts. Go stores such a replicator with an empty collection list and restores it on start. It is pushed no documents until it has a collection (`go.net.replicator.push`).
