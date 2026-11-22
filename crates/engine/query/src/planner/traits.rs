@@ -8,6 +8,7 @@ use crate::document::DocumentMapping;
 use crate::error::Result;
 
 use crate::plan::CursorPageInfo;
+use crate::plan::JoinedParentRelation;
 use crate::planner::index_selection::CursorSeek;
 
 // Re-exported from planner/mod.rs for backwards compatibility.
@@ -60,6 +61,16 @@ pub trait PlanNode: MaybeSend {
     /// leave the child on its exhaustive path.
     fn set_vector_parent(&mut self, _field_index: usize, _doc_id: &str) -> bool {
         false
+    }
+
+    /// Relations this plan has already joined into its parent documents.
+    ///
+    /// The default walks the source tree so wrappers do not hide the
+    /// capability; join nodes report the relations they can reapply directly.
+    fn joined_parent_relations(&self) -> Vec<JoinedParentRelation> {
+        self.source()
+            .map(|source| source.joined_parent_relations())
+            .unwrap_or_default()
     }
 
     /// Get the document mapping for this node.

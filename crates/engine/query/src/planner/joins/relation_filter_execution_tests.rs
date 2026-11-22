@@ -434,7 +434,54 @@ fn indexed_side_filter_keeps_relation_when_parent_fk_is_indexed() {
         assert_eq!(rows.len(), 1, "{rows:?}");
         assert_eq!(rows[0]["title"], json!("David"), "{rows:?}");
         assert_eq!(rows[0]["publisher"]["name"], json!("Penguin"), "{rows:?}");
-        assert_eq!(fetcher.book_reads.load(Ordering::SeqCst), 3);
+        assert_eq!(fetcher.book_reads.load(Ordering::SeqCst), 1);
+    })
+    .unwrap()
+}
+
+/// The ordered primary path fetches raw parents by ID too. Its already-planned
+/// relation is reapplied directly, without rescanning all parent documents.
+#[test]
+fn ordered_parent_lookup_keeps_relation_when_parent_fk_is_indexed() {
+    workers::block_on(async {
+        let fetcher = Arc::new(IndexedSideFetcher::new());
+        let planner = Planner::new(vec![people(), books_with_parent_fk_index(), publishers()])
+            .with_fetcher(fetcher.clone());
+        let select = Select::new("Book")
+            .with_field(Field::new("title"))
+            .with_select(Select::new("publisher").with_field(Field::new("name")))
+            .with_filter(author_named("David"))
+            .with_order(OrderBy::new().with_condition(OrderCondition::with_path(
+                vec!["author".to_string(), "name".to_string()],
+                OrderDirection::Asc,
+            )));
+
+        let mut plan = planner.plan(&select).unwrap();
+        assert_eq!(
+            join_direction(&plan.explain(), "author").as_deref(),
+            Some("secondary"),
+            "{}",
+            plan.explain()
+        );
+        plan.init().await.unwrap();
+        plan.start().await.unwrap();
+
+        let mut rows = Vec::new();
+        while plan.next().await.unwrap() {
+            rows.push(plan.document_map().render_doc_to_json(plan.value()));
+        }
+        let explain = plan.explain_execute();
+        plan.close().await.unwrap();
+
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0]["title"], json!("David"), "{rows:?}");
+        assert_eq!(rows[0]["publisher"]["name"], json!("Penguin"), "{rows:?}");
+        assert_eq!(fetcher.book_reads.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            explain["selectNode"]["typeIndexJoin"]["typeJoinOne"]["root"]["scanNode"]["docFetches"],
+            json!(2),
+            "{explain}"
+        );
     })
     .unwrap()
 }

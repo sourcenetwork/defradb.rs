@@ -13,6 +13,7 @@ use crate::error::{QueryError, Result};
 use crate::fetcher::DocFetcher;
 use crate::mapper::{Filter, OrderDirection};
 use crate::plan::IndexScanNode;
+use crate::plan::JoinedParentRelation;
 use crate::plan::OrphanNode;
 use crate::planner::index_selection::{IndexScanParams, IndexScanType};
 use crate::planner::{Doc, ExecInfo, PlanNode};
@@ -128,13 +129,6 @@ pub struct TypeJoinOne {
     /// child's FK index. This mirrors Go's one-to-one secondary-side lookup and
     /// records empty FK-index reads for SSI conflict detection.
     indexed_inverted_child_fetch: Option<IndexedInvertedChildFetch>,
-    /// Whether the wrapped parent plan has already joined relations that must
-    /// survive the parent-index lookups made by this join.
-    preserve_parent_plan: bool,
-    /// Parent documents produced by the wrapped plan, keyed by document ID.
-    /// Inverted-index lookups fetch raw parents, so these docs restore relation
-    /// values joined before this join was assembled.
-    pre_joined_parent_docs: RapidHashMap<String, Doc>,
 }
 
 /// A filter condition on a relation field.
@@ -255,8 +249,6 @@ impl TypeJoinOne {
             shared_yielded_ids: None,
             parent_residual_filter: None,
             indexed_inverted_child_fetch: None,
-            preserve_parent_plan: false,
-            pre_joined_parent_docs: RapidHashMap::new(),
         }
     }
 
@@ -345,35 +337,100 @@ impl TypeJoinOne {
         self.parent_collection = Some(parent_collection);
         self.parent_scan_mapping = Some(parent_scan_mapping);
         self.fetcher = fetcher;
-        self.preserve_parent_plan = self.parent_plan.kind() != "scanNode";
         self
     }
 
-    /// Scan the wrapped parent plan once and keep its relation-joined documents.
-    async fn load_pre_joined_parent_docs(&mut self) -> Result<()> {
-        self.parent_plan.init().await?;
-        self.parent_plan.start().await?;
-        while self.parent_plan.next().await? {
-            let parent_doc = self.parent_plan.value().deep_clone();
-            if let Some(doc_id) = parent_doc.doc_id() {
-                self.pre_joined_parent_docs
-                    .insert(doc_id.to_string(), parent_doc);
-            }
-        }
-        self.parent_plan.close().await?;
-        Ok(())
-    }
+    /// Reapply the relations already joined by the wrapped parent plan.
+    async fn apply_joined_parent_relations(
+        &mut self,
+        parent_doc: &mut Doc,
+        parent_mapping: &DocumentMapping,
+    ) -> Result<()> {
+        let mut relations = self.parent_plan.joined_parent_relations();
+        for field in &self.parent_side.collection().fields {
+            let schema::FieldKind::Relation {
+                collection_id,
+                is_array: false,
+            } = &field.kind
+            else {
+                continue;
+            };
 
-    /// Restore relations joined into the wrapped parent plan before its raw
-    /// document was fetched again by the parent FK index.
-    fn with_pre_joined_relations(&self, parent_doc: Doc) -> Doc {
-        let Some(doc_id) = parent_doc.doc_id() else {
-            return parent_doc;
+            let Some(relation_index) = parent_mapping.first_index_of_name(&field.name) else {
+                continue;
+            };
+            let Some(child_mapping) = parent_mapping
+                .child_mappings
+                .get(relation_index)
+                .and_then(|child| child.as_ref())
+            else {
+                continue;
+            };
+
+            if relations
+                .iter()
+                .any(|relation| relation.relation_field_name == field.name)
+            {
+                continue;
+            }
+
+            relations.push(JoinedParentRelation {
+                relation_field_name: field.name.clone(),
+                fk_field_name: schema::CollectionVersion::relation_id_field_name(&field.name),
+                child_collection: collection_id.clone(),
+                child_mapping: child_mapping.as_ref().clone(),
+            });
+        }
+
+        let current_relation = self.parent_side.relation_field().name.clone();
+        let Some(fetcher) = self.fetcher.clone() else {
+            return Ok(());
         };
-        self.pre_joined_parent_docs
-            .get(doc_id)
-            .cloned()
-            .unwrap_or(parent_doc)
+
+        for relation in relations {
+            if relation.relation_field_name == current_relation {
+                continue;
+            }
+            let Some(relation_index) = parent_mapping
+                .first_index_of_name(&relation.relation_field_name)
+                .or_else(|| {
+                    parent_mapping.try_find_index_from_render_key(&relation.relation_field_name)
+                })
+            else {
+                continue;
+            };
+            let Some(fk_index) = parent_mapping.first_index_of_name(&relation.fk_field_name) else {
+                continue;
+            };
+
+            let child_doc_id = parent_doc
+                .get(fk_index)
+                .and_then(|value| value.as_str())
+                .map(String::from);
+            let Some(child_doc_id) = child_doc_id else {
+                parent_doc.set(relation_index, serde_json::Value::Null);
+                continue;
+            };
+
+            let result = fetcher
+                .get_by_ids(&relation.child_collection, &[child_doc_id])
+                .await?;
+            let child_docs = documents_to_plan_docs(result.docs(), &relation.child_mapping)?;
+            let child_value = child_docs
+                .first()
+                .map(|doc| relation.child_mapping.render_doc_to_json(doc))
+                .unwrap_or(serde_json::Value::Null);
+            parent_doc.set(relation_index, child_value);
+
+            self.go_child_metrics.iterations += 2;
+            self.go_child_metrics.doc_fetches += child_docs.len() as u64;
+            self.go_child_metrics.field_fetches += child_docs
+                .first()
+                .map(|doc| doc.stored_field_count as u64)
+                .unwrap_or_default();
+        }
+
+        Ok(())
     }
 
     /// Set a residual scalar filter for parent docs fetched in inverted index mode.
@@ -721,7 +778,8 @@ impl TypeJoinOne {
                 .clone();
 
             let mut index_scan =
-                IndexScanNode::new(parent_collection, parent_mapping, params).with_fetcher(fetcher);
+                IndexScanNode::new(parent_collection, parent_mapping.clone(), params)
+                    .with_fetcher(fetcher);
             if let Some(ref filter) = self.parent_residual_filter {
                 index_scan = index_scan.with_residual_filter(filter.clone());
             }
@@ -747,8 +805,9 @@ impl TypeJoinOne {
             }
 
             // Merge child into each parent and queue for yielding
-            for parent_doc in parent_docs {
-                let mut parent_doc = self.with_pre_joined_relations(parent_doc);
+            for mut parent_doc in parent_docs {
+                self.apply_joined_parent_relations(&mut parent_doc, &parent_mapping)
+                    .await?;
                 self.merge_child(&mut parent_doc, Some(child_doc.deep_clone()));
                 self.docs_to_yield.push_back(parent_doc);
             }
@@ -824,9 +883,15 @@ impl TypeJoinOne {
             let parent_collection = self.parent_collection.as_ref().ok_or_else(|| {
                 QueryError::internal("ordered primary join: parent_collection not initialized")
             })?;
-            let parent_mapping = self.parent_scan_mapping.as_ref().ok_or_else(|| {
-                QueryError::internal("ordered primary join: parent_scan_mapping not initialized")
-            })?;
+            let parent_mapping = self
+                .parent_scan_mapping
+                .as_ref()
+                .ok_or_else(|| {
+                    QueryError::internal(
+                        "ordered primary join: parent_scan_mapping not initialized",
+                    )
+                })?
+                .clone();
             let fetcher = self.fetcher.as_ref().ok_or_else(|| {
                 QueryError::internal("ordered primary join: fetcher not initialized")
             })?;
@@ -835,7 +900,7 @@ impl TypeJoinOne {
                 .get_by_ids(&parent_collection.name, &[parent_doc_id])
                 .await?;
 
-            let parent_docs = documents_to_plan_docs(result.docs(), parent_mapping)?;
+            let parent_docs = documents_to_plan_docs(result.docs(), &parent_mapping)?;
 
             // Track parent lookup metrics (Go counts this as child metrics)
             self.go_child_metrics.iterations += 2;
@@ -850,8 +915,11 @@ impl TypeJoinOne {
                 None => continue,
             };
 
+            self.apply_joined_parent_relations(&mut parent_doc, &parent_mapping)
+                .await?;
+
             if let Some(ref filter) = self.parent_residual_filter {
-                if !filter.matches(parent_doc.fields(), parent_mapping)? {
+                if !filter.matches(parent_doc.fields(), &parent_mapping)? {
                     continue;
                 }
             }
@@ -1087,9 +1155,6 @@ impl PlanNode for TypeJoinOne {
         ) {
             // Inverted/ordered mode: only init the child plan (index scan on child).
             // Parent lookups happen per-child in next_inverted_index() / next_ordered_primary().
-            if self.preserve_parent_plan {
-                self.load_pre_joined_parent_docs().await?;
-            }
             self.child_plan.init().await?;
             self.child_plan.start().await?;
             // Capture child's index fetches from init (the initial index scan)
@@ -1238,7 +1303,6 @@ impl PlanNode for TypeJoinOne {
         }
         self.child_cache.clear();
         self.docs_to_yield.clear();
-        self.pre_joined_parent_docs.clear();
         if let Some(ref mut config) = self.orphan_config {
             config.orphan_node.close().await?;
         }
@@ -1257,6 +1321,23 @@ impl PlanNode for TypeJoinOne {
     fn kind(&self) -> &'static str {
         // Go's explain uses "typeIndexJoin" as the wrapper node
         "typeIndexJoin"
+    }
+
+    fn joined_parent_relations(&self) -> Vec<JoinedParentRelation> {
+        let relation_field = self.parent_side.relation_field();
+        if relation_field.kind.is_array() || !relation_field.is_primary {
+            return Vec::new();
+        }
+        if !self.child_plan.joined_parent_relations().is_empty() {
+            return Vec::new();
+        }
+
+        vec![JoinedParentRelation {
+            relation_field_name: relation_field.name.clone(),
+            fk_field_name: schema::CollectionVersion::relation_id_field_name(&relation_field.name),
+            child_collection: self.child_side.collection().name.clone(),
+            child_mapping: self.child_plan.document_map().clone(),
+        }]
     }
 
     fn explain_inner(&self) -> JsonValue {

@@ -52,8 +52,8 @@ pub use select::SelectNode;
 pub use sequence::SequenceNode;
 pub use similarity::SimilarityNode;
 pub use type_join::{
-    compare_json_values, resolve_nested_field, JoinDirection, JoinSide, RelationFilter,
-    TypeJoinMany, TypeJoinOne,
+    compare_json_values, resolve_nested_field, JoinDirection, JoinSide, JoinedParentRelation,
+    RelationFilter, TypeJoinMany, TypeJoinOne,
 };
 pub use view::ViewNode;
 
