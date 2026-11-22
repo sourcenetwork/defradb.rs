@@ -109,6 +109,9 @@ lean_lib OrderEncoding where
 lean_lib IndexMaintenance where
 
 @[default_target]
+lean_lib IndexPrefix where
+
+@[default_target]
 lean_lib Conformance where
 
 @[default_target]
