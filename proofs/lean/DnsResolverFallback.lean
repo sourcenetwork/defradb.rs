@@ -63,15 +63,20 @@ def fallbackLines : List Line := defaultNS.map fun s => ⟨"nameserver", [s]⟩
 
 -- `usable_line`: a line hickory accepts stays whole; otherwise its directive
 -- with each argument hickory accepts alone, if hickory accepts that rebuilt line.
+-- A rejected `nameserver` line is never rebuilt: it is dropped whole.
 -- `ok` is hickory's check of one line next to a valid nameserver (`accepted`).
+-- `args` here are the words before any `#` or `;` comment, which the code cuts off first.
 def usableLine (ok : Line → Bool) (l : Line) : Option Line :=
   -- Accepted whole: kept unchanged.
   if ok l then some l
   else
     -- The arguments hickory accepts one at a time.
     let args := l.args.filter fun a => ok ⟨l.directive, [a]⟩
-    -- The rebuilt line, kept only when it has arguments and hickory accepts it.
-    if args ≠ [] ∧ ok ⟨l.directive, args⟩ then some ⟨l.directive, args⟩ else none
+    -- The rebuilt line, kept only when it is not a nameserver line, has
+    -- arguments, and hickory accepts it.
+    if l.directive ≠ "nameserver" ∧ args ≠ [] ∧ ok ⟨l.directive, args⟩ then
+      some ⟨l.directive, args⟩
+    else none
 
 -- The lines `parse_lenient` keeps.
 def kept (ok : Line → Bool) (ls : List Line) : List Line := ls.filterMap (usableLine ok)
@@ -162,8 +167,15 @@ theorem usable_line_accepted (ok : Line → Bool) (l l' : Line) (h : usableLine 
   · cases h; assumption
   · simp only at h
     split at h
-    · cases h; rename_i hc; exact hc.2
+    · cases h; rename_i hc; exact hc.2.2
     · cases h
+
+-- A `nameserver` line hickory rejects is dropped whole, so no address is
+-- pieced together from its other words.
+theorem rejected_nameserver_dropped (ok : Line → Bool) (l : Line)
+    (hr : ok l = false) (hn : l.directive = "nameserver") : usableLine ok l = none := by
+  -- Not accepted whole, and the rebuild is refused for a nameserver line.
+  simp [usableLine, hr, hn]
 
 -- Every kept line is one hickory accepts, so no rejected line reaches it.
 theorem kept_lines_accepted (ok : Line → Bool) (ls : List Line) (l : Line)

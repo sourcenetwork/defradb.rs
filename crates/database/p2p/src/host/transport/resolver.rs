@@ -88,18 +88,25 @@ fn parse_lenient(text: &str) -> (ResolverConfig, ResolverOpts) {
     }
 }
 
-/// `line` as hickory accepts it: whole, or its directive with each argument
-/// hickory accepts on its own; `None` when nothing of it is accepted.
+/// `line` as hickory accepts it: whole, or (for `search`, `domain` and
+/// `options`) its directive with each argument hickory accepts on its own;
+/// `None` when nothing of it is accepted. Words are recovered only from
+/// before a `#` or `;` comment, and a rejected `nameserver` line is skipped
+/// whole, as Go reads only its first argument.
 #[cfg(unix)]
 fn usable_line(line: &str) -> Option<String> {
     if accepted(line) {
         return Some(line.to_owned());
     }
-    let mut words = line.split_whitespace();
+    let body = line.split(['#', ';']).next().unwrap_or_default();
+    let mut words = body.split_whitespace();
     let directive = words.next()?;
-    let args: Vec<&str> = words
-        .filter(|arg| accepted(&format!("{directive} {arg}")))
-        .collect();
+    let args: Vec<&str> = match directive {
+        "nameserver" => Vec::new(),
+        _ => words
+            .filter(|arg| accepted(&format!("{directive} {arg}")))
+            .collect(),
+    };
     let rebuilt = format!("{directive} {}", args.join(" "));
     let kept = (!args.is_empty() && accepted(&rebuilt)).then_some(rebuilt);
     tracing::warn!(

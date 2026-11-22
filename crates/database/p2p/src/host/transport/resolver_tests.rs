@@ -155,6 +155,17 @@ fn a_bad_nameserver_line_keeps_the_good_ones() {
     assert_eq!(servers(&config), udp_tcp("10.0.0.2"));
 }
 
+/// A rejected `nameserver` line is skipped whole: an address in its comment
+/// is never recovered as a nameserver.
+#[cfg(unix)]
+#[test]
+fn a_bad_nameserver_line_never_uses_its_comment() {
+    let (config, _) = from_text("nameserver not-an-ip # 8.8.8.8\n");
+    assert_eq!(servers(&config), localhost_servers());
+    let (config, _) = from_text("nameserver not-an-ip ; 8.8.8.8\nnameserver 10.0.0.2\n");
+    assert_eq!(servers(&config), udp_tcp("10.0.0.2"));
+}
+
 /// Go skips a directive it does not know.
 #[cfg(unix)]
 #[test]
