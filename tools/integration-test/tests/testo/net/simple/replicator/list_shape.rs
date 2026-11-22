@@ -78,7 +78,7 @@ fn a_replicator_list_reports_go_shape() {
                         "Addresses": [m::unique("replicator_address")],
                         "CollectionIDs": [m::r("collection0")],
                         "Status": 0,
-                        "LastStatusChange": "0001-01-01T00:00:00Z",
+                        "LastStatusChange": m::unique("replicator_status_change"),
                     },
                 ]),
                 common: on("db0"),
