@@ -245,6 +245,42 @@ fn filtered_truncate_removes_only_matching_searchable_encryption_records() {
 }
 
 #[test]
+fn unfiltered_truncate_removes_searchable_encryption_records() {
+    workers::block_on(async {
+        let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+        db.create_collection(users_schema()).await.unwrap();
+        let mutator = AutoCommitMutator::new(db.clone());
+        let alice = create_user(&mutator, "Alice", 30).await;
+        let alice_key =
+            DatastoreSE::new("users-collection", "users-name", vec![1], alice.to_string()).bytes();
+        // A replicator keeps artifacts for documents it does not hold.
+        let unheld_key =
+            DatastoreSE::new("users-collection", "users-name", vec![2], "bae-unheld").bytes();
+        let other_key =
+            DatastoreSE::new("other-collection", "users-name", vec![3], "bae-other").bytes();
+
+        let txn = db.new_txn(false).await.unwrap();
+        let datastore = txn.datastore().unwrap();
+        for key in [&alice_key, &unheld_key, &other_key] {
+            datastore.set(key, b"").await.unwrap();
+        }
+        drop(datastore);
+        txn.commit().await.unwrap();
+
+        db.truncate_collection_as(&RequestContext::ambient(), "Users", None)
+            .await
+            .unwrap();
+
+        let txn = db.new_txn(true).await.unwrap();
+        let datastore = txn.datastore().unwrap();
+        assert!(datastore.get(&alice_key).await.unwrap().is_none());
+        assert!(datastore.get(&unheld_key).await.unwrap().is_none());
+        assert!(datastore.get(&other_key).await.unwrap().is_some());
+    })
+    .unwrap()
+}
+
+#[test]
 fn filtered_truncate_processes_more_than_one_chunk() {
     workers::block_on(async {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
