@@ -4187,7 +4187,7 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "One-to-many child paging",
-        name: "LIVE_EveryParentPage / INV_RedSecondParentKeepsPage: a child page is filled per parent, not by one global scan bound",
+        name: "LIVE_EveryParentCompletesOrderedPage / INV_PageIsOrderedPrefix / INV_RedSecondParentKeepsPage: each parent completes its exact ordered child page",
         axis: Tla,
         anchor: "crates/engine/query/src/plan/type_join/type_join_many/children.rs TypeJoinMany::next_per_parent, can_stop_at_limit, child_limit, child_offset",
         model_ref: "MC_ChildPagePerParent_{Green,Red_GlobalBound}.cfg",

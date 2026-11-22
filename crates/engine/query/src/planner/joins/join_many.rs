@@ -191,7 +191,13 @@ impl Planner {
         {
             join_many = join_many.with_preserve_ordered_orphans();
         }
-        if nested_order_by.is_some() && (child_plan_provides_ordering || child_scan_provides_order)
+        let has_nested_aggregate = nested_select
+            .fields
+            .iter()
+            .any(|field| matches!(field, Requestable::Aggregate(_)));
+        if nested_order_by.is_some()
+            && !has_nested_aggregate
+            && (child_plan_provides_ordering || child_scan_provides_order)
         {
             join_many = join_many.with_child_plan_provides_ordering();
         }
