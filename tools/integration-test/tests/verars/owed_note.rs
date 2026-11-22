@@ -37,7 +37,7 @@ async fn a_command_that_resolves_a_journaled_request_with_its_bytes_notes_the_ou
             .await
             .expect("provider");
         let owner = provider.self_did().unwrap();
-        let policy = provider.create_policy(POLICY).await.expect("policy");
+        let policy = provider.create_policy(POLICY, None).await.expect("policy");
         let bearer = provider.create_bearer_token(&owner).await.unwrap();
         provider
             .register_object(&bearer, &policy, "file", "report")

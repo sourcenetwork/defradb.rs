@@ -31,7 +31,7 @@ use defra_perf::emit::{Family, Group, Row, Trust};
 use document::{Document, NormalValue};
 use query::mutator::DocMutator;
 use query::DocFetcher;
-use schema::{CollectionVersion, FieldDescription, FieldKind};
+use schema::CollectionVersion;
 use storage::corekv::{Reader, Store, Writer};
 use storage::RegolithStore;
 use wasm_bindgen::prelude::*;
@@ -71,26 +71,16 @@ fn field_names(count: usize) -> Vec<String> {
     (0..count).map(|i| format!("field_{i}")).collect()
 }
 
-fn collection_version(field_count: usize) -> CollectionVersion {
-    let mut fields = vec![FieldDescription::new(
-        "1",
-        "_docID",
-        FieldKind::doc_id(),
-        schema::CType::LwwRegister,
-    )];
-    for (index, name) in field_names(field_count).iter().enumerate() {
-        fields.push(FieldDescription::new(
-            (index + 2).to_string(),
-            name,
-            FieldKind::string(),
-            schema::CType::LwwRegister,
-        ));
-    }
-    CollectionVersion::new(COLLECTION, "bafkwasmperf", "wasmperf", fields)
+fn collection_sdl(field_count: usize) -> String {
+    let fields: Vec<String> = field_names(field_count)
+        .iter()
+        .map(|name| format!("{name}: String"))
+        .collect();
+    format!("type {COLLECTION} {{ {} }}", fields.join(" "))
 }
 
-fn document(field_count: usize, seq: usize) -> Document {
-    let mut doc = Document::new(collection_version(field_count));
+fn document(collection: &Arc<CollectionVersion>, field_count: usize, seq: usize) -> Document {
+    let mut doc = Document::new(Arc::clone(collection));
     for name in field_names(field_count) {
         doc.set(&name, NormalValue::String(format!("{name}-{seq}")))
             .expect("the field is in the definition");
@@ -112,9 +102,15 @@ async fn document_ops() {
     for fields in FIELD_COUNTS {
         let store = Arc::new(RegolithStore::in_memory().expect("an in-memory store"));
         let db = Arc::new(DB::open_from_arc(store).await.expect("a database"));
-        db.create_collection(collection_version(fields))
+        let collection = Arc::new(
+            db.add_collection(
+                &defra_core::RequestContext::ambient(),
+                &collection_sdl(fields),
+            )
             .await
-            .expect("the collection to register");
+            .expect("the collection to register")
+            .remove(0),
+        );
         let mutator = db::write::autocommit::AutoCommitMutator::new(db.clone());
 
         let started = now();
@@ -122,7 +118,7 @@ async fn document_ops() {
         for seq in 0..OPS {
             ids.push(
                 mutator
-                    .create(COLLECTION, document(fields, seq))
+                    .create(COLLECTION, document(&collection, fields, seq))
                     .await
                     .expect("the create to succeed")
                     .doc_id

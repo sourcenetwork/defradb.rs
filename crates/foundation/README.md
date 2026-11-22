@@ -16,3 +16,4 @@ workspace may use it.
 | [keyring](keyring) | Key storage |
 | [cursor](cursor) | Opaque cursor token codec for GraphQL pagination |
 | [defra-version](defra-version) | Version metadata and Go compat tracking |
+| [prolly](prolly) | History-independent prolly tree: build, insert/remove, diff |

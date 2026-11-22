@@ -19,6 +19,38 @@ pub struct ActorRelationshipQuery<'a> {
     pub actor: &'a str,
 }
 
+/// Select direct relationship assignments for one subject and issuer.
+#[derive(Clone, Copy)]
+pub struct AssignmentQuery<'a> {
+    pub policy: &'a str,
+    pub resource: &'a str,
+    pub relation: &'a str,
+    pub subject: &'a str,
+    pub issuer: &'a str,
+    /// Reject evidence older than this previously verified position.
+    /// A verified newer term is accepted, including when its height resets.
+    pub not_before: Option<&'a AssignmentPosition>,
+}
+
+/// A finalized block position a consumer can persist between reads.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AssignmentPosition {
+    pub term: u64,
+    pub height: u64,
+    pub block_hash: String,
+}
+
+/// A complete verified assignment set and the evidence that authenticates it.
+/// The evidence can include other subjects' relationships in the same policy.
+#[derive(Debug, Clone)]
+pub struct CertifiedAssignments {
+    pub object_ids: Vec<String>,
+    pub position: AssignmentPosition,
+    pub timestamp: u64,
+    pub module_state_root: String,
+    pub evidence: serde_json::Value,
+}
+
 #[derive(Debug, Clone)]
 pub struct AcpLightClientStatus {
     pub height: u64,
@@ -76,6 +108,10 @@ impl From<vera_delegation::CommandError> for ProviderError {
         }
     }
 }
+
+/// The most registrations one request carries: the most commands vera.rs
+/// applies in one ordered list.
+pub const MAX_REGISTRATIONS_PER_REQUEST: usize = vera_modules::acp::MAX_POLICY_COMMAND_LIST;
 
 /// One command of a request built for owed changes, under the bearer token
 /// it is submitted with.
@@ -219,7 +255,16 @@ pub trait VeraProvider: MaybeSendSync {
         ))
     }
 
-    async fn create_policy(&self, policy_yaml: &str) -> Result<String, ProviderError>;
+    /// Create the YAML policy as the provider's actor and return its ID.
+    /// vera.rs derives the ID from the definition, the actor and `nonce`,
+    /// drawing a random nonce when none is given; sent again with the same
+    /// nonce it returns the policy already made and makes no second one.
+    /// A provider whose ACP assigns its own IDs refuses a nonce.
+    async fn create_policy(
+        &self,
+        policy_yaml: &str,
+        nonce: Option<acp::PolicyNonce>,
+    ) -> Result<String, ProviderError>;
 
     async fn register_object(
         &self,
@@ -228,6 +273,22 @@ pub trait VeraProvider: MaybeSendSync {
         resource: &str,
         object_id: &str,
     ) -> Result<(), ProviderError>;
+
+    /// Register each of `objects` under `bearer_token` in one request the
+    /// provider applies in order, all or none, at most
+    /// [`MAX_REGISTRATIONS_PER_REQUEST`] of them. A provider that applies no
+    /// such list refuses it as unsupported, and its registrations are sent
+    /// one at a time ([`Self::register_object`]).
+    async fn register_objects(
+        &self,
+        bearer_token: &str,
+        objects: &[acp::AcpObject<'_>],
+    ) -> Result<(), ProviderError> {
+        let _ = (bearer_token, objects);
+        Err(ProviderError::Unsupported(
+            "this provider registers one object per request".into(),
+        ))
+    }
 
     async fn archive_object(
         &self,
@@ -397,6 +458,16 @@ pub trait VeraProvider: MaybeSendSync {
         resource: &str,
         object_id: &str,
     ) -> Result<(bool, String), ProviderError>;
+
+    /// Read complete assignment evidence. Callers must authorize its disclosure.
+    async fn read_certified_assignments(
+        &self,
+        _query: AssignmentQuery<'_>,
+    ) -> Result<CertifiedAssignments, ProviderError> {
+        Err(ProviderError::Unsupported(
+            "certified assignment discovery".into(),
+        ))
+    }
 
     async fn query_actor_relationship(
         &self,

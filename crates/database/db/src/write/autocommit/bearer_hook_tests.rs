@@ -181,14 +181,15 @@ fn create_retry_callback_uses_bearer_captured_before_commit() {
             .await
             .unwrap();
         owed.commit().await.unwrap();
-        let callback = super::create::acp_registration_retry_callback(
+        let callback = acp::CommitRegistration::new(
             Arc::new(acp::ExternalDocumentAcp::new(observer.clone(), store)),
             creator,
+            Some(TOKEN.to_string()),
             "policy".into(),
             "resource".into(),
             "doc-2".into(),
-            Some(TOKEN.to_string()),
-        );
+        )
+        .into_hook();
 
         assert_eq!(defra_core::signing::get_request_bearer_token(DID), None);
         callback().await.unwrap();

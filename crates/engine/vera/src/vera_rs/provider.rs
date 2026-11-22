@@ -3,15 +3,15 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::provider::{
-    AcpLightClientStatus, ActorRelationshipQuery, ProviderError, ProviderPolicyInfo, SubjectRef,
-    VeraProvider,
+    AcpLightClientStatus, ActorRelationshipQuery, AssignmentQuery, CertifiedAssignments,
+    ProviderError, ProviderPolicyInfo, SubjectRef, VeraProvider,
 };
 use crate::tuning::AcpTuning;
 use acp_light_client::{
     AcpLightClient, AcpTransport, FreshnessPolicy, HttpWsTransport, ProofClient,
 };
 use alloy_primitives::{Bytes, FixedBytes, B256};
-use alloy_sol_types::{SolCall, SolEvent};
+use alloy_sol_types::SolCall;
 use async_trait::async_trait;
 use commonware_codec::DecodeExt as _;
 use events::{AcpCacheInvalidatedData, AcpHeightAdvancedData, Bus, Message};
@@ -29,17 +29,21 @@ use super::provider_commands::resolve_registered_or_passthrough_bearer_token;
 use super::provider_commands::{
     holds_registered_key, resolve_registered_or_passthrough_bearer_token_as,
 };
+use super::receipt_wait::Fallback;
 use super::request_digest;
 use super::signer::{admission, DelegationSigner, Secp256k1Signer};
 use super::transport::RpcTransport;
 use super::worker::NativeWorker;
 
+mod assignments;
 #[cfg(test)]
 mod audience_tests;
+mod create_policy;
 mod exact_relationship;
 mod genesis;
 mod owed_request;
 mod reach;
+mod registration_list;
 #[cfg(test)]
 mod signer_tests;
 mod submission;
@@ -67,6 +71,8 @@ pub struct VeraRsProvider {
     trusted: ConsensusPublicKey,
     signer: Arc<dyn DelegationSigner>,
     sync_timeout: Duration,
+    /// Longest wait between two asks for a receipt with no new header.
+    receipt_fallback: Arc<Fallback>,
     light_client_observability: Arc<AtomicU64>,
     _light_client_observer: edge::Service,
     edge: edge::Edge,
@@ -311,6 +317,7 @@ impl VeraRsProvider {
         })
         .await?;
         let light_client_observability = Arc::new(AtomicU64::new(0));
+        let receipt_fallback = Arc::new(Fallback::new(tuning.receipt_fallback));
 
         let client = Arc::new(VeraRsClient::with_transport(rpc));
         let signer = actor.signer()?;
@@ -330,6 +337,7 @@ impl VeraRsProvider {
                 light_client: light_client.clone(),
                 trusted,
                 timeout: tuning.receipt_timeout,
+                fallback: receipt_fallback.clone(),
             },
             worker: worker.clone(),
             follow,
@@ -360,6 +368,7 @@ impl VeraRsProvider {
             trusted,
             signer,
             sync_timeout: tuning.receipt_timeout,
+            receipt_fallback,
             light_client_observability,
             _light_client_observer,
             edge: edge.clone(),
@@ -395,6 +404,13 @@ impl VeraRsProvider {
         let answer = read.await?;
         self.follower.still(epoch)?;
         Ok(answer)
+    }
+
+    /// How many waits for a receipt ended at
+    /// [`AcpTuning::receipt_fallback`] rather than at a new finalized
+    /// header, since the provider was built.
+    pub fn receipt_fallbacks(&self) -> u64 {
+        self.receipt_fallback.expired()
     }
 
     fn policy_id_to_bytes32(policy_id: &str) -> Result<FixedBytes<32>, ProviderError> {
@@ -619,69 +635,12 @@ impl VeraProvider for VeraRsProvider {
         self.owed_outcome(digest, tx, floor).await
     }
 
-    async fn create_policy(&self, policy_yaml: &str) -> Result<String, ProviderError> {
-        let token = bearer::create_scoped_bearer_token(
-            self.signer.as_ref(),
-            &did_spelling::wire(&self.actor_did),
-            &self.worker_did,
-            self.deployment,
-            300,
-            vera_client::DelegationScope::CreatePolicy,
-        )
-        .await
-        .map_err(|e| ProviderError::Config(e.to_string()))?;
-        let call = IAcp::bearerCreatePolicyCall {
-            bearerToken: token,
-            policy: policy_yaml.as_bytes().to_vec().into(),
-            marshalType: 1,
-        };
-        let confirmed = self.send_tx_with_sequence(call.abi_encode().into()).await?;
-        let mut events = confirmed.receipt.logs().iter().filter(|log| {
-            log.address == ACP_ADDRESS
-                && log.topics().first() == Some(&IAcp::DelegatedPolicyCreated::SIGNATURE_HASH)
-        });
-        let log = events
-            .next()
-            .ok_or_else(|| ProviderError::Query("creation event missing".into()))?;
-        let event = IAcp::DelegatedPolicyCreated::decode_raw_log_validate(
-            log.topics().iter().copied(),
-            &log.data.data,
-        )
-        .map_err(|e| ProviderError::Query(format!("creation event: {e}")))?;
-        if events.next().is_some() || !did_spelling::same_actor(&event.creator, &self.actor_did) {
-            return Err(ProviderError::Query(
-                "creation event does not match the actor".into(),
-            ));
-        }
-        let id = hex::encode(event.policyId);
-        let record = self
-            .admitted_read(async {
-                verified(self.light_client.header_chain(), || {
-                    self.light_client.read_policy(&id)
-                })
-                .await
-                .map_err(|e| ProviderError::Query(format!("created policy proof: {e}")))
-            })
-            .await?;
-        let record: PolicyRecord = serde_json::from_slice(
-            record
-                .value
-                .as_deref()
-                .ok_or_else(|| ProviderError::Query("created policy absent".into()))?,
-        )
-        .map_err(|e| ProviderError::Query(format!("created policy record: {e}")))?;
-        if record.policy.id != id
-            || record.raw_policy != policy_yaml
-            || !did_spelling::same_actor(&record.metadata.owner_did, &self.actor_did)
-            || record.metadata.tx_signer != self.worker_did
-            || record.metadata.tx_hash != confirmed.receipt.tx_hash.as_slice()
-            || record.metadata.creation_ts.block_height != confirmed.revision
-        {
-            return Err(ProviderError::Query(
-                "created policy does not match the signed request".into(),
-            ));
-        }
-        Ok(id)
+    async fn create_policy(
+        &self,
+        policy_yaml: &str,
+        nonce: Option<acp::PolicyNonce>,
+    ) -> Result<String, ProviderError> {
+        self.create_policy_with(policy_yaml, nonce).await
     }
 
     async fn register_object(
@@ -705,6 +664,22 @@ impl VeraProvider for VeraRsProvider {
             "vera.rs register_object send_tx completed"
         );
 
+        Ok(())
+    }
+
+    async fn register_objects(
+        &self,
+        bearer_token: &str,
+        objects: &[acp::AcpObject<'_>],
+    ) -> Result<(), ProviderError> {
+        let calldata = registration_list::calldata(bearer_token, objects)?;
+        let send_tx_start = Instant::now();
+        self.send_tx(calldata).await?;
+        tracing::info!(
+            objects = objects.len(),
+            elapsed = ?send_tx_start.elapsed(),
+            "vera.rs register_objects send_tx completed"
+        );
         Ok(())
     }
 
@@ -927,6 +902,13 @@ impl VeraProvider for VeraRsProvider {
             Some(owner) => (true, did_spelling::defra(owner.0.as_str()).into_owned()),
             None => (false, String::new()),
         })
+    }
+
+    async fn read_certified_assignments(
+        &self,
+        query: AssignmentQuery<'_>,
+    ) -> Result<CertifiedAssignments, ProviderError> {
+        self.admitted_read(assignments::read(self, query)).await
     }
 
     async fn query_actor_relationship(

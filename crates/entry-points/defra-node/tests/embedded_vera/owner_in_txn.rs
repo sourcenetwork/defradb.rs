@@ -61,7 +61,7 @@ impl Home {
         let vera = node.vera_acp().expect("vera.rs document ACP").clone();
         assert_eq!(vera.self_did(), Some(did(&owner).to_string()));
         let policy = vera
-            .add_policy(did(&owner).as_str(), POLICY)
+            .add_policy(did(&owner).as_str(), POLICY, None)
             .await
             .expect("policy");
         node.add_collection(&users(&policy))

@@ -260,6 +260,12 @@ pub struct OwedChange {
     /// other changes was refused.
     #[serde(default, skip_serializing_if = "is_false")]
     pub alone: bool,
+    /// The reader a create's genesis asks for, owed with the document's
+    /// registration (`TransactionOutbox::stage_with_registration`): it is
+    /// in neither the node's admission count nor its actor's, neither when
+    /// it is staged nor when it settles.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub with_registration: bool,
 }
 
 impl OwedChange {
@@ -278,6 +284,7 @@ impl OwedChange {
             epoch: new.txn.map(|_| run_epoch()),
             in_flight: None,
             alone: false,
+            with_registration: false,
         }
     }
 
@@ -410,6 +417,7 @@ mod tests {
             epoch: None,
             in_flight: None,
             alone: false,
+            with_registration: false,
         }
     }
 

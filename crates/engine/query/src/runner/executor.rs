@@ -432,8 +432,11 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         &self,
         context: &RequestContext,
         policy: &str,
+        nonce: Option<acp::PolicyNonce>,
     ) -> std::result::Result<String, TransactionError> {
-        self.registry.add_dac_policy_as(context, policy).await
+        self.registry
+            .add_dac_policy_as(context, policy, nonce)
+            .await
     }
 
     async fn list_dac_policies_as(
@@ -943,13 +946,13 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 let registered = acp
                     .is_doc_registered(field(2)?, field(3)?, field(4)?)
                     .await
-                    .map_err(|error| crate::error::QueryError::execution(error.to_string()))?;
+                    .map_err(crate::error::QueryError::from_acp)?;
                 serde_json::to_vec(&registered)
             } else if field(1)? == "owner" {
                 let owner = acp
                     .get_doc_owner(field(2)?, field(3)?, field(4)?)
                     .await
-                    .map_err(|error| crate::error::QueryError::execution(error.to_string()))?;
+                    .map_err(crate::error::QueryError::from_acp)?;
                 serde_json::to_vec(&owner)
             } else if field(4)? == "writer" {
                 let decision = acp
@@ -981,13 +984,25 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 let allowed = acp
                     .check_doc_access(&acp_identity, permission, field(2)?, field(3)?, field(4)?)
                     .await
-                    .map_err(|error| crate::error::QueryError::execution(error.to_string()))?;
+                    .map_err(crate::error::QueryError::from_acp)?;
                 serde_json::to_vec(&allowed)
             }
             .map_err(|error| crate::error::QueryError::execution(error.to_string()))?;
             Ok::<_, crate::error::QueryError>(response)
         })
-        .await?;
+        .await
+        .map_err(|error| match error {
+            // A refused create is the provider's answer, not a missing one.
+            error @ crate::error::QueryError::PermissionDenied(_) => error,
+            // A strict request names nothing about the document it could not
+            // check; any other keeps the provider's words, as before.
+            error => self.access_check_failure(error, |error| match error {
+                crate::error::QueryError::AcpProviderUnavailable(message) => {
+                    crate::error::QueryError::Execution(message)
+                }
+                other => other,
+            }),
+        })?;
         Ok(std::sync::Arc::from(response))
     }
 }

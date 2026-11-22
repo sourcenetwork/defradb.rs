@@ -538,6 +538,29 @@ mod tests {
             assert_eq!(status(HttpError::from(error)), expected);
         }
     }
+
+    #[test]
+    fn transaction_schema_errors_keep_their_source_context() {
+        workers::block_on(async {
+            let error = HttpError::from(TransactionError::operation(
+                "schema error: duplicate field. Name: _docID",
+            ));
+            let response = error.into_response();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+            let body = axum::body::to_bytes(response.into_body(), 1024)
+                .await
+                .unwrap();
+            let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "error": "schema error: duplicate field. Name: _docID"
+                })
+            );
+        })
+        .unwrap()
+    }
 }
 
 #[cfg(test)]

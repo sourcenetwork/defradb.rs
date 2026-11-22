@@ -33,7 +33,7 @@
 (* Rust code modelled:                                                     *)
 (*   crates/entry-points/defra-node/src/db_impls.rs DbSchemaOps::add_view               *)
 (*   crates/database/db/src/collection/ops/create.rs                                *)
-(*     DB::create_collections_atomic_with_acp_registration_as,             *)
+(*     DB::create_view_collections_as, DB::stage_new_collections,          *)
 (*     DB::require_view_transforms (the lens config, in the transaction)   *)
 (*   crates/database/db/src/definition/migration/committed_lenses.rs DB::add_lens,  *)
 (*     DB::commit_synced_lens, write_lens_config                           *)

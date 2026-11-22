@@ -20,14 +20,14 @@ pub enum DacPolicyError {
         acp: &'static str,
         creator: String,
     },
-    /// An explicit policy counter names a policy ID, and the remote ACP,
-    /// which assigns its own counters, holds no policy under it.
-    #[error("the remote ACP holds no policy {policy_id}; with a remote ACP an explicit counter only names a policy it was seeded with")]
-    RemotePolicyAbsent { policy_id: String },
-    /// The remote ACP holds a policy under the ID an explicit counter names,
-    /// and its definition is not the caller's.
-    #[error("the remote ACP holds policy {policy_id} under another definition")]
-    RemotePolicyDiffers { policy_id: String },
+    /// A counter makes a local ACP's policy ID; the remote ACP (vera.rs)
+    /// derives its IDs from the definition, the creator and a nonce.
+    #[error("a policy counter makes a local ACP's policy ID; the remote ACP derives its IDs from a nonce")]
+    CounterNeedsLocalAcp,
+    /// A nonce makes a remote ACP's policy ID; a local ACP numbers its
+    /// policies, as Go's does.
+    #[error("a policy nonce makes a remote ACP's policy ID; the local ACP numbers its policies")]
+    NonceNeedsRemoteAcp,
     /// The policy store could not be read for policy `policy_id`.
     #[error("policy validation failed with acp: {message}. PolicyID: {policy_id}")]
     Lookup { message: String, policy_id: String },
@@ -44,6 +44,10 @@ pub enum DacPolicyError {
     /// The light client could not report its status.
     #[error("failed to get ACP light client status: {0}")]
     LightClient(String),
+    #[error("certified assignment discovery requires the subject's identity")]
+    AssignmentSubject,
+    #[error("failed to read certified assignments: {0}")]
+    Assignments(#[source] acp::AssignmentReadError),
     /// The caller may not run the operation.
     #[error(transparent)]
     Db(#[from] Error),

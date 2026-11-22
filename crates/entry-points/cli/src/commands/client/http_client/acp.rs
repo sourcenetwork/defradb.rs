@@ -58,8 +58,15 @@ pub struct NacRelationshipRequest {
 }
 
 impl HttpClient {
-    pub async fn acp_add_policy(&self, policy: &str) -> Result<AcpAddPolicyResponse> {
-        let url = self.acp_policy_url();
+    pub async fn acp_add_policy(
+        &self,
+        policy: &str,
+        nonce: Option<acp::PolicyNonce>,
+    ) -> Result<AcpAddPolicyResponse> {
+        let url = match nonce {
+            Some(nonce) => format!("{}?nonce={nonce}", self.acp_policy_url()),
+            None => self.acp_policy_url(),
+        };
         let response = self.post_text(&url, policy, None).await?;
         if !response.status().is_success() {
             let status = response.status();

@@ -149,13 +149,32 @@ pub async fn register_collection_if_needed(
     identity: Option<&Did>,
     collection: &CollectionVersion,
 ) -> acp::Result<()> {
-    if !collection.is_branchable {
+    let (Some(did), Some(object)) = (
+        identity,
+        collection_to_register(acp, identity, collection).await?,
+    ) else {
         return Ok(());
+    };
+    acp.register_object(did, object.policy_id, object.resource, object.object_id)
+        .await
+}
+
+/// The ACP object a branchable `collection` still needs registered to
+/// `identity`, as [`register_collection_if_needed`] decides it: none when
+/// the collection is not branchable, has no policy, has no identity to own
+/// it, or is registered to `identity` already; refused when another owns it.
+pub async fn collection_to_register<'a>(
+    acp: &dyn DocumentACP,
+    identity: Option<&Did>,
+    collection: &'a CollectionVersion,
+) -> acp::Result<Option<acp::AcpObject<'a>>> {
+    if !collection.is_branchable {
+        return Ok(None);
     }
 
     let (policy, did) = match (&collection.policy, identity) {
         (Some(p), Some(id)) => (p, id),
-        _ => return Ok(()),
+        _ => return Ok(None),
     };
 
     if acp
@@ -172,7 +191,7 @@ pub async fn register_collection_if_needed(
             .get_doc_owner(&policy.id, &policy.resource_name, &collection.collection_id)
             .await?;
         if existing_owner.as_ref() == Some(did) {
-            return Ok(());
+            return Ok(None);
         }
         return Err(acp::Error::DocumentAlreadyRegistered(format!(
             "collection object '{}' under resource '{}' is already registered to a different owner (expected {}, found {})",
@@ -186,13 +205,11 @@ pub async fn register_collection_if_needed(
         )));
     }
 
-    acp.register_object(
-        did,
-        &policy.id,
-        &policy.resource_name,
-        &collection.collection_id,
-    )
-    .await
+    Ok(Some(acp::AcpObject {
+        policy_id: &policy.id,
+        resource: &policy.resource_name,
+        object_id: &collection.collection_id,
+    }))
 }
 
 /// Clean up ACP relations when deleting a document.

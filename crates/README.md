@@ -17,7 +17,7 @@ flowchart TB
     database["<b>Database</b><br/>db · replication-filter · p2p · kms · pg-compat"]
     engine["<b>Engine</b><br/>query · vera-embedded · vera · vera-delegation · acp · datastore · blockstore · storage"]
     blocks["<b>Building blocks</b><br/>crdt · inputs · orbis · telemetry · zanzibar · document · identity · bitswap · net · chunk-split"]
-    foundation["<b>Foundation</b><br/>edge · events · schema · crypto · defra-core · lens · workers · keyring · cursor · defra-version"]
+    foundation["<b>Foundation</b><br/>edge · events · schema · crypto · defra-core · lens · workers · keyring · cursor · defra-version · prolly"]
 
     entry --> surfaces --> database --> engine --> blocks --> foundation
 ```
@@ -31,7 +31,7 @@ flowchart TB
 | [Database](database/README.md) | [db](database/db) · [replication-filter](database/replication-filter) · [p2p](database/p2p) · [kms](database/kms) · [pg-compat](database/pg-compat) |
 | [Engine](engine/README.md) | [query](engine/query) · [vera-embedded](engine/vera-embedded) · [vera](engine/vera) · [vera-delegation](engine/vera-delegation) · [acp](engine/acp) · [datastore](engine/datastore) · [blockstore](engine/blockstore) · [storage](engine/storage) |
 | [Building blocks](building-blocks/README.md) | [crdt](building-blocks/crdt) · [inputs](building-blocks/inputs) · [orbis](building-blocks/orbis) · [telemetry](building-blocks/telemetry) · [zanzibar](building-blocks/zanzibar) · [document](building-blocks/document) · [identity](building-blocks/identity) · [bitswap](building-blocks/bitswap) · [net](building-blocks/net) · [chunk-split](building-blocks/chunk-split) |
-| [Foundation](foundation/README.md) | [edge](foundation/edge) · [events](foundation/events) · [schema](foundation/schema) · [crypto](foundation/crypto) · [defra-core](foundation/defra-core) · [lens](foundation/lens) · [workers](foundation/workers) · [keyring](foundation/keyring) · [cursor](foundation/cursor) · [defra-version](foundation/defra-version) |
+| [Foundation](foundation/README.md) | [edge](foundation/edge) · [events](foundation/events) · [schema](foundation/schema) · [crypto](foundation/crypto) · [defra-core](foundation/defra-core) · [lens](foundation/lens) · [workers](foundation/workers) · [keyring](foundation/keyring) · [cursor](foundation/cursor) · [defra-version](foundation/defra-version) · [prolly](foundation/prolly) |
 
 ### Find a crate
 
@@ -65,6 +65,7 @@ flowchart TB
 | [p2p](database/p2p) | Database |
 | [p2p-adapter](surfaces/p2p-adapter) | Surfaces |
 | [pg-compat](database/pg-compat) | Database |
+| [prolly](foundation/prolly) | Foundation |
 | [query](engine/query) | Engine |
 | [replication-filter](database/replication-filter) | Database |
 | [schema](foundation/schema) | Foundation |

@@ -71,6 +71,9 @@ pub(super) struct Remote {
     pub(super) hold_owner_read: AtomicBool,
     pub(super) owner_read_waiting: regolith::sync::Event,
     pub(super) owner_reads_released: regolith::sync::Event,
+    /// Objects whose access checks fail as unavailable while every other
+    /// call answers.
+    pub(super) unchecked: Map<String, ()>,
 }
 
 /// The words a delegation bound to one request names `command` by.
@@ -124,6 +127,7 @@ impl Remote {
             hold_owner_read: AtomicBool::new(false),
             owner_read_waiting: regolith::sync::Event::new(),
             owner_reads_released: regolith::sync::Event::new(),
+            unchecked: map(),
         })
     }
 
@@ -321,7 +325,11 @@ impl VeraProvider for Remote {
         })
     }
 
-    async fn create_policy(&self, policy_yaml: &str) -> Result<String, ProviderError> {
+    async fn create_policy(
+        &self,
+        policy_yaml: &str,
+        _nonce: Option<acp::PolicyNonce>,
+    ) -> Result<String, ProviderError> {
         let parsed = acp::policy_yaml::parse_policy_yaml(policy_yaml)
             .map_err(|error| ProviderError::Config(error.to_string()))?;
         let id = acp::policy_yaml::build_policy(&parsed, 0)
@@ -479,6 +487,11 @@ impl VeraProvider for Remote {
         actor_did: &str,
     ) -> Result<bool, ProviderError> {
         self.reachable()?;
+        if self.unchecked.contains_key(object_id) {
+            return Err(ProviderError::Unavailable(format!(
+                "stub provider cannot check {object_id}"
+            )));
+        }
         if self.stale.load(Ordering::SeqCst) {
             return Err(ProviderError::Unavailable(
                 "verified permission: verified revision is stale; wait for a fresh finalized revision"
