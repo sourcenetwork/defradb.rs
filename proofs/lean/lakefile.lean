@@ -220,6 +220,9 @@ lean_lib RetrySchedule where
 lean_lib ChunkSplit where
 
 @[default_target]
+lean_lib ProllyTree where
+
+@[default_target]
 lean_lib TxnId where
 
 @[default_target]
@@ -368,3 +371,9 @@ lean_lib RemoteOwnerAnswer where
 
 @[default_target]
 lean_lib StrictAccessRule where
+
+@[default_target]
+lean_lib SeTruncatePrefix where
+
+@[default_target]
+lean_lib ReplicatorEmptyCollections where

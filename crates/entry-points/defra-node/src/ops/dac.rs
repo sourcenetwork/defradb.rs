@@ -123,4 +123,17 @@ impl Node {
             .await
             .map_err(transaction_error)
     }
+
+    pub async fn certified_assignments_as(
+        &self,
+        context: &RequestContext,
+        query: acp::AssignmentQuery,
+    ) -> Result<acp::CertifiedAssignments> {
+        let database = Arc::clone(self.database());
+        let context = self.caller(context);
+        self.on_acp(move || async move {
+            Ok(database.certified_assignments_as(&context, &query).await?)
+        })
+        .await
+    }
 }

@@ -4362,7 +4362,7 @@ async fn busy_replies_complete_rooted_and_block_sync_waiters_as_busy() {
             root_cid: root,
             car_data: crate::sync::car::encode_car_busy(&root).unwrap(),
         },
-        TransportEvent::BitswapComplete {
+        TransportEvent::BlockSyncComplete {
             query_id: query,
             success: false,
             cause: Some(crate::transport::FetchFailureCause::Refused),

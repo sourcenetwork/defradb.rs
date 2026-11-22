@@ -21,6 +21,10 @@ static BASE: Lazy<String> = Lazy::new(start);
 
 /// `sdl` with every provider URL pointed at the stub.
 pub fn route(sdl: &str) -> String {
+    let needs_stub = PROVIDERS.iter().any(|(real, _)| sdl.contains(real));
+    if !needs_stub {
+        return sdl.to_owned();
+    }
     PROVIDERS.iter().fold(sdl.to_owned(), |sdl, (real, path)| {
         sdl.replace(real, &format!("{}{path}", *BASE))
     })

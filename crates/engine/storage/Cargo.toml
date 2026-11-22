@@ -19,6 +19,8 @@ schema = { path = "../../foundation/schema" }
 regolith.workspace = true
 # The worker pool: each worker's regolith queues, detached callbacks.
 workers = { path = "../../foundation/workers" }
+# The prolly tree whose nodes `stores::prolly_nodes` keeps.
+prolly = { path = "../../foundation/prolly" }
 kovan.workspace = true
 bytes.workspace = true
 chrono = { version = "0.4", features = ["serde"] }

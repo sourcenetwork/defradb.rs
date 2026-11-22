@@ -14,67 +14,29 @@
 
 #![cfg(feature = "otel")]
 
-use kovan::Atom;
+mod common;
+
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::panic::AssertUnwindSafe;
 use std::process::{Command, Stdio};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const HINT: &str =
     "OpenTelemetry export failed, ensure your OTLP collector is running and reachable";
-
-/// Drain a child's piped stderr into a shared string on a background thread,
-/// so the child never blocks on a full pipe buffer.
-fn drain_stderr(stderr: std::process::ChildStderr) -> Arc<Atom<String>> {
-    let buf = Arc::new(Atom::new(String::new()));
-    let buf_thread = Arc::clone(&buf);
-    std::thread::spawn(move || {
-        let mut rdr = stderr;
-        let mut chunk = [0u8; 4096];
-        loop {
-            match rdr.read(&mut chunk) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => {
-                    let text = String::from_utf8_lossy(&chunk[..n]).into_owned();
-                    buf_thread.rcu(|buffered| {
-                        let mut next = buffered.clone();
-                        next.push_str(&text);
-                        next
-                    });
-                }
-            }
-        }
-    });
-    buf
-}
-
-fn wait_for_port(port: u16, child: &mut std::process::Child) -> bool {
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while Instant::now() < deadline {
-        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            return true;
-        }
-        if matches!(child.try_wait(), Ok(Some(_))) {
-            return false; // exited early
-        }
-        std::thread::sleep(Duration::from_millis(200));
-    }
-    false
-}
 
 /// Fire a GraphQL query over a raw TCP socket. The `query.execute_request`
 /// span it produces is info-level, so it survives the default env filter and
 /// reaches the OTLP exporter (a plain HTTP GET would only make a debug-level
 /// span, which the filter drops before export).
-fn send_graphql(port: u16) {
+fn send_graphql(address: &str) {
     let body = r#"{"query":"query { __typename }"}"#;
     let req = format!(
         "POST /api/v0/graphql HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
         body.len(),
         body
     );
-    if let Ok(mut s) = TcpStream::connect(("127.0.0.1", port)) {
+    if let Ok(mut s) = TcpStream::connect(address) {
         let _ = s.write_all(req.as_bytes());
         let mut resp = String::new();
         let _ = s.read_to_string(&mut resp);
@@ -83,15 +45,10 @@ fn send_graphql(port: u16) {
 
 #[test]
 fn exporter_unreachable_logs_hint_once_and_suppresses_raw() {
-    let http_port = portpicker::pick_unused_port().expect("free http port");
     // A port nobody listens on → the HTTP exporter fails to reach it.
-    // Guard against portpicker handing back the same port twice (the two
-    // calls bind-and-release independently, so equality is possible).
-    let dead_otlp_port = std::iter::repeat_with(portpicker::pick_unused_port)
-        .flatten()
-        .find(|&p| p != http_port)
-        .expect("free otlp port distinct from http port");
+    let dead_otlp_port = portpicker::pick_unused_port().expect("free otlp port");
     let rootdir = tempfile::tempdir().expect("tempdir");
+    let (log, output) = common::NodeLog::create(rootdir.path().join("node.log"));
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_defradb"))
         .arg("start")
@@ -102,7 +59,8 @@ fn exporter_unreachable_logs_hint_once_and_suppresses_raw() {
         .arg("--store")
         .arg("memory")
         .arg("--url")
-        .arg(format!("127.0.0.1:{http_port}"))
+        .arg(common::ANY_PORT)
+        .args(common::LOG_FLAGS)
         .env(
             "OTEL_EXPORTER_OTLP_ENDPOINT",
             format!("http://127.0.0.1:{dead_otlp_port}"),
@@ -115,36 +73,30 @@ fn exporter_unreachable_logs_hint_once_and_suppresses_raw() {
         .env("DEFRA_LOG_LEVEL", "info")
         .env_remove("RUST_LOG")
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
+        .stderr(output)
         .spawn()
         .expect("spawn defra");
 
-    let stderr = drain_stderr(child.stderr.take().expect("piped stderr"));
-
-    let ready = wait_for_port(http_port, &mut child);
-    if !ready {
+    let waited = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        log.http_address(Duration::from_secs(30))
+    }));
+    let http_address = waited.unwrap_or_else(|panic| {
         let _ = child.kill();
         let _ = child.wait();
-        panic!(
-            "defra did not start serving on :{http_port}\n--- stderr ---\n{}",
-            stderr.load_clone()
-        );
-    }
+        std::panic::resume_unwind(panic)
+    });
 
     // Drive a few queries so the batch processor has spans to export, then
     // give it time to attempt (and fail) an export and emit the hint.
     for _ in 0..5 {
-        send_graphql(http_port);
+        send_graphql(&http_address);
         std::thread::sleep(Duration::from_millis(200));
     }
     std::thread::sleep(Duration::from_secs(2));
 
     let _ = child.kill();
     let _ = child.wait();
-    // Let the drain thread flush the tail of the pipe.
-    std::thread::sleep(Duration::from_millis(200));
-
-    let captured = stderr.load_clone();
+    let captured = log.closed();
 
     let hint_count = captured.matches(HINT).count();
     assert_eq!(
