@@ -55,7 +55,7 @@ pub(crate) fn build(
     config: &P2PHostConfig,
 ) -> Result<(SwarmTransport, Option<relay::client::Behaviour>)> {
     let noise = || noise::Config::new(keypair).map_err(|e| Error::Transport(e.to_string()));
-    let (dns_config, dns_opts) = resolver::resolver_config(config.resolver.read())?;
+    let (dns_config, dns_opts) = resolver::resolver_config(config.resolver.read());
 
     let tcp = authenticated_tcp(keypair).map_err(|e| Error::Transport(e.to_string()))?;
     let quic = libp2p::quic::tokio::Transport::new(libp2p::quic::Config::new(keypair))

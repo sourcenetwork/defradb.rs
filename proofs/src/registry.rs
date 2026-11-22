@@ -4241,4 +4241,16 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
         bound_by: "tools/integration-test/tests/testo/query/one_to_many/with_limit.rs query_one_to_many_with_child_limit_keeps_a_two_parent_page",
     },
+    Property {
+        // #2924: a host resolver configuration that lists no nameservers, or
+        // cannot be read, gives Go's local nameservers instead of failing the
+        // node's start; one that lists nameservers is kept unchanged.
+        family: "DNS resolver fallback",
+        name: "DnsResolverFallback.chosen_has_nameservers / usable_read_passes_through / failed_read_falls_back / empty_read_falls_back",
+        axis: Lean,
+        anchor: "crates/database/p2p/src/host/transport/resolver.rs resolver_config, fallback_config, FALLBACK_NAMESERVERS",
+        model_ref: "DnsResolverFallback (lake build)",
+        tiers: &[Contract],
+        bound_by: "crates/database/p2p/src/host/transport/resolver_tests.rs a_failed_read_falls_back_to_the_localhost_nameservers, a_read_without_nameservers_falls_back_to_the_localhost_nameservers, a_read_with_nameservers_passes_through_unchanged, the_fallback_matches_the_lean_model",
+    },
 ];
