@@ -1,5 +1,7 @@
 use std::future::pending;
-use std::sync::atomic::Ordering;
+use std::pin::pin;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
 
@@ -105,6 +107,41 @@ fn a_stopped_service_has_let_go_of_what_it_held() {
     assert!(service.is_running());
     edge.block_on(service.stopped()).unwrap();
     assert!(released.load(Ordering::SeqCst));
+}
+
+/// A service that owns a server's connection set keeps it through the scope's
+/// drain, so work already admitted finishes instead of being dropped at once.
+#[test]
+fn a_service_drains_its_task_set_when_its_scope_closes() {
+    let runtime = runtime();
+    let edge = runtime.edge().clone();
+    let scope = edge.scope();
+    let service_edge = scope.edge().clone();
+    let task_edge = service_edge.clone();
+    let closing_edge = service_edge.clone();
+    let finished = Arc::new(AtomicBool::new(false));
+    let task_finished = Arc::clone(&finished);
+
+    let service = service_edge.spawn(async move {
+        let mut connections = crate::TaskSet::new(task_edge.clone());
+        connections.spawn(async move {
+            task_edge.sleep(Duration::from_millis(50)).await;
+            task_finished.store(true, Ordering::SeqCst);
+        });
+
+        let mut closing = pin!(closing_edge.closing());
+        loop {
+            nuclei::select! {
+                Some(_) = connections.join_next() => continue,
+                () = closing.as_mut() => break,
+            }
+        }
+        while connections.join_next().await.is_some() {}
+    });
+    let drained = edge.block_on(scope.drain(Duration::from_secs(5))).unwrap();
+    assert!(drained.is_complete());
+    assert!(finished.load(Ordering::SeqCst));
+    assert!(edge.block_on(service).is_ok());
 }
 
 #[test]
