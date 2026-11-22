@@ -78,9 +78,32 @@ fn a_replicator_list_reports_go_shape() {
                         "Addresses": [m::unique("replicator_address")],
                         "CollectionIDs": [m::r("collection0")],
                         "Status": 0,
-                        "LastStatusChange": m::unique("replicator_status_change"),
+                        "LastStatusChange": m::current_timestamp(),
                     },
                 ]),
+                common: Common {
+                    capture: captures([("added_at", "/0/LastStatusChange")]),
+                    ..on("db0")
+                },
+                ..Default::default()
+            }
+            .into(),
+            AddReplicator {
+                target: "db1".into(),
+                collections: vec!["Users".into()],
+                common: on("db0"),
+                ..Default::default()
+            }
+            .into(),
+            ListReplicators {
+                full: true,
+                expected_data: json!([{
+                    "ID": m::r("peer0"),
+                    "Addresses": [m::unique("replicator_address_after_update")],
+                    "CollectionIDs": [m::r("collection0")],
+                    "Status": 0,
+                    "LastStatusChange": m::r("added_at"),
+                }]),
                 common: on("db0"),
                 ..Default::default()
             }

@@ -2228,6 +2228,26 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // Adding a replicator timestamps it; updates retain its status time.
+        family: "B3 filtered replication",
+        name: "INV_NoOverwrite",
+        axis: Tla,
+        anchor: "crates/surfaces/p2p-adapter/src/replicator_install_store.rs Prepare::run; crates/database/p2p/src/bitswap/registry.rs ReplicatorRegistry::set_replicator_info",
+        model_ref: "MC_ReplicatorAddedAt_{Green,Red_Overwrite}.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/net/simple/replicator/list_shape.rs a_replicator_list_reports_go_shape",
+    },
+    Property {
+        // New records get the current time, and updates keep the old one.
+        family: "B3 filtered replication",
+        name: "ReplicatorAddedAt.create_uses_now / update_keeps_previous / recovered_zero_stays_zero",
+        axis: Lean,
+        anchor: "crates/surfaces/p2p-adapter/src/replicator_install_store.rs Prepare::run; crates/database/p2p/src/bitswap/registry.rs ReplicatorRegistry::set_replicator_info",
+        model_ref: "ReplicatorAddedAt (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/surfaces/p2p-adapter/tests/unit/replicator_install_store.rs updating_a_replicator_keeps_its_original_status_timestamp",
+    },
+    Property {
         // A replicator added with no collections is stored, listed, and
         // restored on start, as in Go, and receives no pushes until it has a
         // collection (#2702).

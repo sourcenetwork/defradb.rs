@@ -11,6 +11,8 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 # event to the settled rest (depth = events + 1), and DEADLOCK:<l> stops with
 # event l next (past the end when l = events + 1).
 RUNS=(
+  "MC_ReplicatorAddedAt_Green.cfg ReplicatorAddedAt.tla GREEN"
+  "MC_ReplicatorAddedAt_Red_Overwrite.cfg ReplicatorAddedAt.tla RED" # updating must preserve timestamp
   "MC_DocumentUpdateJournal_Green.cfg DocumentUpdateJournal.tla GREEN"
   "MC_DocumentUpdateJournal_Green_Outside.cfg DocumentUpdateJournal.tla GREEN"
   "MC_DocumentUpdateJournal_Red_Detached.cfg DocumentUpdateJournal.tla RED"

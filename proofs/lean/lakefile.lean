@@ -377,3 +377,6 @@ lean_lib SeTruncatePrefix where
 
 @[default_target]
 lean_lib ReplicatorEmptyCollections where
+
+@[default_target]
+lean_lib ReplicatorAddedAt where

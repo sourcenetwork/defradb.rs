@@ -653,12 +653,13 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
         self.peer_addresses
             .insert(peer_id.to_string(), addr_str.to_string());
 
-        let replicator_info = p2p::ReplicatorInfo::from_raw_with_filters(
+        let mut replicator_info = p2p::ReplicatorInfo::from_raw_with_filters(
             peer_id.to_string(),
             collection_cids.clone(),
             vec![addr_str.to_string()],
             replication_filters.clone(),
         );
+        replicator_info.last_status_change = chrono::Utc::now();
         let mut replay = if let Some(pusher) = &self.doc_pusher {
             let request = crate::ReplicatorInstallRequest::new(
                 replicator_info.clone(),

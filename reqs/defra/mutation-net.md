@@ -299,6 +299,7 @@ A node that holds none of a document with 31 updates, told of its next head, fet
 - **Scenarios:** ["net::simple::replicator::list_shape::a_replicator_list_reports_go_shape"]
 
 Listing replicators returns each entry as `{ID, Addresses, CollectionIDs, Status, LastStatusChange}`, with `Addresses` as an array and `Status` as Go's numeric status.
+Adding a new replicator records the current time as `LastStatusChange`; updating its collections retains its existing status and timestamp.
 
 # `defra.net.replicator.list`: A replicator with no collections is listed
 
