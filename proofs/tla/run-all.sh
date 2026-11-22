@@ -70,6 +70,8 @@ RUNS=(
   "MC_HeldPubsubRequest_Red_ResendLate.cfg HeldPubsubRequest.tla RED" # a resend goes out after the deadline (NoResendAfterDeadline)
   "MC_FloatEquality_Green.cfg FloatEquality.tla GREEN"
   "MC_FloatEquality_Red_Epsilon.cfg FloatEquality.tla RED" # the old tolerance equates distinct values (INV_ExactOnly)
+  "MC_MigratedCounterMerge_Green.cfg MigratedCounterMerge.tla GREEN"
+  "MC_MigratedCounterMerge_Red_Double.cfg MigratedCounterMerge.tla RED" # the active value is migrated twice (INV_TransformedOnce)
   "MC_VerifiedClientGraph_Green.cfg VerifiedClientGraph.tla GREEN"
   "MC_VerifiedClientGraph_Red_SingleMutation.cfg VerifiedClientGraph.tla RED" # a multi-mutation request is accepted (INV_SingleMutation)
   "MC_VerifiedClientGraph_Red_Unencrypted.cfg VerifiedClientGraph.tla RED" # the request adds encryption outside the approved graph (INV_Unencrypted)

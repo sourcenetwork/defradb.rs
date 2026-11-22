@@ -109,6 +109,9 @@ pub struct CompositeMergeState {
     /// The document before this composite's field merges, read only when the
     /// collection has an index.
     pub(crate) indexed_before: Option<Option<Document>>,
+    /// A counter operation on another version was translated onto the active
+    /// representation. Its value must be stored there, not migrated again.
+    pub(crate) active_result: bool,
 }
 
 pub(super) enum CompositeMergePreparation {

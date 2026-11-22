@@ -8,6 +8,158 @@ use defra_core::block::FieldDelta;
 
 use super::field::FieldMergeResult;
 
+async fn counter_document_on_active_version(
+    datastore: &NamespaceView,
+    db: &crate::database::DB<impl Store>,
+    collection: &Collection,
+    doc_short_id: u64,
+    delta: &FieldDelta<'_>,
+) -> std::result::Result<Option<Document>, MergeError> {
+    let stored_version = collection
+        .load_version(datastore, doc_short_id)
+        .await
+        .map_err(MergeError::Database)?;
+    if let Some(doc_id) = crate::docid::map::get_doc_id(
+        &datastore.sibling(storage::namespace::Namespace::Systemstore),
+        doc_short_id,
+    )
+    .await
+    .map_err(MergeError::Database)?
+    {
+        let doc_id = DocID::from_string(&doc_id)
+            .map_err(|error| MergeError::MergeFailed(error.to_string()))?;
+        let at_active_version = stored_version.as_deref() == Some(collection.version_id());
+        let mut document = if at_active_version {
+            collection
+                .read_document_unvalidated(datastore, doc_short_id)
+                .await
+                .map_err(MergeError::Database)?
+        } else {
+            collection
+                .get_with_datastore(datastore, doc_short_id, &doc_id)
+                .await
+                .map_err(MergeError::Database)?
+        };
+        let Some(document) = document.as_mut() else {
+            return Ok(None);
+        };
+        document.set_id(doc_id);
+        document.set_collection_version_id(
+            stored_version
+                .as_deref()
+                .unwrap_or(collection.version_id())
+                .to_owned(),
+        );
+        if at_active_version && delta.collection_version_id != collection.version_id() {
+            let systemstore = datastore.sibling(storage::namespace::Namespace::Systemstore);
+            let versions = crate::definition::loader::get_collections_by_collection_id_known(
+                &systemstore,
+                collection.collection_id(),
+                Some(collection),
+            )
+            .await
+            .map_err(MergeError::Database)?;
+            let Some(history) = crate::definition::lens::build_collection_history(
+                &versions,
+                collection.version_id(),
+            ) else {
+                return Ok(None);
+            };
+            if !history.contains_key(delta.collection_version_id) {
+                return Ok(None);
+            }
+            let lens_document =
+                crate::definition::lens::doc_to_lens_doc(document).ok_or_else(|| {
+                    MergeError::MergeFailed("failed to decode a counter operand".into())
+                })?;
+            let transformed = lens::transform_to_target(
+                &db.lens_store,
+                delta.collection_version_id,
+                &history,
+                lens::LensInput::new(collection.version_id(), lens_document),
+            )
+            .await
+            .map_err(|error| MergeError::MergeFailed(error.to_string()))?;
+            let transformed = crate::definition::migration::helpers::lens_doc_to_document(
+                transformed,
+                document,
+                collection,
+            );
+            *document = transformed;
+            document.set_collection_version_id(delta.collection_version_id);
+        }
+        return Ok(Some(document.clone()));
+    }
+    Ok(None)
+}
+
+async fn counter_result_on_active_version(
+    datastore: &NamespaceView,
+    db: &crate::database::DB<impl Store>,
+    collection: &Collection,
+    field: &FieldDescription,
+    delta: &FieldDelta<'_>,
+    op: &document::FieldOp,
+    doc_short_id: u64,
+) -> std::result::Result<Option<Document>, MergeError> {
+    let Some(source_document) =
+        counter_document_on_active_version(datastore, db, collection, doc_short_id, delta).await?
+    else {
+        return Ok(None);
+    };
+    let updated = counter_apply(collection, field, source_document.get(&field.name), op)?;
+    let mut updated_source = source_document;
+    updated_source.set_unchecked(field.name.to_owned(), updated);
+    updated_source.set_collection_version_id(delta.collection_version_id);
+
+    if delta.collection_version_id == collection.version_id() {
+        return Ok(Some(updated_source));
+    }
+    let systemstore = datastore.sibling(storage::namespace::Namespace::Systemstore);
+    let versions = crate::definition::loader::get_collections_by_collection_id_known(
+        &systemstore,
+        collection.collection_id(),
+        Some(collection),
+    )
+    .await
+    .map_err(MergeError::Database)?;
+    let Some(history) =
+        crate::definition::lens::build_collection_history(&versions, collection.version_id())
+    else {
+        return Ok(None);
+    };
+    let lens_document = crate::definition::lens::doc_to_lens_doc(&updated_source)
+        .ok_or_else(|| MergeError::MergeFailed("failed to decode a merged counter".into()))?;
+    let transformed = lens::transform_to_target(
+        &db.lens_store,
+        collection.version_id(),
+        &history,
+        lens::LensInput::new(delta.collection_version_id, lens_document),
+    )
+    .await
+    .map_err(|error| MergeError::MergeFailed(error.to_string()))?;
+    let result = crate::definition::migration::helpers::lens_doc_to_document(
+        transformed,
+        &updated_source,
+        collection,
+    );
+    Ok(Some(result))
+}
+
+fn counter_apply(
+    collection: &Collection,
+    field: &FieldDescription,
+    current: Option<&NormalValue>,
+    op: &document::FieldOp,
+) -> std::result::Result<NormalValue, MergeError> {
+    let crdt = collection
+        .crdts()
+        .field(field.crdt_type)
+        .ok_or_else(|| MergeError::MergeFailed("counter field has no CRDT".into()))?;
+    crdt.apply(field, current, op)
+        .map_err(|error| MergeError::MergeFailed(error.to_string()))
+}
+
 impl<S, B> DbMergeHandler<S, B>
 where
     S: Store,
@@ -37,7 +189,13 @@ where
             .map_err(|error| MergeError::BlockDecode(format!("field '{}': {error}", field.name)))?;
         let state = crdt.state(field, delta.priority, &input).map_err(failed)?;
         let op = crdt.op(input, false).map_err(failed)?;
-        let target = op_target(datastore, collection, doc_short_id, field).await?;
+        let translate_counter =
+            crdt.ctype().is_counter() && delta.collection_version_id != collection.version_id();
+        let target = if translate_counter {
+            None
+        } else {
+            op_target(datastore, collection, doc_short_id, field).await?
+        };
         if target.is_none() && standalone {
             return Ok(FieldMergeResult {
                 applied: false,
@@ -47,53 +205,100 @@ where
                 op: None,
                 parked: None,
                 superseded: false,
+                active_result: false,
             });
         }
         let applied_key =
             storage::keys::HeadstorePriorityKey::new(doc_short_id, delta.priority, *cid).bytes();
         let applied = !headstore.has(&applied_key).await.map_err(storage)?;
 
-        let value = match target {
-            Some(part) => {
-                let doc_key = collection.doc_key(doc_short_id);
-                if applied {
-                    let operand =
-                        storage::merge::document_part(part, state.part()).ok_or_else(|| {
-                            MergeError::MergeFailed(format!(
-                                "invalid operation on '{}'",
-                                field.name
-                            ))
-                        })?;
-                    crate::database::stored_crdts::record(
-                        datastore,
-                        crate::database::stored_crdts::custom([state.kind]),
-                    )
-                    .await
-                    .map_err(storage)?;
-                    datastore.merge(&doc_key, &operand).await.map_err(storage)?;
+        let mut active_result = false;
+        let value = if translate_counter {
+            let transformed = if applied {
+                counter_result_on_active_version(
+                    datastore,
+                    &self.db,
+                    collection,
+                    field,
+                    delta,
+                    &op,
+                    doc_short_id,
+                )
+                .await?
+            } else {
+                counter_document_on_active_version(
+                    datastore,
+                    &self.db,
+                    collection,
+                    doc_short_id,
+                    delta,
+                )
+                .await?
+            };
+            match transformed {
+                Some(document) => {
+                    active_result = true;
+                    document.get(&field.name).cloned()
                 }
-                // The read is never validated: no decision rests on it.
-                datastore
-                    .get_parts(&doc_key, &[])
-                    .await
-                    .map_err(storage)?
-                    .as_deref()
-                    .and_then(StoredDocument::decode)
-                    .and_then(|stored| stored.fields.get(&part)?.materialize(self.db.crdts()))
+                None => {
+                    let stored = collection
+                        .read_document_unvalidated(datastore, doc_short_id)
+                        .await
+                        .map_err(MergeError::Database)?;
+                    let stored = stored.as_ref().and_then(|doc| doc.get(&field.name));
+                    if applied {
+                        Some(crdt.apply(field, stored, &op).map_err(failed)?)
+                    } else {
+                        stored.cloned()
+                    }
+                }
             }
-            None => {
-                // A value on another schema version (or predating part IDs) is
-                // rewritten whole by its composite, so the operation applies
-                // to the stored value here and the composite puts the result.
-                let stored = collection
-                    .read_document_unvalidated(datastore, doc_short_id)
-                    .await
-                    .map_err(MergeError::Database)?;
-                let stored = stored.as_ref().and_then(|doc| doc.get(&field.name));
-                if applied {
-                    Some(crdt.apply(field, stored, &op).map_err(failed)?)
-                } else {
-                    stored.cloned()
+        } else {
+            match target {
+                Some(part) => {
+                    let doc_key = collection.doc_key(doc_short_id);
+                    if applied {
+                        let operand = storage::merge::document_part(part, state.part())
+                            .ok_or_else(|| {
+                                MergeError::MergeFailed(format!(
+                                    "invalid operation on '{}'",
+                                    field.name
+                                ))
+                            })?;
+                        crate::database::stored_crdts::record(
+                            datastore,
+                            crate::database::stored_crdts::custom([state.kind]),
+                        )
+                        .await
+                        .map_err(storage)?;
+                        datastore.merge(&doc_key, &operand).await.map_err(storage)?;
+                    }
+                    // The read is never validated: no decision rests on it.
+                    datastore
+                        .get_parts(&doc_key, &[])
+                        .await
+                        .map_err(storage)?
+                        .as_deref()
+                        .and_then(StoredDocument::decode)
+                        .and_then(|stored| stored.fields.get(&part)?.materialize(self.db.crdts()))
+                }
+                None => {
+                    if !applied {
+                        collection
+                            .read_document_unvalidated(datastore, doc_short_id)
+                            .await
+                            .map_err(MergeError::Database)?
+                            .as_ref()
+                            .and_then(|doc| doc.get(&field.name))
+                            .cloned()
+                    } else {
+                        let stored = collection
+                            .read_document_unvalidated(datastore, doc_short_id)
+                            .await
+                            .map_err(MergeError::Database)?;
+                        let stored = stored.as_ref().and_then(|doc| doc.get(&field.name));
+                        Some(crdt.apply(field, stored, &op).map_err(failed)?)
+                    }
                 }
             }
         };
@@ -111,6 +316,7 @@ where
             op: None,
             parked: None,
             superseded: false,
+            active_result,
         })
     }
 

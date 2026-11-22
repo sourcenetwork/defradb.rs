@@ -361,6 +361,9 @@ lean_lib SigningOverride where
 lean_lib FloatEquality where
 
 @[default_target]
+lean_lib MigratedCounterMerge where
+
+@[default_target]
 lean_lib OwedParts where
 
 @[default_target]

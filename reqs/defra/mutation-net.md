@@ -266,6 +266,13 @@ An upsert on a `@crdt(type: text)` field that finds no document adds it with the
 
 When `SyncCollectionVersions` fetches a view version whose query source names a lens, the receiving node commits that lens's config as if it had added the lens itself, then registers it. A view on the receiving node can then name the lens with `AddView(transform_cid)`, before and after the node restarts; it never fails with `lens CID not found`.
 
+# `defra.net.migrated_counter_merge`: An old-version counter update merges through a lens once
+
+- **Parents:** ["defra"]
+- **Scenarios:** ["issues::t_2916::an_old_version_counter_update_merges_through_a_lens_once"]
+
+When a peer still at a collection's source version increments a counter and the receiving node has migrated that counter with a lens, the receiving node applies the increment to the source-version projection, then migrates the result once. Later increments from the peer remain visible. With an increment-by-one lens, a source value of one reads as two after migration and three and four after the peer's next two increments; the peer reads two and three.
+
 # `defra.net.sync.exact_fetch`: A DAG fetch is sent only what the receiver lacks
 
 - **Parents:** ["defra"]

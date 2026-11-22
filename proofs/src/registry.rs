@@ -2439,6 +2439,31 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/database/db/tests/merge/merge_handler_tests.rs counter_merge_of_an_unmaterialized_document_waits_for_its_composite, counter_merge_marks_cid_merged",
     },
     Property {
+        // A counter increment from a peer still at the source schema version
+        // applies to that source projection, then the result migrates once.
+        // A whole active-document put is used for the translated result so a
+        // linked non-operation field cannot make the merge skip it.
+        family: "Schema-evolution operations in the core",
+        name: "INV_TransformedOnce: an old-version counter increment is translated once",
+        axis: Tla,
+        anchor: "crates/database/db/src/merge/merge_handler/field_ops.rs counter_document_on_active_version, counter_result_on_active_version; crates/database/db/src/merge/merge_handler/composite_persist.rs persist_merged_document",
+        model_ref: "MC_MigratedCounterMerge_{Green,Red_Double}.cfg",
+        tiers: &[Contract],
+        bound_by: "tools/integration-test/tests/testo/issues/t_2916.rs an_old_version_counter_update_merges_through_a_lens_once",
+    },
+    Property {
+        // The Lean rule behind the TLA+ invariant: the source value plus the
+        // peer's delta migrates once, while translating the already-migrated
+        // value again can differ.
+        family: "Schema-evolution operations in the core",
+        name: "MigratedCounterMerge.translated_once / double_apply_differs",
+        axis: Lean,
+        anchor: "crates/database/db/src/merge/merge_handler/field_ops.rs counter_document_on_active_version, counter_result_on_active_version; crates/database/db/src/merge/merge_handler/composite_persist.rs persist_merged_document",
+        model_ref: "MigratedCounterMerge (lake build)",
+        tiers: &[Contract],
+        bound_by: "tools/integration-test/tests/testo/issues/t_2916.rs an_old_version_counter_update_merges_through_a_lens_once",
+    },
+    Property {
         // A commit begins when it is handed to its transaction's owner, or,
         // if a request is running the transaction then, when the owner takes
         // it; a caller that stops waiting before that abandons it. One that
