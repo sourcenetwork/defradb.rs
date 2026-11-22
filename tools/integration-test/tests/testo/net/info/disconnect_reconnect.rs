@@ -4,6 +4,7 @@ use integration_test::actions::{
 use integration_test::m;
 use integration_test::scenario::{captures, Common};
 use integration_test::test_case::TestCase;
+use integration_test::ClientType;
 use serde_json::json;
 
 #[test]
@@ -11,6 +12,7 @@ use serde_json::json;
 fn net_info_disconnect_sticks_until_explicit_reconnect() {
     TestCase {
         id: integration_test::scenario_id!(),
+        client_types: Some(&[ClientType::InProcess, ClientType::RustHttp, ClientType::Cli]),
         actions: vec![
             NewNode {
                 network: true,
