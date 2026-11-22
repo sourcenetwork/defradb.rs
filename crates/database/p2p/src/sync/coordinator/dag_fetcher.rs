@@ -153,7 +153,7 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
     diagnostics: Arc<SyncDiagnostics>,
 ) -> (FetchTaskEnd, AttemptSample) {
     // libp2p keeps the context's order: its rooted CAR goes to the announcing
-    // publisher, whose reply is what lets the dead-Bitswap repair fire.
+    // publisher, whose reply is what lets the dead-block-sync repair fire.
     let health = transport
         .supports_cancellable_rooted_sync()
         .then(|| limiter.provider_health());
@@ -376,7 +376,7 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
         &last_failures,
         diagnostics.dag_fetch_logs(),
     );
-    drop_dead_bitswap_connection(&transport, &providers, &context, &root_cid).await;
+    drop_dead_block_sync_connection(&transport, &providers, &context, &root_cid).await;
     (FetchTaskEnd::Settled, sample)
 }
 
@@ -425,7 +425,7 @@ fn trace_stall(context: &DagFetchContext, root_cid: Cid) {
     }
 }
 
-/// Hang up on a connection whose Bitswap is dead while the connection lives.
+/// Hang up on a connection whose block sync is dead while the connection lives.
 ///
 /// A partition that never closes the socket can leave a peer's Bitswap
 /// queue dead on the outbound substream timeout, so every later want is
@@ -447,7 +447,7 @@ fn trace_stall(context: &DagFetchContext, root_cid: Cid) {
 ///   satisfy are indistinguishable from here.
 /// - **Still connected**, so the hang-up is the repair and not a race with a
 ///   connection that is already going away.
-async fn drop_dead_bitswap_connection<T: P2PTransport>(
+async fn drop_dead_block_sync_connection<T: P2PTransport>(
     transport: &T,
     providers: &ProviderRotation,
     context: &DagFetchContext,
@@ -469,10 +469,10 @@ async fn drop_dead_bitswap_connection<T: P2PTransport>(
     warn!(
         root_cid = %root_cid,
         provider = %provider,
-        "Publisher answered on its own substreams but served no block for the root it announced; dropping the connection so Bitswap is rebuilt"
+        "Publisher answered on its own substreams but served no block for the root it announced; dropping the connection so block sync is rebuilt"
     );
     if let Err(error) = transport.disconnect(provider).await {
-        debug!(root_cid = %root_cid, provider = %provider, error = %error, "Failed to drop the dead Bitswap connection");
+        debug!(root_cid = %root_cid, provider = %provider, error = %error, "Failed to drop the dead block-sync connection");
     }
 }
 

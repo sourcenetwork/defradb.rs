@@ -7,7 +7,7 @@ use crate::error::Result;
 /// Configuration for DAG sync operations.
 #[derive(Debug, Clone)]
 pub struct DagSyncConfig {
-    /// Timeout for fetching a single block via Bitswap.
+    /// Timeout for fetching a single block via block sync.
     block_fetch_timeout: Duration,
 }
 
