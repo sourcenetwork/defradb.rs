@@ -111,3 +111,68 @@ fn concurrent_encrypted_index_adds_on_one_collection_all_land() {
     )
     .expect("every round finishes before the deadline");
 }
+
+/// With no re-runs allowed, a change that loses the race fails with the
+/// exhaustion error and leaves the definition as the winners wrote it.
+#[test]
+#[mantra_macros::req_test("defra.txn.indexes.concurrent-encrypted-changes")]
+fn an_encrypted_index_add_out_of_retries_fails_and_changes_nothing() {
+    workers::block_on_timeout(
+        async {
+            let store = Arc::new(RegolithStore::in_memory().unwrap());
+            let options = db::DbOptions::default().with_max_txn_retries(0);
+            let db = Arc::new(DB::from_arc_with_options(store, options).unwrap());
+
+            for round in 0..ROUNDS {
+                let collection = users(round);
+                let name = collection.name.clone();
+                db.create_collection(collection).await.unwrap();
+
+                let start = Arc::new(regolith::sync::Barrier::new(CONTENDERS));
+                let mut tasks = Vec::new();
+                for field in 0..CONTENDERS {
+                    let (db, name, start) = (db.clone(), name.clone(), start.clone());
+                    tasks.push(
+                        workers::spawn(
+                            Some(crate::common::worker_io::pool()),
+                            "test",
+                            move || async move {
+                                start.wait().await;
+                                db.add_encrypted_index(&name, &format!("f{field}")).await
+                            },
+                        )
+                        .unwrap(),
+                    );
+                }
+                let mut landed = Vec::new();
+                let mut exhausted = 0;
+                for (field, task) in tasks.into_iter().enumerate() {
+                    match task.await.unwrap() {
+                        Ok(()) => landed.push(format!("f{field}")),
+                        Err(error) => {
+                            let text = error.to_string();
+                            assert!(
+                                text.starts_with(
+                                    "storage error: transaction retry attempts exhausted: "
+                                ),
+                                "round {round}: add on f{field}: {text}"
+                            );
+                            exhausted += 1;
+                        }
+                    }
+                }
+
+                assert_eq!(listed(&db, &name).await, landed, "round {round}");
+                if exhausted > 0 {
+                    return;
+                }
+            }
+            panic!(
+                "no add ran out of retries in {ROUNDS} rounds of {CONTENDERS}: \
+                 the adds never overlapped, so the test did not exercise the race"
+            );
+        },
+        DEADLINE,
+    )
+    .expect("every round finishes before the deadline");
+}
