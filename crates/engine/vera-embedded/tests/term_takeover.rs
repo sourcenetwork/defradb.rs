@@ -55,7 +55,7 @@ const READER: &str = "did:key:z6MkfXG2FkNy3u7Eg3jm8e2YQpGz7Z1JqWgHDAP1hLk9r2bR";
 /// The in-process channel to whichever device the test points it at.
 struct Following {
     current: Atom<EmbeddedTransport>,
-    proof_gate: std::sync::Mutex<Option<ProofGate>>,
+    proof_gate: regolith::sync::Mutex<Option<ProofGate>>,
 }
 
 struct ProofGate {
@@ -90,12 +90,12 @@ impl AcpTransport for Following {
         max_bytes: usize,
     ) -> BoxFuture<'_, Result<Value, TransportError>> {
         let current = self.current.load_clone();
-        let gate = if method == "vera_getCurrentPolicyPrefixProof" {
-            self.proof_gate.lock().unwrap().take()
-        } else {
-            None
-        };
         Box::pin(async move {
+            let gate = if method == "vera_getCurrentPolicyPrefixProof" {
+                self.proof_gate.lock().await.take()
+            } else {
+                None
+            };
             let result = AcpTransport::call(&current, method, params, max_bytes).await;
             if let Some(gate) = gate.filter(|_| result.is_ok()) {
                 let _ = gate.started.send(());
@@ -298,7 +298,7 @@ async fn a_provider_follows_a_confirmed_takeover_and_sends_again_what_it_voided(
             timeout(),
             &edge,
         )),
-        proof_gate: std::sync::Mutex::new(None),
+        proof_gate: regolith::sync::Mutex::new(None),
     });
     let named = provider(
         transport.clone(),
@@ -367,7 +367,7 @@ async fn a_provider_follows_a_confirmed_takeover_and_sends_again_what_it_voided(
     assert_eq!(before.position.term, 0);
     let (started, started_rx) = futures::channel::oneshot::channel();
     let (release, release_rx) = futures::channel::oneshot::channel();
-    *transport.proof_gate.lock().unwrap() = Some(ProofGate {
+    *transport.proof_gate.lock().await = Some(ProofGate {
         started,
         release: release_rx,
     });

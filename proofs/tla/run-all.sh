@@ -702,6 +702,8 @@ RUNS=(
   "MC_ReceiptWait_Red_TimerOnly.cfg ReceiptWait.tla RED" # a wait that ends only on its timer sleeps past a verified receipt
   "MC_ReceiptWait_Red_SeenAfterSend.cfg ReceiptWait.tla RED" # the height read after the send misses a header verified in between
   "MC_ReceiptWait_Red_Unbounded.cfg ReceiptWait.tla RED" # a wait with no fallback never reads a receipt when no header comes
+  "MC_AssignmentPositionFloor_Green.cfg AssignmentPositionFloor.tla GREEN" # a certified read is accepted only at or after its caller's position
+  "MC_AssignmentPositionFloor_Red_NoGuard.cfg AssignmentPositionFloor.tla RED" # without the guard, an older certified read is accepted
   "MC_AcpOutbox_Green.cfg AcpOutbox.tla GREEN" # a new document: owed registration and two owed changes never widen access, across crashes
   "MC_AcpOutbox_Green_Registered.cfg AcpOutbox.tla GREEN" # a registered document: deletes of tuples the provider holds deny from the commit on
   "MC_AcpOutbox_Green_Three.cfg AcpOutbox.tla GREEN" # three changes on one tuple in every order, with an actor the provider refuses

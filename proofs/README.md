@@ -67,6 +67,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | vera.rs embedded transport | TLA+ / Lean | vera-embedded |
 | vera.rs deployment terms | Lean | vera |
 | vera.rs receipt wait | Boundary + Contract | over the loop's turns, the node's finalized height and the light client's verified height, with time counted only while the loop waits; that the node serves a receipt from the moment it publishes its block's header is vera.rs's property; unit tests in `crates/engine/vera/src/vera_rs/receipt_wait_tests.rs`, in-process node test `crates/engine/vera-embedded/tests/receipt_wait.rs`; the temporal side is `ReceiptWait.tla` |
+| vera.rs certified assignment reads | TLA+ / Lean | vera, vera-embedded; a caller's certified position floor rejects an older term, an older height, or a different block at the same position; `crates/engine/vera/src/vera_rs/provider/assignments.rs` and its Rust unit test |
 | DiskANN resident code table | Lean | db-index |
 | DiskANN walk cutoff | Lean | db-index (vector) |
 | PQ distance four sums | Lean | db-index (vector) |

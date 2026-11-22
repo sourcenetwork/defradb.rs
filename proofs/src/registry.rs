@@ -2008,6 +2008,15 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/engine/vera/src/vera_rs/receipt_wait_tests.rs a_receipt_is_asked_for_at_the_next_verified_height_and_not_after_a_sleep, a_header_verified_while_the_request_is_sent_still_ends_the_wait, with_no_header_each_wait_ends_at_its_fallback_and_an_unheard_send_is_sent_again; crates/engine/vera-embedded/tests/receipt_wait.rs writes_are_confirmed_at_their_blocks_header_and_not_at_the_fallback",
     },
     Property {
+        family: "vera.rs certified assignment reads",
+        name: "INV_PositionFloor / floor_rejects_replays / floor_accepts_a_new_height: a certified assignment read is accepted only at or after its caller's position",
+        axis: Tla,
+        anchor: "crates/engine/vera/src/vera_rs/provider/assignments.rs read, check_position, AssignmentPosition",
+        model_ref: "MC_AssignmentPositionFloor_{Green,Red_NoGuard}.cfg",
+        tiers: &[Contract],
+        bound_by: "crates/engine/vera/src/vera_rs/provider/assignments.rs position_floor_rejects_replays_and_accepts_a_verified_new_term",
+    },
+    Property {
         // A remote provider cannot join the row transaction, so a create
         // writes the registration it owes into that transaction and the
         // node settles it after the commit and again at start. Until the
