@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 use testo::prelude::*;
@@ -106,7 +105,7 @@ fn announce(path: PathBuf, line: String) -> PathBuf {
 }
 
 fn version(path: &PathBuf) -> Result<String, String> {
-    let output = Command::new(path)
+    let output = crate::cli_command(path)
         .arg("version")
         .output()
         .map_err(|e| e.to_string())?;

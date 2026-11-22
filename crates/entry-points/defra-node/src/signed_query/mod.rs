@@ -25,14 +25,11 @@ pub(super) async fn execute_with_signing_context(
     signing_config: SigningConfig,
     principal: Option<String>,
 ) -> QueryResponse {
-    let batch_session = Some(signing_config.public_key_hex.clone());
     let context = match principal {
         Some(did) => request.context.with_identity(Some(did)),
         None => request.context,
     };
-    request.context = context
-        .with_signing(Some(signing_config))
-        .with_batch_session(batch_session);
+    request.context = context.with_signing_session(Some(signing_config));
     let context = request.context.clone();
     edge.spawn(context.mirror(async move {
         match txn_handle {

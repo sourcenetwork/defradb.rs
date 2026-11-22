@@ -21,7 +21,7 @@ const SDL: &str = r#"
 
 async fn chunked_db() -> Arc<DB<RegolithStore>> {
     let (db, _bus) = make_test_db_with_bus().await;
-    db.create_collections_atomic(query::parse_sdl(SDL).unwrap())
+    db.add_collection(&defra_core::RequestContext::ambient(), SDL)
         .await
         .expect("schema");
     db

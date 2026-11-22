@@ -140,6 +140,25 @@ fn a_request_without_a_mutation_is_left_to_its_execution_to_parse() {
 }
 
 #[test]
+fn a_request_without_mutation_work_skips_mutation_preparation() {
+    workers::block_on(async {
+        let runner = runner();
+        let query =
+            QueryRequest::new(r#"query { User(filter: { name: { _eq: "Bob" } }) { name } }"#);
+        assert!(runner.prepare_request(&query).await.unwrap().is_none());
+        let parsed = query.operation(None, QueryLimits::default()).unwrap();
+        assert!(!parsed.has_unexplained_mutations());
+
+        let mutation = QueryRequest::new(
+            r#"mutation @explain { add_User(input: { name: "Alice" }) { name } }"#,
+        );
+        let parsed = mutation.operation(None, QueryLimits::default()).unwrap();
+        assert!(!parsed.has_unexplained_mutations());
+    })
+    .unwrap()
+}
+
+#[test]
 fn a_request_that_does_not_parse_answers_with_its_parse_error() {
     workers::block_on(async {
         for text in [

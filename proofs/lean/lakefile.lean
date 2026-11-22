@@ -22,6 +22,9 @@ lean_lib VeraActorSpelling where
 lean_lib VeraPolicyNonce where
 
 @[default_target]
+lean_lib VeraRegistrationList where
+
+@[default_target]
 lean_lib VeraDelegationSigner where
 
 @[default_target]
@@ -217,6 +220,9 @@ lean_lib RetrySchedule where
 lean_lib ChunkSplit where
 
 @[default_target]
+lean_lib ProllyTree where
+
+@[default_target]
 lean_lib TxnId where
 
 @[default_target]
@@ -230,6 +236,9 @@ lean_lib DocStoreTarget where
 
 @[default_target]
 lean_lib JsonSubPathCut where
+
+@[default_target]
+lean_lib RelationFilterNoChild where
 
 @[default_target]
 lean_lib CarClosureDepth where
@@ -301,6 +310,9 @@ lean_lib CommitConflictReceipt where
 lean_lib NacToggle where
 
 @[default_target]
+lean_lib FfiOptions where
+
+@[default_target]
 lean_lib NacRelationship where
 
 @[default_target]
@@ -356,3 +368,9 @@ lean_lib RemoteOwnerAnswer where
 
 @[default_target]
 lean_lib StrictAccessRule where
+
+@[default_target]
+lean_lib SeTruncatePrefix where
+
+@[default_target]
+lean_lib ReplicatorEmptyCollections where

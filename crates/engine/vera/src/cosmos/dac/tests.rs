@@ -9,6 +9,7 @@ mod cache_mutations;
 #[path = "../../../tests/unit/access_cache_race.rs"]
 mod cache_race;
 mod owed;
+mod registration_batch;
 
 /// Which relationship-emitting provider method a routing test drove, plus
 /// the structured-subject codec tuple for the EntitySet path. Each field

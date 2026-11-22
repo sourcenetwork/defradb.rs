@@ -10,6 +10,7 @@ use zanzibar::types::Subject;
 
 use crate::error::{Error, Result};
 use crate::identity::Identity;
+use crate::object_registration::{AcpObject, RegistrationFailure};
 use crate::permission::DocumentPermission;
 
 /// Told when this node changes an object's relationships on its provider
@@ -415,6 +416,43 @@ pub trait DocumentACP: MaybeSendSync {
         doc_id: &str,
     ) -> Result<()> {
         let _ = (policy_id, resource_name, doc_id);
+        Ok(())
+    }
+
+    /// [`Self::redrive_registration`] for each of `objects`, in their order:
+    /// what each came to. A provider that settles owed registrations sends
+    /// those one owner owes together ([`Self::register_objects`]); every
+    /// object is answered for, whatever became of the others.
+    async fn redrive_registrations(&self, objects: &[AcpObject<'_>]) -> Vec<Result<()>> {
+        let mut outcomes = Vec::with_capacity(objects.len());
+        for object in objects {
+            outcomes.push(
+                self.redrive_registration(object.policy_id, object.resource, object.object_id)
+                    .await,
+            );
+        }
+        outcomes
+    }
+
+    /// Register each of `objects` with `identity` as its owner, in order:
+    /// what [`Self::register_object`] does for each, which a provider that
+    /// can sends as one list it applies all or none. It stops at the first
+    /// that fails, and says which ([`RegistrationFailure`]).
+    async fn register_objects(
+        &self,
+        identity: &Did,
+        objects: &[AcpObject<'_>],
+    ) -> std::result::Result<(), RegistrationFailure> {
+        for (index, object) in objects.iter().enumerate() {
+            self.register_object(
+                identity,
+                object.policy_id,
+                object.resource,
+                object.object_id,
+            )
+            .await
+            .map_err(|error| RegistrationFailure::new(index, error))?;
+        }
         Ok(())
     }
 

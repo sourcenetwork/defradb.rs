@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Output, Stdio};
+
+use integration_test::cli_command;
 
 fn defra_binary() -> PathBuf {
     integration_test::rust_binary()
@@ -10,7 +12,7 @@ fn is_rust_binary(binary: &Path) -> bool {
 }
 
 fn go_binary() -> Option<PathBuf> {
-    Command::new("defradb")
+    cli_command("defradb")
         .arg("--help")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -30,7 +32,7 @@ fn defra_keyring_with_mode(
     args: &[&str],
     add_development_flag: bool,
 ) -> Output {
-    let mut cmd = Command::new(binary);
+    let mut cmd = cli_command(binary);
     cmd.arg("--keyring-backend")
         .arg("file")
         .arg("--keyring-path")
@@ -48,7 +50,7 @@ fn defra_keyring_with_mode(
 
 fn defra_keyring_stdin(binary: &Path, keyring_dir: &Path, args: &[&str], input: &str) -> Output {
     use std::io::Write;
-    let mut cmd = Command::new(binary);
+    let mut cmd = cli_command(binary);
     cmd.arg("--keyring-backend")
         .arg("file")
         .arg("--keyring-path")

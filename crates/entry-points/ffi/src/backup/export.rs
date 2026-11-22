@@ -14,16 +14,16 @@ use crate::{ffi_async_ok, ffi_entry, try_ffi, ERR_INVALID_NODE_HANDLE};
 /// # Safety
 ///
 /// Every string must be null or a valid null-terminated string.
-#[no_mangle]
-pub unsafe extern "C" fn defra_backup_export(
+pub unsafe fn defra_backup_export(
     node_ptr: usize,
     filepath: *const c_char,
     collections: *const c_char,
     format: *const c_char,
     pretty: c_int,
+    identity_ptr: usize,
 ) -> DefraResult {
     ffi_entry! {
-        let request = try_ffi!(Request::resolve(node_ptr, 0));
+        let request = try_ffi!(Request::resolve(node_ptr, identity_ptr));
         let node_ptr = try_ffi!(request.require_node("backup export"));
         match go_string(format).to_lowercase().as_str() {
             "" | "json" => {}
@@ -37,9 +37,11 @@ pub unsafe extern "C" fn defra_backup_export(
             .get(node_ptr, |state| (state.database.clone(), state.query_runner.clone()))
             .ok_or_else(|| DefraResult::error(ERR_INVALID_NODE_HANDLE)));
 
+        let context = request.context();
         ffi_async_ok!(node_ptr, {
             let json_output =
-                db::backup::export_database(&database, &runner, &collections, pretty).await?;
+                db::backup::export_database_as(&context, &database, &runner, &collections, pretty)
+                    .await?;
 
             // Written to a temporary file and renamed, so a failed export
             // never leaves a partial file at `filepath`.

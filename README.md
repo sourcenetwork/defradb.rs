@@ -332,7 +332,7 @@ API rather than the offline command for an at-rest-encrypted store.
 
 - [DefraDB (Go)](https://github.com/sourcenetwork/defradb) — concepts, architecture, specifications
 - [DefraDB Docs](https://docs.source.network/defradb) — user documentation
-- `CLAUDE.md` — development workflow and conventions
+- `AGENTS.md` — development workflow and conventions
 
 ## License
 

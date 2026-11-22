@@ -34,10 +34,7 @@ use defra_core::thread_bounds::MaybeBoxFuture;
 
 pub use callback::{DefraRemoteSignAsyncCallback, DefraRemoteSignCallback, DEFRA_SIGN_RETRYABLE};
 pub use pending::defra_remote_sign_complete;
-pub use register::{
-    defra_identity_new_remote, defra_identity_new_remote_async, defra_identity_new_remote_bytes,
-    defra_identity_new_remote_bytes_async,
-};
+pub(crate) use register::{register_bytes, register_hex};
 
 use callback::{failed, signature, MAX_REMOTE_SIGNATURE_LEN};
 use pending::Wave;

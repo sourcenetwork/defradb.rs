@@ -37,7 +37,7 @@ const ERR_ON_WORKER: &str = "a synchronous call cannot wait on a DefraDB thread:
 fn unavailable(error: workers::Error) -> String {
     match error {
         workers::Error::OnWorker => ERR_ON_WORKER.to_string(),
-        other => format!("the call did not run: {}", other),
+        other => other.report("C call").to_string(),
     }
 }
 

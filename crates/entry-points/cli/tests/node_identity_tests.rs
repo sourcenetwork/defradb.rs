@@ -1,3 +1,5 @@
+mod common;
+
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
@@ -20,38 +22,48 @@ impl Drop for RunningNode {
 
 impl RunningNode {
     async fn start(root: &Path, key_type: &str, flags: &[&str]) -> Self {
-        let port = portpicker::pick_unused_port().expect("unused HTTP port");
-        let address = format!("127.0.0.1:{port}");
+        Self::start_with_store(root, "memory", key_type, flags).await
+    }
+
+    /// [`Self::start`] on the given datastore. `--store` takes one value, so
+    /// a second one in `flags` cannot replace the first.
+    async fn start_with_store(root: &Path, store: &str, key_type: &str, flags: &[&str]) -> Self {
         let log_path = root.join("node.log");
-        let log = std::fs::File::create(&log_path).unwrap();
+        let (log, output) = common::NodeLog::create(log_path.clone());
         let child = Command::new(env!("CARGO_BIN_EXE_defradb"))
             .arg("--rootdir")
             .arg(root)
-            .args(["--url", &address])
+            .args(["--url", common::ANY_PORT])
+            .args(common::LOG_FLAGS)
             .args([
                 "start",
                 "--store",
-                "memory",
+                store,
                 "--no-p2p",
                 "--default-key-type",
                 key_type,
             ])
             .args(flags)
             .env("DEFRA_KEYRING_SECRET", "node-identity-test-secret")
+            // The bound address is logged at info.
+            .env("RUST_LOG", "info")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(log)
+            .stderr(output)
             .spawn()
             .expect("start node");
         let mut node = Self {
             child,
-            url: format!("http://{address}"),
+            url: String::new(),
             client: net::http::Client::builder(edge::testing::edge())
                 .no_proxy()
                 .timeout(Duration::from_secs(5))
                 .build()
                 .unwrap(),
         };
+        // `node` owns the child from here, so a failed wait still kills it.
+        let address = log.http_address(Duration::from_secs(15));
+        node.url = format!("http://{address}");
         nuclei::time::timeout(Duration::from_secs(15), async {
             loop {
                 assert!(
@@ -256,4 +268,94 @@ async fn production_without_keyring_or_explicit_identity_stays_anonymous() {
     let root = tempfile::tempdir().unwrap();
     let node = RunningNode::start(root.path(), "ed25519", &["--no-keyring"]).await;
     assert!(node.identity().await.get("DID").is_none());
+}
+
+/// Node ACP enabled on a store stays enforced when the node restarts without
+/// `--node-acp-enable`, as Go's `defradb start` loads the stored state
+/// (`db_nac.go`): its routes answer, and an anonymous caller is refused.
+#[test]
+fn nac_state_survives_restart_without_flag() {
+    use crypto::Key;
+
+    workers::block_on(async {
+        let root = tempfile::tempdir().unwrap();
+        let key = crypto::generate_ed25519().unwrap();
+        let owner_hex = hex::encode(key.raw());
+
+        let status = |node: &RunningNode| {
+            let token = cli::commands::client::generate_auth_token(&owner_hex, &node.url).unwrap();
+            let request = node
+                .client
+                .get(format!("{}/api/v0/acp/node/status", node.url))
+                .bearer_auth(token);
+            async move {
+                let body: Value = request
+                    .send()
+                    .await
+                    .unwrap()
+                    .error_for_status()
+                    .unwrap()
+                    .json()
+                    .await
+                    .unwrap();
+                body
+            }
+        };
+
+        let node = RunningNode::start_with_store(
+            root.path(),
+            "regolith",
+            "ed25519",
+            &["--node-acp-enable", "--identity", &owner_hex],
+        )
+        .await;
+        let before = status(&node).await;
+        assert_eq!(
+            before["Status"], "enabled",
+            "status before restart: {before}"
+        );
+        drop(node);
+
+        let node = RunningNode::start_with_store(root.path(), "regolith", "ed25519", &[]).await;
+        let after = status(&node).await;
+        assert_eq!(after["Status"], "enabled", "status after restart: {after}");
+
+        let response = node
+            .client
+            .post(format!("{}/api/v0/collections", node.url))
+            .body("type Users { name: String }")
+            .send()
+            .await
+            .unwrap();
+        let code = response.status();
+        let body = response.text().await.unwrap();
+        assert_eq!(
+            code,
+            net::http::StatusCode::UNAUTHORIZED,
+            "an anonymous caller was not refused by NAC: {body}"
+        );
+        assert!(
+            body.contains("not authorized to perform operation"),
+            "the refusal is not a NAC denial: {body}"
+        );
+
+        let token = cli::commands::client::generate_auth_token(&owner_hex, &node.url).unwrap();
+        let collections = node
+            .client
+            .get(format!("{}/api/v0/collections", node.url))
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert!(
+            !collections.contains("Users"),
+            "the refused collection was added: {collections}"
+        );
+    })
+    .unwrap();
 }

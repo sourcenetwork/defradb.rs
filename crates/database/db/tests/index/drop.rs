@@ -2,14 +2,20 @@
 //! change in one commit, the entries go in pages after it, and a restart
 //! finishes what a drop or a backfill left behind.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use db::index::backfill::encode_progress;
 use db::index::drop::DropProgress;
 use db::{AutoCommitMutator, BackfillSource, Collection, IndexManager, DB};
 use defra_core::{Action, ActionStatus};
-use schema::{CollectionVersion, IndexDescription};
-use storage::corekv::Key;
+use document::{Document, NormalValue};
+use query::DocMutator;
+use schema::{
+    CollectionVersion, DistanceMetric, HnswParams, IndexDescription, IndexedFieldDescription,
+    VectorAlgorithm, VectorIndexDescription,
+};
+use storage::corekv::{IterOptions, Iterator, Key};
 use storage::keys::systemstore::{
     ActionProgressKey, ActionReasonKey, ActionStatusKey, CollectionKey, CollectionNameKey,
 };
@@ -358,4 +364,89 @@ fn drop_progress_survives_its_encoding() {
         assert_eq!(decoded, Some(progress));
     }
     assert_eq!(DropProgress::decode(b"{\"collection_short_id\":1}"), None);
+}
+
+/// Every datastore key but the id sequences, which only ever grow.
+async fn datastore_keys(db: &DB<RegolithStore>) -> BTreeSet<Vec<u8>> {
+    let txn = db.new_txn(true).await.unwrap();
+    let datastore = txn.datastore().unwrap();
+    let mut iter = datastore
+        .iterator(IterOptions::new().with_keys_only(true))
+        .await
+        .unwrap();
+    let mut keys = BTreeSet::new();
+    while let Some(pair) = iter.next().await.unwrap() {
+        if !pair.key.starts_with(b"/seq/") {
+            keys.insert(pair.key.to_vec());
+        }
+    }
+    iter.close().await.unwrap();
+    let _ = txn.discard();
+    keys
+}
+
+/// Dropping an index leaves nothing of it in the datastore, where its entries
+/// are written, for an ordered and a vector index alike: every key the index
+/// added, a vector index's own data included, goes with it.
+#[test]
+fn drop_index_removes_everything_the_index_wrote() {
+    workers::block_on(async {
+        let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            "type Note { title: String embedding: [Float32!] }",
+        )
+        .await
+        .unwrap();
+        let note = db.get_collection("Note").unwrap().unwrap().schema_arc();
+        let mutator = AutoCommitMutator::new(db.clone());
+        for i in 0..5 {
+            let mut doc = Document::new(note.clone());
+            doc.set("title", NormalValue::String(format!("n{i}")))
+                .unwrap();
+            doc.set(
+                "embedding",
+                NormalValue::Float32Array(vec![i as f32, 1.0, 0.0]),
+            )
+            .unwrap();
+            mutator.create("Note", doc).await.unwrap();
+        }
+
+        let without_indexes = datastore_keys(&db).await;
+        let vector = VectorIndexDescription {
+            algorithm: VectorAlgorithm::Hnsw,
+            metric: DistanceMetric::Cosine,
+            dimensions: 3,
+            hnsw: Some(HnswParams::default()),
+            ivfpq: None,
+            ivfflat: None,
+            ssg: None,
+            diskann: None,
+        };
+        for (field, name, vector) in [
+            ("title", "by_title", None),
+            ("embedding", "by_embedding", Some(vector)),
+        ] {
+            let fields = vec![IndexedFieldDescription {
+                name: field.to_string(),
+                descending: false,
+            }];
+            let kind = IndexManager::requested_kind(&fields, false, vector).unwrap();
+            db.create_index("Note", Some(name), fields, kind)
+                .await
+                .unwrap();
+            let created = datastore_keys(&db).await;
+            assert!(
+                created.len() > without_indexes.len(),
+                "{name} wrote no entries"
+            );
+            db.drop_index("Note", name).await.unwrap();
+            let left = datastore_keys(&db)
+                .await
+                .difference(&without_indexes)
+                .count();
+            assert_eq!(left, 0, "{name} left {left} entries");
+        }
+    })
+    .unwrap()
 }

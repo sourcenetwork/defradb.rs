@@ -59,6 +59,38 @@ impl ReplicaOwnership for Deployment {
     }
 }
 
+/// The host's opt-in: a `Notes` row's genesis grants `reader` to the node
+/// its immutable `addressee` names. Nothing else is projected.
+struct Addressed;
+
+#[async_trait::async_trait]
+impl db::DocumentMutationProjector for Addressed {
+    fn genesis_read_access(
+        &self,
+        collection: &str,
+        _policy: &str,
+        _resource: &str,
+    ) -> Option<db::GenesisReadAccess> {
+        (collection == "Notes").then_some(db::GenesisReadAccess::AddressedBy("addressee"))
+    }
+
+    async fn reconcile(
+        &self,
+        _context: &db::DocumentMutationContext<'_>,
+    ) -> storage::corekv::Result<()> {
+        Ok(())
+    }
+
+    async fn project(
+        &self,
+        _context: &db::DocumentMutationContext<'_>,
+        _collection: &str,
+        _doc_id: &str,
+    ) -> storage::corekv::Result<()> {
+        Ok(())
+    }
+}
+
 fn keyring(spec: &PeerSpec) -> Arc<dyn keyring::Keyring> {
     Arc::new(keyring::FileKeyring::open(spec.home.join("keys"), b"test-password").expect("keyring"))
 }
@@ -76,6 +108,7 @@ fn signer(spec: &PeerSpec) -> Arc<dyn DelegationSigner> {
 fn builder(spec: &PeerSpec) -> defra_node::NodeBuilder {
     let builder = Node::builder()
         .data_path(spec.home.join("data"))
+        .with_document_projector(Arc::new(Addressed))
         .with_signing_key(SigningKey::Ed25519(spec.owner.key.clone()))
         .with_p2p(P2PConfig {
             peer_key: PeerKeySource::Store,

@@ -18,27 +18,19 @@ enum Vanish {
 async fn markers_after_sweep(vanish: Vanish) -> Vec<String> {
     let db = Arc::new(db::DB::new(storage::RegolithStore::in_memory().unwrap()).unwrap());
     db.set_network(edge::testing::edge());
-    db.create_collection(schema::CollectionVersion::new(
-        "Users",
-        "version-users",
-        "collection-users",
-        vec![
-            schema::FieldDescription::new(
-                "1",
-                "_docID",
-                schema::FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            schema::FieldDescription::new(
-                "2",
-                "name",
-                schema::FieldKind::string(),
-                schema::CType::LwwRegister,
-            ),
-        ],
-    ))
-    .await
-    .unwrap();
+    let context = defra_core::RequestContext::ambient();
+    db.add_collection(&context, "type Users { name: String }")
+        .await
+        .unwrap();
+    let collection_id = db
+        .get_collections_as(
+            &context,
+            &db::CollectionSelector::with_names(vec!["Users".into()]),
+        )
+        .await
+        .unwrap()
+        .remove(0)
+        .collection_id;
     let created = db::AutoCommitMutator::new(db.clone())
         .create(
             "Users",
@@ -68,12 +60,12 @@ async fn markers_after_sweep(vanish: Vanish) -> Vec<String> {
         coordinator.head_hint_car_authority(),
     );
     pusher
-        .persist_replicator(peer.as_str(), &["collection-users".into()])
+        .persist_replicator(peer.as_str(), std::slice::from_ref(&collection_id))
         .await
         .unwrap();
     let peerstore = storage::stores::Peerstore::new(db.store().clone());
     peerstore
-        .observe_push_head(peer.as_str(), &doc_id, "collection-users")
+        .observe_push_head(peer.as_str(), &doc_id, &collection_id)
         .await
         .unwrap();
     match vanish {

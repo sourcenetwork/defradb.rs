@@ -507,6 +507,13 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
         self.inner.register_ordered_async_hook(callback).await
     }
 
+    async fn owe_acp_registration(
+        &self,
+        registration: acp::CommitRegistration,
+    ) -> query::error::Result<()> {
+        self.inner.owe_acp_registration(registration).await
+    }
+
     async fn resolve_prepared_input(
         &self,
         request: &query::prepared::PreparedInputRequest,

@@ -428,9 +428,13 @@ where
         }
         JobCompletion::Succeeded
     } else {
-        // The newer head's marker generation fences this acknowledgement; the
-        // recorder still counts it as a delivery to the peer.
-        if job.marker_generation.is_some() {
+        // A newer head of this document is queued. Generations are allocated
+        // after commit, so this older head can hold the newer generation and
+        // its marker; acknowledging on the generation alone would clear it
+        // before the newer head lands (`LiveMarkerGeneration.tla`
+        // `Red_NoHeadFence`). Only a head that is still the whole frontier
+        // completes the scope, as on the current branch.
+        if job.marker_generation.is_some() && is_whole_frontier(context, job).await {
             let _ = report_push_ack(&context.failure_tx, job).await;
         }
         JobCompletion::Retired

@@ -16,11 +16,14 @@ use document::{DocID, Document, NormalValue};
 use identity::Did;
 use query::access_hooks::ReadValidator;
 use query::{QueryExecutor, QueryRequest, QueryRunner};
-use schema::PolicyDescription;
 use serde_json::Value;
 use storage::RegolithStore;
 
 const SDL: &str = "type Article { body: String @chunk(maxChars: 64) }";
+/// [`SDL`] with the parent under a policy; its chunk collection takes none.
+const POLICY_SDL: &str = r#"type Article @policy(id: "chunk-policy", resource: "articles") {
+    body: String @chunk(maxChars: 64)
+}"#;
 pub(super) const CHUNKS: &str = "Article__body_chunk";
 pub(super) const BODY: &str = "A short story.";
 
@@ -48,13 +51,13 @@ pub(super) async fn node() -> Node {
 pub(super) async fn node_with_policy(policy: bool) -> Node {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let db = Arc::new(DB::from_arc(store.clone()).unwrap());
-    let mut collections = query::parse_sdl(SDL).unwrap();
-    for collection in &mut collections {
-        if policy && collection.chunk_of.is_none() {
-            collection.policy = Some(PolicyDescription::new("chunk-policy", "articles"));
-        }
-    }
-    db.create_collections_atomic(collections).await.unwrap();
+    let sdl = match policy {
+        true => POLICY_SDL,
+        false => SDL,
+    };
+    db.add_collection(&defra_core::RequestContext::ambient(), sdl)
+        .await
+        .unwrap();
     let acp: Arc<dyn DocumentACP> = Arc::new(acp::ZanzibarDocumentACP::new(Arc::new(
         acp::PersistentZanzibarStore::from_store(store.clone()),
     )));
