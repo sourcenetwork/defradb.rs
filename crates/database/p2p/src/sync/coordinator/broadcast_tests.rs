@@ -522,6 +522,7 @@ async fn fanout_registration_failure_is_peer_local() {
         })
     };
     for peer in ["fanout-a", "fanout-b", "fanout-c"] {
+        coordinator.peer_state().peer_connected(peer);
         transport
             .create_replicator(
                 &PeerId::new(peer.to_string()),

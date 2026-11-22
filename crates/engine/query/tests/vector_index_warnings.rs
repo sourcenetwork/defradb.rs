@@ -2,7 +2,9 @@
 //! how it serializes into a `QueryResponse`'s `extensions`.
 
 use query::executor::QueryResponse;
-use query::planner::vector_routing::{vector_index_unused_warning, NotRouted};
+use query::planner::vector_routing::{
+    vector_index_unused_warning, vector_index_unused_warning_for_filter, NotRouted,
+};
 use schema::DistanceMetric;
 
 fn all_not_routed_variants() -> [NotRouted; 8] {
@@ -62,13 +64,23 @@ fn vector_index_unused_warning_has_the_exact_shape() {
         serde_json::to_value(&warning).unwrap(),
         serde_json::json!({
             "code": "VECTOR_INDEX_UNUSED",
-            "message": "similarity query on field 'embedding' did not use the vector index and read the whole collection",
+            "message": "similarity query on field 'embedding' did not use the vector index",
             "detail": {
                 "field": "embedding",
                 "reason": "noLimit",
             },
         })
     );
+}
+
+#[test]
+fn filtered_warning_does_not_claim_a_full_collection_scan() {
+    let warning = vector_index_unused_warning_for_filter("embedding");
+    assert_eq!(
+        warning.message,
+        "similarity query on field 'embedding' did not use the vector index"
+    );
+    assert_eq!(warning.detail.unwrap()["reason"], "filter");
 }
 
 #[test]
@@ -95,7 +107,7 @@ fn a_response_with_one_warning_serializes_with_extensions() {
             "extensions": {
                 "warnings": [{
                     "code": "VECTOR_INDEX_UNUSED",
-                    "message": "similarity query on field 'embedding' did not use the vector index and read the whole collection",
+                    "message": "similarity query on field 'embedding' did not use the vector index",
                     "detail": {
                         "field": "embedding",
                         "reason": "noLimit",
