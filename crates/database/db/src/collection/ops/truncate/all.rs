@@ -155,7 +155,9 @@ impl<S: Store> crate::database::DB<S> {
         short_id: u32,
     ) -> Result<()> {
         use storage::keys::datastore::ViewCacheKey;
-        use storage::keys::{HeadstoreColPublishedKey, HeadstoreColSetKey, IndexDataStoreKey};
+        use storage::keys::{
+            DatastoreSE, HeadstoreColPublishedKey, HeadstoreColSetKey, IndexDataStoreKey,
+        };
 
         let datastore = txn.datastore()?;
         let headstore = txn.headstore()?;
@@ -163,6 +165,9 @@ impl<S: Store> crate::database::DB<S> {
         let systemstore = txn.systemstore()?;
 
         delete_prefix(&datastore, IndexDataStoreKey::collection_prefix(short_id)).await?;
+        // Searchable-encryption artifacts, including those a replicator
+        // received for documents it may not hold (Go collection_truncate.go).
+        delete_prefix(&datastore, DatastoreSE::collection_prefix(collection_id)).await?;
         // A materialized view's rows live in its cache, not as documents.
         delete_prefix(&datastore, ViewCacheKey::collection_prefix(short_id)).await?;
 

@@ -326,4 +326,39 @@ mod tests {
         .unwrap();
         assert_eq!(current.status, p2p::ReplicatorStatus::Active);
     }
+
+    /// A replicator stored with no collections (Go persists one when it was
+    /// added before any collection existed) comes back from storage and is
+    /// listed by the registry the restore loops feed (#2702).
+    #[test]
+    fn a_persisted_replicator_with_no_collections_is_restored() {
+        workers::block_on(async {
+            let store = Arc::new(RegolithStore::in_memory().unwrap());
+            let peerstore = storage::stores::Peerstore::new(store);
+            let info = p2p::ReplicatorInfo::from_raw("peer-empty".to_string(), vec![], vec![]);
+            peerstore
+                .create_replicator(info.peer_id_str(), &info.to_bytes().unwrap())
+                .await
+                .unwrap();
+
+            let loaded = load_persisted_replicators(&peerstore).await.unwrap();
+            assert_eq!(loaded.len(), 1);
+            assert!(loaded[0].collections.is_empty());
+
+            // The CLI and defra-node restore loops hand each row to the host,
+            // which stores it with set_replicator_info.
+            let registry = p2p::ReplicatorRegistry::new();
+            for row in loaded {
+                registry.set_replicator_info(row);
+            }
+            let listed: Vec<String> = registry
+                .list_replicator_info()
+                .iter()
+                .map(|info| info.peer_id_str().to_string())
+                .collect();
+            assert_eq!(listed, vec!["peer-empty".to_string()]);
+            assert!(!registry.is_any_replicator("peer-empty"));
+        })
+        .unwrap();
+    }
 }

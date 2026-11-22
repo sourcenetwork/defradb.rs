@@ -124,6 +124,18 @@ RUNS=(
   "MC_ReplicaRegistration_Red_StaleDecision.cfg ReplicaRegistration.tla RED" # a decision remembered from before a revocation admits the revoked writer (INV_RevokedWriterDenied)
   "MC_ReplicaRegistration_Red_ArchiveOnDelete.cfg ReplicaRegistration.tla RED" # merging a delete archives the object on the provider (INV_RegisteredStays)
   "MC_ReplicaRegistration_Red_DeleteClears.cfg ReplicaRegistration.tla RED" # a local delete drops the creator's owed registration and replicas wait for ever (LIVE_RowMerges)
+  "MC_RemoteGenesisReader_Green.cfg RemoteGenesisReader.tla GREEN" # on a shared remote provider the reader a genesis names is owed by its creator with the registration, and a node merges only once its provider holds both
+  "MC_RemoteGenesisReader_Green_Live.cfg RemoteGenesisReader.tla GREEN" # the addressed node merges the genesis unless revoked, even across a crash of the creating node
+  "MC_RemoteGenesisReader_Red_Address.cfg RemoteGenesisReader.tla RED" # the creator grants every node (INV_OnlyGranted)
+  "MC_RemoteGenesisReader_Red_Ungated.cfg RemoteGenesisReader.tla RED" # a receiver merges without asking whether it may read (INV_OnlyGranted)
+  "MC_RemoteGenesisReader_Red_Staged.cfg RemoteGenesisReader.tla RED" # a grant still owed is counted as held (INV_SettledFirst)
+  "MC_RemoteGenesisReader_Red_Memo.cfg RemoteGenesisReader.tla RED" # a later frame merges on the genesis's earlier answer after the revocation (INV_RevokedStops)
+  "MC_RemoteGenesisReader_Red_Unregistered.cfg RemoteGenesisReader.tla RED" # an unregistered document is treated as public (INV_RegisteredFirst)
+  "MC_RemoteGenesisReader_Red_Separate.cfg RemoteGenesisReader.tla RED" # the grant is staged after the commit and a crash loses it (LIVE_AddressedMerges)
+  "MC_RemoteGenesisReader_Red_Counted.cfg RemoteGenesisReader.tla RED" # the grant counts against the bounds on ordinary owed changes and refuses a valid batch of creates (INV_ValidBatchCommits)
+  "MC_RemoteGenesisReader_Red_Admitted.cfg RemoteGenesisReader.tla RED" # the owed grant is added to its actor's admission count and the actor's own revocation is refused (INV_OrdinaryAdmitted)
+  "MC_RemoteGenesisReader_Red_Unbalanced.cfg RemoteGenesisReader.tla RED" # the grant is taken from a count it was never added to (INV_CountBalanced)
+  "MC_RemoteGenesisReader_Red_Order.cfg RemoteGenesisReader.tla RED" # the grant is sent before the registration and refused for good (LIVE_AddressedMerges)
   "MC_ParkedMerge_Green.cfg ParkedMerge.tla GREEN" # a refused replicated change is parked by document, never rejected for good, never merged before its history or without its signer's write, within the index bound
   "MC_ParkedMerge_Green_Live.cfg ParkedMerge.tla GREEN" # a parked change and its descendant merge once the signer holds write, and a change on another branch always merges
   "MC_ParkedMerge_Red_Quarantine.cfg ParkedMerge.tla RED" # a refused change is rejected for good (INV_NeverQuarantined)
@@ -258,6 +270,10 @@ RUNS=(
   "MC_ReplicatorIncarnation_Red_ReplayMarker.cfg ReplicatorIncarnation.tla RED"
   "MC_ReplicatorIncarnation_Red_ReplaySuperseded.cfg ReplicatorIncarnation.tla RED"
   "MC_ReplicatorIncarnation_Red_ReplayCompare.cfg ReplicatorIncarnation.tla RED" # a read-then-compare flip skips after a same-incarnation rewrite (ACT_FlipNotSkipped)
+  "MC_LiveMarkerGeneration_Green.cfg LiveMarkerGeneration.tla GREEN" # #2902/#3114: a superseded live write is owed by the newer marker; acks fenced on generation and frontier
+  "MC_LiveMarkerGeneration_Red_Superseded.cfg LiveMarkerGeneration.tla RED" # a live write superseded by a replay's newer marker is reported undurable (INV_NoFalseFailure)
+  "MC_LiveMarkerGeneration_Red_NoFence.cfg LiveMarkerGeneration.tla RED" # an ack clears whatever marker holds the scope: an older head clears a newer head's marker (INV_LiveOwed)
+  "MC_LiveMarkerGeneration_Red_NoHeadFence.cfg LiveMarkerGeneration.tla RED" # #3114: retired ack on the generation alone; with post-commit allocation the older head holds the newer generation and clears it (INV_LiveOwed)
   "MC_ReplicatorInstall_Green.cfg ReplicatorInstall.tla GREEN"
   "MC_ReplicatorInstall_Red_Validation.cfg ReplicatorInstall.tla RED"
   "MC_ReplicatorInstall_Red_Active.cfg ReplicatorInstall.tla RED"
@@ -519,6 +535,8 @@ RUNS=(
   "MC_Truncate_Red_Shape.cfg Truncate.tla RED" # filter shape check left out: a non-filter removes everything (INV_BadFilterRemovesNothing)
   "MC_Truncate_Red_PartialRetry.cfg Truncate.tla RED" # retry exhaustion loses committed partial progress (INV_RetryExhaustionKeepsProgress)
   "MC_Truncate_Red_ViewCache.cfg Truncate.tla RED" # #2703: view cache clear left out: a truncated view still shows its rows (INV_UnfilteredEmptiesView)
+  "MC_Truncate_Red_SearchRecords.cfg Truncate.tla RED" # #2728: /se/ prefix delete left out: an encrypted search still finds truncated documents (INV_UnfilteredClearsSearchRecords)
+  "MC_Truncate_Red_SearchNamespace.cfg Truncate.tla RED" # #2728: received search records in the raw root store survive the prefix delete (INV_UnfilteredClearsSearchRecords)
   "MC_NacOrder_Green.cfg NacOrder.tla GREEN" # #2680/#2700: a document write checks get-collection then its own permission, in its transaction, and a call with no identity acts as no one
   "MC_NacOrder_Red_SkipGet.cfg NacOrder.tla RED" # get-collection left out: a caller without it writes (INV_NoEffectWithoutPermission)
   "MC_NacOrder_Red_OwnFirst.cfg NacOrder.tla RED" # the write's own permission checked first: the refusal names it, not get-collection (INV_RefusalNamesGoFirst)
@@ -669,6 +687,10 @@ RUNS=(
   "MC_PendingSubmission_Red_GivesUpEarly.cfg PendingSubmission.tla RED" # a failure that may pass ends the loop before its deadline
   "MC_PendingSubmission_Red_ForgetsOnTimeout.cfg PendingSubmission.tla RED" # the journal drops the request when the deadline passes
   "MC_PendingSubmission_Red_Recalled_Forgets.cfg PendingSubmission.tla RED" # with the journal emptied at a deadline, a later call has nothing to send again
+  "MC_ReceiptWait_Green.cfg ReceiptWait.tla GREEN" # a receipt is asked for at the verified head that holds it, and in the end without headers
+  "MC_ReceiptWait_Red_TimerOnly.cfg ReceiptWait.tla RED" # a wait that ends only on its timer sleeps past a verified receipt
+  "MC_ReceiptWait_Red_SeenAfterSend.cfg ReceiptWait.tla RED" # the height read after the send misses a header verified in between
+  "MC_ReceiptWait_Red_Unbounded.cfg ReceiptWait.tla RED" # a wait with no fallback never reads a receipt when no header comes
   "MC_AcpOutbox_Green.cfg AcpOutbox.tla GREEN" # a new document: owed registration and two owed changes never widen access, across crashes
   "MC_AcpOutbox_Green_Registered.cfg AcpOutbox.tla GREEN" # a registered document: deletes of tuples the provider holds deny from the commit on
   "MC_AcpOutbox_Green_Three.cfg AcpOutbox.tla GREEN" # three changes on one tuple in every order, with an actor the provider refuses
@@ -753,6 +775,10 @@ RUNS=(
   "MC_ReplicationAckScope_Green.cfg ReplicationAckScope.tla GREEN" # push and read pick one ack scope: an acknowledged document reads acknowledged, a never-pushed one never does
   "MC_ReplicationAckScope_Red_MainRule.cfg ReplicationAckScope.tla RED" # main before the fix: collection scope for a filtered replicator, its acks never read (INV_AckedReadsAcked)
   "MC_ReplicationAckScope_Red_PushToFiltered.cfg ReplicationAckScope.tla RED" # collection heads pushed to a filtered replicator: it gets unmatched documents (INV_FilterRespected)
+  "MC_ReplicatorEmptyCollections_Green.cfg ReplicatorEmptyCollections.tla GREEN" # a replicator added with no collections is listed, restored, and pushed nothing (#2702)
+  "MC_ReplicatorEmptyCollections_Red_DropOnStore.cfg ReplicatorEmptyCollections.tla RED" # main before #2702: store_info drops the empty record, never listed (INV_ListedAsAdded)
+  "MC_ReplicatorEmptyCollections_Red_DropOnLoad.cfg ReplicatorEmptyCollections.tla RED" # load_from_infos skips the empty row, gone after a restart (INV_ListedAsAdded)
+  "MC_ReplicatorEmptyCollections_Red_EmptyMeansAll.cfg ReplicatorEmptyCollections.tla RED" # an empty list read as every collection: pushed every write (INV_NoPushOutsideCollections)
   "MC_Capability_Green.cfg         MC_Capability_Common.tla   GREEN" # capability: only legit tokens authorized
   "MC_Capability_Red_Forge.cfg     MC_Capability_Common.tla   RED"   # capability: forged token accepted (INV_OnlyLegitAccepted)
   "MC_Capability_Red_Ttl.cfg       MC_Capability_Common.tla   RED"   # capability: over-cap TTL accepted (INV_TtlCapped)
