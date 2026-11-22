@@ -41,12 +41,21 @@ impl Node {
         // Start HTTP server, in its own scope. Its task is awaited below to
         // notice a crash, so it carries no deadline.
         let mut http_task: Option<edge::Task<()>> = if let Some(server) = self.http_server.take() {
-            info!("Starting HTTP server on {}", self.config.api.address);
+            let listener = self.http_listener.take();
+            match listener.as_ref().map(std::net::TcpListener::local_addr) {
+                Some(Ok(bound)) => info!("Starting HTTP server on {bound}"),
+                Some(Err(e)) => info!("Starting HTTP server on the given listener ({e})"),
+                None => info!("Starting HTTP server on {}", self.config.api.address),
+            }
             Some(
                 self.http_scope
                     .edge()
                     .spawn(async move {
-                        if let Err(e) = server.run().await {
+                        let served = match listener {
+                            Some(listener) => server.serve_on(listener).await,
+                            None => server.run().await,
+                        };
+                        if let Err(e) = served {
                             error!("HTTP server error: {}", e);
                         }
                     })

@@ -32,9 +32,17 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub struct Replicator {
     #[serde(rename = "ID")]
     pub id: String,
-    #[serde(rename = "Addresses", default)]
+    #[serde(
+        rename = "Addresses",
+        default,
+        deserialize_with = "p2p::replicator::null_as_empty_vec"
+    )]
     pub addresses: Vec<String>,
-    #[serde(rename = "CollectionIDs", default)]
+    #[serde(
+        rename = "CollectionIDs",
+        default,
+        deserialize_with = "p2p::replicator::null_as_empty_vec"
+    )]
     pub collection_ids: Vec<String>,
     /// Active is 0, inactive is 1, as Go's `client.ReplicatorStatus`.
     #[serde(rename = "Status", default)]
@@ -295,5 +303,17 @@ mod tests {
             ADDRESSES_EMPTY
         );
         assert!(addresses_given(&["/ip4/127.0.0.1/tcp/1".to_owned()]).is_ok());
+    }
+
+    #[test]
+    fn a_go_replicator_with_no_collections_decodes() {
+        // Go's nil slices marshal as `null`: a replicator with no
+        // collections lists that way after a restart.
+        let replicator: Replicator = serde_json::from_str(
+            r#"{"ID":"peer","Addresses":null,"CollectionIDs":null,"Status":0,"LastStatusChange":""}"#,
+        )
+        .unwrap();
+        assert!(replicator.collection_ids.is_empty());
+        assert!(replicator.addresses.is_empty());
     }
 }
