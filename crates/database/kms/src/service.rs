@@ -13,7 +13,7 @@ use crate::wire::{FetchEncryptionKeyReply, FetchEncryptionKeyRequest};
 
 /// Told which encryption keys became usable after a key request. Called after
 /// the answers are returned, on the requesting task, which it must not hold up.
-pub trait KeyArrivalListener: defra_core::thread_bounds::MaybeSendSync {
+pub trait KeyArrivalListener: Send + Sync {
     fn keys_arrived(&self, cids: &[EncryptionCid]);
 }
 
