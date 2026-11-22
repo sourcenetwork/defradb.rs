@@ -2320,7 +2320,7 @@ pub const PROPERTIES: &[Property] = &[
         name: "INV_KindPreserved / INV_SyncWaits",
         axis: Tla,
         anchor: "crates/surfaces/http/src/handlers/index/go_api.rs go_create_index; crates/surfaces/http/src/index_adapter.rs IndexAdapter::create_index; crates/database/db/src/index/create.rs create_index, start_index",
-        model_ref: "MC_HttpIndexBuild_{Green,Green_Sync,Red_Vector}.cfg",
+        model_ref: "MC_HttpIndexBuild_{Green,Green_Sync,Red_Vector,Red_Early}.cfg",
         tiers: &[Boundary],
         bound_by: "tools/integration-test/tests/testo/index/async_backfill_migration.rs async_backfill_restart_after_non_zero_watermark_resumes_to_ready",
     },

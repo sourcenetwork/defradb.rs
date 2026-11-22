@@ -7,8 +7,9 @@
 \* IndexAdapter::create_index; db/src/index/create.rs create_index/start_index.
 EXTENDS Naturals
 \* Background and Vector describe the request. DropVector plants the bug
-\* that discards a vector configuration on a background request.
-CONSTANTS Background, Vector, DropVector
+\* that discards a vector configuration on a background request; EarlySync
+\* lets a synchronous request respond before the backfill completes.
+CONSTANTS Background, Vector, DropVector, EarlySync
 \* defined, built, responded track the steps; storedVector is the chosen kind.
 VARIABLES defined, built, responded, storedVector
 \* All state, including the index kind.
@@ -24,7 +25,7 @@ Define == /\ ~defined /\ defined' = TRUE
 Build == /\ defined /\ ~built /\ built' = TRUE
          /\ UNCHANGED <<defined, responded, storedVector>>
 \* A background response follows publication; a synchronous one follows build.
-Respond == /\ defined /\ ~responded /\ (Background \/ built)
+Respond == /\ defined /\ ~responded /\ (Background \/ built \/ EarlySync)
            /\ responded' = TRUE /\ UNCHANGED <<defined, built, storedVector>>
 \* Each operation may run in order allowed by its guard.
 Next == Define \/ Build \/ Respond
