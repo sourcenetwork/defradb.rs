@@ -399,6 +399,47 @@ fn provider_err(error: impl std::borrow::Borrow<ProviderError>) -> acp::Error {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl acp::RemotePolicies for VeraDocumentACP {
+    async fn certified_assignments(
+        &self,
+        query: &acp::AssignmentQuery,
+    ) -> std::result::Result<acp::CertifiedAssignments, acp::AssignmentReadError> {
+        let floor = query
+            .not_before
+            .as_ref()
+            .map(|position| crate::AssignmentPosition {
+                term: position.term,
+                height: position.height,
+                block_hash: position.block_hash.clone(),
+            });
+        let result = self
+            .provider
+            .read_certified_assignments(crate::AssignmentQuery {
+                policy: &query.policy,
+                resource: &query.resource,
+                relation: &query.relation,
+                subject: &query.subject,
+                issuer: &query.issuer,
+                not_before: floor.as_ref(),
+            })
+            .await
+            .map_err(|error| match error {
+                ProviderError::Unavailable(_) | ProviderError::ProofsOvertaken(_) => {
+                    acp::AssignmentReadError::Unavailable(error.to_string())
+                }
+                ProviderError::Unsupported(_) => acp::AssignmentReadError::Unsupported,
+                _ => acp::AssignmentReadError::Invalid(error.to_string()),
+            })?;
+        Ok(acp::CertifiedAssignments {
+            object_ids: result.object_ids,
+            position: acp::AssignmentPosition {
+                term: result.position.term,
+                height: result.position.height,
+                block_hash: result.position.block_hash,
+            },
+            timestamp: result.timestamp,
+            module_state_root: result.module_state_root,
+        })
+    }
     async fn add_policy(
         &self,
         creator: &str,
