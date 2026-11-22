@@ -36,7 +36,7 @@ dependencies = [
 [[package]]
 name = "acp-light-client"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=76bb9b3e00415a0ab3145451ade759516ce13753#76bb9b3e00415a0ab3145451ade759516ce13753"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=7993ba38d889d16503f7a6ec9c33ef91375e4c0e#7993ba38d889d16503f7a6ec9c33ef91375e4c0e"
 dependencies = [
  "alloy-primitives",
  "commonware-codec",
@@ -3954,7 +3954,7 @@ dependencies = [
 [[package]]
 name = "defra-harness"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=76bb9b3e00415a0ab3145451ade759516ce13753#76bb9b3e00415a0ab3145451ade759516ce13753"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=7993ba38d889d16503f7a6ec9c33ef91375e4c0e#7993ba38d889d16503f7a6ec9c33ef91375e4c0e"
 dependencies = [
  "eyre",
  "futures",
@@ -12737,7 +12737,7 @@ dependencies = [
 [[package]]
 name = "test-infra"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=76bb9b3e00415a0ab3145451ade759516ce13753#76bb9b3e00415a0ab3145451ade759516ce13753"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=7993ba38d889d16503f7a6ec9c33ef91375e4c0e#7993ba38d889d16503f7a6ec9c33ef91375e4c0e"
 dependencies = [
  "eyre",
  "futures",
@@ -13989,7 +13989,7 @@ dependencies = [
 [[package]]
 name = "vera-harness"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=76bb9b3e00415a0ab3145451ade759516ce13753#76bb9b3e00415a0ab3145451ade759516ce13753"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=7993ba38d889d16503f7a6ec9c33ef91375e4c0e#7993ba38d889d16503f7a6ec9c33ef91375e4c0e"
 dependencies = [
  "cosmrs",
  "eyre",

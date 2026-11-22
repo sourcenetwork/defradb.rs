@@ -69,7 +69,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 # The light client's freshness limit, at the revision `crates/engine/vera` builds on.
-acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "76bb9b3e00415a0ab3145451ade759516ce13753" }
+acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "7993ba38d889d16503f7a6ec9c33ef91375e4c0e" }
 # The document ACP layer the stopped-node test asks through.
 acp = { path = "../../engine/acp" }
 identity = { path = "../../building-blocks/identity" }
