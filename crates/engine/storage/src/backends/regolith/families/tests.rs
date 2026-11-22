@@ -25,6 +25,7 @@ fn every_entity_ends_where_its_key_builder_ends_it() {
         entities.push([b"h/r/".as_slice(), &document, b"/"].concat());
     }
     for id in [0u32, 7, 47, 300, u32::MAX] {
+        entities.push(IndexDataStoreKey::index_prefix(id, 47));
         entities.push(stored(b"d", &IndexDataStoreKey::index_prefix(id, 47)));
         entities.push(stored(b"d", &IndexDataStoreKey::index_prefix(7, id)));
         entities.push(stored(
@@ -56,7 +57,7 @@ fn every_entity_ends_where_its_key_builder_ends_it() {
 /// with is the key's family.
 #[test]
 fn the_first_family_a_key_starts_with_is_its_family() {
-    let cases: [(&[u8], Class); 16] = [
+    let cases: [(&[u8], Class); 17] = [
         (b"bm\x01\x55", Class::Ordinary),
         (b"b\x01\x55", Class::ContentAddressed),
         (b"t\x01\x55", Class::ContentAddressed),
@@ -69,8 +70,9 @@ fn the_first_family_a_key_starts_with_is_its_family() {
         (b"d/d/users/", Class::Ordinary),
         (b"d/del/users/", Class::Ordinary),
         (b"d/v/users/", Class::Ordinary),
-        (b"d/i/\x01/\x02/", Class::Ordinary),
         (b"d/\x01/\x02/", Class::Ordinary),
+        (b"d/index/\x01/\x02/", Class::Ordinary),
+        (b"/index/\x01/\x02/", Class::Ordinary),
         (b"a/zanzibar/7/rel/users/bae-1/", Class::Ordinary),
         (b"a/acp/users/bae-1/", Class::Ordinary),
     ];
@@ -115,6 +117,9 @@ fn keys_without_an_entity_name_none() {
         b"d/",
         b"d/\x01",
         b"d/\x01/\xf9",
+        b"d/index/",
+        b"d/index/\x01/\xf9",
+        b"/index/\x01/",
         b"a/zanzibar/policy/7",
         b"a/zanzibar/counter",
         b"a/zanzibar/7/rel/users/",

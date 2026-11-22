@@ -2,7 +2,7 @@ use super::super::utils::{encode_uvarint_ascending, SEPARATOR};
 use crate::corekv::Key;
 
 /// The fixed family tag ahead of every secondary-index key.
-const INDEX_KEYSPACE_PREFIX: &[u8] = b"/i/";
+const INDEX_KEYSPACE_PREFIX: &[u8] = b"/index/";
 
 /// An indexed field with value and sort direction.
 ///
@@ -46,15 +46,15 @@ impl PartialEq for IndexedField {
 
 /// IndexDataStoreKey: Stores indexed field values for secondary indexes
 ///
-/// Structure: `/i/[CollectionShortID]/[IndexID]/[EncodedFieldValue1][EncodedFieldValue2]...(/[DocShortID])`
-/// Example: `/i/1/2/<encoded value A><encoded value B>`
+/// Structure: `/index/[CollectionShortID]/[IndexID]/[EncodedFieldValue1][EncodedFieldValue2]...(/[DocShortID])`
+/// Example: `/index/1/2/<encoded value A><encoded value B>`
 ///
 /// The trailing doc short ID makes equal index values unique and lets
 /// index scans resolve the matching document without storing the full
 /// DocID. It is 0 (omitted) for unique-index keys, whose values carry
 /// the doc identity instead.
 ///
-/// The leading `i` tag keeps collection short IDs out of the top-level key
+/// The leading `index` tag keeps collection short IDs out of the top-level key
 /// spaces. The collection, index and document short IDs are prefix-free
 /// order-preserving uvarints, so neither an index nor an index entry can be a
 /// prefix of another.
@@ -179,7 +179,7 @@ impl Key for IndexDataStoreKey {
             .collect::<Vec<_>>()
             .join("/");
         format!(
-            "/i/{}/{}/{}",
+            "/index/{}/{}/{}",
             self.collection_short_id, self.index_id, values_str
         )
     }
@@ -192,7 +192,7 @@ mod keyspace_tests {
 
     #[test]
     fn index_keyspace_is_tagged_across_the_byte_boundary() {
-        let ids = (0..=239).chain([240]);
+        let ids = (0..=239).chain([240, 2287, 2288, 65_535, 65_536, u32::MAX]);
         for collection_short_id in ids {
             let key = IndexDataStoreKey::with_doc_short_id(
                 collection_short_id,
@@ -204,7 +204,7 @@ mod keyspace_tests {
             let prefix = IndexDataStoreKey::index_prefix(collection_short_id, 1);
 
             assert!(
-                key.starts_with(b"/i/"),
+                key.starts_with(b"/index/"),
                 "collection {collection_short_id} escaped the index keyspace: {key:?}"
             );
             assert!(
@@ -216,9 +216,25 @@ mod keyspace_tests {
 
     #[test]
     fn index_integer_encodings_are_prefix_free() {
-        let collection_ids = (0..=239u32).chain([240]);
-        let index_ids = (0..=239u32).chain([240]);
-        let doc_ids = (1..=239u64).chain([240]);
+        let boundaries = [240, 2287, 2288, 65_535, 65_536, u32::MAX];
+        let collection_ids = (0..=239u32).chain(boundaries);
+        let index_ids = (0..=239u32).chain(boundaries);
+        let doc_ids = (1..=239u64).chain([
+            240,
+            2287,
+            2288,
+            65_535,
+            65_536,
+            u64::from(u32::MAX),
+            u64::from(u32::MAX) + 1,
+            (1_u64 << 40) - 1,
+            1_u64 << 40,
+            (1_u64 << 48) - 1,
+            1_u64 << 48,
+            (1_u64 << 56) - 1,
+            1_u64 << 56,
+            u64::MAX,
+        ]);
         let encoded: Vec<Vec<u8>> = collection_ids
             .map(|id| encode_uvarint_ascending(Vec::new(), u64::from(id)))
             .chain(index_ids.map(|id| encode_uvarint_ascending(Vec::new(), u64::from(id))))

@@ -8,6 +8,13 @@ Requirements that start in defradb.rs rather than in a Go integration test.
 
 Index behaviour beyond what Go's integration suite checks.
 
+# `defra.index.keyspace_isolation`: Secondary index keyspace isolation
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["collection.truncate.isolation.truncate_preserves_other_collections"]
+
+Secondary index entries occupy a keyspace disjoint from document and schema-version keys. Querying and dropping an index or truncating its collection leaves other collections' documents and definitions intact, including for collection short IDs whose legacy index prefixes overlapped other key families.
+
 # `defra.index.unique_writer`: Unique-index errors name only the writer
 
 - **Parents:** ["defra.index"]

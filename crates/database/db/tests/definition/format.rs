@@ -1,11 +1,4 @@
-//! A store written by an older index encoding is refused on open.
-//!
-//! The encoding changed from one varint of nanoseconds to a marker plus
-//! separate seconds and nanos varints. Nothing rebuilt those entries before:
-//! the existing reindex path is driven by schema migration, not by a storage
-//! format change. An upgraded store therefore answered range queries with
-//! new-format bounds against old-format entries, so rows went missing, deletes
-//! orphaned their entries, and unique indexes stopped rejecting duplicates.
+//! Opening a store upgrades older secondary-index encodings.
 
 use db::definition::migration::format::CURRENT_INDEX_FORMAT;
 use schema::{CollectionVersion, FieldDescription, FieldKind};
@@ -94,63 +87,125 @@ fn simple_schema() -> CollectionVersion {
     )
 }
 
-fn prefixed_index_format_key() -> Vec<u8> {
-    [
-        b"s".as_slice(),
-        db::definition::migration::format::INDEX_FORMAT_KEY,
-    ]
-    .concat()
-}
-
-/// Rebuilds an accepted older encoding and stamps it current, rather than
-/// leaving its entries in a layout this build cannot read directly.
+/// Older and unstamped stores are rebuilt and stamped on open.
 #[test]
-fn a_rebuildable_older_format_is_stamped_after_rebuild() {
+fn older_index_formats_are_upgraded() {
     workers::block_on(async {
-        let store = RegolithStore::in_memory().unwrap();
-        let db = db::DB::open(store.clone()).await.expect("fresh open");
-        db.create_collection(simple_schema()).await.expect("schema");
-        let txn = db.new_txn(false).await.expect("txn");
-        txn.systemstore()
-            .expect("systemstore")
-            .set(&prefixed_index_format_key(), &3u32.to_be_bytes())
-            .await
-            .expect("stamp the older format");
-        txn.commit().await.expect("commit");
-        drop(db);
-
-        let db = db::DB::open(store).await.expect("format 3 rebuilds");
-        assert_eq!(
-            db.stored_index_format().await.expect("read the stamp"),
-            Some(CURRENT_INDEX_FORMAT),
-            "the rebuilt store must report the layout this build wrote"
-        );
+        for format in [None, Some(1u32), Some(2), Some(3)] {
+            let store = RegolithStore::in_memory().unwrap();
+            let db = db::DB::open(store.clone()).await.unwrap();
+            db.create_collection(simple_schema()).await.unwrap();
+            let txn = db.new_txn(false).await.unwrap();
+            let systemstore = txn.systemstore().unwrap();
+            match format {
+                Some(format) => systemstore
+                    .set(
+                        db::definition::migration::format::INDEX_FORMAT_KEY,
+                        &format.to_be_bytes(),
+                    )
+                    .await
+                    .unwrap(),
+                None => systemstore
+                    .delete(db::definition::migration::format::INDEX_FORMAT_KEY)
+                    .await
+                    .unwrap(),
+            }
+            drop(systemstore);
+            txn.commit().await.unwrap();
+            drop(db);
+            let db = db::DB::open(store).await.unwrap();
+            assert_eq!(
+                db.stored_index_format().await.unwrap(),
+                Some(CURRENT_INDEX_FORMAT)
+            );
+            assert!(db.require_collection("Tallies").is_ok());
+        }
     })
     .unwrap()
 }
 
-/// A store with collections but no stamp predates the format marker and is
-/// rebuilt, rather than refused.
+/// A future format cannot be interpreted by this build.
 #[test]
-fn an_unstamped_store_with_collections_is_rebuilt() {
+fn future_index_format_is_refused() {
     workers::block_on(async {
         let store = RegolithStore::in_memory().unwrap();
-        let db = db::DB::open(store.clone()).await.expect("fresh open");
-        db.create_collection(simple_schema()).await.expect("schema");
-        let txn = db.new_txn(false).await.expect("txn");
-        txn.systemstore()
-            .expect("systemstore")
-            .delete(&prefixed_index_format_key())
-            .await
-            .expect("remove the stamp");
-        txn.commit().await.expect("commit");
+        let db = db::DB::open(store.clone()).await.unwrap();
+        let txn = db.new_txn(false).await.unwrap();
+        txn.systemstore().unwrap().set(db::definition::migration::format::INDEX_FORMAT_KEY, &(CURRENT_INDEX_FORMAT + 1).to_be_bytes()).await.unwrap();
+        txn.commit().await.unwrap();
         drop(db);
+        assert!(matches!(db::DB::open(store).await, Err(db::Error::UnsupportedIndexFormat { stored: Some(format), .. }) if format == CURRENT_INDEX_FORMAT + 1));
+    }).unwrap()
+}
 
-        let db = db::DB::open(store).await.expect("old store rebuilds");
-        assert_eq!(
-            db.stored_index_format().await.expect("read the stamp"),
-            Some(CURRENT_INDEX_FORMAT)
+/// A rebuild never treats a legacy key under /i/ as a new index entry.
+#[test]
+fn upgrade_rebuilds_entries_without_deleting_legacy_keys() {
+    use db::AutoCommitMutator;
+    use document::{Document, NormalValue};
+    use query::DocMutator;
+    use schema::IndexDescription;
+    use std::sync::Arc;
+    use storage::corekv::{IterOptions, Iterator as _};
+    use storage::keys::IndexDataStoreKey;
+
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let db = Arc::new(db::DB::open(store.clone()).await.unwrap());
+        let schema =
+            simple_schema().with_index(IndexDescription::new("counts").with_field("count", false));
+        db.create_collection(schema.clone()).await.unwrap();
+        let collection = db.require_collection("Tallies").unwrap();
+        let prefix = IndexDataStoreKey::index_prefix(
+            collection.resolved_root_id(),
+            collection.schema().indexes[0].id,
         );
+        let mut doc = Document::new(schema);
+        doc.set("count", NormalValue::Int(42)).unwrap();
+        AutoCommitMutator::new(db.clone())
+            .create("Tallies", doc)
+            .await
+            .unwrap();
+        let txn = db.new_txn(false).await.unwrap();
+        let data = txn.datastore().unwrap();
+        let mut iter = data
+            .iterator(IterOptions::new().with_prefix(prefix.clone()))
+            .await
+            .unwrap();
+        let entry = iter.next().await.unwrap().unwrap();
+        iter.close().await.unwrap();
+        drop(iter);
+        data.delete(&entry.key).await.unwrap();
+        data.set(b"/i/pk/legacy", b"preserve").await.unwrap();
+        txn.systemstore()
+            .unwrap()
+            .set(
+                db::definition::migration::format::INDEX_FORMAT_KEY,
+                &3u32.to_be_bytes(),
+            )
+            .await
+            .unwrap();
+        let system = txn.systemstore().unwrap();
+        system.set(b"/reindex/owed/tallies-collection", br#"{"token":17,"migration_destination":null}"#).await.unwrap();
+        system.set(b"/reindex/progress/tallies-collection", br#"{"token":17,"stage":{"Walk":{"fence":null,"last":18446744073709551615}},"deferred":[]}"#).await.unwrap();
+        drop(system);
+        drop(data);
+        txn.commit().await.unwrap();
+        drop(db);
+        let db = db::DB::open(store).await.unwrap();
+        let txn = db.new_txn(true).await.unwrap();
+        let data = txn.datastore().unwrap();
+        assert_eq!(
+            data.get(b"/i/pk/legacy").await.unwrap().unwrap().as_ref(),
+            b"preserve"
+        );
+        let mut iter = data
+            .iterator(IterOptions::new().with_prefix(prefix))
+            .await
+            .unwrap();
+        assert!(iter.next().await.unwrap().is_some());
+        assert!(iter.next().await.unwrap().is_none());
+        iter.close().await.unwrap();
     })
     .unwrap()
 }

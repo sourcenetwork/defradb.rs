@@ -1,21 +1,17 @@
 /-!
 # IndexKeyspace: tagged secondary-index keys stay isolated
 
-The story, in plain words. A secondary-index key used to start with the
-collection's short-ID bytes. A short ID below 240 is one raw byte, so collection
-100 made index keys that begin `/d/`, the documents' family, and collection 118
-made keys that begin `/v/`, the versions' family. The fix puts the fixed tag
-`/i/` before the collection and index IDs. Every integer is encoded by the same
-order-preserving uvarint: one byte below 240, two bytes through 2287, and a
-width marker plus big-endian bytes above that. The first byte therefore names
-the whole integer's width, so no integer encoding is a prefix of another.
+A secondary-index key used to start with the collection's short-ID bytes.
+A short ID below 240 is one raw byte, so collection 100 made index keys
+that begin `/d/`, and collection 118 made keys that begin `/v/`. The fixed
+`/index/` tag separates new index keys from those families regardless of the
+bytes that follow it. The legacy-key theorem covers one-byte collection IDs.
 
-What must hold: an index key starts with `/i/`, never with another family's
-tag, and two index keys share a prefix only when they are the same key.
-
-What must never happen: collection 100's index entries land in the document
-family, collection 118's land in the version family, or one index's prefix scan
-reads another index's entries.
+The short-ID model covers values below 240 and the value 240 only. It proves
+prefix-freedom for that subset, not for every width of the Rust encoder. The
+model's `IndexKey.bytes` is an index prefix, not a complete index entry; it
+omits encoded fields and document IDs. It does not prove index-prefix
+isolation between different collection or index IDs.
 
 Rust anchors: `crates/engine/storage/src/keys/datastore/index_key.rs`
 `INDEX_KEYSPACE_PREFIX`, `IndexDataStoreKey::index_prefix`,
@@ -27,8 +23,8 @@ namespace IndexKeyspace
 -- A byte, as a natural number.
 abbrev Byte := Nat
 
--- The fixed tag in front of every secondary-index key: `/i/`.
-def indexTag : List Byte := [47, 105, 47]
+-- The fixed tag in front of every secondary-index key: `/index/`.
+def indexTag : List Byte := [47, 105, 110, 100, 101, 120, 47]
 
 -- A collection short ID in the model: every single-byte value and the first
 -- multi-byte boundary. The code's uvarint gives the first group one byte and
@@ -45,8 +41,8 @@ def ShortId.bytes : ShortId → List Byte
 def IsPrefix (left right : List Byte) : Prop :=
   ∃ suffix, left ++ suffix = right
 
--- The one-/two-byte split makes a short ID self-delimiting: one ID's bytes are
--- a prefix of another's only when they are the same ID.
+-- Within the modeled subset, one ID's bytes prefix another only when the
+-- IDs are the same.
 theorem short_id_bytes_prefix_eq (left right : ShortId) :
     IsPrefix left.bytes right.bytes → left = right := by
   rintro ⟨suffix, hbytes⟩
@@ -80,7 +76,7 @@ theorem short_id_bytes_prefix_eq (left right : ShortId) :
       subst hsuffix
       rfl
 
--- A secondary-index key names a collection and an index.
+-- An index prefix names a collection and an index.
 structure IndexKey where
   collection : ShortId
   index : ShortId
@@ -92,7 +88,6 @@ def IndexKey.bytes (key : IndexKey) : List Byte :=
     ++ key.index.bytes
     ++ [47]
 
--- A short ID's bytes are a prefix of another's only when they name the same ID.
 -- Prefixes compose: if `a` starts `b` and `b` starts `c`, `a` starts `c`.
 theorem prefix_trans {a b c : List Byte}
     (hab : IsPrefix a b) (hbc : IsPrefix b c) : IsPrefix a c := by
@@ -100,7 +95,7 @@ theorem prefix_trans {a b c : List Byte}
   obtain ⟨bc, hbc⟩ := hbc
   exact ⟨ab ++ bc, by rw [← List.append_assoc, hab, hbc]⟩
 
--- Every index key starts with the fixed `/i/` tag.
+-- Every modeled index prefix starts with the fixed `/index/` tag.
 theorem key_starts_with_tag (key : IndexKey) : IsPrefix indexTag key.bytes := by
   refine ⟨key.collection.bytes ++ [47] ++ key.index.bytes ++ [47], ?_⟩
   simp [IndexKey.bytes]
@@ -113,20 +108,27 @@ theorem tag_not_prefix_of_family (second : Byte) (hne : second ≠ 105) :
   injection hrest with hsecond _
   exact hne hsecond.symm
 
+-- A legacy key's one-byte collection ID is followed immediately by a slash.
+-- The new tag has another character there, even when that byte is `i`.
+theorem tag_not_prefix_of_legacy (first : Byte) (tail : List Byte) :
+    ¬ IsPrefix indexTag ([47, first, 47] ++ tail) := by
+  rintro ⟨suffix, hbytes⟩
+  simp [indexTag] at hbytes
+
 -- The families collection 100 and 118 used to reach.
 def documentFamily : List Byte := [47, 100, 47]
 def versionFamily : List Byte := [47, 118, 47]
 
--- Neither of those families starts with the index tag, so an index key
--- (which does) cannot be a prefix of either.
-theorem key_not_in_document_family (key : IndexKey) :
-    ¬ IsPrefix key.bytes documentFamily := by
-  intro hkey
-  exact tag_not_prefix_of_family 100 (by decide) (prefix_trans (key_starts_with_tag key) hkey)
+-- The family prefixes cannot start any tagged index key, regardless of the
+-- collection ID, index ID, field values or document ID that follow the tag.
+theorem key_not_in_document_family (suffix : List Byte) :
+    ¬ IsPrefix documentFamily (indexTag ++ suffix) := by
+  rintro ⟨tail, hbytes⟩
+  simp [documentFamily, indexTag] at hbytes
 
-theorem key_not_in_version_family (key : IndexKey) :
-    ¬ IsPrefix key.bytes versionFamily := by
-  intro hkey
-  exact tag_not_prefix_of_family 118 (by decide) (prefix_trans (key_starts_with_tag key) hkey)
+theorem key_not_in_version_family (suffix : List Byte) :
+    ¬ IsPrefix versionFamily (indexTag ++ suffix) := by
+  rintro ⟨tail, hbytes⟩
+  simp [versionFamily, indexTag] at hbytes
 
 end IndexKeyspace
