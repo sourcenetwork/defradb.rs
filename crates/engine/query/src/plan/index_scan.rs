@@ -312,7 +312,6 @@ impl PlanNode for IndexScanNode {
             "indexName".to_string(),
             serde_json::Value::String(self.index_params.index_name.clone()),
         );
-
         obj.insert(
             "indexLimit".into(),
             serde_json::json!(self.index_params.limit),
