@@ -188,6 +188,28 @@ where
             .map_err(DacPolicyError::LightClient)
     }
 
+    /// Return assignments only for the authenticated subject.
+    pub async fn certified_assignments_as(
+        &self,
+        context: &RequestContext,
+        query: &acp::AssignmentQuery,
+    ) -> Result<acp::CertifiedAssignments, DacPolicyError> {
+        self.check_node_access_as(context, NodePermission::DacStatus)
+            .await?;
+        if context.identity().filter(|identity| !identity.is_empty())
+            != Some(query.subject.as_str())
+        {
+            return Err(DacPolicyError::AssignmentSubject);
+        }
+        self.dac_policies()
+            .ok_or(DacPolicyError::AcpNotAvailable)?
+            .remote_policies()
+            .ok_or(DacPolicyError::NoLightClient)?
+            .certified_assignments(query)
+            .await
+            .map_err(DacPolicyError::Assignments)
+    }
+
     /// Whether resource `resource_name` of policy `policy_id` can guard a
     /// collection: the policy exists and the resource has the permissions
     /// documents need. Go's `ValidateResourceInterface`.
