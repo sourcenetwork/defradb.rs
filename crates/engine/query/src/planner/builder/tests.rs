@@ -458,6 +458,36 @@ fn a_filtered_similarity_query_warns_that_its_vector_index_is_unused() {
 }
 
 #[test]
+fn a_review_and_wrapped_filter_warns_that_its_vector_index_is_unused() {
+    workers::block_on(async {
+        let planner = Planner::new(vec![make_vector_collection()])
+            .with_fetcher(std::sync::Arc::new(crate::test_utils::MockFetcher::new()));
+
+        let filter = Filter::from_conditions(map([(
+            "_and".to_string(),
+            serde_json::json!([{ "age": { "_gt": 15 } }]),
+        )]));
+        let select = Select::new("Users")
+            .with_similarity(Similarity::new("embedding", vec![1.0, 0.0, 0.0]).with_alias("sim"))
+            .with_filter(filter)
+            .with_limit(2)
+            .with_order(
+                OrderBy::new().with_condition(OrderCondition::new("sim", OrderDirection::Desc)),
+            );
+
+        let result = planner.plan_with_index_info(&select).unwrap();
+
+        assert_eq!(result.warnings.len(), 1);
+        let warning = &result.warnings[0];
+        assert_eq!(warning.code, "VECTOR_INDEX_UNUSED");
+        let detail = warning.detail.as_ref().unwrap();
+        assert_eq!(detail["field"], "embedding");
+        assert_eq!(detail["reason"], "filter");
+    })
+    .unwrap()
+}
+
+#[test]
 fn an_empty_filter_is_not_treated_as_a_scalar_filter() {
     workers::block_on(async {
         let planner = Planner::new(vec![make_vector_collection()])

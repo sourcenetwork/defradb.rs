@@ -566,3 +566,87 @@ fn vector_index_warning_with_filter_reports_warning() {
     }
     .execute();
 }
+
+#[test]
+#[mantra_macros::req_test("defra.query.simple.similarity.filtered_vector_warning")]
+fn vector_index_warning_and_wrapped_filter_reports_warning() {
+    TestCase {
+        id: integration_test::scenario_id!(),
+        actions: vec![
+            AddCollection {
+                sdl: r#"
+                    type User {
+                                    name: String
+                                    age: Int
+                                    vector: [Float32!] @index(vector: {dimensions: 3, hnsw: {metric: COSINE}})
+                                }
+                "#.into(),
+                ..Default::default()
+            }
+            .into(),
+            AddDoc {
+                collection: "User".into(),
+                doc_map: Some(json!({ "age": 10, "name": "x", "vector": [1.0, 0.0, 0.0] })),
+                ..Default::default()
+            }
+            .into(),
+            AddDoc {
+                collection: "User".into(),
+                doc_map: Some(json!({ "age": 20, "name": "y", "vector": [0.0, 1.0, 0.0] })),
+                ..Default::default()
+            }
+            .into(),
+            AddDoc {
+                collection: "User".into(),
+                doc_map: Some(json!({ "age": 30, "name": "xy", "vector": [0.9, 0.4, 0.0] })),
+                ..Default::default()
+            }
+            .into(),
+            AddDoc {
+                collection: "User".into(),
+                doc_map: Some(json!({ "age": 40, "name": "z", "vector": [0.0, 0.0, 1.0] })),
+                ..Default::default()
+            }
+            .into(),
+            Request {
+                request: r#"
+                    query {
+                        User(
+                            filter: {_and: [{age: {_gt: 15}}]},
+                            order: {_alias: {sim: DESC}},
+                            limit: 2
+                        ) {
+                            name
+                            sim: SIMILARITY(vector: {vector: [1, 0, 0]})
+                        }
+                    }
+                "#.into(),
+                expected_data: json!({
+                    "User": [
+                        {
+                            "name": "xy",
+                            "sim": m::similarity_score("COSINE", json!([0.9, 0.4, 0]), json!([1, 0, 0])),
+                        },
+                        {
+                            "name": "y",
+                            "sim": m::similarity_score("COSINE", json!([0, 1, 0]), json!([1, 0, 0])),
+                        },
+                    ],
+                }),
+                expected_extensions: json!(m::object(json!({
+                    "warnings": [
+                        m::object(json!({
+                            "code": "VECTOR_INDEX_UNUSED",
+                            "detail": { "field": "vector", "reason": "filter" },
+                            "message": m::nonempty_string(),
+                        })),
+                    ],
+                }))),
+                ..Default::default()
+            }
+            .into(),
+        ],
+        ..Default::default()
+    }
+    .execute();
+}
