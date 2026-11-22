@@ -115,14 +115,14 @@ pub(super) async fn fixture() -> Fixture {
     Fixture { db, kms }
 }
 
-fn encrypt() {
+pub(super) fn encrypt() {
     set_encryption_config(Some(EncryptionConfig {
         encrypt_doc: false,
         encrypt_fields: vec!["left".to_string(), "right".to_string()],
     }));
 }
 
-fn document(value: &str) -> Document {
+pub(super) fn document(value: &str) -> Document {
     let mut doc = Document::new(secrets_collection());
     doc.set("left", value).unwrap();
     doc.set("right", value).unwrap();

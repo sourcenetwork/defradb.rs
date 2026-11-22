@@ -231,20 +231,31 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
 
         // Check if any secondary relation ID fields are selected (e.g., `_authorID` for a secondary `author` relation).
         // These require a TypeJoin to compute the ID via reverse lookup.
-        let has_secondary_relation_id = select.fields.iter().any(|f| {
-            if let Requestable::Field(field) = f {
-                let field_name = &field.name;
-                // Check pattern: _<relationName>ID
-                if field_name.starts_with('_') && field_name.ends_with("ID") && field_name.len() > 3
-                {
-                    let relation_name = &field_name[1..field_name.len() - 2];
-                    if let Some(relation_field) = collection.field_by_name(relation_name) {
-                        // Only secondary relations need a join to compute the ID
-                        return relation_field.kind.is_relation() && !relation_field.is_primary;
-                    }
-                }
-            }
-            false
+        let secondary_id_fields = select
+            .fields
+            .iter()
+            .filter_map(|f| match f {
+                Requestable::Field(field) => Some(field.name.clone()),
+                _ => None,
+            })
+            .chain(
+                select
+                    .filter
+                    .as_ref()
+                    .map(|f| f.referenced_fields())
+                    .unwrap_or_default(),
+            );
+        let has_secondary_relation_id = secondary_id_fields.into_iter().any(|field_name| {
+            let Some(relation_name) = field_name
+                .strip_prefix('_')
+                .and_then(|name| name.strip_suffix("ID"))
+            else {
+                return false;
+            };
+            let Some(relation_field) = collection.field_by_name(relation_name) else {
+                return false;
+            };
+            relation_field.kind.is_relation() && !relation_field.is_primary
         });
 
         // Check if an ordering-only index can be used (planner needed for IndexScanNode)

@@ -81,7 +81,7 @@ pub async fn sync_branchable(
     Ok(Json(()))
 }
 
-/// Sync collection versions (schema definitions) from connected peers via Bitswap.
+/// Sync collection versions (schema definitions) from connected peers via block sync.
 ///
 /// POST /api/v0/p2p/collections/sync-versions
 ///

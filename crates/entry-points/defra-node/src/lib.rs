@@ -90,6 +90,7 @@ pub use access_hooks::AccessHooks;
 /// [`Node::document_acp`] returns) without depending on `acp` directly.
 pub use acp::nac::NodePermission;
 pub use acp::ReplicaGrant;
+pub use acp::{AssignmentPosition, AssignmentQuery, CertifiedAssignments};
 pub use acp::{DocumentACP, DocumentPermission, Identity as AcpIdentity, PolicyNonce};
 pub use acp_ops::transactional::RelationshipChange;
 #[cfg(feature = "vera")]
@@ -1184,10 +1185,60 @@ impl Node {
     /// Admitted as a request (see [`Self::shutdown`]).
     pub async fn execute_as(&self, context: &RequestContext, query_str: &str) -> QueryResponse {
         let runner = Arc::clone(&self.runner);
-        let request = QueryRequest::new(query_str).with_context(context.clone());
-        self.as_request(async move { runner.execute(request).await })
-            .await
-            .unwrap_or_else(signed_query::refused_response)
+        let mut request = QueryRequest::new(query_str).with_context(context.clone());
+        let signing_config = if request.context.signing().is_some() {
+            request.context.signing().cloned()
+        } else if request.context.signing_override() == Some(false) {
+            None
+        } else if self.node_identity_did.is_some()
+            && (self.node_signs || request.context.signing_override() == Some(true))
+        {
+            defra_core::signing::resolve_signing_config_with_flag(
+                request.context.identity(),
+                self.node_identity_did.as_deref(),
+                true,
+            )
+        } else {
+            None
+        };
+
+        if self.node_identity_did.is_some()
+            && (self.node_signs || request.context.signing_override() == Some(true))
+            && request.context.signing_override() != Some(false)
+            && signing_config.is_none()
+        {
+            return unavailable_node_signer_response(
+                self.node_identity_did.as_deref().unwrap_or("node"),
+            );
+        }
+        match signing_config {
+            Some(signing_config) => {
+                request.context = request
+                    .context
+                    .with_signing_session(Some(signing_config.clone()));
+                match self.network.as_ref() {
+                    Some(network) => {
+                        signed_query::execute_with_signing_context(
+                            network.requests(),
+                            runner,
+                            request,
+                            None,
+                            signing_config,
+                            None,
+                        )
+                        .await
+                    }
+                    None => self
+                        .as_request(async move { runner.execute(request).await })
+                        .await
+                        .unwrap_or_else(signed_query::refused_response),
+                }
+            }
+            None => self
+                .as_request(async move { runner.execute(request).await })
+                .await
+                .unwrap_or_else(signed_query::refused_response),
+        }
     }
 
     /// Add an equality encrypted (searchable-encryption) index on `field_name`

@@ -49,6 +49,8 @@ pub(super) struct ServerSetup {
     pub http_scope: edge::Scope,
     #[cfg(feature = "postgres")]
     pub pg_server: Option<pg_compat::PgServer>,
+    #[cfg(feature = "postgres")]
+    pub pg_scope: edge::Scope,
     /// The Vera node started for document ACP.
     #[cfg(feature = "embedded-vera")]
     pub embedded_vera: Option<vera_embedded::HostedNode>,
@@ -68,8 +70,14 @@ pub struct Node {
     pub(super) deferred_index_task: Option<workers::Background>,
     pub(super) txn_cleanup_task: Option<workers::Background>,
     pub(super) http_server: Option<defra_http::Server>,
+    /// A listener the caller bound for the HTTP server, served in place of
+    /// binding the configured address.
+    pub(super) http_listener: Option<std::net::TcpListener>,
     /// Where the HTTP server's work runs, drained at shutdown.
     pub(super) http_scope: edge::Scope,
+    /// Where the PostgreSQL server's work runs, drained at shutdown.
+    #[cfg(feature = "postgres")]
+    pub(super) pg_scope: edge::Scope,
     /// The Vera node this process runs for document ACP, stopped at shutdown
     /// once nothing asks it for a decision any more.
     #[cfg(feature = "embedded-vera")]
@@ -89,6 +97,19 @@ pub struct Node {
 }
 
 impl Node {
+    /// Serve HTTP on `listener`, already bound by the caller, instead of
+    /// binding the configured address.
+    ///
+    /// Binding first is the only way to serve on an ephemeral port (bind
+    /// port 0) and know which one it is: choosing a free port, releasing it
+    /// and handing over the address leaves a window in which another process
+    /// can take it. Matches defra-node's `HttpConfig::with_listener`.
+    #[doc(hidden)]
+    pub fn with_http_listener(mut self, listener: std::net::TcpListener) -> Self {
+        self.http_listener = Some(listener);
+        self
+    }
+
     /// Load the keyring `encryption-key`. Writable startup may generate and
     /// persist a 32-byte key on first use; diagnostics require an existing key.
     ///
@@ -389,7 +410,10 @@ impl Node {
             deferred_index_task: servers.deferred_index_task,
             txn_cleanup_task: servers.txn_cleanup_task,
             http_server: Some(servers.http_server),
+            http_listener: None,
             http_scope: servers.http_scope,
+            #[cfg(feature = "postgres")]
+            pg_scope: servers.pg_scope,
             #[cfg(feature = "embedded-vera")]
             embedded_vera: servers.embedded_vera,
             #[cfg(feature = "postgres")]

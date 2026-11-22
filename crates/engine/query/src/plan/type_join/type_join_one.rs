@@ -1030,10 +1030,15 @@ impl TypeJoinOne {
     ) -> Result<bool> {
         match child_doc {
             None => {
-                // No child document - relation filter cannot pass
-                // This handles queries like `filter: {author: {verified: true}}`
-                // where if there's no author, the filter fails
-                Ok(false)
+                // Only an explicit ID condition can match a missing relation.
+                // Evaluate the complete filter with null fields, including any
+                // sibling conditions, using the normal scalar semantics.
+                if !rel_filter.conditions.conditions().contains_key("_docID") {
+                    return Ok(false);
+                }
+                rel_filter
+                    .conditions
+                    .matches(&[], self.child_plan.document_map())
             }
             Some(doc) => {
                 // Evaluate the filter conditions against the child's scan mapping

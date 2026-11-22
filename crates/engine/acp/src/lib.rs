@@ -83,7 +83,10 @@ pub use pending::{PendingRegistration, PendingRegistrations};
 pub use permission::DocumentPermission;
 #[cfg(not(target_arch = "wasm32"))]
 pub use persistent::PersistentAcpStore;
-pub use policy_lookup::{LightClientStatus, PolicyLookup, RemotePolicies, StorePolicies};
+pub use policy_lookup::{
+    AssignmentPosition, AssignmentQuery, AssignmentReadError, CertifiedAssignments,
+    LightClientStatus, PolicyLookup, RemotePolicies, StorePolicies,
+};
 pub use policy_nonce::{PolicyNonce, PolicyNonceError, POLICY_NONCE_BYTES};
 pub use provider_command::ProviderCommand;
 pub use read_access::{check_doc_read_access, DirectChecker, DocAccess, ObjectAccessChecker};

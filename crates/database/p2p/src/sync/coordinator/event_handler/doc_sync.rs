@@ -280,7 +280,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                             tracing::debug!(
                                 cid = %cid,
                                 doc_id = %item.doc_id,
-                                "Need to fetch block via Bitswap"
+                                "Need to fetch block via block sync"
                             );
                             cids_to_fetch.push((cid, item.doc_id.clone()));
                         }

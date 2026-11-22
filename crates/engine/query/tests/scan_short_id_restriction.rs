@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use query::doc_stream::{DocStream, VecStream};
 use query::document::DocumentMapping;
 use query::error::Result;
+use query::explain_asserter::ExplainAsserter;
 use query::fetcher::DocFetcher;
 use query::plan::ScanNode;
 use query::planner::PlanNode;
@@ -219,15 +220,11 @@ fn a_vector_routed_scan_reports_an_index_fetch() {
             .with_doc_short_ids(vec![1, 2])
             .as_vector_indexed();
         titles(&mut routed).await;
-        assert_eq!(routed.explain_execute_inner()["indexFetches"], 1);
+        ExplainAsserter::new(&routed.explain_execute_inner()).index_fetches(1);
 
         let mut unrouted = scan(fetcher).with_doc_short_ids(vec![1, 2]);
         titles(&mut unrouted).await;
-        assert_eq!(
-            unrouted.explain_execute_inner()["indexFetches"],
-            0,
-            "a plain short-id restriction is not an index hit"
-        );
+        ExplainAsserter::new(&unrouted.explain_execute_inner()).index_fetches(0);
     })
     .unwrap()
 }
