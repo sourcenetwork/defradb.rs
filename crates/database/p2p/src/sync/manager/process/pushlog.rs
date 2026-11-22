@@ -486,7 +486,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 missing_count = missing.len(),
                 doc_id = %msg.doc_id,
                 collection_id = %msg.collection_id,
-                "DAG has missing links, requesting Bitswap fetch"
+                "DAG has missing links, requesting block-sync fetch"
             );
         }
 

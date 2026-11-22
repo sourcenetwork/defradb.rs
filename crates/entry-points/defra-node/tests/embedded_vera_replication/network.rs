@@ -34,11 +34,16 @@ impl Peer {
 
     /// Subscribe `to` to `Users` and have this peer push `Users` to it.
     pub async fn replicate_to(&self, to: &Peer) {
+        self.replicate_collection_to(to, "Users").await
+    }
+
+    /// Subscribe `to` to `collection` and have this peer push it to `to`.
+    pub async fn replicate_collection_to(&self, to: &Peer, collection: &str) {
         to.node
             .p2p_system()
             .expect("p2p")
             .ops()
-            .add_collections(vec!["Users".into()])
+            .add_collections(vec![collection.into()])
             .await
             .expect("subscription");
         let addr = to.p2p_addr().await;
@@ -47,7 +52,7 @@ impl Peer {
             .expect("p2p")
             .ops()
             .add_replicator(
-                vec!["Users".into()],
+                vec![collection.into()],
                 Some(&addr),
                 Default::default(),
                 Vec::new(),

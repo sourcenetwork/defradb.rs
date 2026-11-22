@@ -107,7 +107,8 @@ crates/
     ├── workers/            # Thread-per-core worker pool
     ├── keyring/            # Key storage
     ├── cursor/             # Opaque cursor token codec for GraphQL pagination
-    └── defra-version/      # Version metadata and Go compat tracking
+    ├── defra-version/      # Version metadata and Go compat tracking
+    └── prolly/             # History-independent prolly tree: build, insert/remove, diff
 
 tools/
 ├── apple/                  # Apple embedding: .xcframework build + Swift import smoke test
@@ -384,6 +385,15 @@ that is correct but slower is not done.
   error. The check path writes nothing. The policy snapshot is an `Atom`, swapped on load and reload.
 - Read-only queries decide ACP at the same snapshot as their rows. Remote ACP (Vera) stays at the network edge, with
   its staleness documented.
+
+### Requirements and tests
+
+- A change to what DefraDB does (a fix or a feature) starts in `reqs/`: the requirements it fulfils or adds say what
+  done means, error text included, before the code changes (`reqs/README.md`).
+- Every requirement a change adds or fulfils has a testo test under `tools/integration-test/tests/testo/` tagged with its
+  ID. Unit tests alone do not cover a behaviour change; a new integration test is always a testo test.
+- Exempt: refactors, speedups with identical results, CI, docs, proofs, and internal code no client can reach. A PR
+  that relies on the exemption says why.
 
 ### Proofs
 

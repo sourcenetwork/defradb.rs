@@ -95,7 +95,7 @@ pub enum SyncEvent {
         peer_permit: DagFetchPeerPermit,
     },
 
-    /// DAG is ready for merge after Bitswap fetch completed.
+    /// DAG is ready for merge after block-sync fetch completed.
     ///
     /// All missing blocks have been fetched. The database layer should now
     /// process the complete DAG for CRDT merge.
