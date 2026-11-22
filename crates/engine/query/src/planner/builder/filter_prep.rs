@@ -27,13 +27,17 @@ impl super::Planner {
         select: &Select,
         collection: &CollectionVersion,
         computed_field_names: &[&str],
-    ) -> FilterParts {
-        // Strip _alias conditions that reference computed fields (aggregates/similarity) from the filter.
-        // These must be evaluated after the computed fields are set, not during plan execution.
+    ) -> crate::error::Result<FilterParts> {
+        // Relation ID conditions must be evaluated after the join that computes
+        // them, so they are stripped from the plan-level filter below.
         let filter_for_plan = select.filter.as_ref().map(|f| {
             let (stripped, _) = f.strip_aggregate_alias_conditions(computed_field_names);
             stripped
         });
+        let filter_for_plan = match filter_for_plan {
+            Some(filter) => Some(filter.without_secondary_relation_ids(collection)?),
+            None => None,
+        };
 
         // Convert doc_ids to a _docID filter and merge with the explicit filter.
         // The docID parameter (e.g., User(docID: "...")) must be applied as a real
@@ -103,6 +107,16 @@ impl super::Planner {
 
             if let Some(ref rel_filter) = relation_filter {
                 for (field_name, condition) in rel_filter.conditions() {
+                    if let Some(relation_name) = field_name
+                        .strip_prefix('_')
+                        .and_then(|name| name.strip_suffix("ID"))
+                    {
+                        if let Some(relation_field) = collection.field_by_name(relation_name) {
+                            if relation_field.kind.is_relation() && !relation_field.is_primary {
+                                continue;
+                            }
+                        }
+                    }
                     // Check if this field is a relation
                     if let Some(field) = collection.field_by_name(field_name) {
                         if field.kind.is_relation() {
@@ -163,11 +177,11 @@ impl super::Planner {
             scalar_filter
         };
 
-        FilterParts {
+        Ok(FilterParts {
             scalar_filter,
             relation_filter,
             filter_for_plan,
             is_complex_filter,
-        }
+        })
     }
 }

@@ -5,6 +5,7 @@ use integration_test::actions::{AddCollection, GetCollections, Request};
 use integration_test::m;
 use integration_test::scenario::{captures, Common};
 use integration_test::test_case::TestCase;
+use integration_test::ClientType;
 use serde_json::json;
 
 #[test]
@@ -55,12 +56,12 @@ fn default_explain_with_index_on_filter() {
                                 "selectNode": {
                                     "docID": null,
                                     "filter": null,
-                                    "scanNode": {
+                                    "scanNode": m::object(json!({
                                         "collectionName": "User",
                                         "collectionID": m::nonempty_string(),
                                         "filter": { "age": { "_eq": 30 } },
                                         "prefixes": [m::nonempty_string()],
-                                    },
+                                    })),
                                 },
                             },
                         }],
@@ -194,7 +195,10 @@ fn default_explain_with_index_on_subquery_nested_relation_order() {
 #[test]
 #[mantra_macros::req_test("go.explain.default.index")]
 fn explain_relation_filter_uses_the_indexed_child_scan() {
-    TestCase::from_actions(vec![
+    TestCase {
+        id: integration_test::scenario_id!(),
+        client_types: Some(&[ClientType::InProcess, ClientType::RustHttp, ClientType::Cli]),
+        actions: vec![
         AddCollection {
             sdl: "type Book { title: String author: Author } type Author { name: String @index books: [Book] }".into(),
             ..Default::default()
@@ -213,10 +217,16 @@ fn explain_relation_filter_uses_the_indexed_child_scan() {
             expected_data: m::explain_target("scanNode", true, 1, json!({
                 "collectionName": "Author",
                 "collectionID": m::r("author_version"),
+                "indexName": "Author_name_ASC",
+                "indexLimit": null,
+                "indexOffset": 0,
+                "indexFetches": 0,
                 "filter": {"name": {"_like": "%vid%"}},
                 "prefixes": ["/2"]
             })),
             ..Default::default()
         }.into(),
-    ]).execute();
+        ],
+        ..Default::default()
+    }.execute();
 }
