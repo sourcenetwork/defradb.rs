@@ -1,4 +1,4 @@
-use super::super::utils::{encode_uvarint_ascending, SEPARATOR};
+use super::super::utils::{SEPARATOR, encode_uvarint_ascending};
 use crate::corekv::Key;
 
 /// The fixed family tag ahead of every secondary-index key.
@@ -192,7 +192,7 @@ mod keyspace_tests {
 
     #[test]
     fn index_keyspace_is_tagged_across_the_byte_boundary() {
-        let ids = (0..=239).chain([240]);
+        let ids = (0..=239).chain([240, 2287, 2288, 65_535, 65_536, u32::MAX]);
         for collection_short_id in ids {
             let key = IndexDataStoreKey::with_doc_short_id(
                 collection_short_id,
@@ -216,9 +216,25 @@ mod keyspace_tests {
 
     #[test]
     fn index_integer_encodings_are_prefix_free() {
-        let collection_ids = (0..=239u32).chain([240]);
-        let index_ids = (0..=239u32).chain([240]);
-        let doc_ids = (1..=239u64).chain([240]);
+        let boundaries = [240, 2287, 2288, 65_535, 65_536, u32::MAX];
+        let collection_ids = (0..=239u32).chain(boundaries);
+        let index_ids = (0..=239u32).chain(boundaries);
+        let doc_ids = (1..=239u64).chain([
+            240,
+            2287,
+            2288,
+            65_535,
+            65_536,
+            u64::from(u32::MAX),
+            u64::from(u32::MAX) + 1,
+            (1_u64 << 40) - 1,
+            1_u64 << 40,
+            (1_u64 << 48) - 1,
+            1_u64 << 48,
+            (1_u64 << 56) - 1,
+            1_u64 << 56,
+            u64::MAX,
+        ]);
         let encoded: Vec<Vec<u8>> = collection_ids
             .map(|id| encode_uvarint_ascending(Vec::new(), u64::from(id)))
             .chain(index_ids.map(|id| encode_uvarint_ascending(Vec::new(), u64::from(id))))
