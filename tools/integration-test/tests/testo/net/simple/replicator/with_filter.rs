@@ -4,7 +4,7 @@
 //! tests run only against the Rust node.
 
 use integration_test::actions::{
-    Actions, AddCollection, AddDoc, AddReplicator, NewNode, Request, WaitForPeersEvents,
+    Actions, AddCollection, AddDoc, AddReplicator, NewNode, Request, Restart, WaitForPeersEvents,
 };
 use integration_test::scenario::{Common, Eventually};
 use integration_test::test_case::TestCase;
@@ -28,6 +28,44 @@ fn nodes() -> Vec<Actions> {
         actions.push(
             NewNode {
                 network: true,
+                common: on(node),
+                ..Default::default()
+            }
+            .into(),
+        );
+    }
+    for node in ["db0", "db1"] {
+        actions.push(
+            AddCollection {
+                sdl: SDL.into(),
+                common: on(node),
+                ..Default::default()
+            }
+            .into(),
+        );
+    }
+    for node in ["db0", "db1"] {
+        actions.push(
+            WaitForPeersEvents {
+                start: true,
+                common: on(node),
+                ..Default::default()
+            }
+            .into(),
+        );
+    }
+    actions
+}
+
+/// Restart needs directories that survive the stop; the shared nodes helper
+/// uses the harness default, which does not.
+fn persisted_nodes() -> Vec<Actions> {
+    let mut actions = Vec::new();
+    for node in ["db0", "db1"] {
+        actions.push(
+            NewNode {
+                network: true,
+                database_dir: Some("".into()),
                 common: on(node),
                 ..Default::default()
             }
@@ -163,6 +201,61 @@ fn an_and_of_filters_pushes_documents_matching_every_one() {
             doc("did:a", "x"),
             db1_holds(json!([{ "agent_did": "did:a", "kind": "x" }])),
         ],
+    );
+}
+
+#[test]
+#[mantra_macros::req_test("defra.replicator_filter.restart")]
+fn a_restarted_replicator_keeps_its_filter() {
+    case(
+        integration_test::scenario_id!(),
+        persisted_nodes()
+            .into_iter()
+            .chain(vec![
+                replicator(json!({ "agent_did": { "_in": ["did:a", "did:b"] } }), None),
+                doc("did:c", "x"),
+                doc("did:a", "x"),
+                Restart {
+                    stop: true,
+                    common: on("db0"),
+                    ..Default::default()
+                }
+                .into(),
+                Restart {
+                    stop: true,
+                    common: on("db1"),
+                    ..Default::default()
+                }
+                .into(),
+                Restart {
+                    common: on("db1"),
+                    ..Default::default()
+                }
+                .into(),
+                Restart {
+                    common: on("db0"),
+                    ..Default::default()
+                }
+                .into(),
+                WaitForPeersEvents {
+                    start: true,
+                    common: on("db0"),
+                    ..Default::default()
+                }
+                .into(),
+                WaitForPeersEvents {
+                    start: true,
+                    common: on("db1"),
+                    ..Default::default()
+                }
+                .into(),
+                doc("did:b", "x"),
+                db1_holds(json!([
+                    { "agent_did": "did:a", "kind": "x" },
+                    { "agent_did": "did:b", "kind": "x" },
+                ])),
+            ])
+            .collect(),
     );
 }
 

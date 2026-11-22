@@ -245,6 +245,13 @@ With `{agent_did: {_in: ["did:a", "did:b"]}}`, documents for `did:a` and `did:b`
 
 Adding the replicator fails, and nothing is pushed, when the filter names a field the collection lacks (`... not found ...`), gives an `_in` value of the wrong type (`["did:a", 42]` on a String: `... does not match the field type`), or reaches a field that is not `@immutable`, even inside an `_or` (`... must be marked @immutable`).
 
+# `defra.replicator_filter.restart`: A restarted replicator keeps its filter
+
+- **Parents:** ["defra.replicator_filter"]
+- **Scenarios:** ["net::simple::replicator::with_filter::a_restarted_replicator_keeps_its_filter"]
+
+After both nodes restart, a replicator added with a query filter still accepts matching pushes from its restored record: documents written after the restart that match reach the target, and a non-matching document written before it stays absent.
+
 # `defra.crdt.text_convergence`: Concurrent text edits converge with both kept
 
 - **Parents:** ["defra"]
