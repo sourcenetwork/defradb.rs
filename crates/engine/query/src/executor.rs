@@ -280,10 +280,9 @@ pub struct GqlWarning {
     pub detail: Option<serde_json::Map<String, JsonValue>>,
 }
 
-/// A similarity query read the whole collection even though the field it scored
-/// has a vector index. The results are correct, but the query costs more as the
-/// collection grows. The `reason` detail says which part of the query shape
-/// ruled the index out.
+/// A similarity query did not use the vector index on the field it scored.
+/// The results are correct, but the query may cost more as the collection grows.
+/// The `reason` detail says which part of the query shape ruled the index out.
 pub const WARNING_CODE_VECTOR_INDEX_UNUSED: &str = "VECTOR_INDEX_UNUSED";
 
 /// GraphQL error extensions exposed to clients.
