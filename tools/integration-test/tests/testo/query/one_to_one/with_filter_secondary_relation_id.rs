@@ -5,6 +5,7 @@ use integration_test::actions::{AddCollection, AddDoc, Request};
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
+use integration_test::ClientType;
 use serde_json::json;
 
 #[test]
@@ -412,6 +413,7 @@ fn query_one_to_one_with_eq_filter_on_secondary_relation_id_and_relation_selecti
 fn query_one_to_one_with_nested_secondary_relation_id_filter_refuses_instead_of_matching_all() {
     TestCase {
         id: integration_test::scenario_id!(),
+        client_types: Some(&[ClientType::InProcess, ClientType::RustHttp, ClientType::Cli]),
         actions: vec![
             AddCollection {
                 sdl: r#"
@@ -454,6 +456,7 @@ fn query_one_to_one_with_nested_secondary_relation_id_filter_refuses_instead_of_
 fn query_one_to_one_with_negated_secondary_relation_id_filter_refuses() {
     TestCase {
         id: integration_test::scenario_id!(),
+        client_types: Some(&[ClientType::InProcess, ClientType::RustHttp, ClientType::Cli]),
         actions: vec![
             AddCollection {
                 sdl: r#"
