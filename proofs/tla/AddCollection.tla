@@ -24,7 +24,8 @@
 \*   DB::add_collection              the whole sequence
 \*   check_collection_patch          nac
 \*   prepare_new_collections         parse, validate, policy (check_policies)
-\*   create_collections_atomic_*     the all-or-nothing create
+\*   create_collections_atomic       the all-or-nothing create: one transaction,
+\*     stage_new_collections in it, then one commit (collection/ops/create.rs)
 \*   crates/database/db/src/txn/registry/schemas.rs add_collection_in_txn_as  the same checks inside a transaction
 \*   crates/database/db/src/txn/registry/views.rs add_view_in_txn  an AddView's view collections in a
 \*     transaction: nac (add-view) in it, then all or none, by its savepoint

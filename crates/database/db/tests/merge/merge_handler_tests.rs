@@ -4459,8 +4459,9 @@ async fn assert_remote_merge_invalidates_stable_scope_after_schema_patch(batch: 
     let mut db = DB::from_arc(store.clone()).unwrap();
     db.set_event_bus(bus.clone());
     let db = Arc::new(db);
-    db.create_collections_atomic(
-        query::parse_sdl("type ObservationProbe { value: String }").unwrap(),
+    db.add_collection(
+        &defra_core::RequestContext::ambient(),
+        "type ObservationProbe { value: String }",
     )
     .await
     .unwrap();

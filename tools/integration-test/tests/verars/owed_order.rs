@@ -124,7 +124,7 @@ async fn a_grant_still_in_flight_cannot_land_after_the_revocation_that_follows_i
         let owner = identity::Did::new(vera.self_did().expect("actor DID")).unwrap();
         let reader = identity::Did::new(READER).unwrap();
         let policy = vera
-            .add_policy(owner.as_str(), POLICY)
+            .add_policy(owner.as_str(), POLICY, None)
             .await
             .expect("policy");
         drop(vera);

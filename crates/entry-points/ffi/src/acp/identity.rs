@@ -23,8 +23,7 @@ use crate::{ffi_entry, try_ffi};
 /// # Safety
 ///
 /// `did` and `bearer_token` must be null or valid null-terminated strings.
-#[no_mangle]
-pub unsafe extern "C" fn defra_identity_new_from_bearer_token(
+pub unsafe fn defra_identity_new_from_bearer_token(
     did: *const c_char,
     bearer_token: *const c_char,
 ) -> DefraNewIdentityResult {

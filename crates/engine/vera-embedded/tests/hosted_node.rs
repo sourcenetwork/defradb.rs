@@ -67,7 +67,7 @@ async fn once_the_node_stops_the_provider_verifies_no_new_decision() {
     )
     .await
     .expect("provider");
-    let policy = provider.create_policy(POLICY).await.expect("policy");
+    let policy = provider.create_policy(POLICY, None).await.expect("policy");
     let owner = provider.self_did().expect("actor DID");
     let delegation = provider
         .create_bearer_token(&owner)
@@ -198,7 +198,7 @@ async fn a_dropped_provider_lets_go_of_its_worker_at_once() {
     )
     .await
     .expect("provider");
-    provider.create_policy(POLICY).await.expect("policy");
+    provider.create_policy(POLICY, None).await.expect("policy");
     drop(provider);
 
     // No task the provider started may still hold the worker: the next

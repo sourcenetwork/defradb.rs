@@ -21,8 +21,7 @@ use crate::{ffi_async, ffi_entry, try_ffi};
 ///
 /// `index_name`, `fields` and `vector_json` must be null or valid
 /// null-terminated strings; every non-null string in `opts` must be one too.
-#[no_mangle]
-pub unsafe extern "C" fn defra_index_new(
+pub unsafe fn defra_index_new(
     node_ptr: usize,
     index_name: *const c_char,
     fields: *const c_char,

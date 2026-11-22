@@ -27,13 +27,15 @@ pub struct ReplicatorRegistry {
     replicators: Atom<Replicators>,
 }
 
+/// Store a peer's record, keeping it when its collection list is empty.
+///
+/// Go keeps a replicator added before any collection existed: it is stored
+/// with no collection IDs, listed, and restored on start (#2702). It is a
+/// replicator of nothing, so it grants no access and receives no pushes.
+/// Only removing a peer's last collection deletes its entry, as in Go's
+/// `deleteReplicator` (internal/db/p2p/replicator.go).
 fn store_info(replicators: &mut Replicators, info: ReplicatorInfo) {
-    let peer_id = info.peer_id_str().to_string();
-    if info.collections.is_empty() && info.filters.is_empty() {
-        replicators.remove(&peer_id);
-    } else {
-        replicators.insert(peer_id, info);
-    }
+    replicators.insert(info.peer_id_str().to_string(), info);
 }
 
 impl ReplicatorRegistry {
@@ -56,7 +58,8 @@ impl ReplicatorRegistry {
         });
     }
 
-    /// Replace the full set of collections replicated by a peer.
+    /// Replace the full set of collections replicated by a peer. An empty
+    /// list keeps the peer's entry with no collections; it does not remove it.
     pub fn set_peer_collections(&self, peer_id: &str, collections: &[String]) {
         if peer_id.is_empty() {
             return;
@@ -75,7 +78,8 @@ impl ReplicatorRegistry {
         });
     }
 
-    /// Replace the full metadata record for a peer.
+    /// Replace the full metadata record for a peer. A record with no
+    /// collections is kept and listed; it does not remove the peer.
     pub fn set_replicator_info(&self, info: ReplicatorInfo) {
         if info.peer_id_str().is_empty() {
             return;
@@ -115,7 +119,7 @@ impl ReplicatorRegistry {
                         info.filters
                             .retain(|collection, _| collection != collection_id);
                     }
-                    info.collections.is_empty() && info.filters.is_empty()
+                    info.collections.is_empty()
                 }
             };
             if fully_removed {
@@ -131,10 +135,7 @@ impl ReplicatorRegistry {
         self.replicators
             .load()
             .get(peer_id)
-            .map(|info| {
-                info.collections.iter().any(|id| id == collection_id)
-                    || info.filters.contains_key(collection_id)
-            })
+            .map(|info| info.collections.iter().any(|id| id == collection_id))
             .unwrap_or(false)
     }
 
@@ -147,9 +148,13 @@ impl ReplicatorRegistry {
             .unwrap_or(false)
     }
 
-    /// Check if a peer is a replicator for any collection.
+    /// Check if a peer is a replicator for any collection. A peer kept with
+    /// no collections is not.
     pub fn is_any_replicator(&self, peer_id: &str) -> bool {
-        self.replicators.load().contains_key(peer_id)
+        self.replicators
+            .load()
+            .get(peer_id)
+            .is_some_and(|info| !info.collections.is_empty())
     }
 
     /// Get all replicator peer ID strings for a collection.
@@ -157,10 +162,7 @@ impl ReplicatorRegistry {
         self.replicators
             .load()
             .iter()
-            .filter(|(_, info)| {
-                info.collections.iter().any(|id| id == collection_id)
-                    || info.filters.contains_key(collection_id)
-            })
+            .filter(|(_, info)| info.collections.iter().any(|id| id == collection_id))
             .map(|(peer_id, _)| peer_id.clone())
             .collect()
     }
@@ -182,7 +184,8 @@ impl ReplicatorRegistry {
     /// Load replicators from ReplicatorInfo records.
     ///
     /// Existing state is cleared before loading. Accepts any peer ID format
-    /// (libp2p or iroh) since we store as strings.
+    /// (libp2p or iroh) since we store as strings. A record with no
+    /// collections is loaded and listed, as Go restores it.
     pub fn load_from_infos(&self, infos: &[ReplicatorInfo]) -> (usize, usize) {
         let mut replicators = Replicators::new();
         let mut loaded = 0;
@@ -199,9 +202,7 @@ impl ReplicatorRegistry {
                 continue;
             }
 
-            if !info.collections.is_empty() || !info.filters.is_empty() {
-                replicators.insert(peer_id_str.to_string(), info.clone());
-            }
+            replicators.insert(peer_id_str.to_string(), info.clone());
             loaded += 1;
         }
 
@@ -457,69 +458,6 @@ mod tests {
     }
 
     #[test]
-    fn test_replicator_registry_keeps_filter_only_records() {
-        let registry = ReplicatorRegistry::new();
-        let peer = random_peer_id();
-        let mut filters = ReplicationFilters::new();
-        filters.insert(
-            "users".to_string(),
-            ReplicationFilter::new("agent_did", serde_json::json!("did:key:z6M")),
-        );
-
-        registry.set_replicator_info(ReplicatorInfo::from_raw_with_filters(
-            peer.clone(),
-            Vec::new(),
-            Vec::new(),
-            filters.clone(),
-        ));
-
-        assert!(registry.is_replicator("users", &peer));
-        assert!(registry.get_replicators("users").contains(&peer));
-
-        let (loaded, skipped) =
-            registry.load_from_infos(&[registry.get_replicator_info(&peer).unwrap()]);
-        assert_eq!((loaded, skipped), (1, 0));
-        assert!(registry.is_replicator("users", &peer));
-    }
-
-    #[test]
-    fn test_replicator_registry_replaces_the_full_record() {
-        let registry = ReplicatorRegistry::new();
-        let peer = random_peer_id();
-        let mut old_filters = ReplicationFilters::new();
-        old_filters.insert(
-            "posts".to_string(),
-            ReplicationFilter::new("agent_did", serde_json::json!("did:key:old")),
-        );
-
-        registry.set_replicator_info(ReplicatorInfo::from_raw_with_filters(
-            peer.clone(),
-            vec!["posts".to_string()],
-            vec!["/ip4/127.0.0.1/tcp/9000".to_string()],
-            old_filters,
-        ));
-
-        let mut new_filters = ReplicationFilters::new();
-        new_filters.insert(
-            "users".to_string(),
-            ReplicationFilter::new("agent_did", serde_json::json!("did:key:new")),
-        );
-        registry.set_replicator_info(ReplicatorInfo::from_raw_with_filters(
-            peer.clone(),
-            vec!["users".to_string()],
-            vec!["/ip4/127.0.0.1/tcp/9001".to_string()],
-            new_filters.clone(),
-        ));
-
-        let info = registry.get_replicator_info(&peer).unwrap();
-        assert_eq!(info.collections, vec!["users".to_string()]);
-        assert_eq!(info.addresses, vec!["/ip4/127.0.0.1/tcp/9001".to_string()]);
-        assert_eq!(info.filters, new_filters);
-        assert!(!registry.is_replicator("posts", &peer));
-        assert!(registry.is_replicator("users", &peer));
-    }
-
-    #[test]
     fn test_remove_peer_collections_by_name_vs_cid() {
         // The push registry is keyed by collection CID. Removing by the collection
         // NAME must NOT clear the peer (it never matches the stored CID) — this is
@@ -601,8 +539,58 @@ mod tests {
         assert_eq!(loaded, 1);
         assert_eq!(skipped, 0);
 
+        // Go restores a stored replicator with no collections and lists it
+        // (#2702); it is still not a replicator of anything.
+        assert_eq!(registry.get_all_peer_ids(), vec![peer.clone()]);
+        assert_eq!(registry.list_replicator_info().len(), 1);
         assert!(!registry.is_any_replicator(&peer));
-        assert!(registry.get_all_peer_ids().is_empty());
+        assert!(!registry.is_replicator("users", &peer));
+    }
+
+    #[test]
+    fn a_replicator_with_no_collections_is_listed_and_grants_nothing() {
+        let registry = ReplicatorRegistry::new();
+        let set_info = random_peer_id();
+        let set_collections = random_peer_id();
+
+        registry.set_replicator_info(ReplicatorInfo::from_raw(set_info.clone(), vec![], vec![]));
+        registry.set_peer_collections(&set_collections, &[]);
+
+        let mut listed: Vec<String> = registry
+            .list_replicator_info()
+            .iter()
+            .map(|info| info.peer_id_str().to_string())
+            .collect();
+        listed.sort();
+        let mut expected = vec![set_info.clone(), set_collections.clone()];
+        expected.sort();
+        assert_eq!(listed, expected, "an empty replicator is listed, as in Go");
+
+        for peer in [&set_info, &set_collections] {
+            assert!(registry.get_replicator_info(peer).is_some());
+            assert!(registry.get_collections(peer).is_empty());
+            assert!(!registry.is_any_replicator(peer));
+            assert!(!registry.is_replicator("users", peer));
+            assert!(!registry.is_filtered_replicator("users", peer));
+        }
+        assert!(registry.get_replicators("users").is_empty());
+    }
+
+    #[test]
+    fn removing_the_last_collection_still_drops_the_entry() {
+        // Go deletes a replicator once its last collection is removed
+        // (internal/db/p2p/replicator.go deleteReplicator).
+        let registry = ReplicatorRegistry::new();
+        let peer = random_peer_id();
+
+        registry.add_replicator("users", &peer);
+        assert!(registry.remove_peer_collections(&peer, &["users".to_string()]));
+        assert!(registry.get_replicator_info(&peer).is_none());
+        assert!(registry.list_replicator_info().is_empty());
+
+        registry.set_peer_collections(&peer, &[]);
+        assert!(registry.remove_peer_collections(&peer, &[]));
+        assert!(registry.get_replicator_info(&peer).is_none());
     }
 
     #[test]

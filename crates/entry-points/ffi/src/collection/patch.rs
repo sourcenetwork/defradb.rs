@@ -15,8 +15,7 @@ use crate::{ffi_async_ok, ffi_entry, try_ffi};
 /// # Safety
 ///
 /// `patch` and `lens_config` must be null or valid null-terminated strings.
-#[no_mangle]
-pub unsafe extern "C" fn defra_collection_patch(
+pub unsafe fn defra_collection_patch(
     node_ptr: usize,
     patch: *const c_char,
     lens_config: *const c_char,

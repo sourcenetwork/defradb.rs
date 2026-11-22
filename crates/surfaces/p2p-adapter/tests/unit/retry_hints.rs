@@ -17,30 +17,19 @@ enum PushPath {
 async fn assert_hint_prevents_resend(path: PushPath) {
     let db = Arc::new(db::DB::new(storage::RegolithStore::in_memory().unwrap()).unwrap());
     db.set_network(edge::testing::edge());
-    db.create_collection(
-        schema::CollectionVersion::new(
-            "Users",
-            "version-users",
-            "collection-users",
-            vec![
-                schema::FieldDescription::new(
-                    "1",
-                    "_docID",
-                    schema::FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                ),
-                schema::FieldDescription::new(
-                    "2",
-                    "name",
-                    schema::FieldKind::string(),
-                    schema::CType::LwwRegister,
-                ),
-            ],
+    let context = defra_core::RequestContext::ambient();
+    db.add_collection(&context, "type Users @branchable { name: String }")
+        .await
+        .unwrap();
+    let collection_id = db
+        .get_collections_as(
+            &context,
+            &db::CollectionSelector::with_names(vec!["Users".into()]),
         )
-        .as_branchable(),
-    )
-    .await
-    .unwrap();
+        .await
+        .unwrap()
+        .remove(0)
+        .collection_id;
     let created = db::AutoCommitMutator::new(db.clone())
         .create(
             "Users",
@@ -69,7 +58,7 @@ async fn assert_hint_prevents_resend(path: PushPath) {
         coordinator.head_hint_car_authority(),
     );
     pusher
-        .persist_replicator(peer.as_str(), &["collection-users".into()])
+        .persist_replicator(peer.as_str(), std::slice::from_ref(&collection_id))
         .await
         .unwrap();
     let peerstore = storage::stores::Peerstore::new(db.store().clone());
@@ -102,13 +91,13 @@ async fn assert_hint_prevents_resend(path: PushPath) {
             }
             PushPath::Document => {
                 pusher
-                    .retry_doc(&peer, &created.doc_id.to_string(), "collection-users", 0)
+                    .retry_doc(&peer, &created.doc_id.to_string(), &collection_id, 0)
                     .await
                     .unwrap_err();
             }
             PushPath::Collection => {
                 pusher
-                    .retry_collection_commit(&peer, "collection-users", 0)
+                    .retry_collection_commit(&peer, &collection_id, 0)
                     .await
                     .unwrap_err();
             }
