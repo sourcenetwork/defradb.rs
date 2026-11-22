@@ -88,11 +88,13 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         }
     }
 
+    /// Membership only: a replicator with no collections replicates none, as
+    /// Go's per-collection push map (internal/db/p2p/p2p.go) never lists it.
     fn replicator_in_collection(
         rep: &crate::replicator::ReplicatorInfo,
         collection_id: &str,
     ) -> bool {
-        rep.collections.is_empty() || rep.collections.iter().any(|id| id == collection_id)
+        rep.collections.iter().any(|id| id == collection_id)
     }
 
     fn peer_id_for_replicator(rep: &crate::replicator::ReplicatorInfo) -> Option<PeerId> {

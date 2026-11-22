@@ -870,9 +870,9 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             .collect()
     }
 
-    /// Process a pending DAG after Bitswap blocks have been received.
+    /// Process a pending DAG after block-sync blocks have been received.
     ///
-    /// This is called when BitswapComplete is received, indicating all requested
+    /// This is called when BlockSyncComplete is received, indicating all requested
     /// blocks have arrived. We re-check the DAG for any remaining missing links
     /// (recursively, at all depths) and process it if complete.
     ///

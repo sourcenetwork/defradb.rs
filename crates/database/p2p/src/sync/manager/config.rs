@@ -66,7 +66,7 @@ pub const DEFAULT_BROADCAST_PENDING_BYTES: usize = 64 * 1024 * 1024;
 /// Default maximum number of entries in the pending DAGs map.
 ///
 /// Prevents unbounded memory growth when many DAGs arrive faster than they
-/// can be resolved via Bitswap. Overflow is nacked back to the pusher with
+/// can be resolved via block sync. Overflow is nacked back to the pusher with
 /// `RATE_LIMITED_MESSAGE` (#1088 W1) so its retry ladder keeps the doc queued.
 pub const DEFAULT_MAX_PENDING_DAGS: usize = 1000;
 
@@ -132,7 +132,7 @@ pub struct SyncConfig {
     /// Timeout for one outbound PushLog send to a replicator peer.
     pub push_send_timeout: Duration,
 
-    /// Maximum number of pending-DAG registrations held while Bitswap
+    /// Maximum number of pending-DAG registrations held while block sync
     /// completes missing links. Overflow is rejected with a backpressure nack.
     /// Each known source peer may occupy at most one quarter of this capacity.
     /// Values below 1 are normalized to 1 (a zero cap would reject every
