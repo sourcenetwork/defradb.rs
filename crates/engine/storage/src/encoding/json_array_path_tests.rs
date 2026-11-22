@@ -68,3 +68,20 @@ fn descending_json_sentinels_round_trip() {
         assert_eq!(decoded.value, expected);
     }
 }
+
+#[test]
+fn descending_json_null_round_trips_as_null() {
+    let leaf = JsonLeafValue::new(
+        JsonPath::new()
+            .append_property("custom")
+            .append_property("value"),
+        JsonScalarValue::Null,
+    );
+
+    let encoded = encode_json_descending(Vec::new(), &leaf);
+    let (remaining, decoded) = decode_json_descending(&encoded).unwrap();
+
+    assert!(remaining.is_empty());
+    assert_eq!(decoded.path, leaf.path);
+    assert_eq!(decoded.value, JsonScalarValue::Null);
+}

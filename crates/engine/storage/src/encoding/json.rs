@@ -215,6 +215,7 @@ pub fn decode_json_descending(buf: &[u8]) -> Result<(&[u8], JsonLeafValue)> {
     }
 
     let mut rest = &buf[1..];
+    let separator;
 
     // The path itself remains in ascending order.
     let mut path = JsonPath::new();
@@ -226,6 +227,7 @@ pub fn decode_json_descending(buf: &[u8]) -> Result<(&[u8], JsonLeafValue)> {
         // The path stays ascending. Normal values and both sentinels use the
         // ascending separator; PathMin uses the next separator byte.
         if rest[0] == ESCAPED_TERM && (rest[1] == JSON_PATH_END || rest[1] == JSON_PATH_END + 1) {
+            separator = rest[1];
             rest = &rest[2..];
             break;
         }
@@ -246,7 +248,7 @@ pub fn decode_json_descending(buf: &[u8]) -> Result<(&[u8], JsonLeafValue)> {
     if rest.is_empty() {
         return Ok((rest, JsonLeafValue::new(path, JsonScalarValue::PathMax)));
     }
-    if rest == [super::ENCODED_NULL_DESC] {
+    if rest == [super::ENCODED_NULL_DESC] && separator == JSON_PATH_END + 1 {
         return Ok((
             &rest[1..],
             JsonLeafValue::new(path, JsonScalarValue::PathMin),

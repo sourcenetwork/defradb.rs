@@ -36,6 +36,13 @@ A counter field can be indexed. After local increments, or after two nodes incre
 
 An ordered query over an indexed field with `limit: 3, offset: 2` reads `limit + offset` index entries, returns exactly the page after skipping two, and leaves the query offset to the limit node so it is not applied twice. The same paging is correct when the ordered field is not indexed.
 
+# `defra.index.descending_json_path`: Descending JSON paths filter with unambiguous sentinels
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["index::json_descending::descending_json_index_filters_an_array_path", "index::json_descending::descending_json_index_filters_a_nested_path_range"]
+
+A JSON field indexed `DESC` serves `_any` over an array path and `_gt` over a nested scalar path. The path remains in its ordinary encoded order while only the scalar value is inverted, so an array path and a longer property path cannot collide and the path range sentinels bracket every value at that path.
+
 # `defra.collection`: Collection-wide operations
 
 - **Parents:** ["defra"]
