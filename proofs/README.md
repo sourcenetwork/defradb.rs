@@ -113,6 +113,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Document write pipeline | TLA+ | db, db-block-builder |
 | Text chunking | TLA+ / Lean | chunk-split, schema, db, query |
 | Prolly tree catch-up | TLA+ / Lean | prolly (the p2p pull is not wired yet, #2977) |
+| Prolly tree node store and cache | TLA+ / Lean | prolly, storage |
 | Postgres wire connection loop | TLA+ | pg-compat |
 | HTTP client redirects and body deadline | Lean | net |
 | Connect fallback race | TLA+ | net |

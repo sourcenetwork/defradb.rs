@@ -1,6 +1,9 @@
+mod common;
+
 use std::{collections::BTreeMap, num::NonZeroU32};
 
-use prolly::{diff, tree::DEFAULT_TARGET, Difference, MemStore, Node, Store, Tree};
+use common::{run, Counting};
+use prolly::{diff, tree::DEFAULT_TARGET, Difference, MemStore, Store, Tree};
 use proptest::prelude::*;
 
 fn key(k: u16) -> Vec<u8> {
@@ -20,25 +23,10 @@ fn compare(left: &BTreeMap<u16, u8>, right: &BTreeMap<u16, u8>) -> Vec<Differenc
         .collect()
 }
 
-fn build(store: &mut MemStore, target: NonZeroU32, map: &BTreeMap<u16, u8>) -> Tree {
-    Tree::build(store, target, map.iter().map(|(k, v)| (key(*k), vec![*v]))).unwrap()
-}
-
-/// A store that counts the nodes read through it.
-struct Counting<'a> {
-    inner: &'a MemStore,
-    reads: std::cell::Cell<usize>,
-}
-
-impl Store for Counting<'_> {
-    fn get(&self, hash: &prolly::Hash) -> Option<std::sync::Arc<Node>> {
-        self.reads.set(self.reads.get() + 1);
-        self.inner.get(hash)
-    }
-
-    fn put(&mut self, _node: Node) -> prolly::Hash {
-        unreachable!("diff only reads")
-    }
+async fn build(store: &mut MemStore, target: NonZeroU32, map: &BTreeMap<u16, u8>) -> Tree {
+    Tree::build(store, target, map.iter().map(|(k, v)| (key(*k), vec![*v])))
+        .await
+        .unwrap()
 }
 
 proptest! {
@@ -50,12 +38,16 @@ proptest! {
         left in prop::collection::btree_map(0u16..300, 0u8..4, 0..300),
         right in prop::collection::btree_map(0u16..300, 0u8..4, 0..300),
     ) {
-        let target = NonZeroU32::new(target).unwrap();
-        let mut left_store = MemStore::new();
-        let mut right_store = MemStore::new();
-        let lhs = build(&mut left_store, target, &left);
-        let rhs = build(&mut right_store, target, &right);
-        prop_assert_eq!(diff(&left_store, &lhs, &right_store, &rhs).unwrap(), compare(&left, &right));
+        run(async {
+            let target = NonZeroU32::new(target).unwrap();
+            let mut left_store = MemStore::new();
+            let mut right_store = MemStore::new();
+            let lhs = build(&mut left_store, target, &left).await;
+            let rhs = build(&mut right_store, target, &right).await;
+            let found = diff(&left_store, &lhs, &right_store, &rhs).await.unwrap();
+            prop_assert_eq!(found, compare(&left, &right));
+            Ok(())
+        })?;
     }
 
     #[test]
@@ -63,80 +55,98 @@ proptest! {
         base in prop::collection::btree_map(0u16..2000, 0u8..4, 500..1000),
         edits in prop::collection::btree_map(0u16..2000, prop::option::of(0u8..4), 1..5),
     ) {
-        let mut store = MemStore::new();
-        let before = build(&mut store, DEFAULT_TARGET, &base);
-        let mut after = before;
-        let mut changed = base.clone();
-        for (k, v) in &edits {
-            match v {
-                Some(v) => { after.insert(&mut store, key(*k), vec![*v]).unwrap(); changed.insert(*k, *v); }
-                None => { after.remove(&mut store, &key(*k)).unwrap(); changed.remove(k); }
+        run(async {
+            let mut store = MemStore::new();
+            let before = build(&mut store, DEFAULT_TARGET, &base).await;
+            let mut after = before;
+            let mut changed = base.clone();
+            for (k, v) in &edits {
+                match v {
+                    Some(v) => {
+                        after.insert(&mut store, key(*k), vec![*v]).await.unwrap();
+                        changed.insert(*k, *v);
+                    }
+                    None => {
+                        after.remove(&mut store, &key(*k)).await.unwrap();
+                        changed.remove(k);
+                    }
+                }
             }
-        }
-        prop_assert_eq!(diff(&store, &before, &store, &after).unwrap(), compare(&base, &changed));
+            let found = diff(&store, &before, &store, &after).await.unwrap();
+            prop_assert_eq!(found, compare(&base, &changed));
+            Ok(())
+        })?;
     }
 }
 
 #[test]
 fn unequal_roots_are_each_read_once() {
-    let mut store = MemStore::new();
-    let left = build(
-        &mut store,
-        DEFAULT_TARGET,
-        &(0..4).map(|k| (k, 0)).collect(),
-    );
-    let right = build(
-        &mut store,
-        DEFAULT_TARGET,
-        &(0..4).map(|k| (k, 1)).collect(),
-    );
-    assert_eq!(store.get(&left.root().unwrap()).unwrap().level, 0);
-    assert_eq!(store.get(&right.root().unwrap()).unwrap().level, 0);
-    let counting = Counting {
-        inner: &store,
-        reads: std::cell::Cell::new(0),
-    };
-    assert_eq!(diff(&counting, &left, &counting, &right).unwrap().len(), 4);
-    assert_eq!(counting.reads.get(), 2, "one read per root");
+    run(async {
+        let mut store = MemStore::new();
+        let left = build(
+            &mut store,
+            DEFAULT_TARGET,
+            &(0..4).map(|k| (k, 0)).collect(),
+        )
+        .await;
+        let right = build(
+            &mut store,
+            DEFAULT_TARGET,
+            &(0..4).map(|k| (k, 1)).collect(),
+        )
+        .await;
+        for tree in [&left, &right] {
+            let root = store.get(&tree.root().unwrap()).await.unwrap().unwrap();
+            assert_eq!(root.level, 0);
+        }
+        let counting = Counting::new(&store);
+        let found = diff(&counting, &left, &counting, &right).await.unwrap();
+        assert_eq!(found.len(), 4);
+        assert_eq!(counting.reads.get(), 2, "one read per root");
+    })
 }
 
 #[test]
 fn equal_trees_differ_nowhere_and_read_nothing() {
-    let mut store = MemStore::new();
-    let map: BTreeMap<u16, u8> = (0..5_000).map(|k| (k, (k % 7) as u8)).collect();
-    let tree = build(&mut store, DEFAULT_TARGET, &map);
-    let counting = Counting {
-        inner: &store,
-        reads: std::cell::Cell::new(0),
-    };
-    assert!(diff(&counting, &tree, &counting, &tree).unwrap().is_empty());
-    assert_eq!(counting.reads.get(), 0);
+    run(async {
+        let mut store = MemStore::new();
+        let map: BTreeMap<u16, u8> = (0..5_000).map(|k| (k, (k % 7) as u8)).collect();
+        let tree = build(&mut store, DEFAULT_TARGET, &map).await;
+        let counting = Counting::new(&store);
+        assert!(diff(&counting, &tree, &counting, &tree)
+            .await
+            .unwrap()
+            .is_empty());
+        assert_eq!(counting.reads.get(), 0);
+    })
 }
 
 #[test]
 fn one_changed_entry_reads_a_path_not_the_tree() {
-    let mut store = MemStore::new();
-    let map: BTreeMap<u16, u8> = (0..20_000).map(|k| (k, 0)).collect();
-    let before = build(&mut store, DEFAULT_TARGET, &map);
-    let mut after = before;
-    after.insert(&mut store, key(12_345), vec![1]).unwrap();
-    let counting = Counting {
-        inner: &store,
-        reads: std::cell::Cell::new(0),
-    };
-    let found = diff(&counting, &before, &counting, &after).unwrap();
-    assert_eq!(
-        found,
-        vec![Difference {
-            key: key(12_345),
-            left: Some(vec![0]),
-            right: Some(vec![1])
-        }]
-    );
-    assert!(
-        counting.reads.get() < 40,
-        "read {} nodes of a {}-node tree",
-        counting.reads.get(),
-        store.len()
-    );
+    run(async {
+        let mut store = MemStore::new();
+        let map: BTreeMap<u16, u8> = (0..20_000).map(|k| (k, 0)).collect();
+        let before = build(&mut store, DEFAULT_TARGET, &map).await;
+        let mut after = before;
+        after
+            .insert(&mut store, key(12_345), vec![1])
+            .await
+            .unwrap();
+        let counting = Counting::new(&store);
+        let found = diff(&counting, &before, &counting, &after).await.unwrap();
+        assert_eq!(
+            found,
+            vec![Difference {
+                key: key(12_345),
+                left: Some(vec![0]),
+                right: Some(vec![1])
+            }]
+        );
+        let reads = counting.reads.get();
+        assert!(
+            reads < 40,
+            "read {reads} nodes of a {}-node tree",
+            store.len()
+        );
+    })
 }

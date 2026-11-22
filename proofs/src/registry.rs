@@ -3743,13 +3743,14 @@ pub const PROPERTIES: &[Property] = &[
         // (`open_bounded`), `build` over a sorted list, the one-pass
         // `Builder`, the windowed edit level by level and walked up to the
         // root with the single-child `collapse`, `diff`'s walk against a
-        // per-key comparison, and the injective node encoding. SHA-256 is
+        // per-key comparison, the injective node encoding, and its decoder,
+        // which reads a node's bytes back and refuses bytes after them. SHA-256 is
         // trusted collision-free; an edit's window is any run of chunks that
         // holds the change, where Rust finds it by key.
         family: "Prolly tree catch-up",
-        name: "chunks_append / closes_append / chunks_flatten / chunks_nonempty / chunks_shrink / open_bounded / build / sorted_insert / sorted_erase / eq_of_same_entries / build_same_entries / insert_comm / erase_insert_comm / insert_insert / canon_chunks / rewrite_level_refines / rewrite_level_up / walk_levels / edit_root / builder_root / diff_eq / mergeDiff_spec / encode_injective",
+        name: "chunks_append / closes_append / chunks_flatten / chunks_nonempty / chunks_shrink / open_bounded / build / sorted_insert / sorted_erase / eq_of_same_entries / build_same_entries / insert_comm / erase_insert_comm / insert_insert / canon_chunks / rewrite_level_refines / rewrite_level_up / walk_levels / edit_root / builder_root / diff_eq / mergeDiff_spec / encode_injective / decode_encode / decode_refuses_trailing",
         axis: Lean,
-        anchor: "crates/foundation/prolly/src/chunk.rs Chunker::push, Chunker::finish, chunk; crates/foundation/prolly/src/hash.rs is_boundary; crates/foundation/prolly/src/tree.rs Tree::build, raise, collapse; crates/foundation/prolly/src/build.rs Builder::push, Builder::finish, Builder::feed, Builder::close; crates/foundation/prolly/src/edit.rs Tree::edit, rewrite_level, splice; crates/foundation/prolly/src/diff.rs diff, Walk::open, Walk::take; crates/foundation/prolly/src/node.rs Node::encode, Item::encoded_len, MAX_CHUNK_BYTES",
+        anchor: "crates/foundation/prolly/src/chunk.rs Chunker::push, Chunker::finish, chunk; crates/foundation/prolly/src/hash.rs is_boundary; crates/foundation/prolly/src/tree.rs Tree::build, raise, collapse; crates/foundation/prolly/src/build.rs Builder::push, Builder::finish, Builder::feed, Builder::close; crates/foundation/prolly/src/edit.rs Tree::edit, rewrite_level, splice; crates/foundation/prolly/src/diff.rs diff, Walk::open, Walk::take; crates/foundation/prolly/src/node.rs Node::encode, Node::decode, Item::encoded_len, MAX_CHUNK_BYTES",
         model_ref: "ProllyTree (lake build)",
         tiers: &[Boundary],
         bound_by: "",
@@ -3769,6 +3770,19 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/foundation/prolly/src/tree.rs Tree::build, Tree::root; crates/foundation/prolly/src/diff.rs diff",
         model_ref: "MC_ProllySync_Green.cfg (GREEN) / MC_ProllySync_{Red_NoFilter,Red_StaleRoot,Red_MissingOnly,Red_KeepClaim}.cfg (RED)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // Node contents are not modelled: a node is named by its hash, so a
+        // cached or pending copy is never stale. One worker owns the store,
+        // so a flush and a read never overlap. The Rust cache's CLOCK victim
+        // choice is one of the model's "any part that fits".
+        family: "Prolly tree node store and cache",
+        name: "GetFinds / CacheBounded / HugeEvictsNothing / PublishedStored / BuildWhole: a node put is always readable, the cache stays under its byte budget, a node over budget evicts nothing, a published root names only stored nodes, and a build whose put failed never returns a tree",
+        axis: Tla,
+        anchor: "crates/foundation/prolly/src/cache.rs Cached::get, Cached::insert; crates/foundation/prolly/src/tree.rs collapse; crates/engine/storage/src/stores/prolly_nodes.rs ProllyNodes::get, ProllyNodes::put, ProllyNodes::flush; crates/foundation/prolly/src/build.rs Builder::push, Builder::finish",
+        model_ref: "MC_ProllyNodeCache_Green.cfg (GREEN) / MC_ProllyNodeCache_{Red_SkipPending,Red_NoEvict,Red_CacheHuge,Red_DropOnFail,Red_PublishBeforeFlush,Red_FinishAfterFail}.cfg (RED)",
         tiers: &[Boundary],
         bound_by: "",
     },

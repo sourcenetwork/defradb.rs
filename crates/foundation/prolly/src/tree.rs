@@ -36,16 +36,16 @@ impl Tree {
     /// [`Error::Unsorted`]. It holds one open chunk per level ([`Builder`]),
     /// each under [`MAX_CHUNK_BYTES`](crate::node::MAX_CHUNK_BYTES) or a
     /// single item.
-    pub fn build<S, I>(store: &mut S, target: NonZeroU32, entries: I) -> Result<Self>
+    pub async fn build<S, I>(store: &mut S, target: NonZeroU32, entries: I) -> Result<Self>
     where
         S: Store,
         I: IntoIterator<Item = (Vec<u8>, Vec<u8>)>,
     {
         let mut builder = Builder::new(target);
         for (key, value) in entries {
-            builder.push(store, key, value)?;
+            builder.push(store, key, value).await?;
         }
-        builder.finish(store)
+        builder.finish(store).await
     }
 
     /// The root hash, `None` for an empty tree.
@@ -59,7 +59,7 @@ impl Tree {
     }
 
     /// The value stored for `key`.
-    pub fn get<S>(&self, store: &S, key: &[u8]) -> Result<Option<Vec<u8>>>
+    pub async fn get<S>(&self, store: &S, key: &[u8]) -> Result<Option<Vec<u8>>>
     where
         S: Store,
     {
@@ -67,7 +67,7 @@ impl Tree {
             return Ok(None);
         };
         loop {
-            let node = load(store, &hash)?;
+            let node = load(store, &hash).await?;
             let index = node.items.partition_point(|item| item.key.as_slice() < key);
             let Some(item) = node.items.get(index) else {
                 return Ok(None);
@@ -89,15 +89,15 @@ impl Tree {
 }
 
 /// The node stored under `hash`.
-pub(crate) fn load<S>(store: &S, hash: &Hash) -> Result<Arc<Node>>
+pub(crate) async fn load<S>(store: &S, hash: &Hash) -> Result<Arc<Node>>
 where
     S: Store,
 {
-    store.get(hash).ok_or(Error::MissingNode(*hash))
+    store.get(hash).await?.ok_or(Error::MissingNode(*hash))
 }
 
 /// Stores the chunk `items` of `level` and returns its item for the level above.
-pub(crate) fn child<S>(store: &mut S, level: u8, items: Vec<Item>) -> Item
+pub(crate) async fn child<S>(store: &mut S, level: u8, items: Vec<Item>) -> Result<Item>
 where
     S: Store,
 {
@@ -105,16 +105,16 @@ where
         .last()
         .map(|item| item.key.clone())
         .unwrap_or_default();
-    let hash = store.put(Node { level, items });
-    Item {
+    let hash = store.put(Node { level, items }).await?;
+    Ok(Item {
         key,
         value: hash.0.to_vec(),
-    }
+    })
 }
 
 /// Cuts `items` of `level` and goes up until a level is one chunk
 /// (`ProllyTree.build`), then stores that chunk as the root ([`collapse`]).
-pub(crate) fn raise<S>(
+pub(crate) async fn raise<S>(
     store: &mut S,
     mut items: Vec<Item>,
     mut level: u8,
@@ -126,29 +126,33 @@ where
     loop {
         let mut chunks = chunk(items, target);
         if chunks.len() <= 1 {
-            return collapse(store, level, chunks.pop().unwrap_or_default());
+            return collapse(store, level, chunks.pop().unwrap_or_default()).await;
         }
-        items = chunks
-            .into_iter()
-            .map(|items| child(store, level, items))
-            .collect();
+        items = Vec::with_capacity(chunks.len());
+        for chunk in chunks {
+            items.push(child(store, level, chunk).await?);
+        }
         level += 1;
     }
 }
 
 /// Stores `items` as the root of `level`, after dropping every root above it
 /// that holds a single child, so the root is the lowest level that is one
-/// chunk (`ProllyTree.collapse`); `None` when there are no items.
-pub(crate) fn collapse<S>(store: &mut S, level: u8, items: Vec<Item>) -> Result<Option<Hash>>
+/// chunk (`ProllyTree.collapse`); `None` when there are no items. Flushes the
+/// store, so the root it returns names only stored nodes.
+pub(crate) async fn collapse<S>(store: &mut S, level: u8, items: Vec<Item>) -> Result<Option<Hash>>
 where
     S: Store,
 {
     if items.is_empty() {
+        store.flush().await?;
         return Ok(None);
     }
     let mut node = Arc::new(Node { level, items });
     while node.level > 0 && node.items.len() == 1 {
-        node = load(store, &Hash::from_slice(&node.items[0].value)?)?;
+        node = load(store, &Hash::from_slice(&node.items[0].value)?).await?;
     }
-    Ok(Some(store.put(Arc::unwrap_or_clone(node))))
+    let root = store.put(Arc::unwrap_or_clone(node)).await?;
+    store.flush().await?;
+    Ok(Some(root))
 }
