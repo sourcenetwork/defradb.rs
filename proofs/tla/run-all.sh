@@ -68,6 +68,8 @@ RUNS=(
   "MC_HeldPubsubRequest_Red_LateWatch.cfg HeldPubsubRequest.tla RED" # the wake-up is armed after the publish (Delivered)
   "MC_HeldPubsubRequest_Red_NoDedupe.cfg HeldPubsubRequest.tla RED" # a resend's duplicate reply reaches the caller (OneReplyEach)
   "MC_HeldPubsubRequest_Red_ResendLate.cfg HeldPubsubRequest.tla RED" # a resend goes out after the deadline (NoResendAfterDeadline)
+  "MC_FloatEquality_Green.cfg FloatEquality.tla GREEN"
+  "MC_FloatEquality_Red_Epsilon.cfg FloatEquality.tla RED" # the old tolerance equates distinct values (INV_ExactOnly)
   "MC_VerifiedClientGraph_Green.cfg VerifiedClientGraph.tla GREEN"
   "MC_VerifiedClientGraph_Red_SingleMutation.cfg VerifiedClientGraph.tla RED" # a multi-mutation request is accepted (INV_SingleMutation)
   "MC_VerifiedClientGraph_Red_Unencrypted.cfg VerifiedClientGraph.tla RED" # the request adds encryption outside the approved graph (INV_Unencrypted)
@@ -419,6 +421,18 @@ RUNS=(
   "MC_ChunkSettingsSync_Red_NoMergeGuard.cfg ChunkSettingsSync.tla RED"
   "MC_ChunkSettingsSync_Red_NoActivateGuard.cfg ChunkSettingsSync.tla RED"
   "MC_ChunkSettingsSync_Red_NoNameCheck.cfg ChunkSettingsSync.tla RED"
+  "MC_ProllySync_Green.cfg ProllySync.tla GREEN"
+  "MC_ProllySync_Red_NoFilter.cfg ProllySync.tla RED"
+  "MC_ProllySync_Red_StaleRoot.cfg ProllySync.tla RED"
+  "MC_ProllySync_Red_MissingOnly.cfg ProllySync.tla RED"
+  "MC_ProllySync_Red_KeepClaim.cfg ProllySync.tla RED"
+  "MC_ProllyNodeCache_Green.cfg ProllyNodeCache.tla GREEN" # nodes put are readable, the cache stays under budget, roots name stored nodes
+  "MC_ProllyNodeCache_Red_SkipPending.cfg ProllyNodeCache.tla RED" # a read skips the pending nodes (GetFinds)
+  "MC_ProllyNodeCache_Red_NoEvict.cfg ProllyNodeCache.tla RED" # the cache never evicts (CacheBounded)
+  "MC_ProllyNodeCache_Red_CacheHuge.cfg ProllyNodeCache.tla RED" # a node over budget empties the cache (HugeEvictsNothing)
+  "MC_ProllyNodeCache_Red_DropOnFail.cfg ProllyNodeCache.tla RED" # a failed write drops its nodes (GetFinds)
+  "MC_ProllyNodeCache_Red_PublishBeforeFlush.cfg ProllyNodeCache.tla RED" # a root goes out before its node is stored (PublishedStored)
+  "MC_ProllyNodeCache_Red_FinishAfterFail.cfg ProllyNodeCache.tla RED" # a build finishes after a failed put (BuildWhole)
   "MC_RetryPreparedInputs_Green.cfg RetryPreparedInputs.tla GREEN" # exact-context external answer survives commit retry
   "MC_RetryPreparedInputs_Red_Recompute.cfg RetryPreparedInputs.tla RED" # clearing prepared memo repeats provider work
   "MC_RetryPreparedInputs_Red_InAttempt.cfg RetryPreparedInputs.tla RED" # provider work runs under active transaction
@@ -537,6 +551,11 @@ RUNS=(
   "MC_Truncate_Red_ViewCache.cfg Truncate.tla RED" # #2703: view cache clear left out: a truncated view still shows its rows (INV_UnfilteredEmptiesView)
   "MC_Truncate_Red_SearchRecords.cfg Truncate.tla RED" # #2728: /se/ prefix delete left out: an encrypted search still finds truncated documents (INV_UnfilteredClearsSearchRecords)
   "MC_Truncate_Red_SearchNamespace.cfg Truncate.tla RED" # #2728: received search records in the raw root store survive the prefix delete (INV_UnfilteredClearsSearchRecords)
+  "MC_TruncateIndexCleanup_Green.cfg TruncateIndexCleanup.tla GREEN" # #3172: the cleanup reads the definition after the chunks and cleans every declared index, one prefix each
+  "MC_TruncateIndexCleanup_Red_Captured.cfg TruncateIndexCleanup.tla RED" # indexes taken from the collection the truncate began with: an index created mid-truncate keeps entries (INV_NoEntryForTruncatedDoc)
+  "MC_TruncateIndexCleanup_Red_Writable.cfg TruncateIndexCleanup.tla RED" # only writable indexes cleaned: a failed build keeps entries (INV_NoEntryForTruncatedDoc)
+  "MC_TruncateIndexCleanup_Red_SnapshotBackfill.cfg TruncateIndexCleanup.tla RED" # backfill pages read documents unvalidated: an entry commits after the cleanup (INV_NoEntryForTruncatedDoc)
+  "MC_TruncateIndexCleanup_Red_CollectionPrefix.cfg TruncateIndexCleanup.tla RED" # the collection-wide prefix: short ID 100 sweeps every collection's documents (INV_OtherCollectionIntact)
   "MC_NacOrder_Green.cfg NacOrder.tla GREEN" # #2680/#2700: a document write checks get-collection then its own permission, in its transaction, and a call with no identity acts as no one
   "MC_NacOrder_Red_SkipGet.cfg NacOrder.tla RED" # get-collection left out: a caller without it writes (INV_NoEffectWithoutPermission)
   "MC_NacOrder_Red_OwnFirst.cfg NacOrder.tla RED" # the write's own permission checked first: the refusal names it, not get-collection (INV_RefusalNamesGoFirst)

@@ -19,6 +19,38 @@ pub struct ActorRelationshipQuery<'a> {
     pub actor: &'a str,
 }
 
+/// Select direct relationship assignments for one subject and issuer.
+#[derive(Clone, Copy)]
+pub struct AssignmentQuery<'a> {
+    pub policy: &'a str,
+    pub resource: &'a str,
+    pub relation: &'a str,
+    pub subject: &'a str,
+    pub issuer: &'a str,
+    /// Reject evidence older than this previously verified position.
+    /// A verified newer term is accepted, including when its height resets.
+    pub not_before: Option<&'a AssignmentPosition>,
+}
+
+/// A finalized block position a consumer can persist between reads.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AssignmentPosition {
+    pub term: u64,
+    pub height: u64,
+    pub block_hash: String,
+}
+
+/// A complete verified assignment set and the evidence that authenticates it.
+/// The evidence can include other subjects' relationships in the same policy.
+#[derive(Debug, Clone)]
+pub struct CertifiedAssignments {
+    pub object_ids: Vec<String>,
+    pub position: AssignmentPosition,
+    pub timestamp: u64,
+    pub module_state_root: String,
+    pub evidence: serde_json::Value,
+}
+
 #[derive(Debug, Clone)]
 pub struct AcpLightClientStatus {
     pub height: u64,
@@ -426,6 +458,16 @@ pub trait VeraProvider: MaybeSendSync {
         resource: &str,
         object_id: &str,
     ) -> Result<(bool, String), ProviderError>;
+
+    /// Read complete assignment evidence. Callers must authorize its disclosure.
+    async fn read_certified_assignments(
+        &self,
+        _query: AssignmentQuery<'_>,
+    ) -> Result<CertifiedAssignments, ProviderError> {
+        Err(ProviderError::Unsupported(
+            "certified assignment discovery".into(),
+        ))
+    }
 
     async fn query_actor_relationship(
         &self,

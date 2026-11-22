@@ -112,6 +112,8 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Custom CRDT types | TLA+ & Lean | crdt, schema, db-merge, p2p (#2183) |
 | Document write pipeline | TLA+ | db, db-block-builder |
 | Text chunking | TLA+ / Lean | chunk-split, schema, db, query |
+| Prolly tree catch-up | TLA+ / Lean | prolly (the p2p pull is not wired yet, #2977) |
+| Prolly tree node store and cache | TLA+ / Lean | prolly, storage |
 | Postgres wire connection loop | TLA+ | pg-compat |
 | HTTP client redirects and body deadline | Lean | net |
 | Connect fallback race | TLA+ | net |
@@ -126,7 +128,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Index changes in a transaction | TLA+ | db, defra-node, http, cli |
 | Encrypted index changes outside a transaction | TLA+ | db, defra-node, cli |
 | Gossip announcement audience | TLA+ | p2p |
-| Collection truncate | TLA+ | db |
+| Collection truncate | TLA+ & Lean | db, storage |
 | Relation-filtered mutation | TLA+ | query, datastore, db |
 | Add DAC policy | TLA+ | db, acp, vera, http, cli, ffi, defra-node |
 | Add view with a lens transform | TLA+ & Lean | defra-node, db, schema, lens (#2724; NAC before the create transaction is a known gap, #2736) |

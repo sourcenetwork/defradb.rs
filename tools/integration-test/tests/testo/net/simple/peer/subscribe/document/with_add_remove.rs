@@ -456,6 +456,20 @@ fn p2_p_document_add_and_remove_single() {
                 ..Default::default()
             }
             .into(),
+            WaitForPeersEvents {
+                topics: Some(vec![Topic {
+                    topic: Text::reference("doc0_0"),
+                    peers: vec!["db1".into()],
+                }]),
+                event_type: Some(EventType::Left),
+                millis: Some(5000),
+                common: Common {
+                    node: Some("db0".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
             UpdateDoc {
                 collection: "Users".into(),
                 doc_id: Text::reference("doc0_0"),

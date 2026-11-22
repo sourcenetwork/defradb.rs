@@ -10,6 +10,7 @@ mod truncate {
     mod filter;
     mod index_filter;
     mod list_actions;
+    mod other_collections;
     mod parallel;
     mod simple;
     mod view;

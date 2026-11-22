@@ -3547,6 +3547,33 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // Truncating a collection while an index is created or its build
+        // fails: the cleanup reads the definition in its own transaction,
+        // after the chunks, and deletes every declared ordered index's own
+        // prefix, so no entry outlives the documents it named and no other
+        // collection's keys go with them.
+        family: "Collection truncate",
+        name: "INV_NoEntryForTruncatedDoc / INV_OtherCollectionIntact / LIVE_TruncateFinishes",
+        axis: Tla,
+        anchor: "crates/database/db/src/collection/ops/truncate/all.rs DB::truncate_all, DB::truncate_metadata_in; crates/database/db/src/definition/loader.rs get_collections_by_collection_id; crates/database/db/src/index/create.rs DB::stage_index_definition; crates/database/db/src/index/backfill.rs BackfillPage::index, DB::record_backfill_failure",
+        model_ref: "MC_TruncateIndexCleanup_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // The key prefix the truncate deletes per index covers exactly that
+        // index's entries: never another index's, and never a key of a
+        // `/tag/name/` family, whatever the short ID. The collection-wide
+        // prefix it replaced covered every document for short ID 100.
+        family: "Collection truncate",
+        name: "IndexPrefix.index_prefix_takes_its_entries / index_prefix_only_its_index / index_prefix_misses_family / old_prefix_of_100_covers_documents / old_prefix_of_118_covers_versions",
+        axis: Lean,
+        anchor: "crates/engine/storage/src/keys/utils/mod.rs encode_uvarint_ascending; crates/engine/storage/src/keys/datastore/index_key.rs IndexDataStoreKey::index_prefix; crates/engine/storage/src/keys/document.rs doc_key, deleted_doc_key; crates/database/db/src/collection/ops/truncate/all.rs DB::truncate_metadata_in",
+        model_ref: "IndexPrefix (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         // An unfiltered truncate deletes its collection's whole `/se/`
         // prefix: no search record of it survives, held or received, and no
         // other collection's record goes with it.
@@ -3734,6 +3761,55 @@ pub const PROPERTIES: &[Property] = &[
         axis: Lean,
         anchor: "crates/database/p2p/src/iroh/records/verify.rs verify; crates/database/p2p/src/iroh/records/book.rs Book::offer, Book::live; crates/database/p2p/src/iroh/records/key.rs blind, advertised_key, CollectionKey::encode; crates/database/p2p/src/iroh/records/pointer.rs Pointer::print, Pointer::parse; crates/database/p2p/src/iroh/records/task.rs Records::providers, rank",
         model_ref: "ServiceRecord (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // Lean models chunking under any close rule that reads the item and
+        // its open chunk, the byte cap that bounds the open chunk
+        // (`open_bounded`), `build` over a sorted list, the one-pass
+        // `Builder`, the windowed edit level by level and walked up to the
+        // root with the single-child `collapse`, `diff`'s walk against a
+        // per-key comparison, the injective node encoding, and its decoder,
+        // which reads a node's bytes back and refuses bytes after them. SHA-256 is
+        // trusted collision-free; an edit's window is any run of chunks that
+        // holds the change, where Rust finds it by key.
+        family: "Prolly tree catch-up",
+        name: "chunks_append / closes_append / chunks_flatten / chunks_nonempty / chunks_shrink / open_bounded / build / sorted_insert / sorted_erase / eq_of_same_entries / build_same_entries / insert_comm / erase_insert_comm / insert_insert / canon_chunks / rewrite_level_refines / rewrite_level_up / walk_levels / edit_root / builder_root / diff_eq / mergeDiff_spec / encode_injective / decode_encode / decode_refuses_trailing",
+        axis: Lean,
+        anchor: "crates/foundation/prolly/src/chunk.rs Chunker::push, Chunker::finish, chunk; crates/foundation/prolly/src/hash.rs is_boundary; crates/foundation/prolly/src/tree.rs Tree::build, raise, collapse; crates/foundation/prolly/src/build.rs Builder::push, Builder::finish, Builder::feed, Builder::close; crates/foundation/prolly/src/edit.rs Tree::edit, rewrite_level, splice; crates/foundation/prolly/src/diff.rs diff, Walk::open, Walk::take; crates/foundation/prolly/src/node.rs Node::encode, Node::decode, Item::encoded_len, MAX_CHUNK_BYTES",
+        model_ref: "ProllyTree (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // The pull is not wired into p2p yet (#2977); the model is its contract.
+        // Each pull is one atomic step and read access never changes, so
+        // "caught up" means caught up with the responder as it was at that
+        // step, and a read revoked mid-pull is not checked. PulledHolds is
+        // about pulls whose walk completes: `ProllyTree.diff_eq` and
+        // `ProllyTree.mergeDiff_spec` show a completed walk reports exactly the
+        // differing keys, but not that the walk ends or that every node read
+        // succeeds. A walk that fails makes no "caught up" claim and changes
+        // nothing, a stutter step the model already allows.
+        family: "Prolly tree catch-up",
+        name: "NoLeak / PulledHolds: a pull never shows a peer a document it may not read, and a pull that ends caught up leaves the puller holding every version the responder could show it at that pull",
+        axis: Tla,
+        anchor: "crates/foundation/prolly/src/tree.rs Tree::build, Tree::root; crates/foundation/prolly/src/diff.rs diff",
+        model_ref: "MC_ProllySync_Green.cfg (GREEN) / MC_ProllySync_{Red_NoFilter,Red_StaleRoot,Red_MissingOnly,Red_KeepClaim}.cfg (RED)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // Node contents are not modelled: a node is named by its hash, so a
+        // cached or pending copy is never stale. One worker owns the store,
+        // so a flush and a read never overlap. The Rust cache's CLOCK victim
+        // choice is one of the model's "any part that fits".
+        family: "Prolly tree node store and cache",
+        name: "GetFinds / CacheBounded / HugeEvictsNothing / PublishedStored / BuildWhole: a node put is always readable, the cache stays under its byte budget, a node over budget evicts nothing, a published root names only stored nodes, and a build whose put failed never returns a tree",
+        axis: Tla,
+        anchor: "crates/foundation/prolly/src/cache.rs Cached::get, Cached::insert; crates/foundation/prolly/src/tree.rs collapse; crates/engine/storage/src/stores/prolly_nodes.rs ProllyNodes::get, ProllyNodes::put, ProllyNodes::flush; crates/foundation/prolly/src/build.rs Builder::push, Builder::finish",
+        model_ref: "MC_ProllyNodeCache_Green.cfg (GREEN) / MC_ProllyNodeCache_{Red_SkipPending,Red_NoEvict,Red_CacheHuge,Red_DropOnFail,Red_PublishBeforeFlush,Red_FinishAfterFail}.cfg (RED)",
         tiers: &[Boundary],
         bound_by: "",
     },
@@ -4111,6 +4187,17 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "MC_AddViewTransform_{Green,Green_NacBefore,Red_*}.cfg",
         tiers: &[Boundary],
         bound_by: "",
+    },
+    Property {
+        // #2965: float equality is exact, both in query filters and in index
+        // matching; a tolerance can make `0` match `1e-300`.
+        family: "Float filter equality",
+        name: "exact_accepts_same / epsilon_accepts_distinct / tolerant_has_rejects",
+        axis: Lean,
+        anchor: "crates/engine/query/src/mapper/filter/eval/operators.rs values_equal; crates/engine/storage/src/index/matcher/mod.rs values_equal",
+        model_ref: "FloatEquality (lake build); MC_FloatEquality_{Green,Red_Epsilon}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/engine/query/src/mapper/filter/eval/operators.rs float_equality_is_exact; crates/engine/storage/src/index/matcher/tests.rs test_float_equality_is_exact; tools/integration-test/tests/testo/query/simple/with_filter/with_eq_float_zero.rs float_zero_equality_is_exact_on_indexed_and_unindexed_fields, float_zero_inequality_is_exact_on_indexed_and_unindexed_fields",
     },
     Property {
         // #2724: verify-signature's NAC, document ACP and block checks decide
