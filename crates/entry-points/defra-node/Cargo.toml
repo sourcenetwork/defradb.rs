@@ -135,6 +135,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 tokio-tungstenite = "0.30.0"
 zanzibar = { path = "../../building-blocks/zanzibar" }
 document = { path = "../../building-blocks/document" }
+query = { path = "../../engine/query", features = ["testing"] }
 defra-core = { path = "../../foundation/defra-core", features = ["ambient"] }
 edge = { path = "../../foundation/edge", features = ["testing"] }
 axum.workspace = true
