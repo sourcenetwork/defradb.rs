@@ -387,6 +387,7 @@ pub(super) mod tests {
     use storage::RegolithStore;
 
     use super::*;
+    use crate::index::deferred::{decode_record, encode_record};
     use crate::AutoCommitMutator;
 
     pub(crate) const NAME: &str = "Tallies";
@@ -470,6 +471,70 @@ pub(super) mod tests {
         )
         .await
         .map(|_: ()| ())
+        .unwrap();
+    }
+
+    #[test]
+    fn moving_and_rebuilding_preserve_foreign_recorded_keys() {
+        workers::block_on(async {
+            let (db, short_id, index_id) = indexed().await;
+            let collection = db.require_collection(NAME).unwrap();
+            let schema = collection.schema();
+            let desc = schema
+                .indexes
+                .iter()
+                .find(|index| index.id == index_id)
+                .unwrap();
+            let manager = IndexManager::from_indexes(
+                short_id,
+                schema,
+                std::slice::from_ref(desc),
+                collection.crdts(),
+            )
+            .unwrap();
+            let index = manager.get_index(&desc.name).unwrap();
+            let doc = 7;
+            let old_key = IndexManager::entry_keys(index, doc, &[vec![NormalValue::Int(1)]])
+                .unwrap()
+                .pop()
+                .unwrap();
+            let new_keys =
+                IndexManager::entry_keys(index, doc, &[vec![NormalValue::Int(2)]]).unwrap();
+            let foreign = b"/i/pk/legacy".to_vec();
+            let old = vec![old_key.clone(), foreign.clone()];
+            let txn = db.new_txn(false).await.unwrap();
+            let data = txn.datastore().unwrap();
+            let record = index_position_key(short_id, index_id, doc);
+            for operation in 0..2 {
+                data.set(&foreign, b"preserve").await.unwrap();
+                data.set(&old_key, b"").await.unwrap();
+                data.set(&record, &encode_record(&old).unwrap())
+                    .await
+                    .unwrap();
+                if operation == 0 {
+                    let recorded = data.get(&record).await.unwrap().unwrap();
+                    let recorded = IndexManager::recorded(Some(&recorded)).unwrap();
+                    move_entries(&data, index, short_id, doc, &recorded, &new_keys)
+                        .await
+                        .unwrap();
+                } else {
+                    manager
+                        .replace(&data, index, doc, &[vec![NormalValue::Int(2)]])
+                        .await
+                        .unwrap();
+                }
+                assert_eq!(
+                    data.get(&foreign).await.unwrap().unwrap().as_ref(),
+                    b"preserve"
+                );
+                assert!(data.get(&old_key).await.unwrap().is_none());
+                assert!(data.get(&new_keys[0]).await.unwrap().is_some());
+                assert_eq!(
+                    decode_record(&data.get(&record).await.unwrap().unwrap()).unwrap(),
+                    new_keys
+                );
+            }
+        })
         .unwrap();
     }
 
