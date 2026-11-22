@@ -173,6 +173,8 @@ async fn explain_nested_execute_test(cluster: TestCluster) {
         .enter("subType")
         .enter("selectTopNode")
         .enter("selectNode")
+        .iterations(2)
+        .filter_matches(2)
         .enter("typeIndexJoin")
         .enter("typeJoinOne")
         .enter("subType")

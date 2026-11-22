@@ -67,7 +67,7 @@ fn assert_join_one_shape(explain: &Value) {
             "root",
             "scanNode",
         ])
-        .node();
+        .exists();
 
     ExplainAsserter::new(explain)
         .path(&[
@@ -84,7 +84,7 @@ fn assert_join_one_shape(explain: &Value) {
             "selectNode",
             "scanNode",
         ])
-        .node();
+        .exists();
 }
 
 async fn debug_explain_asc_test(cluster: TestCluster) {

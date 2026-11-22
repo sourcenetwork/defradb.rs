@@ -92,6 +92,12 @@ impl<'a> ExplainAsserter<'a> {
         self.require_node()
     }
 
+    /// Confirms the current level exists without reading a count from it.
+    pub fn exists(self) -> Self {
+        self.require_node();
+        self
+    }
+
     pub fn iterations(self, expected: impl Into<ExpectedCount>) -> Self {
         self.count("iterations", expected)
     }
@@ -120,11 +126,6 @@ impl<'a> ExplainAsserter<'a> {
         self.count("planExecutions", expected)
     }
 
-    fn exists(self) -> Self {
-        self.require_node();
-        self
-    }
-
     fn require_node(&self) -> &'a Value {
         self.path
             .iter()
@@ -134,18 +135,21 @@ impl<'a> ExplainAsserter<'a> {
 
     fn count(self, name: &str, expected: impl Into<ExpectedCount>) -> Self {
         let expected = expected.into();
-        let actual = self
-            .require_node()
-            .get(name)
-            .unwrap_or_else(|| panic!("missing '{name}' at path [{}]", self.path.join(", ")))
-            .as_u64()
-            .unwrap_or_else(|| {
-                panic!(
-                    "'{name}' at path [{}] is not a count: {}",
-                    self.path.join(", "),
-                    self.require_node()[name]
-                )
-            });
+        let node = self.require_node();
+        let value = match node.get(name) {
+            Some(value) => value,
+            None => panic!(
+                "missing '{name}' at path [{}]: {node}",
+                self.path.join(", "),
+            ),
+        };
+        let actual = match value.as_u64() {
+            Some(actual) => actual,
+            None => panic!(
+                "'{name}' at path [{}] is not a count: {value}",
+                self.path.join(", "),
+            ),
+        };
 
         assert!(
             expected.bounds().contains(&actual),
@@ -172,18 +176,12 @@ fn descend<'a>(value: &'a Value, segment: &str) -> Option<&'a Value> {
 }
 
 fn describe(expected: ExpectedCount) -> String {
-    let (start_bound, end_bound) = expected.bounds();
-    let start = match start_bound {
-        Bound::Included(value) => value.to_string(),
-        Bound::Excluded(value) => value.saturating_add(1).to_string(),
-        Bound::Unbounded => "0".to_string(),
-    };
-    let end = match end_bound {
-        Bound::Included(value) => value.to_string(),
-        Bound::Excluded(value) => value.saturating_sub(1).to_string(),
-        Bound::Unbounded => "unbounded".to_string(),
-    };
-    format!("{start}..={end}")
+    match expected {
+        ExpectedCount::Exact(value) => format!("{value}..={value}"),
+        ExpectedCount::Range(range) => format!("{}..{}", range.start, range.end),
+        ExpectedCount::RangeInclusive(range) => format!("{}..={}", range.start(), range.end()),
+        ExpectedCount::AtMost(value) => format!("..={value}"),
+    }
 }
 
 #[cfg(test)]
@@ -328,7 +326,14 @@ mod tests {
                 .path(&["selectNode"])
                 .iterations(ExpectedCount::at_most(4));
         });
-        assert!(at_most.contains("expected 0..=4"));
+        assert!(at_most.contains("expected ..=4"));
         assert!(at_most.contains("got 5"));
+
+        let empty = failure(|| {
+            ExplainAsserter::new(&explain)
+                .path(&["selectNode"])
+                .iterations(ExpectedCount::Range(0..0));
+        });
+        assert!(empty.contains("expected 0..0"));
     }
 }
