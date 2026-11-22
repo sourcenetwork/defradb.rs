@@ -80,8 +80,8 @@ fn float_zero_inequality_is_exact_on_indexed_and_unindexed_fields() {
             add_doc("tiny", json!(1e-300)),
             add_doc("small", json!(2.7755575615628914e-17)),
             add_doc("one", json!(1.0)),
-            users(r#"{lu: {_ne: 0.0}}"#, &["tiny", "small", "one"]),
-            users(r#"{l: {_ne: 0.0}}"#, &["tiny", "small", "one"]),
+            users(r#"{_not: {lu: {_eq: 0.0}}}"#, &["tiny", "small", "one"]),
+            users(r#"{_not: {l: {_eq: 0.0}}}"#, &["tiny", "small", "one"]),
         ],
         ..Default::default()
     }
