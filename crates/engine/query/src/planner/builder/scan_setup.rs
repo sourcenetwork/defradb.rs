@@ -130,17 +130,28 @@ impl Planner {
 
         // Check if any secondary relation ID fields are selected (e.g., `_authorID`).
         // These require a TypeJoinOne to reverse-lookup the FK, which needs full schema mapping.
-        let has_secondary_id_field = select.fields.iter().any(|f| {
-            if let Requestable::Field(field) = f {
-                let name = &field.name;
-                if name.starts_with('_') && name.ends_with("ID") && name.len() > 3 {
-                    let rel_name = &name[1..name.len() - 2];
-                    if let Some(rel_field) = collection.field_by_name(rel_name) {
-                        return rel_field.kind.is_relation() && !rel_field.is_primary;
-                    }
-                }
-            }
-            false
+        let secondary_id_field_names = select
+            .fields
+            .iter()
+            .filter_map(|f| match f {
+                Requestable::Field(field) => Some(field.name.clone()),
+                _ => None,
+            })
+            .chain(
+                select
+                    .filter
+                    .as_ref()
+                    .map(|f| f.referenced_fields())
+                    .unwrap_or_default(),
+            );
+        let has_secondary_id_field = secondary_id_field_names.into_iter().any(|name| {
+            let Some(rel_name) = name.strip_prefix('_').and_then(|n| n.strip_suffix("ID")) else {
+                return false;
+            };
+            let Some(rel_field) = collection.field_by_name(rel_name) else {
+                return false;
+            };
+            rel_field.kind.is_relation() && !rel_field.is_primary
         });
 
         // Build scan mapping: for queries with nested selections, relation filters, relation ordering,
