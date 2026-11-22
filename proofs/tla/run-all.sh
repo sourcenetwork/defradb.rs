@@ -927,6 +927,7 @@ RUNS=(
   "MC_IndexFormatGuard_Red_EarlyStamp.cfg IndexFormatGuard.tla RED" # stamp before all collections are rebuilt
   "MC_IndexFormatGuard_Red_DeleteLegacy.cfg IndexFormatGuard.tla RED" # deleting legacy entries can remove other data
   "MC_IndexFormatGuard_Red_UnguardedRecord.cfg IndexFormatGuard.tla RED" # draining a legacy position record deletes an ambiguous key
+  "MC_IndexFormatGuard_Red_StaleProgress.cfg IndexFormatGuard.tla RED" # a pre-upgrade cursor can skip rebuilding entries
   "MC_IndexFormatGuard_Red_Future.cfg IndexFormatGuard.tla RED" # a future format is accepted
   "MC_DeferredDrainTask_Green.cfg DeferredDrainTask.tla GREEN" # owed work is always asked for, and a quiet index settles under steady traffic
   "MC_DeferredDrainTask_Red_StopAtFailure.cfg DeferredDrainTask.tla RED" # a failing index ends the pass and the rest is forgotten (INV_OwedKept)
