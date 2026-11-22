@@ -1021,7 +1021,7 @@ async fn try_fetch_from_provider(
     timer: &mut FetchTimer,
 ) -> CarFetchAttempt {
     // Per-provider CAR failures log at debug — the caller aggregates per-DAG
-    // outcomes into a single WARN via BitswapComplete (see issue #858).
+    // outcomes into a single WARN via BlockSyncComplete (see issue #858).
     if let Err(error) = parse_endpoint_id(provider) {
         debug!(
             provider = %provider,
@@ -1386,7 +1386,7 @@ pub(super) async fn handle_block_sync(
     if !any_success
         && !size_limited
         && event_tx
-            .send(TransportEvent::BitswapComplete {
+            .send(TransportEvent::BlockSyncComplete {
                 query_id,
                 success: false,
                 cause: Some(aggregate_failure_cause(&failures)),
@@ -1396,7 +1396,7 @@ pub(super) async fn handle_block_sync(
             .await
             .is_err()
     {
-        warn!("Event channel closed, cannot emit BitswapComplete");
+        warn!("Event channel closed, cannot emit BlockSyncComplete");
     }
 }
 
