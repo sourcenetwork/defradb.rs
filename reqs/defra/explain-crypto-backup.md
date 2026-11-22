@@ -115,7 +115,7 @@ A collection `filter` (string or integer `_eq`, `_gt`, `_and`, `_or`, `_in`, a J
 # `go.explain.default.index`: Indexed filter and order plans
 
 - **Parents:** ["go.explain.default"]
-- **Scenarios:** ["explain.default.default-explain-with-index-on-filter", "explain.default.default-explain-with-index-on-order", "explain.default.default-explain-with-index-on-subquery-nested-relation-order", "explain.simple.simple-explain-with-index-on-filter", "explain.simple.simple-explain-with-index-on-order", "explain.simple.simple-explain-with-index-on-subquery-nested-relation-order"]
+- **Scenarios:** ["explain.default.default-explain-with-index-on-filter", "explain.default.default-explain-with-index-on-order", "explain.default.default-explain-with-index-on-subquery-nested-relation-order", "explain.simple.simple-explain-with-index-on-filter", "explain.simple.simple-explain-with-index-on-order", "explain.simple.simple-explain-with-index-on-subquery-nested-relation-order", "explain::default::with_index::explain_relation_filter_uses_the_indexed_child_scan"]
 
 On a collection with `@index` on `age`, filtering on or ordering by `age` explains as `selectTopNode > selectNode > scanNode` with no `orderNode`. The scan is Go-shaped: it names the collection, shows the selecting filter and root prefix, and carries no `indexName` or index metrics in the plan explain; execute explain keeps metrics. Ordering a child by an indexed field of a related collection with `limit: 2` puts a `limitNode` but no `orderNode` in the child plan. Holds for default and `simple` types.
 

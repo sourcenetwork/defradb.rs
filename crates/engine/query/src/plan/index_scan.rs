@@ -316,15 +316,18 @@ impl PlanNode for IndexScanNode {
             serde_json::Value::String(self.collection.version_id.clone()),
         );
 
-        let filter = self
-            .explain_filter
-            .as_ref()
-            .or(self.residual_filter.as_ref());
+        let filter = match (&self.explain_filter, &self.residual_filter) {
+            (Some(shown), Some(residual)) if shown.conditions() != residual.conditions() => {
+                Some(shown.and(residual.clone()))
+            }
+            (Some(shown), _) => Some(shown.clone()),
+            (None, residual) => residual.clone(),
+        };
         obj.insert(
             "filter".to_string(),
             filter.map_or_else(
                 || serde_json::Value::Null,
-                |filter| filter.to_explain_json_without_docid(),
+                |filter| filter.to_explain_json(),
             ),
         );
         obj.insert(
@@ -510,7 +513,7 @@ mod tests {
     }
 
     #[test]
-    fn explain_omits_docid_from_the_shown_filter() {
+    fn explain_keeps_docid_filter_conditions() {
         let mut collection = CollectionVersion::new("Person", "v1", "coll-person", vec![]);
         collection.root_id = 2;
         let node = make_index_scan_node_for(
@@ -525,7 +528,26 @@ mod tests {
 
         assert_eq!(
             node.explain()["scanNode"]["filter"],
-            serde_json::json!({"name": {"_like": "%vid%"}}),
+            serde_json::json!({"_docID": {"_eq": "bae-1"}, "name": {"_like": "%vid%"}}),
+        );
+    }
+
+    #[test]
+    fn explain_keeps_both_distinct_scan_filters() {
+        let node = make_index_scan_node(IndexScanType::ExactMatch { values: vec![] })
+            .with_explain_filter(Filter::from_conditions(serde_json::Map::from_iter([(
+                "name".to_string(),
+                serde_json::json!({"_eq": "Ada"}),
+            )])))
+            .with_residual_filter(Filter::from_conditions(serde_json::Map::from_iter([(
+                "score".to_string(),
+                serde_json::json!({"_gt": 1}),
+            )])));
+        assert_eq!(
+            node.explain()["scanNode"]["filter"],
+            serde_json::json!({
+                "_and": [{"name": {"_eq": "Ada"}}, {"score": {"_gt": 1}}]
+            })
         );
     }
 
