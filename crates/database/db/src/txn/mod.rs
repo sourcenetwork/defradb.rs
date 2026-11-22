@@ -343,13 +343,6 @@ impl<S: Store> DbTxn<S> {
     /// when passed to database methods.
     pub fn make_explicit(&mut self) {
         self.explicit = true;
-        if let Some(txn) = self.txn.as_ref() {
-            // Go's SSI validates an explicit transaction's read ranges at
-            // commit; implicit reads stay snapshot reads.
-            if !txn.is_readonly() {
-                txn.set_scans_validated(true);
-            }
-        }
     }
 
     /// Name the handle this explicit transaction is known to its callers by.

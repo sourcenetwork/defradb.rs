@@ -11,6 +11,21 @@ use super::{IndexManager, IndexType};
 use crate::index::error::{Error, Result};
 
 impl IndexManager {
+    /// Save a local unique entry with only the conflict lookup validated: a
+    /// local write decides on the existing holder, while unrelated explicit
+    /// transaction scans stay snapshot reads.
+    pub(super) async fn save_local_unique_validated(
+        &self,
+        datastore: &mut NamespaceView,
+        index: &IndexType,
+        doc_short_id: u64,
+        values: &[document::NormalValue],
+    ) -> std::result::Result<(), storage::corekv::Error> {
+        datastore.set_scans_validated(true);
+        self.save_healing_stale_unique(datastore, index, doc_short_id, values)
+            .await
+    }
+
     /// Save an index entry, healing stale unique conflicts (#1111/#700).
     ///
     /// A unique violation whose existing entry points at a **deleted or
