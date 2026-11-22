@@ -107,8 +107,9 @@ async fn build_reply<S: Store>(
     store: &S,
     request: &QuerySEArtifactsRequest,
 ) -> std::result::Result<Vec<String>, String> {
-    let txn = store
-        .new_txn(true)
+    // Artifacts live in the datastore namespace, where truncate and purge
+    // delete them (Go's `DatastoreSE` keys go through the datastore too).
+    let txn = datastore::BasicTxn::new(store, 0, true)
         .await
         .map_err(|e| format!("failed to open SE read txn: {e}"))?;
 
@@ -118,9 +119,15 @@ async fn build_reply<S: Store>(
         .map(|q| FieldQuery::new(&q.field_name, &q.index_id, q.search_tag.clone()))
         .collect();
 
-    let doc_ids = fetch_doc_ids(&txn, &request.collection_id, &queries)
+    let doc_ids = fetch_doc_ids(&txn.datastore(), &request.collection_id, &queries)
         .await
-        .map_err(|e| format!("SE artifact lookup failed: {e}"))?;
+        .map_err(|e| format!("SE artifact lookup failed: {e}"));
+    // A read-only transaction has nothing to keep; discarding it cannot lose
+    // a write, so a failure is only traced.
+    if let Err(error) = txn.discard() {
+        tracing::warn!(%error, "failed to discard a read-only transaction");
+    }
+    let doc_ids = doc_ids?;
 
     tracing::debug!(
         collection_id = %request.collection_id,
@@ -163,7 +170,9 @@ async fn store_artifacts<S>(store: &S, peer_id: &str, data: &[u8]) -> Vec<String
 where
     S: Store,
 {
-    let mut txn = match store.new_txn(false).await {
+    // The datastore namespace, as `build_reply` reads and truncate and purge
+    // delete.
+    let txn = match datastore::BasicTxn::new(store, 0, false).await {
         Ok(txn) => txn,
         Err(error) => {
             tracing::warn!(peer_id = %peer_id, error = %error, "failed to create SE artifact transaction");
@@ -171,7 +180,7 @@ where
         }
     };
 
-    let result = match receive_and_store(&mut txn, data).await {
+    let result = match receive_and_store(&mut txn.datastore(), data).await {
         Ok(result) => result,
         Err(error) => {
             tracing::warn!(peer_id = %peer_id, error = %error, "failed to receive SE artifacts");
@@ -243,4 +252,135 @@ where
     }
 
     doc_ids
+}
+
+#[cfg(all(test, feature = "p2p", not(target_arch = "wasm32")))]
+mod tests {
+    use std::sync::Arc;
+
+    use defra_core::RequestContext;
+    use document::{Document, NormalValue};
+    use p2p::message::{PushSEArtifactsRequest, SEArtifact, SEFieldQuery};
+    use query::DocMutator;
+    use schema::{CollectionVersion, FieldDescription, FieldKind};
+    use storage::corekv::{IterOptions, Iterator, Reader, Store};
+    use storage::RegolithStore;
+
+    use super::*;
+    use crate::{AutoCommitMutator, DB};
+
+    const COLLECTION_ID: &str = "users-collection";
+    const TAG: [u8; 16] = [7; 16];
+
+    fn users_schema() -> CollectionVersion {
+        CollectionVersion::new(
+            "Users",
+            "users-v1",
+            COLLECTION_ID,
+            vec![
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+                FieldDescription::new("3", "age", FieldKind::int(), schema::CType::LwwRegister),
+            ],
+        )
+    }
+
+    /// Pushes one artifact per doc the way a document owner does, through
+    /// the libp2p push entry point the node's event loop calls.
+    async fn push(store: &Arc<RegolithStore>, handle: &P2PHostHandle, doc_ids: &[&str]) {
+        let artifacts = doc_ids
+            .iter()
+            .map(|doc_id| SEArtifact::new(*doc_id, "name", TAG.to_vec()))
+            .collect();
+        let mut request = PushSEArtifactsRequest::new(COLLECTION_ID, artifacts);
+        request.message_id = "push-1".into();
+        let data = defra_core::cbor::to_vec(&request).unwrap();
+        let mut stored =
+            handle_artifacts_push(store, None, handle, p2p::PeerId::random(), &data).await;
+        stored.sort();
+        assert_eq!(stored, doc_ids);
+    }
+
+    async fn served(store: &Arc<RegolithStore>) -> Vec<String> {
+        let request = QuerySEArtifactsRequest::new(
+            COLLECTION_ID,
+            vec![SEFieldQuery::new("name", "name", TAG.to_vec())],
+        );
+        let mut doc_ids = build_reply(&**store, &request).await.unwrap();
+        doc_ids.sort();
+        doc_ids
+    }
+
+    /// Every `/se/` key, in the root keyspace and in the datastore namespace.
+    async fn se_keys(store: &RegolithStore) -> Vec<Vec<u8>> {
+        let txn = store.new_txn(true).await.unwrap();
+        let mut keys = Vec::new();
+        for prefix in [b"/se/".to_vec(), b"d/se/".to_vec()] {
+            let mut iter = txn
+                .iterator(IterOptions::new().with_prefix(prefix))
+                .await
+                .unwrap();
+            while let Some(pair) = iter.next().await.unwrap() {
+                keys.push(pair.key.to_vec());
+            }
+            iter.close().await.unwrap();
+        }
+        keys
+    }
+
+    #[test]
+    fn received_se_artifacts_removed_by_truncate() {
+        workers::block_on(edge::compat(async {
+            let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+            db.create_collection(users_schema()).await.unwrap();
+            let store = Arc::clone(db.store());
+            // A host that is not running: the push's ack fails and is
+            // logged, which leaves the stored artifacts as they are.
+            let (_, handle, _events, _replicators) = p2p::P2PHost::new(
+                p2p::testutil::MockBitswapStore::new(),
+                edge::testing::edge(),
+            )
+            .await
+            .unwrap();
+
+            let mut doc = Document::new(users_schema());
+            doc.set("name", NormalValue::String("alice".into()))
+                .unwrap();
+            doc.set("age", NormalValue::Int(30)).unwrap();
+            let alice = AutoCommitMutator::new(db.clone())
+                .create("Users", doc)
+                .await
+                .unwrap()
+                .doc_id
+                .to_string();
+
+            push(&store, &handle, &[&alice]).await;
+            assert_eq!(served(&store).await, vec![alice.clone()]);
+
+            let filter: query::documents::Filter = serde_json::json!({"age": {"_eq": 30}}).into();
+            db.truncate_collection_as(&RequestContext::ambient(), "Users", Some(&filter))
+                .await
+                .unwrap();
+            assert!(served(&store).await.is_empty());
+            assert!(se_keys(&store).await.is_empty());
+
+            // A replicator also holds artifacts for documents it never
+            // received; only the collection-wide truncate reaches those.
+            let unheld = "bae-00000000-0000-0000-0000-000000000000";
+            push(&store, &handle, &[unheld]).await;
+            assert_eq!(served(&store).await, vec![unheld.to_owned()]);
+
+            db.truncate_collection_as(&RequestContext::ambient(), "Users", None)
+                .await
+                .unwrap();
+            assert!(served(&store).await.is_empty());
+            assert!(se_keys(&store).await.is_empty());
+        }))
+        .unwrap()
+    }
 }

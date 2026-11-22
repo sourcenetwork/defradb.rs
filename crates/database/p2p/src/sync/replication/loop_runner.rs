@@ -158,7 +158,7 @@ impl ReplicationLoop {
                         tracing::debug!(
                             cid = %root_cid,
                             query_id = ?query_id,
-                            "Bitswap fetch started for missing blocks"
+                            "Block-sync fetch started for missing blocks"
                         );
                     }
                 }
@@ -200,7 +200,7 @@ impl ReplicationLoop {
     /// Waits for at least one event (blocking), then drains up to
     /// `config.batch_size - 1` more events using `try_recv()`.
     /// Merge-eligible events are batched together for efficient processing;
-    /// other events (errors, already-merged, Bitswap) are processed individually.
+    /// other events (errors, already-merged, block sync) are processed individually.
     pub async fn process_next_batch<B, T, H>(
         coordinator: &SyncCoordinator<B, T>,
         events: &mut SyncEventReceiver,

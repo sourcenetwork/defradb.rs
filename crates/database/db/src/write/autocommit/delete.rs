@@ -34,6 +34,7 @@ impl<S: Store + 'static> storage::corekv::RetryAttemptFn for DeleteManyRetryAtte
             let mutator = AutoCommitMutator {
                 db: Arc::clone(&self.db),
                 prepared_inputs: self.prepared_inputs.clone(),
+                creates: std::sync::atomic::AtomicU64::new(0),
             };
             match mutator.run_delete_many_attempt(retry, self).await {
                 Ok(value) => Ok(Box::new(value) as storage::corekv::RetryAttemptValue),
@@ -52,6 +53,7 @@ impl<S: Store + 'static> storage::corekv::RetryAttemptFn for DeleteRetryAttempt<
             let mutator = AutoCommitMutator {
                 db: Arc::clone(&self.db),
                 prepared_inputs: self.prepared_inputs.clone(),
+                creates: std::sync::atomic::AtomicU64::new(0),
             };
             match mutator.run_delete_attempt(retry, self).await {
                 Ok(value) => Ok(Box::new(value) as storage::corekv::RetryAttemptValue),
@@ -75,6 +77,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let mutator = Self {
             db: self.db.clone(),
             prepared_inputs: Some(inputs.clone()),
+            creates: std::sync::atomic::AtomicU64::new(0),
         };
         loop {
             match mutator.delete_impl(context, collection_name, doc_id).await {
@@ -117,6 +120,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let mutator = Self {
             db: self.db.clone(),
             prepared_inputs: Some(inputs.clone()),
+            creates: std::sync::atomic::AtomicU64::new(0),
         };
         loop {
             match mutator
