@@ -2468,7 +2468,7 @@ dependencies = [
  "iroh",
  "keyring 0.5.0",
  "kms",
- "kovan",
+ "kovan-channel",
  "lens",
  "libc",
  "libp2p",

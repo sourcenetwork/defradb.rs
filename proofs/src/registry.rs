@@ -81,6 +81,19 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // `execute_as` signs a node's writes through the shared signed-query
+        // context while keeping its caller's identity and DAC bypass; a
+        // missing signer fails closed. Boundary, bound by the focused node
+        // signing test.
+        family: "Node identity and signing",
+        name: "NodeSigningChoice.execute_as_keeps_the_caller / execute_as_signs_as_the_caller / execute_as_unsigned_without_signing / execute_as_refuses_a_missing_signer",
+        axis: Lean,
+        anchor: "crates/entry-points/defra-node/src/lib.rs Node::execute_as; crates/entry-points/defra-node/src/signed_query/mod.rs execute_with_signing_context; crates/foundation/defra-core/src/request_context.rs RequestContext::with_signing_session",
+        model_ref: "NodeSigningChoice (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/entry-points/defra-node/tests/execute_as_signing.rs execute_as_signs_writes_and_keeps_the_caller_identity",
+    },
+    Property {
         // A node's identity and its signing are separate choices, as in Go:
         // an identity-only node runs each request as its caller and never
         // signs, and a node built without `with_identity_only` runs requests
@@ -886,6 +899,15 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "MC_ReplicatorIncarnation_{Green,Red_Replay*}.cfg",
         tiers: &[Boundary],
         bound_by: "",
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "A live write whose marker a newer generation supersedes (a replay's or a second live writer's) is owed by that marker and never reported undurable, and its head stays delivered or marked, because a live ack completes the marker only at its own generation and only while its head is the whole frontier, on the retired branch too",
+        axis: Tla,
+        anchor: "crates/engine/storage/src/stores/peerstore.rs register_scope_marker, register_scope_marker_at; crates/database/db/src/merge/push_docs.rs push_existing_docs_with_config_and_allowlist; crates/database/p2p/src/sync/coordinator/push_worker.rs run_push_job, is_whole_frontier",
+        model_ref: "MC_LiveMarkerGeneration_{Green,Red_Superseded,Red_NoFence,Red_NoHeadFence}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/engine/storage/src/stores/peerstore_tests.rs live_registration_superseded_by_replay_marker_is_owed_by_it; crates/database/p2p/src/sync/coordinator/push_worker_tests.rs retired_older_head_with_newer_generation_leaves_the_marker",
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
@@ -2206,6 +2228,30 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // A replicator added with no collections is stored, listed, and
+        // restored on start, as in Go, and receives no pushes until it has a
+        // collection (#2702).
+        family: "B3 filtered replication",
+        name: "INV_ListedAsAdded / INV_NoPushOutsideCollections: a replicator with no collections is listed and pushed nothing",
+        axis: Tla,
+        anchor: "crates/database/p2p/src/bitswap/registry.rs store_info, ReplicatorRegistry::load_from_infos, remove_peer_collections; crates/database/p2p/src/sync/coordinator/broadcast.rs replicator_in_collection",
+        model_ref: "MC_ReplicatorEmptyCollections_{Green,Red_DropOnStore,Red_DropOnLoad,Red_EmptyMeansAll}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // Storing or loading a replicator record always leaves its entry, the
+        // one with no collections included; an empty entry grants nothing and
+        // is picked for no collection's pushes.
+        family: "B3 filtered replication",
+        name: "ReplicatorEmptyCollections.stored_is_listed / restart_lists_every_record / empty_grants_nothing / empty_gets_no_push / push_only_to_members",
+        axis: Lean,
+        anchor: "crates/database/p2p/src/bitswap/registry.rs store_info, ReplicatorRegistry::load_from_infos, ReplicatorRegistry::is_any_replicator; crates/database/p2p/src/sync/coordinator/broadcast.rs replicator_in_collection",
+        model_ref: "ReplicatorEmptyCollections (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         // A transaction ID travels in the request context. Only the caller
         // that opened the transaction runs in it, a read-only transaction
         // refuses writes, a finished transaction runs nothing, a discard
@@ -3493,10 +3539,22 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Collection truncate",
-        name: "INV_NoRemovalWithoutPermission / INV_NoRemovalFromChunks / INV_FilteredNeverOnBranchable / INV_FilteredRemovesOnlyCommittedMatches / INV_BadFilterRemovesNothing / INV_UnfilteredRemovesAll / INV_UnfilteredEmptiesView",
+        name: "INV_NoRemovalWithoutPermission / INV_NoRemovalFromChunks / INV_FilteredNeverOnBranchable / INV_FilteredRemovesOnlyCommittedMatches / INV_BadFilterRemovesNothing / INV_UnfilteredRemovesAll / INV_UnfilteredEmptiesView / INV_UnfilteredClearsSearchRecords",
         axis: Tla,
-        anchor: "crates/database/db/src/collection/ops/truncate/mod.rs DB::truncate_collection_as, DB::truncate_parsed_as, DB::truncate_target, conditions, DB::truncate; crates/database/db/src/collection/ops/truncate/all.rs DB::truncate_all, DB::truncate_metadata_in; crates/database/db/src/collection/ops/truncate/filtered.rs DB::truncate_matching; crates/database/db/src/chunk/user_writes.rs ensure_admin_changeable",
+        anchor: "crates/database/db/src/collection/ops/truncate/mod.rs DB::truncate_collection_as, DB::truncate_parsed_as, DB::truncate_target, conditions, DB::truncate; crates/database/db/src/collection/ops/truncate/all.rs DB::truncate_all, DB::truncate_metadata_in; crates/database/db/src/collection/ops/truncate/filtered.rs DB::truncate_matching; crates/database/db/src/chunk/user_writes.rs ensure_admin_changeable; crates/database/db/src/merge/se/serve.rs store_artifacts, build_reply",
         model_ref: "MC_Truncate_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // An unfiltered truncate deletes its collection's whole `/se/`
+        // prefix: no search record of it survives, held or received, and no
+        // other collection's record goes with it.
+        family: "Collection truncate",
+        name: "SeTruncatePrefix.none_left / others_kept / held_only_misses_received",
+        axis: Lean,
+        anchor: "crates/database/db/src/collection/ops/truncate/all.rs DB::truncate_metadata_in; crates/database/db/src/merge/se/serve.rs store_artifacts",
+        model_ref: "SeTruncatePrefix (lake build)",
         tiers: &[Boundary],
         bound_by: "",
     },

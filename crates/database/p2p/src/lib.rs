@@ -85,6 +85,8 @@ pub mod testutil;
 pub mod topics;
 pub mod tracked_task;
 pub mod transport;
+#[cfg(test)]
+mod transport_kind_tests;
 #[cfg(feature = "libp2p-transport")]
 pub mod two_stream;
 
