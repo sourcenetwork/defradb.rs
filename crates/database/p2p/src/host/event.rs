@@ -191,6 +191,12 @@ pub enum HostEvent {
 impl HostEvent {
     /// Assign every host event to the shared bounded scheduler.
     pub fn dispatch_class(&self) -> crate::sync::DispatchClass {
-        crate::sync::classify_p2p_event!(self, HostEvent)
+        crate::sync::classify_p2p_event!(
+            self,
+            HostEvent,
+            BitswapProgress,
+            BitswapComplete,
+            BitswapBlockReceived
+        )
     }
 }

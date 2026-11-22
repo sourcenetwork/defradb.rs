@@ -120,6 +120,8 @@ tempfile = "3"
 mantra-macros = "0.9"
 # Store wrappers that race a NAC decision against another commit.
 zanzibar = { path = "../../building-blocks/zanzibar" }
+# A host handle for the SE push serve test.
+p2p = { path = "../../database/p2p", default-features = false, features = ["test-utils"] }
 
 [lints]
 workspace = true
