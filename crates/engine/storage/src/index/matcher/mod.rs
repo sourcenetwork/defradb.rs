@@ -250,8 +250,8 @@ fn values_equal(a: &NormalValue, b: &NormalValue) -> bool {
         (NormalValue::Null, NormalValue::Null) => true,
         (NormalValue::Bool(a), NormalValue::Bool(b)) => a == b,
         (NormalValue::Int(a), NormalValue::Int(b)) => a == b,
-        (NormalValue::Float64(a), NormalValue::Float64(b)) => (a - b).abs() < f64::EPSILON,
-        (NormalValue::Float32(a), NormalValue::Float32(b)) => (a - b).abs() < f32::EPSILON,
+        (NormalValue::Float64(a), NormalValue::Float64(b)) => a == b,
+        (NormalValue::Float32(a), NormalValue::Float32(b)) => a == b,
         (NormalValue::String(a), NormalValue::String(b)) => a == b,
         (NormalValue::Bytes(a), NormalValue::Bytes(b)) => a == b,
         (NormalValue::Time(a), NormalValue::Time(b)) => a == b,
@@ -260,12 +260,8 @@ fn values_equal(a: &NormalValue, b: &NormalValue) -> bool {
         (NormalValue::Bool(a), NormalValue::NillableBool(Some(b))) => a == b,
         (NormalValue::NillableInt(Some(a)), NormalValue::Int(b)) => a == b,
         (NormalValue::Int(a), NormalValue::NillableInt(Some(b))) => a == b,
-        (NormalValue::NillableFloat64(Some(a)), NormalValue::Float64(b)) => {
-            (a - b).abs() < f64::EPSILON
-        }
-        (NormalValue::Float64(a), NormalValue::NillableFloat64(Some(b))) => {
-            (a - b).abs() < f64::EPSILON
-        }
+        (NormalValue::NillableFloat64(Some(a)), NormalValue::Float64(b)) => a == b,
+        (NormalValue::Float64(a), NormalValue::NillableFloat64(Some(b))) => a == b,
         (NormalValue::NillableString(Some(a)), NormalValue::String(b)) => a == b,
         (NormalValue::String(a), NormalValue::NillableString(Some(b))) => a == b,
         // Nillable None values are considered null

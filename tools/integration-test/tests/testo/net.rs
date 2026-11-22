@@ -74,6 +74,7 @@ mod simple {
         mod with_delete;
         mod with_filter;
         mod with_no_collections;
+        mod with_offline_push;
         mod with_shared_field;
         mod with_update;
     }
