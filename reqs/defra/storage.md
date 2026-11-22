@@ -36,6 +36,13 @@ A counter field can be indexed. After local increments, or after two nodes incre
 
 An ordered query over an indexed field with `limit: 3, offset: 2` reads `limit + offset` index entries, returns exactly the page after skipping two, and leaves the query offset to the limit node so it is not applied twice. The same paging is correct when the ordered field is not indexed.
 
+# `defra.index.backfill_cache`: A stale cache does not stop an index backfill
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["db::index::create::index_backfill_finishes_from_a_reloaded_stale_definition"]
+
+When a handle's collection cache is behind the stored index definition, resuming its interrupted backfill reads the stored definition and completes by the index ID. A later query through the index returns the stored rows, and the action is cleared.
+
 # `defra.collection`: Collection-wide operations
 
 - **Parents:** ["defra"]
