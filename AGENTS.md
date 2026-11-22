@@ -107,7 +107,8 @@ crates/
     ├── workers/            # Thread-per-core worker pool
     ├── keyring/            # Key storage
     ├── cursor/             # Opaque cursor token codec for GraphQL pagination
-    └── defra-version/      # Version metadata and Go compat tracking
+    ├── defra-version/      # Version metadata and Go compat tracking
+    └── prolly/             # History-independent prolly tree: build, insert/remove, diff
 
 tools/
 ├── apple/                  # Apple embedding: .xcframework build + Swift import smoke test
