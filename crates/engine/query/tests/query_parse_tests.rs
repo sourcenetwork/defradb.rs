@@ -230,3 +230,16 @@ fn test_filter_with_nested_and() {
 
     assert!(selects[0].filter.is_some());
 }
+
+#[test]
+fn test_parse_commits_negative_depth_is_unlimited() {
+    let depth = |value: &str| {
+        let query = format!("{{ _commits(depth: {value}) {{ cid }} }}");
+        parse_query(&query).unwrap()[0].depth
+    };
+
+    assert_eq!(depth("-1"), Some(u64::MAX));
+    assert_eq!(depth("-7"), Some(u64::MAX - 6));
+    assert_eq!(depth("0"), Some(0));
+    assert_eq!(depth("3"), Some(3));
+}

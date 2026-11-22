@@ -8,13 +8,16 @@ mod delta;
 
 use cid::Cid;
 use document::CommitRow;
-use rapidhash::{HashMapExt, HashSetExt, RapidHashSet};
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use std::str::FromStr;
 use storage::corekv::{IterOptions, Store};
 use storage::keys::HeadstorePriorityKey;
 
 use crate::error::{Error, Result};
 use crate::txn::{DbTxn, LentTxn};
+
+/// Blocks a commit walk loads between yields to the other tasks on its core.
+const TRAVERSE_YIELD_BLOCKS: u32 = 256;
 
 /// Options for commits queries
 #[derive(Debug, Clone, Default)]
@@ -118,15 +121,10 @@ impl<S: Store> CommitsFetcher<S> {
             );
             if let Some(depth) = options.depth {
                 if depth > 0 {
-                    self.traverse_depth(
-                        txn,
-                        &block,
-                        depth - 1,
-                        &mut commits,
-                        options,
-                        owner.as_deref(),
-                    )
-                    .await?;
+                    let below = self
+                        .traverse_depth(txn, cid, &block, depth - 1, options, owner.as_deref())
+                        .await?;
+                    commits.extend(below);
                 }
             }
         }
@@ -303,51 +301,70 @@ impl<S: Store> CommitsFetcher<S> {
         });
     }
 
-    /// Traverse depth from a starting block
+    /// Lists the commits below `start` (already listed) that lie at most
+    /// `remaining_depth` heads down, each once, in Go's DAG-scan order.
+    ///
+    /// Heads are pushed in stored order and the last is popped first. Each
+    /// commit is decided when popped, against the most depth it was already
+    /// walked with: never walked, it is listed and its heads pushed; walked
+    /// with less, its heads are pushed again without listing it, so nothing a
+    /// shorter path reaches is lost; otherwise it is skipped
+    /// (`proofs/lean/CommitsDepthCast.lean`).
     async fn traverse_depth(
         &self,
         txn: &DbTxn<S>,
+        start: Cid,
         block: &defra_core::block::Block,
         remaining_depth: u64,
-        commits: &mut Vec<CommitRow>,
         options: &CommitsQueryOptions,
         doc_id: Option<&str>,
-    ) -> Result<()> {
-        if remaining_depth == 0 {
-            return Ok(());
-        }
+    ) -> Result<Vec<CommitRow>> {
+        let mut commits = Vec::new();
+        let mut deepest: RapidHashMap<Cid, u64> = RapidHashMap::new();
+        deepest.insert(start, remaining_depth);
+        let mut stack: Vec<(Cid, u64)> = Vec::new();
+        Self::push_heads(&mut stack, block, remaining_depth);
+        let mut budget = workers::Budget::new(TRAVERSE_YIELD_BLOCKS);
 
-        if let Some(ref heads) = block.heads {
-            for head_cid in heads {
-                let head_block = match self.load_block(txn, head_cid).await {
-                    Ok(b) => b,
-                    Err(_) => continue,
-                };
+        while let Some((cid, remaining)) = stack.pop() {
+            let list = match deepest.get(&cid) {
+                None => true,
+                Some(&walked) if walked < remaining => false,
+                Some(_) => continue,
+            };
+            deepest.insert(cid, remaining);
+            budget.spend(1).await;
 
-                let docs = self
-                    .block_to_commit_docs(
+            let head_block = match self.load_block(txn, &cid).await {
+                Ok(b) => b,
+                Err(_) => continue,
+            };
+            if list {
+                commits.extend(
+                    self.block_to_commit_docs(
                         txn,
-                        head_cid,
+                        &cid,
                         &head_block,
                         doc_id,
                         options.field_name.as_deref(),
                     )
-                    .await?;
-                commits.extend(docs);
-
-                Box::pin(self.traverse_depth(
-                    txn,
-                    &head_block,
-                    remaining_depth - 1,
-                    commits,
-                    options,
-                    doc_id,
-                ))
-                .await?;
+                    .await?,
+                );
             }
+            Self::push_heads(&mut stack, &head_block, remaining);
         }
 
-        Ok(())
+        Ok(commits)
+    }
+
+    /// Pushes `block`'s heads, in stored order, with one less depth left.
+    fn push_heads(stack: &mut Vec<(Cid, u64)>, block: &defra_core::block::Block, remaining: u64) {
+        if remaining == 0 {
+            return;
+        }
+        if let Some(ref heads) = block.heads {
+            stack.extend(heads.iter().map(|head| (*head, remaining - 1)));
+        }
     }
 
     /// Get all head CIDs from headstore

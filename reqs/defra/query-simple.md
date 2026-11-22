@@ -412,10 +412,10 @@ With `GROUP(groupBy: [Verified]) { AVG(GROUP: {field: Age}) }`, an outer `AVG(GR
 # `go.query.simple.cid.doc-version`: `cid` returns the document state at that commit
 
 - **Parents:** ["go.query.simple.cid"]
-- **Scenarios:** ["query.simple.with-cid", "query.simple.with-cid-and-doc-id", "query.simple.with-cid-multiple-docs", "query.simple.with-shared-field-cid-returns-all-owners", "query.simple.with-update-and-first-cid-and-doc-id", "query.simple.with-update-and-first-cid-and-doc-idand-schema-version", "query.simple.with-update-and-last-cid-and-doc-id", "query.simple.with-update-and-middle-cid-and-doc-id"]
+- **Scenarios:** ["query.simple.with-cid", "query.simple.with-cid-and-doc-id", "query.simple.with-cid-multiple-docs", "query.simple.with-shared-field-cid-returns-all-owners", "query.simple.with-update-and-first-cid-and-doc-id", "query.simple.with-update-and-first-cid-and-doc-idand-schema-version", "query.simple.with-update-and-last-cid-and-doc-id", "query.simple.with-update-and-middle-cid-and-doc-id", "query.simple.with-version-cid-on-merged-history-lists-each-version-once"]
 - **Scope:** "excluded from the encrypted-docs and signed-docs multipliers (CIDs are templated/hardcoded)"
 
-`Users(cid: "<composite CID>")` (with or without a matching `docID`) returns only that document, with its field values and `_version` as of that commit, even after later updates and when other documents exist. A field-level CID shared by several documents with identical field content returns every owning document.
+`Users(cid: "<composite CID>")` (with or without a matching `docID`) returns only that document, with its field values and `_version` as of that commit, even after later updates and when other documents exist. A field-level CID shared by several documents with identical field content returns every owning document. On a merged history, the `_version` of a document queried by `cid` lists every commit of that history once.
 
 # `go.query.simple.cid.counter`: `cid` on documents with counter fields
 
