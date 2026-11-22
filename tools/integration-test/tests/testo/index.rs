@@ -11,6 +11,7 @@ mod backfill_unique_txn;
 mod crdt;
 mod delete;
 mod get;
+mod index_offset_limit;
 mod json;
 mod json_array;
 mod json_composite;

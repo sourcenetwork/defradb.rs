@@ -975,12 +975,33 @@ impl<S: Store> Peerstore<S> {
         }
     }
 
+    /// Register a live head's scope marker and return the generation its push
+    /// carries. A marker newer than this call's allocation already owes the
+    /// head, so a superseded write is durable too, never reported undurable
+    /// (#2902), as replay registrations (`*_for_incarnation`) treat it.
     async fn register_scope_marker(
         &self,
         peer_id: &str,
         doc_id: &str,
         collection_id: &str,
         retry_info_bytes: &[u8],
+    ) -> Result<Option<u64>> {
+        let generation = self
+            .allocate_scope_generation(doc_id, collection_id)
+            .await?;
+        self.register_scope_marker_at(peer_id, doc_id, collection_id, retry_info_bytes, generation)
+            .await
+    }
+
+    /// [`Self::register_scope_marker`] from an already allocated generation;
+    /// a test allocates one before a competing write commits.
+    async fn register_scope_marker_at(
+        &self,
+        peer_id: &str,
+        doc_id: &str,
+        collection_id: &str,
+        retry_info_bytes: &[u8],
+        generation: u64,
     ) -> Result<Option<u64>> {
         let incarnation_key = ReplicatorIncarnationKey::new(peer_id);
         let peer_key = ReplicatorKey::new(peer_id);
@@ -995,15 +1016,41 @@ impl<S: Store> Peerstore<S> {
         };
         drop(txn);
 
-        self.register_scope_marker_once(
-            peer_id,
-            doc_id,
-            collection_id,
-            retry_info_bytes,
-            expected_incarnation,
-        )
-        .await
-        .map(ReplayMarkerWrite::generation)
+        let scoped = !(doc_id.is_empty() && collection_id.is_empty());
+        let written = self
+            .register_scope_marker_attempt(
+                peer_id,
+                doc_id,
+                collection_id,
+                retry_info_bytes,
+                expected_incarnation,
+                generation,
+            )
+            .await?;
+        Ok(match written {
+            // A newer marker committed between this allocation and the
+            // write (a replay, or a second live write that allocated after
+            // this one). That marker owes this head until the newest head
+            // lands or the sweep sends it, because an ack completes a marker
+            // only at its own generation and only while its head is the
+            // whole frontier (`LiveMarkerGeneration.tla`). This head's push
+            // still goes out at its own, older generation, which can never
+            // complete the newer marker.
+            ReplayMarkerWrite::Superseded if scoped => Some(generation),
+            written => written.generation(),
+        })
+    }
+
+    /// A fresh marker generation for a scope; the empty scope has none.
+    async fn allocate_scope_generation(&self, doc_id: &str, collection_id: &str) -> Result<u64> {
+        if doc_id.is_empty() && collection_id.is_empty() {
+            return Ok(0);
+        }
+        Ok(self
+            .store
+            .allocate(b"/rep/retry/marker-generation", 1)
+            .await?
+            .end)
     }
 
     async fn register_scope_marker_once(
@@ -1014,26 +1061,36 @@ impl<S: Store> Peerstore<S> {
         retry_info_bytes: &[u8],
         expected_incarnation: u64,
     ) -> Result<ReplayMarkerWrite> {
-        let peer_id = peer_id.to_owned();
-        let doc_id = doc_id.to_owned();
-        let collection_id = collection_id.to_owned();
-        let retry_info_bytes = retry_info_bytes.to_vec();
-        let retry_schedule = self.retry_schedule.clone();
-        let generation = if doc_id.is_empty() && collection_id.is_empty() {
-            0
-        } else {
-            self.store
-                .allocate(b"/rep/retry/marker-generation", 1)
-                .await?
-                .end
-        };
-        self.transact_conflicts(Box::new(RegisterScopeMarkerAttempt {
+        let generation = self
+            .allocate_scope_generation(doc_id, collection_id)
+            .await?;
+        self.register_scope_marker_attempt(
             peer_id,
-            expected_incarnation,
             doc_id,
             collection_id,
             retry_info_bytes,
-            retry_schedule,
+            expected_incarnation,
+            generation,
+        )
+        .await
+    }
+
+    async fn register_scope_marker_attempt(
+        &self,
+        peer_id: &str,
+        doc_id: &str,
+        collection_id: &str,
+        retry_info_bytes: &[u8],
+        expected_incarnation: u64,
+        generation: u64,
+    ) -> Result<ReplayMarkerWrite> {
+        self.transact_conflicts(Box::new(RegisterScopeMarkerAttempt {
+            peer_id: peer_id.to_owned(),
+            expected_incarnation,
+            doc_id: doc_id.to_owned(),
+            collection_id: collection_id.to_owned(),
+            retry_info_bytes: retry_info_bytes.to_vec(),
+            retry_schedule: self.retry_schedule.clone(),
             generation,
         }))
         .await
