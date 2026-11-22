@@ -153,6 +153,7 @@ impl Node {
 
         if http_crashed {
             info!("Initiating shutdown due to HTTP server failure...");
+            #[cfg(feature = "postgres")]
             if let Some(task) = pg_task {
                 task.abort();
             }
