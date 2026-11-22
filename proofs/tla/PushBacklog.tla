@@ -52,6 +52,13 @@
 \*                 = "DropQueue"        - it discards them instead, losing live work
 \*                                        at the first offline probe. [RED]
 \*
+\*   OfflineAdmission = "Recorded"       - the durable recorder admits an offline
+\*                                        push. [GREEN]
+\*                 = "Denied"           - it refuses it, so the job fails and never
+\*                                        parks the peer. [GREEN]
+\*                 = "ParkDenied"       - the job parks anyway, hiding a durable
+\*                                        refusal from `failed_total`. [RED]
+\*
 \* Every variable is state the code holds; the properties are stated over that state,
 \* as invariants or as properties of each step, and nothing is recorded only to state
 \* them. Variables and the code state each one is (crates/database/p2p/src/sync):
@@ -96,7 +103,8 @@ CONSTANTS
   HandleMode,    \* "FixedWorkers" | "RetainAll"
   FairnessMode,  \* "PerPeerCap" | "Unfair"
   ParkMode,      \* "ParkUnreachable" | "RetryUnreachable" | "DemoteEveryTimeout"
-  OfflineMode    \* "KeepQueue" | "DropQueue"
+  OfflineMode,   \* "KeepQueue" | "DropQueue"
+  OfflineAdmission \* "Recorded" | "Denied" | "ParkDenied"
 
 \* At least one peer is healthy, so the liveness promise is about someone.
 ASSUME Peers # {} /\ SlowPeers \subseteq Peers /\ SlowPeers # Peers
@@ -116,6 +124,7 @@ ASSUME HandleMode \in {"FixedWorkers", "RetainAll"}
 ASSUME FairnessMode \in {"PerPeerCap", "Unfair"}
 ASSUME ParkMode \in {"ParkUnreachable", "RetryUnreachable", "DemoteEveryTimeout"}
 ASSUME OfflineMode \in {"KeepQueue", "DropQueue"}
+ASSUME OfflineAdmission \in {"Recorded", "Denied", "ParkDenied"}
 
 VARIABLES
   arrivals,    \* arrivals so far
@@ -291,18 +300,23 @@ Timeout(p) ==
   /\ UNCHANGED <<arrivals, sent, coalesced, rejected>>
 
 \* The transport already reports p offline. The current job is parked in the retry
-\* ledger without a send. KeepQueue leaves p's queued jobs in the backlog for the
-\* reconnect window; DropQueue loses them instead. This is the offline branch of
-\* run_push_job, not a timeout.
+\* ledger without a send, but only after the durable recorder admits it. KeepQueue
+\* leaves p's queued jobs in the backlog for the reconnect window; DropQueue loses
+\* them instead. This is the offline branch of run_push_job, not a timeout.
 OfflinePark(p) ==
   /\ JobEnds(p)
   /\ \E k \in {0, 1} : ProbeEnds(p, k)
-  /\ IF OfflineMode = "KeepQueue"
+  /\ IF OfflineAdmission = "Denied"
        THEN /\ failed' = failed + 1
             /\ UNCHANGED backlog
-       ELSE /\ failed' = failed + 1 + backlog[p]
-            /\ backlog' = [backlog EXCEPT ![p] = 0]
-  /\ unreachable' = unreachable \cup {p}
+            /\ UNCHANGED unreachable
+       ELSE
+         /\ IF OfflineMode = "KeepQueue"
+              THEN /\ failed' = failed + 1
+                   /\ UNCHANGED backlog
+              ELSE /\ failed' = failed + 1 + backlog[p]
+                   /\ backlog' = [backlog EXCEPT ![p] = 0]
+         /\ unreachable' = unreachable \cup {p}
   /\ UNCHANGED <<arrivals, sent, coalesced, rejected>>
 
 \* An unreachable peer with nothing queued or running loses its parking state
@@ -377,6 +391,14 @@ INV_UnreachableLeaveAWorker == ProbeJobs < Workers
 \* queue. DropQueue breaks it at the first offline probe.
 ACT_OfflineParkKeepsQueue ==
   [][\A p \in Peers : OfflinePark(p) => UNCHANGED backlog]_vars
+
+\* A durable refusal is a failure, not expected absence. ParkDenied breaks it by
+\* counting the refused job as parked and leaving the peer parked.
+ACT_OfflineDenialFails ==
+  [][\A p \in Peers :
+       (OfflinePark(p) /\ OfflineAdmission # "Recorded") =>
+         (backlog'[p] = backlog[p] /\ unreachable' = unreachable
+          /\ OfflineAdmission = "Denied")]_vars
 
 \* p's queued jobs leave the queue in this step without a worker taking one: they move
 \* to the retry ledger.

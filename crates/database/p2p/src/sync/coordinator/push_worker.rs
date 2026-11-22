@@ -111,36 +111,22 @@ async fn offline_push_admitted<T>(context: &PushWorkerContext<T>, job: &PushJobS
 where
     T: P2PTransport,
 {
-    let Some(tx) = context.failure_tx.load().as_deref().cloned() else {
-        return false;
-    };
-    let (durable_tx, durable_rx) = crate::rt::oneshot::channel();
-    let failure = PushFailure {
-        peer_id: job.peer_id.to_string(),
-        doc_id: job.doc_id.clone(),
-        collection_id: job.collection_id.clone(),
-        cid: job.root_cid.to_string(),
-        head_priority: job.head_priority(),
-        create_retry: false,
-        initial_registration: false,
-        acknowledged: false,
-        marker_generation: job.marker_generation,
-        retry_after: None,
-        admission_only: true,
-        durable_tx: Some(durable_tx),
-    };
-    let mut send = std::pin::pin!(tx.send(failure));
-    loop {
-        match workers::timeout(Duration::from_secs(5), &mut send).await {
-            Ok(_) => break,
-            Err(_) => tracing::warn!(
-                peer_id = %job.peer_id,
-                doc_id = %job.doc_id,
-                "Push failure recorder is backlogged; still waiting to admit an offline push"
-            ),
-        }
-    }
-    matches!(durable_rx.await, Ok(Some(_)))
+    report_push_event(
+        &context.failure_tx,
+        &job.peer_id,
+        job.doc_id.clone(),
+        job.collection_id.clone(),
+        Some(job.root_cid),
+        job.head_priority(),
+        false,
+        false,
+        None,
+        true,
+        job.marker_generation,
+        false,
+    )
+    .await
+    .is_some()
 }
 
 /// Whether `job`'s head is the whole current frontier of its scope. A marker

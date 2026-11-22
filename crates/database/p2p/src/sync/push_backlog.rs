@@ -212,7 +212,7 @@ struct PeerMetrics {
     failed: u64,
     parked: u64,
     last_success_ms: u64,
-    last_activity_ms: u64,
+    last_activity_seq: u128,
 }
 
 #[derive(Default)]
@@ -233,6 +233,7 @@ struct Inner {
     /// essentially no protection (defradb#1112).
     peer_cooldowns: RapidHashMap<String, PeerCooldown>,
     metrics: RapidHashMap<String, PeerMetrics>,
+    metrics_sequence: u128,
     /// Numbers each new unreachable spell (`PeerCooldown::unreachable`).
     unreachable_spells: u64,
     queued_items: usize,
@@ -996,7 +997,7 @@ impl BacklogOwner {
                         && !inner.active.contains_key(*peer_key)
                         && !inner.peer_cooldowns.contains_key(*peer_key)
                 })
-                .min_by_key(|(_, metrics)| metrics.last_activity_ms)
+                .min_by_key(|(_, metrics)| metrics.last_activity_seq)
                 .map(|(peer_key, _)| peer_key.clone())
             else {
                 return;
@@ -1195,14 +1196,12 @@ impl BacklogOwner {
             JobCompletion::Retired => {}
         }
         let metrics = self.inner.metrics.entry(peer_key).or_default();
-        metrics.last_activity_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
+        self.inner.metrics_sequence = self.inner.metrics_sequence.saturating_add(1);
+        metrics.last_activity_seq = self.inner.metrics_sequence;
         match completion {
             JobCompletion::Succeeded => {
-                metrics.last_success_ms = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
+                metrics.last_success_ms = web_time::SystemTime::now()
+                    .duration_since(web_time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_millis() as u64;
             }
