@@ -1,10 +1,15 @@
-//! The resolver configuration the DNS layers use: the host's, or Go's local
-//! nameservers when the host's lists none or cannot be read
-//! (`proofs/lean/DnsResolverFallback.lean`).
+//! The resolver configuration the DNS layers use: the host's, read the way
+//! Go's `dnsReadConfig` reads it (a line or word hickory rejects is skipped,
+//! the rest is kept), with Go's local nameservers in place of the host's
+//! when it lists none or cannot be read
+//! (`proofs/lean/DnsResolverFallback.lean`). It is read once, when the
+//! transport is built.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use hickory_resolver::config::NameServerConfigGroup;
+#[cfg(unix)]
+use hickory_resolver::system_conf::parse_resolv_conf;
 use libp2p::dns::{ResolveError, ResolverConfig, ResolverOpts};
 
 /// The nameservers Go's resolver falls back to (`defaultNS` in Go's `net`
@@ -16,6 +21,10 @@ pub(crate) const FALLBACK_NAMESERVERS: [IpAddr; 2] = [
 
 /// The DNS port the fallback nameservers answer on.
 pub(crate) const DNS_PORT: u16 = 53;
+
+/// The file [`ResolverSource::System`] reads on unix.
+#[cfg(unix)]
+const RESOLV_CONF: &str = "/etc/resolv.conf";
 
 /// Where the DNS layers read the host's resolver configuration from.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -29,13 +38,78 @@ pub enum ResolverSource {
 }
 
 impl ResolverSource {
+    /// The host's settings. On unix only a file that cannot be read is an
+    /// error: any text gives a configuration with a nameserver.
     pub(crate) fn read(&self) -> Result<(ResolverConfig, ResolverOpts), ResolveError> {
         match self {
+            #[cfg(unix)]
+            Self::System => Ok(parse_lenient(&std::fs::read_to_string(RESOLV_CONF)?)),
+            #[cfg(not(unix))]
             Self::System => hickory_resolver::system_conf::read_system_conf(),
             #[cfg(unix)]
-            Self::ResolvConf(text) => hickory_resolver::system_conf::parse_resolv_conf(text),
+            Self::ResolvConf(text) => Ok(parse_lenient(text)),
         }
     }
+}
+
+/// `text` as Go reads it. hickory rejects a whole file over one bad line, so
+/// each line (or each word of a line) hickory rejects is skipped first. A
+/// file left with no nameserver gets [`FALLBACK_NAMESERVERS`] and keeps its
+/// search domains and options.
+#[cfg(unix)]
+fn parse_lenient(text: &str) -> (ResolverConfig, ResolverOpts) {
+    let kept: String = text
+        .lines()
+        .filter_map(usable_line)
+        .map(|line| line + "\n")
+        .collect();
+    match parse_resolv_conf(&kept) {
+        Ok(read) => read,
+        Err(cause) => {
+            warn_fallback(&cause);
+            let fallback: String = FALLBACK_NAMESERVERS
+                .iter()
+                .map(|ip| format!("nameserver {ip}\n"))
+                .collect();
+            parse_resolv_conf(format!("{kept}{fallback}"))
+                .unwrap_or_else(|_| (fallback_config(), ResolverOpts::default()))
+        }
+    }
+}
+
+/// `line` as hickory accepts it: whole, or its directive with each argument
+/// hickory accepts on its own; `None` when nothing of it is accepted.
+#[cfg(unix)]
+fn usable_line(line: &str) -> Option<String> {
+    if accepted(line) {
+        return Some(line.to_owned());
+    }
+    let mut words = line.split_whitespace();
+    let directive = words.next()?;
+    let args: Vec<&str> = words
+        .filter(|arg| accepted(&format!("{directive} {arg}")))
+        .collect();
+    let rebuilt = format!("{directive} {}", args.join(" "));
+    let kept = (!args.is_empty() && accepted(&rebuilt)).then_some(rebuilt);
+    tracing::warn!(
+        line,
+        ?kept,
+        "skipping what hickory cannot parse in a resolv.conf line"
+    );
+    kept
+}
+
+/// Whether hickory parses `line` next to a valid nameserver.
+#[cfg(unix)]
+fn accepted(line: &str) -> bool {
+    parse_resolv_conf(format!("nameserver {}\n{line}\n", Ipv4Addr::LOCALHOST)).is_ok()
+}
+
+fn warn_fallback(cause: &dyn std::fmt::Display) {
+    tracing::warn!(
+        %cause,
+        "no usable DNS nameservers in the host resolver configuration, using 127.0.0.1:53 and [::1]:53"
+    );
 }
 
 /// The configuration the DNS layers use for a read of the host's settings:
@@ -49,15 +123,11 @@ pub(crate) fn resolver_config<E>(
 where
     E: std::fmt::Display,
 {
-    let cause = match read {
+    match read {
         Ok((config, opts)) if !config.name_servers().is_empty() => return (config, opts),
-        Ok(_) => "no nameservers found in config".to_owned(),
-        Err(error) => error.to_string(),
-    };
-    tracing::warn!(
-        %cause,
-        "no usable DNS nameservers in the host resolver configuration, using 127.0.0.1:53 and [::1]:53"
-    );
+        Ok(_) => warn_fallback(&"no nameservers found in config"),
+        Err(error) => warn_fallback(&error),
+    }
     (fallback_config(), ResolverOpts::default())
 }
 

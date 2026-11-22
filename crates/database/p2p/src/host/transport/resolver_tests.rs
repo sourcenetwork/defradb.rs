@@ -92,22 +92,23 @@ fn the_fallback_matches_the_lean_model() {
 #[cfg(unix)]
 #[test]
 fn an_unparseable_resolv_conf_falls_back_to_the_localhost_nameservers() {
-    let read = super::ResolverSource::ResolvConf("nameserver not-an-ip\n".into()).read();
+    let text = "nameserver not-an-ip\n";
+    let read = hickory_resolver::system_conf::parse_resolv_conf(text);
     let error = read.as_ref().err().map(ToString::to_string);
     assert!(
         error
             .as_deref()
             .is_some_and(|error| error.contains("Error parsing resolv.conf")),
-        "the text must reach hickory's parse error, got {error:?}"
+        "hickory alone must reject the text, got {error:?}"
     );
-    let (config, _) = resolver_config(read);
+    let (config, _) = from_text(text);
     assert_eq!(servers(&config), localhost_servers());
 }
 
 #[cfg(unix)]
 #[test]
 fn an_empty_resolv_conf_reads_as_no_nameservers() {
-    let read = super::ResolverSource::ResolvConf(String::new()).read();
+    let read = hickory_resolver::system_conf::parse_resolv_conf("");
     let error = read.as_ref().err().map(ToString::to_string);
     assert!(
         error
@@ -115,6 +116,82 @@ fn an_empty_resolv_conf_reads_as_no_nameservers() {
             .is_some_and(|error| error.contains("no nameservers found in config")),
         "an empty file must be hickory's no-nameservers error, got {error:?}"
     );
-    let (config, _) = resolver_config(read);
+    let (config, _) = from_text("");
     assert_eq!(servers(&config), localhost_servers());
+}
+
+/// What the DNS layers use for this `resolv.conf` text.
+#[cfg(unix)]
+fn from_text(text: &str) -> (ResolverConfig, ResolverOpts) {
+    resolver_config(super::ResolverSource::ResolvConf(text.into()).read())
+}
+
+#[cfg(unix)]
+fn udp_tcp(ip: &str) -> Vec<(SocketAddr, Protocol)> {
+    let addr = SocketAddr::new(ip.parse().unwrap(), DNS_PORT);
+    vec![(addr, Protocol::Udp), (addr, Protocol::Tcp)]
+}
+
+#[cfg(unix)]
+fn search(config: &ResolverConfig) -> Vec<String> {
+    config.search().iter().map(ToString::to_string).collect()
+}
+
+/// Go's `dnsReadConfig` ignores an option it does not know; the nameserver
+/// next to it is still used.
+#[cfg(unix)]
+#[test]
+fn an_unknown_option_keeps_the_hosts_nameserver() {
+    let (config, opts) = from_text("nameserver 10.0.0.2\noptions ndots:3 bogus\n");
+    assert_eq!(servers(&config), udp_tcp("10.0.0.2"));
+    assert_eq!(opts.ndots, 3);
+}
+
+/// Go skips a `nameserver` line that is not an IP and keeps the others.
+#[cfg(unix)]
+#[test]
+fn a_bad_nameserver_line_keeps_the_good_ones() {
+    let (config, _) = from_text("nameserver not-an-ip\nnameserver 10.0.0.2\n");
+    assert_eq!(servers(&config), udp_tcp("10.0.0.2"));
+}
+
+/// Go skips a directive it does not know.
+#[cfg(unix)]
+#[test]
+fn an_unknown_directive_keeps_the_hosts_nameserver() {
+    let (config, _) = from_text("nameserver 10.0.0.2\nfoo bar\n");
+    assert_eq!(servers(&config), udp_tcp("10.0.0.2"));
+}
+
+/// A search domain hickory rejects is dropped; the rest of the line stays.
+#[cfg(unix)]
+#[test]
+fn a_bad_search_domain_keeps_the_others() {
+    let long = "a".repeat(64);
+    let (config, _) = from_text(&format!(
+        "nameserver 10.0.0.2\nsearch {long}.example corp.example\n"
+    ));
+    assert_eq!(servers(&config), udp_tcp("10.0.0.2"));
+    assert_eq!(search(&config), vec!["corp.example".to_owned()]);
+}
+
+/// Go sets only `servers = defaultNS` when the file names no nameserver; its
+/// search domains and options stay.
+#[cfg(unix)]
+#[test]
+fn a_file_without_nameservers_keeps_its_search_and_options() {
+    let (config, opts) = from_text("search corp.example\noptions ndots:3 timeout:9\n");
+    assert_eq!(servers(&config), localhost_servers());
+    assert_eq!(search(&config), vec!["corp.example".to_owned()]);
+    assert_eq!(opts.ndots, 3);
+    assert_eq!(opts.timeout, std::time::Duration::from_secs(9));
+}
+
+/// The settings real hosts ship parse as they are.
+#[cfg(unix)]
+#[test]
+fn a_systemd_resolved_stub_passes_through() {
+    let (config, opts) = from_text("nameserver 127.0.0.53\noptions edns0 trust-ad\nsearch .\n");
+    assert_eq!(servers(&config), udp_tcp("127.0.0.53"));
+    assert!(opts.edns0);
 }
