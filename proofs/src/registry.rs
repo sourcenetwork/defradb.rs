@@ -4162,6 +4162,17 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // #3052: a patch commits its version, registers any lens it staged,
+        // and only then settles a reindex owed by that patch.
+        family: "Patch lens settlement",
+        name: "INV_SettleAfterLens",
+        axis: Tla,
+        anchor: "crates/database/db/src/definition/patch/mod.rs PatchCollectionState::patch_collection; crates/database/db/src/definition/patch/in_place.rs PatchCollectionState::update_version_in_place; crates/database/db/src/definition/migration/reindex/page.rs ReindexPage::walk",
+        model_ref: "MC_LensSettlement_{Green,Red_Early}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         // #2724: verify-signature's NAC, document ACP and block checks decide
         // at the caller's transaction view, or the read-only one the pool path
         // opens: NAC through check_node_access_in_txn, document ACP bound to

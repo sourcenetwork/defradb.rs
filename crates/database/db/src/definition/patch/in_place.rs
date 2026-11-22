@@ -86,18 +86,20 @@ impl<S: Store> crate::database::DB<S> {
                 .previous_version
                 .as_ref()
                 .and_then(|previous| previous.transform.as_ref())
-                .is_some()
+                .cloned();
+            let removed = removed_transform.is_some()
                 && new_schema
                     .previous_version
                     .as_ref()
                     .and_then(|previous| previous.transform.as_ref())
                     .is_none();
-            if removed_transform && !new_schema.indexes.is_empty() {
+            if removed && !new_schema.indexes.is_empty() {
                 crate::definition::migration::owe_reindex(
                     &txn.systemstore()?,
                     &self.collections,
                     new_schema.collection_id.as_str(),
                     None,
+                    removed_transform.as_deref(),
                 )
                 .await?;
             }

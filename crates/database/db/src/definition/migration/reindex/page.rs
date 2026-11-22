@@ -18,8 +18,11 @@ use super::progress::{self, Stage};
 use crate::collection::epoch::EpochedCollections;
 use crate::collection::Collection;
 use crate::definition::lens::build_collection_history;
+use crate::definition::lens::doc_to_lens_doc;
 use crate::definition::loader::get_collections_by_collection_id;
-use crate::definition::migration::helpers::{cache_migrated_document, migrate_to_active, ToActive};
+use crate::definition::migration::helpers::{
+    cache_migrated_document, lens_doc_to_document, migrate_to_active, ToActive,
+};
 use crate::error::{Error, Result};
 use crate::index::manager::DocumentSource;
 use crate::index::pages::Page;
@@ -53,6 +56,11 @@ pub(super) struct ReindexPage {
     pub(super) fence: Option<u64>,
     /// Also move the version of documents whose path runs no transform.
     pub(super) restamp_identity: bool,
+    /// Also write transformed values back to the datastore. A patch settlement
+    /// may index migrated values while leaving their source values for reads.
+    pub(super) persist_migrations: bool,
+    /// The transform an in-place patch removed, if any.
+    pub(super) removed_transform: Option<String>,
     pub(super) lens_store: Arc<dyn TransformStore>,
     pub(super) collections: Arc<EpochedCollections>,
 }
@@ -210,20 +218,33 @@ impl ReindexPage {
                     collection.name()
                 ))
             })?;
-        // A removed transform is no longer part of the collection's migration
-        // path. Reindexing reads the historical values unchanged instead of
-        // asking for a transform the node no longer holds.
+        // A transform removed from every stored version is no longer part of
+        // the collection's migration path. Reindexing reads the historical
+        // values unchanged instead of asking for it. A transform that remains
+        // on a stored version is required: fail loud rather than index
+        // untransformed values while its lens is missing.
         for link in history.values_mut() {
-            if link.transform.as_ref().is_some_and(|transform| {
-                !self
-                    .lens_store
-                    .has_transform(&lens::TransformId::new(transform))
-            }) {
-                tracing::debug!(
-                    transform = %link.transform.as_deref().unwrap_or_default(),
-                    "a reindex history transform is no longer held; reading through it as identity"
-                );
-                link.transform = None;
+            if let Some(transform) = link.transform.as_deref() {
+                let transform_id = lens::TransformId::new(transform);
+                if !self.lens_store.has_transform(&transform_id) {
+                    let still_referenced = versions.iter().any(|version| {
+                        version
+                            .previous_version
+                            .as_ref()
+                            .and_then(|previous| previous.transform.as_deref())
+                            == Some(transform)
+                    });
+                    if still_referenced {
+                        return Err(Error::Lens(format!(
+                            "required reindex transform '{transform}' is not held"
+                        )));
+                    }
+                    tracing::debug!(
+                        transform,
+                        "a reindex history transform was removed; reading through it as identity"
+                    );
+                    link.transform = None;
+                }
             }
         }
         let mut source = BackfillSource::open_range(
@@ -250,6 +271,17 @@ impl ReindexPage {
                 continue;
             }
             last = doc_short_id;
+            let doc = match self.revert_removed_transform(&doc).await? {
+                Some(reverted) => {
+                    if cache_migrated_document(datastore, systemstore, collection, &reverted)
+                        .await?
+                    {
+                        materialized += 1;
+                    }
+                    reverted
+                }
+                None => doc,
+            };
             let doc = match migrate_to_active(&doc, collection, &history, &self.lens_store).await? {
                 ToActive::Current => doc,
                 ToActive::Identity if self.restamp_identity => {
@@ -266,8 +298,9 @@ impl ReindexPage {
                         doc_short_id,
                         manager.unique_index_keys(&doc, collection.schema())?,
                     );
-                    if cache_migrated_document(datastore, systemstore, collection, &migrated)
-                        .await?
+                    if self.persist_migrations
+                        && cache_migrated_document(datastore, systemstore, collection, &migrated)
+                            .await?
                     {
                         materialized += 1;
                     }
@@ -290,6 +323,42 @@ impl ReindexPage {
             last,
             exhausted: false,
         })
+    }
+}
+
+impl ReindexPage {
+    /// A transform removed from every stored version may have materialized its
+    /// output in an earlier reindex. Invert that one transform and move the
+    /// document behind the removed edge, so the rest of the walk reads the
+    /// source values again.
+    async fn revert_removed_transform(
+        &self,
+        doc: &document::Document,
+    ) -> Result<Option<document::Document>> {
+        let Some(version) = doc.collection_version_id() else {
+            return Ok(None);
+        };
+        if version != self.collection.version_id() {
+            return Ok(None);
+        }
+        let Some(previous) = self.collection.schema().previous_version.as_ref() else {
+            return Ok(None);
+        };
+        let Some(transform) = self.removed_transform.as_deref() else {
+            return Ok(None);
+        };
+        let transform_id = lens::TransformId::new(transform);
+        let Some(lens_doc) = doc_to_lens_doc(doc) else {
+            return Ok(None);
+        };
+        let reverted = self
+            .lens_store
+            .transform_doc(&transform_id, lens_doc, true)
+            .await
+            .map_err(|error| Error::Lens(error.to_string()))?;
+        let mut reverted = lens_doc_to_document(reverted, doc, &self.collection);
+        reverted.set_collection_version_id(previous.source_collection_id.clone());
+        Ok(Some(reverted))
     }
 }
 
