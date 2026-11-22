@@ -146,30 +146,19 @@ impl Planner {
         // For ordering, extract parent's order_by conditions that reference this relation
         // and convert them to child-level order_by. e.g., parent's `{device: {model: ASC}}`
         // becomes child's `{model: ASC}` for index selection on the Device collection.
-        let parent_order_for_child: Option<OrderBy> = select.order_by.as_ref().and_then(|o| {
-            let child_conditions: Vec<OrderCondition> = o
-                .conditions
-                .iter()
-                .filter_map(|c| {
-                    if c.fields.len() >= 2 && c.fields[0] == *relation_field_name {
-                        // Convert nested path to child-relative path
-                        Some(OrderCondition {
-                            fields: c.fields[1..].to_vec(),
-                            direction: c.direction,
-                        })
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            if child_conditions.is_empty() {
-                None
-            } else {
-                Some(OrderBy {
-                    conditions: child_conditions,
-                })
-            }
-        });
+        // Only the first order condition can drive the join, as Go's
+        // tryOptimizeJoinDirectionByOrder: a later one is only a tie-break.
+        let parent_order_for_child: Option<OrderBy> = select
+            .order_by
+            .as_ref()
+            .and_then(|o| o.conditions.first())
+            .filter(|c| c.fields.len() >= 2 && c.fields[0] == *relation_field_name)
+            .map(|c| OrderBy {
+                conditions: vec![OrderCondition {
+                    fields: c.fields[1..].to_vec(),
+                    direction: c.direction,
+                }],
+            });
 
         // Combine child's own order_by with parent's order for this relation
         let combined_child_order = match (&nested_select.order_by, &parent_order_for_child) {
@@ -276,8 +265,8 @@ impl Planner {
                     child_filter_for_index.as_ref(),
                     combined_child_order.as_ref(),
                     &target_collection,
-                    nested_limit,
-                    nested_offset,
+                    None,
+                    0,
                 )
             };
         let child_uses_index = child_index_result.is_some();

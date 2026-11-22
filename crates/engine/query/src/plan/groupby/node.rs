@@ -101,6 +101,19 @@ impl GroupByNode {
         self
     }
 
+    /// The `_group` order that interleaves with the source to order the groups.
+    pub(super) fn group_order(&self) -> Option<OrderBy> {
+        self.group_aliases
+            .first()
+            .and_then(|a| a.order.clone())
+            .filter(|o| !o.is_empty())
+    }
+
+    /// Whether groups come out in the order their first document came in.
+    pub fn keeps_source_order(&self) -> bool {
+        self.group_order().is_none() && self.inner_group_by_fields.is_empty()
+    }
+
     pub fn with_inner_aggregates(mut self, inner_aggregates: Vec<InnerAggregateDef>) -> Self {
         self.inner_aggregates = inner_aggregates;
         self

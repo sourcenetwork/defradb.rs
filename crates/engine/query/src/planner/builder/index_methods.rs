@@ -28,8 +28,12 @@ impl super::Planner {
             return None;
         }
 
-        let limit = select.limit.as_ref().and_then(|l| l.limit);
-        let offset = select.limit.as_ref().map(|l| l.offset).unwrap_or(0);
+        // Rows dropped or merged after the scan would end the page short.
+        let page_follows_scan = select.filter.is_none() && select.group_by.is_none();
+        let (limit, offset) = match &select.limit {
+            Some(page) if page_follows_scan => (page.limit, page.offset),
+            _ => (None, 0),
+        };
 
         // A relation filter is joined after the parent scan. Do not stop that
         // scan at the requested limit: the first ordered rows may not match
@@ -120,8 +124,8 @@ impl super::Planner {
             for index in &collection.indexes {
                 let (can_order, needs_reverse) = can_be_ordered_by_index(order_by, index);
                 if can_order {
-                    let params =
-                        order_index_scan_params(index, needs_reverse, scan_limit, scan_offset);
+                    let stop = scan_limit.filter(|&l| l > 0).map(|l| l.saturating_add(scan_offset));
+                    let params = order_index_scan_params(index, needs_reverse, stop, 0);
                     return Some((params, true));
                 }
             }
@@ -165,7 +169,10 @@ impl super::Planner {
                     limit,
                     offset,
                 ) {
-                    return Some((params, true));
+                    let provides_ordering = order_by
+                        .map(|order| can_be_ordered_by_filtered_index(order, best_index, filter).0)
+                        .unwrap_or(false);
+                    return Some((params, provides_ordering));
                 }
             }
         }
@@ -174,8 +181,9 @@ impl super::Planner {
             for index in &collection.indexes {
                 let (can_order, needs_reverse) = can_be_ordered_by_index(order_by, index);
                 if can_order {
+                    let stop = limit.filter(|&l| l > 0).map(|l| l.saturating_add(offset));
                     return Some((
-                        order_index_scan_params(index, needs_reverse, limit, offset),
+                        order_index_scan_params(index, needs_reverse, stop, 0),
                         true,
                     ));
                 }

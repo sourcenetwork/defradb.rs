@@ -50,6 +50,12 @@ impl Planner {
         let parent_relation_filter_for_child = &child.parent_relation_filter_for_child;
 
         let mut join_provides_ordering: Option<bool> = None;
+        // The child scan orders by the first condition only, so later ones still need a sort.
+        let join_orders_parent = parent_order_for_child.is_some()
+            && select
+                .order_by
+                .as_ref()
+                .is_some_and(|order| order.conditions.len() == 1);
 
         // Find the other side of the relation
         let target_relation_field = if let Some(rel_name) = &relation_field.relation_name {
@@ -232,10 +238,10 @@ impl Planner {
                         .map(|c| c.direction)
                         .unwrap_or(OrderDirection::Asc);
                     let join = join.with_orphan_config(orphan, direction, shared_ids, child_has_fk);
-                    join_provides_ordering = Some(parent_order_for_child.is_some());
+                    join_provides_ordering = Some(join_orders_parent);
                     Box::new(join)
                 } else {
-                    join_provides_ordering = Some(parent_order_for_child.is_some());
+                    join_provides_ordering = Some(join_orders_parent);
                     Box::new(join)
                 }
             } else {
@@ -312,10 +318,10 @@ impl Planner {
                         let shared_ids = crate::plan::new_shared_yielded_ids();
                         let join =
                             join.with_orphan_config(orphan, direction, shared_ids, child_has_fk);
-                        join_provides_ordering = Some(parent_order_for_child.is_some());
+                        join_provides_ordering = Some(join_orders_parent);
                         Box::new(join)
                     } else {
-                        join_provides_ordering = Some(parent_order_for_child.is_some());
+                        join_provides_ordering = Some(join_orders_parent);
                         Box::new(join)
                     }
                 } else {

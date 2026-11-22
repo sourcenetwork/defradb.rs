@@ -533,6 +533,14 @@ pub fn test_fn(
             clients.join(", ")
         ));
     }
+    let source = &loaded.scenario.source;
+    if let Some((names, reason)) = super::multiplier_excludes::lookup(&source.path, &source.test) {
+        let names: Vec<String> = names.iter().map(|name| format!("{name:?}")).collect();
+        out.push_str(&format!(
+            "        // {reason}\n        multiplier_excludes: &[{}],\n",
+            names.join(", ")
+        ));
+    }
     if let Some((kind, reason)) = super::not_applying::lookup(&loaded.scenario.id) {
         out.push_str(&format!(
             "        not_applying: Some(NotApplying::{kind}({})),\n",
