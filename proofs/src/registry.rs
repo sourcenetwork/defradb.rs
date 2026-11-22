@@ -2315,6 +2315,26 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // An explain names the direct lookup index, or the child scan index.
+        family: "Schema-evolution operations in the core",
+        name: "INV_NameMatches",
+        axis: Tla,
+        anchor: "crates/engine/query/src/plan/type_join/mod.rs scan_node_with_index_name; crates/engine/query/src/plan/type_join/type_join_one.rs explain_execute_inner",
+        model_ref: "MC_ExplainIndexName_{Green,Green_Fallback,Red_Lookup}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/engine/query/src/plan/type_join/mod.rs direct_lookup_index_takes_precedence_over_child_plan_index",
+    },
+    Property {
+        // A lookup name takes precedence, with the child name as fallback.
+        family: "Schema-evolution operations in the core",
+        name: "ExplainIndexName.lookup_wins / child_is_fallback / no_index_no_name",
+        axis: Lean,
+        anchor: "crates/engine/query/src/plan/type_join/mod.rs scan_node_with_index_name",
+        model_ref: "ExplainIndexName (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/engine/query/src/plan/type_join/mod.rs direct_lookup_index_takes_precedence_over_child_plan_index",
+    },
+    Property {
         // #2379: an index answers queries only while no reindex is owed;
         // schema changes and merges that store a document off the active
         // version across a lens owe a fresh record, and a rebuild clears only

@@ -112,20 +112,6 @@ impl TypeJoinMany {
             .and_then(|value| value.as_u64())
     }
 
-    fn scan_node_with_index_name(scan_node: Option<&JsonValue>, metrics: JsonValue) -> JsonValue {
-        let mut result = metrics.as_object().cloned().unwrap_or_default();
-        if let Some(index_name) = scan_node
-            .and_then(|value| value.get("indexName"))
-            .and_then(|value| value.as_str())
-        {
-            result.insert(
-                "indexName".to_string(),
-                JsonValue::String(index_name.to_string()),
-            );
-        }
-        JsonValue::Object(result)
-    }
-
     fn nested_type_join_one_root_scan(value: &JsonValue) -> Option<JsonValue> {
         value
             .as_object()
@@ -481,9 +467,10 @@ impl TypeJoinMany {
                     let scan_node = obj.get("scanNode").cloned();
                     obj.insert(
                         "scanNode".to_string(),
-                        Self::scan_node_with_index_name(
+                        super::super::scan_node_with_index_name(
                             scan_node.as_ref(),
                             self.go_child_metrics.scan_node_json(),
+                            None,
                         ),
                     );
                 }
@@ -513,9 +500,10 @@ impl TypeJoinMany {
                 let scan_node = select_inner.get("scanNode").cloned();
                 select_inner.insert(
                     "scanNode".to_string(),
-                    Self::scan_node_with_index_name(
+                    super::super::scan_node_with_index_name(
                         scan_node.as_ref(),
                         self.go_child_metrics.scan_node_json(),
+                        None,
                     ),
                 );
             }
@@ -538,7 +526,7 @@ impl TypeJoinMany {
                         "selectNode": {
                             "iterations": self.exec_info.iterations,
                             "filterMatches": self.exec_info.iterations,
-                            "scanNode": Self::scan_node_with_index_name(
+                            "scanNode": super::super::scan_node_with_index_name(
                                 child_execute.as_object().and_then(|obj| obj.get("scanNode")),
                                 serde_json::json!({
                                 "iterations": self.exec_info.iterations,
@@ -546,6 +534,7 @@ impl TypeJoinMany {
                                 "fieldFetches": self.go_child_metrics.field_fetches,
                                 "indexFetches": original_child_scan_index_fetches.unwrap_or(0),
                                 }),
+                                None,
                             )
                         }
                     }
@@ -564,7 +553,7 @@ impl TypeJoinMany {
                         "selectNode": {
                             "iterations": self.go_child_metrics.iterations,
                             "filterMatches": self.child_exec_info.docs_fetched,
-                            "scanNode": Self::scan_node_with_index_name(
+                            "scanNode": super::super::scan_node_with_index_name(
                                 child_execute.as_object().and_then(|obj| obj.get("scanNode")),
                                 serde_json::json!({
                                 "iterations": self.go_child_metrics.iterations,
@@ -572,6 +561,7 @@ impl TypeJoinMany {
                                 "fieldFetches": self.go_child_metrics.field_fetches,
                                 "indexFetches": original_child_scan_index_fetches.unwrap_or(0),
                                 }),
+                                None,
                             )
                         }
                     }

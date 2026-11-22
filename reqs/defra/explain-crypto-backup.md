@@ -58,9 +58,9 @@ With `@index` on `age`, filtering `age: {_eq: 30}` over three docs reports `scan
 # `defra.explain.index_name`: Index scans name their index in Rust plans
 
 - **Parents:** ["defra"]
-- **Scenarios:** ["explain.execute.index_name.a_rust_index_scan_names_its_index"]
+- **Scenarios:** ["explain.execute.index_name.a_rust_index_scan_names_its_index", "explain.execute.index_name.a_rust_direct_relation_lookup_names_its_index"]
 
-The Rust execution explain includes `indexName` on an index-backed `scanNode`. This is a deliberate Rust-only addition to the Go execute-explain shape; the generated Go scenarios keep Go's fields.
+The Rust execution explain includes `indexName` on an index-backed `scanNode`. A direct foreign-key lookup names the index it uses; otherwise the child scan retains its index name. This is a deliberate Rust-only addition to the Go execute-explain shape.
 
 # `go.explain.execute.orphan`: Orphan node counters
 

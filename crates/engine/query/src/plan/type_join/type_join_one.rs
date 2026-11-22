@@ -160,20 +160,6 @@ impl std::fmt::Debug for TypeJoinOne {
 }
 
 impl TypeJoinOne {
-    fn scan_node_with_index_name(scan_node: Option<&JsonValue>, metrics: JsonValue) -> JsonValue {
-        let mut result = metrics.as_object().cloned().unwrap_or_default();
-        if let Some(index_name) = scan_node
-            .and_then(|value| value.get("indexName"))
-            .and_then(|value| value.as_str())
-        {
-            result.insert(
-                "indexName".to_string(),
-                JsonValue::String(index_name.to_string()),
-            );
-        }
-        JsonValue::Object(result)
-    }
-
     fn override_nested_type_index_join_metrics(
         value: &mut serde_json::Value,
         metrics: &ExecInfo,
@@ -197,7 +183,7 @@ impl TypeJoinOne {
                                     let scan_node = root_obj.get("scanNode").cloned();
                                     root_obj.insert(
                                         "scanNode".to_string(),
-                                        Self::scan_node_with_index_name(
+                                        super::scan_node_with_index_name(
                                             scan_node.as_ref(),
                                             serde_json::json!({
                                                 "iterations": metrics.iterations,
@@ -205,6 +191,7 @@ impl TypeJoinOne {
                                                 "fieldFetches": metrics.fields_fetched,
                                                 "indexFetches": metrics.indexes_fetched,
                                             }),
+                                            None,
                                         ),
                                     );
                                 }
@@ -1373,7 +1360,7 @@ impl PlanNode for TypeJoinOne {
                     let scan_node = child_obj.get("scanNode").cloned();
                     select_node.insert(
                         "scanNode".to_string(),
-                        Self::scan_node_with_index_name(
+                        super::scan_node_with_index_name(
                             scan_node.as_ref(),
                             serde_json::json!({
                                 "iterations": child_scan_metrics.iterations,
@@ -1381,6 +1368,7 @@ impl PlanNode for TypeJoinOne {
                                 "fieldFetches": child_scan_metrics.fields_fetched,
                                 "indexFetches": child_scan_metrics.indexes_fetched,
                             }),
+                            None,
                         ),
                     );
                 }
@@ -1420,7 +1408,7 @@ impl PlanNode for TypeJoinOne {
                         let scan_node = obj.get("scanNode").cloned();
                         obj.insert(
                             "scanNode".to_string(),
-                            Self::scan_node_with_index_name(
+                            super::scan_node_with_index_name(
                                 scan_node.as_ref(),
                                 serde_json::json!({
                                     "iterations": scan_node_iterations,
@@ -1428,6 +1416,9 @@ impl PlanNode for TypeJoinOne {
                                     "fieldFetches": child_scan_metrics.fields_fetched,
                                     "indexFetches": child_scan_metrics.indexes_fetched,
                                 }),
+                                self.indexed_inverted_child_fetch
+                                    .as_ref()
+                                    .map(|fetch| fetch.index_name.as_str()),
                             ),
                         );
                     }
@@ -1458,7 +1449,7 @@ impl PlanNode for TypeJoinOne {
                         let scan_node = child_obj.get("scanNode").cloned();
                         select_inner.insert(
                             "scanNode".to_string(),
-                            Self::scan_node_with_index_name(
+                            super::scan_node_with_index_name(
                                 scan_node.as_ref(),
                                 serde_json::json!({
                                     "iterations": scan_node_iterations,
@@ -1466,6 +1457,9 @@ impl PlanNode for TypeJoinOne {
                                     "fieldFetches": child_scan_metrics.fields_fetched,
                                     "indexFetches": child_scan_metrics.indexes_fetched,
                                 }),
+                                self.indexed_inverted_child_fetch
+                                    .as_ref()
+                                    .map(|fetch| fetch.index_name.as_str()),
                             ),
                         );
                     }
