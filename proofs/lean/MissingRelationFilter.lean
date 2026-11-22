@@ -17,18 +17,22 @@ namespace MissingRelationFilter
 def accepts (hasId idResult siblingsResult : Bool) : Bool :=
   hasId && idResult && siblingsResult
 
+-- A filter without an explicit document ID never accepts a missing child.
 theorem without_id_rejected (idResult siblingsResult : Bool) :
     accepts false idResult siblingsResult = false := by
   simp [accepts]
 
+-- A failing document ID condition rejects the missing child.
 theorem failing_id_rejected (siblingsResult : Bool) :
     accepts true false siblingsResult = false := by
   simp [accepts]
 
+-- Any failing sibling condition rejects the missing child.
 theorem failing_sibling_rejected (idResult : Bool) :
     accepts true idResult false = false := by
   cases idResult <;> simp [accepts]
 
+-- Acceptance requires the ID condition and both scalar results.
 theorem accepted_iff_all_match (hasId idResult siblingsResult : Bool) :
     accepts hasId idResult siblingsResult = true ↔
       hasId = true ∧ idResult = true ∧ siblingsResult = true := by
