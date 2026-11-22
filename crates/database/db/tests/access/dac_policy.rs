@@ -266,6 +266,43 @@ fn a_local_node_has_no_light_client() {
 }
 
 #[test]
+fn assignment_reads_require_the_subject_and_do_not_treat_unsupported_as_empty() {
+    workers::block_on(async {
+        let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
+        db.set_dac_policies(Arc::new(DacPolicies::remote(
+            Arc::new(Remote::default()),
+            Arc::new(MemoryZanzibarStore::new()),
+        )));
+        let query = acp::AssignmentQuery {
+            policy: "policy".into(),
+            resource: "document".into(),
+            relation: "reader".into(),
+            subject: "did:key:other".into(),
+            issuer: OWNER_DID.into(),
+            not_before: None,
+        };
+        let error = db
+            .certified_assignments_as(&acting(OWNER_DID), &query)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, DacPolicyError::AssignmentSubject));
+        let query = acp::AssignmentQuery {
+            subject: OWNER_DID.into(),
+            ..query
+        };
+        let error = db
+            .certified_assignments_as(&acting(OWNER_DID), &query)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            DacPolicyError::Assignments(acp::AssignmentReadError::Unsupported)
+        ));
+    })
+    .unwrap();
+}
+
+#[test]
 fn a_remote_policy_gets_the_caller_as_creator_and_a_local_copy() {
     workers::block_on(async {
         let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
