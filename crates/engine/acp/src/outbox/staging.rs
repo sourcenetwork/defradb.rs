@@ -342,6 +342,55 @@ impl TransactionOutbox {
         self.changes.staged()
     }
 
+    /// Record, in this transaction, the reader a create's genesis asks for:
+    /// an add by the document's creator, behind the registration this
+    /// transaction owes for it. The grant is counted with that registration,
+    /// one per created document, so it is held to none of the bounds on new
+    /// changes and leaves the transaction's count as it was: a batch of
+    /// creates that its registrations allow is never refused for its grants
+    /// (`proofs/tla/RemoteGenesisReader.tla`, `Red_Counted`). Anything else
+    /// is refused as [`Self::stage`] would refuse it: another op, an acting
+    /// DID that is not the owed registration's creator, or an object with no
+    /// owed registration.
+    pub async fn stage_with_registration(&self, request: StageRelationship<'_>) -> Result<Staged> {
+        if !self.provider.submits_subject(&request.subject) {
+            return Err(Error::UnsupportedSubject(request.subject.to_string()));
+        }
+        let actor = self.provider.canonical_actor(request.actor);
+        let owed = self
+            .pending
+            .get(request.policy_id, request.resource, request.object)
+            .await?;
+        if request.op != OwedOp::Add
+            || owed.is_none_or(|owed| self.provider.canonical_actor(&owed.creator) != actor)
+        {
+            return Err(refusal(&request));
+        }
+        let tuple = owed_tuple(&*self.provider, &request)?;
+        let authority = self.provider.command_authority(
+            request.actor,
+            ProviderCommand::Relationship {
+                tuple: &tuple,
+                op: request.op,
+            },
+        )?;
+        let change = self
+            .changes
+            .stage_with_registration(NewOwedChange {
+                txn: request.txn,
+                tuple,
+                op: request.op,
+                actor,
+                authority,
+                authority_checked: true,
+            })
+            .await?;
+        Ok(Staged {
+            seq: change.seq,
+            authority_checked: true,
+        })
+    }
+
     /// Record, in this transaction, the change `request` asks for.
     ///
     /// The acting DID and an actor subject are kept in the provider's one

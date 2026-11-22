@@ -29,6 +29,13 @@ For a field whose CRDT merges by value (text, JSON), the index holds only the cu
 
 A counter field can be indexed. After local increments, or after two nodes increment concurrently and replicate to each other, an equality or range filter on the total fetches one index entry and one document, and a filter on any earlier total fetches none. An index on a counter can be created through the index API or `@index`, alone, in a composite, unique or collection-level index. Go rejects an index on a counter field.
 
+# `defra.index.offset_limit`: Ordered index paging reserves offset in its scan budget
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["index::index_offset_limit::ordered_index_offset_limit_returns_the_requested_page"]
+
+An ordered query over an indexed field with `limit: 3, offset: 2` reads `limit + offset` index entries, returns exactly the page after skipping two, and leaves the query offset to the limit node so it is not applied twice. The same paging is correct when the ordered field is not indexed.
+
 # `defra.collection`: Collection-wide operations
 
 - **Parents:** ["defra"]

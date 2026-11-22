@@ -7,6 +7,7 @@ use vera_modules::acp::types::PolicyCmd;
 use super::{policy_cmd, NativeWorker, ProviderError, VeraRsProvider, ACP_ADDRESS};
 use crate::provider::owed_request_digest;
 use crate::vera_rs::outcome_note::Noted;
+use crate::vera_rs::receipt_wait::{until_receipt, Start};
 
 /// Whether resolving a journaled request notes its outcome.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -47,7 +48,9 @@ impl VeraRsProvider {
     pub(super) async fn recover_pending(&self) -> Result<(), ProviderError> {
         let worker = self.worker.clone().lock_owned().await;
         if let Some(wire) = worker.pending().map(<[u8]>::to_vec) {
-            let (_, confirmed) = self.resolve_pending(worker, wire, Note::Keep).await?;
+            let (_, confirmed) = self
+                .resolve_pending(worker, wire, Note::Keep, Start::Ask)
+                .await?;
             tracing::info!(submission = %confirmed.receipt.tx_hash, success = confirmed.receipt.success(), "Recovered native submission");
         }
         Ok(())
@@ -105,7 +108,9 @@ impl VeraRsProvider {
             let retry = tx.target == ACP_ADDRESS && tx.calldata == data;
             // Noted even when its bytes are ours: the drainer may have
             // journaled them and know the request by its digest alone.
-            let (recovered, confirmed) = self.resolve_pending(worker, wire, Note::Keep).await?;
+            let (recovered, confirmed) = self
+                .resolve_pending(worker, wire, Note::Keep, Start::Ask)
+                .await?;
             worker = recovered;
             if retry {
                 return Ok(confirmed);
@@ -119,43 +124,54 @@ impl VeraRsProvider {
             })
             .await
             .map_err(unavailable)??;
-        let (_, confirmed) = self.resolve_pending(worker, wire, Note::Skip).await?;
+        let (_, confirmed) = self
+            .resolve_pending(worker, wire, Note::Skip, Start::Send)
+            .await?;
         Ok(confirmed)
     }
 
-    /// Drives the journaled request `wire` to its acknowledged receipt.
+    /// Drives the journaled request `wire` to its acknowledged receipt,
+    /// asking at each newly verified height (`receipt_wait.rs`); `start`
+    /// says whether it may have been sent before.
     /// With [`Note::Keep`] its outcome is noted under its digest before the
     /// journal lets it go: the caller did not journal it, and the one that
     /// did may know it by its digest alone (`outcome_note.rs`).
-    /// Modeled by proofs/tla/PendingSubmission.tla, and the note by
-    /// AcpOutbox.tla's JRecover.
+    /// Modeled by proofs/tla/PendingSubmission.tla, its wait by
+    /// ReceiptWait.tla, and the note by AcpOutbox.tla's JRecover.
     pub(super) async fn resolve_pending(
         &self,
         worker: OwnedMutexGuard<NativeWorker>,
         wire: Vec<u8>,
         note: Note,
+        start: Start,
     ) -> Result<(OwnedMutexGuard<NativeWorker>, ConfirmedSubmission), ProviderError> {
         let tx = NativeTx::decode_wire(&wire).map_err(unavailable)?;
         let hash = tx.tx_id().0;
-        let response = nuclei::time::timeout(self.sync_timeout, async {
-            let mut awaiting_receipt = false;
-            loop {
-                match self.client.receipt(hash, &self.trusted).await {
-                    Ok(Some(response)) => return Ok(response),
-                    Ok(None) if !awaiting_receipt => match self.client.send(&wire).await {
-                        Ok(_) => awaiting_receipt = true,
-                        Err(error) if error.retryable() => {}
+        let (client, trusted, wire) = (&self.client, &self.trusted, &wire);
+        let response = nuclei::time::timeout(
+            self.sync_timeout,
+            until_receipt(
+                self.light_client.as_ref(),
+                &self.receipt_fallback,
+                start,
+                move || async move {
+                    match client.receipt(hash, trusted).await {
+                        Ok(found) => Ok(found),
+                        Err(error) if error.retryable() => Ok(None),
+                        Err(error) => Err(unavailable(error)),
+                    }
+                },
+                move || async move {
+                    match client.send(wire).await {
+                        Ok(_) => Ok(true),
+                        Err(error) if error.retryable() => Ok(false),
                         // Admission errors cannot disprove an earlier submission.
-                        Err(ClientError::Rpc { .. }) => awaiting_receipt = true,
-                        Err(error) => return Err(unavailable(error)),
-                    },
-                    Ok(None) => {}
-                    Err(error) if error.retryable() => {}
-                    Err(error) => return Err(unavailable(error)),
-                }
-                nuclei::time::sleep(std::time::Duration::from_millis(200)).await;
-            }
-        })
+                        Err(ClientError::Rpc { .. }) => Ok(true),
+                        Err(error) => Err(unavailable(error)),
+                    }
+                },
+            ),
+        )
         .await
         .map_err(|_| {
             unavailable(format!(

@@ -9,6 +9,7 @@ use vera_domain::NativeTx;
 use super::submission::Note;
 use super::{policy_cmd, IAcp, NativeWorker, ProviderError, VeraRsProvider, ACP_ADDRESS};
 use crate::provider::{owed_request_digest, OwedCall, OwedRequestOutcome};
+use crate::vera_rs::receipt_wait::Start;
 
 fn unavailable(cause: impl std::fmt::Display) -> ProviderError {
     ProviderError::Unavailable(format!("owed request: {cause}"))
@@ -85,7 +86,9 @@ impl VeraRsProvider {
             if pending.target == ACP_ADDRESS && pending.calldata == data {
                 return Ok(format!("{:#x}", pending.tx_id().0));
             }
-            let (recovered, _) = self.resolve_pending(worker, wire, Note::Keep).await?;
+            let (recovered, _) = self
+                .resolve_pending(worker, wire, Note::Keep, Start::Ask)
+                .await?;
             worker = recovered;
         }
         let wire = self
@@ -124,7 +127,7 @@ impl VeraRsProvider {
                 } else {
                     Note::Skip
                 };
-                let (_, confirmed) = self.resolve_pending(worker, wire, note).await?;
+                let (_, confirmed) = self.resolve_pending(worker, wire, note, Start::Ask).await?;
                 return Ok(if confirmed.receipt.success() {
                     OwedRequestOutcome::Applied
                 } else {
