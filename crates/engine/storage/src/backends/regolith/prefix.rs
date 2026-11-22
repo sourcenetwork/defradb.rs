@@ -32,7 +32,7 @@ impl PrefixExtractor for DefraPrefixExtractor {
     /// takes a new name, so tables built under the old cuts are read without
     /// their prefix filter until a compaction rewrites them.
     fn name(&self) -> &'static str {
-        "defradb-entities-v2"
+        "defradb-entities-v3"
     }
 }
 

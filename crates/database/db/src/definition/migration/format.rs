@@ -1,14 +1,8 @@
-//! Refuse secondary indexes whose on-disk key encoding changed.
+//! Rebuild secondary indexes when their on-disk encoding changes.
 //!
-//! DateTime index keys were one varint of nanoseconds and are now a marker plus
-//! separate seconds and nanos varints, so entries written by an older build are
-//! unreadable by this one. Nothing rebuilds them on its own: the existing
-//! reindex path is driven by schema migration, not by a storage format change.
-//!
-//! Left alone, an upgraded store answers a range query from bounds in the new
-//! format against entries in the old one, so rows go missing, deletes orphan
-//! their entries, and a unique index stops rejecting duplicates. Before 1.0,
-//! refusing an older store keeps those incompatible entries invisible.
+//! Older index entries stay in their original namespace, which can overlap
+//! document keys. Rebuilding into the separate current namespace avoids
+//! deleting keys whose ownership cannot be determined from their bytes.
 
 use storage::corekv::{IterOptions, Iterator as _, Store};
 use storage::keys::systemstore::CollectionKey;
@@ -70,16 +64,15 @@ pub(crate) async fn ensure_index_format_for_collection_creation(
 }
 
 impl<S: Store> DB<S> {
-    /// Refuse an incompatible index layout before any startup migration writes.
+    /// Refuse a newer index layout before any startup migration writes.
     pub(crate) async fn check_index_format(&self) -> Result<()>
     where
         S: 'static,
     {
         let stored = self.stored_index_format().await?;
-        let has_collections = !self.get_all_active_collections_internal()?.is_empty();
         let compatible = match stored {
-            Some(format) => format == CURRENT_INDEX_FORMAT,
-            None => !has_collections,
+            Some(format) => format <= CURRENT_INDEX_FORMAT,
+            None => true,
         };
         if compatible {
             Ok(())
@@ -88,19 +81,15 @@ impl<S: Store> DB<S> {
         }
     }
 
-    /// Refuse secondary indexes written by an older encoding, and, at every
-    /// open, rebuild the indexes kept the other way on an earlier start.
-    ///
-    /// A store with no stamp is either brand new, where it has no collections,
-    /// or written before the stamp existed. The latter is refused, rather than
-    /// guessed at, because its key layout is incompatible.
+    /// Rebuild indexes written by an older encoding and indexes kept in a
+    /// different mode. The format stamp is written after every rebuild succeeds.
     pub(crate) async fn migrate_index_format(&self) -> Result<()>
     where
         S: 'static,
     {
         let stored = self.stored_index_format().await?;
         self.check_index_format().await?;
-        if stored.is_some_and(|format| format >= 2) {
+        if stored == Some(CURRENT_INDEX_FORMAT) {
             self.rebuild_indexes_kept_the_other_way().await?;
         } else {
             self.rebuild_every_index(stored).await?;
@@ -179,7 +168,7 @@ impl<S: Store> DB<S> {
         }
 
         for name in stale {
-            if let Err(error) = self.reindex_collection_with_migrations(&name).await {
+            if let Err(error) = self.reindex_for_format(&name).await {
                 // Leaving the stamp unwritten means the next open retries, which
                 // is the honest outcome: a half-rebuilt store must not report
                 // itself as current.

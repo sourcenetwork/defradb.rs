@@ -5,12 +5,12 @@ The story, in plain words. A secondary-index key used to start with the
 collection's short-ID bytes. A short ID below 240 is one raw byte, so collection
 100 made index keys that begin `/d/`, the documents' family, and collection 118
 made keys that begin `/v/`, the versions' family. The fix puts the fixed tag
-`/i/` before the collection and index IDs. Every integer is encoded by the same
+`/index/` before the collection and index IDs. Every integer is encoded by the same
 order-preserving uvarint: one byte below 240, two bytes through 2287, and a
 width marker plus big-endian bytes above that. The first byte therefore names
 the whole integer's width, so no integer encoding is a prefix of another.
 
-What must hold: an index key starts with `/i/`, never with another family's
+What must hold: an index key starts with `/index/`, never with another family's
 tag, and two index keys share a prefix only when they are the same key.
 
 What must never happen: collection 100's index entries land in the document
@@ -27,8 +27,8 @@ namespace IndexKeyspace
 -- A byte, as a natural number.
 abbrev Byte := Nat
 
--- The fixed tag in front of every secondary-index key: `/i/`.
-def indexTag : List Byte := [47, 105, 47]
+-- The fixed tag in front of every secondary-index key: `/index/`.
+def indexTag : List Byte := [47, 105, 110, 100, 101, 120, 47]
 
 -- A collection short ID in the model: every single-byte value and the first
 -- multi-byte boundary. The code's uvarint gives the first group one byte and
@@ -100,7 +100,7 @@ theorem prefix_trans {a b c : List Byte}
   obtain ⟨bc, hbc⟩ := hbc
   exact ⟨ab ++ bc, by rw [← List.append_assoc, hab, hbc]⟩
 
--- Every index key starts with the fixed `/i/` tag.
+-- Every index key starts with the fixed `/index/` tag.
 theorem key_starts_with_tag (key : IndexKey) : IsPrefix indexTag key.bytes := by
   refine ⟨key.collection.bytes ++ [47] ++ key.index.bytes ++ [47], ?_⟩
   simp [IndexKey.bytes]
@@ -112,6 +112,13 @@ theorem tag_not_prefix_of_family (second : Byte) (hne : second ≠ 105) :
   injection hbytes with _ hrest
   injection hrest with hsecond _
   exact hne hsecond.symm
+
+-- A legacy key's one-byte collection ID is followed immediately by a slash.
+-- The new tag has another character there, even when that byte is `i`.
+theorem tag_not_prefix_of_legacy (first : Byte) (tail : List Byte) :
+    ¬ IsPrefix indexTag ([47, first, 47] ++ tail) := by
+  rintro ⟨suffix, hbytes⟩
+  simp [indexTag] at hbytes
 
 -- The families collection 100 and 118 used to reach.
 def documentFamily : List Byte := [47, 100, 47]

@@ -320,7 +320,11 @@ async fn move_entries(
     if old == new {
         return Ok(());
     }
-    for key in old.iter().filter(|key| !new.contains(key)) {
+    let prefix = storage::keys::IndexDataStoreKey::index_prefix(short_id, index.description().id);
+    for key in old
+        .iter()
+        .filter(|key| key.starts_with(&prefix) && !new.contains(key))
+    {
         datastore.delete(key).await.map_err(Error::Storage)?;
     }
     for key in new.iter().filter(|key| !old.contains(key)) {

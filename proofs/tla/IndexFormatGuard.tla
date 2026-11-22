@@ -1,106 +1,65 @@
 ---------------------------- MODULE IndexFormatGuard ----------------------------
-\* The story: a store carries a stamp saying which index key layout wrote it.
-\* The current layout tags index keys with `/i/`; older layouts did not. At open
-\* the node compares the stamp with the layout it knows. A stamp from another
-\* layout is refused. A stamp that is missing is ambiguous: a brand-new store has
-\* no stamp and no collections, while a store written before stamps existed may
-\* already hold collections. The latter must be refused, not guessed at. A new
-\* empty store is stamped so a later open sees it as current.
+\* Older and unstamped stores rebuild their secondary indexes into the tagged
+\* keyspace. The old keys remain untouched because they can overlap other data.
+\* Only after every rebuild succeeds may the current format be stamped and the
+\* node open. A failed rebuild keeps the old stamp, so the next open retries.
+\* Deferred position records may still name old keys, including after the
+\* rebuild when a document is absent. Replace and drain may remove such a
+\* record, but delete its referenced key only when it has the current index
+\* prefix. A crash or rebuild failure leaves the stamp old and retry safe.
+\* A future format is refused before any migration writes.
 \*
-\* Who acts: the open check, the fresh-store stamp, and the store's collection
-\* set as the guard sees it.
-\*
-\* What must never happen: the node opens an index layout it cannot read, or
-\* changes a store it has just refused.
-\*
-\* Code it models:
-\*   crates/database/db/src/definition/migration/format.rs
-\*     CURRENT_INDEX_FORMAT, DB::stored_index_format, DB::migrate_index_format
-\*   crates/database/db/src/database/mod.rs DB::finish_open
-
-EXTENDS Integers, FiniteSets
-
-CONSTANTS
-  Collections,         \* the collections the store may hold
-  RefusesOld,          \* "On": a non-current stamp is refused | "Off": the guard accepts it
-  RefusesUnstamped,    \* "On": a missing stamp with collections is refused | "Off": accepted
-  StampsFresh,         \* "On": a new empty store gets the current stamp | "Off": left unstamped
-  MutatesOnRefusal     \* "Off": a refusal writes nothing | "On": the refusal mutates the store
-
-ASSUME RefusesOld \in {"On", "Off"}
-ASSUME RefusesUnstamped \in {"On", "Off"}
-ASSUME StampsFresh \in {"On", "Off"}
-ASSUME MutatesOnRefusal \in {"On", "Off"}
-
-VARIABLES
-  stamp,             \* "Current", "Old" (any earlier layout), or "None"
-  storedCollections, \* the active collections on the store
-  phase,             \* "Check", "Open", or "Refused"
-  mutated            \* whether the open path has written the store
-
-vars == <<stamp, storedCollections, phase, mutated>>
-
-\* Every variable stays in its range.
-TypeOK ==
-  /\ stamp \in {"Current", "Old", "None"}
-  /\ storedCollections \subseteq Collections
-  /\ phase \in {"Check", "Open", "Refused"}
-  /\ mutated \in BOOLEAN
-
-\* A store starts with any stamp and any collection set, ready for the guard.
-Init ==
-  /\ stamp \in {"Current", "Old", "None"}
-  /\ storedCollections \in SUBSET Collections
-  /\ phase = "Check"
-  /\ mutated = FALSE
-
-\* A brand-new empty store gets the current stamp before the guard runs.
-FreshStamp ==
-  /\ phase = "Check"
-  /\ stamp = "None"
-  /\ storedCollections = {}
-  /\ StampsFresh = "On"
-  /\ stamp' = "Current"
-  /\ UNCHANGED <<storedCollections, phase, mutated>>
-
-\* The open-time guard. `Compatible` is the only state it may open.
-Compatible ==
-  \/ stamp = "Current"
-  \/ stamp = "None" /\ RefusesUnstamped = "Off"
-  \/ stamp = "Old" /\ RefusesOld = "Off"
-
-Evaluate ==
-  /\ phase = "Check"
-  /\ \/ StampsFresh = "Off"
-     \/ stamp /= "None"
-     \/ storedCollections /= {}
-  /\ IF Compatible
-     THEN /\ phase' = "Open"
-          /\ mutated' = FALSE
-     ELSE /\ phase' = "Refused"
-          /\ mutated' = (MutatesOnRefusal = "On")
-  /\ UNCHANGED <<stamp, storedCollections>>
-
-\* Any one step happens next.
-Next == FreshStamp \/ Evaluate
-
-\* Start in Init and take any steps.
+\* Rust: crates/database/db/src/definition/migration/format.rs
+\* DB::check_index_format, DB::migrate_index_format, DB::rebuild_every_index,
+\* DB::stamp_index_format; crates/database/db/src/database/mod.rs DB::finish_open;
+\* crates/database/db/src/index/deferred/drain.rs and replace.rs.
+EXTENDS FiniteSets
+CONSTANTS Collections, Rebuild, StampLast, RefuseFuture, RetainLegacy, GuardRecordedKeys
+ASSUME /\ Rebuild \in BOOLEAN /\ StampLast \in BOOLEAN /\ RefuseFuture \in BOOLEAN /\ RetainLegacy \in BOOLEAN /\ GuardRecordedKeys \in BOOLEAN
+VARIABLES stamp, initialStamp, rebuilt, phase, legacyIntact, wrote, oldRecords
+vars == <<stamp, initialStamp, rebuilt, phase, legacyIntact, wrote, oldRecords>>
+TypeOK == /\ stamp \in {"Old", "None", "Current", "Future"}
+          /\ initialStamp \in {"Old", "None", "Current", "Future"}
+          /\ rebuilt \subseteq Collections
+          /\ phase \in {"Check", "Rebuild", "Open", "Failed", "Refused"}
+          /\ legacyIntact \in BOOLEAN /\ wrote \in BOOLEAN
+          /\ oldRecords \subseteq Collections
+Init == /\ initialStamp \in {"Old", "None", "Current", "Future"}
+        /\ stamp = initialStamp
+        /\ rebuilt = IF stamp = "Current" THEN Collections ELSE {}
+        /\ phase = "Check" /\ legacyIntact = TRUE /\ wrote = FALSE
+        /\ oldRecords \in SUBSET Collections
+Check == /\ phase = "Check"
+         /\ IF stamp = "Future" /\ RefuseFuture
+               THEN phase' = "Refused"
+               ELSE IF stamp = "Current" \/ stamp = "Future"
+                    THEN phase' = "Open"
+                    ELSE phase' = "Rebuild"
+         /\ UNCHANGED <<stamp, initialStamp, rebuilt, legacyIntact, wrote, oldRecords>>
+RebuildOne == /\ phase = "Rebuild" /\ Rebuild /\ rebuilt # Collections
+              /\ \E c \in Collections \ rebuilt: rebuilt' = rebuilt \cup {c}
+              /\ wrote' = TRUE /\ legacyIntact' = (legacyIntact /\ RetainLegacy)
+              /\ UNCHANGED <<stamp, initialStamp, phase, oldRecords>>
+Finish == /\ phase = "Rebuild"
+          /\ (rebuilt = Collections \/ ~StampLast \/ ~Rebuild)
+          /\ stamp' = "Current" /\ phase' = "Open" /\ wrote' = TRUE
+          /\ UNCHANGED <<initialStamp, rebuilt, legacyIntact, oldRecords>>
+Fail == /\ phase = "Rebuild" /\ phase' = "Failed"
+        /\ UNCHANGED <<stamp, initialStamp, rebuilt, legacyIntact, wrote, oldRecords>>
+Retry == /\ phase = "Failed" /\ phase' = "Check"
+         /\ UNCHANGED <<stamp, initialStamp, rebuilt, legacyIntact, wrote, oldRecords>>
+\* Replace during rebuilding or drain after open can consume a legacy record.
+\* Its referenced key is ambiguous, so the guard must leave that key alone.
+ConsumeOldRecord == /\ phase \in {"Rebuild", "Open"} /\ oldRecords # {}
+                    /\ \E c \in oldRecords: oldRecords' = oldRecords \ {c}
+                    /\ legacyIntact' = (legacyIntact /\ GuardRecordedKeys)
+                    /\ wrote' = TRUE
+                    /\ UNCHANGED <<stamp, initialStamp, rebuilt, phase>>
+Next == Check \/ RebuildOne \/ Finish \/ Fail \/ Retry \/ ConsumeOldRecord
 Spec == Init /\ [][Next]_vars
-
-\* Every variable stays in its range.
 INV_TypeOK == TypeOK
-
-\* An open store uses the current layout, or is a new empty store not yet stamped.
-INV_OpenCompatible ==
-  phase = "Open" =>
-    \/ stamp = "Current"
-    \/ stamp = "None" /\ storedCollections = {}
-
-\* A refusal leaves the store untouched.
-INV_RefusalReadOnly == phase = "Refused" => ~mutated
-
-\* An unstamped store with no collections is new, not legacy: it opens.
-INV_FreshStoreOpens ==
-  (phase = "Refused" /\ stamp = "None") => storedCollections /= {}
-
+INV_OpenCompatible == phase = "Open" => stamp = "Current" /\ rebuilt = Collections
+INV_FailureKeepsStamp == phase = "Failed" => stamp = initialStamp
+INV_FutureRefusedUntouched == initialStamp = "Future" => phase = "Check" \/ (phase = "Refused" /\ ~wrote)
+INV_LegacyIntact == legacyIntact
 ====

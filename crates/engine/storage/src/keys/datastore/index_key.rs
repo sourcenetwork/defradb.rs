@@ -2,7 +2,7 @@ use super::super::utils::{encode_uvarint_ascending, SEPARATOR};
 use crate::corekv::Key;
 
 /// The fixed family tag ahead of every secondary-index key.
-const INDEX_KEYSPACE_PREFIX: &[u8] = b"/i/";
+const INDEX_KEYSPACE_PREFIX: &[u8] = b"/index/";
 
 /// An indexed field with value and sort direction.
 ///
@@ -46,15 +46,15 @@ impl PartialEq for IndexedField {
 
 /// IndexDataStoreKey: Stores indexed field values for secondary indexes
 ///
-/// Structure: `/i/[CollectionShortID]/[IndexID]/[EncodedFieldValue1][EncodedFieldValue2]...(/[DocShortID])`
-/// Example: `/i/1/2/<encoded value A><encoded value B>`
+/// Structure: `/index/[CollectionShortID]/[IndexID]/[EncodedFieldValue1][EncodedFieldValue2]...(/[DocShortID])`
+/// Example: `/index/1/2/<encoded value A><encoded value B>`
 ///
 /// The trailing doc short ID makes equal index values unique and lets
 /// index scans resolve the matching document without storing the full
 /// DocID. It is 0 (omitted) for unique-index keys, whose values carry
 /// the doc identity instead.
 ///
-/// The leading `i` tag keeps collection short IDs out of the top-level key
+/// The leading `index` tag keeps collection short IDs out of the top-level key
 /// spaces. The collection, index and document short IDs are prefix-free
 /// order-preserving uvarints, so neither an index nor an index entry can be a
 /// prefix of another.
@@ -179,7 +179,7 @@ impl Key for IndexDataStoreKey {
             .collect::<Vec<_>>()
             .join("/");
         format!(
-            "/i/{}/{}/{}",
+            "/index/{}/{}/{}",
             self.collection_short_id, self.index_id, values_str
         )
     }
@@ -204,7 +204,7 @@ mod keyspace_tests {
             let prefix = IndexDataStoreKey::index_prefix(collection_short_id, 1);
 
             assert!(
-                key.starts_with(b"/i/"),
+                key.starts_with(b"/index/"),
                 "collection {collection_short_id} escaped the index keyspace: {key:?}"
             );
             assert!(
