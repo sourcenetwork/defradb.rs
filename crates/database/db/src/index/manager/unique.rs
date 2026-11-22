@@ -21,9 +21,24 @@ impl IndexManager {
         doc_short_id: u64,
         values: &[document::NormalValue],
     ) -> std::result::Result<(), storage::corekv::Error> {
+        let IndexType::Unique(unique) = index else {
+            return self
+                .save_healing_stale_unique(datastore, index, doc_short_id, values)
+                .await;
+        };
+        let restore = RestoreScanValidation {
+            datastore: datastore.clone(),
+            previous: datastore.scans_validated(),
+        };
         datastore.set_scans_validated(true);
-        self.save_healing_stale_unique(datastore, index, doc_short_id, values)
-            .await
+        unique
+            .conflicting_entry_validated(datastore, values)
+            .await?;
+        let result = self
+            .save_healing_stale_unique(datastore, index, doc_short_id, values)
+            .await;
+        drop(restore);
+        result
     }
 
     /// Save an index entry, healing stale unique conflicts (#1111/#700).
@@ -216,6 +231,19 @@ impl IndexManager {
         .await
         .map_err(Error::Storage)?;
         Ok(())
+    }
+}
+
+/// Restores a transaction-wide scan-validation setting, including when the
+/// helper's future is dropped while it waits for storage.
+struct RestoreScanValidation {
+    datastore: NamespaceView,
+    previous: bool,
+}
+
+impl Drop for RestoreScanValidation {
+    fn drop(&mut self) {
+        self.datastore.set_scans_validated(self.previous);
     }
 }
 

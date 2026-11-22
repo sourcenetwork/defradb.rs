@@ -1378,6 +1378,8 @@ RUNS=(
   "MC_DocumentSave_Green.cfg DocumentSave.tla GREEN" # a save refuses a deleted document and never forks
   "MC_DocumentSave_Red_NoDeletedCheck.cfg DocumentSave.tla RED" # a deleted document is written over and forks (INV_NoFork)
   "MC_DocumentSave_Red_SplitTxn.cfg DocumentSave.tla RED" # a delete between lookup and write forks the save (INV_NoFork)
+  "MC_RelationLinkConflict_Green.cfg RelationLinkConflict.tla GREEN" # a validated link read commits when empty and conflicts after a later first link
+  "MC_RelationLinkConflict_Red_Unvalidated.cfg RelationLinkConflict.tla RED" # an unvalidated link read lets both links commit (INV_SecondLinkIsRefused)
 )
 
 parallelism="${TLA_JOBS:-4}"

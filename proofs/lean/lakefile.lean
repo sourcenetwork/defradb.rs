@@ -370,6 +370,9 @@ lean_lib RemoteOwnerAnswer where
 lean_lib StrictAccessRule where
 
 @[default_target]
+lean_lib RelationLinkConflict where
+
+@[default_target]
 lean_lib SeTruncatePrefix where
 
 @[default_target]
