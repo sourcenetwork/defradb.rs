@@ -2228,6 +2228,30 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // A replicator added with no collections is stored, listed, and
+        // restored on start, as in Go, and receives no pushes until it has a
+        // collection (#2702).
+        family: "B3 filtered replication",
+        name: "INV_ListedAsAdded / INV_NoPushOutsideCollections: a replicator with no collections is listed and pushed nothing",
+        axis: Tla,
+        anchor: "crates/database/p2p/src/bitswap/registry.rs store_info, ReplicatorRegistry::load_from_infos, remove_peer_collections; crates/database/p2p/src/sync/coordinator/broadcast.rs replicator_in_collection",
+        model_ref: "MC_ReplicatorEmptyCollections_{Green,Red_DropOnStore,Red_DropOnLoad,Red_EmptyMeansAll}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // Storing or loading a replicator record always leaves its entry, the
+        // one with no collections included; an empty entry grants nothing and
+        // is picked for no collection's pushes.
+        family: "B3 filtered replication",
+        name: "ReplicatorEmptyCollections.stored_is_listed / restart_lists_every_record / empty_grants_nothing / empty_gets_no_push / push_only_to_members",
+        axis: Lean,
+        anchor: "crates/database/p2p/src/bitswap/registry.rs store_info, ReplicatorRegistry::load_from_infos, ReplicatorRegistry::is_any_replicator; crates/database/p2p/src/sync/coordinator/broadcast.rs replicator_in_collection",
+        model_ref: "ReplicatorEmptyCollections (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         // A transaction ID travels in the request context. Only the caller
         // that opened the transaction runs in it, a read-only transaction
         // refuses writes, a finished transaction runs nothing, a discard
@@ -3710,6 +3734,55 @@ pub const PROPERTIES: &[Property] = &[
         axis: Lean,
         anchor: "crates/database/p2p/src/iroh/records/verify.rs verify; crates/database/p2p/src/iroh/records/book.rs Book::offer, Book::live; crates/database/p2p/src/iroh/records/key.rs blind, advertised_key, CollectionKey::encode; crates/database/p2p/src/iroh/records/pointer.rs Pointer::print, Pointer::parse; crates/database/p2p/src/iroh/records/task.rs Records::providers, rank",
         model_ref: "ServiceRecord (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // Lean models chunking under any close rule that reads the item and
+        // its open chunk, the byte cap that bounds the open chunk
+        // (`open_bounded`), `build` over a sorted list, the one-pass
+        // `Builder`, the windowed edit level by level and walked up to the
+        // root with the single-child `collapse`, `diff`'s walk against a
+        // per-key comparison, the injective node encoding, and its decoder,
+        // which reads a node's bytes back and refuses bytes after them. SHA-256 is
+        // trusted collision-free; an edit's window is any run of chunks that
+        // holds the change, where Rust finds it by key.
+        family: "Prolly tree catch-up",
+        name: "chunks_append / closes_append / chunks_flatten / chunks_nonempty / chunks_shrink / open_bounded / build / sorted_insert / sorted_erase / eq_of_same_entries / build_same_entries / insert_comm / erase_insert_comm / insert_insert / canon_chunks / rewrite_level_refines / rewrite_level_up / walk_levels / edit_root / builder_root / diff_eq / mergeDiff_spec / encode_injective / decode_encode / decode_refuses_trailing",
+        axis: Lean,
+        anchor: "crates/foundation/prolly/src/chunk.rs Chunker::push, Chunker::finish, chunk; crates/foundation/prolly/src/hash.rs is_boundary; crates/foundation/prolly/src/tree.rs Tree::build, raise, collapse; crates/foundation/prolly/src/build.rs Builder::push, Builder::finish, Builder::feed, Builder::close; crates/foundation/prolly/src/edit.rs Tree::edit, rewrite_level, splice; crates/foundation/prolly/src/diff.rs diff, Walk::open, Walk::take; crates/foundation/prolly/src/node.rs Node::encode, Node::decode, Item::encoded_len, MAX_CHUNK_BYTES",
+        model_ref: "ProllyTree (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // The pull is not wired into p2p yet (#2977); the model is its contract.
+        // Each pull is one atomic step and read access never changes, so
+        // "caught up" means caught up with the responder as it was at that
+        // step, and a read revoked mid-pull is not checked. PulledHolds is
+        // about pulls whose walk completes: `ProllyTree.diff_eq` and
+        // `ProllyTree.mergeDiff_spec` show a completed walk reports exactly the
+        // differing keys, but not that the walk ends or that every node read
+        // succeeds. A walk that fails makes no "caught up" claim and changes
+        // nothing, a stutter step the model already allows.
+        family: "Prolly tree catch-up",
+        name: "NoLeak / PulledHolds: a pull never shows a peer a document it may not read, and a pull that ends caught up leaves the puller holding every version the responder could show it at that pull",
+        axis: Tla,
+        anchor: "crates/foundation/prolly/src/tree.rs Tree::build, Tree::root; crates/foundation/prolly/src/diff.rs diff",
+        model_ref: "MC_ProllySync_Green.cfg (GREEN) / MC_ProllySync_{Red_NoFilter,Red_StaleRoot,Red_MissingOnly,Red_KeepClaim}.cfg (RED)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // Node contents are not modelled: a node is named by its hash, so a
+        // cached or pending copy is never stale. One worker owns the store,
+        // so a flush and a read never overlap. The Rust cache's CLOCK victim
+        // choice is one of the model's "any part that fits".
+        family: "Prolly tree node store and cache",
+        name: "GetFinds / CacheBounded / HugeEvictsNothing / PublishedStored / BuildWhole: a node put is always readable, the cache stays under its byte budget, a node over budget evicts nothing, a published root names only stored nodes, and a build whose put failed never returns a tree",
+        axis: Tla,
+        anchor: "crates/foundation/prolly/src/cache.rs Cached::get, Cached::insert; crates/foundation/prolly/src/tree.rs collapse; crates/engine/storage/src/stores/prolly_nodes.rs ProllyNodes::get, ProllyNodes::put, ProllyNodes::flush; crates/foundation/prolly/src/build.rs Builder::push, Builder::finish",
+        model_ref: "MC_ProllyNodeCache_Green.cfg (GREEN) / MC_ProllyNodeCache_{Red_SkipPending,Red_NoEvict,Red_CacheHuge,Red_DropOnFail,Red_PublishBeforeFlush,Red_FinishAfterFail}.cfg (RED)",
         tiers: &[Boundary],
         bound_by: "",
     },
