@@ -7,7 +7,7 @@ use web_time::Instant;
 use crate::document::{documents_to_plan_docs, DocumentMapping};
 use crate::error::Result;
 use crate::mapper::{GroupBy, OrderDirection};
-use crate::planner::{Doc, IndexScanParams, IndexScanType};
+use crate::planner::{Doc, IndexScanParams, IndexScanType, PlanNode};
 use document::NormalValue;
 
 use super::super::RelationFilter;
@@ -469,6 +469,10 @@ impl TypeJoinMany {
     /// Returns false if:
     /// - There are no child documents (empty relation can't pass any filter)
     /// - No child document passes the filter conditions
+    fn child_has_residual_filter(node: &dyn PlanNode) -> bool {
+        node.has_residual_filter() || node.source().is_some_and(Self::child_has_residual_filter)
+    }
+
     pub(super) fn check_relation_filter(
         &self,
         children: &[Doc],
@@ -582,10 +586,12 @@ impl TypeJoinMany {
 
             // If the page stopped early, report the entries the scan had actually
             // fetched at that threshold. `docs_fetched` includes residual-rejected
-            // rows, so it is the Go-compatible bound; no terminal probe is added.
+            // rows. A residual scan also probes one more row after the threshold,
+            // so include that terminal probe; exhaustive scans keep their real count.
             if let Some(scanned_to_limit) = scanned_to_limit {
                 self.go_child_metrics.index_fetches -= child_info.indexes_fetched;
-                self.go_child_metrics.index_fetches += scanned_to_limit;
+                let terminal_probe = Self::child_has_residual_filter(self.child_plan.as_ref());
+                self.go_child_metrics.index_fetches += scanned_to_limit + u64::from(terminal_probe);
             }
 
             self.child_plan.close().await?;
