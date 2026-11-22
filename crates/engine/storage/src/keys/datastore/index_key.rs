@@ -1,4 +1,4 @@
-use super::super::utils::{SEPARATOR, encode_uvarint_ascending};
+use super::super::utils::{encode_uvarint_ascending, SEPARATOR};
 use crate::corekv::Key;
 
 /// The fixed family tag ahead of every secondary-index key.
