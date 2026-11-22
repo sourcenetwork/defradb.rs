@@ -11,8 +11,10 @@ one at a time, or goes away when none is accepted. If what is left names a
 nameserver, that is the configuration. If it names none (an empty file, a
 container, a network still coming up), the two nameservers Go's resolver
 falls back to, `127.0.0.1:53` and `[::1]:53`, are added, and every other
-line kept (search domains, options) stays. A file that cannot be read at all
-gives those two nameservers with default options.
+line kept (search domains, options) stays. The file is read as bytes, as Go
+reads it, so a byte that is not UTF-8 spoils only the line it is on. A file
+that cannot be opened or read at all gives those two nameservers with
+default options.
 
 What must never happen: the node is left with no nameserver (hickory then
 refuses to build the resolver, and the node does not start), a line hickory
@@ -28,8 +30,8 @@ line hickory accepts survives into the chosen configuration
 model.
 
 Rust anchors: `crates/database/p2p/src/host/transport/resolver.rs`
-`parse_lenient`, `usable_line`, `accepted`, `resolver_config`,
-`fallback_config`, `FALLBACK_NAMESERVERS`.
+`read_file`, `parse_lenient`, `usable_line`, `accepted`,
+`resolver_config`, `fallback_config`, `FALLBACK_NAMESERVERS`.
 -/
 
 namespace DnsResolverFallback
@@ -81,7 +83,7 @@ def chooseText (ok : Line → Bool) (ls : List Line) : List Line :=
 
 -- The result of reading the host's file: it could not be read, or here is its text.
 inductive Read where
-  -- The file is missing or unreadable.
+  -- The file is missing or cannot be opened or read; bytes that are not UTF-8 are not this case.
   | failed : Read
   -- The file's lines.
   | text : List Line → Read

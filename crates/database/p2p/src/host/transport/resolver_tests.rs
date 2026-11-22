@@ -195,3 +195,30 @@ fn a_systemd_resolved_stub_passes_through() {
     assert_eq!(servers(&config), udp_tcp("127.0.0.53"));
     assert!(opts.edns0);
 }
+
+/// Go reads the file as bytes, so a comment in Latin-1 (not UTF-8) does not
+/// hide the nameserver after it.
+#[cfg(unix)]
+#[test]
+fn a_comment_that_is_not_utf8_keeps_the_hosts_nameserver() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("resolv.conf");
+    std::fs::write(
+        &path,
+        b"# G\xe9n\xe9r\xe9 par l'admin\nnameserver 10.0.0.2\n",
+    )
+    .unwrap();
+    let (config, _) = resolver_config(super::read_file(&path));
+    assert_eq!(servers(&config), udp_tcp("10.0.0.2"));
+}
+
+/// A file that cannot be opened still takes the localhost fallback.
+#[cfg(unix)]
+#[test]
+fn a_missing_file_falls_back_to_the_localhost_nameservers() {
+    let dir = tempfile::tempdir().unwrap();
+    let read = super::read_file(&dir.path().join("missing"));
+    assert!(read.is_err());
+    let (config, _) = resolver_config(read);
+    assert_eq!(servers(&config), localhost_servers());
+}

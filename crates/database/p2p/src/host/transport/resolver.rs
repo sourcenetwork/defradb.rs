@@ -43,13 +43,24 @@ impl ResolverSource {
     pub(crate) fn read(&self) -> Result<(ResolverConfig, ResolverOpts), ResolveError> {
         match self {
             #[cfg(unix)]
-            Self::System => Ok(parse_lenient(&std::fs::read_to_string(RESOLV_CONF)?)),
+            Self::System => read_file(std::path::Path::new(RESOLV_CONF)),
             #[cfg(not(unix))]
             Self::System => hickory_resolver::system_conf::read_system_conf(),
             #[cfg(unix)]
             Self::ResolvConf(text) => Ok(parse_lenient(text)),
         }
     }
+}
+
+/// The file at `path`, read as Go's `dnsReadConfig` reads it: as bytes, so
+/// only a file that cannot be opened or read is an error. A byte that is not
+/// UTF-8 (a Latin-1 comment) becomes U+FFFD, and a line it lands in outside a
+/// comment is skipped like any other line hickory rejects.
+#[cfg(unix)]
+fn read_file(path: &std::path::Path) -> Result<(ResolverConfig, ResolverOpts), ResolveError> {
+    Ok(parse_lenient(&String::from_utf8_lossy(&std::fs::read(
+        path,
+    )?)))
 }
 
 /// `text` as Go reads it. hickory rejects a whole file over one bad line, so
