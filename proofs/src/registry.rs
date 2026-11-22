@@ -4196,4 +4196,13 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
         bound_by: "",
     },
+    Property {
+        family: "One-to-many child paging",
+        name: "LIVE_EveryParentPage / INV_RedSecondParentKeepsPage: a child page is filled per parent, not by one global scan bound",
+        axis: Tla,
+        anchor: "crates/engine/query/src/plan/type_join/type_join_many/children.rs TypeJoinMany::next_per_parent, can_stop_at_limit, child_limit, child_offset",
+        model_ref: "MC_ChildPagePerParent_{Green,Red_GlobalBound}.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/query/one_to_many/with_limit.rs query_one_to_many_with_child_limit_keeps_a_two_parent_page",
+    },
 ];

@@ -7,7 +7,7 @@ use web_time::Instant;
 use crate::document::{documents_to_plan_docs, DocumentMapping};
 use crate::error::Result;
 use crate::mapper::{GroupBy, OrderDirection};
-use crate::planner::{Doc, IndexScanParams, IndexScanType, PlanNode};
+use crate::planner::{Doc, IndexScanParams, IndexScanType};
 use document::NormalValue;
 
 use super::super::RelationFilter;
@@ -469,10 +469,6 @@ impl TypeJoinMany {
     /// Returns false if:
     /// - There are no child documents (empty relation can't pass any filter)
     /// - No child document passes the filter conditions
-    fn child_has_residual_filter(node: &dyn PlanNode) -> bool {
-        node.has_residual_filter() || node.source().is_some_and(Self::child_has_residual_filter)
-    }
-
     pub(super) fn check_relation_filter(
         &self,
         children: &[Doc],
@@ -540,11 +536,6 @@ impl TypeJoinMany {
             let mut all_children = Vec::new();
             let mut matching_count = 0u64;
             let mut total_scanned = 0u64;
-            let mut scanned_to_limit = None;
-            let effective_needed = self
-                .child_limit
-                .map(|limit| self.child_offset + limit)
-                .unwrap_or(u64::MAX);
             let can_stop_at_limit = self.relation_filter.is_none()
                 && (self.child_order_by.is_none()
                     || (self.child_plan_provides_ordering && !self.preserve_ordered_orphans));
@@ -563,10 +554,6 @@ impl TypeJoinMany {
                 if fk_matches {
                     matching_count += 1;
                     all_children.push(child_doc.deep_clone());
-                    if matching_count >= effective_needed {
-                        scanned_to_limit = Some(total_scanned);
-                    }
-
                     // Early termination is safe for unordered child scans, and for
                     // ordered scans when the child plan is already streaming in that
                     // order. Exhaustive relation ordering still needs the full scope
@@ -588,12 +575,6 @@ impl TypeJoinMany {
             self.go_child_metrics.doc_fetches += child_info.docs_fetched;
             self.go_child_metrics.field_fetches += child_info.fields_fetched;
             self.go_child_metrics.index_fetches += child_info.indexes_fetched;
-
-            if let Some(scanned_to_limit) = scanned_to_limit {
-                self.go_child_metrics.index_fetches -= child_info.indexes_fetched;
-                let terminal_probe = Self::child_has_residual_filter(self.child_plan.as_ref());
-                self.go_child_metrics.index_fetches += scanned_to_limit + u64::from(terminal_probe);
-            }
 
             self.child_plan.close().await?;
 
