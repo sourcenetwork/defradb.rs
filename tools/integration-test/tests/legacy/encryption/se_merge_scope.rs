@@ -29,13 +29,7 @@ const USER_SCHEMA: &str = "type User { name: String  age: Int  city: String }";
 
 /// The Go compat binary the spike pane provides; `defradb` is not on PATH.
 fn go_binary() -> PathBuf {
-    if let Ok(p) = std::env::var("DEFRA_GO_BIN") {
-        return PathBuf::from(p);
-    }
-    PathBuf::from(std::env::var("HOME").expect("HOME")).join(format!(
-        ".cache/defra-harness/{}/defradb",
-        defra_version::GO_COMPAT_COMMIT
-    ))
+    integration_test::go_compat_binary()
 }
 
 fn p2p_addr(cluster: &TestCluster, idx: usize) -> String {
