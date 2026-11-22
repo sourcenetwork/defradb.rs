@@ -22,8 +22,14 @@ VARIABLES
 vars == <<due, backoff, attempts, merged, arrivals>>
 
 TypeOK ==
-  /\ due \cup backoff = Roots
+  /\ due \subseteq Roots
+  /\ backoff \subseteq Roots
+  /\ merged \subseteq Roots
   /\ due \cap backoff = {}
+  /\ due \cap merged = {}
+  /\ backoff \cap merged = {}
+  /\ \A r \in Roots :
+       (attempts[r] = 1) <=> r \notin (due \cup backoff \cup merged)
   /\ attempts \in [Roots -> 0..1]
   /\ merged \subseteq Roots
   /\ arrivals \in 0..MaxArrivals
@@ -78,6 +84,6 @@ INV_DuePartition == TypeOK
 INV_KeyArrivalPromotes ==
   (arrivals > 0 /\ Promotes) => backoff = {}
 
-LIVE_PromotedBackoffDrains == Promotes => <>(backoff = {})
+LIVE_PromotedBackoffDrains == <>(backoff = {})
 
 ====
