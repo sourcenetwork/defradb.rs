@@ -61,7 +61,7 @@ pub enum SyncPlan {
     /// All blocks are available locally, no fetch needed.
     Complete,
 
-    /// Need to fetch missing blocks via Bitswap.
+    /// Need to fetch missing blocks via block sync.
     ///
     /// Use `SyncPlan::needs_fetch_new()` or `NeedsFetchData::new()` to create,
     /// which enforces the invariant that `missing` is non-empty.

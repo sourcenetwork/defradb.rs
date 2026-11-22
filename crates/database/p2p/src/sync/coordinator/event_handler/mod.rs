@@ -1,6 +1,6 @@
 //! Transport event handling for the sync coordinator.
 
-mod bitswap;
+mod block_sync;
 mod branchable_sync;
 pub(crate) mod car;
 mod doc_sync;
@@ -534,22 +534,22 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 )
                 .await?;
             }
-            TransportEvent::BitswapBlockReceived {
+            TransportEvent::BlockSyncBlockReceived {
                 query_id,
                 cid,
                 data,
             } => {
-                self.handle_bitswap_block_received(query_id, cid, data)
+                self.handle_block_sync_block_received(query_id, cid, data)
                     .await?;
             }
-            TransportEvent::BitswapComplete {
+            TransportEvent::BlockSyncComplete {
                 query_id,
                 provider_busy: true,
                 ..
             } => {
-                self.handle_bitswap_provider_busy(query_id).await?;
+                self.handle_block_sync_provider_busy(query_id).await?;
             }
-            TransportEvent::BitswapComplete {
+            TransportEvent::BlockSyncComplete {
                 query_id,
                 success,
                 cause,
@@ -561,7 +561,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 } else {
                     Err(cause.unwrap_or(crate::transport::FetchFailureCause::Error))
                 };
-                self.handle_bitswap_complete(query_id, outcome, error)
+                self.handle_block_sync_complete(query_id, outcome, error)
                     .await?;
             }
             TransportEvent::DocSyncRequest {
@@ -701,17 +701,17 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                                 } else {
                                     Err(crate::transport::FetchFailureCause::NoBlocks)
                                 };
-                                self.handle_bitswap_complete(query_id, outcome, None)
+                                self.handle_block_sync_complete(query_id, outcome, None)
                                     .await?;
                             }
                             Some(car::CarIngestDisposition::StorageContended) => {
-                                self.handle_bitswap_deferred(query_id).await?;
+                                self.handle_block_sync_deferred(query_id).await?;
                             }
                             Some(car::CarIngestDisposition::SizeLimit(cid)) => {
                                 self.handle_car_size_limit(query_id, cid).await?;
                             }
                             None => {
-                                self.handle_bitswap_complete(
+                                self.handle_block_sync_complete(
                                     query_id,
                                     Err(crate::transport::FetchFailureCause::Error),
                                     result.as_ref().err().map(ToString::to_string),

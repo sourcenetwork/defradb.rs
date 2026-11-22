@@ -94,7 +94,7 @@ impl<S: Store> P2PHost<S> {
                                 tracing::warn!(
                                     query_id = query_id.0,
                                     error = %e,
-                                    "Failed to send BitswapBlockReceived event"
+                                    "Failed to send BlockSyncBlockReceived event"
                                 );
                             }
 
