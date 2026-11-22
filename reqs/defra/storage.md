@@ -43,6 +43,8 @@ An ordered query over an indexed field with `limit: 3, offset: 2` reads `limit +
 
 When any transition from a stored version to the active version runs no transform, a read applies the registered transforms, indexes the migrated result, and does not stamp it as the active version. Registering another transform later still applies it, and a query over an indexed field after two migrations returns the migrated fields.
 
+A transition without a lens may be given one later, so the same rule applies to an intended identity transition. Until the path is complete, reads may rerun the earlier lenses. Explicit identity materialization is a separate operation.
+
 # `defra.collection`: Collection-wide operations
 
 - **Parents:** ["defra"]

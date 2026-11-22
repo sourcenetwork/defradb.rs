@@ -213,6 +213,8 @@ pub fn build_collection_history(
 /// The walk mirrors the lens pipeline's forward-first navigation and is used by reindexing to
 /// avoid stamping transform-less paths before an application has explicitly requested eager
 /// identity materialization.
+/// A missing lens can be registered later, so a permanent identity hop also prevents
+/// automatic materialization. Reads may rerun earlier lenses until the path is complete.
 pub(crate) fn migration_path_transforms(
     history: &RapidHashMap<String, TargetedHistoryLink>,
     source_version_id: &str,

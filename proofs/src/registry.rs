@@ -2315,6 +2315,27 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // A partially transformed document remains at its source version so
+        // a lens registered later still runs.
+        family: "Schema-evolution operations in the core",
+        name: "INV_NoPartialStamp",
+        axis: Tla,
+        anchor: "crates/database/db/src/definition/lens.rs migration_path_transforms; crates/database/db/src/definition/migration/helpers.rs migrate_to_active; crates/database/db/src/definition/migration/reindex/page.rs ReindexPage::walk",
+        model_ref: "MC_PartialLensPath_{Green,Red_Partial}.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/issues/t_3044.rs",
+    },
+    Property {
+        // The completeness guard holds only when every hop has a lens.
+        family: "Schema-evolution operations in the core",
+        name: "PartialLensPath.partial_not_materialized / empty_not_materialized / missing_hop_not_materialized / filled_hop_materialized",
+        axis: Lean,
+        anchor: "crates/database/db/src/definition/lens.rs migration_path_transforms; crates/database/db/src/definition/migration/reindex/page.rs ReindexPage::walk",
+        model_ref: "PartialLensPath (lake build)",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/issues/t_3044.rs",
+    },
+    Property {
         // #2379: an index answers queries only while no reindex is owed;
         // schema changes and merges that store a document off the active
         // version across a lens owe a fresh record, and a rebuild clears only
