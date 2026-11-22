@@ -147,32 +147,41 @@ impl<S: Store> crate::database::DB<S> {
             DatastoreSE, HeadstoreColPublishedKey, HeadstoreColSetKey, IndexDataStoreKey,
         };
 
-        // The definition is read in this transaction, so an index whose
-        // definition commits before this one is either listed here or makes
-        // the attempt run again (proofs/tla/TruncateIndexCleanup.tla).
-        let current = txn
-            .load_collection_for_write_attempt(collection.name(), collection)
-            .await?;
-        let collection_id = current.collection_id();
-        let short_id = current.resolved_root_id();
+        let collection_id = collection.collection_id();
+        let short_id = collection.resolved_root_id();
 
         let datastore = txn.datastore()?;
         let headstore = txn.headstore()?;
         let blockstore = txn.blockstore()?;
         let systemstore = txn.systemstore()?;
 
+        // Every version's definition is read in this transaction, after the
+        // chunks, so it lists any index that can hold an entry for a deleted
+        // document (proofs/tla/TruncateIndexCleanup.tla). Versions, not the
+        // one the truncate began with: a patch can activate another meanwhile,
+        // and an index can be added through it.
+        let versions = crate::definition::loader::get_collections_by_collection_id(
+            &systemstore,
+            collection_id,
+        )
+        .await?;
+        let mut index_ids: Vec<u32> = versions
+            .iter()
+            .flat_map(|version| version.indexes.iter())
+            .filter(|index| !index.is_vector())
+            .map(|index| index.id)
+            .collect();
+        index_ids.sort_unstable();
+        index_ids.dedup();
+
         // Index entries go one declared index at a time, failed builds
         // included: a short ID below 240 is one raw byte, so the collection's
         // own prefix can be the start of another family (`/d/` for short ID
         // 100) and cover every collection's keys (proofs/lean/IndexPrefix.lean).
-        for index in current
-            .get_indexes()
-            .iter()
-            .filter(|index| !index.is_vector())
-        {
+        for index_id in index_ids {
             delete_prefix(
                 &datastore,
-                IndexDataStoreKey::index_prefix(short_id, index.id),
+                IndexDataStoreKey::index_prefix(short_id, index_id),
             )
             .await?;
         }

@@ -33,10 +33,11 @@
 \* Code it models:
 \*   crates/database/db/src/collection/ops/truncate/all.rs
 \*     DB::truncate_all              the chunks, then the metadata cleanup
-\*     DB::truncate_metadata_in      the cleanup: the definition read through
-\*                                   DbTxn::load_collection_for_write_attempt,
-\*                                   then IndexDataStoreKey::index_prefix of
-\*                                   every declared ordered index
+\*     DB::truncate_metadata_in      the cleanup: every version's definition
+\*                                   read through
+\*                                   get_collections_by_collection_id, then
+\*                                   IndexDataStoreKey::index_prefix of every
+\*                                   ordered index any version declares
 \*   crates/database/db/src/index/create.rs
 \*     DB::stage_index_definition    the create's definition commit
 \*   crates/database/db/src/index/backfill.rs

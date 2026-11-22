@@ -3555,7 +3555,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Collection truncate",
         name: "INV_NoEntryForTruncatedDoc / INV_OtherCollectionIntact / LIVE_TruncateFinishes",
         axis: Tla,
-        anchor: "crates/database/db/src/collection/ops/truncate/all.rs DB::truncate_all, DB::truncate_metadata_in; crates/database/db/src/txn/mod.rs DbTxn::load_collection_for_write_attempt; crates/database/db/src/index/create.rs DB::stage_index_definition; crates/database/db/src/index/backfill.rs BackfillPage::index, DB::record_backfill_failure",
+        anchor: "crates/database/db/src/collection/ops/truncate/all.rs DB::truncate_all, DB::truncate_metadata_in; crates/database/db/src/definition/loader.rs get_collections_by_collection_id; crates/database/db/src/index/create.rs DB::stage_index_definition; crates/database/db/src/index/backfill.rs BackfillPage::index, DB::record_backfill_failure",
         model_ref: "MC_TruncateIndexCleanup_{Green,Red_*}.cfg",
         tiers: &[Boundary],
         bound_by: "",
