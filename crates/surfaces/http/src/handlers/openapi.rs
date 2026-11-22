@@ -90,7 +90,7 @@ mod tests {
     fn document_tracks_the_pinned_go_baseline() {
         assert_eq!(
             defra_version::GO_COMPAT_COMMIT,
-            "307364d9d",
+            "89cc88cf5",
             "refresh the OpenAPI snapshot when the Go compatibility baseline changes"
         );
     }
