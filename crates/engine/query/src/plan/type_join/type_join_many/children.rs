@@ -586,7 +586,7 @@ impl TypeJoinMany {
             // including those skipped by the residual filter, which matches Go's behavior.
             if limit_reached {
                 self.go_child_metrics.index_fetches -= child_info.indexes_fetched;
-                self.go_child_metrics.index_fetches += total_scanned + 1;
+                self.go_child_metrics.index_fetches += total_scanned;
             }
 
             self.child_plan.close().await?;
