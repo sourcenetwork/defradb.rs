@@ -125,6 +125,7 @@ mod updates {
         mod collections_txn;
         mod contraints;
         mod embeddings;
+        mod removed_transform_reindex;
         mod fields {
             mod simple;
         }

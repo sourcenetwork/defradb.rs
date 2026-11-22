@@ -265,12 +265,12 @@ Index lookups on migrated fields use the migrated values for the active version 
 
 - **Parents:** ["go.collection_version.migrations.query.index"]
 - **Go-Tests:** ["collection_version/migrations/query/with_index_test.go::TestCollectionMigrationQuery_SwitchToOldDistantVersionWithNoMigrations_ShouldNotReindex", "collection_version/migrations/query/with_index_test.go::TestCollectionMigrationQuery_SwitchToNewDistantVersionWithNoMigrations_ShouldNotReindex", "collection_version/migrations/query/with_index_test.go::TestCollectionMigrationQuery_SwitchToOldDistantVersionWithMigrationInBetween_ShouldReindexWithOldValues", "collection_version/migrations/query/with_index_test.go::TestCollectionMigrationQuery_SwitchToNewDistantVersionWithMigrationInBetween_ShouldReindexWithMigratedValues", "collection_version/migrations/query/with_index_test.go::TestCollectionMigrationQuery_ApplyingMigrationBetweenOldVersions_ShouldReindex", "collection_version/migrations/query/with_index_test.go::TestCollectionMigrationQuery_ApplyingMigrationBetweenNewVersions_ShouldNotReindex", "collection_version/migrations/query/with_index_test.go::TestCollectionMigrationQuery_ApplyingMigrationToUnknownVersionsThenPatch_ShouldReindex", "collection_version/migrations/query/with_index_test.go::TestCollectionMigrationQuery_ApplyingMigrationWithPatching_ShouldReindex"]
-Switching to a distant version reindexes only if a migration lies in between (old or migrated values accordingly); registering a migration between versions reindexes when it affects the active version (also when the version is created later by patch, or when the migration comes with the patch) and not when it lies between newer inactive versions. An identity-path reindex does not advance documents' stored versions, so a transform installed afterwards still applies them.
+Switching to a distant version reindexes only if a migration lies in between (old or migrated values accordingly); registering a migration between versions reindexes when it affects the active version (also when the version is created later by patch, or when the migration comes with the patch) and not when it lies between newer inactive versions.
 
 # `defra.collection_version.removed_transform_reindex`: Removing a transform reindexes an indexed collection
 
 - **Parents:** ["go.collection_version.migrations.query.index.reindex"]
-- **Scenarios:** ["collection_version::updates::remove::col_version_update_remove_collection_source_transform"]
+- **Scenarios:** ["collection_version::updates::remove::removed_transform_reindex::remove_source_transform_reindexes_an_indexed_collection"]
 
 Removing a collection's source transform from its active version reindexes indexed fields with the unheld transform read as identity, and settlement runs after the patch commits. A filter on the indexed field then returns the source values, not values the removed transform produced.
 

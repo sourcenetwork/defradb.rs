@@ -15,7 +15,7 @@ fn col_version_update_remove_collection_source_transform() {
             AddCollection {
                 sdl: r#"
                     type Users {
-                        name: String @index
+                        name: String
                     }
                 "#
                 .into(),
