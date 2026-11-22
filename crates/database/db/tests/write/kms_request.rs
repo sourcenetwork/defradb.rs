@@ -3,11 +3,14 @@ use std::sync::{
     Arc,
 };
 
+use super::kms::{document, encrypt};
 use async_trait::async_trait;
 use db::AutoCommitMutator;
 use document::{DocID, Document};
 use query::{
+    error::QueryError,
     mutator::{CreateResult, DeleteResult, DocMutator, UpdateResult},
+    prepared::{PreparedInputKind, PreparedInputRequest},
     QueryExecutor, QueryRequest,
 };
 use rapidhash::RapidHashSet;
@@ -190,6 +193,53 @@ fn prepared_request_inherits_encryption_from_an_earlier_create() {
         assert!(!response.has_errors(), "{:?}", response.errors);
         assert_eq!(response.data.unwrap()["second"][0]["right"], "two");
         assert_eq!(fixture.kms.0.load(Ordering::SeqCst), 2);
+    })
+    .unwrap()
+}
+
+#[test]
+fn retried_create_many_reuses_memo_identity_and_keys() {
+    workers::block_on(async {
+        let fixture = super::kms::fixture().await;
+        let base = Arc::new(AutoCommitMutator::new(Arc::clone(&fixture.db)));
+        encrypt();
+        let memo = query::prepared::PreparedInputMemo::default();
+        let mutator = base.with_prepared_inputs(memo.clone()).unwrap();
+        let first = mutator
+            .create_many("Secrets", vec![document("first"), document("second")])
+            .await;
+        let Err(QueryError::NeedsInput(request)) = first else {
+            panic!("the first attempt should ask for KMS keys");
+        };
+        assert_eq!(fixture.kms.0.load(Ordering::SeqCst), 0);
+
+        memo.answer_wave(&request, |wave| mutator.resolve_prepared_inputs(wave))
+            .await
+            .unwrap();
+        assert_eq!(fixture.kms.0.load(Ordering::SeqCst), 4);
+        let allocation = |ordinal: u64| {
+            PreparedInputRequest::new(
+                PreparedInputKind::Allocation,
+                [b"doc-short-id-v1".as_slice(), &ordinal.to_be_bytes()].concat(),
+            )
+        };
+        let short_id = |ordinal: u64| {
+            memo.get(&allocation(ordinal))
+                .map(|bytes| u64::from_be_bytes(bytes.as_ref().try_into().unwrap()))
+                .unwrap()
+        };
+        let first_ids = [short_id(0), short_id(1)];
+        assert_ne!(first_ids[0], first_ids[1]);
+
+        let mutator = base.with_prepared_inputs(memo.clone()).unwrap();
+        let second = mutator
+            .create_many("Secrets", vec![document("first"), document("second")])
+            .await
+            .unwrap();
+        assert_eq!(second.len(), 2);
+        assert_ne!(second[0].doc_id, second[1].doc_id);
+        assert_eq!([short_id(0), short_id(1)], first_ids);
+        assert_eq!(fixture.kms.0.load(Ordering::SeqCst), 4);
     })
     .unwrap()
 }
