@@ -816,6 +816,8 @@ RUNS=(
   "MC_AdministrativeRelationship_Green.cfg AdministrativeRelationship.tla GREEN"
   "MC_AdministrativeRelationship_Red_Actor.cfg AdministrativeRelationship.tla RED" # INV_Actor
   "MC_AdministrativeRelationship_Red_Active.cfg AdministrativeRelationship.tla RED" # INV_Active
+  "MC_ChildPagePerParent_Green.cfg ChildPagePerParent.tla GREEN" # a child page is filled per parent, so later parents keep their children
+  "MC_ChildPagePerParent_Red_GlobalBound.cfg ChildPagePerParent.tla RED" # one global child bound lets the first parent starve the second (page B stays empty)
   "MC_AdministrativeRelationship_Red_NacBound.cfg AdministrativeRelationship.tla RED" # INV_NacBound
   "MC_AdministrativeRelationship_Red_Bypass.cfg AdministrativeRelationship.tla RED" # INV_Bypass
   "MC_AdministrativeRelationship_Red_Operation.cfg AdministrativeRelationship.tla RED" # INV_Operation
