@@ -141,6 +141,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Receive gate | TLA+ | p2p, db |
 | P2P delivery liveness | TLA+ | p2p, p2p-adapter, db-merge, storage |
 | Document save | TLA+ & Lean | query, defra-node |
+| Per-parent child paging | TLA+ | query |
 | Mutation value checks | Lean | document, defra-core, query |
 | Cursor tokens | Lean | cursor |
 | Peer key loading | TLA+ / Lean | defra-node, ffi |

@@ -4064,6 +4064,17 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // One-to-many child paging (#3051): the scan stays unbounded and each
+        // parent stops only when the selected index guarantees the child order.
+        family: "Per-parent child paging",
+        name: "INV_EveryParentHasPage / INV_EarlyStopOnlyWhenOrdered",
+        axis: Tla,
+        anchor: "crates/engine/query/src/planner/joins/child_plan.rs build_relation_child_plan; crates/engine/query/src/plan/type_join/type_join_many/children.rs TypeJoinMany::next_per_parent",
+        model_ref: "MC_ChildLimitPaging_{Green,Red_UnorderedStop}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         family: "Document save",
         name: "INV_NoFork / INV_DeletedStaysDeleted / INV_RefusedOnlyDeleted",
         axis: Tla,
