@@ -34,7 +34,7 @@ Settle ==
   /\ committed
   /\ (Mode = "early" \/ lensRegistered)
   /\ ~settled
-  /\ lensRegistered' = IF Mode = "safe" THEN lensRegistered ELSE FALSE
+  /\ UNCHANGED lensRegistered
   /\ settled' = TRUE
   /\ UNCHANGED committed
 
