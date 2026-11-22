@@ -4075,6 +4075,15 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        family: "Per-parent child paging",
+        name: "stop_after_parent_page",
+        axis: Lean,
+        anchor: "crates/engine/query/src/plan/type_join/type_join_many/children.rs TypeJoinMany::next_per_parent",
+        model_ref: "ChildPage.lean",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         family: "Document save",
         name: "INV_NoFork / INV_DeletedStaysDeleted / INV_RefusedOnlyDeleted",
         axis: Tla,
