@@ -667,17 +667,45 @@ async fn superseded_active_failure_never_enters_persisted_retry() {
     backlog.close();
 }
 
-/// A push the peer acknowledged after a newer head replaced it is retired, and
-/// its acknowledgement still reaches the recorder with the generation that
-/// fences it, so the peer's retry clock sees the delivery.
-#[nuclei::test]
-async fn superseded_acknowledged_push_reports_its_delivery() {
+/// The document's frontier is this one head.
+struct Frontier(Cid);
+
+#[async_trait::async_trait]
+impl crate::sync::DocumentHeadProvider for Frontier {
+    async fn get_document_heads(&self, _doc_id: &str) -> crate::error::Result<Vec<Cid>> {
+        Ok(vec![self.0])
+    }
+
+    async fn get_collection_heads(&self, _collection_id: &str) -> crate::error::Result<Vec<Cid>> {
+        Ok(Vec::new())
+    }
+}
+
+/// Runs the push of an older head (priority 1) of one document until a newer
+/// head (priority 2) is queued behind it, with the older or the newer head as
+/// the document's frontier, and returns what reached the recorder.
+async fn retire_older_head(
+    older_generation: u64,
+    newer_generation: u64,
+    frontier_is_older: bool,
+) -> Vec<PushFailure> {
     let backlog = PushBacklog::new(64, usize::MAX, 1, 1, edge::testing::edge());
     let transport = TestTransport::new(Vec::new()).with_send_delay(Duration::from_millis(50));
     let (context, mut failures) =
         test_context(transport.clone(), backlog.clone(), Duration::from_secs(1));
     let mut older = versioned_job("peer", 1);
-    older.marker_generation = Some(7);
+    older.marker_generation = Some(older_generation);
+    let mut newer = versioned_job("peer", 2);
+    newer.marker_generation = Some(newer_generation);
+    let frontier = if frontier_is_older {
+        older.root_cid
+    } else {
+        newer.root_cid
+    };
+    let context = Arc::new(PushWorkerContext {
+        head_provider: Arc::new(Frontier(frontier)),
+        ..Arc::try_unwrap(context).ok().unwrap()
+    });
     backlog.try_enqueue(older).await;
     let active = backlog.next_job().await.unwrap();
     let push = {
@@ -689,19 +717,48 @@ async fn superseded_acknowledged_push_reports_its_delivery() {
         assert!(crate::rt::time::Instant::now() < deadline);
         crate::rt::time::sleep(Duration::from_millis(2)).await;
     }
-    let mut newer = versioned_job("peer", 2);
-    newer.marker_generation = Some(8);
     backlog.try_enqueue(newer).await;
 
     assert_eq!(push.join().await.unwrap(), JobCompletion::Retired);
-    let reported = crate::rt::time::timeout(Duration::from_secs(1), failures.recv())
-        .await
-        .expect("the superseded acknowledgement never reached the recorder")
-        .unwrap();
-    assert!(reported.acknowledged);
-    assert_eq!(reported.marker_generation, Some(7));
     backlog.job_done(&active, JobCompletion::Retired).await;
     backlog.close();
+    // The fake recorder forwards on its own task; wait for it to go quiet.
+    let mut reported = Vec::new();
+    while let Ok(Some(event)) =
+        crate::rt::time::timeout(Duration::from_millis(200), failures.recv()).await
+    {
+        reported.push(event);
+    }
+    reported
+}
+
+/// A push the peer acknowledged after a newer job for its document was
+/// queued, while its head is still the whole frontier, reports its delivery
+/// with the generation that fences it, so the peer's retry clock sees it.
+#[nuclei::test]
+async fn superseded_acknowledged_push_reports_its_delivery() {
+    let reported = retire_older_head(7, 8, true).await;
+    assert_eq!(reported.len(), 1, "the delivery never reached the recorder");
+    assert!(reported[0].acknowledged);
+    assert_eq!(reported[0].marker_generation, Some(7));
+}
+
+/// Two live writes to one document: generations are allocated after commit,
+/// so the write with the older head can hold the newer generation (8), and
+/// its marker replaces the newer head's (7). Its ack, retired by the newer
+/// head, must not complete that marker, because the newer head has not landed
+/// (`LiveMarkerGeneration.tla` `Red_NoHeadFence`).
+#[nuclei::test]
+async fn retired_older_head_with_newer_generation_leaves_the_marker() {
+    let reported = retire_older_head(8, 7, false).await;
+    assert!(
+        reported.iter().all(|event| !event.acknowledged),
+        "a retired head that is not the frontier completed its scope: {:?}",
+        reported
+            .iter()
+            .map(|event| event.marker_generation)
+            .collect::<Vec<_>>()
+    );
 }
 
 /// The rejection-to-retry handoff must be lossless: a full failure
