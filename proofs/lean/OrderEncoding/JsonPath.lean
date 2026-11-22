@@ -86,4 +86,10 @@ theorem descending_json_sentinels_bracket_values
     pathMax path <ₗ entry path value ∧ entry path value <ₗ pathMin path :=
   ⟨path_max_below_value path value hne, path_min_above_value path value⟩
 
+/-- A valid UTF-8 leading byte is never the zero-index marker, which lies
+    among UTF-8 continuation bytes. This models the first-byte distinction. -/
+theorem utf8_lead_is_not_array_marker (byte : Nat)
+    (h : byte ≤ 127 ∨ (194 ≤ byte ∧ byte ≤ 244)) : byte ≠ 136 := by
+  omega
+
 end OrderEncoding.JsonPath

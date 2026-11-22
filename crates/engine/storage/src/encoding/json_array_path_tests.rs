@@ -1,6 +1,8 @@
 use document::{JsonLeafValue, JsonPath, JsonScalarValue};
 
-use super::{decode_json_descending, encode_json_descending};
+use super::{
+    decode_json_ascending, decode_json_descending, encode_json_ascending, encode_json_descending,
+};
 
 #[test]
 fn descending_json_array_path_round_trips() {
@@ -84,4 +86,32 @@ fn descending_json_null_round_trips_as_null() {
     assert!(remaining.is_empty());
     assert_eq!(decoded.path, leaf.path);
     assert_eq!(decoded.value, JsonScalarValue::Null);
+}
+
+#[test]
+fn descending_json_unicode_property_and_array_path_round_trip() {
+    let path = JsonPath::new()
+        .append_property("éclair")
+        .append_index()
+        .append_property("雪");
+    let leaf = JsonLeafValue::new(path.clone(), JsonScalarValue::Number(2.0));
+    let encoded = encode_json_descending(Vec::new(), &leaf);
+    let (remaining, decoded) = decode_json_descending(&encoded).unwrap();
+    assert!(remaining.is_empty());
+    assert_eq!(decoded.path, path);
+    assert_eq!(decoded.value, leaf.value);
+}
+
+#[test]
+fn ascending_json_unicode_property_and_array_path_round_trip() {
+    let path = JsonPath::new()
+        .append_property("éclair")
+        .append_index()
+        .append_property("雪");
+    let leaf = JsonLeafValue::new(path.clone(), JsonScalarValue::Number(2.0));
+    let encoded = encode_json_ascending(Vec::new(), &leaf);
+    let (remaining, decoded) = decode_json_ascending(&encoded).unwrap();
+    assert!(remaining.is_empty());
+    assert_eq!(decoded.path, path);
+    assert_eq!(decoded.value, leaf.value);
 }

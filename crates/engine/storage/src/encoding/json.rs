@@ -13,7 +13,7 @@ use super::{
     decode_bool_ascending, decode_bytes_ascending, decode_float64_ascending, decode_if_null,
     decode_uvarint_ascending, encode_bool_ascending, encode_bytes_ascending,
     encode_float64_ascending, encode_null_ascending, encode_uvarint_ascending, peek_type,
-    EncodedType, ESCAPED_TERM, INT_MAX, INT_MIN, JSON_MARKER,
+    EncodedType, ESCAPED_TERM, INT_ZERO, JSON_MARKER,
 };
 use crate::corekv::{Error, Result};
 
@@ -184,8 +184,8 @@ pub fn decode_json_ascending(buf: &[u8]) -> Result<(&[u8], JsonLeafValue)> {
         }
 
         // Check if this is an array index (uvarint) or property (string)
-        // Array indices are encoded as uvarints which start with 0x80+ marker
-        if rest[0] >= INT_MIN && rest[0] <= INT_MAX {
+        // Array paths use the zero index marker; other bytes start a property.
+        if rest[0] == INT_ZERO {
             // Array index - decode uvarint
             let (remaining, _idx) = decode_uvarint_ascending(rest)?;
             path = path.append_index();
@@ -232,7 +232,7 @@ pub fn decode_json_descending(buf: &[u8]) -> Result<(&[u8], JsonLeafValue)> {
             break;
         }
 
-        if rest[0] >= INT_MIN && rest[0] <= INT_MAX {
+        if rest[0] == INT_ZERO {
             // Array index - decode ascending uvarint
             let (remaining, _idx) = decode_uvarint_ascending(rest)?;
             path = path.append_index();

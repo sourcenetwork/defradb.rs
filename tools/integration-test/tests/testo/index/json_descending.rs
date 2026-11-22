@@ -16,6 +16,7 @@ fn user_with_descending_json_index() -> AddCollection {
 }
 
 #[test]
+#[mantra_macros::req_test("defra.index.descending_json_path")]
 fn descending_json_index_filters_an_array_path() {
     TestCase {
         id: integration_test::scenario_id!(),
@@ -47,6 +48,7 @@ fn descending_json_index_filters_an_array_path() {
 }
 
 #[test]
+#[mantra_macros::req_test("defra.index.descending_json_path")]
 fn descending_json_index_filters_a_nested_path_range() {
     TestCase {
         id: integration_test::scenario_id!(),
