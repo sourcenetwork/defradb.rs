@@ -157,6 +157,7 @@ mod nac {
     mod list_p2p_document;
     mod list_p2p_replicator;
     mod nac_restart;
+    mod nac_restart_enforced;
     mod nac_start;
     mod new_encrypted_index;
     mod new_index;

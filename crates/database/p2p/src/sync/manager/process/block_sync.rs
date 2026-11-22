@@ -1,4 +1,4 @@
-//! Bitswap query tracking and block storage.
+//! Block-sync query tracking and block storage.
 
 use std::sync::Arc;
 
@@ -332,7 +332,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     pub(crate) fn rooted_car_completion_tracker(&self) -> RootedCarCompletionTracker {
         self.rooted_car_completions.clone()
     }
-    /// Register a Bitswap query for tracking.
+    /// Register a block-sync query for tracking.
     ///
     /// This maps the QueryId to the root CID so we can identify
     /// which DAG a completion event belongs to.
@@ -345,20 +345,20 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         self.block_sync_completions.take_early(query_id)
     }
 
-    /// Remove and return the root CID associated with a Bitswap query.
+    /// Remove and return the root CID associated with a block-sync query.
     pub fn take_query_root(&self, query_id: QueryId) -> Option<Cid> {
         self.query_to_root.remove(&query_id)
     }
 
-    /// Store a block received via Bitswap and check if pending DAGs can now proceed.
+    /// Store a block received via block sync and check if pending DAGs can now proceed.
     ///
-    /// This is called when blocks are fetched via Bitswap during DAG synchronization.
+    /// This is called when blocks are fetched during block synchronization.
     /// The block is stored in the blockstore, and we check if any pending DAGs are
     /// now complete and can be processed.
     ///
     /// Returns `true` if the block was stored (not a duplicate).
-    pub async fn store_bitswap_block(&self, cid: &Cid, data: &[u8]) -> Result<bool> {
-        // PushLog, CAR, Bitswap and merge all mutate the same per-CID merge
+    pub async fn store_sync_block(&self, cid: &Cid, data: &[u8]) -> Result<bool> {
+        // PushLog, CAR, block sync and merge all mutate the same per-CID merge
         // marker. Keep one storage owner, but never retain the transport's
         // state-bearing block event while waiting for it: the current owner or
         // the receiver clock will re-check the pending frontier.
@@ -366,7 +366,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             self.diagnostics.record_single_flight_suppressed();
             tracing::debug!(
                 cid = %cid,
-                "Coalescing Bitswap block behind the current storage owner"
+                "Coalescing block-sync block behind the current storage owner"
             );
             return Ok(false);
         };
@@ -380,7 +380,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         {
             tracing::debug!(
                 cid = %cid,
-                "Bitswap block already in blockstore (duplicate)"
+                "Block-sync block already in blockstore (duplicate)"
             );
             return Ok(false);
         }
@@ -391,7 +391,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             tracing::warn!(
                 cid = %cid,
                 error = %p2p_err,
-                "Bitswap block failed CID verification, discarding"
+                "Block-sync block failed CID verification, discarding"
             );
             return Err(p2p_err);
         }
@@ -401,7 +401,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             tracing::error!(
                 cid = %cid,
                 error = %e,
-                "Failed to store Bitswap block"
+                "Failed to store block-sync block"
             );
             return Err(Error::BlockstoreError(e.to_string()));
         }
@@ -409,7 +409,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         tracing::info!(
             cid = %cid,
             data_len = data.len(),
-            "Stored Bitswap block in blockstore"
+            "Stored block-sync block in blockstore"
         );
 
         for root_cid in self.pending_dags.read(|pending| pending.waiting_roots(cid)) {

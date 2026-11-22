@@ -108,6 +108,7 @@
       "tools/integration-test/tests/testo/query/simple/with_filter/with_eq_datetime.rs::query_simple_with_date_time_equals_filter_block",
       "tools/integration-test/tests/testo/query/simple/with_filter/with_eq_datetime.rs::query_simple_with_nil_date_time_equals_and_non_nil_filter_block_should_succeed",
       "tools/integration-test/tests/testo/query/simple/with_filter/with_eq_float.rs::query_simple_with_float_equals_filter_block",
+      "tools/integration-test/tests/testo/query/simple/with_filter/with_eq_float_zero.rs::float_zero_equality_is_exact_on_indexed_and_unindexed_fields",
       "tools/integration-test/tests/testo/query/simple/with_filter/with_eq_int.rs::query_simple_with_int_equals_filter_block",
       "tools/integration-test/tests/testo/query/simple/with_filter/with_eq_string.rs::query_simple_with_string_filter_block",
       "tools/integration-test/tests/testo/query/simple/with_filter/with_eq_string.rs::query_simple_with_string_filter_block_and_select_select_different_field_than_filter_with_match",
@@ -138,6 +139,7 @@
       "tools/integration-test/tests/testo/query/simple/with_filter/with_neq_datetime.rs::query_simple_with_date_time_not_equals_filter_block",
       "tools/integration-test/tests/testo/query/simple/with_filter/with_neq_datetime.rs::query_simple_with_nil_date_time_not_equal_and_non_nil_filter_block_should_succeed",
       "tools/integration-test/tests/testo/query/simple/with_filter/with_neq_float.rs::query_simple_with_float_not_equals_filter_block",
+      "tools/integration-test/tests/testo/query/simple/with_filter/with_eq_float_zero.rs::float_zero_inequality_is_exact_on_indexed_and_unindexed_fields",
       "tools/integration-test/tests/testo/query/simple/with_filter/with_neq_int.rs::query_simple_with_int_not_equals_filter_block",
       "tools/integration-test/tests/testo/query/simple/with_filter/with_neq_string.rs::query_simple_with_string_not_equals_filter_block"
     ],

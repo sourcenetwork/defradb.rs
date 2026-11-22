@@ -143,7 +143,9 @@ impl<S: Store> crate::database::DB<S> {
 
     async fn truncate_metadata_in(txn: &DbTxn<S>, collection: &Collection) -> Result<()> {
         use storage::keys::datastore::ViewCacheKey;
-        use storage::keys::{HeadstoreColPublishedKey, HeadstoreColSetKey, IndexDataStoreKey};
+        use storage::keys::{
+            DatastoreSE, HeadstoreColPublishedKey, HeadstoreColSetKey, IndexDataStoreKey,
+        };
 
         // The definition is read in this transaction, so an index whose
         // definition commits before this one is either listed here or makes
@@ -174,6 +176,9 @@ impl<S: Store> crate::database::DB<S> {
             )
             .await?;
         }
+        // Searchable-encryption artifacts, including those a replicator
+        // received for documents it may not hold (Go collection_truncate.go).
+        delete_prefix(&datastore, DatastoreSE::collection_prefix(collection_id)).await?;
         // A materialized view's rows live in its cache, not as documents.
         delete_prefix(&datastore, ViewCacheKey::collection_prefix(short_id)).await?;
 

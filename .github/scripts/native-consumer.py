@@ -89,6 +89,7 @@ UNIT_NAMES = (
     "outcome_note::tests::an_outcome_of_an_earlier_request_with_the_same_bytes_is_not_the_callers",
     "outcome_note::tests::an_outcome_survives_a_reopen_and_the_oldest_is_pushed_out",
     "provider::audience_tests::a_provider_checks_the_genesis_identity_it_reports",
+    "provider::assignments::tests::position_floor_rejects_replays_and_accepts_a_verified_new_term",
     "provider::exact_relationship::tests::a_proof_at_another_root_answers_nothing",
     "provider::exact_relationship::tests::an_absent_owner_refuses_as_a_registered_document_does",
     "provider::exact_relationship::tests::an_observation_overtaken_at_every_ask_ends_in_the_refusal",
@@ -160,7 +161,7 @@ LIVE_CASES = (
     ("p2p-replication", "p2p_acp::rust_verars_p2p_acp"),
 )
 CARGO = ["cargo", "+1.99.1"]
-BUILD = ["--release", "--frozen", "-j", "2"]
+BUILD = ["--release", "--frozen"]
 PUBLIC_FIELDS = ("phase", "exit_code", "seconds", "passed", "panic_site")
 
 
@@ -253,7 +254,7 @@ def clean_environment(environ):
     env = dict(environ)
     exact = {"RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "RUSTDOCFLAGS", "CARGO_ENCODED_RUSTDOCFLAGS",
              "RUSTC", "RUSTDOC", "RUSTUP_TOOLCHAIN", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER",
-             "CARGO_INCREMENTAL", "CARGO_BUILD_INCREMENTAL", "CARGO_BUILD_TARGET", "CARGO_TARGET_DIR",
+             "CARGO_INCREMENTAL", "CARGO_BUILD_INCREMENTAL", "CARGO_BUILD_JOBS", "CARGO_BUILD_TARGET", "CARGO_TARGET_DIR",
              "CARGO_BUILD_RUSTFLAGS", "RUST_LOG", "VERAD_BINARY", "VERA_TRACE_SPANS"}
     for key in list(env):
         if key in exact or key.startswith(("CARGO_PROFILE_", "CARGO_BUILD_RUSTC", "CARGO_BUILD_RUSTDOC",
@@ -261,7 +262,11 @@ def clean_environment(environ):
                 key.startswith("CARGO_TARGET_") and key.endswith("_RUSTFLAGS")):
             del env[key]
     # The node harness observes INFO-level HTTP and P2P readiness events.
-    env.update(CARGO_BUILD_JOBS="2", CARGO_TERM_COLOR="never", RUST_LOG="info")
+    env.update(CARGO_TERM_COLOR="never", RUST_LOG="info")
+    # defra-node otherwise stamps the commit and a per-second build time, so it and every crate
+    # above it rebuilt on every run. Nothing in the qualification reads either value.
+    env.update(DEFRA_NODE_BUILD_TIME_OVERRIDE="native-consumer", DEFRA_NODE_GIT_HASH_OVERRIDE="native-consumer",
+               DEFRA_NODE_GIT_DIRTY_OVERRIDE="")
     return env
 
 
