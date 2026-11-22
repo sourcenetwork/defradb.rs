@@ -358,6 +358,9 @@ lean_lib KmsChunks where
 lean_lib SigningOverride where
 
 @[default_target]
+lean_lib FloatEquality where
+
+@[default_target]
 lean_lib OwedParts where
 
 @[default_target]
