@@ -2,6 +2,7 @@
 //! Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{AddCollection, AddDoc, Request};
+use integration_test::scenario::Common;
 use integration_test::test_case::TestCase;
 use serde_json::json;
 use testo::action::ActionInstance;
@@ -32,6 +33,10 @@ fn users(filter: &str, names: &[&str]) -> Action {
         expected_data: json!({
             "F": names.iter().map(|name| json!({ "name": name })).collect::<Vec<_>>(),
         }),
+        common: Common {
+            unordered_documents: vec!["/data/F".into()],
+            ..Default::default()
+        },
         ..Default::default()
     }
     .into()
