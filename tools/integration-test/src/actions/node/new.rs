@@ -142,6 +142,12 @@ impl Op for NewNode {
             .then(|| self.key_type.unwrap_or_default());
         let txn_ttl = self.txn_ttl(state.client_type())?;
         let index_gate = self.index_gate(state.client_type())?;
+        if self.backfill_batch_docs.is_some() && state.client_type() == ClientType::GoHttp {
+            return Err(Failure::unsupported(format!(
+                "{} argument backfillBatchDocs under GoHttp",
+                Self::name()
+            )));
+        }
         let registered_identity = self.registered_identity(state.client_type())?;
         let dir = match self.database_dir {
             Some(_) => Some(Arc::new(tempfile::tempdir().map_err(|e| {

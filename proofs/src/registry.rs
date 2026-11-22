@@ -2315,6 +2315,26 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // HTTP build mode does not change the requested index kind.
+        family: "Schema-evolution operations in the core",
+        name: "INV_KindPreserved / INV_SyncWaits",
+        axis: Tla,
+        anchor: "crates/surfaces/http/src/handlers/index/go_api.rs go_create_index; crates/surfaces/http/src/index_adapter.rs IndexAdapter::create_index; crates/database/db/src/index/create.rs create_index, start_index",
+        model_ref: "MC_HttpIndexBuild_{Green,Green_Sync,Red_Vector}.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/index/async_backfill_migration.rs async_backfill_restart_after_non_zero_watermark_resumes_to_ready",
+    },
+    Property {
+        // The vector config and background selection are independent.
+        family: "Schema-evolution operations in the core",
+        name: "IndexBuildMode.kind_independent / background_ordered / background_vector",
+        axis: Lean,
+        anchor: "crates/surfaces/http/src/handlers/index/go_api.rs go_create_index; crates/surfaces/http/src/index_adapter.rs IndexAdapter::create_index",
+        model_ref: "IndexBuildMode (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/surfaces/http/src/handlers/index/go_api.rs background_build_and_vector_configuration_are_independent",
+    },
+    Property {
         // #2379: an index answers queries only while no reindex is owed;
         // schema changes and merges that store a document off the active
         // version across a lens owe a fresh record, and a rebuild clears only

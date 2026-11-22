@@ -120,8 +120,7 @@ impl NewIndex {
     }
 
     /// [`NewIndex::check_arguments`], plus the descending fields the HTTP and
-    /// CLI clients cannot send, and `async`: an index created over HTTP is
-    /// built before the response.
+    /// CLI clients cannot send.
     fn check_remote_arguments(&self) -> Result<(), Failure> {
         self.check_arguments()?;
         let descending = self.index.fields.iter().any(|field| field.descending);
@@ -166,24 +165,27 @@ impl HttpRun for NewIndex {
             let created = collection.clone();
             let txn = state.txn_id(action.txn);
             let in_txn = txn.is_some();
+            if action.r#async && state.client_type() == crate::ClientType::GoHttp {
+                return Err(Failure::unsupported(
+                    "index.new async under GoHttp".to_owned(),
+                ));
+            }
             let wait_for_build = !action.r#async && !in_txn;
+            let build_in_background = action.r#async && !in_txn;
             state
                 .http_as(
                     action.common.node(),
                     action.common.identity_seed,
                     |client| async move {
                         client
-                            .index_create(
+                            .index_create_with_build_mode(
                                 txn.as_deref(),
                                 &created,
                                 &fields,
                                 name.as_deref(),
                                 unique,
-                                if wait_for_build {
-                                    None
-                                } else {
-                                    Some(schema::VectorIndexDescription::default())
-                                },
+                                None,
+                                build_in_background,
                             )
                             .await
                     },
@@ -205,8 +207,6 @@ const BUILD_TIMEOUT: Duration = Duration::from_secs(10);
 /// Waits until no index of `collection` is still building, as Go's
 /// `NewIndex` action does: Go builds an index in the background, so a
 /// `ListIndexes` straight after the create would see it mid-backfill.
-// ponytail: waits on every index of the collection, not just the new one; the
-// HTTP client refuses `async`, so no other index is left building on purpose.
 fn wait_until_built(state: &State, action: &NewIndex, collection: &str) -> Result<(), Failure> {
     let deadline = Instant::now() + BUILD_TIMEOUT;
     loop {
