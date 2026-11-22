@@ -335,7 +335,10 @@ impl PlanNode for IndexScanNode {
             "indexOffset".into(),
             serde_json::json!(self.index_params.offset),
         );
-        obj.insert("indexFetches".into(), serde_json::json!(self.index_fetches));
+        obj.insert(
+            "indexFetches".to_string(),
+            serde_json::json!(self.index_fetches),
+        );
         obj.insert(
             "filter".to_string(),
             filter.map_or_else(
@@ -519,7 +522,7 @@ mod tests {
                     "collectionName": "Person",
                     "collectionID": "v1",
                     "indexName": "idx_test",
-                    "indexLimit": null,
+                    "indexLimit": serde_json::Value::Null,
                     "indexOffset": 0,
                     "indexFetches": 0,
                     "filter": {"name": {"_like": "%vid%"}},
@@ -569,7 +572,7 @@ mod tests {
     }
 
     #[test]
-    fn explain_keeps_index_metadata_and_scan_shape() {
+    fn explain_names_the_selected_index() {
         let mut collection = CollectionVersion::new("Person", "v1", "coll-person", vec![]);
         collection.root_id = 2;
         let node = make_index_scan_node_for(
