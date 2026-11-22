@@ -592,7 +592,7 @@ fn vector_index_warning_and_wrapped_filter_reports_warning() {
             .into(),
             AddDoc {
                 collection: "User".into(),
-                doc_map: Some(json!({ "age": 20, "name": "y", "vector": [0.0, 1.0, 0.0] })),
+                doc_map: Some(json!({ "age": 20, "name": "y", "vector": [0.5, 1.0, 0.0] })),
                 ..Default::default()
             }
             .into(),
@@ -629,7 +629,7 @@ fn vector_index_warning_and_wrapped_filter_reports_warning() {
                         },
                         {
                             "name": "y",
-                            "sim": m::similarity_score("COSINE", json!([0, 1, 0]), json!([1, 0, 0])),
+                            "sim": m::similarity_score("COSINE", json!([0.5, 1, 0]), json!([1, 0, 0])),
                         },
                     ],
                 }),
