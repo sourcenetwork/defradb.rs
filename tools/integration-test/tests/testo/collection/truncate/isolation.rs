@@ -1,4 +1,8 @@
-use integration_test::actions::{AddCollection, AddDoc, DeleteIndex, Request, Truncate};
+use integration_test::actions::{
+    AddCollection, AddDoc, DeleteIndex, GetCollections, Request, Truncate,
+};
+use integration_test::m;
+use integration_test::scenario::{captures, Common};
 use integration_test::test_case::TestCase;
 use serde_json::json;
 
@@ -15,6 +19,16 @@ fn truncate_preserves_other_collections() {
         AddDoc {
             collection: "Kept".into(),
             doc_map: Some(json!({ "name": "retained" })),
+            ..Default::default()
+        }
+        .into(),
+        GetCollections {
+            collection_name: Some("Kept".into()),
+            filtered: true,
+            common: Common {
+                capture: captures([("kept_versions", "/collections")]),
+                ..Default::default()
+            },
             ..Default::default()
         }
         .into(),
@@ -73,6 +87,15 @@ fn truncate_preserves_other_collections() {
             .into(),
         );
     }
+    actions.push(
+        GetCollections {
+            collection_name: Some("Kept".into()),
+            filtered: true,
+            expected_data: json!({"collections": m::r("kept_versions")}),
+            ..Default::default()
+        }
+        .into(),
+    );
     actions.push(
         Request {
             request:
