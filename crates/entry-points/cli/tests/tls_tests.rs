@@ -1,5 +1,7 @@
 //! Exercise TLS configuration through the running CLI, not just the config fields.
 
+mod common;
+
 use std::path::Path;
 use std::time::Duration;
 
@@ -13,14 +15,45 @@ use tempfile::TempDir;
 struct RunningNode {
     child: Child,
     root: TempDir,
+    /// Where the node's HTTP server listens, once [`RunningNode::start`]
+    /// has read it from the log.
     address: String,
 }
 
 impl RunningNode {
+    /// Starts a node and waits until its HTTP server listens.
     fn start(root: TempDir, tls: bool) -> Self {
-        let port = portpicker::pick_unused_port().expect("available port");
-        let address = format!("127.0.0.1:{port}");
+        let (log, output) = common::NodeLog::create(root.path().join("node.log"));
+        let mut command = Self::command(&root, tls);
+        command.stdout(output.try_clone().unwrap()).stderr(output);
+        let child = command.spawn().unwrap();
+        // Our copies of the pipe end go with the command, so the pipe closes
+        // when the node exits.
+        drop(command);
+        let mut node = Self {
+            child,
+            root,
+            address: String::new(),
+        };
+        node.address = log.http_address(Duration::from_secs(20));
+        node
+    }
+
+    /// Starts a node without waiting for it, for a startup that must fail.
+    /// The node writes its log file itself, so the log is whole once it
+    /// has exited.
+    fn spawn(root: TempDir, tls: bool) -> Self {
         let log = std::fs::File::create(root.path().join("node.log")).unwrap();
+        let mut command = Self::command(&root, tls);
+        command.stdout(log.try_clone().unwrap()).stderr(log);
+        Self {
+            child: command.spawn().unwrap(),
+            root,
+            address: String::new(),
+        }
+    }
+
+    fn command(root: &TempDir, tls: bool) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_defradb"));
         command
             .args([
@@ -30,13 +63,12 @@ impl RunningNode {
                 "--store",
                 "memory",
                 "--url",
+                common::ANY_PORT,
             ])
-            .arg(&address)
+            .args(common::LOG_FLAGS)
             .arg("--rootdir")
             .arg(root.path())
             .env("RUST_LOG", "info")
-            .stdout(log.try_clone().unwrap())
-            .stderr(log)
             .kill_on_drop(true);
         if tls {
             command
@@ -45,11 +77,7 @@ impl RunningNode {
                 .arg("--privkeypath")
                 .arg(root.path().join("key.pem"));
         }
-        Self {
-            child: command.spawn().unwrap(),
-            root,
-            address,
-        }
+        command
     }
 
     fn logs(&self) -> String {
@@ -60,7 +88,7 @@ impl RunningNode {
         let url = format!("{scheme}://{}/health-check", self.address);
         let result = timeout(Duration::from_secs(20), async {
             loop {
-                assert!(self.child.try_wait().unwrap().is_none(), "{}", self.logs());
+                assert!(matches!(self.child.try_wait(), Ok(None)), "{}", self.logs());
                 if let Ok(response) = client.get(&url).send().await {
                     assert_eq!(response.status(), StatusCode::OK);
                     assert_eq!(response.json::<String>().await.unwrap(), "Healthy");
@@ -142,13 +170,12 @@ async fn node_shutdown_closes_existing_https_connections() {
     config.datastore.store = cli::config::DatastoreType::Memory;
     config.net.p2p_disabled = true;
     config.keyring.disabled = true;
-    config.api.address = format!(
-        "127.0.0.1:{}",
-        portpicker::pick_unused_port().expect("available port")
-    );
+    // The test binds the port itself, so no other process can take it
+    // before the node serves on it.
+    let listener = std::net::TcpListener::bind(common::ANY_PORT).unwrap();
+    let url = format!("https://{}/health-check", listener.local_addr().unwrap());
     config.api.pubkey_path = root.path().join("cert.pem").display().to_string();
     config.api.privkey_path = root.path().join("key.pem").display().to_string();
-    let url = format!("https://{}/health-check", config.api.address);
     let client = Client::builder(edge::testing::edge())
         .no_proxy()
         .add_root_certificate(certificate)
@@ -160,7 +187,8 @@ async fn node_shutdown_closes_existing_https_connections() {
         .unwrap();
     let node = cli::commands::Node::new(config, None, edge::testing::edge())
         .await
-        .unwrap();
+        .unwrap()
+        .with_http_listener(listener);
     let shutdown = node.shutdown_tx.clone();
     let task = nuclei::spawn(node.run());
     timeout(Duration::from_secs(10), async {
@@ -234,7 +262,7 @@ async fn invalid_tls_configuration_fails_before_serving() {
             }
             _ => unreachable!(),
         }
-        let mut node = RunningNode::start(root, true);
+        let mut node = RunningNode::spawn(root, true);
         let status = timeout(Duration::from_secs(10), node.child.wait())
             .await
             .unwrap_or_else(|_| panic!("{case}: invalid TLS allowed startup: {}", node.logs()))
@@ -274,7 +302,7 @@ async fn partial_default_certificate_pair_fails_before_serving() {
         let certs = root.path().join("certs");
         std::fs::create_dir(&certs).unwrap();
         std::fs::write(certs.join(filename), "incomplete pair").unwrap();
-        let mut node = RunningNode::start(root, false);
+        let mut node = RunningNode::spawn(root, false);
         let status = timeout(Duration::from_secs(10), node.child.wait())
             .await
             .expect("startup did not reject the incomplete certificate pair")
