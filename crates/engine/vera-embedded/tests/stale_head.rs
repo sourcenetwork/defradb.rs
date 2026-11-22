@@ -129,7 +129,7 @@ async fn a_read_at_a_starved_head_waits_for_the_next_revision() {
     )
     .await
     .expect("provider");
-    let policy = provider.create_policy(POLICY).await.expect("policy");
+    let policy = provider.create_policy(POLICY, None).await.expect("policy");
     let owner = provider.self_did().unwrap();
     let delegation = provider.create_bearer_token(&owner).await.unwrap();
     provider

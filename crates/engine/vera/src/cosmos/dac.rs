@@ -145,14 +145,30 @@ impl VeraDocumentACP {
         self.provider.self_did()
     }
 
-    /// Create a policy on Vera. Returns the policy ID.
+    /// Create a policy on Vera, its ID derived from `nonce` where the
+    /// provider derives one. Returns the policy ID.
+    ///
+    /// The provider creates as its own actor, which owns the policy. A
+    /// nonce names the policy that actor gets, so one supplied by another
+    /// caller is refused: the ID that caller computed from its own DID is
+    /// not the one it would get. Without a nonce any permitted caller adds
+    /// a policy the actor owns.
     pub async fn add_policy(
         &self,
-        _creator_did: &str,
+        creator_did: &str,
         policy_yaml: &str,
+        nonce: Option<acp::PolicyNonce>,
     ) -> std::result::Result<String, ProviderError> {
+        if let (Some(_), Some(actor)) = (nonce, self.provider.self_did()) {
+            if !crate::vera_rs::did_spelling::same_actor(creator_did, &actor) {
+                return Err(ProviderError::Config(format!(
+                    "a policy nonce names the policy the node's actor {actor} creates; \
+                     {creator_did} is not that actor"
+                )));
+            }
+        }
         let yaml = policy_yaml.to_owned();
-        self.remote(move |provider| async move { provider.create_policy(&yaml).await })
+        self.remote(move |provider| async move { provider.create_policy(&yaml, nonce).await })
             .await
     }
 
@@ -383,8 +399,54 @@ fn provider_err(error: impl std::borrow::Borrow<ProviderError>) -> acp::Error {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl acp::RemotePolicies for VeraDocumentACP {
-    async fn add_policy(&self, creator: &str, policy: &str) -> std::result::Result<String, String> {
-        VeraDocumentACP::add_policy(self, creator, policy)
+    async fn certified_assignments(
+        &self,
+        query: &acp::AssignmentQuery,
+    ) -> std::result::Result<acp::CertifiedAssignments, acp::AssignmentReadError> {
+        let floor = query
+            .not_before
+            .as_ref()
+            .map(|position| crate::AssignmentPosition {
+                term: position.term,
+                height: position.height,
+                block_hash: position.block_hash.clone(),
+            });
+        let result = self
+            .provider
+            .read_certified_assignments(crate::AssignmentQuery {
+                policy: &query.policy,
+                resource: &query.resource,
+                relation: &query.relation,
+                subject: &query.subject,
+                issuer: &query.issuer,
+                not_before: floor.as_ref(),
+            })
+            .await
+            .map_err(|error| match error {
+                ProviderError::Unavailable(_) | ProviderError::ProofsOvertaken(_) => {
+                    acp::AssignmentReadError::Unavailable(error.to_string())
+                }
+                ProviderError::Unsupported(_) => acp::AssignmentReadError::Unsupported,
+                _ => acp::AssignmentReadError::Invalid(error.to_string()),
+            })?;
+        Ok(acp::CertifiedAssignments {
+            object_ids: result.object_ids,
+            position: acp::AssignmentPosition {
+                term: result.position.term,
+                height: result.position.height,
+                block_hash: result.position.block_hash,
+            },
+            timestamp: result.timestamp,
+            module_state_root: result.module_state_root,
+        })
+    }
+    async fn add_policy(
+        &self,
+        creator: &str,
+        policy: &str,
+        nonce: Option<acp::PolicyNonce>,
+    ) -> std::result::Result<String, String> {
+        VeraDocumentACP::add_policy(self, creator, policy, nonce)
             .await
             .map_err(|e| e.to_string())
     }
@@ -588,6 +650,14 @@ impl DocumentACP for VeraDocumentACP {
         .map_err(provider_err)?;
         self.invalidate_cached_access(policy_id);
         Ok(())
+    }
+
+    async fn register_objects(
+        &self,
+        identity: &Did,
+        objects: &[acp::AcpObject<'_>],
+    ) -> std::result::Result<(), acp::RegistrationFailure> {
+        self.register_listed(identity, objects).await
     }
 
     async fn is_doc_registered(
@@ -998,7 +1068,10 @@ impl DocumentACP for VeraDocumentACP {
 
 mod owed;
 mod owed_journal;
+mod registration_batch;
 mod request_bound;
+
+pub(crate) use owed_journal::MAX_OWED_REQUEST_BYTES;
 
 #[cfg(test)]
 mod tests;

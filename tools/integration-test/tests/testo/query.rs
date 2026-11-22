@@ -214,6 +214,7 @@ mod simple {
         mod with_eq_blob;
         mod with_eq_datetime;
         mod with_eq_float;
+        mod with_eq_float_zero;
         mod with_eq_int;
         mod with_eq_string;
         mod with_geq_datetime;

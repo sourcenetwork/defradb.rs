@@ -17,8 +17,7 @@ use crate::{ffi_async, ffi_async_ok, ffi_entry, try_ffi, ERR_INVALID_NODE_HANDLE
 ///   "owner": "did:key:..." | null
 /// }
 /// ```
-#[no_mangle]
-pub extern "C" fn defra_acp_nac_status(node_ptr: usize, identity_ptr: usize) -> DefraResult {
+pub fn defra_acp_nac_status(node_ptr: usize, identity_ptr: usize) -> DefraResult {
     ffi_entry! {
         let request = try_ffi!(Request::resolve(node_ptr, identity_ptr));
         let node_ptr = request.node();
@@ -39,8 +38,7 @@ pub extern "C" fn defra_acp_nac_status(node_ptr: usize, identity_ptr: usize) -> 
 
 /// Disables node access control temporarily, Go's `DisableNAC`, as the
 /// identity `identity_ptr` names; the core checks the caller.
-#[no_mangle]
-pub extern "C" fn defra_acp_nac_disable(node_ptr: usize, identity_ptr: usize) -> DefraResult {
+pub fn defra_acp_nac_disable(node_ptr: usize, identity_ptr: usize) -> DefraResult {
     ffi_entry! {
         let request = try_ffi!(Request::resolve(node_ptr, identity_ptr));
         let node_ptr = try_ffi!(request.require_node("node access control changes"));
@@ -55,8 +53,7 @@ pub extern "C" fn defra_acp_nac_disable(node_ptr: usize, identity_ptr: usize) ->
 /// Re-enables a disabled node access control, Go's `ReEnableNAC`, as the
 /// identity `identity_ptr` names; the core checks the caller against the
 /// stored relationships.
-#[no_mangle]
-pub extern "C" fn defra_acp_nac_re_enable(node_ptr: usize, identity_ptr: usize) -> DefraResult {
+pub fn defra_acp_nac_re_enable(node_ptr: usize, identity_ptr: usize) -> DefraResult {
     ffi_entry! {
         let request = try_ffi!(Request::resolve(node_ptr, identity_ptr));
         let node_ptr = try_ffi!(request.require_node("node access control changes"));
@@ -92,8 +89,7 @@ unsafe fn relation_or_admin(relation: *const c_char) -> String {
 /// # Safety
 ///
 /// `relation` and `actor` must be null or valid null-terminated strings.
-#[no_mangle]
-pub unsafe extern "C" fn defra_acp_nac_relationship_add(
+pub unsafe fn defra_acp_nac_relationship_add(
     node_ptr: usize,
     identity_ptr: usize,
     relation: *const c_char,
@@ -128,8 +124,7 @@ pub unsafe extern "C" fn defra_acp_nac_relationship_add(
 /// # Safety
 ///
 /// `relation` and `actor` must be null or valid null-terminated strings.
-#[no_mangle]
-pub unsafe extern "C" fn defra_acp_nac_relationship_delete(
+pub unsafe fn defra_acp_nac_relationship_delete(
     node_ptr: usize,
     identity_ptr: usize,
     relation: *const c_char,
@@ -156,8 +151,7 @@ pub unsafe extern "C" fn defra_acp_nac_relationship_delete(
 /// identity `identity_ptr` names; the core allows it in development mode
 /// only, for an admin. An embedded node runs node access control in
 /// development mode, so an admin may.
-#[no_mangle]
-pub extern "C" fn defra_acp_nac_purge(node_ptr: usize, identity_ptr: usize) -> DefraResult {
+pub fn defra_acp_nac_purge(node_ptr: usize, identity_ptr: usize) -> DefraResult {
     ffi_entry! {
         let request = try_ffi!(Request::resolve(node_ptr, identity_ptr));
         let node_ptr = try_ffi!(request.require_node("node access control changes"));

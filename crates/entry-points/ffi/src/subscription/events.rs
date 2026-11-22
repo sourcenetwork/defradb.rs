@@ -62,8 +62,7 @@ const NAMEABLE: [EventName; 13] = [
 /// # Safety
 ///
 /// `names` must be null or a valid null-terminated string.
-#[no_mangle]
-pub unsafe extern "C" fn defra_event_subscribe(
+pub unsafe fn defra_event_subscribe(
     node_ptr: usize,
     names: *const c_char,
     identity_ptr: usize,

@@ -87,6 +87,10 @@ pub struct Planner {
     /// The request's DAC bypass (`RequestContext::dac_bypass`); that of
     /// `RequestContext::ambient` until `with_dac_bypass` sets it
     dac_bypass: bool,
+    /// The request's strict access reads
+    /// (`RequestContext::strict_access_reads`); off until
+    /// `with_strict_access` sets it
+    strict_access: bool,
     /// App read validator, applied after ACP
     retry_inputs: Option<crate::prepared::PreparedInputMemo>,
     read_validator: Option<Arc<dyn crate::access_hooks::ReadValidator>>,
@@ -135,6 +139,7 @@ impl Planner {
             acp_registration_projection: None,
             identity_did: None,
             dac_bypass: defra_core::RequestContext::ambient().dac_bypass(),
+            strict_access: false,
             read_validator: None,
             retry_inputs: None,
             fts_scores: RapidHashMap::new(),
@@ -192,6 +197,13 @@ impl Planner {
         self
     }
 
+    /// Set the request's strict access reads for permission filtering in
+    /// plans.
+    pub fn with_strict_access(mut self, strict: bool) -> Self {
+        self.strict_access = strict;
+        self
+    }
+
     pub fn with_acp_registration_projection(
         mut self,
         projection: Option<Arc<crate::txn::AcpRegistrationProjection>>,
@@ -229,6 +241,7 @@ impl Planner {
                 acp: acp.clone(),
                 identity: acp::Identity::from(self.identity_did.clone()),
                 dac_bypass: self.dac_bypass,
+                strict: self.strict_access,
                 policy_id: policy.id.clone(),
                 resource_name: policy.resource_name.clone(),
             }),

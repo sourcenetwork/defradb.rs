@@ -81,7 +81,7 @@ async fn hub_restart_recovers_success_acked_pending_dags() {
             client.p2p_connect(&[&hub_addr]).expect("connect to hub");
             // Filtered replicas recover through rooted CAR; Controlled mode
             // denies their legacy Bitswap data-block fallback as well.
-            let added = std::process::Command::new(client.binary_path())
+            let added = integration_test::cli_command(client.binary_path())
                 .arg("--url")
                 .arg(cluster.api_url(pusher).strip_prefix("http://").unwrap())
                 .args([

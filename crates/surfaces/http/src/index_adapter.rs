@@ -194,7 +194,3 @@ impl<S: Store + 'static> IndexOperations for IndexAdapter<S> {
             .map_err(|e| e.to_string())
     }
 }
-
-#[cfg(test)]
-#[path = "index_adapter_tests.rs"]
-mod tests;

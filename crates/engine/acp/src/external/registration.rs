@@ -73,9 +73,39 @@ where
                 .await
             {
                 Ok(()) => false,
-                Err(Error::DocumentAlreadyRegistered(_)) => true,
+                Err(error) if self.held_after_refusal(owed, &error).await => true,
                 Err(error) => return Err(error),
             };
+        self.registered(owed, held).await
+    }
+
+    /// Whether the provider holds the object `owed` names after it refused
+    /// its registration with `error`. Another settler (an access decision, a
+    /// redrive, another commit's hook) may register the object between this
+    /// one asking and sending, and the provider then refuses the second
+    /// registration: the object is held, and the record is cleared as held,
+    /// not reported as failed. An unreachable provider is not asked.
+    pub(super) async fn held_after_refusal(
+        &self,
+        owed: &PendingRegistration,
+        error: &Error,
+    ) -> bool {
+        match error {
+            Error::DocumentAlreadyRegistered(_) => true,
+            Error::ProviderUnavailable(_) => false,
+            _ => matches!(
+                self.provider
+                    .is_doc_registered(&owed.policy_id, &owed.resource_name, &owed.doc_id)
+                    .await,
+                Ok(true)
+            ),
+        }
+    }
+
+    /// The provider holds the object `owed` names: clear the record. One
+    /// `held` by the provider before this node registered it keeps its owner,
+    /// and a replica's registration yields to it.
+    pub(super) async fn registered(&self, owed: &PendingRegistration, held: bool) -> Result<()> {
         if held {
             self.yield_replica_if_held_elsewhere(owed).await?;
         }
@@ -121,6 +151,17 @@ where
         owed: &PendingRegistration,
         also: Option<&str>,
     ) -> Result<Arc<dyn DocumentACP>> {
+        self.registrar_from(owed, also)
+            .map(|(registrar, _)| registrar)
+    }
+
+    /// [`Self::registrar`], and whether it is the provider serving this
+    /// gate's request with that request's own bearer.
+    pub(super) fn registrar_from(
+        &self,
+        owed: &PendingRegistration,
+        also: Option<&str>,
+    ) -> Result<(Arc<dyn DocumentACP>, bool)> {
         let command = ProviderCommand::RegisterObject {
             policy_id: &owed.policy_id,
             resource: &owed.resource_name,
@@ -132,9 +173,18 @@ where
                 .command_authority(&owed.creator, command)
                 .is_ok()
         {
-            return Ok(Arc::clone(&self.provider));
+            return Ok((Arc::clone(&self.provider), true));
         }
         self.recorded_registrar(owed, also)
+            .map(|registrar| (registrar, false))
+    }
+
+    /// Whether the request this gate serves presents its bearer as bound to
+    /// one request, which names one command.
+    pub(super) fn serving_binds_one_request(&self) -> bool {
+        self.serving
+            .as_ref()
+            .is_some_and(defra_core::RequestContext::bearer_names_request)
     }
 
     /// Whether the request this gate serves carries a bearer for `actor`,

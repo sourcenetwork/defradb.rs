@@ -83,7 +83,7 @@ async fn a_remembered_decision_is_not_given_past_the_freshness_limit() {
         .expect("provider"),
     );
     let owner = provider.self_did().expect("actor DID");
-    let policy = provider.create_policy(POLICY).await.expect("policy");
+    let policy = provider.create_policy(POLICY, None).await.expect("policy");
     let delegation = provider
         .create_bearer_token(&owner)
         .await

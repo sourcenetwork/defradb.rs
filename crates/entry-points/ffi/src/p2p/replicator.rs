@@ -18,8 +18,7 @@ use crate::types::DefraResult;
 ///
 /// `collections` and `addresses` must be null or valid null-terminated
 /// strings.
-#[no_mangle]
-pub unsafe extern "C" fn defra_p2p_replicator_add(
+pub unsafe fn defra_p2p_replicator_add(
     node_ptr: usize,
     collections: *const c_char,
     addresses: *const c_char,
@@ -44,8 +43,7 @@ pub unsafe extern "C" fn defra_p2p_replicator_add(
 ///
 /// `collections`, `addresses` and `filters_json` must be null or valid
 /// null-terminated strings.
-#[no_mangle]
-pub unsafe extern "C" fn defra_p2p_replicator_add_with_filter(
+pub unsafe fn defra_p2p_replicator_add_with_filter(
     node_ptr: usize,
     collections: *const c_char,
     addresses: *const c_char,
@@ -91,8 +89,7 @@ unsafe fn parse_filters(
 /// # Safety
 ///
 /// `collections` and `id` must be null or valid null-terminated strings.
-#[no_mangle]
-pub unsafe extern "C" fn defra_p2p_replicator_delete(
+pub unsafe fn defra_p2p_replicator_delete(
     node_ptr: usize,
     collections: *const c_char,
     id: *const c_char,
@@ -111,8 +108,7 @@ pub unsafe extern "C" fn defra_p2p_replicator_delete(
 /// `RetryReplicators`: re-pushes the document blocks a replicator missed and
 /// regenerates and re-pushes their searchable-encryption artifacts. Admitted
 /// as `add-p2p-replicator`, since it does the pushing adding one starts.
-#[no_mangle]
-pub extern "C" fn defra_p2p_replicator_retry(node_ptr: usize, identity_ptr: usize) -> DefraResult {
+pub fn defra_p2p_replicator_retry(node_ptr: usize, identity_ptr: usize) -> DefraResult {
     ffi_entry! {
         ok(retry(node_ptr, identity_ptr))
     }
@@ -136,8 +132,7 @@ fn retry(node_ptr: usize, identity_ptr: usize) -> Result<(), DefraResult> {
 
 /// Answers with the node's replicators as a JSON array of Go's
 /// `client.Replicator`.
-#[no_mangle]
-pub extern "C" fn defra_p2p_replicator_list(node_ptr: usize, identity_ptr: usize) -> DefraResult {
+pub fn defra_p2p_replicator_list(node_ptr: usize, identity_ptr: usize) -> DefraResult {
     ffi_entry! {
         json(run(node_ptr, identity_ptr, NodePermission::P2pReplicatorList, None, |ops| async move {
             peer::list_replicators(&*ops).await

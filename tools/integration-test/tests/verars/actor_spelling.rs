@@ -57,7 +57,7 @@ async fn either_spelling_of_a_secp256k1_actor_is_one_vera_actor() {
         // The provider's actor is the node's key, under DefraDB's spelling.
         assert_eq!(provider.self_did().as_deref(), Some(owner.did.as_str()));
         let policy = provider
-            .create_policy(USER_ACP_POLICY)
+            .create_policy(USER_ACP_POLICY, None)
             .await
             .expect("policy");
         let token = provider

@@ -35,14 +35,64 @@ impl PolicyLookup for StorePolicies {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait RemotePolicies: MaybeSendSync {
     /// Create the YAML `policy` on the remote ACP for `creator`, a DID, and
-    /// return the ID the remote ACP gave it.
-    async fn add_policy(&self, creator: &str, policy: &str) -> Result<String, String>;
+    /// return the ID the remote ACP gave it. vera.rs derives the ID from the
+    /// definition, the creator and `nonce`; without one it draws its own.
+    /// Sent again with the same nonce, it returns the policy the first call
+    /// made and makes no second one.
+    async fn add_policy(
+        &self,
+        creator: &str,
+        policy: &str,
+        nonce: Option<crate::PolicyNonce>,
+    ) -> Result<String, String>;
 
     /// The remote ACP's policy `policy_id`; `Ok(None)` when it has none.
     async fn get_policy(&self, policy_id: &str) -> Result<Option<Policy>, String>;
 
     /// Where the node's light client of the remote ACP stands.
     fn light_client_status(&self) -> Result<LightClientStatus, String>;
+
+    async fn certified_assignments(
+        &self,
+        _query: &AssignmentQuery,
+    ) -> Result<CertifiedAssignments, AssignmentReadError> {
+        Err(AssignmentReadError::Unsupported)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum AssignmentReadError {
+    #[error("certified assignment discovery is not available")]
+    Unsupported,
+    #[error("certified assignment read is temporarily unavailable: {0}")]
+    Unavailable(String),
+    #[error("certified assignment read failed: {0}")]
+    Invalid(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AssignmentPosition {
+    pub term: u64,
+    pub height: u64,
+    pub block_hash: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct AssignmentQuery {
+    pub policy: String,
+    pub resource: String,
+    pub relation: String,
+    pub subject: String,
+    pub issuer: String,
+    pub not_before: Option<AssignmentPosition>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CertifiedAssignments {
+    pub object_ids: Vec<String>,
+    pub position: AssignmentPosition,
+    pub timestamp: u64,
+    pub module_state_root: String,
 }
 
 /// The state of a node's light client of its remote ACP.

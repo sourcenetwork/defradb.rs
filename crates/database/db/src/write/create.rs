@@ -312,6 +312,7 @@ where
         stores.systemstore,
         stores.datastore,
         collection,
+        doc,
         computed.doc_short_id,
         block_result,
     )

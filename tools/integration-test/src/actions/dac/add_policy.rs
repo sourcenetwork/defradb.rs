@@ -64,7 +64,7 @@ impl HttpRun for AddDACPolicy {
             let policy = action.policy.clone();
             state
                 .http_as(action.common.node(), identity, |client| async move {
-                    client.acp_add_policy(&policy).await
+                    client.acp_add_policy(&policy, None).await
                 })?
                 .map(|response| added(response.policy_id))
                 .map_err(|e| Failure::operation(e.to_string()))

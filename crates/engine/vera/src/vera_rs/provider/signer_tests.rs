@@ -22,6 +22,7 @@ use super::{
 use crate::vera_rs::client::tests::{Recorded, TRUSTED_KEY};
 use crate::vera_rs::client::VeraRsClient;
 use crate::vera_rs::did_spelling;
+use crate::vera_rs::receipt_wait::Fallback;
 use crate::vera_rs::signer::admission;
 use crate::vera_rs::signer::DelegationSigner as _;
 use vera_delegation::testing::{Recording, Returns};
@@ -57,6 +58,7 @@ pub(super) async fn provider(
             light_client: light_client.clone(),
             trusted: trusted_key(TRUSTED_KEY).expect("trusted key"),
             timeout: Duration::from_secs(5),
+            fallback: Arc::new(Fallback::new(Duration::from_millis(200))),
         },
         worker: worker.clone(),
         follow,
@@ -76,6 +78,7 @@ pub(super) async fn provider(
         trusted: trusted_key(TRUSTED_KEY).expect("trusted key"),
         signer,
         sync_timeout: Duration::from_secs(5),
+        receipt_fallback: Arc::new(Fallback::new(Duration::from_millis(200))),
         light_client_observability: Arc::new(AtomicU64::new(0)),
         _light_client_observer: edge.spawn_service(std::future::pending()),
         edge,
@@ -135,7 +138,7 @@ async fn the_provider_signs_its_delegations_through_its_signer() {
 
     // The node answers nothing, so creation stops at its submission, which
     // carries the token the signer signed.
-    let stopped = provider.create_policy("name: test").await;
+    let stopped = provider.create_policy("name: test", None).await;
     assert!(matches!(stopped, Err(ProviderError::Unavailable(_))));
     let (expected, claims) = signed(&signer);
     assert_eq!(submitted(&rpc), expected);
@@ -162,7 +165,7 @@ async fn a_signature_vera_rs_would_refuse_is_never_sent() {
 
         for refused in [
             provider.create_bearer_token(&actor).await.map(drop),
-            provider.create_policy("name: test").await.map(drop),
+            provider.create_policy("name: test", None).await.map(drop),
         ] {
             assert!(
                 matches!(&refused, Err(ProviderError::Config(said)) if said.contains(reason)),
