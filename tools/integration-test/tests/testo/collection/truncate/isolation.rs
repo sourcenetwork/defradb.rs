@@ -45,7 +45,9 @@ fn truncate_preserves_other_collections() {
     }
     actions.push(
         Request {
-            request: "query { Kept(filter: {name: {_eq: \"retained\"}}) { name } Filler124 { name } }".into(),
+            request:
+                "query { Kept(filter: {name: {_eq: \"retained\"}}) { name } Filler124 { name } }"
+                    .into(),
             expected_data: json!({ "Kept": [{ "name": "retained" }], "Filler124": [] }),
             ..Default::default()
         }

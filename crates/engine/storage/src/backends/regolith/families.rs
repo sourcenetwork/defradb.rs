@@ -156,7 +156,11 @@ static FAMILIES: [Family; 21] = [
     family(b"d/iplog/", &[], Class::Log),
     family(b"/iplog/", &[], Class::Log),
     // One index's entries, with and without the datastore namespace.
-    family(b"d/index/", &[Part::Uvarint, Part::Uvarint], Class::Ordinary),
+    family(
+        b"d/index/",
+        &[Part::Uvarint, Part::Uvarint],
+        Class::Ordinary,
+    ),
     family(b"/index/", &[Part::Uvarint, Part::Uvarint], Class::Ordinary),
     // One collection's field values of one instance (`keys::DataStoreKey`).
     family(b"d/", &[Part::Uvarint, Part::Uvarint], Class::Ordinary),
