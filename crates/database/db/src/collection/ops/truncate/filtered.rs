@@ -60,7 +60,7 @@ impl<S: Store> crate::database::DB<S> {
                     .map(|doc_id| document::DocID::from_string(doc_id))
                     .collect::<std::result::Result<Vec<_>, _>>()?;
                 let purged = db.purge_documents(txn, &collection, &doc_ids).await?;
-                Ok((purged, txn.clone()))
+                Ok(purged)
             })
         })
         .await
@@ -90,5 +90,7 @@ where
     let found = runner
         .matching_doc_ids(collection.name(), filter.clone(), limit, true)
         .await;
+    drop(runner);
+    txn.datastore()?.set_scans_validated(false);
     Ok(found?)
 }

@@ -60,16 +60,17 @@ EXTENDS Naturals, FiniteSets   \* numbers to compare, and Cardinality to count d
 
 CONSTANTS
   Docs,      \* the documents in the collection
-  Enforced   \* which checks and steps the database really runs (a subset of the eight)
+  Enforced   \* which checks and steps the database really runs (a subset of the nine)
 
 \* At least two documents, so a filter can match some and not others.
 ASSUME Cardinality(Docs) >= 2
-\* Only the five named checks, the view cache clear and the two search-record
-\* steps can be enforced: "seprefix" deletes the collection's `/se/` prefix on
-\* an unfiltered truncate, and "sesamespace" stores received records under
-\* that same datastore prefix rather than in the raw root store.
-ASSUME Enforced \subseteq {"nac", "chunk", "branchable", "txn", "shape", "viewcache",
-                            "seprefix", "sesamespace"}
+\* Only the five named checks, the filtered-page reread, the view cache clear
+\* and the two search-record steps can be enforced: "reread" chooses a filtered
+\* page's matches again just before purge, "seprefix" deletes the collection's
+\* `/se/` prefix on an unfiltered truncate, and "sesamespace" stores received
+\* records under that same datastore prefix rather than in the raw root store.
+ASSUME Enforced \subseteq {"nac", "chunk", "branchable", "txn", "shape", "reread",
+                            "viewcache", "seprefix", "sesamespace"}
 
 \* A document the node holds no copy of but received search records for.
 Unheld == {"unheld"}
@@ -82,6 +83,8 @@ VARIABLES
   inTxn,           \* the request runs inside an explicit transaction
   shapeOk,         \* the filter is a filter
   committedMatch,  \* the documents the filter matches in committed state
+  selectedMatch,   \* the documents the filtered page selected before the delete
+  currentMatch,    \* the documents the filter matches when the delete runs
   txnMatch,        \* the documents it matches in the transaction's own view
   step,            \* "check", then "delete", then "done"
   removed,         \* the documents this request removed
@@ -93,7 +96,7 @@ VARIABLES
 \* Every variable, for saying a step leaves them all as they are.
 vars == <<permitted, chunks, branchable, filtered, inTxn, shapeOk,
           committedMatch, txnMatch, step, removed, refused, isView, viewRows,
-          seRecords>>
+          selectedMatch, currentMatch, seRecords>>
 
 \* Every variable holds a value of the shape it should.
 TypeOK ==
@@ -104,6 +107,8 @@ TypeOK ==
   /\ inTxn \in BOOLEAN
   /\ shapeOk \in BOOLEAN
   /\ committedMatch \subseteq Docs
+  /\ selectedMatch \subseteq Docs
+  /\ currentMatch \subseteq Docs
   /\ txnMatch \subseteq Docs
   /\ step \in {"check", "delete", "done"}
   /\ removed \subseteq Docs
@@ -121,6 +126,8 @@ Init ==
   /\ inTxn \in BOOLEAN
   /\ shapeOk \in BOOLEAN
   /\ committedMatch \in SUBSET Docs
+  /\ selectedMatch = committedMatch
+  /\ currentMatch = committedMatch
   /\ txnMatch \in SUBSET Docs
   /\ step = "check"
   /\ removed = {}
@@ -151,7 +158,22 @@ Check ==
        THEN /\ refused' = TRUE /\ step' = "done"
        ELSE /\ refused' = refused /\ step' = "delete"
   /\ UNCHANGED <<permitted, chunks, branchable, filtered, inTxn, shapeOk,
-                 committedMatch, txnMatch, removed, isView, viewRows, seRecords>>
+                 committedMatch, selectedMatch, currentMatch, txnMatch, removed,
+                 isView, viewRows, seRecords>>
+
+\* A write lands after a filtered page selected its matches and before the
+\* purge runs. It can move documents across the filter; the page's selected
+\* set does not follow it. With the reread guard, the purge reads the filter's
+\* current matches again; without it, it keeps using the stale selection.
+MoveAfterSelection ==
+  /\ step = "delete"
+  /\ filtered
+  /\ committedMatch' \in SUBSET Docs
+  /\ committedMatch' # committedMatch
+  /\ currentMatch' = committedMatch'
+  /\ selectedMatch' = selectedMatch
+  /\ UNCHANGED <<permitted, chunks, branchable, filtered, inTxn, shapeOk,
+                 txnMatch, step, removed, refused, isView, viewRows, seRecords>>
 
 \* The documents the delete takes. Without a filter, all of them. A filter that
 \* is not one, let through, is read as no conditions and matches everything. A
@@ -161,7 +183,8 @@ Targets ==
   IF ~filtered THEN Docs
   ELSE IF ~shapeOk THEN Docs
   ELSE IF inTxn THEN txnMatch
-  ELSE committedMatch
+  ELSE IF "reread" \in Enforced THEN currentMatch
+  ELSE selectedMatch
 
 \* The delete: durable at once, outside any transaction. An unfiltered delete
 \* also clears the view cache when that step runs; left out, the cache keeps
@@ -178,10 +201,12 @@ Delete ==
                     THEN (IF "sesamespace" \in Enforced THEN {} ELSE seRecords \cap Unheld)
                     ELSE seRecords
   /\ UNCHANGED <<permitted, chunks, branchable, filtered, inTxn, shapeOk,
-                 committedMatch, txnMatch, refused, isView>>
+                 committedMatch, selectedMatch, currentMatch, txnMatch, refused,
+                 isView>>
 
-\* Each step of a request is one of the two.
-Next == Check \/ Delete
+\* Each step of a request is one of the two, with a concurrent write able to
+\* land between a filtered page's selection and its delete.
+Next == Check \/ MoveAfterSelection \/ Delete
 
 \* A finished request stays finished.
 Done == step = "done" /\ UNCHANGED vars
@@ -200,6 +225,10 @@ INV_FilteredNeverOnBranchable == (filtered /\ branchable) => removed = {}
 
 \* A filtered truncate removes only documents that match in committed state.
 INV_FilteredRemovesOnlyCommittedMatches == filtered => removed \subseteq committedMatch
+
+\* A filtered truncate removes only the documents the filter matches when the
+\* delete runs, not a page selected before a filter-moving write.
+INV_FilteredRemovesOnlyCurrentMatches == filtered => removed \subseteq currentMatch
 
 \* A filter that is not one removes nothing.
 INV_BadFilterRemovesNothing == (filtered /\ ~shapeOk) => removed = {}

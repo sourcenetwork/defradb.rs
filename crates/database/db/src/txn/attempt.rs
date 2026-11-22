@@ -56,7 +56,7 @@ where
 impl<S, F, T> RetryAttemptFn for DbAttemptWithTxn<S, F>
 where
     S: Store + 'static,
-    F: MaybeSend + for<'t> FnMut(&'t LentTxn<S>) -> MaybeBoxFuture<'t, Result<(T, LentTxn<S>)>>,
+    F: MaybeSend + for<'t> FnMut(&'t LentTxn<S>) -> MaybeBoxFuture<'t, Result<T>>,
     T: Send + 'static,
 {
     fn run<'a>(&'a mut self, retry: &'a mut dyn RetryTxn) -> RetryAttemptFuture<'a> {
@@ -65,11 +65,10 @@ where
             let txn: LentTxn<S> = Arc::new(self.db.new_db_txn(
                 datastore::BasicTxn::from_retry_attempt_io(io, 0, self.db.crdts().clone()),
             ));
-            let (value, attempt_txn) = (self.run)(&txn)
+            let value = (self.run)(&txn)
                 .await
                 .map_err(|error| RetryAttemptError::Abort(Box::new(error)))?;
-            drop(txn);
-            let txn = Arc::try_unwrap(attempt_txn).map_err(|_| {
+            let txn = Arc::try_unwrap(txn).map_err(|_| {
                 RetryAttemptError::Abort(Box::new(crate::Error::Other(
                     "an attempt transaction was still lent when its work ended".into(),
                 )))
@@ -111,13 +110,11 @@ where
     }
 
     /// Run `run` in an engine-retried transaction, lending that transaction
-    /// to the closure for reads. The closure returns it once every handle is
+    /// to the closure for reads. Once the closure returns, every handle is
     /// gone, so the engine can commit the attempt it read and wrote in.
     pub(crate) async fn transact_db_with_txn<T, F>(self: &Arc<Self>, run: F) -> Result<T>
     where
-        F: MaybeSend
-            + 'static
-            + for<'t> FnMut(&'t LentTxn<S>) -> MaybeBoxFuture<'t, Result<(T, LentTxn<S>)>>,
+        F: MaybeSend + 'static + for<'t> FnMut(&'t LentTxn<S>) -> MaybeBoxFuture<'t, Result<T>>,
         T: Send + 'static,
     {
         let attempt = DbAttemptWithTxn {
