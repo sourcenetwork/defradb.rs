@@ -2315,6 +2315,26 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // Removing a transform must not invert native documents.
+        family: "Schema-evolution operations in the core",
+        name: "INV_NativePreserved",
+        axis: Tla,
+        anchor: "crates/database/db/src/definition/migration/reindex/page.rs ReindexPage::walk",
+        model_ref: "MC_RemovedLensOrigin_{Green,Red_Inverse}.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/collection_version/updates/remove/col_source_transform.rs removing_transform_preserves_old_and_new_documents",
+    },
+    Property {
+        // Native and materialized documents can have identical stored values.
+        family: "Schema-evolution operations in the core",
+        name: "RemovedLensOrigin.inverse_changes_native / preserving_keeps_native / same_stored_value_different_origins",
+        axis: Lean,
+        anchor: "crates/database/db/src/definition/migration/reindex/page.rs ReindexPage::walk",
+        model_ref: "RemovedLensOrigin (lake build)",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/collection_version/updates/remove/col_source_transform.rs removing_transform_preserves_old_and_new_documents",
+    },
+    Property {
         // #2379: an index answers queries only while no reindex is owed;
         // schema changes and merges that store a document off the active
         // version across a lens owe a fresh record, and a rebuild clears only

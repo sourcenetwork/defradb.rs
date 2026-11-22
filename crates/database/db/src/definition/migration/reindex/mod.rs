@@ -78,22 +78,10 @@ where
     }
 
     /// Rebuild a collection's indexes for the reindex owed to it under `token`.
-    pub(super) async fn rebuild_settling(
-        &self,
-        collection_name: &str,
-        token: u64,
-        removed_transform: Option<String>,
-    ) -> Result<()> {
-        self.reindex_in_pages(
-            collection_name,
-            Some(token),
-            false,
-            None,
-            removed_transform,
-            false,
-        )
-        .await
-        .map(|_| ())
+    pub(super) async fn rebuild_settling(&self, collection_name: &str, token: u64) -> Result<()> {
+        self.reindex_in_pages(collection_name, Some(token), false, None, false)
+            .await
+            .map(|_| ())
     }
 
     /// Rebuild secondary indexes for a collection using lens-migrated documents.
@@ -105,7 +93,7 @@ where
         if self.get_collection(collection_name)?.is_none() {
             return Ok(());
         }
-        self.reindex_in_pages(collection_name, None, false, None, None, true)
+        self.reindex_in_pages(collection_name, None, false, None, true)
             .await
             .map(|_| ())
     }
@@ -116,7 +104,7 @@ where
         collection_name: &str,
         indexes: Vec<u32>,
     ) -> Result<()> {
-        self.reindex_in_pages(collection_name, None, false, Some(indexes), None, true)
+        self.reindex_in_pages(collection_name, None, false, Some(indexes), true)
             .await
             .map(|_| ())
     }
@@ -140,7 +128,7 @@ where
     ) -> Result<usize> {
         self.check_node_access_as(context, acp::nac::NodePermission::CollectionPatch)
             .await?;
-        self.reindex_in_pages(collection_name, None, true, None, None, true)
+        self.reindex_in_pages(collection_name, None, true, None, true)
             .await
     }
 
@@ -155,7 +143,6 @@ where
         settles: Option<u64>,
         restamp_identity: bool,
         indexes: Option<Vec<u32>>,
-        removed_transform: Option<String>,
         persist_migrations: bool,
     ) -> Result<usize> {
         let collection = self
@@ -184,7 +171,6 @@ where
                 indexes: indexes.clone(),
                 fence,
                 restamp_identity,
-                removed_transform: removed_transform.clone(),
                 persist_migrations,
                 lens_store: Arc::clone(&self.lens_store),
                 collections: Arc::clone(&self.collections),

@@ -229,6 +229,8 @@ Registering Lens WASM transforms and applying them so documents written at one v
 
 - **Parents:** ["go.collection_version.migrations"]
 - **Go-Tests:** ["collection_version/migrations/add_lens_test.go::TestAddLens_WithPatchCollection_TransformsDocuments", "collection_version/patch_migration_presence_test.go::TestCollectionVersionPatch_NoneMigration_NoTransformRecorded", "collection_version/patch_migration_presence_test.go::TestCollectionVersionPatch_SomeEmptyMigration_TransformRecorded", "collection_version/updates/replace/col_source_transform_test.go::TestColVersionUpdateReplaceCollectionSourceTransform", "collection_version/updates/remove/col_source_transform_test.go::TestColVersionUpdateRemoveCollectionSourceTransform"]
+
+Removing a source transform preserves documents created at the active version. A value already materialized through the removed transform is retained: its stored version alone does not distinguish it from a native document, and a lens need not be reversible.
 - **Scope:** "the remove-transform test is skipped under the secondary-index multiplier (which adds @index to every field) (Go issue #4722)"
 
 A patch may carry a Lens transform for the new version, which then transforms documents on read; a patch with no migration records no transform, while a present-but-empty lens records the empty lens's ID. A collection source's transform may be replaced or removed by patch, changing or dropping the migration applied on read.

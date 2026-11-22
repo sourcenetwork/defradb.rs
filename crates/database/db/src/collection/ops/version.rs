@@ -100,7 +100,6 @@ impl<S: Store> crate::database::DB<S> {
                 &self.collections,
                 &collection_id,
                 None,
-                None,
             )
             .await?;
 

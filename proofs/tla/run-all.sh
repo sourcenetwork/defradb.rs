@@ -11,6 +11,8 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 # event to the settled rest (depth = events + 1), and DEADLOCK:<l> stops with
 # event l next (past the end when l = events + 1).
 RUNS=(
+  "MC_RemovedLensOrigin_Green.cfg RemovedLensOrigin.tla GREEN"
+  "MC_RemovedLensOrigin_Red_Inverse.cfg RemovedLensOrigin.tla RED" # an inverse must not alter a native document
   "MC_DocumentUpdateJournal_Green.cfg DocumentUpdateJournal.tla GREEN"
   "MC_DocumentUpdateJournal_Green_Outside.cfg DocumentUpdateJournal.tla GREEN"
   "MC_DocumentUpdateJournal_Red_Detached.cfg DocumentUpdateJournal.tla RED"

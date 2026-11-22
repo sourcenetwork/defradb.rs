@@ -127,7 +127,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         if !across_lens {
             return Ok(false);
         }
-        owe_reindex(systemstore, &self.db.collections, collection_id, None, None)
+        owe_reindex(systemstore, &self.db.collections, collection_id, None)
             .await
             .map_err(MergeError::Database)?;
         Ok(true)

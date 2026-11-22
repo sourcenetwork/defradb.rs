@@ -99,7 +99,6 @@ impl<S: Store> crate::database::DB<S> {
                     &self.collections,
                     new_schema.collection_id.as_str(),
                     None,
-                    removed_transform.as_deref(),
                 )
                 .await?;
             }

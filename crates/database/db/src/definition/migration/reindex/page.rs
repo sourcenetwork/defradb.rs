@@ -18,11 +18,8 @@ use super::progress::{self, Stage};
 use crate::collection::epoch::EpochedCollections;
 use crate::collection::Collection;
 use crate::definition::lens::build_collection_history;
-use crate::definition::lens::doc_to_lens_doc;
 use crate::definition::loader::get_collections_by_collection_id;
-use crate::definition::migration::helpers::{
-    cache_migrated_document, lens_doc_to_document, migrate_to_active, ToActive,
-};
+use crate::definition::migration::helpers::{cache_migrated_document, migrate_to_active, ToActive};
 use crate::error::{Error, Result};
 use crate::index::manager::DocumentSource;
 use crate::index::pages::Page;
@@ -59,8 +56,6 @@ pub(super) struct ReindexPage {
     /// Also write transformed values back to the datastore. A patch settlement
     /// may index migrated values while leaving their source values for reads.
     pub(super) persist_migrations: bool,
-    /// The transform an in-place patch removed, if any.
-    pub(super) removed_transform: Option<String>,
     pub(super) lens_store: Arc<dyn TransformStore>,
     pub(super) collections: Arc<EpochedCollections>,
 }
@@ -271,17 +266,9 @@ impl ReindexPage {
                 continue;
             }
             last = doc_short_id;
-            let doc = match self.revert_removed_transform(&doc).await? {
-                Some(reverted) => {
-                    if cache_migrated_document(datastore, systemstore, collection, &reverted)
-                        .await?
-                    {
-                        materialized += 1;
-                    }
-                    reverted
-                }
-                None => doc,
-            };
+            // The active version alone cannot distinguish a document created
+            // there from one materialized through the removed transform.
+            // Reversing the transform would corrupt documents created there.
             let doc = match migrate_to_active(&doc, collection, &history, &self.lens_store).await? {
                 ToActive::Current => doc,
                 ToActive::Identity if self.restamp_identity => {
@@ -323,42 +310,6 @@ impl ReindexPage {
             last,
             exhausted: false,
         })
-    }
-}
-
-impl ReindexPage {
-    /// A transform removed from every stored version may have materialized its
-    /// output in an earlier reindex. Invert that one transform and move the
-    /// document behind the removed edge, so the rest of the walk reads the
-    /// source values again.
-    async fn revert_removed_transform(
-        &self,
-        doc: &document::Document,
-    ) -> Result<Option<document::Document>> {
-        let Some(version) = doc.collection_version_id() else {
-            return Ok(None);
-        };
-        if version != self.collection.version_id() {
-            return Ok(None);
-        }
-        let Some(previous) = self.collection.schema().previous_version.as_ref() else {
-            return Ok(None);
-        };
-        let Some(transform) = self.removed_transform.as_deref() else {
-            return Ok(None);
-        };
-        let transform_id = lens::TransformId::new(transform);
-        let Some(lens_doc) = doc_to_lens_doc(doc) else {
-            return Ok(None);
-        };
-        let reverted = self
-            .lens_store
-            .transform_doc(&transform_id, lens_doc, true)
-            .await
-            .map_err(|error| Error::Lens(error.to_string()))?;
-        let mut reverted = lens_doc_to_document(reverted, doc, &self.collection);
-        reverted.set_collection_version_id(previous.source_collection_id.clone());
-        Ok(Some(reverted))
     }
 }
 

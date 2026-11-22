@@ -234,7 +234,6 @@ impl<S: Store> DB<S> {
                     &self.collections,
                     &dst_col.collection_id,
                     Some(&dest_version_id),
-                    None,
                 )
                 .await?;
             }
@@ -493,7 +492,6 @@ impl<S: Store> DB<S> {
                     &self.collections,
                     &dst_col.collection_id,
                     Some(&dest_version_id),
-                    None,
                 )
                 .await?;
             }

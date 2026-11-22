@@ -44,10 +44,6 @@ pub(super) struct OwedReindex {
     /// The IDs of the indexes to rebuild; `None` for every index.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) indexes: Option<Vec<u32>>,
-    /// The transform an in-place patch removed, so a later reindex can invert
-    /// values it had already materialized.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) removed_transform: Option<String>,
 }
 
 fn owed_key(collection_id: &str) -> Vec<u8> {
@@ -85,7 +81,6 @@ pub(crate) async fn owe_reindex(
     collections: &Arc<EpochedCollections>,
     collection_id: &str,
     migration_destination: Option<&str>,
-    removed_transform: Option<&str>,
 ) -> Result<()> {
     write_owed(
         systemstore,
@@ -95,7 +90,6 @@ pub(crate) async fn owe_reindex(
             token: rand::random(),
             migration_destination: migration_destination.map(str::to_owned),
             indexes: None,
-            removed_transform: removed_transform.map(str::to_owned),
         },
     )
     .await
@@ -119,7 +113,6 @@ pub(super) async fn owe_full_reindex(
             token,
             migration_destination: None,
             indexes,
-            removed_transform: None,
         },
     )
     .await
@@ -293,10 +286,7 @@ where
             None => None,
         };
         match rebuild {
-            Some(name) => {
-                self.rebuild_settling(&name, owed.token, owed.removed_transform.clone())
-                    .await
-            }
+            Some(name) => self.rebuild_settling(&name, owed.token).await,
             None => {
                 let txn = self.new_txn(false).await?;
                 clear_owed_reindex(
