@@ -1,7 +1,7 @@
 use axum::http::header::CONTENT_TYPE;
 use axum::response::IntoResponse;
 
-const OPENAPI_JSON: &str = include_str!("openapi-go-307364d9d.json");
+const OPENAPI_JSON: &str = include_str!("openapi-go-89cc88cf5.json");
 
 /// GET /openapi.json
 pub async fn get() -> impl IntoResponse {
