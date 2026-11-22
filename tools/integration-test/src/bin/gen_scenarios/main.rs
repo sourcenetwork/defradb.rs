@@ -40,6 +40,7 @@ const HAND_PORTED: &[&str] = &[
     "tests/integration/collection_version/similarity_test.go",
     "tests/integration/acp/nac/add_nac_relationship_test.go",
     "tests/integration/acp/nac/delete_nac_relationship_test.go",
+    "tests/integration/net/simple/peer/subscribe/document/with_add_remove_test.go",
 ];
 
 #[derive(Default)]

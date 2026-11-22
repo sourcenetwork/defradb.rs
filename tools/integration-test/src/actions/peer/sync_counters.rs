@@ -8,6 +8,7 @@ use testo::prelude::*;
 
 /// Checks counters in a Rust node's `p2p status`: each counter named in
 /// `at_most` is no more than its limit, and each named in `at_least` no less.
+/// A name may use `/` to descend into a nested object.
 /// A counter named in `since` is checked as its rise past the value captured
 /// under that name by an earlier `SyncCounters` (the result is the whole
 /// status, so `capture` takes `/<counter>`). The node is read directly,
@@ -84,8 +85,9 @@ impl Op for SyncCounters {
 impl SyncCounters {
     /// `counter`'s value, less its captured baseline when `since` names one.
     fn counter(&self, state: &State, status: &Value, counter: &str) -> Result<u64, Failure> {
-        let value = status[counter]
-            .as_u64()
+        let value = status
+            .pointer(&format!("/{counter}"))
+            .and_then(Value::as_u64)
             .ok_or_else(|| Failure::operation(format!("status has no counter {counter}")))?;
         let Some(capture) = self.since.get(counter) else {
             return Ok(value);

@@ -192,11 +192,34 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             );
         }
 
-        // For patched versions, set previous_version to point to the head (previous version CID)
-        if let Some(heads) = &block.heads {
-            if let Some(head_cid) = heads.first() {
-                schema.previous_version = Some(CollectionSource::new(head_cid.to_string()));
-            }
+        // For patched versions, set previous_version to point to the head
+        // (previous version CID). A placeholder created by an earlier
+        // migration registration may name that same head and carry the
+        // transform between them; the incoming block does not, so keep the
+        // transform when the predecessor agrees.
+        if let Some(head_cid) = block
+            .heads
+            .as_ref()
+            .and_then(|heads| heads.first())
+            .map(|head| head.to_string())
+        {
+            let transform_for_head = |source: Option<&schema::CollectionSource>| {
+                source
+                    .filter(|source| source.source_collection_id == head_cid)
+                    .and_then(|source| source.transform.clone())
+            };
+            let placeholder_transform = self
+                .db
+                .get_collection_by_version_id_full(&version_id)
+                .await
+                .map_err(MergeError::Database)?
+                .filter(|existing| existing.schema().is_placeholder)
+                .and_then(|existing| {
+                    transform_for_head(existing.schema().previous_version.as_ref())
+                });
+            let mut source = CollectionSource::new(head_cid);
+            source.transform = placeholder_transform;
+            schema.previous_version = Some(source);
         }
 
         // Views (collections with a query_select) are non-materialized and carry query metadata.

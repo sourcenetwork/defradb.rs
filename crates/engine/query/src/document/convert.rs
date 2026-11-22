@@ -7,7 +7,7 @@ use crate::doc::{Doc, DocStatus};
 use crate::error::Result;
 use crate::json_convert::normal_value_to_json;
 
-use super::DocumentMapping;
+use crate::document::DocumentMapping;
 
 /// The reserved field name for document deletion status.
 pub const DELETED_FIELD_NAME: &str = "_deleted";
@@ -59,6 +59,14 @@ pub fn document_to_plan_doc_with_status(
     if let Some(index) = mapping.first_index_of_name("_docID") {
         if let Some(doc_id) = doc.id() {
             fields[index] = Some(JsonValue::String(doc_id.to_string()));
+        }
+    }
+    if let Some(doc_id) = doc.id() {
+        let missing_at_zero = mapping
+            .first_index_of_name("_docID")
+            .is_none_or(|index| index != 0);
+        if missing_at_zero && num_fields > 0 {
+            fields[0] = Some(JsonValue::String(doc_id.to_string()));
         }
     }
 
