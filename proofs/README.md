@@ -71,7 +71,8 @@ section is the **diff**: what is proven vs. the accepted gap.
 | DiskANN walk cutoff | Lean | db-index (vector) |
 | PQ distance four sums | Lean | db-index (vector) |
 | Query fragment nesting bound | Lean | query |
-| Float filter equality | Lean | query, storage |
+| Missing relation filters | TLA+ & Lean | query |
+| Float filter equality | TLA+ & Lean | query, storage |
 | Index-maintenance consistency | Lean + TLA+ | db-index, db-merge |
 | Concurrent collection-head transitions | TLA+ & Lean | db-block-builder, storage |
 | Commit-ordered document arrivals | TLA+ | db, storage (pinned regolith) |

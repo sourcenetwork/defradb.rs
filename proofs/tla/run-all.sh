@@ -11,6 +11,10 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 # event to the settled rest (depth = events + 1), and DEADLOCK:<l> stops with
 # event l next (past the end when l = events + 1).
 RUNS=(
+  "MC_MissingRelationFilter_Green.cfg MissingRelationFilter.tla GREEN"
+  "MC_MissingRelationFilter_Green_Match.cfg MissingRelationFilter.tla GREEN"
+  "MC_MissingRelationFilter_Red_NoId.cfg MissingRelationFilter.tla RED"
+  "MC_MissingRelationFilter_Red_Sibling.cfg MissingRelationFilter.tla RED"
   "MC_DocumentUpdateJournal_Green.cfg DocumentUpdateJournal.tla GREEN"
   "MC_DocumentUpdateJournal_Green_Outside.cfg DocumentUpdateJournal.tla GREEN"
   "MC_DocumentUpdateJournal_Red_Detached.cfg DocumentUpdateJournal.tla RED"
