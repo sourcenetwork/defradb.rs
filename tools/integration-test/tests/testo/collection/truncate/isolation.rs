@@ -1,9 +1,10 @@
-use integration_test::actions::{AddCollection, AddDoc, Request, Truncate};
+use integration_test::actions::{AddCollection, AddDoc, DeleteIndex, Request, Truncate};
 use integration_test::test_case::TestCase;
 use serde_json::json;
 
 #[test]
 #[mantra_macros::req_test("defra.collection.truncate_isolation")]
+#[mantra_macros::req_test("defra.index.keyspace_isolation")]
 fn truncate_preserves_other_collections() {
     let mut actions = vec![
         AddCollection {
@@ -35,6 +36,35 @@ fn truncate_preserves_other_collections() {
             }
             .into(),
         );
+        if n == 99 || n == 117 {
+            actions.push(
+                Request {
+                    request: format!(
+                        "query {{ {name}(filter: {{name: {{_eq: \"removed\"}}}}) {{ name }} }}"
+                    )
+                    .into(),
+                    expected_data: json!({ (name.clone()): [{"name": "removed"}] }),
+                    ..Default::default()
+                }
+                .into(),
+            );
+            actions.push(
+                DeleteIndex {
+                    collection: name.clone(),
+                    index_name: format!("{name}_name_ASC"),
+                    ..Default::default()
+                }
+                .into(),
+            );
+            actions.push(
+                Request {
+                    request: format!("query {{ Kept(filter: {{name: {{_eq: \"retained\"}}}}) {{ name }} {name} {{ name }} }}").into(),
+                    expected_data: json!({"Kept": [{"name": "retained"}], (name.clone()): [{"name": "removed"}]}),
+                    ..Default::default()
+                }
+                .into(),
+            );
+        }
         actions.push(
             Truncate {
                 collection: name,
