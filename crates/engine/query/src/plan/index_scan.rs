@@ -324,6 +324,22 @@ impl PlanNode for IndexScanNode {
             (None, residual) => residual.clone(),
         };
         obj.insert(
+            "indexName".to_string(),
+            serde_json::Value::String(self.index_params.index_name.clone()),
+        );
+        obj.insert(
+            "indexLimit".into(),
+            serde_json::json!(self.index_params.limit),
+        );
+        obj.insert(
+            "indexOffset".into(),
+            serde_json::json!(self.index_params.offset),
+        );
+        obj.insert(
+            "indexFetches".to_string(),
+            serde_json::json!(self.index_fetches),
+        );
+        obj.insert(
             "filter".to_string(),
             filter.map_or_else(
                 || serde_json::Value::Null,
@@ -505,6 +521,10 @@ mod tests {
                 "scanNode": {
                     "collectionName": "Person",
                     "collectionID": "v1",
+                    "indexName": "idx_test",
+                    "indexLimit": serde_json::Value::Null,
+                    "indexOffset": 0,
+                    "indexFetches": 0,
                     "filter": {"name": {"_like": "%vid%"}},
                     "prefixes": ["/2"],
                 }
@@ -552,7 +572,7 @@ mod tests {
     }
 
     #[test]
-    fn explain_keeps_metrics_out_of_plan_shape() {
+    fn explain_names_the_selected_index() {
         let mut collection = CollectionVersion::new("Person", "v1", "coll-person", vec![]);
         collection.root_id = 2;
         let node = make_index_scan_node_for(
@@ -564,8 +584,10 @@ mod tests {
         let explain = node.explain();
         assert_eq!(explain["scanNode"]["filter"], serde_json::Value::Null);
         assert_eq!(explain["scanNode"]["prefixes"], serde_json::json!(["/2"]));
-        assert!(explain["scanNode"].get("indexName").is_none());
-        assert!(explain["scanNode"].get("indexFetches").is_none());
+        assert_eq!(explain["scanNode"]["indexName"], "idx_test");
+        assert_eq!(explain["scanNode"]["indexLimit"], serde_json::Value::Null);
+        assert_eq!(explain["scanNode"]["indexOffset"], 0);
+        assert_eq!(explain["scanNode"]["indexFetches"], 0);
     }
 
     #[test]

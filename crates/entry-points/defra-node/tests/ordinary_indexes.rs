@@ -1,4 +1,5 @@
 use defra_node::Node;
+use query::explain_asserter::{ExpectedCount, ExplainAsserter};
 use schema::IndexedFieldDescription;
 
 #[test]
@@ -67,17 +68,6 @@ fn reconcile_indexes_preserves_documents_and_uses_completed_composite() {
     .unwrap()
 }
 
-fn scan_count(value: &serde_json::Value, name: &str) -> Option<u64> {
-    match value {
-        serde_json::Value::Object(fields) => fields
-            .get(name)
-            .and_then(|v| v.as_u64())
-            .or_else(|| fields.values().find_map(|v| scan_count(v, name))),
-        serde_json::Value::Array(values) => values.iter().find_map(|v| scan_count(v, name)),
-        _ => None,
-    }
-}
-
 #[test]
 fn ordered_index_stream_stops_after_passing_residual_rows() {
     workers::block_on(async {
@@ -124,11 +114,17 @@ fn ordered_index_stream_stops_after_passing_residual_rows() {
             .await;
         assert!(!explained.has_errors(), "{:?}", explained.errors);
         let plan = explained.data.unwrap();
-        let fetched = scan_count(&plan, "indexFetches").unwrap();
-        assert!(
-            (24..=25).contains(&fetched),
-            "must consume rejected rows, then stop: {plan}"
-        );
+        ExplainAsserter::new(&plan)
+            .path(&[
+                "explain",
+                "operationNode",
+                "0",
+                "selectTopNode",
+                "limitNode",
+                "selectNode",
+                "scanNode",
+            ])
+            .index_fetches(ExpectedCount::between(24, 25));
         node.shutdown().await.unwrap();
     })
     .unwrap()
@@ -177,8 +173,18 @@ fn ordered_prefix_sorts_only_the_boundary_tie_group() {
             .await;
         assert!(!explained.has_errors(), "{:?}", explained.errors);
         let plan = explained.data.unwrap();
-        let fetched = scan_count(&plan, "docFetches").unwrap();
-        assert!(fetched <= 6, "page must not materialize 122 rows: {plan}");
+        ExplainAsserter::new(&plan)
+            .path(&[
+                "explain",
+                "operationNode",
+                "0",
+                "selectTopNode",
+                "limitNode",
+                "orderNode",
+                "selectNode",
+                "scanNode",
+            ])
+            .doc_fetches(ExpectedCount::at_most(6));
     }
     node.shutdown().await.unwrap();
     })
@@ -219,10 +225,18 @@ fn partial_index_order_keeps_residual_filter_and_page_offset() {
         .await;
     assert!(!result.has_errors(), "{:?}", result.errors);
     let plan = result.data.unwrap();
-    assert!(
-        scan_count(&plan, "docFetches").unwrap() <= 8,
-        "must finish two matching tie groups: {plan}"
-    );
+    ExplainAsserter::new(&plan)
+        .path(&[
+            "explain",
+            "operationNode",
+            "0",
+            "selectTopNode",
+            "limitNode",
+            "orderNode",
+            "selectNode",
+            "scanNode",
+        ])
+        .doc_fetches(ExpectedCount::at_most(8));
     node.shutdown().await.unwrap();
     })
     .unwrap()

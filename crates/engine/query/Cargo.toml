@@ -10,6 +10,9 @@ repository.workspace = true
 [lib]
 bench = false
 
+[features]
+testing = []
+
 [dependencies]
 # Query deadlines on the worker pool's deadline queue.
 workers = { path = "../../foundation/workers" }
@@ -81,6 +84,7 @@ sha2 = { workspace = true, features = ["asm"] }
 
 [dev-dependencies]
 defra-core = { path = "../../foundation/defra-core", features = ["ambient"] }
+query = { path = ".", features = ["testing"] }
 
 [lints]
 workspace = true
