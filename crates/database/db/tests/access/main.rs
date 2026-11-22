@@ -8,6 +8,7 @@ mod dac_policy;
 mod enforcement;
 mod external_counts;
 mod external_drainer;
+mod external_genesis_reader;
 mod external_observation;
 mod external_observation_wait;
 mod external_outbox;

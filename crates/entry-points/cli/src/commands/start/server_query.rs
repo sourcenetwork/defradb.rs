@@ -76,8 +76,11 @@ impl Node {
             }
         }
 
-        if let Some(adapter) = &nac_adapter {
-            query_runner = query_runner.with_nac(adapter.clone() as Arc<dyn query::NacChecker>);
+        // Queries check the node's NAC once it is configured, by the flag or by
+        // a previous run: one a previous run enabled is enforced without the
+        // flag. A node never configured stays so for the run (no NAC routes).
+        if let Some(adapter) = nac_adapter {
+            query_runner = query_runner.with_nac(adapter as Arc<dyn query::NacChecker>);
         }
 
         if let Some(transport) = se_transport {

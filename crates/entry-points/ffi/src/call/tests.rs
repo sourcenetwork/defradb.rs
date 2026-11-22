@@ -120,6 +120,24 @@ fn a_synchronous_call_on_a_worker_is_refused() {
     );
 }
 
+#[test]
+fn a_pool_failure_reports_the_caller_sentence_without_task_details() {
+    assert_eq!(
+        unavailable(workers::Error::ShutDown),
+        "the node is shutting down; try again"
+    );
+
+    let panicked = unavailable(workers::Error::Panicked {
+        task: "C call",
+        message: "secret".into(),
+    });
+    assert_eq!(
+        panicked,
+        "the request failed on an internal error; see the node's log"
+    );
+    assert!(!panicked.contains("secret"));
+}
+
 /// An asynchronous call as the C FFI makes one: its admission detached, its
 /// task answering `reply` on the worker that ran it.
 fn call_async<M, Fut>(pool: &Pool, reply: Reply, make: M)
