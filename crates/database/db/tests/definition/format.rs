@@ -8,11 +8,8 @@
 //! orphaned their entries, and unique indexes stopped rejecting duplicates.
 
 use db::definition::migration::format::CURRENT_INDEX_FORMAT;
-use db::Error;
 use schema::{CollectionVersion, FieldDescription, FieldKind};
-use storage::corekv::{Key, Reader as _};
-use storage::keys::systemstore::CollectionKey;
-use storage::{RegolithStore, Store};
+use storage::RegolithStore;
 
 /// The marker byte every encoded time key starts with, per `encoding::mod`.
 const TIME_MARKER: u8 = 8;
@@ -97,10 +94,18 @@ fn simple_schema() -> CollectionVersion {
     )
 }
 
-/// Refuses the last index encoding before the keyspace tag rather than
-/// misreading its entries with the new layout.
+fn prefixed_index_format_key() -> Vec<u8> {
+    [
+        b"s".as_slice(),
+        db::definition::migration::format::INDEX_FORMAT_KEY,
+    ]
+    .concat()
+}
+
+/// Rebuilds an accepted older encoding and stamps it current, rather than
+/// leaving its entries in a layout this build cannot read directly.
 #[test]
-fn an_older_index_format_is_refused() {
+fn a_rebuildable_older_format_is_stamped_after_rebuild() {
     workers::block_on(async {
         let store = RegolithStore::in_memory().unwrap();
         let db = db::DB::open(store.clone()).await.expect("fresh open");
@@ -108,49 +113,26 @@ fn an_older_index_format_is_refused() {
         let txn = db.new_txn(false).await.expect("txn");
         txn.systemstore()
             .expect("systemstore")
-            .set(
-                db::definition::migration::format::INDEX_FORMAT_KEY,
-                &3u32.to_be_bytes(),
-            )
+            .set(&prefixed_index_format_key(), &3u32.to_be_bytes())
             .await
             .expect("stamp the older format");
         txn.commit().await.expect("commit");
         drop(db);
 
-        let schema_key = CollectionKey::new("tallies-collection").bytes();
-        let system_schema_key = [b"s".as_slice(), schema_key.as_slice()].concat();
-        let before = {
-            let txn = store.new_txn(true).await.expect("read before refusal");
-            let value = txn.get(&system_schema_key).await.expect("read the schema");
-            txn.discard();
-            value
-        };
-
-        let error = match db::DB::open(store.clone()).await {
-            Err(error) => error,
-            Ok(_) => panic!("older store refuses"),
-        };
-        let after = {
-            let txn = store.new_txn(true).await.expect("read after refusal");
-            let value = txn.get(&system_schema_key).await.expect("read the schema");
-            txn.discard();
-            value
-        };
-        assert_eq!(before, after, "a refusal must not rewrite the schema");
-        assert!(matches!(
-            error,
-            Error::UnsupportedIndexFormat {
-                stored: Some(3),
-                current: CURRENT_INDEX_FORMAT,
-            }
-        ));
+        let db = db::DB::open(store).await.expect("format 3 rebuilds");
+        assert_eq!(
+            db.stored_index_format().await.expect("read the stamp"),
+            Some(CURRENT_INDEX_FORMAT),
+            "the rebuilt store must report the layout this build wrote"
+        );
     })
     .unwrap()
 }
 
-/// A store with collections but no stamp predates the format marker itself.
+/// A store with collections but no stamp predates the format marker and is
+/// rebuilt, rather than refused.
 #[test]
-fn an_unstamped_store_with_collections_is_refused() {
+fn an_unstamped_store_with_collections_is_rebuilt() {
     workers::block_on(async {
         let store = RegolithStore::in_memory().unwrap();
         let db = db::DB::open(store.clone()).await.expect("fresh open");
@@ -158,23 +140,17 @@ fn an_unstamped_store_with_collections_is_refused() {
         let txn = db.new_txn(false).await.expect("txn");
         txn.systemstore()
             .expect("systemstore")
-            .delete(db::definition::migration::format::INDEX_FORMAT_KEY)
+            .delete(&prefixed_index_format_key())
             .await
             .expect("remove the stamp");
         txn.commit().await.expect("commit");
         drop(db);
 
-        let error = match db::DB::open(store).await {
-            Err(error) => error,
-            Ok(_) => panic!("old store refuses"),
-        };
-        assert!(matches!(
-            error,
-            Error::UnsupportedIndexFormat {
-                stored: None,
-                current: CURRENT_INDEX_FORMAT,
-            }
-        ));
+        let db = db::DB::open(store).await.expect("old store rebuilds");
+        assert_eq!(
+            db.stored_index_format().await.expect("read the stamp"),
+            Some(CURRENT_INDEX_FORMAT)
+        );
     })
     .unwrap()
 }

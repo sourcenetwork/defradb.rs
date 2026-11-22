@@ -116,7 +116,7 @@ const fn family(start: &'static [u8], entity: &'static [Part], class: Class) -> 
 /// stable as a key grows: a key still shorter than one of the longer starts
 /// falls to the shorter family, which names no entity in so few bytes (`b`
 /// names none, and `d/` needs six).
-static FAMILIES: [Family; 19] = [
+static FAMILIES: [Family; 20] = [
     // Block merge markers: decision keys, not blocks.
     family(b"bm", &[], Class::Ordinary),
     // Blocks, keyed by the CID of their bytes (`keys::BlockstoreKey`).
@@ -155,8 +155,9 @@ static FAMILIES: [Family; 19] = [
     // (`keys::index_pending_log`), with and without the namespace.
     family(b"d/iplog/", &[], Class::Log),
     family(b"/iplog/", &[], Class::Log),
-    // One index's entries (`keys::IndexDataStoreKey`), and one collection's
-    // field values of one instance (`keys::DataStoreKey`).
+    // One index's entries (`keys::IndexDataStoreKey`).
+    family(b"d/i/", &[Part::Uvarint, Part::Uvarint], Class::Ordinary),
+    // One collection's field values of one instance (`keys::DataStoreKey`).
     family(b"d/", &[Part::Uvarint, Part::Uvarint], Class::Ordinary),
     // One ACP object's relationship tuples, under their policy
     // (`zanzibar::Relationship::storage_key`), and in the earlier ACP store

@@ -17,6 +17,7 @@ mod json_array;
 mod json_composite;
 mod json_unique;
 mod json_unique_array;
+mod keyspace;
 mod list_actions;
 mod list_collection_name;
 mod merged_field {

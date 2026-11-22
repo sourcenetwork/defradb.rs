@@ -36,6 +36,13 @@ A counter field can be indexed. After local increments, or after two nodes incre
 
 An ordered query over an indexed field with `limit: 3, offset: 2` reads `limit + offset` index entries, returns exactly the page after skipping two, and leaves the query offset to the limit node so it is not applied twice. The same paging is correct when the ordered field is not indexed.
 
+# `defra.index.keyspace`: Collection short IDs cannot collide with another family
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["index::keyspace::a_tagged_index_keyspace_keeps_collections_separate"]
+
+Secondary-index keys begin with the fixed `/i/` family tag before the collection and index IDs. Even at short IDs `100` and `118`, whose untagged bytes would spell the document and version families, each collection's indexed query returns only its own row and its index scan stays within its own `/i/<collection>/<index>/` prefix.
+
 # `defra.collection`: Collection-wide operations
 
 - **Parents:** ["defra"]

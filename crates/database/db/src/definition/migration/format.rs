@@ -76,11 +76,7 @@ impl<S: Store> DB<S> {
         S: 'static,
     {
         let stored = self.stored_index_format().await?;
-        let has_collections = !self.get_all_active_collections_internal()?.is_empty();
-        let compatible = match stored {
-            Some(format) => format == CURRENT_INDEX_FORMAT,
-            None => !has_collections,
-        };
+        let compatible = stored.is_none_or(|format| format <= CURRENT_INDEX_FORMAT);
         if compatible {
             Ok(())
         } else {
@@ -91,16 +87,17 @@ impl<S: Store> DB<S> {
     /// Refuse secondary indexes written by an older encoding, and, at every
     /// open, rebuild the indexes kept the other way on an earlier start.
     ///
-    /// A store with no stamp is either brand new, where it has no collections,
-    /// or written before the stamp existed. The latter is refused, rather than
-    /// guessed at, because its key layout is incompatible.
+    /// A store with no stamp predates the stamp and is rebuilt to the current
+    /// layout. A store created by the current code is stamped in its first
+    /// collection transaction, so `None` cannot mean "created by this build
+    /// and not yet stamped".
     pub(crate) async fn migrate_index_format(&self) -> Result<()>
     where
         S: 'static,
     {
         let stored = self.stored_index_format().await?;
         self.check_index_format().await?;
-        if stored.is_some_and(|format| format >= 2) {
+        if stored.is_some_and(|format| format >= CURRENT_INDEX_FORMAT) {
             self.rebuild_indexes_kept_the_other_way().await?;
         } else {
             self.rebuild_every_index(stored).await?;

@@ -65,6 +65,8 @@ mod ops;
 mod owed;
 #[cfg(feature = "vera")]
 mod owed_drainer;
+#[cfg(test)]
+mod storage_open_tests;
 pub use ops::{EncryptedIndexListing, IndexListing};
 #[cfg(any(feature = "p2p", feature = "libp2p"))]
 mod p2p_runtime;

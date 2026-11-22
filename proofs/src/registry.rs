@@ -2926,12 +2926,12 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Index-maintenance consistency",
-        name: "INV_OpenCompatible / INV_RefusalReadOnly / INV_FreshStoreOpens — only the current index format opens (or a new empty store is stamped first), and a refusal writes nothing",
+        name: "INV_OpenCompatible / INV_RefusalReadOnly / INV_FreshStoreOpens / INV_RebuiltIsCurrent / INV_StampedAfterOpen — newer layouts are refused untouched, older and unstamped layouts rebuild and stamp, and a new empty store is stamped first",
         axis: Tla,
         anchor: "crates/database/db/src/definition/migration/format.rs CURRENT_INDEX_FORMAT, DB::stored_index_format, DB::migrate_index_format; crates/database/db/src/database/mod.rs DB::finish_open",
         model_ref: "MC_IndexFormatGuard_{Green,Red_AcceptOld,Red_AcceptUnstamped,Red_MutatesOnRefusal,Red_NoFreshStamp}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/database/db/tests/definition/format.rs an_older_index_format_is_refused, an_unstamped_store_with_collections_is_refused, a_fresh_store_opens_clean, a_collection_created_without_open_is_reopenable",
+        bound_by: "crates/database/db/tests/definition/format.rs a_rebuildable_older_format_is_stamped_after_rebuild, an_unstamped_store_with_collections_is_rebuilt, a_fresh_store_opens_clean, a_collection_created_without_open_is_reopenable",
     },
     Property {
         family: "Index-maintenance consistency",

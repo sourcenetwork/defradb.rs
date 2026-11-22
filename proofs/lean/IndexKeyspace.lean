@@ -92,7 +92,7 @@ def IndexKey.bytes (key : IndexKey) : List Byte :=
     ++ key.index.bytes
     ++ [47]
 
--- Two tagged index keys share a prefix only when they are the same key.
+-- A short ID's bytes are a prefix of another's only when they name the same ID.
 -- Prefixes compose: if `a` starts `b` and `b` starts `c`, `a` starts `c`.
 theorem prefix_trans {a b c : List Byte}
     (hab : IsPrefix a b) (hbc : IsPrefix b c) : IsPrefix a c := by
