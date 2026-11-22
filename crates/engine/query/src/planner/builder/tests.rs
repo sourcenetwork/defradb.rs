@@ -624,6 +624,37 @@ fn test_plan_relation_with_limit() {
     .unwrap()
 }
 
+// ========================================================================
+// Nested Relation Filter Tests
+// ========================================================================
+#[test]
+fn ordered_index_scan_reserves_offset_for_limit_node() {
+    workers::block_on(async {
+        let planner = Planner::new(vec![make_test_collection_with_index()]);
+        let collection = planner.collection("Users").unwrap();
+        let order = OrderBy::new().with_condition(OrderCondition::new("age", OrderDirection::Asc));
+        let select = Select::new("Users")
+            .with_field(Field::new("name"))
+            .with_order(order)
+            .with_limit_offset(3, 2);
+
+        let (params, provides_ordering) = planner.try_select_index(&select, collection).unwrap();
+
+        assert!(provides_ordering);
+        assert_eq!(params.limit, Some(5));
+        assert_eq!(params.offset, 0);
+    })
+    .unwrap()
+}
+
+fn find_index_scan(value: &serde_json::Value) -> Option<&serde_json::Value> {
+    if value.get("indexName").is_some() {
+        return Some(value);
+    }
+    value
+        .as_object()
+        .and_then(|object| object.values().find_map(find_index_scan))
+}
 #[test]
 fn test_plan_one_to_many_child_limit_does_not_bound_index_scan() {
     workers::block_on(async {
@@ -666,15 +697,6 @@ fn test_plan_one_to_many_child_limit_does_not_bound_index_scan() {
         assert_eq!(index_scan["indexOffset"], 0);
     })
     .unwrap()
-}
-
-fn find_index_scan(value: &serde_json::Value) -> Option<&serde_json::Value> {
-    if value.get("indexName").is_some() {
-        return Some(value);
-    }
-    value
-        .as_object()
-        .and_then(|object| object.values().find_map(find_index_scan))
 }
 
 // ========================================================================

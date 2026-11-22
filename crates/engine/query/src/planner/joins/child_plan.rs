@@ -8,7 +8,6 @@ use crate::document::DocumentMapping;
 use crate::error::{QueryError, Result};
 use crate::mapper::{Filter, OrderBy, OrderCondition, Requestable, Select};
 use crate::plan::{IndexScanNode, ScanNode};
-use crate::planner::index_selection::can_be_ordered_by_index;
 use crate::planner::PlanNode;
 
 use super::super::builder::Planner;
@@ -291,14 +290,12 @@ impl Planner {
                 )
             };
         let child_uses_index = child_index_result.is_some();
-        // A filter-only index can service the scan without ordering it. Only an
-        // index that orders the child's page may stop that page before a sort.
-        let child_scan_provides_order = combined_child_order.as_ref().is_some_and(|order| {
-            target_collection
-                .indexes
-                .iter()
-                .any(|index| can_be_ordered_by_index(order, index).0)
-        });
+        // A filter-only index can service the scan without ordering it. Only the
+        // selected index that orders the child's page may stop that page before
+        // a sort.
+        let child_scan_provides_order = child_index_result
+            .as_ref()
+            .is_some_and(|(_, provides_ordering)| *provides_ordering);
         // Create the child scan plan with scan_mapping (includes FK fields for joins)
         let child_plan: Box<dyn PlanNode> = if let Some((params, _)) = child_index_result {
             let mut index_scan = IndexScanNode::new(

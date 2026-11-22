@@ -204,6 +204,127 @@ fn query_one_to_many_with_single_child_limit() {
 
 #[test]
 #[mantra_macros::req_test("go.query.one_to_many.child-order-paging")]
+fn query_one_to_many_with_child_limit_keeps_a_two_parent_page() {
+    TestCase {
+        id: integration_test::scenario_id!(),
+        actions: vec![
+            AddCollection {
+                sdl: r#"
+                    type Book {
+                        name: String @index
+                        rating: Int @index
+                        author: Author
+                    }
+
+                    type Author {
+                        name: String
+                        published: [Book]
+                    }
+                "#
+                .into(),
+                ..Default::default()
+            }
+            .into(),
+            AddDoc {
+                collection: "Author".into(),
+                doc_map: Some(json!({ "name": "John" })),
+                common: Common {
+                    capture: captures([("john", "/docID")]),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            AddDoc {
+                collection: "Author".into(),
+                doc_map: Some(json!({ "name": "Amy" })),
+                common: Common {
+                    capture: captures([("amy", "/docID")]),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            AddDoc {
+                collection: "Book".into(),
+                doc_map: Some(json!({
+                    "name": "z",
+                    "rating": 1,
+                    "_authorID": m::r("john")
+                })),
+                ..Default::default()
+            }
+            .into(),
+            AddDoc {
+                collection: "Book".into(),
+                doc_map: Some(json!({
+                    "name": "a",
+                    "rating": 2,
+                    "_authorID": m::r("john")
+                })),
+                ..Default::default()
+            }
+            .into(),
+            AddDoc {
+                collection: "Book".into(),
+                doc_map: Some(json!({
+                    "name": "m",
+                    "rating": 3,
+                    "_authorID": m::r("amy")
+                })),
+                ..Default::default()
+            }
+            .into(),
+            AddDoc {
+                collection: "Book".into(),
+                doc_map: Some(json!({
+                    "name": "n",
+                    "rating": 4,
+                    "_authorID": m::r("amy")
+                })),
+                ..Default::default()
+            }
+            .into(),
+            Request {
+                request: r#"
+                    query {
+                        Author {
+                            name
+                            published(limit: 1) {
+                                name
+                            }
+                        }
+                    }
+                "#
+                .into(),
+                expected_data: json!({
+                    "Author": [
+                        {
+                            "name": "John",
+                            "published": [{ "name": "z" }],
+                        },
+                        {
+                            "name": "Amy",
+                            "published": [{ "name": "m" }],
+                        },
+                    ],
+                }),
+                common: Common {
+                    compare: Some(true),
+                    unordered_documents: vec!["/data/Author".into()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+        ],
+        ..Default::default()
+    }
+    .execute();
+}
+
+#[test]
+#[mantra_macros::req_test("go.query.one_to_many.child-order-paging")]
 fn query_one_to_many_with_child_limit_keeps_a_filtered_child_order() {
     TestCase {
         id: integration_test::scenario_id!(),
