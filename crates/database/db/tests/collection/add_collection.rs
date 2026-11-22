@@ -58,6 +58,24 @@ fn one_invalid_type_creates_nothing() {
 }
 
 #[test]
+fn invalid_schema_keeps_its_error_context() {
+    workers::block_on(async {
+        let db = new_db();
+        let err = db
+            .add_collection(&RequestContext::default(), "type User { _docID: String }")
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            err.to_string(),
+            "schema error: duplicate field. Name: _docID"
+        );
+        assert!(db.list_collections().unwrap().is_empty());
+    })
+    .unwrap()
+}
+
+#[test]
 fn caller_without_collection_patch_is_denied() {
     workers::block_on(async {
         let db = new_db();

@@ -15,12 +15,12 @@ mod child_mapping;
 mod child_plan;
 mod filter_only;
 mod filter_relation;
-#[cfg(test)]
-mod indexed_side_execution_tests;
 mod join_many;
 mod join_one;
 mod mapping;
 mod multi_level;
+#[cfg(test)]
+mod relation_filter_execution_tests;
 mod relation_paths;
 #[cfg(test)]
 mod relation_paths_tests;

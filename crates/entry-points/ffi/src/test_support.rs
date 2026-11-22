@@ -177,3 +177,59 @@ impl Named {
         }
     }
 }
+
+/// Registers a remote identity through `defra_identity_new_remote_sized`,
+/// with its public key as hex and the synchronous `sign`.
+pub(crate) fn register_remote_hex(
+    did: *const std::ffi::c_char,
+    public_key_hex: *const std::ffi::c_char,
+    key_type: *const std::ffi::c_char,
+    signer_handle: usize,
+    sign: crate::remote_signer::DefraRemoteSignCallback,
+) -> crate::types::DefraNewIdentityResult {
+    register_remote(
+        crate::api::identity::DefraRemoteIdentityOptions {
+            key_type,
+            public_key_hex,
+            public_key: ptr::null(),
+            public_key_len: 0,
+            signer_handle,
+            sign: Some(sign),
+            sign_async: None,
+        },
+        did,
+    )
+}
+
+/// Registers a remote identity through `defra_identity_new_remote_sized`,
+/// with its public key as bytes and a synchronous or asynchronous signer.
+pub(crate) fn register_remote_bytes(
+    did: *const std::ffi::c_char,
+    public_key: *const u8,
+    public_key_len: usize,
+    key_type: *const std::ffi::c_char,
+    signer_handle: usize,
+    sign: Option<crate::remote_signer::DefraRemoteSignCallback>,
+    sign_async: Option<crate::remote_signer::DefraRemoteSignAsyncCallback>,
+) -> crate::types::DefraNewIdentityResult {
+    register_remote(
+        crate::api::identity::DefraRemoteIdentityOptions {
+            key_type,
+            public_key_hex: ptr::null(),
+            public_key,
+            public_key_len,
+            signer_handle,
+            sign,
+            sign_async,
+        },
+        did,
+    )
+}
+
+fn register_remote(
+    options: crate::api::identity::DefraRemoteIdentityOptions,
+    did: *const std::ffi::c_char,
+) -> crate::types::DefraNewIdentityResult {
+    let size = std::mem::size_of_val(&options) as u32;
+    unsafe { crate::api::identity::defra_identity_new_remote_sized(did, &options, size) }
+}

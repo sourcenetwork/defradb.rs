@@ -294,6 +294,38 @@ fn create_index_backfills_more_documents_than_a_batch_holds() {
 }
 
 #[test]
+fn create_index_honors_a_smaller_backfill_batch() {
+    workers::block_on(async {
+        let total = 4;
+        let options = db::database::DbOptions::new().with_backfill_batch_docs(2);
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let db = Arc::new(DB::from_arc_with_options(store, options).unwrap());
+        db.create_collection(users_schema("Batched", "batched-v1", "col-index-batched"))
+            .await
+            .unwrap();
+        let mutator = AutoCommitMutator::new(db.clone());
+        for i in 0..total {
+            create_user(&mutator, "Batched", &format!("user-{i}")).await;
+        }
+
+        let (fields, kind) = by_name();
+        let index = db
+            .create_index("Batched", Some("by_name"), fields, kind)
+            .await
+            .unwrap();
+
+        assert_eq!(index_entries(&db, "Batched", index.id).await, total);
+        assert!(!db
+            .list_index_actions("col-index-batched")
+            .await
+            .unwrap()
+            .contains_key(&index.id));
+        assert!(!progress_recorded(&db, "col-index-batched", index.id).await);
+    })
+    .unwrap()
+}
+
+#[test]
 fn create_index_commits_schema_and_publishes_cache() {
     workers::block_on(async {
         let (_store, db) = open_with_collection("Guarded", "guarded-v1", "col-index-guard").await;

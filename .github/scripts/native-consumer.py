@@ -98,6 +98,9 @@ UNIT_NAMES = (
     "provider::owed_request::tests::a_recorded_hash_names_the_request_and_bytes_alone_do_not",
     "provider::owed_request::tests::without_a_hash_the_bytes_name_the_request",
     "provider::reach::tests::a_transport_failure_is_told_from_an_answer",
+    "provider::registration_list::tests::a_list_beyond_what_vera_rs_applies_at_once_is_not_built",
+    "provider::registration_list::tests::a_list_carries_each_registration_in_order_under_one_token",
+    "provider::registration_list::tests::a_policy_identifier_that_names_no_policy_is_a_query_error_as_alone",
     "provider::signer_tests::a_signature_vera_rs_would_refuse_is_never_sent",
     "provider::signer_tests::the_drainer_sends_nothing_while_the_provider_is_not_admitted",
     "provider::signer_tests::the_provider_signs_its_delegations_through_its_signer",
@@ -123,6 +126,9 @@ UNIT_NAMES = (
     "provider::verified::tests::late_and_overtaken_answers_are_counted_apart",
     "provider_commands::request_bearer_tests::a_remote_identity_acts_with_the_token_its_request_carries",
     "provider_commands::request_bearer_tests::the_node_holds_a_registered_local_key_and_not_a_request_token",
+    "receipt_wait::tests::a_header_verified_while_the_request_is_sent_still_ends_the_wait",
+    "receipt_wait::tests::a_receipt_is_asked_for_at_the_next_verified_height_and_not_after_a_sleep",
+    "receipt_wait::tests::with_no_header_each_wait_ends_at_its_fallback_and_an_unheard_send_is_sent_again",
     "worker::tests::pending_request_and_identity_survive_reopen",
 )
 UNIT_TESTS = tuple("vera_rs::" + name for name in UNIT_NAMES)

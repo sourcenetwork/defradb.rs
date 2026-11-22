@@ -20,8 +20,7 @@ use crate::{ffi_async_ok, ffi_entry, try_ffi};
 /// # Safety
 ///
 /// Every non-null string in `opts` must be a valid null-terminated string.
-#[no_mangle]
-pub unsafe extern "C" fn defra_collection_truncate(
+pub unsafe fn defra_collection_truncate(
     node_ptr: usize,
     opts: CollectionOptions,
     identity_ptr: usize,
@@ -40,8 +39,7 @@ pub unsafe extern "C" fn defra_collection_truncate(
 ///
 /// `filter_json` must be null or a valid null-terminated string; every
 /// non-null string in `opts` must be one too.
-#[no_mangle]
-pub unsafe extern "C" fn defra_collection_truncate_with_filter(
+pub unsafe fn defra_collection_truncate_with_filter(
     node_ptr: usize,
     opts: CollectionOptions,
     identity_ptr: usize,

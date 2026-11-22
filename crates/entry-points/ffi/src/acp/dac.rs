@@ -85,8 +85,7 @@ pub(crate) async fn resolve_managing_relations(
 /// # Safety
 ///
 /// `policy` must be null or a valid null-terminated string.
-#[no_mangle]
-pub unsafe extern "C" fn defra_acp_dac_policy_add(
+pub unsafe fn defra_acp_dac_policy_add(
     node_ptr: usize,
     identity_ptr: usize,
     policy: *const c_char,
@@ -131,8 +130,7 @@ pub unsafe extern "C" fn defra_acp_dac_policy_add(
 /// # Safety
 ///
 /// Every string must be null or a valid null-terminated string.
-#[no_mangle]
-pub unsafe extern "C" fn defra_acp_dac_relationship_add(
+pub unsafe fn defra_acp_dac_relationship_add(
     node_ptr: usize,
     identity_ptr: usize,
     collection: *const c_char,
@@ -278,8 +276,7 @@ pub unsafe extern "C" fn defra_acp_dac_relationship_add(
 /// # Safety
 ///
 /// Every string must be null or a valid null-terminated string.
-#[no_mangle]
-pub unsafe extern "C" fn defra_acp_dac_relationship_delete(
+pub unsafe fn defra_acp_dac_relationship_delete(
     node_ptr: usize,
     identity_ptr: usize,
     collection: *const c_char,

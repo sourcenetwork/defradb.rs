@@ -12,8 +12,7 @@ use crate::types::DefraResult;
 
 /// Starts (or restarts) collecting the blocks the identity `identity_ptr`
 /// names (0 for the node's) signs.
-#[no_mangle]
-pub extern "C" fn defra_batch_start(node_ptr: usize, identity_ptr: usize) -> DefraResult {
+pub fn defra_batch_start(node_ptr: usize, identity_ptr: usize) -> DefraResult {
     ffi_entry! {
         let _rt = try_ffi!(get_rt());
         let node = try_ffi!(resolve_target_node(node_ptr));
@@ -46,8 +45,7 @@ pub extern "C" fn defra_batch_start(node_ptr: usize, identity_ptr: usize) -> Def
 /// Returns JSON with fields: sig_type, identity, value (hex), merkle_root (hex), cid_count.
 ///
 /// The identity is the one `defra_batch_start` was given.
-#[no_mangle]
-pub extern "C" fn defra_batch_sign(node_ptr: usize, identity_ptr: usize) -> DefraResult {
+pub fn defra_batch_sign(node_ptr: usize, identity_ptr: usize) -> DefraResult {
     ffi_entry! {
         let _rt = try_ffi!(get_rt());
         let node = try_ffi!(resolve_target_node(node_ptr));
