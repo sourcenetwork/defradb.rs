@@ -56,6 +56,6 @@ pub enum ReplicationResult {
     ChannelClosed,
     /// Poll-based DAG fetch started for a known source peer
     DagFetchStarted { root_cid: Cid },
-    /// Bitswap fetch started for missing blocks
+    /// Block-sync fetch started for missing blocks
     BitswapFetchStarted { root_cid: Cid, query_id: QueryId },
 }
