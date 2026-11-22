@@ -1063,6 +1063,9 @@ RUNS=(
   "MC_PushBacklog_Green_SharedCap.cfg MC_PushBacklog_Common.tla GREEN" # F24 with 3 workers, cap 2: several probes per unreachable peer, a reply mid-probe -> the shared cap still leaves a worker
   "MC_PushBacklog_Red_TwoDead.cfg MC_PushBacklog_Common.tla RED" # F24, code before the fix: a timeout frees the worker and nothing else, two dead peers take the pool back (INV_UnreachableLeaveAWorker)
   "MC_PushBacklog_Red_DemoteEveryTimeout.cfg MC_PushBacklog_Common.tla RED" # F24 review: every timeout demotes the queue, a peer that answers its next send loses it (ACT_DemoteAfterFailedProbe)
+  "MC_PushBacklog_Red_OfflineQueue.cfg MC_PushBacklog_Common.tla RED" # review: an offline probe drops the peer's queue (ACT_OfflineParkKeepsQueue)
+  "MC_PushBacklog_Green_OfflineDenied.cfg MC_PushBacklog_Common.tla GREEN" # review: a denied offline admission fails without parking (ACT_OfflineDenialFails)
+  "MC_PushBacklog_Red_OfflineAdmission.cfg MC_PushBacklog_Common.tla RED" # review: a denied offline admission parks anyway (ACT_OfflineDenialFails)
   "MC_PushBacklog_Red_SpawnPerItem.cfg MC_PushBacklog_Common.tla RED" # old broadcast: task spawned per (write,peer) before the semaphore -> resident work unbounded (INV_QueueBounded)
   "MC_PushBacklog_Red_PermitLeak.cfg MC_PushBacklog_Common.tla RED" # completing job keeps its worker slot -> pool decays (INV_PermitConservation)
   "MC_PushBacklog_Red_RetainHandles.cfg MC_PushBacklog_Common.tla RED" # SyncShutdownHandle retains every completed JoinHandle (INV_HandlesBounded)
