@@ -48,7 +48,7 @@ An ordered query over an indexed field with `limit: 3, offset: 2` reads `limit +
 - **Parents:** ["defra.index"]
 - **Scenarios:** ["index::keyspace::a_tagged_index_keyspace_keeps_collections_separate"]
 
-Secondary-index keys begin with the fixed `/i/` family tag before the collection and index IDs. Even at short IDs `100` and `118`, whose untagged bytes would spell the document and version families, each collection's indexed query returns only its own row and its index scan stays within its own `/i/<collection>/<index>/` prefix.
+Secondary-index keys begin with the fixed `/index/` family tag before the collection and index IDs. Even at short IDs `100` and `118`, whose untagged bytes would spell the document and version families, each collection's indexed query returns only its own row and its index scan stays within its own `/index/<collection>/<index>/` prefix.
 
 # `defra.collection`: Collection-wide operations
 
