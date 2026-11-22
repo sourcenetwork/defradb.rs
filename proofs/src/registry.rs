@@ -2232,10 +2232,10 @@ pub const PROPERTIES: &[Property] = &[
         // restored on start, as in Go, and receives no pushes until it has a
         // collection (#2702).
         family: "B3 filtered replication",
-        name: "INV_ListedAsAdded / INV_NoPushOutsideCollections: a replicator with no collections is listed and pushed nothing",
+        name: "INV_ListedAsAdded / INV_NoPushOutsideCollections / INV_FilterRetained: empty and filtered replicators remain listed",
         axis: Tla,
         anchor: "crates/database/p2p/src/bitswap/registry.rs store_info, ReplicatorRegistry::load_from_infos, remove_peer_collections; crates/database/p2p/src/sync/coordinator/broadcast.rs replicator_in_collection",
-        model_ref: "MC_ReplicatorEmptyCollections_{Green,Red_DropOnStore,Red_DropOnLoad,Red_EmptyMeansAll}.cfg",
+        model_ref: "MC_ReplicatorEmptyCollections_{Green,Red_DropOnStore,Red_DropOnLoad,Red_EmptyMeansAll,Red_DropFilters}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },
@@ -2244,7 +2244,7 @@ pub const PROPERTIES: &[Property] = &[
         // one with no collections included; an empty entry grants nothing and
         // is picked for no collection's pushes.
         family: "B3 filtered replication",
-        name: "ReplicatorEmptyCollections.stored_is_listed / restart_lists_every_record / empty_grants_nothing / empty_gets_no_push / push_only_to_members",
+        name: "ReplicatorEmptyCollections.stored_is_listed / restart_lists_every_record / empty_grants_nothing / empty_gets_no_push / push_only_to_members / filtered_only_is_retained / nothing_remaining_is_removed",
         axis: Lean,
         anchor: "crates/database/p2p/src/bitswap/registry.rs store_info, ReplicatorRegistry::load_from_infos, ReplicatorRegistry::is_any_replicator; crates/database/p2p/src/sync/coordinator/broadcast.rs replicator_in_collection",
         model_ref: "ReplicatorEmptyCollections (lake build)",

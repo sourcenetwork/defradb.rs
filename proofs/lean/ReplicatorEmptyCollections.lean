@@ -21,6 +21,8 @@ crates/database/p2p/src/sync/coordinator/broadcast.rs `replicator_in_collection`
 
 namespace ReplicatorEmptyCollections
 
+-- The listing model below abstracts away filters. The removal rule with
+-- filters is modeled separately at the end of this file.
 -- One persisted replicator record: a peer and the collections it replicates.
 structure Info where
   -- The peer's ID.
@@ -121,5 +123,18 @@ theorem old_store_loses_empty (reg : Registry) (p : Nat) :
 -- The old push rule sends every collection's writes to a peer with none.
 theorem old_push_sends_everything (c : Nat) : inCollectionOld [] c = true := by
   simp [inCollectionOld]
+
+-- A remaining collection or filter keeps the peer after removals.
+def keepAfterRemoval (collections filters : List Nat) : Bool :=
+  !collections.isEmpty || !filters.isEmpty
+
+-- A filtered-only peer remains listed even when no collection remains.
+theorem filtered_only_is_retained (filter : Nat) (others : List Nat) :
+    keepAfterRemoval [] (filter :: others) = true := by
+  simp [keepAfterRemoval]
+
+-- A peer with no remaining collections or filters can be removed.
+theorem nothing_remaining_is_removed : keepAfterRemoval [] [] = false := by
+  rfl
 
 end ReplicatorEmptyCollections

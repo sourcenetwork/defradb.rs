@@ -207,14 +207,16 @@ fn an_and_of_filters_pushes_documents_matching_every_one() {
 #[test]
 #[mantra_macros::req_test("defra.replicator_filter.restart")]
 fn a_restarted_replicator_keeps_its_filter() {
-    case(
-        integration_test::scenario_id!(),
-        persisted_nodes()
+    TestCase {
+        id: integration_test::scenario_id!(),
+        client_types: Some(&[ClientType::InProcess, ClientType::RustHttp, ClientType::Cli]),
+        actions: persisted_nodes()
             .into_iter()
             .chain(vec![
                 replicator(json!({ "agent_did": { "_in": ["did:a", "did:b"] } }), None),
                 doc("did:c", "x"),
                 doc("did:a", "x"),
+                db1_holds(json!([{ "agent_did": "did:a", "kind": "x" }])),
                 Restart {
                     stop: true,
                     common: on("db0"),
@@ -249,14 +251,18 @@ fn a_restarted_replicator_keeps_its_filter() {
                     ..Default::default()
                 }
                 .into(),
+                doc("did:c", "y"),
                 doc("did:b", "x"),
                 db1_holds(json!([
                     { "agent_did": "did:a", "kind": "x" },
                     { "agent_did": "did:b", "kind": "x" },
                 ])),
             ])
+            .map(Into::into)
             .collect(),
-    );
+        ..Default::default()
+    }
+    .execute();
 }
 
 #[test]
