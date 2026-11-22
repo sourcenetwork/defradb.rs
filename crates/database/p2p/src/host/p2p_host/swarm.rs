@@ -61,7 +61,9 @@ impl<S: Store> P2PHost<S> {
                 );
 
                 let mut superseded = false;
-                if self.explicitly_disconnected.contains(&peer_id) && endpoint.is_listener() {
+                if self.swarm.behaviour().disconnect_gate.contains(&peer_id)
+                    && endpoint.is_listener()
+                {
                     debug!(
                         peer_id = %peer_id,
                         connection_id = %connection_id,
@@ -113,7 +115,7 @@ impl<S: Store> P2PHost<S> {
                 // peers to the routing table until protocol negotiation
                 // completes (async). We add the address now so the initial or
                 // periodic bootstrap has at least one peer to query.
-                if !self.explicitly_disconnected.contains(&peer_id) {
+                if !self.swarm.behaviour().disconnect_gate.contains(&peer_id) {
                     self.swarm
                         .behaviour_mut()
                         .kademlia
@@ -135,6 +137,7 @@ impl<S: Store> P2PHost<S> {
                 );
                 debug!(peer_id = %peer_id, "Bitswap protocol pre-announce complete");
 
+                self.announced_peers.insert(peer_id);
                 if !self.forward_event(HostEvent::PeerConnected(peer_id)).await {
                     warn!(peer_id = %peer_id, "Failed to send PeerConnected event - receiver dropped");
                 }
@@ -333,9 +336,10 @@ impl<S: Store> P2PHost<S> {
         {
             let _ = response.send(Ok(()));
         }
-        if !self
-            .forward_event(HostEvent::PeerDisconnected(peer_id))
-            .await
+        if self.announced_peers.remove(&peer_id)
+            && !self
+                .forward_event(HostEvent::PeerDisconnected(peer_id))
+                .await
         {
             warn!(peer_id = %peer_id, "Failed to send PeerDisconnected event - receiver dropped");
         }
@@ -376,6 +380,7 @@ mod tests {
         let (mut host, _handle, mut events, _registry) =
             P2PHost::new(store, edge::testing::edge()).await.unwrap();
         let peer = PeerId::random();
+        host.announced_peers.insert(peer);
 
         // One of two connections closes; one remains (num_established == 1).
         host.handle_connection_closed(peer, ConnectionId::new_unchecked(1), 1)
@@ -392,5 +397,16 @@ mod tests {
             saw_disconnect(&drain(&mut events), peer),
             "PeerDisconnected must fire once the last connection closes"
         );
+    }
+
+    #[nuclei::test]
+    async fn refused_connection_does_not_emit_a_disconnect() {
+        let store = MockBitswapStore::new();
+        let (mut host, _handle, mut events, _registry) =
+            P2PHost::new(store, edge::testing::edge()).await.unwrap();
+        let peer = PeerId::random();
+        host.handle_connection_closed(peer, ConnectionId::new_unchecked(1), 0)
+            .await;
+        assert!(!saw_disconnect(&drain(&mut events), peer));
     }
 }

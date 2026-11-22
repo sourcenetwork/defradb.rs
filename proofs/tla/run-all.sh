@@ -11,6 +11,10 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 # event to the settled rest (depth = events + 1), and DEADLOCK:<l> stops with
 # event l next (past the end when l = events + 1).
 RUNS=(
+  "MC_GenericDisconnectDial_Green.cfg GenericDisconnectDial.tla GREEN"
+  "MC_GenericDisconnectDial_Red_Clear.cfg GenericDisconnectDial.tla RED" # generic dial must not clear the marker
+  "MC_PeerDisconnectEvents_Green.cfg PeerDisconnectEvents.tla GREEN"
+  "MC_PeerDisconnectEvents_Red_Unannounced.cfg PeerDisconnectEvents.tla RED" # unannounced close stays silent
   "MC_DocumentUpdateJournal_Green.cfg DocumentUpdateJournal.tla GREEN"
   "MC_DocumentUpdateJournal_Green_Outside.cfg DocumentUpdateJournal.tla GREEN"
   "MC_DocumentUpdateJournal_Red_Detached.cfg DocumentUpdateJournal.tla RED"
@@ -396,9 +400,7 @@ RUNS=(
   "MC_PeerDisconnect_Green.cfg PeerDisconnect.tla GREEN" # Disconnect answers only once the peer's last connection closed
   "MC_PeerDisconnect_Red_EarlyAck.cfg PeerDisconnect.tla RED" # answering before the closes (INV_AnsweredMeansClosed)
   "MC_ExplicitDisconnect_Green_Libp2p.cfg ExplicitDisconnect.tla GREEN" # Kademlia excludes a deliberately disconnected peer
-  "MC_ExplicitDisconnect_Green_Vinc.cfg ExplicitDisconnect.tla GREEN" # an in-flight list does not redial after a deliberate close
   "MC_ExplicitDisconnect_Red_Libp2p.cfg ExplicitDisconnect.tla RED" # Kademlia ignores the marker (INV_NoRedialAfterDeliberateClose)
-  "MC_ExplicitDisconnect_Red_Vinc.cfg ExplicitDisconnect.tla RED" # an exchange dial ignores the marker (INV_NoRedialAfterDeliberateClose)
   "MC_ExplicitDisconnect_Red_Inbound.cfg ExplicitDisconnect.tla RED" # libp2p accepts a marked inbound dial (INV_MarkedInboundRefused)
   "MC_SchemaPublication_Green.cfg SchemaPublication.tla GREEN"
   "MC_SchemaPublication_Red_EarlyReply.cfg SchemaPublication.tla RED"

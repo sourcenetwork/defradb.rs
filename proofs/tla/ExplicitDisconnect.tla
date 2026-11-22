@@ -5,20 +5,20 @@
 \* after one peer deliberately disconnects from another. Discovery may then
 \* look at that list, but it must not redial a peer that this node put on its
 \* explicit-disconnect list. Only this node's own explicit dial undoes that
-\* marker. Vinc can distinguish an explicit inbound dial; libp2p cannot, so a
-\* marked inbound connection is refused there until the local peer redials.
+\* marker. A marked inbound libp2p connection is refused until the local
+\* peer redials.
 \*
 \* The state bound keeps one marker, one in-flight list, and one outstanding
 \* dial. That is enough for the race while keeping TLC under its time budget;
 \* the invariant is quantified over every peer pair.
 \*
 \* The Rust code this models:
-\*   - the explicit-disconnect marker            crates/database/p2p/src/host/p2p_host/mod.rs explicitly_disconnected
+\*   - the explicit-disconnect marker            crates/database/p2p/src/behaviour/disconnect_gate.rs DisconnectGate
 \*   - discovery excluding marked peers          crates/database/p2p/src/host/p2p_host/mod.rs run_kademlia_bootstrap
-\*   - generic dials keeping the marker          crates/database/p2p/src/host/command_handler/network.rs handle_dial
+\*   - background dials checking the marker       crates/database/p2p/src/host/command_handler/network.rs handle_dial
 \*   - explicit dials clearing the marker        crates/database/p2p/src/host/command_handler/network.rs handle_explicit_dial
 \*   - replicator registration clearing it       crates/database/p2p/src/host/command_handler/mod.rs handle_command/CreateReplicator
-\*   - inbound connections staying usable        crates/database/p2p/src/host/p2p_host/swarm.rs handle_swarm_event/ConnectionEstablished
+\*   - marked inbound connections being refused crates/database/p2p/src/host/p2p_host/swarm.rs handle_swarm_event/ConnectionEstablished
 
 EXTENDS Naturals, FiniteSets
 
@@ -64,9 +64,11 @@ Init ==
 ExplicitConnect(a, b) ==
   /\ a # b
   /\ ~Linked(a, b)
-  /\ links' = links \cup {<<a, b>>, <<b, a>>}
   /\ markers' = markers \ {<<a, b>>}
-  /\ known' = [known EXCEPT ![a] = known[a] \cup {b}, ![b] = known[b] \cup {a}]
+  /\ IF Half = "Libp2p" /\ Marked(b, a)
+       THEN /\ UNCHANGED <<links, known>>
+       ELSE /\ links' = links \cup {<<a, b>>, <<b, a>>}
+            /\ known' = [known EXCEPT ![a] = known[a] \cup {b}, ![b] = known[b] \cup {a}]
   /\ UNCHANGED <<pendingLists, backgroundDials, remoteDials>>
 
 \* The remote peer explicitly dials in. The local marker stays: accepting the

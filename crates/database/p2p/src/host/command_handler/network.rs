@@ -55,7 +55,13 @@ impl<S: Store> P2PHost<S> {
         addrs: Vec<Multiaddr>,
         response: crate::rt::oneshot::Sender<Result<()>>,
     ) {
-        let result = self.dial_peer(peer_id, addrs);
+        let result = if self.swarm.behaviour().disconnect_gate.contains(&peer_id) {
+            Err(Error::Dial(format!(
+                "peer {peer_id} was explicitly disconnected"
+            )))
+        } else {
+            self.dial_peer(peer_id, addrs)
+        };
         if response.send(result).is_err() {
             debug!(peer_id = %peer_id, "Dial command response dropped - caller cancelled");
         }
@@ -67,7 +73,7 @@ impl<S: Store> P2PHost<S> {
         addrs: Vec<Multiaddr>,
         response: crate::rt::oneshot::Sender<Result<()>>,
     ) {
-        self.explicitly_disconnected.remove(&peer_id);
+        self.swarm.behaviour_mut().disconnect_gate.unblock(&peer_id);
         let result = self.dial_peer(peer_id, addrs);
         if response.send(result).is_err() {
             debug!(peer_id = %peer_id, "Explicit dial command response dropped - caller cancelled");
@@ -81,7 +87,7 @@ impl<S: Store> P2PHost<S> {
     ) {
         self.peer_addrs.remove(&peer_id);
         self.swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
-        self.explicitly_disconnected.insert(peer_id);
+        self.swarm.behaviour_mut().disconnect_gate.block(peer_id);
         // `disconnect_peer_id` returns `Err(())` when the peer is not connected.
         // Disconnect is idempotent: hanging up on an absent peer is success.
         if self.swarm.disconnect_peer_id(peer_id).is_ok() {

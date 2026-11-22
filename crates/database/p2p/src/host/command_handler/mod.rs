@@ -209,7 +209,7 @@ impl<S: Store> P2PHost<S> {
                 info,
                 response,
             } => {
-                self.explicitly_disconnected.remove(&peer_id);
+                self.swarm.behaviour_mut().disconnect_gate.unblock(&peer_id);
                 self.handle_create_replicator(peer_id, info, response);
             }
             HostCommand::DeleteReplicator { peer_id, response } => {

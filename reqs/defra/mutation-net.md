@@ -225,6 +225,14 @@ Disconnecting from one or several connected peers leaves the active peer list em
 
 Listing P2P collections returns nothing until some are added, then exactly the added collection IDs; removing one leaves only the rest.
 
+# `defra.net.peers.sticky_disconnect`: Explicit disconnect blocks background reconnect
+
+- **Parents:** ["go.net.peers.disconnect"]
+- **Scenarios:** ["net::info::disconnect_reconnect::a_replicator_retry_does_not_redial_a_disconnected_peer"]
+
+After an explicit disconnect, background retries and incoming connections do not reconnect that peer until an explicit local dial clears the disconnect marker.
+A refused connection that was never announced does not emit a peer-disconnected event.
+
 # `defra.replicator_filter`: A replicator that pushes only matching documents
 
 - **Parents:** ["defra"]
