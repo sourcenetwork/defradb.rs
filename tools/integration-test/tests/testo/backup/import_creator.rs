@@ -73,8 +73,17 @@ fn an_anonymous_import_is_owned_as_an_anonymous_create() {
             }
             .into(),
             // Who owns an anonymous create depends on the client; the import
-            // must land with the same owner, so another identity sees both
-            // documents or neither.
+            // must land with the same owner. The anonymous caller sees both,
+            // so each is its own or public, and another identity sees both
+            // or neither, so they are not one of each.
+            Request {
+                request: "query { Users { name } }".into(),
+                expected_data: json!({
+                    "Users": m::unordered(json!([{ "name": "Created" }, { "name": "Imported" }])),
+                }),
+                ..Default::default()
+            }
+            .into(),
             Request {
                 request: "query { Users { name } }".into(),
                 expected_data: json!({

@@ -34,6 +34,9 @@ Rust anchors: `crates/database/db/src/backup/import.rs` `import_database_as`,
 `crates/database/db/src/backup/batch.rs` `Batch::must_save_before`;
 `crates/entry-points/defra-node/src/ops/backup.rs` `NodeHost`;
 `crates/surfaces/http/src/request_path.rs` `Server`;
+`crates/entry-points/cli/src/commands/start/server_query.rs`
+`setup_query_runner`; `crates/engine/query/src/runner/mod.rs`
+`QueryRunner::resolve_identity`;
 `crates/entry-points/ffi/src/backup/import.rs` `FfiHost`;
 `crates/entry-points/defra-node/src/lib.rs` `execute_prepared_request`.
 -/
@@ -54,13 +57,18 @@ inductive Edge where
   | ffi
   deriving DecidableEq
 
-/-- The node a request lands on: whether it signs with its identity, and the
-number standing for that identity (and its key). -/
+/-- The node a request lands on: whether it signs with its identity, the
+number standing for that identity (and its key), and the identity
+`defradb start` was given when its document ACP is local, which its runner
+acts as for a request that names none (`setup_query_runner`,
+`with_default_identity`). -/
 structure NodeSetup where
   -- TRUE when the node signs with its identity
   signs : Bool
   -- the node identity's number
   id : Nat
+  -- `defradb start`'s own identity for anonymous requests, or none
+  cliDefault : Option Nat
 
 /-- A write's request as an edge builds it: the identity it names, and the
 write's own signing choice (`enableSigning`). -/
@@ -73,13 +81,16 @@ structure Request where
 
 /-- Who request `r` acts as on edge `e`: the Node fills in its own identity
 for a request that names none when it signs with it
-(`with_default_query_identity`); every other edge acts as the identity the
-request names. -/
+(`with_default_query_identity`); `defradb start`'s runner fills in the
+identity it was given (`QueryRunner::resolve_identity`); every other edge
+acts as the identity the request names. -/
 def actor (n : NodeSetup) (e : Edge) (r : Request) : Option Nat :=
   -- look at the edge
   match e with
   -- the Node: the request's identity, else the node's when it signs
   | .node => if n.signs then (r.identity <|> some n.id) else r.identity
+  -- `defradb start`: the request's identity, else the one it was given
+  | .httpCliStart => r.identity <|> n.cliDefault
   -- any other edge: the request's identity
   | _ => r.identity
 
@@ -138,17 +149,29 @@ theorem creator_law (n : NodeSetup) (e : Edge) (c : Option Nat) :
   -- the owner is the actor, and the actor law holds
   simp [creator, actor_law]
 
-/-- The HTTP case: through either HTTP server an anonymous import acts as no
-one, as an anonymous create through it does, and a named one as its caller. -/
-theorem http_actor_is_the_caller (n : NodeSetup) (c : Option Nat)
-    (e : Edge) (h : e = .httpNodeBuilder ∨ e = .httpCliStart) :
-    actor n e (importRequest c) = c := by
-  -- split on which HTTP server it is
-  cases h with
-  -- the NodeBuilder's: the request's identity
-  | inl h => subst h; rfl
-  -- `defradb start`'s: the request's identity
-  | inr h => subst h; rfl
+/-- The NodeBuilder's HTTP server: an anonymous import acts as no one, as an
+anonymous create through it does, and a named one as its caller. -/
+theorem http_actor_is_the_caller (n : NodeSetup) (c : Option Nat) :
+    actor n .httpNodeBuilder (importRequest c) = c := by
+  -- the request's identity, unchanged
+  rfl
+
+/-- `defradb start`'s HTTP server: a named import acts as its caller, and an
+anonymous one as the identity the server was given (none when it has none
+or its ACP is remote), as an anonymous create through it does. -/
+theorem cli_start_actor_falls_back_to_its_identity (n : NodeSetup)
+    (c : Option Nat) :
+    actor n .httpCliStart (importRequest c) = (c <|> n.cliDefault) := by
+  -- the request's identity, else the server's own
+  rfl
+
+/-- So on a `defradb start` given identity `d`, an anonymous import is owned
+by `d`, exactly as an anonymous create there is. -/
+theorem cli_start_anonymous_import_owned_by_its_identity (s : Bool) (i d : Nat) :
+    creator ⟨s, i, some d⟩ .httpCliStart (importRequest none) = some d ∧
+      creator ⟨s, i, some d⟩ .httpCliStart (createRequest none) = some d := by
+  -- both sides compute to d
+  exact ⟨rfl, rfl⟩
 
 /-- On a signing node an import signs with the caller's key when it names
 one, and with the node's when it is anonymous. -/
@@ -169,7 +192,7 @@ def oldNodeImportActor (c : Option Nat) : Option Nat :=
 /-- RED witness: on a signing Node, an anonymous create was owned by the
 node while main's anonymous import was owned by no one. -/
 theorem old_anonymous_import_owned_by_no_one :
-    creator ⟨true, 7⟩ .node (createRequest none) = some 7 ∧
+    creator ⟨true, 7, none⟩ .node (createRequest none) = some 7 ∧
       oldNodeImportActor none = none := by
   -- both sides compute to concrete values
   exact ⟨rfl, rfl⟩

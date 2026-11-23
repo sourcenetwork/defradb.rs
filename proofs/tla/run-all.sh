@@ -1408,6 +1408,8 @@ RUNS=(
   "MC_BackupImportWritePath_Red_RegistrationAllOrNothing.cfg BackupImportWritePath.tla RED" # one taken ID leaves its batch-mates without theirs (INV_SavedRegistered)
   "MC_BackupImportWritePath_Red_PrepareOnPool.cfg BackupImportWritePath.tla RED" # the driver runs on a database worker (INV_DriverOnCaller)
   "MC_BackupImportWritePath_Red_FfiTxnAccepted.cfg BackupImportWritePath.tla RED" # the FFI import runs in a transaction handle (INV_FfiTxnRefused)
+  "MC_BackupImportWritePath_Red_ContentCollisionDropped.cfg BackupImportWritePath.tla RED" # a batch the create refuses for a taken ID loses the documents before it (INV_KeepsPrefix)
+  "MC_BackupImportWritePath_Red_ImportRouteOnPool.cfg BackupImportWritePath.tla RED" # the HTTP import route runs its driver on a database worker (INV_DriverOnCaller)
 )
 
 parallelism="${TLA_JOBS:-4}"

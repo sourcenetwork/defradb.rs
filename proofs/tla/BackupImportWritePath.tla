@@ -73,18 +73,25 @@
 \*   * FlushOnPendingAlias: a batch is saved before a document whose alias
 \*     it holds joins it (Red_BatchSkipsPendingAlias);
 \*   * OneByOneOnRefusal: a refused batch is saved again one document at a
-\*     time (Red_RefusedBatchDropped);
+\*     time (Red_RefusedBatchDropped refuses it at the alias check,
+\*     Red_ContentCollisionDropped at the create, with no alias in the file);
 \*   * RegisterEachOnRefusal: a registration refused by one taken alias
 \*     registers every other document's alias on its own
 \*     (Red_RegistrationAllOrNothing);
 \*   * RequireNode: the FFI refuses a transaction handle (Red_FfiTxnAccepted).
 \*
-\* What is abstracted: a document is its alias; relation fields are left out
-\* (a batch is also saved before a document whose relation points into it,
-\* so the target's new ID is known, which changes no alias rule); a create
-\* is refused only by a held alias or by shutdown; one import per run; the
-\* edge, the caller, whether the node signs and the FFI target are picked at
-\* the start; the drain's deadline is not modelled (past it the database
+\*   * ImportRouteOnEdge: both HTTP servers leave the import route on the
+\*     network edge, off the worker pool (Red_ImportRouteOnPool).
+\*
+\* What is abstracted: a document is its alias, or no alias, and its content;
+\* relation fields are left out (a batch is also saved before a document
+\* whose relation points into it, so the target's new ID is known, which
+\* changes no alias rule); a create is refused by a held alias, by a
+\* document whose content (and so whose new ID) a saved document or an
+\* earlier one of the same create already has, or by shutdown; one import
+\* per run; the edge, the caller, whether the node signs, whether
+\* `defradb start` has an identity of its own for an anonymous request and
+\* the FFI target are picked at the start; the drain's deadline is not modelled (past it the database
 \* closes under any request still running, the import's as any other's);
 \* only the Node edge's admission and its caller stopping are modelled.
 \*
@@ -101,6 +108,9 @@
 \* crates/entry-points/defra-node/src/ops/http_ops.rs HttpNodeOps::import;
 \* crates/surfaces/http/src/handlers/backup.rs import;
 \* crates/surfaces/http/src/request_path.rs Server;
+\* crates/surfaces/http/src/pool_layer.rs runs_on_pool, ON_EDGE;
+\* crates/entry-points/cli/src/commands/start/server_query.rs
+\* setup_query_runner (with_default_identity);
 \* crates/entry-points/cli/src/backup_adapter.rs BackupAdapter::import;
 \* crates/entry-points/ffi/src/backup/import.rs defra_backup_import, FfiHost.
 EXTENDS Naturals, Sequences, FiniteSets
@@ -120,12 +130,24 @@ CONSTANTS
   FlushOnPendingAlias, \* TRUE: a batch is saved before a document whose alias it holds
   OneByOneOnRefusal,   \* TRUE: a refused batch is saved again one document at a time
   RegisterEachOnRefusal, \* TRUE: a refused registration is redone one document at a time
-  RequireNode          \* TRUE: the FFI import refuses a transaction handle
+  RequireNode,         \* TRUE: the FFI import refuses a transaction handle
+  ImportRouteOnEdge    \* TRUE: the HTTP servers run the import route off the pool
 
-\* The backup files a run may import, each a sequence of aliases: one alias
-\* twice, one alias the other writer may claim, and the alias the store
-\* holds first and then last.
-Files == {<<"a", "a">>, <<"a", "c">>, <<"p", "b">>, <<"b", "p">>}
+\* The mark of a document the file gives no ID of its own.
+NoAlias == "-"
+\* A document of a file: its alias (or NoAlias) and its content.
+D(a, c) == [al |-> a, ct |-> c]
+\* The files with no document sharing content: one alias twice, one alias
+\* the other writer may claim, and the alias the store holds first and then
+\* last.
+AliasFiles == {<<D("a", "1"), D("a", "2")>>, <<D("a", "1"), D("c", "2")>>,
+               <<D("p", "1"), D("b", "2")>>, <<D("b", "1"), D("p", "2")>>}
+\* The file of two documents with no ID and the same content, so the same
+\* new ID: the second is refused by the create itself, no alias involved
+\* (testo backup/failed_import.rs's two Johns).
+ContentFiles == {<<D(NoAlias, "j"), D(NoAlias, "j")>>}
+\* The backup files a run may import.
+Files == AliasFiles \cup ContentFiles
 \* The aliases the store holds before the import.
 Preexisting == {"p"}
 \* The alias the other writer may claim.
@@ -143,7 +165,8 @@ VARIABLES
   edge,       \* the edge the import came through
   caller,     \* who imports
   signs,      \* TRUE when the node signs with its identity
-  target,     \* the FFI call's target: "node" or "txn"
+  cliDefault, \* TRUE when `defradb start` was given an identity and its ACP is local
+  target,    \* the FFI call's target: "node" or "txn"
   file,       \* the file being imported
   phase,      \* "start", "run", "done", "failed" or "dropped"
   driverOn,   \* where the driver runs: "caller" or "worker"
@@ -161,12 +184,19 @@ VARIABLES
   failedAt    \* the document a failed import stopped at, or 0
 
 \* Every variable, for stuttering steps.
-vars == <<edge, caller, signs, target, file, phase, driverOn, next, batch,
+vars == <<edge, caller, signs, cliDefault, target, file, phase, driverOn, next, batch,
           unit, rest, single, stage, store, committed, admitting, drained,
           claimed, failedAt>>
 
-\* Every alias any file or the store may name.
-Aliases == UNION {{f[i] : i \in DOMAIN f} : f \in Files} \cup Preexisting \cup {Contested}
+\* Every alias any file or the store may name (a document with no alias
+\* names none).
+Aliases == (UNION {{f[i].al : i \in DOMAIN f} : f \in Files} \ {NoAlias})
+             \cup Preexisting \cup {Contested}
+
+\* The alias of document `d` of the file being imported, or NoAlias.
+AliasOf(d) == file[d].al
+\* The content of document `d`, which decides its new ID.
+ContentOf(d) == file[d].ct
 
 \* The request path an import write runs through on edge `e`.
 HostOf(e) ==
@@ -188,13 +218,17 @@ CreateSigner(c, s) ==
   ELSE c
 
 \* Who owns a create sent through edge `e` by caller `c`: the caller when it
-\* names one; an anonymous create on a signing Node acts as the node; an
-\* anonymous create anywhere else is owned by no one.
+\* names one; an anonymous create on a signing Node acts as the node; one
+\* through `defradb start`'s server acts as the identity that server was
+\* given, when it has one and its ACP is local (its runner's default
+\* identity); an anonymous create anywhere else is owned by no one.
 CreateCreator(e, c, s) ==
   \* a named caller owns what it creates
   IF c # "anon" THEN c
   \* the Node fills in its own identity for an anonymous request
   ELSE IF e = "Node" /\ s THEN "node"
+  \* `defradb start`'s runner fills in the identity it was started with
+  ELSE IF e = "HttpCliStart" /\ cliDefault THEN "configured"
   \* elsewhere an anonymous create is owned by no one
   ELSE "none"
 
@@ -240,8 +274,10 @@ TypeOK ==
 
 \* The run's start.
 Init ==
-  \* any edge, caller, signing setting, FFI target and file
+  \* any edge, caller, signing setting, `defradb start` identity, FFI target
+  \* and file
   /\ edge \in Edges /\ caller \in Callers /\ signs \in BOOLEAN
+  /\ cliDefault \in BOOLEAN
   /\ target \in {"node", "txn"} /\ file \in Files
   \* the import has not started
   /\ phase = "start" /\ driverOn = "caller"
@@ -273,20 +309,25 @@ Start ==
               \* the FFI call is placed on a worker as every FFI document
               \* call is; on the Node and NodeBuilder edges
               \* import_backup_with wraps the driver in on_pool only in the
-              \* bug; the cli adapter runs it on the handler's task
+              \* bug; both HTTP servers run the import handler, and the
+              \* driver it awaits, on the worker pool only when their route
+              \* layer places the import route there (the bug)
               /\ driverOn' = IF edge = "Ffi" THEN "worker"
                              ELSE IF edge \in {"Node", "HttpNodeBuilder"} /\ ~DriverOnCaller
+                               THEN "worker"
+                             ELSE IF edge \in {"HttpNodeBuilder", "HttpCliStart"}
+                                       /\ ~ImportRouteOnEdge
                                THEN "worker" ELSE "caller"
   \* nothing else moves
-  /\ UNCHANGED <<edge, caller, signs, target, file, next, batch, unit, rest,
+  /\ UNCHANGED <<edge, caller, signs, cliDefault, target, file, next, batch, unit, rest,
                  single, stage, store, committed, admitting, drained, claimed,
                  failedAt>>
 
-\* Whether alias `a` is held in the store.
-Held(a) == store[a] # "none"
+\* Whether alias `a` is held in the store (NoAlias never is).
+Held(a) == a # NoAlias /\ store[a] # "none"
 
 \* The aliases of the documents waiting in the batch.
-Pending == {file[d] : d \in batch}
+Pending == {AliasOf(d) : d \in batch} \ {NoAlias}
 
 \* The driver takes the next document into the batch. Nothing is checked
 \* here: the check runs when the batch is saved.
@@ -294,12 +335,12 @@ Gather ==
   \* the import is running, nothing is being saved, a document is left
   /\ phase = "run" /\ stage = "idle" /\ next <= Len(file)
   \* a document whose alias the batch holds waits for the batch's save
-  /\ ~(FlushOnPendingAlias /\ file[next] \in Pending)
+  /\ ~(FlushOnPendingAlias /\ AliasOf(next) \in Pending)
   \* the document joins the batch
   /\ batch' = batch \cup {next}
   /\ next' = next + 1
   \* nothing else moves
-  /\ UNCHANGED <<edge, caller, signs, target, file, phase, driverOn, unit,
+  /\ UNCHANGED <<edge, caller, signs, cliDefault, target, file, phase, driverOn, unit,
                  rest, single, stage, store, committed, admitting, drained,
                  claimed, failedAt>>
 
@@ -311,7 +352,7 @@ Flush ==
   \* the whole batch is the unit; it starts at the check
   /\ unit' = batch /\ batch' = {} /\ stage' = "check"
   \* nothing else moves
-  /\ UNCHANGED <<edge, caller, signs, target, file, phase, driverOn, next,
+  /\ UNCHANGED <<edge, caller, signs, cliDefault, target, file, phase, driverOn, next,
                  rest, single, store, committed, admitting, drained, claimed,
                  failedAt>>
 
@@ -333,21 +374,22 @@ Refused(stop) ==
 Check ==
   \* the unit is at its check
   /\ phase = "run" /\ stage = "check"
-  /\ IF CheckBeforeCreate /\ \E d \in unit : Held(file[d])
+  /\ IF CheckBeforeCreate /\ \E d \in unit : Held(AliasOf(d))
        \* taken: refused, reporting the first document whose alias is held
-       THEN Refused(Min({d \in unit : Held(file[d])}))
+       THEN Refused(Min({d \in unit : Held(AliasOf(d))}))
        \* free (or not checked): on to the create
        ELSE /\ stage' = "save"
             /\ UNCHANGED <<phase, unit, rest, single, failedAt>>
   \* nothing else moves
-  /\ UNCHANGED <<edge, caller, signs, target, file, driverOn, next, batch,
+  /\ UNCHANGED <<edge, caller, signs, cliDefault, target, file, driverOn, next, batch,
                  store, committed, admitting, drained, claimed>>
 
 \* The record of document `d` as the import wrote it.
 Written(d) ==
-  \* its number and alias, the path it ran through, its signer and owner,
-  \* and whether it was broadcast
-  [doc |-> d, alias |-> file[d], host |-> HostOf(edge),
+  \* its number, alias and content, the path it ran through, its signer and
+  \* owner, and whether it was broadcast
+  [doc |-> d, alias |-> AliasOf(d), content |-> ContentOf(d),
+   host |-> HostOf(edge),
    signer |-> ImportSigner(edge, caller, signs),
    creator |-> ImportCreator(edge, caller, signs),
    broadcast |-> Broadcast]
@@ -362,25 +404,38 @@ SaveRefused ==
   \* which rule refuses it
   /\ IF HoldImport THEN drained ELSE ~admitting
 
+\* The documents of the unit the create refuses whatever their aliases: a
+\* document whose content, and so whose new ID, a saved document already
+\* has, or an earlier document of the same create has.
+Collides ==
+  \* each document of the unit whose new ID is already taken
+  {d \in unit : \/ ContentOf(d) \in {r.content : r \in committed}
+                \/ \E e \in unit : e < d /\ ContentOf(e) = ContentOf(d)}
+
 \* The create: the unit's documents in one request, all or nothing.
 Save ==
   \* the unit is at its create
   /\ phase = "run" /\ stage = "save"
   /\ IF SaveRefused
-       \* refused: nothing saved
+       \* refused by shutdown: nothing saved
        THEN /\ Refused(Min(unit))
+            /\ UNCHANGED committed
+     \* refused by an ID already taken: nothing saved, the import reports the
+     \* first document whose ID was taken
+     ELSE IF Collides # {}
+       THEN /\ Refused(Min(Collides))
             /\ UNCHANGED committed
        \* created: every document of the unit is saved; on to registration
        ELSE /\ committed' = committed \cup {Written(d) : d \in unit}
             /\ stage' = "register"
             /\ UNCHANGED <<phase, unit, rest, single, failedAt>>
   \* nothing else moves
-  /\ UNCHANGED <<edge, caller, signs, target, file, driverOn, next, batch,
+  /\ UNCHANGED <<edge, caller, signs, cliDefault, target, file, driverOn, next, batch,
                  store, admitting, drained, claimed>>
 
 \* Whether every alias of `u` may be registered to its document: free, or
 \* (without validation) whatever holds it.
-Registrable(u) == \A d \in u : ~Held(file[d]) \/ ~AliasInTxn
+Registrable(u) == \A d \in u : ~Held(AliasOf(d)) \/ ~AliasInTxn
 
 \* After the unit's registration: the next document of a batch being saved
 \* one at a time, or back to gathering.
@@ -415,22 +470,23 @@ Register ==
          THEN /\ FailSaved
               /\ store' = IF RegisterEachOnRefusal
                             THEN [a \in Aliases |->
-                                    IF \E d \in unit : file[d] = a /\ ~Held(a)
+                                    IF \E d \in unit : AliasOf(d) = a /\ ~Held(a)
                                       THEN "imported"
                                       ELSE store[a]]
                             ELSE store
          \* else each alias is set to its document (the first of two that
          \* share one keeps it)
          ELSE /\ store' = [a \in Aliases |->
-                             IF \E d \in unit : file[d] = a
+                             IF \E d \in unit : AliasOf(d) = a
                                THEN "imported"
                                ELSE store[a]]
               \* a unit that held one alias twice fails on its second
-              /\ IF \E d, e \in unit : d # e /\ file[d] = file[e]
+              /\ IF \E d, e \in unit : d # e /\ AliasOf(d) = AliasOf(e)
+                                       /\ AliasOf(d) # NoAlias
                    THEN FailSaved
                    ELSE AfterUnit /\ UNCHANGED <<phase, failedAt>>
   \* nothing else moves
-  /\ UNCHANGED <<edge, caller, signs, target, file, driverOn, next, batch,
+  /\ UNCHANGED <<edge, caller, signs, cliDefault, target, file, driverOn, next, batch,
                  committed, admitting, drained, claimed>>
 
 \* The import ends once the file is done and nothing waits to be saved.
@@ -440,7 +496,7 @@ Finish ==
   \* it ends well
   /\ phase' = "done"
   \* nothing else moves
-  /\ UNCHANGED <<edge, caller, signs, target, file, driverOn, next, batch,
+  /\ UNCHANGED <<edge, caller, signs, cliDefault, target, file, driverOn, next, batch,
                  unit, rest, single, stage, store, committed, admitting,
                  drained, claimed, failedAt>>
 
@@ -454,7 +510,7 @@ Claim ==
   \* remember the writer holds it
   /\ claimed' = TRUE
   \* nothing else moves
-  /\ UNCHANGED <<edge, caller, signs, target, file, phase, driverOn, next,
+  /\ UNCHANGED <<edge, caller, signs, cliDefault, target, file, phase, driverOn, next,
                  batch, unit, rest, single, stage, committed, admitting,
                  drained, failedAt>>
 
@@ -470,7 +526,7 @@ Abandon ==
   /\ phase' = "dropped"
   /\ unit' = {} /\ rest' = {} /\ single' = FALSE /\ stage' = "idle"
   \* nothing else moves
-  /\ UNCHANGED <<edge, caller, signs, target, file, driverOn, next, batch,
+  /\ UNCHANGED <<edge, caller, signs, cliDefault, target, file, driverOn, next, batch,
                  store, committed, admitting, drained, claimed, failedAt>>
 
 \* The node's shutdown stops admitting requests.
@@ -480,7 +536,7 @@ Close ==
   \* later requests are refused
   /\ admitting' = FALSE
   \* nothing else moves
-  /\ UNCHANGED <<edge, caller, signs, target, file, phase, driverOn, next,
+  /\ UNCHANGED <<edge, caller, signs, cliDefault, target, file, phase, driverOn, next,
                  batch, unit, rest, single, stage, store, committed, drained,
                  claimed, failedAt>>
 
@@ -494,7 +550,7 @@ Drain ==
   \* the drain is over; the database closes
   /\ drained' = TRUE
   \* nothing else moves
-  /\ UNCHANGED <<edge, caller, signs, target, file, phase, driverOn, next,
+  /\ UNCHANGED <<edge, caller, signs, cliDefault, target, file, phase, driverOn, next,
                  batch, unit, rest, single, stage, store, committed,
                  admitting, claimed, failedAt>>
 
@@ -534,8 +590,10 @@ INV_DriverOnCaller ==
 \* Promise: no two imported documents share an alias, and none takes an
 \* alias the store held before the import.
 INV_NoDuplicateAlias ==
-  \* two different saved documents carry two different aliases
-  /\ \A r, q \in committed : r.doc # q.doc => r.alias # q.alias
+  \* two different saved documents carry two different aliases, when they
+  \* carry one
+  /\ \A r, q \in committed :
+       (r.doc # q.doc /\ r.alias # NoAlias) => r.alias # q.alias
   \* no saved document carries an alias the store held
   /\ \A r \in committed : r.alias \notin Preexisting
 
@@ -560,8 +618,9 @@ INV_CreatorAsCreate ==
 \* between the check and the registration (which then fails the import).
 INV_SavedRegistered ==
   \* an ended or dropped Node import left no saved document's alias free
+  \* (a document the file gave no ID has none to register)
   (edge = "Node" /\ phase \in {"done", "failed", "dropped"}) =>
-    \A r \in committed : Held(r.alias)
+    \A r \in committed : r.alias = NoAlias \/ Held(r.alias)
 
 \* Promise: the Node's drain never finishes while an import still runs.
 INV_DrainWaitsForImport ==
