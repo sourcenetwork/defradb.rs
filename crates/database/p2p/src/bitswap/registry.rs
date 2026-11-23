@@ -87,7 +87,6 @@ impl ReplicatorRegistry {
         self.replicators.rcu(|current| {
             let mut info = info.clone();
             if let Some(existing) = current.get(info.peer_id_str()) {
-                info.addresses = existing.addresses.clone();
                 info.status = existing.status;
                 info.last_status_change = existing.last_status_change;
             }
@@ -663,12 +662,12 @@ mod tests {
         registry.set_replicator_info(ReplicatorInfo::from_raw(
             peer.clone(),
             vec!["posts".to_string()],
-            Vec::new(),
+            vec!["/ip4/127.0.0.1/tcp/1234".to_string()],
         ));
 
         let replaced = registry.get_replicator_info(&peer).unwrap();
         assert_eq!(replaced.collections, vec!["posts".to_string()]);
-        assert_eq!(replaced.addresses, existing.addresses);
+        assert_eq!(replaced.addresses, vec!["/ip4/127.0.0.1/tcp/1234"]);
         assert_eq!(replaced.status, existing.status);
         assert_eq!(replaced.last_status_change, existing.last_status_change);
     }

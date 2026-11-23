@@ -242,10 +242,8 @@ pub fn merge_live_replicators_with_persisted_metadata(
                 return info;
             };
 
-            for address in &persisted_info.addresses {
-                if !info.addresses.iter().any(|existing| existing == address) {
-                    info.addresses.push(address.clone());
-                }
+            if info.addresses.is_empty() {
+                info.addresses.clone_from(&persisted_info.addresses);
             }
             info.status = persisted_info.status;
             info.last_status_change = persisted_info.last_status_change;
@@ -406,10 +404,7 @@ mod resolve_remove_collections_tests {
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].peer_id_str(), peer);
         assert_eq!(merged[0].collections, vec!["allowed".to_string()]);
-        assert_eq!(
-            merged[0].addresses,
-            vec!["live-addr".to_string(), "persisted-addr".to_string()]
-        );
+        assert_eq!(merged[0].addresses, vec!["live-addr".to_string()]);
         assert_eq!(merged[0].status, p2p::ReplicatorStatus::Inactive);
         assert_eq!(merged[0].last_status_change, persisted.last_status_change);
     }
