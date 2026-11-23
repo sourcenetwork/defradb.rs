@@ -67,7 +67,7 @@ impl Found {
         let mut found = Found::default();
         match (root, collection) {
             (Root::Select(select), _) if select.collection_name == "_commits" => {
-                found.filter(&collections, Shape::Commits, select.filter.as_ref());
+                found.commits(&collections, select);
             }
             (Root::Select(select), Some(collection)) => {
                 found.select(&collections, collection, select);
@@ -90,6 +90,18 @@ impl Found {
         }
     }
 
+    /// `_commits` and its `links`, each filtered by `CommitsFilterArg`.
+    fn commits(&mut self, collections: &Collections<'_>, select: &Select) {
+        self.filter(collections, Shape::Commits, select.filter.as_ref());
+        for field in &select.fields {
+            if let Requestable::Select(sub) = field {
+                if sub.collection_name == "links" {
+                    self.commits(collections, sub);
+                }
+            }
+        }
+    }
+
     fn select<'a>(
         &mut self,
         collections: &Collections<'a>,
@@ -97,6 +109,11 @@ impl Found {
         select: &Select,
     ) {
         let shape = if select.is_encrypted {
+            // Go generates no `encrypted_<Collection>` field for a collection
+            // without an encrypted index: the missing field is the error.
+            if collection.encrypted_indexes.is_empty() {
+                return;
+            }
             Shape::Encrypted(collection)
         } else {
             Shape::Collection(collection)
@@ -113,6 +130,10 @@ impl Found {
     ) {
         for field in fields {
             match field {
+                Requestable::Select(sub) if !has_filter(sub) => {}
+                Requestable::Select(sub) if sub.collection_name == "GROUP" => {
+                    self.select(collections, collection, sub);
+                }
                 Requestable::Select(sub) => {
                     let related = collection
                         .field_by_name(&sub.collection_name)
@@ -123,7 +144,7 @@ impl Found {
                     }
                 }
                 Requestable::Aggregate(aggregate) => {
-                    for target in &aggregate.targets {
+                    for target in aggregate.targets.iter().filter(|t| t.filter.is_some()) {
                         let shape = target_shape(collections, collection, &target.host_name);
                         if let Some(shape) = shape {
                             self.filter(collections, shape, target.filter.as_ref());
@@ -164,13 +185,18 @@ impl Found {
                     }
                 }
                 for position in positions {
-                    let Some(at) = walk::shape_at(collections, shape, &position.path) else {
+                    let Some((at, whole_list)) = walk::shape_at(collections, shape, &position.path)
+                    else {
                         continue;
                     };
                     let Some(value) = lookup(conditions, &position.path) else {
                         continue;
                     };
-                    let messages = walk::variable(collections, at, value);
+                    let messages = if whole_list {
+                        walk::variable_list(collections, at, value)
+                    } else {
+                        walk::variable(collections, at, value)
+                    };
                     self.variable_error(&position.name, &go_json(value), messages);
                 }
             }
@@ -198,6 +224,19 @@ impl Found {
             ));
         }
     }
+}
+
+/// Whether `select` or anything selected below it carries a filter: a
+/// subtree without one is not walked, so its relations are never looked up.
+fn has_filter(select: &Select) -> bool {
+    select.filter.is_some()
+        || select.fields.iter().any(|field| match field {
+            Requestable::Select(sub) => has_filter(sub),
+            Requestable::Aggregate(aggregate) => {
+                aggregate.targets.iter().any(|t| t.filter.is_some())
+            }
+            _ => false,
+        })
 }
 
 /// The block an aggregate target's `filter` is checked against: the host

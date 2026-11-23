@@ -174,3 +174,72 @@ fn filters_the_input_type_defines_still_run() {
     }
     .execute();
 }
+
+#[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
+fn unknown_field_in_a_whole_and_list_variable_is_rejected() {
+    rejects(
+        integration_test::scenario_id!(),
+        "query($c: [AuthorFilterArg!]) { Author(filter: {_and: $c}) { name } }",
+        Some(json!({ "c": [{ "nope": { "_eq": 1 } }] })),
+        "Variable \"$c\" got invalid value [{\"nope\":{\"_eq\":1}}].\nIn element #1: In field \"nope\": Unknown field.",
+    );
+}
+
+#[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
+fn unknown_field_in_a_commits_links_filter_is_rejected() {
+    rejects(
+        integration_test::scenario_id!(),
+        "query { _commits { cid links(filter: {nope: {_eq: 1}}) { cid } } }",
+        None,
+        "Argument \"filter\" has invalid value {nope: {_eq: 1}}.\nIn field \"nope\": Unknown field.",
+    );
+}
+
+#[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
+fn unknown_field_in_a_group_filter_is_rejected() {
+    rejects(
+        integration_test::scenario_id!(),
+        "query { Author(groupBy: [name]) { name GROUP(filter: {nope: {_eq: 1}}) { age } } }",
+        None,
+        "Argument \"filter\" has invalid value {nope: {_eq: 1}}.\nIn field \"nope\": Unknown field.",
+    );
+}
+
+/// Range operators on text are a Rust extension Go's `StringOperatorBlock`
+/// lacks: text compares lexicographically, so they keep filtering.
+#[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
+fn range_operators_on_a_string_field_still_filter() {
+    let author = |name: &str| AddDoc {
+        collection: "Author".into(),
+        doc_map: Some(json!({ "name": name })),
+        ..Default::default()
+    };
+    TestCase {
+        id: integration_test::scenario_id!(),
+        actions: vec![
+            AddCollection {
+                sdl: SDL.into(),
+                ..Default::default()
+            }
+            .into(),
+            author("Alice").into(),
+            author("Bob").into(),
+            author("Carol").into(),
+            Request {
+                request: r#"query {
+                    Author(filter: {name: {_gt: "B", _le: "Bz"}}) { name }
+                }"#
+                .into(),
+                expected_data: json!({ "Author": [{ "name": "Bob" }] }),
+                ..Default::default()
+            }
+            .into(),
+        ],
+        ..Default::default()
+    }
+    .execute();
+}

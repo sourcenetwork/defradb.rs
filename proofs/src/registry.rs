@@ -750,6 +750,17 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/engine/query/tests/filter_source.rs a_nested_variable_is_recorded_at_its_position; tools/integration-test/tests/testo/query/simple/with_filter_unknown.rs a_bad_literal_is_reported_before_its_variables, unknown_operator_in_a_nested_variable_is_rejected",
     },
     Property {
+        // A variable that stands for a whole `_and`/`_or` list is found at
+        // its position and checked as a list, never skipped.
+        family: "Filter input validation",
+        name: "whole_list_variable_is_checked: a variable at a list key is checked as a list",
+        axis: Lean,
+        anchor: "crates/engine/query/src/query_parse/filter_shape/walk.rs shape_at, variable_list; crates/engine/query/src/query_parse/filter_shape/mod.rs check",
+        model_ref: "FilterInputShape (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/engine/query/tests/filter_shape_checks.rs a_whole_list_variable_under_and_is_checked; tools/integration-test/tests/testo/query/simple/with_filter_unknown.rs unknown_field_in_a_whole_and_list_variable_is_rejected",
+    },
+    Property {
         family: "HTTP router composition",
         name: "WholeRouter / SingleConstructor / NoBypass / ForwardingPreserved",
         axis: Tla,

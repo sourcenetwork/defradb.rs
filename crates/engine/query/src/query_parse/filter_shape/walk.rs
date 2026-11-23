@@ -132,18 +132,7 @@ pub(super) fn variable_fields(
         let nested = match collections.field(shape, key) {
             Field::Unknown => Vec::new(),
             Field::One(inner) => variable(collections, inner, field_value),
-            Field::ListOf(inner) => match field_value {
-                JsonValue::Array(items) => items
-                    .iter()
-                    .enumerate()
-                    .flat_map(|(index, item)| {
-                        variable(collections, inner, item)
-                            .into_iter()
-                            .map(move |message| format!("In element #{}: {message}", index + 1))
-                    })
-                    .collect(),
-                other => variable(collections, inner, other),
-            },
+            Field::ListOf(inner) => variable_list(collections, inner, field_value),
         };
         messages.extend(
             nested
@@ -154,13 +143,35 @@ pub(super) fn variable_fields(
     messages
 }
 
-/// The shape at `path` below `shape`, or `None` where the path leaves every
-/// generated input type.
+/// [`variable`] for a value of a list of `shape`: each element numbered by
+/// position, and a single value checked as a list of one.
+pub(super) fn variable_list(
+    collections: &Collections<'_>,
+    shape: Shape<'_>,
+    value: &JsonValue,
+) -> Vec<String> {
+    let JsonValue::Array(items) = value else {
+        return variable(collections, shape, value);
+    };
+    items
+        .iter()
+        .enumerate()
+        .flat_map(|(index, item)| {
+            variable(collections, shape, item)
+                .into_iter()
+                .map(move |message| format!("In element #{}: {message}", index + 1))
+        })
+        .collect()
+}
+
+/// The shape at `path` below `shape`, and whether the path ends on a list of
+/// it (`_and: $c`), or `None` where the path leaves every generated input
+/// type.
 pub(super) fn shape_at<'a>(
     collections: &Collections<'a>,
     mut shape: Shape<'a>,
     path: &[PathStep],
-) -> Option<Shape<'a>> {
+) -> Option<(Shape<'a>, bool)> {
     let mut in_list = false;
     for step in path {
         match step {
@@ -181,7 +192,7 @@ pub(super) fn shape_at<'a>(
             }
         }
     }
-    (!in_list).then_some(shape)
+    Some((shape, in_list))
 }
 
 fn sorted(fields: &serde_json::Map<String, JsonValue>) -> Vec<(&String, &JsonValue)> {

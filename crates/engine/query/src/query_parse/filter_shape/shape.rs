@@ -13,7 +13,9 @@ pub(super) enum Ops {
     Comparison,
     /// `ID`, `Boolean`: equality and membership.
     Equality,
-    /// `String`, `Blob`: equality, membership and the pattern operators.
+    /// `String`, `Blob`: equality, membership, the pattern operators and, as
+    /// a Rust extension Go's blocks lack, range (text compares
+    /// lexicographically, RFC 3339 text as time).
     Text,
     /// An encrypted index's field, which `encrypted_<Collection>` filters by `_eq` only.
     EqOnly,
@@ -30,7 +32,18 @@ impl Ops {
             Self::Equality => matches!(key, "_eq" | "_in" | "_neq" | "_nin"),
             Self::Text => matches!(
                 key,
-                "_eq" | "_ilike" | "_in" | "_like" | "_neq" | "_nilike" | "_nin" | "_nlike"
+                "_eq"
+                    | "_geq"
+                    | "_gt"
+                    | "_ilike"
+                    | "_in"
+                    | "_leq"
+                    | "_like"
+                    | "_lt"
+                    | "_neq"
+                    | "_nilike"
+                    | "_nin"
+                    | "_nlike"
             ),
             Self::EqOnly => key == "_eq",
         }
