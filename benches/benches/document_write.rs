@@ -79,24 +79,23 @@ type Mutator = db::write::autocommit::AutoCommitMutator<RegolithStore>;
 /// A fresh in-memory database with the collection already registered. In
 /// memory on purpose: this measures the write path, and putting a real disk
 /// under it would measure the disk.
-async fn fixture(field_count: usize) -> Mutator {
+///
+/// Registers the already parsed version: parsing the SDL here would run the
+/// parser right before the timed write and slow that write down.
+async fn fixture(version: &schema::CollectionVersion) -> Mutator {
     let store = Arc::new(RegolithStore::in_memory().expect("an in-memory store"));
     let db = Arc::new(DB::from_arc(store).expect("a database over it"));
-    db.add_collection(
-        &defra_core::RequestContext::ambient(),
-        &collection_sdl(field_count),
-    )
-    .await
-    .expect("the collection to register");
+    db.create_collection(version.clone())
+        .await
+        .expect("the collection to register");
     Mutator::new(db)
 }
 
 /// A fixture with one document already in it, and that document's id.
-async fn seeded(field_count: usize) -> (Mutator, DocID) {
-    let mutator = fixture(field_count).await;
-    let version = collection_version(field_count, false);
+async fn seeded(field_count: usize, version: &schema::CollectionVersion) -> (Mutator, DocID) {
+    let mutator = fixture(version).await;
     let created = mutator
-        .create(COLLECTION, document(field_count, next_seq(), &version))
+        .create(COLLECTION, document(field_count, next_seq(), version))
         .await
         .expect("the seed create to succeed");
     (mutator, created.doc_id)
@@ -126,12 +125,12 @@ fn report(rt: &common::Runtime) {
     let mut read = Group::higher_better("read", "ops/s").over("fields");
 
     for fields in FIELD_COUNTS {
+        let version = collection_version(fields, false);
         create = create.row(
             repeat(format!("{fields} fields"), REPS, || {
                 rt.block_on(async {
-                    let mutator = fixture(fields).await;
+                    let mutator = fixture(&version).await;
                     let base = next_seq() * OPS;
-                    let version = collection_version(fields, false);
                     let start = std::time::Instant::now();
                     for seq in 0..OPS {
                         mutator
@@ -150,15 +149,11 @@ fn report(rt: &common::Runtime) {
                 rt.block_on(async {
                     let store = Arc::new(storage::RegolithStore::in_memory().expect("a store"));
                     let db = Arc::new(DB::open_from_arc(store).await.expect("a database"));
-                    db.add_collection(
-                        &defra_core::RequestContext::ambient(),
-                        &collection_sdl(fields),
-                    )
-                    .await
-                    .expect("the collection to register");
+                    db.create_collection(version.clone())
+                        .await
+                        .expect("the collection to register");
                     let mutator = Mutator::new(db.clone());
                     let base = next_seq() * OPS;
-                    let version = collection_version(fields, false);
                     let mut ids = Vec::with_capacity(OPS);
                     for seq in 0..OPS {
                         ids.push(
@@ -214,7 +209,7 @@ fn create(c: &mut Criterion) {
                 // million documents is a different measurement from a create into
                 // an empty one, and mixing the two would report their average.
                 b.iter_batched_ref(
-                    || rt.block_on(fixture(fields)),
+                    || rt.block_on(fixture(&version)),
                     |mutator| {
                         rt.block_on(async {
                             black_box(
@@ -244,7 +239,7 @@ fn create_many(c: &mut Criterion) {
         group.throughput(Throughput::Elements(batch as u64));
         group.bench_with_input(BenchmarkId::from_parameter(batch), &batch, |b, &batch| {
             b.iter_batched_ref(
-                || rt.block_on(fixture(fields)),
+                || rt.block_on(fixture(&version)),
                 |mutator| {
                     rt.block_on(async {
                         let base = next_seq();
@@ -277,7 +272,7 @@ fn update(c: &mut Criterion) {
             &fields,
             |b, &fields| {
                 b.iter_batched_ref(
-                    || rt.block_on(seeded(fields)),
+                    || rt.block_on(seeded(fields, &version)),
                     |(mutator, doc_id)| {
                         rt.block_on(async {
                             // One field touched, which is the common shape: a
@@ -311,10 +306,11 @@ fn delete(c: &mut Criterion) {
     let rt = common::owned_runtime();
     let mut group = c.benchmark_group("document_delete");
     let fields = 16;
+    let version = collection_version(fields, false);
     group.throughput(Throughput::Elements(1));
     group.bench_function("16", |b| {
         b.iter_batched_ref(
-            || rt.block_on(seeded(fields)),
+            || rt.block_on(seeded(fields, &version)),
             |(mutator, doc_id)| {
                 rt.block_on(async {
                     black_box(
@@ -338,20 +334,11 @@ fn delete(c: &mut Criterion) {
 /// lets accumulate before the next sweep.
 const PRIOR_APPENDS: [usize; 2] = [1, 14];
 
-async fn branchable_fixture(prior: usize) -> Mutator {
-    let store = Arc::new(RegolithStore::in_memory().expect("an in-memory store"));
-    let db = Arc::new(DB::from_arc(store).expect("a database over it"));
-    db.add_collection(
-        &defra_core::RequestContext::ambient(),
-        &branchable_collection_sdl(4),
-    )
-    .await
-    .expect("the collection to register");
-    let mutator = Mutator::new(db);
-    let version = collection_version(4, true);
+async fn branchable_fixture(prior: usize, version: &schema::CollectionVersion) -> Mutator {
+    let mutator = fixture(version).await;
     for _ in 0..prior {
         mutator
-            .create(COLLECTION, document(4, next_seq(), &version))
+            .create(COLLECTION, document(4, next_seq(), version))
             .await
             .expect("the seed append to succeed");
     }
@@ -366,7 +353,7 @@ fn create_branchable(c: &mut Criterion) {
         group.throughput(Throughput::Elements(1));
         group.bench_with_input(BenchmarkId::from_parameter(prior), &prior, |b, &prior| {
             b.iter_batched_ref(
-                || rt.block_on(branchable_fixture(prior)),
+                || rt.block_on(branchable_fixture(prior, &version)),
                 |mutator| {
                     rt.block_on(async {
                         black_box(
@@ -387,18 +374,17 @@ fn create_branchable(c: &mut Criterion) {
 const BACKFILL_DOCS: [usize; 2] = [1_000, 10_000];
 
 /// A database holding `docs` documents of four fields and no index yet.
-async fn populated(docs: usize) -> Arc<DB<RegolithStore>> {
+async fn populated(docs: usize, version: &schema::CollectionVersion) -> Arc<DB<RegolithStore>> {
     let store = Arc::new(RegolithStore::in_memory().expect("an in-memory store"));
     let db = Arc::new(DB::from_arc(store).expect("a database over it"));
-    db.add_collection(&defra_core::RequestContext::ambient(), &collection_sdl(4))
+    db.create_collection(version.clone())
         .await
         .expect("the collection to register");
     let mutator = Mutator::new(db.clone());
     let base = next_seq() * docs;
-    let version = collection_version(4, false);
     for seq in 0..docs {
         mutator
-            .create(COLLECTION, document(4, base + seq, &version))
+            .create(COLLECTION, document(4, base + seq, version))
             .await
             .expect("the seed create to succeed");
     }
@@ -412,11 +398,12 @@ fn index_backfill(c: &mut Criterion) {
     let rt = common::owned_runtime();
     let mut group = c.benchmark_group("index_backfill");
     group.sample_size(10);
+    let version = collection_version(4, false);
     for docs in BACKFILL_DOCS {
         group.throughput(Throughput::Elements(docs as u64));
         group.bench_with_input(BenchmarkId::from_parameter(docs), &docs, |b, &docs| {
             b.iter_batched_ref(
-                || rt.block_on(populated(docs)),
+                || rt.block_on(populated(docs, &version)),
                 |db| {
                     rt.block_on(async {
                         let fields = vec![IndexedFieldDescription {
