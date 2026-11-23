@@ -308,13 +308,19 @@ impl PlanNode for IndexScanNode {
     fn explain_inner(&self) -> serde_json::Value {
         let mut obj = serde_json::Map::new();
 
-        let filter = self
-            .explain_filter
-            .as_ref()
-            .or(self.residual_filter.as_ref());
+        // Both filters apply to the rows this scan returns, so show both.
+        let filter = match (&self.explain_filter, &self.residual_filter) {
+            (Some(shown), Some(residual)) if shown.conditions() != residual.conditions() => {
+                Some(shown.and(residual.clone()))
+            }
+            (Some(shown), _) => Some(shown.clone()),
+            (None, residual) => residual.clone(),
+        };
         obj.insert(
             "filter".to_string(),
-            filter.map_or(serde_json::Value::Null, Filter::to_explain_json),
+            filter
+                .as_ref()
+                .map_or(serde_json::Value::Null, Filter::to_explain_json),
         );
         obj.insert(
             "collectionName".to_string(),
@@ -436,7 +442,16 @@ mod tests {
     use schema::CollectionVersion;
 
     fn make_index_scan_node(scan_type: IndexScanType) -> IndexScanNode {
-        let collection = CollectionVersion::new("test", "v1", "coll_test_001", vec![]);
+        make_index_scan_node_for(
+            CollectionVersion::new("test", "v1", "coll_test_001", vec![]),
+            scan_type,
+        )
+    }
+
+    fn make_index_scan_node_for(
+        collection: CollectionVersion,
+        scan_type: IndexScanType,
+    ) -> IndexScanNode {
         let document_mapping = DocumentMapping::new();
         let params = IndexScanParams {
             index_name: "idx_test".to_string(),
@@ -458,6 +473,34 @@ mod tests {
             expected_index_name: "idx_test".to_string(),
             fetch_limit: None,
         }
+    }
+
+    fn filter(conditions: serde_json::Value) -> Filter {
+        Filter::from_conditions(conditions.as_object().cloned().unwrap())
+    }
+
+    #[test]
+    fn explain_keeps_both_distinct_scan_filters() {
+        let node = make_index_scan_node(IndexScanType::ExactMatch { values: vec![] })
+            .with_explain_filter(filter(serde_json::json!({"name": {"_eq": "Ada"}})))
+            .with_residual_filter(filter(serde_json::json!({"score": {"_gt": 1}})));
+
+        assert_eq!(
+            node.explain()["scanNode"]["filter"],
+            serde_json::json!({"_and": [{"name": {"_eq": "Ada"}}, {"score": {"_gt": 1}}]}),
+        );
+    }
+
+    #[test]
+    fn explain_shows_one_filter_when_both_are_the_same() {
+        let node = make_index_scan_node(IndexScanType::ExactMatch { values: vec![] })
+            .with_explain_filter(filter(serde_json::json!({"name": {"_eq": "Ada"}})))
+            .with_residual_filter(filter(serde_json::json!({"name": {"_eq": "Ada"}})));
+
+        assert_eq!(
+            node.explain()["scanNode"]["filter"],
+            serde_json::json!({"name": {"_eq": "Ada"}}),
+        );
     }
 
     #[test]

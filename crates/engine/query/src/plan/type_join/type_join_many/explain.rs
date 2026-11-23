@@ -199,11 +199,19 @@ impl TypeJoinMany {
         let select_node_content = if child_is_select {
             // Child explain is {"selectNode": {"docID": ..., "filter": ..., "scanNode": ...}}
             // Extract the selectNode's inner content
-            child_explain
+            let mut content = child_explain
                 .as_object()
                 .and_then(|o| o.get("selectNode"))
                 .cloned()
-                .unwrap_or(child_explain.clone())
+                .unwrap_or(child_explain.clone());
+            // An index scan already shows the filter it serves, where Go shows it.
+            if let Some(content) = content.as_object_mut() {
+                let scan_filter = content.get("scanNode").and_then(|scan| scan.get("filter"));
+                if scan_filter.is_some() && scan_filter == content.get("filter") {
+                    content.insert("filter".to_string(), serde_json::Value::Null);
+                }
+            }
+            content
         } else {
             let mut select_node_inner = serde_json::Map::new();
             select_node_inner.insert("docID".to_string(), serde_json::Value::Null);
@@ -322,11 +330,19 @@ impl TypeJoinMany {
 
         let select_node_content = if child_is_select {
             // Child is SelectNode - extract inner content to avoid double wrapping
-            child_explain
+            let mut content = child_explain
                 .as_object()
                 .and_then(|o| o.get("selectNode"))
                 .cloned()
-                .unwrap_or(child_explain.clone())
+                .unwrap_or(child_explain.clone());
+            // An index scan already shows the filter it serves, where Go shows it.
+            if let Some(content) = content.as_object_mut() {
+                let scan_filter = content.get("scanNode").and_then(|scan| scan.get("filter"));
+                if scan_filter.is_some() && scan_filter == content.get("filter") {
+                    content.insert("filter".to_string(), serde_json::Value::Null);
+                }
+            }
+            content
         } else {
             let mut select_node_inner = serde_json::Map::new();
             // Merge child explain into selectNode
