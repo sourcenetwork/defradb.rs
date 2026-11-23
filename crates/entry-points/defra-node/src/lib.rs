@@ -608,6 +608,17 @@ impl Node {
         request: QueryRequest,
         txn_handle: Option<TransactionHandle>,
     ) -> QueryResponse {
+        self.execute_admitted_request(request, txn_handle, Admit::Request)
+            .await
+    }
+
+    /// [`Self::execute_prepared_request`], admitted as `admit` says.
+    pub(crate) async fn execute_admitted_request(
+        &self,
+        request: QueryRequest,
+        txn_handle: Option<TransactionHandle>,
+        admit: Admit,
+    ) -> QueryResponse {
         // Read before the node's default fills in the actor: a caller's key
         // signs only for an actor the caller named.
         let caller_signer = match embedded_signer::admitted_signer(&request) {
@@ -634,7 +645,7 @@ impl Node {
             }
             let runner = Arc::clone(&self.runner);
             return self
-                .as_request(async move {
+                .admitted(admit, async move {
                     match txn_handle {
                         Some(handle) => runner.execute_in_txn(request, &handle).await,
                         None => execute_autocommit_request(runner.as_ref(), request).await,
@@ -668,7 +679,8 @@ impl Node {
         };
 
         #[cfg(not(target_arch = "wasm32"))]
-        execute_with_signing_context(
+        signed_query::execute_signed(
+            admit,
             network.requests(),
             self.runner.clone(),
             request,
@@ -690,10 +702,41 @@ impl Node {
         F: std::future::Future + defra_core::thread_bounds::MaybeSend + 'static,
         F::Output: defra_core::thread_bounds::MaybeSend + 'static,
     {
+        self.admitted(Admit::Request, work).await
+    }
+
+    /// [`Self::as_request`], admitted as `admit` says.
+    pub(crate) async fn admitted<F>(
+        &self,
+        admit: Admit,
+        work: F,
+    ) -> std::result::Result<F::Output, edge::EdgeError>
+    where
+        F: std::future::Future + defra_core::thread_bounds::MaybeSend + 'static,
+        F::Output: defra_core::thread_bounds::MaybeSend + 'static,
+    {
         match self.network.as_ref() {
-            Some(network) => network.requests().spawn(work).within(Duration::MAX).await,
+            Some(network) => {
+                admit
+                    .spawn(network.requests(), work)
+                    .within(Duration::MAX)
+                    .await
+            }
             None => Ok(work.await),
         }
+    }
+
+    /// Admits a request that runs on its caller's task, such as a backup
+    /// import, until the returned admission drops: shutdown's drain waits
+    /// for it, and its own work runs as [`Admit::Continuation`]. `None` on a
+    /// node with no network, which has nothing to drain.
+    pub(crate) fn admit_request(
+        &self,
+    ) -> std::result::Result<Option<edge::Admission>, edge::EdgeError> {
+        self.network
+            .as_ref()
+            .map(|network| network.requests().admit_request())
+            .transpose()
     }
 
     fn with_default_query_identity(&self, mut request: QueryRequest) -> QueryRequest {
@@ -1496,6 +1539,29 @@ fn refused_transaction(error: edge::EdgeError, step: &str) -> query::Transaction
         }
         error => format!("transaction task failed: {error}"),
     })
+}
+
+/// How a request's task is admitted to the node's request scope.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Admit {
+    /// A request of its own: refused once shutdown stops admitting.
+    Request,
+    /// Work of a request already admitted ([`Node::admit_request`]): still
+    /// admitted while that request is in flight, so shutdown drains it.
+    Continuation,
+}
+
+impl Admit {
+    fn spawn<F>(self, edge: &edge::Edge, work: F) -> edge::Task<F::Output>
+    where
+        F: std::future::Future + defra_core::thread_bounds::MaybeSend + 'static,
+        F::Output: defra_core::thread_bounds::MaybeSend + 'static,
+    {
+        match self {
+            Self::Request => edge.spawn(work),
+            Self::Continuation => edge.spawn_continuation(work),
+        }
+    }
 }
 
 async fn execute_autocommit_request(

@@ -10,10 +10,13 @@ writes to the edge's own request path (its `ImportHost`), so the request it
 sends is the one a create by the same caller would send. The laws below say
 the import is signed, acts and owns exactly as that create does.
 
-The import also gathers documents into batches. A batch is flushed before a
-document whose alias it already holds, so that document's alias check sees
-the earlier one registered: checking in batches refuses exactly the
-documents a one-at-a-time check refuses.
+The import also gathers documents into batches, and checks a batch's aliases
+against the store just before it saves the batch. A batch is saved before a
+document whose alias it already holds joins it, so no batch holds one alias
+twice. A batch whose check refuses it saved nothing, and its documents are
+then saved one at a time, up to the first one refused. Together these make
+saving a batch exactly what saving its documents one at a time does: the
+same documents saved, the same one refused, and never one alias twice.
 
 Who acts: the caller; the edge, which builds the request; the driver, which
 batches. Nothing here is temporal: the ordering and the races are the TLA+
@@ -23,9 +26,11 @@ What must never happen:
 * an imported document signed by a key a create would not sign with;
 * an import acting as, or owned by, someone a create would not be;
 * two documents of one file saved under one alias, or one under an alias
-  the store already holds.
+  the store already holds;
+* a refused batch losing a document that comes before the one refused.
 
 Rust anchors: `crates/database/db/src/backup/import.rs` `import_database_as`,
+`save`, `create`,
 `crates/database/db/src/backup/batch.rs` `Batch::must_save_before`;
 `crates/entry-points/defra-node/src/ops/backup.rs` `NodeHost`;
 `crates/surfaces/http/src/request_path.rs` `Server`;
@@ -169,68 +174,64 @@ theorem old_anonymous_import_owned_by_no_one :
   -- both sides compute to concrete values
   exact ⟨rfl, rfl⟩
 
-/-! ## 4. Batches keep the one-at-a-time alias check -/
+/-! ## 4. A batch saves what one document at a time saves -/
 
-/-- The driver's state: the aliases the store holds, the aliases of the
-documents gathered into the unsaved batch, and the aliases saved so far. -/
-structure Driver where
-  -- aliases the store holds (the ones it had, then every saved batch's)
-  registered : List Nat
-  -- aliases of the documents waiting in the batch
-  pending : List Nat
-  -- aliases of the documents saved by this import
-  committed : List Nat
+/-- Save the documents of `batch`, aliases by number, one at a time against
+the store `reg` (the aliases it holds): each one is checked, then saved and
+its alias registered; the first one whose alias is held stops it. The
+aliases saved, in order. -/
+def saveEach (reg : List Nat) : List Nat → List Nat
+  -- nothing left: nothing more saved
+  | [] => []
+  -- the next document: refused when its alias is held, else saved and
+  -- registered before the one after it is checked
+  | a :: rest => if a ∈ reg then [] else a :: saveEach (reg ++ [a]) rest
 
-/-- Save the batch and register its aliases. -/
-def flush (s : Driver) : Driver :=
-  -- the batch's aliases join the store and the saved list; the batch empties
-  { registered := s.registered ++ s.pending, pending := [],
-    committed := s.committed ++ s.pending }
+/-- Save `batch` as the import does: one check for the whole batch, then one
+create of all of it; a batch the check refuses saved nothing, and is saved
+again one document at a time. -/
+def saveBatch (reg batch : List Nat) : List Nat :=
+  -- every alias free: the batch is saved together
+  if ∀ a ∈ batch, a ∉ reg then batch
+  -- refused: one at a time, up to the first one refused
+  else saveEach reg batch
 
-/-- Check alias `a` against the store and gather its document: a taken
-alias fails the import. -/
-def admit (s : Driver) (a : Nat) : Option Driver :=
-  -- a held alias is the error `a document with the given ID already exists`
-  if a ∈ s.registered then none
-  -- a free one joins the batch
-  else some { s with pending := s.pending ++ [a] }
+/-- A batch whose aliases are all free and distinct is saved whole one at a
+time too. -/
+theorem saveEach_all_free :
+    ∀ (reg batch : List Nat), batch.Nodup → (∀ a ∈ batch, a ∉ reg) →
+      saveEach reg batch = batch
+  -- the empty batch saves nothing either way
+  | _, [], _, _ => rfl
+  -- a document, then the rest
+  | reg, a :: rest, hnd, hfree => by
+    -- a is not repeated later, and the rest has no repeats
+    have hcons := List.nodup_cons.mp hnd
+    -- a is free in the store
+    have ha : a ∉ reg := hfree a (by simp)
+    -- the rest stays free once a is registered: none of it is a, none is held
+    have hrest : ∀ x ∈ rest, x ∉ reg ++ [a] := by
+      -- take a later document
+      intro x hx
+      -- it is neither held nor a
+      simp only [List.mem_append, List.mem_singleton, not_or]
+      -- held would contradict the check; equal to a would repeat a
+      exact ⟨hfree x (by simp [hx]), fun h => hcons.1 (h ▸ hx)⟩
+    -- a is saved, and the rest is saved whole by the same law
+    simp [saveEach, ha, saveEach_all_free (reg ++ [a]) rest hcons.2 hrest]
 
-/-- The driver's step for one document: flush first when the batch already
-holds its alias, then check and gather it. -/
-def gather (s : Driver) (a : Nat) : Option Driver :=
-  -- the batch holds the alias: save it, so the check sees the alias stored
-  if a ∈ s.pending then admit (flush s) a
-  -- otherwise check against the store and gather
-  else admit s a
-
-/-- The step without the flush (the RED variant): check the store only. -/
-def gatherNoFlush (s : Driver) (a : Nat) : Option Driver :=
-  -- the batch is not consulted
-  admit s a
-
-/-- Batch-alias lemma: a document is refused exactly when an earlier one
-(stored, or waiting in the batch) carries its alias, which is what checking
-each document alone against everything before it refuses. -/
-theorem gather_refuses_iff (s : Driver) (a : Nat) :
-    gather s a = none ↔ (a ∈ s.registered ∨ a ∈ s.pending) := by
-  -- split on whether the batch holds the alias
-  by_cases hp : a ∈ s.pending
-  -- it does: the flushed store holds it, so the check refuses it
-  · simp [gather, hp, admit, flush]
-  -- it does not: the plain store check decides
-  · by_cases hr : a ∈ s.registered
-    -- the store holds it: refused
-    · simp [gather, hp, admit, hr]
-    -- free everywhere: gathered
-    · simp [gather, hp, admit, hr]
-
-/-- What the driver keeps true: the store is what it had plus what was
-saved, and no alias appears twice across the store and the batch. -/
-def Good (r0 : List Nat) (s : Driver) : Prop :=
-  -- the store holds the old aliases and the saved ones
-  s.registered = r0 ++ s.committed ∧
-  -- no alias twice in the store and the batch together
-  (s.registered ++ s.pending).Nodup
+/-- Batch law: a batch with no alias twice (what saving before a pending
+alias guarantees, `Batch::must_save_before`) saves exactly what saving its
+documents one at a time saves. -/
+theorem saveBatch_eq_saveEach (reg batch : List Nat) (hb : batch.Nodup) :
+    saveBatch reg batch = saveEach reg batch := by
+  -- split on the batch's check
+  unfold saveBatch
+  split
+  -- free: saving it together is saving it whole one at a time
+  · next h => exact (saveEach_all_free reg batch hb h).symm
+  -- refused: the import saves one at a time
+  · rfl
 
 /-- Adding an alias missing from a list keeps it without repeats. -/
 theorem nodup_snoc {l : List Nat} {a : Nat} (h : l.Nodup) (ha : a ∉ l) :
@@ -250,106 +251,79 @@ theorem nodup_snoc {l : List Nat} {a : Nat} (h : l.Nodup) (ha : a ∉ l) :
   -- which ha refutes
   exact fun hxy => ha (hxy ▸ hx)
 
-/-- Flushing keeps the driver good. -/
-theorem flush_good {r0 : List Nat} {s : Driver} (h : Good r0 s) :
-    Good r0 (flush s) := by
-  -- take the two facts apart
-  obtain ⟨hreg, hnd⟩ := h
-  -- the store grows by the batch, as the saved list does
-  refine ⟨?_, ?_⟩
-  -- r0 ++ committed ++ pending, regrouped
-  · simp [flush, hreg, List.append_assoc]
-  -- the same aliases, now all in the store
-  · simpa [flush] using hnd
-
-/-- Gathering a document keeps the driver good. -/
-theorem admit_good {r0 : List Nat} {s t : Driver} {a : Nat} (h : Good r0 s)
-    (ha : a ∉ s.pending) (hs : admit s a = some t) : Good r0 t := by
-  -- take the two facts apart
-  obtain ⟨hreg, hnd⟩ := h
-  -- the check passed, so the store lacks the alias
-  unfold admit at hs
-  -- split on the store check
-  by_cases hr : a ∈ s.registered
-  -- refused: no new state
-  · simp [hr] at hs
-  -- gathered: the new state adds a to the batch
-  · simp [hr] at hs
-    -- the new state is the old one with a gathered
-    subst hs
-    -- the store is unchanged; a is new to the store and the batch
-    refine ⟨hreg, ?_⟩
-    -- regroup to (store ++ batch) ++ [a]
-    rw [← List.append_assoc]
-    -- a is in neither part
-    exact nodup_snoc hnd (by simp [hr, ha])
-
-/-- One step of the driver keeps it good. -/
-theorem gather_good {r0 : List Nat} {s t : Driver} {a : Nat} (h : Good r0 s)
-    (hs : gather s a = some t) : Good r0 t := by
-  -- split on whether the batch holds the alias
-  unfold gather at hs
-  by_cases hp : a ∈ s.pending
-  -- it does: flush, which keeps it good and empties the batch, then gather
-  · simp [hp] at hs
-    exact admit_good (flush_good h) (by simp [flush]) hs
-  -- it does not: gather directly
-  · simp [hp] at hs
-    exact admit_good h hp hs
-
-/-- The driver over a whole file: one step per document, stopping at the
-first refusal, and a last flush. -/
-def run (s : Driver) : List Nat → Option Driver
-  -- the file is done: save what waits
-  | [] => some (flush s)
-  -- the next document: step, then the rest
-  | a :: rest => (gather s a).bind (fun t => run t rest)
-
-/-- Running the driver keeps it good. -/
-theorem run_good {r0 : List Nat} :
-    ∀ (file : List Nat) (s t : Driver), Good r0 s → run s file = some t → Good r0 t
-  -- the empty file: the last flush keeps it good
-  | [], s, t, h, hr => by
-    -- the result is the flushed state
-    simp [run] at hr
-    subst hr
-    exact flush_good h
+/-- One at a time never saves an alias twice, nor one the store held. -/
+theorem saveEach_nodup :
+    ∀ (reg batch : List Nat), reg.Nodup → (reg ++ saveEach reg batch).Nodup
+  -- nothing saved: the store as it was
+  | reg, [], h => by simpa [saveEach] using h
   -- a document, then the rest
-  | a :: rest, s, t, h, hr => by
-    -- the step succeeded with some state u, and the rest ran from u
-    simp [run, Option.bind_eq_some] at hr
-    obtain ⟨u, hu, hrest⟩ := hr
-    -- u is good, so the rest keeps it good
-    exact run_good rest u t (gather_good h hu) hrest
+  | reg, a :: rest, h => by
+    -- split on whether its alias is held
+    by_cases ha : a ∈ reg
+    -- held: refused, nothing more saved
+    · simpa [saveEach, ha] using h
+    -- free: the store with a registered has no repeats, nor does the rest
+    · have := saveEach_nodup (reg ++ [a]) rest (nodup_snoc h ha)
+      -- regroup reg ++ [a] ++ saved into reg ++ a :: saved
+      simpa [saveEach, ha, List.append_assoc] using this
 
-/-- No duplicate alias: an import that finishes saved no two documents under
-one alias and none under an alias the store held before it. -/
-theorem no_duplicate_alias (r0 file : List Nat) (t : Driver)
-    (h0 : r0.Nodup) (hr : run ⟨r0, [], []⟩ file = some t) :
-    (r0 ++ t.committed).Nodup := by
-  -- the start is good: the store is r0, nothing waits or is saved
-  have hstart : Good r0 ⟨r0, [], []⟩ := ⟨by simp, by simpa using h0⟩
-  -- so the end is good
-  obtain ⟨hreg, hnd⟩ := run_good file _ t hstart hr
-  -- the store at the end is r0 ++ committed, without repeats
-  rw [hreg] at hnd
-  -- no repeats means pairwise distinct
-  unfold List.Nodup at hnd ⊢
-  -- dropping the batch keeps it pairwise distinct
-  exact (List.pairwise_append.mp hnd).1
+/-- No duplicate alias: saving a batch with no alias twice puts no alias in
+the store twice, and none the store already held. -/
+theorem no_duplicate_alias (reg batch : List Nat) (h0 : reg.Nodup)
+    (hb : batch.Nodup) : (reg ++ saveBatch reg batch).Nodup := by
+  -- the batch saves what one at a time saves, which never repeats
+  rw [saveBatch_eq_saveEach reg batch hb]
+  exact saveEach_nodup reg batch h0
 
-/-- RED witness: without the flush, a file naming alias 1 twice gathers both
-documents into one batch and saves both. -/
-def runNoFlush (s : Driver) : List Nat → Option Driver
-  -- the file is done: save what waits
-  | [] => some (flush s)
-  -- the next document: the store-only check, then the rest
-  | a :: rest => (gatherNoFlush s a).bind (fun t => runNoFlush t rest)
+/-- Prefix law: one at a time saves a first part of the batch, and the
+document right after that part is refused because its alias is held. So a
+failed batch keeps every document before the one refused. -/
+theorem keeps_prefix_until_refused :
+    ∀ (reg batch : List Nat), ∃ unsaved,
+      saveEach reg batch ++ unsaved = batch ∧
+        ∀ a later, unsaved = a :: later → a ∈ reg ++ saveEach reg batch
+  -- nothing in the batch: nothing unsaved
+  | _, [] => ⟨[], rfl, fun _ _ h => nomatch h⟩
+  -- a document, then the rest
+  | reg, a :: rest => by
+    -- split on whether its alias is held
+    by_cases ha : a ∈ reg
+    -- held: nothing saved, the whole batch unsaved, starting with a, held
+    · refine ⟨a :: rest, by simp [saveEach, ha], ?_⟩
+      -- the first unsaved document is a, which the store holds
+      intro b later hb
+      -- b is a
+      simp only [List.cons.injEq] at hb
+      -- so it is held
+      simp [saveEach, ha, hb.1 ▸ ha]
+    -- free: a is saved, and the rest keeps its own prefix
+    · obtain ⟨unsaved, hsplit, hstop⟩ := keeps_prefix_until_refused (reg ++ [a]) rest
+      refine ⟨unsaved, by simp [saveEach, ha, hsplit], ?_⟩
+      -- the first unsaved document is held by the store with a and the rest saved
+      intro b later hb
+      -- regroup reg ++ [a] ++ saved into reg ++ a :: saved
+      simpa [saveEach, ha, List.append_assoc] using hstop b later hb
 
-/-- The RED run saves alias 1 twice. -/
+/-! ## 5. The bugs the guards rule out -/
+
+/-- RED variant: a batch the check refuses fails as a whole and saves
+nothing (no one-at-a-time retry). -/
+def saveBatchDropped (reg batch : List Nat) : List Nat :=
+  -- free: saved together; refused: nothing
+  if ∀ a ∈ batch, a ∉ reg then batch else []
+
+/-- RED witness: with alias 2 held, the batch [1, 2] dropped whole loses
+document 1, which one at a time saves before 2 is refused. -/
+theorem dropped_batch_loses_the_prefix :
+    saveBatchDropped [2] [1, 2] = [] ∧ saveEach [2] [1, 2] = [1] := by
+  -- both sides compute to concrete values
+  decide
+
+/-- RED witness: without saving before a pending alias, a batch can hold
+alias 1 twice; it passes the check and saves 1 twice. -/
 theorem no_flush_saves_a_duplicate :
-    (runNoFlush ⟨[], [], []⟩ [1, 1]).map (·.committed) = some [1, 1] := by
-  -- the run computes to concrete values
-  rfl
+    saveBatch [] [1, 1] = [1, 1] ∧ ¬ ([] ++ saveBatch [] [1, 1]).Nodup := by
+  -- both sides compute to concrete values
+  decide
 
 end BackupImportSigner

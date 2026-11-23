@@ -137,3 +137,28 @@ fn a_continuation_is_refused_after_the_drain_completed_even_with_plain_spawns_ra
     racer.join().unwrap();
     runtime.shutdown().unwrap();
 }
+
+#[test]
+fn an_admitted_request_holds_the_drain_and_admits_its_continuations_after_close() {
+    let runtime = start();
+    let edge = runtime.edge().clone();
+    let scope = edge.scope();
+    let admission = scope.edge().admit_request().unwrap();
+    scope.close();
+    assert!(matches!(
+        scope.edge().admit_request(),
+        Err(EdgeError::Closed)
+    ));
+    let continued = scope.edge().spawn_continuation(async { 5 });
+    edge.block_on(async {
+        assert_eq!(continued.await, Ok(5));
+        let early = scope.drain(Duration::from_millis(100)).await;
+        assert_eq!(early.remaining, 1, "{early:?}");
+        drop(admission);
+        assert!(scope.drain(LIMIT).await.is_complete());
+        let late = scope.edge().spawn_continuation(async {});
+        assert_eq!(late.await, Err(EdgeError::Closed));
+    })
+    .unwrap();
+    runtime.shutdown().unwrap();
+}

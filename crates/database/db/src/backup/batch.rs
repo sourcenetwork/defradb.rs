@@ -31,10 +31,11 @@ pub(super) struct Batch {
 
 impl Batch {
     /// Whether a document must wait for this batch to be saved: one of its
-    /// aliases is already waiting here, so its alias check must see that
-    /// one registered (`proofs/lean/BackupImportSigner.lean`
-    /// `gather_refuses_iff`), or one of its relations points at a document
-    /// waiting here, whose new ID only the save gives.
+    /// aliases is already waiting here, so no batch holds one alias twice
+    /// and its check must see that one registered
+    /// (`proofs/lean/BackupImportSigner.lean` `saveBatch_eq_saveEach`), or
+    /// one of its relations points at a document waiting here, whose new
+    /// ID only the save gives.
     pub(super) fn must_save_before<'a, A, T>(&self, aliases: A, targets: T) -> bool
     where
         A: IntoIterator<Item = &'a String>,

@@ -1,5 +1,5 @@
 //! The file's document IDs as aliases of the imported documents: checked
-//! free before a document is gathered, registered once it is saved.
+//! free just before their batch is saved, registered once it is saved.
 
 use std::sync::Arc;
 

@@ -8,7 +8,7 @@ use identity::Did;
 use query::{QueryRequest, QueryResponse, TransactionError, TransactionHandle};
 use schema::CollectionVersion;
 
-use crate::{refused_transaction, Error, Node, Result};
+use crate::{refused_transaction, Admit, Error, Node, Result};
 
 impl Node {
     /// Parse `sdl`, check it and create every collection it defines, or none,
@@ -58,6 +58,20 @@ impl Node {
             Some(id) => self.execute_request_in_txn(request, &handle(id)).await,
             None => self.execute_request(request).await,
         }
+    }
+
+    /// [`Self::run_as_identity`] as work of a request already admitted
+    /// ([`Node::admit_request`]), so shutdown drains it with that request.
+    pub(crate) async fn run_continuing_as_identity(
+        &self,
+        context: &RequestContext,
+        identity: Option<Did>,
+        request: QueryRequest,
+    ) -> QueryResponse {
+        let request = request_in(context, identity, request);
+        let txn = context.txn().map(handle);
+        self.execute_admitted_request(request, txn, Admit::Continuation)
+            .await
     }
 
     /// Begin an explicit transaction for the caller `context` names. Requests

@@ -27,10 +27,12 @@ impl Node {
     }
 
     /// Import the documents of backup `data` as `context`'s identity. They
-    /// get new document IDs, as Go's import gives them. Each create and
-    /// relation patch is a request of this node, admitted, signed and
-    /// broadcast as any other write, so a shutdown refuses the writes after
-    /// it begins. The import runs outside any transaction `context` names.
+    /// get new document IDs, as Go's import gives them. The import is one
+    /// admitted request of this node: refused once shutdown stops admitting,
+    /// and drained by shutdown once begun, so a saved batch always gets its
+    /// aliases. Each create and relation patch continues that request and is
+    /// signed and broadcast as any other write. The import runs outside any
+    /// transaction `context` names.
     pub async fn import_backup_as(&self, context: &RequestContext, data: &str) -> Result<()> {
         let context = self.caller(context).with_txn(None);
         let host = NodeHost {
@@ -38,10 +40,19 @@ impl Node {
             identity: acting_identity(&context)?,
             context: context.clone(),
         };
-        self.ops()
-            .import_backup_with(context, &host, data)
-            .await
-            .map(drop)
+        self.import_admitted(context, &host, data).await.map(drop)
+    }
+
+    /// The import of [`Self::import_backup_as`] as one admitted request, every
+    /// write sent through `host`.
+    async fn import_admitted(
+        &self,
+        context: RequestContext,
+        host: &dyn ImportHost,
+        data: &str,
+    ) -> Result<db::backup::ImportStats> {
+        let _admitted = self.admit_request()?;
+        self.ops().import_backup_with(context, host, data).await
     }
 }
 
@@ -49,7 +60,8 @@ impl Node {
 #[path = "backup_tests.rs"]
 mod tests;
 
-/// This node's request path for an import's writes.
+/// This node's request path for an import's writes, each continuing the
+/// import's own admitted request ([`Node::admit_request`]).
 struct NodeHost<'a> {
     node: &'a Node,
     context: RequestContext,
@@ -58,10 +70,11 @@ struct NodeHost<'a> {
 
 impl ImportHost for NodeHost<'_> {
     fn run(&self, request: QueryRequest) -> MaybeBoxFuture<'_, QueryResponse> {
-        Box::pin(
-            self.node
-                .run_as_identity(&self.context, self.identity.clone(), request),
-        )
+        Box::pin(self.node.run_continuing_as_identity(
+            &self.context,
+            self.identity.clone(),
+            request,
+        ))
     }
 
     fn on_db(&self, job: DbJob) -> MaybeBoxFuture<'_, std::result::Result<(), String>> {

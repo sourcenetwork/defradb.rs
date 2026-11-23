@@ -85,8 +85,9 @@ where
 /// create and relation patch is a request sent through `host`, the request
 /// path of the edge the import came in by, so it is written exactly as a
 /// create through that edge would be. Consecutive documents of a collection
-/// are saved together, each save all or nothing; a failure stops the import
-/// with the documents saved before it kept.
+/// are saved together, each save all or nothing; a refused save is redone
+/// one document at a time, so a failure stops the import with every
+/// document before the one refused kept.
 pub async fn import_database_as<S>(
     context: &defra_core::RequestContext,
     database: &Arc<DB<S>>,
@@ -279,6 +280,11 @@ where
 
 /// Saves the gathered documents of `target` in one request through `host`,
 /// then registers their aliases in one transaction.
+///
+/// A batch that is refused saved nothing, so its documents are then saved
+/// one at a time, in file order, up to the one refused: the import keeps
+/// every document before the first it cannot import, as one create per
+/// document would.
 async fn save<S>(
     host: &dyn ImportHost,
     database: &Arc<DB<S>>,
@@ -293,7 +299,31 @@ where
         return Ok(());
     }
     let gathered = batch.take();
-    // One check for the batch: no file ID of it may name a stored document.
+    match create(host, database, target, &gathered).await {
+        Ok(ids) => record(host, database, target, gathered, ids, imported).await,
+        Err(error) if gathered.len() == 1 => Err(error),
+        Err(_) => {
+            for doc in gathered {
+                let one = vec![doc];
+                let ids = create(host, database, target, &one).await?;
+                record(host, database, target, one, ids, imported).await?;
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Checks that no file ID of `gathered` names a stored document, then
+/// creates them all in one request: all or none. Their new IDs, in order.
+async fn create<S>(
+    host: &dyn ImportHost,
+    database: &Arc<DB<S>>,
+    target: &Target,
+    gathered: &[Gathered],
+) -> Result<Vec<String>, String>
+where
+    S: Store + 'static,
+{
     // The batch never holds one ID twice (`Batch::must_save_before`).
     let aliases: Vec<String> = gathered
         .iter()
@@ -306,15 +336,34 @@ where
         .iter()
         .map(|doc| JsonValue::Object(doc.fields.clone()))
         .collect();
-    let ids = documents::save_many(
+    documents::save_many(
         |request| host.run(request),
         &target.name,
         &docs,
         &AddOptions::default(),
     )
     .await
-    .map_err(|e| create_error(&target.name, e.to_string()))?;
+    .map_err(|e| create_error(&target.name, e.to_string()))
+}
 
+/// Registers the aliases of the created documents `gathered`, whose new IDs
+/// are `ids`, in one transaction, and notes them as imported.
+///
+/// An alias another writer took since the check refuses the whole
+/// registration, and the documents stay saved. Each document's aliases are
+/// then registered on their own, so every other one still answers to its
+/// file ID, and the import fails with the first refusal.
+async fn record<S>(
+    host: &dyn ImportHost,
+    database: &Arc<DB<S>>,
+    target: &Target,
+    gathered: Vec<Gathered>,
+    ids: Vec<String>,
+    imported: &mut Imported,
+) -> Result<(), String>
+where
+    S: Store + 'static,
+{
     let saved: Vec<Saved> = ids
         .iter()
         .zip(&gathered)
@@ -323,8 +372,26 @@ where
             aliases: doc.aliases.clone(),
         })
         .collect();
-    host.on_db(alias::register(database, target.short_id, saved))
-        .await?;
+    let together = host
+        .on_db(alias::register(database, target.short_id, saved.clone()))
+        .await;
+    if let Err(error) = together {
+        if saved.len() == 1 {
+            return Err(error);
+        }
+        let mut refused = None;
+        for doc in saved {
+            let alone = host
+                .on_db(alias::register(database, target.short_id, vec![doc]))
+                .await;
+            if let Err(error) = alone {
+                refused.get_or_insert(error);
+            }
+        }
+        if let Some(error) = refused {
+            return Err(error);
+        }
+    }
 
     for (doc_id, doc) in ids.into_iter().zip(gathered) {
         for alias in doc.aliases {

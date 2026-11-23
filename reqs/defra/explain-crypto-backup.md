@@ -384,3 +384,10 @@ An import that names no identity creates its documents as a create that names no
 - **Scenarios:** ["backup::duplicate_alias::a_repeated_doc_id_fails_and_keeps_the_first_document"]
 
 A backup file in which two documents carry the same `_docID` (or `_docIDNew`) fails with `a document with the given ID already exists` when it reaches the second one; the first is imported and the second is not created.
+
+# `defra.backup.import.keeps_earlier_documents`: A failed import keeps the documents before the failure
+
+- **Parents:** ["go.backup.import"]
+- **Scenarios:** ["backup::failed_import::a_failed_import_keeps_every_document_before_the_one_refused"]
+
+An import that cannot create one of its documents fails with that document's error and stops there. Every document of the file before it is imported, and none after it is: a file of `{"name":"Alice"}`, `{"name":"John"}`, `{"name":"John"}`, `{"name":"Zed"}`, whose second John has the first one's content and so its ID, fails with `a document with the given ID already exists` and leaves Alice and the first John.

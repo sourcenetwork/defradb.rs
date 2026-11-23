@@ -1,4 +1,5 @@
 mod duplicate_alias;
+mod failed_import;
 mod import_creator;
 mod signed_import;
 mod one_to_many {

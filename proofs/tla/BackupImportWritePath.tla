@@ -15,9 +15,19 @@
 \*
 \* Who acts:
 \*   * the import driver, which walks the file and gathers consecutive
-\*     documents into a batch it saves in one request (all or nothing);
-\*   * another writer, which may claim an alias at any moment;
-\*   * the node's shutdown, which stops admitting requests.
+\*     documents into a batch, then saves the batch in three separate steps:
+\*     it checks that no alias of the batch is held, it creates the batch's
+\*     documents in one request (all or nothing), and it registers their
+\*     aliases in one transaction. A batch refused at the check or the
+\*     create saved nothing, so its documents are then saved one at a time
+\*     the same way, up to the first one refused. A registration refused by
+\*     an alias taken since the check is redone one document at a time, so
+\*     the others still get theirs;
+\*   * another writer, which may claim an alias at any moment, between any
+\*     two of those steps;
+\*   * the node's shutdown, which stops admitting requests and then drains:
+\*     the drain finishes once no admitted request is still running, and the
+\*     database closes after it.
 \*
 \* What must never happen:
 \*   1. an imported document signed otherwise than a create would be, or
@@ -33,36 +43,55 @@
 \*      (imports run on a node only) - INV_FfiTxnRefused;
 \*   7. an imported document owned by someone a create would not be owned
 \*      by - INV_CreatorAsCreate;
-\*   8. a Node write committed after the node stopped admitting - INV_NoWriteAfterClose.
+\*   8. a Node import that ended with a saved document whose alias nobody
+\*      holds - INV_SavedRegistered;
+\*   9. the Node's drain finishing while an import still runs -
+\*      INV_DrainWaitsForImport;
+\*  10. a failed import that lost a document before the one it failed at -
+\*      INV_KeepsPrefix.
 \*
 \* Each guard has a RED configuration that removes it:
 \*   * OwnMutator = FALSE: writes go through the edge's host (Red_OwnMutator);
 \*   * KeepSigningChoice: the host keeps the edge's signer (Red_NoSigningChoice);
 \*   * AliasInTxn: registration reads validated (Red_AliasOutsideTxn);
-\*   * CheckBeforeCreate: the alias check comes first (Red_AliasCheckAfterCreate);
+\*   * CheckBeforeCreate: a batch's aliases are checked before its create
+\*     (Red_AliasCheckAfterCreate);
 \*   * FfiOwnPath: FFI writes through its DocumentCall (Red_FfiViaNode);
 \*   * KeepCaller: the host acts as the caller (Red_CallerIgnored);
-\*   * AdmitEachWrite: the Node host admits each write (Red_ImportAdmittedOnce);
+\*   * HoldImport: the Node import is one admitted request that its writes
+\*     continue (Red_WritesAdmittedAlone);
 \*   * AnonAsCreate: an anonymous import acts as an anonymous create (Red_ActorNoOne);
 \*   * AdapterTakesHost: the cli adapter forwards the handler's host (Red_AdapterOwnHost);
 \*   * DriverOnCaller: import_backup_with runs the driver where it is called
 \*     (Red_PrepareOnPool);
-\*   * FlushOnPendingAlias: a batch flushes before a document whose alias it
-\*     holds (Red_BatchSkipsPendingAlias);
+\*   * FlushOnPendingAlias: a batch is saved before a document whose alias
+\*     it holds joins it (Red_BatchSkipsPendingAlias);
+\*   * OneByOneOnRefusal: a refused batch is saved again one document at a
+\*     time (Red_RefusedBatchDropped);
+\*   * RegisterEachOnRefusal: a registration refused by one taken alias
+\*     registers every other document's alias on its own
+\*     (Red_RegistrationAllOrNothing);
 \*   * RequireNode: the FFI refuses a transaction handle (Red_FfiTxnAccepted).
 \*
 \* What is abstracted: a document is its alias; relation fields are left out
-\* (a batch also flushes before a document whose relation points into it, so
-\* the target's new ID is known, which changes no alias rule); one import
-\* per run; the edge, the caller, whether the node signs and the FFI target
-\* are picked at the start.
+\* (a batch is also saved before a document whose relation points into it,
+\* so the target's new ID is known, which changes no alias rule); a create
+\* is refused only by a held alias or by shutdown; one import per run; the
+\* edge, the caller, whether the node signs and the FFI target are picked at
+\* the start; the drain's deadline is not modelled (past it the database
+\* closes under any request still running, the import's as any other's);
+\* only the Node edge's admission is modelled.
 \*
-\* Rust: crates/database/db/src/backup/import.rs import_database_as,
-\* crates/database/db/src/backup/host.rs ImportHost, RunnerHost;
-\* crates/database/db/src/backup/batch.rs Batch::must_save_before;
+\* Rust: crates/database/db/src/backup/import.rs import_database_as, save,
+\* create, record; crates/database/db/src/backup/host.rs ImportHost,
+\* RunnerHost; crates/database/db/src/backup/batch.rs Batch::must_save_before;
 \* crates/database/db/src/backup/alias.rs register, check_free;
-\* crates/entry-points/defra-node/src/ops/backup.rs
-\* Node::import_backup_as, NodeOps::import_backup_with, NodeHost;
+\* crates/entry-points/defra-node/src/ops/backup.rs Node::import_backup_as,
+\* Node::import_admitted, NodeOps::import_backup_with, NodeHost;
+\* crates/entry-points/defra-node/src/lib.rs Node::admit_request, Admit;
+\* crates/entry-points/defra-node/src/ops/request.rs
+\* Node::run_continuing_as_identity; crates/foundation/edge/src/handle.rs
+\* Edge::admit_request, Edge::spawn_continuation;
 \* crates/entry-points/defra-node/src/ops/http_ops.rs HttpNodeOps::import;
 \* crates/surfaces/http/src/handlers/backup.rs import;
 \* crates/surfaces/http/src/request_path.rs Server;
@@ -74,19 +103,22 @@ CONSTANTS
   OwnMutator,          \* TRUE: the driver writes with a mutator of its own (the bug)
   KeepSigningChoice,   \* TRUE: the host signs as the edge would
   AliasInTxn,          \* TRUE: alias registration is a validated read-then-write
-  CheckBeforeCreate,   \* TRUE: a document's alias is checked before it is created
+  CheckBeforeCreate,   \* TRUE: a batch's aliases are checked before it is created
   FfiOwnPath,          \* TRUE: the FFI writes through its own DocumentCall
   KeepCaller,          \* TRUE: the host acts as the caller who imports
-  AdmitEachWrite,      \* TRUE: the Node host admits every write on its own
+  HoldImport,          \* TRUE: a Node import is one admitted request its writes continue
   AnonAsCreate,        \* TRUE: an anonymous import acts as an anonymous create does
   AdapterTakesHost,    \* TRUE: the cli adapter writes through the handler's host
   DriverOnCaller,      \* TRUE: import_backup_with runs the driver on its caller
-  FlushOnPendingAlias, \* TRUE: a batch flushes before a document whose alias it holds
+  FlushOnPendingAlias, \* TRUE: a batch is saved before a document whose alias it holds
+  OneByOneOnRefusal,   \* TRUE: a refused batch is saved again one document at a time
+  RegisterEachOnRefusal, \* TRUE: a refused registration is redone one document at a time
   RequireNode          \* TRUE: the FFI import refuses a transaction handle
 
 \* The backup files a run may import, each a sequence of aliases: one alias
-\* twice, one alias the other writer may claim, one alias the store holds.
-Files == {<<"a", "a">>, <<"a", "c">>, <<"p", "b">>}
+\* twice, one alias the other writer may claim, and the alias the store
+\* holds first and then last.
+Files == {<<"a", "a">>, <<"a", "c">>, <<"p", "b">>, <<"b", "p">>}
 \* The aliases the store holds before the import.
 Preexisting == {"p"}
 \* The alias the other writer may claim.
@@ -97,6 +129,8 @@ Edges == {"Node", "HttpNodeBuilder", "HttpCliStart", "Ffi"}
 Callers == {"anon", "alice"}
 \* A document number: its position in the file.
 Docs(f) == 1..Len(f)
+\* The smallest number of a non-empty set.
+Min(s) == CHOOSE x \in s : \A y \in s : x <= y
 
 VARIABLES
   edge,       \* the edge the import came through
@@ -107,16 +141,22 @@ VARIABLES
   phase,      \* "start", "run", "done" or "failed"
   driverOn,   \* where the driver runs: "caller" or "worker"
   next,       \* the next document of the file to look at
-  batch,      \* the documents gathered and not yet saved
-  pending,    \* the aliases of the documents in the batch
+  batch,      \* the documents gathered and not yet being saved
+  unit,       \* the documents being saved now: a batch, or one of it
+  rest,       \* when saving one at a time, the batch's documents not yet done
+  single,     \* TRUE while a refused batch is saved one document at a time
+  stage,      \* the step of saving `unit`: "idle", "check", "save" or "register"
   store,      \* each alias's owner: "imported", "w" (the other writer), "old" or "none"
   committed,  \* the saved documents, each a record of how it was written
   admitting,  \* TRUE while the node admits requests
-  claimed     \* TRUE once the other writer holds the contested alias
+  drained,    \* TRUE once the node's drain finished (the database closes next)
+  claimed,    \* TRUE once the other writer holds the contested alias
+  failedAt    \* the document a failed import stopped at, or 0
 
 \* Every variable, for stuttering steps.
 vars == <<edge, caller, signs, target, file, phase, driverOn, next, batch,
-          pending, store, committed, admitting, claimed>>
+          unit, rest, single, stage, store, committed, admitting, drained,
+          claimed, failedAt>>
 
 \* Every alias any file or the store may name.
 Aliases == UNION {{f[i] : i \in DOMAIN f} : f \in Files} \cup Preexisting \cup {Contested}
@@ -179,13 +219,17 @@ Broadcast == ~OwnMutator
 TypeOK ==
   \* the edge, caller and target come from their sets
   /\ edge \in Edges /\ caller \in Callers /\ target \in {"node", "txn"}
-  \* the phase and the driver's place are one of theirs
+  \* the phase, the driver's place and the saving step are one of theirs
   /\ phase \in {"start", "run", "done", "failed"}
   /\ driverOn \in {"caller", "worker"}
+  /\ stage \in {"idle", "check", "save", "register"}
   \* every alias has an owner or none
   /\ store \in [Aliases -> {"imported", "w", "old", "none"}]
-  \* the batch and the next document stay within the file
-  /\ batch \subseteq Docs(file) /\ next \in 1..(Len(file) + 1)
+  \* the documents in flight stay within the file
+  /\ batch \subseteq Docs(file) /\ unit \subseteq Docs(file)
+  /\ rest \subseteq Docs(file) /\ next \in 1..(Len(file) + 1)
+  \* the stop is a document of the file, or none
+  /\ failedAt \in 0..Len(file)
 
 \* The run's start.
 Init ==
@@ -194,23 +238,29 @@ Init ==
   /\ target \in {"node", "txn"} /\ file \in Files
   \* the import has not started
   /\ phase = "start" /\ driverOn = "caller"
-  \* no document looked at, none gathered, none saved
-  /\ next = 1 /\ batch = {} /\ pending = {} /\ committed = {}
+  \* no document looked at, none gathered, none being saved, none saved
+  /\ next = 1 /\ batch = {} /\ unit = {} /\ rest = {} /\ single = FALSE
+  /\ stage = "idle" /\ committed = {} /\ failedAt = 0
   \* the store holds the preexisting aliases and nothing else
   /\ store = [a \in Aliases |-> IF a \in Preexisting THEN "old" ELSE "none"]
-  \* the node admits requests; the other writer has not claimed its alias
-  /\ admitting = TRUE /\ claimed = FALSE
+  \* the node admits requests and has not drained; no alias is claimed
+  /\ admitting = TRUE /\ drained = FALSE /\ claimed = FALSE
 
-\* The edge starts the import: the FFI refuses a transaction handle, and
-\* the driver runs where its edge places it.
+\* Whether the Node import holds its admission now: it was admitted as one
+\* request (Node::admit_request) and has not ended.
+Holding == edge = "Node" /\ HoldImport /\ phase = "run"
+
+\* The edge starts the import: the FFI refuses a transaction handle, a Node
+\* import admitted as one request is refused once the node stops admitting,
+\* and the driver runs where its edge places it.
 Start ==
   \* only once
   /\ phase = "start"
   \* an FFI call on a transaction is refused before anything runs
   /\ IF edge = "Ffi" /\ target = "txn" /\ RequireNode
        THEN phase' = "failed" /\ UNCHANGED driverOn
-       \* a Node import admitted once as a whole is refused after close
-       ELSE IF edge = "Node" /\ ~AdmitEachWrite /\ ~admitting
+       \* the Node admits the import as a request: refused after close
+       ELSE IF edge = "Node" /\ HoldImport /\ ~admitting
          THEN phase' = "failed" /\ UNCHANGED driverOn
          ELSE /\ phase' = "run"
               \* the FFI call is placed on a worker as every FFI document
@@ -221,92 +271,171 @@ Start ==
                              ELSE IF edge \in {"Node", "HttpNodeBuilder"} /\ ~DriverOnCaller
                                THEN "worker" ELSE "caller"
   \* nothing else moves
-  /\ UNCHANGED <<edge, caller, signs, target, file, next, batch, pending,
-                 store, committed, admitting, claimed>>
+  /\ UNCHANGED <<edge, caller, signs, target, file, next, batch, unit, rest,
+                 single, stage, store, committed, admitting, drained, claimed,
+                 failedAt>>
 
 \* Whether alias `a` is held in the store.
 Held(a) == store[a] # "none"
 
-\* The driver takes the next document into the batch, after checking its
-\* alias against the store when the check comes first.
+\* The aliases of the documents waiting in the batch.
+Pending == {file[d] : d \in batch}
+
+\* The driver takes the next document into the batch. Nothing is checked
+\* here: the check runs when the batch is saved.
 Gather ==
-  \* the import is running and the file has a document left
-  /\ phase = "run" /\ next <= Len(file)
-  \* a document whose alias the batch holds waits for a flush first
-  /\ ~(FlushOnPendingAlias /\ file[next] \in pending)
-  \* the alias is checked before the document joins the batch
-  /\ IF CheckBeforeCreate /\ Held(file[next])
-       \* taken: the import fails with the alias error, nothing new saved
-       THEN /\ phase' = "failed"
-            /\ UNCHANGED <<next, batch, pending>>
-       \* free: the document joins the batch
-       ELSE /\ batch' = batch \cup {next}
-            /\ pending' = pending \cup {file[next]}
-            /\ next' = next + 1
-            /\ UNCHANGED phase
+  \* the import is running, nothing is being saved, a document is left
+  /\ phase = "run" /\ stage = "idle" /\ next <= Len(file)
+  \* a document whose alias the batch holds waits for the batch's save
+  /\ ~(FlushOnPendingAlias /\ file[next] \in Pending)
+  \* the document joins the batch
+  /\ batch' = batch \cup {next}
+  /\ next' = next + 1
   \* nothing else moves
-  /\ UNCHANGED <<edge, caller, signs, target, file, driverOn, store,
-                 committed, admitting, claimed>>
+  /\ UNCHANGED <<edge, caller, signs, target, file, phase, driverOn, unit,
+                 rest, single, stage, store, committed, admitting, drained,
+                 claimed, failedAt>>
+
+\* The driver starts saving the batch: at any moment (the file ended, it hit
+\* its size bound, or the next document must wait for it).
+Flush ==
+  \* there is a batch and nothing is being saved
+  /\ phase = "run" /\ stage = "idle" /\ batch # {}
+  \* the whole batch is the unit; it starts at the check
+  /\ unit' = batch /\ batch' = {} /\ stage' = "check"
+  \* nothing else moves
+  /\ UNCHANGED <<edge, caller, signs, target, file, phase, driverOn, next,
+                 rest, single, store, committed, admitting, drained, claimed,
+                 failedAt>>
+
+\* What happens when `unit` is refused at its check or its create, which
+\* then saved nothing of it. `stop` is the document the import reports.
+Refused(stop) ==
+  \* a batch of several, refused for the first time: save it one at a time,
+  \* from its first document's check
+  IF ~single /\ Cardinality(unit) > 1 /\ OneByOneOnRefusal
+    THEN /\ single' = TRUE /\ rest' = unit /\ unit' = {Min(unit)}
+         /\ stage' = "check"
+         /\ UNCHANGED <<phase, failedAt>>
+    \* otherwise the import fails there, the rest of the batch unsaved
+    ELSE /\ phase' = "failed" /\ failedAt' = stop
+         /\ unit' = {} /\ rest' = {} /\ single' = FALSE /\ stage' = "idle"
+
+\* The check: no alias of the unit may be held in the store. A job on the
+\* database (alias::check_free).
+Check ==
+  \* the unit is at its check
+  /\ phase = "run" /\ stage = "check"
+  /\ IF CheckBeforeCreate /\ \E d \in unit : Held(file[d])
+       \* taken: refused, reporting the first document whose alias is held
+       THEN Refused(Min({d \in unit : Held(file[d])}))
+       \* free (or not checked): on to the create
+       ELSE /\ stage' = "save"
+            /\ UNCHANGED <<phase, unit, rest, single, failedAt>>
+  \* nothing else moves
+  /\ UNCHANGED <<edge, caller, signs, target, file, driverOn, next, batch,
+                 store, committed, admitting, drained, claimed>>
 
 \* The record of document `d` as the import wrote it.
 Written(d) ==
   \* its number and alias, the path it ran through, its signer and owner,
-  \* whether it was broadcast and whether the node admitted it
+  \* and whether it was broadcast
   [doc |-> d, alias |-> file[d], host |-> HostOf(edge),
    signer |-> ImportSigner(edge, caller, signs),
    creator |-> ImportCreator(edge, caller, signs),
-   broadcast |-> Broadcast, admitted |-> admitting]
+   broadcast |-> Broadcast]
 
-\* Whether every alias of batch `b` may be registered to its document: free,
-\* or (without validation) whatever holds it.
-Registrable(b) == \A d \in b : ~Held(file[d]) \/ ~AliasInTxn
+\* Whether the Node refuses the import's create now. A write that continues
+\* the admitted import (Admit::Continuation) is refused only once the drain
+\* finished; a write admitted on its own is refused once the node stops
+\* admitting.
+SaveRefused ==
+  \* only the Node edge's admission is modelled
+  /\ edge = "Node"
+  \* which rule refuses it
+  /\ IF HoldImport THEN drained ELSE ~admitting
 
-\* The batch is saved in one request, then its aliases are registered in
-\* one transaction. Saving is all or nothing; a refused write saves none.
-Flush ==
-  \* there is a batch; it may be saved at any moment (the file ended, it hit
-  \* its size bound, or the next document must wait for it)
-  /\ phase = "run" /\ batch # {}
-  /\ IF edge = "Node" /\ AdmitEachWrite /\ ~admitting
-       \* the Node host refuses the write after close: nothing saved
-       THEN /\ phase' = "failed"
-            /\ UNCHANGED <<committed, store>>
-       \* an alias checked only after the create fails with the documents saved
-       ELSE IF ~CheckBeforeCreate /\ \E d \in batch : store[file[d]] = "old"
-         THEN /\ committed' = committed \cup {Written(d) : d \in batch}
-              /\ phase' = "failed"
-              /\ UNCHANGED store
-       \* the registration's validated reads see a taken alias: the
-       \* documents stay saved and the import fails with the alias error
-       ELSE IF ~Registrable(batch)
-         THEN /\ committed' = committed \cup {Written(d) : d \in batch}
-              /\ phase' = "failed"
-              /\ UNCHANGED store
-         \* else the batch is saved and each alias set to its document (the
-         \* first of two that share one keeps it)
-         ELSE /\ committed' = committed \cup {Written(d) : d \in batch}
-              /\ store' = [a \in Aliases |->
-                             IF \E d \in batch : file[d] = a
+\* The create: the unit's documents in one request, all or nothing.
+Save ==
+  \* the unit is at its create
+  /\ phase = "run" /\ stage = "save"
+  /\ IF SaveRefused
+       \* refused: nothing saved
+       THEN /\ Refused(Min(unit))
+            /\ UNCHANGED committed
+       \* created: every document of the unit is saved; on to registration
+       ELSE /\ committed' = committed \cup {Written(d) : d \in unit}
+            /\ stage' = "register"
+            /\ UNCHANGED <<phase, unit, rest, single, failedAt>>
+  \* nothing else moves
+  /\ UNCHANGED <<edge, caller, signs, target, file, driverOn, next, batch,
+                 store, admitting, drained, claimed>>
+
+\* Whether every alias of `u` may be registered to its document: free, or
+\* (without validation) whatever holds it.
+Registrable(u) == \A d \in u : ~Held(file[d]) \/ ~AliasInTxn
+
+\* After the unit's registration: the next document of a batch being saved
+\* one at a time, or back to gathering.
+AfterUnit ==
+  IF single /\ rest \ unit # {}
+    \* the next document of the refused batch, from its check
+    THEN /\ rest' = rest \ unit /\ unit' = {Min(rest \ unit)}
+         /\ stage' = "check" /\ UNCHANGED single
+    \* the batch is done
+    ELSE /\ rest' = {} /\ unit' = {} /\ single' = FALSE /\ stage' = "idle"
+
+\* The import fails at the unit's first document with its documents saved.
+FailSaved ==
+  \* the import stops; nothing is being saved any more
+  /\ phase' = "failed" /\ failedAt' = Min(unit)
+  /\ unit' = {} /\ rest' = {} /\ single' = FALSE /\ stage' = "idle"
+
+\* The registration: the unit's aliases in one transaction on the database
+\* (alias::register), after its create. Once the drain finished, the
+\* database closes and refuses it.
+Register ==
+  \* the unit is at its registration
+  /\ phase = "run" /\ stage = "register"
+  /\ IF edge = "Node" /\ drained
+       \* the database closed under the import: its documents stay saved,
+       \* their aliases unregistered
+       THEN FailSaved /\ UNCHANGED store
+       \* the validated reads see a taken alias: the documents stay saved,
+       \* each one's alias is then registered on its own where it is free,
+       \* and the import fails with the alias error
+       ELSE IF ~Registrable(unit)
+         THEN /\ FailSaved
+              /\ store' = IF RegisterEachOnRefusal
+                            THEN [a \in Aliases |->
+                                    IF \E d \in unit : file[d] = a /\ ~Held(a)
+                                      THEN "imported"
+                                      ELSE store[a]]
+                            ELSE store
+         \* else each alias is set to its document (the first of two that
+         \* share one keeps it)
+         ELSE /\ store' = [a \in Aliases |->
+                             IF \E d \in unit : file[d] = a
                                THEN "imported"
                                ELSE store[a]]
-              \* a batch that held one alias twice fails on its second
-              /\ phase' = IF \E d, e \in batch : d # e /\ file[d] = file[e]
-                            THEN "failed" ELSE phase
-  \* the batch is empty again
-  /\ batch' = {} /\ pending' = {}
+              \* a unit that held one alias twice fails on its second
+              /\ IF \E d, e \in unit : d # e /\ file[d] = file[e]
+                   THEN FailSaved
+                   ELSE AfterUnit /\ UNCHANGED <<phase, failedAt>>
   \* nothing else moves
-  /\ UNCHANGED <<edge, caller, signs, target, file, driverOn, next, admitting,
-                 claimed>>
+  /\ UNCHANGED <<edge, caller, signs, target, file, driverOn, next, batch,
+                 committed, admitting, drained, claimed>>
 
 \* The import ends once the file is done and nothing waits to be saved.
 Finish ==
   \* the import runs, the file is done and nothing waits
-  /\ phase = "run" /\ next > Len(file) /\ batch = {}
+  /\ phase = "run" /\ next > Len(file) /\ batch = {} /\ stage = "idle"
   \* it ends well
   /\ phase' = "done"
   \* nothing else moves
   /\ UNCHANGED <<edge, caller, signs, target, file, driverOn, next, batch,
-                 pending, store, committed, admitting, claimed>>
+                 unit, rest, single, stage, store, committed, admitting,
+                 drained, claimed, failedAt>>
 
 \* Another writer claims the contested alias, through a validated write of
 \* its own: only while nothing holds it.
@@ -319,7 +448,8 @@ Claim ==
   /\ claimed' = TRUE
   \* nothing else moves
   /\ UNCHANGED <<edge, caller, signs, target, file, phase, driverOn, next,
-                 batch, pending, committed, admitting>>
+                 batch, unit, rest, single, stage, committed, admitting,
+                 drained, failedAt>>
 
 \* The node's shutdown stops admitting requests.
 Close ==
@@ -329,13 +459,32 @@ Close ==
   /\ admitting' = FALSE
   \* nothing else moves
   /\ UNCHANGED <<edge, caller, signs, target, file, phase, driverOn, next,
-                 batch, pending, store, committed, claimed>>
+                 batch, unit, rest, single, stage, store, committed, drained,
+                 claimed, failedAt>>
+
+\* The drain finishes: after the close, once no admitted request still runs.
+\* A Node import holding its admission is one of them.
+Drain ==
+  \* after the close, once
+  /\ ~admitting /\ ~drained
+  \* nothing admitted still runs
+  /\ ~Holding
+  \* the drain is over; the database closes
+  /\ drained' = TRUE
+  \* nothing else moves
+  /\ UNCHANGED <<edge, caller, signs, target, file, phase, driverOn, next,
+                 batch, unit, rest, single, stage, store, committed,
+                 admitting, claimed, failedAt>>
 
 \* Any of the actors takes a step.
-Next == Start \/ Gather \/ Flush \/ Finish \/ Claim \/ Close
+Next == Start \/ Gather \/ Flush \/ Check \/ Save \/ Register \/ Finish
+        \/ Claim \/ Close \/ Drain
 
 \* Every run: a start, then any steps.
 Spec == Init /\ [][Next]_vars
+
+\* The numbers of the saved documents.
+SavedDocs == {r.doc : r \in committed}
 
 \* Promise: every imported document is signed as a create by the same
 \* caller on the same node would be.
@@ -384,9 +533,22 @@ INV_CreatorAsCreate ==
   \* for each saved document, its owner is a create's
   \A r \in committed : r.creator = CreateCreator(edge, caller, signs)
 
-\* Promise: no Node import write commits after the node stopped admitting.
-INV_NoWriteAfterClose ==
-  \* every saved Node document was admitted
-  edge = "Node" => \A r \in committed : r.admitted
+\* Promise: once a Node import ended, every alias of a document it saved is
+\* held: by that document, or by the other writer when it claimed the alias
+\* between the check and the registration (which then fails the import).
+INV_SavedRegistered ==
+  \* an ended Node import left no saved document's alias free
+  (edge = "Node" /\ phase \in {"done", "failed"}) =>
+    \A r \in committed : Held(r.alias)
+
+\* Promise: the Node's drain never finishes while an import still runs.
+INV_DrainWaitsForImport ==
+  \* a drained Node runs no import
+  (edge = "Node" /\ drained) => phase # "run"
+
+\* Promise: a failed import kept every document before the one it stopped at.
+INV_KeepsPrefix ==
+  \* each document before the stop was saved
+  (phase = "failed" /\ failedAt > 0) => \A d \in 1..(failedAt - 1) : d \in SavedDocs
 
 ====

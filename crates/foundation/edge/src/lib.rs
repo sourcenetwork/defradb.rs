@@ -51,7 +51,7 @@ mod timer;
 pub use compat::{compat, Compat};
 pub use config::{EdgeConfig, ThreadStart};
 pub use error::EdgeError;
-pub use handle::{Drained, Edge, Scope};
+pub use handle::{Admission, Drained, Edge, Scope};
 #[cfg(not(target_arch = "wasm32"))]
 pub use on_demand::on_demand;
 #[cfg(target_arch = "wasm32")]
