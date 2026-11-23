@@ -128,8 +128,8 @@ fn subscription_with_a_doc_id_variable_only_gets_that_documents_updates() {
             .into(),
             SubscriptionRequest {
                 subscription: "stream".into(),
-                request: Some("subscription($id: ID) { User(docID: $id) { name age } }".into()),
-                variables: Some(json!({ "id": ADDO })),
+                request: Some("subscription($id: [ID!]) { User(docID: $id) { name age } }".into()),
+                variables: Some(json!({ "id": [ADDO] })),
                 expected_count: Some(1),
                 ..Default::default()
             }
