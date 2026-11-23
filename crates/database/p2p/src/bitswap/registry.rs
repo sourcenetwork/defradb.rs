@@ -85,13 +85,8 @@ impl ReplicatorRegistry {
             return;
         }
         self.replicators.rcu(|current| {
-            let mut info = info.clone();
-            if let Some(existing) = current.get(info.peer_id_str()) {
-                info.status = existing.status;
-                info.last_status_change = existing.last_status_change;
-            }
             let mut replicators = current.clone();
-            store_info(&mut replicators, info);
+            store_info(&mut replicators, info.clone());
             replicators
         });
     }
@@ -653,12 +648,10 @@ mod tests {
     }
 
     #[test]
-    fn replacing_replicator_info_keeps_runtime_state() {
+    fn replacing_replicator_info_uses_new_address() {
         let registry = ReplicatorRegistry::new();
         let peer = random_peer_id();
         registry.add_replicator("users", &peer);
-        let existing = registry.get_replicator_info(&peer).unwrap();
-
         registry.set_replicator_info(ReplicatorInfo::from_raw(
             peer.clone(),
             vec!["posts".to_string()],
@@ -668,8 +661,6 @@ mod tests {
         let replaced = registry.get_replicator_info(&peer).unwrap();
         assert_eq!(replaced.collections, vec!["posts".to_string()]);
         assert_eq!(replaced.addresses, vec!["/ip4/127.0.0.1/tcp/1234"]);
-        assert_eq!(replaced.status, existing.status);
-        assert_eq!(replaced.last_status_change, existing.last_status_change);
     }
 
     #[test]
