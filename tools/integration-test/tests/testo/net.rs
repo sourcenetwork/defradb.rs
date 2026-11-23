@@ -88,6 +88,7 @@ mod sync {
         mod versions;
     }
     mod collection_version {
+        mod migration_transform;
         mod patch;
         mod simple;
         mod view;

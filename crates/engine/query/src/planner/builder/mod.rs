@@ -385,12 +385,11 @@ impl Planner {
         // scalar selection keeps the choice deterministic rather than dependent
         // on which indexes a collection happens to carry.
         //
-        // A row rejected above the scan is invisible to it, and the scan is what
-        // widens the candidate set when a page comes up short. An `OrderNode`
-        // blocks and consumes everything, so widening cannot instead be driven by
-        // the consumer still pulling. Rather than return a short page, these
-        // shapes take the exhaustive path, which scores every matching document
-        // and is therefore always right.
+        // A row rejected above the scan is invisible to it, so these shapes take
+        // the exhaustive path, which scores every matching document and is
+        // therefore always right. A non-empty scalar filter can change the
+        // candidate set before the similarity order, so it takes the exhaustive
+        // path; an empty filter selects every row and keeps vector routing.
         let rows_rejected_above_the_scan = filter_has_relations
             || is_complex_filter
             || select.group_by.is_some()
@@ -407,7 +406,11 @@ impl Planner {
             vector_routing::first_indexed_similarity(&sim_query.similarities, &collection.indexes);
 
         let vector_route = if let Some(ref fetcher) = self.fetcher {
-            if rows_rejected_above_the_scan {
+            let filter_has_conditions = select
+                .filter
+                .as_ref()
+                .is_some_and(|filter| !filter.conditions().is_empty());
+            if rows_rejected_above_the_scan || filter_has_conditions {
                 if let Some(field) = warning_field {
                     warnings.push(vector_routing::vector_index_unused_warning_for_filter(
                         field,
