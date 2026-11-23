@@ -858,7 +858,10 @@ fn a_restore_walk_over_an_unreadable_child_is_counted() {
 // ----- DocSync re-merge -----
 
 /// A DocSync reply names a local unmerged head whose child fails to read:
-/// it is not re-merged as complete, it goes to the fetch list.
+/// it is not re-merged as complete, it goes to the fetch list. The fault
+/// fails only the re-merge's read, so the DocSync fetcher reads the DAG
+/// whole and marks the head ready: dropping the head instead of fetching it
+/// would leave it never ready.
 #[test]
 fn doc_sync_remerge_over_an_unreadable_child_fetches_instead() {
     workers::block_on(async {
@@ -867,7 +870,7 @@ fn doc_sync_remerge_over_an_unreadable_child_fetches_instead() {
         let (root, root_bytes) = composite(1, &[("name", field)]);
         blockstore.put(&field, &field_bytes).await.unwrap();
         blockstore.put(&root, &root_bytes).await.unwrap();
-        blockstore.fail(field, Fault::Storage);
+        blockstore.fail_some(field, Fault::Storage, 0, 1);
         let (coordinator, mut events) = crate::sync::coordinator::SyncCoordinator::new(
             crate::sync::coordinator::access_tests::NoopTransport::new(),
             blockstore.clone(),
@@ -891,12 +894,20 @@ fn doc_sync_remerge_over_an_unreadable_child_fetches_instead() {
             .await
             .unwrap();
 
-        while let Ok(event) = events.try_recv() {
-            assert!(
-                !matches!(event, SyncEvent::BlockReceived { cid, .. } if cid == root),
-                "an unread DAG was re-merged as complete"
-            );
-        }
+        crate::rt::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                match events.try_recv() {
+                    Ok(SyncEvent::BlockReceived { cid, .. }) if cid == root => {
+                        panic!("an unread DAG was re-merged as complete")
+                    }
+                    Ok(SyncEvent::DagReady { root_cid, .. }) if root_cid == root => break,
+                    Ok(_) => {}
+                    Err(_) => crate::rt::yield_now().await,
+                }
+            }
+        })
+        .await
+        .expect("the DocSync fetcher makes the unread head ready");
         assert_eq!(
             coordinator
                 .manager()
