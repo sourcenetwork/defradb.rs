@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
 
 use crate::scenario::{Common, Failure, Op};
 use crate::test_case::State;
@@ -8,9 +9,11 @@ use testo::prelude::*;
 
 /// Checks counters in a Rust node's `p2p status`: each counter named in
 /// `at_most` is no more than its limit, and each named in `at_least` no less.
+/// A name may use `/` to descend into a nested object.
 /// A counter named in `since` is checked as its rise past the value captured
 /// under that name by an earlier `SyncCounters` (the result is the whole
-/// status, so `capture` takes `/<counter>`). The node is read directly,
+/// status, so `capture` takes `/<counter>`). With `eventually`, the status is
+/// read again until every bound holds or the timeout passes. The node is read directly,
 /// whichever client the test runs through; a Go node has no such status.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -50,9 +53,32 @@ impl Op for SyncCounters {
         let p2p = node
             .p2p()
             .ok_or_else(|| Failure::operation("the node has no P2P".to_owned()))?;
-        let status = state
-            .block_on(p2p.sync_status())
-            .map_err(|e| Failure::operation(e.to_string()))?;
+        let read = || {
+            state
+                .block_on(p2p.sync_status())
+                .map_err(|e| Failure::operation(e.to_string()))
+        };
+        let Some(timing) = &self.common.eventually else {
+            return self.check(state, read()?);
+        };
+        let timeout = timing.timeout_millis.unwrap_or(EVENTUALLY_TIMEOUT_MILLIS);
+        let interval = Duration::from_millis(timing.interval_millis.unwrap_or(100));
+        let deadline = Instant::now() + Duration::from_millis(timeout);
+        loop {
+            match self.check(state, read()?) {
+                Err(_) if Instant::now() < deadline => std::thread::sleep(interval),
+                outcome => return outcome,
+            }
+        }
+    }
+}
+
+/// How long an `eventually` read waits for its bounds to hold by default.
+const EVENTUALLY_TIMEOUT_MILLIS: u64 = 20_000;
+
+impl SyncCounters {
+    /// `status`, once every bound holds in it.
+    fn check(&self, state: &State, status: Value) -> Result<Value, Failure> {
         let mut seen = serde_json::Map::new();
         for (counter, limit) in &self.at_most {
             let value = self.counter(state, &status, counter)?;
@@ -84,8 +110,9 @@ impl Op for SyncCounters {
 impl SyncCounters {
     /// `counter`'s value, less its captured baseline when `since` names one.
     fn counter(&self, state: &State, status: &Value, counter: &str) -> Result<u64, Failure> {
-        let value = status[counter]
-            .as_u64()
+        let value = status
+            .pointer(&format!("/{counter}"))
+            .and_then(Value::as_u64)
             .ok_or_else(|| Failure::operation(format!("status has no counter {counter}")))?;
         let Some(capture) = self.since.get(counter) else {
             return Ok(value);
