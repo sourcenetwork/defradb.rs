@@ -6,11 +6,14 @@
 \* per-parent mode each parent restarts the scan and fills exactly the ordered
 \* page it asked for. In the old global mode, the first parent's page consumes
 \* the shared scan bound, so a later parent can be left without its page.
+\* A page must also stop at the limit: a scan that kept reading past it would
+\* hand the parent more children than it asked for.
 
 EXTENDS Naturals, FiniteSets, Sequences
 
 CONSTANTS
   Mode,        \* "PerParent" or "Global"
+  StopAtLimit, \* TRUE: a per-parent scan stops once its page is full
   Limit,       \* how many children one page may take
   Parents,     \* the parents making pages
   ChildrenOfA, \* child positions belonging to parent "a"
@@ -56,10 +59,17 @@ NthOwned(p, n) ==
 RequiredPage(p) ==
   [i \in 1..PageLen(p) |-> NthOwned(p, i)]
 
+\* How far parent p's own scan may read: up to the page length with the early
+\* stop, or through every child p has without it.
+ScanStop(p) ==
+  IF StopAtLimit                    \* the early stop is in place
+    THEN PageLen(p)                 \* so the scan ends when the page is full
+    ELSE Cardinality(ChildrenOf(p)) \* otherwise it reads every child of p
+
 \* Per-parent mode: parent p's own scan reads its next child in index order
 \* and adds it to its page, until the page is full (the early stop).
 PerParent(p) ==
-  /\ Len(page[p]) < PageLen(p)                                       \* the page is not full yet
+  /\ Len(page[p]) < ScanStop(p)                                      \* the scan has not stopped yet
   /\ page' = [page EXCEPT ![p] = Append(page[p], NthOwned(p, Len(page[p]) + 1))] \* take the next child
   /\ UNCHANGED <<cursor, scans>>                                     \* the global scan is not used
 
@@ -95,6 +105,10 @@ LIVE_EveryParentCompletesOrderedPage ==
 INV_PageIsOrderedPrefix ==
   \A p \in Parents :
     page[p] = SubSeq(RequiredPage(p), 1, Len(page[p]))
+
+\* Promise: no page ever holds more children than the limit lets it take.
+INV_PageWithinLimit ==
+  \A p \in Parents : Len(page[p]) <= PageLen(p)
 
 \* RED check: once the global bound is spent, parent "b" must still have its
 \* full page. Global mode breaks it, since "a" spends the whole bound.
