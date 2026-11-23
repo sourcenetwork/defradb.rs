@@ -12,7 +12,7 @@ use futures::future::join_all;
 use regolith::sync::Event;
 use workers::{block_on, Config, Placement, Pool, Workers};
 
-use super::{Outcome, OutcomeRecord, OutcomeStore, Owners, TxnId, Unavailable};
+use super::{Outcome, OutcomeRecord, OutcomeStore, Owners, TxnId, Unavailable, OUTCOME_CAP};
 
 /// A transaction that names its worker and records its drop.
 struct Probe {
@@ -288,9 +288,9 @@ fn an_outcome_is_open_then_final_only_for_its_owner() {
     assert_eq!(owners.outcome(id, &"bob"), None);
 
     let status = owners.outcome_status(id, &"alice").unwrap();
-    status.store(Outcome::Committing);
+    Outcome::Committing.store(&status);
     assert_eq!(owners.outcome(id, &"alice"), Some(Outcome::Committing));
-    status.store(Outcome::Committed);
+    Outcome::Committed.store(&status);
 
     block_on(owners.finish(id, &"alice", |probe| Box::pin(async move { drop(probe) })))
         .unwrap()
@@ -305,7 +305,7 @@ fn an_id_from_another_start_names_no_retained_outcome() {
     let dropped = Arc::new(AtomicUsize::new(0));
     let id = begin(&owners, "alice", &dropped);
     let status = owners.outcome_status(id, &"alice").unwrap();
-    status.store(Outcome::Committed);
+    Outcome::Committed.store(&status);
     block_on(owners.finish(id, &"alice", |probe| Box::pin(async move { drop(probe) })))
         .unwrap()
         .unwrap();
@@ -316,10 +316,11 @@ fn an_id_from_another_start_names_no_retained_outcome() {
 
 #[test]
 fn outcome_retention_keeps_final_results_and_not_open_work() {
-    let store: OutcomeStore<&'static str> = OutcomeStore::new(Duration::from_millis(20));
+    let store: OutcomeStore<&'static str> =
+        OutcomeStore::new(Duration::from_millis(20), OUTCOME_CAP);
     let now = std::time::Instant::now();
     let id = TxnId::new(1, 0, 1, 17).unwrap();
-    let cell = Arc::new(regolith::sync::Atom::new(Outcome::Open));
+    let cell = Arc::new(std::sync::atomic::AtomicU8::new(Outcome::Open as u8));
     store.insert(
         id,
         OutcomeRecord {
@@ -338,4 +339,44 @@ fn outcome_retention_keeps_final_results_and_not_open_work() {
     std::thread::sleep(Duration::from_millis(30));
     store.expire(std::time::Instant::now());
     assert_eq!(store.status(id), None);
+}
+
+#[test]
+fn outcome_records_stay_bounded_when_retention_is_disabled() {
+    let store: OutcomeStore<&'static str> = OutcomeStore::new(Duration::ZERO, 3);
+    let now = std::time::Instant::now();
+    let later = now + Duration::from_millis(1);
+    let latest = now + Duration::from_millis(2);
+    for index in 0..4 {
+        let finished = match index {
+            0 => now,
+            1 => later,
+            _ => latest,
+        };
+        let id = TxnId::new(index, 0, 1, 1).unwrap();
+        store.insert(
+            id,
+            OutcomeRecord {
+                status: Arc::new(std::sync::atomic::AtomicU8::new(Outcome::Aborted as u8)),
+                owner: "alice",
+                finished,
+            },
+        );
+    }
+
+    assert_eq!(store.records.len(), 3);
+    assert_eq!(store.evictions(), 1);
+    assert_eq!(store.status(TxnId::new(0, 0, 1, 1).unwrap()), None);
+    assert_eq!(
+        store.status(TxnId::new(1, 0, 1, 1).unwrap()),
+        Some(Outcome::Aborted)
+    );
+    assert_eq!(
+        store.status(TxnId::new(2, 0, 1, 1).unwrap()),
+        Some(Outcome::Aborted)
+    );
+    assert_eq!(
+        store.status(TxnId::new(3, 0, 1, 1).unwrap()),
+        Some(Outcome::Aborted)
+    );
 }

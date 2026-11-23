@@ -26,7 +26,7 @@ mod table;
 mod tests;
 
 use std::future::Future;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
@@ -88,6 +88,39 @@ pub(crate) enum Outcome {
     Aborted,
 }
 
+impl Outcome {
+    fn is_final(self) -> bool {
+        matches!(self, Outcome::Committed | Outcome::Aborted)
+    }
+
+    pub(crate) fn store_committing_if_open(status: &AtomicU8) {
+        let _ = status.compare_exchange(
+            Outcome::Open as u8,
+            Outcome::Committing as u8,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+    }
+
+    pub(crate) fn store(self, status: &AtomicU8) {
+        status.store(self as u8, Ordering::Release);
+    }
+}
+
+impl TryFrom<u8> for Outcome {
+    type Error = u8;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Outcome::Committing),
+            1 => Ok(Outcome::Open),
+            2 => Ok(Outcome::Committed),
+            3 => Ok(Outcome::Aborted),
+            _ => Err(value),
+        }
+    }
+}
+
 /// Every worker's table, shared by the registry and the requests on their
 /// way; actors hold it weakly, so dropping the registry ends every
 /// transaction it owns.
@@ -103,32 +136,55 @@ where
 /// What one transaction's ID last said, and when the record may go.
 #[derive(Clone)]
 struct OutcomeRecord<K> {
-    status: Arc<regolith::sync::Atom<Outcome>>,
+    status: Arc<AtomicU8>,
     owner: K,
     finished: Instant,
 }
 
+const OUTCOME_CAP: usize = 4096;
+
 /// One worker's retained outcomes, keyed by the transaction's full ID.
-struct OutcomeStore<K: 'static> {
+struct OutcomeStore<K>
+where
+    K: 'static,
+{
     records: HopscotchMap<(u64, u64), OutcomeRecord<K>, RandomState>,
     retention_nanos: AtomicU64,
+    evictions: AtomicU64,
+    cap: usize,
 }
 
-impl<K: Clone + PartialEq + Send + Sync + 'static> OutcomeStore<K> {
-    fn new(retention: Duration) -> Self {
+impl<K> OutcomeStore<K>
+where
+    K: Clone + PartialEq + Send + Sync + 'static,
+{
+    fn new(retention: Duration, cap: usize) -> Self {
         Self {
             records: HopscotchMap::with_hasher(RandomState::default()),
             retention_nanos: AtomicU64::new(retention.as_nanos() as u64),
+            evictions: AtomicU64::new(0),
+            cap,
         }
     }
 
     fn status(&self, id: TxnId) -> Option<Outcome> {
         self.records
             .get(&id.key())
-            .map(|record| *record.status.load())
+            .and_then(|record| Outcome::try_from(record.status.load(Ordering::Acquire)).ok())
     }
 
     fn insert(&self, id: TxnId, record: OutcomeRecord<K>) {
+        if self.records.len() >= self.cap {
+            let Some((key, _)) = self.records.iter().min_by_key(|(_, candidate)| {
+                let status = Outcome::try_from(candidate.status.load(Ordering::Acquire))
+                    .unwrap_or(Outcome::Open);
+                (u8::from(status.is_final()), candidate.finished)
+            }) else {
+                return;
+            };
+            self.records.remove(&key);
+            self.evictions.fetch_add(1, Ordering::Relaxed);
+        }
         self.records.insert(id.key(), record);
     }
 
@@ -140,7 +196,7 @@ impl<K: Clone + PartialEq + Send + Sync + 'static> OutcomeStore<K> {
         let Some(record) = self.records.get(&id.key()) else {
             return;
         };
-        record.status.store(status);
+        record.status.store(status as u8, Ordering::Release);
         self.records.insert(
             id.key(),
             OutcomeRecord {
@@ -171,7 +227,7 @@ impl<K: Clone + PartialEq + Send + Sync + 'static> OutcomeStore<K> {
             .is_some_and(|record| record.owner == *key)
     }
 
-    fn cell(&self, id: TxnId) -> Option<Arc<regolith::sync::Atom<Outcome>>> {
+    fn cell(&self, id: TxnId) -> Option<Arc<AtomicU8>> {
         self.records
             .get(&id.key())
             .map(|record| Arc::clone(&record.status))
@@ -179,14 +235,16 @@ impl<K: Clone + PartialEq + Send + Sync + 'static> OutcomeStore<K> {
 
     fn expire(&self, now: Instant) {
         let retention = Duration::from_nanos(self.retention_nanos.load(Ordering::Relaxed));
+        if retention.is_zero() {
+            return;
+        }
         let expired: Vec<(u64, u64)> = self
             .records
             .iter()
             .filter_map(|(key, record)| {
-                let status = *record.status.load();
-                (now.duration_since(record.finished) >= retention
-                    && status != Outcome::Open
-                    && status != Outcome::Committing)
+                let status = Outcome::try_from(record.status.load(Ordering::Acquire))
+                    .unwrap_or(Outcome::Open);
+                (now.duration_since(record.finished) >= retention && status.is_final())
                     .then_some(key)
             })
             .collect();
@@ -196,10 +254,13 @@ impl<K: Clone + PartialEq + Send + Sync + 'static> OutcomeStore<K> {
     }
 
     fn set_retention(&self, retention: Duration) {
-        if !retention.is_zero() {
-            self.retention_nanos
-                .store(retention.as_nanos() as u64, Ordering::Relaxed);
-        }
+        self.retention_nanos
+            .store(retention.as_nanos() as u64, Ordering::Relaxed);
+    }
+
+    #[cfg(test)]
+    fn evictions(&self) -> u64 {
+        self.evictions.load(Ordering::Relaxed)
     }
 }
 
@@ -236,11 +297,11 @@ where
             .map(|_| Table::new())
             .collect::<Box<_>>();
         let outcomes = (0..pool.workers())
-            .map(|_| OutcomeStore::new(Duration::from_secs(600)))
+            .map(|_| OutcomeStore::new(Duration::from_secs(600), OUTCOME_CAP))
             .collect();
         Self {
             pool,
-            start_token: random::<u64>().max(1),
+            start_token: (random::<u32>().max(1) as u64) << 32,
             shared: Arc::new(Shared { tables, outcomes }),
             fences,
         }
@@ -257,10 +318,10 @@ where
     #[cfg(target_family = "wasm")]
     pub(crate) fn here(fences: Arc<CommitFences>) -> Self {
         Self {
-            start_token: random::<u64>().max(1),
+            start_token: (random::<u32>().max(1) as u64) << 32,
             shared: Arc::new(Shared {
                 tables: Box::new([Table::new()]),
-                outcomes: Box::new([OutcomeStore::new(Duration::from_secs(600))]),
+                outcomes: Box::new([OutcomeStore::new(Duration::from_secs(600), OUTCOME_CAP)]),
             }),
             fences,
         }
@@ -359,7 +420,7 @@ where
             };
             let (mailbox, inbox) = unbounded();
             let idle = Arc::new(ArrayQueue::new(1));
-            let status = Arc::new(regolith::sync::Atom::new(Outcome::Open));
+            let status = Arc::new(AtomicU8::new(Outcome::Open as u8));
             let outcome = OutcomeRecord {
                 status: Arc::clone(&status),
                 owner: key.clone(),
@@ -567,11 +628,7 @@ where
 
     /// The status cell a commit or discard updates while ending `id` for
     /// `key`; none if the transaction is gone or another caller owns it.
-    pub(crate) fn outcome_status(
-        &self,
-        id: TxnId,
-        key: &K,
-    ) -> Option<Arc<regolith::sync::Atom<Outcome>>> {
+    pub(crate) fn outcome_status(&self, id: TxnId, key: &K) -> Option<Arc<AtomicU8>> {
         let owner = id.owner(self.workers());
         if !self.shared.tables[owner].admits(id, key) {
             return None;
@@ -703,7 +760,7 @@ where
     );
     let status = tables.outcomes[worker]
         .cell(id)
-        .unwrap_or_else(|| Arc::new(regolith::sync::Atom::new(Outcome::Open)));
+        .unwrap_or_else(|| Arc::new(AtomicU8::new(Outcome::Open as u8)));
     if start(actor::own(idle, id, worker, inbox, shared.clone(), status)).is_err() {
         tables.tables[worker].take(id);
     }

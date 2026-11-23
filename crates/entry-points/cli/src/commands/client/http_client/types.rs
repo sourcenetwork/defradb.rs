@@ -44,7 +44,7 @@ pub struct GraphQLErrorExtensions {
 /// Transaction begin response with the opaque ID later routes carry.
 #[derive(Debug, Deserialize)]
 pub struct TxBeginResponse {
-    pub id: String,
+    pub id: u64,
 }
 
 /// Server error response

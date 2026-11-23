@@ -89,7 +89,7 @@ pub(super) async fn own<T, K>(
     worker: usize,
     mailbox: UnboundedReceiver<Message<T>>,
     shared: Weak<Shared<T, K>>,
-    _status: Arc<regolith::sync::Atom<super::Outcome>>,
+    _status: Arc<std::sync::atomic::AtomicU8>,
 ) where
     T: MaybeSend + 'static,
     K: Clone + PartialEq + Send + Sync + 'static,

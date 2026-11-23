@@ -1,161 +1,198 @@
-\* A client waits for the answer to a transaction commit.
-\* Actors: the owner client, a foreign client, and the node.
-\* What can happen: the commit is queued, its answer is lost, the owner or a
-\* foreign client asks for the outcome, the record expires, or the node restarts.
-\* What must never happen: the owner is told anything but the node's final
-\* outcome, a foreign client is told a state, or an old start's ID is answered.
-
-\* A client waits for the answer to a transaction commit.
-\* Actors: the owner client, a foreign client, and the node.
-\* What can happen: the commit is queued, its answer is lost, the owner or a
-\* foreign client asks for the outcome, the record expires, or the node restarts.
-\* What must never happen: the owner is told anything but the node's final
-\* outcome, a foreign client is told a state, or an old start's ID is answered.
-
-MODULE TxnOutcomeQuery
+---- MODULE TxnOutcomeQuery ----
+\* The story, in plain words.
+\*
+\* A client sends a commit, and the connection may drop before the node tells
+\* it whether the commit landed. The node keeps the transaction's outcome for a
+\* short time. The owner may ask again, and the node answers with the outcome
+\* it saw. Another client gets only "unknown". An ID written by an earlier
+\* server start names no live record of this start, so it also gets "unknown".
+\*
+\* What must hold:
+\*   1. a concrete answer to the owner equals the outcome the query saw;
+\*   2. another client never receives a concrete outcome;
+\*   3. a query from an old start never receives a concrete outcome;
+\*   4. a lost final answer is either not asked for yet, the outcome the
+\*      owner's query saw, or safely unknown.
+\*
+\* The model gives the owner a fair chance to ask before the record expires
+\* (ownerMayQuery). That is the timing premise behind the liveness promise:
+\* retention is finite, so an owner that never asks before expiry may get only
+\* "unknown".
+\*
+\* RED configs remove one guard:
+\*   * QueryWorks=FALSE answers every owner query "unknown";
+\*   * BrokenStart=TRUE answers an old-start ID as if it were current;
+\*   * LeaksOwner=TRUE answers another client with the owner's outcome.
 
 EXTENDS Naturals
 
 CONSTANTS
-    \* The idle age, in ticks, after which a final outcome may be forgotten.
-    Idle,
-    \* TRUE when the owner's outcome query is implemented.
-    QueryWorks,
-    \* TRUE when the query checks the token of the server start.
-    CheckToken,
-    \* TRUE when the query checks the caller's ownership.
-    CheckOwner,
-    \* FALSE in the green model; TRUE plants a query that ignores the token.
-    BrokenStart,
-    \* FALSE in the green model; TRUE plants a foreign-state leak.
-    LeaksOwner
+  Idle,          \* how many ticks a final outcome is retained
+  QueryWorks,    \* TRUE when the owner's query is implemented
+  CheckToken,    \* TRUE when the query checks the server-start token
+  CheckOwner,    \* TRUE when the query checks the caller's ownership
+  BrokenStart,   \* TRUE plants a query that ignores the start token
+  LeaksOwner     \* TRUE plants a foreign-state leak
 
 VARIABLES
-    \* The node's state: open, committing, committed or aborted.
-    status,
-    \* Whether the owner lost the commit's answer.
-    lost,
-    \* The last answer a query returned, or "none".
-    answer,
-    \* Which client asked the last query: "owner" or "foreign".
-    askedBy,
-    \* Whether the final outcome is still retained.
-    retained,
-    \* The current server-start token.
-    token,
-    \* The token written into the client's transaction ID.
-    idToken,
-    \* The number of idle ticks since the outcome became final.
-    age
+  status,             \* open, committing, committed or aborted
+  lost,               \* whether the owner lost the commit's answer
+  answer,             \* the last answer returned, or "none"
+  askedBy,            \* owner, foreign, or none
+  retained,           \* whether the final outcome is still retained
+  token,              \* the current server-start token
+  idToken,            \* the token written into the client's transaction ID
+  age,                \* idle ticks since the outcome became final
+  ownerMayQuery,      \* the owner still has its fair chance before expiry
+  querySeenStatus,    \* the status the last query answered from
+  queryTokenAnswered, \* whether a concrete answer was issued under the ID's token
+  queryToken          \* the server-start token the last query saw
 
-vars == <<status, lost, answer, askedBy, retained, token, idToken, age>>
+vars == <<status, lost, answer, askedBy, retained, token, idToken, age,
+          ownerMayQuery, querySeenStatus, queryTokenAnswered, queryToken>>
 
 OldStart == token # idToken
 \* OldStart says the ID was written by an earlier server start.
 
 Final(state) == state \in {"committed", "aborted"}
-\* Final says the commit or abort is settled and cannot change again.
+\* Final says the commit or abort has settled and cannot change again.
 
 Init ==
-    /\ status = "open"
-    /\ lost = FALSE
-    /\ answer = "none"
-    /\ askedBy = "none"
-    /\ retained = TRUE
-    /\ token = 1
-    /\ idToken = 1
-    /\ age = 0
-    \* Every transaction starts open, with the same current and ID tokens.
+  /\ status = "open"
+  /\ lost = FALSE
+  /\ answer = "none"
+  /\ askedBy = "none"
+  /\ retained = TRUE
+  /\ token = 1
+  /\ idToken = IF BrokenStart THEN 2 ELSE 1
+  /\ age = 0
+  /\ ownerMayQuery = TRUE
+  /\ querySeenStatus = "none"
+  /\ queryTokenAnswered = FALSE
+  /\ queryToken = 1
+  \* Every transaction starts open, under the current start token, before any
+  \* query has answered.
 
 QueueCommit ==
-    /\ status = "open"
-    /\ status' = "committing"
-    /\ UNCHANGED <<lost, answer, askedBy, retained, token, idToken, age>>
-    \* A commit arrives, but its answer has not been decided yet.
+  /\ status = "open"
+  /\ status' = "committing"
+  /\ UNCHANGED <<lost, answer, askedBy, retained, token, idToken, age,
+                 queryToken,
+                 ownerMayQuery, querySeenStatus, queryTokenAnswered>>
+  \* A commit arrives, but its answer has not been decided yet.
 
 FinishCommit ==
-    /\ status = "committing"
-    /\ status' \in {"committed", "aborted"}
-    /\ age' = 0
-    /\ retained' = TRUE
-    /\ UNCHANGED <<lost, answer, askedBy, token, idToken>>
-    \* The node decides the commit; either final result is possible here.
+  /\ status = "committing"
+  /\ status' \in {"committed", "aborted"}
+  /\ age' = 0
+  /\ retained' = TRUE
+  /\ UNCHANGED <<lost, answer, askedBy, token, idToken,
+                 queryToken,
+                 ownerMayQuery, querySeenStatus, queryTokenAnswered>>
+  \* The node decides the commit; either final result is possible here.
 
 LoseAnswer ==
-    /\ lost' = TRUE
-    /\ UNCHANGED <<status, answer, askedBy, retained, token, idToken, age>>
-    \* The connection drops before the client receives an answer.
+  /\ lost' = TRUE
+  /\ UNCHANGED <<status, answer, askedBy, retained, token, idToken, age,
+                 queryToken,
+                 ownerMayQuery, querySeenStatus, queryTokenAnswered>>
+  \* The connection drops before the client receives an answer.
 
 OwnerQuery ==
-    /\ askedBy' = "owner"
-    /\ answer' =
-        IF token # idToken /\ CheckToken
-            THEN IF BrokenStart THEN status ELSE "unknown"
-        ELSE IF status \in {"open", "committing", "committed", "aborted"}
-                /\ QueryWorks /\ retained
+  /\ lost
+  /\ ownerMayQuery
+  /\ askedBy' = "owner"
+  /\ answer' =
+       IF CheckToken /\ (token # idToken)
+       THEN IF BrokenStart /\ QueryWorks /\ retained
             THEN status
-        ELSE "unknown"
-    /\ UNCHANGED <<status, lost, retained, token, idToken, age>>
-    \* The owner asks for the outcome; the node answers its current or retained state.
+            ELSE "unknown"
+       ELSE IF QueryWorks /\ retained
+            THEN status
+            ELSE "unknown"
+  /\ ownerMayQuery' = FALSE
+  /\ querySeenStatus' = answer'
+  /\ queryTokenAnswered' = (answer' # "unknown")
+  /\ queryToken' = token
+  /\ UNCHANGED <<status, lost, retained, token, idToken, age, queryToken>>
+  \* The owner asks about its lost answer; a correct node answers the outcome
+  \* it still retains, or unknown after expiry or for an old-start ID.
 
 ForeignQuery ==
-    /\ askedBy' = "foreign"
-    /\ answer' = IF LeaksOwner THEN status ELSE "unknown"
-    /\ UNCHANGED <<status, lost, retained, token, idToken, age>>
-    \* A foreign client asks; a correct node says only unknown.
+  /\ askedBy' = "foreign"
+  /\ answer' = IF LeaksOwner THEN status ELSE "unknown"
+  /\ querySeenStatus' = answer'
+  /\ queryTokenAnswered' = (answer' # "unknown")
+  /\ queryToken' = token
+  /\ UNCHANGED <<status, lost, retained, token, idToken, age,
+                 ownerMayQuery>>
+  \* Another client asks. A correct node says only unknown, because it cannot
+  \* disclose another caller's transaction.
 
 Restart ==
-    /\ token' = token + 1
-    /\ idToken' = idToken
-    /\ UNCHANGED <<status, lost, answer, askedBy, retained, age>>
-    \* A restart mints a new token; a broken model wrongly rewrites the old ID.
+  /\ token = 1
+  /\ ~ownerMayQuery
+  /\ token' = 2
+  /\ UNCHANGED <<status, lost, answer, askedBy, retained, idToken, age,
+                 ownerMayQuery, querySeenStatus, queryTokenAnswered, queryToken>>
+  \* A restart mints a new token only after the owner's query chance. One
+  \* transition is enough without creating unbounded token values. A RED
+  \* BrokenStart model begins with an old ID instead.
 
 Expire ==
-    /\ age < Idle
-    /\ age' = age + 1
-    /\ retained' = age + 1 < Idle
-    /\ UNCHANGED <<status, lost, answer, askedBy, token, idToken>>
-    \* Each idle tick ages the retained outcome until the idle limit passes.
+  /\ ~ownerMayQuery
+  /\ Final(status)
+  /\ age < Idle
+  /\ age' = age + 1
+  /\ retained' = ((age + 1) < Idle)
+  /\ UNCHANGED <<status, lost, answer, askedBy, token, idToken,
+                 ownerMayQuery, querySeenStatus, queryTokenAnswered, queryToken>>
+  \* The record ages only after a final outcome, and only after the owner has
+  \* had its fair chance to ask; after Idle ticks it is no longer retained.
 
 Next ==
-    \/ QueueCommit
-    \/ FinishCommit
-    \/ LoseAnswer
-    \/ OwnerQuery
-    \/ ForeignQuery
-    \/ Restart
-    \/ Expire
-    \* Any one enabled action may be the next step.
+  \/ QueueCommit
+  \/ FinishCommit
+  \/ LoseAnswer
+  \/ OwnerQuery
+  \/ ForeignQuery
+  \/ Restart
+  \/ Expire
+  \* Any one enabled action may be the next step.
 
 Fair == WF_vars(OwnerQuery)
 \* Once the owner's query is enabled, it is eventually taken.
 
 Spec == Init /\ [][Next]_vars /\ Fair
-\* The system starts once and takes only the actions above, allowing stuttering.
+\* The system starts once, takes only the actions above, and answers a fair
+\* owner query.
 
 INV_Agreement ==
-    QueryWorks => (answer # "unknown" => answer = status)
-    \* Any concrete owner answer equals the node's own state.
+  (answer \notin {"none", "unknown"}) => answer = querySeenStatus
+  \* Every concrete owner answer equals the outcome that query saw.
 
 INV_Foreign ==
-    ~LeaksOwner => (askedBy = "foreign" => answer = "unknown")
-    \* A foreign query never reveals a state.
+  (askedBy = "foreign") => answer = "unknown"
+  \* A foreign query never reveals a concrete state.
 
 INV_StartToken ==
-    CheckToken => (token # idToken => answer = "unknown")
-    \* An ID from an earlier start is never answered with a new state.
+  CheckToken => (queryTokenAnswered => queryToken = idToken)
+  \* A concrete answer was issued only under the ID's own start token.
 
 INV_FinalAnswer ==
-    lost /\ Final(status) /\ QueryWorks /\ ~LeaksOwner /\ CheckToken =>
-        answer \in {"none", status, "unknown"}
-    \* A lost answer is either still unasked, the final state, or safely unknown.
+  (lost /\ Final(status) /\ QueryWorks) =>
+    answer \in {"none", querySeenStatus, "unknown"}
+  \* A lost final answer is unasked, the outcome the owner query saw, or
+  \* safely unknown.
 
 INV_Bounded ==
-    age <= Idle
-    \* Retention ages only to the configured idle limit.
+  age <= Idle
+  \* Retention ages only to the configured idle limit.
 
 LIVE_QuestionAnswered ==
-    [](lost /\ Final(status) /\ ~OldStart => <>(answer = status))
-    \* A lost final answer is eventually reported to the owner while retained.
+  [](lost /\ Final(status) /\ ~OldStart /\ ownerMayQuery
+       => <>(answer = status))
+  \* A lost final answer is eventually reported exactly, while the owner still
+  \* has its fair chance before retention expires.
 
 ====

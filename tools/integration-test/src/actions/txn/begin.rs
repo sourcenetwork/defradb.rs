@@ -65,12 +65,7 @@ impl HttpRun for TxnBegin {
                     client.tx_begin(read_only).await
                 })?
                 .map_err(|e| Failure::operation(e.to_string()))?;
-            let id: TxnId = begun
-                .id
-                .parse()
-                .map_err(|error: defra_core::TxnIdParseError| {
-                    Failure::operation(error.to_string())
-                })?;
+            let id: TxnId = defra_core::TxnId::from_wire(begun.id);
             state.txns.push(id);
             Ok(json!({}))
         });
@@ -88,15 +83,12 @@ impl CliRun for TxnBegin {
             let printed = state
                 .defra_client_as(action.common.node(), None, identity, args)
                 .map_err(Failure::operation)?;
-            let id: TxnId = printed["id"]
-                .as_str()
-                .ok_or_else(|| {
-                    Failure::operation(format!("defra client tx new printed no ID: {printed}"))
-                })?
-                .parse()
-                .map_err(|error: defra_core::TxnIdParseError| {
-                    Failure::operation(error.to_string())
-                })?;
+            let Some(encoded) = printed["id"].as_u64() else {
+                return Err(Failure::operation(format!(
+                    "defra client tx new printed no numeric ID: {printed}"
+                )));
+            };
+            let id: TxnId = defra_core::TxnId::from_wire(encoded);
             state.txns.push(id);
             Ok(json!({}))
         });

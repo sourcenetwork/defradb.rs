@@ -159,6 +159,7 @@ client_actions! {
         TxnBegin,
         TxnCommit,
         TxnDiscard,
+        TxnOutcome,
         UpdateDoc,
         UpdateWithFilter,
         VerifyBlockSignature,

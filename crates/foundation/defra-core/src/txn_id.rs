@@ -4,8 +4,8 @@ use std::fmt;
 use std::str::FromStr;
 use thiserror::Error;
 
-/// An explicit transaction's ID: an opaque per-start token and the owner route
-/// the HTTP routes carry as `<start>-<route>`.
+/// An explicit transaction's ID: a per-start token in the high bits and the
+/// owner route in the low bits of the numeric ID the HTTP routes carry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TxnId {
     /// The process start that opened the transaction.
@@ -14,14 +14,42 @@ pub struct TxnId {
     pub route: u64,
 }
 
+/// The start token's bits in a new ID.
+const START_MASK: u64 = u64::MAX << 32;
+/// The owner route's bits in a new ID.
+const ROUTE_MASK: u64 = u32::MAX as u64;
+
+impl TxnId {
+    /// The numeric ID the wire carries: the start token and route packed
+    /// together. A legacy route keeps its whole numeric value.
+    pub fn encoded(self) -> u64 {
+        self.start | self.route
+    }
+
+    /// The canonical transaction ID from its numeric wire value.
+    pub fn from_wire(encoded: u64) -> TxnId {
+        let start = encoded & START_MASK;
+        if start == 0 {
+            return TxnId {
+                start: 0,
+                route: encoded,
+            };
+        }
+        TxnId {
+            start,
+            route: encoded & ROUTE_MASK,
+        }
+    }
+}
+
 /// The text was not `<start>-<route>`.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
-#[error("transaction ID must be `<start>-<route>` or a legacy numeric route")]
+#[error("invalid transaction id")]
 pub struct TxnIdParseError;
 
 impl fmt::Display for TxnId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}-{}", self.start, self.route)
+        write!(f, "{}", self.encoded())
     }
 }
 
@@ -29,15 +57,9 @@ impl FromStr for TxnId {
     type Err = TxnIdParseError;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        let Some((start, route)) = text.split_once('-') else {
-            let route = text.parse().map_err(|_| TxnIdParseError)?;
-            return Ok(TxnId { start: 0, route });
-        };
-        let (start, route) = (
-            start.parse().ok().ok_or(TxnIdParseError)?,
-            route.parse().ok().ok_or(TxnIdParseError)?,
-        );
-        Ok(TxnId { start, route })
+        text.parse()
+            .map(TxnId::from_wire)
+            .map_err(|_| TxnIdParseError)
     }
 }
 
@@ -48,19 +70,19 @@ mod tests {
     #[test]
     fn round_trips_through_text() {
         assert_eq!(
-            "9-42".parse::<TxnId>(),
+            ((9u64 << 32) | 42).to_string().parse::<TxnId>(),
             Ok(TxnId {
-                start: 9,
+                start: 9u64 << 32,
                 route: 42
             })
         );
         assert_eq!(
             TxnId {
-                start: 9,
+                start: 9u64 << 32,
                 route: 42
             }
             .to_string(),
-            "9-42"
+            ((9u64 << 32) | 42).to_string()
         );
         assert_eq!(
             "42".parse::<TxnId>(),

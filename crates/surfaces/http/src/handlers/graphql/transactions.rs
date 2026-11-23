@@ -28,11 +28,12 @@ pub struct TxBeginQuery {
 }
 
 /// Response from beginning a transaction (Go-compatible).
-/// Uses the opaque `id` field the later transaction routes carry.
+/// Uses Go's numeric `id`; the start token is packed into its high bits and
+/// the owner route into its low bits.
 #[derive(Debug, Clone, Serialize)]
 pub struct TxBeginResponse {
-    /// Transaction ID as opaque text: `<per-start token>-<owner route>`.
-    pub id: String,
+    /// Transaction ID as a numeric wire ID.
+    pub id: u64,
 }
 
 /// Path parameter for transaction operations.
@@ -63,6 +64,9 @@ pub async fn tx_begin(
                     readonly = query.read_only,
                     "Transaction started"
                 );
+                let id = id
+                    .parse()
+                    .map_err(|_| HttpError::BadRequest("invalid transaction id".to_string()))?;
                 (StatusCode::OK, Json(TxBeginResponse { id })).into_response()
             }
             Err(e) => {

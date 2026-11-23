@@ -220,7 +220,7 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             .map_err(|error| unavailable(error, handle))?
             .outcome_status(id, &self.caller(context));
         if let Some(outcome) = outcome.as_ref() {
-            outcome.store(crate::txn::owner::Outcome::Committing);
+            crate::txn::owner::Outcome::store_committing_if_open(outcome);
         }
         self.owners()
             .map_err(|error| unavailable(error, handle))?
@@ -230,10 +230,10 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
                     let started = Instant::now();
                     let result = owned.commit().await;
                     if let Some(outcome) = outcome.as_ref() {
-                        outcome.store(match result {
-                            Ok(()) => crate::txn::owner::Outcome::Committed,
-                            Err(_) => crate::txn::owner::Outcome::Aborted,
-                        });
+                        match result {
+                            Ok(()) => crate::txn::owner::Outcome::Committed.store(outcome),
+                            Err(_) => crate::txn::owner::Outcome::Aborted.store(outcome),
+                        }
                     }
                     report_slow_phase("commit", "execute", started);
                     result.map_err(|error| commit_error(&label, error))
@@ -258,7 +258,7 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             .map_err(|error| unavailable(error, handle))?
             .outcome_status(id, &self.caller(context));
         if let Some(outcome) = outcome.as_ref() {
-            outcome.store(crate::txn::owner::Outcome::Committing);
+            crate::txn::owner::Outcome::store_committing_if_open(outcome);
         }
         self.owners()
             .map_err(|error| unavailable(error, handle))?
@@ -268,13 +268,25 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
                     let started = Instant::now();
                     let ending = match owned.commit_unless_told().await {
                         crate::txn::owner::Ending::Ended(result) => {
+                            match result {
+                                Ok(_) => {
+                                    if let Some(outcome) = outcome.as_ref() {
+                                        crate::txn::owner::Outcome::Committed.store(outcome);
+                                    }
+                                }
+                                Err(_) => {
+                                    if let Some(outcome) = outcome.as_ref() {
+                                        crate::txn::owner::Outcome::Aborted.store(outcome);
+                                    }
+                                }
+                            }
                             crate::txn::owner::Ending::Ended(
                                 result.map_err(|error| commit_error(&label, error)),
                             )
                         }
                         crate::txn::owner::Ending::Kept(owned, result) => {
                             if let Some(outcome) = outcome.as_ref() {
-                                outcome.store(crate::txn::owner::Outcome::Open);
+                                crate::txn::owner::Outcome::Open.store(outcome);
                             }
                             crate::txn::owner::Ending::Kept(
                                 owned,
@@ -305,7 +317,7 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             .map_err(|error| unavailable(error, handle))?
             .outcome_status(id, &self.caller(context));
         if let Some(outcome) = outcome.as_ref() {
-            outcome.store(crate::txn::owner::Outcome::Committing);
+            crate::txn::owner::Outcome::store_committing_if_open(outcome);
         }
         self.owners()
             .map_err(|error| unavailable(error, handle))?
@@ -317,12 +329,12 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
                         .map_err(|error| commit_error(&label, error))
                         .inspect(|()| {
                             if let Some(outcome) = outcome.as_ref() {
-                                outcome.store(crate::txn::owner::Outcome::Committed);
+                                crate::txn::owner::Outcome::Committed.store(outcome);
                             }
                         })
                         .inspect_err(|_| {
                             if let Some(outcome) = outcome.as_ref() {
-                                outcome.store(crate::txn::owner::Outcome::Aborted);
+                                crate::txn::owner::Outcome::Aborted.store(outcome);
                             }
                         })
                 })
@@ -763,7 +775,7 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             .map_err(|error| unavailable(error, handle))?
             .outcome_status(id, &self.caller(context));
         if let Some(outcome) = outcome.as_ref() {
-            outcome.store(crate::txn::owner::Outcome::Committing);
+            crate::txn::owner::Outcome::store_committing_if_open(outcome);
         }
         self.owners()
             .map_err(|error| unavailable(error, handle))?
@@ -773,7 +785,12 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
                         .discard()
                         .inspect(|()| {
                             if let Some(outcome) = outcome.as_ref() {
-                                outcome.store(crate::txn::owner::Outcome::Aborted);
+                                crate::txn::owner::Outcome::Aborted.store(outcome);
+                            }
+                        })
+                        .inspect_err(|_| {
+                            if let Some(outcome) = outcome.as_ref() {
+                                crate::txn::owner::Outcome::Aborted.store(outcome);
                             }
                         })
                         .map_err(|error| {

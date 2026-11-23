@@ -126,7 +126,8 @@ async fn get(router: Router, path: &str) -> (StatusCode, String) {
 #[nuclei::test]
 async fn a_known_outcome_is_mapped_to_its_wire_name() {
     edge::compat(async move {
-        let (status, body) = get(router(OutcomeExecutor::committed()), "/tx/1-1").await;
+        let id = (9u64 << 32) | 1;
+        let (status, body) = get(router(OutcomeExecutor::committed()), &format!("/tx/{id}")).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body, r#"{"outcome":"committed"}"#);
     })
@@ -136,7 +137,8 @@ async fn a_known_outcome_is_mapped_to_its_wire_name() {
 #[nuclei::test]
 async fn an_unowned_or_missing_outcome_is_unknown() {
     edge::compat(async move {
-        let (status, body) = get(router(OutcomeExecutor::unknown()), "/tx/1-1").await;
+        let id = (9u64 << 32) | 1;
+        let (status, body) = get(router(OutcomeExecutor::unknown()), &format!("/tx/{id}")).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body, r#"{"outcome":"unknown"}"#);
     })
