@@ -52,9 +52,7 @@ pub fn document() -> Value {
 
         for row in ROUTES {
             let path = documented_path(row);
-            let Some(method) = documented_method(row) else {
-                continue;
-            };
+            let method = documented_method(row);
             let item = paths
                 .entry(path.clone())
                 .or_insert_with(|| Value::Object(Map::new()));
@@ -91,10 +89,10 @@ fn documented_path(row: &Route) -> String {
 /// The method the document lists for a row. The GraphQL websocket is
 /// registered with `any()`, which OpenAPI cannot express; it is documented as
 /// `get`, the method a websocket upgrade arrives as.
-fn documented_method(row: &Route) -> Option<String> {
+fn documented_method(row: &Route) -> String {
     match &row.method {
-        Some(method) => Some(method.as_str().to_ascii_lowercase()),
-        None => Some("get".to_string()),
+        Some(method) => method.as_str().to_ascii_lowercase(),
+        None => "get".to_string(),
     }
 }
 
@@ -130,10 +128,16 @@ fn description(path: &str) -> &'static str {
 
 /// `bearerToken` is the scheme Go's document already defines; an exempt route
 /// declares no security, which is how OpenAPI spells "nothing required".
+///
+/// A `Dynamic` route decides for itself and runs unauthenticated when DAC and
+/// NAC are both off, so it declares the scheme as optional — the same
+/// `[{}, {bearerToken: []}]` Go's document puts at the root. `IdentityOnly` and
+/// `Required` need a caller to decide anything, so they declare it required.
 fn security(permission: &RoutePermission) -> Value {
     match permission {
         RoutePermission::Exempt => json!([]),
-        RoutePermission::IdentityOnly | RoutePermission::Dynamic | RoutePermission::Required(_) => {
+        RoutePermission::Dynamic => json!([{}, { "bearerToken": [] }]),
+        RoutePermission::IdentityOnly | RoutePermission::Required(_) => {
             json!([{ "bearerToken": [] }])
         }
     }
@@ -223,10 +227,13 @@ fn add_missing_tags(doc: &mut Value) {
             paths
                 .values()
                 .flat_map(|item| item.as_object().into_iter().flatten())
-                .filter_map(|(method, operation)| {
-                    is_operation(method)
-                        .then(|| operation["tags"][0].as_str().map(str::to_string))
+                .filter(|(method, _)| is_operation(method))
+                .flat_map(|(_, operation)| {
+                    operation["tags"]
+                        .as_array()
+                        .into_iter()
                         .flatten()
+                        .filter_map(|tag| tag.as_str().map(str::to_string))
                 })
                 .collect()
         })
@@ -288,7 +295,7 @@ mod tests {
     fn served() -> BTreeSet<(String, String)> {
         ROUTES
             .iter()
-            .filter_map(|row| documented_method(row).map(|method| (row.path.to_string(), method)))
+            .map(|row| (row.path.to_string(), documented_method(row)))
             .collect()
     }
 
@@ -299,7 +306,7 @@ mod tests {
         let document = document();
         let listed = documented(&document);
         for row in ROUTES {
-            let method = documented_method(row).expect("every row documents");
+            let method = documented_method(row);
             assert!(
                 listed.contains(&(row.path.to_string(), method.clone())),
                 "{} {method} is served and not documented",
@@ -418,6 +425,51 @@ mod tests {
             document["paths"]["/p2p/manage"]["post"]["security"],
             json!([{ "bearerToken": [] }])
         );
+    }
+
+    /// A `Dynamic` route decides for itself and runs with no caller when DAC and
+    /// NAC are off, so it declares the scheme as optional rather than required.
+    /// A route that needs a caller to decide anything declares it required.
+    #[test]
+    fn security_matches_what_the_edge_actually_requires() {
+        let document = document();
+        assert_eq!(
+            document["paths"]["/batch/start"]["post"]["security"],
+            json!([{}, { "bearerToken": [] }]),
+            "a dynamic route is reachable without a caller"
+        );
+        assert_eq!(
+            document["paths"]["/p2p/manage"]["post"]["security"],
+            json!([{ "bearerToken": [] }]),
+            "a route gated on a node permission needs a caller"
+        );
+    }
+
+    /// Every tag an operation names is declared, not only the first one: Go's
+    /// `/node/identity` carries `["node", "identity"]`.
+    #[test]
+    fn every_tag_an_operation_uses_is_declared() {
+        let document = document();
+        let declared: BTreeSet<&str> = document["tags"]
+            .as_array()
+            .expect("tags")
+            .iter()
+            .filter_map(|tag| tag["name"].as_str())
+            .collect();
+        for (path, item) in document["paths"].as_object().expect("paths") {
+            for (method, operation) in item.as_object().expect("path item") {
+                if !is_operation(method) {
+                    continue;
+                }
+                for tag in operation["tags"].as_array().into_iter().flatten() {
+                    let tag = tag.as_str().expect("a tag name");
+                    assert!(
+                        declared.contains(tag),
+                        "{method} {path} is tagged {tag} and the document does not declare it"
+                    );
+                }
+            }
+        }
     }
 
     /// `operationId` is what a client generator names its methods after, so it
