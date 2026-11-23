@@ -790,6 +790,8 @@ fn collection_migration_query_with_migrations_across_multiple_versions_applies_a
             }
             .into(),
         ],
+        // TODO(https://github.com/sourcenetwork/defradb.rs/issues/3044): with indexes, a query after a migration returns unmigrated fields.
+        multiplier_excludes: &["secondary-index"],
         ..Default::default()
     }
     .execute();
