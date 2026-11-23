@@ -43,13 +43,8 @@ impl PlanNode for GroupByNode {
         // (Go appends the outer groupBy fields to the inner ones), in order of
         // first appearance and then sorted. Without either the child source is
         // the scan itself and the interleave reduces to first appearance.
-        let group_order = self
-            .group_aliases
-            .first()
-            .and_then(|a| a.order.clone())
-            .filter(|o| !o.is_empty());
-        let interleave_child_source =
-            group_order.is_some() || !self.inner_group_by_fields.is_empty();
+        let group_order = self.group_order();
+        let interleave_child_source = !self.keeps_source_order();
         let mut ordered_keys: Vec<String> = Vec::new();
         let mut key_set: RapidHashSet<String> = RapidHashSet::new();
 
