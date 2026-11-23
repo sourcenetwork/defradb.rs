@@ -936,37 +936,27 @@ impl<B: Blockstore + 'static> SyncManager<B> {
 
         self.diagnostics.record_missing_link_retry();
 
-        // Load the root block from blockstore
-        let block_data = match self.blockstore.get(root_cid).await {
-            Ok(Some(data)) => data,
-            Ok(None) => {
-                tracing::error!(
-                    root_cid = %root_cid,
-                    "Root block not found in blockstore during retry"
-                );
-                return Err(Error::BlockstoreError("Root block not found".to_string()));
-            }
-            Err(e) => {
-                tracing::error!(
-                    root_cid = %root_cid,
-                    error = %e,
-                    "Failed to load root block from blockstore"
-                );
-                return Err(Error::from_blockstore(e));
-            }
-        };
-
         // Recursively check ALL missing links at every depth of the DAG.
         // This is critical for multi-level DAGs like Collection → Composite → LWW
         // where a single-level check would declare the DAG "ready" prematurely.
-        // A walk that fails on a local read leaves the frontier `[root]`: the
-        // receiver clock keeps the root and retries it after its backoff, and
-        // a sweep over other roots goes on.
-        let missing = frontier_or_unknown(
-            *root_cid,
-            find_all_missing_links(self.blockstore.as_ref(), &block_data).await,
-            &self.diagnostics,
-        );
+        // A root that is gone is missing itself, and a local fault reading the
+        // root or a block below it leaves the frontier unknown: either way the
+        // frontier is `[root]`, the receiver clock keeps the root and retries
+        // it after its backoff, and a sweep over other roots goes on.
+        let walk = match self.blockstore.get(root_cid).await {
+            Ok(Some(block_data)) => {
+                find_all_missing_links(self.blockstore.as_ref(), &block_data).await
+            }
+            Ok(None) => {
+                tracing::warn!(
+                    root_cid = %root_cid,
+                    "Root block not found in blockstore during retry; it is missing"
+                );
+                Ok(vec![*root_cid])
+            }
+            Err(e) => Err(Error::from_blockstore(e)),
+        };
+        let missing = frontier_or_unknown(*root_cid, walk, &self.diagnostics);
 
         tracing::debug!(
             root_cid = %root_cid,

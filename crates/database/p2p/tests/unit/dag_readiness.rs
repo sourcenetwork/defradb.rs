@@ -838,3 +838,138 @@ fn doc_sync_remerge_over_an_unreadable_child_fetches_instead() {
     })
     .unwrap();
 }
+
+// ----- A fault reading the root block itself -----
+
+/// A push whose stored child does not match its hash registers with the
+/// frontier `[root]`, so the push's own closing sweep retries the root. When
+/// that read of the root fails too, the head stays registered, keeps the
+/// frontier `[root]`, and the push is acked, not answered with an error.
+#[test]
+fn a_root_read_fault_in_the_push_sweep_still_acks_the_registered_head() {
+    workers::block_on(async {
+        let blockstore = FaultyBlockstore::new();
+        let (manager, mut events) = manager(&blockstore);
+        let (field, _) = lww("name");
+        let (_, other_bytes) = lww("other");
+        let (root, root_bytes) = composite(1, &[("name", field)]);
+        blockstore.put(&field, &other_bytes).await.unwrap();
+        blockstore.hash_on_read(true);
+        blockstore.fail(root, Fault::Storage);
+
+        push(&manager, "doc1", root, &root_bytes).await;
+
+        assert!(manager.pending_dag_snapshot(&root).is_some());
+        assert_eq!(manager.pending_dag_missing(&root), vec![root]);
+        assert!(dag_ready(&mut events).is_empty());
+    })
+    .unwrap();
+}
+
+/// Three roots wait on one block; when it lands, one root's own block is
+/// gone, fails to read or conflicts. Every other root still completes, the
+/// arrival is not an error, and the failing root keeps the frontier `[root]`.
+#[test]
+fn a_root_read_fault_does_not_stop_the_waiter_sweep() {
+    for fault in [Fault::Gone, Fault::Storage, Fault::Conflict] {
+        for which in 0..3 {
+            workers::block_on(async {
+                let blockstore = FaultyBlockstore::new();
+                let (manager, mut events) = manager(&blockstore);
+                let (shared, shared_bytes) = lww("shared");
+                let mut roots = Vec::new();
+                for priority in 1..=3 {
+                    let (root, root_bytes) = composite(priority, &[("shared", shared)]);
+                    push(&manager, &format!("doc{priority}"), root, &root_bytes).await;
+                    assert_eq!(manager.pending_dag_missing(&root), vec![shared]);
+                    roots.push(root);
+                }
+                blockstore.put(&shared, &shared_bytes).await.unwrap();
+                blockstore.fail(roots[which], fault);
+
+                let completed = manager.retry_pending_dags_waiting_on(&shared).await;
+
+                let case = format!("{fault:?} which={which}");
+                let mut healthy: Vec<Cid> = roots
+                    .iter()
+                    .enumerate()
+                    .filter(|(idx, _)| *idx != which)
+                    .map(|(_, root)| *root)
+                    .collect();
+                healthy.sort();
+                let mut completed = completed.expect("the arrival is not an error");
+                completed.sort();
+                assert_eq!(completed, healthy, "{case}");
+                let mut ready = dag_ready(&mut events);
+                ready.sort();
+                assert_eq!(ready, healthy, "{case}");
+                assert_eq!(
+                    manager.pending_dag_missing(&roots[which]),
+                    vec![roots[which]],
+                    "{case}"
+                );
+                let walk_errors = manager.diagnostics().snapshot().missing_link_walk_errors;
+                match fault {
+                    Fault::Gone => assert_eq!(walk_errors, 0, "{case}"),
+                    _ => assert!(walk_errors >= 1, "{case}"),
+                }
+            })
+            .unwrap();
+        }
+    }
+}
+
+// ----- The CAR size-limit check -----
+
+/// A CAR response with a size-limit notice arrives while a stored child of
+/// the root fails to read. The fault is local, so the response is not
+/// reported as the provider's failure: it completes, and the walk error is
+/// counted for the readiness check that follows.
+#[test]
+fn a_local_read_fault_in_the_car_size_check_is_not_the_providers_failure() {
+    use crate::sync::coordinator::event_handler::car::CarIngestDisposition;
+    for fault in [Fault::Storage, Fault::Conflict] {
+        workers::block_on(async {
+            let blockstore = FaultyBlockstore::new();
+            let (field, field_bytes) = lww("name");
+            let (root, root_bytes) = composite(1, &[("name", field)]);
+            blockstore.put(&field, &field_bytes).await.unwrap();
+            blockstore.fail(field, fault);
+            let (coordinator, _events) = crate::sync::coordinator::SyncCoordinator::new(
+                crate::sync::coordinator::access_tests::NoopTransport::new(),
+                blockstore.clone(),
+                crate::network::test_network(),
+                crate::sync::manager::SyncConfig::default(),
+            )
+            .await
+            .unwrap();
+            let (unrelated, _) = lww("unrelated");
+            let car = crate::sync::car::encode_car_response(
+                &[root],
+                &[(&root, &root_bytes)],
+                &[(unrelated, crate::sync::car::CAR_MAX_BYTES + 1)],
+            )
+            .unwrap();
+
+            let disposition = coordinator
+                .handle_car_fetch_response(PeerId::new("provider".to_string()), root, car)
+                .await;
+
+            assert_eq!(
+                disposition.expect("a local fault is not the provider's error"),
+                CarIngestDisposition::Completed,
+                "{fault:?}"
+            );
+            assert!(
+                coordinator
+                    .manager()
+                    .diagnostics()
+                    .snapshot()
+                    .missing_link_walk_errors
+                    >= 1,
+                "{fault:?}"
+            );
+        })
+        .unwrap();
+    }
+}

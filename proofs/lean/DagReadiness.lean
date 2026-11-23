@@ -3,11 +3,13 @@ The story. A node walks the children of a root block to learn which blocks of
 its DAG are still missing. Each unmerged child is read once: the read finds
 the block, finds nothing, or fails. What must never happen: the walk answers
 "nothing missing" although some child was never read, and a failed walk is
-taken by a caller as a complete DAG.
+taken by a caller as a complete DAG. The pending retry first reads the stored
+root itself: a root that is gone or fails to read must never be ready either.
 
 Rust: crates/database/p2p/src/sync/manager/links.rs `find_all_missing_links`
 (one `get` per unmerged child) and `frontier_or_unknown` (a failed walk is the
-frontier `[root]`). The orderings between callers are modeled by
+frontier `[root]`); crates/database/p2p/src/sync/manager/process/pending_dag.rs
+`retry_pending_dag` (the root read before the walk). The orderings between callers are modeled by
 `proofs/tla/DagReadiness.tla`.
 -/
 namespace DagReadiness
@@ -138,5 +140,33 @@ theorem ready_implies_read (read : Nat → Read) (cs : List Nat) (root : Nat)
     simp [hw, ready, frontierOrUnknown] at h
     subst h
     exact ok_nil_implies_all_read read cs hw
+
+-- The pending retry reads the stored root before it walks the children
+-- (pending_dag.rs `retry_pending_dag`).
+def retryWalk (root : Nat) (rootRead : Read) (read : Nat → Read) (cs : List Nat) : Walk :=
+  match rootRead with
+  -- the root is gone: the root itself is the one missing block
+  | .absent => .ok [root]
+  -- the root read failed: the frontier is unknown
+  | .failed => .err
+  -- the root was read: the walk over its children answers
+  | _ => walk read cs
+
+-- A retry makes a DAG ready only when it read the root and every child was
+-- merged or present.
+theorem retry_ready_implies_read (root : Nat) (rootRead : Read) (read : Nat → Read)
+    (cs : List Nat) (h : ready root (retryWalk root rootRead read cs) = true) :
+    (rootRead ≠ .absent ∧ rootRead ≠ .failed) ∧
+      ∀ c ∈ cs, read c = .merged ∨ read c = .present := by
+  -- look at what the root read found
+  cases rootRead with
+  -- a gone root leaves the frontier [root], which is not ready
+  | absent => simp [retryWalk, ready, frontierOrUnknown] at h
+  -- a failed root read leaves the frontier [root], which is not ready
+  | failed => simp [retryWalk, ready, frontierOrUnknown] at h
+  -- a read root: the retry is the plain walk, and a ready walk read every child
+  | merged => exact ⟨by decide, ready_implies_read read cs root h⟩
+  -- the same for a root that was present
+  | present => exact ⟨by decide, ready_implies_read read cs root h⟩
 
 end DagReadiness

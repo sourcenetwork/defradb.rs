@@ -75,6 +75,8 @@ RUNS=(
   "MC_DagReadiness_Red_ErrAsEmpty_Restore.cfg DagReadiness.tla RED" # the restore sweep takes a failed walk as complete (INV_ReadyImpliesRead)
   "MC_DagReadiness_Red_ErrAbortsSweep.cfg DagReadiness.tla RED" # one failed walk ends the waiter sweep (INV_SweepTotal)
   "MC_DagReadiness_Red_ConflictStringified.cfg DagReadiness.tla RED" # a storage conflict loses its type (INV_ConflictTyped)
+  "MC_DagReadiness_Red_RootFaultErrs.cfg DagReadiness.tla RED" # a gone or unreadable root fails the retry (INV_SweepTotal, INV_RegisteredNeverErrors)
+  "MC_DagReadiness_Red_CarFaultBlamesPeer.cfg DagReadiness.tla RED" # a local fault in the CAR size-limit check fails the response (INV_LocalFaultNotBlamed)
   "MC_HeldPubsubRequest_Green.cfg HeldPubsubRequest.tla GREEN"
   "MC_HeldPubsubRequest_Red_NoHold.cfg HeldPubsubRequest.tla RED" # a refused publish fails the sync at once (Delivered)
   "MC_HeldPubsubRequest_Red_NoResend.cfg HeldPubsubRequest.tla RED" # a later subscriber is never sent the request (Delivered)
