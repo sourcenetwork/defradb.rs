@@ -13,7 +13,7 @@ use query::prepared::PreparedInputMemo;
 use query::txn::AcpRegistrationProjection;
 use query::QueryExecutor as _;
 
-use super::external_outbox::{owed, Outbox};
+use super::external_outbox::{actor, owed, tuple, Outbox};
 use super::external_registration::{alice, bob, request, RemoteAcp, POLICY, RESOURCE};
 use super::external_staging::{Change, Staging};
 
@@ -98,6 +98,21 @@ fn an_owed_archive_leaves_its_actor_the_commit_history_and_nothing_else() {
         assert!(!reads(&outbox, &bob, false).await);
         assert!(!reads(&outbox, &Identity::Anonymous, true).await);
         assert!(!reads(&outbox, &Identity::Anonymous, false).await);
+    })
+    .unwrap()
+}
+
+#[test]
+fn an_owed_delete_of_the_actors_owner_relation_takes_its_commit_history_too() {
+    workers::block_on(async {
+        let outbox = Outbox::new();
+        let owner = tuple(DOC, acp::OWNER_RELATION, actor(alice()));
+        outbox.commit(&owner, OwedOp::Delete).await;
+        archive(&outbox).await;
+        let alice = Identity::Authenticated(alice());
+
+        assert!(!reads(&outbox, &alice, true).await);
+        assert!(!reads(&outbox, &alice, false).await);
     })
     .unwrap()
 }

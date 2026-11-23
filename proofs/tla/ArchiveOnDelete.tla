@@ -62,7 +62,9 @@
 \*   Decide               check_doc_access through ExternalDocumentAcp
 \*   ReadHistory, HistoryActorOnly   check_commit_read_access_as -> decided_by_owed:
 \*                        OwedDenial::Archived spares only the archive's actor, and only
-\*                        for the commit history
+\*                        for the commit history. archive_actor names nobody while a
+\*                        delete of that actor's owner relation is owed too (the model
+\*                        has one owner, whose owner relation nobody deletes)
 EXTENDS Naturals, Sequences
 
 CONSTANTS

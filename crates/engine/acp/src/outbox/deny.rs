@@ -100,7 +100,8 @@ where
 /// The actor that staged the archive owed on one object, while it is
 /// unsettled: the deleting owner may inspect its own commit history before
 /// the archive settles. A change staged on that tuple commits first aborts
-/// the decision.
+/// the decision. Nobody is named while a delete of that actor's owner
+/// relation is owed too: such a delete spares it nothing.
 pub(super) async fn archive_actor<R>(
     reader: &R,
     policy_id: &str,
@@ -117,7 +118,12 @@ where
     let change: OwedChange = ops::change(reader, state.oldest).await?.ok_or_else(|| {
         crate::Error::Serialization(format!("owed ACP change {} has no record", state.oldest))
     })?;
-    Ok(matches!(change.op, OwedOp::Archive).then_some(change.actor))
+    if !matches!(change.op, OwedOp::Archive) {
+        return Ok(None);
+    }
+    let key = keys::subject_key(policy_id, resource, object, &change.actor);
+    let named = ops::owed_at(reader, &key, &ops::staged_parts(&[SECOND])).await?;
+    Ok((named.second == 0).then_some(change.actor))
 }
 
 /// Owed denials as one transaction sees them: the deletes it has staged
