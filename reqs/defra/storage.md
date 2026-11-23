@@ -39,9 +39,9 @@ A filter on an indexed field of a related document returns each matching documen
 # `defra.index.relation.aggregate_filter_own_join`: An aggregate's filter keeps to its own join
 
 - **Parents:** ["defra.index"]
-- **Scenarios:** ["index::aggregate_own_join::an_aggregate_filter_does_not_drop_an_indexed_child_selection"]
+- **Scenarios:** ["index::aggregate_own_join::an_aggregate_filter_does_not_drop_an_indexed_child_selection", "index::aggregate_own_join::a_selection_limit_does_not_cut_an_aggregate_with_the_same_filter"]
 
-When a query selects a relation with one filter and aggregates the same relation with another, such as `authoredBooks(filter: {title: {_eq: "A"}})` beside `COUNT(authoredBooks: {filter: {pages: {_gt: 100}}})`, the aggregate reads through a join of its own: the selection returns every related document its own filter keeps and the aggregate counts every one its filter keeps, with or without an index on either field. Explain shows each filter on its own join's `scanNode`, as Go does.
+When a query selects a relation with one filter and aggregates the same relation with another, such as `authoredBooks(filter: {title: {_eq: "A"}})` beside `COUNT(authoredBooks: {filter: {pages: {_gt: 100}}})`, the aggregate reads through a join of its own: the selection returns every related document its own filter keeps and the aggregate counts every one its filter keeps, with or without an index on either field. Explain shows each filter on its own join's `scanNode`, as Go does. A limit or offset on the selection never cuts what an aggregate with the same filter counts.
 
 # `defra.index.counter`: An index on a counter follows its total
 
