@@ -111,7 +111,9 @@ where
     /// only when that writer publishes a root in the transaction that writes
     /// the root's nodes. A tree edit flushes its nodes before it returns the
     /// root, so a caller that publishes the root afterwards must not run a
-    /// page between an edit and the publication of its root.
+    /// page between an edit and the publication of its root. Moving that flush
+    /// into the publishing transaction is
+    /// <https://github.com/sourcenetwork/defradb.rs/issues/3279>.
     pub async fn reclaim<R>(
         store: &S,
         roots: Arc<R>,
