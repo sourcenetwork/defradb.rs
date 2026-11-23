@@ -80,6 +80,7 @@ pub const ROUTES: &[Route] = &[
     // Exempt routes (no auth needed)
     row("/health-check", GET, Exempt, false),
     row("/openapi.json", GET, Exempt, false),
+    row("/openapi.rs.json", GET, Exempt, false),
     row("/api/v0/version", GET, Exempt, false),
     row("/api/v0/graphql/ws", ANY, Exempt, false),
     row("/api/v0/batch/verify", POST, Exempt, false),
