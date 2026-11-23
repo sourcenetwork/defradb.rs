@@ -1062,6 +1062,7 @@ mod tests {
     fn truncate_uses_collection_truncate_permission() {
         let parsed = ParsedOperation::Mutation {
             mutations: vec![crate::mapper::Mutation::truncate("Users")],
+            excluded: Vec::new(),
             explain: None,
         };
 

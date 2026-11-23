@@ -168,8 +168,8 @@ pub(super) fn parse_aggregate_target_from_json(
                         target.field_name = Some(s.to_string());
                     }
                 }
-                "filter" => {
-                    if let JsonValue::Object(filter_obj) = val {
+                "filter" => match val {
+                    JsonValue::Object(filter_obj) => {
                         target.filter = Some(
                             Filter::from_conditions(filter_obj.clone())
                                 .with_source(FilterSource::SelectorVariable(variable.to_string()))
@@ -179,7 +179,9 @@ pub(super) fn parse_aggregate_target_from_json(
                                 }),
                         );
                     }
-                }
+                    JsonValue::Null => {}
+                    _ => return Err(QueryError::parse("filter must be an object")),
+                },
                 "limit" => {
                     if let Some(n) = val.as_i64() {
                         target.limit = Some(Limit::new(Some(n as u64), 0));

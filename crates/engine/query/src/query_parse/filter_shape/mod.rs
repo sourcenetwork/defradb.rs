@@ -31,27 +31,35 @@ pub(super) enum Root<'o> {
 
 /// Checks every filter under `root`, whose collection is `collection`
 /// (`None` for `_commits`), loading the other collections only when a
-/// relation needs one.
+/// relation needs one. The errors are kept in `found`, so a literal error
+/// under a later root still wins over a variable error under an earlier one.
 pub(super) async fn check(
+    found: &mut Found,
     root: Root<'_>,
     collection: Option<&CollectionVersion>,
     provider: &dyn CollectionProvider,
 ) -> Result<()> {
+    if found.literal.is_some() {
+        return Ok(());
+    }
     let loaded = Vec::new();
-    let found = Found::run(&root, collection, &loaded);
-    if !found.missed {
-        return found.into_result();
+    let mut this = Found::run(&root, collection, &loaded);
+    if this.missed {
+        let mut all = Vec::new();
+        for name in provider.list_collections().await? {
+            all.extend(provider.get_collection(&name).await?);
+        }
+        this = Found::run(&root, collection, &all);
     }
-    let mut all = Vec::new();
-    for name in provider.list_collections().await? {
-        all.extend(provider.get_collection(&name).await?);
-    }
-    Found::run(&root, collection, &all).into_result()
+    found.literal = found.literal.take().or(this.literal);
+    found.variable = found.variable.take().or(this.variable);
+    Ok(())
 }
 
-/// The errors found, split by check: literal errors win.
+/// The errors found across a request's roots, split by check: the first
+/// literal error wins, then the first variable error.
 #[derive(Default)]
-struct Found {
+pub(super) struct Found {
     literal: Option<String>,
     variable: Option<String>,
     missed: bool,
@@ -83,7 +91,7 @@ impl Found {
         found
     }
 
-    fn into_result(self) -> Result<()> {
+    pub(super) fn into_result(self) -> Result<()> {
         match self.literal.or(self.variable) {
             Some(message) => Err(QueryError::unknown_field(message)),
             None => Ok(()),

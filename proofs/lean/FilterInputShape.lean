@@ -172,4 +172,100 @@ theorem whole_list_variable_is_checked
               simp [shapeAt] at h ⊢
               exact ih false x h
 
+/-!
+## Literal errors win across every root, excluded mutations included
+
+A request can have several roots (two collections in one query, several
+mutations), and a mutation `@skip` or `@include` leaves out still has its
+filters checked, because graphql-go validates the whole document before
+anything runs. Each root yields at most one literal error and at most one
+variable error. graphql-go reports literal errors first: a variable error is
+only the answer when no root at all has a literal error.
+
+What must never happen: a variable error under an earlier root hides a
+literal error under a later one, or an excluded mutation's error is dropped.
+
+This models `filter_shape::check` and `Found` in
+`crates/engine/query/src/query_parse/filter_shape/mod.rs`, which
+`check_filter_shapes` in `crates/engine/query/src/query_parse/validation.rs`
+runs over every root, and over `mutations` then `excluded` for a mutation.
+-/
+
+-- What one root's check found: maybe a literal error, maybe a variable error.
+structure Outcome where
+  -- The root's literal error, if any.
+  literal : Option String
+  -- The root's variable error, if any.
+  coerced : Option String
+
+-- Keep the first literal error and the first variable error seen so far.
+def absorb (found : Outcome) (root : Outcome) : Outcome :=
+  -- Each kind keeps what it had, or else takes this root's.
+  { literal := found.literal.or root.literal, coerced := found.coerced.or root.coerced }
+
+-- Run every root's outcome into one, in request order, from nothing found.
+def combine (roots : List Outcome) : Outcome :=
+  -- Fold left from an empty outcome.
+  roots.foldl absorb ⟨none, none⟩
+
+-- The answer: a literal error if there is one, else a variable error.
+def answer (o : Outcome) : Option String :=
+  -- Literal first, as graphql-go validates before it coerces.
+  o.literal.or o.coerced
+
+-- Folding never loses a literal error once one is held.
+theorem foldl_keeps_literal (roots : List Outcome) (found : Outcome) (e : String)
+    (h : found.literal = some e) : (roots.foldl absorb found).literal = some e := by
+  -- By induction on the roots left, from any outcome holding the error.
+  induction roots generalizing found with
+  -- No roots left: the outcome is unchanged.
+  | nil => simpa using h
+  -- One more root: absorbing it keeps the held literal error.
+  | cons r rest ih =>
+      apply ih
+      simp [absorb, h]
+
+-- Folding from any start, a root with a literal error leaves one held.
+theorem foldl_finds_literal (roots : List Outcome) (start r : Outcome) (e : String)
+    (hr : r ∈ roots) (he : r.literal = some e) :
+    ∃ e', (roots.foldl absorb start).literal = some e' := by
+  -- By induction on the roots, from any starting outcome.
+  induction roots generalizing start with
+  -- No roots: the premise that `r` is among them is false.
+  | nil => simp at hr
+  -- One root `x`, then the others.
+  | cons x rest ih =>
+      simp only [List.foldl]
+      cases hx : (absorb start x).literal with
+      -- Nothing held after `x`: so `r` is not `x`, and is among the others.
+      | none =>
+          have hne : r ≠ x := by
+            -- `x` added no literal error, but `r` has one, so they differ.
+            intro hrx
+            subst hrx
+            cases hs : start.literal <;> simp [absorb, hs, he] at hx
+          have hrest : r ∈ rest := by
+            -- `r` is in the list and is not its head.
+            simpa [hne] using hr
+          exact ih (absorb start x) hrest
+      -- A literal error is held after `x`: the fold keeps it.
+      | some e' => exact ⟨e', foldl_keeps_literal rest _ e' hx⟩
+
+-- If any root has a literal error, the answer is a literal error, never a
+-- variable error.
+theorem literal_anywhere_wins (roots : List Outcome) (r : Outcome) (e : String)
+    (hr : r ∈ roots) (he : r.literal = some e) :
+    ∃ e', answer (combine roots) = some e' ∧ (combine roots).literal = some e' := by
+  -- The combined outcome holds a literal error, and the answer takes it.
+  obtain ⟨e', h⟩ := foldl_finds_literal roots ⟨none, none⟩ r e hr he
+  exact ⟨e', by simp [answer, combine, h], h⟩
+
+-- An excluded mutation with a literal error fails the request too.
+theorem excluded_literal_is_reported (run excluded : List Outcome) (r : Outcome) (e : String)
+    (hr : r ∈ excluded) (he : r.literal = some e) :
+    ∃ e', answer (combine (run ++ excluded)) = some e' := by
+  -- The excluded root is among all the roots checked.
+  obtain ⟨e', h, _⟩ := literal_anywhere_wins (run ++ excluded) r e (by simp [hr]) he
+  exact ⟨e', h⟩
+
 end FilterInputShape

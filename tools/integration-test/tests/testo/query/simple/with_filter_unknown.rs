@@ -4,12 +4,17 @@
 
 use integration_test::actions::{AddCollection, AddDoc, Request};
 use integration_test::test_case::TestCase;
+use integration_test::ClientType;
 use serde_json::{json, Value};
 
 const SDL: &str = r#"
     type Author { name: String age: Int books: [Book] }
     type Book { title: String rating: Float author: Author }
 "#;
+
+/// The clients a Rust node serves. Go's blocks lack the filter extensions
+/// some of these tests use, so a Go node refuses them.
+const RUST_CLIENTS: &[ClientType] = &[ClientType::InProcess, ClientType::RustHttp, ClientType::Cli];
 
 fn rejects(id: &'static str, request: &str, variables: Option<Value>, error: &str) {
     TestCase {
@@ -261,6 +266,51 @@ fn range_operators_on_a_string_field_still_filter() {
             }
             .into(),
         ],
+        client_types: Some(RUST_CLIENTS),
+        ..Default::default()
+    }
+    .execute();
+}
+
+#[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
+fn a_literal_error_in_a_later_root_wins_over_a_variable_error() {
+    rejects(
+        integration_test::scenario_id!(),
+        "query($f: AuthorFilterArg) { Author(filter: $f) { name } Book(filter: {nope: {_eq: 1}}) { title } }",
+        Some(json!({ "f": { "gone": { "_eq": 1 } } })),
+        "Argument \"filter\" has invalid value {nope: {_eq: 1}}.\nIn field \"nope\": Unknown field.",
+    );
+}
+
+/// `_ne`, a Rust alias of `_neq`, is a list block's operator as it is a
+/// scalar block's.
+#[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
+fn the_ne_alias_filters_a_list_field() {
+    let user = |tags: Value| AddDoc {
+        collection: "User".into(),
+        doc_map: Some(json!({ "tags": tags })),
+        ..Default::default()
+    };
+    TestCase {
+        id: integration_test::scenario_id!(),
+        actions: vec![
+            AddCollection {
+                sdl: "type User { tags: [String] }".into(),
+                ..Default::default()
+            }
+            .into(),
+            user(json!(["a"])).into(),
+            user(json!(["b"])).into(),
+            Request {
+                request: r#"query { User(filter: {tags: {_ne: ["a"]}}) { tags } }"#.into(),
+                expected_data: json!({ "User": [{ "tags": ["b"] }] }),
+                ..Default::default()
+            }
+            .into(),
+        ],
+        client_types: Some(RUST_CLIENTS),
         ..Default::default()
     }
     .execute();

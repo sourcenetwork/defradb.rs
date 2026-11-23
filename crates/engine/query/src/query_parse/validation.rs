@@ -65,31 +65,37 @@ async fn check_filter_shapes(
     op: &ParsedOperation,
     provider: &dyn CollectionProvider,
 ) -> Result<()> {
+    let mut found = filter_shape::Found::default();
     let selects: &[Select] = match op {
         ParsedOperation::Query { selects, .. } => selects,
         ParsedOperation::Subscription { select, .. } => std::slice::from_ref(select.as_ref()),
-        ParsedOperation::Mutation { mutations, .. } => {
-            for mutation in mutations {
+        ParsedOperation::Mutation {
+            mutations,
+            excluded,
+            ..
+        } => {
+            for mutation in mutations.iter().chain(excluded) {
                 let collection = provider.get_collection(&mutation.collection_name).await?;
                 if let Some(collection) = collection {
-                    filter_shape::check(Root::Mutation(mutation), Some(&collection), provider)
-                        .await?;
+                    let root = Root::Mutation(mutation);
+                    filter_shape::check(&mut found, root, Some(&collection), provider).await?;
                 }
             }
-            return Ok(());
+            return found.into_result();
         }
         ParsedOperation::Introspection { .. } => return Ok(()),
     };
     for select in selects {
         if select.collection_name == "_commits" {
-            filter_shape::check(Root::Select(select), None, provider).await?;
+            filter_shape::check(&mut found, Root::Select(select), None, provider).await?;
         } else if !is_internal_collection(&select.collection_name) {
             if let Some(collection) = provider.get_collection(&select.collection_name).await? {
-                filter_shape::check(Root::Select(select), Some(&collection), provider).await?;
+                let root = Root::Select(select);
+                filter_shape::check(&mut found, root, Some(&collection), provider).await?;
             }
         }
     }
-    Ok(())
+    found.into_result()
 }
 
 /// Validate that the collection referenced by a Select exists.
@@ -441,6 +447,7 @@ mod tests {
             };
             let op = ParsedOperation::Mutation {
                 mutations: vec![mutation],
+                excluded: Vec::new(),
                 explain: None,
             };
             let err = validate_parsed_operation(&op, &provider).await.unwrap_err();
@@ -476,6 +483,7 @@ mod tests {
         };
         let op = ParsedOperation::Mutation {
             mutations: vec![mutation],
+            excluded: Vec::new(),
             explain: None,
         };
         let provider = StaticCollectionProvider::new(vec![collection]);

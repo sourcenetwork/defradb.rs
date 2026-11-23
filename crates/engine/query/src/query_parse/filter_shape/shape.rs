@@ -149,7 +149,7 @@ impl<'a> Collections<'a> {
             }
             Shape::Ops(ops) if ops.defines(key) => Field::One(Shape::Any),
             Shape::Ops(_) => Field::Unknown,
-            Shape::List(ops) => match key {
+            Shape::List(ops) => match canonical(key) {
                 "_all" | "_any" | "_none" => Field::One(Shape::Ops(ops)),
                 "_eq" | "_neq" => Field::One(Shape::Any),
                 // A Rust extension to Go's list blocks.

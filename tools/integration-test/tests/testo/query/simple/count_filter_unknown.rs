@@ -66,6 +66,18 @@ fn unknown_field_in_a_count_selector_variable_is_rejected() {
 
 #[test]
 #[mantra_macros::req_test("defra.query.filter.input-validation")]
+fn a_count_selector_variable_with_a_list_filter_is_rejected() {
+    run(
+        integration_test::scenario_id!(),
+        "query($t: Book__CountSelector) { Author { name COUNT(books: $t) } }",
+        json!({ "t": { "filter": [{ "nope": { "_eq": 1 } }] } }),
+        Value::Null,
+        Some("filter must be an object"),
+    );
+}
+
+#[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn a_valid_count_selector_variable_still_counts() {
     run(
         integration_test::scenario_id!(),

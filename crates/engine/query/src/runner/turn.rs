@@ -486,7 +486,9 @@ where
                             .await
                     }
                 }
-                ParsedOperation::Mutation { explain, mutations } => {
+                ParsedOperation::Mutation {
+                    explain, mutations, ..
+                } => {
                     if let Some(explain_type) = explain {
                         self.with_collection_provider(txn_provider)
                             .explain_mutation_with_identity(&request.query, identity, explain_type)
