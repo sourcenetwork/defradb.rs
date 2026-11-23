@@ -24,6 +24,10 @@ pub struct Tamper {
 /// `version_id`, signs its composite, and sends each block in its own
 /// PushLog, children first. The target must be an iroh node. Fails with the
 /// first refusal the target answers.
+///
+/// With `rootOnly` it sends the signed composite alone, so the target holds a
+/// root whose links it lacks and keeps a pending fetch for the rest. The
+/// result names the pusher's own peer ID as `peerID`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PushCommit {
@@ -32,6 +36,8 @@ pub struct PushCommit {
     pub version_id: Text,
     /// String and integer field values, by field name.
     pub fields: Map<String, Value>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub root_only: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tamper: Option<Tamper>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
@@ -96,16 +102,27 @@ impl Op for PushCommit {
             fragment = tampered_field(&fragment, &tamper.field, tamper.value).0;
         }
         let collection_id = self.collection_id.as_str().to_owned();
+        let root_only = self.root_only;
         let edge = edge::testing::edge();
-        let replies = edge
+        let (peer_id, refusals) = edge
             .block_on(edge::compat(async move {
                 let peer = HostilePeer::dial(&addresses).await;
-                peer.push(&fragment, &collection_id).await
+                let peer_id = peer.peer_id();
+                let refusals: Vec<Option<String>> = match root_only {
+                    true => vec![peer.push_root(&fragment, &collection_id).await.err_message],
+                    false => peer
+                        .push(&fragment, &collection_id)
+                        .await
+                        .into_iter()
+                        .map(|(_, reply)| reply.err_message)
+                        .collect(),
+                };
+                (peer_id, refusals)
             }))
             .map_err(|e| Failure::operation(format!("push did not run: {e}")))?;
-        match replies.into_iter().find_map(|(_, reply)| reply.err_message) {
+        match refusals.into_iter().flatten().next() {
             Some(refusal) => Err(Failure::operation(refusal)),
-            None => Ok(json!({})),
+            None => Ok(json!({ "peerID": peer_id })),
         }
     }
 }

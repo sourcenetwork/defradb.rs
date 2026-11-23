@@ -15,7 +15,7 @@ mod cluster;
 
 use crate::support;
 use cluster::{
-    addr, churn, connect, create, eventually, fetches_in_flight_to, heads, heads_acked_by, holds,
+    addr, churn, connect, create, eventually, fetch_slots_held_by, heads, heads_acked_by, holds,
     is_connected, markers_for, peer_id, pending_from, replicate, row, set, start, sync_status,
     COLLECTION, START_TIMEOUT,
 };
@@ -65,8 +65,10 @@ struct CatchUp {
 
 /// Bring the hub back under catch-up load and return once the catch-up node's
 /// roots fill the hub's `fetch_slots`: as many of them are pending on the hub
-/// as there are slots, and as many fetches to it are in flight as its per-peer
-/// share allows (one slot fewer).
+/// as there are slots, nothing else is pending there, and slots serving its
+/// roots, and no other peer's, number as many as its per-peer share allows
+/// (one slot fewer). Every number is read from one sync status, which answers
+/// without asking the throttled node anything.
 async fn hub_restarted_under_catchup(cluster: &mut TestCluster, fetch_slots: u64) -> CatchUp {
     cluster
         .client(DESKTOP)
@@ -116,17 +118,18 @@ async fn hub_restarted_under_catchup(cluster: &mut TestCluster, fetch_slots: u64
     let per_peer = fetch_slots.saturating_sub(1).max(1);
     let deadline = Instant::now() + Duration::from_secs(180);
     loop {
-        let pending = pending_from(cluster, HUB, &catchup_peer).await;
-        let in_flight = fetches_in_flight_to(cluster, HUB, &catchup_peer).await;
-        if pending >= fetch_slots && in_flight >= per_peer {
+        let status = sync_status(cluster, HUB).await;
+        let pending = pending_from(&status, &catchup_peer);
+        let only_catchup = status["pending_dags"].as_u64() == Some(pending);
+        let held_by_catchup = fetch_slots_held_by(&status, &catchup_peer);
+        if pending >= fetch_slots && only_catchup && held_by_catchup >= per_peer {
             break;
         }
         if Instant::now() >= deadline {
-            let status = sync_status(cluster, HUB).await;
             panic!(
                 "the catch-up load never filled the hub's {fetch_slots} fetch slots (pending from \
-                 it {pending}, in flight to it {in_flight}): the scenario cannot hold capacity. \
-                 hub fetch slots: {}. hub sync status: {status}",
+                 it {pending}, slots serving its roots {held_by_catchup}): the scenario cannot \
+                 hold capacity. hub fetch slots: {}. hub sync status: {status}",
                 status["pending_dag_fetch_slots"]
             );
         }

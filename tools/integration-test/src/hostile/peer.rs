@@ -84,6 +84,35 @@ impl HostilePeer {
         }
     }
 
+    /// This peer's own ID, in the form the node's sync status reports a
+    /// pushing peer as.
+    pub fn peer_id(&self) -> String {
+        self.transport.local_peer_id().to_string()
+    }
+
+    /// Push only `fragment`'s root, one PushLog, and return the node's reply.
+    /// The node then holds the root but not the blocks it links, so it keeps
+    /// a pending fetch for them until something serves the DAG.
+    pub async fn push_root(&self, fragment: &Fragment, collection_id: &str) -> PushLogReply {
+        let bytes = fragment
+            .blocks
+            .iter()
+            .find(|(cid, _)| *cid == fragment.root)
+            .map(|(_, bytes)| bytes.clone())
+            .expect("the fragment holds its root block");
+        let request = PushLogRequest::new(
+            fragment.doc_id.clone(),
+            fragment.root.to_bytes().into(),
+            collection_id.to_string(),
+            fragment.creator.clone(),
+            bytes.into(),
+        );
+        self.transport
+            .send_two_stream_request(&self.target, request)
+            .await
+            .expect("the node answers the push")
+    }
+
     /// Push every block of a fragment in order, one PushLog each, and return
     /// the node's reply to each.
     pub async fn push(&self, fragment: &Fragment, collection_id: &str) -> Vec<(Cid, PushLogReply)> {

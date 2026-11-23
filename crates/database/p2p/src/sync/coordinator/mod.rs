@@ -309,8 +309,19 @@ fn served_per_requested(served: u64, requested: u64) -> f64 {
     }
 }
 
+/// One held pending-DAG fetch slot: the peer whose root it serves, and the
+/// state holding it.
 #[derive(Clone)]
-enum PendingDagFetchTask {
+struct PendingDagFetchTask {
+    /// The root's source peer, in the peer-id form the sync status reports.
+    /// `None` for a root no caller named an origin for, such as a restored
+    /// durable record without one.
+    peer: Option<Arc<str>>,
+    state: PendingDagFetchState,
+}
+
+#[derive(Clone)]
+enum PendingDagFetchState {
     Scheduled,
     Claimed(std::sync::Weak<()>),
     Running(std::sync::Weak<()>),
@@ -318,13 +329,52 @@ enum PendingDagFetchTask {
 }
 
 impl PendingDagFetchTask {
-    fn is_live(&self) -> bool {
-        match self {
-            Self::Scheduled => true,
-            Self::Claimed(owner) | Self::Running(owner) | Self::Merging(owner) => {
-                owner.strong_count() != 0
-            }
+    fn scheduled(peer: Option<&str>) -> Self {
+        Self {
+            peer: peer.map(Arc::from),
+            state: PendingDagFetchState::Scheduled,
         }
+    }
+
+    /// This slot in `state`, keeping the peer it serves.
+    fn in_state(&self, state: PendingDagFetchState) -> Self {
+        Self {
+            peer: self.peer.clone(),
+            state,
+        }
+    }
+
+    fn is_live(&self) -> bool {
+        match &self.state {
+            PendingDagFetchState::Scheduled => true,
+            PendingDagFetchState::Claimed(owner)
+            | PendingDagFetchState::Running(owner)
+            | PendingDagFetchState::Merging(owner) => owner.strong_count() != 0,
+        }
+    }
+
+    fn is_scheduled(&self) -> bool {
+        matches!(self.state, PendingDagFetchState::Scheduled)
+    }
+
+    fn is_running(&self) -> bool {
+        matches!(self.state, PendingDagFetchState::Running(_))
+    }
+
+    /// Whether this slot is `generation`'s, in any claimed state: a later
+    /// owner's slot must not be released by an earlier owner's drop.
+    fn holds_generation(&self, generation: &std::sync::Weak<()>) -> bool {
+        match &self.state {
+            PendingDagFetchState::Scheduled => false,
+            PendingDagFetchState::Claimed(owner)
+            | PendingDagFetchState::Running(owner)
+            | PendingDagFetchState::Merging(owner) => owner.ptr_eq(generation),
+        }
+    }
+
+    /// Whether this slot is claimed for `generation` and not yet running.
+    fn is_claimed_by(&self, generation: &std::sync::Weak<()>) -> bool {
+        matches!(&self.state, PendingDagFetchState::Claimed(owner) if owner.ptr_eq(generation))
     }
 }
 
@@ -343,10 +393,9 @@ impl Drop for PendingDagWorkOwner {
         let mut released = false;
         self.shutdown.inner.pending_dag_fetch_tasks.rcu(|current| {
             let mut next = current.clone();
-            released = matches!(next.get(&self.root_cid),
-                Some(PendingDagFetchTask::Claimed(owner)
-                    | PendingDagFetchTask::Running(owner)
-                    | PendingDagFetchTask::Merging(owner)) if owner.ptr_eq(&generation));
+            released = next
+                .get(&self.root_cid)
+                .is_some_and(|task| task.holds_generation(&generation));
             if released {
                 next.remove(&self.root_cid);
             }
@@ -756,7 +805,9 @@ impl SyncShutdownHandle {
             .collect()
     }
 
-    fn reserve_pending_dag_fetch(&self, root_cid: Cid) -> bool {
+    /// Reserve a slot for `root_cid`, naming the peer its root came from so
+    /// the sync status can report which peer each held slot serves.
+    fn reserve_pending_dag_fetch(&self, root_cid: Cid, source_peer: Option<&str>) -> bool {
         let mut reserved = false;
         self.inner.pending_dag_fetch_tasks.rcu(|current| {
             let mut next = Self::prune_pending_dag_fetches(current);
@@ -764,7 +815,7 @@ impl SyncShutdownHandle {
                 && !next.contains_key(&root_cid)
                 && next.len() < self.inner.pending_dag_fetch_task_limit;
             if reserved {
-                next.insert(root_cid, PendingDagFetchTask::Scheduled);
+                next.insert(root_cid, PendingDagFetchTask::scheduled(source_peer));
             }
             next
         });
@@ -774,7 +825,10 @@ impl SyncShutdownHandle {
     fn release_pending_dag_fetch_reservation(&self, root_cid: &Cid) {
         self.inner.pending_dag_fetch_tasks.rcu(|current| {
             let mut next = current.clone();
-            if matches!(next.get(root_cid), Some(PendingDagFetchTask::Scheduled)) {
+            if next
+                .get(root_cid)
+                .is_some_and(PendingDagFetchTask::is_scheduled)
+            {
                 next.remove(root_cid);
             }
             next
@@ -790,23 +844,25 @@ impl SyncShutdownHandle {
     }
 
     fn claim_pending_dag_merge(&self, root_cid: Cid) -> Option<Arc<PendingDagWorkOwner>> {
-        if !self
-            .inner
-            .pending_dag_fetch_tasks
-            .peek(|tasks| matches!(tasks.get(&root_cid), Some(PendingDagFetchTask::Scheduled)))
-        {
+        if !self.inner.pending_dag_fetch_tasks.peek(|tasks| {
+            tasks
+                .get(&root_cid)
+                .is_some_and(PendingDagFetchTask::is_scheduled)
+        }) {
             return None;
         }
         let owner = self.pending_dag_work_owner(root_cid);
         let mut claimed = false;
         self.inner.pending_dag_fetch_tasks.rcu(|current| {
             let mut next = current.clone();
-            claimed = matches!(next.get(&root_cid), Some(PendingDagFetchTask::Scheduled));
+            claimed = next
+                .get(&root_cid)
+                .is_some_and(PendingDagFetchTask::is_scheduled);
             if claimed {
-                next.insert(
-                    root_cid,
-                    PendingDagFetchTask::Merging(Arc::downgrade(&owner.generation)),
-                );
+                let slot = next
+                    .get_mut(&root_cid)
+                    .expect("the scheduled slot was just seen");
+                slot.state = PendingDagFetchState::Merging(Arc::downgrade(&owner.generation));
             }
             next
         });
@@ -840,7 +896,12 @@ impl SyncShutdownHandle {
         count
     }
 
-    fn spawn_pending_dag_fetch<F>(&self, root_cid: Cid, future: F) -> bool
+    fn spawn_pending_dag_fetch<F>(
+        &self,
+        root_cid: Cid,
+        source_peer: Option<&str>,
+        future: F,
+    ) -> bool
     where
         F: std::future::Future<Output = ()> + MaybeSend + 'static,
     {
@@ -850,15 +911,21 @@ impl SyncShutdownHandle {
             let mut next = Self::prune_pending_dag_fetches(current);
             claimed = !self.is_shutting_down()
                 && match next.get(&root_cid) {
-                    Some(PendingDagFetchTask::Scheduled) => true,
-                    Some(_) => false,
+                    Some(task) => task.is_scheduled(),
                     None => next.len() < self.inner.pending_dag_fetch_task_limit,
                 };
             if claimed {
-                next.insert(
-                    root_cid,
-                    PendingDagFetchTask::Claimed(Arc::downgrade(&owner.generation)),
-                );
+                let generation = PendingDagFetchState::Claimed(Arc::downgrade(&owner.generation));
+                // A reservation made by the retry clock already names the
+                // peer; a direct spawn names the one it was handed.
+                let slot = match next.get(&root_cid) {
+                    Some(task) => task.in_state(generation),
+                    None => PendingDagFetchTask {
+                        peer: source_peer.map(Arc::from),
+                        state: generation,
+                    },
+                };
+                next.insert(root_cid, slot);
             }
             next
         });
@@ -877,13 +944,13 @@ impl SyncShutdownHandle {
         });
         self.inner.pending_dag_fetch_tasks.rcu(|current| {
             let mut next = current.clone();
-            if matches!(next.get(&root_cid), Some(PendingDagFetchTask::Claimed(generation))
-                if generation.ptr_eq(&Arc::downgrade(&owner.generation)))
-            {
-                next.insert(
-                    root_cid,
-                    PendingDagFetchTask::Running(Arc::downgrade(&owner.generation)),
-                );
+            let running = PendingDagFetchState::Running(Arc::downgrade(&owner.generation));
+            let slot = next
+                .get(&root_cid)
+                .filter(|task| task.is_claimed_by(&Arc::downgrade(&owner.generation)))
+                .map(|task| task.in_state(running));
+            if let Some(slot) = slot {
+                next.insert(root_cid, slot);
             }
             next
         });
@@ -902,7 +969,7 @@ impl SyncShutdownHandle {
         let reservations = self.inner.pending_dag_fetch_tasks.peek(|tasks| {
             tasks
                 .values()
-                .filter(|task| task.is_live() && !matches!(task, PendingDagFetchTask::Running(_)))
+                .filter(|task| task.is_live() && !task.is_running())
                 .count()
         });
         self.inner.background_tasks.len() + reservations
@@ -1324,7 +1391,11 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 }
                 _ => DagFetchPeerPermit::default(),
             };
-            if !self.runtime.shutdown.reserve_pending_dag_fetch(root_cid) {
+            if !self
+                .runtime
+                .shutdown
+                .reserve_pending_dag_fetch(root_cid, dag.source_peer.as_deref())
+            {
                 continue;
             }
             available -= 1;
@@ -1602,6 +1673,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     pub(crate) fn spawn_pending_dag_fetch_task<F>(
         &self,
         root_cid: Cid,
+        source_peer: Option<&str>,
         task_name: &'static str,
         future: F,
     ) -> bool
@@ -1611,7 +1683,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         if self
             .runtime
             .shutdown
-            .spawn_pending_dag_fetch(root_cid, future)
+            .spawn_pending_dag_fetch(root_cid, source_peer, future)
         {
             true
         } else {
@@ -2013,11 +2085,11 @@ mod shutdown_tests {
         let first_release = Arc::new(crate::rt::Notify::new());
         let first_release_for_task = Arc::clone(&first_release);
 
-        assert!(shutdown.spawn_pending_dag_fetch(root, async move {
+        assert!(shutdown.spawn_pending_dag_fetch(root, None, async move {
             first_release_for_task.notified().await;
         }));
         assert!(
-            !shutdown.spawn_pending_dag_fetch(root, async {}),
+            !shutdown.spawn_pending_dag_fetch(root, None, async {}),
             "a live fetch must suppress a second task for the same root"
         );
         assert_eq!(shutdown.retained_task_count(), 1);
@@ -2030,7 +2102,7 @@ mod shutdown_tests {
         }
 
         assert!(
-            shutdown.spawn_pending_dag_fetch(root, async {}),
+            shutdown.spawn_pending_dag_fetch(root, None, async {}),
             "the root must become eligible after its prior fetch finishes"
         );
         shutdown.shutdown().await;
@@ -2045,20 +2117,22 @@ mod shutdown_tests {
         let release = Arc::new(crate::rt::Notify::new());
         let task_release = Arc::clone(&release);
 
-        assert!(shutdown.reserve_pending_dag_fetch(first));
-        assert!(shutdown.spawn_pending_dag_fetch(first, async move {
-            task_release.notified().await;
-        }));
-        assert!(shutdown.reserve_pending_dag_fetch(second));
+        assert!(shutdown.reserve_pending_dag_fetch(first, Some("peer-a")));
+        assert!(
+            shutdown.spawn_pending_dag_fetch(first, Some("peer-a"), async move {
+                task_release.notified().await;
+            })
+        );
+        assert!(shutdown.reserve_pending_dag_fetch(second, Some("peer-b")));
         assert_eq!(shutdown.available_pending_dag_fetch_slots(), 0);
         assert!(
-            !shutdown.reserve_pending_dag_fetch(third),
+            !shutdown.reserve_pending_dag_fetch(third, None),
             "a scheduled event must consume the same bound as a running task"
         );
         assert_eq!(shutdown.retained_task_count(), 2);
 
         shutdown.release_pending_dag_fetch_reservation(&second);
-        assert!(shutdown.reserve_pending_dag_fetch(third));
+        assert!(shutdown.reserve_pending_dag_fetch(third, None));
         release.notify_one();
         shutdown.shutdown().await;
     }
@@ -2067,7 +2141,7 @@ mod shutdown_tests {
     async fn shutdown_signals_pending_fetches_before_the_drain_timeout() {
         let shutdown = SyncShutdownHandle::new(1, test_network());
         let root = Cid::new_v1(0x55, Code::Sha2_256.digest(b"pending-root"));
-        assert!(shutdown.spawn_pending_dag_fetch(root, std::future::pending()));
+        assert!(shutdown.spawn_pending_dag_fetch(root, None, std::future::pending()));
         crate::rt::yield_now().await;
 
         let started = crate::rt::time::Instant::now();

@@ -21,7 +21,8 @@
 \* SyncCoordinator::dispatch_due_pending_dag_fetches with
 \* release_pending_dag_fetch_reservation (the full-lane rollback, which does
 \* not notify), and SyncCoordinator::run_pending_dag_retry_clock (the wait the
-\* wake ends).
+\* wake ends). Each slot entry also carries the peer whose root it serves, which
+\* fetch_slots.rs reports as roots[].peer; a model has no slot occupant.
 \* The tick is left out on purpose: the model asks whether freed room is used
 \* before the next tick, so a clock that only ticks counts as asleep.
 EXTENDS Naturals, FiniteSets

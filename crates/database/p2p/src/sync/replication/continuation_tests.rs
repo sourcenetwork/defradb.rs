@@ -705,7 +705,7 @@ async fn a_fetch_task_keeps_its_slot_until_it_ends_after_its_dag_ready() {
     let (open, gate) = futures::channel::oneshot::channel::<()>();
     let event_tx = coordinator.manager().event_sender();
     assert!(
-        coordinator.spawn_pending_dag_fetch_task(root, "gated_fetch", async move {
+        coordinator.spawn_pending_dag_fetch_task(root, None, "gated_fetch", async move {
             event_tx.clone().send(dag_ready_event(root)).await.unwrap();
             gate.await.unwrap();
         })
