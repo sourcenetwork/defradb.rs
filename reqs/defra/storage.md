@@ -29,6 +29,13 @@ For a field whose CRDT merges by value (text, JSON), the index holds only the cu
 
 A collection patch that removes a field an index, an encrypted index or a full-text index reads fails with `cannot remove field '<field>': index '<index>' depends on it, drop the index first. Collection: <collection>` (`an encrypted index` or `a full-text index` in place of `index '<index>'`), and the collection keeps its definition, so later creates and indexed queries work. This holds for a composite, a unique and a JSON index too, and a unique index still refuses a duplicate. A removed field that several indexes read gets one error, naming the first of them; each removed field an index reads gets its own line. Removing a field an embedding is generated from fails with `the given field does not exist. Embedding generation field: <field>`, as in Go, and writes go on. Removing a field no index reads is accepted. Go fails instead with `the given field does not exist`, which https://github.com/sourcenetwork/defradb/issues/4722 calls misleading.
 
+# `defra.index.relation.filter_keeps_joined_parent`: A relation filter through an index keeps any earlier join
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["query::one_to_many::with_relation_filter_indexed_fk::relation_filter_through_an_indexed_fk_keeps_another_joined_relation", "index::join_keeps_relation::an_indexed_author_filter_keeps_a_nested_publisher_owner", "index::join_keeps_relation::an_indexed_author_filter_keeps_an_earlier_one_to_many_join", "index::join_keeps_relation::an_indexed_author_filter_and_a_publisher_filter_both_apply", "index::join_keeps_relation::an_enrollment_filtered_on_course_and_student_keeps_both"]
+
+A filter on an indexed field of a related document returns each matching document with every other relation the query selects or filters on, however those relations are joined: a one-to-one relation such as a selected publisher and its own nested owner, a one-to-many relation such as reviews, a second relation filter, and a join collection filtered on both of its relations. This holds whether or not the parent's foreign key is indexed too.
+
 # `defra.index.counter`: An index on a counter follows its total
 
 - **Parents:** ["defra.index"]
