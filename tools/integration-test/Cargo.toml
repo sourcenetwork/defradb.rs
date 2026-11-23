@@ -19,6 +19,7 @@ name = "verars"
 path = "tests/verars/main.rs"
 
 [dependencies]
+defra-version = { path = "../../crates/foundation/defra-version" }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 commonware-codec = "=2026.10.0"
 defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "7993ba38d889d16503f7a6ec9c33ef91375e4c0e" }
