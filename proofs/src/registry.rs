@@ -1113,6 +1113,15 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Peer connection observation",
+        name: "Refused connection is evicted, a closed displaced connection is not restored, and a newer connection keeps the slot",
+        axis: Tla,
+        anchor: "crates/database/p2p/src/iroh/endpoint_rpc.rs restore_displaced_connection, evict_connection",
+        model_ref: "MC_DisplacedConnectionRestore_{Green,Red_NoEvict,Red_Closed,Red_EvictAny,Red_Overwrite}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/database/p2p/src/iroh/endpoint_rpc.rs a_closed_displaced_handle_evicts_the_refused_connection, a_closed_displaced_restore_spares_a_concurrent_replacement",
+    },
+    Property {
+        family: "Peer connection observation",
         name: "SharedRpc replacement identity, legacy reuse, modern preference, revoked refusal, stable-id eviction and refused-publish restore",
         axis: Lean,
         anchor: "crates/database/p2p/src/iroh/endpoint_rpc.rs remember_connection, restore_displaced_connection, connect_with_cache and evict_connection; endpoint_streams.rs adopt_new_connection",
