@@ -11,7 +11,8 @@ Reads both headers through clang's AST and compares what a caller depends on:
   the ABI and its fields stay exactly as they were;
 - every typedef, enum constant and macro keeps its meaning; a macro may be
   respelled, as long as it evaluates to the same integer or has the same
-  tokens once whitespace and enclosing parentheses are dropped;
+  tokens once comments and enclosing parentheses are dropped; an enum
+  constant counts whether or not its enum has a name;
 - every exported function has C linkage when C++ includes the header, so a
   C++ caller links against the symbol the library exports, not a mangled one.
 
@@ -31,6 +32,20 @@ import tempfile
 
 OPTIONS_SUFFIX = "Options"
 MACRO_RE = re.compile(r"^[ \t]*#[ \t]*define[ \t]+(\w+(?:\([^)]*\))?)[ \t]*(.*?)[ \t]*$", re.MULTILINE)
+# One preprocessor token, or the whitespace or comment between two. A string or
+# character literal is one token, its spaces included.
+TOKEN_RE = re.compile(
+    r"""\s+ | /\*.*?\*/ | //[^\n]*
+    | (?:u8|u|U|L)?"(?:\\.|[^"\\\n])*"
+    | (?:u8|u|U|L)?'(?:\\.|[^'\\\n])*'
+    | \.?\d(?:[eEpP][+-]|[\w.])*
+    | [A-Za-z_]\w*
+    | <<= | >>= | \.\.\. | -> | \+\+ | -- | << | >> | <= | >= | == | != | && | \|\| | [-+*/%&|^]= | \#\#
+    | .""",
+    re.VERBOSE | re.DOTALL,
+)
+SKIP_RE = re.compile(r"\s+|/\*.*\*/|//.*", re.DOTALL)
+KINDS = ("function", "struct", "typedef", "enum", "enum constant", "macro")
 
 
 def clang_ast(header, language="c", standard="c11"):
@@ -100,9 +115,12 @@ def cxx_linkage(header):
 
 def api(header):
     """What a caller of `header` depends on, by kind and name."""
-    model = {"function": {}, "struct": {}, "typedef": {}, "enum": {}, "macro": {}, "linkage": cxx_linkage(header)}
+    model = {kind: {} for kind in KINDS}
+    model["linkage"] = cxx_linkage(header)
     for node in header_decls(clang_ast(header), header):
         kind, name = node.get("kind"), node.get("name")
+        if kind == "EnumDecl":
+            model["enum constant"].update(enum_constants(node))
         if not name:
             continue
         if kind == "FunctionDecl":
@@ -113,8 +131,9 @@ def api(header):
         elif kind == "TypedefDecl":
             model["typedef"][name] = node["type"]["qualType"]
         elif kind == "EnumDecl":
-            model["enum"][name] = enum_constants(node)
-    text = Path(header).read_text(encoding="utf-8")
+            model["enum"][name] = "enum"
+    # Line splicing joins a backslash-newline's lines into one logical line, a macro's whole definition.
+    text = re.sub(r"\\\r?\n", "", Path(header).read_text(encoding="utf-8"))
     model["macro"] = {name: value for name, value in MACRO_RE.findall(text)}
     model["header"] = str(header)
     return model
@@ -135,17 +154,22 @@ def macro_value(header, name):
     return constants.get("defra_macro_probe")
 
 
+def encloses(tokens):
+    """Whether the first token's parenthesis closes at the last token."""
+    depth = 0
+    for index, token in enumerate(tokens):
+        depth += {"(": 1, ")": -1}.get(token, 0)
+        if depth == 0:
+            return index == len(tokens) - 1
+    return False
+
+
 def macro_tokens(text):
-    """`text` without whitespace or parentheses enclosing all of it."""
-    text = re.sub(r"\s+", "", text)
-    while text.startswith("(") and text.endswith(")"):
-        depth = 0
-        for index, char in enumerate(text):
-            depth += {"(": 1, ")": -1}.get(char, 0)
-            if depth == 0 and index < len(text) - 1:
-                return text
-        text = text[1:-1]
-    return text
+    """`text`'s preprocessor tokens, without comments or parentheses enclosing all of them."""
+    tokens = [match.group() for match in TOKEN_RE.finditer(text) if not SKIP_RE.fullmatch(match.group())]
+    while tokens and tokens[0] == "(" and encloses(tokens):
+        tokens = tokens[1:-1]
+    return tokens
 
 
 def macro_equivalent(name, old, new):
@@ -179,21 +203,10 @@ def struct_breaks(name, old, new):
     return breaks
 
 
-def enum_breaks(name, old, new):
-    values = dict(new)
-    breaks = []
-    for constant, value in old:
-        if constant not in values:
-            breaks.append(f"enum {name} lost {constant}")
-        elif values[constant] != value:
-            breaks.append(f"enum {name} {constant} changed from {value} to {values[constant]}")
-    return breaks
-
-
 def breaks(old, new):
     """Every change from `old` to `new` that breaks a caller built against `old`."""
     found = []
-    for kind in ("function", "struct", "typedef", "enum", "macro"):
+    for kind in KINDS:
         for name, before in old[kind].items():
             if name not in new[kind]:
                 found.append(f"{kind} {name} was removed")
@@ -201,8 +214,6 @@ def breaks(old, new):
             after = new[kind][name]
             if kind == "struct":
                 found += struct_breaks(name, before, after)
-            elif kind == "enum":
-                found += enum_breaks(name, before, after)
             elif kind == "macro":
                 if not macro_equivalent(name, old, new):
                     found.append(f"macro {name} changed from `{before}` to `{after}`")

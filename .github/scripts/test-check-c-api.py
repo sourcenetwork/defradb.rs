@@ -64,7 +64,8 @@ class CheckCApi(unittest.TestCase):
         model = self.header("defra.h", BASE)
         self.assertEqual(set(model["function"]), {"defra_thing_sized", "defra_thing"})
         self.assertEqual(set(model["struct"]), {"DefraResult", "DefraThingOptions"})
-        self.assertEqual(model["enum"]["DefraKind"], [("DEFRA_KIND_A", 0), ("DEFRA_KIND_B", 4), ("DEFRA_KIND_C", 5)])
+        self.assertEqual(set(model["enum"]), {"DefraKind"})
+        self.assertEqual(model["enum constant"], {"DEFRA_KIND_A": 0, "DEFRA_KIND_B": 4, "DEFRA_KIND_C": 5})
         self.assertEqual(model["macro"]["DEFRA_SIGN_RETRYABLE"], "2")
 
     def test_an_identical_header_is_compatible(self):
@@ -154,8 +155,32 @@ class CheckCApi(unittest.TestCase):
         self.assertEqual(self.breaks(old, old.replace('"defra"', '( "defra" )')), [])
         self.assertTrue(self.breaks(old, old.replace('"defra"', '"defradb"')))
 
+    def test_spaces_inside_a_string_literal_are_part_of_the_macro(self):
+        old = BASE.replace("#define DEFRA_SIGN_RETRYABLE 2", '#define DEFRA_NAME "defra db"')
+        self.assertEqual(self.breaks(old, old.replace('"defra db"', '"defradb"')), ['macro DEFRA_NAME changed from `"defra db"` to `"defradb"`'])
+        self.assertEqual(self.breaks(old, old.replace('"defra db"', "'d'")), ["macro DEFRA_NAME changed from `\"defra db\"` to `'d'`"])
+        char = BASE.replace("#define DEFRA_SIGN_RETRYABLE 2", "#define DEFRA_SEP ' '")
+        self.assertTrue(self.breaks(char, char.replace("' '", "'_'")))
+
+    def test_a_multiline_macro_is_read_whole(self):
+        old = BASE.replace("#define DEFRA_SIGN_RETRYABLE 2", "#define DEFRA_LIMIT (1 \\\n  + 1)")
+        self.assertEqual(self.header("defra.h", old)["macro"]["DEFRA_LIMIT"], "(1   + 1)")
+        self.assertEqual(self.breaks(old, old), [])
+        self.assertEqual(self.breaks(old, old.replace("(1 \\\n  + 1)", "(1 + \\\n 1)")), [])
+        self.assertEqual(self.breaks(old, old.replace("+ 1)", "+ 2)")), ["macro DEFRA_LIMIT changed from `(1   + 1)` to `(1   + 2)`"])
+
+    def test_anonymous_enum_constants_are_compared(self):
+        old = BASE.replace("typedef void (*DefraResultCallback)", "enum { DEFRA_FLAG = 4 };\ntypedef void (*DefraResultCallback)")
+        self.assertEqual(self.header("defra.h", old)["enum constant"]["DEFRA_FLAG"], 4)
+        self.assertEqual(self.breaks(old, old), [])
+        self.assertEqual(self.breaks(old, old.replace("DEFRA_FLAG = 4", "DEFRA_FLAG = 5")), ["enum constant DEFRA_FLAG changed from `4` to `5`"])
+        self.assertEqual(self.breaks(old, old.replace("enum { DEFRA_FLAG = 4 };\n", "")), ["enum constant DEFRA_FLAG was removed"])
+
     def test_changing_an_enum_or_a_macro_breaks(self):
-        self.assertEqual(self.changed("DEFRA_KIND_B = 4", "DEFRA_KIND_B = 3"), ["enum DefraKind DEFRA_KIND_B changed from 4 to 3", "enum DefraKind DEFRA_KIND_C changed from 5 to 4"])
+        self.assertEqual(
+            self.changed("DEFRA_KIND_B = 4", "DEFRA_KIND_B = 3"),
+            ["enum constant DEFRA_KIND_B changed from `4` to `3`", "enum constant DEFRA_KIND_C changed from `5` to `4`"],
+        )
         self.assertEqual(self.changed("#define DEFRA_SIGN_RETRYABLE 2", "#define DEFRA_SIGN_RETRYABLE 3"), ["macro DEFRA_SIGN_RETRYABLE changed from `2` to `3`"])
 
 
