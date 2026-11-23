@@ -41,7 +41,7 @@ async fn the_document_describes_the_routes_this_node_serves() {
         // A route Go documents, carried with Go's own request body.
         assert!(
             document["paths"]["/collections/{name}"]["post"]["requestBody"].is_object(),
-            "Go's operation for /collections/{name} lost its request body"
+            "Go's operation for the collection document route lost its request body"
         );
 
         // Root-mounted, so it cannot inherit the document's `/api/v0` mounts.
@@ -85,8 +85,7 @@ async fn the_document_describes_the_routes_this_node_serves() {
         assert_eq!(alias_type, "application/json");
         assert_eq!(alias, document, "the alias answers a different document");
     })
-    .await
-    .unwrap();
+    .await;
 }
 
 async fn fetch(client: &Client, base: &str, path: &str) -> (StatusCode, String, Value) {
