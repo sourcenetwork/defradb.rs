@@ -41,6 +41,9 @@ pub struct Route {
     /// The JSON body the route accepts, as a schema rendered with the
     /// document's generator, or `None` for a route that takes no body.
     pub request: Option<BodySchema>,
+    /// Whether the handler refuses a request with no body. `views/gc` reads an
+    /// absent body as "every view", so its document says `required: false`.
+    pub request_required: bool,
     /// The JSON body the route returns, the same way.
     pub response: Option<BodySchema>,
 }
@@ -51,7 +54,10 @@ pub type BodySchema = fn(&mut SchemaGenerator) -> Schema;
 
 /// Renders `T`'s schema. Used as [`BodySchema`]: a row names the type, and the
 /// schema is built when a client asks for the document.
-pub fn body<T: JsonSchema>(generator: &mut SchemaGenerator) -> Schema {
+pub fn body<T>(generator: &mut SchemaGenerator) -> Schema
+where
+    T: JsonSchema,
+{
     generator.root_schema_for::<T>()
 }
 
@@ -90,6 +96,7 @@ const fn row(
         permission,
         collection_first,
         request: None,
+        request_required: true,
         response: None,
     }
 }
@@ -109,7 +116,27 @@ const fn row_body(
         permission,
         collection_first,
         request,
+        request_required: true,
         response,
+    }
+}
+
+/// A row whose request body is optional: the handler runs with none.
+const fn row_optional_body(
+    path: &'static str,
+    method: Option<Method>,
+    permission: RoutePermission,
+    collection_first: bool,
+    request: BodySchema,
+) -> Route {
+    Route {
+        path,
+        method,
+        permission,
+        collection_first,
+        request: Some(request),
+        request_required: false,
+        response: None,
     }
 }
 
@@ -245,7 +272,7 @@ pub const ROUTES: &[Route] = &[
     row("/api/v0/view", POST, required(NodePermission::ViewAdd), false),
     row("/api/v0/view/refresh", POST, required(NodePermission::ViewRefresh), false),
     // Go has no view GC route.
-    row_body("/api/v0/views/gc", POST, required(NodePermission::ViewGc), false, Some(body::<ViewNamesRequest>), None),
+    row_optional_body("/api/v0/views/gc", POST, required(NodePermission::ViewGc), false, body::<ViewNamesRequest>),
     // Encrypted indexes (global list)
     row("/api/v0/encrypted-indexes", GET, required(NodePermission::EncryptedIndexListAll), false),
     // Utility

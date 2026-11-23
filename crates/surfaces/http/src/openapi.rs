@@ -136,7 +136,7 @@ fn operation(
 
     if let Some(request) = request {
         operation["requestBody"] = json!({
-            "required": true,
+            "required": row.request_required,
             "content": { "application/json": { "schema": request } }
         });
     }
@@ -213,13 +213,9 @@ fn to_openapi_30(value: &mut Value) {
         Value::Object(map) => {
             // Only these keys hold a schema (or a list of them); `enum` and
             // `required` hold data, and `nullable` is a flag.
-            for key in [
-                "items",
-                "additionalProperties",
-                "not",
-                "additionalItems",
-                "contains",
-            ] {
+            // `additionalProperties` is not here: a boolean is valid in 3.0's
+            // Draft-4 dialect, and `deny_unknown_fields` means `false`.
+            for key in ["items", "not", "additionalItems", "contains"] {
                 if matches!(map.get(key), Some(Value::Bool(_))) {
                     map.insert(key.to_string(), Value::Object(Map::new()));
                 }
@@ -244,15 +240,6 @@ fn to_openapi_30(value: &mut Value) {
             }
 
             map.remove("$schema");
-
-            if let Some(Value::String(reference)) = map.get("$ref") {
-                if let Some(name) = reference.strip_prefix("#/$defs/") {
-                    map.insert(
-                        "$ref".to_string(),
-                        Value::String(format!("#/components/schemas/{name}")),
-                    );
-                }
-            }
 
             // `type: [T, "null"]` is `type: T, nullable: true` in 3.0.
             if let Some(Value::Array(types)) = map.get("type").cloned() {
@@ -311,6 +298,17 @@ fn to_openapi_30(value: &mut Value) {
                     let value = map.remove(exclusive).expect("a number");
                     map.insert(bound.to_string(), value);
                     map.insert(exclusive.to_string(), Value::Bool(true));
+                }
+            }
+
+            // After the merges above: a single branch lifted out of `anyOf` can
+            // be the `$ref` itself.
+            if let Some(Value::String(reference)) = map.get("$ref") {
+                if let Some(name) = reference.strip_prefix("#/$defs/") {
+                    map.insert(
+                        "$ref".to_string(),
+                        Value::String(format!("#/components/schemas/{name}")),
+                    );
                 }
             }
 
@@ -774,6 +772,52 @@ mod tests {
         assert_eq!(
             document["components"]["schemas"]["PolicyInfo"]["properties"]["resources"],
             json!({}),
+        );
+    }
+
+    /// An optional request body is published as optional: `views/gc` reads an
+    /// absent body as "every view", so telling a client it must send one would
+    /// be wrong. The typed rows that refuse an absent body still say required.
+    #[test]
+    fn an_optional_body_is_published_as_optional() {
+        let document = document();
+        assert_eq!(
+            document["paths"]["/views/gc"]["post"]["requestBody"]["required"],
+            json!(false)
+        );
+        assert_eq!(
+            document["paths"]["/acp/document/is-owner"]["post"]["requestBody"]["required"],
+            json!(true)
+        );
+    }
+
+    /// `deny_unknown_fields` is `additionalProperties: false`, which 3.0 allows
+    /// as a boolean. Turning it into `{}` would tell a client the opposite of
+    /// what the handler does.
+    #[test]
+    fn a_rejecting_body_keeps_additional_properties_false() {
+        let document = document();
+        assert_eq!(
+            document["components"]["schemas"]["OwnDocumentsRequest"]["additionalProperties"],
+            json!(false),
+            "the handler refuses unknown fields"
+        );
+    }
+
+    /// A `$ref` lifted out of an `anyOf` by the rewrite still points at the
+    /// components. Reachable as soon as a field is `Option<SomeNamedStruct>`.
+    #[test]
+    fn a_reference_lifted_out_of_any_of_is_rewritten() {
+        let mut schema = json!({
+            "anyOf": [
+                { "$ref": "#/$defs/Named" },
+                { "type": "null" }
+            ]
+        });
+        to_openapi_30(&mut schema);
+        assert_eq!(
+            schema,
+            json!({ "$ref": "#/components/schemas/Named", "nullable": true })
         );
     }
 
