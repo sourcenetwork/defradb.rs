@@ -39,9 +39,9 @@ An ordered query over an indexed field with `limit: 3, offset: 2` reads `limit +
 # `defra.index.patch_indexed_field`: A patch refuses to remove an indexed field
 
 - **Parents:** ["defra.index"]
-- **Scenarios:** ["index::remove_indexed_field::removing_an_indexed_field_names_the_index_and_keeps_the_collection_usable", "index::remove_indexed_field::removing_a_fulltext_field_names_the_field_and_keeps_the_collection_usable"]
+- **Scenarios:** ["index::remove_indexed_field::removing_an_indexed_field_names_the_index_and_keeps_the_collection_usable", "index::remove_indexed_field::removing_a_fulltext_field_names_the_field_and_keeps_the_collection_usable", "index::remove_indexed_field::removing_an_embedding_source_keeps_the_collection_usable"]
 
-Removing a field named by an index or full-text index fails with an error naming that field; the collection keeps the field and index and documents can still be written.
+Removing a field named by an index, full-text index, or vector embedding fails with an error naming that field; the collection keeps the field and index or embedding and documents can still be written.
 
 # `defra.collection`: Collection-wide operations
 
