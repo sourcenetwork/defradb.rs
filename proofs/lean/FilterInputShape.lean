@@ -14,7 +14,8 @@ This models `walk::literal` in
 `crates/engine/query/src/query_parse/filter_shape/walk.rs`, which
 `filter_shape::check` (in `filter_shape/mod.rs`) runs on every filter
 `validate_operation` sees: selects, relation selections and `GROUP`,
-`_commits` and its `links`, mutation filters, and aggregate selectors parsed by
+`_commits` and the `links` and `heads` below it or a `_version`, mutation
+filters, and aggregate selectors parsed by
 `parse_aggregate_target_obj` and `parse_aggregate_target_from_json` in
 `query_parse/aggregates.rs`. `truncate_` is checked before
 `Mutation::truncate_filter` folds its `docID` list in.

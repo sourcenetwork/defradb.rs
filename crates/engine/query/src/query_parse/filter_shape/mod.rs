@@ -90,12 +90,19 @@ impl Found {
         }
     }
 
-    /// `_commits` and its `links`, each filtered by `CommitsFilterArg`.
+    /// `_commits`, filtered by `CommitsFilterArg`, and the commits below it.
     fn commits(&mut self, collections: &Collections<'_>, select: &Select) {
         self.filter(collections, Shape::Commits, select.filter.as_ref());
+        self.commit_links(collections, select);
+    }
+
+    /// The `links` and `heads` of a commit selection (`_commits` or a
+    /// collection's `_version`): Go types both as `[Commit]` with a
+    /// `CommitsFilterArg` filter.
+    fn commit_links(&mut self, collections: &Collections<'_>, select: &Select) {
         for field in &select.fields {
             if let Requestable::Select(sub) = field {
-                if sub.collection_name == "links" {
+                if matches!(sub.collection_name.as_str(), "links" | "heads") {
                     self.commits(collections, sub);
                 }
             }
@@ -133,6 +140,9 @@ impl Found {
                 Requestable::Select(sub) if !has_filter(sub) => {}
                 Requestable::Select(sub) if sub.collection_name == "GROUP" => {
                     self.select(collections, collection, sub);
+                }
+                Requestable::Select(sub) if sub.collection_name == "_version" => {
+                    self.commit_links(collections, sub);
                 }
                 Requestable::Select(sub) => {
                     let related = collection

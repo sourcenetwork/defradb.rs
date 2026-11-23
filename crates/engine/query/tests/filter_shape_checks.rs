@@ -148,6 +148,48 @@ fn an_unknown_filter_under_commits_links_is_rejected() {
 }
 
 #[test]
+fn an_unknown_filter_under_commits_heads_is_rejected() {
+    assert_eq!(
+        message(check(
+            "{ _commits { cid heads(filter: {nope: {_eq: 1}}) { cid } } }",
+            json!({}),
+        )),
+        "Argument \"filter\" has invalid value {nope: {_eq: 1}}.\nIn field \"nope\": Unknown field."
+    );
+}
+
+#[test]
+fn an_unknown_filter_under_version_links_is_rejected() {
+    assert_eq!(
+        message(check(
+            "{ Author { name _version { cid links(filter: {nope: {_eq: 1}}) { cid } } } }",
+            json!({}),
+        )),
+        "Argument \"filter\" has invalid value {nope: {_eq: 1}}.\nIn field \"nope\": Unknown field."
+    );
+}
+
+#[test]
+fn an_unknown_filter_under_version_heads_is_rejected() {
+    assert_eq!(
+        message(check(
+            "{ Author { name _version { cid heads(filter: {nope: {_eq: 1}}) { cid } } } }",
+            json!({}),
+        )),
+        "Argument \"filter\" has invalid value {nope: {_eq: 1}}.\nIn field \"nope\": Unknown field."
+    );
+}
+
+#[test]
+fn a_valid_filter_under_version_links_passes() {
+    check(
+        "{ Author { name _version { cid links(filter: {fieldName: {_eq: \"age\"}}) { cid } } } }",
+        json!({}),
+    )
+    .unwrap();
+}
+
+#[test]
 fn an_unknown_filter_on_group_is_rejected() {
     assert_eq!(
         message(check(

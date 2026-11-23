@@ -199,6 +199,28 @@ fn unknown_field_in_a_commits_links_filter_is_rejected() {
 
 #[test]
 #[mantra_macros::req_test("defra.query.filter.input-validation")]
+fn unknown_field_in_a_commits_heads_filter_is_rejected() {
+    rejects(
+        integration_test::scenario_id!(),
+        "query { _commits { cid heads(filter: {nope: {_eq: 1}}) { cid } } }",
+        None,
+        "Argument \"filter\" has invalid value {nope: {_eq: 1}}.\nIn field \"nope\": Unknown field.",
+    );
+}
+
+#[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
+fn unknown_field_in_a_version_links_filter_is_rejected() {
+    rejects(
+        integration_test::scenario_id!(),
+        "query { Author { name _version { cid links(filter: {nope: {_eq: 1}}) { cid } } } }",
+        None,
+        "Argument \"filter\" has invalid value {nope: {_eq: 1}}.\nIn field \"nope\": Unknown field.",
+    );
+}
+
+#[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn unknown_field_in_a_group_filter_is_rejected() {
     rejects(
         integration_test::scenario_id!(),
