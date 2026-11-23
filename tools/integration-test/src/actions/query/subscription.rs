@@ -206,8 +206,15 @@ impl SubscriptionRequest {
         let (sender, responses) = async_channel::unbounded();
         let reader = edge.spawn(read_events(response, sender));
         // The stream's open check sends a refusal as its first event, before
-        // any update; a valid stream sends nothing until one.
-        let first = match state.block_on(workers::timeout(IDLE_WAIT, responses.recv())) {
+        // any update; a valid stream sends nothing until one. An open that
+        // expects a refusal waits for it as long as for any expected event,
+        // so a loaded server's late refusal is not taken for an idle stream.
+        let first_wait = if self.expected_error.is_some() {
+            EVENT_WAIT
+        } else {
+            IDLE_WAIT
+        };
+        let first = match state.block_on(workers::timeout(first_wait, responses.recv())) {
             Ok(Ok(Err(error))) => return Err(Failure::operation(error)),
             Ok(Ok(Ok(response))) => match response.get("errors").filter(|e| !e.is_null()) {
                 Some(errors) => {
