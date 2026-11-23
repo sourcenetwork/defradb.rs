@@ -87,3 +87,27 @@ fn a_valid_count_selector_variable_still_counts() {
         None,
     );
 }
+
+#[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
+fn unknown_field_in_a_group_count_filter_is_rejected() {
+    run(
+        integration_test::scenario_id!(),
+        "query { Author(groupBy: [name]) { name COUNT(GROUP: {filter: {nope: {_eq: 1}}}) } }",
+        json!({}),
+        Value::Null,
+        Some("Argument \"GROUP\" has invalid value {filter: {nope: {_eq: 1}}}.\nIn field \"filter\": In field \"nope\": Unknown field."),
+    );
+}
+
+#[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
+fn a_valid_group_count_filter_still_counts() {
+    run(
+        integration_test::scenario_id!(),
+        "query { Author(groupBy: [name]) { name COUNT(GROUP: {filter: {name: {_eq: \"A\"}}}) } }",
+        json!({}),
+        json!({ "Author": [{ "name": "A", "COUNT": 1 }] }),
+        None,
+    );
+}

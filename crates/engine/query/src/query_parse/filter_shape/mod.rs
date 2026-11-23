@@ -324,14 +324,14 @@ fn fields_have_filter(fields: &[Requestable]) -> bool {
 }
 
 /// The block an aggregate target's `filter` is checked against: the host
-/// collection itself (a top-level aggregate, `_group`), a relation's
+/// collection itself (a top-level aggregate, `GROUP`), a relation's
 /// collection, or a scalar list's element filter.
 fn target_shape<'a>(
     collections: &Collections<'a>,
     collection: &'a CollectionVersion,
     host: &str,
 ) -> Option<Shape<'a>> {
-    if host == collection.name || host == "_group" {
+    if host == collection.name || host == "GROUP" {
         return Some(Shape::Collection(collection));
     }
     let field = collection.field_by_name(host)?;
