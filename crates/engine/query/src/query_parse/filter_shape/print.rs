@@ -107,7 +107,32 @@ fn print_go_json(value: &JsonValue, out: &mut String) {
             out.push(']');
         }
         JsonValue::String(s) => push_go_string(s, out),
+        JsonValue::Number(n) => match (n.as_i64(), n.as_f64()) {
+            (Some(i), _) => out.push_str(&i.to_string()),
+            (None, Some(f)) => push_go_float(f, out),
+            (None, None) => out.push_str(&n.to_string()),
+        },
         other => out.push_str(&other.to_string()),
+    }
+}
+
+/// A number Go decoded as `float64` (any that is not an `int64`), as
+/// `encoding/json` writes it: the shortest digits without an exponent from
+/// 1e-6 up to 1e21, so `1.0` is `1`, and outside that the exponent form
+/// with its sign, `1e+21` and `1e-7`.
+fn push_go_float(f: f64, out: &mut String) {
+    let abs = f.abs();
+    if abs != 0.0 && !(1e-6..1e21).contains(&abs) {
+        let scientific = format!("{f:e}");
+        let (mantissa, exponent) = scientific.split_once('e').unwrap_or((&scientific, "0"));
+        out.push_str(mantissa);
+        out.push('e');
+        if !exponent.starts_with('-') {
+            out.push('+');
+        }
+        out.push_str(exponent);
+    } else {
+        out.push_str(&f.to_string());
     }
 }
 
