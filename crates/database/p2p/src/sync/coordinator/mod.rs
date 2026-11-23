@@ -53,6 +53,7 @@ pub(crate) mod dag_retry;
 mod event_handler;
 mod fetch_failures;
 mod fetch_logs;
+mod fetch_slots;
 pub(crate) mod haves;
 #[cfg(feature = "libp2p-transport")]
 mod held_request;
@@ -74,6 +75,7 @@ mod result_types;
 mod selective_car_access;
 mod subscriptions;
 
+pub use fetch_slots::{PendingDagFetchSlot, PendingDagFetchSlots};
 pub use peer_details::{PeerDetails, PendingFetch, QuarantinedRoot};
 pub use result_types::{CreateReplicatorResult, LoadReplicatorsResult};
 pub use selective_car_access::{HeadHintCarAuthority, HeadHintCarGrant};
@@ -185,6 +187,8 @@ pub struct SyncStatus {
     pub inbound_budget: Vec<crate::transport::InboundClassSnapshot>,
     /// Per-peer measurements of our CAR fetches; empty for transports without them.
     pub peer_fetches: Vec<crate::transport::PeerFetchStats>,
+    /// What holds each pending-DAG fetch slot (#2571).
+    pub pending_dag_fetch_slots: fetch_slots::PendingDagFetchSlots,
     /// Current/high-water occupancy of bounded non-authoritative mutation
     /// gossip/artifact work. Durable head markers are installed before this
     /// pool is entered, so shedding here cannot lose a sync obligation.
@@ -1176,6 +1180,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             request_dispatch: self.runtime.dispatch_diagnostics.snapshot(),
             inbound_budget,
             peer_fetches,
+            pending_dag_fetch_slots: self.runtime.shutdown.pending_dag_fetch_slots(),
             non_authoritative_broadcast_tasks,
             non_authoritative_broadcast_high_water,
             non_authoritative_broadcast_rejected_total,

@@ -308,6 +308,19 @@ A node that holds none of a document with 31 updates, told of its next head, fet
 Listing replicators returns each entry as `{ID, Addresses, CollectionIDs, Status, LastStatusChange}`, with `Addresses` as an array and `Status` as Go's numeric status.
 Adding a new replicator records the current time as `LastStatusChange`; updating its collections retains its existing status and timestamp.
 
+# `defra.net.sync.fetch_slots`: A node's P2P status reports what holds its fetch slots
+
+- **Parents:** ["defra"]
+
+A defradb.rs node's `p2p status` carries `pending_dag_fetch_slots`: the slot `limit` (`--p2p-max-concurrent-dag-fetches`, 4 by default), the number `held`, how many are `scheduled`, `claimed`, `running` and `merging`, and a `roots` list naming the root CID and state of each held slot. A Go node has no such status.
+
+# `defra.net.sync.fetch_slots.released`: Fetch slots are free once a fetched DAG merges
+
+- **Parents:** ["defra.net.sync.fetch_slots"]
+- **Scenarios:** ["net::sync::fetch_slots::fetch_slots_are_free_once_a_fetched_dag_merges"]
+
+A node holding none of a document with 11 updates, told of its next head, fetches the whole DAG from its peer (the peer's `car_served_cids` is at least one) and converges on it. Its `pending_dag_fetch_slots.limit` is then 4, and `pending_dag_fetch_slots.held` comes back to zero.
+
 # `defra.net.replicator.list`: A replicator with no collections is listed
 
 - **Parents:** ["go.net.replicator"]
