@@ -35,7 +35,7 @@
 \*       Journal::recovery_needed, Journal::recovered
 \*   crates/engine/vera/src/vera_rs/follow/mod.rs       Follow::admit, reconcile
 \*   crates/engine/acp/src/recovery.rs                  RecoveryLedger::page, RecoveryCursor,
-\*       RecoverySource
+\*       RecoverySource, RecoveryStep
 \*   crates/engine/acp/src/external/recovery.rs         RecoverySource::next and ::delivered
 \*       for ExternalDocumentAcp
 \*   crates/engine/acp/src/external/voided.rs           OweAgain::owe_again, OweAgain::settle_owed
@@ -54,8 +54,9 @@
 \*   Owe, HandOver        Follower::recover calling OweAgain::owe_again with the page
 \*   Record, OweFirst     Follower::recover calling RecoverySource::delivered after it
 \*   cursor, cursorTerm, complete   the RecoveryCursor stored by delivered
-\*   Done, SaysDone       next returning None for a complete cursor of this term, and
-\*                        Follower::recover then calling Journal::recovered
+\*   Done, SaysDone       next returning RecoveryStep::Done with the term of a complete
+\*                        cursor, and Follower::recover then calling Journal::recovered
+\*                        with that term
 \*   Gate, Open           Follow::admit: refuse while the journal is closed or a term
 \*                        is unchecked
 \*   Crash                the node stops: Follower::recover's page is dropped

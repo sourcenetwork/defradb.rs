@@ -251,7 +251,7 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "vera.rs deployment terms",
-        name: "deny_wins / settled_reads_confirmed / settled_is_proven / unanswered_grant_is_unproven / refused_restores / applied_reads_fact / confirmed_reads_fact / last_iff_end / walk_covers: a recovery slot reads an unanswered change as applied with a denial first, an unanswered grant is never taken as confirmed, a refused change leaves the slot as it was, the newest answer replaces what was unanswered, and pages read one after the other hand over every slot once and end at the last",
+        name: "deny_wins / settled_reads_confirmed / confirmed_outranks_grant / settled_is_proven / unanswered_grant_is_unproven / refused_restores / applied_reads_fact / confirmed_reads_fact / last_iff_end / walk_covers: an unanswered denial wins a recovery slot, an unanswered grant neither outranks what was confirmed nor counts as confirmed, a refused change leaves the slot as it was, the newest answer replaces what was unanswered, and pages read one after the other hand over every slot once and end at the last",
         axis: Lean,
         anchor: "crates/engine/acp/src/recovery.rs resolve, RecoveryLedger::confirm, RecoveryLedger::prepare, RecoveryLedger::settle, RecoveryLedger::page; crates/engine/acp/src/external/recovery.rs RecoverySource::next",
         model_ref: "VeraRecoveryLedger (lake build)",

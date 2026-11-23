@@ -24,10 +24,10 @@ What must never happen:
 What this file proves:
   * a change that takes access away wins a slot (`deny_wins`), and a slot with
     nothing unanswered reads as what was confirmed (`settled_reads_confirmed`);
-  * what a slot reads as counts as confirmed only when the deployment
-    confirmed exactly that: always once nothing is unanswered
-    (`settled_is_proven`), never for a grant asked over a different or missing
-    confirmation (`unanswered_grant_is_unproven`);
+  * a grant the deployment never answered does not outrank what it confirmed
+    (`confirmed_outranks_grant`), and where nothing was confirmed it is not
+    taken as confirmed (`unanswered_grant_is_unproven`); a slot with nothing
+    unanswered is (`settled_is_proven`);
   * a refused change leaves the slot exactly as it was (`refused_restores`),
     and an applied one is what the slot reads as (`applied_reads_fact`);
   * the deployment's newest answer replaces whatever a stop left unanswered
@@ -55,17 +55,18 @@ structure Slot (α : Type) where
   -- A grant or a registration asked for and not answered.
   allowing : Option α
 
-/-- What a slot reads as: an unanswered change stands for what it asked, and
-one that takes access away comes first. -/
+/-- What a slot reads as. An unanswered change that takes access away comes
+first. Otherwise what the deployment confirmed stands, and an unanswered
+change that gives access stands only where nothing was confirmed. -/
 def resolve {α : Type} (slot : Slot α) : Option α :=
-  -- Look at the two unanswered changes.
-  match slot.denying, slot.allowing with
+  -- Look at the unanswered denial, then the confirmed record.
+  match slot.denying, slot.confirmed with
   -- A change that takes access away wins.
   | some denial, _ => some denial
-  -- Otherwise a change that gives access stands.
-  | none, some grant => some grant
-  -- With nothing unanswered, what was confirmed.
-  | none, none => slot.confirmed
+  -- Otherwise what the deployment confirmed.
+  | none, some fact => some fact
+  -- With nothing confirmed, an unanswered grant if there is one.
+  | none, none => slot.allowing
 
 /-- Whether what a slot reads as is what the deployment confirmed. A pass owes
 a grant again only when this holds. -/
@@ -103,8 +104,26 @@ theorem deny_wins {α : Type} (fact : α) (slot : Slot α) :
 theorem settled_reads_confirmed {α : Type} (slot : Slot α)
     (noDenial : slot.denying = none) (noGrant : slot.allowing = none) :
     resolve slot = slot.confirmed := by
-  -- With both unanswered places empty, `resolve` takes its last case.
-  simp [resolve, noDenial, noGrant]
+  -- Take the slot apart into its three records.
+  cases slot with
+  | mk confirmed denying allowing =>
+    -- Both unanswered places are empty.
+    simp at noDenial noGrant
+    -- Whether or not something was confirmed, that is what is read.
+    cases confirmed <;> simp [resolve, noDenial, noGrant]
+
+/-- A grant the deployment never answered does not outrank what it confirmed:
+a confirmed revocation stands until a later grant is confirmed. -/
+theorem confirmed_outranks_grant {α : Type} (fact grant : α) (slot : Slot α)
+    (noDenial : slot.denying = none) (held : slot.confirmed = some fact) :
+    resolve (prepare false grant slot) = some fact := by
+  -- Take the slot apart into its three records.
+  cases slot with
+  | mk confirmed denying allowing =>
+    -- No denial is unanswered and something was confirmed.
+    simp at noDenial held
+    -- Preparing a grant touches neither, so the confirmed record is read.
+    simp [resolve, prepare, noDenial, held]
 
 /-- A slot with nothing unanswered is proven: it reads as what was confirmed. -/
 theorem settled_is_proven {α : Type} [DecidableEq α] (slot : Slot α)
@@ -113,20 +132,18 @@ theorem settled_is_proven {α : Type} [DecidableEq α] (slot : Slot α)
   -- It reads as the confirmed record, which is what `proven` compares.
   simp [proven, settled_reads_confirmed slot noDenial noGrant]
 
-/-- A grant the deployment never answered is not proven, unless the deployment
-had confirmed that very grant before. -/
+/-- A grant the deployment never answered, in a slot where it confirmed
+nothing, is not proven. -/
 theorem unanswered_grant_is_unproven {α : Type} [DecidableEq α] (grant : α) (slot : Slot α)
-    (noDenial : slot.denying = none) (differs : slot.confirmed ≠ some grant) :
+    (noDenial : slot.denying = none) (nothing : slot.confirmed = none) :
     proven (prepare false grant slot) = false := by
   -- Take the slot apart into its three records.
   cases slot with
   | mk confirmed denying allowing =>
-    -- No denial is unanswered, so the slot reads as the grant.
-    simp at noDenial differs
-    -- The grant is not the confirmed record, so the two differ.
-    simp [proven, prepare, resolve, noDenial]
-    -- Turn the inequality around to match.
-    exact fun same => differs same.symm
+    -- No denial is unanswered and nothing was confirmed.
+    simp at noDenial nothing
+    -- The slot reads as the grant, which is not the empty confirmed record.
+    simp [proven, prepare, resolve, noDenial, nothing]
 
 /-- A change the deployment refused leaves the slot exactly as it was before
 the node asked. -/
@@ -151,7 +168,7 @@ theorem refused_restores {α : Type} (denies : Bool) (fact : α) (slot : Slot α
 unanswered before: a change a stop left behind cannot outlive a later answer. -/
 theorem confirmed_reads_fact {α : Type} (fact : α) (slot : Slot α) :
     resolve (confirm fact slot) = some fact := by
-  -- A confirmation leaves nothing unanswered, so `resolve` takes its last case.
+  -- A confirmation leaves no denial, so the confirmed record is read.
   simp [resolve, confirm]
 
 /-- A change the deployment applied is what the slot reads as. -/
