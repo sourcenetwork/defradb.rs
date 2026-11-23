@@ -698,8 +698,14 @@ RUNS=(
   "MC_FollowDeployment_Red_NoMark.cfg FollowDeployment.tla RED" # replay start not written down: a refused replay cut short is held and its revocation forgotten (INV_RevocationDenies)
   "MC_FollowDeployment_Red_NoDeliveryGate.cfg FollowDeployment.tla RED" # a checked term admits before its owed changes reach the outbox (INV_RevocationDenies)
   "MC_FollowDeployment_Red_CollapsesBatch.cfg FollowDeployment.tla RED" # only the first change of an object handed back together is owed: the revocation after it is lost (INV_RevocationDenies)
-  "MC_FollowDeploymentRecovery_Green.cfg FollowDeploymentRecovery.tla GREEN" # an uncovered void is rebuilt from the node's own state, and nothing is decided before every page is handed over
-  "MC_FollowDeploymentRecovery_Red_NoPageGate.cfg FollowDeploymentRecovery.tla RED" # recovery pages are not handed over, but the checked term admits (INV_NoDecisionBeforeHandover)
+  "MC_FollowDeploymentRecovery_Green.cfg FollowDeploymentRecovery.tla GREEN" # an uncovered takeover is rebuilt from the node's own ledger in pages, across a crash and a second takeover: nothing lost is left unowed when the node decides, a revocation denies, the pass ends
+  "MC_FollowDeploymentRecovery_Green_OneRecordPages.cfg FollowDeploymentRecovery.tla GREEN" # the same with pages of one record
+  "MC_FollowDeploymentRecovery_Red_NoGate.cfg FollowDeploymentRecovery.tla RED" # deciding while the journal is closed: a lost revocation not owed yet lets the grant through (INV_RevocationDenies)
+  "MC_FollowDeploymentRecovery_Red_NoHandOver.cfg FollowDeploymentRecovery.tla RED" # a page's lost records never reach the outbox: the node reopens with them unowed (INV_NothingLost)
+  "MC_FollowDeploymentRecovery_Red_CursorFirst.cfg FollowDeploymentRecovery.tla RED" # the cursor is written before the page is handed over: a crash between loses the page (INV_NothingLost)
+  "MC_FollowDeploymentRecovery_Red_CompleteEveryPage.cfg FollowDeploymentRecovery.tla RED" # a page that stopped at its limit marks the pass complete: later records are never checked (INV_NothingLost)
+  "MC_FollowDeploymentRecovery_Red_NeverDone.cfg FollowDeploymentRecovery.tla RED" # the source never says the pass is over: the node never reopens (LIVE_RecoveryEnds)
+  "MC_FollowDeploymentRecovery_Red_NoTermFence.cfg FollowDeploymentRecovery.tla RED" # a cursor of an older term is resumed: what a second takeover lost behind it is never checked (INV_NothingLost)
   "MC_PendingSubmission_Green.cfg PendingSubmission.tla GREEN" # a pending submission is resent until confirmed, takes effect once and stays journaled
   "MC_PendingSubmission_Green_Recalled.cfg PendingSubmission.tla GREEN" # a caller that keeps calling is confirmed though calls end early and the node drops the request
   "MC_PendingSubmission_Red_NoResend.cfg PendingSubmission.tla RED" # a lost send taken as sent waits for a receipt that cannot come
