@@ -34,7 +34,9 @@ inductive Value where
   | field : String → Value → Value → Value
 
 -- The literal check: every key the input type at `path` does not define is
--- an error at that key; a variable position is never looked into.
+-- an error at that key, and its value is not looked into, since there is no
+-- type to check it against (`literal_fields` stops at `Field::Unknown`); a
+-- variable position is never looked into either.
 def walk (defined : List String → String → Bool) (path : List String) : Value → List (List String)
   -- A variable is assumed valid here.
   | .filled _ _ => []
@@ -42,10 +44,20 @@ def walk (defined : List String → String → Bool) (path : List String) : Valu
   | .scalar => []
   -- No fields left.
   | .done => []
-  -- This key's error (if undefined), its value's errors, then the others'.
+  -- A defined key: its value's errors, then the others'. An undefined key:
+  -- that key's one error, then the others'.
   | .field k v rest =>
-      (if defined path k then [] else [path ++ [k]])
-        ++ walk defined (path ++ [k]) v ++ walk defined path rest
+      (if defined path k then walk defined (path ++ [k]) v else [path ++ [k]])
+        ++ walk defined path rest
+
+-- Below an undefined key nothing is reported: `{nope: {deeper: 1}}` gives
+-- the one error at `nope`, never a second at `deeper`.
+theorem unknown_key_is_one_error
+    (defined : List String → String → Bool) (path : List String) (k : String) (v : Value)
+    (hk : defined path k = false) :
+    walk defined path (.field k v .done) = [path ++ [k]] := by
+  -- The key is undefined, so its value is skipped and no fields follow.
+  simp [walk, hk]
 
 -- Forget every variable's value, keeping only where the variable was.
 def erase : Value → Value

@@ -750,6 +750,16 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/engine/query/tests/filter_source.rs a_nested_variable_is_recorded_at_its_position; tools/integration-test/tests/testo/query/simple/with_filter_unknown.rs a_bad_literal_is_reported_before_its_variables, unknown_operator_in_a_nested_variable_is_rejected",
     },
     Property {
+        // An unknown key is one error: the walk does not look below it.
+        family: "Filter input validation",
+        name: "unknown_key_is_one_error: nothing below an unknown key is reported",
+        axis: Lean,
+        anchor: "crates/engine/query/src/query_parse/filter_shape/walk.rs literal_fields",
+        model_ref: "FilterInputShape (lake build)",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/query/simple/with_filter_unknown.rs unknown_field_in_a_literal_filter_is_rejected",
+    },
+    Property {
         // A variable that stands for a whole `_and`/`_or` list is found at
         // its position and checked as a list, never skipped.
         family: "Filter input validation",
