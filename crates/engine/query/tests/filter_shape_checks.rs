@@ -7,21 +7,24 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use query::query_parse::{parse_request_with_variables, validate_operation};
-use query::{parse_sdl, CollectionProvider, Result, StaticCollectionProvider};
+use query::{parse_sdl, CollectionProvider, QueryError, Result, StaticCollectionProvider};
 use rapidhash::{HashMapExt, RapidHashMap};
 use schema::CollectionVersion;
 use serde_json::{json, Value};
 
 const SDL: &str = r#"
-    type Author { name: String age: Int books: [Book] }
+    type Author { name: String age: Int tags: [String!] books: [Book] }
     type Book { title: String rating: Float author: Author }
 "#;
 
-/// A provider that counts the lookups validation makes.
+/// A provider that counts the lookups validation makes, and can fail them
+/// as a store read would.
 struct Counting {
     inner: StaticCollectionProvider,
     gets: AtomicUsize,
     lists: AtomicUsize,
+    failing_get: Option<&'static str>,
+    failing_list: bool,
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -29,11 +32,17 @@ struct Counting {
 impl CollectionProvider for Counting {
     async fn get_collection(&self, name: &str) -> Result<Option<Arc<CollectionVersion>>> {
         self.gets.fetch_add(1, Ordering::Relaxed);
+        if self.failing_get == Some(name) {
+            return Err(QueryError::internal("the store read failed"));
+        }
         self.inner.get_collection(name).await
     }
 
     async fn list_collections(&self) -> Result<Vec<String>> {
         self.lists.fetch_add(1, Ordering::Relaxed);
+        if self.failing_list {
+            return Err(QueryError::internal("the store read failed"));
+        }
         self.inner.list_collections().await
     }
 }
@@ -43,10 +52,16 @@ fn provider(extra: usize) -> Counting {
     for index in 0..extra {
         sdl.push_str(&format!("type Other{index} {{ x: Int }}\n"));
     }
+    provider_for(&sdl)
+}
+
+fn provider_for(sdl: &str) -> Counting {
     Counting {
-        inner: StaticCollectionProvider::new(parse_sdl(&sdl).expect("valid SDL")),
+        inner: StaticCollectionProvider::new(parse_sdl(sdl).expect("valid SDL")),
         gets: AtomicUsize::new(0),
         lists: AtomicUsize::new(0),
+        failing_get: None,
+        failing_list: false,
     }
 }
 
@@ -219,4 +234,152 @@ fn an_encrypted_query_without_an_encrypted_index_leaves_its_filter_unchecked() {
         json!({}),
     )
     .unwrap();
+}
+
+/// In a three-collection cycle `A.b -> B.c -> C.a`, `A.b` is a self
+/// reference to B's place in the set: `b`'s filter is B's.
+#[test]
+fn a_filter_through_a_three_collection_cycle_is_checked_against_its_target() {
+    let provider = provider_for(
+        "type A { name: String b: B } type B { title: String c: C } type C { x: Int a: A }",
+    );
+    check_with(
+        &provider,
+        r#"{ A(filter: {b: {title: {_eq: "x"}}}) { name } }"#,
+        json!({}),
+    )
+    .unwrap();
+    let text = message(check_with(
+        &provider,
+        r#"{ A(filter: {b: {name: {_eq: "x"}}}) { name } }"#,
+        json!({}),
+    ));
+    assert!(
+        text.contains("In field \"b\": In field \"name\": Unknown field."),
+        "{text}"
+    );
+}
+
+/// Go decodes a variable's numbers into `int64` or `float64` and prints
+/// them with `json.Marshal`: a whole float prints without its fraction, a
+/// large or small one in Go's exponent form, and an integer past `int64`
+/// as the float it became.
+#[test]
+fn a_variable_prints_its_numbers_as_go_does() {
+    let text = message(check(
+        "query($f: AuthorFilterArg) { Author(filter: $f) { name } }",
+        json!({ "f": { "nope": { "_in": [1.0, 2.5, -0.5, 1e17, 1e21, 1.5e-7, 18446744073709551615u64, 7] } } }),
+    ));
+    assert_eq!(
+        text,
+        "Variable \"$f\" got invalid value {\"nope\":{\"_in\":[1,2.5,-0.5,100000000000000000,1e+21,1.5e-7,18446744073709552000,7]}}.\nIn field \"nope\": Unknown field."
+    );
+}
+
+/// A known literal error stands even when the relation lookup a later
+/// selection's filter needs fails.
+#[test]
+fn a_literal_error_is_not_replaced_by_a_failed_relation_lookup() {
+    let mut provider = provider(0);
+    provider.failing_list = true;
+    let text = message(check_with(
+        &provider,
+        r#"{ Author(filter: {nope: {_eq: 1}}) { books(filter: {title: {_eq: "x"}}) { title } } }"#,
+        json!({}),
+    ));
+    assert_eq!(
+        text,
+        "Argument \"filter\" has invalid value {nope: {_eq: 1}}.\nIn field \"nope\": Unknown field."
+    );
+}
+
+/// Once a root has a literal error, a later root's collection is not
+/// looked up, so a failed lookup cannot replace that error.
+#[test]
+fn a_literal_error_is_not_replaced_by_a_later_roots_failed_lookup() {
+    let mut provider = provider(0);
+    provider.failing_get = Some("Book");
+    let text = message(check_with(
+        &provider,
+        r#"{ Author(filter: {nope: {_eq: 1}}) { name } Book(filter: {title: {_eq: "x"}}) { title } }"#,
+        json!({}),
+    ));
+    assert_eq!(
+        text,
+        "Argument \"filter\" has invalid value {nope: {_eq: 1}}.\nIn field \"nope\": Unknown field."
+    );
+}
+
+/// A root with no filter anywhere below it has nothing to check, so the
+/// filter pass looks nothing up: only the collection check does.
+#[test]
+fn a_root_without_a_filter_is_looked_up_once() {
+    let provider = provider(0);
+    check_with(&provider, "{ Author { _docID } }", json!({})).unwrap();
+    assert_eq!(provider.gets.load(Ordering::Relaxed), 1);
+    assert_eq!(provider.lists.load(Ordering::Relaxed), 0);
+}
+
+/// Relation filters under several roots load the other collections once
+/// for the request, not once per root.
+#[test]
+fn relation_filters_under_several_roots_load_the_collections_once() {
+    let provider = provider(0);
+    check_with(
+        &provider,
+        r#"{ a: Author { books(filter: {title: {_eq: "x"}}) { title } } b: Author { books(filter: {title: {_eq: "y"}}) { title } } }"#,
+        json!({}),
+    )
+    .unwrap();
+    assert_eq!(provider.lists.load(Ordering::Relaxed), 1);
+}
+
+/// With no `encrypted_<Collection>` field to check arguments on, a
+/// non-object filter variable is left to the missing-field error too.
+#[test]
+fn an_encrypted_query_without_an_encrypted_index_leaves_a_non_object_variable_unchecked() {
+    check(
+        "query($f: AuthorEncryptedFilterArg) { encrypted_Author(filter: $f) { docIDs } }",
+        json!({ "f": 7 }),
+    )
+    .unwrap();
+}
+
+/// A non-object variable where an operator block belongs fails with the
+/// block's name, as graphql-go's coercion names it.
+#[test]
+fn a_non_object_variable_for_an_operator_block_names_the_block() {
+    let cases = [
+        ("{name: $v}", "StringOperatorBlock"),
+        ("{age: $v}", "IntOperatorBlock"),
+        ("{_docID: $v}", "IDOperatorBlock"),
+        ("{tags: $v}", "NotNullStringListOperatorBlock"),
+        ("{tags: {_any: $v}}", "NotNullStringOperatorBlock"),
+    ];
+    for (filter, block) in cases {
+        let text = message(check(
+            &format!("query($v: {block}) {{ Author(filter: {filter}) {{ name }} }}"),
+            json!({ "v": 7 }),
+        ));
+        assert_eq!(
+            text,
+            format!(
+                "Variable \"$v\" got invalid value 7.\nExpected \"{block}\", found not an object."
+            ),
+            "{filter}"
+        );
+    }
+}
+
+/// A scalar list's aggregate `filter` is the element's `FilterArg`.
+#[test]
+fn a_non_object_aggregate_filter_on_a_scalar_list_names_its_filter_arg() {
+    let text = message(check(
+        "query($f: NotNullStringFilterArg) { Author { COUNT(tags: {filter: $f}) } }",
+        json!({ "f": 7 }),
+    ));
+    assert_eq!(
+        text,
+        "Variable \"$f\" got invalid value 7.\nExpected \"NotNullStringFilterArg\", found not an object."
+    );
 }

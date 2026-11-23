@@ -31,100 +31,61 @@ pub(super) enum Root<'o> {
 
 /// Checks every filter under `root`, whose collection is `collection`
 /// (`None` for `_commits`), loading the other collections only when a
-/// relation needs one. The errors are kept in `found`, so a literal error
-/// under a later root still wins over a variable error under an earlier one.
+/// relation needs one, and then once for the request. The errors are kept
+/// in `found`, so a literal error under a later root still wins over a
+/// variable error under an earlier one.
 pub(super) async fn check(
     found: &mut Found,
     root: Root<'_>,
     collection: Option<&CollectionVersion>,
     provider: &dyn CollectionProvider,
 ) -> Result<()> {
-    if found.literal.is_some() {
+    if found.has_literal() {
         return Ok(());
     }
-    let loaded = Vec::new();
-    let mut this = Found::run(&root, collection, &loaded);
-    if this.missed {
+    let none = Vec::new();
+    let mut walk = Walk::run(&root, collection, found.loaded.as_deref().unwrap_or(&none));
+    if walk.needs_collections() && found.loaded.is_none() {
         let mut all = Vec::new();
         for name in provider.list_collections().await? {
             all.extend(provider.get_collection(&name).await?);
         }
-        this = Found::run(&root, collection, &all);
+        walk = Walk::run(&root, collection, &all);
+        found.loaded = Some(all);
     }
-    found.literal = found.literal.take().or(this.literal);
-    found.variable = found.variable.take().or(this.variable);
+    found.literal = found.literal.take().or(walk.literal);
+    found.variable = found.variable.take().or(walk.variable);
     Ok(())
 }
 
 impl Root<'_> {
-    /// Whether any filter under this root is a variable's non-object value.
-    fn has_not_object(&self) -> bool {
+    /// Whether this root has a filter anywhere: one without has nothing to
+    /// check, so its collection is not looked up for it.
+    pub(super) fn has_filter(&self) -> bool {
         match self {
-            Root::Select(select) => select_has_not_object(select),
+            Root::Select(select) => has_filter(select),
             Root::Mutation(mutation) => {
-                is_not_object(mutation.filter.as_ref()) || fields_have_not_object(&mutation.fields)
+                mutation.filter.is_some() || fields_have_filter(&mutation.fields)
             }
         }
     }
 }
 
-fn is_not_object(filter: Option<&Filter>) -> bool {
-    filter.is_some_and(|f| f.not_object_value().is_some())
-}
-
-fn select_has_not_object(select: &Select) -> bool {
-    is_not_object(select.filter.as_ref()) || fields_have_not_object(&select.fields)
-}
-
-fn fields_have_not_object(fields: &[Requestable]) -> bool {
-    fields.iter().any(|field| match field {
-        Requestable::Select(sub) => select_has_not_object(sub),
-        Requestable::Aggregate(aggregate) => aggregate
-            .targets
-            .iter()
-            .any(|t| is_not_object(t.filter.as_ref())),
-        _ => false,
-    })
-}
-
 /// The errors found across a request's roots, split by check: the first
-/// literal error wins, then the first variable error.
+/// literal error wins, then the first variable error. The other collections
+/// are loaded at most once, the first time a relation filter needs them.
 #[derive(Default)]
 pub(super) struct Found {
     literal: Option<String>,
     variable: Option<String>,
-    missed: bool,
+    loaded: Option<Vec<Arc<CollectionVersion>>>,
 }
 
 impl Found {
-    fn run(
-        root: &Root<'_>,
-        collection: Option<&CollectionVersion>,
-        all: &[Arc<CollectionVersion>],
-    ) -> Self {
-        let collections = Collections::new(all);
-        let mut found = Found::default();
-        match (root, collection) {
-            (Root::Select(select), _) if select.collection_name == "_commits" => {
-                found.commits(&collections, select);
-            }
-            (Root::Select(select), Some(collection)) => {
-                found.select(&collections, collection, select);
-            }
-            (Root::Mutation(mutation), Some(collection)) => {
-                let shape = Shape::Collection(collection);
-                found.filter(&collections, shape, mutation.filter.as_ref());
-                found.fields(&collections, collection, &mutation.fields);
-            }
-            _ => {}
-        }
-        found.missed = collections.missed();
-        // A non-object filter this walk could not name (a scalar list's
-        // aggregate filter) must still not run as an empty filter.
-        if found.literal.is_none() && found.variable.is_none() && root.has_not_object() {
-            found.variable = Some("filter must be an object".to_string());
-        }
-        found
+    /// Whether a literal error is known: nothing a later root holds can
+    /// change the answer, so the later roots are not looked up.
+    pub(super) fn has_literal(&self) -> bool {
+        self.literal.is_some()
     }
 
     pub(super) fn into_result(self) -> Result<()> {
@@ -132,6 +93,58 @@ impl Found {
             Some(message) => Err(QueryError::unknown_field(message)),
             None => Ok(()),
         }
+    }
+}
+
+/// One walk over one root's filters, with the collections loaded so far.
+#[derive(Default)]
+struct Walk {
+    literal: Option<String>,
+    variable: Option<String>,
+    /// A relation's collection was not loaded, so its filter went unchecked.
+    missed: bool,
+    /// A relation's filter went unchecked before the literal error was found,
+    /// so a filter there may hold an earlier one.
+    missed_before_literal: bool,
+    /// A non-object filter was given where the walk could name no type.
+    unnamed_not_object: bool,
+}
+
+impl Walk {
+    fn run(
+        root: &Root<'_>,
+        collection: Option<&CollectionVersion>,
+        all: &[Arc<CollectionVersion>],
+    ) -> Self {
+        let collections = Collections::new(all);
+        let mut walk = Walk::default();
+        match (root, collection) {
+            (Root::Select(select), _) if select.collection_name == "_commits" => {
+                walk.commits(&collections, select);
+            }
+            (Root::Select(select), Some(collection)) => {
+                walk.select(&collections, collection, select);
+            }
+            (Root::Mutation(mutation), Some(collection)) => {
+                let shape = Shape::Collection(collection);
+                walk.filter(&collections, shape, mutation.filter.as_ref());
+                walk.fields(&collections, collection, &mutation.fields);
+            }
+            _ => {}
+        }
+        walk.missed = collections.missed();
+        // A non-object filter the walk reached but could not name (a JSON
+        // list's aggregate filter) must still not run as an empty filter.
+        if walk.literal.is_none() && walk.variable.is_none() && walk.unnamed_not_object {
+            walk.variable = Some("filter must be an object".to_string());
+        }
+        walk
+    }
+
+    /// Whether a walk with every collection loaded could answer differently:
+    /// a relation went unchecked, and no literal error was found before it.
+    fn needs_collections(&self) -> bool {
+        self.missed && (self.literal.is_none() || self.missed_before_literal)
     }
 
     /// `_commits`, filtered by `CommitsFilterArg`, and the commits below it.
@@ -216,6 +229,7 @@ impl Found {
         };
         if let Some(value) = filter.not_object_value() {
             let messages: Vec<String> = walk::not_object(shape).into_iter().collect();
+            self.unnamed_not_object |= messages.is_empty();
             match filter.source() {
                 FilterSource::Variable(name) => {
                     self.variable_error(name, &go_json(value), messages);
@@ -242,6 +256,7 @@ impl Found {
                         &skips,
                     );
                     if !messages.is_empty() {
+                        self.missed_before_literal = collections.missed();
                         self.literal = Some(match filter.enclosing() {
                             Some(enclosing) => {
                                 argument(&enclosing.name, &enclosing.printed, in_filter(messages))
@@ -297,14 +312,15 @@ impl Found {
 /// Whether `select` or anything selected below it carries a filter: a
 /// subtree without one is not walked, so its relations are never looked up.
 fn has_filter(select: &Select) -> bool {
-    select.filter.is_some()
-        || select.fields.iter().any(|field| match field {
-            Requestable::Select(sub) => has_filter(sub),
-            Requestable::Aggregate(aggregate) => {
-                aggregate.targets.iter().any(|t| t.filter.is_some())
-            }
-            _ => false,
-        })
+    select.filter.is_some() || fields_have_filter(&select.fields)
+}
+
+fn fields_have_filter(fields: &[Requestable]) -> bool {
+    fields.iter().any(|field| match field {
+        Requestable::Select(sub) => has_filter(sub),
+        Requestable::Aggregate(aggregate) => aggregate.targets.iter().any(|t| t.filter.is_some()),
+        _ => false,
+    })
 }
 
 /// The block an aggregate target's `filter` is checked against: the host

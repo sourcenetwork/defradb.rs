@@ -75,9 +75,15 @@ async fn check_filter_shapes(
             ..
         } => {
             for mutation in mutations.iter().chain(excluded) {
+                let root = Root::Mutation(mutation);
+                if found.has_literal() {
+                    break;
+                }
+                if !root.has_filter() {
+                    continue;
+                }
                 let collection = provider.get_collection(&mutation.collection_name).await?;
                 if let Some(collection) = collection {
-                    let root = Root::Mutation(mutation);
                     filter_shape::check(&mut found, root, Some(&collection), provider).await?;
                 }
             }
@@ -86,11 +92,17 @@ async fn check_filter_shapes(
         ParsedOperation::Introspection { .. } => return Ok(()),
     };
     for select in selects {
+        let root = Root::Select(select);
+        if found.has_literal() {
+            break;
+        }
+        if !root.has_filter() {
+            continue;
+        }
         if select.collection_name == "_commits" {
-            filter_shape::check(&mut found, Root::Select(select), None, provider).await?;
+            filter_shape::check(&mut found, root, None, provider).await?;
         } else if !is_internal_collection(&select.collection_name) {
             if let Some(collection) = provider.get_collection(&select.collection_name).await? {
-                let root = Root::Select(select);
                 filter_shape::check(&mut found, root, Some(&collection), provider).await?;
             }
         }
