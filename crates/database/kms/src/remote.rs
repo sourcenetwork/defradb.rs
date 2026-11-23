@@ -87,6 +87,23 @@ impl inputs::Source for RemoteKeys {
     }
 }
 
+/// Notify once for the keys stored from a reply, even if the request future
+/// is cancelled while storing a later key in that reply.
+struct ArrivedKeys<'a> {
+    listener: &'a AtomOption<Arc<dyn crate::service::KeyArrivalListener>>,
+    cids: Vec<EncryptionCid>,
+}
+
+impl Drop for ArrivedKeys<'_> {
+    fn drop(&mut self) {
+        if !self.cids.is_empty() {
+            if let Some(listener) = self.listener.load() {
+                listener.keys_arrived(&self.cids);
+            }
+        }
+    }
+}
+
 /// The next reply on `stream`, with the stream to read the one after.
 async fn next_reply(
     mut stream: TransportReplyStream,
@@ -191,7 +208,10 @@ impl RemoteKeys {
             // AAD binds OUR (requester) ephemeral pubkey and the RESPONDER's
             // peer id, matching the serve side.
             let aad = crate::ecies_envelope::make_associated_data(&our_eph_pub, &responder_peer_id);
-            let mut arrived = Vec::new();
+            let mut arrived = ArrivedKeys {
+                listener: &self.arrivals,
+                cids: Vec::new(),
+            };
             for (cid_bytes, block_env) in reply.links.iter().zip(reply.blocks.iter()) {
                 let Ok(cid) = cid::Cid::try_from(cid_bytes.as_slice()) else {
                     tracing::warn!("KMS reply contained malformed CID; skipping");
@@ -210,16 +230,11 @@ impl RemoteKeys {
                     .await
                 {
                     Ok(key) => {
-                        arrived.push(cid);
+                        arrived.cids.push(cid);
                         answers[index] = Some(Ok(Arc::new(Zeroizing::new(key))));
                         remaining -= 1;
                     }
                     Err(error) => unavailable = Some(error),
-                }
-            }
-            if !arrived.is_empty() {
-                if let Some(listener) = self.arrivals.load() {
-                    listener.keys_arrived(&arrived);
                 }
             }
         }

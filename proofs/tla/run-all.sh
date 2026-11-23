@@ -1102,6 +1102,8 @@ RUNS=(
   "MC_SyncOwnership_Red_UndrainedMarker.cfg SyncOwnership.tla RED" # P2P stops with a marker registration pending and the dropped task acknowledges the commit
   "MC_SyncOwnership_Red_ShedAsStall.cfg SyncOwnership.tla RED" # a provider's busy CAR reply is rotated past and deferred, never counted as a stalled window or terminal exhaustion
   "MC_SyncOwnership_Green_Dispatch.cfg MC_SyncOwnership_Dispatch.tla GREEN" # one attempt per fetch slot, re-armed from its end, acked heads kept: due roots go in order and every acked head merges across a restart
+  "MC_KeyBatchNotification_Green.cfg KeyBatchNotification.tla GREEN"
+  "MC_KeyBatchNotification_Red_Cancel.cfg KeyBatchNotification.tla RED" # cancellation drops stored keys without notification
   "MC_PendingKeyArrival_Green.cfg PendingKeyArrival.tla GREEN"
   "MC_PendingKeyArrival_Red_LostPromotion.cfg PendingKeyArrival.tla RED" # a key arrival promotes every backoff root while the clock still dispatches them
   "MC_PendingKeyArrival_Red_NoPromotion.cfg PendingKeyArrival.tla RED" # without promotion, a key arrival cannot clear blocked roots

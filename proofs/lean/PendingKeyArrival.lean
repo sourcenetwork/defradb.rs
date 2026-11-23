@@ -16,4 +16,12 @@ theorem arrival_survives_finish (now backoff : Nat) (pending : Bool) :
     finish now backoff (arrive pending) = now := by
   rfl
 
+/-- Completing or cancelling a reply flushes its stored keys to the listener. -/
+def flush (stored notified : List Nat) : List Nat := stored ++ notified
+
+/-- Every stored key is present in the notification after a flush. -/
+theorem stored_key_is_notified (stored notified : List Nat) (key : Nat)
+    (present : key ∈ stored) : key ∈ flush stored notified := by
+  simp [flush, present]
+
 end PendingKeyArrival

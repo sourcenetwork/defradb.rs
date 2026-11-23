@@ -2793,6 +2793,11 @@ fn remote_key_arrival_wakes_a_parked_encrypted_merge() {
                 assert!(Instant::now() < deadline, "root did not park on backoff: {status}");
                 edge::testing::edge().sleep(Duration::from_millis(50)).await;
             };
+            let observed_at = Instant::now();
+            let remaining = replica.p2p().unwrap().sync_status().await.unwrap()
+                ["next_pending_retry_in_ms"]
+                .as_u64()
+                .unwrap_or_default();
             closed.store(false, Ordering::SeqCst);
             let kms = replica.database().kms().unwrap();
             let answers = kms
@@ -2800,10 +2805,8 @@ fn remote_key_arrival_wakes_a_parked_encrypted_merge() {
                 .await
                 .unwrap();
             assert!(answers[0].is_ok(), "independent key fetch failed: {:?}", answers[0]);
-            let remaining = replica.p2p().unwrap().sync_status().await.unwrap()
-                ["next_pending_retry_in_ms"]
-                .as_u64()
-                .unwrap_or_default();
+            let elapsed = u64::try_from(observed_at.elapsed().as_millis()).unwrap_or(u64::MAX);
+            let remaining = remaining.saturating_sub(elapsed);
             assert!(remaining >= 4_500, "key arrived too near the normal retry: {remaining}ms");
             let event = edge::testing::edge()
                 .timeout(Duration::from_millis(3_000), async {

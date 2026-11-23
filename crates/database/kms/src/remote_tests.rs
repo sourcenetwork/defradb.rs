@@ -364,3 +364,79 @@ async fn stored_remote_keys_notify_listener_once_per_reply() {
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0], cids);
 }
+
+#[nuclei::test(start_paused = true)]
+async fn cancelling_a_reply_notifies_keys_stored_before_a_later_put_blocks() {
+    use crate::{KeyStore, StoredKey};
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct Recorder(Mutex<Vec<Vec<EncryptionCid>>>);
+    impl crate::KeyArrivalListener for Recorder {
+        fn keys_arrived(&self, cids: &[EncryptionCid]) {
+            self.0.lock().unwrap().push(cids.to_vec());
+        }
+    }
+
+    struct GateStore {
+        inner: MemoryKeyStore,
+        puts: AtomicUsize,
+        second_put: regolith::sync::Notify,
+    }
+    #[async_trait]
+    impl KeyStore for GateStore {
+        async fn put(&self, cid: EncryptionCid, stored: StoredKey) -> crate::Result<()> {
+            if self.puts.fetch_add(1, Ordering::SeqCst) == 1 {
+                self.second_put.notify_one();
+                std::future::pending::<()>().await;
+            }
+            self.inner.put(cid, stored).await
+        }
+        async fn get(&self, cid: &EncryptionCid) -> crate::Result<Option<StoredKey>> {
+            self.inner.get(cid).await
+        }
+        async fn generate(&self, scope: &KeyScope) -> crate::Result<(EncryptionCid, StoredKey)> {
+            self.inner.generate(scope).await
+        }
+        async fn delete(&self, cid: &EncryptionCid) -> crate::Result<()> {
+            self.inner.delete(cid).await
+        }
+        async fn list(&self) -> crate::Result<Vec<EncryptionCid>> {
+            self.inner.list().await
+        }
+    }
+
+    let (transport, _, cids) = peer_and_node(2, true).await;
+    let store = Arc::new(GateStore {
+        inner: MemoryKeyStore::new(),
+        puts: AtomicUsize::new(0),
+        second_put: regolith::sync::Notify::new(),
+    });
+    let recorder = Arc::new(Recorder::default());
+    let arrivals = Arc::new(kovan::AtomOption::none());
+    arrivals.store_some(recorder.clone() as Arc<dyn crate::KeyArrivalListener>);
+    let remote = super::RemoteKeys {
+        tier: Arc::new(crate::tier::KeyTier::new(store.clone(), 4096)),
+        transports: vec![transport],
+        node_identity: node(),
+        test_ephemeral: Arc::new(kovan::AtomOption::none()),
+        arrivals,
+    };
+    let keys: Vec<_> = cids
+        .iter()
+        .map(|cid| super::RemoteKey {
+            cid: *cid,
+            capability: None,
+        })
+        .collect();
+    let fetch = Box::pin(remote.fetch_batch(None, &keys));
+    let blocked = Box::pin(store.second_put.notified());
+    match futures::future::select(fetch, blocked).await {
+        futures::future::Either::Right(((), fetch)) => drop(fetch),
+        futures::future::Either::Left(_) => panic!("reply finished before the second put blocked"),
+    }
+
+    assert!(store.get(&cids[0]).await.unwrap().is_some());
+    assert!(store.get(&cids[1]).await.unwrap().is_none());
+    assert_eq!(*recorder.0.lock().unwrap(), vec![vec![cids[0]]]);
+}
