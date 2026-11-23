@@ -586,6 +586,13 @@ pub trait DocumentACP: MaybeSendSync {
         Err(Error::UnsupportedRelationshipListing)
     }
 
+    async fn verify_transport_sentinel(
+        &self,
+        _query: &crate::TransportSentinelQuery,
+    ) -> Result<bool> {
+        Err(Error::UnsupportedRelationshipListing)
+    }
+
     /// Create a persisted access decision for a caller/object/permission check.
     ///
     /// Vera-backed ACP can use this to mint a decision that downstream

@@ -725,6 +725,74 @@ where
             .await
     }
 
+    async fn verify_transport_sentinel(
+        &self,
+        query: &crate::TransportSentinelQuery,
+    ) -> Result<bool> {
+        self.owed_layout().await?;
+        let mut deadline = Box::pin(
+            workers::delay(OBSERVATION_PATIENCE)
+                .map_err(|error| Error::Storage(error.to_string()))?,
+        );
+        let Some(_settling) = before(deadline.as_mut(), std::pin::pin!(self.settling.lock())).await
+        else {
+            return Err(unsettled_relationship());
+        };
+        for (resource, object) in [
+            (query.resource.as_str(), query.child.as_str()),
+            ("nodes", query.parent.as_str()),
+            ("nodes", query.device_node.as_str()),
+            ("device_groups", query.group.as_str()),
+        ] {
+            if self.owed(&query.policy, resource, object).await?.is_some() {
+                return Err(Error::ProviderUnavailable(
+                    "sentinel evidence has an unsettled registration".into(),
+                ));
+            }
+        }
+        let present = self.provider.verify_transport_sentinel(query).await?;
+        let device = Did::new(&query.device)
+            .map_err(|error| Error::ProviderUnavailable(error.to_string()))?;
+        let tuples = [
+            crate::outbox::OwedTuple {
+                policy_id: query.policy.clone(),
+                resource: query.resource.clone(),
+                object: query.child.clone(),
+                relation: "parent".into(),
+                subject: crate::outbox::OwedSubject::EntitySet {
+                    resource: "nodes".into(),
+                    object: query.parent.clone(),
+                    relation: String::new(),
+                },
+            },
+            crate::outbox::OwedTuple {
+                policy_id: query.policy.clone(),
+                resource: "nodes".into(),
+                object: query.device_node.clone(),
+                relation: "transport_publisher".into(),
+                subject: crate::outbox::OwedSubject::Actor {
+                    did: self.provider.canonical_actor(&device),
+                },
+            },
+            crate::outbox::OwedTuple {
+                policy_id: query.policy.clone(),
+                resource: "device_groups".into(),
+                object: query.group.clone(),
+                relation: "member".into(),
+                subject: crate::outbox::OwedSubject::Actor {
+                    did: self.provider.canonical_actor(&device),
+                },
+            },
+        ];
+        let txn = self.store.new_txn(true).await.map_err(storage_error)?;
+        for tuple in &tuples {
+            if crate::outbox::tuple_rest(&txn, tuple).await?.is_some() {
+                return Err(unsettled_relationship());
+            }
+        }
+        Ok(present)
+    }
+
     async fn observe_actor_relationship(
         &self,
         observation: crate::ActorRelationshipObservation<'_>,

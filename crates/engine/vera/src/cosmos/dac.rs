@@ -399,6 +399,21 @@ fn provider_err(error: impl std::borrow::Borrow<ProviderError>) -> acp::Error {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl acp::RemotePolicies for VeraDocumentACP {
+    async fn verify_transport_sentinel(
+        &self,
+        query: &acp::TransportSentinelQuery,
+    ) -> std::result::Result<bool, acp::AssignmentReadError> {
+        self.provider
+            .verify_transport_sentinel(query)
+            .await
+            .map_err(|error| match error {
+                ProviderError::Unavailable(_) | ProviderError::ProofsOvertaken(_) => {
+                    acp::AssignmentReadError::Unavailable(error.to_string())
+                }
+                ProviderError::Unsupported(_) => acp::AssignmentReadError::Unsupported,
+                _ => acp::AssignmentReadError::Invalid(error.to_string()),
+            })
+    }
     async fn certified_assignments(
         &self,
         query: &acp::AssignmentQuery,
@@ -477,6 +492,12 @@ impl acp::RemotePolicies for VeraDocumentACP {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl DocumentACP for VeraDocumentACP {
+    async fn verify_transport_sentinel(&self, query: &acp::TransportSentinelQuery) -> Result<bool> {
+        self.provider
+            .verify_transport_sentinel(query)
+            .await
+            .map_err(provider_err)
+    }
     fn caller_of_delegation(
         &self,
         token: &str,

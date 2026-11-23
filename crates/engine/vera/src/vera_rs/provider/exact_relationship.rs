@@ -14,6 +14,18 @@ pub(super) async fn query(
     client: &Arc<AcpLightClient>,
     query: ActorRelationshipQuery<'_>,
 ) -> Result<bool, ProviderError> {
+    let subject = entity_subject(query.actor)?;
+    query_subject(client, query, subject, false)
+        .await
+        .map(|(present, _)| present)
+}
+
+async fn query_subject(
+    client: &Arc<AcpLightClient>,
+    query: ActorRelationshipQuery<'_>,
+    subject: vera_acp::Subject,
+    require_owner: bool,
+) -> Result<(bool, B256), ProviderError> {
     async {
         let fail = |error: String| ProviderError::Query(error);
         let policy_id = hex::encode(super::VeraRsProvider::policy_id_to_bytes32(query.policy)?);
@@ -69,6 +81,9 @@ pub(super) async fn query(
             query.requester,
         )?;
         if !is_owner {
+            if require_owner {
+                return Err(ProviderError::RelationshipObservationDenied);
+            }
             let mut authorized = false;
             for manager in record
                 .policy
@@ -122,14 +137,8 @@ pub(super) async fn query(
         } else {
             current_incarnation
         };
-        let subject = vera_modules::actor::canonical_str(query.actor);
-        let relationship: vera_acp::Relationship = serde_json::from_value(serde_json::json!({
-            "resource": query.resource,
-            "object_id": object_id,
-            "relation": query.relation,
-            "subject": { "Entity": subject },
-        }))
-        .map_err(|e| fail(e.to_string()))?;
+        let relationship =
+            vera_acp::Relationship::new(query.resource, object_id, query.relation, subject);
         let generations = record
             .relations
             .pair(&relationship)
@@ -144,15 +153,101 @@ pub(super) async fn query(
             proof.module_state_root,
             "relationship",
         )?;
-        granted(
+        let present = granted(
             proof.value.as_deref(),
             &policy_id,
             &relationship,
             incarnation,
             generations,
-        )
+        )?;
+        if present && require_owner && query.relation != "owner" {
+            let found: RelationshipRecord =
+                serde_json::from_slice(proof.value.as_deref().expect("present record"))
+                    .map_err(|error| ProviderError::Query(error.to_string()))?;
+            if !issued_by(&found.metadata.owner_did, query.requester) {
+                return Ok((false, policy.module_state_root));
+            }
+        }
+        Ok((present, policy.module_state_root))
     }
     .await
+}
+
+pub(super) async fn sentinel(
+    client: &Arc<AcpLightClient>,
+    policy: &str,
+    resource: &str,
+    child: &str,
+    parent: &str,
+    device_node: &str,
+    group: &str,
+    account: &str,
+    device: &str,
+) -> Result<bool, ProviderError> {
+    for actor in [account, device] {
+        let did =
+            identity::Did::new(actor).map_err(|error| ProviderError::Query(error.to_string()))?;
+        if did.is_wildcard() {
+            return Err(ProviderError::Query("explicit actor required".into()));
+        }
+    }
+    if [policy, resource, child, parent, device_node, group]
+        .iter()
+        .any(|value| value.is_empty())
+    {
+        return Err(ProviderError::Query(
+            "sentinel selector is incomplete".into(),
+        ));
+    }
+    let query = |resource, object, relation, actor| ActorRelationshipQuery {
+        requester: account,
+        policy,
+        resource,
+        object,
+        relation,
+        actor,
+    };
+    let (parented, root) = query_subject(
+        client,
+        query(resource, child, "parent", account),
+        vera_acp::Subject::entity_set("nodes", parent, ""),
+        true,
+    )
+    .await?;
+    let (parent_owned, parent_root) = query_subject(
+        client,
+        query("nodes", parent, "owner", account),
+        entity_subject(account)?,
+        true,
+    )
+    .await?;
+    let (admitted, device_root) = query_subject(
+        client,
+        query("nodes", device_node, "transport_publisher", device),
+        entity_subject(device)?,
+        true,
+    )
+    .await?;
+    let (member, group_root) = query_subject(
+        client,
+        query("device_groups", group, "member", device),
+        entity_subject(device)?,
+        true,
+    )
+    .await?;
+    at_policy_root(root, parent_root, "sentinel parent")?;
+    at_policy_root(root, device_root, "device admission")?;
+    at_policy_root(root, group_root, "device group")?;
+    Ok(parented && parent_owned && admitted && member)
+}
+
+fn entity_subject(actor: &str) -> Result<vera_acp::Subject, ProviderError> {
+    serde_json::from_value(serde_json::json!({"Entity": vera_modules::actor::canonical_str(actor)}))
+        .map_err(|error| ProviderError::Query(error.to_string()))
+}
+
+fn issued_by(issuer: &str, account: &str) -> bool {
+    vera_modules::actor::canonical_str(issuer) == vera_modules::actor::canonical_str(account)
 }
 
 /// Whether the proven owner is the requester. A proven absence of an owner
@@ -207,6 +302,12 @@ fn granted(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_previous_owners_grant_is_not_issued_by_the_new_owner() {
+        assert!(issued_by("did:key:first", "did:key:first"));
+        assert!(!issued_by("did:key:first", "did:key:second"));
+    }
 
     fn relationship() -> vera_acp::Relationship {
         serde_json::from_value(serde_json::json!({

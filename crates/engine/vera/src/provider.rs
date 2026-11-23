@@ -491,6 +491,15 @@ pub trait VeraProvider: MaybeSendSync {
         ))
     }
 
+    async fn verify_transport_sentinel(
+        &self,
+        _query: &acp::TransportSentinelQuery,
+    ) -> Result<bool, ProviderError> {
+        Err(ProviderError::Unsupported(
+            "verified transport sentinel".into(),
+        ))
+    }
+
     async fn replica_group_member(
         &self,
         _group: &acp::ReplicaGroup,

@@ -85,7 +85,7 @@ pub use permission::DocumentPermission;
 pub use persistent::PersistentAcpStore;
 pub use policy_lookup::{
     AssignmentPosition, AssignmentQuery, AssignmentReadError, CertifiedAssignments,
-    LightClientStatus, PolicyLookup, RemotePolicies, StorePolicies,
+    LightClientStatus, PolicyLookup, RemotePolicies, StorePolicies, TransportSentinelQuery,
 };
 pub use policy_nonce::{PolicyNonce, PolicyNonceError, POLICY_NONCE_BYTES};
 pub use provider_command::ProviderCommand;

@@ -11,6 +11,47 @@ use schema::CollectionVersion;
 use crate::{refused_transaction, Error, Node, Result};
 
 impl Node {
+    pub async fn restore_shared_transport_collection_as(
+        &self,
+        context: &RequestContext,
+        sdl: &str,
+        selection: acp::TransportSentinelQuery,
+    ) -> Result<Vec<CollectionVersion>> {
+        if context.identity() != Some(selection.device.as_str()) || context.txn().is_some() {
+            return Err(acp::Error::PermissionDenied("shared transport restoration requires its device identity and no caller transaction".into()).into());
+        }
+        if self.database().document_acp().is_none() {
+            return Err(acp::Error::PermissionDenied(
+                "shared transport restoration requires document access control".into(),
+            )
+            .into());
+        }
+        let created = self
+            .add_collection_as(
+                &context
+                    .clone()
+                    .with_shared_transport_sentinel(selection.clone()),
+                sdl,
+            )
+            .await?;
+        if created.len() != 1 || created[0].collection_id != selection.child {
+            return Err(acp::Error::PermissionDenied(
+                "restored collection identity does not match the proof".into(),
+            )
+            .into());
+        }
+        if !self
+            .document_acp()
+            .verify_transport_sentinel(&selection)
+            .await?
+        {
+            return Err(acp::Error::PermissionDenied(
+                "shared transport sentinel is no longer admitted".into(),
+            )
+            .into());
+        }
+        Ok(created)
+    }
     /// Parse `sdl`, check it and create every collection it defines, or none,
     /// in the transaction `context` carries if it carries one.
     pub async fn add_collection_as(
