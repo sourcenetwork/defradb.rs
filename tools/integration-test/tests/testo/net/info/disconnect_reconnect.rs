@@ -174,6 +174,13 @@ fn a_replicator_retry_does_not_redial_a_disconnected_peer() {
                 ..Default::default()
             }
             .into(),
+            AddReplicator {
+                target: "db1".into(),
+                collections: vec!["Note".into()],
+                common: on("db0"),
+                ..Default::default()
+            }
+            .into(),
         ],
         ..Default::default()
     }

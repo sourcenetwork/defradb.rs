@@ -501,7 +501,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
         )?;
 
         self.handle
-            .dial(peer_id, vec![parsed.transport_addr])
+            .dial_explicit(peer_id, vec![parsed.transport_addr])
             .await
             .map_err(|error| {
                 P2PError::transport(format!("failed to connect to replicator peer: {error}"))
