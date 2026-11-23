@@ -57,6 +57,7 @@ UNIT_NAMES = (
     "client::tests::transport_failures_say_whether_the_call_may_be_sent_again",
     "delegation_parity::a_policy_identifier_parses_as_vera_rs_client_parses_it",
     "delegation_parity::the_acp_precompile_is_the_one_vera_rs_client_names",
+    "follow::effect::tests::a_voided_batch_keeps_every_archive_it_carried",
     "follow::effect::tests::an_archive_and_other_requests_are_told_apart",
     "follow::effect::tests::registrations_and_relationship_changes_are_read_back_with_their_delegation",
     "follow::journal::tests::a_failed_write_leaves_what_the_journal_reports_as_it_was",
