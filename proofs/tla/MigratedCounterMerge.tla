@@ -3,19 +3,29 @@
 (* The story, in plain words.                                              *)
 (*                                                                         *)
 (* A peer keeps a counter at a collection's source version. The receiving  *)
-(* node has migrated that counter to the active version with a lens. When  *)
-(* the peer adds one, the receiver first reads the source-version value,   *)
-(* adds the peer's delta there, then migrates that result once.            *)
+(* node has migrated that counter to the active version with a lens and    *)
+(* stores it there. When the peer adds one, the receiver takes its stored  *)
+(* document back to the source version with the lens's inverse, adds the   *)
+(* peer's delta there, then migrates that result once.                     *)
+(*                                                                         *)
+(* A lens need not export an inverse. The receiver then cannot go back to  *)
+(* the source version, so it adds the peer's delta to the migrated value   *)
+(* as it is. The increment still lands.                                    *)
+(*                                                                         *)
+(* A receiver that still stores the document at the source version has     *)
+(* nothing to translate: it adds the delta to the stored value and every   *)
+(* read migrates the whole document. That case is not modelled here.       *)
 (*                                                                         *)
 (* Who acts: the migration registers the lens, and the peer increments the *)
 (* source counter.                                                         *)
 (*                                                                         *)
-(* What must never happen: the active value is migrated more than once, so *)
-(* it stops naming the migrated source value.                              *)
+(* What must never happen: the active value is migrated more than once, or *)
+(* an increment never lands, so the active value stops naming the migrated *)
+(* source value.                                                           *)
 (*                                                                         *)
 (* Rust code modelled:                                                     *)
 (*   crates/database/db/src/merge/merge_handler/field_ops.rs               *)
-(*     counter_document_on_active_version, counter_result_on_active_version*)
+(*     counter_on_active_version, apply_field_op_once                      *)
 (*   crates/database/db/src/merge/merge_handler/composite_persist.rs       *)
 (*     persist_merged_document (the translated active result is put whole) *)
 (***************************************************************************)
@@ -24,10 +34,16 @@ EXTENDS Naturals
 CONSTANTS
   \* The peer's starting counter value and the highest source value checked.
   StartSource, MaxSource,
+  \* TRUE when the lens exports an inverse, FALSE for a forward-only lens.
+  HasInverse,
   \* "once" is the fix. "double" plants the old active-value translation.
+  \* "stuck" plants a receiver that has no answer for a forward-only lens.
   Mode
+\* The start is a counter value no larger than the highest one checked, the
+\* lens either has an inverse or not, and the mode is one of the three.
 ASSUME StartSource \in Nat /\ MaxSource \in Nat /\ StartSource <= MaxSource
-       /\ Mode \in {"once", "double"}
+       /\ HasInverse \in BOOLEAN
+       /\ Mode \in {"once", "double", "stuck"}
 
 VARIABLES source, active, migrated
 vars == <<source, active, migrated>>
@@ -50,16 +66,28 @@ Migrate ==
   /\ active' = Transform(source)
   /\ UNCHANGED source
 
-\* The peer increments its source value. The receiver translates that delta
-\* onto the source projection. The red mode plants the old bug: it adds to
-\* the already-migrated value and then migrates the sum again.
+\* What the receiver stores after the peer's increment, given the peer's new
+\* source value.
+\*   "double": the old bug. It adds to the already-migrated value and then
+\*             migrates the sum again.
+\*   with an inverse: the stored value goes back to the source version, takes
+\*             the delta there and migrates once, which is the migrated new
+\*             source value.
+\*   "stuck", no inverse: the planted bug. Going back fails and nothing is
+\*             stored, so the active value stays where it was.
+\*   "once", no inverse: the delta is added to the migrated value as it is.
+Merged(newSource) ==
+  IF Mode = "double" THEN Transform(active + 1)
+  ELSE IF HasInverse THEN Transform(newSource)
+  ELSE IF Mode = "stuck" THEN active
+  ELSE active + 1
+
+\* The peer increments its source value and the receiver merges the delta.
 Increment ==
   /\ migrated
   /\ source < MaxSource
   /\ source' = source + 1
-  /\ active' = IF Mode = "once"
-                 THEN Transform(source')
-                 ELSE Transform(active + 1)
+  /\ active' = Merged(source')
   /\ UNCHANGED migrated
 
 Next == Migrate \/ Increment

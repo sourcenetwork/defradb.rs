@@ -8,11 +8,19 @@ use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
 use serde_json::json;
 
-#[test]
-#[mantra_macros::req_test("defra.net.migrated_counter_merge")]
-fn an_old_version_counter_update_merges_through_a_lens_once() {
+/// A peer at the source version increments `n` twice after `migrated` has
+/// moved `U` to a new version through `lenses`. `migrated` answers `query`
+/// with `expected` after the migration and after each increment.
+fn old_version_counter_updates(
+    id: &'static str,
+    sdl: &str,
+    lenses: Vec<LensModule>,
+    query: &str,
+    expected: [serde_json::Value; 3],
+) {
+    let [migrated, first, second] = expected;
     TestCase {
-        id: integration_test::scenario_id!(),
+        id,
         actions: vec![
             NewNode {
                 network: true,
@@ -33,13 +41,7 @@ fn an_old_version_counter_update_merges_through_a_lens_once() {
             }
             .into(),
             AddCollection {
-                sdl: r#"
-                    type U {
-                        name: String
-                        n: Int @crdt(type: pcounter) @index
-                    }
-                "#
-                .into(),
+                sdl: sdl.into(),
                 common: Common {
                     node: Some("migrated".into()),
                     ..Default::default()
@@ -48,13 +50,7 @@ fn an_old_version_counter_update_merges_through_a_lens_once() {
             }
             .into(),
             AddCollection {
-                sdl: r#"
-                    type U {
-                        name: String
-                        n: Int @crdt(type: pcounter) @index
-                    }
-                "#
-                .into(),
+                sdl: sdl.into(),
                 common: Common {
                     node: Some("peer".into()),
                     ..Default::default()
@@ -189,10 +185,7 @@ fn an_old_version_counter_update_merges_through_a_lens_once() {
                 source_version_id: Text::reference("source_version"),
                 destination_version_id: Text::reference("active_version"),
                 lens: Lens {
-                    lenses: Some(vec![LensModule {
-                        arguments: json!({ "field": "n", "value": 1 }),
-                        path: "bin/lenses/increment.wasm".into(),
-                    }]),
+                    lenses: Some(lenses),
                 },
                 common: Common {
                     node: Some("migrated".into()),
@@ -211,15 +204,8 @@ fn an_old_version_counter_update_merges_through_a_lens_once() {
             }
             .into(),
             Request {
-                request: r#"
-                    query {
-                        U {
-                            n
-                        }
-                    }
-                "#
-                .into(),
-                expected_data: json!({ "U": [{ "n": 2 }] }),
+                request: query.into(),
+                expected_data: json!({ "U": [migrated] }),
                 common: Common {
                     node: Some("migrated".into()),
                     retry: true,
@@ -289,15 +275,8 @@ fn an_old_version_counter_update_merges_through_a_lens_once() {
             }
             .into(),
             Request {
-                request: r#"
-                    query {
-                        U {
-                            n
-                        }
-                    }
-                "#
-                .into(),
-                expected_data: json!({ "U": [{ "n": 3 }] }),
+                request: query.into(),
+                expected_data: json!({ "U": [first] }),
                 common: Common {
                     node: Some("migrated".into()),
                     retry: true,
@@ -367,15 +346,8 @@ fn an_old_version_counter_update_merges_through_a_lens_once() {
             }
             .into(),
             Request {
-                request: r#"
-                    query {
-                        U {
-                            n
-                        }
-                    }
-                "#
-                .into(),
-                expected_data: json!({ "U": [{ "n": 4 }] }),
+                request: query.into(),
+                expected_data: json!({ "U": [second] }),
                 common: Common {
                     node: Some("migrated".into()),
                     retry: true,
@@ -389,4 +361,118 @@ fn an_old_version_counter_update_merges_through_a_lens_once() {
         ..Default::default()
     }
     .execute();
+}
+
+const INDEXED: &str = r#"
+    type U {
+        name: String
+        n: Int @crdt(type: pcounter) @index
+    }
+"#;
+
+const UNINDEXED: &str = r#"
+    type U {
+        name: String
+        n: Int @crdt(type: pcounter)
+    }
+"#;
+
+const COUNTER: &str = "query { U { n } }";
+const COUNTER_AND_NOTE: &str = "query { U { n note } }";
+
+fn increment() -> LensModule {
+    LensModule {
+        arguments: json!({ "field": "n", "value": 1 }),
+        path: "bin/lenses/increment.wasm".into(),
+    }
+}
+
+fn copy_name_to_note() -> LensModule {
+    LensModule {
+        arguments: json!({ "src": "name", "dst": "note" }),
+        path: "bin/lenses/copy.wasm".into(),
+    }
+}
+
+fn default_note() -> LensModule {
+    LensModule {
+        arguments: json!({ "dst": "note", "value": "set" }),
+        path: "bin/lenses/set_default.wasm".into(),
+    }
+}
+
+#[test]
+#[mantra_macros::req_test("defra.net.migrated_counter_merge")]
+fn an_old_version_counter_update_merges_through_a_lens_once() {
+    old_version_counter_updates(
+        integration_test::scenario_id!(),
+        INDEXED,
+        vec![increment()],
+        COUNTER,
+        [json!({ "n": 2 }), json!({ "n": 3 }), json!({ "n": 4 })],
+    );
+}
+
+#[test]
+#[mantra_macros::req_test("defra.net.migrated_counter_merge")]
+fn an_old_version_counter_update_merges_through_a_forward_only_lens() {
+    old_version_counter_updates(
+        integration_test::scenario_id!(),
+        INDEXED,
+        vec![copy_name_to_note()],
+        COUNTER_AND_NOTE,
+        [
+            json!({ "n": 1, "note": "counter" }),
+            json!({ "n": 2, "note": "counter" }),
+            json!({ "n": 3, "note": "counter" }),
+        ],
+    );
+}
+
+#[test]
+#[mantra_macros::req_test("defra.net.migrated_counter_merge")]
+fn an_old_version_counter_update_adds_to_a_counter_a_forward_only_lens_wrote() {
+    old_version_counter_updates(
+        integration_test::scenario_id!(),
+        INDEXED,
+        vec![increment(), copy_name_to_note()],
+        COUNTER_AND_NOTE,
+        [
+            json!({ "n": 2, "note": "counter" }),
+            json!({ "n": 3, "note": "counter" }),
+            json!({ "n": 4, "note": "counter" }),
+        ],
+    );
+}
+
+#[test]
+#[mantra_macros::req_test("defra.net.migrated_counter_merge")]
+fn an_old_version_counter_update_keeps_the_fields_the_lens_wrote() {
+    old_version_counter_updates(
+        integration_test::scenario_id!(),
+        INDEXED,
+        vec![increment(), default_note()],
+        COUNTER_AND_NOTE,
+        [
+            json!({ "n": 2, "note": "set" }),
+            json!({ "n": 3, "note": "set" }),
+            json!({ "n": 4, "note": "set" }),
+        ],
+    );
+}
+
+#[test]
+#[mantra_macros::req_test("defra.net.migrated_counter_merge")]
+fn an_old_version_counter_update_lands_on_a_document_stored_at_the_source_version() {
+    old_version_counter_updates(
+        integration_test::scenario_id!(),
+        UNINDEXED,
+        vec![increment(), default_note()],
+        COUNTER_AND_NOTE,
+        [
+            json!({ "n": 2, "note": "set" }),
+            json!({ "n": 3, "note": "set" }),
+            json!({ "n": 4, "note": "set" }),
+        ],
+    );
 }
