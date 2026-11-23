@@ -76,6 +76,33 @@ fn index_directives_are_detected() {
 }
 
 #[test]
+fn index_text_outside_a_directive_is_not_an_index() {
+    assert!(!has_index_directive(
+        r#"type User { name: String @default(value: "@index") }"#
+    ));
+    assert!(!has_index_directive(
+        "type User {\n\t# name: String @index\n\tname: String\n}"
+    ));
+    assert!(!has_index_directive(
+        r#"type User { """a @vectorIndex here""" name: String }"#
+    ));
+    assert!(!has_index_directive("type User { name: String @indexed }"));
+    assert!(has_index_directive(
+        "type User {\n\t# a comment\n\tname: String @index\n}"
+    ));
+}
+
+#[test]
+fn a_referenced_sdl_with_index_text_in_a_string_is_indexed() {
+    let sdl = Text::concat([
+        r#"type User @policy(id: ""#.into(),
+        Text::reference("policy"),
+        r#"") { name: String @default(value: "@index") }"#.into(),
+    ]);
+    assert!(!skips(vec![add_text(sdl)]));
+}
+
+#[test]
 fn simple_field() {
     assert_eq!(
         add_indexes("type User {\n\tname: String\n}"),
