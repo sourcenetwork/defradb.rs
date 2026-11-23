@@ -5,6 +5,7 @@ mod common;
 mod admin_ops;
 mod config;
 mod delete;
+mod follow;
 mod guard;
 mod key_owners;
 mod kms_release;

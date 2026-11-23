@@ -12,6 +12,7 @@ use datastore::NamespaceView;
 use crate::collection::loader::get_collection_with_index_manager;
 use crate::collection::Collection;
 use crate::index::IndexManager;
+use crate::txn::DbTxn;
 
 use super::{ChunkCollection, ChunkWrites};
 
@@ -43,13 +44,21 @@ where
     }
 
     pub(super) async fn open(&self, name: &str) -> Result<ChunkCollection> {
-        let (collection, datastore, systemstore, index_manager) =
-            get_collection_with_index_manager(self.txn, name).await?;
-        ChunkCollection::new(collection, datastore, systemstore, index_manager)
+        ChunkCollection::open(self.txn, name).await
     }
 }
 
 impl ChunkCollection {
+    /// The chunk collection `name`, opened in `txn`.
+    pub(crate) async fn open<S>(txn: &DbTxn<S>, name: &str) -> Result<Self>
+    where
+        S: Store + 'static,
+    {
+        let (collection, datastore, systemstore, index_manager) =
+            get_collection_with_index_manager(txn, name).await?;
+        Self::new(collection, datastore, systemstore, index_manager)
+    }
+
     pub(crate) fn new(
         collection: Collection,
         datastore: NamespaceView,
@@ -110,30 +119,44 @@ impl ChunkCollection {
     }
 
     pub(super) async fn chunks_of(&self, parent: &str) -> Result<Vec<u64>> {
+        short_ids(self.scan_of(parent).await?).await
+    }
+
+    /// The short IDs of `parent`'s chunks with `hash`. Peers that sign or
+    /// encrypt their chunks can each hold one under its own ID.
+    pub(crate) async fn chunks_with(&self, parent: &str, hash: &str) -> Result<Vec<u64>> {
         let entries = self
-            .scan_of(parent)
-            .await?
-            .collect_all()
-            .await
-            .map_err(|e| QueryError::execution(format!("chunk scan failed: {e}")))?;
-        Ok(entries
-            .into_iter()
-            .map(|entry| entry.doc_short_id)
-            .collect())
+            .scan(&[
+                NormalValue::String(parent.to_string()),
+                NormalValue::String(hash.to_string()),
+            ])
+            .await?;
+        short_ids(entries).await
     }
 
     async fn scan_of(&self, parent: &str) -> Result<RangeIterator> {
+        self.scan(&[NormalValue::String(parent.to_string())]).await
+    }
+
+    async fn scan(&self, prefix: &[NormalValue]) -> Result<RangeIterator> {
         let index = self
             .index_manager
             .get_index(&self.index_name)
             .ok_or_else(|| QueryError::execution("chunk source index is not loaded"))?;
         index
-            .scan_prefix(
-                &self.datastore,
-                &[NormalValue::String(parent.to_string())],
-                false,
-            )
+            .scan_prefix(&self.datastore, prefix, false)
             .await
             .map_err(|e| QueryError::execution(format!("chunk scan failed: {e}")))
     }
+}
+
+async fn short_ids(mut entries: RangeIterator) -> Result<Vec<u64>> {
+    let entries = entries
+        .collect_all()
+        .await
+        .map_err(|e| QueryError::execution(format!("chunk scan failed: {e}")))?;
+    Ok(entries
+        .into_iter()
+        .map(|entry| entry.doc_short_id)
+        .collect())
 }
