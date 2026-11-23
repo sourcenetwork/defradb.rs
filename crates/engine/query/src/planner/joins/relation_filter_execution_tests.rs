@@ -397,8 +397,8 @@ fn filter_on_an_indexed_child_reads_the_parents_once() {
     .unwrap()
 }
 
-/// A parent-side FK index switches the join to parent-index lookups. A relation
-/// already joined into the parent plan must still survive those raw lookups.
+/// A parent-side FK index switches the join to parent-index lookups. The
+/// publisher join the parent plan holds must still run on the looked-up parents.
 #[test]
 fn indexed_side_filter_keeps_relation_when_parent_fk_is_indexed() {
     workers::block_on(async {
@@ -439,8 +439,8 @@ fn indexed_side_filter_keeps_relation_when_parent_fk_is_indexed() {
     .unwrap()
 }
 
-/// The ordered primary path fetches raw parents by ID too. Its already-planned
-/// relation is reapplied directly, without rescanning all parent documents.
+/// The ordered primary path fetches raw parents by ID too. The publisher join
+/// it wraps runs on each one, without rescanning all parent documents.
 #[test]
 fn ordered_parent_lookup_keeps_relation_when_parent_fk_is_indexed() {
     workers::block_on(async {

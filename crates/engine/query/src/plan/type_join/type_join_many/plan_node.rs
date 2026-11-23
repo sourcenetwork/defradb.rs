@@ -246,6 +246,15 @@ impl PlanNode for TypeJoinMany {
         Some(self.parent_plan.as_ref())
     }
 
+    async fn join_fetched(
+        &mut self,
+        doc: &mut Doc,
+        joined: &str,
+        reads: &mut ExecInfo,
+    ) -> Result<bool> {
+        self.parent_plan.join_fetched(doc, joined, reads).await
+    }
+
     fn document_map(&self) -> &DocumentMapping {
         &self.document_mapping
     }

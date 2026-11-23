@@ -138,6 +138,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Node access control operations | TLA+ & Lean | db, acp, http, cli, ffi, defra-node |
 | Filter relation paths and scalar leaves | Lean | query (#2427, #2430) |
 | Relation filter with no matching child | Lean | query (#3087) |
+| Joins on a parent read by key | Lean | query (#3042) |
 | Orphan block sweep | TLA+ & Lean | db, storage |
 | Per-peer stream cap | TLA+ | p2p |
 | Receive gate | TLA+ | p2p, db |

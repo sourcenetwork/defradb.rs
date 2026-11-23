@@ -8,7 +8,6 @@ use crate::document::DocumentMapping;
 use crate::error::Result;
 
 use crate::plan::CursorPageInfo;
-use crate::plan::JoinedParentRelation;
 use crate::planner::index_selection::CursorSeek;
 
 // Re-exported from planner/mod.rs for backwards compatibility.
@@ -63,14 +62,21 @@ pub trait PlanNode: MaybeSend {
         false
     }
 
-    /// Relations this plan has already joined into its parent documents.
+    /// Run this plan's joins on a document read outside the plan.
     ///
-    /// The default walks the source tree so wrappers do not hide the
-    /// capability; join nodes report the relations they can reapply directly.
-    fn joined_parent_relations(&self) -> Vec<JoinedParentRelation> {
-        self.source()
-            .map(|source| source.joined_parent_relations())
-            .unwrap_or_default()
+    /// A join driven by its child's index reads each parent by key instead of
+    /// running the plan it wraps, so the joins that plan holds are applied to
+    /// the parent here. `joined` names the relation the caller attaches itself,
+    /// which a join on the same relation leaves to it. `reads` gains what the
+    /// lookups read. `Ok(false)` means a relation filter in the plan rejects
+    /// the document.
+    async fn join_fetched(
+        &mut self,
+        _doc: &mut Doc,
+        _joined: &str,
+        _reads: &mut ExecInfo,
+    ) -> Result<bool> {
+        Ok(true)
     }
 
     /// Get the document mapping for this node.

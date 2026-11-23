@@ -247,6 +247,9 @@ lean_lib JsonSubPathCut where
 lean_lib RelationFilterNoChild where
 
 @[default_target]
+lean_lib JoinFetchedParent where
+
+@[default_target]
 lean_lib CarClosureDepth where
 
 @[default_target]

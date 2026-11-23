@@ -2796,6 +2796,15 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/engine/query/src/planner/joins/relation_filter_execution_tests.rs no_matching_child_reads_no_parent, no_matching_child_reads_no_parent_of_an_index_ordered_scan",
     },
     Property {
+        family: "Joins on a parent read by key",
+        name: "lookup_same_rows / lookup_keeps_only_passing / raw_attach_keeps_a_rejected_parent — a parent an index-driven join reads by key is joined by the plan that join wraps, so the rows are those of the full walk and a parent whose other relation fails its filter is not returned",
+        axis: Lean,
+        anchor: "crates/engine/query/src/plan/type_join/type_join_one.rs TypeJoinOne::join_fetched, TypeJoinOne::child_of_fetched, TypeJoinOne::next_inverted_index, TypeJoinOne::next_ordered_primary_inner",
+        model_ref: "JoinFetchedParent.lookup_same_rows / lookup_keeps_only_passing / raw_attach_keeps_a_rejected_parent",
+        tiers: &[Contract],
+        bound_by: "tools/integration-test/tests/testo/query/one_to_many/with_relation_filter_indexed_fk.rs relation_filter_through_an_indexed_fk_keeps_a_nested_joined_relation, relation_filter_through_an_indexed_fk_keeps_a_second_relation_filter",
+    },
+    Property {
         family: "PQ distance four sums",
         name: "four_eq_sum — four running sums over a code's lookups add up to the one running sum, in exact arithmetic",
         axis: Lean,

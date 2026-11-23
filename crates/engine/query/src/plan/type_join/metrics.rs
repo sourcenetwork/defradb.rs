@@ -1,5 +1,7 @@
 //! Shared metrics types for type join nodes
 
+use crate::planner::ExecInfo;
+
 /// Metrics for simulating Go-compatible child scan behavior.
 ///
 /// In Go DefraDB, the child scan is re-initialized per parent, and metrics
@@ -32,6 +34,14 @@ impl JoinChildMetrics {
         self.field_fetches = 0;
         self.index_fetches = 0;
         self.filter_matches = 0;
+    }
+
+    /// Add what a lookup read.
+    pub fn add(&mut self, reads: &ExecInfo) {
+        self.iterations += reads.iterations;
+        self.doc_fetches += reads.docs_fetched;
+        self.field_fetches += reads.fields_fetched;
+        self.index_fetches += reads.indexes_fetched;
     }
 
     /// Convert scanNode metrics to JSON for explain execute output.
