@@ -937,12 +937,17 @@ where
             .await?;
         self.refuse_revoked(requestor, policy_id, collection_id, doc_id)
             .await?;
+        let subject = if target.is_wildcard() {
+            OwedSubject::Wildcard
+        } else {
+            OwedSubject::Actor {
+                did: self.provider.canonical_actor(target),
+            }
+        };
         let operation = crate::recovery::RecoveryOperation::AddRelationship {
             actor: self.provider.canonical_actor(requestor),
             relation: relation.to_owned(),
-            subject: OwedSubject::Actor {
-                did: self.provider.canonical_actor(target),
-            },
+            subject,
         };
         self.recovery_prepare(policy_id, collection_id, doc_id, operation.clone())
             .await?;
@@ -1022,12 +1027,17 @@ where
             .await?;
         self.refuse_revoked(requestor, policy_id, collection_id, doc_id)
             .await?;
+        let subject = if target.is_wildcard() {
+            OwedSubject::Wildcard
+        } else {
+            OwedSubject::Actor {
+                did: self.provider.canonical_actor(target),
+            }
+        };
         let operation = crate::recovery::RecoveryOperation::DeleteRelationship {
             actor: self.provider.canonical_actor(requestor),
             relation: relation.to_owned(),
-            subject: OwedSubject::Actor {
-                did: self.provider.canonical_actor(target),
-            },
+            subject,
         };
         self.recovery_prepare(policy_id, collection_id, doc_id, operation.clone())
             .await?;
