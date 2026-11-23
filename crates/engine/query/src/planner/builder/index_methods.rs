@@ -35,16 +35,6 @@ impl super::Planner {
             _ => (None, 0),
         };
 
-        // A relation filter is joined after the parent scan. Do not stop that
-        // scan at the requested limit: the first ordered rows may not match
-        // the relation and would be rejected only after the limit node.
-        let has_relation_filter = select
-            .filter
-            .as_ref()
-            .is_some_and(Filter::has_relation_filters);
-        let scan_limit = if has_relation_filter { None } else { limit };
-        let scan_offset = if has_relation_filter { 0 } else { offset };
-
         // Try filter-based index selection.
         // Relation fields in the filter (e.g., `owner: {name: {_eq: "X"}}`) are
         // handled by TypeJoin nodes, but scalar/FK field conditions in the same
@@ -97,8 +87,8 @@ impl super::Planner {
                     best_index,
                     select.order_by.as_ref(),
                     &collection.fields,
-                    scan_limit,
-                    scan_offset,
+                    limit,
+                    offset,
                 ) {
                     let provides_ordering = select
                         .order_by
@@ -124,10 +114,7 @@ impl super::Planner {
             for index in &collection.indexes {
                 let (can_order, needs_reverse) = can_be_ordered_by_index(order_by, index);
                 if can_order {
-                    let stop = scan_limit
-                        .filter(|&l| l > 0)
-                        .map(|l| l.saturating_add(scan_offset));
-                    let params = order_index_scan_params(index, needs_reverse, stop, 0);
+                    let params = order_index_scan_params(index, needs_reverse, limit, offset);
                     return Some((params, true));
                 }
             }
@@ -183,8 +170,10 @@ impl super::Planner {
             for index in &collection.indexes {
                 let (can_order, needs_reverse) = can_be_ordered_by_index(order_by, index);
                 if can_order {
-                    let stop = limit.filter(|&l| l > 0).map(|l| l.saturating_add(offset));
-                    return Some((order_index_scan_params(index, needs_reverse, stop, 0), true));
+                    return Some((
+                        order_index_scan_params(index, needs_reverse, limit, offset),
+                        true,
+                    ));
                 }
             }
         }

@@ -8,8 +8,13 @@ const SCALARS: [&str; 9] = [
 ];
 
 /// Whether `sdl` already declares an index, so the multiplier leaves it alone.
+/// Text in strings and comments does not count.
 pub fn has_index_directive(sdl: &str) -> bool {
-    sdl.contains("@index") || sdl.contains("@vectorIndex")
+    tokens(sdl).windows(2).any(|pair| {
+        pair[0].kind == Kind::Punct('@')
+            && pair[1].kind == Kind::Name
+            && matches!(&sdl[pair[1].start..pair[1].end], "index" | "vectorIndex")
+    })
 }
 
 /// `sdl` with `@index` after the type of each scalar field and of each

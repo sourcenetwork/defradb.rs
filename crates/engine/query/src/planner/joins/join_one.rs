@@ -51,7 +51,7 @@ impl Planner {
 
         let mut join_provides_ordering: Option<bool> = None;
         // The child scan orders by the first condition only, so later ones still need a sort.
-        let join_orders_parent = parent_order_for_child.is_some()
+        let join_orders_parent = child.child_scan_orders_parent
             && select
                 .order_by
                 .as_ref()
