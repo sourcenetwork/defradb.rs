@@ -10,7 +10,7 @@ async fn data(node: &Node, query: &str) -> Value {
 async fn fixture() -> Node {
     let node = Node::builder().build().await.unwrap();
     node.add_collection(
-        "type Note { tag: String embedding: [Float32!] @index(vector: {dimensions: 1, hnsw: {metric: DOT}}) }",
+        "type Note { tag: String @index embedding: [Float32!] @index(vector: {dimensions: 1, hnsw: {metric: DOT}}) }",
     ).await.unwrap();
     for (tag, score) in [
         ("hot", 100),
@@ -80,7 +80,7 @@ fn group_limit_is_not_used_as_a_document_candidate_limit() {
 }
 
 #[test]
-fn scalar_filter_keeps_vector_routing() {
+fn scalar_filter_takes_the_exhaustive_path() {
     workers::block_on(async {
     let node = fixture().await;
     let query = r#"{ Note(filter: {tag: {_eq: "cold"}}, order: {_alias: {sim: DESC}}, limit: 2) {
@@ -93,7 +93,7 @@ fn scalar_filter_keeps_vector_routing() {
         ])
     );
     let explain = data(&node, &format!("query @explain(type: execute) {query}")).await;
-    assert!(uses_vector_index(&explain), "{explain}");
+    assert!(!uses_vector_index(&explain), "{explain}");
 })
     .unwrap()
 }
