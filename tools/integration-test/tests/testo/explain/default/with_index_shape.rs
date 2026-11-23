@@ -13,6 +13,7 @@ use serde_json::json;
 fn indexed_scan_explains_the_selected_index() {
     TestCase {
         id: integration_test::scenario_id!(),
+        client_types: Some(&[ClientType::InProcess, ClientType::RustHttp, ClientType::Cli]),
         actions: vec![
             AddCollection {
                 sdl: r#"
@@ -49,6 +50,60 @@ fn indexed_scan_explains_the_selected_index() {
                                         "indexLimit": null,
                                         "indexName": "User_age_ASC",
                                         "indexOffset": 0,
+                                        "prefixes": ["/1"],
+                                    },
+                                },
+                            },
+                        }],
+                    },
+                }),
+                ..Default::default()
+            }
+            .into(),
+        ],
+        ..Default::default()
+    }
+    .execute();
+}
+
+#[test]
+#[mantra_macros::req_test("go.explain.default.index")]
+fn go_indexed_scan_explains_the_selected_index() {
+    TestCase {
+        id: integration_test::scenario_id!(),
+        client_types: Some(&[ClientType::GoHttp]),
+        actions: vec![
+            AddCollection {
+                sdl: r#"
+                    type User {
+                        name: String
+                        age: Int @index
+                    }
+                "#
+                .into(),
+                ..Default::default()
+            }
+            .into(),
+            Request {
+                request: r#"
+                    query @explain {
+                        User(filter: {age: {_eq: 30}}) {
+                            name
+                        }
+                    }
+                "#
+                .into(),
+                expected_data: json!({
+                    "explain": {
+                        "operationNode": [{
+                            "selectTopNode": {
+                                "selectNode": {
+                                    "docID": null,
+                                    "filter": null,
+                                    "scanNode": {
+                                        "collectionID": "bafyreiek4irx5zh2it7sokxwbqud2uanuhkqppnmt2dgan7r4gyafly6wi",
+                                        "collectionName": "User",
+                                        "filter": {"age": {"_eq": 30}},
                                         "prefixes": ["/1"],
                                     },
                                 },
