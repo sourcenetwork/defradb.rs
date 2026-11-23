@@ -3,7 +3,7 @@
 \* directly, without a discovery list. It must not clear that marker; only an
 \* explicit local dial can clear it and permit reconnection.
 \* Rust: crates/database/p2p/src/host/command_handler/network.rs handle_dial,
-\* handle_dial_explicit, handle_disconnect.
+\* handle_explicit_dial, handle_disconnect.
 EXTENDS Naturals
 \* ClearOnGeneric plants the old generic-dial behavior.
 CONSTANT ClearOnGeneric
