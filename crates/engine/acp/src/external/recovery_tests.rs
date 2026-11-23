@@ -274,6 +274,14 @@ fn a_pass_checks_the_records_past_its_first_page() {
         let (effects, _, pages) = pass(&gate, &Deployment::empty()).await;
         assert!(pages > 1, "the ledger is larger than one page");
         assert_eq!(effects.len(), 6000);
+        let registered: RapidHashSet<&str> = effects
+            .iter()
+            .filter_map(|effect| match effect {
+                VoidedEffect::Registration { object, .. } => Some(object.as_str()),
+                VoidedEffect::Change(_) => None,
+            })
+            .collect();
+        assert_eq!(registered.len(), 3000, "every object once");
     })
     .unwrap()
 }
