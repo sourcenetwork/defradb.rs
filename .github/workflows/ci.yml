@@ -565,6 +565,8 @@ jobs:
         run: cargo test -p db --test block head_conformance::head_queries_match_executable_lean -- --exact
       - name: Check projection scope model binding
         run: cargo test -p acp --test projection_scope -- --ignored
+      - name: Check parent registration model binding
+        run: cargo test -p acp --test parent_registration -- --ignored
       - name: Check genesis read access model binding
         run: cargo test -p db --test merge genesis_access::genesis_reader_matches_executed_lean_model -- --exact --ignored
       - name: Check Lean-to-Rust conformance

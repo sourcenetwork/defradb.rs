@@ -660,6 +660,11 @@ bound to the registration covers both as well. Vera checks the acting identity
 when it executes the command. A later grant on the parent relation requires
 permission on the proposed target.
 
+A registered document keeps a parent. Local ACP refuses to delete its last
+parent relationship; the relationship goes when the document is deleted. An
+update that writes another value into the parent field is refused, so the
+document always names the parent it was admitted under.
+
 A receiver sharing the creator's Vera deployment waits for the object's
 registration. An embedder that enables foreign replica registration for the
 collection can register a signed genesis on its own deployment. The receiving

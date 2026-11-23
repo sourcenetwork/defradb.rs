@@ -59,6 +59,38 @@ impl<S: ZanzibarStore + ?Sized + 'static> ZanzibarDocumentACP<S> {
         }
         Ok(())
     }
+
+    /// A registered child of a gated resource keeps a parent: its last
+    /// parent link goes only with its registration.
+    pub(super) async fn check_parent_unlink(
+        &self,
+        policy_id: &str,
+        rel: &Relationship,
+    ) -> Result<()> {
+        let gated = self
+            .store
+            .get_policy(policy_id)
+            .await?
+            .is_some_and(|policy| {
+                policy
+                    .get_resource(&rel.resource)
+                    .and_then(|resource| resource.create.as_ref())
+                    .is_some_and(|rule| rule.parent == rel.relation)
+            });
+        if !gated {
+            return Ok(());
+        }
+        let links = self
+            .store
+            .get_relation_subjects(policy_id, &rel.resource, &rel.object_id, &rel.relation)
+            .await?;
+        if links.as_slice() == std::slice::from_ref(&rel.subject) {
+            return Err(Error::InvalidRelation(
+                "cannot delete the last parent relation".to_string(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -758,6 +790,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> DocumentACP for ZanzibarDocumentACP<S>
         // No floor validation on the revoke path: type validation guards what a
         // grant introduces, but a revoke only removes an existing edge.
         let rel = Relationship::new(collection_id, doc_id, relation, target);
+        self.check_parent_unlink(policy_id, &rel).await?;
         let deleted = self.store.delete_relationship(policy_id, &rel).await?;
 
         if deleted {

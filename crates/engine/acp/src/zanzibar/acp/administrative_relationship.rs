@@ -92,6 +92,7 @@ where
         }
         let relationship = Relationship::new(resource, doc_id, relation, target);
         let changed = if delete {
+            scoped.check_parent_unlink(policy_id, &relationship).await?;
             authorization
                 .store
                 .delete_relationship(policy_id, &relationship)

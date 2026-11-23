@@ -363,7 +363,7 @@ impl CompositeMergeHook for AcpCompositeMergeHook {
             Ok(true) => {}
             Ok(false) => return Ok(ReplicaStep::Gate),
             Err(error) => {
-                tracing::debug!(%doc_id, %error, "Could not establish replica signer membership");
+                tracing::warn!(%doc_id, %error, "Could not establish replica signer membership");
                 return Ok(ReplicaStep::Gate);
             }
         }
