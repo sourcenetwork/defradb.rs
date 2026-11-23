@@ -270,8 +270,9 @@ where
                 return Ok(Reconciled::Closed {
                     reason,
                     report: TakeoverReport {
-                        unrestorable: std::mem::take(&mut losses.unrestorable),
-                        ..TakeoverReport::default()
+                        applied: losses.applied,
+                        owed: losses.owed,
+                        unrestorable: losses.unrestorable,
                     },
                 });
             }

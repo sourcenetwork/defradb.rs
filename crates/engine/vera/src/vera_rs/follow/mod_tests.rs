@@ -349,16 +349,27 @@ fn a_journal_begun_after_the_worker_signed_cannot_vouch_for_a_void_reaching_back
 #[test]
 fn a_void_archive_that_is_refused_again_fails_closed() {
     let directory = tempfile::tempdir().unwrap();
-    let kept = confirmed(wire(0, "bae-1", register()), 5);
-    let archived = confirmed(archive(1, "bae-1"), 6);
-    let mut journal = journal(directory.path(), &[kept.clone(), archived.clone()]);
-    let deployment = Deployment::holding([&kept]).refuse(&archived);
+    let kept = confirmed(wire(0, "bae-0", register()), 5);
+    let applied = confirmed(wire(1, "bae-1", register()), 6);
+    let owed = confirmed(wire(2, "bae-2", register()), 7);
+    let archived = confirmed(archive(3, "bae-3"), 8);
+    let mut journal = journal(
+        directory.path(),
+        &[kept.clone(), applied, owed.clone(), archived.clone()],
+    );
+    let deployment = Deployment::holding([&kept]).refuse(&owed).refuse(&archived);
 
     let outcome = block_on(reconcile(&mut journal, &deployment, 1, &mut ignore)).unwrap();
-    assert!(matches!(
-        outcome,
-        Reconciled::Closed { ref reason, .. } if reason.contains("archive")
-    ));
+    let Reconciled::Closed { reason, report } = outcome else {
+        panic!("a refused archive must fail closed");
+    };
+    assert!(reason.contains("archive"));
+    assert_eq!(
+        report.applied,
+        vec![report::Applied::Change(lost_registration("bae-1"))]
+    );
+    assert_eq!(report.owed, vec![lost_registration("bae-2")]);
+    assert_eq!(report.unrestorable.len(), 1);
 }
 
 #[test]
