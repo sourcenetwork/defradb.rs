@@ -3,7 +3,7 @@
 
 use super::*;
 use async_trait::async_trait;
-use query::txn::{TransactionHandle, TransactionRegistry, TxnJob};
+use query::txn::{TransactionHandle, TransactionOutcome, TransactionRegistry, TxnJob};
 use storage::corekv::MaybeSend;
 use web_time::Instant;
 
@@ -215,6 +215,13 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         })?;
         let label = handle.to_string();
         let queued = Instant::now();
+        let outcome = self
+            .owners()
+            .map_err(|error| unavailable(error, handle))?
+            .outcome_status(id, &self.caller(context));
+        if let Some(outcome) = outcome.as_ref() {
+            outcome.store(crate::txn::owner::Outcome::Committing);
+        }
         self.owners()
             .map_err(|error| unavailable(error, handle))?
             .finish(id, &self.caller(context), move |owned| {
@@ -222,6 +229,12 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
                     report_slow_phase("commit", "queue", queued);
                     let started = Instant::now();
                     let result = owned.commit().await;
+                    if let Some(outcome) = outcome.as_ref() {
+                        outcome.store(match result {
+                            Ok(()) => crate::txn::owner::Outcome::Committed,
+                            Err(_) => crate::txn::owner::Outcome::Aborted,
+                        });
+                    }
                     report_slow_phase("commit", "execute", started);
                     result.map_err(|error| commit_error(&label, error))
                 })
@@ -240,6 +253,13 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         })?;
         let label = handle.to_string();
         let queued = Instant::now();
+        let outcome = self
+            .owners()
+            .map_err(|error| unavailable(error, handle))?
+            .outcome_status(id, &self.caller(context));
+        if let Some(outcome) = outcome.as_ref() {
+            outcome.store(crate::txn::owner::Outcome::Committing);
+        }
         self.owners()
             .map_err(|error| unavailable(error, handle))?
             .finish_unless(id, &self.caller(context), move |owned| {
@@ -253,6 +273,9 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
                             )
                         }
                         crate::txn::owner::Ending::Kept(owned, result) => {
+                            if let Some(outcome) = outcome.as_ref() {
+                                outcome.store(crate::txn::owner::Outcome::Open);
+                            }
                             crate::txn::owner::Ending::Kept(
                                 owned,
                                 result.map_err(|error| commit_error(&label, error)),
@@ -277,6 +300,13 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             TransactionError::not_found(format!("transaction '{handle}' not found"))
         })?;
         let label = handle.to_string();
+        let outcome = self
+            .owners()
+            .map_err(|error| unavailable(error, handle))?
+            .outcome_status(id, &self.caller(context));
+        if let Some(outcome) = outcome.as_ref() {
+            outcome.store(crate::txn::owner::Outcome::Committing);
+        }
         self.owners()
             .map_err(|error| unavailable(error, handle))?
             .finish(id, &self.caller(context), move |owned| {
@@ -285,6 +315,16 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
                         .commit_confirmed(&confirmations)
                         .await
                         .map_err(|error| commit_error(&label, error))
+                        .inspect(|()| {
+                            if let Some(outcome) = outcome.as_ref() {
+                                outcome.store(crate::txn::owner::Outcome::Committed);
+                            }
+                        })
+                        .inspect_err(|_| {
+                            if let Some(outcome) = outcome.as_ref() {
+                                outcome.store(crate::txn::owner::Outcome::Aborted);
+                            }
+                        })
                 })
             })
             .await
@@ -718,19 +758,53 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             TransactionError::not_found(format!("transaction '{handle}' not found"))
         })?;
         let label = handle.to_string();
+        let outcome = self
+            .owners()
+            .map_err(|error| unavailable(error, handle))?
+            .outcome_status(id, &self.caller(context));
+        if let Some(outcome) = outcome.as_ref() {
+            outcome.store(crate::txn::owner::Outcome::Committing);
+        }
         self.owners()
             .map_err(|error| unavailable(error, handle))?
             .finish(id, &self.caller(context), move |owned| {
                 Box::pin(async move {
-                    owned.discard().map_err(|error| {
-                        TransactionError::execution(format!(
-                            "discard error for transaction '{label}': {error}"
-                        ))
-                    })
+                    owned
+                        .discard()
+                        .inspect(|()| {
+                            if let Some(outcome) = outcome.as_ref() {
+                                outcome.store(crate::txn::owner::Outcome::Aborted);
+                            }
+                        })
+                        .map_err(|error| {
+                            TransactionError::execution(format!(
+                                "discard error for transaction '{label}': {error}"
+                            ))
+                        })
                 })
             })
             .await
             .map_err(|error| unavailable(error, handle))?
+    }
+
+    async fn outcome_as(
+        &self,
+        context: &RequestContext,
+        handle: &TransactionHandle,
+    ) -> std::result::Result<TransactionOutcome, TransactionError> {
+        let id = TxnId::parse(handle).ok_or_else(|| {
+            TransactionError::not_found(format!("transaction '{handle}' not found"))
+        })?;
+        self.owners()
+            .map_err(|error| unavailable(error, handle))?
+            .outcome(id, &self.caller(context))
+            .map(|outcome| match outcome {
+                crate::txn::owner::Outcome::Open => TransactionOutcome::Open,
+                crate::txn::owner::Outcome::Committing => TransactionOutcome::Committing,
+                crate::txn::owner::Outcome::Committed => TransactionOutcome::Committed,
+                crate::txn::owner::Outcome::Aborted => TransactionOutcome::Aborted,
+            })
+            .ok_or_else(|| TransactionError::not_found(format!("transaction '{handle}' not found")))
     }
 }
 

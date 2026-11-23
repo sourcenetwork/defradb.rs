@@ -1,59 +1,83 @@
-//! A transaction ID names the worker that owns the transaction.
+//! A transaction ID names the process start that opened it and the worker that
+//! owns it.
 //!
-//! The ID is `sequence * workers + worker`: the owner is `id % workers`, so the
-//! edge routes every request for the transaction with arithmetic and no
-//! lookup, and each worker draws its own sequence numbers without touching
-//! another's. With one worker the IDs are 0, 1, 2, ... The ID stays a plain
-//! `u64` on the wire, as Go DefraDB's transaction IDs are.
+//! The wire ID is the opaque text `<start>-<route>`: `start` is a 64-bit token
+//! drawn once by the owner registry, and `route` is `sequence * workers +
+//! worker`. The owner is `route % workers`, so the edge routes every request
+//! for the transaction with arithmetic and no lookup, and each worker draws its
+//! own sequence numbers without touching another's. The token keeps an ID from
+//! one node start from naming a transaction or retained outcome of another.
 
 use std::fmt;
 
 /// An explicit transaction's ID.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct TxnId(u64);
+pub(crate) struct TxnId {
+    start: u64,
+    route: u64,
+}
 
 impl TxnId {
-    /// The ID worker `worker` of `workers` gives its `sequence`th transaction;
-    /// `None` once the IDs would pass `u64::MAX`.
-    pub(crate) fn new(sequence: u64, worker: usize, workers: usize) -> Option<TxnId> {
+    /// The ID `start` gives worker `worker` of `workers` for its
+    /// `sequence`th transaction; `None` when the worker or route cannot be
+    /// represented.
+    pub(crate) fn new(sequence: u64, worker: usize, workers: usize, start: u64) -> Option<TxnId> {
         let workers = u64::try_from(workers).ok()?;
         let worker = u64::try_from(worker).ok()?;
-        sequence
+        let route = sequence
             .checked_mul(workers)?
             .checked_add(worker)
-            .map(TxnId)
+            .map(|route| (start, route))
+            .map(|(_, route)| route)?;
+        Some(TxnId { start, route })
     }
 
-    /// The ID a client sent back, as text; `None` when it is not a `u64`.
+    /// The ID a client sent back, as text; `None` when it is not
+    /// `<start>-<route>`.
     pub(crate) fn parse(text: &str) -> Option<TxnId> {
-        text.parse().ok().map(TxnId)
+        let (start, route) = text.split_once('-')?;
+        Some(TxnId {
+            start: start.parse().ok()?,
+            route: route.parse().ok()?,
+        })
     }
 
     /// The index of the worker that owns this transaction among `workers`.
     pub(crate) fn owner(self, workers: usize) -> usize {
         let workers = u64::try_from(workers.max(1)).unwrap_or(u64::MAX);
-        usize::try_from(self.0 % workers).unwrap_or(0)
+        usize::try_from(self.route % workers).unwrap_or(0)
     }
 
     pub(crate) fn get(self) -> u64 {
-        self.0
+        self.route
+    }
+
+    /// The full key a registry-wide table stores: the start token and route.
+    pub(crate) fn key(self) -> (u64, u64) {
+        (self.start, self.route)
     }
 
     /// The ID of a transaction no table holds and no request can name (a
     /// standalone query's snapshot), for its log lines.
     pub(crate) fn unnamed() -> TxnId {
-        TxnId(u64::MAX)
+        TxnId {
+            start: u64::MAX,
+            route: u64::MAX,
+        }
     }
 
     /// The ID a table stored.
     pub(super) fn from_raw(id: u64) -> TxnId {
-        TxnId(id)
+        TxnId {
+            start: 0,
+            route: id,
+        }
     }
 }
 
 impl fmt::Display for TxnId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
+        write!(f, "{}-{}", self.start, self.route)
     }
 }
 
@@ -66,7 +90,8 @@ mod tests {
         for workers in [1, 2, 3, 7, 64] {
             for worker in 0..workers {
                 for sequence in [0, 1, 2, 1_000, u64::MAX / 128] {
-                    let id = TxnId::new(sequence, worker, workers).unwrap();
+                    let start = (worker as u64) * 7 + sequence + 1;
+                    let id = TxnId::new(sequence, worker, workers, start).unwrap();
                     assert_eq!(id.owner(workers), worker);
                     assert_eq!(TxnId::parse(&id.to_string()), Some(id));
                 }
@@ -80,16 +105,20 @@ mod tests {
         let mut seen = rapidhash::RapidHashSet::default();
         for worker in 0..workers {
             for sequence in 0..100 {
-                assert!(seen.insert(TxnId::new(sequence, worker, workers).unwrap()));
+                assert!(seen.insert(TxnId::new(sequence, worker, workers, 1).unwrap()));
             }
         }
     }
 
     #[test]
     fn one_worker_counts_from_zero_and_ids_past_u64_are_refused() {
-        assert_eq!(TxnId::new(0, 0, 1).map(TxnId::get), Some(0));
-        assert_eq!(TxnId::new(41, 0, 1).map(TxnId::get), Some(41));
-        assert_eq!(TxnId::new(u64::MAX, 1, 2), None);
+        assert_eq!(TxnId::new(0, 0, 1, 9).map(TxnId::get), Some(0));
+        assert_eq!(TxnId::new(41, 0, 1, 9).map(TxnId::get), Some(41));
+        assert_eq!(TxnId::new(41, 0, 1, 9).map(TxnId::key), Some((9, 41)));
+        assert_eq!(TxnId::new(1, 1, 2, 9).unwrap().start, 9);
+        assert_eq!(TxnId::parse("9-41"), TxnId::new(41, 0, 1, 9));
+        assert_eq!(TxnId::parse("9"), None);
+        assert_eq!(TxnId::parse("x-1"), None);
         assert_eq!(TxnId::parse("not a number"), None);
         assert_eq!(TxnId::parse("-1"), None);
     }

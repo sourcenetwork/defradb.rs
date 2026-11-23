@@ -1038,6 +1038,10 @@ RUNS=(
   "MC_TxnTurns_Green.cfg TxnTurns.tla GREEN" # calls on one transaction take tickets, may drop them: one runs at a time, none overtakes an earlier ticket, no call waits forever
   "MC_TxnTurns_Red_NoRecheck.cfg TxnTurns.tla RED" # a dropping call never looks again: a dropped ticket nobody skips stalls the transaction (Progress)
   "MC_TxnTurns_Red_CancelSkipsNow.cfg TxnTurns.tla RED" # a dropped ticket serves the next at once: two calls run together (INV_OneRunning)
+  "MC_TxnOutcomeQuery_Green.cfg TxnOutcomeQuery.tla GREEN" # a lost commit answer is queryable only by its owner, under its start token, until the idle age
+  "MC_TxnOutcomeQuery_Red_Unknown.cfg TxnOutcomeQuery.tla RED" # the query always says unknown: a live final answer is never reported (LIVE_QuestionAnswered)
+  "MC_TxnOutcomeQuery_Red_Start.cfg TxnOutcomeQuery.tla RED" # a restart rewrites the old ID: its state is served to a new transaction (INV_StartToken)
+  "MC_TxnOutcomeQuery_Red_Owner.cfg TxnOutcomeQuery.tla RED" # a foreign query leaks the state (INV_Foreign)
   "MC_VersionPin_Green.cfg VersionPin.tla GREEN" # requests pin an old version, the active one or nothing while DDL changes the active version: pins stay in their turn, unpinned turns see the active version, old-version reads change nothing, writes land at the selected version
   "MC_VersionPin_Red_PinLeaks.cfg VersionPin.tla RED" # a turn leaves its pin behind: the next request still sees the old version (INV_PinScoped)
   "MC_VersionPin_Red_WriteBackOnPin.cfg VersionPin.tla RED" # a read through an old version stores the migrated document back (INV_ReadNoSideEffect)

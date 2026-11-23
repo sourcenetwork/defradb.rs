@@ -49,6 +49,10 @@ fn identity_only_routes() {
         RoutePermission::IdentityOnly
     );
     assert_eq!(
+        route_permission("/api/v0/tx/{id}", &Method::GET),
+        RoutePermission::IdentityOnly
+    );
+    assert_eq!(
         route_permission("/api/v0/tx/{id}", &Method::DELETE),
         RoutePermission::IdentityOnly
     );
@@ -241,6 +245,11 @@ fn all_registered_routes_return_expected_permission() {
         ),
         // Transactions
         ("/api/v0/tx", Method::POST, RoutePermission::IdentityOnly),
+        (
+            "/api/v0/tx/{id}",
+            Method::GET,
+            RoutePermission::IdentityOnly,
+        ),
         (
             "/api/v0/tx/{id}",
             Method::POST,

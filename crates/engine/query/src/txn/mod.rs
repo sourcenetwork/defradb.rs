@@ -29,7 +29,7 @@ pub use guard::TransactionGuard;
 pub use handle::TransactionHandle;
 pub use observed_owners::{ObservedOwners, OwnerAnswer, OwnerChanged};
 pub use read_access::OverlayChecker;
-pub use registry::{NoOpTransactionRegistry, TransactionRegistry};
+pub use registry::{NoOpTransactionRegistry, TransactionOutcome, TransactionRegistry};
 pub use source_nac::{
     embedded_source_permission_job, host_source_permission_job, source_permission_job,
     SourcePermission,

@@ -343,7 +343,10 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
             // What the create records as owed names the transaction by its
             // handle, whether or not the request did.
             let recorded_in = match (context.txn(), txn.handle_id()) {
-                (None, Some(id)) => context.clone().with_txn(Some(defra_core::TxnId(id))),
+                (None, Some(id)) => context.clone().with_txn(Some(defra_core::TxnId {
+                    start: 0,
+                    route: id,
+                })),
                 _ => context.clone(),
             };
             let blockstore = txn.blockstore().map_err(|e| {

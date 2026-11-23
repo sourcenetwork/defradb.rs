@@ -209,7 +209,7 @@ fn filtered_truncate_in_a_transaction_is_refused_and_removes_nothing() {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
         db.create_collection(users_schema()).await.unwrap();
         create_user(&AutoCommitMutator::new(db.clone()), "Alice", 30).await;
-        let in_txn = RequestContext::ambient().with_txn(Some(TxnId(1)));
+        let in_txn = RequestContext::ambient().with_txn(Some(TxnId { start: 0, route: 1 }));
 
         let error = db
             .truncate_collection_as(&in_txn, "Users", Some(&age_filter(30)))
@@ -238,7 +238,7 @@ fn unfiltered_truncate_in_a_transaction_applies_at_once() {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
         db.create_collection(users_schema()).await.unwrap();
         create_user(&AutoCommitMutator::new(db.clone()), "Alice", 30).await;
-        let in_txn = RequestContext::ambient().with_txn(Some(TxnId(1)));
+        let in_txn = RequestContext::ambient().with_txn(Some(TxnId { start: 0, route: 1 }));
 
         db.truncate_collection_as(&in_txn, "Users", None)
             .await

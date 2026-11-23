@@ -86,6 +86,7 @@ pub(crate) fn create_router_with_state_and_body_limits(
     //   DELETE /tx/{id} - discard transaction
     let tx_routes = Router::new()
         .route("/", post(handlers::tx_begin))
+        .route("/{id}", get(handlers::tx_outcome))
         .route("/{id}", post(handlers::tx_commit))
         .route("/{id}", delete(handlers::tx_discard));
 

@@ -12,7 +12,7 @@ use futures::future::join_all;
 use regolith::sync::Event;
 use workers::{block_on, Config, Placement, Pool, Workers};
 
-use super::{Owners, TxnId, Unavailable};
+use super::{Outcome, OutcomeRecord, OutcomeStore, Owners, TxnId, Unavailable};
 
 /// A transaction that names its worker and records its drop.
 struct Probe {
@@ -276,4 +276,66 @@ fn a_standalone_read_called_off_the_workers_runs_on_one() {
     .unwrap()
     .unwrap();
     assert!(ran.is_some(), "the read runs on a worker of the pool");
+}
+
+#[test]
+fn an_outcome_is_open_then_final_only_for_its_owner() {
+    let owners = Probes::new(pool(1));
+    let dropped = Arc::new(AtomicUsize::new(0));
+    let id = begin(&owners, "alice", &dropped);
+
+    assert_eq!(owners.outcome(id, &"alice"), Some(Outcome::Open));
+    assert_eq!(owners.outcome(id, &"bob"), None);
+
+    let status = owners.outcome_status(id, &"alice").unwrap();
+    status.store(Outcome::Committing);
+    assert_eq!(owners.outcome(id, &"alice"), Some(Outcome::Committing));
+    status.store(Outcome::Committed);
+
+    block_on(owners.finish(id, &"alice", |probe| Box::pin(async move { drop(probe) })))
+        .unwrap()
+        .unwrap();
+    assert_eq!(owners.outcome(id, &"alice"), Some(Outcome::Committed));
+    assert_eq!(owners.outcome(id, &"bob"), None);
+}
+
+#[test]
+fn an_id_from_another_start_names_no_retained_outcome() {
+    let owners = Probes::new(pool(1));
+    let dropped = Arc::new(AtomicUsize::new(0));
+    let id = begin(&owners, "alice", &dropped);
+    let status = owners.outcome_status(id, &"alice").unwrap();
+    status.store(Outcome::Committed);
+    block_on(owners.finish(id, &"alice", |probe| Box::pin(async move { drop(probe) })))
+        .unwrap()
+        .unwrap();
+
+    let restarted = Probes::new(pool(1));
+    assert_eq!(restarted.outcome(id, &"alice"), None);
+}
+
+#[test]
+fn outcome_retention_keeps_final_results_and_not_open_work() {
+    let store: OutcomeStore<&'static str> = OutcomeStore::new(Duration::from_millis(20));
+    let now = std::time::Instant::now();
+    let id = TxnId::new(1, 0, 1, 17).unwrap();
+    let cell = Arc::new(regolith::sync::Atom::new(Outcome::Open));
+    store.insert(
+        id,
+        OutcomeRecord {
+            status: Arc::clone(&cell),
+            owner: "alice",
+            finished: now,
+        },
+    );
+
+    std::thread::sleep(Duration::from_millis(30));
+    store.expire(std::time::Instant::now());
+    assert_eq!(store.status(id), Some(Outcome::Open));
+
+    store.mark(id, Outcome::Aborted, std::time::Instant::now());
+    assert_eq!(store.status(id), Some(Outcome::Aborted));
+    std::thread::sleep(Duration::from_millis(30));
+    store.expire(std::time::Instant::now());
+    assert_eq!(store.status(id), None);
 }

@@ -233,7 +233,7 @@ pub(crate) async fn register_created_doc(
                             doc_id_str,
                         )
                         .with_authority(authority, context.bearer_names_request())
-                        .in_transaction(context.txn().map(|txn| txn.0)),
+                        .in_transaction(context.txn().map(|txn| txn.route)),
                     )
                     .await
                     .map_err(|e| query::error::QueryError::execution(e.to_string()))?;

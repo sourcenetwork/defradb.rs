@@ -2,23 +2,39 @@
 
 use std::fmt;
 use std::str::FromStr;
+use thiserror::Error;
 
-/// An explicit transaction's ID: Go's `uint64`, the number the HTTP routes
-/// carry.
+/// An explicit transaction's ID: an opaque per-start token and the owner route
+/// the HTTP routes carry as `<start>-<route>`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct TxnId(pub u64);
+pub struct TxnId {
+    /// The process start that opened the transaction.
+    pub start: u64,
+    /// The route that names the owner worker and its sequence.
+    pub route: u64,
+}
+
+/// The text was not `<start>-<route>`.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+#[error("transaction ID must be `<start>-<route>`")]
+pub struct TxnIdParseError;
 
 impl fmt::Display for TxnId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
+        write!(f, "{}-{}", self.start, self.route)
     }
 }
 
 impl FromStr for TxnId {
-    type Err = std::num::ParseIntError;
+    type Err = TxnIdParseError;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        text.parse().map(TxnId)
+        let (start, route) = text.split_once('-').ok_or(TxnIdParseError)?;
+        let (start, route) = (
+            start.parse().ok().ok_or(TxnIdParseError)?,
+            route.parse().ok().ok_or(TxnIdParseError)?,
+        );
+        Ok(TxnId { start, route })
     }
 }
 
@@ -28,8 +44,22 @@ mod tests {
 
     #[test]
     fn round_trips_through_text() {
-        assert_eq!("42".parse::<TxnId>(), Ok(TxnId(42)));
-        assert_eq!(TxnId(42).to_string(), "42");
+        assert_eq!(
+            "9-42".parse::<TxnId>(),
+            Ok(TxnId {
+                start: 9,
+                route: 42
+            })
+        );
+        assert_eq!(
+            TxnId {
+                start: 9,
+                route: 42
+            }
+            .to_string(),
+            "9-42"
+        );
+        assert!("42".parse::<TxnId>().is_err());
         assert!("x".parse::<TxnId>().is_err());
     }
 }

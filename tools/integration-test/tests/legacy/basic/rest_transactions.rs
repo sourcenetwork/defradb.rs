@@ -48,7 +48,7 @@ async fn rust_rest_transactions_preserve_isolation() {
             StatusCode::OK,
         )
         .await;
-        let transaction = begin["id"].to_string();
+        let transaction = begin["id"].as_str().unwrap().to_string();
         let schema = client
             .post(format!("{api}/api/v0/collections"))
             .header("x-defradb-tx", &transaction)
@@ -121,7 +121,7 @@ async fn rust_rest_transactions_preserve_isolation() {
             StatusCode::OK,
         )
         .await;
-        let transaction = begin["id"].to_string();
+        let transaction = begin["id"].as_str().unwrap().to_string();
         request(
             &client,
             api,
@@ -198,7 +198,7 @@ async fn rust_rest_transactions_preserve_isolation() {
             StatusCode::OK,
         )
         .await;
-        let transaction = begin["id"].to_string();
+        let transaction = begin["id"].as_str().unwrap().to_string();
         request(
             &client,
             api,

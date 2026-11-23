@@ -41,10 +41,10 @@ pub struct GraphQLErrorExtensions {
     pub code: String,
 }
 
-/// Transaction begin response (matches Go's `CreateTxResponse`).
+/// Transaction begin response with the opaque ID later routes carry.
 #[derive(Debug, Deserialize)]
 pub struct TxBeginResponse {
-    pub id: u64,
+    pub id: String,
 }
 
 /// Server error response

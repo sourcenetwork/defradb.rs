@@ -26,12 +26,16 @@ mod table;
 mod tests;
 
 use std::future::Future;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use defra_core::thread_bounds::MaybeSend;
 use futures::future::LocalBoxFuture;
-use regolith::sync::{unbounded, ArrayQueue};
+use rand::random;
+use rapidhash::fast::RandomState;
+use regolith::sync::{unbounded, ArrayQueue, HopscotchMap};
+use web_time::Instant;
 use workers::Target;
 #[cfg(not(target_family = "wasm"))]
 use workers::{Pool, Submit};
@@ -71,6 +75,19 @@ impl From<workers::Error> for Unavailable {
     }
 }
 
+/// The outcome a client may ask for after it lost a commit's answer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Outcome {
+    /// The commit was queued but has not landed yet.
+    Committing,
+    /// The transaction is open and no commit was queued.
+    Open,
+    /// The commit landed.
+    Committed,
+    /// The transaction ended without a commit.
+    Aborted,
+}
+
 /// Every worker's table, shared by the registry and the requests on their
 /// way; actors hold it weakly, so dropping the registry ends every
 /// transaction it owns.
@@ -80,6 +97,110 @@ where
     K: 'static,
 {
     tables: Box<[Table<T, K>]>,
+    outcomes: Box<[OutcomeStore<K>]>,
+}
+
+/// What one transaction's ID last said, and when the record may go.
+#[derive(Clone)]
+struct OutcomeRecord<K> {
+    status: Arc<regolith::sync::Atom<Outcome>>,
+    owner: K,
+    finished: Instant,
+}
+
+/// One worker's retained outcomes, keyed by the transaction's full ID.
+struct OutcomeStore<K: 'static> {
+    records: HopscotchMap<(u64, u64), OutcomeRecord<K>, RandomState>,
+    retention_nanos: AtomicU64,
+}
+
+impl<K: Clone + PartialEq + Send + Sync + 'static> OutcomeStore<K> {
+    fn new(retention: Duration) -> Self {
+        Self {
+            records: HopscotchMap::with_hasher(RandomState::default()),
+            retention_nanos: AtomicU64::new(retention.as_nanos() as u64),
+        }
+    }
+
+    fn status(&self, id: TxnId) -> Option<Outcome> {
+        self.records
+            .get(&id.key())
+            .map(|record| *record.status.load())
+    }
+
+    fn insert(&self, id: TxnId, record: OutcomeRecord<K>) {
+        self.records.insert(id.key(), record);
+    }
+
+    fn remove(&self, id: TxnId) {
+        self.records.remove(&id.key());
+    }
+
+    fn mark(&self, id: TxnId, status: Outcome, now: Instant) {
+        let Some(record) = self.records.get(&id.key()) else {
+            return;
+        };
+        record.status.store(status);
+        self.records.insert(
+            id.key(),
+            OutcomeRecord {
+                status: Arc::clone(&record.status),
+                owner: record.owner.clone(),
+                finished: now,
+            },
+        );
+    }
+
+    fn touch(&self, id: TxnId, now: Instant) {
+        let Some(record) = self.records.get(&id.key()) else {
+            return;
+        };
+        self.records.insert(
+            id.key(),
+            OutcomeRecord {
+                status: Arc::clone(&record.status),
+                owner: record.owner.clone(),
+                finished: now,
+            },
+        );
+    }
+
+    fn admitted(&self, id: TxnId, key: &K) -> bool {
+        self.records
+            .get(&id.key())
+            .is_some_and(|record| record.owner == *key)
+    }
+
+    fn cell(&self, id: TxnId) -> Option<Arc<regolith::sync::Atom<Outcome>>> {
+        self.records
+            .get(&id.key())
+            .map(|record| Arc::clone(&record.status))
+    }
+
+    fn expire(&self, now: Instant) {
+        let retention = Duration::from_nanos(self.retention_nanos.load(Ordering::Relaxed));
+        let expired: Vec<(u64, u64)> = self
+            .records
+            .iter()
+            .filter_map(|(key, record)| {
+                let status = *record.status.load();
+                (now.duration_since(record.finished) >= retention
+                    && status != Outcome::Open
+                    && status != Outcome::Committing)
+                    .then_some(key)
+            })
+            .collect();
+        for key in expired {
+            self.records.remove(&key);
+        }
+    }
+
+    fn set_retention(&self, retention: Duration) {
+        if !retention.is_zero() {
+            self.retention_nanos
+                .store(retention.as_nanos() as u64, Ordering::Relaxed);
+        }
+    }
 }
 
 /// The transactions of one registry, spread over the pool's workers. Each is
@@ -96,6 +217,7 @@ where
 {
     #[cfg(not(target_family = "wasm"))]
     pool: Pool,
+    start_token: u64,
     shared: Arc<Shared<T, K>>,
     /// Where a commit whose caller stops waiting is fenced until it lands.
     fences: Arc<CommitFences>,
@@ -110,10 +232,16 @@ where
     /// commits fenced in `fences` when a caller stops waiting.
     #[cfg(not(target_family = "wasm"))]
     pub(crate) fn fenced(pool: Pool, fences: Arc<CommitFences>) -> Self {
-        let tables = (0..pool.workers()).map(|_| Table::new()).collect();
+        let tables = (0..pool.workers())
+            .map(|_| Table::new())
+            .collect::<Box<_>>();
+        let outcomes = (0..pool.workers())
+            .map(|_| OutcomeStore::new(Duration::from_secs(600)))
+            .collect();
         Self {
             pool,
-            shared: Arc::new(Shared { tables }),
+            start_token: random(),
+            shared: Arc::new(Shared { tables, outcomes }),
             fences,
         }
     }
@@ -129,8 +257,10 @@ where
     #[cfg(target_family = "wasm")]
     pub(crate) fn here(fences: Arc<CommitFences>) -> Self {
         Self {
+            start_token: random(),
             shared: Arc::new(Shared {
                 tables: Box::new([Table::new()]),
+                outcomes: Box::new([OutcomeStore::new(Duration::from_secs(600))]),
             }),
             fences,
         }
@@ -214,36 +344,47 @@ where
     {
         let shared = Arc::downgrade(&self.shared);
         let workers = self.workers();
+        let start_token = self.start_token;
         self.place(Target::LeastLoaded, "txn.begin", move || async move {
             let worker = here()?;
             let sequence = match shared.upgrade() {
                 Some(tables) => tables.tables[worker].draw(),
                 None => return Err(Unavailable::NotFound),
             };
-            let id = TxnId::new(sequence, worker, workers).ok_or(Unavailable::Exhausted)?;
+            let id =
+                TxnId::new(sequence, worker, workers, start_token).ok_or(Unavailable::Exhausted)?;
             let txn = match open(id).await {
                 Ok(txn) => txn,
                 Err(error) => return Ok(Err(error)),
             };
             let (mailbox, inbox) = unbounded();
             let idle = Arc::new(ArrayQueue::new(1));
+            let status = Arc::new(regolith::sync::Atom::new(Outcome::Open));
+            let outcome = OutcomeRecord {
+                status: Arc::clone(&status),
+                owner: key.clone(),
+                finished: Instant::now(),
+            };
             // The slot is new and holds one: the push cannot find it full.
             let _ = idle.push(txn);
-            match shared.upgrade() {
-                Some(tables) => tables.tables[worker].insert(
-                    id,
-                    Entry {
-                        mailbox,
-                        idle: Arc::clone(&idle),
-                        key,
-                        ending: false,
-                    },
-                ),
-                None => return Err(Unavailable::NotFound),
-            }
-            if let Err(error) = start(actor::own(idle, id, worker, inbox, shared.clone())) {
+            let Some(tables) = shared.upgrade() else {
+                return Err(Unavailable::NotFound);
+            };
+            tables.tables[worker].insert(
+                id,
+                Entry {
+                    mailbox,
+                    idle: Arc::clone(&idle),
+                    key,
+                    ending: false,
+                },
+            );
+            tables.outcomes[worker].insert(id, outcome);
+            drop(tables);
+            if let Err(error) = start(actor::own(idle, id, worker, inbox, shared.clone(), status)) {
                 if let Some(tables) = shared.upgrade() {
                     tables.tables[worker].take(id);
+                    tables.outcomes[worker].remove(id);
                 }
                 return Err(Unavailable::Pool(error));
             }
@@ -383,6 +524,8 @@ where
                     reply: Some(reply.clone()),
                 });
                 drop(reply);
+                shared.outcomes[worker].set_retention(max_idle);
+                shared.outcomes[worker].expire(Instant::now());
                 drop(shared);
                 let mut ended = 0;
                 for _ in 0..asked {
@@ -405,6 +548,38 @@ where
     /// How many transactions are open now, on every worker.
     pub(crate) fn len(&self) -> usize {
         self.shared.tables.iter().map(Table::len).sum()
+    }
+
+    /// The outcome `id` names for `key`: the live transaction's state, or its
+    /// retained result. A stranger and an ID from another start find nothing.
+    pub(crate) fn outcome(&self, id: TxnId, key: &K) -> Option<Outcome> {
+        let owner = id.owner(self.workers());
+        if self.shared.tables[owner].admits(id, key) {
+            return self.shared.outcomes[owner]
+                .status(id)
+                .or(Some(Outcome::Open));
+        }
+        if self.shared.outcomes[owner].admitted(id, key) {
+            return self.shared.outcomes[owner].status(id);
+        }
+        None
+    }
+
+    /// The status cell a commit or discard updates while ending `id` for
+    /// `key`; none if the transaction is gone or another caller owns it.
+    pub(crate) fn outcome_status(
+        &self,
+        id: TxnId,
+        key: &K,
+    ) -> Option<Arc<regolith::sync::Atom<Outcome>>> {
+        let owner = id.owner(self.workers());
+        if !self.shared.tables[owner].admits(id, key) {
+            return None;
+        }
+        self.shared.outcomes[owner]
+            .records
+            .get(&id.key())
+            .map(|record| Arc::clone(&record.status))
     }
 
     /// Queues the request `build` makes for transaction `id` of the caller
@@ -526,7 +701,10 @@ where
             ending: true,
         },
     );
-    if start(actor::own(idle, id, worker, inbox, shared.clone())).is_err() {
+    let status = tables.outcomes[worker]
+        .cell(id)
+        .unwrap_or_else(|| Arc::new(regolith::sync::Atom::new(Outcome::Open)));
+    if start(actor::own(idle, id, worker, inbox, shared.clone(), status)).is_err() {
         tables.tables[worker].take(id);
     }
 }
