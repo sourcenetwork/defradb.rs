@@ -35,9 +35,8 @@ fn add_user(name: &str, age: i64) -> AddDoc {
     }
 }
 
-fn explain_fred() -> String {
-    r#"query @explain(type: execute) { User(filter: {name: {_eq: "Fred"}}) { age } }"#.into()
-}
+const EXPLAIN_FRED: &str =
+    r#"query @explain(type: execute) { User(filter: {name: {_eq: "Fred"}}) { age } }"#;
 
 #[test]
 #[mantra_macros::req_test("defra.index.backfill.http-build-mode")]
@@ -79,7 +78,7 @@ fn an_index_created_in_the_background_lists_as_building_until_its_backfill_ends(
             }
             .into(),
             Request {
-                request: explain_fred(),
+                request: EXPLAIN_FRED.into(),
                 expected_data: json!(m::explain_scan(json!({ "indexFetches": 0 }))),
                 ..Default::default()
             }
@@ -101,7 +100,7 @@ fn an_index_created_in_the_background_lists_as_building_until_its_backfill_ends(
             }
             .into(),
             Request {
-                request: explain_fred(),
+                request: EXPLAIN_FRED.into(),
                 expected_data: json!(m::explain_scan(json!({ "indexFetches": 1 }))),
                 ..Default::default()
             }
