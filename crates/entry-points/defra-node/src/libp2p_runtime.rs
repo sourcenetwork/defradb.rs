@@ -16,9 +16,14 @@ pub(crate) type NodeMergeHandler<S> = db::merge::AcpMergeHandler<S, NodeBlocksto
 pub(crate) type NodeCoordinator<S> =
     p2p::sync::SyncCoordinator<NodeBlockstore<S>, p2p::Libp2pTransport>;
 
-struct KeyArrivalPromoter<S: storage::corekv::Store + 'static>(std::sync::Weak<NodeCoordinator<S>>);
+struct KeyArrivalPromoter<S>(std::sync::Weak<NodeCoordinator<S>>)
+where
+    S: storage::corekv::Store + 'static;
 
-impl<S: storage::corekv::Store + 'static> kms::KeyArrivalListener for KeyArrivalPromoter<S> {
+impl<S> kms::KeyArrivalListener for KeyArrivalPromoter<S>
+where
+    S: storage::corekv::Store + 'static,
+{
     fn keys_arrived(&self, _cids: &[kms::EncryptionCid]) {
         if let Some(coordinator) = self.0.upgrade() {
             coordinator.manager().promote_pending_retries();

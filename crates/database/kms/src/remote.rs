@@ -191,6 +191,7 @@ impl RemoteKeys {
             // AAD binds OUR (requester) ephemeral pubkey and the RESPONDER's
             // peer id, matching the serve side.
             let aad = crate::ecies_envelope::make_associated_data(&our_eph_pub, &responder_peer_id);
+            let mut arrived = Vec::new();
             for (cid_bytes, block_env) in reply.links.iter().zip(reply.blocks.iter()) {
                 let Ok(cid) = cid::Cid::try_from(cid_bytes.as_slice()) else {
                     tracing::warn!("KMS reply contained malformed CID; skipping");
@@ -209,10 +210,16 @@ impl RemoteKeys {
                     .await
                 {
                     Ok(key) => {
+                        arrived.push(cid);
                         answers[index] = Some(Ok(Arc::new(Zeroizing::new(key))));
                         remaining -= 1;
                     }
                     Err(error) => unavailable = Some(error),
+                }
+            }
+            if !arrived.is_empty() {
+                if let Some(listener) = self.arrivals.load() {
+                    listener.keys_arrived(&arrived);
                 }
             }
         }
@@ -256,9 +263,6 @@ impl RemoteKeys {
                 );
             })?;
         tracing::debug!(cid = %cid, "KMS key request: DEK unwrapped and stored");
-        if let Some(listener) = self.arrivals.load() {
-            listener.keys_arrived(std::slice::from_ref(&cid));
-        }
         Ok(key)
     }
 }

@@ -341,3 +341,26 @@ async fn a_retryable_send_failure_is_retried_unsplit() {
 async fn a_retryable_send_failure_of_one_chunk_is_retried() {
     one_failed_send_is_retried(Some(2)).await;
 }
+
+#[nuclei::test(start_paused = true)]
+async fn stored_remote_keys_notify_listener_once_per_reply() {
+    #[derive(Default)]
+    struct Recorder(std::sync::Mutex<Vec<Vec<EncryptionCid>>>);
+    impl crate::KeyArrivalListener for Recorder {
+        fn keys_arrived(&self, cids: &[EncryptionCid]) {
+            self.0.lock().unwrap().push(cids.to_vec());
+        }
+    }
+
+    let (_, kms, cids) = peer_and_node(3, true).await;
+    let recorder = Arc::new(Recorder::default());
+    kms.set_key_arrival_listener(recorder.clone());
+    let keys = kms
+        .get_keys_each(&RequestContext::anonymous(), &cids)
+        .await
+        .unwrap();
+    assert!(keys.iter().all(Result::is_ok));
+    let calls = recorder.0.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0], cids);
+}

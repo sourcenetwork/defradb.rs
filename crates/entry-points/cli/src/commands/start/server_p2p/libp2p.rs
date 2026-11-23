@@ -8,13 +8,18 @@ use super::P2PSetup;
 use crate::config::Config;
 use crate::error::{Error, Result};
 
-struct KeyArrivalPromoter<S: storage::corekv::Store + 'static>(
+struct KeyArrivalPromoter<S>(
     std::sync::Weak<
         p2p::sync::SyncCoordinator<blockstore::DefraBlockstore<S>, p2p::Libp2pTransport>,
     >,
-);
+)
+where
+    S: storage::corekv::Store + 'static;
 
-impl<S: storage::corekv::Store + 'static> kms::KeyArrivalListener for KeyArrivalPromoter<S> {
+impl<S> kms::KeyArrivalListener for KeyArrivalPromoter<S>
+where
+    S: storage::corekv::Store + 'static,
+{
     fn keys_arrived(&self, _cids: &[kms::EncryptionCid]) {
         if let Some(coordinator) = self.0.upgrade() {
             coordinator.manager().promote_pending_retries();

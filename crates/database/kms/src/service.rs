@@ -12,7 +12,7 @@ use crate::types::{EncryptionCid, KeyScope};
 use crate::wire::{FetchEncryptionKeyReply, FetchEncryptionKeyRequest};
 
 /// Told which encryption keys became usable after a key request. Called after
-/// the answers are returned, on the requesting task, which it must not hold up.
+/// each reply is stored, on the requesting task, which it must not hold up.
 pub trait KeyArrivalListener: Send + Sync {
     fn keys_arrived(&self, cids: &[EncryptionCid]);
 }
@@ -121,7 +121,7 @@ pub trait KmsService: MaybeSendSync {
     /// implementations that don't serve over a transport (e.g. `NoopKms`).
     fn set_local_peer_id(&self, _id: String) {}
 
-    /// Tell `listener` which requested keys became usable. First call wins.
+    /// Tell `listener` which requested keys became usable. Replaces any previous listener.
     fn set_key_arrival_listener(&self, _listener: std::sync::Arc<dyn KeyArrivalListener>) {}
 }
 

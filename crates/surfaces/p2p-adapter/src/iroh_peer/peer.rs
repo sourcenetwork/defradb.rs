@@ -21,10 +21,15 @@ pub type IrohCoordinator<S> = p2p::sync::IrohSyncCoordinator<IrohBlockstore<S>>;
 pub type IrohReplicationStack<S> = db::merge::ReplicationStack<S, IrohBlockstore<S>, IrohTransport>;
 
 #[cfg(feature = "kms")]
-struct KeyArrivalPromoter<S: storage::Store + 'static>(std::sync::Weak<IrohCoordinator<S>>);
+struct KeyArrivalPromoter<S>(std::sync::Weak<IrohCoordinator<S>>)
+where
+    S: Store + 'static;
 
 #[cfg(feature = "kms")]
-impl<S: Store + 'static> kms::KeyArrivalListener for KeyArrivalPromoter<S> {
+impl<S> kms::KeyArrivalListener for KeyArrivalPromoter<S>
+where
+    S: Store + 'static,
+{
     fn keys_arrived(&self, _cids: &[kms::EncryptionCid]) {
         if let Some(coordinator) = self.0.upgrade() {
             coordinator.manager().promote_pending_retries();

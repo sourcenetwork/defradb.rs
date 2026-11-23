@@ -104,11 +104,12 @@ impl PendingDagLease {
             if rotates {
                 pending.remove(&self.root_cid);
             } else if let Some(dag) = pending.get_mut(&self.root_cid) {
-                dag.next_retry_at = if preempted {
+                dag.next_retry_at = if preempted || dag.key_arrival_pending {
                     now
                 } else {
                     dag.next_retry_at.max(now + retry_backoff(dag.dispatches))
                 };
+                dag.key_arrival_pending = false;
                 dag.estimates.observe(sample);
             }
         });
@@ -674,6 +675,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 {
                     return false;
                 }
+                dag.key_arrival_pending = false;
                 if dag.merge_continuation {
                     // A committed yield makes the root ready again; errors or lost claims keep retry pacing.
                     dag.next_retry_at = now + super::super::pending::PENDING_RETRY_BASE;
@@ -739,6 +741,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                         fetch_failures: 0,
                         last_fetch_error: None,
                         next_retry_at: next,
+                        key_arrival_pending: false,
                         dispatches: 0,
                         incomplete_attempts: 0,
                         merge_continuation: true,
@@ -814,12 +817,20 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     pub fn promote_pending_retries(&self) {
         let changed = self.pending_dags.update(|pending| {
             let now = crate::rt::time::Instant::now();
-            let roots: Vec<Cid> = pending.keys().copied().collect();
+            let roots: Vec<Cid> = pending
+                .iter()
+                .filter(|(_, dag)| !dag.key_arrival_pending || dag.next_retry_at > now)
+                .map(|(cid, _)| *cid)
+                .collect();
             let mut changed = false;
             for root_cid in roots {
                 if let Some(dag) = pending.get_mut(&root_cid) {
-                    dag.next_retry_at = dag.next_retry_at.min(now);
-                    changed = true;
+                    changed |= !dag.key_arrival_pending;
+                    dag.key_arrival_pending = true;
+                    if dag.next_retry_at > now {
+                        dag.next_retry_at = now;
+                        changed = true;
+                    }
                 }
             }
             changed
@@ -1277,6 +1288,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 fetch_failures: 0,
                 last_fetch_error: None,
                 next_retry_at: crate::rt::time::Instant::now(),
+                key_arrival_pending: false,
                 dispatches: 0,
                 incomplete_attempts: 0,
                 merge_continuation: false,
