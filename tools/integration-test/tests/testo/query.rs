@@ -305,6 +305,7 @@ mod simple {
     mod with_version;
     mod with_version_cid;
     mod with_version_cid_doc_ids;
+    mod with_version_cid_long_history;
     mod with_version_cid_merged;
     mod with_version_order;
 }
