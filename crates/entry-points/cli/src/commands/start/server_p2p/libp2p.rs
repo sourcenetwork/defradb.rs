@@ -8,25 +8,6 @@ use super::P2PSetup;
 use crate::config::Config;
 use crate::error::{Error, Result};
 
-struct KeyArrivalPromoter<S>(
-    std::sync::Weak<
-        p2p::sync::SyncCoordinator<blockstore::DefraBlockstore<S>, p2p::Libp2pTransport>,
-    >,
-)
-where
-    S: storage::corekv::Store + 'static;
-
-impl<S> kms::KeyArrivalListener for KeyArrivalPromoter<S>
-where
-    S: storage::corekv::Store + 'static,
-{
-    fn keys_arrived(&self, _cids: &[kms::EncryptionCid]) {
-        if let Some(coordinator) = self.0.upgrade() {
-            coordinator.manager().promote_pending_retries();
-        }
-    }
-}
-
 impl Node {
     #[allow(clippy::too_many_arguments)]
     pub(super) async fn setup_libp2p_p2p(
@@ -578,7 +559,9 @@ impl Node {
             txn_broadcaster: Some(txn_broadcaster),
             kms_transport: Some(kms_transport as Arc<dyn kms::KeyTransport>),
             wire_kms: Some(Box::new(move |kms| {
-                kms.set_key_arrival_listener(Arc::new(KeyArrivalPromoter(coordinator_for_kms)));
+                kms.set_key_arrival_listener(defra_p2p_adapter::key_arrival_promoter(
+                    coordinator_for_kms,
+                ));
                 merge_handler_inner_for_kms.set_kms(kms);
             })),
             local_peer_id,

@@ -13,23 +13,6 @@ use p2p::topics::DefraTopic;
 
 pub(crate) type NodeBlockstore<S> = blockstore::DefraBlockstore<S>;
 pub(crate) type NodeMergeHandler<S> = db::merge::AcpMergeHandler<S, NodeBlockstore<S>>;
-pub(crate) type NodeCoordinator<S> =
-    p2p::sync::SyncCoordinator<NodeBlockstore<S>, p2p::Libp2pTransport>;
-
-struct KeyArrivalPromoter<S>(std::sync::Weak<NodeCoordinator<S>>)
-where
-    S: storage::corekv::Store + 'static;
-
-impl<S> kms::KeyArrivalListener for KeyArrivalPromoter<S>
-where
-    S: storage::corekv::Store + 'static,
-{
-    fn keys_arrived(&self, _cids: &[kms::EncryptionCid]) {
-        if let Some(coordinator) = self.0.upgrade() {
-            coordinator.manager().promote_pending_retries();
-        }
-    }
-}
 
 async fn shutdown_libp2p_host(handle: &p2p::P2PHostHandle, host_task: edge::Service) {
     if let Err(error) = handle.shutdown().await {
@@ -473,7 +456,9 @@ where
         kms_transport: kms_transport as Arc<dyn kms::KeyTransport>,
         local_peer_id,
         wire_kms: Some(Box::new(move |kms| {
-            kms.set_key_arrival_listener(Arc::new(KeyArrivalPromoter(coordinator_for_kms)));
+            kms.set_key_arrival_listener(defra_p2p_adapter::key_arrival_promoter(
+                coordinator_for_kms,
+            ));
             merge_handler_inner_for_kms.set_kms(kms);
         })),
         wire_document_acp: Some(Box::new(move |acp, strict| {

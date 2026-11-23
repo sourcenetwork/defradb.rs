@@ -40,6 +40,7 @@ libp2p = [
     "db/p2p",
     "p2p?/libp2p-transport",
     "defra-p2p-adapter/libp2p",
+    "defra-p2p-adapter/kms",
     "defra-p2p-adapter/native",
 ]
 # Opt in only when the application uses the OS keyring backend.
