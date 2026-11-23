@@ -12,13 +12,13 @@
 //! pending node before it looks in regolith, and the pending set is cleared
 //! only after its transaction commits, so a node put is always readable.
 //!
-//! [`ProllyNodes::reclaim`] marks the nodes a caller's live roots name and
-//! sweeps one bounded page of the rest. The delete transaction marks the
-//! roots again, so a root published after the page scan keeps an old node it
-//! names. `t` is a key family, not a [`Namespace`](crate::namespace::Namespace), so the
-//! namespace walks (dump, purge) do not see it either; a purged store has no
-//! `t` key, and a restored one is rebuilt from its heads and reclaimed
-//! against those roots.
+//! [`ProllyNodes::reclaim`] sweeps one bounded page of the nodes no live root
+//! names (`proofs/tla/ProllyNodeReclaim.tla`). Its delete transaction reads
+//! the live roots itself, with validated reads, so a root published before it
+//! commits re-runs it against that root. `t` is a key family, not a
+//! [`Namespace`](crate::namespace::Namespace), so the namespace walks (dump,
+//! purge) do not see it either; a purged store has no `t` key, and a restored
+//! one is rebuilt from its heads and reclaimed against those roots.
 
 use std::sync::Arc;
 
@@ -27,9 +27,10 @@ use prolly::{Hash, Node};
 use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 
 use crate::corekv::{
-    engine_retry_options, transact, IterOptions, RetryAttemptFn, RetryAttemptFuture,
+    engine_retry_options, transact, IterOptions, MaybeSendSync, RetryAttemptFn, RetryAttemptFuture,
     RetryAttemptValue, RetryOptions, RetryTxn, Store,
 };
+use defra_core::thread_bounds::MaybeBoxFuture;
 
 /// The multicodec of raw bytes.
 const RAW: u64 = 0x55;
@@ -51,8 +52,21 @@ pub struct ReclaimPage {
     pub marked: usize,
     /// Unmarked node keys deleted.
     pub deleted: usize,
-    /// Where the next call resumes; `None` at the end of `t`.
+    /// Where the next call resumes; `None` once the scan reached the end of
+    /// `t`.
     pub next_start: Option<Vec<u8>>,
+}
+
+/// What [`LiveRoots::read`] returns: the root of every live tree.
+pub type LiveRootsFuture<'txn> = MaybeBoxFuture<'txn, crate::corekv::Result<Vec<Hash>>>;
+
+/// The roots [`ProllyNodes::reclaim`] keeps, read inside its delete
+/// transaction.
+pub trait LiveRoots: MaybeSendSync {
+    /// Reads every live root through `txn`, with validated reads of the keys
+    /// that hold them, so a root published before the delete commits is a
+    /// conflict and the delete runs again.
+    fn read<'txn>(&'txn self, txn: &'txn mut dyn RetryTxn) -> LiveRootsFuture<'txn>;
 }
 
 /// A [`prolly::Store`] over a regolith store.
@@ -87,17 +101,26 @@ impl<S> ProllyNodes<S>
 where
     S: Store + 'static,
 {
-    /// Marks the nodes `roots` name and sweeps one bounded page of the
-    /// remaining `t` keys. `start` resumes a stopped sweep. The delete
-    /// transaction marks the roots again: a root published after the page
-    /// scan keeps an old node it names, and a racing put either wins the
-    /// commit and is skipped on the re-run, or the delete wins.
-    pub async fn reclaim(
+    /// Sweeps one bounded page of `t`: deletes the page's keys that no root
+    /// `roots` reads names. `start` resumes a stopped sweep.
+    ///
+    /// The roots are read in the delete transaction, so the page deletes
+    /// nothing a root published before its commit names. A node put is blind
+    /// and conflicts with nothing, so a node committed before its root is
+    /// published can be swept in between: a page is safe beside a writer
+    /// only when that writer publishes a root in the transaction that writes
+    /// the root's nodes. A tree edit flushes its nodes before it returns the
+    /// root, so a caller that publishes the root afterwards must not run a
+    /// page between an edit and the publication of its root.
+    pub async fn reclaim<R>(
         store: &S,
-        roots: &[Hash],
+        roots: Arc<R>,
         start: Option<Vec<u8>>,
         limit: usize,
-    ) -> prolly::Result<ReclaimPage> {
+    ) -> prolly::Result<ReclaimPage>
+    where
+        R: LiveRoots + 'static,
+    {
         let (keys, next_start) = node_keys(store, start.as_deref(), limit).await?;
         let scanned = keys.len();
         if keys.is_empty() {
@@ -108,10 +131,7 @@ where
                 next_start,
             });
         }
-        let attempt = Box::new(ReclaimNodes {
-            keys,
-            roots: roots.to_vec(),
-        });
+        let attempt = Box::new(ReclaimNodes { keys, roots });
         let (marked, deleted) = transact::<_, (u64, u64)>(
             store,
             engine_retry_options(crate::corekv::DEFAULT_MAX_TXN_RETRIES),
@@ -168,6 +188,7 @@ where
     let mut page_end = None;
     while keys.len() < limit {
         let Some(pair) = scan.next().await.map_err(store_error)? else {
+            page_end = None;
             break;
         };
         if node_hash(&pair.key).is_some() {
@@ -184,10 +205,10 @@ where
 
 async fn mark_roots(
     txn: &mut dyn RetryTxn,
-    roots: &[Hash],
+    roots: Vec<Hash>,
 ) -> crate::corekv::Result<RapidHashSet<Hash>> {
     let mut marked = RapidHashSet::new();
-    let mut pending = roots.to_vec();
+    let mut pending = roots;
     while let Some(hash) = pending.pop() {
         if !marked.insert(hash) {
             continue;
@@ -201,27 +222,30 @@ async fn mark_roots(
             continue;
         }
         for item in node.items {
-            let child = Cid::try_from(item.value.as_slice())
-                .map_err(|error| crate::corekv::Error::Other(error.to_string()))?;
-            pending.push(Hash(child.hash().digest().try_into().map_err(|_| {
-                crate::corekv::Error::Other("a prolly child CID digest is not 32 bytes".into())
-            })?));
+            pending.push(
+                Hash::from_slice(&item.value)
+                    .map_err(|error| crate::corekv::Error::Other(error.to_string()))?,
+            );
         }
     }
     Ok(marked)
 }
 
-/// One attempt at one page. It marks every root again, so a candidate named
-/// by a root published since the scan is not deleted.
-struct ReclaimNodes {
+/// One attempt at one page. It reads the live roots in its own transaction,
+/// so a run that lost to a root's publication marks again from that root.
+struct ReclaimNodes<R> {
     keys: Vec<Vec<u8>>,
-    roots: Vec<Hash>,
+    roots: Arc<R>,
 }
 
-impl RetryAttemptFn for ReclaimNodes {
+impl<R> RetryAttemptFn for ReclaimNodes<R>
+where
+    R: LiveRoots,
+{
     fn run<'a>(&'a mut self, txn: &'a mut dyn RetryTxn) -> RetryAttemptFuture<'a> {
         Box::pin(async move {
-            let marked = mark_roots(txn, &self.roots).await?;
+            let roots = self.roots.read(txn).await?;
+            let marked = mark_roots(txn, roots).await?;
             let mut deleted = 0;
             for key in &self.keys {
                 let Some(hash) = node_hash(key) else {

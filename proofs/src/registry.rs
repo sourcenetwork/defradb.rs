@@ -3815,24 +3815,27 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         // A sweep's candidates are one bounded page. The delete transaction
-        // marks the caller's roots again, so a root published after the page
-        // scan keeps an old node it names. The model trusts that the caller
-        // supplies every live root.
+        // reads the live roots itself, validated, so a root published before
+        // its commit re-runs it. The model trusts that `LiveRoots::read`
+        // returns every live root, and that the caller storing the roots
+        // publishes one in the transaction that writes its nodes: nothing in
+        // the workspace publishes a root yet.
         family: "Prolly tree node store and cache",
-        name: "SweepKeepsLiveRoots: a page sweep re-marks live roots and deletes only unmarked nodes",
+        name: "SweepKeepsLiveRoots: a page sweep racing a root's publication never deletes a node the live root names",
         axis: Tla,
-        anchor: "crates/engine/storage/src/stores/prolly_nodes.rs ProllyNodes::reclaim, ReclaimNodes::run, mark_roots",
-        model_ref: "MC_ProllyNodeReclaim_Green.cfg (GREEN) / MC_ProllyNodeReclaim_Red_NoRecheck.cfg (RED)",
+        anchor: "crates/engine/storage/src/stores/prolly_nodes.rs ProllyNodes::reclaim, node_keys, ReclaimNodes::run, mark_roots, LiveRoots::read",
+        model_ref: "MC_ProllyNodeReclaim_Green.cfg (GREEN) / MC_ProllyNodeReclaim_{Red_FixedRoots,Red_NoValidation,Red_PutAlone,Red_DeleteMarked}.cfg (RED)",
         tiers: &[Boundary],
         bound_by: "",
     },
     Property {
-        // The Lean theorem states the data rule the delete applies: its
-        // deleted list is exactly the stored nodes the live marks do not name.
+        // The data rule the delete applies: a node is deleted exactly when
+        // it is on the page and the live marks do not name it, so a marked
+        // node never is.
         family: "Prolly tree node store and cache",
-        name: "reclaimDeletesOnlyUnmarked",
+        name: "reclaimDeletesOnlyUnmarked / reclaimKeepsMarked",
         axis: Lean,
-        anchor: "crates/engine/storage/src/stores/prolly_nodes.rs ProllyNodes::reclaim, ReclaimNodes::run, mark_roots",
+        anchor: "crates/engine/storage/src/stores/prolly_nodes.rs ReclaimNodes::run, mark_roots",
         model_ref: "ProllyTree (lake build)",
         tiers: &[Boundary],
         bound_by: "",

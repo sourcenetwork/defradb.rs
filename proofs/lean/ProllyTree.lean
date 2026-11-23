@@ -2069,20 +2069,29 @@ theorem decode_refuses_trailing (l : Nat) (is : List (List Nat × List Nat)) (x 
 /-!
 ## Reclamation deletes only unmarked nodes
 
-The story, in plain words. A sweep has a set of node names and a set of live
-marks (`ProllyNodes::reclaim` in
-`crates/engine/storage/src/stores/prolly_nodes.rs`). The sweep's delete list is
-the names the marks do not contain. The theorem states exactly that rule, so a
-marked live node can never be on it.
+The story, in plain words. A sweep has a page of stored node names and the set
+of names its live roots mark (`ReclaimNodes::run` and `mark_roots` in
+`crates/engine/storage/src/stores/prolly_nodes.rs`). It deletes the names on
+the page that the marks do not contain. So a marked node is never deleted, and
+every unmarked node on the page is.
 -/
 
--- The node names the live marks do not name.
+-- The node names on the page that the live marks do not name.
 def reclaimUnmarked (marked : List Nat) (stored : List Nat) : List Nat :=
+  -- Keep a stored name only when the marks do not contain it.
   stored.filter (fun node => !(marked.contains node))
 
-/-- A sweep deletes exactly the stored nodes its live marks do not name. -/
-theorem reclaimDeletesOnlyUnmarked (marked stored : List Nat) :
-    reclaimUnmarked marked stored =
-      stored.filter (fun node => !(marked.contains node)) := rfl
+/-- A sweep deletes a node exactly when it is on the page and not marked. -/
+theorem reclaimDeletesOnlyUnmarked (marked stored : List Nat) (node : Nat) :
+    node ∈ reclaimUnmarked marked stored ↔ node ∈ stored ∧ node ∉ marked := by
+  -- Being kept by the filter is being stored and passing the test.
+  simp [reclaimUnmarked]
+
+/-- A sweep never deletes a node its live roots mark. -/
+theorem reclaimKeepsMarked (marked stored : List Nat) (node : Nat)
+    (live : node ∈ marked) : node ∉ reclaimUnmarked marked stored := by
+  -- Were it deleted, it would be unmarked, and it is marked.
+  intro deleted
+  exact ((reclaimDeletesOnlyUnmarked marked stored node).mp deleted).2 live
 
 end ProllyTree
