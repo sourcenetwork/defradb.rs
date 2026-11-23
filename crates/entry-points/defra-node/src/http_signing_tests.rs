@@ -100,7 +100,7 @@ fn http_client_signs_the_complete_agent_create_graph() {
             let txn = if explicit {
                 let response: Value = http.post(format!("http://{address}/api/v0/tx"))
                     .bearer_auth(&token).send().await.unwrap().json().await.unwrap();
-                Some(response["id"].as_u64().unwrap().to_string())
+                Some(response["id"].as_str().unwrap().to_string())
             } else { None };
             let response = defra_http::client_signed_create::execute(
                 &format!("ws://{address}/api/v0/graphql/client-sign"), &authorization, request, txn.as_deref(), &mut graph,
@@ -289,7 +289,7 @@ resources:
                 parent_id,
                 node_did,
                 token,
-                txn["id"].as_u64().unwrap().to_string(),
+                txn["id"].as_str().unwrap().to_string(),
             )
         })
         .await
@@ -476,7 +476,7 @@ fn http_client_signs_a_single_document_update() {
         let mut transactions = Vec::new();
         for _ in 0..2 {
             let value: Value = http.post(format!("http://{address}/api/v0/tx")).bearer_auth(&token).send().await.unwrap().json().await.unwrap();
-            transactions.push(value["id"].as_u64().unwrap().to_string());
+            transactions.push(value["id"].as_str().unwrap().to_string());
         }
         for (txn, patch) in transactions.iter().zip([json!({"name":"disjoint"}), json!({"extra":"first"})]) {
             let mut graph = ClientUpdateSignatures::from_input(&storage::Crdts::default(), &schema, &doc_id, &patch, &latest, &signing).unwrap();
@@ -499,7 +499,7 @@ fn http_client_signs_a_single_document_update() {
         let mut transactions = Vec::new();
         for _ in 0..2 {
             let value: Value = http.post(format!("http://{address}/api/v0/tx")).bearer_auth(&token).send().await.unwrap().json().await.unwrap();
-            transactions.push(value["id"].as_u64().unwrap().to_string());
+            transactions.push(value["id"].as_str().unwrap().to_string());
         }
         for (txn, patch) in transactions.iter().zip([json!({"name":"winner"}), json!({"name":"loser"})]) {
             let mut graph = ClientUpdateSignatures::from_input(&storage::Crdts::default(), &schema, &doc_id, &patch, &merged, &signing).unwrap();
@@ -525,7 +525,7 @@ fn http_client_signs_a_single_document_update() {
         let mut transactions = Vec::new();
         for _ in 0..2 {
             let value: Value = http.post(format!("http://{address}/api/v0/tx")).bearer_auth(&token).send().await.unwrap().json().await.unwrap();
-            transactions.push(value["id"].as_u64().unwrap().to_string());
+            transactions.push(value["id"].as_str().unwrap().to_string());
         }
         let conditional_patch = json!({"extra":"conditional"});
         let mut conditional = ClientUpdateSignatures::from_input(&storage::Crdts::default(), &schema, &doc_id, &conditional_patch, &latest, &signing).unwrap();
@@ -779,13 +779,13 @@ resources:
         assert!(denied.is_err() || denied.unwrap().has_errors());
         let new_tx = |token: &str| http.post(format!("http://{address}/api/v0/tx")).bearer_auth(token);
         let other_tx: Value = new_tx(&other_token).send().await.unwrap().json().await.unwrap();
-        let other_tx = other_tx["id"].as_u64().unwrap().to_string();
+        let other_tx = other_tx["id"].as_str().unwrap().to_string();
         let mut mismatch = make_graph(&owner_signing);
         let result = defra_http::client_signed_delete::execute(&ws, &auth(&owner_token), delete(), Some(&other_tx), &mut mismatch).await;
         assert!(result.is_err() || result.unwrap().has_errors());
         http.delete(format!("http://{address}/api/v0/tx/{other_tx}")).bearer_auth(&other_token).send().await.unwrap().error_for_status().unwrap();
         let owner_tx: Value = new_tx(&owner_token).send().await.unwrap().json().await.unwrap();
-        let owner_tx = owner_tx["id"].as_u64().unwrap().to_string();
+        let owner_tx = owner_tx["id"].as_str().unwrap().to_string();
         let mut rolled_back = make_graph(&owner_signing);
         let deleted = defra_http::client_signed_delete::execute(&ws, &auth(&owner_token), delete(), Some(&owner_tx), &mut rolled_back).await.unwrap();
         assert!(!deleted.has_errors());
@@ -863,7 +863,7 @@ fn http_client_signs_large_document_in_an_explicit_transaction() {
         let http = net::http::Client::builder(edge::testing::edge()).no_proxy().build().unwrap();
         let txn: Value = http.post(format!("http://{address}/api/v0/tx")).bearer_auth(&token)
             .send().await.unwrap().json().await.unwrap();
-        let txn = txn["id"].as_u64().unwrap().to_string();
+        let txn = txn["id"].as_str().unwrap().to_string();
         let mut doc = Document::new(schema);
         let text = "session history ✓".repeat(120_000);
         assert!(text.len() > 1024 * 1024);
@@ -914,7 +914,7 @@ fn incomplete_fragmented_signing_request_can_be_discarded_without_a_write() {
         let http = net::http::Client::builder(edge::testing::edge()).no_proxy().build().unwrap();
         let txn: Value = http.post(format!("http://{address}/api/v0/tx")).bearer_auth(&token)
             .send().await.unwrap().json().await.unwrap();
-        let txn = txn["id"].as_u64().unwrap().to_string();
+        let txn = txn["id"].as_str().unwrap().to_string();
         let mut handshake = format!("ws://{address}/api/v0/graphql/client-sign").into_client_request().unwrap();
         handshake.headers_mut().insert("authorization", format!("Bearer {token}").parse().unwrap());
         let stream = net::connect(handshake.uri()).await.unwrap();
