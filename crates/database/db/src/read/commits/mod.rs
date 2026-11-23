@@ -21,8 +21,8 @@ const TRAVERSE_YIELD_BLOCKS: u32 = 256;
 
 /// A commit walked with at least this much depth left was walked to the
 /// bottom of its history, since no history is 2^62 commits deep: walking it
-/// again with more depth cannot reach anything new. A negative `depth` casts
-/// to at least 2^63, so every commit its walk reaches has at least this left.
+/// again with more depth cannot reach anything new. `depth: -1` parses to
+/// `u64::MAX`, so every commit its walk reaches has at least this left.
 const UNLIMITED_DEPTH: u64 = 1 << 62;
 
 /// Options for commits queries
@@ -317,6 +317,8 @@ impl<S: Store> CommitsFetcher<S> {
     /// shorter path reaches is lost; otherwise it is skipped. A commit already
     /// walked with [`UNLIMITED_DEPTH`] or more is always skipped, so an
     /// unlimited walk reads each block once (`proofs/lean/CommitsDepthCast.lean`).
+    /// A block that does not load is skipped with what lies below it; the
+    /// walk reads one snapshot, so it would not load on a later visit either.
     async fn traverse_depth(
         &self,
         txn: &DbTxn<S>,

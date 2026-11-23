@@ -1,19 +1,26 @@
 /-!
-# CommitsDepthCast: a negative `_commits` depth, and the walk below a commit
+# CommitsDepthCast: reading `_commits` depth, and the walk below a commit
 
 The story, in plain words. `_commits(cid: C, depth: N)` lists commit `C`
 and the commits below it, following each commit's heads (its parents in the
 document's history), down to `N - 1` heads below `C`.
 
 Who acts: the parser, which reads `depth` (an Int, so possibly negative)
-into an unsigned 64-bit number, and the walk (`CommitsFetcher::traverse_depth`),
-which visits the commits below `C` with a stack.
+into an unsigned 64-bit number or refuses it, and the walk
+(`CommitsFetcher::traverse_depth`), which visits the commits below `C` with
+a stack.
 
 What can happen:
-- `depth` is negative. Go casts it to an unsigned number, so it becomes a
-  huge depth: no limit. The parser does the same cast (`as u64`).
+- `depth` is negative. `-1` means no limit: the parser reads it as
+  `u64::MAX`. Any other negative depth is refused with an error. (Go casts
+  every negative depth to an unsigned number, so in Go each one is no limit;
+  defradb.rs keeps only `-1`.)
 - the history is merged: one commit is reached through several heads, along
   paths of different lengths.
+- a block does not load. The walk skips it and what lies below it. It reads
+  one snapshot, so the same block fails on every later visit too; the model
+  below has every block load, and says nothing about a history with a
+  missing block.
 
 What the walk does: it pushes a commit's heads in order and pops the last one
 first. When it pops a commit it looks at the most remaining depth that commit
@@ -21,19 +28,24 @@ was already walked with: never walked, it lists the commit and walks its
 heads; walked with less depth, it walks its heads again without listing it;
 otherwise it skips it. One guard: a commit already walked with at least
 `UNLIMITED_DEPTH` (2^62) left reached the bottom of its history, so it is
-always skipped; a negative depth leaves at least that everywhere
-(`negative_clears_cap`).
+always skipped; `depth: -1` leaves at least that everywhere
+(`minus_one_clears_cap`).
 
 What must never happen:
-- a negative depth limiting the walk (`negative_is_huge`, `walk_unlimited`);
+- `-1` limiting the walk (`minus_one_is_unlimited`, `walk_unlimited`);
+- another negative depth being read as a depth (`other_negative_refused`),
+  or a non-negative one changing (`nonnegative_is_itself`);
 - a commit listed twice (`walk_nodup`);
 - a commit that some path reaches within the depth left out (`walk_mem`),
   which a plain "seen" set would do when the long path is walked first
   (`seen_only_loses_a_commit`);
-- an order other than Go's: the commit, then everything reached through its
-  last head, then through each earlier head, skipping what is already listed
-  (`walk_eq_fresh`, `go_scan_merged`, `go_scan_diamond`). Deciding at push
-  time instead of pop time lists the heads first (`push_time_differs`);
+- an order other than the path walk with the last head first: the commit,
+  then everything reached through its last head, then through each earlier
+  head, skipping what is already listed (`walk_eq_fresh`). For an unlimited
+  walk that is Go's DAG-scan order (`go_scan_merged`, `go_scan_diamond`);
+  `goScan` has no depth bound, so it says nothing about Go's order for a
+  bounded walk. Deciding at push time instead of pop time lists the heads
+  first (`push_time_differs`);
 - an unlimited walk loading a block more than once, which it does without
   the guard each time a short branch reaches a merge the long branch already
   walked (`ladder_loads_once`; RED `no_guard_loads_again`).
@@ -46,39 +58,44 @@ Rust anchors: `parse_field_to_select` in
 
 namespace CommitsDepthCast
 
-/-! ## 1. The cast of a negative depth -/
+/-! ## 1. Reading a depth -/
 
--- 2^64, the number of values of a u64.
-abbrev two64 : Int := 18446744073709551616
+-- `u64::MAX`, the depth `-1` is read as.
+abbrev u64max : Nat := 18446744073709551615
 
--- Rust's `v as u64` for an i64 `v`: the value modulo 2^64, as a natural number.
-def asU64 (v : Int) : Nat := (v % two64).toNat
-
--- Promise: every negative i64 casts to at least 2^63, a depth far beyond any history.
-theorem negative_is_huge (v : Int) (lo : -9223372036854775808 ≤ v) (neg : v < 0) :
-    9223372036854775808 ≤ asU64 v := by
-  unfold asU64 two64   -- open the cast
-  omega                -- v % 2^64 = v + 2^64 here, so at least 2^63
-
--- Promise: a non-negative i64 casts to itself, so positive depths keep their meaning.
-theorem nonnegative_is_itself (v : Int) (nonneg : 0 ≤ v) (hi : v < 9223372036854775808) :
-    asU64 v = v.toNat := by
-  unfold asU64 two64   -- open the cast
-  omega                -- below 2^64 the modulo changes nothing
+-- The parser's reading of an Int depth: `-1` is `u64::MAX`, any other
+-- negative depth is refused (`none`, the GraphQL error), and a non-negative
+-- one is itself.
+def readDepth (v : Int) : Option Nat :=
+  if v = -1 then some u64max          -- -1: no limit
+  else if v < 0 then none             -- -2 and below: refused
+  else some v.toNat                   -- 0 and up: as given
 
 -- Promise: `depth: -1` is `u64::MAX`, the value the parser test checks.
-theorem minus_one_is_max : asU64 (-1) = 18446744073709551615 := by
-  unfold asU64 two64   -- open the cast
-  omega                -- -1 % 2^64 = 2^64 - 1
+theorem minus_one_is_unlimited : readDepth (-1) = some u64max := by
+  simp [readDepth]                    -- the first branch
 
--- Promise: below a negative depth's start (`asU64 d - 1` left), every commit
--- fewer than 2^62 heads down still has at least `UNLIMITED_DEPTH` (2^62)
--- left, so the walk's guard holds for all of them.
-theorem negative_clears_cap (v : Int) (k : Nat) (lo : -9223372036854775808 ≤ v) (neg : v < 0)
-    (near : k < 4611686018427387904) :
-    4611686018427387904 ≤ asU64 v - 1 - k := by
-  have := negative_is_huge v lo neg   -- the start is at least 2^63 - 1
-  omega                               -- 2^63 - 1 - k is at least 2^62
+-- Promise: every negative depth other than `-1` is refused, down to the
+-- least i64 (the parser test checks -2, -7 and `i64::MIN`).
+theorem other_negative_refused (v : Int) (neg : v < 0) (ne : v ≠ -1) :
+    readDepth v = none := by
+  simp [readDepth, ne, neg]           -- not -1, and negative: refused
+
+-- Promise: a non-negative depth is read as itself, so positive depths keep
+-- their meaning.
+theorem nonnegative_is_itself (v : Int) (nonneg : 0 ≤ v) :
+    readDepth v = some v.toNat := by
+  have h1 : v ≠ -1 := by omega        -- a non-negative depth is not -1
+  have h2 : ¬ v < 0 := by omega       -- nor negative
+  simp [readDepth, h1, h2]            -- so the last branch
+
+-- Promise: below `-1`'s start (`u64::MAX - 1` left), every commit fewer than
+-- 2^62 heads down still has at least `UNLIMITED_DEPTH` (2^62) left, so the
+-- walk's guard holds for all of them.
+theorem minus_one_clears_cap (k : Nat) (near : k < 4611686018427387904) :
+    4611686018427387904 ≤ u64max - 1 - k := by
+  unfold u64max                       -- open u64::MAX
+  omega                               -- 2^64 - 2 - k is at least 2^62
 
 /-! ## 2. The walk below a commit -/
 
@@ -537,17 +554,17 @@ theorem walk_mem (v r : Nat) (x : Nat) :
 theorem walk_nodup (v r : Nat) : (fresh (fun _ => false) (pathLast heads v r)).Nodup :=
   fresh_nodup _ _                                                -- fresh never repeats
 
-/-! ## 3. A negative depth is unlimited -/
+/-! ## 3. `depth: -1` is unlimited -/
 
-
--- Promise: `_commits(cid: v, depth: d)` with a negative `d` walks with
--- `asU64 d - 1` left below `v`; on any history below 2^63 commits high, that
--- is the walk with no limit (the one with exactly `v`'s height left).
-theorem walk_unlimited (dag : ∀ v h, h ∈ heads v → rank h < rank v) (v : Nat) (d : Int)
-    (lo : -9223372036854775808 ≤ d) (neg : d < 0) (height : rank v < 9223372036854775808) :
-    pathLast heads v (asU64 d - 1) = pathLast heads v (rank v) := by
-  have := negative_is_huge d lo neg              -- the depth is at least 2^63
-  exact pathLast_stable heads rank dag _ _ v (by omega) (Nat.le_refl _)  -- beyond v's height
+-- Promise: `_commits(cid: v, depth: -1)` walks with `u64::MAX - 1` left
+-- below `v`; on any history below 2^63 commits high, that is the walk with
+-- no limit (the one with exactly `v`'s height left).
+theorem walk_unlimited (dag : ∀ v h, h ∈ heads v → rank h < rank v) (v : Nat) (n : Nat)
+    (read : readDepth (-1) = some n) (height : rank v < 9223372036854775808) :
+    pathLast heads v (n - 1) = pathLast heads v (rank v) := by
+  rw [minus_one_is_unlimited] at read            -- -1 is read as u64::MAX
+  cases read                                     -- so n is u64::MAX
+  exact pathLast_stable heads rank dag _ _ v (by unfold u64max; omega) (Nat.le_refl _)  -- beyond v's height
 
 end Walk
 
@@ -598,9 +615,9 @@ theorem go_scan_merged : goScan merged 20 [6] (fun _ => false) = [6, 5, 3, 0, 4,
   decide                                                         -- run it
 
 -- Promise: the stack loop with pop-time marking lists the same at the depth
--- a negative `depth` gives.
+-- `depth: -1` gives (`u64::MAX - 1` left below the start).
 theorem walk_merged :
-    (run merged unlimited 20 [(6, 9223372036854775807)] (fun _ => none)).map Prod.fst =
+    (run merged unlimited 20 [(6, 18446744073709551614)] (fun _ => none)).map Prod.fst =
       some [6, 5, 3, 0, 4, 2] := by
   decide                                                         -- run it
 
@@ -682,12 +699,12 @@ def ladder : Nat → List Nat
   | 4 => [3] | 3 => [2] | 2 => [0]                               -- its long branch
   | _ => []                                                      -- the create, 0
 
--- Promise: at a negative depth the ladder's 16 commits are listed, each once,
--- and each block is loaded once. The walk starts with 2^63 - 1 left, the
--- least a negative depth gives (`depth: -2^63`).
+-- Promise: at `depth: -1` the ladder's 16 commits are listed, each once,
+-- and each block is loaded once. The walk starts with `u64::MAX - 1` left,
+-- what `-1` gives.
 theorem ladder_loads_once :
-    (run ladder unlimited 100 [(15, 9223372036854775807)] (fun _ => none)).map (·.1.length) = some 16 ∧
-      loads ladder unlimited 100 [(15, 9223372036854775807)] (fun _ => none) = 16 := by
+    (run ladder unlimited 100 [(15, 18446744073709551614)] (fun _ => none)).map (·.1.length) = some 16 ∧
+      loads ladder unlimited 100 [(15, 18446744073709551614)] (fun _ => none) = 16 := by
   decide                                                         -- run both
 
 -- Promise (RED): without the guard (a cap above every depth), the walk lists
@@ -695,9 +712,9 @@ theorem ladder_loads_once :
 -- merge with more depth left: 34 loads for 16 commits, growing with the
 -- square of the merges.
 theorem no_guard_loads_again :
-    (run ladder 18446744073709551616 100 [(15, 9223372036854775807)] (fun _ => none)).map Prod.fst =
-        (run ladder unlimited 100 [(15, 9223372036854775807)] (fun _ => none)).map Prod.fst ∧
-      loads ladder 18446744073709551616 100 [(15, 9223372036854775807)] (fun _ => none) = 34 := by
+    (run ladder 18446744073709551616 100 [(15, 18446744073709551614)] (fun _ => none)).map Prod.fst =
+        (run ladder unlimited 100 [(15, 18446744073709551614)] (fun _ => none)).map Prod.fst ∧
+      loads ladder 18446744073709551616 100 [(15, 18446744073709551614)] (fun _ => none) = 34 := by
   decide                                                         -- run both
 
 end CommitsDepthCast

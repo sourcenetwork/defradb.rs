@@ -1,5 +1,5 @@
-//! A negative `depth` on `_commits` is unlimited, as Go's `uint64(int32)` cast
-//! makes it, and a walk from a merge commit lists its branches last head
+//! `depth: -1` on `_commits` is unlimited and any other negative depth is
+//! refused, and a walk from a merge commit lists its branches last head
 //! first, as Go's DAG scan does (`go.query.commits.depth`).
 
 use integration_test::actions::{
@@ -9,6 +9,7 @@ use integration_test::actions::{
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
+use integration_test::ClientType;
 use serde_json::json;
 use testo::action::ActionInstance;
 
@@ -98,12 +99,28 @@ fn query_commits_with_depth_minus_one_returns_all_commits() {
     .execute();
 }
 
+/// Go casts every negative depth to a huge one; defradb.rs keeps only `-1`
+/// as unlimited and refuses the rest, so the Go client is left out.
 #[test]
 #[mantra_macros::req_test("go.query.commits.depth")]
-fn query_commits_with_depth_minus_seven_returns_all_commits() {
+fn query_commits_with_depth_minus_two_returns_error() {
+    let mut actions = doc_with_two_updates();
+    actions.push(
+        Request {
+            request: Text::concat([
+                Text::from(r#"query { _commits(docID: ""#),
+                Text::reference("doc0_0"),
+                Text::from(r#"", depth: -2) { cid } }"#),
+            ]),
+            expected_error: Some("depth must be non-negative, or -1 for no limit".into()),
+            ..Default::default()
+        }
+        .into(),
+    );
     TestCase {
         id: integration_test::scenario_id!(),
-        actions: same_as_no_depth("-7"),
+        actions,
+        client_types: Some(&[ClientType::InProcess, ClientType::RustHttp, ClientType::Cli]),
         ..Default::default()
     }
     .execute();

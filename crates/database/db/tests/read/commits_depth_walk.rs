@@ -255,18 +255,15 @@ fn commits_depth_walk_reads_each_block_once_at_unlimited_depth() {
     let (short_first, short_first_tops) = ladder(k, 10, false);
     let blocks = long_first.blocks.len();
 
-    // `depth: -1` casts to u64::MAX, and `depth: -2^63`, the least any
-    // negative depth casts to, to 2^63.
-    for depth in [u64::MAX, 1 << 63] {
-        let (rows, long_first_reads) = long_first.walk_counted(long_first_tops[k], depth);
-        let (_, short_first_reads) = short_first.walk_counted(short_first_tops[k], depth);
+    // `depth: -1` parses to u64::MAX.
+    let (rows, long_first_reads) = long_first.walk_counted(long_first_tops[k], u64::MAX);
+    let (_, short_first_reads) = short_first.walk_counted(short_first_tops[k], u64::MAX);
 
-        let unique: rapidhash::RapidHashSet<Cid> = rows.iter().copied().collect();
-        assert_eq!(rows.len(), blocks);
-        assert_eq!(unique.len(), blocks);
-        assert_eq!(
-            long_first_reads, short_first_reads,
-            "at depth {depth}, walking each long branch first reads no block more often"
-        );
-    }
+    let unique: rapidhash::RapidHashSet<Cid> = rows.iter().copied().collect();
+    assert_eq!(rows.len(), blocks);
+    assert_eq!(unique.len(), blocks);
+    assert_eq!(
+        long_first_reads, short_first_reads,
+        "walking each long branch first reads no block more often"
+    );
 }

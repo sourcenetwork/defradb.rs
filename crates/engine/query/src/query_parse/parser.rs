@@ -878,11 +878,19 @@ pub(super) fn parse_field_to_select(
             "depth" => {
                 // depth is only valid for _commits queries
                 if collection_name == "_commits" {
-                    // null means "no limit" (None), not an error. A negative
-                    // depth wraps to a huge one, as Go's `uint64(int32)` does,
-                    // so it is no limit either.
+                    // null means "no limit" (None), not an error. -1 is no
+                    // limit too; Go casts every negative depth to a huge one,
+                    // defradb.rs refuses the others.
                     if let Some(depth_val) = parse_optional_int_value(arg_value, variables)? {
-                        select.depth = Some(depth_val as u64);
+                        select.depth = Some(match depth_val {
+                            -1 => u64::MAX,
+                            ..=-2 => {
+                                return Err(QueryError::parse(
+                                    "depth must be non-negative, or -1 for no limit",
+                                ));
+                            }
+                            depth => depth as u64,
+                        });
                     }
                     // else depth remains None (unlimited)
                 } else {
