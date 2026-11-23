@@ -630,15 +630,9 @@ where
                 )
             })
             .collect();
-        for (prepared, fact) in facts.iter().enumerate() {
-            if let Err(error) = self.recovery_prepare(fact).await {
-                // Nothing was sent, so no intent may stay behind.
-                for fact in &facts[..prepared] {
-                    self.recovery_answered(fact, false).await;
-                }
-                return Err(crate::RegistrationFailure::new(0, error));
-            }
-        }
+        self.recovery_prepare(&facts)
+            .await
+            .map_err(|error| crate::RegistrationFailure::new(0, error))?;
         let sent = self.provider.register_objects(identity, objects).await;
         // The objects before a failure are registered and the ones after it
         // were not tried. The one that failed is not registered either,
@@ -650,11 +644,13 @@ where
                 matches!(failure.error, Error::ProviderUnavailable(_)).then_some(failure.index),
             ),
         };
-        for (index, fact) in facts.iter().enumerate() {
-            if unanswered != Some(index) {
-                self.recovery_answered(fact, index < registered).await;
-            }
-        }
+        let answers: Vec<(&RecoveryFact, bool)> = facts
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| unanswered != Some(*index))
+            .map(|(index, fact)| (fact, index < registered))
+            .collect();
+        self.recovery_answered(&answers).await;
         sent
     }
 

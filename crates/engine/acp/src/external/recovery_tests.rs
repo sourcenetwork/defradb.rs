@@ -483,13 +483,13 @@ fn an_unanswered_delete_is_owed_and_an_unanswered_grant_is_only_reported() {
     workers::block_on(async {
         let (store, gate) = gate();
         confirm(&store, &[owned("bae-1"), grant("bae-1", "reader", true)]).await;
-        gate.recovery_prepare(&grant("bae-1", "updater", true))
+        gate.recovery_prepare(&[grant("bae-1", "updater", true)])
             .await
             .unwrap();
-        gate.recovery_prepare(&grant("bae-1", "reader", true))
+        gate.recovery_prepare(&[grant("bae-1", "reader", true)])
             .await
             .unwrap();
-        gate.recovery_prepare(&grant("bae-1", "reader", false))
+        gate.recovery_prepare(&[grant("bae-1", "reader", false)])
             .await
             .unwrap();
 
@@ -509,7 +509,7 @@ fn an_unanswered_registration_is_reported_with_nothing_owed_on_its_object() {
     workers::block_on(async {
         let (store, gate) = gate();
         confirm(&store, &[grant("bae-1", "reader", true)]).await;
-        gate.recovery_prepare(&owned("bae-1")).await.unwrap();
+        gate.recovery_prepare(&[owned("bae-1")]).await.unwrap();
 
         let (effects, unrestored, _) = pass(&gate, &Deployment::empty()).await;
         assert!(effects.is_empty(), "{effects:?}");

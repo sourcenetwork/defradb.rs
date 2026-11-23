@@ -336,43 +336,43 @@ where
         )
     }
 
-    /// Record, in a transaction of its own, that `fact` is about to be asked
-    /// of the provider outside any transaction.
-    pub(super) async fn recovery_prepare(&self, fact: &RecoveryFact) -> Result<()> {
+    /// Record, in one transaction of their own, that `facts` are about to be
+    /// asked of the provider outside any transaction: all of them or none.
+    pub(super) async fn recovery_prepare(&self, facts: &[RecoveryFact]) -> Result<()> {
         let txn = self.begin(false).await?;
-        let view = txn.acpstore();
-        RecoveryLedger::new(view.clone()).prepare(fact).await?;
-        drop(view);
+        let ledger = RecoveryLedger::new(txn.acpstore());
+        for fact in facts {
+            ledger.prepare(fact).await?;
+        }
+        drop(ledger);
         txn.commit()
             .await
             .map_err(|error| Error::Storage(error.to_string()))
     }
 
-    /// Record the provider's answer to a `fact` prepared before it was
-    /// asked. The provider has answered whatever this write comes to, so a
-    /// failure is logged and the answer stands: the intent it leaves is read
-    /// by a pass as unanswered.
-    pub(super) async fn recovery_answered(&self, fact: &RecoveryFact, applied: bool) {
-        if let Err(error) = self.recovery_settle(fact, applied).await {
+    /// Record, in one transaction, what the provider answered for facts
+    /// prepared before it was asked, each with whether it applied. The
+    /// provider has answered whatever this write comes to, so a failure is
+    /// logged and the answers stand: the intents it leaves are read by a pass
+    /// as unanswered.
+    pub(super) async fn recovery_answered(&self, answers: &[(&RecoveryFact, bool)]) {
+        if let Err(error) = self.recovery_settle(answers).await {
             tracing::warn!(
                 target: "acp::audit",
                 %error,
-                policy_id = %fact.policy_id,
-                resource = %fact.resource_name,
-                object = %fact.object_id,
-                applied,
+                answers = answers.len(),
                 "Could not record what the ACP provider answered for a recovery pass"
             );
         }
     }
 
-    async fn recovery_settle(&self, fact: &RecoveryFact, applied: bool) -> Result<()> {
+    async fn recovery_settle(&self, answers: &[(&RecoveryFact, bool)]) -> Result<()> {
         let txn = self.begin(false).await?;
-        let view = txn.acpstore();
-        RecoveryLedger::new(view.clone())
-            .settle(fact, applied)
-            .await?;
-        drop(view);
+        let ledger = RecoveryLedger::new(txn.acpstore());
+        for (fact, applied) in answers {
+            ledger.settle(fact, *applied).await?;
+        }
+        drop(ledger);
         txn.commit()
             .await
             .map_err(|error| Error::Storage(error.to_string()))
@@ -385,12 +385,12 @@ where
     where
         F: std::future::Future<Output = Result<T>>,
     {
-        self.recovery_prepare(&fact).await?;
+        self.recovery_prepare(std::slice::from_ref(&fact)).await?;
         let answer = ask.await;
         match &answer {
-            Ok(_) => self.recovery_answered(&fact, true).await,
+            Ok(_) => self.recovery_answered(&[(&fact, true)]).await,
             Err(Error::ProviderUnavailable(_)) => {}
-            Err(_) => self.recovery_answered(&fact, false).await,
+            Err(_) => self.recovery_answered(&[(&fact, false)]).await,
         }
         answer
     }
