@@ -89,6 +89,22 @@ fn books() -> CollectionVersion {
     })
 }
 
+/// Books with an index on the author FK, so a filter on the author can look
+/// up its Books instead of scanning them.
+fn books_with_parent_fk_index() -> CollectionVersion {
+    books().with_index(IndexDescription {
+        id: 1,
+        name: "Book__authorID_ASC".to_string(),
+        unique: false,
+        kind: None,
+        auto_generated: false,
+        fields: vec![IndexedFieldDescription {
+            name: "_authorID".to_string(),
+            descending: false,
+        }],
+    })
+}
+
 fn publishers() -> CollectionVersion {
     CollectionVersion::new(
         "Publisher",
@@ -238,7 +254,7 @@ impl DocFetcher for IndexedSideFetcher {
         collection_name: &str,
         params: &IndexScanParams,
     ) -> Result<IndexScanResult> {
-        if collection_name == "Book" {
+        if collection_name == "Book" && params.index_name == "Book_title_ASC" {
             // The title index, read whole for an order it provides.
             let mut books: Vec<_> = self.books.iter().collect();
             books.sort_by_key(|book| {
@@ -262,6 +278,20 @@ impl DocFetcher for IndexedSideFetcher {
                 _ => None,
             })
             .collect();
+        if collection_name == "Book" {
+            // The author FK index: the Books of the given authors.
+            return Ok(IndexScanResult::new(
+                self.books
+                    .iter()
+                    .filter(|book| {
+                        book.get("_authorID")
+                            .and_then(|value| value.as_str())
+                            .is_some_and(|author_id| names.contains(&author_id))
+                    })
+                    .filter_map(|book| book.id().map(|id| id.to_string()))
+                    .collect(),
+            ));
+        }
         let doc_ids = self
             .people
             .iter()
@@ -440,6 +470,73 @@ fn no_matching_child_reads_no_parent_of_an_index_ordered_scan() {
         .await;
         assert!(rows.is_empty(), "{rows:?}");
         assert_eq!(fetcher.book_reads.load(Ordering::SeqCst), 0);
+    })
+    .unwrap()
+}
+
+/// A parent FK index would let the join look Books up by author, but that
+/// lookup would drop the publisher already joined into the Book plan. The join
+/// keeps the earlier one and reads every Book once instead.
+#[test]
+fn indexed_side_filter_keeps_relation_when_parent_fk_is_indexed() {
+    workers::block_on(async {
+        let fetcher = Arc::new(IndexedSideFetcher::new());
+        let planner = Planner::new(vec![people(), books_with_parent_fk_index(), publishers()])
+            .with_fetcher(fetcher.clone());
+        let select = Select::new("Book")
+            .with_field(Field::new("title"))
+            .with_select(Select::new("publisher").with_field(Field::new("name")))
+            .with_filter(author_named("David"));
+
+        let plan = planner.plan(&select).unwrap();
+        assert_eq!(
+            join_direction(&plan.explain(), "author").as_deref(),
+            Some("primary"),
+            "{}",
+            plan.explain()
+        );
+        let (rows, _) = run(plan).await;
+
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0]["title"], json!("David"), "{rows:?}");
+        assert_eq!(rows[0]["publisher"]["name"], json!("Penguin"), "{rows:?}");
+        // Every Book is read once: the parent-first join cannot use the FK index.
+        assert_eq!(fetcher.book_reads.load(Ordering::SeqCst), 2);
+    })
+    .unwrap()
+}
+
+/// The ordered path would fetch Books by ID too. It keeps the publisher join
+/// the same way.
+#[test]
+fn ordered_parent_lookup_keeps_relation_when_parent_fk_is_indexed() {
+    workers::block_on(async {
+        let fetcher = Arc::new(IndexedSideFetcher::new());
+        let planner = Planner::new(vec![people(), books_with_parent_fk_index(), publishers()])
+            .with_fetcher(fetcher.clone());
+        let select = Select::new("Book")
+            .with_field(Field::new("title"))
+            .with_select(Select::new("publisher").with_field(Field::new("name")))
+            .with_filter(author_named("David"))
+            .with_order(OrderBy::new().with_condition(OrderCondition::with_path(
+                vec!["author".to_string(), "name".to_string()],
+                OrderDirection::Asc,
+            )));
+
+        let plan = planner.plan(&select).unwrap();
+        assert_eq!(
+            join_direction(&plan.explain(), "author").as_deref(),
+            Some("primary"),
+            "{}",
+            plan.explain()
+        );
+        let (rows, _) = run(plan).await;
+
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0]["title"], json!("David"), "{rows:?}");
+        assert_eq!(rows[0]["publisher"]["name"], json!("Penguin"), "{rows:?}");
+        // Every Book is read once: the parent-first join cannot use the FK index.
+        assert_eq!(fetcher.book_reads.load(Ordering::SeqCst), 2);
     })
     .unwrap()
 }
