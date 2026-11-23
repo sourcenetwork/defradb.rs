@@ -13,6 +13,11 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 RUNS=(
   "MC_RemovedLensOrigin_Green.cfg RemovedLensOrigin.tla GREEN"
   "MC_RemovedLensOrigin_Red_Inverse.cfg RemovedLensOrigin.tla RED" # an inverse must not alter a native document
+  "MC_DisplacedConnectionRestore_Green.cfg DisplacedConnectionRestore.tla GREEN"
+  "MC_DisplacedConnectionRestore_Red_NoEvict.cfg DisplacedConnectionRestore.tla RED"
+  "MC_DisplacedConnectionRestore_Red_Closed.cfg DisplacedConnectionRestore.tla RED"
+  "MC_DisplacedConnectionRestore_Red_EvictAny.cfg DisplacedConnectionRestore.tla RED" # a newer connection is evicted (FreshKept)
+  "MC_DisplacedConnectionRestore_Red_Overwrite.cfg DisplacedConnectionRestore.tla RED" # the restore overwrites a newer connection (FreshKept)
   "MC_DocumentUpdateJournal_Green.cfg DocumentUpdateJournal.tla GREEN"
   "MC_DocumentUpdateJournal_Green_Outside.cfg DocumentUpdateJournal.tla GREEN"
   "MC_DocumentUpdateJournal_Red_Detached.cfg DocumentUpdateJournal.tla RED"
@@ -214,6 +219,10 @@ RUNS=(
   "MC_ChunkMerge_Red_ListedDeleteOnly.cfg ChunkMerge.tla RED" # merge holds back only a listed chunk's delete (INV_ListedChunksStay)
   "MC_ChunkMerge_Red_RefuseDelete.cfg ChunkMerge.tla RED" # merge refuses an early chunk delete for good (INV_DeletesNotLost)
   "MC_ChunkMerge_Red_UnstoredDelete.cfg ChunkMerge.tla RED" # a chunk delete merges before its chunk's first block (INV_ListedChunksStay)
+  "MC_ChunkMerge_Red_NoRebuild.cfg ChunkMerge.tla RED" # a merge keeps another peer's text and builds none of its chunks (INV_TextChunksStored)
+  "MC_ChunkMerge_Red_SignedChunkIds.cfg ChunkMerge.tla RED" # signed chunk blocks give one chunk a document per peer (INV_EachChunkOnce)
+  "MC_ChunkMerge_Green_Encrypted.cfg ChunkMerge.tla GREEN" # an encrypted text's chunks come with its article, not from the rebuild
+  "MC_ChunkMerge_Red_EncryptedNotShipped.cfg ChunkMerge.tla RED" # encrypted text skipped and its chunks not shipped (INV_TextChunksStored)
   "MC_ChunkRead_Green.cfg ChunkRead.tla GREEN" # a chunk shows only while its parent is live, readable and uses it
   "MC_ChunkRead_Red_NoDeletedCheck.cfg ChunkRead.tla RED" # deleted parent still shows its chunks (INV_ShownIsLiveAndReadable)
   "MC_ChunkRead_Red_NoHashCheck.cfg ChunkRead.tla RED" # forged chunk claims a real hash (INV_ShownIsTheText)
@@ -224,6 +233,10 @@ RUNS=(
   "MC_ChunkRead_Red_NoResolveCheck.cfg ChunkRead.tla RED" # a chunk of an unknown collection is served as public (INV_ServedIsReadable)
   "MC_ChunkRead_Red_TrustList.cfg ChunkRead.tla RED" # a padded list shows chunks of old text (INV_ShownIsTheText)
   "MC_ChunkRead_Red_NoOwnAppCheck.cfg ChunkRead.tla RED" # chunk collection's own app check skipped (INV_ShownPassesOwnApp)
+  "MC_ChunkRead_Red_DelegationScope.cfg ChunkRead.tla RED" # a chunk delegation gets the article's own keys (INV_DelegatedKeyInScope)
+  "MC_SelectedUpdate_Green.cfg SelectedUpdate.tla GREEN" # an update of a selected document loses only to a change of a field it depends on
+  "MC_SelectedUpdate_Red_ExpectedOnly.cfg SelectedUpdate.tla RED" # a written field is not compared and a change to it is written over (INV_NoSilentOverwrite)
+  "MC_SelectedUpdate_Red_Whole.cfg SelectedUpdate.tla RED" # every field is compared and an unrelated change loses the race (INV_LosesOnlyToItsFields)
   "MC_EndpointBind_Green.cfg EndpointBind.tla GREEN"
   "MC_EndpointBind_Red_Retain.cfg EndpointBind.tla RED"
   "MC_EndpointBind_Red_Address.cfg EndpointBind.tla RED"
@@ -372,6 +385,22 @@ RUNS=(
   "MC_OwnerObservation_Red_RegistrationSnapshot.cfg OwnerObservation.tla RED"
   "MC_OwnerObservation_Red_Visibility.cfg OwnerObservation.tla RED"
   "MC_OwnerObservation_Red_VisibilitySnapshot.cfg OwnerObservation.tla RED"
+  "MC_ParentChunks_Green.cfg ParentChunks.tla GREEN" # #2241: list and missing chunks in the parent's transaction, cascade delete
+  "MC_ParentChunks_Red_SeparateTxn.cfg ParentChunks.tla RED" # chunks created in a follow-up transaction (INV_ListedChunksExist)
+  "MC_ParentChunks_Red_NoCascade.cfg ParentChunks.tla RED" # delete leaves chunks behind (INV_NoChunkOfDeletedParent)
+  "MC_ParentChunks_Red_NoValidation.cfg ParentChunks.tla RED" # stale update after a delete creates chunks (INV_NoChunkOfDeletedParent)
+  "MC_ParentChunks_Red_CreateWithoutList.cfg ParentChunks.tla RED" # signed create blocks without the list, first update ties (INV_ListMatchesText)
+  "MC_ParentChunks_Red_NoLookup.cfg ParentChunks.tla RED" # a write creates chunks that arrived first, a valid create fails (INV_ValidWritesSucceed)
+  "MC_ChunkFollow_Green.cfg ChunkFollow.tla GREEN" # #2310: a chunk's push and sync follow its parent
+  "MC_ChunkFollow_Red_OwnFilter.cfg ChunkFollow.tla RED" # filter run on the chunk drops every chunk (INV_ChunksFollowParent)
+  "MC_ChunkFollow_Red_AllChunks.cfg ChunkFollow.tla RED" # chunks pushed unfiltered leak (INV_NoForeignChunks)
+  "MC_ChunkFollow_Red_SyncParentOnly.cfg ChunkFollow.tla RED" # doc sync without the chunks (INV_ChunksFollowParent)
+  "MC_ChunkFollow_Red_SyncHistory.cfg ChunkFollow.tla RED" # doc sync sends the old texts' chunks too (INV_SyncSendsCurrentChunks)
+  "MC_TruncateChunks_Green.cfg TruncateChunks.tla GREEN" # truncate empties chunks before parents
+  "MC_TruncateChunks_Red_ParentsFirst.cfg TruncateChunks.tla RED" # parents first strands a racing create (INV_LiveParentHasChunks)
+  "MC_TruncateChunks_Red_PurgeLeavesChunks.cfg TruncateChunks.tla RED" # purge leaves the chunks of purged articles (INV_PurgedHaveNoChunks)
+  "MC_ChunkMarkerHandoff_Green.cfg ChunkMarkerHandoff.tla GREEN" # a committed head keeps its marker registration past the request deadline
+  "MC_ChunkMarkerHandoff_Red_RequestOwned.cfg ChunkMarkerHandoff.tla RED" # the deadline drops the chunks not registered yet (INV_CommittedHeadOwned)
   "MC_StrictAccessRead_Green.cfg StrictAccessRead.tla GREEN"
   "MC_StrictAccessRead_Red_Partial.cfg StrictAccessRead.tla RED"
   "MC_StrictAccessRead_Red_DenialErrors.cfg StrictAccessRead.tla RED"
