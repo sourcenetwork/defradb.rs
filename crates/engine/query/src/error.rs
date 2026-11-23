@@ -469,34 +469,34 @@ impl QueryError {
     /// `"invalid cursor"` — invalid base64, invalid JSON, or empty doc ID.
     /// Mirrors Go's `internal/cursor/errors.go::errInvalidCursor`.
     pub fn cursor_invalid() -> Self {
-        Self::execution("invalid cursor")
+        Self::invalid_argument("invalid cursor")
     }
 
     /// `"_cursor block must contain exactly one collection query"`.
     /// Mirrors Go's `client/request/errors.go::errCursorMustContainQuery`.
     pub fn cursor_must_contain_query() -> Self {
-        Self::execution("_cursor block must contain exactly one collection query")
+        Self::invalid_argument("_cursor block must contain exactly one collection query")
     }
 
     /// `"_cursor block cannot contain multiple collection queries"`.
     /// Mirrors Go's `errMultipleQueriesInCursor`.
     pub fn cursor_multiple_queries() -> Self {
-        Self::execution("_cursor block cannot contain multiple collection queries")
+        Self::invalid_argument("_cursor block cannot contain multiple collection queries")
     }
 
     /// `"first must be non-negative"`.
     pub fn cursor_first_must_be_non_negative() -> Self {
-        Self::execution("first must be non-negative")
+        Self::invalid_argument("first must be non-negative")
     }
 
     /// `"last must be non-negative"`.
     pub fn cursor_last_must_be_non_negative() -> Self {
-        Self::execution("last must be non-negative")
+        Self::invalid_argument("last must be non-negative")
     }
 
     /// `"forward parameters (first/after) cannot be combined with backward parameters (last/before)"`.
     pub fn cursor_forward_backward_conflict() -> Self {
-        Self::execution(
+        Self::invalid_argument(
             "forward parameters (first/after) cannot be combined with backward parameters (last/before)",
         )
     }
@@ -504,7 +504,7 @@ impl QueryError {
     /// `"no supporting index for cursor order field"` — order fields not covered by any index.
     /// Mirrors Go's `internal/planner/errors.go::errNoSupportingIndexForCursor`.
     pub fn cursor_no_supporting_index() -> Self {
-        Self::execution("no supporting index for cursor order field")
+        Self::invalid_argument("no supporting index for cursor order field")
     }
 }
 
@@ -656,5 +656,22 @@ mod cursor_error_tests {
             e.to_string(),
             "forward parameters (first/after) cannot be combined with backward parameters (last/before)"
         );
+    }
+
+    /// A cursor argument written wrong fails the same way on every run, so a
+    /// subscription's open check refuses it instead of keeping the stream.
+    #[test]
+    fn cursor_errors_are_invalid_requests() {
+        for error in [
+            QueryError::cursor_invalid(),
+            QueryError::cursor_must_contain_query(),
+            QueryError::cursor_multiple_queries(),
+            QueryError::cursor_first_must_be_non_negative(),
+            QueryError::cursor_last_must_be_non_negative(),
+            QueryError::cursor_forward_backward_conflict(),
+            QueryError::cursor_no_supporting_index(),
+        ] {
+            assert!(error.is_invalid_request(), "{error}");
+        }
     }
 }
