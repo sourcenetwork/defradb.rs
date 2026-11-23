@@ -245,6 +245,7 @@ fn a_commit_whose_waiter_leaves_before_it_begins_still_lands() {
     let committed = Arc::new(AtomicUsize::new(0));
     let request_entered = Arc::new(Event::new());
     let request_released = Arc::new(Event::new());
+    let landed = Arc::new(Event::new());
     let id = begin(&owners, "alice", &dropped);
     let request = {
         let (owners, entered, released) = (
@@ -263,7 +264,7 @@ fn a_commit_whose_waiter_leaves_before_it_begins_still_lands() {
     };
     block_on(request_entered.wait()).unwrap();
     let waiter = std::thread::spawn({
-        let (owners, committed) = (owners.clone(), committed.clone());
+        let (owners, committed, landed) = (owners.clone(), committed.clone(), landed.clone());
         move || {
             block_on(async {
                 workers::timeout(Duration::from_millis(20), async {
@@ -272,6 +273,7 @@ fn a_commit_whose_waiter_leaves_before_it_begins_still_lands() {
                             Box::pin(async move {
                                 txn.log.push("committed".into());
                                 committed.fetch_add(1, Ordering::SeqCst);
+                                landed.set();
                                 Ok::<(), std::convert::Infallible>(())
                             })
                         })
@@ -293,14 +295,9 @@ fn a_commit_whose_waiter_leaves_before_it_begins_still_lands() {
     );
     request_released.set();
     assert_eq!(request.join().unwrap().unwrap(), Ok(()));
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    while committed.load(Ordering::SeqCst) == 0 {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the queued commit never ran after its waiter left"
-        );
-        std::thread::sleep(Duration::from_millis(1));
-    }
+    block_on(workers::timeout(Duration::from_secs(5), landed.wait()))
+        .unwrap()
+        .expect("the queued commit never ran after its waiter left");
     let after = block_on(owners.run(id, &"alice", |probe| {
         Box::pin(async move { probe.log.clone() })
     }))

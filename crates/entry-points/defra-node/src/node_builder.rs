@@ -349,8 +349,9 @@ impl NodeBuilder {
         self
     }
 
-    /// Hold every explicit transaction commit at `gate` before it begins, so
-    /// a test can prove a dropped commit wait does not abandon the commit.
+    /// Hold every explicit transaction commit at `gate` before it is handed
+    /// to its owner, so a test can prove a commit whose HTTP answer passed its
+    /// bound still lands.
     pub fn with_commit_gate(mut self, gate: Arc<dyn db::CommitGate>) -> Self {
         self.config.commit_gate = Some(crate::CommitGateHandle(gate));
         self

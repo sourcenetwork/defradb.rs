@@ -32,6 +32,21 @@ async fn within<F: std::future::Future>(
 }
 
 impl<S: Store + 'static> DbTransactionRegistry<S> {
+    /// Runs `commit` once the database's commit gate, if it has one, lets it
+    /// through, and tells the gate when it has its outcome.
+    async fn gated<F>(&self, commit: F) -> F::Output
+    where
+        F: std::future::Future,
+    {
+        let Some(gate) = self.db.options().commit_gate.clone() else {
+            return commit.await;
+        };
+        gate.enter().await;
+        let outcome = commit.await;
+        gate.ended();
+        outcome
+    }
+
     /// Trusted embedded-host only: the owner admits the transaction turn and
     /// native NAC checks that owner on the same view. Never expose this
     /// capability as an HTTP or GraphQL request parameter.
@@ -215,19 +230,22 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         })?;
         let label = handle.to_string();
         let queued = Instant::now();
-        self.owners()
-            .map_err(|error| unavailable(error, handle))?
-            .finish(id, &self.caller(context), move |owned| {
-                Box::pin(async move {
-                    report_slow_phase("commit", "queue", queued);
-                    let started = Instant::now();
-                    let result = owned.commit().await;
-                    report_slow_phase("commit", "execute", started);
-                    result.map_err(|error| commit_error(&label, error))
+        self.gated(async {
+            self.owners()
+                .map_err(|error| unavailable(error, handle))?
+                .finish(id, &self.caller(context), move |owned| {
+                    Box::pin(async move {
+                        report_slow_phase("commit", "queue", queued);
+                        let started = Instant::now();
+                        let result = owned.commit().await;
+                        report_slow_phase("commit", "execute", started);
+                        result.map_err(|error| commit_error(&label, error))
+                    })
                 })
-            })
-            .await
-            .map_err(|error| unavailable(error, handle))?
+                .await
+                .map_err(|error| unavailable(error, handle))?
+        })
+        .await
     }
 
     async fn commit_detached_as(
@@ -240,19 +258,22 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         })?;
         let label = handle.to_string();
         let queued = Instant::now();
-        self.owners()
-            .map_err(|error| unavailable(error, handle))?
-            .finish_detached(id, &self.caller(context), move |owned| {
-                Box::pin(async move {
-                    report_slow_phase("commit", "queue", queued);
-                    let started = Instant::now();
-                    let result = owned.commit().await;
-                    report_slow_phase("commit", "execute", started);
-                    result.map_err(|error| commit_error(&label, error))
+        self.gated(async {
+            self.owners()
+                .map_err(|error| unavailable(error, handle))?
+                .finish_detached(id, &self.caller(context), move |owned| {
+                    Box::pin(async move {
+                        report_slow_phase("commit", "queue", queued);
+                        let started = Instant::now();
+                        let result = owned.commit().await;
+                        report_slow_phase("commit", "execute", started);
+                        result.map_err(|error| commit_error(&label, error))
+                    })
                 })
-            })
-            .await
-            .map_err(|error| unavailable(error, handle))?
+                .await
+                .map_err(|error| unavailable(error, handle))?
+        })
+        .await
     }
 
     async fn commit_unless_told_as(
@@ -265,31 +286,34 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         })?;
         let label = handle.to_string();
         let queued = Instant::now();
-        self.owners()
-            .map_err(|error| unavailable(error, handle))?
-            .finish_unless(id, &self.caller(context), move |owned| {
-                Box::pin(async move {
-                    report_slow_phase("commit", "queue", queued);
-                    let started = Instant::now();
-                    let ending = match owned.commit_unless_told().await {
-                        crate::txn::owner::Ending::Ended(result) => {
-                            crate::txn::owner::Ending::Ended(
-                                result.map_err(|error| commit_error(&label, error)),
-                            )
-                        }
-                        crate::txn::owner::Ending::Kept(owned, result) => {
-                            crate::txn::owner::Ending::Kept(
-                                owned,
-                                result.map_err(|error| commit_error(&label, error)),
-                            )
-                        }
-                    };
-                    report_slow_phase("commit", "execute", started);
-                    ending
+        self.gated(async {
+            self.owners()
+                .map_err(|error| unavailable(error, handle))?
+                .finish_unless(id, &self.caller(context), move |owned| {
+                    Box::pin(async move {
+                        report_slow_phase("commit", "queue", queued);
+                        let started = Instant::now();
+                        let ending = match owned.commit_unless_told().await {
+                            crate::txn::owner::Ending::Ended(result) => {
+                                crate::txn::owner::Ending::Ended(
+                                    result.map_err(|error| commit_error(&label, error)),
+                                )
+                            }
+                            crate::txn::owner::Ending::Kept(owned, result) => {
+                                crate::txn::owner::Ending::Kept(
+                                    owned,
+                                    result.map_err(|error| commit_error(&label, error)),
+                                )
+                            }
+                        };
+                        report_slow_phase("commit", "execute", started);
+                        ending
+                    })
                 })
-            })
-            .await
-            .map_err(|error| unavailable(error, handle))?
+                .await
+                .map_err(|error| unavailable(error, handle))?
+        })
+        .await
     }
 
     async fn commit_confirmed_as(

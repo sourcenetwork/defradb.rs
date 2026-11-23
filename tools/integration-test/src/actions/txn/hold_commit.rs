@@ -32,6 +32,9 @@ impl Op for HoldCommit {
         Some(&self.expected_error)
     }
 
+    /// The commit's answer as an error, for the scenario to match: the
+    /// bound's 503 with `outcome: "unknown"`, given while the commit is held
+    /// at the gate.
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.client_identity(Self::name())?;
         let id = state
@@ -45,66 +48,50 @@ impl Op for HoldCommit {
             .commit_gate
             .clone()
             .ok_or_else(|| Failure::operation("the node has no commit gate".to_owned()))?;
-        let outcome = match state.client_type() {
+        let error = match state.client_type() {
             ClientType::RustHttp => {
                 let url = state.url_on(self.common.node())?;
-                state
+                let (status, body) = state
                     .block_on(network_edge().spawn(async move {
-                        let token = identity.map(|seed| {
-                            cli::commands::client::generate_auth_token(
+                        let client = net::http::Client::new(network_edge());
+                        let mut request = client.post(format!("{url}/api/v0/tx/{id}"));
+                        if let Some(seed) = identity {
+                            let token = cli::commands::client::generate_auth_token(
                                 &crate::scenario::identity::private_key_hex(seed),
                                 &url,
                             )
-                            .expect("a token for a test identity")
-                        });
-                        let client = net::http::Client::new(network_edge());
-                        let request = client
-                            .post(format!("{url}/api/v0/tx/{id}"))
-                            .header(
-                                "Authorization",
-                                token
-                                    .map(|token| format!("Bearer {token}"))
-                                    .unwrap_or_default(),
-                            )
-                            .body("");
-                        let commit = network_edge().spawn(async move { request.send().await });
-                        if nuclei::time::timeout(Duration::from_secs(10), gate.entered.wait())
-                            .await
-                            .is_err()
-                        {
-                            return Err(net::http::Error::Request {
-                                url: format!("{url}/api/v0/tx/{id}"),
-                                source: Box::new(std::io::Error::other(
-                                    "the commit never reached its gate",
-                                )),
-                            });
+                            .expect("a token for a test identity");
+                            request = request.header("Authorization", format!("Bearer {token}"));
                         }
-                        commit.await.unwrap()
+                        let response = request.body("").send().await?;
+                        let status = response.status().as_u16();
+                        Ok::<_, net::http::Error>((status, response.text().await?))
                     }))
                     .map_err(|error| Failure::operation(error.to_string()))?
+                    .map_err(|error| Failure::operation(error.to_string()))?;
+                let value: Value = serde_json::from_str(&body).map_err(|error| {
+                    Failure::operation(format!("bad bounded-commit body {body:?}: {error}"))
+                })?;
+                if status != 503 || value["outcome"] != json!("unknown") {
+                    return Err(Failure::operation(format!(
+                        "the bounded commit answered {status}: {value}"
+                    )));
+                }
+                value["error"].as_str().unwrap_or_default().to_owned()
             }
-            ClientType::Cli => {
-                let printed = state.defra_client_as(
-                    self.common.node(),
-                    None,
-                    identity,
-                    &["tx", "commit", &id],
-                );
-                return match printed {
-                    Ok(value) => Err(Failure::operation(format!(
+            ClientType::Cli => match state.defra_client_as(
+                self.common.node(),
+                None,
+                identity,
+                &["tx", "commit", &id],
+            ) {
+                Ok(value) => {
+                    return Err(Failure::operation(format!(
                         "the bounded commit unexpectedly succeeded: {value}"
-                    ))),
-                    Err(error) => {
-                        if !error.contains(&self.expected_error) {
-                            return Err(Failure::operation(format!(
-                                "bounded commit error {error:?} did not contain {:?}",
-                                self.expected_error
-                            )));
-                        }
-                        Ok(json!({}))
-                    }
-                };
-            }
+                    )))
+                }
+                Err(error) => error,
+            },
             client => {
                 return Err(Failure::unsupported(format!(
                     "{} under {client:?}",
@@ -112,29 +99,12 @@ impl Op for HoldCommit {
                 )))
             }
         };
-        let response = outcome.map_err(|error| Failure::operation(error.to_string()))?;
-        if response.status().as_u16() != 503 {
+        if !gate.entered.is_set() {
             return Err(Failure::operation(format!(
-                "the bounded commit answered {}",
-                response.status()
+                "the commit answered {error:?} without reaching its gate"
             )));
         }
-        let body = state
-            .block_on(async { response.text().await })
-            .map_err(|error| Failure::operation(error.to_string()))?;
-        let value: Value = serde_json::from_str(&body).map_err(|error| {
-            Failure::operation(format!("bad bounded-commit body {body:?}: {error}"))
-        })?;
-        if value["outcome"] != json!("unknown")
-            || !value["error"]
-                .as_str()
-                .is_some_and(|error| error.contains(&self.expected_error))
-        {
-            return Err(Failure::operation(format!(
-                "unexpected bounded-commit body: {value}"
-            )));
-        }
-        Ok(json!({}))
+        Err(Failure::operation(error))
     }
 }
 
@@ -146,7 +116,7 @@ impl Action for HoldCommit {
     }
 }
 
-/// Releases the held commit and gives its worker a moment to finish it.
+/// Releases the held commit and waits until it has its outcome.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReleaseCommit {
@@ -179,7 +149,9 @@ impl Op for ReleaseCommit {
             .clone()
             .ok_or_else(|| Failure::operation("the node has no commit gate".to_owned()))?;
         gate.release();
-        std::thread::sleep(Duration::from_millis(20));
+        state
+            .block_on(workers::timeout(Duration::from_secs(10), gate.ended.wait()))
+            .map_err(|_| Failure::operation("the released commit never ended".to_owned()))?;
         Ok(json!({}))
     }
 }

@@ -10,7 +10,9 @@
 \* not mistake an unknown answer for an abort.
 \*
 \* Correspondence with the Rust code:
-\*   crates/surfaces/http/src/server.rs Server::serve_router commit bound;
+\*   crates/surfaces/http/src/server.rs Server::router commit bound, and
+\*   its admitted layer: the bound drops only the wait on the handler's edge
+\*   task, so the handler, every commit step included, runs to its end;
 \*   crates/engine/query/src/runner/executor.rs QueryRunner::commit_txn_as;
 \*   crates/database/db/src/txn/owner/mod.rs Owners::finish_detached (the commit stays
 \*   owned and fenced after its waiter goes); regolith's CommitTicket, whose

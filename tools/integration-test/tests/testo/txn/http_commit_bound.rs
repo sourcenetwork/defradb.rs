@@ -14,6 +14,7 @@ fn an_http_commit_past_its_bound_answers_unknown_and_lands() {
         actions: vec![
             NewNode {
                 commit_gate: true,
+                commit_timeout_ms: Some(1),
                 ..Default::default()
             }
             .into(),

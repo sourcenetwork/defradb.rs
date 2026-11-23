@@ -563,6 +563,8 @@ impl Server {
         );
         router = router.layer(admitted.clone());
 
+        // Outside `admitted`: when the bound passes it drops only the wait on
+        // the handler's task, so every step of the commit still runs.
         if self.config.commit_timeout_ms > 0 {
             let limit = Duration::from_millis(self.config.commit_timeout_ms);
             router = router.layer(axum::middleware::from_fn(

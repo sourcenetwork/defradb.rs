@@ -65,6 +65,8 @@ pub struct NodeSpec {
     /// The gate explicit commits pass before they begin, for a real-node
     /// scenario that holds a commit past its HTTP bound.
     pub commit_gate: Option<Arc<crate::commit_gate::TestCommitGate>>,
+    /// The HTTP server's bound on answering a commit; `None` leaves it off.
+    pub commit_timeout: Option<Duration>,
     /// An in-process iroh node serving these stream protocols, in place of
     /// the libp2p one `network` starts.
     pub iroh: Option<crate::actions::stream::IrohSpec>,
@@ -151,6 +153,9 @@ impl TestNode {
                     config = config
                         .with_transaction_idle_timeout(ttl)
                         .with_transaction_cleanup_interval(tick);
+                }
+                if let Some(bound) = spec.commit_timeout {
+                    config = config.with_commit_timeout(bound);
                 }
                 let node = Arc::new(build(&spec, &listen, Some(config))?);
                 Ok(Self::new(None, Some(url), spec, Some(node), Vec::new()))

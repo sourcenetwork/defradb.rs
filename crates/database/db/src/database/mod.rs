@@ -61,8 +61,8 @@ pub struct DbOptions {
     /// The gate every index backfill passes before each batch. `None` lets
     /// every batch run.
     pub index_build_gate: Option<Arc<dyn crate::index::build_gate::IndexBuildGate>>,
-    /// The gate explicit transaction commits pass before they begin. `None`
-    /// lets every commit run.
+    /// The gate explicit transaction commits pass before they are handed to
+    /// their owner. `None` lets every commit run.
     pub commit_gate: Option<Arc<dyn crate::txn::commit_gate::CommitGate>>,
     /// Documents an index backfill may index in one transaction. `None` uses
     /// the built-in page size.
@@ -157,7 +157,8 @@ impl DbOptions {
         self
     }
 
-    /// Holds every explicit transaction commit at `gate` before it begins.
+    /// Holds every explicit transaction commit at `gate` before it is handed
+    /// to its owner.
     pub fn with_commit_gate(mut self, gate: Arc<dyn crate::txn::commit_gate::CommitGate>) -> Self {
         self.commit_gate = Some(gate);
         self

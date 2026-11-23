@@ -297,6 +297,8 @@ The HTTP server bounds only how long it waits to answer an explicit transaction 
 
 The bound is `commit_timeout_ms`, in milliseconds, on the HTTP server, and it is opt in: `0`, the default, disables it.
 
+The CLI's `client tx commit` sends a commit once and never retries it, so it reports the bound's answer, `commit outcome unknown after <bound> milliseconds`, rather than a later attempt's "not found".
+
 # `defra.txn.no_neighbour_conflict`: Updating one document does not conflict with its neighbour
 
 - **Parents:** ["defra.txn"]
