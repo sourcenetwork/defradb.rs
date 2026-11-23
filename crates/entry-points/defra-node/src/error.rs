@@ -560,7 +560,10 @@ mod tests {
 
     struct CountEvents(Arc<AtomicUsize>);
 
-    impl<S: tracing::Subscriber> Layer<S> for CountEvents {
+    impl<S> Layer<S> for CountEvents
+    where
+        S: tracing::Subscriber,
+    {
         fn on_event(&self, _: &tracing::Event<'_>, _: Context<'_, S>) {
             self.0.fetch_add(1, Ordering::Relaxed);
         }
