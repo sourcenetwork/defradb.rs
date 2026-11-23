@@ -98,8 +98,9 @@ jobs:
               p2p: want('p2p'),
             }));
 
-            // A pull request runs testo through the in-process client only, so a
-            // green pull request has run the scenarios; the queue runs every client.
+            // A pull request runs testo through the in-process client, plain and
+            // with every field indexed (the secondary-index multiplier), so a green
+            // pull request has run the scenarios; the queue runs every client.
             const testoClients = ['in-process', 'in-process-secondary-index', ...['rust-http', 'go-http', 'cli', 'legacy']
               .filter((client) => want(`testo-${client}`))];
             core.setOutput('testo_clients', testoClients.join(','));
