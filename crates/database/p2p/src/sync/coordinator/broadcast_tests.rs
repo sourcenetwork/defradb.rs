@@ -636,6 +636,7 @@ fn a_replicator_with_no_collections_gets_no_push_job() {
                 block: Bytes::from_static(b"block"),
                 doc_id: "doc1".to_string(),
                 collection_id: "collection1".to_string(),
+                decided_in: "collection1".to_string(),
                 creator: "creator".to_string(),
                 document: None,
             })
