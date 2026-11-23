@@ -12,11 +12,13 @@
 \* restore_displaced_connection and evict_connection.
 \* Naturals is the standard module the checker loads for this spec.
 EXTENDS Naturals
-\* Mode picks the code under test: the real one, or one of two planted bugs.
+\* Mode picks the code under test: the real one, or one of four planted bugs.
 CONSTANT Mode
 \* "correct" is the code; "noEvict" skips the eviction; "restoreClosed" skips
-\* the closed check.
-ASSUME Mode \in {"correct", "noEvict", "restoreClosed"}
+\* the closed check; "evictAny" evicts whatever is cached instead of only the
+\* refused handle; "plainInsert" restores with a plain insert instead of
+\* insert_if_absent.
+ASSUME Mode \in {"correct", "noEvict", "restoreClosed", "evictAny", "plainInsert"}
 \* slot: what the cache holds for the peer. displaced: the handle the refused
 \* publish pushed out, if any. displacedOpen: whether that handle is still
 \* open. done: the cleanup has run.
@@ -32,14 +34,19 @@ Init == /\ slot \in {"empty", "refused", "fresh"}
         /\ displacedOpen \in BOOLEAN
 \* and the cleanup has not run yet.
         /\ done = FALSE
-\* evict_connection: remove the refused handle if it is the one cached, and
-\* leave anything else alone. The "noEvict" bug leaves it in.
-Evicted == IF slot = "refused" /\ Mode # "noEvict" THEN "empty" ELSE slot
+\* evict_connection: remove the refused handle if it is the one cached (the
+\* stable_id check), and leave anything else alone. The "noEvict" bug leaves
+\* it in; the "evictAny" bug drops the identity check and empties any slot.
+Evicted == CASE Mode = "noEvict" -> slot
+             [] Mode = "evictAny" -> "empty"
+             [] OTHER -> IF slot = "refused" THEN "empty" ELSE slot
 \* restore_displaced_connection runs once.
 Restore == /\ ~done
 \* After the eviction, the sibling goes back only into an empty slot
-\* (insert_if_absent), only if there is a sibling,
-           /\ slot' = IF Evicted = "empty" /\ displaced = "sibling"
+\* (insert_if_absent; the "plainInsert" bug writes over whatever is there),
+\* only if there is a sibling,
+           /\ slot' = IF (Evicted = "empty" \/ Mode = "plainInsert")
+                           /\ displaced = "sibling"
 \* and only while it is open. The "restoreClosed" bug drops this check.
                            /\ (displacedOpen \/ Mode = "restoreClosed")
 \* Otherwise the slot keeps what the eviction left.
