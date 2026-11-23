@@ -134,7 +134,7 @@ fn books_without_author_index() -> CollectionVersion {
 }
 
 #[test]
-fn relation_filter_uses_indexed_side_without_parent_fk_index() {
+fn relation_filter_without_parent_fk_index_reads_the_parents_once() {
     workers::block_on(async {
         let planner = Planner::new(vec![people_with_name_index(), books_without_author_index()]);
         let select = Select::new("Book")
@@ -152,7 +152,7 @@ fn relation_filter_uses_indexed_side_without_parent_fk_index() {
             .get("typeIndexJoin")
             .and_then(|join| join.get("direction"))
             .and_then(serde_json::Value::as_str);
-        assert_eq!(direction, Some("secondary"));
+        assert_eq!(direction, Some("primary"));
     })
     .unwrap()
 }

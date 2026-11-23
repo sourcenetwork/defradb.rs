@@ -9,3 +9,4 @@ mod peer_query;
 mod query;
 mod replicator;
 mod truncate;
+mod unfiltered_truncate;

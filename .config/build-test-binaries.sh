@@ -20,8 +20,20 @@ build() {
     echo "$var=$(cd "$out" && pwd)/$name" >> "$NEXTEST_ENV"
 }
 
+# A test that spawns the Rust CLI without `--rootdir` would read the
+# developer's ~/.defradb. Point the fallback at a config that does not parse,
+# so such a spawn fails on every machine (#2193). Spawn the CLI through
+# `integration_test::cli_command` instead. Go's defradb ignores this variable.
+poison_rootdir() {
+    local dir="$target/poisoned-rootdir"
+    mkdir -p "$dir"
+    printf 'spawned without --rootdir: use integration_test::cli_command: [\n' > "$dir/config.yaml"
+    echo "DEFRA_ROOTDIR=$(cd "$dir" && pwd)" >> "$NEXTEST_ENV"
+}
+
 case "${1:-}" in
     integration)
+        poison_rootdir
         build DEFRA_RUST_BINARY defra
         build DEFRA_IROH_BINARY defra-iroh --features iroh
         ;;

@@ -312,7 +312,6 @@ impl PlanNode for IndexScanNode {
             "indexName".to_string(),
             serde_json::Value::String(self.index_params.index_name.clone()),
         );
-
         obj.insert(
             "indexLimit".into(),
             serde_json::json!(self.index_params.limit),
@@ -395,6 +394,10 @@ impl PlanNode for IndexScanNode {
         }
         self.index_params.limit = Some(limit);
         true
+    }
+
+    fn has_residual_filter(&self) -> bool {
+        self.residual_filter.is_some()
     }
 
     fn exec_info(&self) -> ExecInfo {

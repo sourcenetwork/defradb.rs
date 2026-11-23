@@ -12,7 +12,6 @@
 //! Own test binary: the burst/rate env overrides must not leak into other
 //! tests' clusters.
 
-use std::process::Command;
 use std::time::{Duration, Instant};
 
 use integration_test::TestCluster;
@@ -26,7 +25,7 @@ fn socket_addr(cluster: &TestCluster, node: usize) -> String {
 
 fn add_filtered_replicator(cluster: &TestCluster, node: usize, addr: &str) {
     let client = cluster.client(node);
-    let output = Command::new(client.binary_path())
+    let output = integration_test::cli_command(client.binary_path())
         .arg("--url")
         .arg(socket_addr(cluster, node))
         .args([

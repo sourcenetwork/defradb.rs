@@ -581,10 +581,12 @@ test-features:
     cargo nextest run -p cli --cargo-profile {{ profile }} --features otel --test telemetry_dedup
     cargo nextest run -p defra-node --cargo-profile {{ profile }} --features p2p
 
-# The WASM lens modules in tools/lenses that integration tests load.
+# The WASM lens modules in tools/lenses that integration tests load. The
+# target dir is pinned because the tests read tools/lenses/target whatever
+# CARGO_TARGET_DIR says.
 [group('test')]
 build-lenses:
-    cargo build --manifest-path tools/lenses/Cargo.toml --target wasm32-unknown-unknown
+    cargo build --manifest-path tools/lenses/Cargo.toml --target wasm32-unknown-unknown --target-dir tools/lenses/target
 
 # Every integration area, serially. Each spawns real nodes.
 [group('test')]

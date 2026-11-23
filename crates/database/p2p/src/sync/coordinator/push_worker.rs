@@ -105,6 +105,30 @@ pub(super) async fn report_push_ack(
     .is_some()
 }
 
+/// Asks the durable recorder whether an offline push may park. `None` from
+/// the recorder is a denial, not an accepted marker; a gone recorder fails.
+async fn offline_push_admitted<T>(context: &PushWorkerContext<T>, job: &PushJobSpec) -> bool
+where
+    T: P2PTransport,
+{
+    report_push_event(
+        &context.failure_tx,
+        &job.peer_id,
+        job.doc_id.clone(),
+        job.collection_id.clone(),
+        Some(job.root_cid),
+        job.head_priority(),
+        false,
+        false,
+        None,
+        true,
+        job.marker_generation,
+        false,
+    )
+    .await
+    .is_some()
+}
+
 /// Whether `job`'s head is the whole current frontier of its scope. A marker
 /// stands for every head registered under it, and the live path sends only
 /// the latest; with a sibling head beside this one, only the retry ladder,
@@ -238,6 +262,18 @@ where
 {
     if !context.backlog.is_current(job).await {
         return JobCompletion::Retired;
+    }
+
+    // An offline target is expected absence, not a transport failure. Keep its
+    // retry obligation on the ladder and leave queued work for the reconnect
+    // window; only a live send's transport error counts as failed.
+    if !context.peer_state.is_connected(job.peer_id.as_str()) {
+        if !offline_push_admitted(context, job).await {
+            return JobCompletion::Failed;
+        }
+        context.backlog.record_head_hint_parked_offline();
+        context.backlog.park_peer_offline(job);
+        return JobCompletion::Parked;
     }
 
     // The recorder reads the persisted peer floor, so replay-installed hints
@@ -378,9 +414,13 @@ where
         }
         JobCompletion::Succeeded
     } else {
-        // The newer head's marker generation fences this acknowledgement; the
-        // recorder still counts it as a delivery to the peer.
-        if job.marker_generation.is_some() {
+        // A newer head of this document is queued. Generations are allocated
+        // after commit, so this older head can hold the newer generation and
+        // its marker; acknowledging on the generation alone would clear it
+        // before the newer head lands (`LiveMarkerGeneration.tla`
+        // `Red_NoHeadFence`). Only a head that is still the whole frontier
+        // completes the scope, as on the current branch.
+        if job.marker_generation.is_some() && is_whole_frontier(context, job).await {
             let _ = report_push_ack(&context.failure_tx, job).await;
         }
         JobCompletion::Retired

@@ -522,6 +522,7 @@ async fn fanout_registration_failure_is_peer_local() {
         })
     };
     for peer in ["fanout-a", "fanout-b", "fanout-c"] {
+        coordinator.peer_state().peer_connected(peer);
         transport
             .create_replicator(
                 &PeerId::new(peer.to_string()),
@@ -571,4 +572,83 @@ async fn fanout_registration_failure_is_peer_local() {
 
     coordinator.shutdown().await;
     recorder.abort();
+}
+
+/// Go pushes an update only to the replicators of its collection
+/// (internal/db/p2p/p2p.go pushLogToReplicators), so a replicator added with
+/// no collections receives nothing. Registries now keep such a replicator
+/// listed (#2702); this pins that keeping it never turns it into a
+/// replicator of every collection.
+#[test]
+fn a_replicator_with_no_collections_gets_no_push_job() {
+    use super::super::access_tests::NoopTransport;
+    use crate::bitswap::{AccessMode, ReplicatorRegistry};
+    use crate::replicator::EqOnlyFilterMatcher;
+    use crate::sync::collection_store::MemoryCollectionStorage;
+    use crate::sync::head_provider::DocumentHeadProvider;
+
+    struct NoHeads;
+
+    #[async_trait]
+    impl DocumentHeadProvider for NoHeads {
+        async fn get_document_heads(&self, _doc_id: &str) -> P2PResult<Vec<Cid>> {
+            Ok(Vec::new())
+        }
+
+        async fn get_collection_heads(&self, _collection_id: &str) -> P2PResult<Vec<Cid>> {
+            Ok(Vec::new())
+        }
+    }
+
+    workers::block_on(async {
+        let transport = NoopTransport::new();
+        let store = Arc::new(storage::RegolithStore::in_memory().unwrap());
+        let blockstore = Arc::new(blockstore::DefraBlockstore::new(store, true));
+        let (coordinator, _events) = SyncCoordinator::with_head_provider(
+            transport.clone(),
+            blockstore,
+            crate::network::test_network(),
+            crate::sync::SyncConfig::default(),
+            AccessMode::Open,
+            Arc::new(ReplicatorRegistry::new()),
+            Arc::new(MemoryCollectionStorage::default()),
+            Arc::new(NoHeads),
+            Arc::new(EqOnlyFilterMatcher),
+        )
+        .await
+        .unwrap();
+        transport
+            .create_replicator(&PeerId::new("no-collections".to_string()), Vec::new())
+            .await
+            .unwrap();
+        transport
+            .create_replicator(
+                &PeerId::new("member".to_string()),
+                vec!["collection1".to_string()],
+            )
+            .await
+            .unwrap();
+
+        let cid = Cid::new_v1(0x71, Code::Sha2_256.digest(b"head"));
+        let jobs = coordinator
+            .push_jobs(&PendingPush {
+                cid,
+                block: Bytes::from_static(b"block"),
+                doc_id: "doc1".to_string(),
+                collection_id: "collection1".to_string(),
+                creator: "creator".to_string(),
+                document: None,
+            })
+            .await
+            .unwrap();
+        let peers: Vec<String> = jobs.iter().map(|job| job.peer_id.to_string()).collect();
+        assert_eq!(
+            peers,
+            vec!["member".to_string()],
+            "a replicator with no collections must not be pushed to"
+        );
+
+        coordinator.shutdown().await;
+    })
+    .unwrap();
 }

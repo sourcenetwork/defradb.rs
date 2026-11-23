@@ -31,9 +31,13 @@ required-features = ["node"]
 name = "policy_ids"
 required-features = ["node"]
 
+[[test]]
+name = "receipt_wait"
+required-features = ["node"]
+
 [features]
 # Start and stop the node itself, on the network runtime's cores.
-node = ["dep:vera-node", "dep:commonware-codec", "dep:hex"]
+node = ["dep:vera-node"]
 
 [dependencies]
 # The two transports the vera.rs provider is built on, and their errors.
@@ -46,13 +50,16 @@ edge = { path = "../../foundation/edge" }
 # The embedded node's in-process method table. The revision is the one
 # `tools/integration-test` pins for `vera-harness`; the native consumer check
 # refuses a difference.
-vera-jsonrpc = { git = "https://github.com/sourcenetwork/vera.rs", rev = "1367a56b2471bc379fd0e5522b8492d4b4b6e5d8" }
+vera-jsonrpc = { git = "https://github.com/sourcenetwork/vera.rs", rev = "177783a896068e26d4223c0a0835199870f88d3c" }
 
 # The node a host starts with the `node` feature, at the same revision.
-vera-node = { git = "https://github.com/sourcenetwork/vera.rs", rev = "1367a56b2471bc379fd0e5522b8492d4b4b6e5d8", optional = true }
-# The encoding of the node's consensus key.
-commonware-codec = { version = "=2026.10.0", optional = true }
-hex = { workspace = true, optional = true }
+vera-node = { git = "https://github.com/sourcenetwork/vera.rs", rev = "177783a896068e26d4223c0a0835199870f88d3c", optional = true }
+# The encoding of the node's consensus key, and of the newest block a
+# header subscription starts with.
+commonware-codec = "=2026.10.0"
+hex.workspace = true
+# The block and header types of that newest block.
+vera-domain = "0.1.2"
 
 futures.workspace = true
 # The atom a host closes its transports through.
@@ -62,14 +69,14 @@ thiserror.workspace = true
 
 [dev-dependencies]
 # The light client's freshness limit, at the revision `crates/engine/vera` builds on.
-acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "df6515f71901d9b4ebfe56f221de412e849e43f9" }
+acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "7993ba38d889d16503f7a6ec9c33ef91375e4c0e" }
 # The document ACP layer the stopped-node test asks through.
 acp = { path = "../../engine/acp" }
 identity = { path = "../../building-blocks/identity" }
 # The term certificate the takeover test approves as the deployment's operator.
 vera-client = "0.1.2"
 # The node the tests host in their own process.
-vera-node = { git = "https://github.com/sourcenetwork/vera.rs", rev = "1367a56b2471bc379fd0e5522b8492d4b4b6e5d8" }
+vera-node = { git = "https://github.com/sourcenetwork/vera.rs", rev = "177783a896068e26d4223c0a0835199870f88d3c" }
 commonware-codec = "=2026.10.0"
 edge = { path = "../../foundation/edge", features = ["testing"] }
 hex.workspace = true

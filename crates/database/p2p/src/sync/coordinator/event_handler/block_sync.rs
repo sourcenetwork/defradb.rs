@@ -1,4 +1,4 @@
-//! Bitswap block and completion event handling.
+//! Block-sync block and completion event handling.
 
 use cid::Cid;
 
@@ -29,13 +29,13 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 &root_cid,
                 &format!("provider cannot serve oversized CAR block {cid}"),
             );
-            self.retry_pending_root_after_bitswap(query_id, root_cid)
+            self.retry_pending_root_after_block_sync(query_id, root_cid)
                 .await?;
         }
         Ok(())
     }
 
-    async fn retry_pending_root_after_bitswap(
+    async fn retry_pending_root_after_block_sync(
         &self,
         query_id: crate::QueryId,
         root_cid: Cid,
@@ -45,7 +45,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 tracing::debug!(
                     query_id = query_id.0,
                     root_cid = %root_cid,
-                    "Pending DAG completed after Bitswap activity"
+                    "Pending DAG completed after block-sync activity"
                 );
             }
             Ok(false) => {
@@ -75,7 +75,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         Ok(())
     }
 
-    pub(super) async fn handle_bitswap_block_received(
+    pub(super) async fn handle_block_sync_block_received(
         &self,
         query_id: crate::QueryId,
         cid: Cid,
@@ -85,22 +85,22 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             query_id = query_id.0,
             cid = %cid,
             data_len = data.len(),
-            "Storing Bitswap block in blockstore"
+            "Storing block-sync block in blockstore"
         );
 
-        match self.manager.store_bitswap_block(&cid, &data).await {
+        match self.manager.store_sync_block(&cid, &data).await {
             Ok(true) => {
                 tracing::debug!(
                     query_id = query_id.0,
                     cid = %cid,
-                    "Bitswap block stored successfully"
+                    "Block-sync block stored successfully"
                 );
             }
             Ok(false) => {
                 tracing::debug!(
                     query_id = query_id.0,
                     cid = %cid,
-                    "Bitswap block was already in blockstore"
+                    "Block-sync block was already in blockstore"
                 );
             }
             Err(e) => {
@@ -108,7 +108,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                     query_id = query_id.0,
                     cid = %cid,
                     error = %e,
-                    "Failed to store Bitswap block"
+                "Failed to store block-sync block"
                 );
                 return Err(e);
             }
@@ -121,13 +121,13 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 received_cid = %cid,
                 completed_count = completed_roots.len(),
                 completed_roots = ?completed_roots,
-                "Bitswap block completed pending DAGs waiting on this CID"
+                "Block-sync block completed pending DAGs waiting on this CID"
             );
         }
         Ok(())
     }
 
-    pub(crate) async fn handle_bitswap_complete(
+    pub(crate) async fn handle_block_sync_complete(
         &self,
         query_id: crate::QueryId,
         outcome: std::result::Result<(), crate::transport::FetchFailureCause>,
@@ -145,7 +145,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         let Some(root_cid) = self.manager.take_query_root(query_id) else {
             tracing::debug!(
                 query_id = query_id.0,
-                "Bitswap fetch completed before its owner registered; completion latched"
+                "Block-sync fetch completed before its owner registered; completion latched"
             );
             return Ok(());
         };
@@ -160,7 +160,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             tracing::debug!(
                 query_id = query_id.0,
                 root_cid = %root_cid,
-                "Bitswap fetch completed"
+                "Block-sync fetch completed"
             );
             self.manager.clear_pending_dag_fetch_failures(&root_cid);
         } else if let Some(ref err) = error {
@@ -180,7 +180,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                         missing_count = snapshot.missing_count,
                         fetch_failures = snapshot.fetch_failures,
                         error = %err,
-                        "Bitswap fetch failed after exhausting providers; pending DAG remains unresolved"
+                        "Block-sync fetch failed after exhausting providers; pending DAG remains unresolved"
                     );
                 } else {
                     tracing::debug!(
@@ -192,7 +192,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                         missing_count = snapshot.missing_count,
                         fetch_failures = snapshot.fetch_failures,
                         error = %err,
-                        "Bitswap fetch failed after exhausting providers; pending DAG remains unresolved"
+                        "Block-sync fetch failed after exhausting providers; pending DAG remains unresolved"
                     );
                 }
             } else {
@@ -200,19 +200,19 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                     query_id = query_id.0,
                     root_cid = %root_cid,
                     error = %err,
-                    "Bitswap fetch failed after exhausting providers for unknown pending DAG"
+                "Block-sync fetch failed after exhausting providers for unknown pending DAG"
                 );
             }
         }
 
-        self.retry_pending_root_after_bitswap(query_id, root_cid)
+        self.retry_pending_root_after_block_sync(query_id, root_cid)
             .await?;
         Ok(())
     }
 
     /// Release a query every provider shed as busy, without recording a
     /// provider failure.
-    pub(crate) async fn handle_bitswap_provider_busy(
+    pub(crate) async fn handle_block_sync_provider_busy(
         &self,
         query_id: crate::QueryId,
     ) -> Result<()> {
@@ -234,7 +234,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     /// failure: poll-owned queries observe the explicit deferred completion,
     /// while the legacy manager-owned path returns its durable root to the
     /// authoritative pending-DAG clock.
-    pub(crate) async fn handle_bitswap_deferred(&self, query_id: crate::QueryId) -> Result<()> {
+    pub(crate) async fn handle_block_sync_deferred(&self, query_id: crate::QueryId) -> Result<()> {
         if !self.manager.block_sync_completion_tracker().defer(query_id) {
             self.release_to_pending_clock(query_id, "ingest coalesced behind a storage owner");
         }
@@ -580,7 +580,7 @@ mod tests {
     }
 
     #[nuclei::test]
-    async fn bitswap_block_received_retries_only_waiting_dags() {
+    async fn block_sync_block_received_retries_only_waiting_dags() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
         let transport = TestTransport::new();
@@ -613,9 +613,9 @@ mod tests {
         );
 
         coordinator
-            .handle_bitswap_block_received(QueryId(42), field_cid, field_block)
+            .handle_block_sync_block_received(QueryId(42), field_cid, field_block)
             .await
-            .expect("bitswap block received");
+            .expect("block-sync block received");
 
         match crate::rt::time::timeout(Duration::from_secs(1), events.recv())
             .await
@@ -641,7 +641,7 @@ mod tests {
     }
 
     #[nuclei::test]
-    async fn bitswap_block_coalesces_without_blocking_the_transport_drain() {
+    async fn block_sync_block_coalesces_without_blocking_the_transport_drain() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
         let transport = TestTransport::new();
@@ -662,7 +662,7 @@ mod tests {
 
         crate::rt::time::timeout(
             Duration::from_millis(100),
-            coordinator.handle_bitswap_block_received(QueryId(42), cid, block.clone()),
+            coordinator.handle_block_sync_block_received(QueryId(42), cid, block.clone()),
         )
         .await
         .expect("contended block event must not wait for the CID owner")
@@ -679,7 +679,7 @@ mod tests {
 
         drop(owner);
         coordinator
-            .handle_bitswap_block_received(QueryId(43), cid, block)
+            .handle_block_sync_block_received(QueryId(43), cid, block)
             .await
             .expect("block stores after the owner releases");
         assert!(blockstore.has(&cid).await.unwrap());
@@ -720,11 +720,11 @@ mod tests {
             let _ = coordinator.manager().register_query(query, root);
             if busy {
                 coordinator
-                    .handle_bitswap_provider_busy(query)
+                    .handle_block_sync_provider_busy(query)
                     .await
                     .unwrap();
             } else {
-                coordinator.handle_bitswap_deferred(query).await.unwrap();
+                coordinator.handle_block_sync_deferred(query).await.unwrap();
             }
             assert!(coordinator.manager().take_query_root(query).is_none());
             let pending = coordinator.manager().pending_dags_from("peer-1");
@@ -750,7 +750,7 @@ mod tests {
     /// durable receiver state. The per-root clock is the sole path that may
     /// claim and emit `DagNeedsFetch`, preventing an immediate retry storm.
     #[nuclei::test(start_paused = true)]
-    async fn bitswap_complete_failure_defers_reissue_to_retry_clock() {
+    async fn block_sync_complete_failure_defers_reissue_to_retry_clock() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
         let transport = TestTransport::new();
@@ -798,13 +798,13 @@ mod tests {
         let query_id = QueryId(7);
         let _ = coordinator.manager().register_query(query_id, root_cid);
         coordinator
-            .handle_bitswap_complete(
+            .handle_block_sync_complete(
                 query_id,
                 Err(crate::transport::FetchFailureCause::Error),
                 Some("selective CAR fetch failed".to_string()),
             )
             .await
-            .expect("bitswap complete");
+            .expect("block-sync complete");
 
         assert!(
             events.try_recv().is_err(),
@@ -841,7 +841,7 @@ mod tests {
     }
 
     #[nuclei::test(start_paused = true)]
-    async fn bitswap_complete_retries_only_its_registered_and_due_root() {
+    async fn block_sync_complete_retries_only_its_registered_and_due_root() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
         let transport = TestTransport::new();
@@ -899,13 +899,13 @@ mod tests {
         let query_id = QueryId(7);
         let _ = coordinator.manager().register_query(query_id, root1_cid);
         coordinator
-            .handle_bitswap_complete(
+            .handle_block_sync_complete(
                 query_id,
                 Err(crate::transport::FetchFailureCause::Error),
                 Some("selective CAR fetch failed".to_string()),
             )
             .await
-            .expect("bitswap complete");
+            .expect("block-sync complete");
 
         assert!(
             events.try_recv().is_err(),
@@ -928,13 +928,13 @@ mod tests {
             .manager()
             .register_query(QueryId(999), root1_cid);
         coordinator
-            .handle_bitswap_complete(
+            .handle_block_sync_complete(
                 QueryId(999),
                 Err(crate::transport::FetchFailureCause::Error),
                 Some("remaining child fetch failed".to_string()),
             )
             .await
-            .expect("registered retry bitswap complete");
+            .expect("registered retry block-sync complete");
         assert!(
             events.try_recv().is_err(),
             "root1 is not due again yet; no immediate reissue"
@@ -963,7 +963,7 @@ mod tests {
         }
 
         coordinator
-            .handle_bitswap_complete(
+            .handle_block_sync_complete(
                 QueryId(9999),
                 Err(crate::transport::FetchFailureCause::Error),
                 Some("ignored".to_string()),
