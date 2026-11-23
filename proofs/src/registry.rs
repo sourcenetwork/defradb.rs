@@ -4130,7 +4130,7 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Explicit transaction link reads",
-        name: "validated_mode_admits_one_link / validated_conflict_blocks_later_link / unvalidated_admits_both",
+        name: "validated_admits_only_empty / validated_taken_is_refused / unvalidated_admits_both",
         axis: Lean,
         anchor: "crates/database/db/src/index/manager/unique.rs save_local_unique_validated; crates/engine/query/src/runner/query/nested.rs has_one_to_one_relation_select",
         model_ref: "RelationLinkConflict (lake build)",
