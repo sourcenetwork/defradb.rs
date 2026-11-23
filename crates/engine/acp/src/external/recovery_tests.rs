@@ -295,10 +295,16 @@ fn a_pass_checks_the_records_past_its_first_page() {
         let granted: RapidHashSet<&str> = effects
             .iter()
             .filter_map(|effect| match effect {
-                VoidedEffect::Change(change) if change.op == OwedOp::Add => {
+                VoidedEffect::Change(change) => {
+                    assert_eq!(change.op, OwedOp::Add);
+                    assert_eq!(change.tuple.policy_id, POLICY);
+                    assert_eq!(change.tuple.resource, USERS);
+                    assert_eq!(change.tuple.relation, "reader");
+                    assert_eq!(change.tuple.subject, reader());
+                    assert_eq!(change.actor, did(OWNER));
                     Some(change.tuple.object.as_str())
                 }
-                _ => None,
+                VoidedEffect::Registration { .. } => None,
             })
             .collect();
         assert_eq!(granted, registered, "and every grant once");
@@ -772,6 +778,34 @@ fn a_list_cut_short_by_an_unreachable_provider_keeps_what_it_may_have_taken() {
             ],
             "the list may have gone through whole from where the answer was lost"
         );
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_list_whose_answer_is_lost_at_its_start_keeps_every_intent() {
+    workers::block_on(async {
+        let mut provider = Provider::default();
+        provider.unanswered_documents.insert("bae-1".into());
+        let (_, gate) = gate_over(provider);
+        let objects: Vec<AcpObject<'_>> = ["bae-1", "bae-2", "bae-3"]
+            .into_iter()
+            .map(|object_id| AcpObject {
+                policy_id: POLICY,
+                resource: USERS,
+                object_id,
+            })
+            .collect();
+
+        let failure = gate
+            .register_objects(&did(OWNER), &objects)
+            .await
+            .expect_err("the list is not answered");
+        assert_eq!(failure.index, 0);
+
+        let (effects, unrestored, _) = pass(&gate, &Deployment::empty()).await;
+        assert!(effects.is_empty(), "{effects:?}");
+        assert_eq!(unrestored.len(), 3, "{unrestored:?}");
     })
     .unwrap()
 }
