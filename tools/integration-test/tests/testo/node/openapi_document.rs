@@ -26,7 +26,7 @@ async fn the_document_describes_the_routes_this_node_serves() {
         let base = cluster.api_url(0);
         let client = Client::new(edge::testing::edge());
 
-        let (status, content_type, document) = fetch(&client, &base, "/openapi.json").await;
+        let (status, content_type, document) = fetch(&client, base, "/openapi.json").await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(content_type, "application/json");
         assert_eq!(document["openapi"], "3.0.3");
@@ -80,7 +80,7 @@ async fn the_document_describes_the_routes_this_node_serves() {
             "the document describes {operations} operations, no more than Go's 64"
         );
 
-        let (alias_status, alias_type, alias) = fetch(&client, &base, "/openapi.rs.json").await;
+        let (alias_status, alias_type, alias) = fetch(&client, base, "/openapi.rs.json").await;
         assert_eq!(alias_status, StatusCode::OK);
         assert_eq!(alias_type, "application/json");
         assert_eq!(alias, document, "the alias answers a different document");
