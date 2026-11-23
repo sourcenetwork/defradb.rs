@@ -18,6 +18,7 @@ mod collection_store;
 mod coordinator;
 mod dag_sync;
 mod dispatch_queue;
+pub(crate) mod doc_sync_ids;
 mod event_dispatcher;
 mod head_provider;
 mod head_scope;

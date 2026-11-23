@@ -31,8 +31,17 @@ pub(super) struct Node {
 }
 
 pub(super) async fn node() -> Node {
+    node_with_bus(None).await
+}
+
+/// A node that publishes its events on `bus`.
+pub(super) async fn node_with_bus(bus: Option<Arc<dyn events::Bus>>) -> Node {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
-    let db = Arc::new(DB::from_arc(store.clone()).unwrap());
+    let mut db = DB::from_arc(store.clone()).unwrap();
+    if let Some(bus) = bus {
+        db.set_event_bus(bus);
+    }
+    let db = Arc::new(db);
     db.add_collection(&defra_core::RequestContext::ambient(), SDL)
         .await
         .unwrap();
