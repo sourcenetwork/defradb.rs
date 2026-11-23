@@ -121,13 +121,15 @@ async fn hub_restarted_under_catchup(cluster: &mut TestCluster, fetch_slots: u64
         if pending >= fetch_slots && in_flight >= per_peer {
             break;
         }
-        assert!(
-            Instant::now() < deadline,
-            "the catch-up load never filled the hub's {fetch_slots} fetch slots (pending from it \
-             {pending}, in flight to it {in_flight}): the scenario cannot hold capacity. \
-             hub sync status: {}",
-            sync_status(cluster, HUB).await
-        );
+        if Instant::now() >= deadline {
+            let status = sync_status(cluster, HUB).await;
+            panic!(
+                "the catch-up load never filled the hub's {fetch_slots} fetch slots (pending from \
+                 it {pending}, in flight to it {in_flight}): the scenario cannot hold capacity. \
+                 hub fetch slots: {}. hub sync status: {status}",
+                status["pending_dag_fetch_slots"]
+            );
+        }
         nuclei::time::sleep(Duration::from_millis(250)).await;
     }
     CatchUp { docs, throttle }
