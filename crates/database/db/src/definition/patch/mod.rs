@@ -227,6 +227,7 @@ impl<S: Store> crate::database::DB<S> {
 }
 
 /// Reject indexes that name fields absent from their own collection version.
+/// A vector embedding's fields are checked by `validate_collection_changes`.
 fn validate_index_fields(version: &CollectionVersion) -> Result<()> {
     for index in &version.indexes {
         for field in &index.fields {
@@ -251,32 +252,6 @@ fn validate_index_fields(version: &CollectionVersion) -> Result<()> {
             return Err(Error::InvalidPatch(format!(
                 "full-text index on field '{}' references a field which does not exist in schema",
                 index.field_name
-            )));
-        }
-    }
-    for embedding in &version.vector_embeddings {
-        let mut missing = Vec::new();
-        if !version
-            .fields
-            .iter()
-            .any(|schema_field| schema_field.name == embedding.field_name)
-        {
-            missing.push(embedding.field_name.clone());
-        }
-        for field_name in &embedding.fields {
-            if !version
-                .fields
-                .iter()
-                .any(|schema_field| schema_field.name == *field_name)
-            {
-                missing.push(field_name.clone());
-            }
-        }
-        if !missing.is_empty() {
-            return Err(Error::InvalidPatch(format!(
-                "vector embedding '{}' references fields which do not exist in schema: {}",
-                embedding.field_name,
-                missing.join(", ")
             )));
         }
     }
@@ -495,21 +470,5 @@ mod tests {
         assert!(error
             .to_string()
             .contains("full-text index on field 'missing' references a field"));
-    }
-
-    #[test]
-    fn an_embedding_rejects_missing_output_and_source_fields() {
-        let mut version = version();
-        version.vector_embeddings =
-            vec![
-                schema::VectorEmbeddingDescription::new("missing_output", "model", "provider")
-                    .with_fields(vec!["name".into(), "missing_source".into()]),
-            ];
-        let error = validate_index_fields(&version).unwrap_err().to_string();
-        assert!(error.contains("missing_output"), "{error}");
-        assert!(error.contains("missing_source"), "{error}");
-        version.vector_embeddings[0].field_name = "name".into();
-        version.vector_embeddings[0].fields = vec!["name".into()];
-        validate_index_fields(&version).unwrap();
     }
 }

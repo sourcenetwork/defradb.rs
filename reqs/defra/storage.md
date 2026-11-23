@@ -41,7 +41,11 @@ An ordered query over an indexed field with `limit: 3, offset: 2` reads `limit +
 - **Parents:** ["defra.index"]
 - **Scenarios:** ["index::remove_indexed_field::removing_an_indexed_field_names_the_index_and_keeps_the_collection_usable", "index::remove_indexed_field::removing_a_fulltext_field_names_the_field_and_keeps_the_collection_usable", "index::remove_indexed_field::removing_an_embedding_source_keeps_the_collection_usable"]
 
-Removing a field named by an index, full-text index, or vector embedding fails with an error naming that field; the collection keeps the field and index or embedding and documents can still be written.
+A collection patch that removes a field named by an index, full-text index, or vector embedding is refused, and nothing changes: the collection keeps the field and its index or embedding, and documents can still be written. The error names what still uses the field:
+
+- a regular index: `index '<index name>' references field '<field>' which does not exist in schema`, e.g. `index 'Users_name_ASC' references field 'name' which does not exist in schema`;
+- a full-text index: `full-text index on field '<field>' references a field which does not exist in schema`;
+- a vector embedding's source field: `the given field does not exist. Embedding generation field: <field>`.
 
 # `defra.collection`: Collection-wide operations
 
