@@ -356,10 +356,12 @@ fn parent_registration_field_cannot_change_after_creation() {
     assert!(collection
         .validate_immutable_fields_unchanged(&old, &same)
         .is_ok());
-    assert!(collection
-        .validate_immutable_fields_unchanged(&old, &changed)
-        .is_err());
-    assert!(collection
-        .validate_immutable_fields_unchanged(&old, &removed)
-        .is_err());
+    for update in [&changed, &removed] {
+        let error = collection
+            .validate_immutable_fields_unchanged(&old, update)
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("parent field 'nodeID' of a registered document cannot change"));
+    }
 }
