@@ -23,6 +23,7 @@ mod inspection;
 mod json_match;
 pub mod op;
 mod relation;
+mod secondary_id;
 mod split;
 
 // Re-export FilterOp from op module

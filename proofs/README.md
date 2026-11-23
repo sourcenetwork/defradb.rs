@@ -71,6 +71,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | DiskANN walk cutoff | Lean | db-index (vector) |
 | PQ distance four sums | Lean | db-index (vector) |
 | Query fragment nesting bound | Lean | query |
+| Float filter equality | Lean | query, storage |
 | Index-maintenance consistency | Lean + TLA+ | db-index, db-merge |
 | Concurrent collection-head transitions | TLA+ & Lean | db-block-builder, storage |
 | Commit-ordered document arrivals | TLA+ | db, storage (pinned regolith) |
@@ -85,6 +86,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Peer connection observation | TLA+ / Lean | p2p |
 | HTTP router composition | TLA+ / Lean | http, defra-node |
 | Explicit transaction statement atomicity | TLA+ | query, db, storage |
+| One-to-many child paging | TLA+ | query; a child limit/offset applies per parent so a later parent keeps its page; `crates/engine/query/src/plan/type_join/type_join_many/children.rs` |
 | Engine ticker export | TLA+ & Lean | telemetry, storage |
 | Worker pool CPU ledger | TLA+ & Lean | workers |
 | Signing identity store | TLA+ & Lean | defra-core, defra-node, ffi |
@@ -128,7 +130,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Index changes in a transaction | TLA+ | db, defra-node, http, cli |
 | Encrypted index changes outside a transaction | TLA+ | db, defra-node, cli |
 | Gossip announcement audience | TLA+ | p2p |
-| Collection truncate | TLA+ | db |
+| Collection truncate | TLA+ & Lean | db, storage |
 | Relation-filtered mutation | TLA+ | query, datastore, db |
 | Add DAC policy | TLA+ | db, acp, vera, http, cli, ffi, defra-node |
 | Add view with a lens transform | TLA+ & Lean | defra-node, db, schema, lens (#2724; NAC before the create transaction is a known gap, #2736) |
@@ -136,11 +138,13 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Node access control operations | TLA+ & Lean | db, acp, http, cli, ffi, defra-node |
 | Filter relation paths and scalar leaves | Lean | query (#2427, #2430) |
 | Relation filter with no matching child | Lean | query (#3087) |
+| Commits depth traversal | Lean | query, db (#2098) |
 | Orphan block sweep | TLA+ & Lean | db, storage |
 | Per-peer stream cap | TLA+ | p2p |
 | Receive gate | TLA+ | p2p, db |
 | P2P delivery liveness | TLA+ | p2p, p2p-adapter, db-merge, storage |
 | Document save | TLA+ & Lean | query, defra-node |
+| Per-parent child paging | TLA+ / Lean | query |
 | Mutation value checks | Lean | document, defra-core, query |
 | Cursor tokens | Lean | cursor |
 | Peer key loading | TLA+ / Lean | defra-node, ffi |
@@ -149,6 +153,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Vector index defaults | Lean | schema |
 | Selected collection version | TLA+ / Lean | db, query, ffi |
 | Per-operation signing choice | Lean | defra-core, http, ffi, cli |
+| DNS resolver fallback | Lean | p2p |
 
 ### Backlog — current retry-era gaps
 This inventory includes legacy models and does not mean every current mechanism is

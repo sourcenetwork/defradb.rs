@@ -348,7 +348,12 @@ impl Node {
             edge: http_scope.edge().clone(),
         })?;
         #[cfg(feature = "postgres")]
-        let pg_server = Self::build_pg_server(database.clone(), config, &query_setup, edge)?;
+        let (pg_scope, pg_server) = {
+            let pg_scope = edge.scope();
+            let pg_server =
+                Self::build_pg_server(database.clone(), config, &query_setup, pg_scope.edge())?;
+            (pg_scope, pg_server)
+        };
 
         Ok(ServerSetup {
             database,
@@ -362,6 +367,8 @@ impl Node {
             http_scope,
             #[cfg(feature = "postgres")]
             pg_server,
+            #[cfg(feature = "postgres")]
+            pg_scope,
             #[cfg(feature = "embedded-vera")]
             embedded_vera: acp_setup.embedded_vera,
         })

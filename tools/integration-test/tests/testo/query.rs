@@ -18,6 +18,7 @@ mod commits {
     mod with_cid_shared_field;
     mod with_delete;
     mod with_depth;
+    pub(super) mod with_depth_negative;
     mod with_doc_id;
     mod with_doc_id_cid;
     mod with_doc_id_count;
@@ -169,6 +170,7 @@ mod one_to_one {
     mod with_count_filter;
     mod with_filter;
     mod with_filter_order;
+    mod with_filter_secondary_relation_id;
     mod with_fragments;
     mod with_group_related_id;
     mod with_group_related_id_alias;
@@ -213,6 +215,7 @@ mod simple {
         mod with_eq_blob;
         mod with_eq_datetime;
         mod with_eq_float;
+        mod with_eq_float_zero;
         mod with_eq_int;
         mod with_eq_string;
         mod with_geq_datetime;
@@ -302,5 +305,7 @@ mod simple {
     mod with_version;
     mod with_version_cid;
     mod with_version_cid_doc_ids;
+    mod with_version_cid_long_history;
+    mod with_version_cid_merged;
     mod with_version_order;
 }

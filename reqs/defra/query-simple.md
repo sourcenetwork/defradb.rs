@@ -412,10 +412,10 @@ With `GROUP(groupBy: [Verified]) { AVG(GROUP: {field: Age}) }`, an outer `AVG(GR
 # `go.query.simple.cid.doc-version`: `cid` returns the document state at that commit
 
 - **Parents:** ["go.query.simple.cid"]
-- **Scenarios:** ["query.simple.with-cid", "query.simple.with-cid-and-doc-id", "query.simple.with-cid-multiple-docs", "query.simple.with-shared-field-cid-returns-all-owners", "query.simple.with-update-and-first-cid-and-doc-id", "query.simple.with-update-and-first-cid-and-doc-idand-schema-version", "query.simple.with-update-and-last-cid-and-doc-id", "query.simple.with-update-and-middle-cid-and-doc-id"]
+- **Scenarios:** ["query.simple.with-cid", "query.simple.with-cid-and-doc-id", "query.simple.with-cid-multiple-docs", "query.simple.with-shared-field-cid-returns-all-owners", "query.simple.with-update-and-first-cid-and-doc-id", "query.simple.with-update-and-first-cid-and-doc-idand-schema-version", "query.simple.with-update-and-last-cid-and-doc-id", "query.simple.with-update-and-middle-cid-and-doc-id", "query.simple.with-version-cid-on-merged-history-lists-each-version-once", "query.simple.with-version-cid-lists-a-history-over-a-thousand-versions"]
 - **Scope:** "excluded from the encrypted-docs and signed-docs multipliers (CIDs are templated/hardcoded)"
 
-`Users(cid: "<composite CID>")` (with or without a matching `docID`) returns only that document, with its field values and `_version` as of that commit, even after later updates and when other documents exist. A field-level CID shared by several documents with identical field content returns every owning document.
+`Users(cid: "<composite CID>")` (with or without a matching `docID`) returns only that document, with its field values and `_version` as of that commit, even after later updates and when other documents exist. A field-level CID shared by several documents with identical field content returns every owning document. The `_version` of a document queried by `cid` lists every commit of that history once, on a merged history and on one more than 1000 commits deep (a document updated 1001 times lists 1002 versions).
 
 # `go.query.simple.cid.counter`: `cid` on documents with counter fields
 
@@ -494,6 +494,13 @@ Within `_version`, `links` and `heads` can be selected several times under diffe
 - **Scenarios:** ["query.simple.query-simple-with-similarity-on-vector-index-excludes-deleted-doc", "query.simple.query-simple-with-similarity-on-vector-index-is-magnitude-invariant", "query.simple.query-simple-with-similarity-on-vector-index-reflects-updated-vector", "query.simple.query-simple-with-similarity-on-vector-index-respects-offset", "query.simple.query-simple-with-similarity-on-vector-index-returns-k-nearest"]
 
 On a field with `@index(vector: {dimensions: 3, hnsw: {metric: COSINE}})`, `User(order: {_alias: {sim: DESC}}, limit: k, offset: m)` with `sim: SIMILARITY(vector: {...})` returns the k nearest documents after skipping m, reading only those through the index (`@explain(type: execute)` shows 1 index fetch and k doc fetches). Updated vectors are re-ranked, deleted documents are excluded, and similarity ignores magnitude (`[10,0,0]` and `[1,0,0]` both score 1).
+
+# `defra.query.simple.similarity.filtered_vector_warning`: A non-empty filter exhausts a vector query
+
+- **Parents:** ["go.query.simple.similarity"]
+- **Scenarios:** ["index::vector_fallback_warning::vector_index_warning_and_wrapped_filter_reports_warning"]
+
+A similarity query with a non-empty scalar filter—including one wrapped in `_and`—does not use the vector index. It exhaustively scores the filter's matches and returns the `VECTOR_INDEX_UNUSED` warning with `reason: filter`. An empty filter selects every row and keeps vector routing.
 
 # `go.query.simple.select.fields`: Plain query returns every document with the selected fields
 

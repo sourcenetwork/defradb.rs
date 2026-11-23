@@ -1,6 +1,9 @@
 import Lake
 open Lake DSL
 
+@[default_target]
+lean_lib ChildPage where
+
 package defraConvergence where
 
 @[default_target]
@@ -107,6 +110,9 @@ lean_lib OrderEncoding where
 
 @[default_target]
 lean_lib IndexMaintenance where
+
+@[default_target]
+lean_lib IndexPrefix where
 
 @[default_target]
 lean_lib Conformance where
@@ -241,6 +247,9 @@ lean_lib JsonSubPathCut where
 lean_lib RelationFilterNoChild where
 
 @[default_target]
+lean_lib CommitsDepthCast where
+
+@[default_target]
 lean_lib CarClosureDepth where
 
 @[default_target]
@@ -358,6 +367,9 @@ lean_lib KmsChunks where
 lean_lib SigningOverride where
 
 @[default_target]
+lean_lib FloatEquality where
+
+@[default_target]
 lean_lib OwedParts where
 
 @[default_target]
@@ -377,3 +389,6 @@ lean_lib ReplicatorEmptyCollections where
 
 @[default_target]
 lean_lib PendingKeyArrival where
+
+@[default_target]
+lean_lib DnsResolverFallback where

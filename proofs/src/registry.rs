@@ -1667,7 +1667,7 @@ pub const PROPERTIES: &[Property] = &[
         name: "INV_QueueBounded / INV_PermitConservation / INV_PeerLeavesAWorker / INV_UnreachableLeaveAWorker / ACT_DemoteAfterFailedProbe / LIVE_HealthyProgress",
         axis: Tla,
         anchor: "crates/database/p2p/src/sync/push_backlog.rs BacklogOwner::enqueue, pop_eligible, park_peer, park_peer_unreachable, peer_answered, retire_idle_cooldowns, take_queued_for_peer; crates/database/p2p/src/sync/coordinator/push_worker.rs spawn_push_workers, run_push_job",
-        model_ref: "MC_PushBacklog_{Green,Green_TwoDead,Green_SharedCap,Red_TwoDead,Red_DemoteEveryTimeout,Red_NoPeerCap,Red_SpawnPerItem,Red_PermitLeak,Red_RetainHandles}.cfg",
+        model_ref: "MC_PushBacklog_{Green,Green_TwoDead,Green_SharedCap,Red_TwoDead,Red_DemoteEveryTimeout,Red_OfflineQueue,Red_NoPeerCap,Red_SpawnPerItem,Red_PermitLeak,Red_RetainHandles}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },
@@ -2832,6 +2832,15 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/engine/query/src/planner/joins/relation_filter_execution_tests.rs no_matching_child_reads_no_parent, no_matching_child_reads_no_parent_of_an_index_ordered_scan",
     },
     Property {
+        family: "Commits depth traversal",
+        name: "minus_one_is_unlimited / other_negative_refused / nonnegative_is_itself / minus_one_clears_cap / walk_eq_fresh / walk_mem / walk_nodup / walk_unlimited / go_scan_merged / push_time_differs — `_commits(depth: -1)` reads as u64::MAX and so walks with no limit, every other negative depth is refused, and a non-negative one is itself; the stack walk below a cid, deciding each commit at pop time against the most depth it was walked with, lists the last-head-first path walk at first occurrence, each commit once, the same set as the old forward walk, and for an unlimited walk in Go's DAG-scan order, which marking at push time breaks, and keeps a commit only a shorter path reaches, which a plain seen set loses; a commit walked with at least UNLIMITED_DEPTH (2^62) left is never walked again, which -1 clears, so an unlimited walk loads each block once; every block is assumed to load",
+        axis: Lean,
+        anchor: "crates/database/db/src/read/commits/mod.rs CommitsFetcher::fetch_commit_by_cid, CommitsFetcher::traverse_depth, CommitsFetcher::push_heads; crates/engine/query/src/query_parse/parser.rs parse_field_to_select",
+        model_ref: "CommitsDepthCast.minus_one_is_unlimited / other_negative_refused / nonnegative_is_itself / minus_one_clears_cap / run_proc / walk_eq_fresh / walk_mem / walk_nodup / walk_unlimited / go_scan_merged / walk_merged / go_scan_diamond / push_time_differs / walk_short_long / seen_only_loses_a_commit / ladder_loads_once / no_guard_loads_again",
+        tiers: &[Contract],
+        bound_by: "crates/database/db/tests/read/commits_depth_walk.rs commits_depth_walk_lists_each_commit_of_a_diamond_chain_once_last_head_first, commits_depth_walk_keeps_rows_a_shorter_path_reaches, commits_depth_walk_lists_a_long_history_at_unlimited_depth, commits_depth_walk_reads_each_block_once_at_unlimited_depth; crates/engine/query/tests/query_parse_tests.rs test_parse_commits_depth_minus_one_is_unlimited, test_parse_commits_depth_other_negative_returns_error",
+    },
+    Property {
         family: "PQ distance four sums",
         name: "four_eq_sum — four running sums over a code's lookups add up to the one running sum, in exact arithmetic",
         axis: Lean,
@@ -3583,6 +3592,33 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // Truncating a collection while an index is created or its build
+        // fails: the cleanup reads the definition in its own transaction,
+        // after the chunks, and deletes every declared ordered index's own
+        // prefix, so no entry outlives the documents it named and no other
+        // collection's keys go with them.
+        family: "Collection truncate",
+        name: "INV_NoEntryForTruncatedDoc / INV_OtherCollectionIntact / LIVE_TruncateFinishes",
+        axis: Tla,
+        anchor: "crates/database/db/src/collection/ops/truncate/all.rs DB::truncate_all, DB::truncate_metadata_in; crates/database/db/src/definition/loader.rs get_collections_by_collection_id; crates/database/db/src/index/create.rs DB::stage_index_definition; crates/database/db/src/index/backfill.rs BackfillPage::index, DB::record_backfill_failure",
+        model_ref: "MC_TruncateIndexCleanup_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // The key prefix the truncate deletes per index covers exactly that
+        // index's entries: never another index's, and never a key of a
+        // `/tag/name/` family, whatever the short ID. The collection-wide
+        // prefix it replaced covered every document for short ID 100.
+        family: "Collection truncate",
+        name: "IndexPrefix.index_prefix_takes_its_entries / index_prefix_only_its_index / index_prefix_misses_family / old_prefix_of_100_covers_documents / old_prefix_of_118_covers_versions",
+        axis: Lean,
+        anchor: "crates/engine/storage/src/keys/utils/mod.rs encode_uvarint_ascending; crates/engine/storage/src/keys/datastore/index_key.rs IndexDataStoreKey::index_prefix; crates/engine/storage/src/keys/document.rs doc_key, deleted_doc_key; crates/database/db/src/collection/ops/truncate/all.rs DB::truncate_metadata_in",
+        model_ref: "IndexPrefix (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         // An unfiltered truncate deletes its collection's whole `/se/`
         // prefix: no search record of it survives, held or received, and no
         // other collection's record goes with it.
@@ -4100,6 +4136,26 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // One-to-many child paging (#3051): the scan stays unbounded and each
+        // parent stops only when the selected index guarantees the child order.
+        family: "Per-parent child paging",
+        name: "INV_EveryParentHasPage / INV_EarlyStopOnlyWhenOrdered",
+        axis: Tla,
+        anchor: "crates/engine/query/src/planner/joins/child_plan.rs build_relation_child_plan; crates/engine/query/src/plan/type_join/type_join_many/children.rs TypeJoinMany::next_per_parent",
+        model_ref: "MC_ChildLimitPaging_{Green,Red_UnorderedStop}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Per-parent child paging",
+        name: "stop_after_parent_page",
+        axis: Lean,
+        anchor: "crates/engine/query/src/plan/type_join/type_join_many/children.rs TypeJoinMany::next_per_parent",
+        model_ref: "ChildPage.lean",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         family: "Document save",
         name: "INV_NoFork / INV_DeletedStaysDeleted / INV_RefusedOnlyDeleted",
         axis: Tla,
@@ -4198,6 +4254,17 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // #2965: float equality is exact, both in query filters and in index
+        // matching; a tolerance can make `0` match `1e-300`.
+        family: "Float filter equality",
+        name: "exact_accepts_same / epsilon_accepts_distinct / tolerant_has_rejects",
+        axis: Lean,
+        anchor: "crates/engine/query/src/mapper/filter/eval/operators.rs values_equal; crates/engine/storage/src/index/matcher/mod.rs values_equal",
+        model_ref: "FloatEquality (lake build); MC_FloatEquality_{Green,Red_Epsilon}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/engine/query/src/mapper/filter/eval/operators.rs float_equality_is_exact; crates/engine/storage/src/index/matcher/tests.rs test_float_equality_is_exact; tools/integration-test/tests/testo/query/simple/with_filter/with_eq_float_zero.rs float_zero_equality_is_exact_on_indexed_and_unindexed_fields, float_zero_inequality_is_exact_on_indexed_and_unindexed_fields",
+    },
+    Property {
         // #2724: verify-signature's NAC, document ACP and block checks decide
         // at the caller's transaction view, or the read-only one the pool path
         // opens: NAC through check_node_access_in_txn, document ACP bound to
@@ -4209,5 +4276,27 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "MC_VerifySignature_{Green_*,Red_*}.cfg",
         tiers: &[Boundary],
         bound_by: "",
+    },
+    Property {
+        family: "One-to-many child paging",
+        name: "LIVE_EveryParentPage / INV_RedSecondParentKeepsPage: a child page is filled per parent, not by one global scan bound",
+        axis: Tla,
+        anchor: "crates/engine/query/src/plan/type_join/type_join_many/children.rs TypeJoinMany::next_per_parent; crates/engine/query/src/plan/type_join/type_join_many/node.rs TypeJoinMany::with_limit, with_offset",
+        model_ref: "MC_ChildPagePerParent_{Green,Red_GlobalBound}.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/query/one_to_many/with_limit.rs query_one_to_many_with_child_limit_keeps_a_two_parent_page",
+    },
+    Property {
+        // #2924: a host resolver configuration is read the way Go reads it
+        // (rejected lines and words skipped, the rest kept); one left with no
+        // nameservers, or that cannot be read, gets Go's local nameservers
+        // instead of failing the node's start.
+        family: "DNS resolver fallback",
+        name: "DnsResolverFallback.chosen_has_nameservers / usable_read_passes_through / accepted_lines_survive / kept_lines_accepted / rejected_nameserver_dropped / failed_read_falls_back",
+        axis: Lean,
+        anchor: "crates/database/p2p/src/host/transport/resolver.rs read_file, parse_lenient, usable_line, accepted, resolver_config, fallback_config, FALLBACK_NAMESERVERS",
+        model_ref: "DnsResolverFallback (lake build)",
+        tiers: &[Contract],
+        bound_by: "crates/database/p2p/src/host/transport/resolver_tests.rs a_failed_read_falls_back_to_the_localhost_nameservers, a_read_with_nameservers_passes_through_unchanged, a_systemd_resolved_stub_passes_through, an_unknown_option_keeps_the_hosts_nameserver, a_bad_nameserver_line_keeps_the_good_ones, a_bad_nameserver_line_never_uses_its_comment, an_unknown_directive_keeps_the_hosts_nameserver, a_bad_search_domain_keeps_the_others, a_file_without_nameservers_keeps_its_search_and_options, a_comment_that_is_not_utf8_keeps_the_hosts_nameserver, a_missing_file_falls_back_to_the_localhost_nameservers, the_fallback_matches_the_lean_model",
     },
 ];
