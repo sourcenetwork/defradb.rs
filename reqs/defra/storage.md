@@ -295,6 +295,8 @@ Transaction behaviour beyond what Go's integration suite checks.
 
 The HTTP server bounds only how long it waits to answer an explicit transaction commit. Past that bound, it answers `503` with JSON naming the bound and `outcome: "unknown"`. It does not cancel the commit: the worker-local commit keeps its ticket and lands or fails on its own, so the caller must not treat this as an abort. A transaction begin is not bounded this way, and a bound of `0` disables it.
 
+The bound is `commit_timeout`, in seconds, on the HTTP server.
+
 # `defra.txn.no_neighbour_conflict`: Updating one document does not conflict with its neighbour
 
 - **Parents:** ["defra.txn"]
