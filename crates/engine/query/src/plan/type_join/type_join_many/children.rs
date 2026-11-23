@@ -7,7 +7,7 @@ use web_time::Instant;
 use crate::document::{documents_to_plan_docs, DocumentMapping};
 use crate::error::Result;
 use crate::mapper::{GroupBy, OrderDirection};
-use crate::planner::{Doc, IndexScanParams, IndexScanType, PlanNode};
+use crate::planner::{Doc, IndexScanParams, IndexScanType};
 use document::NormalValue;
 
 use super::super::RelationFilter;
@@ -469,10 +469,6 @@ impl TypeJoinMany {
     /// Returns false if:
     /// - There are no child documents (empty relation can't pass any filter)
     /// - No child document passes the filter conditions
-    fn child_has_residual_filter(node: &dyn PlanNode) -> bool {
-        node.has_residual_filter() || node.source().is_some_and(Self::child_has_residual_filter)
-    }
-
     pub(super) fn check_relation_filter(
         &self,
         children: &[Doc],
@@ -540,7 +536,6 @@ impl TypeJoinMany {
             let mut all_children = Vec::new();
             let mut matching_count = 0u64;
             let mut total_scanned = 0u64;
-            let mut scanned_to_limit: Option<u64> = None;
             let can_stop_at_limit = self.relation_filter.is_none()
                 && (self.child_order_by.is_none()
                     || (self.child_plan_provides_ordering && !self.preserve_ordered_orphans));
@@ -567,8 +562,6 @@ impl TypeJoinMany {
                         if let Some(limit) = self.child_limit {
                             let effective_needed = self.child_offset + limit;
                             if matching_count >= effective_needed {
-                                let child_info = self.child_plan.exec_info();
-                                scanned_to_limit = Some(child_info.docs_fetched);
                                 break;
                             }
                         }
@@ -582,16 +575,6 @@ impl TypeJoinMany {
             self.go_child_metrics.doc_fetches += child_info.docs_fetched;
             self.go_child_metrics.field_fetches += child_info.fields_fetched;
             self.go_child_metrics.index_fetches += child_info.indexes_fetched;
-
-            // If the page stopped early, report the entries the scan had actually
-            // fetched at that threshold. `docs_fetched` includes residual-rejected
-            // rows. A residual scan also probes one more row after the threshold,
-            // so include that terminal probe; exhaustive scans keep their real count.
-            if let Some(scanned_to_limit) = scanned_to_limit {
-                self.go_child_metrics.index_fetches -= child_info.indexes_fetched;
-                let terminal_probe = Self::child_has_residual_filter(self.child_plan.as_ref());
-                self.go_child_metrics.index_fetches += scanned_to_limit + u64::from(terminal_probe);
-            }
 
             self.child_plan.close().await?;
 
