@@ -9,7 +9,7 @@ fn reconcile_indexes_preserves_documents_and_uses_completed_composite() {
     node.add_collection("type IndexedNote { node: String @index session: String @index text: String }")
         .await
         .unwrap();
-    let response = node.execute(r#"mutation { create_IndexedNote(input: [{node: "node", session: "session", text: "first"}, {node: "node", session: "session", text: "second"}, {node: "other", session: "session", text: "foreign"}]) { _docID } }"#).await;
+    let response = node.execute(r#"mutation { create_IndexedNote(input: [{node: "node", session: "session", text: "first"}, {node: "node", session: "session", text: "second"}, {node: "other", session: "session", text: "foreign"}, {node: "node", session: "other", text: "third"}]) { _docID } }"#).await;
     assert!(!response.has_errors(), "{:?}", response.errors);
     let before = node.get_collection("IndexedNote").unwrap().unwrap();
     let query = "{ IndexedNote(order: {text: ASC}) { _docID node session text } }";
@@ -62,12 +62,10 @@ fn reconcile_indexes_preserves_documents_and_uses_completed_composite() {
         .execute(&format!("query @explain(type: execute) {filtered}"))
         .await;
     assert!(!explain.has_errors(), "{:?}", explain.errors);
-    // Explain names no index, as in Go, so check the scan read index entries.
+    // Explain names no index, as in Go. Only the composite holds exactly the two
+    // matching entries: `node` and `session` alone each hold three.
     let explain = explain.data.unwrap().to_string();
-    assert!(
-        explain.contains("\"indexFetches\":") && !explain.contains("\"indexFetches\":0"),
-        "{explain}"
-    );
+    assert!(explain.contains("\"indexFetches\":2"), "{explain}");
     node.shutdown().await.unwrap();
 })
     .unwrap()
