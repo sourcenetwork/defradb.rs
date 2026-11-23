@@ -352,6 +352,10 @@ pub struct QueryResponseError {
     /// Internal retry control. Never serialized to client responses.
     #[serde(skip)]
     pub(crate) retry_input: Option<crate::prepared::PreparedInputRequest>,
+
+    /// Whether the request itself is invalid. Never serialized.
+    #[serde(skip)]
+    pub(crate) invalid_request: bool,
 }
 
 impl QueryResponseError {
@@ -363,6 +367,7 @@ impl QueryResponseError {
             locations: None,
             extensions: None,
             retry_input: None,
+            invalid_request: false,
         }
     }
 
@@ -400,6 +405,19 @@ impl QueryResponseError {
         self.extensions
             .as_ref()
             .and_then(|extensions| extensions.provider_time)
+    }
+
+    /// Mark whether the request itself is invalid.
+    pub(crate) fn with_invalid_request(mut self, invalid_request: bool) -> Self {
+        self.invalid_request = invalid_request;
+        self
+    }
+
+    /// Whether the request itself is invalid, so running it again unchanged
+    /// can only fail the same way. An error made from a string, without its
+    /// [`QueryError`](crate::error::QueryError), is not known to be.
+    pub fn is_invalid_request(&self) -> bool {
+        self.invalid_request
     }
 
     /// Return the machine-readable error code, if present.
@@ -445,6 +463,7 @@ impl QueryResponseError {
             crate::error::QueryError::NeedsInput(request) => Some(request.clone()),
             _ => None,
         };
+        let invalid_request = error.is_invalid_request();
         let response_error = Self::new(error.to_string());
         let mut response_error = if is_transaction_conflict {
             response_error.with_code(TXN_CONFLICT_ERROR_CODE)
@@ -475,6 +494,7 @@ impl QueryResponseError {
             response_error
         };
         response_error.retry_input = retry_input;
+        response_error.invalid_request = invalid_request;
         response_error
     }
 

@@ -383,3 +383,22 @@ fn a_non_object_aggregate_filter_on_a_scalar_list_names_its_filter_arg() {
         "Variable \"$f\" got invalid value 7.\nExpected \"NotNullStringFilterArg\", found not an object."
     );
 }
+
+/// A subscription open check refuses only an invalid request: a failed
+/// lookup during validation is not one, an unknown filter field is.
+#[test]
+fn a_failed_lookup_does_not_make_the_request_invalid() {
+    let mut failing = provider(0);
+    failing.failing_list = true;
+    let lookup = check_with(
+        &failing,
+        r#"{ Author { books(filter: {title: {_eq: "x"}}) { title } } }"#,
+        json!({}),
+    )
+    .expect_err("the lookup fails");
+    assert!(!lookup.is_invalid_request(), "{lookup}");
+
+    let unknown = check("{ Author(filter: {nope: {_eq: 1}}) { name } }", json!({}))
+        .expect_err("an unknown field is refused");
+    assert!(unknown.is_invalid_request(), "{unknown}");
+}

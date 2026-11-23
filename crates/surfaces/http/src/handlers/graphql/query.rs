@@ -417,8 +417,9 @@ async fn graphql_sse(
     let stream = async_stream::stream! {
         let mut closing = std::pin::pin!(closing);
         // Subscribed above; now the request runs once as a plain request,
-        // raced with closing. One the plain path refuses (a filter naming an
-        // unknown field) is this stream's only result, as Go's is.
+        // raced with closing. An invalid request the plain path refuses (a
+        // filter naming an unknown field) is this stream's only result, as
+        // Go's is.
         let mut open = QueryRequest::new(query_str.clone()).with_context(bearer.clone());
         if did.is_some() {
             open = open.with_identity(did.clone());
@@ -439,7 +440,13 @@ async fn graphql_sse(
             None => true,
             Some(response) => match query::subscription::open_failure(&response) {
                 None => false,
-                Some(_) => {
+                // A check that may pass later does not end the stream, unlike
+                // Go's: the next update runs the query again.
+                Some(query::subscription::OpenFailure::Transient(error)) => {
+                    tracing::warn!(%error, "GraphQL subscription open check failed transiently; keeping the stream");
+                    false
+                }
+                Some(query::subscription::OpenFailure::Invalid(_)) => {
                     if let Ok(json) = serde_json::to_string(&QueryResponse { data: None, ..response }) {
                         yield Ok(Event::default().event("next").data(json));
                     }

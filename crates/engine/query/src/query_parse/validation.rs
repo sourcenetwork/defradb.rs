@@ -183,7 +183,7 @@ fn check_similarity(
                     continue;
                 };
                 if !holds_vector(&target.kind) {
-                    return Err(QueryError::execution(format!(
+                    return Err(QueryError::invalid_argument(format!(
                         "similarity can only target a numeric array field. Field: {}, Type: {}",
                         target.name,
                         target.kind.graphql_type_name()
@@ -273,7 +273,7 @@ fn validate_encrypt_fields(mutation: &Mutation, collection: &CollectionVersion) 
     if message.is_empty() {
         return Ok(());
     }
-    Err(QueryError::execution(format!(
+    Err(QueryError::invalid_argument(format!(
         "Argument \"encryptFields\" has invalid value [{}].{message}",
         mutation.encrypt_fields.join(", ")
     )))

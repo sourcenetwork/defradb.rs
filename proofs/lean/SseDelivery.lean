@@ -5,8 +5,9 @@ A subscriber has a bounded queue. A full queue can drop an update. The HTTP
 stream must then end so its client can fetch state again. A query error must
 be sent as an error, even when the query has no rows. An empty successful query
 is still filtered away. Before its first event the stream checks the request
-once through the plain path (`open_failure`): a request the plain path refuses
-sends that error and completes. This models the decision in `graphql_sse` in
+once through the plain path (`open_failure`): an invalid request the plain path
+refuses sends that error and completes, and a check that failed for a reason
+that passes keeps the stream. This models the decision in `graphql_sse` in
 `crates/surfaces/http/src/handlers/graphql/query.rs`; the open check's ordering
 is `proofs/tla/SubscriptionOpenCheck.tla`.
 -/
@@ -74,9 +75,11 @@ theorem other_has_no_denial : code .other = none := by
 
 -- Once subscribed, the stream runs the request once as a plain request,
 -- raced with the server closing. A good request answers that it needs a
--- stream; a bad one (an unknown filter field) answers with its error.
+-- stream; an invalid one (an unknown filter field) answers with its error; a
+-- check can also fail for a reason that passes (a store read failed, a
+-- provider answered late), which says nothing about the request.
 inductive OpenCheck where
-  | needsStream | failed | closing
+  | needsStream | invalid | transient | closing
   deriving DecidableEq
 
 -- What the stream does after that check.
@@ -88,22 +91,28 @@ inductive OpenOutcome where
 def openOutcome : OpenCheck → OpenOutcome
   -- A good request streams its updates.
   | .needsStream => .stream
-  -- A bad one sends its error as the first result, then completes.
-  | .failed => .errorThenComplete
+  -- An invalid one sends its error as the first result, then completes.
+  | .invalid => .errorThenComplete
+  -- A failure that passes keeps the stream, unlike Go's, which ends it.
+  | .transient => .stream
   -- A closing server completes the stream without waiting for the check.
   | .closing => .complete
 
--- A bad request is told why, and its stream ends.
-theorem bad_open_reports_then_completes : openOutcome .failed = .errorThenComplete := by
+-- An invalid request is told why, and its stream ends.
+theorem bad_open_reports_then_completes : openOutcome .invalid = .errorThenComplete := by
+  rfl
+
+-- A check that failed for a reason that passes keeps the stream.
+theorem transient_open_keeps_stream : openOutcome .transient = .stream := by
   rfl
 
 -- Closing ends the stream even while its check runs.
 theorem closing_open_completes : openOutcome .closing = .complete := by
   rfl
 
--- Only a request the plain path accepted streams.
-theorem only_accepted_opens_stream (check : OpenCheck) :
-    openOutcome check = .stream ↔ check = .needsStream := by
+-- Only an invalid request ends its stream with an error at open.
+theorem only_invalid_open_is_refused (check : OpenCheck) :
+    openOutcome check = .errorThenComplete ↔ check = .invalid := by
   -- One case per check answer.
   cases check <;> simp [openOutcome]
 

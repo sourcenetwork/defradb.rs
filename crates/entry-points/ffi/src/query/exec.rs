@@ -320,8 +320,9 @@ fn subscribe(
 
     let service = get_rt()?.spawn_service(async move {
         // Subscribed above, so the ID returns at once; the request then runs
-        // once as a plain request, and one it refuses (a filter naming an
-        // unknown field) is the subscription's only result, as Go's stream's.
+        // once as a plain request, and an invalid one it refuses (a filter
+        // naming an unknown field) is the subscription's only result, as Go's
+        // stream's. A check that may pass later keeps the subscription.
         let mut open = query::QueryRequest::new(query_str.clone()).with_context(context.clone());
         if did.is_some() {
             open = open.with_identity(did.clone());
@@ -333,15 +334,21 @@ fn subscribe(
             open = open.with_variables(vars.clone());
         }
         let response = query_runner.execute(open).await;
-        if query::subscription::open_failure(&response).is_some() {
-            let refused = query::QueryResponse {
-                data: None,
-                ..response
-            };
-            if let Ok(json) = serde_json::to_string(&refused) {
-                result_tx.send_async(json).await;
+        match query::subscription::open_failure(&response) {
+            Some(query::subscription::OpenFailure::Transient(error)) => {
+                tracing::warn!(%error, "subscription open check failed transiently; keeping it");
             }
-            return;
+            Some(query::subscription::OpenFailure::Invalid(_)) => {
+                let refused = query::QueryResponse {
+                    data: None,
+                    ..response
+                };
+                if let Ok(json) = serde_json::to_string(&refused) {
+                    result_tx.send_async(json).await;
+                }
+                return;
+            }
+            None => {}
         }
         while let Some(message) = subscription.recv().await {
             let Some(update) = message.as_update() else {

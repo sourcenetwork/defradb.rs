@@ -5,7 +5,7 @@ use defra_core::RequestContext;
 use events::{EventName, Message};
 use query::subscription::{
     open_failure, response_has_data, subscription_accepts_doc_id, subscription_doc_ids,
-    subscription_to_scoped_query, validate_subscription,
+    subscription_to_scoped_query, validate_subscription, OpenFailure,
 };
 use rapidhash::{HashMapExt, RapidHashMap};
 use regolith::sync::Atom;
@@ -135,14 +135,14 @@ impl SubscriptionRequest {
         let node = state.node_on(self.common.node())?;
         let events = node.subscribe(&[EventName::Update]).into_receiver();
         // Subscribed first, then checked once as a plain request, as the
-        // HTTP stream opens: a refused request fails the open.
+        // HTTP stream opens: an invalid request fails the open.
         let response = state
             .block_on(node.execute_request_as(
                 &state.context_as(None, identity),
                 self.with_variables(query::QueryRequest::new(query)),
             ))
             .map_err(|e| Failure::operation(e.to_string()))?;
-        if let Some(error) = open_failure(&response) {
+        if let Some(OpenFailure::Invalid(error)) = open_failure(&response) {
             return Err(Failure::operation(error));
         }
         self.keep(state, query, identity, Source::Node(events), None);

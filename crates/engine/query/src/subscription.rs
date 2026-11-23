@@ -383,22 +383,43 @@ fn cid_argument(cid: &str) -> Value<'static, String> {
     Value::List(vec![Value::String(cid.to_string())])
 }
 
-/// The error a subscription's open check reports, from the response to the
+/// Why a subscription's open check did not accept it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OpenFailure {
+    /// The request itself is invalid, such as a filter naming a field its
+    /// input type does not define: the stream sends this error as its first
+    /// and only result, then completes, as Go's does.
+    Invalid(String),
+    /// The check failed for a reason that may pass (a store or provider
+    /// failure, a deadline): the subscription is kept, where Go's
+    /// `execSSESubscription` would end it.
+    Transient(String),
+}
+
+/// What a subscription's open check says, from the response to the
 /// subscription run once as a plain request.
 ///
 /// A subscription the plain path accepts answers that it needs a stream
-/// ([`crate::executor::SUBSCRIPTION_NEEDS_SSE_ERROR_CODE`]); any other answer
-/// is the reason the subscription cannot open, such as a filter naming a
-/// field its input type does not define. Go sends that error as the stream's
-/// first result and completes it.
-pub fn open_failure(response: &QueryResponse) -> Option<String> {
+/// ([`crate::executor::SUBSCRIPTION_NEEDS_SSE_ERROR_CODE`]). Any other error
+/// is [`OpenFailure::Invalid`] when it says the request itself is invalid
+/// ([`crate::executor::QueryResponseError::is_invalid_request`]), and
+/// [`OpenFailure::Transient`] otherwise.
+pub fn open_failure(response: &QueryResponse) -> Option<OpenFailure> {
     let needs_stream = response
         .errors
         .iter()
         .any(|error| error.code() == Some(crate::executor::SUBSCRIPTION_NEEDS_SSE_ERROR_CODE));
-    match (needs_stream, response.errors.first()) {
-        (false, Some(error)) => Some(error.message.clone()),
-        _ => None,
+    if needs_stream {
+        return None;
+    }
+    let invalid = response
+        .errors
+        .iter()
+        .find(|error| error.is_invalid_request());
+    match (invalid, response.errors.first()) {
+        (Some(error), _) => Some(OpenFailure::Invalid(error.message.clone())),
+        (None, Some(error)) => Some(OpenFailure::Transient(error.message.clone())),
+        (None, None) => None,
     }
 }
 

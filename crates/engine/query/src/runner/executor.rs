@@ -619,17 +619,10 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             None => match request.operation(variables.as_ref(), self.query_limits) {
                 Ok(p) => p,
                 Err(e) => {
-                    return QueryResponse {
-                        data: None,
-                        errors: vec![QueryResponseError {
-                            message: e.to_string(),
-                            path: None,
-                            locations: None,
-                            extensions: None,
-                            retry_input: None,
-                        }],
-                        extensions: None,
-                    };
+                    // A request that does not parse is invalid, whatever the error.
+                    return QueryResponse::error(
+                        QueryResponseError::new(e.to_string()).with_invalid_request(true),
+                    );
                 }
             },
         };
@@ -644,7 +637,10 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             )
             .await
             {
-                return QueryResponse::error(error.to_string());
+                return QueryResponse::error(
+                    QueryResponseError::new(error.to_string())
+                        .with_invalid_request(error.is_invalid_request()),
+                );
             }
             // A standalone query reads a snapshot of its own on a worker,
             // which nothing registers. Its first run takes a copy of this
@@ -682,17 +678,10 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             )
             .await
             {
-                return QueryResponse {
-                    data: None,
-                    errors: vec![QueryResponseError {
-                        message: e.to_string(),
-                        path: None,
-                        locations: None,
-                        extensions: None,
-                        retry_input: None,
-                    }],
-                    extensions: None,
-                };
+                return QueryResponse::error(
+                    QueryResponseError::new(e.to_string())
+                        .with_invalid_request(e.is_invalid_request()),
+                );
             }
         }
 

@@ -173,6 +173,11 @@ pub enum QueryError {
     #[error("Argument \"input\" has invalid value.\nIn field \"{0}\": Unknown field.")]
     SecondaryRelationInput(String),
 
+    /// An argument the request gives does not fit what its field takes, in
+    /// GraphQL validation's words.
+    #[error("{0}")]
+    InvalidArgument(String),
+
     /// A subscription sent as a plain request: it is served only over SSE.
     #[error("parse error: {}", crate::subscription::SUBSCRIPTION_NEEDS_SSE)]
     SubscriptionNeedsSse,
@@ -286,6 +291,51 @@ pub enum QueryError {
 }
 
 impl QueryError {
+    /// Whether this error says the request itself is invalid, so running it
+    /// again unchanged can only fail the same way: it does not parse or
+    /// validate, names what does not exist, or was refused by an access
+    /// decision. A failure of the store, a provider, a deadline or a retry
+    /// budget is not: the same request may succeed later.
+    pub fn is_invalid_request(&self) -> bool {
+        match self {
+            Self::Parse(_)
+            | Self::UnknownMutationCollection(_)
+            | Self::InvalidFilter(_)
+            | Self::FilterFieldNotSelected { .. }
+            | Self::UnknownField(_)
+            | Self::SubSelectionOnLeaf { .. }
+            | Self::CollectionNotFound(_)
+            | Self::InvalidAggregateTarget(_)
+            | Self::TypeMismatch { .. }
+            | Self::UnexpectedType { .. }
+            | Self::SecondaryRelationInput(_)
+            | Self::InvalidArgument(_)
+            | Self::SubscriptionNeedsSse
+            | Self::Schema(_)
+            | Self::InvalidDocId(_)
+            | Self::RequiredFieldMissing(_)
+            | Self::InvalidMutationInput(_)
+            | Self::PermissionDenied(_)
+            | Self::DelegationOutsideWindow { .. }
+            | Self::Introspection(_) => true,
+            Self::Storage(_)
+            | Self::TransactionConflict(_)
+            | Self::TransactionRetryExhausted(_)
+            | Self::AcpProviderUnavailable(_)
+            | Self::AccessCheckUnavailable { .. }
+            | Self::NeedsInput(_)
+            | Self::IndexOwed(_)
+            | Self::Execution(_)
+            | Self::DocumentNotFound(_)
+            | Self::Internal(_)
+            | Self::WriteAuthorityUnavailable(_)
+            | Self::AcpRegistrationFailed { .. }
+            | Self::AcpCheckFailed { .. }
+            | Self::CommitAccessCheckFailed(_)
+            | Self::AcpRegistrationCheckFailed { .. } => false,
+        }
+    }
+
     /// Retain verification diagnostics without exposing them through a query response.
     pub fn commit_access_check_failed(error: Self) -> Self {
         Self::CommitAccessCheckFailed(Box::new(error))
@@ -333,6 +383,11 @@ impl QueryError {
     /// Create a document not found error
     pub fn document_not_found(msg: impl Into<String>) -> Self {
         Self::DocumentNotFound(msg.into())
+    }
+
+    /// Create an invalid argument error
+    pub fn invalid_argument(msg: impl Into<String>) -> Self {
+        Self::InvalidArgument(msg.into())
     }
 
     /// Create an execution error

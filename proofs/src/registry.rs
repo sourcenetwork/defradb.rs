@@ -719,23 +719,24 @@ pub const PROPERTIES: &[Property] = &[
     Property {
         // A subscription is subscribed first and checked once through the
         // plain path after, raced with closing: a bad filter is the stream's
-        // only result, and no update committed after the open is lost.
+        // only result, a check that failed for a reason that passes keeps
+        // the stream, and no update committed after the open is lost.
         family: "SSE loss and error delivery",
-        name: "INV_BadNeverStreams / INV_BadIsReported / INV_NoLostUpdate / LIVE_ClosingEnds: a bad filter never streams and is reported, an update committed after the check reaches a valid subscription, closing ends every stream",
+        name: "INV_BadNeverStreams / INV_BadIsReported / INV_GoodNeverRefused / INV_NoLostUpdate / LIVE_ClosingEnds: a bad filter never streams and is reported, a good one is never refused even when its check met a failure that passes, an update committed after the check reaches a valid subscription, closing ends every stream",
         axis: Tla,
-        anchor: "crates/surfaces/http/src/handlers/graphql/query.rs graphql_sse; crates/entry-points/ffi/src/query/exec.rs subscribe; crates/engine/query/src/subscription.rs open_failure; tools/integration-test/src/actions/query/subscription.rs SubscriptionRequest::open",
-        model_ref: "MC_SubscriptionOpenCheck_{Green,Red_SkipCheck,Red_CheckThenSubscribe,Red_CheckIgnoresClosing}.cfg",
+        anchor: "crates/surfaces/http/src/handlers/graphql/query.rs graphql_sse; crates/entry-points/ffi/src/query/exec.rs subscribe; crates/engine/query/src/subscription.rs open_failure; crates/engine/query/src/error.rs QueryError::is_invalid_request; tools/integration-test/src/actions/query/subscription.rs SubscriptionRequest::open",
+        model_ref: "MC_SubscriptionOpenCheck_{Green,Red_SkipCheck,Red_CheckThenSubscribe,Red_CheckIgnoresClosing,Red_TransientRefuses}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/surfaces/http/tests/graphql_sse_recovery.rs a_subscription_the_plain_path_refuses_sends_its_error_then_completes; crates/surfaces/http/tests/sse_ends_when_closing.rs a_graphql_subscription_ends_when_its_edge_closes; tools/integration-test/tests/testo/subscription/with_filter_unknown.rs subscription_with_an_unknown_filter_field_is_refused_on_open, subscription_with_a_valid_filter_variable_streams",
+        bound_by: "crates/surfaces/http/tests/graphql_sse_recovery.rs a_subscription_the_plain_path_refuses_sends_its_error_then_completes, a_transient_failure_at_open_keeps_the_stream; crates/engine/query/tests/filter_shape_checks.rs a_failed_lookup_does_not_make_the_request_invalid; crates/surfaces/http/tests/sse_ends_when_closing.rs a_graphql_subscription_ends_when_its_edge_closes; tools/integration-test/tests/testo/subscription/with_filter_unknown.rs subscription_with_an_unknown_filter_field_is_refused_on_open, subscription_with_a_valid_filter_variable_streams",
     },
     Property {
         family: "SSE loss and error delivery",
-        name: "bad_open_reports_then_completes / closing_open_completes / only_accepted_opens_stream: a refused open sends its error and completes, closing completes it, only an accepted open streams",
+        name: "bad_open_reports_then_completes / transient_open_keeps_stream / closing_open_completes / only_invalid_open_is_refused: an invalid open sends its error and completes, a check that failed for a reason that passes keeps the stream, closing completes it, only an invalid open is refused",
         axis: Lean,
         anchor: "crates/surfaces/http/src/handlers/graphql/query.rs graphql_sse; crates/engine/query/src/subscription.rs open_failure",
         model_ref: "SseDelivery (lake build)",
         tiers: &[Boundary],
-        bound_by: "crates/surfaces/http/tests/graphql_sse_recovery.rs a_subscription_the_plain_path_refuses_sends_its_error_then_completes",
+        bound_by: "crates/surfaces/http/tests/graphql_sse_recovery.rs a_subscription_the_plain_path_refuses_sends_its_error_then_completes, a_transient_failure_at_open_keeps_the_stream",
     },
     Property {
         // graphql-go checks a literal filter's keys against its input type

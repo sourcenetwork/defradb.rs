@@ -196,10 +196,11 @@ RUNS=(
   "MC_SseDelivery_Red_Overflow.cfg SseDelivery.tla RED"
   "MC_SseDelivery_Red_Error.cfg SseDelivery.tla RED"
   "MC_SseDelivery_Red_Wakeup.cfg SseDelivery.tla RED"
-  "MC_SubscriptionOpenCheck_Green.cfg SubscriptionOpenCheck.tla GREEN" # subscribe, then check; bad filter reported, closing ends it
+  "MC_SubscriptionOpenCheck_Green.cfg SubscriptionOpenCheck.tla GREEN" # subscribe, then check; bad filter reported, transient failure kept, closing ends it
   "MC_SubscriptionOpenCheck_Red_SkipCheck.cfg SubscriptionOpenCheck.tla RED" # a bad filter streams results (INV_BadNeverStreams)
   "MC_SubscriptionOpenCheck_Red_CheckThenSubscribe.cfg SubscriptionOpenCheck.tla RED" # a promised update is lost (INV_NoLostUpdate)
   "MC_SubscriptionOpenCheck_Red_CheckIgnoresClosing.cfg SubscriptionOpenCheck.tla RED" # a stalled check outlives closing (LIVE_ClosingEnds)
+  "MC_SubscriptionOpenCheck_Red_TransientRefuses.cfg SubscriptionOpenCheck.tla RED" # a good filter is refused on a failure that passes (INV_GoodNeverRefused)
   "MC_HttpRouterComposition_Green.cfg HttpRouterComposition.tla GREEN"
   "MC_HttpRouterComposition_Red_Early.cfg HttpRouterComposition.tla RED"
   "MC_HttpRouterComposition_Red_Fallback.cfg HttpRouterComposition.tla RED"
