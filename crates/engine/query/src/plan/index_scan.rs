@@ -475,8 +475,45 @@ mod tests {
         }
     }
 
+    fn person() -> CollectionVersion {
+        let mut collection = CollectionVersion::new("Person", "v1", "coll-person", vec![]);
+        collection.root_id = 2;
+        collection
+    }
+
     fn filter(conditions: serde_json::Value) -> Filter {
         Filter::from_conditions(conditions.as_object().cloned().unwrap())
+    }
+
+    #[test]
+    fn explain_uses_go_scan_shape_with_filter_and_prefixes() {
+        let node = make_index_scan_node_for(person(), IndexScanType::ExactMatch { values: vec![] })
+            .with_explain_filter(filter(serde_json::json!({"name": {"_like": "%vid%"}})));
+
+        assert_eq!(
+            node.explain(),
+            serde_json::json!({
+                "scanNode": {
+                    "collectionName": "Person",
+                    "collectionID": "v1",
+                    "filter": {"name": {"_like": "%vid%"}},
+                    "prefixes": ["/2"],
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn explain_keeps_docid_filter_conditions() {
+        let node = make_index_scan_node_for(person(), IndexScanType::ExactMatch { values: vec![] })
+            .with_explain_filter(filter(
+                serde_json::json!({"_docID": {"_eq": "bae-1"}, "name": {"_like": "%vid%"}}),
+            ));
+
+        assert_eq!(
+            node.explain()["scanNode"]["filter"],
+            serde_json::json!({"_docID": {"_eq": "bae-1"}, "name": {"_like": "%vid%"}}),
+        );
     }
 
     #[test]
@@ -501,6 +538,16 @@ mod tests {
             node.explain()["scanNode"]["filter"],
             serde_json::json!({"name": {"_eq": "Ada"}}),
         );
+    }
+
+    #[test]
+    fn explain_without_a_filter_shows_null_and_the_prefix() {
+        let node = make_index_scan_node_for(person(), IndexScanType::ExactMatch { values: vec![] });
+
+        let explain = node.explain();
+        assert_eq!(explain["scanNode"]["filter"], serde_json::Value::Null);
+        assert_eq!(explain["scanNode"]["prefixes"], serde_json::json!(["/2"]));
+        assert!(explain["scanNode"].get("indexName").is_none(), "{explain}");
     }
 
     #[test]
