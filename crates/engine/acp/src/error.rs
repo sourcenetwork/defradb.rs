@@ -40,6 +40,9 @@ pub enum Error {
     #[error("unsupported subject for this backend: {0}")]
     UnsupportedSubject(String),
 
+    #[error("certified replica group membership is unsupported by this backend")]
+    UnsupportedReplicaMembership,
+
     /// The backend cannot evaluate named document permissions.
     #[error("named document permission checks are unsupported by this backend")]
     UnsupportedNamedPermission,

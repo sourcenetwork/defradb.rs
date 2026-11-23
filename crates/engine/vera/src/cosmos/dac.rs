@@ -588,6 +588,15 @@ impl DocumentACP for VeraDocumentACP {
         Some(Arc::new(owed_journal::VeraOwedJournal { acp }))
     }
 
+    async fn replica_group_member(&self, group: &acp::ReplicaGroup, signer: &Did) -> Result<bool> {
+        let (group, signer) = (group.clone(), signer.clone());
+        self.remote(
+            move |provider| async move { provider.replica_group_member(&group, &signer).await },
+        )
+        .await
+        .map_err(provider_err)
+    }
+
     async fn check_named_permission(
         &self,
         subject: &Did,

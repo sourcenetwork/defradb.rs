@@ -491,6 +491,16 @@ pub trait VeraProvider: MaybeSendSync {
         ))
     }
 
+    async fn replica_group_member(
+        &self,
+        _group: &acp::ReplicaGroup,
+        _signer: &identity::Did,
+    ) -> Result<bool, ProviderError> {
+        Err(ProviderError::Unsupported(
+            "certified replica group membership".into(),
+        ))
+    }
+
     async fn verify_access(
         &self,
         policy_id: &str,

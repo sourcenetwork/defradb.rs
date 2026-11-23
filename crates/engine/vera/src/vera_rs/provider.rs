@@ -955,6 +955,15 @@ impl VeraProvider for VeraRsProvider {
         .await
     }
 
+    async fn replica_group_member(
+        &self,
+        group: &acp::ReplicaGroup,
+        signer: &identity::Did,
+    ) -> Result<bool, ProviderError> {
+        self.admitted_read(assignments::group_member(self, group, signer))
+            .await
+    }
+
     async fn verify_access(
         &self,
         policy_id: &str,

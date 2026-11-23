@@ -47,6 +47,16 @@ impl ReplicaGrant {
     }
 }
 
+/// A direct membership relation on a group whose owner is trusted by the receiver.
+#[derive(Clone, Debug)]
+pub struct ReplicaGroup {
+    pub policy: String,
+    pub resource: String,
+    pub object: String,
+    pub relation: String,
+    pub owner: Did,
+}
+
 /// The unit a receiving node owes for a replicated document it registers.
 #[derive(Clone, Debug)]
 pub struct ReplicaUnit<'a> {

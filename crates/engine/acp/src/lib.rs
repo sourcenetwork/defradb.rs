@@ -93,7 +93,7 @@ pub use read_access::{check_doc_read_access, DirectChecker, DocAccess, ObjectAcc
 pub use relation::{
     RelationTuple, DELETER_RELATION, OWNER_RELATION, READER_RELATION, UPDATER_RELATION,
 };
-pub use replica::{ReplicaGrant, ReplicaOwed, ReplicaUnit};
+pub use replica::{ReplicaGrant, ReplicaGroup, ReplicaOwed, ReplicaUnit};
 pub use store::AcpStore;
 pub use target_subject::parse_target_subject;
 pub use validation::{validate_resource_interface, REQUIRED_DOCUMENT_PERMISSIONS};

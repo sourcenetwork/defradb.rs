@@ -799,6 +799,45 @@ where
         }
     }
 
+    async fn replica_group_member(
+        &self,
+        group: &crate::ReplicaGroup,
+        signer: &Did,
+    ) -> Result<bool> {
+        let receiver = self
+            .own_actor()
+            .ok_or(Error::UnsupportedReplicaMembership)?;
+        let _settling = self
+            .settling
+            .try_lock()
+            .ok_or_else(unsettled_relationship)?;
+        let member = self.provider.replica_group_member(group, signer).await?;
+        let txn = self.store.new_txn(true).await.map_err(storage_error)?;
+        if txn
+            .get(&pending_key(&group.policy, &group.resource, &group.object))
+            .await
+            .map_err(storage_error)?
+            .is_some()
+        {
+            return Err(unsettled_relationship());
+        }
+        for actor in [&receiver, signer] {
+            let tuple = crate::outbox::OwedTuple {
+                policy_id: group.policy.clone(),
+                resource: group.resource.clone(),
+                object: group.object.clone(),
+                relation: group.relation.clone(),
+                subject: crate::outbox::OwedSubject::Actor {
+                    did: self.provider.canonical_actor(actor),
+                },
+            };
+            if crate::outbox::tuple_rest(&txn, &tuple).await?.is_some() {
+                return Err(unsettled_relationship());
+            }
+        }
+        Ok(member)
+    }
+
     async fn check_named_permission(
         &self,
         subject: &Did,

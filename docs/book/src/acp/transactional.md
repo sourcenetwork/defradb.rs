@@ -673,3 +673,9 @@ An embedder with changing device membership can implement
 registering or adopting a replica. For a known local signer or an unavailable
 membership lookup, the receiving node waits for ordinary registration and
 read access. A lookup failure never queues a registration or creator grant.
+
+For an account-owned group, `DocumentACP::replica_group_member` verifies
+the active owner and the account's direct grants at the same certified state.
+The receiver must itself hold a grant. Only then can an absent signer grant
+identify a nonmember. A missing group, wrong owner, receiver revocation, or
+unsettled local membership change leaves classification unavailable.

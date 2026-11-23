@@ -541,6 +541,17 @@ pub trait DocumentACP: MaybeSendSync {
         doc_id: &str,
     ) -> Result<bool>;
 
+    /// Verify that this receiver belongs to the named owner's group and check
+    /// the signer's membership at the same finalized state. Only a proven
+    /// nonmember returns false.
+    async fn replica_group_member(
+        &self,
+        _group: &crate::ReplicaGroup,
+        _signer: &Did,
+    ) -> Result<bool> {
+        Err(Error::UnsupportedReplicaMembership)
+    }
+
     /// Evaluate a named permission for an explicit actor. Backends that cannot
     /// evaluate named permissions must fail rather than infer a grant.
     async fn check_named_permission(
