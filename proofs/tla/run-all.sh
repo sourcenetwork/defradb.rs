@@ -62,6 +62,19 @@ RUNS=(
   "MC_InlineBatchFlights_Red_Shared.cfg InlineBatchFlights.tla RED"
   "MC_LocalFetchPermit_Green.cfg LocalFetchPermit.tla GREEN"
   "MC_LocalFetchPermit_Red_Hold.cfg LocalFetchPermit.tla RED"
+  "MC_DagReadiness_Green.cfg DagReadiness.tla GREEN"
+  "MC_DagReadiness_Red_SkipNone.cfg DagReadiness.tla RED" # a child deleted before its read is skipped, not missing (INV_AbsentIsMissing)
+  "MC_DagReadiness_Red_DropErr.cfg DagReadiness.tla RED" # the walker drops a failed child read, as main did (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAsEmpty_Start.cfg DagReadiness.tla RED" # the fetch start takes a failed walk as complete (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAsEmpty_RootedCar.cfg DagReadiness.tla RED" # the rooted-CAR check takes a failed walk as complete (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAsEmpty_WalkLoop.cfg DagReadiness.tla RED" # the selective loop takes a failed walk as complete (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAsEmpty_Final.cfg DagReadiness.tla RED" # the final check takes a failed walk as complete (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAsEmpty_DocSync.cfg DagReadiness.tla RED" # the DocSync re-merge takes a failed walk as complete (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAsEmpty_PushAdmission.cfg DagReadiness.tla RED" # the push admission takes a failed walk as complete (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAsEmpty_PendingRetry.cfg DagReadiness.tla RED" # the pending retry takes a failed walk as complete (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAsEmpty_Restore.cfg DagReadiness.tla RED" # the restore sweep takes a failed walk as complete (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAbortsSweep.cfg DagReadiness.tla RED" # one failed walk ends the waiter sweep (INV_SweepTotal)
+  "MC_DagReadiness_Red_ConflictStringified.cfg DagReadiness.tla RED" # a storage conflict loses its type (INV_ConflictTyped)
   "MC_HeldPubsubRequest_Green.cfg HeldPubsubRequest.tla GREEN"
   "MC_HeldPubsubRequest_Red_NoHold.cfg HeldPubsubRequest.tla RED" # a refused publish fails the sync at once (Delivered)
   "MC_HeldPubsubRequest_Red_NoResend.cfg HeldPubsubRequest.tla RED" # a later subscriber is never sent the request (Delivered)
