@@ -479,7 +479,7 @@ fn a_foreign_genesis_waits_for_parent_admission_before_its_creator_gets_write_ac
         assert!(!chain.holds(&rejected, "writer", &creator.did));
         let (accepted, block) = source.create(&creator, "allowed").await;
         assert_eq!(
-            receiver.receive(&source, &accepted, &block).await,
+            receiver.receive_in_batch(&source, &accepted, &block).await,
             MergeOutcome::Merged
         );
         receiver.settle(&accepted).await.unwrap();

@@ -247,13 +247,20 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                                     "missing parent document ID in '{field}'"
                                 ))
                             })?;
-                        let authority = scoped.as_deref().unwrap_or(provider.as_ref());
-                        parent = Some(
-                            authority
-                                .registration_parent(&policy.id, &policy.resource_name, id)
-                                .await
-                                .map_err(|error| MergeError::MergeFailed(error.to_string()))?,
-                        );
+                        parent = if let Some(authority) = scoped.as_ref() {
+                            Some(
+                                authority
+                                    .registration_parent(&policy.id, &policy.resource_name, id)
+                                    .await
+                                    .map_err(|error| MergeError::MergeFailed(error.to_string()))?,
+                            )
+                        } else {
+                            self.registration_input(super::RegistrationLookup::Parent {
+                                policy: policy.id.clone(),
+                                child: policy.resource_name.clone(),
+                                parent: id.to_owned(),
+                            })?
+                        };
                     }
                     if let Some(scoped) = scoped {
                         let signer = identity::Did::new(signer)
@@ -269,20 +276,12 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         )
                         .await
                         .map_err(|error| MergeError::MergeFailed(error.to_string()))?;
-                    } else if parent_field.is_some()
-                        && !registering_replica
-                        && !provider
-                            .is_doc_registered(
-                                &policy.id,
-                                &policy.resource_name,
-                                context.doc_id_str,
-                            )
-                            .await
-                            .map_err(|error| MergeError::MergeFailed(error.to_string()))?
-                    {
-                        return Err(MergeError::MergeFailed(
-                            "parent-gated document awaits provider registration".into(),
-                        ));
+                    } else if parent_field.is_some() && !registering_replica {
+                        self.registration_input(super::RegistrationLookup::Registered {
+                            policy: policy.id.clone(),
+                            resource: policy.resource_name.clone(),
+                            document: context.doc_id_str.to_owned(),
+                        })?;
                     }
                 }
                 self.record_replica(systemstore, context, collection.schema(), parent.as_ref())

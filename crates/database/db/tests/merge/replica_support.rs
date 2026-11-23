@@ -527,6 +527,23 @@ impl Receiver {
         doc_id: &str,
         composite: &Composite,
     ) -> Result<MergeOutcome, db::merge::merge_handler::MergeError> {
+        self.copy_blocks(from, composite).await;
+        self.handler
+            .handle_block(
+                &composite.0,
+                &composite.1,
+                BlockMetadata::normal(
+                    doc_id,
+                    COLLECTION_ID,
+                    "did:key:z6MkCarrier",
+                    Some("peer"),
+                    false,
+                ),
+            )
+            .await
+    }
+
+    async fn copy_blocks(&self, from: &Source, composite: &Composite) {
         let mut pending = vec![composite.0];
         while let Some(cid) = pending.pop() {
             if self.blocks.get(&cid).await.unwrap().is_some() {
@@ -542,19 +559,34 @@ impl Receiver {
             }
             self.blocks.put(&cid, &data).await.unwrap();
         }
-        self.handler
-            .handle_block(
-                &composite.0,
-                &composite.1,
-                BlockMetadata::normal(
-                    doc_id,
-                    COLLECTION_ID,
-                    "did:key:z6MkCarrier",
-                    Some("peer"),
-                    false,
-                ),
-            )
+    }
+
+    pub(crate) async fn receive_in_batch(
+        &self,
+        from: &Source,
+        doc_id: &str,
+        composite: &Composite,
+    ) -> MergeOutcome {
+        self.copy_blocks(from, composite).await;
+        let block = defra_core::merge::MergeBlock {
+            cid: composite.0,
+            block_data: composite.1.clone(),
+            doc_id: doc_id.to_owned(),
+            collection_id: COLLECTION_ID.into(),
+            creator: "did:key:z6MkCarrier".into(),
+            sender_peer: Some("peer".into()),
+            is_explicit_replicator: false,
+            explicit_replay_authorization: None,
+            verified_creator: None,
+        };
+        let mut results = self
+            .handler
+            .inner()
+            .try_batch_merge(&[block])
             .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        results.pop().unwrap().unwrap()
     }
 
     /// Re-drive what is ready to be tried again.
