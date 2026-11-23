@@ -81,6 +81,7 @@ mod simple {
 }
 mod sync {
     mod exact_fetch;
+    mod fetch_slots;
     mod branchable_collection {
         mod complex_network;
         mod simple;
