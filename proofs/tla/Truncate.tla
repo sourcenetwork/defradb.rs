@@ -56,14 +56,13 @@
 \*   DB::truncate                the delete, all (all.rs truncate_all) or matching (filtered.rs truncate_matching)
 \*   DB::truncate_parsed_as      the same sequence for the GraphQL truncate mutation, its filter already parsed
 \*   DB::truncate_metadata_in    (all.rs) the view cache and `/se/` prefix cleared
-\*   store_artifacts, delete_artifacts, owns_recipient_share, merge_share
-\*                              (crates/database/db/src/merge/se/serve.rs) the
-\*                              held and received search records
+\*   store_artifacts, build_reply (crates/database/db/src/merge/se/serve.rs)
+\*                              received search records written and served through the datastore view
 EXTENDS Naturals, FiniteSets   \* numbers to compare, and Cardinality to count documents
 
 CONSTANTS
   Docs,      \* the documents in the collection
-  Enforced   \* which checks and steps the database really runs (a subset of the ten)
+  Enforced   \* which checks and steps the database really runs (a subset of the nine)
 
 \* At least two documents, so a filter can match some and not others.
 ASSUME Cardinality(Docs) >= 2
@@ -88,7 +87,7 @@ VARIABLES
   committedMatch,  \* the documents the filter matches in committed state
   txnMatch,        \* the documents it matches in the transaction's own view
   step,            \* "check", then "delete", then "done"
-  contention,      \* a later chunk meets a writer that conflicts with every retry
+  contention,      \* a chunk meets a writer that conflicts with every retry
   removed,         \* the documents this request removed
   committedChunks, \* the documents chunks committed before an exhausted retry
   refused,         \* the request ended with an error
