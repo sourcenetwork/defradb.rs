@@ -412,3 +412,38 @@ fn a_local_provider_registers_the_genesis_signer_as_before() {
     })
     .unwrap()
 }
+
+#[test]
+fn signed_genesis_registers_only_under_a_parent_that_admits_its_signer() {
+    workers::block_on(async {
+        use zanzibar::ZanzibarStore as _;
+
+        let mut collection = crate::replica_support::users();
+        collection.policy.as_mut().unwrap().parent_field = Some("name".into());
+        let receiver = Receiver::open_collection(collection, |store| {
+            Arc::new(acp::ZanzibarDocumentACP::new(Arc::new(
+                acp::PersistentZanzibarStore::from_store(store),
+            )))
+        }, None, false).await;
+        let store = acp::PersistentZanzibarStore::from_store(receiver.db.store().clone());
+        let yaml = "name: admissions\nresources:\n- name: nodes\n- name: users\n  relations: [{name: parent, types: [nodes]}]\n  create: {parent: parent, requires: owner}\n";
+        let mut policy = acp::policy_yaml::build_policy(&acp::policy_yaml::parse_policy_yaml(yaml).unwrap(), 1).unwrap();
+        policy.id = POLICY.into();
+        store.store_policy(&policy).await.unwrap();
+        let creator = key();
+        let provider = receiver.acp();
+        provider.register_doc_object(&creator.did, POLICY, "nodes", "allowed").await.unwrap();
+        provider.register_doc_object(&receiver.identity, POLICY, "nodes", "other").await.unwrap();
+
+        let source = Source::open().await;
+        let (rejected, block) = source.create(&creator, "other").await;
+        let error = receiver.try_receive(&source, &rejected, &block).await.unwrap_err();
+        assert!(error.to_string().contains("parent requires 'owner'"), "{error}");
+        assert!(!provider.is_doc_registered(POLICY, RESOURCE, &rejected).await.unwrap());
+
+        let (accepted, block) = source.create(&creator, "allowed").await;
+        assert_eq!(receiver.receive(&source, &accepted, &block).await, MergeOutcome::Merged);
+        assert_eq!(provider.get_doc_owner(POLICY, RESOURCE, &accepted).await.unwrap(), Some(creator.did));
+        assert!(store.has_relationship(POLICY, RESOURCE, &accepted, "parent", &zanzibar::Subject::entity_set("nodes", "allowed", "")).await.unwrap());
+    }).unwrap()
+}

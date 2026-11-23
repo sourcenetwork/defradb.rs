@@ -449,6 +449,15 @@ impl Receiver {
         replicas: Option<Arc<dyn ReplicaOwnership>>,
         strict: bool,
     ) -> Self {
+        Self::open_collection(users(), acp, replicas, strict).await
+    }
+
+    pub(crate) async fn open_collection(
+        definition: CollectionVersion,
+        acp: impl FnOnce(Arc<RegolithStore>) -> Arc<dyn DocumentACP>,
+        replicas: Option<Arc<dyn ReplicaOwnership>>,
+        strict: bool,
+    ) -> Self {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let acp = acp(store.clone());
         let node =
@@ -458,7 +467,7 @@ impl Receiver {
             DB::from_arc_with_options(store.clone(), DbOptions::new().with_node_identity(node))
                 .unwrap(),
         );
-        db.create_collection(users()).await.unwrap();
+        db.create_collection(definition).await.unwrap();
         if let Some(ownership) = replicas {
             db.set_replica_registration(ReplicaRegistration::new(["Users"], ownership));
         }
@@ -482,6 +491,15 @@ impl Receiver {
         doc_id: &str,
         composite: &Composite,
     ) -> MergeOutcome {
+        self.try_receive(from, doc_id, composite).await.unwrap()
+    }
+
+    pub(crate) async fn try_receive(
+        &self,
+        from: &Source,
+        doc_id: &str,
+        composite: &Composite,
+    ) -> Result<MergeOutcome, db::merge::merge_handler::MergeError> {
         let mut pending = vec![composite.0];
         while let Some(cid) = pending.pop() {
             if self.blocks.get(&cid).await.unwrap().is_some() {
@@ -510,7 +528,6 @@ impl Receiver {
                 ),
             )
             .await
-            .unwrap()
     }
 
     /// Re-drive what is ready to be tried again.
