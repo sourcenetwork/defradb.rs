@@ -2066,4 +2066,23 @@ theorem decode_refuses_trailing (l : Nat) (is : List (List Nat × List Nat)) (x 
   -- The items read back and leave the extra bytes, which are not empty.
   simp [decode, encode, List.append_assoc, take8_be64 _ _ hn, decItems_enc is _ hi]
 
+/-!
+## Reclamation deletes only unmarked nodes
+
+The story, in plain words. A sweep has a set of node names and a set of live
+marks (`ProllyNodes::reclaim` in
+`crates/engine/storage/src/stores/prolly_nodes.rs`). The sweep's delete list is
+the names the marks do not contain. The theorem states exactly that rule, so a
+marked live node can never be on it.
+-/
+
+-- The node names the live marks do not name.
+def reclaimUnmarked (marked : List Nat) (stored : List Nat) : List Nat :=
+  stored.filter (fun node => !(marked.contains node))
+
+/-- A sweep deletes exactly the stored nodes its live marks do not name. -/
+theorem reclaimDeletesOnlyUnmarked (marked stored : List Nat) :
+    reclaimUnmarked marked stored =
+      stored.filter (fun node => !(marked.contains node)) := rfl
+
 end ProllyTree

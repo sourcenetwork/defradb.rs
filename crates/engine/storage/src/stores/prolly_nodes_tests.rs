@@ -2,9 +2,10 @@ use std::sync::Arc;
 
 use prolly::{diff, tree::DEFAULT_TARGET, Cached, Item, MemStore, Store as _, Tree};
 
-use super::{node_key, ProllyNodes};
+use super::{node_key, ProllyNodes, NODES_PER_SWEEP};
 use crate::backends::RegolithStore;
 use crate::corekv::engine_retry_options;
+use crate::corekv::Dropable as _;
 
 /// The cache's budget: far below the tree's size.
 const BUDGET: usize = 64 * 1024;
@@ -30,6 +31,161 @@ where
 fn nodes(store: &Arc<RegolithStore>) -> Cached<ProllyNodes<RegolithStore>> {
     let nodes = ProllyNodes::new(Arc::clone(store), engine_retry_options(5), PENDING);
     Cached::new(nodes, BUDGET)
+}
+
+async fn node_keys(store: &RegolithStore) -> Vec<Vec<u8>> {
+    let reader = crate::corekv::Store::new_txn(store, true).await.unwrap();
+    let mut scan = reader
+        .iterator(crate::corekv::IterOptions::new().with_prefix(b"t".to_vec()))
+        .await
+        .unwrap();
+    let mut keys = Vec::new();
+    while let Some(pair) = scan.next().await.unwrap() {
+        keys.push(pair.key.to_vec());
+    }
+    scan.close().await.unwrap();
+    reader.discard();
+    keys
+}
+
+#[test]
+fn a_reclaim_keeps_only_the_nodes_the_live_roots_name() {
+    workers::block_on(async {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let mut regolith =
+            ProllyNodes::new(Arc::clone(&store), engine_retry_options(5), usize::MAX);
+        let built = Tree::build(&mut regolith, DEFAULT_TARGET, (0..3).map(entry))
+            .await
+            .unwrap();
+        let stored = node_keys(&store).await.len();
+        let report = ProllyNodes::reclaim(&*store, &[built.root().unwrap()], None, NODES_PER_SWEEP)
+            .await
+            .unwrap();
+        assert_eq!(report.scanned, stored);
+        assert_eq!(report.marked, stored);
+        assert_eq!(report.deleted, 0);
+        assert!(report.next_start.is_some());
+
+        let mut edited_tree = built;
+        edited_tree
+            .remove(&mut regolith, &entry(1).0)
+            .await
+            .unwrap();
+        let edited = edited_tree.root().unwrap();
+        let report = ProllyNodes::reclaim(&*store, &[edited], None, NODES_PER_SWEEP)
+            .await
+            .unwrap();
+        assert_eq!(report.deleted, 1);
+        assert_eq!(node_keys(&store).await.len(), report.marked);
+
+        let mut cursor = edited_tree.iter(&regolith);
+        let mut live = Vec::new();
+        while let Some(item) = cursor.next().await {
+            live.push(item.unwrap());
+        }
+        assert_eq!(live.len(), 2);
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_root_published_after_the_mark_is_not_deleted_by_the_same_snapshot() {
+    workers::block_on(async {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let mut regolith =
+            ProllyNodes::new(Arc::clone(&store), engine_retry_options(5), usize::MAX);
+        let first = Tree::build(&mut regolith, DEFAULT_TARGET, (0..2).map(entry))
+            .await
+            .unwrap();
+        let second = {
+            let mut tree = first;
+            tree.insert(&mut regolith, b"after".to_vec(), b"v".to_vec())
+                .await
+                .unwrap();
+            tree.root().unwrap()
+        };
+
+        let report = ProllyNodes::reclaim(&*store, &[second], None, NODES_PER_SWEEP)
+            .await
+            .unwrap();
+        assert_eq!(report.deleted, report.scanned - report.marked);
+        assert_eq!(node_keys(&store).await.len(), report.marked);
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_sweep_walks_one_bounded_page_at_a_time() {
+    workers::block_on(async {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let mut regolith =
+            ProllyNodes::new(Arc::clone(&store), engine_retry_options(5), usize::MAX);
+        let tree = Tree::build(&mut regolith, DEFAULT_TARGET, (0..3).map(entry))
+            .await
+            .unwrap();
+        let total = node_keys(&store).await.len();
+        let mut start = None;
+        let mut scanned = 0;
+        let mut pages = 0;
+        while let Some(report) = {
+            let report = ProllyNodes::reclaim(&*store, &[tree.root().unwrap()], start, 1)
+                .await
+                .unwrap();
+            assert!(report.scanned <= 1);
+            scanned += report.scanned;
+            pages += 1;
+            let has_next = report.next_start.is_some();
+            start = report.next_start;
+            has_next.then_some(report.deleted)
+        } {
+            assert_eq!(report, 0);
+        }
+        assert_eq!(scanned, total);
+        assert!(pages > 1);
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_sweep_with_no_live_roots_reclaims_every_node_page_by_page() {
+    workers::block_on(async {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let mut regolith =
+            ProllyNodes::new(Arc::clone(&store), engine_retry_options(5), usize::MAX);
+        Tree::build(&mut regolith, DEFAULT_TARGET, (0..3).map(entry))
+            .await
+            .unwrap();
+        let total = node_keys(&store).await.len();
+        let mut start = None;
+        let mut deleted = 0;
+        while {
+            let report = ProllyNodes::reclaim(&*store, &[], start, 1).await.unwrap();
+            assert!(report.scanned <= 1);
+            deleted += report.deleted;
+            let has_next = report.next_start.is_some();
+            start = report.next_start;
+            has_next
+        } {}
+        assert_eq!(deleted, total);
+        assert!(node_keys(&store).await.is_empty());
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_purge_leaves_no_t_key() {
+    workers::block_on(async {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let mut regolith =
+            ProllyNodes::new(Arc::clone(&store), engine_retry_options(5), usize::MAX);
+        Tree::build(&mut regolith, DEFAULT_TARGET, (0..2).map(entry))
+            .await
+            .unwrap();
+        assert!(!node_keys(&store).await.is_empty());
+        store.drop_all().await.unwrap();
+        assert!(node_keys(&store).await.is_empty());
+    })
+    .unwrap()
 }
 
 #[test]

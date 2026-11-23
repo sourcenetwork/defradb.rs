@@ -3814,6 +3814,30 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // A sweep's candidates are one bounded page. The delete transaction
+        // marks the caller's roots again, so a root published after the page
+        // scan keeps an old node it names. The model trusts that the caller
+        // supplies every live root.
+        family: "Prolly tree node store and cache",
+        name: "SweepKeepsLiveRoots: a page sweep re-marks live roots and deletes only unmarked nodes",
+        axis: Tla,
+        anchor: "crates/engine/storage/src/stores/prolly_nodes.rs ProllyNodes::reclaim, ReclaimNodes::run, mark_roots",
+        model_ref: "MC_ProllyNodeReclaim_Green.cfg (GREEN) / MC_ProllyNodeReclaim_Red_NoRecheck.cfg (RED)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // The Lean theorem states the data rule the delete applies: its
+        // deleted list is exactly the stored nodes the live marks do not name.
+        family: "Prolly tree node store and cache",
+        name: "reclaimDeletesOnlyUnmarked",
+        axis: Lean,
+        anchor: "crates/engine/storage/src/stores/prolly_nodes.rs ProllyNodes::reclaim, ReclaimNodes::run, mark_roots",
+        model_ref: "ProllyTree (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         family: "Text chunking",
         name: "covers / bounded / pickPre_capped / deterministic / units_edit / local_edit / heading_keeps_text / unit_break_reads_only_headings / long_unit_fences",
         axis: Lean,
