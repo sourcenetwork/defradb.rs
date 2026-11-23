@@ -278,7 +278,7 @@ As in Go DefraDB, a one-to-many relation field such as `Author.published` is an 
 # `defra.index.range_filter`: A two-sided range filter fetches only the range
 
 - **Parents:** ["defra.index"]
-- **Scenarios:** ["index::range_filter::a_closed_range_fetches_only_the_range", "index::range_filter::an_open_range_on_a_descending_index_fetches_only_the_range", "index::range_filter::an_empty_range_fetches_nothing"]
+- **Scenarios:** ["index::range_filter::a_closed_range_returns_matching_rows", "index::range_filter::an_open_descending_range_returns_matching_rows", "index::range_filter::an_empty_range_returns_no_rows", "index::range_filter::a_closed_range_limits_index_fetches", "index::range_filter::an_open_descending_range_limits_index_fetches", "index::range_filter::an_empty_range_limits_index_fetches"]
 
 Over the index suite's ten users (ages 20, 23, 28, 30, 32, 33, 42, 44, 48, 55), `User(filter: {age: {_geq: 28, _leq: 33}}) { name }` on `age: Int @index` returns Fred, John, Islam, Andy with `indexFetches: 4`; `filter: {age: {_gt: 28, _lt: 44}}` on `age: Int @index(direction: DESC)` returns Addo, Andy, Islam, John with `indexFetches: 4`; and the empty range `{_gt: 44, _lt: 30}` returns `[]` with `indexFetches: 0`. Both bounds limit the index scan, not just the lower one.
 

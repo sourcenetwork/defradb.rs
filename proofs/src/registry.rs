@@ -54,6 +54,51 @@ use Tier::{Behavioral, Boundary, Contract};
 
 pub const PROPERTIES: &[Property] = &[
     Property {
+        family: "Schema-evolution operations in the core",
+        name: "INV_Keep / INV_Match / INV_Real: synced definitions preserve only the matching placeholder's transform and leave held definitions unchanged",
+        axis: Tla,
+        anchor: "crates/database/db/src/merge/merge_handler/definition.rs DbMergeHandler::process_collection_definition_delta",
+        model_ref: "MC_SyncedMigrationTransform_{Green,Red_Drop,Red_Head}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/database/db/tests/merge/collection_predecessor.rs",
+    },
+    Property {
+        family: "Schema-evolution operations in the core",
+        name: "SyncedMigrationTransform.matching_preserved / mismatched_not_carried / no_edge_no_transform / real_unchanged / absent_no_transform",
+        axis: Lean,
+        anchor: "crates/database/db/src/merge/merge_handler/definition.rs DbMergeHandler::process_collection_definition_delta",
+        model_ref: "SyncedMigrationTransform (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/database/db/tests/merge/collection_predecessor.rs",
+    },
+    Property {
+        family: "Secondary index equal-key order",
+        name: "OrderedIndexPage.saturating_budget_page: an ordered scan reserves the offset plus limit without dropping the offset twice",
+        axis: Lean,
+        anchor: "crates/engine/query/src/planner/builder/index_methods.rs order_index_scan_params",
+        model_ref: "OrderedIndexPage (lake build)",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/index/index_offset_limit.rs",
+    },
+    Property {
+        family: "ACP soundness + revocation + dual-path commits",
+        name: "INV_NoStale / INV_SameHash / INV_AcceptValid: certified assignments honor the caller's position floor",
+        axis: Tla,
+        anchor: "crates/engine/vera/src/vera_rs/provider/assignments.rs check_position",
+        model_ref: "MC_AssignmentPosition_{Green,Red_Stale,Red_Hash}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/engine/vera/src/vera_rs/provider/assignments.rs position_floor_rejects_replays_and_accepts_a_verified_new_term",
+    },
+    Property {
+        family: "ACP soundness + revocation + dual-path commits",
+        name: "AssignmentPosition.accepted_iff / stale_term_rejected / stale_height_rejected / same_height_hash_rejected / later_term_accepted / later_height_accepted",
+        axis: Lean,
+        anchor: "crates/engine/vera/src/vera_rs/provider/assignments.rs check_position",
+        model_ref: "AssignmentPosition (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/engine/vera/src/vera_rs/provider/assignments.rs position_floor_rejects_replays_and_accepts_a_verified_new_term",
+    },
+    Property {
         family: "Transactional node source grants",
         name: "HostNoopProjection rechecks descendants with the original actor",
         axis: Tla,
@@ -4094,10 +4139,10 @@ pub const PROPERTIES: &[Property] = &[
         // One-to-many child paging (#3051): the scan stays unbounded and each
         // parent stops only when the selected index guarantees the child order.
         family: "Per-parent child paging",
-        name: "INV_EveryParentHasPage / INV_EarlyStopOnlyWhenOrdered",
+        name: "INV_CompletedPage / INV_EarlyStopOnlyWhenOrdered / LIVE_AllPagesComplete",
         axis: Tla,
         anchor: "crates/engine/query/src/planner/joins/child_plan.rs build_relation_child_plan; crates/engine/query/src/plan/type_join/type_join_many/children.rs TypeJoinMany::next_per_parent",
-        model_ref: "MC_ChildLimitPaging_{Green,Red_UnorderedStop}.cfg",
+        model_ref: "MC_ChildLimitPaging_{Green,Ordered,Red_UnorderedStop}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },
@@ -4234,7 +4279,7 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "One-to-many child paging",
-        name: "LIVE_EveryParentPage / INV_RedSecondParentKeepsPage: a child page is filled per parent, not by one global scan bound",
+        name: "LIVE_EveryParentPage / INV_SecondParentKeepsPage: a child page is filled per parent, not by one global scan bound",
         axis: Tla,
         anchor: "crates/engine/query/src/plan/type_join/type_join_many/children.rs TypeJoinMany::next_per_parent, can_stop_at_limit, child_limit, child_offset",
         model_ref: "MC_ChildPagePerParent_{Green,Red_GlobalBound}.cfg",

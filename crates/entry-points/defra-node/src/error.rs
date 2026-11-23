@@ -187,7 +187,7 @@ pub enum Error {
     EmbeddedVera(#[from] vera_embedded::HostError),
 
     /// A call did not run on the worker pool.
-    #[error("{}", .0.report("node call"))]
+    #[error("{}", .0.caller_message())]
     WorkerPoolCall(#[source] workers::Error),
     /// The worker pool did not start.
     #[error("the worker pool did not start: {0}")]
@@ -533,6 +533,11 @@ pub enum Error {
 pub struct SeedLength(pub usize);
 
 impl Error {
+    pub(crate) fn worker_pool_call(source: workers::Error) -> Self {
+        source.report("node call");
+        Self::WorkerPoolCall(source)
+    }
+
     /// A response lacks `field` in the record rendered by `within`.
     pub fn missing(field: &'static str, within: impl std::fmt::Display) -> Self {
         Self::MissingIn {
@@ -548,25 +553,53 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use tracing_subscriber::layer::{Context, SubscriberExt};
+    use tracing_subscriber::Layer;
+
+    struct CountEvents(Arc<AtomicUsize>);
+
+    impl<S: tracing::Subscriber> Layer<S> for CountEvents {
+        fn on_event(&self, _: &tracing::Event<'_>, _: Context<'_, S>) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+    }
 
     #[test]
     fn a_worker_pool_call_reports_the_caller_sentence_and_keeps_its_source() {
+        let events = Arc::new(AtomicUsize::new(0));
+        let subscriber = tracing_subscriber::registry().with(CountEvents(events.clone()));
+        let _guard = tracing::subscriber::set_default(subscriber);
         let source = workers::Error::Panicked {
             task: "node call",
             message: "secret".into(),
         };
-        let error = Error::WorkerPoolCall(source.clone());
+        let error = Error::worker_pool_call(source.clone());
+        assert_eq!(events.load(Ordering::Relaxed), 1);
 
         assert_eq!(
             error.to_string(),
             "the request failed on an internal error; see the node's log"
         );
         assert!(!error.to_string().contains("secret"));
+        assert_eq!(events.load(Ordering::Relaxed), 1);
         assert!(
             std::error::Error::source(&error)
                 .and_then(|source| source.downcast_ref::<workers::Error>())
                 .is_some_and(|linked| *linked == source),
             "the worker error stays linked as the source"
         );
+    }
+
+    #[test]
+    fn a_shutdown_worker_call_reports_once_and_keeps_its_message() {
+        let events = Arc::new(AtomicUsize::new(0));
+        let subscriber = tracing_subscriber::registry().with(CountEvents(events.clone()));
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let error = Error::worker_pool_call(workers::Error::ShutDown);
+        assert_eq!(error.to_string(), "the node is shutting down; try again");
+        assert_eq!(error.to_string(), "the node is shutting down; try again");
+        assert_eq!(events.load(Ordering::Relaxed), 1);
     }
 }

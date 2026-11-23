@@ -60,6 +60,6 @@ FairSpec ==
 
 LIVE_EveryParentPage == <>(\A p \in Parents : page[p] # 0)
 
-INV_RedSecondParentKeepsPage == scans = Limit => page["b"] # 0
+INV_SecondParentKeepsPage == scans = Limit => page["b"] # 0
 
 ====
