@@ -192,8 +192,6 @@ where
             .map_err(|error| Error::Storage(error.to_string()))
     }
 }
-use identity::Did;
-
 use crate::recovery::RecoveryOperation;
 
 pub(super) async fn prepare<S>(
@@ -238,6 +236,3 @@ where
         .await
         .map_err(|error| Error::Storage(error.to_string()))
 }
-
-#[allow(dead_code)]
-fn unused(_: &Did) {}

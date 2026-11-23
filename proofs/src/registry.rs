@@ -63,6 +63,22 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // When a takeover's cut may lie below the journal's floor, the journal
+        // cannot vouch for what was voided. The provider marks that void
+        // recoverable, then rebuilds from the node's own committed access
+        // state in bounded pages. Every page is handed to the outbox before
+        // the next is read, the pass is fenced by the term it rebuilds and
+        // resumable across a restart, and the provider admits nothing until
+        // the whole pass has handed over.
+        family: "ACP soundness + revocation + dual-path commits",
+        name: "INV_NoDecisionBeforeHandover / LIVE_RecoveryHandsOver: an uncovered takeover recovers without a new worker, page by page through the outbox, and no decision is served before the pass completes",
+        axis: Tla,
+        anchor: "crates/engine/vera/src/vera_rs/provider/terms.rs Follower::recover; crates/engine/vera/src/vera_rs/follow/journal.rs Journal::close_recoverable, Journal::recovered; crates/engine/acp/src/recovery.rs RecoveryLedger, RecoverySource; crates/engine/acp/src/external/recovery.rs ExternalDocumentAcp as RecoverySource; crates/entry-points/defra-node/src/node_acp.rs verified_acp_setup",
+        model_ref: "MC_FollowDeploymentRecovery_{Green,Red_NoPageGate}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         family: "Transactional node source grants",
         name: "HostSourceNoop actual changes require authority and observations validate",
         axis: Tla,

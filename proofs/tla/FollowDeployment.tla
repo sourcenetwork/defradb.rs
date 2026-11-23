@@ -110,6 +110,8 @@ CONSTANTS
     Restage,      \* TRUE: a refused replay is owed again
     Taint,        \* TRUE: entries after a refused one on its object are owed again too
     CheckWindow,  \* TRUE: a term that may have voided pruned entries fails closed
+    Recover,      \* TRUE: an uncovered void is rebuilt from the node's own state
+    RecoverAll,   \* TRUE: the pass owes every committed change again
     Mark,         \* TRUE: where a replay starts is written down before it begins
     KeepBatch     \* TRUE: every change of the object handed back together is owed
 
@@ -129,6 +131,9 @@ VARIABLES
     term,        \* the deployment's term, as the light client certified it
     handled,     \* the term the node last checked
     failClosed,  \* TRUE once the node could not tell what a term voided
+    recoverable, \* TRUE while an uncovered void waits for its own-state pass
+    recoverCursor, \* how much of the own-state pass has handed over
+    recoverDone,   \* TRUE once the pass has walked every record
     mark,        \* where an unfinished replay starts (a request number), 0 if none; durable
     cursor,      \* the journal position the replay sends next, 0 when no replay runs
     checking,    \* the term the running replay checks (the one certified when it began)
@@ -142,7 +147,7 @@ VARIABLES
 
 vars == <<staged, owed, pending, sent, chain, journal, evicted, term, handled,
           failClosed, mark, cursor, checking, lost, tainted, crashes, cache, takeovers,
-          servedVoid, servedWide>>
+          servedVoid, servedWide, recoverable, recoverCursor, recoverDone>>
 
 \* The most requests a run signs: each change once, and once more per takeover.
 MaxSent == N * (MaxTakeovers + 1)
@@ -189,6 +194,8 @@ TypeOK ==
     /\ cursor \in Nat /\ lost \in Seq(1..MaxSent)   \* the replay's progress
     /\ checking \in Nat                             \* a term
     /\ tainted \in BOOLEAN /\ failClosed \in BOOLEAN  \* flags
+    /\ recoverable \in BOOLEAN /\ recoverDone \in BOOLEAN
+    /\ recoverCursor \in 0..N
     /\ term \in Nat /\ handled \in Nat              \* terms
     /\ takeovers \in 0..MaxTakeovers /\ crashes \in 0..MaxCrashes  \* counts
     /\ servedVoid \in BOOLEAN /\ servedWide \in BOOLEAN  \* history flags
@@ -200,6 +207,7 @@ Init ==
     /\ evicted = 0 /\ mark = 0                      \* nothing pruned, no replay begun
     /\ term = 0 /\ handled = 0                      \* the first term, checked
     /\ failClosed = FALSE                           \* the node decides
+    /\ recoverable = FALSE /\ recoverCursor = 0 /\ recoverDone = FALSE
     /\ cursor = 0 /\ lost = <<>> /\ tainted = FALSE /\ crashes = 0  \* no replay runs
     /\ checking = 0                                 \* no term being checked
     /\ cache = {} /\ takeovers = 0                  \* nothing cached, no takeover
@@ -208,6 +216,7 @@ Init ==
 \* Whether the node may decide and send now.
 Open ==
     /\ ~failClosed                                              \* not closed
+    /\ ~recoverable                                             \* no recovery pass runs
     /\ cursor = 0                                               \* no replay runs
     /\ (~Gate \/ (handled = term /\ (pending = <<>> \/ ~GateDelivery)))  \* the term is settled
 
@@ -218,7 +227,8 @@ Stage ==
     /\ owed' = Append(owed, staged + 1)         \* and owed, behind what is owed
     /\ UNCHANGED <<pending, sent, chain, journal, evicted, term, handled, failClosed,
                    mark, cursor, checking, lost, tainted, crashes, cache, takeovers,
-                   servedVoid, servedWide>>     \* nothing else moves
+                   servedVoid, servedWide, recoverable, recoverCursor,
+                   recoverDone>>                \* nothing else moves
 
 \* The oldest owed change is signed as a new request, sent and confirmed. The
 \* journal retains the request; when full it prunes its oldest entry and
@@ -238,7 +248,8 @@ Confirm ==
                   /\ evicted' = evicted                     \* nothing pruned
     /\ owed' = Tail(owed)                       \* it is no longer owed
     /\ UNCHANGED <<staged, pending, term, handled, failClosed, mark, cursor, checking, lost,
-                   tainted, crashes, cache, takeovers, servedVoid, servedWide>>  \* nothing else moves
+                   tainted, crashes, cache, takeovers, servedVoid, servedWide,
+                   recoverable, recoverCursor, recoverDone>>    \* nothing else moves
 
 \* Another device takes over without a handover: the chain keeps only what
 \* lies at or below the cut, so the followed height goes down. The term rises.
@@ -251,7 +262,7 @@ TakeOver ==
     /\ takeovers' = takeovers + 1               \* one more takeover
     /\ UNCHANGED <<staged, owed, pending, sent, journal, evicted, handled, failClosed,
                    mark, cursor, checking, lost, tainted, crashes, cache, servedVoid,
-                   servedWide>>                 \* the node has not looked yet
+                   servedWide, recoverable, recoverCursor, recoverDone>> \* not looked yet
 
 \* The node begins to check the new term. With a replay mark it resumes
 \* there. Otherwise it scans: the journal's requests the chain no longer
@@ -272,8 +283,14 @@ Begin ==
                    ELSE IF starts = {} THEN 0
                    ELSE CHOOSE k \in starts : \A j \in starts : k <= j
        IN IF ~resume /\ missing = DOMAIN journal /\ ~covered
-          THEN /\ failClosed' = TRUE                       \* what was lost is unknown
-               /\ UNCHANGED <<handled, mark, cursor, checking, lost, tainted>>
+          THEN IF Recover
+               THEN /\ recoverable' = TRUE                 \* rebuild from own state
+                    /\ recoverCursor' = 0
+                    /\ recoverDone' = FALSE
+                    /\ UNCHANGED <<failClosed, handled, mark, cursor, checking, lost, tainted>>
+               ELSE /\ failClosed' = TRUE                  \* no recovery source
+                    /\ UNCHANGED <<handled, mark, cursor, checking, lost, tainted,
+                                   recoverable, recoverCursor, recoverDone>>
           ELSE IF from = 0
           THEN /\ handled' = term                          \* nothing to send again
                /\ mark' = 0
@@ -285,7 +302,8 @@ Begin ==
                /\ checking' = term                        \* the term this replay checks
                /\ UNCHANGED <<handled, failClosed>>
     /\ UNCHANGED <<staged, owed, pending, sent, chain, journal, evicted, term, crashes,
-                   cache, takeovers, servedVoid, servedWide>>  \* nothing else moves
+                   cache, takeovers, servedVoid, servedWide, recoverable,
+                   recoverCursor, recoverDone>>                \* nothing else moves
 
 \* The next journaled request is sent again, exactly as signed. A request
 \* the chain already holds answers with what it came to; any other is
@@ -306,7 +324,7 @@ Step ==
     /\ cursor' = cursor + 1                     \* on to the next
     /\ UNCHANGED <<staged, owed, pending, sent, journal, evicted, term, handled,
                    failClosed, mark, checking, crashes, cache, takeovers, servedVoid,
-                   servedWide>>                 \* nothing else moves
+                   servedWide, recoverable, recoverCursor, recoverDone>> \* nothing else moves
 
 \* The replay is done: what it found lost is recorded with the checked term
 \* and the mark is cleared. Lost requests stay in the journal: they hold
@@ -318,7 +336,8 @@ Finish ==
     /\ handled' = checking /\ mark' = 0         \* the term it began for is checked
     /\ cursor' = 0 /\ lost' = <<>> /\ tainted' = FALSE  \* the replay ends
     /\ UNCHANGED <<staged, owed, sent, chain, journal, evicted, term, failClosed,
-                   checking, crashes, cache, takeovers, servedVoid, servedWide>>  \* nothing else moves
+                   checking, crashes, cache, takeovers, servedVoid, servedWide,
+                   recoverable, recoverCursor, recoverDone>>    \* nothing else moves
 
 \* A replay whose next request the chain cannot take (a later takeover
 \* voided an earlier one) waits for its receipt until its deadline and
@@ -329,7 +348,7 @@ Abort ==
     /\ cursor' = 0 /\ lost' = <<>> /\ tainted' = FALSE  \* its progress is lost
     /\ UNCHANGED <<staged, owed, pending, sent, chain, journal, evicted, term, handled,
                    failClosed, mark, checking, crashes, cache, takeovers, servedVoid,
-                   servedWide>>                 \* nothing else moves
+                   servedWide, recoverable, recoverCursor, recoverDone>> \* nothing else moves
 
 \* The node stops part way through a replay: what it held in memory is
 \* gone; the chain, the journal and the mark stay.
@@ -339,7 +358,7 @@ Crash ==
     /\ crashes' = crashes + 1                   \* one more stop
     /\ UNCHANGED <<staged, owed, pending, sent, chain, journal, evicted, term, handled,
                    failClosed, mark, checking, cache, takeovers, servedVoid,
-                   servedWide>>                 \* nothing else moves
+                   servedWide, recoverable, recoverCursor, recoverDone>> \* nothing else moves
 
 \* What a checked term left to owe again is handed to the outbox, before
 \* whatever is owed already. With KeepBatch every change of the object handed
@@ -350,7 +369,7 @@ Deliver ==
     /\ pending' = <<>>                          \* handed over
     /\ UNCHANGED <<staged, sent, chain, journal, evicted, term, handled, failClosed,
                    mark, cursor, checking, lost, tainted, crashes, cache, takeovers, servedVoid,
-                   servedWide>>                 \* nothing else moves
+                   servedWide, recoverable, recoverCursor, recoverDone>> \* nothing else moves
 
 \* The node decides. A cached answer under the current key is reused;
 \* otherwise the deployment is asked at its head and the answer cached. An
@@ -367,7 +386,8 @@ Decide ==
             /\ servedVoid' = servedVoid                       \* read at the live head
             /\ servedWide' = (servedWide \/ (DeployAllows(chain) /\ ~OwedRevoke /\ IntentRevokes))  \* wider?
     /\ UNCHANGED <<staged, owed, pending, sent, chain, journal, evicted, term, handled,
-                   failClosed, mark, cursor, checking, lost, tainted, crashes, takeovers>>  \* nothing else moves
+                   failClosed, mark, cursor, checking, lost, tainted, crashes, takeovers,
+                   recoverable, recoverCursor, recoverDone>>    \* nothing else moves
 
 \* A node that failed closed does nothing more; the run stutters.
 Stopped ==
