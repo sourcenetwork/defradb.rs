@@ -81,6 +81,77 @@ fn removing_an_indexed_field_is_refused_and_writes_go_on() {
 
 #[test]
 #[mantra_macros::req_test("defra.index.field_removal")]
+fn removing_a_composite_index_field_is_refused() {
+    let mut actions = refused_removal(
+        "Users",
+        r#"type Users @index(name: "by_name_age", includes: [{field: "name"}, {field: "age"}]) {
+            name: String
+            age: Int
+        }"#,
+        "/Users/Fields/1",
+        "cannot remove field 'age': index 'by_name_age' depends on it, drop the index first",
+        "by_name_age",
+    );
+    actions.push(add_doc("Users", json!({ "name": "John", "age": 21 })));
+    actions.push(request(
+        r#"query { Users(filter: {name: {_eq: "John"}, age: {_eq: 21}}) { name age } }"#,
+        json!({ "Users": [{ "name": "John", "age": 21 }] }),
+    ));
+    TestCase::from_actions(actions).execute();
+}
+
+#[test]
+#[mantra_macros::req_test("defra.index.field_removal")]
+fn removing_a_unique_index_field_is_refused_and_uniqueness_holds() {
+    let mut actions = refused_removal(
+        "Users",
+        "type Users { email: String @index(unique: true)  name: String }",
+        "/Users/Fields/1",
+        "cannot remove field 'email': index 'Users_email_ASC' depends on it, drop the index first",
+        "Users_email_ASC",
+    );
+    actions.push(add_doc("Users", json!({ "email": "j@x", "name": "John" })));
+    actions.push(
+        AddDoc {
+            collection: "Users".into(),
+            doc_map: Some(json!({ "email": "j@x", "name": "Jim" })),
+            expected_error: Some(
+                "can not index a doc's field(s) that violates unique index".into(),
+            ),
+            ..Default::default()
+        }
+        .into(),
+    );
+    actions.push(request(
+        r#"query { Users(filter: {email: {_eq: "j@x"}}) { name } }"#,
+        json!({ "Users": [{ "name": "John" }] }),
+    ));
+    TestCase::from_actions(actions).execute();
+}
+
+#[test]
+#[mantra_macros::req_test("defra.index.field_removal")]
+fn removing_a_json_index_field_is_refused() {
+    let mut actions = refused_removal(
+        "Users",
+        "type Users { custom: JSON @index  name: String }",
+        "/Users/Fields/1",
+        "cannot remove field 'custom': index 'Users_custom_ASC' depends on it, drop the index first",
+        "Users_custom_ASC",
+    );
+    actions.push(add_doc(
+        "Users",
+        json!({ "custom": { "level": 3 }, "name": "John" }),
+    ));
+    actions.push(request(
+        r#"query { Users(filter: {custom: {level: {_eq: 3}}}) { name } }"#,
+        json!({ "Users": [{ "name": "John" }] }),
+    ));
+    TestCase::from_actions(actions).execute();
+}
+
+#[test]
+#[mantra_macros::req_test("defra.index.field_removal")]
 fn removing_a_field_no_index_reads_is_accepted() {
     TestCase::from_actions(vec![
         AddCollection {
