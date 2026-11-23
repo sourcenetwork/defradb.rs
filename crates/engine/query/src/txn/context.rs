@@ -593,7 +593,7 @@ async fn doc_read_access(
     Ok(true)
 }
 
-/// [`doc_read_access`] for a document read.
+/// Read access for a document.
 #[allow(clippy::too_many_arguments)]
 pub async fn check_doc_read_access_as(
     context: &RequestContext,
@@ -623,7 +623,7 @@ pub async fn check_doc_read_access_as(
     .await
 }
 
-/// [`doc_read_access`] for commit history on one document.
+/// Read access for one document's commit history.
 #[allow(clippy::too_many_arguments)]
 pub async fn check_commit_read_access_as(
     context: &RequestContext,
