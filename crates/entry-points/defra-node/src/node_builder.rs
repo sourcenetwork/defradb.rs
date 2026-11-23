@@ -356,6 +356,19 @@ impl NodeBuilder {
         self
     }
 
+    /// Set the server-side bound on waiting for a transaction commit.
+    ///
+    /// `Duration::ZERO` disables the bound. A commit still running when the
+    /// bound passes keeps running.
+    #[cfg(feature = "http")]
+    pub fn with_commit_timeout(mut self, timeout: Duration) -> Self {
+        self.http_config
+            .as_mut()
+            .expect("an HTTP config")
+            .commit_timeout = timeout;
+        self
+    }
+
     /// Enable Iroh/QUIC P2P replication.
     ///
     /// Requires the `p2p` feature, which implies `native`.
@@ -621,6 +634,7 @@ impl NodeBuilder {
             let server_config = defra_http::ServerConfig {
                 address: http_cfg.address,
                 request_timeout: crate::timeout_secs(http_cfg.request_timeout),
+                commit_timeout: crate::timeout_secs(http_cfg.commit_timeout),
                 query_limits,
                 no_signing: identity_only,
                 ..Default::default()

@@ -92,6 +92,7 @@ pub(super) fn sanitized_node_options(
             "TLSKeyPath": redacted_text(!config.api.privkey_path.is_empty()),
             "ReadTimeout": seconds_as_nanos(config.api.request_timeout),
             "WriteTimeout": seconds_as_nanos(config.api.request_timeout),
+            "CommitTimeout": seconds_as_nanos(config.api.commit_timeout),
             "IdleTimeout": 0,
             "TxnTTL": seconds_as_nanos(config.api.transaction_idle_timeout),
             "TxnTTLTick": seconds_as_nanos(config.api.transaction_cleanup_interval),

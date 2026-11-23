@@ -2457,6 +2457,29 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // A live HTTP server bounds its own wait to answer a transaction
+        // commit. Past the bound, and only then, it answers "unknown"; the
+        // worker-local commit keeps its ticket, so the answer never says or
+        // causes an abort. Without the bound, a queued or running commit can
+        // leave a live client waiting forever.
+        family: "Transaction & merge-queue concurrency",
+        name: "ClientSettles / UnknownIsNotAbort / AnswerOnlyAfterSend: the server settles a wedged commit answer by its own bound without cancelling it",
+        axis: Tla,
+        anchor: "crates/surfaces/http/src/server.rs Server::router commit bound; crates/database/db/src/txn/owner/mod.rs Owners::finish; crates/database/db/src/txn/owner/actor.rs own",
+        model_ref: "MC_CommitResponseWait_{Green,Red_NoBound,Red_Cancel}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/surfaces/http/tests/commit_bound.rs a_commit_past_its_bound_answers_unknown_and_keeps_running, the_bound_is_only_for_transaction_commits, a_begin_is_not_bounded_as_a_commit",
+    },
+    Property {
+        family: "Transaction & merge-queue concurrency",
+        name: "bound_answers_unknown / unknown_keeps_ticket / no_bound_waits: a passed bound answers unknown and keeps the commit ticket",
+        axis: Lean,
+        anchor: "crates/surfaces/http/src/server.rs Server::router commit bound",
+        model_ref: "CommitResponseWait (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         // A request reaches an explicit transaction when its owner key is the
         // one the transaction began with. An HTTP registry keys a request by
         // its identity; the embedded node's registry gives every request one
@@ -4236,7 +4259,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "One-to-many child paging",
         name: "LIVE_EveryParentPage / INV_RedSecondParentKeepsPage: a child page is filled per parent, not by one global scan bound",
         axis: Tla,
-        anchor: "crates/engine/query/src/plan/type_join/type_join_many/children.rs TypeJoinMany::next_per_parent, can_stop_at_limit, child_limit, child_offset",
+        anchor: "crates/engine/query/src/plan/type_join/type_join_many/children.rs TypeJoinMany::next_per_parent",
         model_ref: "MC_ChildPagePerParent_{Green,Red_GlobalBound}.cfg",
         tiers: &[Boundary],
         bound_by: "tools/integration-test/tests/testo/query/one_to_many/with_limit.rs query_one_to_many_with_child_limit_keeps_a_two_parent_page",

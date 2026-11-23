@@ -52,6 +52,7 @@ pub struct VeraConfig {
 pub struct HttpConfig {
     pub address: std::net::SocketAddr,
     pub(crate) request_timeout: Duration,
+    pub(crate) commit_timeout: Duration,
     pub(crate) transaction_idle_timeout: Duration,
     pub(crate) transaction_cleanup_interval: Duration,
     pub(crate) extra_routes: Option<axum::Router>,
@@ -74,6 +75,7 @@ impl HttpConfig {
             request_timeout: Duration::from_secs(
                 defra_http::ServerConfig::default().request_timeout,
             ),
+            commit_timeout: Duration::from_secs(defra_http::ServerConfig::default().commit_timeout),
             transaction_idle_timeout: DEFAULT_TRANSACTION_IDLE_TIMEOUT,
             transaction_cleanup_interval: DEFAULT_TRANSACTION_CLEANUP_INTERVAL,
             extra_routes: None,
@@ -103,6 +105,15 @@ impl HttpConfig {
     /// `Duration::ZERO` disables request timeouts.
     pub fn with_request_timeout(mut self, timeout: Duration) -> Self {
         self.request_timeout = timeout;
+        self
+    }
+
+    /// Set the server-side bound on waiting for a transaction commit.
+    ///
+    /// `Duration::ZERO` disables the bound. A commit still running when the
+    /// bound passes keeps running.
+    pub fn with_commit_timeout(mut self, timeout: Duration) -> Self {
+        self.commit_timeout = timeout;
         self
     }
 

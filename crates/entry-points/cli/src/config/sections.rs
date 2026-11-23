@@ -68,6 +68,10 @@ pub struct ApiConfig {
     /// Request timeout in seconds (0 = no timeout). Default: 300 (5 minutes).
     #[serde(default = "default_request_timeout")]
     pub request_timeout: u64,
+    /// Bound on waiting for a transaction commit in seconds (0 = no bound).
+    /// Default: 60.
+    #[serde(default = "default_commit_timeout")]
+    pub commit_timeout: u64,
     /// Max concurrent requests (0 = unlimited). Default: 1000.
     #[serde(default = "default_max_concurrent")]
     pub max_concurrent_requests: usize,
@@ -105,6 +109,10 @@ pub struct ApiConfig {
 
 fn default_request_timeout() -> u64 {
     300
+}
+
+fn default_commit_timeout() -> u64 {
+    defra_http::DEFAULT_COMMIT_TIMEOUT
 }
 
 fn default_max_concurrent() -> usize {
@@ -154,6 +162,7 @@ impl Default for ApiConfig {
             max_schema_size: 0,
             max_backup_size: defra_http::DEFAULT_MAX_BACKUP_SIZE,
             request_timeout: default_request_timeout(),
+            commit_timeout: default_commit_timeout(),
             max_concurrent_requests: default_max_concurrent(),
             query_timeout: default_query_timeout(),
             transaction_idle_timeout: default_transaction_idle_timeout(),

@@ -151,7 +151,9 @@ pub use router::{
     IndexOperations, NacStatus, NodeAcpOperations, NodePermission, PermissionCheck, ViewOperations,
 };
 #[cfg(feature = "server")]
-pub use server::{RouterTransform, Server, ServerConfig, DEFAULT_MAX_BACKUP_SIZE};
+pub use server::{
+    RouterTransform, Server, ServerConfig, DEFAULT_COMMIT_TIMEOUT, DEFAULT_MAX_BACKUP_SIZE,
+};
 #[cfg(feature = "server")]
 pub use tls::TlsConfig;
 
