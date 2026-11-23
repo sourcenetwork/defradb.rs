@@ -24,6 +24,7 @@ use crate::error::{Error, Result};
 use crate::outbox::{OwedAuthority, OwedState};
 use crate::pending::PendingRegistration;
 use crate::provider_command::ProviderCommand;
+use crate::recovery::RecoveryFact;
 
 impl<S> ExternalDocumentAcp<S>
 where
@@ -109,7 +110,8 @@ where
         if held {
             self.yield_replica_if_held_elsewhere(owed).await?;
         }
-        self.clear(owed).await?;
+        // A replica the provider held already may be another owner's.
+        self.clear(owed, !held || owed.replica_of.is_none()).await?;
         self.object_changed(&owed.policy_id, &owed.resource_name, &owed.doc_id);
         Ok(())
     }
@@ -319,7 +321,7 @@ where
 
     /// Clear `owed` unless its record is of another create by now: a record
     /// written again for a re-created document is not this one to clear.
-    async fn clear(&self, owed: &PendingRegistration) -> Result<()> {
+    async fn clear(&self, owed: &PendingRegistration, registered: bool) -> Result<()> {
         let key = owed.key();
         let mut txn = self.store.new_txn(false).await.map_err(storage_error)?;
         let current = txn.get(&key).await.map_err(storage_error)?;
@@ -332,6 +334,23 @@ where
             return Ok(());
         }
         txn.delete(&key).await.map_err(storage_error)?;
+        // The registration the provider now holds is kept for a recovery
+        // pass, in the commit that clears its record.
+        if registered {
+            let confirmed = RecoveryFact::registered(
+                &owed.policy_id,
+                &owed.resource_name,
+                &owed.doc_id,
+                self.provider.canonical_actor(&owed.creator),
+            )
+            .confirmed()?;
+            txn.set(&confirmed.key, &confirmed.value)
+                .await
+                .map_err(storage_error)?;
+            for intent in &confirmed.unanswered {
+                txn.delete(intent).await.map_err(storage_error)?;
+            }
+        }
         match txn.commit().await {
             Ok(()) => {
                 self.changed.notify_waiters();

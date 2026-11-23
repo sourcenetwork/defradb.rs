@@ -111,6 +111,11 @@ impl Follow {
         self.standing.load_clone().closed.is_some()
     }
 
+    /// Whether the node, closed, can rebuild from its own state.
+    pub(crate) fn needs_recovery(&self) -> bool {
+        self.standing.load_clone().recoverable.is_some()
+    }
+
     /// Whether changes a term voided are still to be owed again.
     pub(crate) fn has_undelivered(&self) -> bool {
         self.standing.load_clone().undelivered

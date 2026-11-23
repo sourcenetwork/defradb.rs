@@ -212,7 +212,8 @@ where
     let owed = Arc::downgrade(&gate);
     let owed: std::sync::Weak<dyn acp::OweAgain> = owed;
     provider.owe_voided_to(owed);
-    let recovery: Arc<dyn acp::RecoverySource> = Arc::clone(&gate) as Arc<dyn acp::RecoverySource>;
+    let recovery = Arc::downgrade(&gate);
+    let recovery: std::sync::Weak<dyn acp::RecoverySource> = recovery;
     provider.set_recovery_source(recovery);
     DocumentAcpSetup {
         document_acp: gate,

@@ -1053,7 +1053,7 @@ impl VeraProvider for VeraRsProvider {
         }
     }
 
-    fn set_recovery_source(&self, source: Arc<dyn acp::RecoverySource>) {
+    fn set_recovery_source(&self, source: std::sync::Weak<dyn acp::RecoverySource>) {
         if self.follower.recovery.set(source).is_err() {
             tracing::warn!("this vera.rs provider already has a recovery source");
         }
@@ -1100,7 +1100,7 @@ impl acp::RecoveryVerifier for VeraRsProvider {
         policy_id: &str,
         resource: &str,
         object_id: &str,
-    ) -> Result<(bool, String), String> {
+    ) -> Result<Option<String>, String> {
         if self.follower.certified() != term {
             return Err(format!("Vera recovery term changed from {term}"));
         }
@@ -1118,48 +1118,59 @@ impl acp::RecoveryVerifier for VeraRsProvider {
         .map_err(|error| {
             reach::read_error(&self.light_client, "recovery owner proof", error).to_string()
         })?;
-        Ok(match owner {
-            Some(owner) => (true, did_spelling::defra(owner.0.as_str()).into_owned()),
-            None => (false, String::new()),
-        })
+        Ok(owner.map(|owner| did_spelling::defra(owner.0.as_str()).into_owned()))
     }
 
-    async fn actor_relationship(
+    async fn relationship(
         &self,
         term: u64,
+        owner: &identity::Did,
         policy_id: &str,
         resource: &str,
         object_id: &str,
         relation: &str,
         subject: &acp::OwedSubject,
-    ) -> Result<bool, String> {
+    ) -> Result<acp::Observed, String> {
         if self.follower.certified() != term {
             return Err(format!("Vera recovery term changed from {term}"));
         }
-        let subject = acp::Subject::from(subject.clone());
-        let actor = match &subject {
+        let actor = match acp::Subject::from(subject.clone()) {
             acp::Subject::Entity(did) => did.as_str().to_owned(),
             acp::Subject::Wildcard => "did:key:*".to_owned(),
-            other => return Err(format!("unsupported recovery subject: {other:?}")),
+            other => {
+                return Ok(acp::Observed::Unobservable(format!(
+                    "a recovery pass cannot read the subject {other:?}"
+                )))
+            }
         };
+        // The deployment shows a relationship to the object's owner and to
+        // the relation's managers. The pass reads the node's own record of
+        // the object, whose owner the deployment was just seen to hold.
         let query = ActorRelationshipQuery {
-            requester: &self.worker_did,
+            requester: owner.as_str(),
             actor: &actor,
             policy: policy_id,
             resource,
             object: object_id,
             relation,
         };
-        verified(self.light_client.header_chain(), || async {
+        let observed = verified(self.light_client.header_chain(), || async {
             exact_relationship::query(&self.light_client, query)
                 .await
                 .map_err(|error| Box::new(error) as Box<dyn std::error::Error + Send + Sync>)
         })
-        .await
-        .map_err(|error| match error.downcast::<ProviderError>() {
-            Ok(error) => error.to_string(),
-            Err(error) => error.to_string(),
-        })
+        .await;
+        match observed {
+            Ok(true) => Ok(acp::Observed::Held),
+            Ok(false) => Ok(acp::Observed::Absent),
+            Err(error) => match error.downcast::<ProviderError>() {
+                Ok(error) if matches!(*error, ProviderError::RelationshipObservationDenied) => {
+                    Ok(acp::Observed::Unobservable(error.to_string()))
+                }
+                Ok(error) => Err(error.to_string()),
+                Err(error) => Err(error.to_string()),
+            },
+        }
     }
 }
 

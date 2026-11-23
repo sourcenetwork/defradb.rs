@@ -91,7 +91,7 @@ pub use policy_lookup::{
 pub use policy_nonce::{PolicyNonce, PolicyNonceError, POLICY_NONCE_BYTES};
 pub use provider_command::ProviderCommand;
 pub use read_access::{check_doc_read_access, DirectChecker, DocAccess, ObjectAccessChecker};
-pub use recovery::{RecoveryCursor, RecoveryPage, RecoverySource, RecoveryVerifier};
+pub use recovery::{Observed, RecoveryCursor, RecoveryPage, RecoverySource, RecoveryVerifier};
 pub use relation::{
     RelationTuple, DELETER_RELATION, OWNER_RELATION, READER_RELATION, UPDATER_RELATION,
 };

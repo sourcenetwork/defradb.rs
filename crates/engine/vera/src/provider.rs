@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use async_trait::async_trait;
 use defra_core::thread_bounds::MaybeSendSync;
 
@@ -531,7 +529,7 @@ pub trait VeraProvider: MaybeSendSync {
     /// Give the provider the node's own access-state source. A takeover that
     /// may have voided more than the journal keeps rebuilds from it instead
     /// of a new worker.
-    fn set_recovery_source(&self, _source: Arc<dyn acp::RecoverySource>) {}
+    fn set_recovery_source(&self, _source: std::sync::Weak<dyn acp::RecoverySource>) {}
 
     /// What a caller's own delegation must name for this provider to act
     /// under it, with the deployment's genesis identity when the provider

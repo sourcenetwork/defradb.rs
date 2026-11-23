@@ -19,7 +19,7 @@ pub(super) struct Follower {
     pub sink: OnceCell<Weak<dyn acp::OweAgain>>,
     /// The node's own access state, for a journal that cannot vouch for what
     /// a term voided.
-    pub recovery: OnceCell<Arc<dyn acp::RecoverySource>>,
+    pub recovery: OnceCell<Weak<dyn acp::RecoverySource>>,
     /// Whether more than one node's outbox asked for what a term voids.
     pub shared: std::sync::atomic::AtomicBool,
     /// Whether the node holds an actor's key, so a change owed again as that
@@ -57,13 +57,17 @@ impl Follower {
     /// the provider not admitted, and once at start, never on a task of its
     /// own: nothing but the provider holds its worker, so dropping the
     /// provider lets go of the worker's directory at once. A check that fails
-    /// is run again by the next call.
+    /// is run again by the next call. A journal closed because it could not
+    /// vouch for what a term voided is rebuilt from the node's own state,
+    /// read through `verifier`; one closed for any other reason stays closed.
     pub async fn check_with(&self, verifier: &dyn acp::RecoveryVerifier) {
         let certified = self.certified();
-        if !self.follow.is_closed()
-            && certified <= self.follow.epoch()
-            && !self.follow.has_undelivered()
-        {
+        let settled = if self.follow.is_closed() {
+            !self.follow.needs_recovery()
+        } else {
+            certified <= self.follow.epoch() && !self.follow.has_undelivered()
+        };
+        if settled {
             return;
         }
         let Ok(mut worker) =
@@ -86,9 +90,9 @@ impl Follower {
                 if worker.confirmed().recovery_needed().is_none() {
                     return closed(&reason);
                 }
-                self.recover(verifier, &mut worker, certified, &reason)
-                    .await;
-                return;
+                let sink = self.recover(verifier, &mut worker, &reason).await;
+                drop(worker);
+                return self.resume(sink).await;
             }
             Err(error) => {
                 tracing::warn!(%error, term = certified, "Vera term not checked yet");
@@ -147,7 +151,14 @@ impl Follower {
             self.follow.update(worker.confirmed());
             Some(sink)
         };
-        let _ = worker;
+        drop(worker);
+        self.resume(sink).await;
+    }
+
+    /// The provider decides again: nothing read before the term is served,
+    /// and what was handed to `sink` is sent. The worker is not held here:
+    /// the submissions take it.
+    async fn resume(&self, sink: Option<Arc<dyn acp::OweAgain>>) {
         if let Ok(state) = self.light_client.header_chain().fresh_state() {
             self.light_client
                 .cache()
@@ -159,61 +170,73 @@ impl Follower {
     }
 
     /// Rebuild the deployment from the node's own state, one bounded page at
-    /// a time, handing each page to the outbox before moving on. The node
-    /// decides nothing until the whole pass has been handed over.
+    /// a time, handing each page to the outbox and recording it before the
+    /// next is read. Once the source says the pass for the certified term is
+    /// over, that term is recorded as checked and the journal reopens: the
+    /// outbox to send through, or `None` while the node stays closed. A pass
+    /// cut short is taken up at its last recorded page by the next call.
     async fn recover(
         &self,
         verifier: &dyn acp::RecoveryVerifier,
         worker: &mut regolith::sync::OwnedMutexGuard<NativeWorker>,
-        certified: u64,
         reason: &str,
-    ) {
+    ) -> Option<Arc<dyn acp::OweAgain>> {
         if self.shared.load(std::sync::atomic::Ordering::Acquire) {
             closed(reason);
-            return;
+            return None;
         }
-        let Some(source) = self.recovery.get().cloned() else {
+        let Some(source) = self.recovery.get().and_then(Weak::upgrade) else {
             tracing::warn!(%reason, "no Vera recovery source is installed");
-            return;
+            return None;
         };
         let Some(sink) = self.sink.get().and_then(Weak::upgrade) else {
             tracing::warn!(%reason, "Vera recovery waits for the node's outbox");
-            return;
+            return None;
         };
-        while let Some(page) = match source.next(verifier).await {
-            Ok(Some(page)) => Some(page),
-            Ok(None) => None,
-            Err(error) => {
-                tracing::warn!(%error, %reason, "Vera recovery pass did not finish");
-                return;
-            }
-        } {
+        // The term the pass ends under: the source fences every page by the
+        // term its verifier reports, so the last page names what was checked.
+        let mut term = None;
+        loop {
+            let page = match source.next(verifier).await {
+                Ok(Some(page)) => page,
+                Ok(None) => break,
+                Err(error) => {
+                    tracing::warn!(%error, %reason, "Vera recovery pass did not finish");
+                    return None;
+                }
+            };
             if !page.effects.is_empty() {
                 if let Err(error) = sink.owe_again(&page.effects).await {
                     tracing::warn!(%error, "Vera recovery state was not owed again");
-                    return;
+                    return None;
                 }
             }
+            for gap in &page.unrestored {
+                tracing::warn!(target: "acp::audit", gap, "Vera recovery could not restore state");
+            }
+            term = Some(page.cursor.term);
             if let Err(error) = source.delivered(page.cursor).await {
                 tracing::warn!(%error, "could not record Vera recovery progress");
-                return;
-            }
-            for gap in &page.unrestored {
-                tracing::warn!(target: "acp::audit", gap, "Vera recovery could not prove state");
+                return None;
             }
         }
-        if let Err(error) = worker.confirmed().recovered(certified) {
+        let term = match term {
+            Some(term) => term,
+            // A pass an earlier call finished without recording it.
+            None => match verifier.term().await {
+                Ok(term) => term,
+                Err(error) => {
+                    tracing::warn!(%error, "Vera recovery term is not known");
+                    return None;
+                }
+            },
+        };
+        if let Err(error) = worker.confirmed().recovered(term) {
             tracing::warn!(%error, "could not record a finished Vera recovery");
-            return;
+            return None;
         }
         self.follow.update(worker.confirmed());
-        let _ = worker;
-        if let Ok(state) = self.light_client.header_chain().fresh_state() {
-            self.light_client
-                .cache()
-                .invalidate_stale(state.module_state_root);
-        }
-        sink.settle_owed().await;
+        Some(sink)
     }
 }
 

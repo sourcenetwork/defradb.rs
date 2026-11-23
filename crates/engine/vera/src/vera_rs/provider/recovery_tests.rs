@@ -1,86 +1,99 @@
 //! A closed journal rebuilt from the node's own state, without a new worker.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+use acp::{
+    DocumentACP, DocumentPermission, ExternalDocumentAcp, Identity, Observed, OweAgain,
+    OwedSubject, RecoverySource, RecoveryVerifier,
+};
 use async_trait::async_trait;
-use regolith::sync::SegQueue;
+use identity::Did;
+use storage::RegolithStore;
+use vera_delegation::testing::{Recording, Returns};
 
 use super::signer_tests::provider;
 use super::transport_tests::Workers;
 use crate::vera_rs::client::tests::Recorded as RpcRecorded;
-use acp::{
-    NewOwedChange, OweAgain, OwedOp, OwedSubject, OwedTuple, RecoveryCursor, RecoveryPage,
-    RecoverySource, RecoveryVerifier, VoidedEffect,
-};
-use vera_delegation::testing::{Recording, Returns};
 
-struct Outbox {
-    effects: SegQueue<VoidedEffect>,
+const OWNER: &str = "did:key:owner";
+const READER: &str = "did:key:reader";
+
+fn did(value: &str) -> Did {
+    Did::new(value).unwrap()
+}
+
+/// The deployment behind the gate: it takes every write and counts them.
+#[derive(Default)]
+struct Deployment {
+    registrations: AtomicU64,
+    grants: AtomicU64,
 }
 
 #[async_trait]
-impl OweAgain for Outbox {
-    async fn owe_again(&self, effects: &[VoidedEffect]) -> acp::Result<()> {
-        for effect in effects {
-            self.effects.push(effect.clone());
-        }
+impl DocumentACP for Deployment {
+    async fn register_doc_object(&self, _: &Did, _: &str, _: &str, _: &str) -> acp::Result<()> {
+        self.registrations.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
 
-    async fn settle_owed(&self) {}
-}
-
-struct Source {
-    sent: AtomicBool,
-}
-
-#[async_trait]
-impl RecoverySource for Source {
-    async fn next(&self, _: &dyn RecoveryVerifier) -> acp::Result<Option<RecoveryPage>> {
-        if self
-            .sent
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .is_err()
-        {
-            return Ok(None);
-        }
-        Ok(Some(RecoveryPage {
-            effects: vec![VoidedEffect::Change(NewOwedChange {
-                txn: None,
-                tuple: OwedTuple {
-                    policy_id: "policy".into(),
-                    resource: "users".into(),
-                    object: "bae-1".into(),
-                    relation: "reader".into(),
-                    subject: OwedSubject::Actor {
-                        did: identity::Did::new("did:key:reader").unwrap(),
-                    },
-                },
-                op: OwedOp::Add,
-                actor: identity::Did::new("did:key:owner").unwrap(),
-                authority: acp::OwedAuthority::NodeKey,
-                authority_checked: true,
-            })],
-            cursor: RecoveryCursor {
-                term: 0,
-                cursor: Some(b"after".to_vec()),
-                complete: true,
-            },
-            unrestored: Vec::new(),
-        }))
+    async fn is_doc_registered(&self, _: &str, _: &str, _: &str) -> acp::Result<bool> {
+        Ok(false)
     }
 
-    async fn delivered(&self, _: RecoveryCursor) -> acp::Result<()> {
+    async fn get_doc_owner(&self, _: &str, _: &str, _: &str) -> acp::Result<Option<Did>> {
+        Ok(Some(did(OWNER)))
+    }
+
+    async fn check_doc_access(
+        &self,
+        _: &Identity,
+        _: DocumentPermission,
+        _: &str,
+        _: &str,
+        _: &str,
+    ) -> acp::Result<bool> {
+        Ok(true)
+    }
+
+    async fn add_actor_relationship(
+        &self,
+        _: &Did,
+        _: &Did,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &[String],
+    ) -> acp::Result<bool> {
+        self.grants.fetch_add(1, Ordering::SeqCst);
+        Ok(true)
+    }
+
+    async fn delete_actor_relationship(
+        &self,
+        _: &Did,
+        _: &Did,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &[String],
+    ) -> acp::Result<bool> {
+        Ok(true)
+    }
+
+    async fn unregister_doc_object(&self, _: &str, _: &str, _: &str) -> acp::Result<()> {
         Ok(())
     }
 }
 
-struct Verifier;
+/// What the new term holds: nothing the node recorded.
+struct Lost;
 
 #[async_trait]
-impl RecoveryVerifier for Verifier {
-    async fn term(&self) -> std::result::Result<u64, String> {
+impl RecoveryVerifier for Lost {
+    async fn term(&self) -> Result<u64, String> {
         Ok(0)
     }
 
@@ -90,47 +103,61 @@ impl RecoveryVerifier for Verifier {
         _: &str,
         _: &str,
         _: &str,
-    ) -> std::result::Result<(bool, String), String> {
-        Err("not called".into())
+    ) -> Result<Option<String>, String> {
+        Ok(None)
     }
 
-    async fn actor_relationship(
+    async fn relationship(
         &self,
         _: u64,
+        _: &Did,
         _: &str,
         _: &str,
         _: &str,
         _: &str,
-        _: &acp::OwedSubject,
-    ) -> std::result::Result<bool, String> {
-        Err("not called".into())
+        _: &OwedSubject,
+    ) -> Result<Observed, String> {
+        Ok(Observed::Absent)
     }
 }
 
 #[nuclei::test]
+#[mantra_macros::req_test("defra.acp.vera_uncovered_takeover_recovery")]
 async fn an_uncovered_journal_recovers_through_the_outbox_under_the_same_worker() {
     let signer = Recording::returning(Returns::Genuine);
     let rpc = RpcRecorded::answering(Ok(serde_json::Value::Null));
     let mut workers = Workers::new();
-    let outbox = Arc::new(Outbox {
-        effects: SegQueue::new(),
-    });
-    let source = Arc::new(Source {
-        sent: AtomicBool::new(false),
-    });
-    let verfier = Verifier;
+    let deployment = Arc::new(Deployment::default());
+    let gate = Arc::new(ExternalDocumentAcp::new(
+        deployment.clone(),
+        Arc::new(RegolithStore::in_memory().expect("a store")),
+    ));
+    gate.register_doc_object(&did(OWNER), "policy", "users", "bae-1")
+        .await
+        .expect("registered");
+    gate.add_actor_relationship(
+        &did(OWNER),
+        &did(READER),
+        "policy",
+        "users",
+        "bae-1",
+        "reader",
+        &[],
+    )
+    .await
+    .expect("granted");
+
     let provider = provider(signer, Arc::clone(&rpc), &mut workers).await;
-    provider
-        .follower
-        .sink
-        .set(Arc::downgrade(&outbox) as std::sync::Weak<dyn OweAgain>)
-        .expect("one outbox");
+    let outbox = Arc::downgrade(&gate);
+    let outbox: std::sync::Weak<dyn OweAgain> = outbox;
+    provider.follower.sink.set(outbox).expect("one outbox");
+    let source = Arc::downgrade(&gate);
+    let source: std::sync::Weak<dyn RecoverySource> = source;
     provider
         .follower
         .recovery
         .set(source)
-        .map_err(|_| "one recovery source")
-        .unwrap();
+        .expect("one recovery source");
     {
         let mut worker = provider.worker.clone().lock_owned().await;
         worker
@@ -139,14 +166,53 @@ async fn an_uncovered_journal_recovers_through_the_outbox_under_the_same_worker(
             .expect("closed");
         provider.follower.follow.update(worker.confirmed());
     }
+    assert!(provider.follower.admit().is_err(), "closed until the pass");
 
-    provider.follower.check_with(&verfier).await;
+    provider.follower.check_with(&Lost).await;
 
+    assert!(provider.follower.admit().is_ok(), "the node decides again");
     let mut worker = provider.worker.clone().lock_owned().await;
     assert_eq!(worker.confirmed().closed(), None);
     assert_eq!(worker.confirmed().recovery_needed(), None);
     assert_eq!(worker.confirmed().handled_term(), 0);
-    assert_eq!(outbox.effects.pop().is_some(), true, "the page was owed");
-    assert_eq!(outbox.effects.pop().is_none(), true, "one page only");
+    assert_eq!(
+        deployment.registrations.load(Ordering::SeqCst),
+        2,
+        "the registration was owed again and sent"
+    );
+    assert_eq!(
+        deployment.grants.load(Ordering::SeqCst),
+        2,
+        "the grant was owed again and sent"
+    );
+    assert!(
+        gate.next(&Lost).await.expect("the ledger").is_none(),
+        "the pass is over"
+    );
     assert!(rpc.calls.pop().is_none(), "recovery sent no decision");
+}
+
+#[nuclei::test]
+async fn a_journal_closed_for_good_is_not_recovered() {
+    let signer = Recording::returning(Returns::Genuine);
+    let rpc = RpcRecorded::answering(Ok(serde_json::Value::Null));
+    let mut workers = Workers::new();
+    let provider = provider(signer, rpc, &mut workers).await;
+    {
+        let mut worker = provider.worker.clone().lock_owned().await;
+        worker
+            .confirmed()
+            .close("several nodes share the provider".into())
+            .expect("closed");
+        provider.follower.follow.update(worker.confirmed());
+    }
+
+    provider.follower.check_with(&Lost).await;
+
+    assert!(provider.follower.admit().is_err());
+    let mut worker = provider.worker.clone().lock_owned().await;
+    assert_eq!(
+        worker.confirmed().closed(),
+        Some("several nodes share the provider")
+    );
 }
