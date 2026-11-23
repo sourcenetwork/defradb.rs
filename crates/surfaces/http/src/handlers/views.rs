@@ -24,7 +24,7 @@ pub struct AddViewRequest {
 }
 
 /// Request body for refreshing views (Go-compatible format).
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ViewNamesRequest {
     #[serde(rename = "Names", default)]
     pub names: Option<Vec<String>>,

@@ -25,7 +25,7 @@ pub struct SignedBlockParams {
     pub cid: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct SignedBlockResponse {
     pub cid: String,
     pub block: String,

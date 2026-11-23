@@ -31,13 +31,15 @@ pub async fn batch_start(
 }
 
 /// Response from the batch sign endpoint.
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct BatchSignResponse {
     pub sig_type: String,
     pub identity: String,
     #[serde(with = "hex_serde")]
+    #[schemars(with = "String")]
     pub value: Vec<u8>,
     #[serde(with = "hex_serde")]
+    #[schemars(with = "String")]
     pub merkle_root: Vec<u8>,
     pub cid_count: usize,
 }
@@ -73,13 +75,15 @@ pub async fn batch_sign(
 }
 
 /// Request body for the batch verify endpoint.
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 pub struct BatchVerifyRequest {
     pub sig_type: String,
     pub identity: String,
     #[serde(with = "hex_serde")]
+    #[schemars(with = "String")]
     pub value: Vec<u8>,
     #[serde(with = "hex_serde")]
+    #[schemars(with = "String")]
     pub merkle_root: Vec<u8>,
     pub cid_count: usize,
     pub cids: Vec<String>,

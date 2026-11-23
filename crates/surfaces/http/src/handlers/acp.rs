@@ -26,7 +26,7 @@ pub struct AddPolicyResponse {
 }
 
 /// A policy as the list and get routes answer it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PolicyInfo {
     pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -199,7 +199,7 @@ fn relationship_operations(
 }
 
 /// Known documents whose ownership the authenticated caller asks about.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OwnDocumentsRequest {
     pub collection: String,
@@ -207,7 +207,7 @@ pub struct OwnDocumentsRequest {
 }
 
 /// A visible document's ownership relative to the authenticated caller.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct OwnDocument {
     pub doc_id: String,
     pub visible: bool,
@@ -216,7 +216,7 @@ pub struct OwnDocument {
     pub owner_registered: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct OwnDocumentsResponse {
     pub documents: Vec<OwnDocument>,
 }

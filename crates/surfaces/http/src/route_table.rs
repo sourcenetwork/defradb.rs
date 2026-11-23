@@ -6,7 +6,12 @@
 //! the table and formats everything else.
 
 use axum::http::Method;
+use schemars::{JsonSchema, Schema, SchemaGenerator};
 
+use crate::handlers::acp::{OwnDocumentsRequest, OwnDocumentsResponse, PolicyInfo};
+use crate::handlers::batch::{BatchSignResponse, BatchVerifyRequest};
+use crate::handlers::block::SignedBlockResponse;
+use crate::handlers::views::ViewNamesRequest;
 use crate::route_permissions::RoutePermission;
 use crate::router::NodePermission;
 
@@ -14,7 +19,10 @@ use RoutePermission::{Dynamic, Exempt, IdentityOnly};
 
 /// One route the server serves, and what the auth middleware needs to know
 /// about it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// No `PartialEq`: two bodies are `fn` pointers, whose addresses are not
+/// guaranteed unique, so comparing whole rows would not mean what it reads as.
+#[derive(Debug, Clone)]
 pub struct Route {
     /// The Axum `MatchedPath` template, in its `/api/v0` form. Mounts are
     /// folded onto that form by `route_permissions::normalize_api_version`
@@ -30,6 +38,21 @@ pub struct Route {
     /// (`http/handler.go`): such a route checks `get-collection` before its
     /// own permission.
     pub collection_first: bool,
+    /// The JSON body the route accepts, as a schema rendered with the
+    /// document's generator, or `None` for a route that takes no body.
+    pub request: Option<BodySchema>,
+    /// The JSON body the route returns, the same way.
+    pub response: Option<BodySchema>,
+}
+
+/// A body's schema, rendered with the document's [`SchemaGenerator`] so the
+/// definitions it reaches land in one `components.schemas`.
+pub type BodySchema = fn(&mut SchemaGenerator) -> Schema;
+
+/// Renders `T`'s schema. Used as [`BodySchema`]: a row names the type, and the
+/// schema is built when a client asks for the document.
+pub fn body<T: JsonSchema>(generator: &mut SchemaGenerator) -> Schema {
+    generator.root_schema_for::<T>()
 }
 
 impl Route {
@@ -66,6 +89,27 @@ const fn row(
         method,
         permission,
         collection_first,
+        request: None,
+        response: None,
+    }
+}
+
+/// A row whose request and response bodies are typed.
+const fn row_body(
+    path: &'static str,
+    method: Option<Method>,
+    permission: RoutePermission,
+    collection_first: bool,
+    request: Option<BodySchema>,
+    response: Option<BodySchema>,
+) -> Route {
+    Route {
+        path,
+        method,
+        permission,
+        collection_first,
+        request,
+        response,
     }
 }
 
@@ -83,7 +127,7 @@ pub const ROUTES: &[Route] = &[
     row("/openapi.rs.json", GET, Exempt, false),
     row("/api/v0/version", GET, Exempt, false),
     row("/api/v0/graphql/ws", ANY, Exempt, false),
-    row("/api/v0/batch/verify", POST, Exempt, false),
+    row_body("/api/v0/batch/verify", POST, Exempt, false, Some(body::<BatchVerifyRequest>), None),
     // GraphQL
     row("/api/v0/graphql/client-sign", GET, required(NodePermission::DocumentUpdate), false),
     // GET is always a read operation; POST determines permission by parsing
@@ -163,10 +207,10 @@ pub const ROUTES: &[Route] = &[
     row("/api/v0/acp/status", GET, required(NodePermission::DacStatus), false),
     row("/api/v0/acp/document/policy", POST, required(NodePermission::DacPolicyAdd), false),
     row("/api/v0/acp/policy", GET, required(NodePermission::DacStatus), false),
-    row("/api/v0/acp/policy/{id}", GET, required(NodePermission::DacStatus), false),
+    row_body("/api/v0/acp/policy/{id}", GET, required(NodePermission::DacStatus), false, None, Some(body::<PolicyInfo>)),
     row("/api/v0/acp/document/decide", POST, required(NodePermission::DacStatus), false),
     // Reads the documents in the caller's transaction, as a query does.
-    row("/api/v0/acp/document/is-owner", POST, required(NodePermission::DocumentRead), false),
+    row_body("/api/v0/acp/document/is-owner", POST, required(NodePermission::DocumentRead), false, Some(body::<OwnDocumentsRequest>), Some(body::<OwnDocumentsResponse>)),
     row("/api/v0/acp/document/relationship", GET, Dynamic, false),
     row("/api/v0/acp/document/relationship", POST, required(NodePermission::DacRelationAdd), false),
     row("/api/v0/acp/document/relationship", DELETE, required(NodePermission::DacRelationDelete), false),
@@ -190,18 +234,18 @@ pub const ROUTES: &[Route] = &[
     row("/api/v0/backup/import", POST, required(NodePermission::DocumentUpdate), false),
     // Block
     row("/api/v0/block/verify-signature", GET, required(NodePermission::SignatureVerify), false),
-    row("/api/v0/block/signed", GET, required(NodePermission::SignatureVerify), false),
+    row_body("/api/v0/block/signed", GET, required(NodePermission::SignatureVerify), false, None, Some(body::<SignedBlockResponse>)),
     // Lens
     row("/api/v0/lens", POST, required(NodePermission::LensCreate), false),
     row("/api/v0/lens", GET, required(NodePermission::LensList), false),
     // Batch signing
     row("/api/v0/batch/start", POST, Dynamic, false),
-    row("/api/v0/batch/sign", POST, Dynamic, false),
+    row_body("/api/v0/batch/sign", POST, Dynamic, false, None, Some(body::<BatchSignResponse>)),
     // Views
     row("/api/v0/view", POST, required(NodePermission::ViewAdd), false),
     row("/api/v0/view/refresh", POST, required(NodePermission::ViewRefresh), false),
     // Go has no view GC route.
-    row("/api/v0/views/gc", POST, required(NodePermission::ViewGc), false),
+    row_body("/api/v0/views/gc", POST, required(NodePermission::ViewGc), false, Some(body::<ViewNamesRequest>), None),
     // Encrypted indexes (global list)
     row("/api/v0/encrypted-indexes", GET, required(NodePermission::EncryptedIndexListAll), false),
     // Utility
