@@ -102,6 +102,8 @@ pub(super) struct RemoteAcp {
     /// A registration of a document already held, even for its own owner,
     /// is refused, as vera.rs refuses one.
     pub(super) refuse_held: AtomicBool,
+    /// A deleted document's object is archived, as vera.rs does.
+    pub(super) archives: AtomicBool,
 }
 
 /// What a test runs inside an exact observation, after the provider answered.
@@ -142,6 +144,7 @@ impl RemoteAcp {
             lose_list_answer: AtomicBool::new(false),
             raced: SegQueue::new(),
             refuse_held: AtomicBool::new(false),
+            archives: AtomicBool::new(false),
         })
     }
 
@@ -541,6 +544,10 @@ impl DocumentACP for RemoteAcp {
                 reason: "no key and no delegation".into(),
             }),
         }
+    }
+
+    fn stages_archive_on_delete(&self) -> bool {
+        self.archives.load(Ordering::SeqCst)
     }
 
     fn command_authority(

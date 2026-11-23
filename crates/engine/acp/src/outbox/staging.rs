@@ -250,7 +250,7 @@ impl TransactionOutbox {
                 request.object,
             )
             .await?;
-        if denial == OwedDenial::Always
+        if matches!(denial, OwedDenial::Always | OwedDenial::Archived)
             || (denial == OwedDenial::UnlessOwner
                 && !prepared.owner
                 && self.authority_revoked(&actor, &request).await?)
@@ -589,7 +589,7 @@ impl TransactionOutbox {
                 "a revocation owed to the provider denies {actor} on {resource} {object}"
             ))
         };
-        if denial == OwedDenial::Always {
+        if matches!(denial, OwedDenial::Always | OwedDenial::Archived) {
             return Err(revoked());
         }
         let owner = match self

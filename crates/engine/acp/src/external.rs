@@ -239,7 +239,8 @@ where
         };
         match (denial, identity) {
             (OwedDenial::None, _) => Ok(false),
-            (OwedDenial::Always, _) | (OwedDenial::UnlessOwner, Identity::Anonymous) => Ok(true),
+            (OwedDenial::Always | OwedDenial::Archived, _)
+            | (OwedDenial::UnlessOwner, Identity::Anonymous) => Ok(true),
             (OwedDenial::UnlessOwner, Identity::Authenticated(actor)) => {
                 let owner = self
                     .provider

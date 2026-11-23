@@ -3,6 +3,8 @@
 use super::*;
 
 const WRITER: &str = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
+const NOT_OWNER: &str =
+    "UNAUTHORIZED: not document owner, cannot archive the deleted document's object";
 
 fn delete_user(doc: &str, actor: &identity::Did) -> QueryRequest {
     QueryRequest::new("mutation($id:ID!) { delete_Users(docIDs:[$id]) {_docID} }")
@@ -46,10 +48,12 @@ fn a_deleted_document_is_archived_on_the_deployment_and_only_its_owner_may_delet
         assert!(chain_reads(&node, &reader, &policy, &doc).await);
 
         let refused = node.execute_request(delete_user(&doc, &writer)).await;
-        assert!(refused.has_errors(), "a writer may delete but not archive");
         assert!(
-            format!("{:?}", refused.errors).contains("not document owner"),
-            "{:?}",
+            refused
+                .errors
+                .iter()
+                .any(|error| error.message.contains(NOT_OWNER)),
+            "a writer may delete but not archive: {:?}",
             refused.errors
         );
         assert_eq!(

@@ -21,10 +21,13 @@
 \* worker's requests go in sequence), and Vera refuses any change to an
 \* archived object, so no grant lands after the archive. From the delete's
 \* commit on, the owed archive denies everyone on the object, the owner
-\* too, until the deployment holds it.
+\* too, until the deployment holds it. One read is left while it is owed:
+\* whoever staged the archive (the deleting owner) still reads the
+\* document's commit history, so it can see the delete it just made.
 \*
 \* What must never happen:
 \*   * a deleted document grants anything to anyone;
+\*   * anyone but its deleter reads a deleted document's commit history;
 \*   * a grant that holds on the deployment after the archive settled;
 \*   * a document deleted by someone who may not archive it.
 \* What must happen: the archive settles, and the deployment then holds no
@@ -33,7 +36,10 @@
 \* Code this models (defradb.rs, vera.rs at 45cd086b):
 \*   crates/engine/acp/src/outbox/staging.rs      TransactionOutbox::stage_archive (owner
 \*       check before commit, earlier unsent changes on the object dropped)
-\*   crates/engine/acp/src/outbox/deny.rs         owed_denial (an owed archive denies all)
+\*   crates/engine/acp/src/outbox/deny.rs         owed_denial (an owed archive denies all),
+\*       archive_actor (who staged it)
+\*   crates/engine/query/src/txn/context.rs       decided_by_owed, spared_by_owed_archive
+\*       (the archive's actor keeps the commit history)
 \*   crates/engine/acp/src/outbox/ops.rs          account (the object's archive count)
 \*   crates/engine/acp/src/outbox/submission.rs   relationship_call (OwedOp::Archive)
 \*   crates/database/db/src/write/autocommit/helpers.rs  unregister_deleted_doc (stages
@@ -54,16 +60,23 @@
 \*                        archived object
 \*   Overlay              owed_denial: an unsettled archive on the object denies everyone
 \*   Decide               check_doc_access through ExternalDocumentAcp
+\*   ReadHistory, HistoryActorOnly   check_commit_read_access_as -> decided_by_owed:
+\*                        OwedDenial::Archived spares only the archive's actor, and only
+\*                        for the commit history
 EXTENDS Naturals, Sequences
 
 CONSTANTS
     CheckOwner,   \* TRUE: a delete by anyone but the owner is refused before commit
     Drop,         \* TRUE: earlier unsent changes on the object go with the delete
     VeraRefuses,  \* TRUE: Vera refuses a change to an archived object
-    Overlay       \* TRUE: an owed archive denies everyone on the object
+    Overlay,      \* TRUE: an owed archive denies everyone on the object
+    HistoryActorOnly  \* TRUE: an owed archive leaves the commit history to its actor alone
 
 \* Who acts: the owner, and a writer the policy lets delete.
 People == {"owner", "writer"}
+
+\* Who asks for the commit history: they, and the reader the owner granted.
+Askers == People \cup {"reader"}
 
 VARIABLES
     doc,         \* "live" or "deleted" on this node
@@ -76,9 +89,10 @@ VARIABLES
     archived,    \* TRUE once the deployment archived the object
     grants,      \* how many grants the owner may still stage (keeps the model finite)
     servedWide,  \* TRUE once a decision allowed the reader on a deleted document
-    lateGrant    \* TRUE once a grant held on the deployment after the archive
+    lateGrant,   \* TRUE once a grant held on the deployment after the archive
+    servedHistory  \* TRUE once someone other than its deleter read a deleted document's history
 
-vars == <<doc, deleter, queue, parked, parkedArchive, renewed, granted, archived, grants, servedWide, lateGrant>>
+vars == <<doc, deleter, queue, parked, parkedArchive, renewed, granted, archived, grants, servedWide, lateGrant, servedHistory>>
 
 \* Whether an archive is owed.
 ArchiveOwed == parkedArchive \/ \E i \in DOMAIN queue : queue[i].op = "archive"
@@ -91,6 +105,7 @@ TypeOK ==
     /\ granted \in BOOLEAN /\ archived \in BOOLEAN                     \* the deployment
     /\ grants \in 0..2                                                  \* a count
     /\ servedWide \in BOOLEAN /\ lateGrant \in BOOLEAN                 \* history flags
+    /\ servedHistory \in BOOLEAN                                      \* one more
 
 \* At the start: a live document, nothing owed, the reader not yet granted.
 Init ==
@@ -99,20 +114,21 @@ Init ==
     /\ granted = FALSE /\ archived = FALSE      \* the deployment holds the owner only
     /\ grants = 2                               \* two grants may be staged
     /\ servedWide = FALSE /\ lateGrant = FALSE  \* nothing served yet
+    /\ servedHistory = FALSE                    \* no history read yet
 
 \* The owner grants the reader: an owed change.
 StageGrant ==
     /\ doc = "live" /\ grants > 0               \* a live document, a grant left to make
     /\ queue' = Append(queue, [op |-> "grant", actor |-> "owner", inflight |-> FALSE])
     /\ grants' = grants - 1                     \* one fewer to make
-    /\ UNCHANGED <<doc, deleter, parked, parkedArchive, renewed, granted, archived, servedWide, lateGrant>>  \* nothing else moves
+    /\ UNCHANGED <<doc, deleter, parked, parkedArchive, renewed, granted, archived, servedWide, lateGrant, servedHistory>>  \* nothing else moves
 
 \* The drainer hands the head change to the worker: its request is journaled
 \* and will be sent before anything journaled after it.
 Journal ==
     /\ queue # <<>> /\ ~queue[1].inflight      \* the head is not yet handed over
     /\ queue' = [queue EXCEPT ![1].inflight = TRUE]  \* now it is
-    /\ UNCHANGED <<doc, deleter, parked, parkedArchive, renewed, granted, archived, grants, servedWide, lateGrant>>  \* nothing else moves
+    /\ UNCHANGED <<doc, deleter, parked, parkedArchive, renewed, granted, archived, grants, servedWide, lateGrant, servedHistory>>  \* nothing else moves
 
 \* Someone deletes the document. With CheckOwner only the owner may: anyone
 \* else is refused and nothing commits. The delete records the archive in
@@ -127,7 +143,7 @@ Delete ==
            IN queue' = Append(kept, [op |-> "archive", actor |-> who, inflight |-> FALSE])
         /\ parked' = IF Drop THEN 0 ELSE parked  \* parked grants go too
         /\ UNCHANGED <<parkedArchive, renewed>>
-    /\ UNCHANGED <<granted, archived, grants, servedWide, lateGrant>>  \* the deployment has not seen it
+    /\ UNCHANGED <<granted, archived, grants, servedWide, lateGrant, servedHistory>>  \* the deployment has not seen it
 
 \* The head change, handed to the worker, is sent and executed. A grant on an
 \* archived object is refused when VeraRefuses. An archive by the owner
@@ -143,16 +159,16 @@ Settle ==
         ELSE IF c.actor = "owner"
         THEN /\ archived' = TRUE /\ granted' = FALSE              \* every relationship removed
              /\ UNCHANGED lateGrant
-        ELSE UNCHANGED <<archived, granted, lateGrant>>          \* only the owner may archive
+        ELSE UNCHANGED <<archived, granted, lateGrant, servedHistory>>          \* only the owner may archive
     /\ queue' = Tail(queue)                     \* settled or refused, it leaves the queue
-    /\ UNCHANGED <<doc, deleter, parked, parkedArchive, renewed, grants, servedWide>>  \* nothing else moves
+    /\ UNCHANGED <<doc, deleter, parked, parkedArchive, renewed, grants, servedWide, servedHistory>>  \* nothing else moves
 
 \* The head grant's delegation has expired: it is parked as awaiting
 \* authority and the changes behind it go on.
 Park ==
     /\ queue # <<>> /\ queue[1].op = "grant" /\ ~queue[1].inflight  \* an unsent grant at the head
     /\ queue' = Tail(queue) /\ parked' = parked + 1  \* it waits aside
-    /\ UNCHANGED <<doc, deleter, parkedArchive, renewed, granted, archived, grants, servedWide, lateGrant>>  \* nothing else moves
+    /\ UNCHANGED <<doc, deleter, parkedArchive, renewed, granted, archived, grants, servedWide, lateGrant, servedHistory>>  \* nothing else moves
 
 \* Its actor hands in a fresh delegation: the parked grant is owed again,
 \* behind whatever is owed now.
@@ -160,7 +176,7 @@ Renew ==
     /\ parked > 0                                \* a grant waits aside
     /\ queue' = Append(queue, [op |-> "grant", actor |-> "owner", inflight |-> FALSE])
     /\ parked' = parked - 1
-    /\ UNCHANGED <<doc, deleter, parkedArchive, renewed, granted, archived, grants, servedWide, lateGrant>>  \* nothing else moves
+    /\ UNCHANGED <<doc, deleter, parkedArchive, renewed, granted, archived, grants, servedWide, lateGrant, servedHistory>>  \* nothing else moves
 
 \* The owner deleted through a request that lets the node sign nothing for
 \* it: the archive at the head waits for the owner's authority. It still
@@ -169,24 +185,37 @@ ParkArchive ==
     /\ queue # <<>> /\ queue[1].op = "archive" /\ ~queue[1].inflight  \* an unsent archive at the head
     /\ ~renewed                                  \* not the one sent under a credential handed in
     /\ queue' = Tail(queue) /\ parkedArchive' = TRUE  \* it waits aside
-    /\ UNCHANGED <<doc, deleter, parked, renewed, granted, archived, grants, servedWide, lateGrant>>  \* nothing else moves
+    /\ UNCHANGED <<doc, deleter, parked, renewed, granted, archived, grants, servedWide, lateGrant, servedHistory>>  \* nothing else moves
 
 \* The owner hands in a credential: the archive is owed again.
 RenewArchive ==
     /\ parkedArchive                             \* the archive waits aside
     /\ queue' = Append(queue, [op |-> "archive", actor |-> "owner", inflight |-> FALSE])
     /\ parkedArchive' = FALSE /\ renewed' = TRUE  \* now it carries the owner's credential
-    /\ UNCHANGED <<doc, deleter, parked, granted, archived, grants, servedWide, lateGrant>>  \* nothing else moves
+    /\ UNCHANGED <<doc, deleter, parked, granted, archived, grants, servedWide, lateGrant, servedHistory>>  \* nothing else moves
 
 \* The reader asks for access to the object. The deployment allows a held
 \* grant on an object it has not archived; an owed archive denies first.
 Decide ==
     /\ LET allows == granted /\ ~archived /\ ~(Overlay /\ ArchiveOwed)
        IN servedWide' = (servedWide \/ (allows /\ doc = "deleted"))  \* allowed on a deleted document?
-    /\ UNCHANGED <<doc, deleter, queue, parked, parkedArchive, renewed, granted, archived, grants, lateGrant>>  \* nothing else moves
+    /\ UNCHANGED <<doc, deleter, queue, parked, parkedArchive, renewed, granted, archived, grants, lateGrant, servedHistory>>  \* nothing else moves
+
+\* Someone asks for the document's commit history. While the archive is
+\* owed the node answers by itself: with HistoryActorOnly only whoever
+\* staged the archive (the deleter) reads it. With nothing owed the
+\* deployment answers: the owner of an object it has not archived, and the
+\* reader while its grant holds.
+ReadHistory ==
+    /\ \E who \in Askers :
+        LET allows == IF Overlay /\ ArchiveOwed                       \* the owed archive answers
+                      THEN ~HistoryActorOnly \/ who = deleter         \* its actor alone
+                      ELSE ~archived /\ (who = "owner" \/ (who = "reader" /\ granted))  \* the deployment
+        IN servedHistory' = (servedHistory \/ (allows /\ doc = "deleted" /\ who # deleter))  \* someone else's read?
+    /\ UNCHANGED <<doc, deleter, queue, parked, parkedArchive, renewed, granted, archived, grants, servedWide, lateGrant>>  \* nothing else moves
 
 Next == StageGrant \/ Journal \/ Delete \/ Settle \/ Park \/ Renew \/ ParkArchive \/ RenewArchive
-        \/ Decide   \* one of these happens at each step
+        \/ Decide \/ ReadHistory   \* one of these happens at each step
 
 \* The drainer keeps handing over and sending what is owed, and an owner
 \* whose archive waits for authority hands one in.
@@ -197,6 +226,9 @@ INV_DeletedGrantsNothing == ~servedWide
 
 \* No grant holds on the deployment after the archive settled.
 INV_NoGrantAfterArchive == ~lateGrant
+
+\* Nobody but its deleter reads a deleted document's commit history.
+INV_HistoryOnlyToDeleter == ~servedHistory
 
 \* A document is deleted only by someone who may archive it.
 INV_DeletedByOwner == doc = "deleted" => deleter = "owner"
