@@ -67,7 +67,7 @@ impl Op for HoldCommit {
                                     .unwrap_or_default(),
                             )
                             .body("");
-                        let commit = nuclei::spawn(async move { request.send().await });
+                        let commit = network_edge().spawn(async move { request.send().await });
                         if nuclei::time::timeout(Duration::from_secs(10), gate.entered.wait())
                             .await
                             .is_err()
@@ -79,7 +79,7 @@ impl Op for HoldCommit {
                                 )),
                             });
                         }
-                        commit.join().await.unwrap()
+                        commit.await.unwrap()
                     }))
                     .map_err(|error| Failure::operation(error.to_string()))?
             }
