@@ -1075,6 +1075,9 @@ jobs:
               await github.rest.issues.createComment({ owner, repo, issue_number, body });
             }
 
+  # The one required check besides Validate title. A job passes when it
+  # succeeded, or was skipped and ci-scope did not ask for it; a job skipped
+  # because a dependency failed is reported as well as that dependency.
   merge-gate:
     name: Merge gate
     needs:
@@ -1083,6 +1086,7 @@ jobs:
       - feature-checks
       - dependency-checks
       - docs
+      - c-api
       - lint
       - unit-tests
       - go-defradb
@@ -1116,6 +1120,7 @@ jobs:
           FEATURE_CHECKS: ${{ needs.feature-checks.result }}
           DEPENDENCY_CHECKS: ${{ needs.dependency-checks.result }}
           DOCS: ${{ needs.docs.result }}
+          C_API: ${{ needs.c-api.result }}
           LINT: ${{ needs.lint.result }}
           UNIT_TESTS: ${{ needs.unit-tests.result }}
           GO_DEFRADB: ${{ needs.go-defradb.result }}
@@ -1133,20 +1138,22 @@ jobs:
         run: |
           set -euo pipefail
 
+          failed=0
           check() {
             local name="$1" result="$2" expected="$3"
             if [ "$result" = success ] || { [ "$result" = skipped ] && [ "$expected" = false ]; }; then
               return 0
             fi
             echo "::error::$name was $result"
-            return 1
+            failed=1
           }
 
-          test "$CI_SCOPE" = success
+          check "CI scope" "$CI_SCOPE" true
           check "Lint (default)" "$LINT_DEFAULT" true
           check "Feature checks" "$FEATURE_CHECKS" "$RUN_FEATURE_CHECKS"
           check "Dependency checks" "$DEPENDENCY_CHECKS" true
           check "Docs" "$DOCS" true
+          check "C API compatibility" "$C_API" true
           check "Lint" "$LINT" true
           check "Unit tests" "$UNIT_TESTS" "$FULL"
           check "Go DefraDB binary" "$GO_DEFRADB" "$FULL"
@@ -1161,3 +1168,4 @@ jobs:
           check "Build testo archive" "$TESTO_ARCHIVE" "$FULL"
           check "Testo" "$TESTO" "$FULL"
           check "Testo summary" "$TESTO_SUMMARY" "$FULL"
+          exit "$failed"
