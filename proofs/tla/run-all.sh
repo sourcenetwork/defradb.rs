@@ -1392,6 +1392,19 @@ RUNS=(
   "MC_DocumentSave_Red_SplitTxn.cfg DocumentSave.tla RED" # a delete between lookup and write forks the save (INV_NoFork)
   "MC_ChildLimitPaging_Green.cfg ChildLimitPaging.tla GREEN" # each ordered child page is collected per parent
   "MC_ChildLimitPaging_Red_UnorderedStop.cfg ChildLimitPaging.tla RED" # an unordered early stop loses a later parent's page (INV_EveryParentHasPage)
+  "MC_BackupImportWritePath_Green.cfg BackupImportWritePath.tla GREEN" # every import write takes its edge's request path: signed, replicated, owned, admitted
+  "MC_BackupImportWritePath_Red_OwnMutator.cfg BackupImportWritePath.tla RED" # the old private mutator writes unsigned blocks (INV_ImportSigned)
+  "MC_BackupImportWritePath_Red_NoSigningChoice.cfg BackupImportWritePath.tla RED" # the import drops the node's signing choice (INV_ImportSigned)
+  "MC_BackupImportWritePath_Red_AliasOutsideTxn.cfg BackupImportWritePath.tla RED" # an unvalidated alias write steals another document's alias (INV_AliasNeverStolen)
+  "MC_BackupImportWritePath_Red_AliasCheckAfterCreate.cfg BackupImportWritePath.tla RED" # a repeated file ID is saved twice (INV_NoDuplicateAlias)
+  "MC_BackupImportWritePath_Red_BatchSkipsPendingAlias.cfg BackupImportWritePath.tla RED" # a batch holding the same ID twice saves both (INV_NoDuplicateAlias)
+  "MC_BackupImportWritePath_Red_FfiViaNode.cfg BackupImportWritePath.tla RED" # the FFI import writes through another edge's path (INV_HostFromEdge)
+  "MC_BackupImportWritePath_Red_AdapterOwnHost.cfg BackupImportWritePath.tla RED" # the HTTP adapter ignores the handler's host (INV_HostFromEdge)
+  "MC_BackupImportWritePath_Red_CallerIgnored.cfg BackupImportWritePath.tla RED" # writes run as no one, not the caller (INV_CreatorAsCreate)
+  "MC_BackupImportWritePath_Red_ActorNoOne.cfg BackupImportWritePath.tla RED" # an anonymous import is owned unlike an anonymous create (INV_CreatorAsCreate)
+  "MC_BackupImportWritePath_Red_ImportAdmittedOnce.cfg BackupImportWritePath.tla RED" # one admission covers the whole import, so writes land after close (INV_NoWriteAfterClose)
+  "MC_BackupImportWritePath_Red_PrepareOnPool.cfg BackupImportWritePath.tla RED" # the driver runs on a database worker (INV_DriverOnCaller)
+  "MC_BackupImportWritePath_Red_FfiTxnAccepted.cfg BackupImportWritePath.tla RED" # the FFI import runs in a transaction handle (INV_FfiTxnRefused)
 )
 
 parallelism="${TLA_JOBS:-4}"

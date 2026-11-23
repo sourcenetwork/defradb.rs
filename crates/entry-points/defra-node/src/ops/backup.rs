@@ -2,9 +2,14 @@
 //! its import, as Go's `BasicExport` and `BasicImport` do.
 
 use acp::nac::NodePermission;
+use db::backup::{DbJob, ImportHost};
+use defra_core::thread_bounds::MaybeBoxFuture;
 use defra_core::RequestContext;
+use identity::Did;
+use query::{QueryRequest, QueryResponse};
 
 use super::handle::NodeOps;
+use super::request::acting_identity;
 use crate::{Error, Node, Result};
 
 impl Node {
@@ -22,12 +27,50 @@ impl Node {
     }
 
     /// Import the documents of backup `data` as `context`'s identity. They
-    /// get new document IDs, as Go's import gives them. The import writes, so
-    /// it runs as an admitted request: shutdown drains it before P2P stops.
+    /// get new document IDs, as Go's import gives them. Each create and
+    /// relation patch is a request of this node, admitted, signed and
+    /// broadcast as any other write, so a shutdown refuses the writes after
+    /// it begins. The import runs outside any transaction `context` names.
     pub async fn import_backup_as(&self, context: &RequestContext, data: &str) -> Result<()> {
-        let (ops, context, data) = (self.ops(), self.caller(context), data.to_owned());
-        self.as_request(async move { ops.import_backup(context, data).await.map(drop) })
-            .await?
+        let context = self.caller(context).with_txn(None);
+        let host = NodeHost {
+            node: self,
+            identity: acting_identity(&context)?,
+            context: context.clone(),
+        };
+        self.ops()
+            .import_backup_with(context, &host, data)
+            .await
+            .map(drop)
+    }
+}
+
+#[cfg(test)]
+#[path = "backup_tests.rs"]
+mod tests;
+
+/// This node's request path for an import's writes.
+struct NodeHost<'a> {
+    node: &'a Node,
+    context: RequestContext,
+    identity: Option<Did>,
+}
+
+impl ImportHost for NodeHost<'_> {
+    fn run(&self, request: QueryRequest) -> MaybeBoxFuture<'_, QueryResponse> {
+        Box::pin(
+            self.node
+                .run_as_identity(&self.context, self.identity.clone(), request),
+        )
+    }
+
+    fn on_db(&self, job: DbJob) -> MaybeBoxFuture<'_, std::result::Result<(), String>> {
+        let ops = self.node.ops();
+        Box::pin(async move {
+            ops.on_pool(move || async move { Ok(job().await) })
+                .await
+                .unwrap_or_else(|error| Err(error.to_string()))
+        })
     }
 }
 
@@ -52,21 +95,16 @@ impl NodeOps {
     }
 
     /// [`Node::import_backup_as`] as `context` names, with no default caller,
-    /// in the request it is called in.
-    pub(crate) async fn import_backup(
+    /// every write sent through `host`. The driver runs on the caller; only
+    /// `host` places work on the pool.
+    pub(crate) async fn import_backup_with(
         &self,
         context: RequestContext,
-        data: String,
+        host: &dyn ImportHost,
+        data: &str,
     ) -> Result<db::backup::ImportStats> {
-        let (database, runner) = (self.database.clone(), self.runner.clone());
-        self.on_pool(move || async move {
-            database
-                .check_node_access_as(&context, NodePermission::DocumentUpdate)
-                .await?;
-            db::backup::import_database_as(&context, &database, &runner, &data)
-                .await
-                .map_err(Error::Backup)
-        })
-        .await
+        db::backup::import_database_as(&context, &self.database, host, data)
+            .await
+            .map_err(Error::Backup)
     }
 }

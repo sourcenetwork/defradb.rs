@@ -4191,6 +4191,32 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/foundation/defra-core/src/request_context.rs signing_override_false_hides_the_key_and_others_keep_it; crates/surfaces/http/src/query_context.rs enable_signing_overrides_the_node_either_way; crates/entry-points/ffi/src/document/signing_tests.rs opting_out_of_a_save_many_leaves_the_blocks_unsigned_on_a_signing_node; tools/integration-test/tests/testo/signature/per_op_signing.rs signature_with_per_op_signing_enabled_on_a_node_not_signing_signs_every_commit",
     },
     Property {
+        // #2716: every create and relation patch of an import is a request
+        // on the request path of the edge it came in by, so it is signed,
+        // broadcast, owned and admitted as that edge's creates are; the
+        // file's IDs are checked before a document is gathered and
+        // registered by validated reads in one transaction.
+        family: "Backup import write path",
+        name: "INV_ImportSigned / INV_ImportReplicated / INV_HostFromEdge / INV_DriverOnCaller / INV_NoDuplicateAlias / INV_AliasNeverStolen / INV_FfiTxnRefused / INV_CreatorAsCreate / INV_NoWriteAfterClose: an import writes as its edge writes a create",
+        axis: Tla,
+        anchor: "crates/database/db/src/backup/import.rs import_database_as; crates/database/db/src/backup/host.rs ImportHost, RunnerHost; crates/database/db/src/backup/batch.rs Batch::must_save_before; crates/database/db/src/backup/alias.rs register, check_free; crates/entry-points/defra-node/src/ops/backup.rs Node::import_backup_as, NodeOps::import_backup_with, NodeHost; crates/surfaces/http/src/request_path.rs Server; crates/surfaces/http/src/handlers/backup.rs import; crates/entry-points/ffi/src/backup/import.rs defra_backup_import, FfiHost",
+        model_ref: "MC_BackupImportWritePath_{Green,Red_OwnMutator,Red_NoSigningChoice,Red_AliasOutsideTxn,Red_AliasCheckAfterCreate,Red_BatchSkipsPendingAlias,Red_FfiViaNode,Red_AdapterOwnHost,Red_CallerIgnored,Red_ActorNoOne,Red_ImportAdmittedOnce,Red_PrepareOnPool,Red_FfiTxnAccepted}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/entry-points/defra-node/src/ops/backup_tests.rs a_write_after_shutdown_begins_is_refused, the_driver_runs_on_its_caller_and_saves_a_collection_in_one_write; crates/entry-points/ffi/src/backup/import_tests.rs an_import_on_a_signing_node_signs_every_block, node_access_control_refuses_an_import_to_a_stranger; tools/integration-test/tests/testo/backup/signed_import.rs an_import_on_a_signing_node_signs_every_block, an_import_reaches_a_replicator_set_before_it",
+    },
+    Property {
+        // #2716: an import's request is the create request of its edge, so
+        // it signs and is owned as a create; a batch saved before a document
+        // whose ID it already holds never saves a file ID twice.
+        family: "Backup import write path",
+        name: "BackupImportSigner.import_request_is_create_request / signing_node_signs_every_import / creator_law / no_duplicate_alias / no_flush_saves_a_duplicate",
+        axis: Lean,
+        anchor: "crates/database/db/src/backup/import.rs import_database_as; crates/database/db/src/backup/batch.rs Batch::must_save_before; crates/entry-points/defra-node/src/lib.rs execute_prepared_request",
+        model_ref: "BackupImportSigner (lake build)",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/backup/import_creator.rs an_anonymous_import_is_owned_as_an_anonymous_create; tools/integration-test/tests/testo/backup/duplicate_alias.rs a_repeated_doc_id_fails_and_keeps_the_first_document",
+    },
+    Property {
         // #2724: add_view accepts a transform CID only if it is non-empty and
         // held, stores it on the view's query source, and the definition's
         // JSON reads it back unchanged.
