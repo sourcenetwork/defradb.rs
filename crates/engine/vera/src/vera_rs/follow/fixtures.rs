@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use alloy_primitives::B256;
+use alloy_primitives::{Bytes, B256};
 use base64::Engine as _;
 use defra_core::thread_bounds::MaybeBoxFuture;
 use kovan_map::HopscotchMap;
@@ -12,8 +12,10 @@ use vera_domain::NativeTx;
 
 use super::{Chain, Confirmation, Replayed};
 use crate::provider::ProviderError;
+use crate::vera_rs::abi::IAcp;
 use crate::vera_rs::{abi::ACP_ADDRESS, policy_cmd};
 use crate::{PolicyAction, PolicyCommand, PolicySubject, SubjectRef};
+use alloy_sol_types::SolCall as _;
 
 pub(super) const POLICY: &str = "1111111111111111111111111111111111111111111111111111111111111111";
 pub(super) const OWNER: &str = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
@@ -44,14 +46,26 @@ pub(super) fn wire(sequence: u64, object: &str, action: PolicyAction<'_>) -> Vec
     sign(sequence, calldata)
 }
 
-/// The request with `sequence` that archives `object`.
-pub(super) fn archive(sequence: u64, object: &str) -> Vec<u8> {
+/// The call that archives `object`, as a batch member.
+pub(super) fn archive_calldata(object: &str) -> Vec<u8> {
     let calldata = policy_cmd::calldata(
         &token(OWNER),
         POLICY,
         &policy_cmd::archive_object("users", object),
     )
     .expect("calldata");
+    calldata.into()
+}
+
+/// The request with `sequence` that archives `object`.
+pub(super) fn archive(sequence: u64, object: &str) -> Vec<u8> {
+    sign(sequence, archive_calldata(object).into())
+}
+
+/// The `batchCalls` request carrying the already-encoded calls, in order.
+pub(super) fn batch(sequence: u64, calls: impl IntoIterator<Item = Vec<u8>>) -> Vec<u8> {
+    let calls = calls.into_iter().map(Bytes::from).collect::<Vec<Bytes>>();
+    let calldata = IAcp::batchCallsCall { calls }.abi_encode().into();
     sign(sequence, calldata)
 }
 

@@ -35,23 +35,39 @@ pub(crate) fn tainted_by(owed: &[Lost]) -> RapidHashSet<ObjectKey> {
 }
 
 /// Adds the replay of `effect`, executed again when `executed`, to `losses`.
+///
+/// A batch keeps its commands together: one refusal taints every object it
+/// carried, so a later refused archive cannot overtake an earlier lost one.
 pub(crate) fn lost_effects(
     losses: &mut Losses,
     tainted: &mut RapidHashSet<ObjectKey>,
     effect: Effect,
     executed: bool,
 ) {
-    let object = effect.object();
-    let lost = !executed || object.as_ref().is_some_and(|key| tainted.contains(key));
-    if !lost {
-        return;
-    }
-    if let Some(key) = object.clone() {
-        tainted.insert(key);
-    }
     match effect {
-        Effect::Owed(change) => losses.owed.push(change),
-        Effect::Other => losses.other += 1,
+        Effect::Batched(effects, other) => {
+            if !executed {
+                losses.other += other;
+            }
+            for effect in effects {
+                lost_effects(losses, tainted, Effect::Owed(effect), executed);
+            }
+        }
+        Effect::Owed(_) | Effect::Other => {
+            let object = effect.object();
+            let lost = !executed || object.as_ref().is_some_and(|key| tainted.contains(key));
+            if !lost {
+                return;
+            }
+            if let Some(key) = object {
+                tainted.insert(key);
+            }
+            match effect {
+                Effect::Owed(change) => losses.owed.push(change),
+                Effect::Other => losses.other += 1,
+                Effect::Batched(_, _) => unreachable!(),
+            }
+        }
     }
 }
 

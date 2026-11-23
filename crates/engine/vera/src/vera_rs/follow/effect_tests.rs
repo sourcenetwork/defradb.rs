@@ -53,3 +53,31 @@ fn an_archive_and_other_requests_are_told_apart() {
     );
     assert_eq!(effect_of(b"not a request"), Effect::Other);
 }
+
+#[test]
+fn a_voided_batch_keeps_every_archive_it_carried() {
+    let batch = batch(
+        3,
+        [archive_calldata("bae-1"), archive_calldata("bae-2"), vec![]],
+    );
+    assert_eq!(
+        effect_of(&batch),
+        Effect::Batched(
+            vec![
+                Lost::Archive {
+                    policy_id: POLICY.into(),
+                    resource: "users".into(),
+                    object: "bae-1".into(),
+                    token: token(OWNER),
+                },
+                Lost::Archive {
+                    policy_id: POLICY.into(),
+                    resource: "users".into(),
+                    object: "bae-2".into(),
+                    token: token(OWNER),
+                },
+            ],
+            0,
+        )
+    );
+}

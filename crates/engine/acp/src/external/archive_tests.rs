@@ -12,6 +12,7 @@ use crate::dac::DocumentACP;
 use crate::identity::Identity;
 use crate::outbox::{InFlight, OwedDenials, OwedOp, StageArchive, StageRelationship, StagedCount};
 use crate::permission::DocumentPermission;
+use crate::OwedWait;
 
 const OWNER: &str = "did:key:owner";
 const WRITER: &str = "did:key:writer";
@@ -335,6 +336,34 @@ fn an_owners_archive_the_node_cannot_sign_yet_waits_for_authority_and_denies() {
             provider.writes().is_empty(),
             "nothing is sent without authority"
         );
+    })
+    .unwrap()
+}
+
+#[test]
+fn an_archive_named_by_a_transaction_is_scoped_to_it() {
+    workers::block_on(async {
+        let (provider, gate) = gate();
+        let owner = &did(OWNER);
+        let txn_id = 7_u64;
+        let mut archive = archive(owner);
+        archive.txn = Some(txn_id);
+        in_transaction(&gate, |outbox| async move {
+            outbox.stage_archive(archive).await
+        })
+        .await
+        .expect("the owner's delete commits");
+        let committed = gate.owed_changes_after(None).await.unwrap();
+        assert_eq!(committed.len(), 1, "{committed:?}");
+        assert_eq!(committed[0].txn, Some(txn_id), "{committed:?}");
+        assert_eq!(
+            committed[0].epoch,
+            Some(crate::outbox::record::run_epoch()),
+            "{committed:?}"
+        );
+        let wait = gate.await_owed(txn_id, None).await.unwrap();
+        assert_eq!(wait, OwedWait::Settled);
+        assert!(!provider.writes().is_empty());
     })
     .unwrap()
 }
