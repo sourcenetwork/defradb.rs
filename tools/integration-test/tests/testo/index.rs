@@ -1,3 +1,4 @@
+mod aggregate_own_join;
 mod array;
 mod array_composite;
 mod array_int_filter;

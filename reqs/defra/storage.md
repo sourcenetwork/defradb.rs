@@ -36,6 +36,13 @@ A collection patch that removes a field an index, an encrypted index or a full-t
 
 A filter on an indexed field of a related document returns each matching document with every other relation the query selects or filters on, however those relations are joined: a one-to-one relation such as a selected publisher and its own nested owner, a one-to-many relation such as reviews, a second relation filter, and a join collection filtered on both of its relations. This holds whether or not the parent's foreign key is indexed too.
 
+# `defra.index.relation.aggregate_filter_own_join`: An aggregate's filter keeps to its own join
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["index::aggregate_own_join::an_aggregate_filter_does_not_drop_an_indexed_child_selection"]
+
+When a query selects a relation with one filter and aggregates the same relation with another, such as `authoredBooks(filter: {title: {_eq: "A"}})` beside `COUNT(authoredBooks: {filter: {pages: {_gt: 100}}})`, the aggregate reads through a join of its own: the selection returns every related document its own filter keeps and the aggregate counts every one its filter keeps, with or without an index on either field. Explain shows each filter on its own join's `scanNode`, as Go does.
+
 # `defra.index.counter`: An index on a counter follows its total
 
 - **Parents:** ["defra.index"]
