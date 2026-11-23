@@ -103,6 +103,16 @@ class Tests(unittest.TestCase):
         self.assertNotIn('/private/keys', public)
         self.assertNotIn(str(self.root), public)
 
+    def test_only_the_drivers_own_guard_messages_are_public(self):
+        self.assertEqual(driver.guard_failure(ValueError('tracked source changed')),
+                         {'error': 'tracked source changed'})
+        self.assertEqual(driver.guard_failure(RuntimeError('qualification phase failed')),
+                         {'error': 'qualification phase failed'})
+        undecodable = UnicodeDecodeError('utf-8', b'token=secret\xff', 12, 13, 'invalid start byte')
+        self.assertEqual(driver.guard_failure(undecodable), {})
+        self.assertEqual(driver.guard_failure(KeyboardInterrupt()), {})
+        self.assertEqual(driver.guard_failure(ValueError(b'bytes')), {})
+
     def test_panic_location_accepts_relative_and_windows_paths_but_not_messages(self):
         log = self.root / 'private.log'
         for path in ('src/poll.rs', r'C:\private\poll.rs', 'poll.rs'):
@@ -432,7 +442,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(runs['compile-native'][3]['VERAD_BINARY'], '/staged/verad')
         tests = [c for c in runner.calls if c[0] == 'test']
         self.assertEqual(len(tests), 26)
-        self.assertEqual(len(tests[0][4]), 96)
+        self.assertEqual(len(tests[0][4]), 97)
         self.assertEqual({c[1] for c in tests[1:]}, {phase for phase, _ in driver.LIVE_CASES})
         for _, _, _, selectors, expected in tests[1:]:
             self.assertEqual(selectors, [expected[0], '--exact'])

@@ -100,6 +100,7 @@ UNIT_NAMES = (
     "provider::owed_request::tests::a_recorded_hash_names_the_request_and_bytes_alone_do_not",
     "provider::owed_request::tests::without_a_hash_the_bytes_name_the_request",
     "provider::reach::tests::a_transport_failure_is_told_from_an_answer",
+    "provider::recovery_tests::a_journal_closed_for_good_is_not_recovered",
     "provider::recovery_tests::an_uncovered_journal_recovers_through_the_outbox_under_the_same_worker",
     "provider::registration_list::tests::a_list_beyond_what_vera_rs_applies_at_once_is_not_built",
     "provider::registration_list::tests::a_list_carries_each_registration_in_order_under_one_token",
@@ -180,6 +181,17 @@ def panic_site(log):
                 file, row, column = match.groups()
                 return {"file": file, "line": int(row), "column": int(column)}
     return None
+
+
+def guard_failure(error):
+    """The public name of a guard this driver raised itself.
+
+    Only the exact types the driver raises with a fixed message are named. A subclass comes from a
+    library and may carry private bytes: a decoding error holds the log bytes it could not read.
+    """
+    if type(error) in (RuntimeError, ValueError) and len(error.args) == 1 and isinstance(error.args[0], str):
+        return {"error": error.args[0]}
+    return {}
 
 
 def dependencies(text):
@@ -506,11 +518,7 @@ def main():
         runner.save()
     except BaseException as error:
         (runner.private / "failure.txt").write_text(repr(error) + "\n")
-        if isinstance(error, (RuntimeError, ValueError)):
-            runner.records.append({"phase": "qualification", "exit_code": 1,
-                                   "error": repr(error)})
-        else:
-            runner.records.append({"phase": "qualification", "exit_code": 1})
+        runner.records.append({"phase": "qualification", "exit_code": 1, **guard_failure(error)})
         runner.save()
         print('{"phase":"qualification","exit_code":1}', flush=True)
         raise SystemExit(1) from None
