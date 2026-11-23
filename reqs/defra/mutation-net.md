@@ -275,6 +275,8 @@ When a peer still at a collection's source version increments a counter and the 
 
 A lens with no `inverse` export cannot give the source-version projection back. The receiving node then adds the increment to the migrated counter as it is, and the block still merges: with a lens that only copies `name` to `note`, the counter reads one, two and three; with a lens that adds one and then copies, it reads two, three and four.
 
+That answer is exact only for a forward-only lens that leaves the counter alone or shifts it by a constant. A forward-only lens that sets or scales the counter, such as a `set_default` on it or a doubling lens, reads `T(source) + 1` on a node storing the active version and `T(source + 1)` on a node still storing the source version, so the two disagree; such a lens needs an `inverse` export for every node to read the same counter.
+
 The increment changes the counter alone. A field the lens wrote, such as a default `note`, reads the same before and after each increment.
 
 A receiving node that still stores the document at the source version, as it does while the collection has no index, has nothing to translate: it adds the increment to the stored value, and each read migrates the whole document, the counter and the fields the lens writes alike.

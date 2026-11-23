@@ -12,6 +12,13 @@
 (* the source version, so it adds the peer's delta to the migrated value   *)
 (* as it is. The increment still lands.                                    *)
 (*                                                                         *)
+(* That shortcut is exact only for a lens that shifts the counter by a     *)
+(* constant or leaves it alone. A forward-only lens that sets or scales    *)
+(* the counter gives Transform(source) + 1 here, while a receiver that     *)
+(* still stores the source version reads Transform(source + 1). The model  *)
+(* checks a doubling lens to show where the guarantee stops; such a lens   *)
+(* needs an inverse for receivers to agree.                                *)
+(*                                                                         *)
 (* A receiver that still stores the document at the source version has     *)
 (* nothing to translate: it adds the delta to the stored value and every   *)
 (* read migrates the whole document. That case is not modelled here.       *)
@@ -36,6 +43,8 @@ CONSTANTS
   StartSource, MaxSource,
   \* TRUE when the lens exports an inverse, FALSE for a forward-only lens.
   HasInverse,
+  \* "shift" adds one to the counter, "scale" doubles it.
+  LensShape,
   \* "once" is the fix. "double" plants the old active-value translation.
   \* "stuck" plants a receiver that has no answer for a forward-only lens.
   Mode
@@ -43,13 +52,18 @@ CONSTANTS
 \* lens either has an inverse or not, and the mode is one of the three.
 ASSUME StartSource \in Nat /\ MaxSource \in Nat /\ StartSource <= MaxSource
        /\ HasInverse \in BOOLEAN
+       /\ LensShape \in {"shift", "scale"}
        /\ Mode \in {"once", "double", "stuck"}
 
 VARIABLES source, active, migrated
 vars == <<source, active, migrated>>
 
-\* The lens in the focused scenario adds one to the counter.
-Transform(value) == value + 1
+\* What the lens does to the counter when it migrates: add one, or double.
+Transform(value) == IF LensShape = "shift" THEN value + 1 ELSE value * 2
+
+\* The receivers are promised to agree when the lens has an inverse, or when
+\* adding the delta to the migrated value is exact, which is the shift lens.
+Covered == HasInverse \/ LensShape = "shift"
 
 TypeOK == /\ source \in 0..MaxSource
           /\ active \in Nat
@@ -94,7 +108,20 @@ Next == Migrate \/ Increment
 
 Spec == Init /\ [][Next]_vars
 
-\* The active value always names the migrated source value.
-INV_TransformedOnce == ~migrated \/ active = Transform(source)
+\* Wherever the guarantee covers the lens, the active value names the
+\* migrated source value, which is what a receiver storing the source
+\* version reads.
+INV_TransformedOnce == ~migrated \/ ~Covered \/ active = Transform(source)
+
+\* With a forward-only lens every increment lands exactly once on the
+\* migrated value: the migration ran at the start value, and each later
+\* increment added one.
+INV_DeltaLands ==
+  ~migrated \/ HasInverse \/ active = Transform(StartSource) + (source - StartSource)
+
+\* Every lens, covered or not, leaves the active value naming the migrated
+\* source value. Only the limit configuration checks it, to show that a
+\* forward-only doubling lens breaks it.
+INV_ReceiversAgree == ~migrated \/ active = Transform(source)
 
 ====

@@ -14,7 +14,9 @@ use super::field::FieldMergeResult;
 /// node knows no path between the two versions.
 ///
 /// A lens that exports no `inverse` cannot take the document back, so its
-/// operation is applied to the migrated counter as it is.
+/// operation is applied to the migrated counter as it is. That matches a
+/// node still storing the block's version only when the lens shifts the
+/// counter or leaves it alone; a lens that sets or scales it needs an inverse.
 async fn counter_on_active_version(
     datastore: &NamespaceView,
     db: &crate::database::DB<impl Store>,

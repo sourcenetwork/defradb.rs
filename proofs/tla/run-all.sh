@@ -72,8 +72,11 @@ RUNS=(
   "MC_FloatEquality_Red_Epsilon.cfg FloatEquality.tla RED" # the old tolerance equates distinct values (INV_ExactOnly)
   "MC_MigratedCounterMerge_Green.cfg MigratedCounterMerge.tla GREEN"
   "MC_MigratedCounterMerge_Green_ForwardOnly.cfg MigratedCounterMerge.tla GREEN"
+  "MC_MigratedCounterMerge_Green_Scale.cfg MigratedCounterMerge.tla GREEN"
+  "MC_MigratedCounterMerge_Green_ScaleForwardOnly.cfg MigratedCounterMerge.tla GREEN"
   "MC_MigratedCounterMerge_Red_Double.cfg MigratedCounterMerge.tla RED" # the active value is migrated twice (INV_TransformedOnce)
   "MC_MigratedCounterMerge_Red_Stuck.cfg MigratedCounterMerge.tla RED" # a forward-only lens leaves the increment unmerged (INV_TransformedOnce)
+  "MC_MigratedCounterMerge_Red_ScaleForwardOnly.cfg MigratedCounterMerge.tla RED" # a forward-only doubling lens leaves receivers disagreeing, the recorded limit (INV_ReceiversAgree)
   "MC_VerifiedClientGraph_Green.cfg VerifiedClientGraph.tla GREEN"
   "MC_VerifiedClientGraph_Red_SingleMutation.cfg VerifiedClientGraph.tla RED" # a multi-mutation request is accepted (INV_SingleMutation)
   "MC_VerifiedClientGraph_Red_Unencrypted.cfg VerifiedClientGraph.tla RED" # the request adds encryption outside the approved graph (INV_Unencrypted)
