@@ -295,7 +295,7 @@ With node access control enabled and owned by identity 1, an identity-only node 
 # `defra.txn.outcome-query`: HTTP transaction outcome after a lost commit answer
 
 - **Parents:** ["go.txn"]
-- **Scenarios:** ["rust_transaction_outcome_query_reports_only_its_owner"]
+- **Scenarios:** ["txn::outcome::an_outcome_is_visible_to_its_owner_and_malformed_ids_are_refused"]
 
 `GET /api/v0/tx/{id}` returns `{"outcome":"open"}` while its owner's transaction has no commit queued, `{"outcome":"committing"}` from the moment a commit or discard is queued until its final result is known, `{"outcome":"committed"}` after a successful commit, and `{"outcome":"aborted"}` after a discard, an idle expiry, an abandon, or a failed commit. The request belongs to the identity that began the transaction; every other caller, including no identity, gets `{"outcome":"unknown"}` with HTTP 200, exactly as an ID that names nothing does. A malformed ID is refused with HTTP 400 and the error `invalid transaction id`. A final result is retained for at least the transaction idle age; after that it is `unknown`. An ID carries a token for the server start that issued it, so an ID from an earlier start is `unknown` and never names a new transaction.
 

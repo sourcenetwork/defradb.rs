@@ -44,7 +44,7 @@ VARIABLES
   idToken,            \* the token written into the client's transaction ID
   age,                \* idle ticks since the outcome became final
   ownerMayQuery,      \* the owner still has its fair chance before expiry
-  querySeenStatus,    \* the status the last query answered from
+  querySeenStatus,    \* the real status at the moment of the last query
   queryTokenAnswered, \* whether a concrete answer was issued under the ID's token
   queryToken          \* the server-start token the last query saw
 
@@ -111,17 +111,19 @@ OwnerQuery ==
             THEN status
             ELSE "unknown"
   /\ ownerMayQuery' = FALSE
-  /\ querySeenStatus' = answer'
+  /\ querySeenStatus' = status
   /\ queryTokenAnswered' = (answer' # "unknown")
   /\ queryToken' = token
-  /\ UNCHANGED <<status, lost, retained, token, idToken, age, queryToken>>
+  /\ UNCHANGED <<status, lost, retained, token, idToken, age>>
   \* The owner asks about its lost answer; a correct node answers the outcome
   \* it still retains, or unknown after expiry or for an old-start ID.
+  \* querySeenStatus records the real status at the moment of the query, not
+  \* the answer, so INV_Agreement can catch an answer that differs from it.
 
 ForeignQuery ==
   /\ askedBy' = "foreign"
   /\ answer' = IF LeaksOwner THEN status ELSE "unknown"
-  /\ querySeenStatus' = answer'
+  /\ querySeenStatus' = status
   /\ queryTokenAnswered' = (answer' # "unknown")
   /\ queryToken' = token
   /\ UNCHANGED <<status, lost, retained, token, idToken, age,

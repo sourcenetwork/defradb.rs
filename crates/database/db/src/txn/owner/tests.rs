@@ -380,3 +380,27 @@ fn outcome_records_stay_bounded_when_retention_is_disabled() {
         Some(Outcome::Aborted)
     );
 }
+
+#[test]
+fn a_full_outcome_store_evicts_a_final_result_before_a_live_record() {
+    let store: OutcomeStore<&'static str> = OutcomeStore::new(Duration::ZERO, 3);
+    let now = std::time::Instant::now();
+    let record = |status: Outcome, age: u64| OutcomeRecord {
+        status: Arc::new(std::sync::atomic::AtomicU8::new(status as u8)),
+        owner: "alice",
+        finished: now + Duration::from_millis(age),
+    };
+    let live = TxnId::new(0, 0, 1, 1).unwrap();
+    let older = TxnId::new(1, 0, 1, 1).unwrap();
+    let newer = TxnId::new(2, 0, 1, 1).unwrap();
+    store.insert(live, record(Outcome::Open, 0));
+    store.insert(older, record(Outcome::Committed, 1));
+    store.insert(newer, record(Outcome::Aborted, 2));
+
+    store.insert(TxnId::new(3, 0, 1, 1).unwrap(), record(Outcome::Open, 3));
+
+    assert_eq!(store.evictions(), 1);
+    assert_eq!(store.status(live), Some(Outcome::Open));
+    assert_eq!(store.status(older), None);
+    assert_eq!(store.status(newer), Some(Outcome::Aborted));
+}

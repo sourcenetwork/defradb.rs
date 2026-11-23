@@ -173,12 +173,14 @@ where
             .and_then(|record| Outcome::try_from(record.status.load(Ordering::Acquire)).ok())
     }
 
+    /// At the cap the oldest final result makes room, and a live transaction's
+    /// record goes only when no final one is left: its result is still to come.
     fn insert(&self, id: TxnId, record: OutcomeRecord<K>) {
         if self.records.len() >= self.cap {
             let Some((key, _)) = self.records.iter().min_by_key(|(_, candidate)| {
                 let status = Outcome::try_from(candidate.status.load(Ordering::Acquire))
                     .unwrap_or(Outcome::Open);
-                (u8::from(status.is_final()), candidate.finished)
+                (u8::from(!status.is_final()), candidate.finished)
             }) else {
                 return;
             };
