@@ -70,6 +70,11 @@ pub trait Op:
         &Value::Null
     }
 
+    /// The op once its captures are resolved, before it runs.
+    fn resolved(self) -> Self {
+        self
+    }
+
     fn run(&self, _state: &State) -> Result<Value, Failure> {
         Err(Failure::unsupported(Self::name()))
     }
