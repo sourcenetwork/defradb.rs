@@ -9,8 +9,11 @@ use std::sync::Arc;
 struct AnyDocResolver;
 #[async_trait::async_trait]
 impl BlockDocIDResolver for AnyDocResolver {
-    async fn doc_ids_for_block(&self, _: &EncryptionCid) -> crate::Result<Vec<String>> {
-        Ok(vec!["bae-test-doc".to_string()])
+    async fn owners_of_block(&self, _: &EncryptionCid) -> crate::Result<Vec<crate::BlockOwner>> {
+        Ok(vec![crate::BlockOwner {
+            doc_id: "bae-test-doc".to_string(),
+            block_collection_id: "collection-a".to_string(),
+        }])
     }
 }
 
@@ -100,6 +103,7 @@ impl crate::policy::AccessPolicy for AllowDelegatedActor {
         actor: &identity::Did,
         _: &KeyScope,
         collection_id: &str,
+        _: &str,
     ) -> crate::Result<crate::PolicyDecision> {
         Ok(
             if actor == &self.actor && collection_id == self.collection_id {

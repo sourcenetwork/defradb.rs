@@ -136,7 +136,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         }
     }
 
-    async fn seed_create_identity(
+    pub(super) async fn seed_create_identity(
         &self,
         context: &RequestContext,
         collection_name: &str,

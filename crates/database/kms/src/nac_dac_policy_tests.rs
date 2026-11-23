@@ -144,6 +144,7 @@ impl DocCollectionLookup for FakeLookup {
             policy_id: "policy-1".into(),
             resource_name: "doc".into(),
             is_branchable: false,
+            chunk_collection_ids: vec!["col-1-chunks".into()],
         }))
     }
 }
@@ -157,6 +158,7 @@ impl DocCollectionLookup for BranchableLookup {
             policy_id: "policy-1".into(),
             resource_name: "doc".into(),
             is_branchable: true,
+            chunk_collection_ids: Vec::new(),
         }))
     }
 }
@@ -194,21 +196,25 @@ fn delegated_release_is_bound_to_the_document_collection() {
             field: None,
         };
         let actor = did("did:key:zalice");
-
-        assert_eq!(
-            policy
-                .check_delegated_release(&actor, &scope, "col-1")
-                .await
-                .unwrap(),
-            PolicyDecision::Allow
-        );
-        assert_eq!(
-            policy
-                .check_delegated_release(&actor, &scope, "other-collection")
-                .await
-                .unwrap(),
-            PolicyDecision::Deny
-        );
+        let cases = [
+            ("col-1", "col-1", PolicyDecision::Allow),
+            ("col-1", "col-1-chunks", PolicyDecision::Allow),
+            ("col-1-chunks", "col-1-chunks", PolicyDecision::Allow),
+            ("col-1-chunks", "col-1", PolicyDecision::Deny),
+            ("col-1", "other-collection", PolicyDecision::Deny),
+            ("other-collection", "other-collection", PolicyDecision::Deny),
+            ("other-collection", "col-1", PolicyDecision::Deny),
+        ];
+        for (delegated, block, expected) in cases {
+            assert_eq!(
+                policy
+                    .check_delegated_release(&actor, &scope, delegated, block)
+                    .await
+                    .unwrap(),
+                expected,
+                "a delegation on {delegated} asking for a block of {block}"
+            );
+        }
     })
     .unwrap()
 }
@@ -435,7 +441,7 @@ fn private_unregistered_doc_denies_owner_key_release() {
         }
         assert_eq!(
             policy
-                .check_delegated_release(&owner, &scope, "col-1")
+                .check_delegated_release(&owner, &scope, "col-1", "col-1")
                 .await
                 .unwrap(),
             PolicyDecision::Deny
@@ -475,7 +481,7 @@ fn private_branchable_doc_inherits_only_live_collection_grant() {
             );
             assert_eq!(
                 policy
-                    .check_delegated_release(&owner, &scope, "col-1")
+                    .check_delegated_release(&owner, &scope, "col-1", "col-1")
                     .await
                     .unwrap(),
                 expected
