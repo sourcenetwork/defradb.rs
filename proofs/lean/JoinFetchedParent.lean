@@ -32,9 +32,21 @@ What must never happen:
   `raw_attach_keeps_a_rejected_parent` plants: the filter is skipped and a
   rejected parent comes back.
 
+The inner join can also be a list relation, such as a Book's reviews: it
+attaches every cached child whose FK names the parent, and its filter keeps a
+parent when at least one of those children passes. The same promises hold for
+it (`lookup_many_same_rows`, `lookup_many_keeps_only_passing`), and the bug
+`pass_through_drops_the_children` plants is the one where the list join hands
+the parent on without attaching its children: the parent comes back with an
+empty list.
+
 Rust anchors: `TypeJoinOne::join_fetched`, `TypeJoinOne::child_of_fetched`,
 `TypeJoinOne::next_inverted_index` and `TypeJoinOne::next_ordered_primary_inner`
-in `crates/engine/query/src/plan/type_join/type_join_one.rs`.
+in `crates/engine/query/src/plan/type_join/type_join_one.rs`;
+`TypeJoinMany::join_fetched` in
+`crates/engine/query/src/plan/type_join/type_join_many/plan_node.rs` and
+`TypeJoinMany::join_children_of_fetched` in
+`crates/engine/query/src/plan/type_join/type_join_many/fetched.rs`.
 -/
 
 namespace JoinFetchedParent
@@ -128,6 +140,84 @@ def rawAttachRows (sel : Parent → Bool) (parents : List Parent) : List Row :=
 theorem raw_attach_keeps_a_rejected_parent :
     walkRows (fun _ => true) true (fun _ => false) [3] [⟨7, some 3⟩] = [] ∧
     rawAttachRows (fun _ => true) [⟨7, some 3⟩] = [(7, some 3)] := by
+  decide
+
+-- A list relation's cached child: its own ID, and the parent its FK names.
+abbrev Kid := Nat × Nat
+
+-- A returned row of a list join: the parent's ID with all its children.
+abbrev ManyRow := Nat × List Nat
+
+-- The children the list join finds for a parent: every cached child whose FK
+-- names it, in cache order.
+def childrenOf (kids : List Kid) (p : Parent) : List Nat :=
+  (kids.filter fun k => k.2 == p.id).map Prod.fst  -- the IDs of p's children
+
+-- The list join on one parent. A filter keeps the parent when at least one
+-- child passes it; the parent is then kept with all its children.
+def joinMany (filtered : Bool) (pass : Nat → Bool) (kids : List Kid) (p : Parent) :
+    Option ManyRow :=
+  if filtered && !((childrenOf kids p).any pass)  -- a filter no child passes
+  then none                                       -- drops the parent,
+  else some (p.id, childrenOf kids p)             -- else it is kept with them
+
+-- The full walk with a list join inside: every parent is joined, and the
+-- outer join keeps the rows of the parents it selects.
+def walkManyRows (sel : Parent → Bool) (filtered : Bool) (pass : Nat → Bool)
+    (kids : List Kid) (parents : List Parent) : List ManyRow :=
+  parents.filterMap fun p =>                   -- every parent is read
+    if sel p                                   -- the outer join selects it:
+    then joinMany filtered pass kids p         --   the list join decides,
+    else none                                  -- else it is not returned
+
+-- The lookup path with a list join inside: only the selected parents, each
+-- handed to the list join.
+def lookupManyRows (sel : Parent → Bool) (filtered : Bool) (pass : Nat → Bool)
+    (kids : List Kid) (parents : List Parent) : List ManyRow :=
+  (parents.filter sel).filterMap               -- only the selected parents,
+    (joinMany filtered pass kids)              -- each joined by the list join
+
+-- With a list join inside, the lookup path returns exactly the rows of the
+-- full walk.
+theorem lookup_many_same_rows (sel : Parent → Bool) (filtered : Bool)
+    (pass : Nat → Bool) (kids : List Kid) (parents : List Parent) :
+    lookupManyRows sel filtered pass kids parents
+      = walkManyRows sel filtered pass kids parents := by
+  induction parents with                       -- one parent at a time
+  | nil => rfl                                 -- no parents: no rows either way
+  | cons p ps ih =>                            -- the first parent, then the rest
+    unfold lookupManyRows walkManyRows at ih ⊢ -- open both paths
+    cases h : sel p <;>                        -- selected or not,
+      simp [List.filter, List.filterMap, h, ih] -- both paths treat it alike
+
+-- With a filter on the list join, every returned row has a child that passes.
+theorem lookup_many_keeps_only_passing (sel : Parent → Bool) (pass : Nat → Bool)
+    (kids : List Kid) (parents : List Parent) (r : ManyRow)
+    (hr : r ∈ lookupManyRows sel true pass kids parents) :
+    ∃ k, k ∈ r.2 ∧ pass k = true := by
+  unfold lookupManyRows at hr                  -- open the lookup path
+  rw [List.mem_filterMap] at hr                -- the row came from some parent
+  obtain ⟨p, _, hp⟩ := hr                      -- call that parent p
+  unfold joinMany at hp                        -- open the list join on p
+  cases ha : (childrenOf kids p).any pass with -- some child passes or none
+  | false => simp [ha] at hp                   -- none: p was dropped, no row
+  | true =>                                    -- one does: the row carries them
+    simp [ha] at hp                            -- the row is (p.id, children)
+    rw [List.any_eq_true] at ha                -- name the passing child
+    obtain ⟨k, hk, hpk⟩ := ha                  -- k, one of p's children
+    exact ⟨k, by rw [← hp]; exact hk, hpk⟩     -- it is in the row and passes
+
+-- The planted bug: the list join hands the parent on without attaching its
+-- children, so the parent comes back with an empty list.
+def passThroughRows (sel : Parent → Bool) (parents : List Parent) : List ManyRow :=
+  (parents.filter sel).map fun p => (p.id, [])  -- no children attached
+
+-- Parent 7 has the child 3. The full walk returns it with that child, and the
+-- pass-through returns it with none.
+theorem pass_through_drops_the_children :
+    walkManyRows (fun _ => true) false (fun _ => true) [(3, 7)] [⟨7, none⟩]
+      = [(7, [3])] ∧
+    passThroughRows (fun _ => true) [⟨7, none⟩] = [(7, [])] := by
   decide
 
 end JoinFetchedParent

@@ -21,6 +21,7 @@ fn doc(collection: &str, capture: &str, fields: Value) -> Actions {
 }
 
 /// Alice wrote A1 (Penguin, owned by Acme) and A2 (Other); Bob wrote B1 (Penguin).
+/// A2 has the review "dull" and B1 the review "good".
 fn library() -> Vec<Actions> {
     vec![
         AddCollection {
@@ -42,6 +43,11 @@ fn library() -> Vec<Actions> {
                     title: String
                     author: Author @index
                     publisher: Publisher
+                    reviews: [Review]
+                }
+                type Review {
+                    body: String
+                    book: Book
                 }
             "#
             .into(),
@@ -71,6 +77,16 @@ fn library() -> Vec<Actions> {
             "Book",
             "b1",
             json!({ "title": "B1", "author": m::r("bob"), "publisher": m::r("penguin") }),
+        ),
+        doc(
+            "Review",
+            "dull",
+            json!({ "body": "dull", "book": m::r("a2") }),
+        ),
+        doc(
+            "Review",
+            "good",
+            json!({ "body": "good", "book": m::r("b1") }),
         ),
     ]
 }
@@ -152,6 +168,47 @@ fn relation_filter_through_an_indexed_fk_keeps_a_second_relation_filter() {
         "#,
         json!({
             "Book": [{ "title": "A1", "publisher": { "name": "Penguin" } }],
+        }),
+    );
+}
+
+#[test]
+#[mantra_macros::req_test("defra.index.relation.filter_keeps_joined_parent")]
+fn relation_filter_through_an_indexed_fk_keeps_a_joined_list_relation() {
+    expect(
+        integration_test::scenario_id!(),
+        r#"
+            query {
+                Book(filter: {author: {name: {_eq: "Bob"}}}) {
+                    title
+                    reviews { body }
+                }
+            }
+        "#,
+        json!({
+            "Book": [{ "title": "B1", "reviews": [{ "body": "good" }] }],
+        }),
+    );
+}
+
+#[test]
+#[mantra_macros::req_test("defra.index.relation.filter_keeps_joined_parent")]
+fn relation_filter_through_an_indexed_fk_keeps_a_list_relation_filter() {
+    expect(
+        integration_test::scenario_id!(),
+        r#"
+            query {
+                Book(filter: {
+                    author: {name: {_eq: "Alice"}},
+                    reviews: {body: {_eq: "dull"}}
+                }) {
+                    title
+                    reviews { body }
+                }
+            }
+        "#,
+        json!({
+            "Book": [{ "title": "A2", "reviews": [{ "body": "dull" }] }],
         }),
     );
 }

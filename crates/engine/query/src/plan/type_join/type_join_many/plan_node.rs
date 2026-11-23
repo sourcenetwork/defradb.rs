@@ -146,23 +146,14 @@ impl PlanNode for TypeJoinMany {
                 }
             };
 
-            // Apply relation filter if present (check against ALL children, not just limited)
-            if let Some(ref rel_filter) = self.relation_filter {
-                // Use filter_child_cache (from indexed filter plan) when available,
-                // otherwise fall back to child_cache (display plan).
-                let use_filter = self.filter_child_plan.is_some();
-                let filter_children = if use_filter {
-                    self.filter_child_cache
-                        .get(&parent_doc_id)
-                        .map(|docs| docs.iter().map(|d| d.deep_clone()).collect())
-                        .unwrap_or_default()
-                } else {
-                    self.get_all_children(&parent_doc_id)
-                };
-                if !self.check_relation_filter(&filter_children, rel_filter, use_filter)? {
-                    // No children pass the filter - skip this parent
-                    continue;
-                }
+            // The filter sees all children, before any limit.
+            let all_children = self
+                .child_cache
+                .get(&parent_doc_id)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            if !self.parent_passes_filter(&parent_doc_id, all_children)? {
+                continue;
             }
 
             // Get children (with ordering, offset, limit applied)
@@ -237,6 +228,7 @@ impl PlanNode for TypeJoinMany {
         self.child_cache.clear();
         self.child_scan_order.clear();
         self.filter_child_cache.clear();
+        self.fetched_child_cache_built = false;
         // filter_child_plan was already closed in init()
         self.initialized = false;
         Ok(())
@@ -252,7 +244,13 @@ impl PlanNode for TypeJoinMany {
         joined: &str,
         reads: &mut ExecInfo,
     ) -> Result<bool> {
-        self.parent_plan.join_fetched(doc, joined, reads).await
+        if !self.parent_plan.join_fetched(doc, joined, reads).await? {
+            return Ok(false);
+        }
+        if self.parent_side.relation_field().name == joined {
+            return Ok(true);
+        }
+        self.join_children_of_fetched(doc, reads).await
     }
 
     fn document_map(&self) -> &DocumentMapping {
