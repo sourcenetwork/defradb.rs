@@ -731,6 +731,28 @@ fn materializing_after_a_stopped_settlement_advances_every_document() {
     .unwrap();
 }
 
+/// A rebuild that writes transformed values back and finds a settlement
+/// stopped part way starts over: the settlement's pages wrote nothing back,
+/// so resuming its cursor would leave the first document at its source
+/// version (`proofs/tla/MaterializeResume.tla`).
+#[test]
+fn reindexing_with_migrations_after_a_stopped_settlement_writes_back_every_document() {
+    workers::block_on(async {
+        let (node, source_version, _) = migrated(db::DbOptions::default()).await;
+        let first = seed_owed_at(&node.db, &source_version, "first", 1).await;
+        seed_owed_at(&node.db, &source_version, "second", 2).await;
+        stop_settlement_after(&node, first).await;
+
+        node.db
+            .reindex_collection_with_migrations(COLLECTION)
+            .await
+            .unwrap();
+
+        assert_eq!(node.db.materialize_collection(COLLECTION).await.unwrap(), 0);
+    })
+    .unwrap();
+}
+
 /// Leaves the collection owed a settlement whose pages committed up to
 /// `last`, as a settlement a crash stopped there leaves it.
 async fn stop_settlement_after(node: &Node, last: u64) {

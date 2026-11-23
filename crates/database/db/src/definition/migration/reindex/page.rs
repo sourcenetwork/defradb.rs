@@ -53,8 +53,10 @@ pub(super) struct ReindexPage {
     pub(super) fence: Option<u64>,
     /// Also move the version of documents whose path runs no transform.
     pub(super) restamp_identity: bool,
-    /// Also write transformed values back to the datastore. A patch settlement
-    /// may index migrated values while leaving their source values for reads.
+    /// Also write transformed values back to the datastore, for a reindex
+    /// this page records; one it resumes keeps the mode its record holds. A
+    /// patch settlement may index migrated values while leaving their source
+    /// values for reads.
     pub(super) persist_migrations: bool,
     pub(super) lens_store: Arc<dyn TransformStore>,
     pub(super) collections: Arc<EpochedCollections>,
@@ -78,19 +80,20 @@ impl ReindexPage {
         size: usize,
     ) -> Result<Step> {
         let collection_id = self.collection.collection_id();
-        let rebuilt = if self.owe {
+        let (rebuilt, persists) = if self.owe {
             owed::owe_full_reindex(
                 systemstore,
                 &self.collections,
                 collection_id,
                 self.token,
                 self.indexes.clone(),
+                self.persist_migrations,
             )
             .await?;
-            self.indexes.clone()
+            (self.indexes.clone(), self.persist_migrations)
         } else {
             match owed::owed_under(systemstore, collection_id, self.token).await? {
-                Some(owed) => owed.indexes,
+                Some(owed) => (owed.indexes, owed.persists_migrations),
                 None => return Ok(Step::Superseded),
             }
         };
@@ -161,6 +164,7 @@ impl ReindexPage {
                 fence,
                 last,
                 budget,
+                persists,
             )
             .await?;
         if walked.exhausted {
@@ -192,7 +196,7 @@ impl ReindexPage {
 
     /// Indexes again, in every index that takes writes, up to `budget`
     /// documents after `last` and below `fence`, each migrated to the active
-    /// version and persisted first.
+    /// version, and persisted first when `persists` holds.
     #[allow(clippy::too_many_arguments)]
     async fn walk(
         &self,
@@ -203,6 +207,7 @@ impl ReindexPage {
         fence: Option<u64>,
         mut last: u64,
         budget: usize,
+        persists: bool,
     ) -> Result<Walked> {
         let versions =
             get_collections_by_collection_id(systemstore, collection.collection_id()).await?;
@@ -272,7 +277,7 @@ impl ReindexPage {
                         doc_short_id,
                         manager.unique_index_keys(&doc, collection.schema())?,
                     );
-                    if self.persist_migrations
+                    if persists
                         && cache_migrated_document(datastore, systemstore, collection, &migrated)
                             .await?
                     {

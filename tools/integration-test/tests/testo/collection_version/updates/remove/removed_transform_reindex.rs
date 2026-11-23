@@ -143,3 +143,65 @@ fn removing_transform_preserves_old_and_new_documents() {
     }
     .execute();
 }
+
+#[test]
+#[mantra_macros::req_test("defra.collection_version.removed_transform_reindex")]
+fn removing_an_inactive_versions_transform_reindexes_the_active_version() {
+    TestCase {
+        id: integration_test::scenario_id!(),
+        client_types: Some(RUST_CLIENTS),
+        actions: vec![
+            AddCollection {
+                sdl: "type Users { name: String age: Int @index }".into(),
+                ..Default::default()
+            }
+            .into(),
+            AddDoc {
+                collection: "Users".into(),
+                doc_map: Some(json!({ "name": "old", "age": 20 })),
+                ..Default::default()
+            }
+            .into(),
+            PatchCollection {
+                patch: r#"[{"op":"add","path":"/Users/Fields/-","value":{"Name":"level","Kind":"Int"}}]"#
+                    .into(),
+                lens: Some(Lens {
+                    lenses: Some(vec![LensModule {
+                        arguments: json!({ "field": "age", "value": 5 }),
+                        path: "bin/lenses/increment.wasm".into(),
+                    }]),
+                }),
+                ..Default::default()
+            }
+            .into(),
+            PatchCollection {
+                patch: r#"[{"op":"add","path":"/Users/Fields/-","value":{"Name":"rank","Kind":"Int"}}]"#
+                    .into(),
+                ..Default::default()
+            }
+            .into(),
+            Request {
+                request: "query { Users(filter: {age: {_eq: 25}}) { name age } }".into(),
+                expected_data: json!({ "Users": [{ "name": "old", "age": 25 }] }),
+                ..Default::default()
+            }
+            .into(),
+            // The version that added `level` is inactive now; its transform
+            // still lies on the active version's history.
+            PatchCollection {
+                patch: r#"[{"op":"remove","path":"/bafyreighc6zz7674lpd3vwbd3bve5elzol3ijntwtzmw6cspnxkfijdsxa/PreviousVersion/Transform"}]"#
+                    .into(),
+                ..Default::default()
+            }
+            .into(),
+            Request {
+                request: "query { Users(filter: {age: {_eq: 20}}) { name age } }".into(),
+                expected_data: json!({ "Users": [{ "name": "old", "age": 20 }] }),
+                ..Default::default()
+            }
+            .into(),
+        ],
+        ..Default::default()
+    }
+    .execute();
+}

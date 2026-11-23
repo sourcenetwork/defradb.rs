@@ -2364,26 +2364,28 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "tools/integration-test/tests/testo/collection_version/migrations/identity_settlement.rs identity_settlement_before_transform_should_apply_later_migration",
     },
     Property {
-        // #3052: a materialization never resumes a settlement's cursor, whose
-        // pages moved no document's version; it owes a reindex of its own.
+        // #3052: a materialization never resumes an owed reindex, a rebuild
+        // that writes values back resumes only a record that does too, and a
+        // resumed page walks the way its record says.
         family: "Schema-evolution operations in the core",
-        name: "INV_MaterializedAll",
+        name: "INV_RebuiltAll",
         axis: Tla,
-        anchor: "crates/database/db/src/definition/migration/reindex/mod.rs DB::reindex_in_pages; crates/database/db/src/definition/migration/reindex/progress.rs read",
-        model_ref: "MC_MaterializeResume_{Green,Red_Resume}.cfg",
+        anchor: "crates/database/db/src/definition/migration/reindex/mod.rs DB::reindex_in_pages; crates/database/db/src/definition/migration/reindex/page.rs ReindexPage::step; crates/database/db/src/definition/migration/reindex/progress.rs read",
+        model_ref: "MC_MaterializeResume_{Green,Red_Resume,Red_ResumeAnyMode,Red_SettleIgnoresMode}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/database/db/tests/index/deferred.rs materializing_after_a_stopped_settlement_advances_every_document",
+        bound_by: "crates/database/db/tests/index/deferred.rs materializing_after_a_stopped_settlement_advances_every_document, reindexing_with_migrations_after_a_stopped_settlement_writes_back_every_document",
     },
     Property {
         // A walk from the start saves every document; one resumed from a
-        // settlement's cursor misses those the settlement walked.
+        // settlement's cursor misses those the settlement walked. The resume
+        // decision reuses a record only for a rebuild it already serves.
         family: "Schema-evolution operations in the core",
-        name: "MaterializeResume.start_over_saves_all / resume_misses",
+        name: "MaterializeResume.start_over_saves_all / resume_misses / reuses_serves",
         axis: Lean,
         anchor: "crates/database/db/src/definition/migration/reindex/mod.rs DB::reindex_in_pages",
         model_ref: "MaterializeResume (lake build)",
         tiers: &[Boundary],
-        bound_by: "crates/database/db/tests/index/deferred.rs materializing_after_a_stopped_settlement_advances_every_document",
+        bound_by: "crates/database/db/tests/index/deferred.rs materializing_after_a_stopped_settlement_advances_every_document, reindexing_with_migrations_after_a_stopped_settlement_writes_back_every_document",
     },
     Property {
         // An explicit transaction's ID is `sequence * workers + worker`. The

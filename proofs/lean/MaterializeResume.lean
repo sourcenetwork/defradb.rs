@@ -7,8 +7,14 @@ documents and saves each one it walks at the active version. If it carried on
 from the settlement's cursor, the documents before that cursor would never
 be saved. So it starts over from the first document.
 
+The same holds for a rebuild that writes transformed values back: carrying on
+from a settlement's cursor would leave the documents before it unwritten. So
+an owed record is carried on only by a rebuild that does not restamp and does
+not write back more than the record did.
+
 Rust owner: crates/database/db/src/definition/migration/reindex/mod.rs,
-DB::reindex_in_pages (a rebuild that restamps owes a reindex of its own).
+DB::reindex_in_pages (a rebuild that restamps, or that writes back over a
+record that did not, owes a reindex of its own).
 -/
 namespace MaterializeResume
 
@@ -35,5 +41,29 @@ theorem resume_misses (cursor n d : Nat) (walkedBySettlement : d ≤ cursor) :
   have after := (List.mem_filter.mp member).2
   -- That contradicts d ≤ cursor.
   simp at after; omega
+
+-- The rule DB::reindex_in_pages applies before carrying on an owed record:
+-- the rebuild must not restamp, and if it writes values back the record must
+-- write values back too. `restamp` and `persist` describe the rebuild asked
+-- for, `recordPersists` the record left behind.
+def reuses (restamp persist recordPersists : Bool) : Bool :=
+  !restamp && (recordPersists || !persist)
+
+-- Reusing a record means the rebuild does not restamp, and that a rebuild
+-- that writes values back only ever carries on a record that wrote them back
+-- for every document its cursor passed.
+theorem reuses_serves (restamp persist recordPersists : Bool)
+    (h : reuses restamp persist recordPersists = true) :
+    restamp = false ∧ (persist = true → recordPersists = true) := by
+  -- Try every combination of the three flags; `h` rules out the bad ones.
+  cases restamp <;> cases persist <;> cases recordPersists <;> simp_all [reuses]
+
+-- A settlement's record (writes nothing back) is never carried on by a
+-- rebuild that writes values back, so it starts over instead.
+theorem settlement_not_reused_by_write_back (restamp : Bool) :
+    reuses restamp true false = false := by
+  -- Unfold the rule: with persist on and the record not persisting, the
+  -- second conjunct is false.
+  simp [reuses]
 
 end MaterializeResume

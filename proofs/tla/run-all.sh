@@ -610,8 +610,10 @@ RUNS=(
   "MC_LensIndexAnswer_Red_NoTokenCheck.cfg LensIndexAnswer.tla RED" # rebuild clears a newer record (INV_IndexMatchesReads)
   "MC_LensIndexAnswer_Red_TrustPlan.cfg LensIndexAnswer.tla RED" # scan trusts a plan made before an owing merge (INV_ScanMatchesReads)
   "MC_LensIndexAnswer_Red_WalkStamps.cfg LensIndexAnswer.tla RED" # a settlement walk saves the document at the active version (INV_ReadsFollowWrites)
-  "MC_MaterializeResume_Green.cfg MaterializeResume.tla GREEN" # a materialization walks every document, whatever a stopped settlement left
-  "MC_MaterializeResume_Red_Resume.cfg MaterializeResume.tla RED" # a materialization resumes a settlement's cursor (INV_MaterializedAll)
+  "MC_MaterializeResume_Green.cfg MaterializeResume.tla GREEN" # a rebuild walks every document at its level, whatever a stopped walk left
+  "MC_MaterializeResume_Red_Resume.cfg MaterializeResume.tla RED" # a materialization resumes an owed reindex's cursor (INV_RebuiltAll)
+  "MC_MaterializeResume_Red_ResumeAnyMode.cfg MaterializeResume.tla RED" # a write-back rebuild resumes a settlement's cursor (INV_RebuiltAll)
+  "MC_MaterializeResume_Red_SettleIgnoresMode.cfg MaterializeResume.tla RED" # a settlement resumes a write-back record without writing back (INV_RebuiltAll)
   "MC_VerifySignature_Green_Pool.cfg VerifySignature.tla GREEN" # #2724: with no transaction, NAC, block and document ACP read one read-only view
   "MC_VerifySignature_Green_Txn.cfg VerifySignature.tla GREEN" # #2724: in the caller's transaction, all three read its view, pending writes included
   "MC_VerifySignature_Red_NoNac.cfg VerifySignature.tla RED" # NAC check left out (INV_VerifiedAtOnePoint)

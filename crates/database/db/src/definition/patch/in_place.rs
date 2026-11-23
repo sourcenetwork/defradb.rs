@@ -81,27 +81,27 @@ impl<S: Store> crate::database::DB<S> {
                     .map_err(Error::Storage)?;
             }
         }
-        if new_schema.is_active || old_schema.is_active {
-            let removed_transform = old_schema
+        let has_transform = |schema: &CollectionVersion| {
+            schema
                 .previous_version
                 .as_ref()
                 .and_then(|previous| previous.transform.as_ref())
-                .cloned();
-            let removed = removed_transform.is_some()
-                && new_schema
-                    .previous_version
-                    .as_ref()
-                    .and_then(|previous| previous.transform.as_ref())
-                    .is_none();
-            if removed && !new_schema.indexes.is_empty() {
-                crate::definition::migration::owe_reindex(
-                    &txn.systemstore()?,
-                    &self.collections,
-                    new_schema.collection_id.as_str(),
-                    None,
-                )
-                .await?;
-            }
+                .is_some()
+        };
+        // An inactive version's transform can still lie on the active
+        // version's history, so its removal owes a reindex whatever the
+        // patched version's activity; the settlement rebuilds only while the
+        // active version has indexes and its history passes through here.
+        if has_transform(old_schema) && !has_transform(&new_schema) {
+            crate::definition::migration::owe_reindex(
+                &txn.systemstore()?,
+                &self.collections,
+                new_schema.collection_id.as_str(),
+                Some(old_version_id),
+            )
+            .await?;
+        }
+        if new_schema.is_active || old_schema.is_active {
             let cached_collection = match new_schema.is_active {
                 true => Some(
                     Collection::load_index_actions(new_schema.clone(), &txn.systemstore()?).await?,

@@ -134,9 +134,10 @@ where
 
     /// Runs the reindex of `collection_name` to its last page: the one owed
     /// under `settles`, or for a rebuild of `indexes` (all, for `None`) asked
-    /// for directly, the one already owed if it covers them and this rebuild
-    /// does not restamp, else a new one its first page records. Returns how
-    /// many documents had their stored version advanced.
+    /// for directly, the one already owed if it covers them, this rebuild
+    /// does not restamp, and it writes transformed values back whenever this
+    /// rebuild does, else a new one its first page records. Returns how many
+    /// documents had their stored version advanced.
     async fn reindex_in_pages(
         &self,
         collection_name: &str,
@@ -152,13 +153,16 @@ where
             Some(token) => (token, false, None),
             None => match self.owed(collection.collection_id()).await? {
                 Some(owed)
-                    if !restamp_identity && covers(owed.indexes.as_deref(), indexes.as_deref()) =>
+                    if !restamp_identity
+                        && (owed.persists_migrations || !persist_migrations)
+                        && covers(owed.indexes.as_deref(), indexes.as_deref()) =>
                 {
                     (owed.token, false, None)
                 }
                 // Started over for both sets: the owed one's progress may
-                // have passed what this one adds, or, for a materialization,
-                // documents a settlement walked without moving their version
+                // have passed what this one adds, documents it walked without
+                // writing them back, or, for a materialization, documents
+                // walked without moving their version
                 // (`proofs/tla/MaterializeResume.tla`).
                 Some(owed) => (rand::random(), true, union(owed.indexes, indexes)),
                 None => (rand::random(), true, indexes),
