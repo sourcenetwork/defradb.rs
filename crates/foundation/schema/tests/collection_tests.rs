@@ -270,6 +270,22 @@ fn registration_parent_must_name_a_field_that_can_hold_a_document_id() {
 }
 
 #[test]
+fn registration_parent_must_use_lww_register() {
+    let mut policy = PolicyDescription::new("policy", "users");
+    policy.parent_field = Some("name".into());
+    let mut fields = sample_fields();
+    fields
+        .iter_mut()
+        .find(|field| field.name == "name")
+        .unwrap()
+        .crdt_type = schema::CType::Text;
+    let collection = CollectionVersion::new("users", "v1", "coll-1", fields).with_policy(policy);
+    let error = collection.validate().unwrap_err();
+    assert!(matches!(&error, SchemaError::InvalidPolicy(_)), "{error}");
+    assert!(error.to_string().contains("last-write-wins register"));
+}
+
+#[test]
 fn test_validate_collection_with_invalid_policy_path_separator() {
     let coll = CollectionVersion::new("users", "v1", "coll-1", sample_fields())
         .with_policy(PolicyDescription::new("policy/traversal", "users"));
