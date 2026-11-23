@@ -484,4 +484,27 @@ mod tests {
         // Descending: 1 > 2
         assert!(desc_1 > desc_2);
     }
+
+    #[test]
+    fn descending_scalars_round_trip() {
+        let path = JsonPath::new().append_property("a").append_property("b");
+        for value in [
+            JsonScalarValue::Null,
+            JsonScalarValue::Bool(false),
+            JsonScalarValue::Bool(true),
+            JsonScalarValue::Number(-5.5),
+            JsonScalarValue::Number(0.0),
+            JsonScalarValue::Number(5.0),
+            JsonScalarValue::String("é".into()),
+        ] {
+            for path in [JsonPath::new(), path.clone()] {
+                let leaf = JsonLeafValue::new(path, value.clone());
+                let encoded = encode_json_descending(vec![], &leaf);
+                let (rest, decoded) =
+                    decode_json_descending(&encoded).unwrap_or_else(|e| panic!("{leaf:?}: {e}"));
+                assert!(rest.is_empty());
+                assert_eq!(decoded, leaf);
+            }
+        }
+    }
 }
