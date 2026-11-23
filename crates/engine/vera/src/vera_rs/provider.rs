@@ -961,19 +961,9 @@ impl VeraProvider for VeraRsProvider {
     ) -> Result<bool, ProviderError> {
         self.admitted_read(async {
             verified(self.light_client.header_chain(), || async {
-                exact_relationship::sentinel(
-                    &self.light_client,
-                    &query.policy,
-                    &query.resource,
-                    &query.child,
-                    &query.parent,
-                    &query.device_node,
-                    &query.group,
-                    &query.account,
-                    &query.device,
-                )
-                .await
-                .map_err(|error| Box::new(error) as Box<dyn std::error::Error + Send + Sync>)
+                exact_relationship::sentinel(&self.light_client, query)
+                    .await
+                    .map_err(|error| Box::new(error) as Box<dyn std::error::Error + Send + Sync>)
             })
             .await
             .map_err(|error| match error.downcast::<ProviderError>() {

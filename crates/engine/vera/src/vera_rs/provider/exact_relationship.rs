@@ -175,15 +175,18 @@ async fn query_subject(
 
 pub(super) async fn sentinel(
     client: &Arc<AcpLightClient>,
-    policy: &str,
-    resource: &str,
-    child: &str,
-    parent: &str,
-    device_node: &str,
-    group: &str,
-    account: &str,
-    device: &str,
+    selection: &acp::TransportSentinelQuery,
 ) -> Result<bool, ProviderError> {
+    let acp::TransportSentinelQuery {
+        policy,
+        resource,
+        child,
+        parent,
+        device_node,
+        group,
+        account,
+        device,
+    } = selection;
     for actor in [account, device] {
         let did =
             identity::Did::new(actor).map_err(|error| ProviderError::Query(error.to_string()))?;
