@@ -780,7 +780,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Peer connection observation",
         name: "INV_NoRedialAfterDeliberateClose / INV_RemoteExplicitDialAccepted",
         axis: Tla,
-        anchor: "crates/database/p2p/src/behaviour/disconnect_gate.rs DisconnectGate; crates/database/p2p/src/host/p2p_host/mod.rs run_kademlia_bootstrap; crates/database/p2p/src/host/command_handler/network.rs handle_dial, handle_explicit_dial; crates/database/p2p/src/host/command_handler/mod.rs handle_command; crates/database/p2p/src/host/p2p_host/swarm.rs handle_swarm_event; tools/integration-test/tests/testo/net/info/disconnect_reconnect.rs",
+        anchor: "crates/database/p2p/src/behaviour/disconnect_gate.rs DisconnectGate, handle_established_inbound_connection; crates/database/p2p/src/host/p2p_host/mod.rs run_kademlia_bootstrap; crates/database/p2p/src/host/command_handler/network.rs handle_dial, handle_explicit_dial; crates/database/p2p/src/host/command_handler/mod.rs handle_command; tools/integration-test/tests/testo/net/info/disconnect_reconnect.rs",
         model_ref: "MC_ExplicitDisconnect_{Green_Libp2p,Red_Libp2p,Red_ClearOnDial,Red_Inbound,Red_RefuseAllowed}.cfg",
         tiers: &[Boundary],
         bound_by: "tools/integration-test/tests/testo/net/info/disconnect_reconnect.rs net_info_disconnect_sticks_until_explicit_reconnect",

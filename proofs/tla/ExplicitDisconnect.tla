@@ -18,7 +18,7 @@
 \*   - background dials checking the marker       crates/database/p2p/src/host/command_handler/network.rs handle_dial
 \*   - explicit dials clearing the marker        crates/database/p2p/src/host/command_handler/network.rs handle_explicit_dial
 \*   - replicator registration clearing it       crates/database/p2p/src/host/command_handler/mod.rs handle_command/CreateReplicator
-\*   - marked inbound connections being refused crates/database/p2p/src/host/p2p_host/swarm.rs handle_swarm_event/ConnectionEstablished
+\*   - marked inbound connections being refused crates/database/p2p/src/behaviour/disconnect_gate.rs handle_established_inbound_connection
 
 EXTENDS Naturals, FiniteSets
 
