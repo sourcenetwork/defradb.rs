@@ -1,7 +1,10 @@
 //! A resource with a `create` rule admits a document only under a parent the
 //! creator holds the rule's permission on (`defra.acp.parent_registration`).
 
-use integration_test::actions::{Actions, AddCollection, AddDACPolicy, AddDoc, Request, UpdateDoc};
+use integration_test::actions::{
+    Actions, AddCollection, AddDACActorRelationship, AddDACPolicy, AddDoc,
+    DeleteDACActorRelationship, Request, UpdateDoc,
+};
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
@@ -257,6 +260,64 @@ fn an_update_cannot_move_a_registered_document_to_another_parent() {
                 ..Default::default()
             }
             .into(),
+        ],
+        client_types: Some(CLIENTS),
+        ..Default::default()
+    }
+    .execute();
+}
+
+#[test]
+#[mantra_macros::req_test("defra.acp.parent_registration.last_parent")]
+fn a_registered_document_retains_at_least_one_parent_link() {
+    let [nodes, jobs] = add_collections();
+    let target = |node: &str| Text::concat([Text::from("nodes:"), Text::reference(node)]);
+    let unlink = |node: &str, last: bool| DeleteDACActorRelationship {
+        collection: "Job".into(),
+        doc_id: Text::reference("job"),
+        relation: "parent".into(),
+        target_actor: Some(target(node)),
+        expected_error: last
+            .then(|| "invalid relation: cannot delete the last parent relation".into()),
+        expected_data: if last {
+            Value::Null
+        } else {
+            json!({ "recordFound": true })
+        },
+        common: as_identity(1),
+        ..Default::default()
+    };
+    TestCase {
+        id: integration_test::scenario_id!(),
+        actions: vec![
+            add_policy().into(),
+            nodes.into(),
+            jobs.into(),
+            add_node("edge", 1, "first").into(),
+            add_node("core", 1, "second").into(),
+            add_job(
+                json!({ "nodeID": m::r("first"), "name": "build" }),
+                Common {
+                    capture: captures([("job", "/docID")]),
+                    ..as_identity(1)
+                },
+                None,
+            )
+            .into(),
+            unlink("first", true).into(),
+            jobs_seen_by(1, json!([{ "name": "build" }])).into(),
+            AddDACActorRelationship {
+                collection: "Job".into(),
+                doc_id: Text::reference("job"),
+                relation: "parent".into(),
+                target_actor: Some(target("second")),
+                expected_data: json!({ "existedAlready": false }),
+                common: as_identity(1),
+                ..Default::default()
+            }
+            .into(),
+            unlink("first", false).into(),
+            unlink("second", true).into(),
         ],
         client_types: Some(CLIENTS),
         ..Default::default()

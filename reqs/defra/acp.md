@@ -37,3 +37,20 @@ Adding a collection whose `@policy` names a resource with a create rule but no `
 - **Scenarios:** ["acp::dac::parent_registration::an_update_cannot_move_a_registered_document_to_another_parent"]
 
 An update that writes another value, or null, into the parent field of a document in such a collection fails with `parent field '<field>' of a registered document cannot change` and changes nothing. An update that writes the value the field already holds succeeds, together with its other fields.
+
+# `defra.acp.parent_registration.last_parent`: A registered document keeps a parent link
+
+- **Parents:** ["defra.acp.parent_registration"]
+- **Scenarios:** ["acp::dac::parent_registration::a_registered_document_retains_at_least_one_parent_link"]
+
+Local document ACP refuses to delete a registered document's last parent relation with `invalid relation: cannot delete the last parent relation`. The owner can still read the document. Once the owner adds another authorized parent, removing the first link succeeds. Removing the remaining link is refused.
+
+Vera makes the registration parent immutable. A relationship edit cannot remove or replace that parent.
+
+# `defra.acp.shared_transport_restoration`: Restore a branchable shared transport collection
+
+- **Parents:** ["defra.acp"]
+
+A device can restore an existing branchable collection using its shared transport policy. The request authenticates that device and identifies one collection with a matching policy, resource and collection ID. The provider verifies at one certified policy root that the collection has the stated parent Node, the account owns that Node, the device has its publisher grant on its registered Node, and the device is a member of the selected group. An absent grant, an unsettled local change, or inconsistent proofs cannot authorize restoration.
+
+This API uses the Gents household policy vocabulary (`nodes`, `device_groups`, `parent`, `owner`, `transport_publisher` and `member`). The caller supplies the policy and object identities. A caller cannot substitute a different relation for the publisher or membership check.
