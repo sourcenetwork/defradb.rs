@@ -3,6 +3,7 @@
 mod common;
 
 mod autocommit_suite;
+mod commits_depth_walk;
 mod commits_suite;
 mod counting;
 mod index_composite_in_order;
