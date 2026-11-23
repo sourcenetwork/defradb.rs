@@ -580,3 +580,10 @@ An SDL with mutually referential named relations (`Player`/`Deck`/`Game` with `d
 - **Scenarios:** ["query.one_to_two_many.with-named-and-unnamed-relationships", "query.one_to_two_many.with-named-and-unnamed-relationships-from-many-side", "query.one_to_two_many.with-nil-unnamed-relationship-from-many-side", "query.one_to_two_many.with-nil-unnamed-relationship-from-one-side", "query.one_to_two_many.with-order"]
 
 With `Book.author` / `Author.written` (`written_books`) and `Book.reviewedBy` / `Author.reviewed` (`reviewed_books`), plus an unnamed `Book.price` / `Price.books`, each relation resolves to its own counterpart from both sides, and `written(order: {rating: ASC})` / `reviewed(order: {rating: DESC})` order each list independently.
+
+# `defra.query.one_to_one.null_relation_id`: Missing relation ID conditions
+
+- **Parents:** ["go.query.one_to_one.filter"]
+- **Scenarios:** ["query::one_to_one::with_filter_secondary_relation_id::missing_relation_checks_all_conditions_against_null"]
+
+A missing relation's ID is null. An explicit ID predicate uses the ordinary null comparison rules, and other conditions on the same missing relation must also match.

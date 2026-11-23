@@ -929,3 +929,21 @@ fn test_to_explain_json_without_docid_returns_null_when_only_docid_remains() {
 
     assert_eq!(filter.to_explain_json_without_docid(), JsonValue::Null);
 }
+
+#[test]
+fn a_combined_secondary_id_and_relation_filter_keeps_both_parts() {
+    let filter = Filter::from_conditions(map([
+        ("_publisherID".to_string(), json!({"_eq": "publisher-1"})),
+        ("publisher".to_string(), json!({"name": {"_eq": "Penguin"}})),
+    ]));
+
+    let (scalar, relation) = filter.split_by_relation();
+    assert_eq!(
+        scalar.map(|filter| filter.conditions().clone()),
+        Some(map([(
+            "_publisherID".to_string(),
+            json!({"_eq": "publisher-1"}),
+        )])),
+    );
+    assert!(relation.is_some_and(|filter| filter.has_relation_filters()));
+}
