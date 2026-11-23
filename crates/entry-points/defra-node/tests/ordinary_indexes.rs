@@ -58,9 +58,16 @@ fn reconcile_indexes_preserves_documents_and_uses_completed_composite() {
             .len(),
         1
     );
-    let explain = node.execute(&format!("query @explain {filtered}")).await;
+    let explain = node
+        .execute(&format!("query @explain(type: execute) {filtered}"))
+        .await;
     assert!(!explain.has_errors(), "{:?}", explain.errors);
-    assert!(explain.data.unwrap().to_string().contains("node_session"));
+    // Explain names no index, as in Go, so check the scan read index entries.
+    let explain = explain.data.unwrap().to_string();
+    assert!(
+        explain.contains("\"indexFetches\":") && !explain.contains("\"indexFetches\":0"),
+        "{explain}"
+    );
     node.shutdown().await.unwrap();
 })
     .unwrap()
