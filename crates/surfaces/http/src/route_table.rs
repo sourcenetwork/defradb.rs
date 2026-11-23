@@ -39,8 +39,8 @@ impl Route {
     }
 }
 
-/// The method a row is registered for, or [`ANY`] for a route registered with
-/// `any()`, which takes every method.
+// The method a row is registered for. [`ANY`] is the one route registered with
+// `any()`, which takes every method. See `Route::method`.
 const GET: Option<Method> = Some(Method::GET);
 const POST: Option<Method> = Some(Method::POST);
 const PATCH: Option<Method> = Some(Method::PATCH);
