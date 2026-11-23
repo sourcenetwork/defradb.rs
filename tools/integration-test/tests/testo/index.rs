@@ -9,6 +9,7 @@ mod backfill_large;
 mod backfill_txn;
 mod backfill_unique;
 mod backfill_unique_txn;
+mod composite_in_order;
 mod crdt;
 mod delete;
 mod get;
