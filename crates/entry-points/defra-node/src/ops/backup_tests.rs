@@ -1,12 +1,15 @@
-//! An import's driver runs on its caller, the import is one admitted
-//! request of the node, and each of its writes continues it.
+//! The import is one admitted request of the node, run as a task of its own,
+//! and each of its writes continues it.
 
+use std::pin::pin;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use db::backup::{DbJob, ImportHost};
 use defra_core::thread_bounds::MaybeBoxFuture;
 use defra_core::RequestContext;
+use futures::future::Either;
 use query::{QueryRequest, QueryResponse};
 use regolith::sync::Event;
 
@@ -17,6 +20,9 @@ const USERS: &str = r#"{"User": [{"name": "John"}, {"name": "Bob"}]}"#;
 
 const ONE_USER: &str =
     r#"{"User": [{"_docID": "bae-3fc941b7-505c-5ce2-91a0-b180930ec8a9", "name": "John"}]}"#;
+
+const SAME_FILE_ID: &str =
+    r#"{"User": [{"_docID": "bae-3fc941b7-505c-5ce2-91a0-b180930ec8a9", "name": "Bob"}]}"#;
 
 /// A node with a network edge, so its requests are admitted, and a `User`
 /// collection.
@@ -35,54 +41,61 @@ async fn users() -> Node {
     node
 }
 
-fn host(node: &Node) -> NodeHost<'_> {
-    NodeHost {
-        node,
-        context: RequestContext::default(),
-        identity: None,
-    }
+fn host(node: &Node) -> NodeHost {
+    NodeHost::new(node, RequestContext::default()).unwrap()
 }
 
-/// [`NodeHost`], noting whether the driver ever called it from a worker.
-struct Watching<'a> {
-    inner: NodeHost<'a>,
+fn requests(node: &Node) -> edge::Edge {
+    node.network.as_ref().unwrap().requests().clone()
+}
+
+/// What [`Watching`] saw.
+#[derive(Default)]
+struct Seen {
     on_worker: AtomicBool,
     writes: AtomicUsize,
 }
 
-impl ImportHost for Watching<'_> {
+/// [`NodeHost`], noting whether the driver ever called it from a worker.
+struct Watching {
+    inner: NodeHost,
+    seen: Arc<Seen>,
+}
+
+impl ImportHost for Watching {
     fn run(&self, request: QueryRequest) -> MaybeBoxFuture<'_, QueryResponse> {
-        self.on_worker
+        self.seen
+            .on_worker
             .fetch_or(workers::current_worker().is_some(), Ordering::SeqCst);
-        self.writes.fetch_add(1, Ordering::SeqCst);
+        self.seen.writes.fetch_add(1, Ordering::SeqCst);
         self.inner.run(request)
     }
 
     fn on_db(&self, job: DbJob) -> MaybeBoxFuture<'_, Result<(), String>> {
-        self.on_worker
+        self.seen
+            .on_worker
             .fetch_or(workers::current_worker().is_some(), Ordering::SeqCst);
         self.inner.on_db(job)
     }
 }
 
 #[test]
-fn the_driver_runs_on_its_caller_and_saves_a_collection_in_one_write() {
+fn the_driver_runs_off_the_workers_and_saves_a_collection_in_one_write() {
     workers::block_on(async {
         let node = users().await;
+        let seen = Arc::new(Seen::default());
         let watching = Watching {
             inner: host(&node),
-            on_worker: AtomicBool::new(false),
-            writes: AtomicUsize::new(0),
+            seen: Arc::clone(&seen),
         };
         let stats = node
-            .ops()
-            .import_backup_with(RequestContext::default(), &watching, USERS)
+            .import_admitted(RequestContext::default(), watching, USERS)
             .await
             .unwrap();
         assert_eq!(stats.documents_imported, 2);
-        assert_eq!(watching.writes.load(Ordering::SeqCst), 1);
+        assert_eq!(seen.writes.load(Ordering::SeqCst), 1);
         assert!(
-            !watching.on_worker.load(Ordering::SeqCst),
+            !seen.on_worker.load(Ordering::SeqCst),
             "the driver never runs on a database worker"
         );
         node.shutdown().await.unwrap();
@@ -109,33 +122,39 @@ fn a_write_after_shutdown_begins_is_refused() {
     .unwrap()
 }
 
-/// [`NodeHost`], holding the import after its access check until shutdown
-/// has stopped admitting requests, then counting what it runs after that.
-struct PausedUntilClose<'a> {
-    inner: NodeHost<'a>,
-    requests: edge::Edge,
+/// What [`PausedUntilClose`] counted once shutdown stopped admitting.
+#[derive(Default)]
+struct AfterClose {
     checked: Event,
-    writes_after_close: AtomicUsize,
-    jobs_after_close: AtomicUsize,
-    failures_after_close: AtomicUsize,
+    writes: AtomicUsize,
+    jobs: AtomicUsize,
+    failures: AtomicUsize,
 }
 
-impl PausedUntilClose<'_> {
+/// [`NodeHost`], holding the import after its access check until shutdown
+/// has stopped admitting requests, then counting what it runs after that.
+struct PausedUntilClose {
+    inner: NodeHost,
+    requests: edge::Edge,
+    after: Arc<AfterClose>,
+}
+
+impl PausedUntilClose {
     fn note(&self, counter: &AtomicUsize, failed: bool) {
         if self.requests.is_closed() {
             counter.fetch_add(1, Ordering::SeqCst);
             if failed {
-                self.failures_after_close.fetch_add(1, Ordering::SeqCst);
+                self.after.failures.fetch_add(1, Ordering::SeqCst);
             }
         }
     }
 }
 
-impl ImportHost for PausedUntilClose<'_> {
+impl ImportHost for PausedUntilClose {
     fn run(&self, request: QueryRequest) -> MaybeBoxFuture<'_, QueryResponse> {
         Box::pin(async move {
             let response = self.inner.run(request).await;
-            self.note(&self.writes_after_close, !response.errors.is_empty());
+            self.note(&self.after.writes, !response.errors.is_empty());
             response
         })
     }
@@ -143,15 +162,15 @@ impl ImportHost for PausedUntilClose<'_> {
     fn on_db(&self, job: DbJob) -> MaybeBoxFuture<'_, Result<(), String>> {
         Box::pin(async move {
             let outcome = self.inner.on_db(job).await;
-            if !self.checked.is_set() {
-                self.checked.set();
+            if !self.after.checked.is_set() {
+                self.after.checked.set();
                 self.requests
                     .timeout(Duration::from_secs(10), self.requests.closing())
                     .await
                     .expect("shutdown stops admitting requests");
                 return outcome;
             }
-            self.note(&self.jobs_after_close, outcome.is_err());
+            self.note(&self.after.jobs, outcome.is_err());
             outcome
         })
     }
@@ -161,24 +180,22 @@ impl ImportHost for PausedUntilClose<'_> {
 fn shutdown_drains_a_running_import_with_its_writes_and_aliases() {
     workers::block_on(async {
         let node = users().await;
+        let after = Arc::new(AfterClose::default());
         let paused = PausedUntilClose {
             inner: host(&node),
-            requests: node.network.as_ref().unwrap().requests().clone(),
-            checked: Event::new(),
-            writes_after_close: AtomicUsize::new(0),
-            jobs_after_close: AtomicUsize::new(0),
-            failures_after_close: AtomicUsize::new(0),
+            requests: requests(&node),
+            after: Arc::clone(&after),
         };
         let finished = AtomicBool::new(false);
         let import = async {
             let outcome = node
-                .import_admitted(RequestContext::default(), &paused, ONE_USER)
+                .import_admitted(RequestContext::default(), paused, ONE_USER)
                 .await;
             finished.store(true, Ordering::SeqCst);
             outcome
         };
         let shutdown = async {
-            paused.checked.wait().await;
+            after.checked.wait().await;
             let outcome = node.shutdown().await;
             (outcome, finished.load(Ordering::SeqCst))
         };
@@ -190,13 +207,13 @@ fn shutdown_drains_a_running_import_with_its_writes_and_aliases() {
             import_ended_first,
             "shutdown finished before the import it admitted ended"
         );
-        assert_eq!(paused.writes_after_close.load(Ordering::SeqCst), 1);
+        assert_eq!(after.writes.load(Ordering::SeqCst), 1);
         assert_eq!(
-            paused.jobs_after_close.load(Ordering::SeqCst),
+            after.jobs.load(Ordering::SeqCst),
             2,
             "the alias check and the alias registration run in the drain"
         );
-        assert_eq!(paused.failures_after_close.load(Ordering::SeqCst), 0);
+        assert_eq!(after.failures.load(Ordering::SeqCst), 0);
     })
     .unwrap()
 }
@@ -206,13 +223,13 @@ fn an_import_after_shutdown_begins_is_refused_before_it_writes() {
     workers::block_on(async {
         let node = users().await;
         node.shutdown().await.unwrap();
+        let seen = Arc::new(Seen::default());
         let watching = Watching {
             inner: host(&node),
-            on_worker: AtomicBool::new(false),
-            writes: AtomicUsize::new(0),
+            seen: Arc::clone(&seen),
         };
         let refused = node
-            .import_admitted(RequestContext::default(), &watching, ONE_USER)
+            .import_admitted(RequestContext::default(), watching, ONE_USER)
             .await;
         assert!(
             matches!(
@@ -221,7 +238,82 @@ fn an_import_after_shutdown_begins_is_refused_before_it_writes() {
             ),
             "{refused:?}"
         );
-        assert_eq!(watching.writes.load(Ordering::SeqCst), 0);
+        assert_eq!(seen.writes.load(Ordering::SeqCst), 0);
+    })
+    .unwrap()
+}
+
+/// Signals of [`Abandoned`]: the import's create has started, and a store
+/// job has finished after it (only the alias registration comes after the
+/// create).
+#[derive(Default)]
+struct AfterCreate {
+    creating: Event,
+    registered: Event,
+}
+
+/// [`NodeHost`], signalling the start of the create and the end of the
+/// alias registration after it.
+struct Abandoned {
+    inner: NodeHost,
+    signals: Arc<AfterCreate>,
+}
+
+impl ImportHost for Abandoned {
+    fn run(&self, request: QueryRequest) -> MaybeBoxFuture<'_, QueryResponse> {
+        self.signals.creating.set();
+        self.inner.run(request)
+    }
+
+    fn on_db(&self, job: DbJob) -> MaybeBoxFuture<'_, Result<(), String>> {
+        Box::pin(async move {
+            let outcome = self.inner.on_db(job).await;
+            if self.signals.creating.is_set() {
+                self.signals.registered.set();
+            }
+            outcome
+        })
+    }
+}
+
+#[test]
+fn a_saved_batch_gets_its_aliases_when_the_caller_stops_waiting() {
+    workers::block_on(async {
+        let node = users().await;
+        let signals = Arc::new(AfterCreate::default());
+        let abandoned = Abandoned {
+            inner: host(&node),
+            signals: Arc::clone(&signals),
+        };
+        let import = pin!(node.import_admitted(RequestContext::default(), abandoned, ONE_USER));
+        let creating = pin!(signals.creating.wait());
+        let stopped = futures::future::select(import, creating).await;
+        assert!(
+            matches!(stopped, Either::Right(_)),
+            "the caller stops waiting while the create runs"
+        );
+        drop(stopped);
+
+        let requests = requests(&node);
+        requests
+            .timeout(Duration::from_secs(10), signals.registered.wait())
+            .await
+            .expect("the saved document's file ID is registered after its caller stopped waiting");
+        let again = node
+            .import_backup_as(&RequestContext::default(), SAME_FILE_ID)
+            .await;
+        assert!(
+            matches!(&again, Err(error) if error.to_string().contains("a document with the given ID already exists")),
+            "{again:?}"
+        );
+        let users = node
+            .execute_request(QueryRequest::new("query { User { name } }"))
+            .await;
+        assert_eq!(
+            users.data,
+            Some(serde_json::json!({ "User": [{ "name": "John" }] }))
+        );
+        node.shutdown().await.unwrap();
     })
     .unwrap()
 }

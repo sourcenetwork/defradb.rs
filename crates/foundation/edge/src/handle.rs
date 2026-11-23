@@ -89,17 +89,6 @@ impl Edge {
         Ok(Task::running(&self.shared, join))
     }
 
-    /// Admits a request that runs on its caller's task, not as a network
-    /// task: it counts as in flight until the returned [`Admission`] drops,
-    /// so a drain waits for it, and its own network work is admitted with
-    /// [`spawn_continuation`](Self::spawn_continuation) after the close.
-    /// [`EdgeError::Closed`] once the runtime or scope stops accepting.
-    pub fn admit_request(&self) -> Result<Admission, EdgeError> {
-        self.admit()
-            .map(|permit| Admission { _permit: permit })
-            .ok_or(EdgeError::Closed)
-    }
-
     /// Runs `future` as a network task that continues a request already
     /// admitted, such as a connection driver. It is admitted after the
     /// runtime or scope stops accepting while admitted work is still in
@@ -319,11 +308,6 @@ impl Scope {
         self.close();
         drain_gate(&self.edge.gate, &self.edge.shared, within).await
     }
-}
-
-/// A request [`Edge::admit_request`] admitted, in flight until it drops.
-pub struct Admission {
-    _permit: Permit,
 }
 
 /// What a drain left behind.

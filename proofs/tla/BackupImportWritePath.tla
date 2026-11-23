@@ -27,7 +27,9 @@
 \*     two of those steps;
 \*   * the node's shutdown, which stops admitting requests and then drains:
 \*     the drain finishes once no admitted request is still running, and the
-\*     database closes after it.
+\*     database closes after it;
+\*   * the Node import's embedded caller, which may stop waiting for the
+\*     import at any moment (a timeout or a select around it).
 \*
 \* What must never happen:
 \*   1. an imported document signed otherwise than a create would be, or
@@ -43,8 +45,9 @@
 \*      (imports run on a node only) - INV_FfiTxnRefused;
 \*   7. an imported document owned by someone a create would not be owned
 \*      by - INV_CreatorAsCreate;
-\*   8. a Node import that ended with a saved document whose alias nobody
-\*      holds - INV_SavedRegistered;
+\*   8. a Node import that ended, or was dropped when its caller stopped
+\*      waiting, with a saved document whose alias nobody holds -
+\*      INV_SavedRegistered;
 \*   9. the Node's drain finishing while an import still runs -
 \*      INV_DrainWaitsForImport;
 \*  10. a failed import that lost a document before the one it failed at -
@@ -60,6 +63,9 @@
 \*   * KeepCaller: the host acts as the caller (Red_CallerIgnored);
 \*   * HoldImport: the Node import is one admitted request that its writes
 \*     continue (Red_WritesAdmittedAlone);
+\*   * DetachedImport: the Node import runs as a network task of its own,
+\*     which goes on to its end when its caller stops waiting
+\*     (Red_ImportOnCallerTask);
 \*   * AnonAsCreate: an anonymous import acts as an anonymous create (Red_ActorNoOne);
 \*   * AdapterTakesHost: the cli adapter forwards the handler's host (Red_AdapterOwnHost);
 \*   * DriverOnCaller: import_backup_with runs the driver where it is called
@@ -80,7 +86,7 @@
 \* edge, the caller, whether the node signs and the FFI target are picked at
 \* the start; the drain's deadline is not modelled (past it the database
 \* closes under any request still running, the import's as any other's);
-\* only the Node edge's admission is modelled.
+\* only the Node edge's admission and its caller stopping are modelled.
 \*
 \* Rust: crates/database/db/src/backup/import.rs import_database_as, save,
 \* create, record; crates/database/db/src/backup/host.rs ImportHost,
@@ -88,10 +94,10 @@
 \* crates/database/db/src/backup/alias.rs register, check_free;
 \* crates/entry-points/defra-node/src/ops/backup.rs Node::import_backup_as,
 \* Node::import_admitted, NodeOps::import_backup_with, NodeHost;
-\* crates/entry-points/defra-node/src/lib.rs Node::admit_request, Admit;
-\* crates/entry-points/defra-node/src/ops/request.rs
-\* Node::run_continuing_as_identity; crates/foundation/edge/src/handle.rs
-\* Edge::admit_request, Edge::spawn_continuation;
+\* crates/entry-points/defra-node/src/lib.rs Node::as_request, Admit;
+\* crates/entry-points/defra-node/src/request_path.rs RequestPath::execute,
+\* RequestPath::admitted; crates/foundation/edge/src/handle.rs Edge::spawn,
+\* Edge::spawn_continuation;
 \* crates/entry-points/defra-node/src/ops/http_ops.rs HttpNodeOps::import;
 \* crates/surfaces/http/src/handlers/backup.rs import;
 \* crates/surfaces/http/src/request_path.rs Server;
@@ -107,6 +113,7 @@ CONSTANTS
   FfiOwnPath,          \* TRUE: the FFI writes through its own DocumentCall
   KeepCaller,          \* TRUE: the host acts as the caller who imports
   HoldImport,          \* TRUE: a Node import is one admitted request its writes continue
+  DetachedImport,      \* TRUE: a Node import runs as a task of its own, past its caller
   AnonAsCreate,        \* TRUE: an anonymous import acts as an anonymous create does
   AdapterTakesHost,    \* TRUE: the cli adapter writes through the handler's host
   DriverOnCaller,      \* TRUE: import_backup_with runs the driver on its caller
@@ -138,7 +145,7 @@ VARIABLES
   signs,      \* TRUE when the node signs with its identity
   target,     \* the FFI call's target: "node" or "txn"
   file,       \* the file being imported
-  phase,      \* "start", "run", "done" or "failed"
+  phase,      \* "start", "run", "done", "failed" or "dropped"
   driverOn,   \* where the driver runs: "caller" or "worker"
   next,       \* the next document of the file to look at
   batch,      \* the documents gathered and not yet being saved
@@ -220,7 +227,7 @@ TypeOK ==
   \* the edge, caller and target come from their sets
   /\ edge \in Edges /\ caller \in Callers /\ target \in {"node", "txn"}
   \* the phase, the driver's place and the saving step are one of theirs
-  /\ phase \in {"start", "run", "done", "failed"}
+  /\ phase \in {"start", "run", "done", "failed", "dropped"}
   /\ driverOn \in {"caller", "worker"}
   /\ stage \in {"idle", "check", "save", "register"}
   \* every alias has an owner or none
@@ -247,7 +254,7 @@ Init ==
   /\ admitting = TRUE /\ drained = FALSE /\ claimed = FALSE
 
 \* Whether the Node import holds its admission now: it was admitted as one
-\* request (Node::admit_request) and has not ended.
+\* request, a network task of its own (Node::as_request), and has not ended.
 Holding == edge = "Node" /\ HoldImport /\ phase = "run"
 
 \* The edge starts the import: the FFI refuses a transaction handle, a Node
@@ -451,6 +458,21 @@ Claim ==
                  batch, unit, rest, single, stage, committed, admitting,
                  drained, failedAt>>
 
+\* The Node import's embedded caller stops waiting for it. An import run as
+\* a network task of its own (DetachedImport) goes on to its end, so for it
+\* this changes nothing and is not a step. One run on its caller's task is
+\* dropped where it stands: what it saved stays saved, and nothing after
+\* that runs, its registration included.
+Abandon ==
+  \* only a running Node import on its caller's task
+  /\ edge = "Node" /\ phase = "run" /\ ~DetachedImport
+  \* the driver is gone; nothing is being saved any more
+  /\ phase' = "dropped"
+  /\ unit' = {} /\ rest' = {} /\ single' = FALSE /\ stage' = "idle"
+  \* nothing else moves
+  /\ UNCHANGED <<edge, caller, signs, target, file, driverOn, next, batch,
+                 store, committed, admitting, drained, claimed, failedAt>>
+
 \* The node's shutdown stops admitting requests.
 Close ==
   \* once
@@ -478,7 +500,7 @@ Drain ==
 
 \* Any of the actors takes a step.
 Next == Start \/ Gather \/ Flush \/ Check \/ Save \/ Register \/ Finish
-        \/ Claim \/ Close \/ Drain
+        \/ Claim \/ Close \/ Drain \/ Abandon
 
 \* Every run: a start, then any steps.
 Spec == Init /\ [][Next]_vars
@@ -503,8 +525,8 @@ INV_HostFromEdge ==
   \* for each saved document, its path is its edge's
   \A r \in committed : r.host = edge
 
-\* Promise: on the Node and HTTP edges the driver runs on its caller, never
-\* on a database worker.
+\* Promise: on the Node and HTTP edges the driver runs off the database
+\* workers (on its caller, or the Node import's own network task).
 INV_DriverOnCaller ==
   \* the FFI call alone is placed on a worker, as every FFI document call is
   edge # "Ffi" => driverOn = "caller"
@@ -533,12 +555,12 @@ INV_CreatorAsCreate ==
   \* for each saved document, its owner is a create's
   \A r \in committed : r.creator = CreateCreator(edge, caller, signs)
 
-\* Promise: once a Node import ended, every alias of a document it saved is
-\* held: by that document, or by the other writer when it claimed the alias
+\* Promise: once a Node import ended or was dropped, every alias of a
+\* document it saved is held: by that document, or by the other writer when it claimed the alias
 \* between the check and the registration (which then fails the import).
 INV_SavedRegistered ==
-  \* an ended Node import left no saved document's alias free
-  (edge = "Node" /\ phase \in {"done", "failed"}) =>
+  \* an ended or dropped Node import left no saved document's alias free
+  (edge = "Node" /\ phase \in {"done", "failed", "dropped"}) =>
     \A r \in committed : Held(r.alias)
 
 \* Promise: the Node's drain never finishes while an import still runs.

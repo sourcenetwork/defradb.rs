@@ -1403,6 +1403,7 @@ RUNS=(
   "MC_BackupImportWritePath_Red_CallerIgnored.cfg BackupImportWritePath.tla RED" # writes run as no one, not the caller (INV_CreatorAsCreate)
   "MC_BackupImportWritePath_Red_ActorNoOne.cfg BackupImportWritePath.tla RED" # an anonymous import is owned unlike an anonymous create (INV_CreatorAsCreate)
   "MC_BackupImportWritePath_Red_WritesAdmittedAlone.cfg BackupImportWritePath.tla RED" # writes admitted alone let the drain close the database before a registration (INV_SavedRegistered)
+  "MC_BackupImportWritePath_Red_ImportOnCallerTask.cfg BackupImportWritePath.tla RED" # a caller that stops waiting drops the driver before a registration (INV_SavedRegistered)
   "MC_BackupImportWritePath_Red_RefusedBatchDropped.cfg BackupImportWritePath.tla RED" # a refused batch loses the documents before the one refused (INV_KeepsPrefix)
   "MC_BackupImportWritePath_Red_RegistrationAllOrNothing.cfg BackupImportWritePath.tla RED" # one taken ID leaves its batch-mates without theirs (INV_SavedRegistered)
   "MC_BackupImportWritePath_Red_PrepareOnPool.cfg BackupImportWritePath.tla RED" # the driver runs on a database worker (INV_DriverOnCaller)
