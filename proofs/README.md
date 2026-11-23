@@ -139,6 +139,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Filter relation paths and scalar leaves | Lean | query (#2427, #2430) |
 | Relation filter with no matching child | Lean | query (#3087) |
 | Joins on a parent read by key | Lean | query (#3042) |
+| Commits depth traversal | Lean | query, db (#2098) |
 | Orphan block sweep | TLA+ & Lean | db, storage |
 | Per-peer stream cap | TLA+ | p2p |
 | Receive gate | TLA+ | p2p, db |
@@ -153,6 +154,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Vector index defaults | Lean | schema |
 | Selected collection version | TLA+ / Lean | db, query, ffi |
 | Per-operation signing choice | Lean | defra-core, http, ffi, cli |
+| DNS resolver fallback | Lean | p2p |
 
 ### Backlog — current retry-era gaps
 This inventory includes legacy models and does not mean every current mechanism is

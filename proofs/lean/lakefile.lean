@@ -250,6 +250,9 @@ lean_lib RelationFilterNoChild where
 lean_lib JoinFetchedParent where
 
 @[default_target]
+lean_lib CommitsDepthCast where
+
+@[default_target]
 lean_lib CarClosureDepth where
 
 @[default_target]
@@ -386,3 +389,6 @@ lean_lib SeTruncatePrefix where
 
 @[default_target]
 lean_lib ReplicatorEmptyCollections where
+
+@[default_target]
+lean_lib DnsResolverFallback where
