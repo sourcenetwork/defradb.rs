@@ -49,28 +49,7 @@ const ENTRIES: &[(&str, &str, &[&str], &str)] = &[
         SECONDARY_INDEX,
         "TODO(https://github.com/sourcenetwork/defradb.rs/issues/3052): removing the transform leaves the migrated value the reindex wrote.",
     ),
-    (
-        "tests/integration/query/one_to_many/with_sum_filter_order_test.go",
-        "TestOneToManyLimitAscOrderSumOfSubTypeAndLimitAscOrderFieldsOfSubtype",
-        SECONDARY_INDEX,
-        CHILD_PAGE,
-    ),
-    (
-        "tests/integration/query/one_to_many/with_sum_filter_order_test.go",
-        "TestOneToManyLimitDescOrderSumOfSubTypeAndLimitAscOrderFieldsOfSubtype",
-        SECONDARY_INDEX,
-        CHILD_PAGE,
-    ),
-    (
-        "tests/integration/query/one_to_many/with_sum_limit_offset_order_test.go",
-        "TestQueryOneToManyWithSumWithLimitWithOffsetWithOrderDescAndRenderedChildrenOrderedAsc",
-        SECONDARY_INDEX,
-        CHILD_PAGE,
-    ),
 ];
-
-const CHILD_PAGE: &str =
-    "TODO(https://github.com/sourcenetwork/defradb.rs/issues/3051): a nested limit bounds the whole child index scan, not each parent's children.";
 
 const LENS_3044: &str = "TODO(https://github.com/sourcenetwork/defradb.rs/issues/3044): \
                          with indexes, a query after a migration returns unmigrated fields.";
