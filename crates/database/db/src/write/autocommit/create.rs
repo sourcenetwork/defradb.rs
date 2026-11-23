@@ -105,12 +105,14 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         if self.prepared_inputs.is_some() {
             return self.create_impl(context, collection_name, docs).await;
         }
+        crate::record_write_phase(0);
         let inputs = query::prepared::PreparedInputMemo::default();
         let mutator = Self {
             db: self.db.clone(),
             prepared_inputs: Some(inputs.clone()),
             creates: std::sync::atomic::AtomicU64::new(0),
         };
+        crate::record_write_phase(1);
         let mut docs = docs;
         for doc in &mut docs {
             mutator
@@ -173,6 +175,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
 
         // Embedding values affect the genesis CID. Every document's missing
         // embeddings join one wave.
+        crate::record_write_phase(2);
         let mut first_miss = None;
         let mut prepared = Vec::with_capacity(docs.len());
         for mut doc in docs {
@@ -199,6 +202,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
 
         // No per-doc write guards for creates: identities are derived inside
         // the txn; the DocID-mapping duplicate check is the gate.
+        crate::record_write_phase(3);
         let mut identified = Vec::with_capacity(prepared.len());
         for mut doc in prepared {
             let ordinal = self
@@ -220,6 +224,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
             identified.push((doc, identity));
         }
 
+        crate::record_write_phase(4);
         let docs = if identified.len() == 1 {
             let (doc, identity) = identified.pop().expect("one document");
             let blocks = pipeline::compute(
@@ -244,6 +249,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
             .collect()
         };
 
+        crate::record_write_phase(5);
         let acp_registration = self.owed_acp_registration(context, &collection)?;
         let attempt = CreateRetryAttempt {
             db: Arc::clone(&self.db),
@@ -259,6 +265,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
             .store()
             .transact_retry(self.db.options().retry_options(), Box::new(attempt))
             .await;
+        crate::record_write_phase(7);
         let created = match result {
             Ok(value) => *value
                 .downcast::<Vec<Created>>()
@@ -272,6 +279,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 }
             },
         };
+        crate::record_write_phase(8);
         Ok(created.into_iter().map(Created::into_result).collect())
     }
 
@@ -316,6 +324,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
             query::error::QueryError::execution(format!("failed to get headstore: {error}"))
         })?;
 
+        crate::record_write_phase(6);
         let result: query::error::Result<Vec<Created>> = async {
             let index_manager = IndexManager::from_indexes(
                 collection.resolved_root_id(),

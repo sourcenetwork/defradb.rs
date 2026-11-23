@@ -15,19 +15,13 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - run: .github/scripts/install-linux-ci-deps.sh
-      - run: cargo build --locked --profile release-fast -p benches --bin cid-ablation --bin cid-criterion
+      - run: cargo build --locked --profile release-fast -p benches --bin cid-phase
       - name: Measure creates on fresh fixtures
         run: |
           set -euo pipefail
           mkdir results
           bench=target/release-fast
-          for fields in 4 16; do
-            "$bench/cid-ablation" "$fields" > "results/rotate-$fields.csv"
-          done
-          for order in forward reverse; do
-            "$bench/cid-criterion" 4 "$order" | tee "results/batched-$order.log"
-            ONE_FIXTURE=1 "$bench/cid-criterion" 4 "$order" | tee "results/single-$order.log"
-          done
+          "$bench/cid-phase" 4 > results/phase-4.csv
       - uses: actions/upload-artifact@v7
         with:
           name: document-create-controls

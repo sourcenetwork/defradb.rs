@@ -11,6 +11,7 @@ publish = false
 # regolith is the only backend, so there is no per-backend feature to pass
 # through and no target that has to gate on one.
 [dependencies]
+libc = "0.2"
 criterion.workspace = true
 db = { path = "../crates/database/db" }
 document = { path = "../crates/building-blocks/document" }
@@ -29,3 +30,7 @@ path = "cid_ablation.rs"
 [[bin]]
 name = "cid-criterion"
 path = "cid_criterion.rs"
+
+[[bin]]
+name = "cid-phase"
+path = "cid_phase.rs"

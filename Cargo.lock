@@ -1765,6 +1765,7 @@ dependencies = [
  "db",
  "defra-core",
  "document",
+ "libc",
  "mimalloc",
  "nuclei",
  "query",

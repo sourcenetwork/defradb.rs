@@ -153,3 +153,9 @@ mod common {
     pub(crate) use super::test_schemas as schema;
     pub(crate) use super::worker_io;
 }
+
+thread_local! { static WRITE_PHASES: std::cell::RefCell<[Option<std::time::Instant>; 9]> = const {std::cell::RefCell::new([None;9])}; }
+pub fn record_write_phase(index: usize) { WRITE_PHASES.with(|phases| phases.borrow_mut()[index] = Some(std::time::Instant::now())); }
+pub fn write_phases() -> [i64;8] {
+    WRITE_PHASES.with(|phases| { let phases=phases.borrow(); std::array::from_fn(|i|match (phases[i],phases[i+1]) {(Some(a),Some(b))=>b.saturating_duration_since(a).as_nanos() as i64,_=>-1}) })
+}
