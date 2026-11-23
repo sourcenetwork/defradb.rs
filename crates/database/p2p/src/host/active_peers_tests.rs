@@ -73,7 +73,14 @@ async fn active_peers_lists_a_dialer_at_its_listen_address_before_its_identify()
 
             let key = Keypair::generate_ed25519();
             let dialer_id = key.public().to_peer_id();
-            let (transport, _) = build(&key, false).unwrap();
+            let (transport, _) = build(
+                &key,
+                &crate::P2PHostConfig {
+                    enable_relay: false,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
             let mut dialer = Swarm::new(
                 transport,
                 libp2p_stream::Behaviour::new(),
@@ -145,7 +152,14 @@ async fn dial_and_hold_identify(
     host_addr: Multiaddr,
 ) -> (Keypair, libp2p::Stream) {
     let key = Keypair::generate_ed25519();
-    let (transport, _) = build(&key, false).unwrap();
+    let (transport, _) = build(
+        &key,
+        &crate::P2PHostConfig {
+            enable_relay: false,
+            ..Default::default()
+        },
+    )
+    .unwrap();
     let mut dialer = Swarm::new(
         transport,
         libp2p_stream::Behaviour::new(),

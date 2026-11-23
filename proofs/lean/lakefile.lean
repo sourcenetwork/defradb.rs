@@ -247,6 +247,9 @@ lean_lib JsonSubPathCut where
 lean_lib RelationFilterNoChild where
 
 @[default_target]
+lean_lib CommitsDepthCast where
+
+@[default_target]
 lean_lib CarClosureDepth where
 
 @[default_target]
@@ -389,3 +392,6 @@ lean_lib RemovedLensOrigin where
 
 @[default_target]
 lean_lib MaterializeResume where
+
+@[default_target]
+lean_lib DnsResolverFallback where
