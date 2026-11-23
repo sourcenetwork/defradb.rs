@@ -363,3 +363,10 @@ A truncate limited to certain documents removes only those (idempotently on retr
 - **Scenarios:** ["collection::truncate::other_collections::truncate_leaves_other_collections_indexes_intact"]
 
 Truncating a collection removes only its own documents and index entries: another collection's documents stay, and a filter on its indexed field still returns them, whatever short IDs the two collections have (with `Kept { name: String @index }` holding `{name: "Kept"}`, truncating each of 125 other indexed collections leaves `Kept(filter: {name: {_eq: "Kept"}})` returning that document, while the truncated collection's own indexed filter returns nothing).
+
+# `defra.collection_version.removed_transform_reindex`: Removing a transform reindexes an indexed collection
+
+- **Parents:** ["go.collection_version.migrations"]
+- **Scenarios:** ["collection_version::updates::remove::removed_transform_reindex::remove_source_transform_reindexes_an_indexed_collection", "collection_version::updates::remove::removed_transform_reindex::removing_transform_preserves_old_and_new_documents"]
+
+Removing a collection's source transform by patch (`{"op": "remove", "path": "/Users/PreviousVersion/Transform"}`) reindexes its indexed fields from the stored values, so a filter on an indexed field returns the values reads return, not values the removed transform produced: with `Users { name: String @index }` holding `{name: "Shahzad"}` and a patch whose `set-default` lens sets `name` to `"Fred"`, removing the transform makes `Users(filter: {name: {_eq: "Shahzad"}})` return that document. A document created at the active version keeps its value: with `age: Int @index`, an `increment` lens adding 5, `{name: "old", age: 20}` written before the lens and `{name: "new", age: 40}` after it, removing the transform makes a filter on `age: 20` return `old` and one on `age: 40` return `new`. A value already materialized through the removed transform is retained, because its stored version alone does not tell it from a document created at the active version and a lens need not be reversible.

@@ -131,6 +131,7 @@ mod updates {
         }
         mod name;
         mod policy;
+        mod removed_transform_reindex;
         mod version_id;
         mod view_txn;
     }
