@@ -1433,6 +1433,19 @@ if [ "$parallelism" -lt 1 ]; then
   echo "TLA_JOBS must be a positive integer" >&2
   exit 2
 fi
+# Half of the machine's memory, shared out between the lanes.
+if [ -z "${TLA_JAVA_HEAP:-}" ]; then
+  if [ -r /proc/meminfo ]; then
+    memory_mb=$(awk '/^MemTotal:/ {print int($2 / 1024)}' /proc/meminfo)
+  else
+    memory_mb=$(( $(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1048576 ))
+  fi
+  if [ "${memory_mb:-0}" -gt 0 ]; then
+    heap_mb=$(( memory_mb / 2 / parallelism ))
+    [ "$heap_mb" -lt 512 ] && heap_mb=512
+    export TLA_JAVA_HEAP="${heap_mb}m"
+  fi
+fi
 if ! workdir=$(mktemp -d "${TMPDIR:-/tmp}/defra-tla.XXXXXX"); then
   echo "Could not create TLA scratch directory" >&2
   exit 1
@@ -1501,6 +1514,6 @@ done
 
 echo "----"
 echo "slowest runs (seconds):"
-cat "$workdir"/*.time 2>/dev/null | sort -rn | head -n 10 | sed 's/^/  /'
+sort -rn "$workdir"/*.time 2>/dev/null | sed -n '1,10s/^/  /p'
 if [ "$fails" -eq 0 ]; then echo "all $n TLA+ runs matched their expected verdict"; else echo "$fails/$n MISMATCHED"; fi
 exit "$((fails > 0))"

@@ -87,9 +87,15 @@ else
   exit 1
 fi
 
+JVM_ARGS=(-XX:+UseParallelGC)
 # TLC extracts bundled standard modules into java.io.tmpdir. Parallel JVMs
 # need distinct directories or one can read another's partially written module.
 if [ -n "${TLA_JAVA_TMPDIR:-}" ]; then
-  exec "$JAVA" "-Djava.io.tmpdir=$TLA_JAVA_TMPDIR" -XX:+UseParallelGC -cp "$JAR" tlc2.TLC "$@"
+  JVM_ARGS+=("-Djava.io.tmpdir=$TLA_JAVA_TMPDIR")
 fi
-exec "$JAVA" -XX:+UseParallelGC -cp "$JAR" tlc2.TLC "$@"
+# The JVM's default heap ceiling is a quarter of the machine, so parallel runs
+# must share it out or the kernel kills one.
+if [ -n "${TLA_JAVA_HEAP:-}" ]; then
+  JVM_ARGS+=("-Xmx$TLA_JAVA_HEAP")
+fi
+exec "$JAVA" "${JVM_ARGS[@]}" -cp "$JAR" tlc2.TLC "$@"
