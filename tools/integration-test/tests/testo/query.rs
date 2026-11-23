@@ -18,6 +18,7 @@ mod commits {
     mod with_cid_shared_field;
     mod with_delete;
     mod with_depth;
+    pub(super) mod with_depth_negative;
     mod with_doc_id;
     mod with_doc_id_cid;
     mod with_doc_id_count;
@@ -304,5 +305,7 @@ mod simple {
     mod with_version;
     mod with_version_cid;
     mod with_version_cid_doc_ids;
+    mod with_version_cid_long_history;
+    mod with_version_cid_merged;
     mod with_version_order;
 }

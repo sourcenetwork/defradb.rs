@@ -19,6 +19,7 @@ pub use event::{HostEvent, HostEventReceiver};
 pub use handle::P2PHostHandle;
 pub use libp2p_transport::{convert_host_event, Libp2pTransport};
 pub use p2p_host::{P2PHost, P2PHostConfig, ResourceLimits};
+pub use transport::ResolverSource;
 
 use libp2p::request_response;
 
