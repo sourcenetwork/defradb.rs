@@ -251,6 +251,8 @@ impl CliRun for NewIndex {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
             action.check_remote_arguments()?;
+            // `index new` has no background flag, here or in Go's CLI.
+            unsupported_argument(&[("async", action.r#async)])?;
             let fields = action.field_names().join(",");
             let mut args = vec![
                 "index",
