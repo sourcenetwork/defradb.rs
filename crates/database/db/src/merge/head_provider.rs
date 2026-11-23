@@ -222,6 +222,16 @@ impl<S: Store + 'static> DocumentHeadProvider for DbHeadProvider<S> {
         Ok(cids)
     }
 
+    async fn following_doc_ids(&self, doc_id: &str) -> p2p::error::Result<Vec<String>> {
+        let failed = |e: crate::error::Error| {
+            p2p::error::Error::HeadProvider(format!("chunk lookup failed: {e}"))
+        };
+        let txn = self.db.new_txn(true).await.map_err(failed)?;
+        crate::chunk::follow::current_chunk_ids(&self.db, &txn, doc_id)
+            .await
+            .map_err(failed)
+    }
+
     async fn get_collection_heads(&self, collection_id: &str) -> p2p::error::Result<Vec<Cid>> {
         let txn = self.db.new_txn(true).await.map_err(|e| {
             p2p::error::Error::HeadProvider(format!("failed to create transaction: {}", e))
