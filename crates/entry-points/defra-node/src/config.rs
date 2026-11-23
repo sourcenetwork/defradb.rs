@@ -228,6 +228,9 @@ pub struct Libp2pConfig {
     /// libp2p resource budget overrides: the memory and file descriptor
     /// budgets and the per-peer inbound stream cap.
     pub resource_limits: p2p::ResourceLimits,
+    /// Where the DNS layers read the resolver configuration; the system's by
+    /// default.
+    pub resolver: p2p::ResolverSource,
 }
 
 #[cfg(feature = "libp2p")]
@@ -242,6 +245,7 @@ impl Default for Libp2pConfig {
             sync: SyncTuning::default(),
             orphan_sweep: db::block::orphan_gc::OrphanSweepConfig::default(),
             resource_limits: p2p::ResourceLimits::default(),
+            resolver: p2p::ResolverSource::System,
         }
     }
 }

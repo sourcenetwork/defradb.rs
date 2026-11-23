@@ -138,6 +138,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Node access control operations | TLA+ & Lean | db, acp, http, cli, ffi, defra-node |
 | Filter relation paths and scalar leaves | Lean | query (#2427, #2430) |
 | Relation filter with no matching child | Lean | query (#3087) |
+| Commits depth traversal | Lean | query, db (#2098) |
 | Orphan block sweep | TLA+ & Lean | db, storage |
 | Per-peer stream cap | TLA+ | p2p |
 | Receive gate | TLA+ | p2p, db |
@@ -153,6 +154,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Indexed field removal | Lean | schema, db |
 | Selected collection version | TLA+ / Lean | db, query, ffi |
 | Per-operation signing choice | Lean | defra-core, http, ffi, cli |
+| DNS resolver fallback | Lean | p2p |
 
 ### Backlog — current retry-era gaps
 This inventory includes legacy models and does not mean every current mechanism is

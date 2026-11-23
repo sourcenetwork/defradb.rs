@@ -42,6 +42,9 @@ pub struct NodeSpec {
     pub nac_owner: Option<u64>,
     /// The node's admission limits, if not the defaults.
     pub admission: Option<crate::actions::AdmissionSpec>,
+    /// The `resolv.conf` text the node's libp2p DNS layers read in place of
+    /// the host's file.
+    pub resolv_conf: Option<String>,
     /// The node's network is iroh rather than libp2p.
     pub iroh_network: bool,
     /// The node's own identity, Go's `NodeIdentity(seed)`; the node signs as it.
@@ -109,10 +112,13 @@ impl TestNode {
             Some(address) => address.clone(),
             None => "/ip4/127.0.0.1/tcp/0".to_owned(),
         };
-        // Admission limits and iroh are a Rust node's options: under go-http
-        // the node is a Rust node reached over HTTP, as rust-http does.
+        // Admission limits, iroh and a resolv.conf are a Rust node's options:
+        // under go-http the node is a Rust node reached over HTTP, as
+        // rust-http does.
         let client_type = match client_type {
-            ClientType::GoHttp if spec.admission.is_some() || spec.iroh_network => {
+            ClientType::GoHttp
+                if spec.admission.is_some() || spec.iroh_network || spec.resolv_conf.is_some() =>
+            {
                 ClientType::RustHttp
             }
             other => other,
@@ -354,6 +360,10 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
                 ..Default::default()
             },
         ));
+    }
+    #[cfg(unix)]
+    if let Some(text) = &spec.resolv_conf {
+        builder = builder.with_resolver_source(p2p::ResolverSource::ResolvConf(text.clone()));
     }
     if let Some(config) = http {
         builder = builder.with_http(config);
