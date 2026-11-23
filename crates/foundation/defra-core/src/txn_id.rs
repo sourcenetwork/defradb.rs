@@ -16,7 +16,7 @@ pub struct TxnId {
 
 /// The text was not `<start>-<route>`.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
-#[error("transaction ID must be `<start>-<route>`")]
+#[error("transaction ID must be `<start>-<route>` or a legacy numeric route")]
 pub struct TxnIdParseError;
 
 impl fmt::Display for TxnId {
@@ -29,7 +29,10 @@ impl FromStr for TxnId {
     type Err = TxnIdParseError;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        let (start, route) = text.split_once('-').ok_or(TxnIdParseError)?;
+        let Some((start, route)) = text.split_once('-') else {
+            let route = text.parse().map_err(|_| TxnIdParseError)?;
+            return Ok(TxnId { start: 0, route });
+        };
         let (start, route) = (
             start.parse().ok().ok_or(TxnIdParseError)?,
             route.parse().ok().ok_or(TxnIdParseError)?,
@@ -59,7 +62,13 @@ mod tests {
             .to_string(),
             "9-42"
         );
-        assert!("42".parse::<TxnId>().is_err());
+        assert_eq!(
+            "42".parse::<TxnId>(),
+            Ok(TxnId {
+                start: 0,
+                route: 42
+            })
+        );
         assert!("x".parse::<TxnId>().is_err());
     }
 }

@@ -19,9 +19,12 @@ pub(crate) struct TxnId {
 
 impl TxnId {
     /// The ID `start` gives worker `worker` of `workers` for its
-    /// `sequence`th transaction; `None` when the worker or route cannot be
-    /// represented.
+    /// `sequence`th transaction; start 0 is reserved for legacy IDs, so a new
+    /// ID refuses it. `None` when the worker or route cannot be represented.
     pub(crate) fn new(sequence: u64, worker: usize, workers: usize, start: u64) -> Option<TxnId> {
+        if start == 0 {
+            return None;
+        }
         let workers = u64::try_from(workers).ok()?;
         let worker = u64::try_from(worker).ok()?;
         let route = sequence
@@ -32,10 +35,15 @@ impl TxnId {
         Some(TxnId { start, route })
     }
 
-    /// The ID a client sent back, as text; `None` when it is not
-    /// `<start>-<route>`.
+    /// The ID a client sent back, as text. A bare number is a legacy ID from
+    /// the reserved legacy start; otherwise the form is `<start>-<route>`.
     pub(crate) fn parse(text: &str) -> Option<TxnId> {
-        let (start, route) = text.split_once('-')?;
+        let Some((start, route)) = text.split_once('-') else {
+            return text
+                .parse::<u64>()
+                .ok()
+                .map(|route| TxnId { start: 0, route });
+        };
         Some(TxnId {
             start: start.parse().ok()?,
             route: route.parse().ok()?,
@@ -115,9 +123,17 @@ mod tests {
         assert_eq!(TxnId::new(0, 0, 1, 9).map(TxnId::get), Some(0));
         assert_eq!(TxnId::new(41, 0, 1, 9).map(TxnId::get), Some(41));
         assert_eq!(TxnId::new(41, 0, 1, 9).map(TxnId::key), Some((9, 41)));
+        assert_eq!(TxnId::new(0, 0, 1, 0), None);
         assert_eq!(TxnId::new(1, 1, 2, 9).unwrap().start, 9);
         assert_eq!(TxnId::parse("9-41"), TxnId::new(41, 0, 1, 9));
-        assert_eq!(TxnId::parse("9"), None);
+        assert_eq!(
+            TxnId::parse("41"),
+            Some(TxnId {
+                start: 0,
+                route: 41
+            })
+        );
+        assert_eq!(TxnId::parse("9"), Some(TxnId { start: 0, route: 9 }));
         assert_eq!(TxnId::parse("x-1"), None);
         assert_eq!(TxnId::parse("not a number"), None);
         assert_eq!(TxnId::parse("-1"), None);

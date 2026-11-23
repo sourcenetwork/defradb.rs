@@ -240,7 +240,7 @@ where
             .collect();
         Self {
             pool,
-            start_token: random(),
+            start_token: random::<u64>().max(1),
             shared: Arc::new(Shared { tables, outcomes }),
             fences,
         }
@@ -257,7 +257,7 @@ where
     #[cfg(target_family = "wasm")]
     pub(crate) fn here(fences: Arc<CommitFences>) -> Self {
         Self {
-            start_token: random(),
+            start_token: random::<u64>().max(1),
             shared: Arc::new(Shared {
                 tables: Box::new([Table::new()]),
                 outcomes: Box::new([OutcomeStore::new(Duration::from_secs(600))]),

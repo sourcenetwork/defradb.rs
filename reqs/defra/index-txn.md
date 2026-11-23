@@ -298,3 +298,5 @@ With node access control enabled and owned by identity 1, an identity-only node 
 - **Scenarios:** ["rust_transaction_outcome_query_reports_only_its_owner"]
 
 `GET /api/v0/tx/{id}` returns `{"outcome":"open"}` while its owner's transaction has no commit queued, `{"outcome":"committing"}` from the moment a commit or discard is queued until its final result is known, `{"outcome":"committed"}` after a successful commit, and `{"outcome":"aborted"}` after a discard, an idle expiry, an abandon, or a failed commit. The request belongs to the identity that began the transaction; every other caller, including no identity, gets `{"outcome":"unknown"}` with HTTP 200, exactly as an ID that names nothing does. A malformed ID is refused with HTTP 400 and the error `invalid transaction id`. A final result is retained for at least the transaction idle age; after that it is `unknown`. An ID carries a token for the server start that issued it, so an ID from an earlier start is `unknown` and never names a new transaction.
+
+For compatibility, the pre-token numeric transaction-ID syntax is still accepted; it names the reserved legacy start `0`, which no new transaction uses.
