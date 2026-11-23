@@ -80,6 +80,20 @@ pub(super) enum Shape<'a> {
     Any,
 }
 
+impl Shape<'_> {
+    /// The input type's name as Go generates it, for the shapes that are an
+    /// object type of their own. An operator block is named by its scalar
+    /// kind, which [`Ops`] does not keep, so it has none here.
+    pub(super) fn name(&self) -> Option<String> {
+        match self {
+            Self::Collection(collection) => Some(format!("{}FilterArg", collection.name)),
+            Self::Encrypted(collection) => Some(format!("{}EncryptedFilterArg", collection.name)),
+            Self::Commits => Some("CommitsFilterArg".to_string()),
+            Self::Ops(_) | Self::List(_) | Self::ScalarFilter(_) | Self::Any => None,
+        }
+    }
+}
+
 /// Where a key leads: the block its value is checked against, or nothing
 /// when the block does not define the key.
 #[derive(Debug, Clone, Copy)]

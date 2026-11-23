@@ -104,16 +104,26 @@ fn literal_list(
 
 /// graphql-go's coercion check of a variable's `value` against `shape`:
 /// unknown keys first, then each defined key's messages, both by sorted key,
-/// and list elements numbered by position.
+/// and list elements numbered by position. A value that is neither an object
+/// nor null, where a named input object belongs, is not an object.
 pub(super) fn variable(
     collections: &Collections<'_>,
     shape: Shape<'_>,
     value: &JsonValue,
 ) -> Vec<String> {
-    let JsonValue::Object(fields) = value else {
-        return Vec::new();
-    };
-    variable_fields(collections, shape, fields)
+    match value {
+        JsonValue::Object(fields) => variable_fields(collections, shape, fields),
+        JsonValue::Null => Vec::new(),
+        _ => not_object(shape).into_iter().collect(),
+    }
+}
+
+/// graphql-go's text for a non-object value given for `shape`, when `shape`
+/// is a named input object.
+pub(super) fn not_object(shape: Shape<'_>) -> Option<String> {
+    shape
+        .name()
+        .map(|name| format!("Expected \"{name}\", found not an object."))
 }
 
 /// [`variable`] for an object value's fields.

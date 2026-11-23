@@ -32,12 +32,12 @@ pub(super) fn parse_filter_value(
             let json_val = vars.get(name.as_str()).ok_or_else(|| {
                 QueryError::parse(format!("Variable \"${}\" was not provided", name))
             })?;
-            if let JsonValue::Object(obj) = json_val {
-                Ok(Filter::from_conditions(obj.clone())
-                    .with_source(FilterSource::Variable(name.clone())))
-            } else {
-                Err(QueryError::parse("filter must be an object"))
-            }
+            let filter = match json_val {
+                JsonValue::Object(obj) => Filter::from_conditions(obj.clone()),
+                JsonValue::Null => return Err(QueryError::parse("filter must be an object")),
+                other => Filter::not_object(other.clone()),
+            };
+            Ok(filter.with_source(FilterSource::Variable(name.clone())))
         }
         _ => Err(QueryError::parse("filter must be an object")),
     }

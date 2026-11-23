@@ -56,6 +56,37 @@ pub(super) async fn check(
     Ok(())
 }
 
+impl Root<'_> {
+    /// Whether any filter under this root is a variable's non-object value.
+    fn has_not_object(&self) -> bool {
+        match self {
+            Root::Select(select) => select_has_not_object(select),
+            Root::Mutation(mutation) => {
+                is_not_object(mutation.filter.as_ref()) || fields_have_not_object(&mutation.fields)
+            }
+        }
+    }
+}
+
+fn is_not_object(filter: Option<&Filter>) -> bool {
+    filter.is_some_and(|f| f.not_object_value().is_some())
+}
+
+fn select_has_not_object(select: &Select) -> bool {
+    is_not_object(select.filter.as_ref()) || fields_have_not_object(&select.fields)
+}
+
+fn fields_have_not_object(fields: &[Requestable]) -> bool {
+    fields.iter().any(|field| match field {
+        Requestable::Select(sub) => select_has_not_object(sub),
+        Requestable::Aggregate(aggregate) => aggregate
+            .targets
+            .iter()
+            .any(|t| is_not_object(t.filter.as_ref())),
+        _ => false,
+    })
+}
+
 /// The errors found across a request's roots, split by check: the first
 /// literal error wins, then the first variable error.
 #[derive(Default)]
@@ -88,6 +119,11 @@ impl Found {
             _ => {}
         }
         found.missed = collections.missed();
+        // A non-object filter this walk could not name (a scalar list's
+        // aggregate filter) must still not run as an empty filter.
+        if found.literal.is_none() && found.variable.is_none() && root.has_not_object() {
+            found.variable = Some("filter must be an object".to_string());
+        }
         found
     }
 
@@ -178,6 +214,20 @@ impl Found {
         let Some(filter) = filter else {
             return;
         };
+        if let Some(value) = filter.not_object_value() {
+            let messages: Vec<String> = walk::not_object(shape).into_iter().collect();
+            match filter.source() {
+                FilterSource::Variable(name) => {
+                    self.variable_error(name, &go_json(value), messages);
+                }
+                FilterSource::SelectorVariable(name) => {
+                    let printed = filter.enclosing().map(|e| e.printed.as_str());
+                    self.variable_error(name, printed.unwrap_or_default(), in_filter(messages));
+                }
+                FilterSource::Literal | FilterSource::LiteralWithVariables(_) => {}
+            }
+            return;
+        }
         let conditions = filter.conditions();
         match filter.source() {
             FilterSource::Literal | FilterSource::LiteralWithVariables(_) => {

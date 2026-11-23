@@ -72,7 +72,7 @@ fn a_count_selector_variable_with_a_list_filter_is_rejected() {
         "query($t: Book__CountSelector) { Author { name COUNT(books: $t) } }",
         json!({ "t": { "filter": [{ "nope": { "_eq": 1 } }] } }),
         Value::Null,
-        Some("filter must be an object"),
+        Some("Variable \"$t\" got invalid value {\"filter\":[{\"nope\":{\"_eq\":1}}]}.\nIn field \"filter\": Expected \"BookFilterArg\", found not an object."),
     );
 }
 

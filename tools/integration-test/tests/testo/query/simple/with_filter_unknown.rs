@@ -123,6 +123,28 @@ fn unknown_field_in_a_filter_variable_is_rejected() {
 
 #[test]
 #[mantra_macros::req_test("defra.query.filter.input-validation")]
+fn a_list_filter_variable_is_rejected() {
+    rejects(
+        integration_test::scenario_id!(),
+        "query($f: AuthorFilterArg) { Author(filter: $f) { name } }",
+        Some(json!({ "f": [{ "nope": { "_eq": 1 } }] })),
+        "Variable \"$f\" got invalid value [{\"nope\":{\"_eq\":1}}].\nExpected \"AuthorFilterArg\", found not an object.",
+    );
+}
+
+#[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
+fn a_non_object_relation_variable_is_rejected() {
+    rejects(
+        integration_test::scenario_id!(),
+        "query($a: AuthorFilterArg) { Book(filter: {author: $a}) { title } }",
+        Some(json!({ "a": 1 })),
+        "Variable \"$a\" got invalid value 1.\nExpected \"AuthorFilterArg\", found not an object.",
+    );
+}
+
+#[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn unknown_operator_in_a_nested_variable_is_rejected() {
     rejects(
         integration_test::scenario_id!(),

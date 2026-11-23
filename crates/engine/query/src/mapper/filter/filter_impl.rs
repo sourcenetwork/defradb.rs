@@ -24,6 +24,9 @@ pub struct Filter {
     source: FilterSource,
     /// The argument it was written inside, when that is not `filter`.
     enclosing: Option<Box<EnclosingArgument>>,
+    /// The value a variable gave where an object belongs, which input
+    /// validation rejects before the empty conditions can run.
+    not_object: Option<Box<JsonValue>>,
 }
 
 /// Two filters are equal when they select the same documents: where their
@@ -61,7 +64,21 @@ impl Filter {
             max_depth,
             source: FilterSource::Literal,
             enclosing: None,
+            not_object: None,
         }
+    }
+
+    /// A filter whose variable gave `value`, which is not an object.
+    pub fn not_object(value: JsonValue) -> Self {
+        Self {
+            not_object: Some(Box::new(value)),
+            ..Self::default()
+        }
+    }
+
+    /// The non-object value a variable gave in place of this filter.
+    pub fn not_object_value(&self) -> Option<&JsonValue> {
+        self.not_object.as_deref()
     }
 
     /// This filter, recorded as written the way `source` says.
