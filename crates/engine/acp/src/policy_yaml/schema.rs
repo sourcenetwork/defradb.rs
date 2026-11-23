@@ -138,6 +138,9 @@ fn validate_references(
         }
         for subject_type in &relation.types {
             let subject_type = subject_type.trim();
+            if subject_type == "actor:individual" {
+                continue;
+            }
             let (resource, relation) = subject_type.split_once("->").unwrap_or((subject_type, ""));
             let valid = resources
                 .get(resource)
