@@ -1052,3 +1052,20 @@ jobs:
             } else {
               await github.rest.issues.createComment({ owner, repo, issue_number, body });
             }
+
+  # The one required check besides Validate title: fails when any job it needs
+  # failed or was cancelled. A job skipped by ci-scope passes; a job skipped
+  # because its dependency failed shows that dependency's failure here. Testo
+  # shards report through Testo summary, which judges their known failures.
+  merge-gate:
+    name: Merge gate
+    needs: [ci-scope, lint, build, wasm-check, lean-conformance, conformance, integration, p2p-linux, testo-summary]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every needed job to pass or be skipped by scope
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          failed=$(jq -r 'to_entries[] | select(.value.result == "failure" or .value.result == "cancelled") | "\(.key)=\(.value.result)"' <<<"$NEEDS")
+          if [ -n "$failed" ]; then echo "::error::Not green: $(echo $failed)"; exit 1; fi
