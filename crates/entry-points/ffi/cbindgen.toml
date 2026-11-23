@@ -308,6 +308,9 @@ static inline struct DefraResult defra_print_dump(uintptr_t target, DefraPrintDu
 }
 """
 include_guard = "DEFRA_H"
+# The extern "C" guards that give C++ callers the unmangled symbols the
+# library exports. `just check-c-api` fails on any exported function without
+# C linkage in C++.
 cpp_compat = true
 documentation = true
 documentation_style = "c"
