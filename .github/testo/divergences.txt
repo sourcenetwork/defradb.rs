@@ -6,6 +6,12 @@
 # - an entry a pull request adds is printed as a warning naming that pull request.
 # A test belongs here or in known-failures/go-http.txt, never both.
 
+# Rust refuses removing an indexed field and names the index; Go fails with "the given field does not exist", which https://github.com/sourcenetwork/defradb/issues/4722 calls misleading.
+testo index::remove_indexed_field::removing_an_indexed_field_is_refused_and_writes_go_on
+# Same as above; Go also refuses moving the remaining fields ("moving fields is not currently supported") before it reaches the index.
+testo index::remove_indexed_field::removing_a_composite_index_field_is_refused
+testo index::remove_indexed_field::removing_a_unique_index_field_is_refused_and_uniqueness_holds
+testo index::remove_indexed_field::removing_a_json_index_field_is_refused
 # Rust names the missing path ("path /Foo/Fields does not exist"); Go reports "add operation does not apply: doc is missing path".
 testo collection_version::updates::add::simple::collection_version_updates_add_simple_errors_adding_unsupported_collection_prop
 # Rust names the missing path ("path /Foo does not exist"); Go reports "add operation does not apply: doc is missing path".

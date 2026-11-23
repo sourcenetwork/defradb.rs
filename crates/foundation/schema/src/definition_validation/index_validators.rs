@@ -5,7 +5,7 @@ use rapidhash::RapidHashSet;
 use super::DefinitionState;
 
 /// Refuses a patch that removes a field an index of the collection reads.
-/// Go refuses it too, as "the given field does not exist".
+/// Go fails here with the misleading "the given field does not exist".
 pub(super) fn validate_indexed_field_not_removed(
     new_state: &DefinitionState,
     old_state: &DefinitionState,
