@@ -206,41 +206,28 @@ impl ReindexPage {
     ) -> Result<Walked> {
         let versions =
             get_collections_by_collection_id(systemstore, collection.collection_id()).await?;
-        let mut history =
+        let history =
             build_collection_history(&versions, collection.version_id()).ok_or_else(|| {
                 Error::Lens(format!(
                     "failed to build migration history for collection '{}'",
                     collection.name()
                 ))
             })?;
-        // A transform removed from every stored version is no longer part of
-        // the collection's migration path. Reindexing reads the historical
-        // values unchanged instead of asking for it. A transform that remains
-        // on a stored version is required: fail loud rather than index
-        // untransformed values while its lens is missing.
-        for link in history.values_mut() {
-            if let Some(transform) = link.transform.as_deref() {
-                let transform_id = lens::TransformId::new(transform);
-                if !self.lens_store.has_transform(&transform_id) {
-                    let still_referenced = versions.iter().any(|version| {
-                        version
-                            .previous_version
-                            .as_ref()
-                            .and_then(|previous| previous.transform.as_deref())
-                            == Some(transform)
-                    });
-                    if still_referenced {
-                        return Err(Error::Lens(format!(
-                            "required reindex transform '{transform}' is not held"
-                        )));
-                    }
-                    tracing::debug!(
-                        transform,
-                        "a reindex history transform was removed; reading through it as identity"
-                    );
-                    link.transform = None;
-                }
-            }
+        // The history holds only transforms a stored version still names; a
+        // removed one left the history with its version. One that is named but
+        // not loaded must not be read as identity.
+        if let Some(transform) = history
+            .values()
+            .filter_map(|link| link.transform.as_deref())
+            .find(|transform| {
+                !self
+                    .lens_store
+                    .has_transform(&lens::TransformId::new(*transform))
+            })
+        {
+            return Err(Error::Lens(format!(
+                "required reindex transform '{transform}' is not held"
+            )));
         }
         let mut source = BackfillSource::open_range(
             collection.clone(),

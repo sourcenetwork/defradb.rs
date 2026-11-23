@@ -2322,7 +2322,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/database/db/src/definition/migration/reindex/page.rs ReindexPage::walk",
         model_ref: "MC_RemovedLensOrigin_{Green,Red_Inverse}.cfg",
         tiers: &[Boundary],
-        bound_by: "tools/integration-test/tests/testo/collection_version/updates/remove/col_source_transform.rs removing_transform_preserves_old_and_new_documents",
+        bound_by: "tools/integration-test/tests/testo/collection_version/updates/remove/removed_transform_reindex.rs removing_transform_preserves_old_and_new_documents",
     },
     Property {
         // Native and materialized documents can have identical stored values.
@@ -2332,7 +2332,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/database/db/src/definition/migration/reindex/page.rs ReindexPage::walk",
         model_ref: "RemovedLensOrigin (lake build)",
         tiers: &[Boundary],
-        bound_by: "tools/integration-test/tests/testo/collection_version/updates/remove/col_source_transform.rs removing_transform_preserves_old_and_new_documents",
+        bound_by: "tools/integration-test/tests/testo/collection_version/updates/remove/removed_transform_reindex.rs removing_transform_preserves_old_and_new_documents",
     },
     Property {
         // #2379: an index answers queries only while no reindex is owed;
@@ -2350,6 +2350,40 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "MC_LensIndexAnswer_{Green,Red_*}.cfg",
         tiers: &[Boundary],
         bound_by: "crates/database/db/tests/merge/plan_scan_race.rs",
+    },
+    Property {
+        // #3052: the reindex a schema change owes fixes only the index and
+        // leaves each document stored as written, so a lens added or removed
+        // afterwards still applies to it as it stands (Red_WalkStamps).
+        family: "Schema-evolution operations in the core",
+        name: "INV_ReadsFollowWrites",
+        axis: Tla,
+        anchor: "crates/database/db/src/definition/migration/reindex/mod.rs DB::rebuild_settling; crates/database/db/src/definition/migration/reindex/page.rs ReindexPage::walk; crates/database/db/src/definition/patch/in_place.rs update_version_in_place",
+        model_ref: "MC_LensIndexAnswer_{Green,Red_WalkStamps}.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/collection_version/migrations/identity_settlement.rs identity_settlement_before_transform_should_apply_later_migration",
+    },
+    Property {
+        // #3052: a materialization never resumes a settlement's cursor, whose
+        // pages moved no document's version; it owes a reindex of its own.
+        family: "Schema-evolution operations in the core",
+        name: "INV_MaterializedAll",
+        axis: Tla,
+        anchor: "crates/database/db/src/definition/migration/reindex/mod.rs DB::reindex_in_pages; crates/database/db/src/definition/migration/reindex/progress.rs read",
+        model_ref: "MC_MaterializeResume_{Green,Red_Resume}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/database/db/tests/index/deferred.rs materializing_after_a_stopped_settlement_advances_every_document",
+    },
+    Property {
+        // A walk from the start saves every document; one resumed from a
+        // settlement's cursor misses those the settlement walked.
+        family: "Schema-evolution operations in the core",
+        name: "MaterializeResume.start_over_saves_all / resume_misses",
+        axis: Lean,
+        anchor: "crates/database/db/src/definition/migration/reindex/mod.rs DB::reindex_in_pages",
+        model_ref: "MaterializeResume (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/database/db/tests/index/deferred.rs materializing_after_a_stopped_settlement_advances_every_document",
     },
     Property {
         // An explicit transaction's ID is `sequence * workers + worker`. The
@@ -4234,7 +4268,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Patch lens settlement",
         name: "INV_SettleAfterLens",
         axis: Tla,
-        anchor: "crates/database/db/src/definition/patch/mod.rs PatchCollectionState::patch_collection; crates/database/db/src/definition/patch/in_place.rs PatchCollectionState::update_version_in_place; crates/database/db/src/definition/migration/reindex/page.rs ReindexPage::walk",
+        anchor: "crates/database/db/src/definition/patch/mod.rs DB::patch_collection; crates/database/db/src/definition/patch/in_place.rs DB::update_version_in_place; crates/database/db/src/definition/migration/reindex/page.rs ReindexPage::walk",
         model_ref: "MC_LensSettlement_{Green,Red_Early}.cfg",
         tiers: &[Boundary],
         bound_by: "",
