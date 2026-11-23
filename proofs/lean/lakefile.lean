@@ -1,6 +1,9 @@
 import Lake
 open Lake DSL
 
+@[default_target]
+lean_lib ChildPage where
+
 package defraConvergence where
 
 @[default_target]
