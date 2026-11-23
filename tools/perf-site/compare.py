@@ -260,22 +260,6 @@ def markdown(deltas, platforms, only_cur, base, cur, threshold, note="", passes=
     out += table(f"Regressed ({len(regressed)})", regressed)
     out += table(f"Improved ({len(improved)})", improved)
 
-    first_create = "criterion_document_write/document_create/"
-    affected = {
-        (d["platform"], f"document_ops/create/{d['key'][len(first_create):]} fields")
-        for d in regressed + improved
-        if d["key"].startswith(first_create)
-    }
-    if affected:
-        out.append(
-            "The document_create latency measures the first write to a fresh collection. "
-            "The document_ops/create workload writes repeatedly to the same collection."
-        )
-        out.append("")
-        context = [d for d in compared if (d["platform"], d["key"]) in affected
-                   and d["verdict"] == NOISE]
-        out += table("Repeated creates (ops/s) for the same field counts", context)
-
     out.append(
         f"{len(compared)} metric(s) compared, {len(unverified)} not comparable."
     )
