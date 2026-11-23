@@ -673,7 +673,13 @@ where
         resource_name: &str,
         doc_id: &str,
     ) -> Result<bool> {
-        if self.owed(policy_id, resource_name, doc_id).await?.is_some() {
+        if let Some(owed) = self.owed(policy_id, resource_name, doc_id).await? {
+            if owed.parent.is_some() {
+                // Returning false could expose this row through a branchable collection.
+                return Err(Error::ProviderUnavailable(
+                    "parent admission is awaiting confirmation".into(),
+                ));
+            }
             return Ok(true);
         }
         self.provider
@@ -688,7 +694,7 @@ where
         doc_id: &str,
     ) -> Result<Option<Did>> {
         if let Some(owed) = self.owed(policy_id, resource_name, doc_id).await? {
-            return Ok(Some(owed.creator));
+            return Ok(owed.parent.is_none().then_some(owed.creator));
         }
         self.provider
             .get_doc_owner(policy_id, resource_name, doc_id)
@@ -705,7 +711,8 @@ where
     ) -> Result<bool> {
         self.owed_layout().await?;
         if let Some(owed) = self.owed(policy_id, resource_name, doc_id).await? {
-            return Ok(matches!(identity, Identity::Authenticated(did) if *did == owed.creator));
+            return Ok(owed.parent.is_none()
+                && matches!(identity, Identity::Authenticated(did) if *did == owed.creator));
         }
         if self
             .revoked(identity, policy_id, resource_name, doc_id)

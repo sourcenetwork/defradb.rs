@@ -659,3 +659,11 @@ registration keeps both parent identifiers across a restart. A delegation
 bound to the registration covers both as well. Vera checks the acting identity
 when it executes the command. A later grant on the parent relation requires
 permission on the proposed target.
+
+A receiver sharing the creator's Vera deployment waits for the object's
+registration. An embedder that enables foreign replica registration for the
+collection can register a signed genesis on its own deployment. The receiving
+node submits under its own identity, with the parent ID from the signed
+document. While parent admission is pending, ACP reports registration as
+unavailable and grants the submitter no owner access. Creator grants are
+delivered after the provider accepts the registration.

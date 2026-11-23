@@ -409,6 +409,51 @@ mod tests {
     }
 
     #[test]
+    fn an_owed_parent_registration_confers_no_ownership_or_access() {
+        workers::block_on(async {
+            let gate = ExternalDocumentAcp::new(
+                Arc::new(Unreached),
+                Arc::new(RegolithStore::in_memory().unwrap()),
+            );
+            let creator = Did::new("did:key:creator").unwrap();
+            let mut owed = PendingRegistration::new(creator.clone(), "policy", "jobs", "child");
+            owed.parent = Some(crate::RegistrationParent {
+                resource: "nodes".into(),
+                object_id: "parent".into(),
+            });
+            let mut txn = gate.store.new_txn(false).await.unwrap();
+            txn.set(&owed.key(), &owed.encode().unwrap()).await.unwrap();
+            txn.commit().await.unwrap();
+
+            assert!(matches!(
+                gate.is_doc_registered("policy", "jobs", "child").await,
+                Err(Error::ProviderUnavailable(_))
+            ));
+            assert_eq!(
+                gate.get_doc_owner("policy", "jobs", "child").await.unwrap(),
+                None
+            );
+            for permission in [
+                DocumentPermission::Read,
+                DocumentPermission::Update,
+                DocumentPermission::Delete,
+            ] {
+                assert!(!gate
+                    .check_doc_access(
+                        &Identity::Authenticated(creator.clone()),
+                        permission,
+                        "policy",
+                        "jobs",
+                        "child"
+                    )
+                    .await
+                    .unwrap());
+            }
+        })
+        .unwrap()
+    }
+
+    #[test]
     fn a_failure_noted_late_does_not_park_a_registration_given_a_fresh_credential() {
         workers::block_on(async {
             let gate = ExternalDocumentAcp::new(

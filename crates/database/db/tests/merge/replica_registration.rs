@@ -447,3 +447,44 @@ fn signed_genesis_registers_only_under_a_parent_that_admits_its_signer() {
         assert!(store.has_relationship(POLICY, RESOURCE, &accepted, "parent", &zanzibar::Subject::entity_set("nodes", "allowed", "")).await.unwrap());
     }).unwrap()
 }
+
+#[test]
+fn a_foreign_genesis_waits_for_parent_admission_before_its_creator_gets_write_access() {
+    workers::block_on(async {
+        let chain = Chain::new();
+        let registrant = key().did;
+        let creator = key();
+        let provider = chain.as_node(&registrant);
+        provider
+            .register_doc_object(&registrant, POLICY, "nodes", "allowed")
+            .await
+            .unwrap();
+        let mut collection = crate::replica_support::users();
+        collection.policy.as_mut().unwrap().parent_field = Some("name".into());
+        let receiver = Receiver::open_collection(
+            collection,
+            |_| provider,
+            Some(embedder(vec![], vec![])),
+            true,
+        )
+        .await;
+        let source = Source::open().await;
+        let (rejected, block) = source.create(&creator, "missing").await;
+        assert_eq!(
+            receiver.receive(&source, &rejected, &block).await,
+            MergeOutcome::Merged
+        );
+        assert!(receiver.settle(&rejected).await.is_err());
+        assert_eq!(chain.owner(&rejected), None);
+        assert!(!chain.holds(&rejected, "writer", &creator.did));
+        let (accepted, block) = source.create(&creator, "allowed").await;
+        assert_eq!(
+            receiver.receive(&source, &accepted, &block).await,
+            MergeOutcome::Merged
+        );
+        receiver.settle(&accepted).await.unwrap();
+        assert_eq!(chain.owner(&accepted), Some(registrant));
+        assert!(chain.holds(&accepted, "writer", &creator.did));
+    })
+    .unwrap();
+}

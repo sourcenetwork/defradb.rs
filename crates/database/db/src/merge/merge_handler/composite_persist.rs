@@ -20,6 +20,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         systemstore: &NamespaceView,
         context: &CompositeMergeContext<'_, '_>,
         collection: &CollectionVersion,
+        parent: Option<&acp::RegistrationParent>,
     ) -> std::result::Result<(), MergeError> {
         let (Some(provider), Some(policy)) = (self.db.document_acp(), collection.policy.as_ref())
         else {
@@ -45,6 +46,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             creator,
                             registrant,
                             grants,
+                            parent,
                         },
                     )
                     .await
@@ -226,34 +228,36 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         "parent-gated genesis requires a verified signer and ACP provider".into(),
                     ));
                 }
+                let mut parent = None;
                 if let (Some(provider), Some(policy), Some(signer)) = (provider, policy, signer) {
-                    if let Some(scoped) = provider.bind_transaction(
+                    let scoped = provider.bind_transaction(
                         systemstore.sibling(storage::namespace::Namespace::Acpstore),
-                    ) {
+                    );
+                    let registering_replica =
+                        matches!(&context.replica, ReplicaStep::Register { .. });
+                    if let Some(field) =
+                        parent_field.filter(|_| scoped.is_some() || registering_replica)
+                    {
+                        let id = doc
+                            .get(field)
+                            .and_then(document::NormalValue::as_str)
+                            .filter(|s| !s.is_empty())
+                            .ok_or_else(|| {
+                                MergeError::MergeFailed(format!(
+                                    "missing parent document ID in '{field}'"
+                                ))
+                            })?;
+                        let authority = scoped.as_deref().unwrap_or(provider.as_ref());
+                        parent = Some(
+                            authority
+                                .registration_parent(&policy.id, &policy.resource_name, id)
+                                .await
+                                .map_err(|error| MergeError::MergeFailed(error.to_string()))?,
+                        );
+                    }
+                    if let Some(scoped) = scoped {
                         let signer = identity::Did::new(signer)
                             .map_err(|error| MergeError::MergeFailed(error.to_string()))?;
-                        let parent = match parent_field {
-                            Some(field) => {
-                                let id = doc
-                                    .get(field)
-                                    .and_then(document::NormalValue::as_str)
-                                    .filter(|s| !s.is_empty())
-                                    .ok_or_else(|| {
-                                        MergeError::MergeFailed(format!(
-                                            "missing parent document ID in '{field}'"
-                                        ))
-                                    })?;
-                                Some(
-                                    scoped
-                                        .registration_parent(&policy.id, &policy.resource_name, id)
-                                        .await
-                                        .map_err(|error| {
-                                            MergeError::MergeFailed(error.to_string())
-                                        })?,
-                                )
-                            }
-                            None => None,
-                        };
                         super::genesis_access::register_genesis(
                             &*scoped,
                             &signer,
@@ -266,6 +270,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         .await
                         .map_err(|error| MergeError::MergeFailed(error.to_string()))?;
                     } else if parent_field.is_some()
+                        && !registering_replica
                         && !provider
                             .is_doc_registered(
                                 &policy.id,
@@ -280,7 +285,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         ));
                     }
                 }
-                self.record_replica(systemstore, context, collection.schema())
+                self.record_replica(systemstore, context, collection.schema(), parent.as_ref())
                     .await?;
             }
 

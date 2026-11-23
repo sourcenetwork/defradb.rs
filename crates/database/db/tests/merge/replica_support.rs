@@ -170,6 +170,33 @@ impl DocumentACP for ChainView {
         Ok(())
     }
 
+    async fn registration_parent(
+        &self,
+        _: &str,
+        _: &str,
+        id: &str,
+    ) -> acp::Result<acp::RegistrationParent> {
+        Ok(acp::RegistrationParent {
+            resource: "nodes".into(),
+            object_id: id.into(),
+        })
+    }
+
+    async fn register_under_parent(
+        &self,
+        actor: &Did,
+        policy: &str,
+        child: &str,
+        doc: &str,
+        parent: &acp::RegistrationParent,
+    ) -> acp::Result<()> {
+        if parent.resource != "nodes" || self.chain.owner(&parent.object_id).as_ref() != Some(actor)
+        {
+            return Err(acp::Error::PermissionDenied("parent requires owner".into()));
+        }
+        self.register_doc_object(actor, policy, child, doc).await
+    }
+
     async fn is_doc_registered(&self, _: &str, _: &str, doc: &str) -> acp::Result<bool> {
         self.read();
         Ok(self.chain.owners.contains_key(doc))

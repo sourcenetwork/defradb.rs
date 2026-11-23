@@ -98,9 +98,6 @@ impl AcpCompositeMergeHook {
         if !self.strict() || acp.supports_transactions() || collection.policy.is_none() {
             return None;
         }
-        if collection.policy.as_ref()?.parent_field.is_some() {
-            return None;
-        }
         self.replicas
             .get()
             .filter(|replicas| replicas.lists(collection))
@@ -367,20 +364,24 @@ impl CompositeMergeHook for AcpCompositeMergeHook {
             return Ok(ReplicaStep::Gate);
         };
         if !registered {
-            if let Err(error) = acp.command_authority(
-                &registrant,
-                acp::ProviderCommand::RegisterObject {
-                    policy_id: &policy.id,
-                    resource: &policy.resource_name,
-                    object: doc_id,
-                },
-            ) {
-                tracing::warn!(
-                    %doc_id,
-                    %error,
-                    "The node cannot register a replicated document as its own actor; it waits for a registration"
-                );
-                return Ok(ReplicaStep::Gate);
+            // A gated command binds the parent from the signed body. Check its
+            // authority when staging that exact command in the merge transaction.
+            if policy.parent_field.is_none() {
+                if let Err(error) = acp.command_authority(
+                    &registrant,
+                    acp::ProviderCommand::RegisterObject {
+                        policy_id: &policy.id,
+                        resource: &policy.resource_name,
+                        object: doc_id,
+                    },
+                ) {
+                    tracing::warn!(
+                        %doc_id,
+                        %error,
+                        "The node cannot register a replicated document as its own actor; it waits for a registration"
+                    );
+                    return Ok(ReplicaStep::Gate);
+                }
             }
             let grants = ownership.creator_grants(&collection.name, &creator, doc_id);
             return Ok(ReplicaStep::Register {
@@ -534,9 +535,6 @@ impl CompositeMergeHook for AcpCompositeMergeHook {
         }
         let acp = self.document_acp()?.clone();
         let policy = collection.policy.as_ref()?;
-        if policy.parent_field.is_some() {
-            return None;
-        }
         if self.replicas_for(collection).is_some() {
             return Some(Box::new(SettleReplicaAction {
                 acp,
@@ -544,6 +542,9 @@ impl CompositeMergeHook for AcpCompositeMergeHook {
                 resource_name: policy.resource_name.clone(),
                 doc_id: doc_id.to_string(),
             }));
+        }
+        if policy.parent_field.is_some() {
+            return None;
         }
         let creator = metadata
             .explicit_replay_authorizer_for(&collection.collection_id)
