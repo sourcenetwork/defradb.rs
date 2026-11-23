@@ -388,6 +388,6 @@ A backup file in which two documents carry the same `_docID` (or `_docIDNew`) fa
 # `defra.backup.import.keeps_earlier_documents`: A failed import keeps the documents before the failure
 
 - **Parents:** ["go.backup.import"]
-- **Scenarios:** ["backup::failed_import::a_failed_import_keeps_every_document_before_the_one_refused"]
+- **Scenarios:** ["backup::failed_import::a_failed_import_keeps_every_document_before_the_one_refused", "backup::failed_import::an_import_refusing_a_value_keeps_every_document_before_it"]
 
-An import that cannot create one of its documents fails with that document's error and stops there. Every document of the file before it is imported, and none after it is: a file of `{"name":"Alice"}`, `{"name":"John"}`, `{"name":"John"}`, `{"name":"Zed"}`, whose second John has the first one's content and so its ID, fails with `a document with the given ID already exists` and leaves Alice and the first John.
+An import that cannot create one of its documents fails with that document's error and stops there. Every document of the file before it is imported, and none after it is: a file of `{"name":"Alice"}`, `{"name":"John"}`, `{"name":"John"}`, `{"name":"Zed"}`, whose second John has the first one's content and so its ID, fails with `a document with the given ID already exists` and leaves Alice and the first John. A value the schema refuses stops it the same way: a file of `{"name":"Alice","points":1}`, `{"name":"Bob","points":"many"}` into a `pcounter` field `points` fails with `failed to create document in 'User': …` and leaves Alice.

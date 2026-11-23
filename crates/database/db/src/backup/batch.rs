@@ -51,7 +51,7 @@ impl Batch {
 
     /// Gathers `doc`.
     pub(super) fn push(&mut self, doc: Gathered) {
-        self.bytes += JsonValue::Object(doc.fields.clone()).to_string().len();
+        self.bytes += serde_json::to_string(&doc.fields).unwrap_or_default().len();
         self.aliases.extend(doc.aliases.iter().cloned());
         self.docs.push(doc);
     }

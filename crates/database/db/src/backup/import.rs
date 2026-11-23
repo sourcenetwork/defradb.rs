@@ -232,10 +232,17 @@ where
             }
 
             // Checked here so a value the schema refuses fails with the
-            // import's own words before anything of this batch is written.
-            Document::from_map(doc_map.clone().into_iter().collect(), schema.clone()).map_err(
-                |e| format!("failed to create document in '{}': {}", collection_name, e),
-            )?;
+            // import's own words. The documents gathered before it are saved
+            // first: the import keeps every document before the one refused.
+            if let Err(e) =
+                Document::from_map(doc_map.clone().into_iter().collect(), schema.clone())
+            {
+                save(host, database, &target, &mut batch, &mut imported).await?;
+                return Err(format!(
+                    "failed to create document in '{}': {}",
+                    collection_name, e
+                ));
+            }
 
             batch.push(Gathered {
                 fields: doc_map,
@@ -298,14 +305,19 @@ where
     if batch.is_empty() {
         return Ok(());
     }
-    let gathered = batch.take();
-    match create(host, database, target, &gathered).await {
+    let mut gathered = batch.take();
+    let docs: Vec<JsonValue> = gathered
+        .iter_mut()
+        .map(|doc| JsonValue::Object(std::mem::take(&mut doc.fields)))
+        .collect();
+    match create(host, database, target, &gathered, &docs).await {
         Ok(ids) => record(host, database, target, gathered, ids, imported).await,
         Err(error) if gathered.len() == 1 => Err(error),
         Err(_) => {
-            for doc in gathered {
+            for (doc, fields) in gathered.into_iter().zip(&docs) {
                 let one = vec![doc];
-                let ids = create(host, database, target, &one).await?;
+                let ids =
+                    create(host, database, target, &one, std::slice::from_ref(fields)).await?;
                 record(host, database, target, one, ids, imported).await?;
             }
             Ok(())
@@ -314,12 +326,14 @@ where
 }
 
 /// Checks that no file ID of `gathered` names a stored document, then
-/// creates them all in one request: all or none. Their new IDs, in order.
+/// creates them, whose fields are `docs`, in one request: all or none.
+/// Their new IDs, in order.
 async fn create<S>(
     host: &dyn ImportHost,
     database: &Arc<DB<S>>,
     target: &Target,
     gathered: &[Gathered],
+    docs: &[JsonValue],
 ) -> Result<Vec<String>, String>
 where
     S: Store + 'static,
@@ -332,14 +346,10 @@ where
     if !aliases.is_empty() {
         host.on_db(alias::check_free(database, aliases)).await?;
     }
-    let docs: Vec<JsonValue> = gathered
-        .iter()
-        .map(|doc| JsonValue::Object(doc.fields.clone()))
-        .collect();
     documents::save_many(
         |request| host.run(request),
         &target.name,
-        &docs,
+        docs,
         &AddOptions::default(),
     )
     .await

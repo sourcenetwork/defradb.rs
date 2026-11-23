@@ -44,3 +44,42 @@ fn a_failed_import_keeps_every_document_before_the_one_refused() {
     }
     .execute();
 }
+
+#[test]
+#[mantra_macros::req_test("defra.backup.import.keeps_earlier_documents")]
+fn an_import_refusing_a_value_keeps_every_document_before_it() {
+    TestCase {
+        id: integration_test::scenario_id!(),
+        actions: vec![
+            AddCollection {
+                sdl: r#"
+                    type User {
+                        name: String
+                        points: Int @crdt(type: pcounter)
+                    }
+                "#
+                .into(),
+                ..Default::default()
+            }
+            .into(),
+            ImportBackup {
+                import_content: r#"{"User":[
+                    {"name":"Alice","points":1},
+                    {"name":"Bob","points":"many"}
+                ]}"#
+                .into(),
+                expected_error: Some("failed to create document in 'User'".into()),
+                ..Default::default()
+            }
+            .into(),
+            Request {
+                request: "query { User { name } }".into(),
+                expected_data: json!({ "User": [{ "name": "Alice" }] }),
+                ..Default::default()
+            }
+            .into(),
+        ],
+        ..Default::default()
+    }
+    .execute();
+}
