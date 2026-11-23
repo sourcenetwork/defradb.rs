@@ -67,6 +67,18 @@ const ENTRIES: &[(&str, &str, &[&str], &str)] = &[
         SECONDARY_INDEX,
         INDEXED_FIELD_REMOVAL,
     ),
+    (
+        "tests/integration/txn/patch_collection_test.go",
+        "TestTxn_PatchCollection_WithCommit_Succeeds",
+        SECONDARY_INDEX,
+        INDEXED_FIELD_REMOVAL,
+    ),
+    (
+        "tests/integration/txn/patch_collection_test.go",
+        "TestTxn_PatchCollection_WithoutCommit_PatchNotApplied",
+        SECONDARY_INDEX,
+        INDEXED_FIELD_REMOVAL,
+    ),
 ];
 
 const INDEXED_FIELD_REMOVAL: &str =
