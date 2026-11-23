@@ -5,7 +5,9 @@ mod common;
 
 mod acp_merge_handler;
 mod acp_protected_update;
+mod broadcast_marker_handoff;
 mod broadcast_mutator_broadcast;
+mod chunk_before_parent;
 mod chunk_definition;
 mod chunk_definition_guard;
 mod chunk_delete;
@@ -13,6 +15,7 @@ mod chunk_forged;
 mod chunk_parent_reads;
 mod chunk_query_row;
 mod chunk_query_shapes;
+mod chunk_rebuild_events;
 mod chunk_surfaces;
 mod chunk_update_journal;
 mod collection_block_links;

@@ -20,6 +20,7 @@ use tracing::{debug, warn};
 use super::authorizer::AccessAuthorizer;
 use crate::message::pubsub as wire;
 use crate::pubsub_rpc::{MessageHandler, TopicHandler};
+use crate::sync::doc_sync_ids::{check_doc_id_limit, with_followers};
 use crate::sync::head_provider::DocumentHeadProvider;
 
 pub(super) const DOC_SYNC_TOPIC: &str = "doc-sync";
@@ -52,12 +53,14 @@ impl PubsubServices {
         local_peer_id_str: &str,
         head_provider: Arc<dyn DocumentHeadProvider>,
         authorizer: Arc<dyn AccessAuthorizer>,
+        max_doc_sync_request_doc_ids: usize,
     ) -> Option<Self> {
         let self_peer: libp2p::PeerId = local_peer_id_str.parse().ok()?;
         let shared = Arc::new(HandlerContext {
             head_provider,
             authorizer,
             local_peer_id: local_peer_id_str.to_string(),
+            max_doc_sync_request_doc_ids,
         });
         let doc_sync = Arc::new(TopicHandler::new(
             DOC_SYNC_TOPIC,
@@ -138,6 +141,7 @@ struct HandlerContext {
     head_provider: Arc<dyn DocumentHeadProvider>,
     authorizer: Arc<dyn AccessAuthorizer>,
     local_peer_id: String,
+    max_doc_sync_request_doc_ids: usize,
 }
 
 impl HandlerContext {
@@ -179,8 +183,12 @@ impl MessageHandler for DocSyncHandler {
         let req: wire::DocSyncRequest =
             ciborium::from_reader(data.as_slice()).map_err(|e| format!("decode request: {e}"))?;
 
+        check_doc_id_limit(req.doc_ids.len(), self.ctx.max_doc_sync_request_doc_ids)
+            .map_err(|e| e.to_string())?;
+        let doc_ids = with_followers(self.ctx.head_provider.as_ref(), &req.doc_ids).await;
+
         let mut results = Vec::new();
-        for doc_id in &req.doc_ids {
+        for doc_id in &doc_ids {
             match self.ctx.head_provider.get_document_heads(doc_id).await {
                 Ok(heads) if !heads.is_empty() => {
                     results.push(wire::DocSyncItem {
@@ -259,6 +267,7 @@ impl MessageHandler for BranchableSyncHandler {
 mod tests {
     use super::*;
     use crate::sync::head_provider::NoOpHeadProvider;
+    use crate::sync::DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS;
     use std::sync::atomic::{AtomicBool, Ordering};
 
     fn a_libp2p_peer() -> libp2p::PeerId {
@@ -353,6 +362,7 @@ mod tests {
             &peer.to_string(),
             Arc::new(NoOpHeadProvider),
             Arc::new(AllowAllAuthorizer),
+            DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS,
         )
         .expect("local peer parses");
 
@@ -376,6 +386,7 @@ mod tests {
             "iroh-node-12345",
             Arc::new(NoOpHeadProvider),
             Arc::new(AllowAllAuthorizer),
+            DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS,
         );
         assert!(services.is_none());
     }
@@ -387,6 +398,7 @@ mod tests {
             &peer.to_string(),
             Arc::new(NoOpHeadProvider),
             Arc::new(AllowAllAuthorizer),
+            DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS,
         )
         .expect("local peer parses");
 
@@ -426,6 +438,7 @@ mod tests {
             &peer.to_string(),
             Arc::new(HeadProviderStub),
             Arc::new(AllowAllAuthorizer),
+            DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS,
         )
         .unwrap();
 
@@ -501,6 +514,7 @@ mod tests {
             }),
             authorizer: Arc::new(AllowAllAuthorizer),
             local_peer_id: "12D3KooWRustPeer".to_string(),
+            max_doc_sync_request_doc_ids: DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS,
         });
         let handler = DocSyncHandler {
             ctx: Arc::clone(&ctx),
@@ -578,6 +592,7 @@ mod tests {
             &peer.to_string(),
             Arc::new(NoOpHeadProvider),
             Arc::new(DenyAllAuthorizer),
+            DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS,
         )
         .unwrap();
 
@@ -600,6 +615,37 @@ mod tests {
         assert!(envelope.err.contains("not authorised"));
     }
 
+    /// A pubsub doc sync is held to the same doc ID limit as the stream path.
+    #[nuclei::test]
+    async fn doc_sync_handler_rejects_requests_above_the_doc_id_limit() {
+        let peer = a_libp2p_peer();
+        let services = PubsubServices::try_new(
+            &peer.to_string(),
+            Arc::new(NoOpHeadProvider),
+            Arc::new(AllowAllAuthorizer),
+            2,
+        )
+        .unwrap();
+        let deliver = |ids: Vec<String>| {
+            let mut bytes = Vec::new();
+            ciborium::into_writer(&wire::DocSyncRequest::new(ids), &mut bytes).unwrap();
+            services
+                .doc_sync
+                .deliver_gossip_message(DOC_SYNC_TOPIC, a_libp2p_peer(), bytes)
+        };
+
+        use crate::pubsub_rpc::{DeliveryOutcome, InternalResponse};
+        let error_of = |outcome: DeliveryOutcome| match outcome {
+            DeliveryOutcome::Respond(r) => InternalResponse::from_cbor(&r.bytes).unwrap().err,
+            other => panic!("expected Respond, got {other:?}"),
+        };
+        let over = error_of(deliver(vec!["a".into(), "b".into(), "c".into()]).await);
+        assert!(over.contains("3 doc IDs"), "{over}");
+        assert!(over.contains("limit of 2"), "{over}");
+        let at = error_of(deliver(vec!["a".into(), "b".into()]).await);
+        assert_eq!(at, "", "a request at the limit must be served");
+    }
+
     /// Parity regression: the pubsub doc-sync handler must accept a peer
     /// that only the shared authorizer says is valid (simulating the
     /// `PeerState` cache-miss → transport fallback path used by
@@ -615,6 +661,7 @@ mod tests {
             &peer.to_string(),
             Arc::new(NoOpHeadProvider),
             Arc::clone(&authorizer) as Arc<dyn AccessAuthorizer>,
+            DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS,
         )
         .unwrap();
 
@@ -652,6 +699,7 @@ mod tests {
             &peer.to_string(),
             Arc::new(NoOpHeadProvider),
             Arc::clone(&authorizer) as Arc<dyn AccessAuthorizer>,
+            DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS,
         )
         .unwrap();
 
@@ -693,6 +741,7 @@ mod tests {
             &peer.to_string(),
             Arc::new(NoOpHeadProvider),
             Arc::new(AllowAllAuthorizer),
+            DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS,
         )
         .unwrap();
 

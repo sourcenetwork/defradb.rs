@@ -20,14 +20,15 @@ pub trait AccessPolicy: MaybeSendSync {
     /// `Deny` to refuse.
     async fn check_release(&self, actor: Option<&Did>, scope: &KeyScope) -> Result<PolicyDecision>;
 
-    /// Check a delegated document release and require the document to belong
-    /// to the collection named by the delegation. Implementations that cannot
-    /// prove the binding deny by default.
+    /// Check a delegated document release of a block in `block_collection_id`,
+    /// and require the delegation's `collection_id` to cover that block.
+    /// Implementations that cannot prove the binding deny by default.
     async fn check_delegated_release(
         &self,
         _actor: &Did,
         _scope: &KeyScope,
         _collection_id: &str,
+        _block_collection_id: &str,
     ) -> Result<PolicyDecision> {
         Ok(PolicyDecision::Deny)
     }
@@ -79,6 +80,8 @@ pub struct DocCollectionInfo {
     pub resource_name: String,
     /// Whether the collection is branchable.
     pub is_branchable: bool,
+    /// Its `@chunk` collections, whose keys follow this collection's documents.
+    pub chunk_collection_ids: Vec<String>,
 }
 
 #[cfg(test)]

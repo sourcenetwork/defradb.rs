@@ -1,6 +1,7 @@
 //! A chunk's blocks and keys follow its parent's permissions, old chunks too.
 
 use document::{DocID, NormalValue};
+use kms::BlockOwner;
 use schema::{CollectionVersion, CHUNK_SOURCE_ID_FIELD};
 use storage::corekv::Store;
 
@@ -46,8 +47,13 @@ where
         .filter(|parent| parent.schema().chunked_field(&source.field_name).is_some()))
 }
 
-/// Each chunk replaced by its parent, so the parent's readers decide.
-pub async fn read_owners<S>(db: &DB<S>, txn: &DbTxn<S>, doc_ids: Vec<String>) -> Result<Vec<String>>
+/// Each chunk replaced by its parent, so the parent's readers decide. Each
+/// owner keeps the collection of the document the block is in.
+pub async fn read_owners<S>(
+    db: &DB<S>,
+    txn: &DbTxn<S>,
+    doc_ids: Vec<String>,
+) -> Result<Vec<BlockOwner>>
 where
     S: Store,
 {
@@ -59,23 +65,38 @@ where
             continue;
         };
         let Some(collection) = db.find_collection_by_root_id(doc_ref.collection_short_id) else {
-            if stored_as_plain(txn, &doc_id).await? {
-                owners.push(doc_id);
+            if let Some(block_collection_id) = stored_as_plain(txn, &doc_id).await? {
+                owners.push(BlockOwner {
+                    doc_id,
+                    block_collection_id,
+                });
             }
             continue;
         };
+        let block_collection_id = collection.collection_id().to_string();
         if !collection.schema().is_generated() {
-            owners.push(doc_id);
+            owners.push(BlockOwner {
+                doc_id,
+                block_collection_id,
+            });
             continue;
         }
         let parents = parents_of_chunks(txn, &collection, &[doc_id]).await?;
-        owners.extend(merged(txn, parents).await?);
+        owners.extend(
+            merged(txn, parents)
+                .await?
+                .into_iter()
+                .map(|doc_id| BlockOwner {
+                    doc_id,
+                    block_collection_id: block_collection_id.clone(),
+                }),
+        );
     }
     Ok(owners)
 }
 
 // The cache can miss a collection the store holds, such as a synced one whose name another holds.
-async fn stored_as_plain<S>(txn: &DbTxn<S>, doc_id: &str) -> Result<bool>
+async fn stored_as_plain<S>(txn: &DbTxn<S>, doc_id: &str) -> Result<Option<String>>
 where
     S: Store,
 {
@@ -86,7 +107,9 @@ where
         doc_id,
     )
     .await?;
-    Ok(found.is_some_and(|collection| !collection.is_generated()))
+    Ok(found
+        .filter(|collection| !collection.is_generated())
+        .map(|collection| collection.collection_id))
 }
 
 async fn merged<S>(txn: &DbTxn<S>, parents: Vec<String>) -> Result<Vec<String>>
