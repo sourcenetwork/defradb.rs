@@ -842,7 +842,7 @@
       "crates/entry-points/ffi/src/signing_override_tests.rs::signing_override_default_signs_on_signing_node"
     ],
     "evidence": "signing_override_tests.rs:136-139 asserts an add with per-op signing disabled leaves every commit signature null",
-    "note": "Not asserted: per-op override on an update (that update's _C unsigned, next update signed again); fallback to the node identity when the HTTP/CLI client identity has no private key; signing with a client identity's own key (Go skips this, #3573)."
+    "note": "Not asserted: per-op override on an update (that update's _C unsigned, next update signed again); fallback to the node identity when the HTTP/CLI client identity has no private key. Signing with a client identity's own key is asserted for secp256k1 in-process by defra.signature.embedded_caller_key (signature::caller_key); Go's Ed25519 client-key test stays skipped (#3573)."
   },
   {
     "id": "go.signature.verify.basic",
@@ -859,12 +859,16 @@
   },
   {
     "id": "go.signature.verify.acp",
-    "verdict": "partial",
+    "verdict": "covered",
     "rust_tests": [
-      "crates/entry-points/defra-node/src/dac_api_tests.rs::node_identity_does_not_bypass_protected_history_reads"
+      "crates/entry-points/defra-node/src/dac_api_tests.rs::node_identity_does_not_bypass_protected_history_reads",
+      "tools/integration-test/tests/testo/signature/acp.rs::signature_acp_if_has_access_to_doc_validate_signature",
+      "tools/integration-test/tests/testo/signature/acp.rs::signature_acp_if_has_no_access_to_doc_should_error",
+      "tools/integration-test/tests/testo/signature/acp_branchable.rs::signature_acp_with_branchable_collection_if_has_collection_access_validate_signature",
+      "tools/integration-test/tests/testo/signature/acp_branchable.rs::signature_acp_with_branchable_collection_if_has_no_collection_access_should_error"
     ],
-    "evidence": "dac_api_tests.rs:379-384 asserts authorized_signed_block_bytes for a DAC-protected doc's _C block errors for an identity without access and succeeds for the owner",
-    "note": "Uses the signed-block-material read, not the verify-signature call; error text 'missing permission' not asserted; the @branchable collection-level block gated on collection read access is untested."
+    "evidence": "testo signature/acp.rs:108 the owner's client key verifies the doc block, :218 another identity gets missing permission; signature/acp_branchable.rs:122 the collection-level block the sync reports verifies against the owner's key, :247 another identity gets missing permission",
+    "note": "Moved to reqs/defra/explain-crypto-backup.md. The testo tests run in-process, as Go's SupportedClientTypes at the pin allow; the branchable tests verify the collection-level block captured from the sync rather than Go's literal CID, which Go's key signed under Go's policy ID."
   },
   {
     "id": "go.signature.transparency",

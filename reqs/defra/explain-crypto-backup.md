@@ -343,6 +343,21 @@ Signing behaviour beyond what Go's integration suite checks.
 
 A node that holds a node identity but was started without signing (`--no-signing`) writes unsigned blocks by default. An add or update sent with `enableSigning: true` (the HTTP `enableSigning` query parameter, the CLI `--enable-signing` flag, or the FFI `enableSigning` option) signs its blocks anyway: every field block and the `_C` block of a new document carry a signature from the request identity's key, or the node identity's when the request has none, as Go's `EnableSigning` option does. A node with no key at all writes unsigned blocks under either choice.
 
+# `defra.signature.embedded_caller_key`: An in-process write signs with the acting identity's own key
+
+- **Parents:** ["defra.signature"]
+- **Scenarios:** ["signature::caller_key::signature_in_process_write_signs_with_the_callers_key", "signature::caller_key::signature_in_process_write_without_identity_signs_with_the_node_key"]
+
+An in-process (embedded) write whose request carries the acting client identity's own local secp256k1 or Ed25519 key signs its blocks with that key whenever the write signs: the priority-1 field blocks, the `_C` block, and a `@branchable` collection's collection-level block, as Go's in-process client does with a `FullIdentity`. Verifying such a block against that identity's public key succeeds, and against the node's key fails with `signature was created by a different key`; the same holds for the blocks of a later update by that identity. A write whose request carries no key falls back to the node key: verifying its blocks against the node's key succeeds.
+
+# `go.signature.verify.acp`: Verification gated by access control
+
+- **Parents:** ["go.signature.verify"]
+- **Scenarios:** ["signature::acp::signature_acp_if_has_access_to_doc_validate_signature", "signature::acp::signature_acp_if_has_no_access_to_doc_should_error", "signature::acp_branchable::signature_acp_with_branchable_collection_if_has_collection_access_validate_signature", "signature::acp_branchable::signature_acp_with_branchable_collection_if_has_no_collection_access_should_error"]
+- **Scope:** "document tests: go client only; branchable tests: go and C clients only"
+
+On a DAC-protected collection, verifying a doc's block as an identity without access fails with `missing permission`, while the owner verifies it; on a private `@branchable` collection the collection-level block (no docID) is verifiable only by an identity with read access to the collection object.
+
 # `defra.encryption.peer.registered_identity`: A peer whose node identity the host registered fetches keys from a node with no identity
 
 - **Parents:** ["go.encryption.peer"]

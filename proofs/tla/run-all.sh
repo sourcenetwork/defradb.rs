@@ -189,6 +189,7 @@ RUNS=(
   "MC_EmbeddedSigner_Red_Actor.cfg EmbeddedSigner.tla RED"
   "MC_EmbeddedSigner_Red_Match.cfg EmbeddedSigner.tla RED"
   "MC_EmbeddedSigner_Red_Key.cfg EmbeddedSigner.tla RED"
+  "MC_EmbeddedSigner_Red_KeyType.cfg EmbeddedSigner.tla RED"
   "MC_EmbeddedSigner_Red_Owner.cfg EmbeddedSigner.tla RED"
   "MC_EmbeddedSigner_Red_Acp.cfg EmbeddedSigner.tla RED"
   "MC_EmbeddedSigner_Red_Bypass.cfg EmbeddedSigner.tla RED"

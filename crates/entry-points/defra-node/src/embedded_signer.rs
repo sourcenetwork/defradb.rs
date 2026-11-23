@@ -16,10 +16,10 @@ pub struct EmbeddedSigner {
 /// Why a local signing capability cannot be built or cannot sign a request.
 #[derive(Debug, thiserror::Error)]
 pub enum EmbeddedSignerError {
-    #[error("embedded signing requires a local Ed25519 key without a remote signer")]
+    #[error("embedded signing requires a local Ed25519 or secp256k1 key without a remote signer")]
     UnsupportedSigner,
-    #[error("invalid Ed25519 private key")]
-    InvalidPrivateKey,
+    #[error("invalid {0} private key")]
+    InvalidPrivateKey(SigningKeyType),
     #[error("private and public signing keys do not match")]
     PublicKeyMismatch,
     #[error("cannot derive a DID from the signing key")]
@@ -33,18 +33,19 @@ pub enum EmbeddedSignerError {
 impl EmbeddedSigner {
     /// Capture and validate an existing local key without looking it up by DID.
     pub fn from_config(config: SigningConfig) -> Result<Self, EmbeddedSignerError> {
-        if config.key_type != SigningKeyType::Ed25519
-            || !config.has_local_private_key()
+        let key_type = match config.key_type {
+            SigningKeyType::Ed25519 => IdentityKeyType::Ed25519,
+            SigningKeyType::Secp256k1 => IdentityKeyType::Secp256k1,
+            _ => return Err(EmbeddedSignerError::UnsupportedSigner),
+        };
+        if !config.has_local_private_key()
             || config.has_remote_signer()
             || config.signing_authorization.is_some()
         {
             return Err(EmbeddedSignerError::UnsupportedSigner);
         }
-        let identity = RawIdentity::from_identity_key_type(
-            IdentityKeyType::Ed25519,
-            &config.private_key_bytes,
-        )
-        .map_err(|_| EmbeddedSignerError::InvalidPrivateKey)?;
+        let identity = RawIdentity::from_identity_key_type(key_type, &config.private_key_bytes)
+            .map_err(|_| EmbeddedSignerError::InvalidPrivateKey(config.key_type))?;
         let public_key = identity.public_key_bytes();
         if public_key != config.public_key_bytes || hex::encode(public_key) != config.public_key_hex
         {
