@@ -37,7 +37,8 @@ relationship on it and names no owner. Only the object's owner may archive, so a
 delete by anyone else (a writer the policy lets delete) is refused before it
 commits and nothing is deleted. Changes on the object not yet sent go with the
 delete, each with a note for its actor; from the commit until the archive
-settles, the object denies everyone. A node that merges a replicated delete
+settles, the object denies everyone, and only the owner that deleted the
+document still reads its commit history. A node that merges a replicated delete
 archives nothing. Vera keeps an archived registration: the same document
 identifier cannot be registered again, so a document re-created with identical
 content stays readable by nobody.

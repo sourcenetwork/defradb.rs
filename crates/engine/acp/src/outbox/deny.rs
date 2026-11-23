@@ -3,7 +3,8 @@
 //! An owed archive (its document was deleted) denies everyone on its
 //! object, its owner and anonymous callers too, from the delete's commit
 //! until the provider holds it: a deleted document grants nothing
-//! (`proofs/tla/ArchiveOnDelete.tla`).
+//! (`proofs/tla/ArchiveOnDelete.tla`). One read is left: the actor that
+//! staged the archive still reads the document's commit history.
 //!
 //! While any delete of a tuple is unsettled, its subject is denied on its
 //! object before the provider is asked, whatever the provider still holds:
@@ -44,6 +45,10 @@ pub enum OwedDenial {
     UnlessOwner,
     /// Denied: the owner relation itself is being taken from it.
     Always,
+    /// Denied: the object's archive is owed. Only the actor that staged the
+    /// archive ([`OwedDenials::archive_actor`]) is spared, and only for the
+    /// document's commit history.
+    Archived,
 }
 
 /// The denial owed deletes put on an identity: `wide` counts the deletes on
@@ -78,7 +83,7 @@ where
     let object_key = keys::object_key(policy_id, resource, object);
     let on_object = ops::owed_at(reader, &object_key, &ops::staged_parts(&[FIRST, SECOND])).await?;
     if on_object.second > 0 {
-        return Ok(OwedDenial::Always);
+        return Ok(OwedDenial::Archived);
     }
     let wide = on_object.first;
     let named = match identity {
