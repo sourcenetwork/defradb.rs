@@ -417,6 +417,7 @@ RUNS=(
   "MC_ConnectionAdoption_Red_AdoptAnnounces.cfg ConnectionAdoption.tla RED"
   "MC_PeerDisconnect_Green.cfg PeerDisconnect.tla GREEN" # Disconnect answers only once the peer's last connection closed
   "MC_PeerDisconnect_Red_EarlyAck.cfg PeerDisconnect.tla RED" # answering before the closes (INV_AnsweredMeansClosed)
+  "MC_ExplicitDisconnect_Red_ClearOnDial.cfg ExplicitDisconnect.tla RED" # a background dial erases the marker
   "MC_ExplicitDisconnect_Green_Libp2p.cfg ExplicitDisconnect.tla GREEN" # Kademlia excludes a deliberately disconnected peer
   "MC_ExplicitDisconnect_Red_Libp2p.cfg ExplicitDisconnect.tla RED" # Kademlia ignores the marker (INV_NoRedialAfterDeliberateClose)
   "MC_ExplicitDisconnect_Red_Inbound.cfg ExplicitDisconnect.tla RED" # libp2p accepts a marked inbound dial (INV_MarkedInboundRefused)

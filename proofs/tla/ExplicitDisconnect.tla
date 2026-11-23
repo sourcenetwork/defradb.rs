@@ -32,16 +32,18 @@ NodePairs == Nodes \X Nodes
 VARIABLES
   links,           \* unordered live connections, stored in both directions
   markers,         \* peers this node disconnected on purpose
+  obligations,     \* deliberate closes not yet cleared by an explicit connect
   known,           \* peers learned from exchanged lists
   pendingLists,    \* lists in flight: <<receiver, sender, learned peer>>
   backgroundDials, \* discovery dials launched since the last explicit event
   remoteDials      \* explicit dials launched by the other side
 
-vars == <<links, markers, known, pendingLists, backgroundDials, remoteDials>>
+vars == <<links, markers, obligations, known, pendingLists, backgroundDials, remoteDials>>
 
 TypeOK ==
   /\ links \subseteq NodePairs
   /\ markers \subseteq NodePairs
+  /\ obligations \subseteq NodePairs
   /\ known \in [Nodes -> SUBSET Nodes]
   /\ pendingLists \subseteq Nodes \X Nodes \X Nodes
   /\ backgroundDials \subseteq NodePairs
@@ -54,6 +56,7 @@ Marked(a, b) == <<a, b>> \in markers
 Init ==
   /\ links = {}
   /\ markers = {}
+  /\ obligations = {}
   /\ known = [peer \in Nodes |-> {}]
   /\ pendingLists = {}
   /\ backgroundDials = {}
@@ -64,6 +67,7 @@ Init ==
 ExplicitConnect(a, b) ==
   /\ a # b
   /\ markers' = markers \ {<<a, b>>}
+  /\ obligations' = obligations \ {<<a, b>>}
   /\ IF Linked(a, b) \/ (Half = "Libp2p" /\ Marked(b, a))
        THEN /\ UNCHANGED <<links, known>>
        ELSE /\ links' = links \cup {<<a, b>>, <<b, a>>}
@@ -79,6 +83,7 @@ RemoteExplicitDial(a, b) ==
   /\ IF Half = "Libp2p" /\ Bug # "AcceptsInbound" THEN ~Marked(b, a) ELSE TRUE
   /\ links' = links \cup {<<a, b>>, <<b, a>>}
   /\ markers' = markers
+  /\ UNCHANGED obligations
   /\ known' = [known EXCEPT ![a] = known[a] \cup {b}, ![b] = known[b] \cup {a}]
   /\ remoteDials' = remoteDials \cup {<<a, b>>}
   /\ UNCHANGED <<pendingLists, backgroundDials>>
@@ -91,7 +96,7 @@ Exchange(a, b, learned) ==
   /\ Linked(a, b)
   /\ Cardinality(pendingLists) < 1
   /\ pendingLists' = pendingLists \cup {<<b, a, learned>>}
-  /\ UNCHANGED <<links, markers, known, backgroundDials, remoteDials>>
+  /\ UNCHANGED <<links, markers, obligations, known, backgroundDials, remoteDials>>
 
 \* A list in flight arrives. Learning a name does not itself dial anybody.
 LearnList ==
@@ -99,7 +104,7 @@ LearnList ==
         /\ list[3] # list[1]
         /\ known' = [known EXCEPT ![list[1]] = known[list[1]] \cup {list[3]}]
         /\ pendingLists' = pendingLists \ {list}
-  /\ UNCHANGED <<links, markers, backgroundDials, remoteDials>>
+  /\ UNCHANGED <<links, markers, obligations, backgroundDials, remoteDials>>
 
 \* A normal link loss is not deliberate. It preserves any marker.
 DropLink(a, b) ==
@@ -107,7 +112,7 @@ DropLink(a, b) ==
   /\ Linked(a, b)
   /\ links' = links \ {<<a, b>>, <<b, a>>}
   /\ remoteDials' = remoteDials \ {<<a, b>>, <<b, a>>}
-  /\ UNCHANGED <<markers, known, pendingLists, backgroundDials>>
+  /\ UNCHANGED <<markers, obligations, known, pendingLists, backgroundDials>>
 
 \* The caller explicitly disconnects. The marker survives later lists and
 \* ordinary link losses; only an explicit local action removes it.
@@ -115,6 +120,7 @@ ExplicitDisconnect(a, b) ==
   /\ a # b
   /\ Cardinality(markers) < 1
   /\ markers' = markers \cup {<<a, b>>}
+  /\ obligations' = obligations \cup {<<a, b>>}
   /\ links' = links \ {<<a, b>>, <<b, a>>}
   /\ remoteDials' = remoteDials \ {<<a, b>>, <<b, a>>}
   /\ backgroundDials' = {dial \in backgroundDials : dial[1] # a}
@@ -128,7 +134,7 @@ BackgroundDial(a, b) ==
   /\ b \in known[a]
   /\ ~Linked(a, b)
   /\ Cardinality(backgroundDials) < 1
-  /\ IF Bug = "IgnoresSticky"
+  /\ IF Bug \in {"IgnoresSticky", "ClearsSticky"}
        THEN TRUE
        ELSE ~Marked(a, b)
   /\ backgroundDials' = backgroundDials \cup {<<a, b>>}
@@ -137,7 +143,7 @@ BackgroundDial(a, b) ==
        ELSE UNCHANGED markers
   /\ links' = links \cup {<<a, b>>, <<b, a>>}
   /\ known' = [known EXCEPT ![a] = known[a] \cup {b}, ![b] = known[b] \cup {a}]
-  /\ UNCHANGED <<pendingLists, remoteDials>>
+  /\ UNCHANGED <<pendingLists, remoteDials, obligations>>
 
 Next ==
   \/ \E a, b \in Nodes : ExplicitConnect(a, b)
@@ -154,7 +160,7 @@ Spec == Init /\ [][Next]_vars /\ WF_vars(LearnList)
 \* disconnected. Explicit local actions remove the marker before dialing.
 INV_NoRedialAfterDeliberateClose ==
   \A a, b \in Nodes :
-     Marked(a, b) => <<a, b>> \notin backgroundDials
+     <<a, b>> \in obligations => <<a, b>> \notin backgroundDials
 
 \* A remote explicit dial connects where its transport can distinguish it. The
 \* marker is not erased by accepting an inbound connection.
