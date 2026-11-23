@@ -20,7 +20,7 @@
 //!
 //! The document declares [`OPENAPI_VERSION`]: 3.0.3, Go's version, because the
 //! operations it carries are Go's and its schemas are written in that dialect.
-//! `schemars` derives JSON Schema 2020-12, so [`to_openapi_30`] rewrites what
+//! `schemars` derives JSON Schema 2020-12, so `to_openapi_30` rewrites what
 //! it emits into the declared dialect rather than mixing the two.
 //!
 //! Because Go's operations are carried verbatim, the `x-defra-permission`
