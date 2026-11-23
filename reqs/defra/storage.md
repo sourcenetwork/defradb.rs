@@ -36,12 +36,12 @@ A counter field can be indexed. After local increments, or after two nodes incre
 
 An ordered query over an indexed field with `limit: 3, offset: 2` reads `limit + offset` index entries, returns exactly the page after skipping two, and leaves the query offset to the limit node so it is not applied twice. The same paging is correct when the ordered field is not indexed.
 
-# `defra.index.backfill_cache`: A stale cache does not stop an index backfill
+# `defra.index.backfill_under_writes`: An index created under writes finishes its backfill
 
 - **Parents:** ["defra.index"]
-- **Scenarios:** ["db::index::create::index_backfill_finishes_from_a_reloaded_stale_definition"]
+- **Scenarios:** ["index::backfill_under_writes::an_index_created_under_updates_is_built_and_used", "db::index::create::index_backfill_finishes_when_the_cache_lags_the_stored_definition"]
 
-When a handle's collection cache is behind the stored index definition, resuming its interrupted backfill reads the stored definition and completes by the index ID. A later query through the index returns the stored rows, and the action is cleared.
+An index created while documents of its collection are updated is built: its backfill completes, the listing shows no failed backfill, and a filter on the indexed field fetches through the index, for a value an update wrote during the build as for an untouched one. The backfill identifies its index by ID in the definition it reads from the store, so a node whose collection cache is behind the committed index definition still completes it and never fails with `index '<name>' disappeared during backfill`.
 
 # `defra.collection`: Collection-wide operations
 

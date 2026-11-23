@@ -9,7 +9,8 @@ use std::sync::{
 
 use async_trait::async_trait;
 use db::index::backfill::{encode_progress, BACKFILL_BATCH_DOCS};
-use db::{AutoCommitMutator, BackfillSource, Collection, IndexManager, DB};
+use db::index::build_gate::{GateWait, IndexBuildGate};
+use db::{AutoCommitMutator, BackfillSource, Cached, Collection, DbOptions, IndexManager, DB};
 use document::{DocID, Document, NormalValue};
 use query::DocMutator;
 use schema::{
@@ -993,91 +994,84 @@ fn index_backfill_resumes_after_a_restart() {
     .unwrap()
 }
 
-/// A process-local cache can lag the stored definition. A stale handle resumes
-/// from the stored index description and identifies the index by its ID, so
-/// the unchanged definition is not mistaken for a changed one.
+/// Holds a backfill before its first batch until the test opens it.
+#[derive(Default)]
+struct BuildGate {
+    entered: regolith::sync::Event,
+    open: regolith::sync::Event,
+}
+
+impl IndexBuildGate for BuildGate {
+    fn enter<'gate>(&'gate self, _collection_id: &'gate str, _index_id: u32) -> GateWait<'gate> {
+        Box::pin(async move {
+            self.entered.set();
+            self.open.wait().await;
+        })
+    }
+}
+
+/// The collection cache can fall behind the definition an index creation
+/// committed (#2913). The backfill identifies its index in the definition it
+/// reads from the store, so a cache without the index does not fail the build.
 #[test]
-fn index_backfill_finishes_from_a_reloaded_stale_definition() {
+#[mantra_macros::req_test("defra.index.backfill_under_writes")]
+fn index_backfill_finishes_when_the_cache_lags_the_stored_definition() {
     workers::block_on(async {
-        const COLLECTION_ID: &str = "col-index-reloaded";
-        let total = 1;
+        const COLLECTION_ID: &str = "col-index-lagging";
+        let total = 3;
+        let gate = Arc::new(BuildGate::default());
         let store = Arc::new(RegolithStore::in_memory().unwrap());
-        let stale_db = Arc::new(DB::from_arc(store.clone()).unwrap());
-        stale_db
-            .create_collection(users_schema("Reloaded", "reloaded-v1", COLLECTION_ID))
-            .await
-            .unwrap();
-        let mutator = AutoCommitMutator::new(stale_db.clone());
-        for i in 0..total {
-            create_user(&mutator, "Reloaded", &format!("user-{i}")).await;
-        }
-        drop(mutator);
-
-        let index_db = Arc::new(DB::open_from_arc(store.clone()).await.unwrap());
-        let (fields, kind) = by_name();
-        let index = index_db
-            .create_index("Reloaded", Some("by_name"), fields, kind)
-            .await
-            .unwrap();
-        stale_db.reload_cache().await.unwrap();
-        assert_eq!(index_entries(&stale_db, "Reloaded", index.id).await, total);
-
-        let mut stored = stale_db
-            .require_collection("Reloaded")
-            .unwrap()
-            .schema()
-            .clone();
-        stored.indexes[0].fields[0].descending = true;
-        let txn = stale_db.new_txn(false).await.unwrap();
-        txn.systemstore()
-            .unwrap()
-            .set(
-                &CollectionKey::new(&stored.version_id).bytes(),
-                &serde_json::to_vec(&stored).unwrap(),
+        let db = Arc::new(
+            DB::from_arc_with_options(
+                store,
+                DbOptions::default().with_index_build_gate(gate.clone()),
             )
+            .unwrap(),
+        );
+        db.create_collection(users_schema("Lagging", "lagging-v1", COLLECTION_ID))
             .await
             .unwrap();
-        txn.commit().await.unwrap();
-
-        let fence = stale_db.next_doc_short_id().await.unwrap();
-        let progress_key = ActionProgressKey::new(
-            COLLECTION_ID,
-            defra_core::Action::BACKFILL_INDEX,
-            index.id.to_string(),
-        )
-        .bytes();
-        let txn = stale_db.new_txn(false).await.unwrap();
-        {
-            let systemstore = txn.systemstore().unwrap();
-            let lease = stale_db
-                .stage_action(
-                    &systemstore,
-                    COLLECTION_ID,
-                    defra_core::Action::BACKFILL_INDEX,
-                    &index.id.to_string(),
-                )
-                .await
-                .unwrap();
-            systemstore
-                .set(&progress_key, &encode_progress(fence, 1))
-                .await
-                .unwrap();
-            drop(lease);
+        let mutator = AutoCommitMutator::new(db.clone());
+        for i in 0..total {
+            create_user(&mutator, "Lagging", &format!("user-{i}")).await;
         }
-        txn.commit().await.unwrap();
-        assert!(stale_db
-            .list_index_actions(COLLECTION_ID)
-            .await
-            .unwrap()
-            .contains_key(&index.id));
+        let before_index = db.require_collection("Lagging").unwrap().schema().clone();
 
-        stale_db.resume_index_backfills().await.unwrap();
-        assert!(!stale_db
+        let creator = db.clone();
+        let index_task = workers::spawn(
+            Some(crate::common::worker_io::pool()),
+            "test",
+            move || async move {
+                let (fields, kind) = by_name();
+                creator
+                    .create_index("Lagging", Some("by_name"), fields, kind)
+                    .await
+            },
+        )
+        .unwrap();
+
+        gate.entered.wait().await;
+        assert_eq!(
+            db.add_collection_to_cache(before_index).await.unwrap(),
+            Cached::Taken
+        );
+        assert!(db
+            .require_collection("Lagging")
+            .unwrap()
+            .get_index("by_name")
+            .is_none());
+        gate.open.set();
+
+        let index = index_task.await.unwrap().unwrap();
+        let failure = db
             .list_index_actions(COLLECTION_ID)
             .await
             .unwrap()
-            .contains_key(&index.id));
-        assert!(!progress_recorded(&stale_db, COLLECTION_ID, index.id).await);
+            .remove(&index.id)
+            .map(|action| action.reason);
+        assert_eq!(failure, None, "the backfill must complete");
+        assert_eq!(index_entries(&db, "Lagging", index.id).await, total);
+        assert_eq!(entries_for(&db, "Lagging", "user-0").await, 1);
     })
     .unwrap()
 }
