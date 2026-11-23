@@ -2,14 +2,14 @@
 //! the target returns. The counters are defradb.rs's `p2p status`, so the
 //! scenario runs Rust nodes only.
 
-use integration_test::ClientType;
 use integration_test::actions::{
     AddCollection, AddDoc, AddReplicator, Close, ConnectPeers, NewNode, Request, Start,
     SyncCounters, WaitForPeersEvents, WaitForSync,
 };
 use integration_test::m;
-use integration_test::scenario::{Common, Eventually, Text, captures};
+use integration_test::scenario::{captures, Common, Eventually, Text};
 use integration_test::test_case::TestCase;
+use integration_test::ClientType;
 use serde_json::json;
 
 fn on(node: &str) -> Common {
