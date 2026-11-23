@@ -73,6 +73,11 @@ pub trait PlanNode: MaybeSend {
         None
     }
 
+    /// A child-first join drops the plan it wraps.
+    fn joins_relations(&self) -> bool {
+        self.source().is_some_and(|source| source.joins_relations())
+    }
+
     /// The plan a join runs for each parent's related documents.
     #[cfg(test)]
     fn child_plan(&self) -> Option<&dyn PlanNode> {

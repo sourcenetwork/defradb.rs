@@ -1219,6 +1219,10 @@ impl PlanNode for TypeJoinOne {
         "typeIndexJoin"
     }
 
+    fn joins_relations(&self) -> bool {
+        true
+    }
+
     fn explain_inner(&self) -> JsonValue {
         let normal_explain = self.explain_join_one_inner();
 

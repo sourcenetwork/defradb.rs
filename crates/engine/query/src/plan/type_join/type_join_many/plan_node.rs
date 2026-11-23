@@ -260,6 +260,10 @@ impl PlanNode for TypeJoinMany {
         "typeIndexJoin"
     }
 
+    fn joins_relations(&self) -> bool {
+        true
+    }
+
     fn explain_inner(&self) -> JsonValue {
         self.explain_inner_impl()
     }
