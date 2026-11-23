@@ -201,6 +201,8 @@ fn one_to_many_to_one_deep_order_by_sub_type_of_both_desc_and_asc() {
             }
             .into(),
         ],
+        // The inverted join drops books without a publisher, as Go's: https://github.com/sourcenetwork/defradb/issues/4551
+        multiplier_excludes: &["secondary-index"],
         ..Default::default()
     }
     .execute();

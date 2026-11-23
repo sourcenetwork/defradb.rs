@@ -536,7 +536,6 @@ impl TypeJoinMany {
             let mut all_children = Vec::new();
             let mut matching_count = 0u64;
             let mut total_scanned = 0u64;
-            let mut limit_reached = false;
             let can_stop_at_limit = self.relation_filter.is_none()
                 && (self.child_order_by.is_none()
                     || (self.child_plan_provides_ordering && !self.preserve_ordered_orphans));
@@ -555,7 +554,6 @@ impl TypeJoinMany {
                 if fk_matches {
                     matching_count += 1;
                     all_children.push(child_doc.deep_clone());
-
                     // Early termination is safe for unordered child scans, and for
                     // ordered scans when the child plan is already streaming in that
                     // order. Exhaustive relation ordering still needs the full scope
@@ -564,7 +562,6 @@ impl TypeJoinMany {
                         if let Some(limit) = self.child_limit {
                             let effective_needed = self.child_offset + limit;
                             if matching_count >= effective_needed {
-                                limit_reached = true;
                                 break;
                             }
                         }
@@ -578,16 +575,6 @@ impl TypeJoinMany {
             self.go_child_metrics.doc_fetches += child_info.docs_fetched;
             self.go_child_metrics.field_fetches += child_info.fields_fetched;
             self.go_child_metrics.index_fetches += child_info.indexes_fetched;
-
-            // If limit was reached early, override index fetches with actual entries scanned.
-            // Go stops scanning when limit reached, counting ALL index entries examined
-            // (including those filtered out by residual filters like _like).
-            // child_info.docs_fetched counts entries iterated in IndexScanNode.next(),
-            // including those skipped by the residual filter, which matches Go's behavior.
-            if limit_reached {
-                self.go_child_metrics.index_fetches -= child_info.indexes_fetched;
-                self.go_child_metrics.index_fetches += child_info.docs_fetched;
-            }
 
             self.child_plan.close().await?;
 

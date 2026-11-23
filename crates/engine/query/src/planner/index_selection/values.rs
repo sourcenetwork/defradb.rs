@@ -120,7 +120,7 @@ pub(super) fn wrap_values_for_json_path(
 /// For example, a Float32 field stores values with `encode_float32_ascending`,
 /// so lookup values must also be Float32 (not Float64 or Int).
 fn normalize_value_for_field(value: NormalValue, field_kind: &FieldKind) -> NormalValue {
-    match (&value, field_kind.as_scalar().map(ScalarKind::base_kind)) {
+    match (&value, indexed_scalar_kind(field_kind)) {
         // Float64 → Float32 when schema says Float32
         (NormalValue::Float64(f), Some(ScalarKind::NillableFloat32)) => {
             NormalValue::Float32(*f as f32)
@@ -132,19 +132,19 @@ fn normalize_value_for_field(value: NormalValue, field_kind: &FieldKind) -> Norm
         // RFC3339 string → Time when the field, or its array's elements, is
         // DateTime; a String field indexes the string itself, whatever it
         // looks like
-        (NormalValue::String(s), _) if indexes_datetime(field_kind) => {
+        (NormalValue::String(s), Some(ScalarKind::NillableDateTime)) => {
             chrono::DateTime::parse_from_rfc3339(s).map_or(value, NormalValue::Time)
         }
         _ => value,
     }
 }
 
-fn indexes_datetime(field_kind: &FieldKind) -> bool {
+/// An array field indexes each element, so its element kind decides the encoding.
+fn indexed_scalar_kind(field_kind: &FieldKind) -> Option<ScalarKind> {
     field_kind
         .as_scalar()
         .or_else(|| field_kind.as_scalar_array().map(|kind| kind.element_kind()))
         .map(ScalarKind::base_kind)
-        == Some(ScalarKind::NillableDateTime)
 }
 
 /// Normalize a NormalValue for a named index field using collection field metadata.
