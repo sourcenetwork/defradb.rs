@@ -11,6 +11,10 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 # event to the settled rest (depth = events + 1), and DEADLOCK:<l> stops with
 # event l next (past the end when l = events + 1).
 RUNS=(
+  "MC_OfflineReconnect_Green.cfg OfflineReconnect.tla GREEN"
+  "MC_OfflineReconnect_Red_StalePark.cfg OfflineReconnect.tla RED"
+  "MC_OfflineReconnect_Red_StaleConnect.cfg OfflineReconnect.tla RED"
+  "MC_OfflineReconnect_Red_Failure.cfg OfflineReconnect.tla RED"
   "MC_HeaderRetry_Green.cfg HeaderRetry.tla GREEN"
   "MC_HeaderRetry_Red_Drop.cfg HeaderRetry.tla RED"
   "MC_OrderedIndexPage_Green.cfg OrderedIndexPage.tla GREEN"

@@ -22,6 +22,9 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     async fn handle_peer_connected(&self, peer_id: PeerId) {
         tracing::debug!(peer_id = %peer_id, "Peer connected");
         self.access.peer_state.peer_connected(peer_id.as_str());
+        self.runtime
+            .push_backlog
+            .peer_connected(&peer_id, std::sync::Arc::clone(&self.access.peer_state));
         self.redrive_pending_dags_for_peer(&peer_id);
         // Durable registrations without an in-memory entry can only complete
         // once a provider is reachable again: reconcile them now

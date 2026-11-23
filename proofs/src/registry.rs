@@ -1708,6 +1708,18 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // The owner rechecks connection state before applying delayed offline
+        // parks or reconnect notifications, and never clears a send failure's
+        // cooldown merely because the peer connected.
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "INV_NoStalePark / INV_KeepFailure",
+        axis: Tla,
+        anchor: "crates/database/p2p/src/sync/push_backlog.rs BacklogOwner::handle, park_peer; crates/database/p2p/src/sync/coordinator/push_worker.rs run_push_job; crates/database/p2p/src/sync/coordinator/event_handler/mod.rs handle_peer_connected",
+        model_ref: "MC_OfflineReconnect_{Green,Red_StalePark,Red_StaleConnect,Red_Failure}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/database/p2p/src/sync/coordinator/push_worker_tests.rs reconnect_wakes_offline_queue_and_fences_stale_parks, reconnect_preserves_newer_transport_cooldown; crates/database/p2p/src/sync/push_backlog.rs stale_reconnect_does_not_clear_offline_cooldown",
+    },
+    Property {
         // Admission has two tiers: a head the full map has no entry for is
         // acknowledged on its durable record alone and joins the rotation,
         // instead of being nacked while the store has room, which left the

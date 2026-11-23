@@ -272,7 +272,9 @@ where
             return JobCompletion::Failed;
         }
         context.backlog.record_head_hint_parked_offline();
-        context.backlog.park_peer_offline(job);
+        context
+            .backlog
+            .park_peer_offline(job, Arc::clone(&context.peer_state));
         return JobCompletion::Parked;
     }
 

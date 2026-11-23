@@ -206,6 +206,8 @@ struct PeerCooldown {
     /// and it has not answered since. Until it answers again, the peer stays
     /// within the unreachable peers' shared cap.
     unreachable: Option<u64>,
+    /// This cooldown was caused only by observing the peer offline.
+    offline_only: bool,
 }
 
 /// A peer's push accounting, kept beside its queue and cooldown state.
@@ -408,6 +410,11 @@ enum Command {
     },
     ParkPeerOffline {
         peer_key: String,
+        peer_state: Arc<crate::sync::peer_state::PeerStateTracker>,
+    },
+    PeerConnected {
+        peer_key: String,
+        peer_state: Arc<crate::sync::peer_state::PeerStateTracker>,
     },
     PeerAnswered {
         peer_key: String,
@@ -531,9 +538,25 @@ impl PushBacklog {
     /// Park the peer of a job the transport already reported offline. Unlike
     /// a failed probe, this keeps its queued jobs in the backlog for the
     /// reconnect window.
-    pub(crate) fn park_peer_offline(&self, job: &PushJobSpec) {
+    pub(crate) fn park_peer_offline(
+        &self,
+        job: &PushJobSpec,
+        peer_state: Arc<crate::sync::peer_state::PeerStateTracker>,
+    ) {
         self.commands.send(Command::ParkPeerOffline {
             peer_key: job.peer_id.to_string(),
+            peer_state,
+        });
+    }
+
+    pub(crate) fn peer_connected(
+        &self,
+        peer_id: &PeerId,
+        peer_state: Arc<crate::sync::peer_state::PeerStateTracker>,
+    ) {
+        self.commands.send(Command::PeerConnected {
+            peer_key: peer_id.to_string(),
+            peer_state,
         });
     }
 
@@ -684,7 +707,7 @@ impl BacklogOwner {
             Command::ParkPeerAtCapacity {
                 peer_key,
                 retry_after,
-            } => self.park_peer(peer_key, retry_after, false),
+            } => self.park_peer(peer_key, retry_after, false, false),
             Command::ParkPeerUnreachable {
                 peer_key,
                 probe_of,
@@ -693,8 +716,27 @@ impl BacklogOwner {
                 let jobs = self.park_peer_unreachable(peer_key, probe_of);
                 let _ = reply.send(jobs);
             }
-            Command::ParkPeerOffline { peer_key } => {
-                self.park_peer(peer_key, None, true);
+            Command::ParkPeerOffline {
+                peer_key,
+                peer_state,
+            } => {
+                if !peer_state.is_connected(&peer_key) {
+                    self.park_peer(peer_key, None, true, true);
+                }
+            }
+            Command::PeerConnected {
+                peer_key,
+                peer_state,
+            } => {
+                if peer_state.is_connected(&peer_key)
+                    && self
+                        .inner
+                        .peer_cooldowns
+                        .get(&peer_key)
+                        .is_some_and(|cooldown| cooldown.offline_only)
+                {
+                    self.inner.peer_cooldowns.remove(&peer_key);
+                }
             }
             Command::PeerAnswered { peer_key } => self.peer_answered(&peer_key),
             Command::TakeQueuedForPeer { peer_key, reply } => {
@@ -901,8 +943,19 @@ impl BacklogOwner {
         }
     }
 
-    fn park_peer(&mut self, peer_key: String, retry_after: Option<Duration>, unreachable: bool) {
+    fn park_peer(
+        &mut self,
+        peer_key: String,
+        retry_after: Option<Duration>,
+        unreachable: bool,
+        offline: bool,
+    ) {
         let inner = &mut self.inner;
+        let offline_only = offline
+            && inner
+                .peer_cooldowns
+                .get(&peer_key)
+                .is_none_or(|cooldown| cooldown.offline_only);
         let consecutive = inner
             .peer_cooldowns
             .get(&peer_key)
@@ -947,6 +1000,7 @@ impl BacklogOwner {
                 until,
                 consecutive,
                 unreachable: spell,
+                offline_only,
             },
         );
         if !unreachable {
@@ -1022,7 +1076,7 @@ impl BacklogOwner {
                 .get(&peer_key)
                 .and_then(|cooldown| cooldown.unreachable)
                 == probe_of;
-        self.park_peer(peer_key.clone(), None, true);
+        self.park_peer(peer_key.clone(), None, true, false);
         if failed_probe {
             self.take_queued_for_peer(&peer_key)
         } else {
@@ -1305,6 +1359,46 @@ mod tests {
             Cid::new_v1(0x55, Code::Sha2_256.digest(cid_seed)),
             Bytes::from_static(b"head-block"),
         )
+    }
+
+    #[test]
+    fn stale_reconnect_does_not_clear_offline_cooldown() {
+        let peer_state = Arc::new(crate::sync::peer_state::PeerStateTracker::new());
+        let mut owner = BacklogOwner {
+            inner: Inner::default(),
+            waiters: VecDeque::new(),
+            limits: Limits {
+                item_capacity: 4,
+                byte_capacity: usize::MAX,
+                per_peer_active_cap: 1,
+                worker_count: 1,
+                peer_capacity_cooldown_base: DEFAULT_PEER_CAPACITY_COOLDOWN_BASE,
+            },
+            counters: Arc::new(Counters::default()),
+        };
+        assert_eq!(
+            owner.enqueue(job("peer", b"queued")),
+            EnqueueOutcome::Enqueued
+        );
+        owner.handle(Command::ParkPeerOffline {
+            peer_key: "peer".into(),
+            peer_state: Arc::clone(&peer_state),
+        });
+        peer_state.peer_connected("peer");
+        let delayed = Command::PeerConnected {
+            peer_key: "peer".into(),
+            peer_state: Arc::clone(&peer_state),
+        };
+        peer_state.peer_disconnected("peer");
+        owner.handle(delayed);
+        assert!(owner.inner.peer_cooldowns.contains_key("peer"));
+
+        peer_state.peer_connected("peer");
+        owner.handle(Command::PeerConnected {
+            peer_key: "peer".into(),
+            peer_state,
+        });
+        assert!(!owner.inner.peer_cooldowns.contains_key("peer"));
     }
 
     fn versioned_job(peer: &str, doc_id: &str, priority: u64) -> PushJobSpec {
