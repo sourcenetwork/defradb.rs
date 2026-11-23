@@ -1,11 +1,16 @@
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use db::{AutoCommitFetcher, AutoCommitMutator, TruncateError, DB};
+use db::{
+    AutoCommitFetcher, AutoCommitMutator, DbCollectionProvider, DbTransactionRegistry,
+    LensedAutoCommitFetcher, TruncateError, DB,
+};
 use defra_core::{RequestContext, TxnId};
 use document::{DocID, Document, NormalValue};
 use query::documents::Filter;
-use query::{DocFetcher, DocMutator};
+use query::{DocFetcher, DocMutator, QueryExecutor, QueryRequest};
 use schema::{CollectionVersion, FieldDescription, FieldKind, IndexDescription};
 use storage::corekv::{IterOptions, Key, RetryAttemptFuture};
 use storage::keys::{DatastoreSE, IndexDataStoreKey};
@@ -56,10 +61,14 @@ async fn set_age(db: &Arc<DB<RegolithStore>>, doc_id: &DocID, age: i64) {
         .unwrap();
 }
 
+type RacingWriteFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
+type RacingWrite = Arc<dyn Fn() -> RacingWriteFuture + Send + Sync>;
+
+/// Commits `race` once, after the first attempt has read and before it
+/// commits.
 struct FilterMovingStore {
     inner: Arc<RegolithStore>,
-    racer: Arc<DB<RegolithStore>>,
-    doc_id: DocID,
+    race: RacingWrite,
     armed: Arc<AtomicBool>,
     attempts: Arc<AtomicUsize>,
 }
@@ -95,8 +104,7 @@ impl storage::corekv::Store for FilterMovingStore {
     {
         let attempt = Box::new(FilterMovingAttempt {
             inner: attempt,
-            racer: Arc::clone(&self.racer),
-            doc_id: self.doc_id.clone(),
+            race: Arc::clone(&self.race),
             armed: Arc::clone(&self.armed),
             attempts: Arc::clone(&self.attempts),
         });
@@ -110,8 +118,7 @@ impl storage::corekv::Store for FilterMovingStore {
 
 struct FilterMovingAttempt {
     inner: storage::corekv::RetryAttempt,
-    racer: Arc<DB<RegolithStore>>,
-    doc_id: DocID,
+    race: RacingWrite,
     armed: Arc<AtomicBool>,
     attempts: Arc<AtomicUsize>,
 }
@@ -122,7 +129,7 @@ impl storage::corekv::RetryAttemptFn for FilterMovingAttempt {
             self.attempts.fetch_add(1, Ordering::SeqCst);
             let output = self.inner.run(txn).await?;
             if self.armed.swap(false, Ordering::SeqCst) {
-                set_age(&self.racer, &self.doc_id, 31).await;
+                (self.race)().await;
             }
             Ok(output)
         })
@@ -138,10 +145,16 @@ fn a_conflicted_filtered_truncate_rereads_its_matches() {
         let alice = create_user(&AutoCommitMutator::new(Arc::clone(&racer)), "Alice", 30).await;
         let armed = Arc::new(AtomicBool::new(true));
         let attempts = Arc::new(AtomicUsize::new(0));
+        let race: RacingWrite = {
+            let racer = Arc::clone(&racer);
+            Arc::new(move || {
+                let (racer, alice) = (Arc::clone(&racer), alice.clone());
+                Box::pin(async move { set_age(&racer, &alice, 31).await })
+            })
+        };
         let store = FilterMovingStore {
             inner: Arc::clone(&inner),
-            racer: Arc::clone(&racer),
-            doc_id: alice,
+            race,
             armed: Arc::clone(&armed),
             attempts: Arc::clone(&attempts),
         };
@@ -158,6 +171,89 @@ fn a_conflicted_filtered_truncate_rereads_its_matches() {
         let docs = AutoCommitFetcher::new(db).get_all("Users").await.unwrap();
         assert_eq!(docs.len(), 1);
         assert_eq!(docs[0].get("age"), Some(&NormalValue::Int(31)));
+    })
+    .unwrap()
+}
+
+async fn run(queries: &dyn QueryExecutor, request: &str) -> serde_json::Value {
+    let txn = queries.begin_txn(false).await.unwrap();
+    let response = queries
+        .execute_in_txn(QueryRequest::new(request), &txn)
+        .await;
+    assert!(!response.has_errors(), "{request}: {:?}", response.errors);
+    queries.commit_txn(&txn).await.unwrap();
+    response.data.unwrap()
+}
+
+#[test]
+fn a_filtered_truncate_rereads_after_a_related_document_leaves_the_filter() {
+    workers::block_on(async {
+        let inner = Arc::new(RegolithStore::in_memory().unwrap());
+        let racer = Arc::new(DB::open((*inner).clone()).await.unwrap());
+        let ctx = RequestContext::ambient();
+        racer
+            .add_collection(&ctx, "type Author { name: String }")
+            .await
+            .unwrap();
+        racer
+            .add_collection(&ctx, "type Book { title: String author: Author }")
+            .await
+            .unwrap();
+        let queries: Arc<dyn QueryExecutor> =
+            Arc::new(query::QueryRunner::with_arc_registry_and_provider(
+                LensedAutoCommitFetcher::new(Arc::clone(&racer)),
+                DbCollectionProvider::new_arc(Arc::clone(&racer)),
+                Arc::new(DbTransactionRegistry::new(Arc::clone(&racer))),
+            ));
+        let created = run(
+            queries.as_ref(),
+            r#"mutation { add_Author(input: {name: "Alice"}) { _docID } }"#,
+        )
+        .await;
+        let author = created["add_Author"][0]["_docID"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        run(
+            queries.as_ref(),
+            &format!(
+                r#"mutation {{ add_Book(input: {{title: "Kept", author: "{author}"}}) {{ _docID }} }}"#
+            ),
+        )
+        .await;
+
+        let rename = format!(
+            r#"mutation {{ update_Author(docID: "{author}", input: {{name: "Bob"}}) {{ _docID }} }}"#
+        );
+        let race: RacingWrite = {
+            let queries = Arc::clone(&queries);
+            Arc::new(move || {
+                let (queries, rename) = (Arc::clone(&queries), rename.clone());
+                Box::pin(async move {
+                    run(queries.as_ref(), &rename).await;
+                })
+            })
+        };
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let store = FilterMovingStore {
+            inner: Arc::clone(&inner),
+            race,
+            armed: Arc::new(AtomicBool::new(true)),
+            attempts: Arc::clone(&attempts),
+        };
+        let db = Arc::new(DB::open(store).await.unwrap());
+        let by_alice: Filter = serde_json::json!({"author": {"name": {"_eq": "Alice"}}}).into();
+
+        db.truncate_collection_as(&ctx, "Book", Some(&by_alice))
+            .await
+            .unwrap();
+
+        assert!(
+            attempts.load(Ordering::SeqCst) >= 2,
+            "the rename conflicted with the page's selection"
+        );
+        let books = run(queries.as_ref(), "query { Book { title } }").await;
+        assert_eq!(books["Book"], serde_json::json!([{"title": "Kept"}]));
     })
     .unwrap()
 }
