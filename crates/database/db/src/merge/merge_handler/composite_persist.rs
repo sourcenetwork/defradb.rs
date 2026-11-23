@@ -364,6 +364,25 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             }
         }
 
+        if !doc_is_tombstoned && !collection.schema().chunked_fields.is_empty() {
+            let rebuilt = crate::chunk::rebuild::build_missing(
+                &self.db,
+                datastore,
+                systemstore,
+                crate::chunk::rebuild::MergedParent {
+                    collection,
+                    doc_short_id: context.doc_short_id,
+                    doc_id: context.doc_id_str,
+                    doc: &doc,
+                    merged: &state.field_values,
+                    encrypted: context.block.encryption.is_some()
+                        || !state.linked_encryption_cids.is_empty(),
+                },
+            )
+            .await?;
+            state.rebuilt_chunks.extend(rebuilt);
+        }
+
         if let Some(enc_key) = self.se_enc_key() {
             if let Err(e) = se_merge::generate_merge_artifacts(
                 datastore,

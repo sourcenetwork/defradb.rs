@@ -766,6 +766,7 @@ pub(super) struct ConnectedPeerTransport {
     before_reply:
         Option<Arc<dyn Fn(String) -> futures::future::BoxFuture<'static, ()> + Send + Sync>>,
     retry_after_ms: Option<u64>,
+    replicators: Option<Vec<p2p::ReplicatorInfo>>,
     script: Option<ReplyScript>,
     arrivals: Arc<kovan::Atom<Vec<Instant>>>,
     publishes: Arc<AtomicUsize>,
@@ -781,10 +782,16 @@ impl ConnectedPeerTransport {
             require_selected_authority: None,
             before_reply: None,
             retry_after_ms: None,
+            replicators: None,
             script: None,
             arrivals: Arc::new(kovan::Atom::new(Vec::new())),
             publishes: Arc::new(AtomicUsize::new(0)),
         }
+    }
+
+    pub(super) fn listing_replicators(mut self, replicators: Vec<p2p::ReplicatorInfo>) -> Self {
+        self.replicators = Some(replicators);
+        self
     }
 
     /// How many gossip publishes reached this transport. The remote peer is
@@ -1076,7 +1083,7 @@ impl p2p::P2PTransport for ConnectedPeerTransport {
     }
 
     async fn list_replicators(&self) -> p2p::Result<Vec<p2p::ReplicatorInfo>> {
-        Err(unreachable_transport())
+        self.replicators.clone().ok_or_else(unreachable_transport)
     }
 
     async fn get_replicator(&self, _peer_id: &PeerId) -> p2p::Result<Option<p2p::ReplicatorInfo>> {
