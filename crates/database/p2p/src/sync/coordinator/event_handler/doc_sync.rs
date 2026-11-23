@@ -11,6 +11,7 @@ use super::super::SyncCoordinator;
 use crate::error::{Error, Result};
 use crate::message::{DocSyncItem, DocSyncReply};
 use crate::signing::sign_with_transport;
+use crate::sync::doc_sync_ids::{check_doc_id_limit, with_followers};
 use crate::transport::{P2PTransport, PeerId};
 
 impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
@@ -121,25 +122,6 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         authorized
     }
 
-    // A synced parent brings the documents that follow it.
-    async fn with_followers(&self, doc_ids: &[String]) -> Vec<String> {
-        let mut all = doc_ids.to_vec();
-        for doc_id in doc_ids {
-            match self
-                .subscriptions
-                .head_provider
-                .following_doc_ids(doc_id)
-                .await
-            {
-                Ok(followers) => all.extend(followers),
-                Err(e) => {
-                    tracing::warn!(doc_id = %doc_id, error = %e, "Failed to find documents following a DocSync document");
-                }
-            }
-        }
-        all
-    }
-
     pub(super) async fn handle_doc_sync_request(
         &self,
         peer_id: PeerId,
@@ -149,18 +131,14 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         self.check_peer_is_replicator(&peer_id).await?;
 
         let max_doc_ids = self.runtime.max_doc_sync_request_doc_ids;
-        if request.doc_ids.len() > max_doc_ids {
+        if let Err(error) = check_doc_id_limit(request.doc_ids.len(), max_doc_ids) {
             tracing::warn!(
                 peer_id = %peer_id,
                 doc_ids_count = request.doc_ids.len(),
                 max = max_doc_ids,
                 "DocSyncRequest exceeds configured doc ID limit, rejecting"
             );
-            return Err(Error::InvalidConfig(format!(
-                "DocSyncRequest contains {} doc IDs, exceeding the limit of {}",
-                request.doc_ids.len(),
-                max_doc_ids,
-            )));
+            return Err(error);
         }
 
         tracing::debug!(
@@ -171,7 +149,9 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         );
 
         let mut results: Vec<DocSyncItem> = Vec::new();
-        for doc_id in self.with_followers(&request.doc_ids).await {
+        for doc_id in
+            with_followers(self.subscriptions.head_provider.as_ref(), &request.doc_ids).await
+        {
             let doc_id = &doc_id;
             tracing::trace!(doc_id = %doc_id, "Looking up heads for document");
             match self
