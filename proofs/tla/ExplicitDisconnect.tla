@@ -60,12 +60,11 @@ Init ==
   /\ remoteDials = {}
 
 \* A caller explicitly connects to a peer. This is the local action that
-\* clears an earlier deliberate disconnect.
+\* clears an earlier deliberate disconnect, even when a link already exists.
 ExplicitConnect(a, b) ==
   /\ a # b
-  /\ ~Linked(a, b)
   /\ markers' = markers \ {<<a, b>>}
-  /\ IF Half = "Libp2p" /\ Marked(b, a)
+  /\ IF Linked(a, b) \/ (Half = "Libp2p" /\ Marked(b, a))
        THEN /\ UNCHANGED <<links, known>>
        ELSE /\ links' = links \cup {<<a, b>>, <<b, a>>}
             /\ known' = [known EXCEPT ![a] = known[a] \cup {b}, ![b] = known[b] \cup {a}]
