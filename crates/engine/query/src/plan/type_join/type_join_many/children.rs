@@ -559,7 +559,6 @@ impl TypeJoinMany {
                 if fk_matches {
                     matching_count += 1;
                     all_children.push(child_doc.deep_clone());
-
                     // Early termination is safe for unordered child scans, and for
                     // ordered scans when the child plan is already streaming in that
                     // order. Exhaustive relation ordering still needs the full scope

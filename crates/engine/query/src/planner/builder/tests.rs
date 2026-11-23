@@ -749,6 +749,9 @@ fn test_plan_relation_with_limit() {
     .unwrap()
 }
 
+// ========================================================================
+// Nested Relation Filter Tests
+// ========================================================================
 #[test]
 fn test_plan_one_to_many_child_limit_does_not_bound_index_scan() {
     workers::block_on(async {
