@@ -848,8 +848,24 @@ async fn retire_older_head(
     }
     backlog.try_enqueue(newer).await;
 
-    assert_eq!(push.join().await.unwrap(), JobCompletion::Retired);
-    backlog.job_done(&active, JobCompletion::Retired).await;
+    assert_eq!(
+        push.join().await.unwrap(),
+        JobCompletion::RetiredAfterDelivery
+    );
+    backlog
+        .job_done(&active, JobCompletion::RetiredAfterDelivery)
+        .await;
+    let snapshot = backlog.snapshot().await;
+    assert_eq!(snapshot.completed_total, 0);
+    assert!(
+        snapshot
+            .per_peer
+            .iter()
+            .find(|peer| peer.peer_id == "peer")
+            .unwrap()
+            .last_success_at_ms
+            > 0
+    );
     backlog.close();
     // The fake recorder forwards on its own task; wait for it to go quiet.
     let mut reported = Vec::new();
@@ -859,6 +875,34 @@ async fn retire_older_head(
         reported.push(event);
     }
     reported
+}
+
+#[nuclei::test]
+async fn retired_before_send_does_not_record_delivery() {
+    let backlog = PushBacklog::new(64, usize::MAX, 1, 1, edge::testing::edge());
+    let transport = TestTransport::new(Vec::new());
+    let (context, _failures) =
+        test_context(transport.clone(), backlog.clone(), Duration::from_secs(1));
+    backlog.try_enqueue(versioned_job("peer", 1)).await;
+    let active = backlog.next_job().await.unwrap();
+    backlog.try_enqueue(versioned_job("peer", 2)).await;
+    assert_eq!(
+        run_push_job(&context, &active).await,
+        JobCompletion::Retired
+    );
+    assert!(transport.sent().is_empty());
+    backlog.job_done(&active, JobCompletion::Retired).await;
+    let snapshot = backlog.snapshot().await;
+    assert_eq!(
+        snapshot
+            .per_peer
+            .iter()
+            .find(|peer| peer.peer_id == "peer")
+            .unwrap()
+            .last_success_at_ms,
+        0
+    );
+    backlog.close();
 }
 
 /// A push the peer acknowledged after a newer job for its document was

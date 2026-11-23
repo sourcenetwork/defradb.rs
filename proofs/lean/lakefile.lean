@@ -7,6 +7,9 @@ lean_lib ChildPage where
 package defraConvergence where
 
 @[default_target]
+lean_lib HeaderRetry where
+
+@[default_target]
 lean_lib SyncedMigrationTransform where
 
 @[default_target]

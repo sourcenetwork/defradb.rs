@@ -423,7 +423,11 @@ where
         if job.marker_generation.is_some() && is_whole_frontier(context, job).await {
             let _ = report_push_ack(&context.failure_tx, job).await;
         }
-        JobCompletion::Retired
+        if any_failed {
+            JobCompletion::Retired
+        } else {
+            JobCompletion::RetiredAfterDelivery
+        }
     }
 }
 

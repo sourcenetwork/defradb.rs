@@ -190,6 +190,8 @@ pub enum JobCompletion {
     Succeeded,
     Failed,
     Retired,
+    /// A superseded job whose send nevertheless succeeded.
+    RetiredAfterDelivery,
     Parked,
 }
 
@@ -1193,13 +1195,13 @@ impl BacklogOwner {
             JobCompletion::Parked => {
                 self.counters.parked_total.fetch_add(1, Ordering::Relaxed);
             }
-            JobCompletion::Retired => {}
+            JobCompletion::Retired | JobCompletion::RetiredAfterDelivery => {}
         }
         let metrics = self.inner.metrics.entry(peer_key).or_default();
         self.inner.metrics_sequence = self.inner.metrics_sequence.saturating_add(1);
         metrics.last_activity_seq = self.inner.metrics_sequence;
         match completion {
-            JobCompletion::Succeeded => {
+            JobCompletion::Succeeded | JobCompletion::RetiredAfterDelivery => {
                 metrics.last_success_ms = web_time::SystemTime::now()
                     .duration_since(web_time::UNIX_EPOCH)
                     .unwrap_or_default()
