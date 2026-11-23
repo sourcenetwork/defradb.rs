@@ -2628,12 +2628,12 @@ pub const PROPERTIES: &[Property] = &[
         // #3043: a patch that drops a field an index reads is refused, so an
         // index never names a field its collection lacks.
         family: "Indexed field removal",
-        name: "accepted_keeps_indexes_resolvable / refusal_names_a_dropped_read / no_dropped_read_accepted / adding_fields_accepted: an accepted patch leaves every index reading real fields, and only dropping a read field is refused",
+        name: "accepted_keeps_indexes_resolvable / refusal_names_a_dropped_read / no_dropped_read_accepted / adding_fields_accepted / errors_exact / errors_refuse_iff_nonempty / errors_nodup: an accepted patch leaves every index reading real fields, only dropping a read field is refused, and each such field gets one error",
         axis: Lean,
         anchor: "crates/foundation/schema/src/definition_validation/index_validators.rs validate_indexed_field_not_removed; crates/database/db/src/definition/patch/mod.rs DB::patch_collection",
         model_ref: "IndexedFieldRemoval (lake build)",
         tiers: &[Boundary],
-        bound_by: "crates/foundation/schema/tests/index_field_removal_tests.rs removing_an_indexed_field_names_the_index, removing_a_field_no_index_reads_is_accepted, removing_a_field_with_an_encrypted_index_is_refused; tools/integration-test/tests/testo/index/remove_indexed_field.rs removing_an_indexed_field_is_refused_and_writes_go_on, removing_a_field_no_index_reads_is_accepted",
+        bound_by: "crates/foundation/schema/tests/index_field_removal_tests.rs removing_an_indexed_field_names_the_index, removing_a_field_no_index_reads_is_accepted, removing_a_field_with_an_encrypted_index_is_refused, removing_a_field_with_a_fulltext_index_is_refused, a_field_two_indexes_read_gets_one_error; crates/database/db/tests/index/patch.rs removing_an_indexed_field_is_refused_with_the_index_name, removing_a_fulltext_field_is_refused_with_the_index_name; tools/integration-test/tests/testo/index/remove_indexed_field.rs removing_an_indexed_field_is_refused_and_writes_go_on, removing_a_fulltext_field_names_the_field_and_keeps_the_collection_usable, removing_a_field_no_index_reads_is_accepted",
     },
     Property {
         // A document call through a selected collection version (possibly

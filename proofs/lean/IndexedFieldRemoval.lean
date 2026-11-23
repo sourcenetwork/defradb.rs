@@ -8,8 +8,11 @@ patch cannot change indexes), so every later write would try to read a field
 the collection no longer has, and fail.
 
 So the patch check refuses a patch when some index reads a field that the
-old version had and the new one does not. An index and an encrypted index
-are both just "a list of field names it reads" here.
+old version had and the new one does not. An index, an encrypted index and
+a full-text index are all just "a list of field names it reads" here.
+
+The refusal reports one error per dropped field some index reads, however
+many indexes read it, in the old version's field order.
 
 What must never happen: an accepted patch leaves an index reading a field
 the new version does not have, while every index read real fields before.
@@ -18,8 +21,9 @@ such as one that only adds fields, is always accepted.
 
 This file proves that (`accepted_keeps_indexes_resolvable`), that a refusal
 always names a dropped field some index reads (`refusal_names_a_dropped_read`),
-and that a patch dropping no read field is accepted (`no_dropped_read_accepted`,
-`adding_fields_accepted`).
+that a patch dropping no read field is accepted (`no_dropped_read_accepted`,
+`adding_fields_accepted`), and that the errors name each such field exactly
+once (`errors_refuse_iff_nonempty`, `errors_exact`, `errors_nodup`).
 
 Rust anchor: `crates/foundation/schema/src/definition_validation/index_validators.rs`
 `validate_indexed_field_not_removed`, run by `validate_collection_changes`
@@ -105,5 +109,62 @@ theorem adding_fields_accepted (old added : List Name)
   apply no_dropped_read_accepted
   intro _ _ f _ hold
   exact List.mem_append_left added hold
+
+-- Some index reads this field.
+def readByAny (indexes : List (List Name)) (f : Name) : Bool :=
+  -- Any index whose field list contains it.
+  indexes.any (fun reads => reads.contains f)
+
+-- The fields the errors name: every old field that was dropped and is read
+-- by some index, in the old order. One entry per field, not per index.
+def errors (old new : List Name) (indexes : List (List Name)) : List Name :=
+  -- Keep the old fields that are dropped and read.
+  old.filter (fun f => dropped old new f && readByAny indexes f)
+
+-- Promise: a field is named exactly when it was dropped and an index reads it.
+theorem errors_exact (old new : List Name) (indexes : List (List Name)) (f : Name) :
+    f ∈ errors old new indexes ↔
+      (f ∈ old ∧ f ∉ new ∧ ∃ reads ∈ indexes, f ∈ reads) := by
+  -- Unfold to membership facts and let simp line them up.
+  simp only [errors, List.mem_filter, dropped, readByAny, Bool.and_eq_true,
+    List.contains_iff_mem, Bool.not_eq_true', List.any_eq_true, decide_eq_true_eq]
+  constructor
+  · -- From the filter: the field is old, not new, and some index reads it.
+    rintro ⟨hold, ⟨_, hnew⟩, hread⟩
+    refine ⟨hold, ?_, hread⟩
+    simpa using hnew
+  · -- Back: each fact gives the matching filter condition.
+    rintro ⟨hold, hnew, hread⟩
+    refine ⟨hold, ⟨hold, ?_⟩, hread⟩
+    simpa using hnew
+
+-- Promise: the check refuses exactly when there is at least one error.
+theorem errors_refuse_iff_nonempty (old new : List Name)
+    (indexes : List (List Name)) :
+    refuses old new indexes = true ↔ errors old new indexes ≠ [] := by
+  constructor
+  · -- A refusal names a dropped read field, and that field is an error.
+    intro h hnil
+    obtain ⟨reads, hreads, f, hf, hold, hnew⟩ :=
+      refusal_names_a_dropped_read old new indexes h
+    have hmem : f ∈ errors old new indexes :=
+      (errors_exact old new indexes f).mpr ⟨hold, hnew, reads, hreads, hf⟩
+    rw [hnil] at hmem
+    exact absurd hmem (List.not_mem_nil f)
+  · -- An error is a dropped field some index reads, so the check refuses.
+    intro hne
+    obtain ⟨f, hf⟩ := List.exists_mem_of_ne_nil _ hne
+    obtain ⟨hold, hnew, reads, hreads, hread⟩ :=
+      (errors_exact old new indexes f).mp hf
+    simp only [refuses, List.any_eq_true]
+    refine ⟨reads, hreads, f, hread, ?_⟩
+    simp [dropped, List.contains_iff_mem, hold, hnew]
+
+-- Promise: when the old version names each field once, so do the errors:
+-- a field two indexes read still gets one error.
+theorem errors_nodup (old new : List Name) (indexes : List (List Name))
+    (h : old.Nodup) : (errors old new indexes).Nodup := by
+  -- Filtering a list without repeats keeps it without repeats.
+  exact h.filter _
 
 end IndexedFieldRemoval

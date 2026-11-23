@@ -1,6 +1,6 @@
 //! Validators that keep a collection's indexes naming only its own fields.
 
-use rapidhash::{HashSetExt, RapidHashSet};
+use rapidhash::RapidHashSet;
 
 use super::DefinitionState;
 
@@ -24,15 +24,6 @@ pub(super) fn validate_indexed_field_not_removed(
             continue;
         };
         let kept: RapidHashSet<&str> = new_col.fields.iter().map(|f| f.name.as_str()).collect();
-        let mut removed = RapidHashSet::new();
-        for field in &old_col.fields {
-            if !kept.contains(field.name.as_str()) {
-                removed.insert(field.name.as_str());
-            }
-        }
-        if removed.is_empty() {
-            continue;
-        }
         let plain = new_col.indexes.iter().flat_map(|index| {
             index
                 .fields
@@ -43,8 +34,18 @@ pub(super) fn validate_indexed_field_not_removed(
             .encrypted_indexes
             .iter()
             .map(|index| ("an encrypted index".to_string(), index.field_name.as_str()));
-        for (index, field) in plain.chain(encrypted) {
-            if removed.contains(field) {
+        let fulltext = new_col
+            .fulltext_indexes
+            .iter()
+            .map(|index| ("a full-text index".to_string(), index.field_name.as_str()));
+        let readers: Vec<(String, &str)> = plain.chain(encrypted).chain(fulltext).collect();
+        // One error per removed field, naming the first index that reads it.
+        for field in &old_col.fields {
+            let field = field.name.as_str();
+            if kept.contains(field) {
+                continue;
+            }
+            if let Some((index, _)) = readers.iter().find(|(_, read)| *read == field) {
                 errs.push(format!(
                     "cannot remove field '{field}': {index} depends on it, drop the index first. Collection: {}",
                     new_col.name

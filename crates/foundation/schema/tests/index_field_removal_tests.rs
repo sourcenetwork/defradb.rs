@@ -1,7 +1,7 @@
 use schema::definition_validation::validate_collection_changes;
 use schema::{
     CType, CollectionVersion, EncryptedIndexDescription, FieldDescription, FieldKind,
-    IndexDescription,
+    FullTextIndexDescription, IndexDescription,
 };
 
 fn users(fields: &[&str]) -> CollectionVersion {
@@ -57,5 +57,37 @@ fn removing_a_field_with_an_encrypted_index_is_refused() {
     assert!(
         error.starts_with("cannot remove field 'name': an encrypted index depends on it"),
         "{error}"
+    );
+}
+
+#[test]
+fn removing_a_field_with_a_fulltext_index_is_refused() {
+    let mut old = users(&["age", "body"]);
+    old.fulltext_indexes = vec![FullTextIndexDescription::new("body")];
+    let mut new = users(&["age"]);
+    new.fulltext_indexes = old.fulltext_indexes.clone();
+    let error = validate_collection_changes(&[old], &[new]).unwrap_err();
+    assert_eq!(
+        error,
+        "cannot remove field 'body': a full-text index depends on it, drop the index first. Collection: Users"
+    );
+}
+
+#[test]
+fn a_field_two_indexes_read_gets_one_error() {
+    let mut old = users(&["age", "name"]);
+    old.indexes = vec![
+        IndexDescription::new("Users_name_ASC").with_field("name", false),
+        IndexDescription::new("Users_name_age")
+            .with_field("name", false)
+            .with_field("age", false),
+    ];
+    let mut new = users(&[]);
+    new.indexes = old.indexes.clone();
+    let error = validate_collection_changes(&[old], &[new]).unwrap_err();
+    assert_eq!(
+        error,
+        "cannot remove field 'age': index 'Users_name_age' depends on it, drop the index first. Collection: Users\n\
+         cannot remove field 'name': index 'Users_name_ASC' depends on it, drop the index first. Collection: Users"
     );
 }
