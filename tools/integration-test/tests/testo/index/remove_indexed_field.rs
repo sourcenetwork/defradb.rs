@@ -117,3 +117,47 @@ fn removing_a_fulltext_field_names_the_field_and_keeps_the_collection_usable() {
     }
     .execute();
 }
+
+#[test]
+#[mantra_macros::req_test("defra.index.field_removal")]
+fn removing_an_embedding_source_keeps_the_collection_usable() {
+    TestCase {
+        id: integration_test::scenario_id!(),
+        actions: vec![
+            AddCollection {
+                sdl: r#"
+                    type Users {
+                        name: String
+                        name_v: [Float32!] @embedding(fields: ["name"], provider: "ollama", model: "nomic-embed-text", url: "http://localhost:11434/api")
+                    }
+                "#
+                .into(),
+                ..Default::default()
+            }
+            .into(),
+            PatchCollection {
+                patch: r#"[{ "op": "remove", "path": "/Users/Fields/1" }]"#.into(),
+                expected_error: Some(
+                    "the given field does not exist. Embedding generation field: name".into(),
+                ),
+                ..Default::default()
+            }
+            .into(),
+            // The vector is given, so no embedding is generated.
+            AddDoc {
+                collection: "Users".into(),
+                doc_map: Some(json!({ "name": "ann", "name_v": [1, 2, 3] })),
+                ..Default::default()
+            }
+            .into(),
+            Request {
+                request: r#"query { Users { name } }"#.into(),
+                expected_data: json!({ "Users": [{ "name": "ann" }] }),
+                ..Default::default()
+            }
+            .into(),
+        ],
+        ..Default::default()
+    }
+    .execute();
+}
