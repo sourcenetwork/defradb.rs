@@ -289,7 +289,7 @@ impl SubscriptionRequest {
         events: &async_channel::Receiver<Message>,
     ) -> Result<Vec<Value>, Failure> {
         let node = state.node_on(&open.node)?;
-        let doc_ids = subscription_doc_ids(&open.query, None, None);
+        let doc_ids = subscription_doc_ids(&open.query, open.variables.as_ref(), None);
         let mut delivered = Vec::new();
         while open
             .expected
