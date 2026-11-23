@@ -9,7 +9,8 @@ use std::sync::{
 
 use async_trait::async_trait;
 use db::index::backfill::{encode_progress, BACKFILL_BATCH_DOCS};
-use db::{AutoCommitMutator, BackfillSource, Collection, IndexManager, DB};
+use db::index::build_gate::{GateWait, IndexBuildGate};
+use db::{AutoCommitMutator, BackfillSource, Cached, Collection, DbOptions, IndexManager, DB};
 use document::{DocID, Document, NormalValue};
 use query::DocMutator;
 use schema::{
@@ -989,6 +990,88 @@ fn index_backfill_resumes_after_a_restart() {
             .get_indexes()
             .iter()
             .any(|existing| existing.name == "by_name"));
+    })
+    .unwrap()
+}
+
+/// Holds a backfill before its first batch until the test opens it.
+#[derive(Default)]
+struct BuildGate {
+    entered: regolith::sync::Event,
+    open: regolith::sync::Event,
+}
+
+impl IndexBuildGate for BuildGate {
+    fn enter<'gate>(&'gate self, _collection_id: &'gate str, _index_id: u32) -> GateWait<'gate> {
+        Box::pin(async move {
+            self.entered.set();
+            self.open.wait().await;
+        })
+    }
+}
+
+/// The collection cache can fall behind the definition an index creation
+/// committed (#2913). The backfill identifies its index in the definition it
+/// reads from the store, so a cache without the index does not fail the build.
+#[test]
+#[mantra_macros::req_test("defra.index.backfill_under_writes")]
+fn index_backfill_finishes_when_the_cache_lags_the_stored_definition() {
+    workers::block_on(async {
+        const COLLECTION_ID: &str = "col-index-lagging";
+        let total = 3;
+        let gate = Arc::new(BuildGate::default());
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let db = Arc::new(
+            DB::from_arc_with_options(
+                store,
+                DbOptions::default().with_index_build_gate(gate.clone()),
+            )
+            .unwrap(),
+        );
+        db.create_collection(users_schema("Lagging", "lagging-v1", COLLECTION_ID))
+            .await
+            .unwrap();
+        let mutator = AutoCommitMutator::new(db.clone());
+        for i in 0..total {
+            create_user(&mutator, "Lagging", &format!("user-{i}")).await;
+        }
+        let before_index = db.require_collection("Lagging").unwrap().schema().clone();
+
+        let creator = db.clone();
+        let index_task = workers::spawn(
+            Some(crate::common::worker_io::pool()),
+            "test",
+            move || async move {
+                let (fields, kind) = by_name();
+                creator
+                    .create_index("Lagging", Some("by_name"), fields, kind)
+                    .await
+            },
+        )
+        .unwrap();
+
+        gate.entered.wait().await;
+        assert_eq!(
+            db.add_collection_to_cache(before_index).await.unwrap(),
+            Cached::Taken
+        );
+        assert!(db
+            .require_collection("Lagging")
+            .unwrap()
+            .get_index("by_name")
+            .is_none());
+        gate.open.set();
+
+        let index = index_task.await.unwrap().unwrap();
+        let failure = db
+            .list_index_actions(COLLECTION_ID)
+            .await
+            .unwrap()
+            .remove(&index.id)
+            .map(|action| action.reason);
+        assert_eq!(failure, None, "the backfill must complete");
+        assert_eq!(index_entries(&db, "Lagging", index.id).await, total);
+        assert_eq!(entries_for(&db, "Lagging", "user-0").await, 1);
     })
     .unwrap()
 }
