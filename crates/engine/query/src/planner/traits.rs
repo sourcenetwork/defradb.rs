@@ -78,12 +78,6 @@ pub trait PlanNode: MaybeSend {
         self.source().is_some_and(|source| source.joins_relations())
     }
 
-    /// The plan a join runs for each parent's related documents.
-    #[cfg(test)]
-    fn child_plan(&self) -> Option<&dyn PlanNode> {
-        None
-    }
-
     /// Get the documents in the current group (for GROUP BY aggregation).
     ///
     /// Returns Some(&[Doc]) if this node is a GroupByNode and is positioned on a group,

@@ -4,6 +4,8 @@ use crate::mapper::{
 };
 use crate::planner::index_selection::{IndexScanParams, IndexScanType};
 use schema::{FieldDescription, FieldKind, IndexDescription, IndexedFieldDescription};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 fn map<const N: usize>(
     entries: [(String, serde_json::Value); N],
@@ -770,7 +772,9 @@ fn test_plan_one_to_many_child_limit_does_not_bound_index_scan() {
                     descending: false,
                 }],
             });
-        let planner = Planner::new(vec![make_users_collection(), posts_collection]);
+        let fetcher = Arc::new(IndexScanRecorder::default());
+        let planner = Planner::new(vec![make_users_collection(), posts_collection])
+            .with_fetcher(fetcher.clone());
 
         let posts_select = Select::new("posts")
             .with_field_name("posts")
@@ -786,14 +790,17 @@ fn test_plan_one_to_many_child_limit_does_not_bound_index_scan() {
             .with_field(Field::new("name"))
             .with_select(posts_select);
 
-        let result = planner.plan_with_index_info(&select).unwrap();
-        let join = result.plan.source().unwrap();
-        let index_scan = join
-            .child_plan()
-            .and_then(find_index_scan)
-            .expect("indexed child scan expected");
-        assert_eq!(index_scan.limit, None);
-        assert_eq!(index_scan.offset, 0);
+        let mut plan = planner.plan(&select).unwrap();
+        plan.init().await.unwrap();
+        plan.start().await.unwrap();
+        while plan.next().await.unwrap() {}
+        plan.close().await.unwrap();
+
+        assert!(
+            fetcher.scans.load(Ordering::SeqCst) > 0,
+            "indexed child scan expected"
+        );
+        assert_eq!(fetcher.bounded.load(Ordering::SeqCst), 0);
     })
     .unwrap()
 }
@@ -818,9 +825,108 @@ fn ordered_index_scan_reserves_offset_for_limit_node() {
     .unwrap()
 }
 
-fn find_index_scan(node: &dyn PlanNode) -> Option<&IndexScanParams> {
-    node.index_params()
-        .or_else(|| node.source().and_then(find_index_scan))
+/// One user with no posts. Counts the index scans it is asked for, and those
+/// bounded by a limit or an offset.
+#[derive(Debug, Default)]
+struct IndexScanRecorder {
+    scans: AtomicUsize,
+    bounded: AtomicUsize,
+}
+
+impl IndexScanRecorder {
+    fn record(&self, params: &IndexScanParams) {
+        self.scans.fetch_add(1, Ordering::SeqCst);
+        if params.limit.is_some() || params.offset > 0 {
+            self.bounded.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    fn docs(&self, collection_name: &str) -> Vec<document::Document> {
+        if collection_name != "users" {
+            return Vec::new();
+        }
+        let id = document::DocID::new_v0_from_seed("ann").to_string();
+        vec![document::Document::from_json_str(
+            &serde_json::json!({"_docID": id, "name": "ann"}).to_string(),
+            make_users_collection(),
+        )
+        .unwrap()]
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+impl crate::fetcher::DocFetcher for IndexScanRecorder {
+    async fn get_all(&self, collection_name: &str) -> Result<Vec<document::Document>> {
+        Ok(self.docs(collection_name))
+    }
+
+    async fn stream_all_with_deleted(
+        &self,
+        collection_name: &str,
+        _show_deleted: bool,
+    ) -> Result<Box<dyn crate::doc_stream::DocStream>> {
+        let docs = self.docs(collection_name);
+        Ok(Box::new(crate::doc_stream::VecStream::new(
+            docs.into_iter().map(|doc| (doc, false)).collect(),
+        )))
+    }
+
+    async fn stream_by_doc_short_ids(
+        &self,
+        _collection_name: &str,
+        _doc_short_ids: &[u64],
+        _show_deleted: bool,
+    ) -> Result<Box<dyn crate::doc_stream::DocStream>> {
+        Ok(Box::new(crate::doc_stream::VecStream::new(Vec::new())))
+    }
+
+    async fn stream_index_scan(
+        &self,
+        _collection_name: &str,
+        params: &IndexScanParams,
+        _show_deleted: bool,
+    ) -> Result<Option<Box<dyn crate::doc_stream::DocStream>>> {
+        self.record(params);
+        Ok(Some(Box::new(
+            crate::doc_stream::VecStream::new(Vec::new()),
+        )))
+    }
+
+    async fn get_by_ids(
+        &self,
+        collection_name: &str,
+        doc_ids: &[String],
+    ) -> Result<crate::fetcher::FetchByIdsResult> {
+        let docs = self
+            .docs(collection_name)
+            .into_iter()
+            .filter(|doc| doc.id().is_some_and(|id| doc_ids.contains(&id.to_string())))
+            .collect();
+        Ok(crate::fetcher::FetchByIdsResult::all_found(docs))
+    }
+
+    async fn get_by_field_value(
+        &self,
+        _collection_name: &str,
+        _field_name: &str,
+        _value: &str,
+    ) -> Result<Vec<document::Document>> {
+        Ok(Vec::new())
+    }
+
+    async fn get_by_index_scan(
+        &self,
+        _collection_name: &str,
+        params: &IndexScanParams,
+    ) -> Result<crate::fetcher::IndexScanResult> {
+        self.record(params);
+        Ok(crate::fetcher::IndexScanResult::new(Vec::new()))
+    }
+
+    fn supports_index_queries(&self) -> bool {
+        true
+    }
 }
 // ========================================================================
 // Nested Relation Filter Tests

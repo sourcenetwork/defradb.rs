@@ -246,11 +246,6 @@ impl PlanNode for TypeJoinMany {
         Some(self.parent_plan.as_ref())
     }
 
-    #[cfg(test)]
-    fn child_plan(&self) -> Option<&dyn PlanNode> {
-        Some(self.child_plan.as_ref())
-    }
-
     fn document_map(&self) -> &DocumentMapping {
         &self.document_mapping
     }
