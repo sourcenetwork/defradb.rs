@@ -18,6 +18,14 @@ pub struct RegistrationParent {
 impl RegistrationParent {
     /// Resolve the rule's single object type from the compiled relation.
     pub fn from_policy(policy: &zanzibar::Policy, child: &str, id: &str) -> crate::Result<Self> {
+        Self::with_requirement(policy, child, id).map(|(parent, _)| parent)
+    }
+
+    pub fn with_requirement<'a>(
+        policy: &'a zanzibar::Policy,
+        child: &str,
+        id: &str,
+    ) -> crate::Result<(Self, &'a str)> {
         let resource = policy
             .get_resource(child)
             .ok_or_else(|| Error::InvalidPolicy(format!("unknown child resource '{child}'")))?;
@@ -31,10 +39,13 @@ impl RegistrationParent {
             Some(zanzibar::SubjectRestriction::EntitySet { resource, relation })
                 if relation.is_empty() && !id.is_empty() =>
             {
-                Ok(Self {
-                    resource: resource.clone(),
-                    object_id: id.into(),
-                })
+                Ok((
+                    Self {
+                        resource: resource.clone(),
+                        object_id: id.into(),
+                    },
+                    rule.requires.as_str(),
+                ))
             }
             _ => Err(Error::InvalidPolicy(
                 "registration requires a single parent object".into(),

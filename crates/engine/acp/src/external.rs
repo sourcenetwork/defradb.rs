@@ -642,6 +642,17 @@ where
             .await
     }
 
+    async fn registration_parent_rule(
+        &self,
+        policy_id: &str,
+        child: &str,
+        id: &str,
+    ) -> Result<(crate::RegistrationParent, String)> {
+        self.provider
+            .registration_parent_rule(policy_id, child, id)
+            .await
+    }
+
     async fn register_under_parent(
         &self,
         identity: &Did,

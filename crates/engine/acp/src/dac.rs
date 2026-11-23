@@ -481,6 +481,42 @@ pub trait DocumentACP: MaybeSendSync {
         Err(Error::UnsupportedParentRegistration)
     }
 
+    /// Resolve the parent and the permission a remote registration will require.
+    async fn registration_parent_rule(
+        &self,
+        _policy_id: &str,
+        _child: &str,
+        _id: &str,
+    ) -> Result<(crate::RegistrationParent, String)> {
+        Err(Error::UnsupportedParentRegistration)
+    }
+
+    /// Authorize a create before queuing its registration with a remote provider.
+    async fn authorized_registration_parent(
+        &self,
+        actor: &Did,
+        policy_id: &str,
+        child: &str,
+        id: &str,
+    ) -> Result<crate::RegistrationParent> {
+        let (parent, permission) = self.registration_parent_rule(policy_id, child, id).await?;
+        if !self
+            .check_named_permission(
+                actor,
+                &permission,
+                policy_id,
+                &parent.resource,
+                &parent.object_id,
+            )
+            .await?
+        {
+            return Err(Error::PermissionDenied(format!(
+                "parent requires '{permission}'"
+            )));
+        }
+        Ok(parent)
+    }
+
     /// Atomically register a child and its parent link as the supplied identity.
     async fn register_under_parent(
         &self,

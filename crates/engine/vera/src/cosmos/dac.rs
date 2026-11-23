@@ -688,12 +688,24 @@ impl DocumentACP for VeraDocumentACP {
         child: &str,
         id: &str,
     ) -> Result<acp::RegistrationParent> {
+        self.registration_parent_rule(policy_id, child, id)
+            .await
+            .map(|(parent, _)| parent)
+    }
+
+    async fn registration_parent_rule(
+        &self,
+        policy_id: &str,
+        child: &str,
+        id: &str,
+    ) -> Result<(acp::RegistrationParent, String)> {
         let policy = self
             .get_policy(policy_id)
             .await
             .map_err(provider_err)?
             .ok_or_else(|| acp::Error::PolicyNotFound(policy_id.into()))?;
-        acp::RegistrationParent::from_policy(&policy, child, id)
+        acp::RegistrationParent::with_requirement(&policy, child, id)
+            .map(|(parent, permission)| (parent, permission.to_owned()))
     }
 
     async fn register_under_parent(

@@ -230,12 +230,21 @@ pub(crate) async fn register_created_doc(
                             "missing parent document ID in '{field}'"
                         ))
                     })?;
-                Some(
+                let parent = if scoped.is_some() {
                     registrar
                         .registration_parent(&policy.id, &policy.resource_name, id)
                         .await
-                        .map_err(|e| query::error::QueryError::execution(e.to_string()))?,
-                )
+                } else {
+                    registrar
+                        .authorized_registration_parent(
+                            &creator,
+                            &policy.id,
+                            &policy.resource_name,
+                            id,
+                        )
+                        .await
+                };
+                Some(parent.map_err(|e| query::error::QueryError::execution(e.to_string()))?)
             }
             None => None,
         };
