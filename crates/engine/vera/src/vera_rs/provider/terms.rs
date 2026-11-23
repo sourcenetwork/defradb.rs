@@ -171,10 +171,11 @@ impl Follower {
 
     /// Rebuild the deployment from the node's own state, one bounded page at
     /// a time, handing each page to the outbox and recording it before the
-    /// next is read. Once the source says the pass for the certified term is
-    /// over, that term is recorded as checked and the journal reopens: the
-    /// outbox to send through, or `None` while the node stays closed. A pass
-    /// cut short is taken up at its last recorded page by the next call.
+    /// next is read. Once the source says the pass for a term is over, that
+    /// term is recorded as checked and the journal reopens: the outbox to
+    /// send through, or `None` while the node stays closed. A term certified
+    /// since is still unchecked, so admission waits for it. A pass cut short
+    /// is taken up at its last recorded page by the next call.
     async fn recover(
         &self,
         verifier: &dyn acp::RecoveryVerifier,
@@ -193,13 +194,10 @@ impl Follower {
             tracing::warn!(%reason, "Vera recovery waits for the node's outbox");
             return None;
         };
-        // The term the pass ends under: the source fences every page by the
-        // term its verifier reports, so the last page names what was checked.
-        let mut term = None;
-        loop {
+        let term = loop {
             let page = match source.next(verifier).await {
-                Ok(Some(page)) => page,
-                Ok(None) => break,
+                Ok(acp::RecoveryStep::Page(page)) => page,
+                Ok(acp::RecoveryStep::Done { term }) => break term,
                 Err(error) => {
                     tracing::warn!(%error, %reason, "Vera recovery pass did not finish");
                     return None;
@@ -214,23 +212,16 @@ impl Follower {
             for gap in &page.unrestored {
                 tracing::warn!(target: "acp::audit", gap, "Vera recovery could not restore state");
             }
-            term = Some(page.cursor.term);
             if let Err(error) = source.delivered(page.cursor).await {
                 tracing::warn!(%error, "could not record Vera recovery progress");
                 return None;
             }
-        }
-        let term = match term {
-            Some(term) => term,
-            // A pass an earlier call finished without recording it.
-            None => match verifier.term().await {
-                Ok(term) => term,
-                Err(error) => {
-                    tracing::warn!(%error, "Vera recovery term is not known");
-                    return None;
-                }
-            },
         };
+        // A second node's outbox that asked meanwhile took no part in the pass.
+        if self.shared.load(std::sync::atomic::Ordering::Acquire) {
+            closed(reason);
+            return None;
+        }
         if let Err(error) = worker.confirmed().recovered(term) {
             tracing::warn!(%error, "could not record a finished Vera recovery");
             return None;

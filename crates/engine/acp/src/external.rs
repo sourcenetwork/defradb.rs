@@ -634,20 +634,20 @@ where
             .await
             .map_err(|error| crate::RegistrationFailure::new(0, error))?;
         let sent = self.provider.register_objects(identity, objects).await;
-        // The objects before a failure are registered and the ones after it
-        // were not tried. The one that failed is not registered either,
-        // unless the provider could not be reached: it may have taken it.
-        let (registered, unanswered) = match &sent {
-            Ok(()) => (facts.len(), None),
-            Err(failure) => (
-                failure.index,
-                matches!(failure.error, Error::ProviderUnavailable(_)).then_some(failure.index),
-            ),
+        // The objects before a failure are registered. After a refusal the
+        // rest are not: the one refused, and the ones after it that were not
+        // tried. A provider that could not be reached may have taken the
+        // one it stopped at and every one after it, so their intents stay.
+        let (registered, answered) = match &sent {
+            Ok(()) => (facts.len(), facts.len()),
+            Err(failure) if matches!(failure.error, Error::ProviderUnavailable(_)) => {
+                (failure.index, failure.index)
+            }
+            Err(failure) => (failure.index, facts.len()),
         };
-        let answers: Vec<(&RecoveryFact, bool)> = facts
+        let answers: Vec<(&RecoveryFact, bool)> = facts[..answered.min(facts.len())]
             .iter()
             .enumerate()
-            .filter(|(index, _)| unanswered != Some(*index))
             .map(|(index, fact)| (fact, index < registered))
             .collect();
         self.recovery_answered(&answers).await;

@@ -110,10 +110,22 @@ where
         if held {
             self.yield_replica_if_held_elsewhere(owed).await?;
         }
-        // A replica the provider held already may be another owner's.
-        self.clear(owed, !held || owed.replica_of.is_none()).await?;
+        // An object the provider held already may be another owner's: its
+        // registration is this node's to restore only when the provider
+        // names the creator.
+        let ours = !held || self.owned_by_creator(owed).await?;
+        self.clear(owed, ours).await?;
         self.object_changed(&owed.policy_id, &owed.resource_name, &owed.doc_id);
         Ok(())
+    }
+
+    async fn owned_by_creator(&self, owed: &PendingRegistration) -> Result<bool> {
+        let owner = self
+            .provider
+            .get_doc_owner(&owed.policy_id, &owed.resource_name, &owed.doc_id)
+            .await?
+            .map(|owner| self.provider.canonical_actor(&owner));
+        Ok(owner == Some(self.provider.canonical_actor(&owed.creator)))
     }
 
     /// The provider serving a request that presents `token` for `actor`,

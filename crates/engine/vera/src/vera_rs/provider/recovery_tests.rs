@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use acp::{
     DocumentACP, DocumentPermission, ExternalDocumentAcp, Identity, Observed, OweAgain,
-    OwedSubject, RecoverySource, RecoveryVerifier,
+    OwedSubject, RecoveryCursor, RecoverySource, RecoveryStep, RecoveryVerifier, VoidedEffect,
 };
 use async_trait::async_trait;
 use identity::Did;
@@ -186,10 +186,44 @@ async fn an_uncovered_journal_recovers_through_the_outbox_under_the_same_worker(
         "the grant was owed again and sent"
     );
     assert!(
-        gate.next(&Lost).await.expect("the ledger").is_none(),
+        matches!(
+            gate.next(&Lost).await.expect("the ledger"),
+            RecoveryStep::Done { term: 0 }
+        ),
         "the pass is over"
     );
     assert!(rpc.calls.pop().is_none(), "recovery sent no decision");
+}
+
+/// A source and outbox that count what a pass asks of them.
+#[derive(Default)]
+struct Watched {
+    asked: AtomicU64,
+}
+
+#[async_trait]
+impl RecoverySource for Watched {
+    async fn next(&self, _: &dyn RecoveryVerifier) -> acp::Result<RecoveryStep> {
+        self.asked.fetch_add(1, Ordering::SeqCst);
+        Ok(RecoveryStep::Done { term: 0 })
+    }
+
+    async fn delivered(&self, _: RecoveryCursor) -> acp::Result<()> {
+        self.asked.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl OweAgain for Watched {
+    async fn owe_again(&self, _: &[VoidedEffect]) -> acp::Result<()> {
+        self.asked.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    async fn settle_owed(&self) {
+        self.asked.fetch_add(1, Ordering::SeqCst);
+    }
 }
 
 #[nuclei::test]
@@ -198,6 +232,17 @@ async fn a_journal_closed_for_good_is_not_recovered() {
     let rpc = RpcRecorded::answering(Ok(serde_json::Value::Null));
     let mut workers = Workers::new();
     let provider = provider(signer, rpc, &mut workers).await;
+    let watched = Arc::new(Watched::default());
+    let outbox = Arc::downgrade(&watched);
+    let outbox: std::sync::Weak<dyn OweAgain> = outbox;
+    provider.follower.sink.set(outbox).expect("one outbox");
+    let source = Arc::downgrade(&watched);
+    let source: std::sync::Weak<dyn RecoverySource> = source;
+    provider
+        .follower
+        .recovery
+        .set(source)
+        .expect("one recovery source");
     {
         let mut worker = provider.worker.clone().lock_owned().await;
         worker
@@ -210,6 +255,11 @@ async fn a_journal_closed_for_good_is_not_recovered() {
     provider.follower.check_with(&Lost).await;
 
     assert!(provider.follower.admit().is_err());
+    assert_eq!(
+        watched.asked.load(Ordering::SeqCst),
+        0,
+        "no pass ran for a journal that cannot be rebuilt"
+    );
     let mut worker = provider.worker.clone().lock_owned().await;
     assert_eq!(
         worker.confirmed().closed(),

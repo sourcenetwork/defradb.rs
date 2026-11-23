@@ -14,7 +14,9 @@ use crate::external::{ExternalDocumentAcp, OweAgain};
 use crate::identity::Identity;
 use crate::outbox::{NewOwedChange, OwedAuthority, OwedOp, OwedSubject, OwedTuple};
 use crate::permission::DocumentPermission;
-use crate::recovery::{Observed, RecoveryFact, RecoveryLedger, RecoverySource, RecoveryVerifier};
+use crate::recovery::{
+    Observed, RecoveryFact, RecoveryLedger, RecoverySource, RecoveryStep, RecoveryVerifier,
+};
 use crate::{AcpObject, VoidedEffect};
 
 const OWNER: &str = "did:key:owner";
@@ -46,6 +48,7 @@ struct Provider {
     unanswered_documents: RapidHashSet<String>,
     refuses_grants: AtomicBool,
     unreachable: AtomicBool,
+    held_by_another: AtomicBool,
 }
 
 #[async_trait]
@@ -61,11 +64,15 @@ impl DocumentACP for Provider {
     }
 
     async fn is_doc_registered(&self, _: &str, _: &str, _: &str) -> Result<bool> {
-        Ok(false)
+        Ok(self.held_by_another.load(Ordering::SeqCst))
     }
 
     async fn get_doc_owner(&self, _: &str, _: &str, _: &str) -> Result<Option<Did>> {
-        Ok(Some(did(OWNER)))
+        Ok(Some(if self.held_by_another.load(Ordering::SeqCst) {
+            did("did:key:other")
+        } else {
+            did(OWNER)
+        }))
     }
 
     async fn check_doc_access(
@@ -218,7 +225,7 @@ impl RecoveryVerifier for Deployment {
 /// recorded before the next, until the source says it is over.
 async fn pass(gate: &Gate, deployment: &Deployment) -> (Vec<VoidedEffect>, Vec<String>, usize) {
     let (mut effects, mut unrestored, mut pages) = (Vec::new(), Vec::new(), 0);
-    while let Some(page) = gate.next(deployment).await.unwrap() {
+    while let RecoveryStep::Page(page) = gate.next(deployment).await.unwrap() {
         pages += 1;
         assert!(pages < 100, "the pass does not end");
         effects.extend(page.effects);
@@ -251,8 +258,11 @@ fn a_pass_owes_what_the_deployment_lost_registration_first_and_then_ends() {
         assert!(is_change(&effects[1], "bae-1", "reader", OwedOp::Add));
         assert!(unrestored.is_empty());
         assert!(
-            gate.next(&Deployment::empty()).await.unwrap().is_none(),
-            "a finished pass stays finished"
+            matches!(
+                gate.next(&Deployment::empty()).await.unwrap(),
+                RecoveryStep::Done { term: 1 }
+            ),
+            "a finished pass stays finished, and names its term"
         );
     })
     .unwrap()
@@ -282,6 +292,16 @@ fn a_pass_checks_the_records_past_its_first_page() {
             })
             .collect();
         assert_eq!(registered.len(), 3000, "every object once");
+        let granted: RapidHashSet<&str> = effects
+            .iter()
+            .filter_map(|effect| match effect {
+                VoidedEffect::Change(change) if change.op == OwedOp::Add => {
+                    Some(change.tuple.object.as_str())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(granted, registered, "and every grant once");
     })
     .unwrap()
 }
@@ -294,11 +314,18 @@ fn a_page_not_recorded_is_read_again_and_a_recorded_one_is_not() {
         confirm(&store, &[owned("bae-1")]).await;
         let deployment = Deployment::empty();
 
-        let first = gate.next(&deployment).await.unwrap().expect("a page");
-        let again = gate.next(&deployment).await.unwrap().expect("the page");
+        let RecoveryStep::Page(first) = gate.next(&deployment).await.unwrap() else {
+            panic!("a page");
+        };
+        let RecoveryStep::Page(again) = gate.next(&deployment).await.unwrap() else {
+            panic!("the page again");
+        };
         assert_eq!(first.effects, again.effects);
         gate.delivered(again.cursor).await.unwrap();
-        assert!(gate.next(&deployment).await.unwrap().is_none());
+        assert!(matches!(
+            gate.next(&deployment).await.unwrap(),
+            RecoveryStep::Done { .. }
+        ));
     })
     .unwrap()
 }
@@ -547,8 +574,9 @@ fn a_grant_the_provider_refused_is_not_owed_by_a_pass() {
             .await;
         assert!(matches!(refused, Err(Error::NotOwner { .. })));
 
-        let (effects, _, _) = pass(&gate, &Deployment::holding(&[])).await;
+        let (effects, unrestored, _) = pass(&gate, &Deployment::holding(&[])).await;
         assert!(effects.is_empty(), "{effects:?}");
+        assert!(unrestored.is_empty(), "{unrestored:?}");
     })
     .unwrap()
 }
@@ -580,6 +608,67 @@ fn a_grant_the_provider_never_answered_is_reported_and_not_owed() {
             unrestored,
             vec!["policy/users/bae-1 reader: the provider never answered this grant".to_owned()]
         );
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_delete_the_deployment_cannot_be_asked_about_is_owed_again() {
+    workers::block_on(async {
+        let (store, gate) = gate();
+        confirm(&store, &[owned("bae-1"), grant("bae-1", "auditor", false)]).await;
+        let mut deployment = Deployment::holding(&["auditor"]);
+        deployment.unobservable.insert("auditor".into());
+
+        let (effects, unrestored, _) = pass(&gate, &deployment).await;
+        assert_eq!(effects.len(), 1, "{effects:?}");
+        assert!(is_change(&effects[0], "bae-1", "auditor", OwedOp::Delete));
+        assert!(unrestored.is_empty(), "{unrestored:?}");
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_confirmed_delete_stands_while_a_later_grant_is_unanswered() {
+    workers::block_on(async {
+        let (store, gate) = gate();
+        confirm(&store, &[owned("bae-1"), grant("bae-1", "reader", false)]).await;
+        gate.recovery_prepare(&[grant("bae-1", "reader", true)])
+            .await
+            .unwrap();
+
+        let (effects, unrestored, _) = pass(&gate, &Deployment::holding(&["reader"])).await;
+        assert_eq!(effects.len(), 1, "{effects:?}");
+        assert!(is_change(&effects[0], "bae-1", "reader", OwedOp::Delete));
+        assert_eq!(
+            unrestored,
+            vec!["policy/users/bae-1 reader: the provider never answered this grant".to_owned()]
+        );
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_registration_another_owner_held_first_is_not_recorded_as_this_nodes() {
+    workers::block_on(async {
+        let provider = Provider::default();
+        provider.held_by_another.store(true, Ordering::SeqCst);
+        let (_, gate) = gate_over(provider);
+        gate.owe_again(&[VoidedEffect::Registration {
+            creator: did(OWNER),
+            policy_id: POLICY.into(),
+            resource: USERS.into(),
+            object: "bae-1".into(),
+            authority: OwedAuthority::NodeKey,
+            request_bound: false,
+        }])
+        .await
+        .unwrap();
+        gate.settle_owed().await;
+
+        let (effects, unrestored, _) = pass(&gate, &Deployment::empty()).await;
+        assert!(effects.is_empty(), "{effects:?}");
+        assert!(unrestored.is_empty(), "{unrestored:?}");
     })
     .unwrap()
 }
@@ -643,15 +732,16 @@ fn a_list_that_fails_part_way_keeps_the_registrations_before_the_failure() {
             .expect_err("the second registration is refused");
         assert_eq!(failure.index, 1);
 
-        let (effects, _, _) = pass(&gate, &Deployment::empty()).await;
+        let (effects, unrestored, _) = pass(&gate, &Deployment::empty()).await;
         assert_eq!(effects.len(), 1, "{effects:?}");
         assert!(is_registration(&effects[0], "bae-1"));
+        assert!(unrestored.is_empty(), "{unrestored:?}");
     })
     .unwrap()
 }
 
 #[test]
-fn a_list_cut_short_by_an_unreachable_provider_keeps_the_one_it_may_have_taken() {
+fn a_list_cut_short_by_an_unreachable_provider_keeps_what_it_may_have_taken() {
     workers::block_on(async {
         let mut provider = Provider::default();
         provider.unanswered_documents.insert("bae-2".into());
@@ -676,7 +766,11 @@ fn a_list_cut_short_by_an_unreachable_provider_keeps_the_one_it_may_have_taken()
         assert!(is_registration(&effects[0], "bae-1"));
         assert_eq!(
             unrestored,
-            vec!["policy/users/bae-2: the provider never answered its registration".to_owned()]
+            vec![
+                "policy/users/bae-2: the provider never answered its registration".to_owned(),
+                "policy/users/bae-3: the provider never answered its registration".to_owned(),
+            ],
+            "the list may have gone through whole from where the answer was lost"
         );
     })
     .unwrap()

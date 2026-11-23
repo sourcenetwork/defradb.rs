@@ -7,9 +7,10 @@
 //! with nothing. A change sent to the provider outside a transaction has no
 //! outbox record, so its fact is first written as an intent beside the fact
 //! and cleared once the provider has answered. An intent left without an
-//! answer is not proof: a pass owes a delete left behind, which wins over an
-//! add, and only reports a grant or registration left behind. The next answer
-//! the provider gives for the slot replaces both.
+//! answer is not proof: a pass owes a delete left behind, which wins the
+//! slot, and only reports a grant or registration left behind, which never
+//! outranks what the provider confirmed. The next answer the provider gives
+//! for the slot replaces both.
 
 use async_trait::async_trait;
 use datastore::NamespaceView;
@@ -265,14 +266,23 @@ pub trait RecoveryVerifier: defra_core::thread_bounds::MaybeSendSync {
     ) -> std::result::Result<Observed, String>;
 }
 
+/// One step of a pass.
+#[derive(Debug)]
+pub enum RecoveryStep {
+    /// A page to hand to the outbox and then record as delivered.
+    Page(RecoveryPage),
+    /// The whole pass for `term` has been handed over.
+    Done { term: u64 },
+}
+
 /// The node's own access state, read in bounded resumable pages.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait RecoverySource: defra_core::thread_bounds::MaybeSendSync {
-    /// The next page of the pass for the verifier's term, or `None` once the
-    /// whole pass has been handed over. A cursor of an older term is not
+    /// The next page of the pass for the verifier's term, or the term whose
+    /// pass has been handed over whole. A cursor of an older term is not
     /// resumed: the pass starts again.
-    async fn next(&self, verifier: &dyn RecoveryVerifier) -> Result<Option<RecoveryPage>>;
+    async fn next(&self, verifier: &dyn RecoveryVerifier) -> Result<RecoveryStep>;
 
     /// Record that the page ending at `cursor` reached the outbox.
     async fn delivered(&self, cursor: RecoveryCursor) -> Result<()>;
@@ -285,24 +295,39 @@ fn state_error(what: &str, source: impl std::fmt::Display) -> Error {
 /// A slot as a pass reads it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Slot {
+    /// The state a pass holds the deployment to.
     pub fact: RecoveryFact,
-    /// Whether the provider confirmed this state. A change it never answered
+    /// Whether the provider confirmed that state. A change it never answered
     /// is not confirmed: a pass acts on it only where that takes access away.
     pub confirmed: bool,
+    /// A grant or registration the provider never answered, beside a state
+    /// it did confirm. It changes nothing a pass does and is reported.
+    pub unanswered: Option<RecoveryFact>,
 }
 
-/// The state a slot's records come to: an intent stands for what it asked,
-/// and one that denies wins.
+/// The state a slot's records come to. An unanswered change that takes
+/// access away wins. Otherwise what the provider confirmed stands, and an
+/// unanswered change that gives access stands only where nothing was
+/// confirmed.
 fn resolve(records: [Option<RecoveryFact>; 3]) -> Option<Slot> {
     let [confirmed, denying, allowing] = records;
-    match denying.or(allowing) {
-        Some(fact) => Some(Slot {
+    if let Some(fact) = denying {
+        return Some(Slot {
             confirmed: confirmed.as_ref() == Some(&fact),
             fact,
-        }),
-        None => confirmed.map(|fact| Slot {
+            unanswered: None,
+        });
+    }
+    match confirmed {
+        Some(fact) => Some(Slot {
+            unanswered: allowing.filter(|asked| *asked != fact),
             fact,
             confirmed: true,
+        }),
+        None => allowing.map(|fact| Slot {
+            fact,
+            confirmed: false,
+            unanswered: None,
         }),
     }
 }

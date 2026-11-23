@@ -8,7 +8,7 @@ use crate::error::{Error, Result};
 use crate::outbox::{OwedAuthority, OwedChange, OwedOp, OwedSubject, OwedTuple};
 use crate::recovery::{
     Observed, RecoveryCursor, RecoveryFact, RecoveryLedger, RecoveryPage, RecoverySource,
-    RecoveryState, RecoveryVerifier, Slot, RECOVERY_PAGE_BYTES,
+    RecoveryState, RecoveryStep, RecoveryVerifier, Slot, RECOVERY_PAGE_BYTES,
 };
 
 /// What the deployment says of the object a page is walking.
@@ -87,6 +87,12 @@ impl Walk {
             .object_owner(term, &fact.policy_id, &fact.resource_name, &fact.object_id)
             .await
             .map_err(Error::Storage)?;
+        if report && slot.unanswered.is_some() {
+            self.unrestored.push(format!(
+                "{}: the provider never answered its registration",
+                name(fact)
+            ));
+        }
         Ok(match (owner, remote) {
             (None, None) => Standing::Unregistered,
             (None, Some(_)) => {
@@ -167,6 +173,12 @@ impl Walk {
         else {
             return Ok(());
         };
+        if slot.unanswered.is_some() {
+            self.unrestored.push(format!(
+                "{} {relation}: the provider never answered this grant",
+                name(fact)
+            ));
+        }
         match standing {
             Standing::Unrecorded => self.unrestored.push(format!(
                 "{} {relation}: no registration was recorded",
@@ -202,7 +214,14 @@ impl Walk {
                             .push(change(fact, actor, relation, subject, OwedOp::Delete));
                     }
                     (Observed::Held, true) | (Observed::Absent, false) => {}
-                    (Observed::Unobservable(reason), _) => self
+                    // A delete the pass cannot check is owed again: deleting
+                    // what is gone changes nothing, and what the node took
+                    // away must not come back.
+                    (Observed::Unobservable(_), false) => {
+                        self.effects
+                            .push(change(fact, actor, relation, subject, OwedOp::Delete));
+                    }
+                    (Observed::Unobservable(reason), true) => self
                         .unrestored
                         .push(format!("{} {relation}: {reason}", name(fact))),
                 }
@@ -218,7 +237,7 @@ impl<S> RecoverySource for ExternalDocumentAcp<S>
 where
     S: storage::corekv::Store + 'static,
 {
-    async fn next(&self, verifier: &dyn RecoveryVerifier) -> Result<Option<RecoveryPage>> {
+    async fn next(&self, verifier: &dyn RecoveryVerifier) -> Result<RecoveryStep> {
         let term = verifier.term().await.map_err(Error::Storage)?;
         let txn = self.begin(true).await?;
         let ledger = RecoveryLedger::new(txn.acpstore());
@@ -249,7 +268,7 @@ where
         verifier: &dyn RecoveryVerifier,
         term: u64,
         ledger: &RecoveryLedger,
-    ) -> Result<Option<RecoveryPage>> {
+    ) -> Result<RecoveryStep> {
         // A cursor of another term checked another deployment state.
         let resumed = ledger
             .state()
@@ -261,7 +280,7 @@ where
                 complete: false,
             });
         if resumed.complete {
-            return Ok(None);
+            return Ok(RecoveryStep::Done { term });
         }
         let page = ledger
             .page(resumed.cursor.as_deref(), RECOVERY_PAGE_BYTES)
@@ -286,7 +305,7 @@ where
                 walk.relationship(verifier, term, standing, slot).await?;
             }
         }
-        Ok(Some(RecoveryPage {
+        Ok(RecoveryStep::Page(RecoveryPage {
             effects: walk.effects,
             cursor: RecoveryCursor {
                 term,

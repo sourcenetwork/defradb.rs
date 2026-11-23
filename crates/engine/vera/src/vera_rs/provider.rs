@@ -1088,6 +1088,17 @@ impl VeraProvider for VeraRsProvider {
     }
 }
 
+impl VeraRsProvider {
+    /// Whether `term` is still the certified one. A pass asks before and
+    /// after each proof it reads, so a page holds only what its term showed.
+    fn still_recovering(&self, term: u64) -> Result<(), String> {
+        if self.follower.certified() == term {
+            return Ok(());
+        }
+        Err(format!("Vera recovery term changed from {term}"))
+    }
+}
+
 #[async_trait]
 impl acp::RecoveryVerifier for VeraRsProvider {
     async fn term(&self) -> Result<u64, String> {
@@ -1101,9 +1112,7 @@ impl acp::RecoveryVerifier for VeraRsProvider {
         resource: &str,
         object_id: &str,
     ) -> Result<Option<String>, String> {
-        if self.follower.certified() != term {
-            return Err(format!("Vera recovery term changed from {term}"));
-        }
+        self.still_recovering(term)?;
         let policy = Self::policy_id_to_bytes32(policy_id)
             .map_err(|error| error.to_string())
             .map(hex::encode)?;
@@ -1118,6 +1127,7 @@ impl acp::RecoveryVerifier for VeraRsProvider {
         .map_err(|error| {
             reach::read_error(&self.light_client, "recovery owner proof", error).to_string()
         })?;
+        self.still_recovering(term)?;
         Ok(owner.map(|owner| did_spelling::defra(owner.0.as_str()).into_owned()))
     }
 
@@ -1131,12 +1141,11 @@ impl acp::RecoveryVerifier for VeraRsProvider {
         relation: &str,
         subject: &acp::OwedSubject,
     ) -> Result<acp::Observed, String> {
-        if self.follower.certified() != term {
-            return Err(format!("Vera recovery term changed from {term}"));
-        }
+        self.still_recovering(term)?;
+        // The deployment is asked about one explicit actor, as every other
+        // observation is; any other subject cannot be read.
         let actor = match acp::Subject::from(subject.clone()) {
-            acp::Subject::Entity(did) => did.as_str().to_owned(),
-            acp::Subject::Wildcard => "did:key:*".to_owned(),
+            acp::Subject::Entity(did) if !did.is_wildcard() => did.as_str().to_owned(),
             other => {
                 return Ok(acp::Observed::Unobservable(format!(
                     "a recovery pass cannot read the subject {other:?}"
@@ -1160,6 +1169,7 @@ impl acp::RecoveryVerifier for VeraRsProvider {
                 .map_err(|error| Box::new(error) as Box<dyn std::error::Error + Send + Sync>)
         })
         .await;
+        self.still_recovering(term)?;
         match observed {
             Ok(true) => Ok(acp::Observed::Held),
             Ok(false) => Ok(acp::Observed::Absent),
