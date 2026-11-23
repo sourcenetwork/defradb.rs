@@ -2676,3 +2676,151 @@ async fn own_transport_peer_id(
     let id = ops.local_peer_id().await.expect("local peer ID is ungated");
     defra_p2p_adapter::TransportPeerId::new(id).expect("a canonical peer ID")
 }
+
+/// A receiver-side test gate: deny remote key requests until the test opens it,
+/// while recording the requested CIDs for an independent fetch.
+struct KeyDeliveryGate {
+    inner: std::sync::Arc<dyn kms::KeyTransport>,
+    closed: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    requested: std::sync::Arc<std::sync::Mutex<Vec<kms::EncryptionCid>>>,
+}
+
+#[async_trait::async_trait]
+impl kms::KeyTransport for KeyDeliveryGate {
+    fn name(&self) -> &'static str {
+        "test-key-delivery-gate"
+    }
+
+    async fn send_request(
+        &self,
+        request: kms::EncodedFetchRequest,
+    ) -> kms::Result<kms::TransportReplyStream> {
+        if self.closed.load(std::sync::atomic::Ordering::SeqCst) {
+            let decoded: kms::FetchEncryptionKeyRequest =
+                defra_core::cbor::from_slice(&request.payload).unwrap();
+            let mut requested = self.requested.lock().unwrap();
+            requested.extend(
+                decoded
+                    .links
+                    .iter()
+                    .filter_map(|link| kms::EncryptionCid::try_from(link.as_slice()).ok()),
+            );
+            return Err(kms::Error::KeyUnavailable);
+        }
+        self.inner.send_request(request).await
+    }
+
+    fn install_handler(&self, handler: std::sync::Arc<dyn kms::IncomingHandler>) {
+        self.inner.install_handler(handler);
+    }
+
+    fn max_keys_per_request(&self) -> Option<usize> {
+        self.inner.max_keys_per_request()
+    }
+}
+
+#[test]
+#[mantra_macros::req_test("defra.encryption.peer.pending_key_arrival")]
+fn remote_key_arrival_wakes_a_parked_encrypted_merge() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    edge::testing::edge()
+        .block_on(async {
+            let closed = Arc::new(AtomicBool::new(true));
+            let requested = Arc::new(Mutex::new(Vec::new()));
+            let wrap_closed = Arc::clone(&closed);
+            let wrap_requested = Arc::clone(&requested);
+            let wrapper = Arc::new(move |inner: Arc<dyn kms::KeyTransport>| {
+                Arc::new(KeyDeliveryGate {
+                    inner,
+                    closed: Arc::clone(&wrap_closed),
+                    requested: Arc::clone(&wrap_requested),
+                }) as Arc<dyn kms::KeyTransport>
+            });
+            let writer = Node::builder()
+                .with_p2p(test_p2p_config())
+                .build()
+                .await
+                .unwrap();
+            let replica = Node::builder()
+                .with_p2p(test_p2p_config())
+                .with_test_kms_transport_wrapper(wrapper)
+                .build()
+                .await
+                .unwrap();
+            const SCHEMA: &str = "type SecretNote { name: String age: Int }";
+            writer.add_collection(SCHEMA).await.unwrap();
+            replica.add_collection(SCHEMA).await.unwrap();
+            install_one_way_replicator(&writer, &replica, &["SecretNote"]).await;
+            let mut merges = replica.subscribe(&[crate::EventName::MergeComplete]);
+            let response = writer
+                .execute(r#"mutation { create_SecretNote(encrypt: true, input: {name: "classified", age: 7}) { _docID } }"#)
+                .await;
+            assert!(response.errors.is_empty(), "{:?}", response.errors);
+            let data = response.data.unwrap();
+            let doc_id = data["add_SecretNote"][0]["_docID"]
+                .as_str()
+                .unwrap_or_else(|| panic!("create returned no document ID: {data}"))
+                .to_owned();
+
+            let deadline = Instant::now() + Duration::from_secs(25);
+            // The retry must finish denying keys and remain parked before the
+            // independent fetch, so it cannot simply join an in-flight merge.
+            let mut settled_since = None;
+            let mut previous_requests = 0;
+            let cid = loop {
+                let status = replica.p2p().unwrap().sync_status().await.unwrap();
+                let (cid, request_count) = {
+                    let requested = requested.lock().unwrap();
+                    (requested.first().copied(), requested.len())
+                };
+                if request_count != previous_requests {
+                    previous_requests = request_count;
+                    settled_since = None;
+                }
+                let parked = status["pending_dags"].as_u64().unwrap_or_default() > 0
+                    && status["pending_dag_retry_dispatched"].as_u64().unwrap_or_default() >= 2
+                    && status["next_pending_retry_in_ms"].as_u64().unwrap_or_default() >= 6_000;
+                if let Some(cid) = cid.filter(|_| parked) {
+                    let since = settled_since.get_or_insert_with(Instant::now);
+                    if since.elapsed() >= Duration::from_millis(500) {
+                        break cid;
+                    }
+                } else {
+                    settled_since = None;
+                }
+                assert!(Instant::now() < deadline, "root did not park on backoff: {status}");
+                edge::testing::edge().sleep(Duration::from_millis(50)).await;
+            };
+            closed.store(false, Ordering::SeqCst);
+            let kms = replica.database().kms().unwrap();
+            let answers = kms
+                .get_keys_each(&kms::RequestContext::anonymous(), &[cid])
+                .await
+                .unwrap();
+            assert!(answers[0].is_ok(), "independent key fetch failed: {:?}", answers[0]);
+            let remaining = replica.p2p().unwrap().sync_status().await.unwrap()
+                ["next_pending_retry_in_ms"]
+                .as_u64()
+                .unwrap_or_default();
+            assert!(remaining >= 4_500, "key arrived too near the normal retry: {remaining}ms");
+            let event = edge::testing::edge()
+                .timeout(Duration::from_millis(3_000), async {
+                    loop {
+                        let event = merges.recv().await.expect("merge subscription closed");
+                        if event.as_merge_complete().is_some_and(|data| data.doc_id == doc_id) {
+                            break;
+                        }
+                    }
+                })
+                .await;
+            assert!(event.is_ok(), "key arrival did not wake the merge before backoff");
+            let result = replica.execute("query { SecretNote { name age } }").await;
+            assert!(result.errors.is_empty(), "{:?}", result.errors);
+            assert_eq!(result.data.unwrap()["SecretNote"][0]["name"], "classified");
+            writer.shutdown().await.unwrap();
+            replica.shutdown().await.unwrap();
+        })
+        .unwrap();
+}
