@@ -49,28 +49,24 @@ fn collection_sdl(field_count: usize) -> String {
 }
 
 fn branchable_collection_sdl(field_count: usize) -> String {
-    format!("type {COLLECTION} @branchable {{ {} }}", {
-        field_names(field_count)
-            .iter()
-            .map(|name| format!("{name}: String"))
-            .collect::<Vec<_>>()
-            .join(" ")
-    })
+    collection_sdl(field_count).replacen('{', "@branchable {", 1)
 }
 
-fn collection_version(field_count: usize) -> schema::CollectionVersion {
-    query::parse_sdl(&collection_sdl(field_count))
+fn collection_version(field_count: usize, branchable: bool) -> schema::CollectionVersion {
+    let sdl = if branchable {
+        branchable_collection_sdl(field_count)
+    } else {
+        collection_sdl(field_count)
+    };
+    query::parse_sdl(&sdl)
         .expect("the benchmark schema to parse")
         .remove(0)
 }
 
 /// A document whose every field is distinct per `seq`, so two documents in one
 /// run never collide on a content-addressed id.
-fn document(field_count: usize, seq: usize) -> Document {
-    let schema = query::parse_sdl(&collection_sdl(field_count))
-        .expect("the benchmark schema to parse")
-        .remove(0);
-    let mut doc = Document::new(schema);
+fn document(field_count: usize, seq: usize, schema: &schema::CollectionVersion) -> Document {
+    let mut doc = Document::new(schema.clone());
     for name in field_names(field_count) {
         doc.set(&name, NormalValue::String(format!("{name}-{seq}")))
             .unwrap();
@@ -98,8 +94,9 @@ async fn fixture(field_count: usize) -> Mutator {
 /// A fixture with one document already in it, and that document's id.
 async fn seeded(field_count: usize) -> (Mutator, DocID) {
     let mutator = fixture(field_count).await;
+    let version = collection_version(field_count, false);
     let created = mutator
-        .create(COLLECTION, document(field_count, next_seq()))
+        .create(COLLECTION, document(field_count, next_seq(), &version))
         .await
         .expect("the seed create to succeed");
     (mutator, created.doc_id)
@@ -134,10 +131,11 @@ fn report(rt: &common::Runtime) {
                 rt.block_on(async {
                     let mutator = fixture(fields).await;
                     let base = next_seq() * OPS;
+                    let version = collection_version(fields, false);
                     let start = std::time::Instant::now();
                     for seq in 0..OPS {
                         mutator
-                            .create(COLLECTION, document(fields, base + seq))
+                            .create(COLLECTION, document(fields, base + seq, &version))
                             .await
                             .expect("the create to succeed");
                     }
@@ -160,11 +158,12 @@ fn report(rt: &common::Runtime) {
                     .expect("the collection to register");
                     let mutator = Mutator::new(db.clone());
                     let base = next_seq() * OPS;
+                    let version = collection_version(fields, false);
                     let mut ids = Vec::with_capacity(OPS);
                     for seq in 0..OPS {
                         ids.push(
                             mutator
-                                .create(COLLECTION, document(fields, base + seq))
+                                .create(COLLECTION, document(fields, base + seq, &version))
                                 .await
                                 .expect("the create to succeed")
                                 .doc_id
@@ -205,6 +204,7 @@ fn create(c: &mut Criterion) {
     report(&rt);
     let mut group = c.benchmark_group("document_create");
     for fields in FIELD_COUNTS {
+        let version = collection_version(fields, false);
         group.throughput(Throughput::Elements(1));
         group.bench_with_input(
             BenchmarkId::from_parameter(fields),
@@ -219,7 +219,7 @@ fn create(c: &mut Criterion) {
                         rt.block_on(async {
                             black_box(
                                 mutator
-                                    .create(COLLECTION, document(fields, next_seq()))
+                                    .create(COLLECTION, document(fields, next_seq(), &version))
                                     .await
                                     .expect("the create to succeed"),
                             );
@@ -239,6 +239,7 @@ fn create_many(c: &mut Criterion) {
     let rt = common::owned_runtime();
     let mut group = c.benchmark_group("document_create_many");
     let fields = 16;
+    let version = collection_version(fields, false);
     for batch in [1usize, 8, 64, 256] {
         group.throughput(Throughput::Elements(batch as u64));
         group.bench_with_input(BenchmarkId::from_parameter(batch), &batch, |b, &batch| {
@@ -247,8 +248,9 @@ fn create_many(c: &mut Criterion) {
                 |mutator| {
                     rt.block_on(async {
                         let base = next_seq();
-                        let docs: Vec<Document> =
-                            (0..batch).map(|s| document(fields, base + s)).collect();
+                        let docs: Vec<Document> = (0..batch)
+                            .map(|s| document(fields, base + s, &version))
+                            .collect();
                         black_box(
                             mutator
                                 .create_many(COLLECTION, docs)
@@ -268,6 +270,7 @@ fn update(c: &mut Criterion) {
     let rt = common::owned_runtime();
     let mut group = c.benchmark_group("document_update");
     for fields in FIELD_COUNTS {
+        let version = collection_version(fields, false);
         group.throughput(Throughput::Elements(1));
         group.bench_with_input(
             BenchmarkId::from_parameter(fields),
@@ -280,8 +283,7 @@ fn update(c: &mut Criterion) {
                             // One field touched, which is the common shape: a
                             // write that rewrote every field would measure a
                             // create.
-                            let mut doc =
-                                Document::with_id(doc_id.clone(), collection_version(fields));
+                            let mut doc = Document::with_id(doc_id.clone(), version.clone());
                             doc.set(
                                 "field_0",
                                 NormalValue::String(format!("updated-{}", next_seq())),
@@ -346,9 +348,10 @@ async fn branchable_fixture(prior: usize) -> Mutator {
     .await
     .expect("the collection to register");
     let mutator = Mutator::new(db);
+    let version = collection_version(4, true);
     for _ in 0..prior {
         mutator
-            .create(COLLECTION, document(4, next_seq()))
+            .create(COLLECTION, document(4, next_seq(), &version))
             .await
             .expect("the seed append to succeed");
     }
@@ -358,6 +361,7 @@ async fn branchable_fixture(prior: usize) -> Mutator {
 fn create_branchable(c: &mut Criterion) {
     let rt = common::owned_runtime();
     let mut group = c.benchmark_group("document_create_branchable");
+    let version = collection_version(4, true);
     for prior in PRIOR_APPENDS {
         group.throughput(Throughput::Elements(1));
         group.bench_with_input(BenchmarkId::from_parameter(prior), &prior, |b, &prior| {
@@ -367,7 +371,7 @@ fn create_branchable(c: &mut Criterion) {
                     rt.block_on(async {
                         black_box(
                             mutator
-                                .create(COLLECTION, document(4, next_seq()))
+                                .create(COLLECTION, document(4, next_seq(), &version))
                                 .await
                                 .expect("the append to succeed"),
                         );
@@ -391,9 +395,10 @@ async fn populated(docs: usize) -> Arc<DB<RegolithStore>> {
         .expect("the collection to register");
     let mutator = Mutator::new(db.clone());
     let base = next_seq() * docs;
+    let version = collection_version(4, false);
     for seq in 0..docs {
         mutator
-            .create(COLLECTION, document(4, base + seq))
+            .create(COLLECTION, document(4, base + seq, &version))
             .await
             .expect("the seed create to succeed");
     }
