@@ -76,6 +76,10 @@ async fn validate_select_collection(
         return Err(QueryError::parse(msg));
     };
 
+    if let Some(filter) = &select.filter {
+        filter.without_secondary_relation_ids(&collection)?;
+    }
+
     validate_similarity(&select.fields, &collection, provider).await
 }
 
@@ -329,6 +333,53 @@ mod tests {
             assert!(validate_parsed_operation(&op, &provider).await.is_ok());
         })
         .unwrap()
+    }
+
+    #[test]
+    fn nested_secondary_relation_id_filter_refuses() {
+        workers::block_on(async {
+            let collection = CollectionVersion::new(
+                "Book",
+                "v1",
+                "coll-book",
+                vec![
+                    schema::FieldDescription::new(
+                        "1",
+                        "author",
+                        schema::FieldKind::relation("Author", false),
+                        schema::CType::LwwRegister,
+                    )
+                    .with_relation_name("book_author"),
+                    schema::FieldDescription::new(
+                        "2",
+                        "_authorID",
+                        schema::FieldKind::doc_id(),
+                        schema::CType::LwwRegister,
+                    )
+                    .with_relation_name("book_author"),
+                ],
+            );
+            let provider = StaticCollectionProvider::new(vec![collection]);
+            let op = ParsedOperation::Query {
+                selects: vec![Select {
+                    collection_name: "Book".into(),
+                    filter: Some(crate::mapper::Filter::from_conditions(
+                        serde_json::json!({
+                            "_or": [{"_authorID": {"_eq": "bae-x"}}]
+                        })
+                        .as_object()
+                        .expect("object")
+                        .clone(),
+                    )),
+                    ..Select::new("Book")
+                }],
+                explain: None,
+                exhaustive: false,
+            };
+            let error = validate_parsed_operation(&op, &provider).await.unwrap_err();
+            assert!(error.to_string().contains("top level"));
+        })
+        .unwrap();
     }
 
     #[test]

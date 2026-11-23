@@ -26,6 +26,7 @@
 //! - Intersection (`&`) is not allowed in DPI-enforced policies
 
 mod auth_error;
+mod commit_registrations;
 mod dac;
 mod delegation_audience;
 mod delegation_window;
@@ -34,6 +35,7 @@ mod external;
 mod identity;
 mod local;
 pub mod nac;
+mod object_registration;
 pub mod outbox;
 pub mod pending;
 mod permission;
@@ -56,6 +58,7 @@ mod validation;
 pub mod zanzibar;
 
 pub use auth_error::normalize_auth_error;
+pub use commit_registrations::{CommitRegistration, CommitRegistrations};
 pub use dac::{
     bound_to_request, with_request_bearer, ActorRelationshipObservation, AuthenticatedCaller,
     DocumentACP, DocumentRelationship, ObjectChangeListener, OwedRefusalListener,
@@ -69,6 +72,7 @@ pub use external::{
 };
 pub use identity::Identity;
 pub use local::{LocalDocumentACP, MemoryAcpStore};
+pub use object_registration::{AcpObject, RegistrationFailure};
 pub use outbox::{
     InFlight, NewOwedChange, OwedAuthority, OwedAuthorityKind, OwedChange, OwedChanges, OwedDenial,
     OwedDenials, OwedEntry, OwedFilter, OwedHold, OwedJournal, OwedOp, OwedOutcome, OwedRef,
@@ -79,7 +83,10 @@ pub use pending::{PendingRegistration, PendingRegistrations};
 pub use permission::DocumentPermission;
 #[cfg(not(target_arch = "wasm32"))]
 pub use persistent::PersistentAcpStore;
-pub use policy_lookup::{LightClientStatus, PolicyLookup, RemotePolicies, StorePolicies};
+pub use policy_lookup::{
+    AssignmentPosition, AssignmentQuery, AssignmentReadError, CertifiedAssignments,
+    LightClientStatus, PolicyLookup, RemotePolicies, StorePolicies,
+};
 pub use policy_nonce::{PolicyNonce, PolicyNonceError, POLICY_NONCE_BYTES};
 pub use provider_command::ProviderCommand;
 pub use read_access::{check_doc_read_access, DirectChecker, DocAccess, ObjectAccessChecker};

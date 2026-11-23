@@ -1,6 +1,9 @@
 import Lake
 open Lake DSL
 
+@[default_target]
+lean_lib ChildPage where
+
 package defraConvergence where
 
 @[default_target]
@@ -20,6 +23,9 @@ lean_lib VeraActorSpelling where
 
 @[default_target]
 lean_lib VeraPolicyNonce where
+
+@[default_target]
+lean_lib VeraRegistrationList where
 
 @[default_target]
 lean_lib VeraDelegationSigner where
@@ -104,6 +110,9 @@ lean_lib OrderEncoding where
 
 @[default_target]
 lean_lib IndexMaintenance where
+
+@[default_target]
+lean_lib IndexPrefix where
 
 @[default_target]
 lean_lib Conformance where
@@ -217,6 +226,9 @@ lean_lib RetrySchedule where
 lean_lib ChunkSplit where
 
 @[default_target]
+lean_lib ProllyTree where
+
+@[default_target]
 lean_lib TxnId where
 
 @[default_target]
@@ -230,6 +242,9 @@ lean_lib DocStoreTarget where
 
 @[default_target]
 lean_lib JsonSubPathCut where
+
+@[default_target]
+lean_lib RelationFilterNoChild where
 
 @[default_target]
 lean_lib CarClosureDepth where
@@ -301,6 +316,9 @@ lean_lib CommitConflictReceipt where
 lean_lib NacToggle where
 
 @[default_target]
+lean_lib FfiOptions where
+
+@[default_target]
 lean_lib NacRelationship where
 
 @[default_target]
@@ -346,6 +364,9 @@ lean_lib KmsChunks where
 lean_lib SigningOverride where
 
 @[default_target]
+lean_lib FloatEquality where
+
+@[default_target]
 lean_lib OwedParts where
 
 @[default_target]
@@ -362,3 +383,9 @@ lean_lib ExplicitDisconnectGate where
 
 @[default_target]
 lean_lib PeerDisconnectEvents where
+
+@[default_target]
+lean_lib SeTruncatePrefix where
+
+@[default_target]
+lean_lib ReplicatorEmptyCollections where

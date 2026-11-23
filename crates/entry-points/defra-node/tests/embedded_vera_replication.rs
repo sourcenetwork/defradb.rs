@@ -33,3 +33,6 @@ mod burst;
 
 #[path = "embedded_vera_replication/revocation.rs"]
 mod revocation;
+
+#[path = "embedded_vera_replication/addressed.rs"]
+mod addressed;

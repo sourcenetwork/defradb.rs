@@ -1,8 +1,8 @@
-//! The durable registrations' transitions run on the database's worker pool:
-//! the resync sweep, the receiver's registrations and their discharges call
-//! the store from the network edge, and each call crosses to a worker once,
-//! runs its engine transaction there and hands its result back. Called on a
-//! worker, or without a pool, a call runs where it is made.
+//! The durable registrations' transitions run on the database's worker pool.
+//! The receiver's registrations and their discharges call the store from the
+//! network edge, and each call crosses to a worker once, runs its engine
+//! transaction there and hands its result back. Called on a worker, or
+//! without a pool, a call runs where it is made.
 
 use std::sync::Arc;
 

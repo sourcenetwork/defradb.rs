@@ -17,8 +17,7 @@ use crate::{ffi_async, ffi_entry, try_ffi};
 ///
 /// `doc_id`, `filter` and `updater` must be null or valid null-terminated
 /// strings; every non-null string in `opts` must be one too.
-#[no_mangle]
-pub unsafe extern "C" fn defra_document_update(
+pub unsafe fn defra_document_update(
     node_ptr: usize,
     doc_id: *const c_char,
     filter: *const c_char,

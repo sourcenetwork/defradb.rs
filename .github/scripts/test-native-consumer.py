@@ -313,11 +313,14 @@ class Tests(unittest.TestCase):
     def test_environment_removes_profile_compiler_runtime_and_deadline_overrides(self):
         poison = {key: 'poison' for key in ('CARGO_PROFILE_RELEASE_LTO', 'RUSTC', 'RUSTDOC',
                   'CARGO_BUILD_RUSTC', 'RUSTFLAGS', 'CARGO_TARGET_DIR', 'VERAD_BINARY',
-                  'DEFRA_RUST_BINARY', 'VERA_E2E_DEADLINE_SCALE', 'ORBIS_LOCAL_STORAGE_KDF_M_COST')}
-        env = driver.clean_environment({**poison, 'PATH': '/usr/bin'})
+                  'DEFRA_RUST_BINARY', 'VERA_E2E_DEADLINE_SCALE', 'ORBIS_LOCAL_STORAGE_KDF_M_COST',
+                  'CARGO_BUILD_JOBS')}
+        stamps = {'DEFRA_NODE_BUILD_TIME_OVERRIDE': 'native-consumer',
+                  'DEFRA_NODE_GIT_HASH_OVERRIDE': 'native-consumer', 'DEFRA_NODE_GIT_DIRTY_OVERRIDE': ''}
+        env = driver.clean_environment({**poison, **{key: 'poison' for key in stamps}, 'PATH': '/usr/bin'})
         self.assertFalse(set(poison) & set(env))
         self.assertEqual(env['PATH'], '/usr/bin')
-        self.assertEqual(env['CARGO_BUILD_JOBS'], '2')
+        self.assertEqual({key: env[key] for key in stamps}, stamps)
 
     def test_node_readiness_events_remain_enabled_with_inherited_log_filters(self):
         for inherited in ('warn', 'error', 'off', 'trace', 'defra_http=off'):
@@ -429,7 +432,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(runs['compile-native'][3]['VERAD_BINARY'], '/staged/verad')
         tests = [c for c in runner.calls if c[0] == 'test']
         self.assertEqual(len(tests), 26)
-        self.assertEqual(len(tests[0][4]), 87)
+        self.assertEqual(len(tests[0][4]), 94)
         self.assertEqual({c[1] for c in tests[1:]}, {phase for phase, _ in driver.LIVE_CASES})
         for _, _, _, selectors, expected in tests[1:]:
             self.assertEqual(selectors, [expected[0], '--exact'])

@@ -10,131 +10,16 @@ use std::sync::Arc;
 use crate::acp::identity_ops::{
     decode_and_validate_public_key, parse_signing_key_type, validate_public_key_bytes,
 };
-use crate::ffi_entry;
 use crate::state::{IdentityState, IDENTITIES};
 use crate::types::{c_str_to_string, DefraNewIdentityResult};
 
-use super::{DefraRemoteSignAsyncCallback, DefraRemoteSignCallback, FfiRemoteSigner, HostCallback};
-
-/// Register an identity whose private key stays outside DefraDB.
-///
-/// The host provides the DID, public key, key type, and a signing callback.
-/// This supports device-bound keys (for example Secure Enclave P-256 keys) and
-/// remote identity providers such as Orbis without exporting private key bytes.
-///
-/// Swift can import this symbol directly from the generated Apple package.
-/// The callback is required and uses a plain C function-pointer ABI.
-///
-/// While a DID has live identity handles, its signer is fixed: registering
-/// the DID again with another `signer_handle` or callback fails until every
-/// handle for it is freed; with the same `signer_handle` and callback it
-/// gives another handle for the same signer. `signer_handle` must stay
-/// valid, and `callback` callable, until every identity handle naming them
-/// is freed and every node started with one (or given one as its identity)
-/// is closed or given another identity: a node keeps signing through them
-/// after the handle is freed.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-#[no_mangle]
-pub extern "C" fn defra_identity_new_remote(
-    did: *const c_char,
-    public_key_hex: *const c_char,
-    key_type: *const c_char,
-    signer_handle: usize,
-    callback: DefraRemoteSignCallback,
-) -> DefraNewIdentityResult {
-    ffi_entry! {
-        // SAFETY: the strings are null or valid C strings from the caller.
-        unsafe { register_hex(did, public_key_hex, key_type, signer_handle, HostCallback::Sync(callback)) }
-    }
-}
-
-/// Register an identity whose public key is already available as raw bytes.
-///
-/// This is intended for Swift and Objective-C callers that already have the
-/// device public key as `Data` or `UnsafePointer<UInt8>`. The callback contract
-/// matches [`defra_identity_new_remote`].
-///
-/// Public key format:
-/// - `secp256r1` / `secp256k1`: uncompressed SEC1 / X9.63 bytes
-/// - `ed25519`: raw 32-byte public key
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-#[no_mangle]
-pub extern "C" fn defra_identity_new_remote_bytes(
-    did: *const c_char,
-    public_key_ptr: *const u8,
-    public_key_len: usize,
-    key_type: *const c_char,
-    signer_handle: usize,
-    callback: DefraRemoteSignCallback,
-) -> DefraNewIdentityResult {
-    ffi_entry! {
-        // SAFETY: the strings are null or valid C strings, and the key is
-        // null or `public_key_len` readable bytes, from the caller.
-        unsafe {
-            register_bytes(
-                did,
-                public_key_ptr,
-                public_key_len,
-                key_type,
-                signer_handle,
-                HostCallback::Sync(callback),
-            )
-        }
-    }
-}
-
-/// [`defra_identity_new_remote`] for a host whose signer answers later: the
-/// callback starts each signature and returns at once, and the host reports
-/// the result with `defra_remote_sign_complete`. No DefraDB thread waits
-/// while the host signs, so this is the form for a host that signs on its
-/// own queue or over the network, and for a node running a single worker.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-#[no_mangle]
-pub extern "C" fn defra_identity_new_remote_async(
-    did: *const c_char,
-    public_key_hex: *const c_char,
-    key_type: *const c_char,
-    signer_handle: usize,
-    callback: DefraRemoteSignAsyncCallback,
-) -> DefraNewIdentityResult {
-    ffi_entry! {
-        // SAFETY: the strings are null or valid C strings from the caller.
-        unsafe { register_hex(did, public_key_hex, key_type, signer_handle, HostCallback::Async(callback)) }
-    }
-}
-
-/// [`defra_identity_new_remote_bytes`] with an asynchronous callback, as
-/// [`defra_identity_new_remote_async`].
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-#[no_mangle]
-pub extern "C" fn defra_identity_new_remote_bytes_async(
-    did: *const c_char,
-    public_key_ptr: *const u8,
-    public_key_len: usize,
-    key_type: *const c_char,
-    signer_handle: usize,
-    callback: DefraRemoteSignAsyncCallback,
-) -> DefraNewIdentityResult {
-    ffi_entry! {
-        // SAFETY: as for `defra_identity_new_remote_bytes`.
-        unsafe {
-            register_bytes(
-                did,
-                public_key_ptr,
-                public_key_len,
-                key_type,
-                signer_handle,
-                HostCallback::Async(callback),
-            )
-        }
-    }
-}
+use super::{FfiRemoteSigner, HostCallback};
 
 /// The registration of an identity whose public key is hex.
 ///
 /// # Safety
 /// The strings are null or valid null-terminated UTF-8 strings.
-unsafe fn register_hex(
+pub(crate) unsafe fn register_hex(
     did: *const c_char,
     public_key_hex: *const c_char,
     key_type: *const c_char,
@@ -144,7 +29,9 @@ unsafe fn register_hex(
     let result = (|| {
         let did_str = c_str_to_string(did).ok_or("invalid did parameter")?;
         let pub_hex = c_str_to_string(public_key_hex).ok_or("invalid public_key_hex parameter")?;
-        let key_type_str = c_str_to_string(key_type).unwrap_or_else(|| "secp256r1".to_string());
+        let key_type_str = c_str_to_string(key_type)
+            .filter(|key_type| !key_type.is_empty())
+            .unwrap_or_else(|| "secp256r1".to_string());
         let signing_key_type = parse_signing_key_type(&key_type_str)?;
 
         let public_key_bytes =
@@ -170,7 +57,7 @@ unsafe fn register_hex(
 /// # Safety
 /// The strings are null or valid null-terminated UTF-8 strings, and
 /// `public_key_ptr` is null or valid for `public_key_len` bytes.
-unsafe fn register_bytes(
+pub(crate) unsafe fn register_bytes(
     did: *const c_char,
     public_key_ptr: *const u8,
     public_key_len: usize,
@@ -189,7 +76,9 @@ unsafe fn register_bytes(
                 public_key_len
             ));
         }
-        let key_type_str = c_str_to_string(key_type).unwrap_or_else(|| "secp256r1".to_string());
+        let key_type_str = c_str_to_string(key_type)
+            .filter(|key_type| !key_type.is_empty())
+            .unwrap_or_else(|| "secp256r1".to_string());
         let signing_key_type = parse_signing_key_type(&key_type_str)?;
         // SAFETY: `public_key_ptr` is non-null and `public_key_len` is
         // bounded (checked above). The caller guarantees the pointer is

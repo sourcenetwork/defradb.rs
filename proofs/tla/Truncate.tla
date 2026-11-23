@@ -23,6 +23,12 @@
 \* documents. An unfiltered truncate of a view empties that cache too, so a
 \* query of the view returns nothing until the next refresh, as Go's does.
 \*
+\* Searchable encryption keeps search records per document under the
+\* collection's `/se/` prefix in the datastore. A node also keeps records it
+\* received from a peer, some for documents it never held. An unfiltered
+\* truncate deletes the whole prefix, so an encrypted search finds none of
+\* the removed documents, as Go's collection_truncate.go does.
+\*
 \* Why the txn check: inside a transaction the caller sees its own uncommitted
 \* writes. A filter evaluated there can match a document only because of a
 \* write that is later discarded, yet the delete is already durable. Outside a
@@ -37,7 +43,8 @@
 \* a document removed from a chunk collection; a filtered truncate removing anything from a branchable collection; a
 \* filtered truncate removing a document that does not match in committed
 \* state; a filter that is not one removing anything; a view still showing rows
-\* after an unfiltered truncate.
+\* after an unfiltered truncate; a search record surviving an unfiltered
+\* truncate.
 \*
 \* Code it models (crates/database/db/src/collection/ops/truncate/mod.rs):
 \*   DB::truncate_collection_as  the whole sequence, for every edge
@@ -46,17 +53,26 @@
 \*   conditions                  check 4: the filter's shape
 \*   DB::truncate                the delete, all (all.rs truncate_all) or matching (filtered.rs truncate_matching)
 \*   DB::truncate_parsed_as      the same sequence for the GraphQL truncate mutation, its filter already parsed
-\*   DB::truncate_metadata_in    (all.rs) the view cache cleared with the collection's metadata
+\*   DB::truncate_metadata_in    (all.rs) the view cache and the `/se/` prefix cleared with the collection's metadata
+\*   store_artifacts, build_reply (crates/database/db/src/merge/se/serve.rs) received search
+\*                               records written and served through the datastore view
 EXTENDS Naturals, FiniteSets   \* numbers to compare, and Cardinality to count documents
 
 CONSTANTS
   Docs,      \* the documents in the collection
-  Enforced   \* which checks and steps the database really runs (a subset of the six)
+  Enforced   \* which checks and steps the database really runs (a subset of the eight)
 
 \* At least two documents, so a filter can match some and not others.
 ASSUME Cardinality(Docs) >= 2
-\* Only the five named checks, and the view cache clear, can be enforced.
-ASSUME Enforced \subseteq {"nac", "chunk", "branchable", "txn", "shape", "viewcache"}
+\* Only the five named checks, the view cache clear and the two search-record
+\* steps can be enforced: "seprefix" deletes the collection's `/se/` prefix on
+\* an unfiltered truncate, and "sesamespace" stores received records under
+\* that same datastore prefix rather than in the raw root store.
+ASSUME Enforced \subseteq {"nac", "chunk", "branchable", "txn", "shape", "viewcache",
+                            "seprefix", "sesamespace"}
+
+\* A document the node holds no copy of but received search records for.
+Unheld == {"unheld"}
 
 VARIABLES
   permitted,       \* the caller holds the truncate permission
@@ -71,11 +87,13 @@ VARIABLES
   removed,         \* the documents this request removed
   refused,         \* the request ended with an error
   isView,          \* the collection is a materialized view
-  viewRows         \* the rows the view's cache holds, one per document it showed
+  viewRows,        \* the rows the view's cache holds, one per document it showed
+  seRecords        \* the documents some search record still names
 
 \* Every variable, for saying a step leaves them all as they are.
 vars == <<permitted, chunks, branchable, filtered, inTxn, shapeOk,
-          committedMatch, txnMatch, step, removed, refused, isView, viewRows>>
+          committedMatch, txnMatch, step, removed, refused, isView, viewRows,
+          seRecords>>
 
 \* Every variable holds a value of the shape it should.
 TypeOK ==
@@ -92,6 +110,7 @@ TypeOK ==
   /\ refused \in BOOLEAN
   /\ isView \in BOOLEAN
   /\ viewRows \subseteq Docs
+  /\ seRecords \subseteq Docs \cup Unheld
 
 \* Any request against any collection can arrive; nothing is removed yet.
 Init ==
@@ -110,6 +129,9 @@ Init ==
   \* A view refreshed before the truncate caches a row per document; any
   \* other collection has no cache.
   /\ viewRows = IF isView THEN Docs ELSE {}
+  \* Every held document has search records, and so does one the node
+  \* received for a document it does not hold.
+  /\ seRecords = Docs \cup Unheld
 
 \* Whether an enforced check fails for this request. Checks 2 to 4 apply only
 \* to a filtered truncate; the chunk check applies to every truncate.
@@ -129,7 +151,7 @@ Check ==
        THEN /\ refused' = TRUE /\ step' = "done"
        ELSE /\ refused' = refused /\ step' = "delete"
   /\ UNCHANGED <<permitted, chunks, branchable, filtered, inTxn, shapeOk,
-                 committedMatch, txnMatch, removed, isView, viewRows>>
+                 committedMatch, txnMatch, removed, isView, viewRows, seRecords>>
 
 \* The documents the delete takes. Without a filter, all of them. A filter that
 \* is not one, let through, is read as no conditions and matches everything. A
@@ -149,6 +171,12 @@ Delete ==
   /\ removed' = Targets
   /\ step' = "done"
   /\ viewRows' = IF ~filtered /\ "viewcache" \in Enforced THEN {} ELSE viewRows
+  \* An unfiltered delete with the prefix step removes every search record
+  \* under the collection's datastore prefix. Received records kept in the raw
+  \* root store instead (no "sesamespace") are not under it and survive.
+  /\ seRecords' = IF ~filtered /\ "seprefix" \in Enforced
+                    THEN (IF "sesamespace" \in Enforced THEN {} ELSE seRecords \cap Unheld)
+                    ELSE seRecords
   /\ UNCHANGED <<permitted, chunks, branchable, filtered, inTxn, shapeOk,
                  committedMatch, txnMatch, refused, isView>>
 
@@ -184,4 +212,9 @@ INV_UnfilteredRemovesAll ==
 \* An unfiltered truncate that was allowed leaves a view showing no rows.
 INV_UnfilteredEmptiesView ==
   (step = "done" /\ ~filtered /\ ~refused) => viewRows = {}
+
+\* An unfiltered truncate that was allowed leaves no search record, for a
+\* held document or a received one, so an encrypted search finds nothing.
+INV_UnfilteredClearsSearchRecords ==
+  (step = "done" /\ ~filtered /\ ~refused) => seRecords = {}
 ====

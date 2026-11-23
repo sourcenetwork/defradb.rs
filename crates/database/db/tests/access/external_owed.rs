@@ -33,7 +33,7 @@ impl Staging {
 
     /// A document `owner` creates while the provider cannot be reached, so
     /// its registration stays owed.
-    async fn create_unregistered(&self, owner: Did, name: &str) -> String {
+    pub(super) async fn create_unregistered(&self, owner: Did, name: &str) -> String {
         self.remote.down.store(true, Ordering::SeqCst);
         let doc = self.create(owner, name, None).await;
         self.remote.down.store(false, Ordering::SeqCst);
