@@ -631,3 +631,31 @@ public only when the node's configuration says so.
 > guarantee: if anything it rested on changed, the commit loses, exactly like a data
 > race. That symmetry is the entire trick, and the TLA+ models for ACP soundness and
 > the deferred-ACP overlay pin it.
+
+## Parent-authorized document creation
+
+A resource can declare which parent admits a new document. In this policy
+fragment, registering a job requires the creator to own the named node.
+
+```yaml
+- name: jobs
+  permissions: [{name: read}, {name: update}, {name: delete}]
+  relations: [{name: parent, types: [nodes]}]
+  create: {parent: parent, requires: owner}
+```
+
+Bind the child collection to the document field that carries the parent's ID.
+
+```graphql
+type Job @policy(id: "POLICY_ID", resource: "jobs", parentField: "nodeID") {
+  nodeID: String!
+}
+```
+
+The policy supplies the parent resource type. The field supplies one object ID.
+Local registration checks the creator against that parent and writes the owner
+and parent relationship in the document transaction. With Vera, the pending
+registration keeps both parent identifiers across a restart. A delegation
+bound to the registration covers both as well. Vera checks the acting identity
+when it executes the command. A later grant on the parent relation requires
+permission on the proposed target.

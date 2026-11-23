@@ -8,6 +8,41 @@
 
 use crate::error::Error;
 
+/// The object on which a child registration requires permission.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RegistrationParent {
+    pub resource: String,
+    pub object_id: String,
+}
+
+impl RegistrationParent {
+    /// Resolve the rule's single object type from the compiled relation.
+    pub fn from_policy(policy: &zanzibar::Policy, child: &str, id: &str) -> crate::Result<Self> {
+        let resource = policy
+            .get_resource(child)
+            .ok_or_else(|| Error::InvalidPolicy(format!("unknown child resource '{child}'")))?;
+        let rule = resource.create.as_ref().ok_or_else(|| {
+            Error::InvalidPolicy(format!("resource '{child}' has no create rule"))
+        })?;
+        let restriction = resource
+            .get_relation(&rule.parent)
+            .and_then(|relation| relation.subject_restriction.as_ref());
+        match restriction {
+            Some(zanzibar::SubjectRestriction::EntitySet { resource, relation })
+                if relation.is_empty() && !id.is_empty() =>
+            {
+                Ok(Self {
+                    resource: resource.clone(),
+                    object_id: id.into(),
+                })
+            }
+            _ => Err(Error::InvalidPolicy(
+                "registration requires a single parent object".into(),
+            )),
+        }
+    }
+}
+
 /// One object an owner is registered for: a document (its DocID) or a
 /// branchable collection (its collection ID).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

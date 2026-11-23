@@ -83,6 +83,7 @@ impl Default for ParsedTypeDirectives {
 pub(super) struct PolicyConfig {
     pub(super) id: String,
     pub(super) resource: String,
+    pub(super) parent_field: Option<String>,
 }
 
 #[derive(Debug)]

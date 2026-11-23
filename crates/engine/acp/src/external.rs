@@ -631,6 +631,30 @@ where
             .await
     }
 
+    async fn registration_parent(
+        &self,
+        policy_id: &str,
+        child: &str,
+        id: &str,
+    ) -> Result<crate::RegistrationParent> {
+        self.provider
+            .registration_parent(policy_id, child, id)
+            .await
+    }
+
+    async fn register_under_parent(
+        &self,
+        identity: &Did,
+        policy_id: &str,
+        resource: &str,
+        object_id: &str,
+        parent: &crate::RegistrationParent,
+    ) -> Result<()> {
+        self.provider
+            .register_under_parent(identity, policy_id, resource, object_id, parent)
+            .await
+    }
+
     async fn register_object(
         &self,
         identity: &Did,

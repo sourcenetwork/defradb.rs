@@ -20,6 +20,47 @@ fn actor_subject(actor: &Did) -> Subject {
     }
 }
 
+impl<S: ZanzibarStore + ?Sized + 'static> ZanzibarDocumentACP<S> {
+    pub(super) async fn check_parent_link(
+        &self,
+        requestor: &Did,
+        policy: &zanzibar::Policy,
+        rel: &Relationship,
+    ) -> Result<()> {
+        if let Some(rule) = policy
+            .get_resource(&rel.resource)
+            .and_then(|r| r.create.as_ref())
+            .filter(|r| r.parent == rel.relation)
+        {
+            let Subject::EntitySet {
+                resource,
+                object_id,
+                relation: target_relation,
+            } = &rel.subject
+            else {
+                return Err(Error::InvalidRelation("parent must be an object".into()));
+            };
+            if !target_relation.is_empty()
+                || !self
+                    .check_named_permission(
+                        requestor,
+                        &rule.requires,
+                        &policy.id,
+                        resource,
+                        object_id,
+                    )
+                    .await?
+            {
+                return Err(Error::PermissionDenied(format!(
+                    "parent requires '{}'",
+                    rule.requires
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: ZanzibarStore + ?Sized + 'static> DocumentACP for ZanzibarDocumentACP<S> {
@@ -75,9 +116,17 @@ impl<S: ZanzibarStore + ?Sized + 'static> DocumentACP for ZanzibarDocumentACP<S>
             return Ok(result);
         }
 
-        let known = self.engine.snapshot().lookup.has_policy(policy_id)
-            || self.store.has_policy(policy_id).await?;
-        if !known {
+        let stored = self.store.get_policy(policy_id).await?;
+        if stored
+            .as_ref()
+            .and_then(|p| p.get_resource(resource_name))
+            .is_some_and(|r| r.create.is_some())
+        {
+            return Err(Error::PermissionDenied(
+                "registration requires a parent object".into(),
+            ));
+        }
+        if stored.is_none() && !self.engine.snapshot().lookup.has_policy(policy_id) {
             self.store
                 .store_policy(&Self::create_default_policy(policy_id, resource_name))
                 .await?;
@@ -120,6 +169,95 @@ impl<S: ZanzibarStore + ?Sized + 'static> DocumentACP for ZanzibarDocumentACP<S>
             "Document registered with Zanzibar ACP"
         );
 
+        Ok(())
+    }
+
+    async fn registration_parent(
+        &self,
+        policy_id: &str,
+        child: &str,
+        id: &str,
+    ) -> Result<crate::RegistrationParent> {
+        let policy = self
+            .store
+            .get_policy(policy_id)
+            .await?
+            .ok_or_else(|| Error::PolicyNotFound(policy_id.into()))?;
+        crate::RegistrationParent::from_policy(&policy, child, id)
+    }
+
+    async fn register_under_parent(
+        &self,
+        identity: &Did,
+        policy_id: &str,
+        resource: &str,
+        id: &str,
+        parent: &crate::RegistrationParent,
+    ) -> Result<()> {
+        if let Some(scope) = self.store.begin_scope(false).await? {
+            self.scoped(scope.store())
+                .register_under_parent(identity, policy_id, resource, id, parent)
+                .await?;
+            scope.commit().await?;
+            return Ok(());
+        }
+        if !self.store.supports_transactions() {
+            return Err(Error::UnsupportedParentRegistration);
+        }
+        let policy = self
+            .store
+            .get_policy(policy_id)
+            .await?
+            .ok_or_else(|| Error::PolicyNotFound(policy_id.into()))?;
+        let expected =
+            crate::RegistrationParent::from_policy(&policy, resource, &parent.object_id)?;
+        if expected != *parent {
+            return Err(Error::InvalidPolicy("unexpected parent resource".into()));
+        }
+        let rule = policy
+            .get_resource(resource)
+            .and_then(|r| r.create.as_ref())
+            .ok_or_else(|| Error::InvalidPolicy("missing create rule".into()))?;
+        if !self
+            .check_named_permission(
+                identity,
+                &rule.requires,
+                policy_id,
+                &parent.resource,
+                &parent.object_id,
+            )
+            .await?
+        {
+            return Err(Error::PermissionDenied(format!(
+                "parent requires '{}'",
+                rule.requires
+            )));
+        }
+        let link = Relationship::new(
+            resource,
+            id,
+            &rule.parent,
+            Subject::entity_set(&parent.resource, &parent.object_id, ""),
+        );
+        let owners = self
+            .store
+            .get_relation_subjects(policy_id, resource, id, OWNER_RELATION)
+            .await?;
+        if !owners.is_empty() {
+            if owners.len() == 1
+                && owners[0].as_entity() == Some(identity)
+                && self
+                    .store
+                    .has_relationship(policy_id, resource, id, &rule.parent, &link.subject)
+                    .await?
+            {
+                return Ok(());
+            }
+            return Err(Error::DocumentAlreadyRegistered(format!("{resource}:{id}")));
+        }
+        let owner = Relationship::with_entity(resource, id, OWNER_RELATION, identity.clone());
+        self.store.store_relationship(policy_id, &owner).await?;
+        self.store.store_relationship(policy_id, &link).await?;
         Ok(())
     }
 
@@ -520,6 +658,8 @@ impl<S: ZanzibarStore + ?Sized + 'static> DocumentACP for ZanzibarDocumentACP<S>
         if policy.get_relation(collection_id, relation).is_some() {
             rel.validate(&policy)?;
         }
+
+        self.check_parent_link(requestor, &policy, &rel).await?;
 
         let has = self
             .store

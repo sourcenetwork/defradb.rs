@@ -62,12 +62,32 @@ pub async fn register_signed_genesis(
     doc_id: &str,
     reader: Option<&Did>,
 ) -> acp::Result<()> {
+    register_genesis(acp, signer, policy_id, resource, doc_id, reader, None).await
+}
+
+pub(super) async fn register_genesis(
+    acp: &dyn acp::DocumentACP,
+    signer: &Did,
+    policy_id: &str,
+    resource: &str,
+    doc_id: &str,
+    reader: Option<&Did>,
+    parent: Option<&acp::RegistrationParent>,
+) -> acp::Result<()> {
     let initial_reader = match reader {
         Some(reader) if !acp.is_doc_registered(policy_id, resource, doc_id).await? => Some(reader),
         _ => None,
     };
-    acp.register_doc_object(signer, policy_id, resource, doc_id)
-        .await?;
+    match parent {
+        Some(parent) => {
+            acp.register_under_parent(signer, policy_id, resource, doc_id, parent)
+                .await?
+        }
+        None => {
+            acp.register_doc_object(signer, policy_id, resource, doc_id)
+                .await?
+        }
+    }
     if let Some(reader) = initial_reader {
         acp.add_actor_relationship(
             signer,

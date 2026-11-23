@@ -455,6 +455,26 @@ impl CollectionVersion {
     fn validate_policy(&self) -> Result<()> {
         if let Some(ref policy) = self.policy {
             policy.validate()?;
+            if let Some(name) = &policy.parent_field {
+                let field = self.field_by_name(name).ok_or_else(|| {
+                    SchemaError::InvalidPolicy(format!(
+                        "parent field '{name}' does not exist on '{}'",
+                        self.name
+                    ))
+                })?;
+                if !matches!(
+                    field.kind,
+                    FieldKind::Scalar(
+                        crate::ScalarKind::DocID
+                            | crate::ScalarKind::String
+                            | crate::ScalarKind::NillableString
+                    )
+                ) {
+                    return Err(SchemaError::InvalidPolicy(format!(
+                        "parent field '{name}' must contain a single document ID"
+                    )));
+                }
+            }
         }
         Ok(())
     }

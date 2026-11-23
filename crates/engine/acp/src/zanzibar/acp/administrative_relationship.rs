@@ -98,6 +98,9 @@ where
                 .await?
         } else {
             relationship.validate(&policy)?;
+            scoped
+                .check_parent_link(actor, &policy, &relationship)
+                .await?;
             if authorization
                 .store
                 .has_relationship(policy_id, resource, doc_id, relation, &relationship.subject)

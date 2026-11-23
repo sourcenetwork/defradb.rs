@@ -37,7 +37,7 @@ fn hash_policy_fields(policy: &ParsedPolicy) -> Vec<u8> {
     let mut resources: Vec<_> = policy.resources.iter().collect();
     resources.sort_by(|a, b| a.name.cmp(&b.name));
 
-    for resource in resources {
+    for resource in &resources {
         hasher.update(resource.name.as_bytes());
 
         let mut relations: Vec<_> = resource.relations.iter().collect();
@@ -54,6 +54,20 @@ fn hash_policy_fields(policy: &ParsedPolicy) -> Vec<u8> {
         }
     }
 
+    if resources.iter().any(|r| r.create.is_some()) {
+        let mut gated = Sha256::new();
+        gated.update(b"defra/parent-registration/v1\0");
+        gated.update(hasher.finalize());
+        for resource in resources {
+            if let Some(rule) = &resource.create {
+                for part in [&resource.name, &rule.parent, &rule.requires] {
+                    gated.update((part.len() as u64).to_be_bytes());
+                    gated.update(part.as_bytes());
+                }
+            }
+        }
+        return gated.finalize().to_vec();
+    }
     hasher.finalize().to_vec()
 }
 
@@ -78,6 +92,7 @@ pub struct ParsedPolicy {
 #[serde(deny_unknown_fields)]
 pub struct PolicyResource {
     pub name: String,
+    pub create: Option<zanzibar::CreateRule>,
     #[serde(default)]
     pub description: String,
     #[serde(default)]
@@ -263,6 +278,7 @@ pub fn build_policy(parsed: &ParsedPolicy, counter: u64) -> crate::error::Result
         resources.push(Resource {
             name: res.name.clone(),
             description: res.description.clone(),
+            create: res.create.clone(),
             relations,
         });
     }
@@ -275,6 +291,7 @@ pub fn build_policy(parsed: &ParsedPolicy, counter: u64) -> crate::error::Result
         description: parsed.description.clone(),
         actor: Some(Resource {
             name: "actor".into(),
+            create: None,
             description: String::new(),
             relations: parsed
                 .actor

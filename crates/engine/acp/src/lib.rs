@@ -72,7 +72,7 @@ pub use external::{
 };
 pub use identity::Identity;
 pub use local::{LocalDocumentACP, MemoryAcpStore};
-pub use object_registration::{AcpObject, RegistrationFailure};
+pub use object_registration::{AcpObject, RegistrationFailure, RegistrationParent};
 pub use outbox::{
     InFlight, NewOwedChange, OwedAuthority, OwedAuthorityKind, OwedChange, OwedChanges, OwedDenial,
     OwedDenials, OwedEntry, OwedFilter, OwedHold, OwedJournal, OwedOp, OwedOutcome, OwedRef,

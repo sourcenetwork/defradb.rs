@@ -274,6 +274,19 @@ pub trait VeraProvider: MaybeSendSync {
         object_id: &str,
     ) -> Result<(), ProviderError>;
 
+    async fn register_under_parent(
+        &self,
+        _bearer_token: &str,
+        _policy_id: &str,
+        _resource: &str,
+        _object_id: &str,
+        _parent: &acp::RegistrationParent,
+    ) -> Result<(), ProviderError> {
+        Err(ProviderError::Unsupported(
+            "parent-authorized registration".into(),
+        ))
+    }
+
     /// Register each of `objects` under `bearer_token` in one request the
     /// provider applies in order, all or none, at most
     /// [`MAX_REGISTRATIONS_PER_REQUEST`] of them. A provider that applies no

@@ -471,6 +471,28 @@ pub trait DocumentACP: MaybeSendSync {
             .await
     }
 
+    /// Resolve the resource type of the parent referenced by the document.
+    async fn registration_parent(
+        &self,
+        _policy_id: &str,
+        _child: &str,
+        _id: &str,
+    ) -> Result<crate::RegistrationParent> {
+        Err(Error::UnsupportedParentRegistration)
+    }
+
+    /// Atomically register a child and its parent link as the supplied identity.
+    async fn register_under_parent(
+        &self,
+        _identity: &Did,
+        _policy_id: &str,
+        _resource: &str,
+        _object_id: &str,
+        _parent: &crate::RegistrationParent,
+    ) -> Result<()> {
+        Err(Error::UnsupportedParentRegistration)
+    }
+
     /// Check if document/object is registered with ACP.
     ///
     /// Documents created without identity may be unregistered; public access is backend-specific.

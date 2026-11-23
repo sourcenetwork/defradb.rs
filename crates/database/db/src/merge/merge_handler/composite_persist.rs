@@ -208,28 +208,76 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             .map_err(|e| MergeError::Database(crate::error::Error::Storage(e)))?;
 
         if old_doc.is_none() && !doc_is_tombstoned {
-            if context.block.heads.as_deref().is_none_or(<[Cid]>::is_empty) {
-                if let (Some(provider), Some(policy), Some(signer)) = (
-                    self.db.document_acp(),
-                    collection.schema().policy.as_ref(),
-                    self.verify_block_signature(context.cid, context.block, &[])
-                        .await?,
-                ) {
+            let genesis = context.block.heads.as_deref().is_none_or(<[Cid]>::is_empty);
+            let policy = collection.schema().policy.as_ref();
+            let parent_field = policy.and_then(|policy| policy.parent_field.as_deref());
+            if parent_field.is_some() && !genesis {
+                return Err(MergeError::MergeFailed(
+                    "a parent-gated document requires its signed genesis".into(),
+                ));
+            }
+            if genesis {
+                let signer = self
+                    .verify_block_signature(context.cid, context.block, &[])
+                    .await?;
+                let provider = self.db.document_acp();
+                if parent_field.is_some() && (signer.is_none() || provider.is_none()) {
+                    return Err(MergeError::MergeFailed(
+                        "parent-gated genesis requires a verified signer and ACP provider".into(),
+                    ));
+                }
+                if let (Some(provider), Some(policy), Some(signer)) = (provider, policy, signer) {
                     if let Some(scoped) = provider.bind_transaction(
                         systemstore.sibling(storage::namespace::Namespace::Acpstore),
                     ) {
                         let signer = identity::Did::new(signer)
                             .map_err(|error| MergeError::MergeFailed(error.to_string()))?;
-                        super::genesis_access::register_signed_genesis(
+                        let parent = match parent_field {
+                            Some(field) => {
+                                let id = doc
+                                    .get(field)
+                                    .and_then(document::NormalValue::as_str)
+                                    .filter(|s| !s.is_empty())
+                                    .ok_or_else(|| {
+                                        MergeError::MergeFailed(format!(
+                                            "missing parent document ID in '{field}'"
+                                        ))
+                                    })?;
+                                Some(
+                                    scoped
+                                        .registration_parent(&policy.id, &policy.resource_name, id)
+                                        .await
+                                        .map_err(|error| {
+                                            MergeError::MergeFailed(error.to_string())
+                                        })?,
+                                )
+                            }
+                            None => None,
+                        };
+                        super::genesis_access::register_genesis(
                             &*scoped,
                             &signer,
                             &policy.id,
                             &policy.resource_name,
                             context.doc_id_str,
                             state.genesis_reader.as_ref(),
+                            parent.as_ref(),
                         )
                         .await
                         .map_err(|error| MergeError::MergeFailed(error.to_string()))?;
+                    } else if parent_field.is_some()
+                        && !provider
+                            .is_doc_registered(
+                                &policy.id,
+                                &policy.resource_name,
+                                context.doc_id_str,
+                            )
+                            .await
+                            .map_err(|error| MergeError::MergeFailed(error.to_string()))?
+                    {
+                        return Err(MergeError::MergeFailed(
+                            "parent-gated document awaits provider registration".into(),
+                        ));
                     }
                 }
                 self.record_replica(systemstore, context, collection.schema())

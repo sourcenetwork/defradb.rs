@@ -73,15 +73,36 @@ pub(super) async fn remote_write_authority(
                         "the verified write names no document".into(),
                     )
                 })?;
+                let mut registration = acp::PendingRegistration::new(
+                    signer.clone(),
+                    &policy.id,
+                    &policy.resource_name,
+                    object,
+                );
+                if let Some(field) = &policy.parent_field {
+                    let [input] = mutation.create_input.as_slice() else {
+                        return Err(QueryError::WriteAuthorityUnavailable(
+                            "a verified registration must name one child".into(),
+                        ));
+                    };
+                    let id = input
+                        .get(field)
+                        .and_then(|value| value.as_str())
+                        .filter(|id| !id.is_empty())
+                        .ok_or_else(|| {
+                            QueryError::WriteAuthorityUnavailable(format!(
+                                "missing parent document ID in '{field}'"
+                            ))
+                        })?;
+                    registration.parent = Some(
+                        provider
+                            .registration_parent(&policy.id, &policy.resource_name, id)
+                            .await
+                            .map_err(refused)?,
+                    );
+                }
                 provider
-                    .command_authority(
-                        signer,
-                        acp::ProviderCommand::RegisterObject {
-                            policy_id: &policy.id,
-                            resource: &policy.resource_name,
-                            object,
-                        },
-                    )
+                    .command_authority(signer, registration.command())
                     .map(drop)
             }
             MutationType::Update | MutationType::Delete => {

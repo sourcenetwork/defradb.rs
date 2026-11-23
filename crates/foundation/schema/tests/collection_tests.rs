@@ -259,6 +259,17 @@ fn test_validate_collection_with_valid_policy() {
 }
 
 #[test]
+fn registration_parent_must_name_a_field_that_can_hold_a_document_id() {
+    for (field, accepted) in [("name", true), ("age", false), ("missing", false)] {
+        let mut policy = PolicyDescription::new("policy", "users");
+        policy.parent_field = Some(field.into());
+        let collection =
+            CollectionVersion::new("users", "v1", "coll-1", sample_fields()).with_policy(policy);
+        assert_eq!(collection.validate().is_ok(), accepted, "{field}");
+    }
+}
+
+#[test]
 fn test_validate_collection_with_invalid_policy_path_separator() {
     let coll = CollectionVersion::new("users", "v1", "coll-1", sample_fields())
         .with_policy(PolicyDescription::new("policy/traversal", "users"));

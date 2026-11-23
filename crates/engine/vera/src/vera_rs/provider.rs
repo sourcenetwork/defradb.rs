@@ -667,6 +667,29 @@ impl VeraProvider for VeraRsProvider {
         Ok(())
     }
 
+    async fn register_under_parent(
+        &self,
+        bearer_token: &str,
+        policy_id: &str,
+        resource: &str,
+        object_id: &str,
+        parent: &acp::RegistrationParent,
+    ) -> Result<(), ProviderError> {
+        self.send_command(
+            bearer_token,
+            &crate::PolicyCommand {
+                policy_id,
+                resource,
+                object_id,
+                action: crate::PolicyAction::RegisterUnderParent {
+                    resource: &parent.resource,
+                    object_id: &parent.object_id,
+                },
+            },
+        )
+        .await
+    }
+
     async fn register_objects(
         &self,
         bearer_token: &str,

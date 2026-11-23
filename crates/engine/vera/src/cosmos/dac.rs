@@ -652,6 +652,55 @@ impl DocumentACP for VeraDocumentACP {
         Ok(())
     }
 
+    async fn registration_parent(
+        &self,
+        policy_id: &str,
+        child: &str,
+        id: &str,
+    ) -> Result<acp::RegistrationParent> {
+        let policy = self
+            .get_policy(policy_id)
+            .await
+            .map_err(provider_err)?
+            .ok_or_else(|| acp::Error::PolicyNotFound(policy_id.into()))?;
+        acp::RegistrationParent::from_policy(&policy, child, id)
+    }
+
+    async fn register_under_parent(
+        &self,
+        identity: &Did,
+        policy_id: &str,
+        resource: &str,
+        object_id: &str,
+        parent: &acp::RegistrationParent,
+    ) -> Result<()> {
+        let token = self.create_bearer_token(identity.as_str()).await?;
+        self.admit_for(
+            identity.as_str(),
+            &token,
+            &PolicyCommand {
+                policy_id,
+                resource,
+                object_id,
+                action: PolicyAction::RegisterUnderParent {
+                    resource: &parent.resource,
+                    object_id: &parent.object_id,
+                },
+            },
+        )?;
+        let [policy, resource, object] = owned([policy_id, resource, object_id]);
+        let parent = parent.clone();
+        self.remote(move |provider| async move {
+            provider
+                .register_under_parent(&token, &policy, &resource, &object, &parent)
+                .await
+        })
+        .await
+        .map_err(provider_err)?;
+        self.invalidate_cached_access(policy_id);
+        Ok(())
+    }
+
     async fn register_objects(
         &self,
         identity: &Did,

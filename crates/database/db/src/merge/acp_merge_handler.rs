@@ -98,6 +98,9 @@ impl AcpCompositeMergeHook {
         if !self.strict() || acp.supports_transactions() || collection.policy.is_none() {
             return None;
         }
+        if collection.policy.as_ref()?.parent_field.is_some() {
+            return None;
+        }
         self.replicas
             .get()
             .filter(|replicas| replicas.lists(collection))
@@ -531,6 +534,9 @@ impl CompositeMergeHook for AcpCompositeMergeHook {
         }
         let acp = self.document_acp()?.clone();
         let policy = collection.policy.as_ref()?;
+        if policy.parent_field.is_some() {
+            return None;
+        }
         if self.replicas_for(collection).is_some() {
             return Some(Box::new(SettleReplicaAction {
                 acp,

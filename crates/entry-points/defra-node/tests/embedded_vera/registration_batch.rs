@@ -106,3 +106,29 @@ fn more_creates_than_one_list_holds_are_registered_in_several() {
     })
     .unwrap();
 }
+
+#[test]
+fn a_created_document_registers_under_its_selected_parent() {
+    workers::block_on(async {
+        let directory = tempfile::tempdir().unwrap();
+        let node = node(directory.path()).await;
+        let vera = node.vera_acp().unwrap();
+        let owner = identity::Did::new(vera.self_did().unwrap()).unwrap();
+        let policy = vera.add_policy(owner.as_str(), &format!(
+            "{POLICY}\n  - name: jobs\n    permissions: [{{name: read}}, {{name: update}}, {{name: delete}}]\n    relations: [{{name: parent, types: [users]}}]\n    create: {{parent: parent, requires: owner}}\n"
+        ), None).await.unwrap();
+        node.add_collection(&format!(
+            "{}\ntype Job @policy(id: \"{policy}\", resource: \"jobs\", parentField: \"parentId\") {{parentId: String!}}",
+            users(&policy),
+        )).await.unwrap();
+        let parent = created(node.execute_request(create_user("parent", &owner)).await);
+        let response = node.execute_request(defra_node::QueryRequest::new(format!(
+            "mutation {{ add_Job(input: {{parentId: \"{parent}\"}}) {{ _docID }} }}"
+        )).with_identity(Some(owner.clone()))).await;
+        assert!(!response.has_errors(), "{:?}", response.errors);
+        let data = response.data.unwrap();
+        let child = data["add_Job"][0]["_docID"].as_str().unwrap();
+        assert_eq!(node.document_acp().get_doc_owner(&policy, "jobs", child).await.unwrap(), Some(owner));
+        node.shutdown().await.unwrap();
+    }).unwrap();
+}

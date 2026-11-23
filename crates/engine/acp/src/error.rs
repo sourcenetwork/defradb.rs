@@ -28,6 +28,9 @@ pub enum Error {
     #[error("document already registered: {0}")]
     DocumentAlreadyRegistered(String),
 
+    #[error("parent-authorized registration is unsupported by this provider")]
+    UnsupportedParentRegistration,
+
     /// Invalid relation name
     #[error("invalid relation: {0}")]
     InvalidRelation(String),
