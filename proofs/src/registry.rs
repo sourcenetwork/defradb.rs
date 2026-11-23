@@ -54,6 +54,15 @@ use Tier::{Behavioral, Boundary, Contract};
 
 pub const PROPERTIES: &[Property] = &[
     Property {
+        family: "Secondary index equal-key order",
+        name: "INV_Page: an ordered scan reserves a saturated offset plus limit and the LimitNode applies the offset once",
+        axis: Tla,
+        anchor: "crates/engine/query/src/planner/builder/index_methods.rs order_index_scan_params",
+        model_ref: "MC_OrderedIndexPage_{Green,Red_DoubleOffset}.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/index/index_offset_limit.rs",
+    },
+    Property {
         family: "Schema-evolution operations in the core",
         name: "INV_Keep / INV_Match / INV_Real: synced definitions preserve only the matching placeholder's transform and leave held definitions unchanged",
         axis: Tla,
