@@ -326,6 +326,7 @@ fn every_listed_route_resolves_in_the_router() {
 const REVIEWED: &[(&str, &str, &str)] = &[
     ("/health-check", "GET", "exempt"),
     ("/openapi.json", "GET", "exempt"),
+    ("/openapi.rs.json", "GET", "exempt"),
     ("/api/v0/version", "GET", "exempt"),
     ("/api/v0/graphql/ws", "ANY", "exempt"),
     ("/api/v0/batch/verify", "POST", "exempt"),
