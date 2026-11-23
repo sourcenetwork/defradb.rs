@@ -587,6 +587,7 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
             match find_all_missing_links(blockstore.as_ref(), &root_data).await {
                 Ok(missing) => Some(missing).filter(|missing| !missing.is_empty()),
                 Err(e) => {
+                    state.diagnostics.record_missing_link_walk_error();
                     warn!(root_cid = %root_cid, error = %e, "find_all_missing_links failed; asking for the whole root");
                     None
                 }
@@ -742,6 +743,7 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
         let missing = match find_all_missing_links(blockstore.as_ref(), &root_data).await {
             Ok(m) => m,
             Err(e) => {
+                state.diagnostics.record_missing_link_walk_error();
                 warn!(root_cid = %root_cid, error = %e, "find_all_missing_links failed");
                 return FetchAttemptOutcome::Incomplete(0, attempt_failures);
             }

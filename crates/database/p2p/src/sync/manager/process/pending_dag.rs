@@ -1192,9 +1192,11 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             }
 
             let missing = match &data {
-                Some(data) => find_all_missing_links(self.blockstore.as_ref(), data)
-                    .await
-                    .unwrap_or_else(|_| vec![root_cid]),
+                Some(data) => frontier_or_unknown(
+                    root_cid,
+                    find_all_missing_links(self.blockstore.as_ref(), data).await,
+                    &self.diagnostics,
+                ),
                 None => vec![root_cid],
             };
             let head_priority = decoded_head_priority.or(record.head_priority);

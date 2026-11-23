@@ -389,6 +389,40 @@ fn a_read_fault_after_rooted_car_ingest_is_not_complete() {
     .unwrap();
 }
 
+/// With cancellable rooted sync and the root held, a child that fails to
+/// read fails the opening walk and the selective walk: the attempt ends
+/// incomplete and both failed walks are counted.
+#[test]
+fn a_read_fault_under_cancellable_rooted_sync_counts_each_failed_walk() {
+    workers::block_on(async {
+        let blockstore = FaultyBlockstore::new();
+        let (root, root_data, child, _) = stored_dag(&blockstore, false).await;
+        let transport = transport(
+            &blockstore,
+            root,
+            root_data,
+            RapidHashMap::new(),
+            RapidHashMap::new(),
+        );
+        transport.set_force_rooted_sync();
+        blockstore.fail(child, Fault::Storage);
+        let diagnostics = SyncDiagnostics::default();
+
+        let outcome = attempt(&transport, &blockstore, root, &diagnostics).await;
+
+        assert!(
+            matches!(outcome, FetchAttemptOutcome::Incomplete(..)),
+            "a read fault reported {outcome:?}"
+        );
+        assert_eq!(
+            diagnostics.snapshot().missing_link_walk_errors,
+            2,
+            "the opening walk and the selective walk both failed"
+        );
+    })
+    .unwrap();
+}
+
 /// A child read as gone between two walks is asked for again.
 #[test]
 fn a_child_gone_between_walks_is_fetched_again() {
@@ -570,8 +604,8 @@ fn a_conflicting_read_is_incomplete_and_releases_its_permit() {
         );
         assert_eq!(
             diagnostics.snapshot().missing_link_walk_errors,
-            u64::from(MAX_FETCH_ATTEMPTS),
-            "each attempt walks again and finds the frontier unknown"
+            3 * u64::from(MAX_FETCH_ATTEMPTS),
+            "each attempt's opening, post-CAR and selective walks fail and are counted"
         );
         let peer = PeerId::new("remote-peer".to_string());
         assert!(
@@ -781,6 +815,42 @@ fn a_registered_head_is_acked_when_a_root_it_advances_fails_to_read() {
         assert!(manager.pending_dag_snapshot(&head).is_some());
         assert_eq!(manager.pending_dag_missing(&root), vec![root]);
         assert!(!dag_ready(&mut events).contains(&root));
+    })
+    .unwrap();
+}
+
+/// After a restart, the restore sweep walks a persisted root whose stored
+/// child fails to read: the root keeps the frontier `[root]` and the failed
+/// walk is counted.
+#[test]
+fn a_restore_walk_over_an_unreadable_child_is_counted() {
+    workers::block_on(async {
+        let blockstore = FaultyBlockstore::new();
+        let pending = Arc::new(crate::sync::pending_store::PendingDagStore::new(Arc::new(
+            RegolithStore::in_memory().unwrap(),
+        )));
+        let (field, field_bytes) = lww("name");
+        let (root, root_bytes) = composite(1, &[("name", field)]);
+        {
+            let (before, _events) = manager(&blockstore);
+            before.install_pending_dag_store(pending.clone()).await;
+            push(&before, "doc1", root, &root_bytes).await;
+            assert_eq!(before.pending_dag_missing(&root), vec![field]);
+        }
+        blockstore.put(&field, &field_bytes).await.unwrap();
+        blockstore.fail(field, Fault::Storage);
+        let (after, mut events) = manager(&blockstore);
+        after.install_pending_dag_store(pending).await;
+
+        after.resync_persisted_pending_dags().await;
+
+        assert_eq!(after.pending_dag_missing(&root), vec![root]);
+        assert!(dag_ready(&mut events).is_empty());
+        assert_eq!(
+            after.diagnostics().snapshot().missing_link_walk_errors,
+            1,
+            "the failed restore walk is counted"
+        );
     })
     .unwrap();
 }
