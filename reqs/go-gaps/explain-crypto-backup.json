@@ -105,10 +105,12 @@
       "tools/integration-test/tests/testo/explain/default/with_index.rs::default_explain_with_index_on_subquery_nested_relation_order",
       "tools/integration-test/tests/testo/explain/simple/with_index.rs::simple_explain_with_index_on_filter",
       "tools/integration-test/tests/testo/explain/simple/with_index.rs::simple_explain_with_index_on_order",
-      "tools/integration-test/tests/testo/explain/simple/with_index.rs::simple_explain_with_index_on_subquery_nested_relation_order"
+      "tools/integration-test/tests/testo/explain/simple/with_index.rs::simple_explain_with_index_on_subquery_nested_relation_order",
+      "tools/integration-test/tests/testo/index/explain_scan_node.rs::explain_of_a_top_level_index_read_is_a_plain_scan_node",
+      "tools/integration-test/tests/testo/index/explain_scan_node.rs::explain_shows_an_index_read_as_a_plain_scan_node"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
-    "note": "Only the indexed-filter case is checked, and only that an index is named, not the selectTopNode>selectNode>scanNode shape. Unverified: ordering by an indexed field with no orderNode, and a child ordered by an indexed related field with limit giving limitNode but no orderNode."
+    "note": "The hand-written top-level filter scenario pins the full selectTopNode>selectNode>scanNode shape with Go's four scanNode fields. Unverified: ordering by an indexed field with no orderNode, and a child ordered by an indexed related field with limit giving limitNode but no orderNode."
   },
   {
     "id": "go.explain.default.group.selection",

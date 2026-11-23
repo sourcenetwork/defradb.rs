@@ -65,6 +65,106 @@ fn explain_shows_an_index_read_as_a_plain_scan_node() {
     .execute();
 }
 
+#[test]
+#[mantra_macros::req_test("go.explain.default.index")]
+fn explain_of_a_top_level_index_read_is_a_plain_scan_node() {
+    TestCase::from_actions(vec![
+        AddCollection {
+            sdl: "type User { name: String  age: Int @index }".into(),
+            ..Default::default()
+        }
+        .into(),
+        capture_version("User", "user_version").into(),
+        Request {
+            request: r#"query @explain { User(filter: {age: {_eq: 30}}) { name } }"#.into(),
+            expected_data: json!({
+                "explain": {
+                    "operationNode": [{
+                        "selectTopNode": {
+                            "selectNode": {
+                                "docID": null,
+                                "filter": null,
+                                "scanNode": {
+                                    "collectionID": m::r("user_version"),
+                                    "collectionName": "User",
+                                    "filter": { "age": { "_eq": 30 } },
+                                    "prefixes": ["/1"],
+                                },
+                            },
+                        },
+                    }],
+                },
+            }),
+            ..Default::default()
+        }
+        .into(),
+    ])
+    .execute();
+}
+
+#[test]
+#[mantra_macros::req_test("go.explain.default.index")]
+fn a_join_from_the_indexed_child_names_the_parent_side() {
+    TestCase::from_actions(vec![
+        AddCollection {
+            sdl: PERSON_BOOKS.into(),
+            ..Default::default()
+        }
+        .into(),
+        capture_version("Person", "person_version").into(),
+        capture_version("Book", "book_version").into(),
+        Request {
+            request: r#"query @explain {
+                Book(filter: {author: {name: {_eq: "David"}}}) { title author { name } }
+            }"#
+            .into(),
+            expected_data: json!({
+                "explain": {
+                    "operationNode": [{
+                        "selectTopNode": {
+                            "selectNode": {
+                                "docID": null,
+                                "filter": { "author": { "name": { "_eq": "David" } } },
+                                "typeIndexJoin": {
+                                    "direction": "primary",
+                                    "joinType": "typeJoinOne",
+                                    "root": {
+                                        "scanNode": {
+                                            "collectionID": m::r("book_version"),
+                                            "collectionName": "Book",
+                                            "filter": null,
+                                            "prefixes": ["/2"],
+                                        },
+                                    },
+                                    "rootName": "authoredBooks",
+                                    "subType": {
+                                        "selectTopNode": {
+                                            "selectNode": {
+                                                "docID": null,
+                                                "filter": null,
+                                                "scanNode": {
+                                                    "collectionID": m::r("person_version"),
+                                                    "collectionName": "Person",
+                                                    "filter": { "name": { "_eq": "David" } },
+                                                    "prefixes": ["/1"],
+                                                },
+                                            },
+                                        },
+                                    },
+                                    "subTypeName": "author",
+                                },
+                            },
+                        },
+                    }],
+                },
+            }),
+            ..Default::default()
+        }
+        .into(),
+    ])
+    .execute();
+}
+
 const PERSON_INDEXED_BOOKS: &str = r#"
     type Person {
         name: String
