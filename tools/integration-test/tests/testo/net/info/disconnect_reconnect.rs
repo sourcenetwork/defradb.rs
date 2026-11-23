@@ -10,6 +10,7 @@ use serde_json::json;
 
 #[test]
 #[mantra_macros::req_test("go.net.peers.disconnect")]
+#[mantra_macros::req_test("defra.net.peers.sticky_disconnect")]
 fn net_info_disconnect_sticks_until_explicit_reconnect() {
     TestCase {
         id: integration_test::scenario_id!(),
@@ -73,6 +74,25 @@ fn net_info_disconnect_sticks_until_explicit_reconnect() {
                 millis: Some(500),
                 common: Common {
                     node: Some("db1".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            ActivePeers {
+                expected_data: json!({ "addresses": m::unordered(json!([])) }),
+                common: Common {
+                    node: Some("db1".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            ConnectPeers {
+                target: "db1".into(),
+                expected_error: Some("connection timed out".into()),
+                common: Common {
+                    node: Some("db0".into()),
                     ..Default::default()
                 },
                 ..Default::default()
