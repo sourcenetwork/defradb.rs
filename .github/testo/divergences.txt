@@ -13,3 +13,6 @@ testo collection_version::updates::add::simple::collection_version_updates_add_s
 # Defra.rs should return an error for a view source query with more than one top-level selection; Go silently keeps the first selection
 # and creates the view (undesirable).
 testo view::simple::with_multiple_sources::add_view_with_two_source_selections_fails_and_creates_no_view
+# Rust stamps a migrated document only when every transition on its path ran a transform; Go stamps a partial read, so the
+# field a later lens sets comes back null (sourcenetwork/defradb#4736).
+testo issues::t_3044::indexed_collection_query_after_two_lenses_returns_migrated_fields
