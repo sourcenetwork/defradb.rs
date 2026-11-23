@@ -27,6 +27,7 @@ impl super::Planner {
         ordered_prefix: usize,
     ) -> Result<Box<dyn PlanNode>> {
         let has_group_by = select.group_by.is_some();
+        let mut groups_keep_source_order = true;
 
         if has_group_by {
             // WITH GROUP BY: GroupByNode → Aggregates → OrderBy → Limit
@@ -286,6 +287,7 @@ impl super::Planner {
                     group_node = group_node.with_child_selects(child_selects_meta);
                 }
 
+                groups_keep_source_order = group_node.keeps_source_order();
                 plan = Box::new(group_node);
             }
 
@@ -305,8 +307,10 @@ impl super::Planner {
 
             // 6. Apply order by (after grouping/aggregation)
             // Skip if index (own or via join) already provides the ordering
+            // and grouping kept it.
             if let Some(ref order_by) = select.order_by {
-                if !index_provides_ordering && !join_provides_ordering {
+                let source_ordered = index_provides_ordering || join_provides_ordering;
+                if !(source_ordered && groups_keep_source_order) {
                     plan = Box::new(OrderByNode::new(
                         plan,
                         order_by.clone(),

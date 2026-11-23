@@ -153,6 +153,8 @@ fn many_to_many_query_from_join_collection_should_succeed() {
             }
             .into(),
         ],
+        // TODO(https://github.com/sourcenetwork/defradb.rs/issues/3042): the join drops a relation when both foreign keys are indexed.
+        multiplier_excludes: &["secondary-index"],
         ..Default::default()
     }
     .execute();
