@@ -358,7 +358,13 @@ pub fn filter_to_index_scan(
         // and backward when the scan is: the planner relies on the index for
         // the requested order, so `_in: [55, 25]` must not come back as written.
         // Sorting after the JSON wrap orders them by the keys the index stores.
-        sort_in_key_order(&mut wrapped_values, first_field_descending, reverse);
+        // Go's unordered composite lookup visits first-field values in ascending
+        // order. Explicit ordering must still follow the scan direction.
+        sort_in_key_order(
+            &mut wrapped_values,
+            first_field_descending,
+            reverse ^ (is_composite && order_by.is_none() && first_field_descending),
+        );
         // For composite indexes, check if subsequent fields have Eq conditions.
         // If so, attach them as suffix_values to enable exact-match lookups
         // instead of prefix scans (e.g., _in on first field + _eq on second).
@@ -599,14 +605,7 @@ fn sort_in_key_order(values: &mut Vec<NormalValue>, descending: bool, reverse: b
         })
         .collect();
     keyed.sort_by(|(a, _), (b, _)| match (a, b) {
-        (Some(a), Some(b)) => {
-            let ascending = a.cmp(b);
-            if descending {
-                ascending.reverse()
-            } else {
-                ascending
-            }
-        }
+        (Some(a), Some(b)) => a.cmp(b),
         (Some(_), None) => std::cmp::Ordering::Less,
         (None, Some(_)) => std::cmp::Ordering::Greater,
         (None, None) => std::cmp::Ordering::Equal,
