@@ -667,3 +667,9 @@ node submits under its own identity, with the parent ID from the signed
 document. While parent admission is pending, ACP reports registration as
 unavailable and grants the submitter no owner access. Creator grants are
 delivered after the provider accepts the registration.
+
+An embedder with changing device membership can implement
+`ReplicaOwnership::allows_foreign_registration` to query the provider before
+registering or adopting a replica. For a known local signer or an unavailable
+membership lookup, the receiving node waits for ordinary registration and
+read access. A lookup failure never queues a registration or creator grant.

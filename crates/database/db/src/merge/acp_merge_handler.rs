@@ -356,6 +356,17 @@ impl CompositeMergeHook for AcpCompositeMergeHook {
         if ownership.is_own_actor(&collection.name, &creator) {
             return Ok(ReplicaStep::Gate);
         }
+        match ownership
+            .allows_foreign_registration(collection, &creator, acp.as_ref())
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => return Ok(ReplicaStep::Gate),
+            Err(error) => {
+                tracing::debug!(%doc_id, %error, "Could not establish replica signer membership");
+                return Ok(ReplicaStep::Gate);
+            }
+        }
         let Some(registrant) = acp.own_actor() else {
             tracing::warn!(
                 %doc_id,

@@ -488,3 +488,75 @@ fn a_foreign_genesis_waits_for_parent_admission_before_its_creator_gets_write_ac
     })
     .unwrap();
 }
+
+#[test]
+fn an_unavailable_membership_lookup_never_authorizes_replica_registration() {
+    struct Membership {
+        available: std::sync::atomic::AtomicBool,
+        local: identity::Did,
+    }
+
+    #[async_trait::async_trait]
+    impl db::merge::ReplicaOwnership for Membership {
+        fn is_own_actor(&self, _: &str, _: &identity::Did) -> bool {
+            false
+        }
+
+        async fn allows_foreign_registration(
+            &self,
+            _: &schema::CollectionVersion,
+            actor: &identity::Did,
+            _: &dyn acp::DocumentACP,
+        ) -> acp::Result<bool> {
+            if !self.available.load(Ordering::SeqCst) {
+                return Err(acp::Error::ProviderUnavailable(
+                    "membership is offline".into(),
+                ));
+            }
+            Ok(actor != &self.local)
+        }
+
+        fn creator_grants(
+            &self,
+            _: &str,
+            creator: &identity::Did,
+            _: &str,
+        ) -> Vec<acp::ReplicaGrant> {
+            vec![acp::ReplicaGrant::new(
+                "writer",
+                acp::Subject::Entity(creator.clone()),
+            )]
+        }
+    }
+
+    workers::block_on(async {
+        let chain = Chain::new();
+        let node = key().did;
+        let local = key();
+        let foreign = key();
+        let membership = Arc::new(Membership {
+            available: false.into(),
+            local: local.did.clone(),
+        });
+        let receiver = Receiver::open(&chain, &node, Some(membership.clone())).await;
+        let source = Source::open().await;
+        let (doc, genesis) = source.create(&foreign, "foreign").await;
+        assert!(is_retry(&receiver.receive(&source, &doc, &genesis).await));
+        assert_eq!(receiver.owed(&doc).await, acp::ReplicaOwed::default());
+        assert_eq!(chain.owner(&doc), None);
+        membership.available.store(true, Ordering::SeqCst);
+        let (own_doc, own_genesis) = source.create(&local, "local").await;
+        assert!(is_retry(
+            &receiver.receive(&source, &own_doc, &own_genesis).await
+        ));
+        assert_eq!(receiver.owed(&own_doc).await, acp::ReplicaOwed::default());
+        assert_eq!(
+            receiver.receive(&source, &doc, &genesis).await,
+            MergeOutcome::Merged
+        );
+        receiver.settle(&doc).await.unwrap();
+        assert_eq!(chain.owner(&doc), Some(node));
+        assert!(chain.holds(&doc, "writer", &foreign.did));
+    })
+    .unwrap()
+}
