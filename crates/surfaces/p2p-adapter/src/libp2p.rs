@@ -366,15 +366,15 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             .await
             .map(|peers| peers.contains(&parsed.peer_id))
             .unwrap_or(false);
+        self.handle
+            .dial_explicit(parsed.peer_id, vec![parsed.transport_addr])
+            .await
+            .map_err(|error| P2PError::transport(error.to_string()))?;
         if already_connected {
             self.peer_addresses
                 .insert(parsed.peer_id.to_string(), addr.to_string());
             return Ok(());
         }
-        self.handle
-            .dial_explicit(parsed.peer_id, vec![parsed.transport_addr])
-            .await
-            .map_err(|error| P2PError::transport(error.to_string()))?;
         self.handle
             .poll_until_connected(parsed.peer_id, std::time::Duration::from_secs(10))
             .await
