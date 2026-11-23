@@ -86,6 +86,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Peer connection observation | TLA+ / Lean | p2p |
 | HTTP router composition | TLA+ / Lean | http, defra-node |
 | Explicit transaction statement atomicity | TLA+ | query, db, storage |
+| One-to-many child paging | TLA+ | query; a child limit/offset applies per parent so a later parent keeps its page; `crates/engine/query/src/plan/type_join/type_join_many/children.rs` |
 | Engine ticker export | TLA+ & Lean | telemetry, storage |
 | Worker pool CPU ledger | TLA+ & Lean | workers |
 | Signing identity store | TLA+ & Lean | defra-core, defra-node, ffi |
@@ -142,6 +143,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Receive gate | TLA+ | p2p, db |
 | P2P delivery liveness | TLA+ | p2p, p2p-adapter, db-merge, storage |
 | Document save | TLA+ & Lean | query, defra-node |
+| Per-parent child paging | TLA+ / Lean | query |
 | Mutation value checks | Lean | document, defra-core, query |
 | Cursor tokens | Lean | cursor |
 | Peer key loading | TLA+ / Lean | defra-node, ffi |

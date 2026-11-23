@@ -140,7 +140,9 @@ where
 {
     let args = serde_json::to_value(original).map_err(|e| e.to_string())?;
     let args = resolve(&args, &state.captures).map_err(|e| e.to_string())?;
-    let action: A = serde_json::from_value(args).map_err(|e| e.to_string())?;
+    let action = serde_json::from_value::<A>(args)
+        .map_err(|e| e.to_string())?
+        .resolved();
     let common = action.common();
     let expected = expectation(&action);
     let outcome = match (&common.eventually, &expected) {
