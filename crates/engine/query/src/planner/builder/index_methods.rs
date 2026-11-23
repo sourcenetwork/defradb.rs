@@ -165,7 +165,10 @@ impl super::Planner {
                     limit,
                     offset,
                 ) {
-                    return Some((params, true));
+                    let provides_ordering = order_by
+                        .map(|order| can_be_ordered_by_filtered_index(order, best_index, filter).0)
+                        .unwrap_or(false);
+                    return Some((params, provides_ordering));
                 }
             }
         }
