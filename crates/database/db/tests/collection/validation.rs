@@ -327,3 +327,39 @@ fn relation_id_of_wrong_length_is_rejected_like_go() {
         .validate_relation_ids(&invalid, Some(&invalid))
         .unwrap();
 }
+
+#[test]
+fn parent_registration_field_cannot_change_after_creation() {
+    let mut schema = CollectionVersion::new(
+        "Job",
+        "job_version",
+        "job_collection",
+        vec![
+            FieldDescription::new(
+                "1",
+                "nodeID",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "body", FieldKind::string(), schema::CType::LwwRegister),
+        ],
+    );
+    let mut policy = schema::PolicyDescription::new("policy", "job");
+    policy.parent_field = Some("nodeID".into());
+    schema.policy = Some(policy);
+    let collection = Collection::new(schema, crdt::Crdts::default());
+    let doc = |json| Document::from_json_str(json, collection.schema_arc()).unwrap();
+    let old = doc(r#"{"nodeID":"parent-a","body":"before"}"#);
+    let same = doc(r#"{"nodeID":"parent-a","body":"after"}"#);
+    let changed = doc(r#"{"nodeID":"parent-b","body":"before"}"#);
+    let removed = doc(r#"{"body":"before"}"#);
+    assert!(collection
+        .validate_immutable_fields_unchanged(&old, &same)
+        .is_ok());
+    assert!(collection
+        .validate_immutable_fields_unchanged(&old, &changed)
+        .is_err());
+    assert!(collection
+        .validate_immutable_fields_unchanged(&old, &removed)
+        .is_err());
+}

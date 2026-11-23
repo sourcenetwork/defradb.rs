@@ -128,12 +128,16 @@ impl Collection {
     where
         F: Fn(&str) -> bool,
     {
-        for field_def in self
-            .def
-            .fields
-            .iter()
-            .filter(|field| field.immutable && checked(&field.name))
-        {
+        for field_def in self.def.fields.iter().filter(|field| {
+            (field.immutable
+                || self
+                    .def
+                    .policy
+                    .as_ref()
+                    .and_then(|p| p.parent_field.as_deref())
+                    == Some(field.name.as_str()))
+                && checked(&field.name)
+        }) {
             // Values compare by the state a register stores for them.
             let stored = |doc: &Document| {
                 let value = doc.get(&field_def.name).unwrap_or(&NormalValue::Null);

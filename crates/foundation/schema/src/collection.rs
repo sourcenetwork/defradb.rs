@@ -474,6 +474,11 @@ impl CollectionVersion {
                         "parent field '{name}' must contain a single document ID"
                     )));
                 }
+                if field.crdt_type != crate::CType::LwwRegister {
+                    return Err(SchemaError::InvalidPolicy(format!(
+                        "parent field '{name}' must use a last-write-wins register"
+                    )));
+                }
             }
         }
         Ok(())
