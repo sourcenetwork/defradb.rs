@@ -1,68 +1,70 @@
 ---- MODULE FollowDeploymentRecovery ----
-\* The own-state recovery pass added to FollowDeployment: the node may rebuild
-\* what an uncovered takeover voided, but it serves nothing until the pass has
-\* handed every page over and the checked term is published.
+\* The own-state pass added to FollowDeployment.
+\*
+\* An uncovered takeover makes the node recoverable. The source walks its
+\* ledger one bounded page at a time, and each page is handed to the outbox.
+\* `recoverCursor` counts the pages handed over. A page source reports the
+\* ledger's end only on the final page, and the node publishes the checked
+\* term only after the source has said the pass is done.
 EXTENDS FollowDeployment
 
-CONSTANT
-    Pages      \* how many pages the own-state pass takes
-    DeliverPage \* TRUE: each page is handed to the outbox before the next
+CONSTANTS
+    Pages,                \* how many bounded pages the ledger takes
+    DeliverPage,          \* TRUE: each page reaches the outbox before the next
+    PageEndsAtBoundary,   \* TRUE: only the final page reports the ledger's end
+    SourceCompletion      \* TRUE: the source reports that the whole pass is done
 
-VARIABLES
-    page       \* the page the pass is handing over
-    pagesDone  \* how many pages have reached the outbox
+\* Every base variable except the term and recovery state recovery may change.
+BaseIdle == <<staged, owed, pending, sent, chain, journal, evicted,
+              failClosed, mark, cursor, checking, lost, tainted, crashes,
+              cache, takeovers, servedVoid, servedWide>>
 
-vars2 == <<page, pagesDone>>
+\* Recovery has produced or is producing pages.
+RecoveryOpen == recoverable \/ recoverDone \/ recoverCursor > 0
 
-TypeOK2 ==
-    /\ page \in 0..Pages
-    /\ pagesDone \in 0..Pages
-    /\ pagesDone <= page
-
-Init2 ==
-    /\ page = 0
-    /\ pagesDone = 0
-
-\* The node can rebuild the voided state only after every page reaches the
-\* outbox and the checked term is published.
-CanDecide ==
-    /\ ~recoverable
-    /\ page = Pages
-    /\ pagesDone = Pages
-
-RecoverPage ==
-    /\ recoverable
-    /\ page < Pages
-    /\ page' = page + 1
-    /\ UNCHANGED <<pagesDone, vars>>
-
-PublishPage ==
-    /\ DeliverPage
-    /\ page > pagesDone
-    /\ pagesDone' = page
-    /\ UNCHANGED <<page, vars>>
-
-FinishRecovery ==
-    /\ recoverable
-    /\ page = Pages
-    /\ pagesDone = Pages
-    /\ recoverable' = FALSE
-    /\ handled' = term
-    /\ UNCHANGED <<page, pagesDone, vars>>
-
-Next2 == RecoverPage \/ PublishPage \/ FinishRecovery
-
-PublishPage2 ==
-    /\ ~DeliverPage
-    /\ page' = Pages
-    /\ UNCHANGED <<pagesDone, vars>>
-
-Spec2 == Init /\ Init2 /\ [][Next \/ Next2 \/ PublishPage2]_(vars \o vars2)
-        /\ WF_vars2(RecoverPage) /\ WF_vars2(PublishPage) /\ WF_vars2(FinishRecovery)
-
+\* A recovery pass may close only with every page handed over and done.
 INV_NoDecisionBeforeHandover ==
-    [](~CanDecide => cursor = 0)
+    ~(RecoveryOpen /\ ~recoverable /\ handled = term
+      /\ (recoverCursor < Pages \/ ~recoverDone))
 
-LIVE_RecoveryHandsOver ==
-    [](recoverable => <>((page = Pages /\ pagesDone = Pages) \/ ~recoverable))
+\* The source returns a page and hands it to the outbox before the next.
+SourcePage ==
+    /\ recoverable                    \* the pass is active
+    /\ recoverCursor < Pages          \* another ledger page remains
+    /\ recoverCursor' = recoverCursor + 1  \* this page reaches the outbox
+    /\ recoverDone' = IF recoverCursor + 1 = Pages
+                      THEN SourceCompletion /\ PageEndsAtBoundary  \* the final page says done
+                      ELSE SourceCompletion /\ ~PageEndsAtBoundary \* the bug says done early
+    /\ UNCHANGED <<BaseIdle, term, handled, recoverable>>
+
+\* The whole recovery pass has been handed over and done.
+FinishRecovery ==
+    /\ recoverable                    \* the pass is still active
+    /\ recoverDone                    \* the source says every page is done
+    /\ recoverable' = FALSE           \* recovery ends
+    /\ handled' = term                \* the term is published
+    /\ UNCHANGED <<BaseIdle, term, recoverCursor, recoverDone>>
+
+\* The no-page-gate bug publishes a checked term without handing over.
+SkipHandover ==
+    /\ ~DeliverPage                   \* the page gate is absent
+    /\ recoverable                    \* a pass is active
+    /\ recoverCursor > 0              \* at least one page was read
+    /\ recoverable' = FALSE           \* the bug ends recovery anyway
+    /\ handled' = term                \* and publishes the term
+    /\ UNCHANGED <<BaseIdle, term, recoverCursor, recoverDone>>
+
+\* The base actions leave the recovery page fields alone.
+BaseNext2 == Next /\ UNCHANGED <<recoverCursor, recoverDone>>  \* base work leaves recovery alone
+
+Next2 == SourcePage \/ FinishRecovery \/ SkipHandover  \* the recovery pass itself
+
+NextAll == BaseNext2 \/ Next2  \* one step is base work or recovery work
+
+Spec2 == Init /\ [][NextAll]_vars
+        /\ WF_vars(SourcePage)      \* the source keeps returning pages
+        /\ WF_vars(FinishRecovery)  \* a done pass is closed and published
+
+LIVE_RecoveryFinishes ==
+    [](recoverable => <>(~recoverable /\ recoverDone /\ recoverCursor = Pages))  \* recovery must end
 ====

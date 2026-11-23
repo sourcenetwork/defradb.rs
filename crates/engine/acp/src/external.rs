@@ -658,40 +658,36 @@ where
             .await
             .map_err(|error| crate::RegistrationFailure::new(0, error))?;
         }
-        match self.provider.register_objects(identity, objects).await {
-            Ok(()) => {
-                for object in objects {
-                    self.recovery_settle(
-                        object.policy_id,
-                        object.resource,
-                        object.object_id,
-                        crate::recovery::RecoveryOperation::Register {
-                            actor: self.provider.canonical_actor(identity),
-                        },
-                        true,
-                    )
-                    .await
-                    .map_err(|error| crate::RegistrationFailure::new(0, error))?;
-                }
-                Ok(())
-            }
-            Err(failure) => {
-                for object in objects {
-                    self.recovery_settle(
-                        object.policy_id,
-                        object.resource,
-                        object.object_id,
-                        crate::recovery::RecoveryOperation::Register {
-                            actor: self.provider.canonical_actor(identity),
-                        },
-                        false,
-                    )
-                    .await
-                    .map_err(|error| crate::RegistrationFailure::new(failure.index, error))?;
-                }
-                Err(failure)
+        let operation = crate::recovery::RecoveryOperation::Register {
+            actor: self.provider.canonical_actor(identity),
+        };
+        let operations: Vec<crate::recovery::RecoveryOperation> =
+            objects.iter().map(|_| operation.clone()).collect();
+        let sent = self.provider.register_objects(identity, objects).await;
+        let registered = sent
+            .as_ref()
+            .map_or_else(|failure| failure.index, |()| operations.len());
+        let mut settle_failure = None;
+        for (index, object) in objects.iter().enumerate() {
+            if let Err(error) = self
+                .recovery_settle(
+                    object.policy_id,
+                    object.resource,
+                    object.object_id,
+                    operations[index].clone(),
+                    index < registered,
+                )
+                .await
+            {
+                settle_failure.get_or_insert_with(|| {
+                    crate::RegistrationFailure::new(index.min(registered), error)
+                });
             }
         }
+        if let Some(failure) = settle_failure {
+            return Err(failure);
+        }
+        sent
     }
 
     async fn register_doc_object(
@@ -949,11 +945,13 @@ where
             relation: relation.to_owned(),
             subject,
         };
-        self.recovery_prepare(policy_id, collection_id, doc_id, operation.clone())
-            .await?;
-        let changed = self
-            .provider
-            .add_actor_relationship(
+        let changed = recovery::record(
+            self,
+            policy_id,
+            collection_id,
+            doc_id,
+            operation.clone(),
+            self.provider.add_actor_relationship(
                 requestor,
                 target,
                 policy_id,
@@ -961,8 +959,9 @@ where
                 doc_id,
                 relation,
                 managing_relations,
-            )
-            .await?;
+            ),
+        )
+        .await?;
         self.recovery_settle(policy_id, collection_id, doc_id, operation, changed)
             .await?;
         self.object_changed(policy_id, collection_id, doc_id);
@@ -990,11 +989,13 @@ where
             relation: relation.to_owned(),
             subject: OwedSubject::try_from(target.clone())?,
         };
-        self.recovery_prepare(policy_id, collection_id, doc_id, operation.clone())
-            .await?;
-        let changed = self
-            .provider
-            .add_relationship(
+        let changed = recovery::record(
+            self,
+            policy_id,
+            collection_id,
+            doc_id,
+            operation.clone(),
+            self.provider.add_relationship(
                 requestor,
                 target,
                 policy_id,
@@ -1002,8 +1003,9 @@ where
                 doc_id,
                 relation,
                 managing_relations,
-            )
-            .await?;
+            ),
+        )
+        .await?;
         self.recovery_settle(policy_id, collection_id, doc_id, operation, changed)
             .await?;
         self.object_changed(policy_id, collection_id, doc_id);
@@ -1039,11 +1041,13 @@ where
             relation: relation.to_owned(),
             subject,
         };
-        self.recovery_prepare(policy_id, collection_id, doc_id, operation.clone())
-            .await?;
-        let changed = self
-            .provider
-            .delete_actor_relationship(
+        let changed = recovery::record(
+            self,
+            policy_id,
+            collection_id,
+            doc_id,
+            operation.clone(),
+            self.provider.delete_actor_relationship(
                 requestor,
                 target,
                 policy_id,
@@ -1051,8 +1055,9 @@ where
                 doc_id,
                 relation,
                 managing_relations,
-            )
-            .await?;
+            ),
+        )
+        .await?;
         self.recovery_settle(policy_id, collection_id, doc_id, operation, changed)
             .await?;
         self.object_changed(policy_id, collection_id, doc_id);
@@ -1080,11 +1085,13 @@ where
             relation: relation.to_owned(),
             subject: OwedSubject::try_from(target.clone())?,
         };
-        self.recovery_prepare(policy_id, collection_id, doc_id, operation.clone())
-            .await?;
-        let changed = self
-            .provider
-            .delete_relationship(
+        let changed = recovery::record(
+            self,
+            policy_id,
+            collection_id,
+            doc_id,
+            operation.clone(),
+            self.provider.delete_relationship(
                 requestor,
                 target,
                 policy_id,
@@ -1092,8 +1099,9 @@ where
                 doc_id,
                 relation,
                 managing_relations,
-            )
-            .await?;
+            ),
+        )
+        .await?;
         self.recovery_settle(policy_id, collection_id, doc_id, operation, changed)
             .await?;
         self.object_changed(policy_id, collection_id, doc_id);

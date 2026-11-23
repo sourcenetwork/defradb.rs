@@ -9,6 +9,7 @@ use rapidhash::{HashMapExt, RapidHashMap};
 use storage::RegolithStore;
 
 use super::*;
+use crate::dac::DocumentACP;
 use crate::external::ExternalDocumentAcp;
 use crate::local::{LocalDocumentACP, MemoryAcpStore};
 use crate::outbox::{OwedOp, OwedSubject};
@@ -56,6 +57,7 @@ async fn ledger(
         .page(None, RECOVERY_PAGE_BYTES)
         .await
         .unwrap()
+        .records
         .remove(0)
         .1;
     drop(ledger);
@@ -76,6 +78,128 @@ struct Fake {
     term: AtomicU64,
     registered: bool,
     grants: RapidHashMap<String, bool>,
+}
+
+struct Refusing;
+
+#[derive(Default)]
+struct PartialBatch(std::sync::atomic::AtomicUsize);
+
+#[async_trait]
+impl DocumentACP for Refusing {
+    async fn register_doc_object(&self, _: &Did, _: &str, _: &str, _: &str) -> Result<()> {
+        Err(Error::ProviderUnavailable("not reached".into()))
+    }
+
+    async fn is_doc_registered(&self, _: &str, _: &str, _: &str) -> Result<bool> {
+        Ok(false)
+    }
+
+    async fn check_doc_access(
+        &self,
+        _: &crate::Identity,
+        _: crate::DocumentPermission,
+        _: &str,
+        _: &str,
+        _: &str,
+    ) -> Result<bool> {
+        Ok(false)
+    }
+
+    async fn add_actor_relationship(
+        &self,
+        _: &Did,
+        _: &Did,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &[String],
+    ) -> Result<bool> {
+        Err(Error::NotManager {
+            operation: "add actor relationship".into(),
+        })
+    }
+
+    async fn delete_actor_relationship(
+        &self,
+        _: &Did,
+        _: &Did,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &[String],
+    ) -> Result<bool> {
+        Err(Error::NotManager {
+            operation: "delete actor relationship".into(),
+        })
+    }
+
+    async fn unregister_doc_object(&self, _: &str, _: &str, _: &str) -> Result<()> {
+        Err(Error::ProviderUnavailable("not reached".into()))
+    }
+}
+
+#[async_trait]
+impl DocumentACP for PartialBatch {
+    async fn register_doc_object(&self, _: &Did, _: &str, _: &str, _: &str) -> Result<()> {
+        match self.0.fetch_add(1, Ordering::SeqCst) {
+            0 => Ok(()),
+            _ => Err(Error::ProviderUnavailable(
+                "second registration refused".into(),
+            )),
+        }
+    }
+
+    async fn is_doc_registered(&self, _: &str, _: &str, _: &str) -> Result<bool> {
+        Ok(false)
+    }
+
+    async fn check_doc_access(
+        &self,
+        _: &crate::Identity,
+        _: crate::DocumentPermission,
+        _: &str,
+        _: &str,
+        _: &str,
+    ) -> Result<bool> {
+        Ok(false)
+    }
+
+    async fn add_actor_relationship(
+        &self,
+        _: &Did,
+        _: &Did,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &[String],
+    ) -> Result<bool> {
+        Err(Error::NotManager {
+            operation: "add actor relationship".into(),
+        })
+    }
+
+    async fn delete_actor_relationship(
+        &self,
+        _: &Did,
+        _: &Did,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &[String],
+    ) -> Result<bool> {
+        Err(Error::NotManager {
+            operation: "delete actor relationship".into(),
+        })
+    }
+
+    async fn unregister_doc_object(&self, _: &str, _: &str, _: &str) -> Result<()> {
+        Err(Error::ProviderUnavailable("not reached".into()))
+    }
 }
 
 impl Fake {
@@ -143,6 +267,7 @@ fn a_pending_operation_is_applied_before_the_pass_asks_the_deployment() {
         .page(None, RECOVERY_PAGE_BYTES)
         .await
         .unwrap();
+        let records = records.records;
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].1.resolved().owner, Some(owner()));
     })
@@ -150,6 +275,7 @@ fn a_pending_operation_is_applied_before_the_pass_asks_the_deployment() {
 }
 
 #[test]
+#[mantra_macros::req_test("defra.acp.vera_uncovered_takeover_recovery")]
 fn a_page_is_owed_again_and_the_pass_resumes_without_repeating_it() {
     workers::block_on(async {
         let (store, mut records) = ledger("policy", "users", "bae-1").await;
@@ -182,12 +308,56 @@ fn a_page_is_owed_again_and_the_pass_resumes_without_repeating_it() {
         ));
         gate.delivered(first.cursor).await.unwrap();
 
-        let next = gate.next(&verifier).await.unwrap().expect("the pass ends");
-        assert!(next.effects.is_empty());
-        gate.delivered(next.cursor).await.unwrap();
-        let ended = gate.next(&verifier).await.unwrap().expect("the pass ends");
-        assert!(ended.effects.is_empty());
-        gate.delivered(ended.cursor).await.unwrap();
+        assert!(
+            gate.next(&verifier).await.unwrap().is_none(),
+            "a completed cursor ends the pass"
+        );
+    })
+    .unwrap()
+}
+
+#[test]
+#[mantra_macros::req_test("defra.acp.vera_uncovered_takeover_recovery")]
+fn a_pass_pages_past_the_first_ledger_page_and_ends() {
+    workers::block_on(async {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let txn = datastore::BasicTxn::new(store.as_ref(), 0, false)
+            .await
+            .unwrap();
+        let ledger = RecoveryLedger::new(txn.acpstore());
+        for index in 0..3000 {
+            let mut record = RecoveryObject::new("policy", "users", &format!("bae-{index}"));
+            record.owner = Some(owner());
+            record.relationships.push(RecoveryRelationship {
+                actor: owner(),
+                relation: "reader".into(),
+                subject: OwedSubject::Actor { did: reader() },
+            });
+            ledger.write(record).await.unwrap();
+        }
+        drop(ledger);
+        txn.commit().await.unwrap();
+
+        let verifier = Fake {
+            term: AtomicU64::new(1),
+            registered: false,
+            grants: RapidHashMap::new(),
+        };
+        let gate = ExternalDocumentAcp::new(
+            Arc::new(LocalDocumentACP::new(Arc::new(MemoryAcpStore::default()))),
+            store,
+        );
+        let mut effects = 0;
+        while let Some(page) = gate.next(&verifier).await.unwrap() {
+            effects += page.effects.len();
+            assert!(page.unrestored.is_empty());
+            gate.delivered(page.cursor).await.unwrap();
+        }
+        assert_eq!(effects, 6000);
+        assert!(
+            gate.next(&verifier).await.unwrap().is_none(),
+            "the completed pass ends"
+        );
     })
     .unwrap()
 }
@@ -211,10 +381,13 @@ fn a_new_term_resets_an_old_recovery_cursor() {
         gate.delivered(page.cursor).await.unwrap();
         verifier.term.store(2, Ordering::SeqCst);
 
-        assert!(
-            gate.next(&verifier).await.unwrap().is_some(),
-            "the new term starts the pass again"
-        );
+        let reset = gate
+            .next(&verifier)
+            .await
+            .unwrap()
+            .expect("the new term starts the pass again");
+        assert_eq!(reset.effects.len(), 1);
+        assert!(reset.cursor.complete);
     })
     .unwrap()
 }
@@ -250,6 +423,90 @@ fn a_confirmed_delete_is_reflected_when_the_pass_rebuilds() {
             page.effects[0],
             crate::VoidedEffect::Change(ref change) if change.op == OwedOp::Delete
         ));
+    })
+    .unwrap()
+}
+
+#[test]
+#[mantra_macros::req_test("defra.acp.vera_uncovered_takeover_recovery")]
+fn a_refused_grant_is_not_owed_again_by_recovery() {
+    workers::block_on(async {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let gate = ExternalDocumentAcp::new(Arc::new(Refusing), Arc::clone(&store));
+        let error = gate
+            .add_actor_relationship(
+                &owner(),
+                &reader(),
+                "policy",
+                "users",
+                "bae-1",
+                "reader",
+                &[],
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(error, Error::NotManager { .. }));
+
+        let txn = datastore::BasicTxn::new(store.as_ref(), 0, true)
+            .await
+            .unwrap();
+        let records = RecoveryLedger::new(txn.acpstore())
+            .page(None, RECOVERY_PAGE_BYTES)
+            .await
+            .unwrap()
+            .records;
+        assert_eq!(records.len(), 1);
+        assert!(records[0].1.pending.is_none());
+        assert!(records[0].1.relationships.is_empty());
+        drop(records);
+        drop(txn);
+
+        let verifier = Fake {
+            term: AtomicU64::new(1),
+            registered: false,
+            grants: RapidHashMap::new(),
+        };
+        let page = gate.next(&verifier).await.unwrap().expect("the page");
+        assert!(page.effects.is_empty(), "a refused grant is not owed again");
+        assert!(!page.unrestored.is_empty());
+    })
+    .unwrap()
+}
+
+#[test]
+#[mantra_macros::req_test("defra.acp.vera_uncovered_takeover_recovery")]
+fn a_batch_failure_keeps_its_applied_registration_prefix() {
+    workers::block_on(async {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let gate = ExternalDocumentAcp::new(Arc::new(PartialBatch::default()), store.clone());
+        let objects = [
+            crate::AcpObject {
+                policy_id: "policy",
+                resource: "users",
+                object_id: "bae-1",
+            },
+            crate::AcpObject {
+                policy_id: "policy",
+                resource: "users",
+                object_id: "bae-2",
+            },
+        ];
+        let failure = gate.register_objects(&owner(), &objects).await.unwrap_err();
+        assert_eq!(failure.index, 1);
+
+        let txn = datastore::BasicTxn::new(store.as_ref(), 0, true)
+            .await
+            .unwrap();
+        let records = RecoveryLedger::new(txn.acpstore())
+            .page(None, RECOVERY_PAGE_BYTES)
+            .await
+            .unwrap()
+            .records;
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].1.owner, Some(owner()));
+        assert!(records[0].1.pending.is_none());
+        assert_eq!(records[1].1.owner, None);
+        assert!(records[1].1.pending.is_none());
     })
     .unwrap()
 }

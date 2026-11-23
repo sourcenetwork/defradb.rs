@@ -96,6 +96,7 @@ n0-future.workspace = true
 
 [dev-dependencies]
 edge = { path = "../../foundation/edge", features = ["testing"] }
+storage = { path = "../../engine/storage" }
 # The recording signer the provider's signer tests sign through.
 vera-delegation = { path = "../../engine/vera-delegation", features = ["testing"] }
 # Tests run with ordered JSON maps: bytes built from a map in any order but the sorted one then differ from the

@@ -71,10 +71,10 @@ pub const PROPERTIES: &[Property] = &[
         // resumable across a restart, and the provider admits nothing until
         // the whole pass has handed over.
         family: "ACP soundness + revocation + dual-path commits",
-        name: "INV_NoDecisionBeforeHandover / LIVE_RecoveryHandsOver: an uncovered takeover recovers without a new worker, page by page through the outbox, and no decision is served before the pass completes",
+        name: "INV_NoDecisionBeforeHandover / LIVE_RecoveryFinishes: an uncovered takeover recovers without a new worker, page by page through the outbox, and no decision is served before the source completes",
         axis: Tla,
-        anchor: "crates/engine/vera/src/vera_rs/provider/terms.rs Follower::recover; crates/engine/vera/src/vera_rs/follow/journal.rs Journal::close_recoverable, Journal::recovered; crates/engine/acp/src/recovery.rs RecoveryLedger, RecoverySource; crates/engine/acp/src/external/recovery.rs ExternalDocumentAcp as RecoverySource; crates/entry-points/defra-node/src/node_acp.rs verified_acp_setup",
-        model_ref: "MC_FollowDeploymentRecovery_{Green,Red_NoPageGate}.cfg",
+        anchor: "crates/engine/vera/src/vera_rs/provider/terms.rs Follower::recover; crates/engine/vera/src/vera_rs/follow/journal.rs Journal::close_recoverable, Journal::recovered; crates/engine/acp/src/recovery.rs RecoveryLedger, RecoverySource; crates/engine/acp/src/external/recovery.rs ExternalDocumentAcp::next, ExternalDocumentAcp::delivered; crates/entry-points/defra-node/src/node_acp.rs verified_acp_setup",
+        model_ref: "MC_FollowDeploymentRecovery_{Green,Red_NoPageGate,Red_PartialPageDone,Red_NoSourceDone}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },
@@ -1984,7 +1984,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "ACP soundness + revocation + dual-path commits",
         name: "INV_NoVoidDecision / INV_RevocationDenies / INV_NothingLost / LIVE_ResubmittedSettles: no decision is served from a voided revision, a revocation confirmed on a void block still denies, nothing a term voided is taken as kept, and what is owed again settles",
         axis: Tla,
-        anchor: "crates/engine/vera/src/vera_rs/follow/mod.rs Follow::admit, Follow::still, Follow::epoch, reconcile, scan, uncovered; crates/engine/vera/src/vera_rs/follow/journal.rs Journal::record, Journal::begin_replay, Journal::handled, MAX_CONFIRMATIONS, MAX_CONFIRMATION_BYTES; crates/engine/vera/src/vera_rs/follow/lost.rs lost_effects, tainted_by; crates/engine/vera/src/vera_rs/provider/terms.rs Follower::check; crates/engine/vera/src/vera_rs/provider.rs decision_state, admitted_read; crates/engine/vera/src/vera_rs/provider/owed_request.rs locked_worker; crates/engine/acp/src/external/voided.rs OweAgain, VoidedEffect; backbone:acp-light-client HeaderChain::voided",
+        anchor: "crates/engine/vera/src/vera_rs/follow/mod.rs Follow::admit, Follow::still, Follow::epoch, reconcile, scan, uncovered; crates/engine/vera/src/vera_rs/follow/journal.rs Journal::record, Journal::begin_replay, Journal::handled, MAX_CONFIRMATIONS, MAX_CONFIRMATION_BYTES; crates/engine/vera/src/vera_rs/follow/lost.rs lost_effects, tainted_by; crates/engine/vera/src/vera_rs/provider/terms.rs Follower::check_with; crates/engine/vera/src/vera_rs/provider.rs decision_state, admitted_read; crates/engine/vera/src/vera_rs/provider/owed_request.rs locked_worker; crates/engine/acp/src/external/voided.rs OweAgain, VoidedEffect; backbone:acp-light-client HeaderChain::voided",
         model_ref: "MC_FollowDeployment_{Green,Green_Window,Red_KeepsCache,Red_ForgetsRevocation,Red_NoGate,Red_NoTaint,Red_AssumesWindow,Red_NoMark,Red_NoDeliveryGate,Red_CollapsesBatch}.cfg",
         tiers: &[Boundary],
         bound_by: "",

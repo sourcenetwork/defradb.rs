@@ -1,12 +1,13 @@
 //! A bounded, resumable rebuild from the node's recovery ledger.
 
 use async_trait::async_trait;
+use std::future::Future;
 
 use super::ExternalDocumentAcp;
 use crate::error::{Error, Result};
 use crate::outbox::{OwedAuthority, OwedOp, OwedTuple};
 use crate::recovery::{
-    RecoveryCursor, RecoveryLedger, RecoveryPage, RecoverySource, RecoveryVerifier,
+    LedgerPage, RecoveryCursor, RecoveryLedger, RecoveryPage, RecoverySource, RecoveryVerifier,
     RECOVERY_PAGE_BYTES,
 };
 
@@ -66,25 +67,17 @@ where
         let view = txn.acpstore();
         let ledger = RecoveryLedger::new(view.clone());
         let cursor = match ledger.state().await? {
-            Some(cursor) => cursor,
-            None => RecoveryCursor {
+            Some(cursor) if cursor.term == term => cursor,
+            _ => RecoveryCursor {
                 term,
                 cursor: None,
                 complete: false,
             },
         };
-        if cursor.term != term || cursor.complete {
-            return Ok(Some(RecoveryPage {
-                effects: Vec::new(),
-                cursor: RecoveryCursor {
-                    term,
-                    cursor: None,
-                    complete: true,
-                },
-                unrestored: Vec::new(),
-            }));
+        if cursor.complete {
+            return Ok(None);
         }
-        let records = ledger
+        let LedgerPage { records, end } = ledger
             .page(cursor.cursor.as_deref(), RECOVERY_PAGE_BYTES)
             .await?;
         let mut effects = Vec::new();
@@ -169,7 +162,7 @@ where
         let next_cursor = RecoveryCursor {
             term,
             cursor: next,
-            complete: true,
+            complete: end,
         };
         drop(ledger);
         drop(view);
@@ -235,4 +228,38 @@ where
     txn.commit()
         .await
         .map_err(|error| Error::Storage(error.to_string()))
+}
+
+/// Ask the provider for `operation` outside a transaction: record the intent
+/// first, then the provider's answer, so a definitive refusal is not left pending.
+pub(super) async fn record<S, T, F>(
+    gate: &ExternalDocumentAcp<S>,
+    policy_id: &str,
+    resource_name: &str,
+    object_id: &str,
+    operation: crate::recovery::RecoveryOperation,
+    ask: F,
+) -> crate::Result<T>
+where
+    S: storage::corekv::Store + 'static,
+    F: Future<Output = crate::Result<T>>,
+{
+    prepare(gate, policy_id, resource_name, object_id, operation.clone()).await?;
+    let answer = ask.await;
+    let definitive = match &answer {
+        Ok(_) => true,
+        Err(error) => matches!(error, Error::NotOwner { .. } | Error::NotManager { .. }),
+    };
+    if definitive {
+        settle(
+            gate,
+            policy_id,
+            resource_name,
+            object_id,
+            operation,
+            answer.is_ok(),
+        )
+        .await?;
+    }
+    answer
 }

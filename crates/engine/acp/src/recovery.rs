@@ -194,6 +194,12 @@ fn state_error(what: &str, source: impl std::fmt::Display) -> Error {
     Error::Storage(format!("Vera recovery {what}: {source}"))
 }
 
+/// One page of recovery records and whether that page reached the ledger's end.
+pub(crate) struct LedgerPage {
+    pub records: Vec<(Vec<u8>, RecoveryObject)>,
+    pub end: bool,
+}
+
 /// Recovery records through the transaction whose ACP namespace `view` is.
 pub(crate) struct RecoveryLedger {
     view: NamespaceView,
@@ -270,12 +276,9 @@ impl RecoveryLedger {
         self.write(object).await
     }
 
-    /// Every record after `after`, until their encoded bytes pass `max_bytes`.
-    pub(crate) async fn page(
-        &self,
-        after: Option<&[u8]>,
-        max_bytes: usize,
-    ) -> Result<Vec<(Vec<u8>, RecoveryObject)>> {
+    /// Every record after `after`, until their encoded bytes pass
+    /// `max_bytes`, and whether that page reached the ledger's end.
+    pub(crate) async fn page(&self, after: Option<&[u8]>, max_bytes: usize) -> Result<LedgerPage> {
         let mut options = IterOptions::new().with_prefix(RECOVERY_PREFIX.to_vec());
         if let Some(after) = after {
             let mut start = RECOVERY_PREFIX.to_vec();
@@ -288,15 +291,15 @@ impl RecoveryLedger {
             .iterator(options)
             .await
             .map_err(|error| state_error("open recovery page", error))?;
-        let mut page = Vec::new();
+        let mut records = Vec::new();
         let mut bytes = 0;
-        while bytes < max_bytes {
+        let end = loop {
             let Some(entry) = iter
                 .next()
                 .await
                 .map_err(|error| state_error("read recovery page", error))?
             else {
-                break;
+                break true;
             };
             bytes += entry.value.len();
             let object: RecoveryObject = serde_json::from_slice(&entry.value)
@@ -306,9 +309,16 @@ impl RecoveryLedger {
                 .strip_prefix(RECOVERY_PREFIX)
                 .ok_or_else(|| state_error("read", "recovery key has no prefix"))?
                 .to_vec();
-            page.push((suffix, object));
-        }
-        Ok(page)
+            records.push((suffix, object));
+            if bytes >= max_bytes {
+                break iter
+                    .next()
+                    .await
+                    .map_err(|error| state_error("read recovery page", error))?
+                    .is_none();
+            }
+        };
+        Ok(LedgerPage { records, end })
     }
 
     pub(crate) async fn state(&self) -> Result<Option<RecoveryCursor>> {

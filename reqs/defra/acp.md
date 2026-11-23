@@ -14,5 +14,6 @@ A store NAC was enabled on comes back with NAC enforced when the node restarts w
 # `defra.acp.vera_uncovered_takeover_recovery`: An uncovered takeover recovers without a new worker
 
 - **Parents:** ["defra.acp"]
+- **Scenarios:** ["recovery::tests::a_page_is_owed_again_and_the_pass_resumes_without_repeating_it", "recovery::tests::a_pass_pages_past_the_first_ledger_page_and_ends", "recovery::tests::a_refused_grant_is_not_owed_again_by_recovery", "recovery::tests::a_batch_failure_keeps_its_applied_registration_prefix"]
 
 When a Vera deployment takeover may have voided confirmed submissions older than the journal keeps, the node marks the journal recoverable and fails closed until a recovery pass finishes. The pass walks this node's own committed registration and relationship state in bounded pages, checks each page against the deployment under the certified term, and owes missing registrations and grants through the outbox. A page is recorded as delivered only after the outbox holds it; the pass resumes from that page after a restart, and a new certified term starts a new pass. The node serves no access decision before the whole pass has been handed over. What the source cannot prove or restore is reported, never dropped.

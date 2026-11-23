@@ -4,7 +4,7 @@
 //! costs it a block. The registrations one transaction makes for one owner
 //! go together ([`crate::DocumentACP::register_objects`]), as one list the
 //! provider applies in order, all or none. A provider that cannot apply a
-//! list sends them one at a time, as it always did.
+//! list sends them one at a time, so a failure names the prefix it applied.
 
 use crate::error::Error;
 

@@ -1,16 +1,16 @@
 //! A closed journal rebuilt from the node's own state, without a new worker.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use regolith::sync::SegQueue;
+use storage::RegolithStore;
 
 use super::signer_tests::provider;
 use super::transport_tests::Workers;
 use crate::vera_rs::client::tests::Recorded as RpcRecorded;
 use acp::{
-    NewOwedChange, OweAgain, OwedOp, OwedSubject, OwedTuple, RecoveryCursor, RecoveryPage,
+    DocumentACP as _, ExternalDocumentAcp, LocalDocumentACP, MemoryAcpStore, OweAgain,
     RecoverySource, RecoveryVerifier, VoidedEffect,
 };
 use vera_delegation::testing::{Recording, Returns};
@@ -31,51 +31,6 @@ impl OweAgain for Outbox {
     async fn settle_owed(&self) {}
 }
 
-struct Source {
-    sent: AtomicBool,
-}
-
-#[async_trait]
-impl RecoverySource for Source {
-    async fn next(&self, _: &dyn RecoveryVerifier) -> acp::Result<Option<RecoveryPage>> {
-        if self
-            .sent
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .is_err()
-        {
-            return Ok(None);
-        }
-        Ok(Some(RecoveryPage {
-            effects: vec![VoidedEffect::Change(NewOwedChange {
-                txn: None,
-                tuple: OwedTuple {
-                    policy_id: "policy".into(),
-                    resource: "users".into(),
-                    object: "bae-1".into(),
-                    relation: "reader".into(),
-                    subject: OwedSubject::Actor {
-                        did: identity::Did::new("did:key:reader").unwrap(),
-                    },
-                },
-                op: OwedOp::Add,
-                actor: identity::Did::new("did:key:owner").unwrap(),
-                authority: acp::OwedAuthority::NodeKey,
-                authority_checked: true,
-            })],
-            cursor: RecoveryCursor {
-                term: 0,
-                cursor: Some(b"after".to_vec()),
-                complete: true,
-            },
-            unrestored: Vec::new(),
-        }))
-    }
-
-    async fn delivered(&self, _: RecoveryCursor) -> acp::Result<()> {
-        Ok(())
-    }
-}
-
 struct Verifier;
 
 #[async_trait]
@@ -91,7 +46,7 @@ impl RecoveryVerifier for Verifier {
         _: &str,
         _: &str,
     ) -> std::result::Result<(bool, String), String> {
-        Err("not called".into())
+        Ok((false, String::new()))
     }
 
     async fn actor_relationship(
@@ -115,9 +70,16 @@ async fn an_uncovered_journal_recovers_through_the_outbox_under_the_same_worker(
     let outbox = Arc::new(Outbox {
         effects: SegQueue::new(),
     });
-    let source = Arc::new(Source {
-        sent: AtomicBool::new(false),
-    });
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let source = Arc::new(ExternalDocumentAcp::new(
+        Arc::new(LocalDocumentACP::new(Arc::new(MemoryAcpStore::default()))),
+        store,
+    ));
+    let owner = identity::Did::new("did:key:owner").unwrap();
+    source
+        .register_doc_object(&owner, "policy", "users", "bae-1")
+        .await
+        .expect("record the registration");
     let verfier = Verifier;
     let provider = provider(signer, Arc::clone(&rpc), &mut workers).await;
     provider
@@ -128,7 +90,7 @@ async fn an_uncovered_journal_recovers_through_the_outbox_under_the_same_worker(
     provider
         .follower
         .recovery
-        .set(source)
+        .set(Arc::clone(&source) as Arc<dyn RecoverySource>)
         .map_err(|_| "one recovery source")
         .unwrap();
     {

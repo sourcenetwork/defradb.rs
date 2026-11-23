@@ -57,7 +57,7 @@
 \*       Journal::begin_replay, Journal::handled, Journal::replaying,
 \*       MAX_CONFIRMATIONS, MAX_CONFIRMATION_BYTES
 \*   crates/engine/vera/src/vera_rs/follow/lost.rs        lost_effects, tainted_by
-\*   crates/engine/vera/src/vera_rs/provider/terms.rs     Follower::check (run on the task of a
+\*   crates/engine/vera/src/vera_rs/provider/terms.rs     Follower::check_with (run on the task of a
 \*       provider call; hands what is owed again to the outbox before it decides again)
 \*   crates/engine/vera/src/vera_rs/provider.rs           decision_state (the term in the key),
 \*       admitted, admitted_read (admitted before each read, and at the same checked
@@ -84,7 +84,7 @@
 \*                        proved in VeraConfirmationJournal.lean
 \*   mark, Mark           Journal::replaying, written before the first replay
 \*   cursor, lost, Crash  the replay's progress in memory, lost when the node stops
-\*   pending, Deliver     Journal::undelivered and Follower::check handing it to the
+\*   pending, Deliver     Journal::undelivered and Follower::check_with handing it to the
 \*                        outbox (owe_again); GateDelivery: Follow::admit refuses while
 \*                        it is not empty, published with the term (Standing)
 \*   KeepBatch            owe_again keeps every change of a tuple handed back together
@@ -294,16 +294,17 @@ Begin ==
           ELSE IF from = 0
           THEN /\ handled' = term                          \* nothing to send again
                /\ mark' = 0
-               /\ UNCHANGED <<failClosed, cursor, checking, lost, tainted>>
+               /\ UNCHANGED <<failClosed, cursor, checking, lost, tainted,
+                              recoverable, recoverCursor, recoverDone>>
           ELSE /\ mark' = IF Mark THEN journal[from] ELSE 0  \* written before any replay
                /\ cursor' = from                           \* the replay starts here
                /\ lost' = <<>>                             \* nothing found lost yet
                /\ tainted' = (pending # <<>>)              \* what still waits taints the object
                /\ checking' = term                        \* the term this replay checks
-               /\ UNCHANGED <<handled, failClosed>>
+               /\ UNCHANGED <<handled, failClosed, recoverable,
+                              recoverCursor, recoverDone>>
     /\ UNCHANGED <<staged, owed, pending, sent, chain, journal, evicted, term, crashes,
-                   cache, takeovers, servedVoid, servedWide, recoverable,
-                   recoverCursor, recoverDone>>                \* nothing else moves
+                   cache, takeovers, servedVoid, servedWide>>  \* nothing else moves
 
 \* The next journaled request is sent again, exactly as signed. A request
 \* the chain already holds answers with what it came to; any other is
