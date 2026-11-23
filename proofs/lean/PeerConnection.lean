@@ -139,24 +139,32 @@ theorem closed_selected_is_removed (handle : Nat) : evict (some handle) handle =
   -- The selected stable id matches the closed handle, so its entry is retired.
   simp [evict]
 
--- A refused publish evicts only its own handle, then refills only an empty slot.
-def restore (slot : Option Nat) (refused : Nat) : Option Nat → Option Nat
-  -- Nothing was displaced, so the slot is left for the pump to clean up.
-  | none => slot
-  -- The displaced handle goes back only where the refused one was removed.
-  | some displaced => (evict slot refused).or (some displaced)
+-- Evict the refused handle even when nothing was displaced. Restore a
+-- displaced handle only while it is open and only into an empty slot.
+def restore (slot : Option Nat) (refused : Nat) (displaced : Option Nat)
+    (displacedOpen : Bool) : Option Nat :=
+  let remaining := evict slot refused
+  if displacedOpen then remaining.or displaced else remaining
 
--- Refusing the handle that displaced a sibling makes the sibling selected again.
+-- An open displaced sibling fills the slot left by the refused handle.
 theorem refusal_restores_sibling (refused sibling : Nat) :
-    restore (some refused) refused (some sibling) = some sibling := by
-  -- The slot still holds the refused handle, so it empties and takes the sibling.
+    restore (some refused) refused (some sibling) true = some sibling := by
   simp [restore, evict, Option.or]
+
+-- No displaced handle does not leave the refused handle in the cache.
+theorem refusal_without_displaced_evicts (refused : Nat) (isOpen : Bool) :
+    restore (some refused) refused none isOpen = none := by
+  cases isOpen <;> simp [restore, evict, Option.or]
+
+-- A closed displaced sibling is not reinserted.
+theorem closed_sibling_not_restored (refused sibling : Nat) :
+    restore (some refused) refused (some sibling) false = none := by
+  simp [restore, evict]
 
 -- A publish that already replaced the refused handle keeps the slot.
 theorem restore_keeps_a_later_publish (refused fresh : Nat) (displaced : Option Nat)
-    (different : fresh ≠ refused) :
-    restore (some fresh) refused displaced = some fresh := by
-  -- Eviction leaves the different handle, and an occupied slot is not refilled.
-  cases displaced <;> simp [restore, evict, different, Option.or]
+    (isOpen : Bool) (different : fresh ≠ refused) :
+    restore (some fresh) refused displaced isOpen = some fresh := by
+  cases isOpen <;> simp [restore, evict, different, Option.or]
 
 end PeerConnection.SharedRpc

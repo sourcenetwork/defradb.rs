@@ -1,11 +1,14 @@
 //! A peer's delete of a chunk merges only once the chunk's parent is gone here.
 
+use std::sync::Arc;
+
 use defra_core::merge::MergeOutcome;
-use document::DocID;
+use document::{DocID, Document, NormalValue};
+use query::mutator::DocMutator;
 
 use super::chunk_update_journal::{
-    create_chunk, merge_outcome, merge_outcome_in, merge_updated_chunk, node, owner, Node, BODY,
-    CHUNKS,
+    create_chunk, merge_outcome, merge_outcome_in, merge_updated_chunk, node, node_with_policy,
+    owner, Node, BODY, CHUNKS,
 };
 use db::merge::merge_handler::MergeError;
 
@@ -133,7 +136,11 @@ fn a_chunk_delete_that_arrives_before_its_parents_merges_after_it() {
             .await
             .unwrap();
 
-        assert!(retried.is_merged(), "{retried:?}");
+        // The local delete already took the chunk with its parent.
+        let MergeOutcome::Skipped { reason, .. } = &retried else {
+            panic!("expected the chunk to be gone already, got {retried:?}");
+        };
+        assert!(MergeOutcome::skip_reason_is_applied(reason), "{reason}");
         assert!(!chunk_is_stored(&peer, &chunk_id).await);
     })
     .unwrap()
@@ -164,7 +171,8 @@ fn a_chunk_delete_cannot_merge_before_its_chunk() {
         let author = node().await;
         let peer = node().await;
         let parent = add_article(&peer).await;
-        let (_, _, created) = create_chunk(&author, &parent, BODY, None).await;
+        // Another text, so the peer's own write holds no copy of this chunk.
+        let (_, _, created) = create_chunk(&author, &parent, "Other text.", None).await;
         let delete = write_chunk_delete(&author, &created.doc_id).await;
 
         let early = merge_outcome(&author, &peer, &delete, &created.doc_id).await;
@@ -177,7 +185,7 @@ fn a_chunk_delete_cannot_merge_before_its_chunk() {
             .await
             .unwrap();
         assert!(chunk.is_merged(), "{chunk:?}");
-        assert_eq!(shown(&peer).await, std::slice::from_ref(&created.doc_id));
+        assert!(chunk_is_stored(&peer, &created.doc_id).await);
         let retried = merge_outcome(&author, &peer, &delete, &created.doc_id)
             .await
             .unwrap();
@@ -217,6 +225,73 @@ fn a_chunk_delete_waits_for_a_parent_merged_without_a_value() {
 
         assert_waits(&outcome, "parent has not arrived");
         assert!(chunk_is_stored(&peer, &chunk_id).await);
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_parent_delete_and_its_chunk_deletes_merge_on_a_peer() {
+    workers::block_on(async {
+        let author = node_with_policy(false).await;
+        let peer = node_with_policy(false).await;
+        let articles = author.db.get_collection("Article").unwrap().unwrap();
+        let mutator = db::AutoCommitMutator::new(Arc::clone(&author.db));
+        let mut article = Document::new(articles.schema_arc());
+        article
+            .set("body", NormalValue::String(BODY.into()))
+            .unwrap();
+        let created = mutator.create("Article", article).await.unwrap();
+        let parent = created.doc_id.to_string();
+        let merged = merge_outcome_in(
+            &author,
+            &peer,
+            &created.commit_cid.unwrap(),
+            &parent,
+            articles.collection_id(),
+        )
+        .await
+        .unwrap();
+        assert!(merged.is_merged(), "{merged:?}");
+        assert!(!created.derived.is_empty());
+        // The peer built the same chunks when it merged the parent.
+        for chunk in &created.derived {
+            let merged =
+                merge_outcome(&author, &peer, &chunk.commit_cid, &chunk.doc_id.to_string())
+                    .await
+                    .unwrap();
+            assert!(
+                matches!(&merged, MergeOutcome::Skipped { reason, .. } if MergeOutcome::skip_reason_is_applied(reason)),
+                "{merged:?}"
+            );
+        }
+        assert_eq!(shown(&peer).await.len(), created.derived.len());
+
+        let deleted = mutator.delete("Article", &created.doc_id).await.unwrap();
+        assert_eq!(deleted.derived.len(), created.derived.len());
+        for chunk in &deleted.derived {
+            let early = merge_outcome(&author, &peer, &chunk.commit_cid, &chunk.doc_id.to_string())
+                .await
+                .unwrap();
+            assert_waits(&early, "parent is live");
+        }
+        let parent_deleted = merge_outcome_in(
+            &author,
+            &peer,
+            &deleted.commit_cid.unwrap(),
+            &parent,
+            articles.collection_id(),
+        )
+        .await
+        .unwrap();
+        assert!(parent_deleted.is_merged(), "{parent_deleted:?}");
+        for chunk in &deleted.derived {
+            let chunk_id = chunk.doc_id.to_string();
+            let retried = merge_outcome(&author, &peer, &chunk.commit_cid, &chunk_id)
+                .await
+                .unwrap();
+            assert!(retried.is_merged(), "{retried:?}");
+            assert!(!chunk_is_stored(&peer, &chunk_id).await);
+        }
     })
     .unwrap()
 }
