@@ -7,7 +7,7 @@
 //! new-format bounds against old-format entries, so rows went missing, deletes
 //! orphaned their entries, and unique indexes stopped rejecting duplicates.
 
-use db::definition::migration::format::CURRENT_INDEX_FORMAT;
+use db::definition::migration::format::{CURRENT_INDEX_FORMAT, INDEX_FORMAT_KEY};
 use storage::RegolithStore;
 
 /// The marker byte every encoded time key starts with, per `encoding::mod`.
@@ -106,4 +106,87 @@ fn an_old_format_entry_falls_outside_new_format_range_bounds() {
         "the old-format entry for the same instant is outside the window, so a \
          scan over these bounds never returns it"
     );
+}
+
+/// A format-3 descending JSON index must be rebuilt before a path range query
+/// uses format-4 bounds. Removing the entries models keys the new scan cannot read.
+#[test]
+fn a_format_three_descending_json_index_is_rebuilt_on_open() {
+    use std::sync::Arc;
+
+    use db::{AutoCommitMutator, LensedAutoCommitFetcher, DB};
+    use document::Document;
+    use query::mutator::DocMutator;
+    use query::{QueryExecutor, QueryRequest, QueryRunner};
+    use storage::corekv::{IterOptions, Iterator as _};
+    use storage::keys::IndexDataStoreKey;
+
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let db = Arc::new(DB::open(store.clone()).await.unwrap());
+        db.add_collection(
+            &defra_core::RequestContext::ambient(),
+            "type User { name: String, custom: JSON @index(direction: DESC) }",
+        )
+        .await
+        .unwrap();
+        let collection = db.require_collection("User").unwrap();
+        let schema = collection.schema_arc();
+        let document =
+            Document::from_json_str(r#"{"name":"John","custom":{"height":180}}"#, schema.clone())
+                .unwrap();
+        AutoCommitMutator::new(db.clone())
+            .create("User", document)
+            .await
+            .unwrap();
+        let index_id = schema.indexes[0].id;
+        let prefix = IndexDataStoreKey::index_prefix(collection.resolved_root_id(), index_id);
+        let txn = db.new_txn(false).await.unwrap();
+        let datastore = txn.datastore().unwrap();
+        let mut iter = datastore
+            .iterator(IterOptions::new().with_prefix(prefix).with_keys_only(true))
+            .await
+            .unwrap();
+        let mut keys = Vec::new();
+        while let Some(pair) = iter.next().await.unwrap() {
+            keys.push(pair.key);
+        }
+        iter.close().await.unwrap();
+        drop(iter);
+        assert!(!keys.is_empty(), "the document has index entries");
+        for key in keys {
+            datastore.delete(&key).await.unwrap();
+        }
+        drop(datastore);
+        txn.systemstore()
+            .unwrap()
+            .set(INDEX_FORMAT_KEY, &3u32.to_be_bytes())
+            .await
+            .unwrap();
+        txn.commit().await.unwrap();
+        drop(db);
+
+        let reopened = Arc::new(DB::open(store).await.unwrap());
+        let schema = reopened
+            .require_collection("User")
+            .unwrap()
+            .schema()
+            .clone();
+        let runner = QueryRunner::new(LensedAutoCommitFetcher::new(reopened.clone()), vec![schema]);
+        let result = runner
+            .execute(QueryRequest::new(
+                "query { User(filter: {custom: {height: {_gt: 170}}}) { name } }",
+            ))
+            .await;
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert_eq!(
+            result.data.unwrap(),
+            serde_json::json!({"User": [{"name": "John"}]})
+        );
+        assert_eq!(
+            reopened.stored_index_format().await.unwrap(),
+            Some(CURRENT_INDEX_FORMAT)
+        );
+    })
+    .unwrap();
 }
