@@ -91,6 +91,7 @@ where
         introspection_cache,
         replication_filter,
         index_build_gate,
+        commit_gate,
     } = config;
     let introspection_cache = introspection_cache.unwrap_or(true);
     #[cfg(not(any(feature = "p2p", feature = "libp2p")))]
@@ -174,6 +175,9 @@ where
     }
     if let Some(gate) = index_build_gate {
         db_options = db_options.with_index_build_gate(gate.0);
+    }
+    if let Some(gate) = commit_gate {
+        db_options = db_options.with_commit_gate(gate.0);
     }
     if let Some(identity) = node_p2p_identity.as_ref() {
         db_options = db_options.with_node_identity_arc(identity.clone());

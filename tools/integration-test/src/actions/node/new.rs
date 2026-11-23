@@ -55,6 +55,9 @@ pub struct NewNode {
     pub client_type: Option<NodeClient>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub index_gate: Option<IndexGate>,
+    /// A Rust node whose explicit commits pass the test's commit gate.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub commit_gate: bool,
     /// Kept so corpus scenarios that set it still parse. It changes nothing:
     /// every node gets Go's `NodeIdentity(i)` and runs identity-only unless
     /// it signs.
@@ -122,6 +125,7 @@ impl Op for NewNode {
         probe.kms = false;
         (probe.ttl_millis, probe.tick_millis, probe.buckets) = (None, None, None);
         probe.index_gate = None;
+        probe.commit_gate = false;
         if probe != Self::default() {
             let options = serde_json::to_string(&probe).unwrap_or_default();
             return Err(Failure::unsupported(format!("{} {options}", Self::name())));
@@ -139,6 +143,15 @@ impl Op for NewNode {
             .then(|| self.key_type.unwrap_or_default());
         let txn_ttl = self.txn_ttl(state.client_type())?;
         let index_gate = self.index_gate(state.client_type())?;
+        if self.commit_gate
+            && !matches!(state.client_type(), ClientType::RustHttp | ClientType::Cli)
+        {
+            return Err(Failure::unsupported(format!(
+                "{} argument commitGate under {:?}: the gate is a hook in the node's process",
+                Self::name(),
+                state.client_type()
+            )));
+        }
         let registered_identity = self.registered_identity(state.client_type())?;
         let dir = match self.database_dir {
             Some(_) => Some(Arc::new(tempfile::tempdir().map_err(|e| {
@@ -159,6 +172,10 @@ impl Op for NewNode {
             txn_ttl,
             se_key: self.searchable_encryption_key()?,
             index_gate,
+            commit_gate: self
+                .commit_gate
+                .then(crate::commit_gate::TestCommitGate::default)
+                .map(Arc::new),
             ..Default::default()
         };
         state.start_node(self.common.node(), spec);

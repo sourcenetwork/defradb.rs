@@ -349,6 +349,13 @@ impl NodeBuilder {
         self
     }
 
+    /// Hold every explicit transaction commit at `gate` before it begins, so
+    /// a test can prove a dropped commit wait does not abandon the commit.
+    pub fn with_commit_gate(mut self, gate: Arc<dyn db::CommitGate>) -> Self {
+        self.config.commit_gate = Some(crate::CommitGateHandle(gate));
+        self
+    }
+
     /// Enable the HTTP GraphQL server.
     #[cfg(feature = "http")]
     pub fn with_http(mut self, config: HttpConfig) -> Self {
@@ -634,7 +641,7 @@ impl NodeBuilder {
             let server_config = defra_http::ServerConfig {
                 address: http_cfg.address,
                 request_timeout: crate::timeout_secs(http_cfg.request_timeout),
-                commit_timeout: crate::timeout_secs(http_cfg.commit_timeout),
+                commit_timeout_ms: crate::timeout_millis(http_cfg.commit_timeout),
                 query_limits,
                 no_signing: identity_only,
                 ..Default::default()

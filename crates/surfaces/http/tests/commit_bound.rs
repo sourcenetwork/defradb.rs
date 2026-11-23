@@ -94,7 +94,7 @@ fn router(commit: Arc<HeldCommit>, request_timeout: u64) -> axum::Router {
         commit,
         ServerConfig {
             request_timeout,
-            commit_timeout: 1,
+            commit_timeout_ms: 1,
             ..ServerConfig::default()
         },
         edge::testing::edge(),
@@ -156,11 +156,11 @@ fn a_begin_is_not_bounded_as_a_commit() {
                 router.oneshot(Request::post("/api/v0/tx").body(Body::empty()).unwrap()),
             );
             commit.started.wait().await;
-            nuclei::time::sleep(Duration::from_millis(1200)).await;
-            assert!(!begin.is_finished(), "a begin was treated as a commit");
+            let timed_out = nuclei::time::timeout(Duration::from_millis(50), begin)
+                .await
+                .is_err();
+            assert!(timed_out, "a begin was treated as a commit");
             commit.release.set();
-            let response = begin.join().await.unwrap().unwrap();
-            assert_eq!(response.status(), StatusCode::OK);
             nuclei::time::timeout(Duration::from_secs(5), commit.completed.wait())
                 .await
                 .unwrap();

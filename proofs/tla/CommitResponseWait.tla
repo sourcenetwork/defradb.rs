@@ -11,7 +11,8 @@
 \*
 \* Correspondence with the Rust code:
 \*   crates/surfaces/http/src/server.rs Server::serve_router commit bound;
-\*   crates/database/db/src/txn/owner/mod.rs Owners::finish (the commit stays
+\*   crates/engine/query/src/runner/executor.rs QueryRunner::commit_txn_as;
+\*   crates/database/db/src/txn/owner/mod.rs Owners::finish_detached (the commit stays
 \*   owned and fenced after its waiter goes); regolith's CommitTicket, whose
 \*   drop never cancels a commit already claimed by commit_nowait.
 

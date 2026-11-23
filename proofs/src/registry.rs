@@ -2465,10 +2465,10 @@ pub const PROPERTIES: &[Property] = &[
         family: "Transaction & merge-queue concurrency",
         name: "ClientSettles / UnknownIsNotAbort / AnswerOnlyAfterSend: the server settles a wedged commit answer by its own bound without cancelling it",
         axis: Tla,
-        anchor: "crates/surfaces/http/src/server.rs Server::router commit bound; crates/database/db/src/txn/owner/mod.rs Owners::finish; crates/database/db/src/txn/owner/actor.rs own",
+        anchor: "crates/surfaces/http/src/server.rs Server::router commit bound; crates/database/db/src/txn/owner/mod.rs Owners::finish, Owners::finish_detached; crates/database/db/src/txn/owner/actor.rs own",
         model_ref: "MC_CommitResponseWait_{Green,Red_NoBound,Red_Cancel}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/surfaces/http/tests/commit_bound.rs a_commit_past_its_bound_answers_unknown_and_keeps_running, the_bound_is_only_for_transaction_commits, a_begin_is_not_bounded_as_a_commit",
+        bound_by: "crates/surfaces/http/tests/commit_bound.rs a_commit_past_its_bound_answers_unknown_and_keeps_running, the_bound_is_only_for_transaction_commits, a_begin_is_not_bounded_as_a_commit; tools/integration-test/tests/testo/txn/http_commit_bound.rs an_http_commit_past_its_bound_answers_unknown_and_lands",
     },
     Property {
         family: "Transaction & merge-queue concurrency",

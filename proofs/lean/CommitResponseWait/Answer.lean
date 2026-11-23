@@ -11,8 +11,9 @@ The temporal story is `proofs/tla/CommitResponseWait.tla`; this file carries
 the one-step law the model takes on trust.
 
 Rust anchors: `Server::serve_router`'s commit bound in
-`crates/surfaces/http/src/server.rs`, and the worker-owned commit in
-`crates/database/db/src/txn/owner/`.
+`crates/surfaces/http/src/server.rs`, `QueryRunner::commit_txn_as`'s detached
+registry commit in `crates/engine/query/src/runner/executor.rs`, and the
+worker-owned commit in `crates/database/db/src/txn/owner/`.
 -/
 
 namespace CommitResponseWait

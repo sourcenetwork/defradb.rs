@@ -75,7 +75,9 @@ impl HttpConfig {
             request_timeout: Duration::from_secs(
                 defra_http::ServerConfig::default().request_timeout,
             ),
-            commit_timeout: Duration::from_secs(defra_http::ServerConfig::default().commit_timeout),
+            commit_timeout: Duration::from_millis(
+                defra_http::ServerConfig::default().commit_timeout_ms,
+            ),
             transaction_idle_timeout: DEFAULT_TRANSACTION_IDLE_TIMEOUT,
             transaction_cleanup_interval: DEFAULT_TRANSACTION_CLEANUP_INTERVAL,
             extra_routes: None,
@@ -447,6 +449,8 @@ pub struct NodeConfig {
     pub replication_filter: Option<ReplicationFilterHandle>,
     /// The gate index backfills pass before each batch; `None` holds none.
     pub index_build_gate: Option<IndexBuildGateHandle>,
+    /// The gate explicit transaction commits pass before they begin.
+    pub commit_gate: Option<CommitGateHandle>,
 }
 
 /// An embedder's [`db::index::build_gate::IndexBuildGate`], compared by
@@ -463,6 +467,24 @@ impl std::fmt::Debug for IndexBuildGateHandle {
 }
 
 impl PartialEq for IndexBuildGateHandle {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+/// An embedder's [`db::CommitGate`], compared by identity.
+#[derive(Clone)]
+pub struct CommitGateHandle(pub Arc<dyn db::CommitGate>);
+
+impl std::fmt::Debug for CommitGateHandle {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CommitGateHandle")
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for CommitGateHandle {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }

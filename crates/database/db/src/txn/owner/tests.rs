@@ -239,6 +239,77 @@ fn abandoning_or_dropping_the_registry_ends_the_transaction() {
 }
 
 #[test]
+fn a_commit_whose_waiter_leaves_before_it_begins_still_lands() {
+    let owners = Arc::new(Probes::new(pool(1)));
+    let dropped = Arc::new(AtomicUsize::new(0));
+    let committed = Arc::new(AtomicUsize::new(0));
+    let request_entered = Arc::new(Event::new());
+    let request_released = Arc::new(Event::new());
+    let id = begin(&owners, "alice", &dropped);
+    let request = {
+        let (owners, entered, released) = (
+            owners.clone(),
+            request_entered.clone(),
+            request_released.clone(),
+        );
+        std::thread::spawn(move || {
+            block_on(owners.run(id, &"alice", move |_| {
+                Box::pin(async move {
+                    entered.set();
+                    released.wait().await;
+                })
+            }))
+        })
+    };
+    block_on(request_entered.wait()).unwrap();
+    let waiter = std::thread::spawn({
+        let (owners, committed) = (owners.clone(), committed.clone());
+        move || {
+            block_on(async {
+                workers::timeout(Duration::from_millis(20), async {
+                    owners
+                        .finish_detached(id, &"alice", |mut txn| {
+                            Box::pin(async move {
+                                txn.log.push("committed".into());
+                                committed.fetch_add(1, Ordering::SeqCst);
+                                Ok::<(), std::convert::Infallible>(())
+                            })
+                        })
+                        .await
+                })
+                .await
+                .is_err()
+            })
+        }
+    });
+    assert!(
+        waiter.join().unwrap().unwrap(),
+        "the commit wait did not time out while it queued behind a request"
+    );
+    assert_eq!(
+        committed.load(Ordering::SeqCst),
+        0,
+        "the commit began before its waiter gave up"
+    );
+    request_released.set();
+    assert_eq!(request.join().unwrap().unwrap(), Ok(()));
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while committed.load(Ordering::SeqCst) == 0 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the queued commit never ran after its waiter left"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let after = block_on(owners.run(id, &"alice", |probe| {
+        Box::pin(async move { probe.log.clone() })
+    }))
+    .unwrap();
+    assert_eq!(after, Err(Unavailable::NotFound), "the commit ended it");
+    assert_eq!(dropped.load(Ordering::SeqCst), 1);
+}
+
+#[test]
 fn a_standalone_read_called_on_a_worker_runs_on_that_worker() {
     let pool = pool(4);
     for index in 0..4 {

@@ -167,9 +167,10 @@ pub struct StartArgs {
     #[arg(long)]
     pub request_timeout: Option<u64>,
 
-    /// Bound on waiting for a transaction commit in seconds (0 = no bound, default: 60)
+    /// Bound on waiting for a transaction commit in milliseconds
+    /// (0 = no bound, default: 0)
     #[arg(long)]
-    pub commit_timeout: Option<u64>,
+    pub commit_timeout_ms: Option<u64>,
 
     /// Max concurrent HTTP requests (0 = unlimited, default: 1000)
     #[arg(long)]
@@ -637,8 +638,8 @@ impl StartArgs {
         if let Some(timeout) = self.request_timeout {
             config.api.request_timeout = timeout;
         }
-        if let Some(timeout) = self.commit_timeout {
-            config.api.commit_timeout = timeout;
+        if let Some(timeout) = self.commit_timeout_ms {
+            config.api.commit_timeout_ms = timeout;
         }
         if let Some(max) = self.max_concurrent_requests {
             config.api.max_concurrent_requests = max;

@@ -152,7 +152,7 @@ pub use router::{
 };
 #[cfg(feature = "server")]
 pub use server::{
-    RouterTransform, Server, ServerConfig, DEFAULT_COMMIT_TIMEOUT, DEFAULT_MAX_BACKUP_SIZE,
+    RouterTransform, Server, ServerConfig, DEFAULT_COMMIT_TIMEOUT_MS, DEFAULT_MAX_BACKUP_SIZE,
 };
 #[cfg(feature = "server")]
 pub use tls::TlsConfig;

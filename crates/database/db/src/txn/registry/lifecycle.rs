@@ -230,6 +230,31 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             .map_err(|error| unavailable(error, handle))?
     }
 
+    async fn commit_detached_as(
+        &self,
+        context: &RequestContext,
+        handle: &TransactionHandle,
+    ) -> std::result::Result<(), TransactionError> {
+        let id = TxnId::parse(handle).ok_or_else(|| {
+            TransactionError::not_found(format!("transaction '{handle}' not found"))
+        })?;
+        let label = handle.to_string();
+        let queued = Instant::now();
+        self.owners()
+            .map_err(|error| unavailable(error, handle))?
+            .finish_detached(id, &self.caller(context), move |owned| {
+                Box::pin(async move {
+                    report_slow_phase("commit", "queue", queued);
+                    let started = Instant::now();
+                    let result = owned.commit().await;
+                    report_slow_phase("commit", "execute", started);
+                    result.map_err(|error| commit_error(&label, error))
+                })
+            })
+            .await
+            .map_err(|error| unavailable(error, handle))?
+    }
+
     async fn commit_unless_told_as(
         &self,
         context: &RequestContext,

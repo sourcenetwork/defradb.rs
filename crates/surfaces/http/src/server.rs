@@ -36,8 +36,8 @@ use crate::router::{
 /// flag value could not raise the bound.
 pub const DEFAULT_MAX_BACKUP_SIZE: u64 = 100 * 1024 * 1024;
 
-/// Default server-side bound on waiting for a transaction commit (60s).
-pub const DEFAULT_COMMIT_TIMEOUT: u64 = 60;
+/// Default server-side bound on waiting for a transaction commit: disabled.
+pub const DEFAULT_COMMIT_TIMEOUT_MS: u64 = 0;
 
 /// Server configuration options.
 #[derive(Debug, Clone)]
@@ -63,10 +63,10 @@ pub struct ServerConfig {
     pub no_signing: bool,
     /// Request timeout in seconds (0 = no timeout).
     pub request_timeout: u64,
-    /// Bound on waiting for an explicit transaction commit in seconds
+    /// Bound on waiting for an explicit transaction commit in milliseconds
     /// (0 = no bound). A commit still running when the bound passes keeps
     /// running; the client is told its outcome is unknown.
-    pub commit_timeout: u64,
+    pub commit_timeout_ms: u64,
     /// Max concurrent requests (0 = unlimited).
     pub max_concurrent_requests: usize,
     /// Maximum retries after an auto-commit transaction conflict.
@@ -84,7 +84,7 @@ impl Default for ServerConfig {
             max_backup_size: DEFAULT_MAX_BACKUP_SIZE,
             no_signing: false,
             request_timeout: 300,
-            commit_timeout: DEFAULT_COMMIT_TIMEOUT,
+            commit_timeout_ms: DEFAULT_COMMIT_TIMEOUT_MS,
             max_concurrent_requests: 1000,
             query_limits: QueryLimits::default(),
         }
@@ -563,8 +563,8 @@ impl Server {
         );
         router = router.layer(admitted.clone());
 
-        if self.config.commit_timeout > 0 {
-            let limit = Duration::from_secs(self.config.commit_timeout);
+        if self.config.commit_timeout_ms > 0 {
+            let limit = Duration::from_millis(self.config.commit_timeout_ms);
             router = router.layer(axum::middleware::from_fn(
                 move |request: axum::extract::Request, next: axum::middleware::Next| async move {
                     if !is_commit_request(&request) {
@@ -574,15 +574,15 @@ impl Server {
                         Ok(response) => response,
                         Err(_) => {
                             tracing::error!(
-                                commit_timeout_secs = limit.as_secs(),
+                                commit_timeout_ms = limit.as_millis(),
                                 "transaction commit exceeded its server-side bound"
                             );
                             (
                                 StatusCode::SERVICE_UNAVAILABLE,
                                 Json(serde_json::json!({
                                     "error": format!(
-                                        "commit outcome unknown after {} seconds",
-                                        limit.as_secs()
+                                        "commit outcome unknown after {} milliseconds",
+                                        limit.as_millis()
                                     ),
                                     "outcome": "unknown",
                                 })),

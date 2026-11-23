@@ -35,7 +35,7 @@ where
     ) -> std::result::Result<(), TransactionError> {
         // A provider that joins the transaction answers inside it: nothing to confirm.
         if self.acp.supports_transactions() {
-            return self.registry.commit_as(context, handle).await;
+            return self.registry.commit_detached_as(context, handle).await;
         }
         let requests = self.registry.commit_unless_told_as(context, handle).await?;
         let Some((first, rest)) = requests.split_first() else {

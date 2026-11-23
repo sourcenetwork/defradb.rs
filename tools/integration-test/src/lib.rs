@@ -4,6 +4,7 @@ pub mod actions;
 mod cli_command;
 mod client_type;
 pub mod clients;
+pub mod commit_gate;
 mod cross_runtime;
 pub mod export;
 mod feature_binaries;
