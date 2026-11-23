@@ -17,6 +17,9 @@ pub(super) struct Follower {
     pub worker: Arc<Mutex<NativeWorker>>,
     pub follow: Follow,
     pub sink: OnceCell<Weak<dyn acp::OweAgain>>,
+    /// The node's own access state, for a journal that cannot vouch for what
+    /// a term voided.
+    pub recovery: OnceCell<Arc<dyn acp::RecoverySource>>,
     /// Whether more than one node's outbox asked for what a term voids.
     pub shared: std::sync::atomic::AtomicBool,
     /// Whether the node holds an actor's key, so a change owed again as that
@@ -55,10 +58,11 @@ impl Follower {
     /// own: nothing but the provider holds its worker, so dropping the
     /// provider lets go of the worker's directory at once. A check that fails
     /// is run again by the next call.
-    pub async fn check(&self) {
+    pub async fn check_with(&self, verifier: &dyn acp::RecoveryVerifier) {
         let certified = self.certified();
-        if self.follow.is_closed()
-            || (certified <= self.follow.epoch() && !self.follow.has_undelivered())
+        if !self.follow.is_closed()
+            && certified <= self.follow.epoch()
+            && !self.follow.has_undelivered()
         {
             return;
         }
@@ -78,7 +82,14 @@ impl Follower {
         self.follow.update(worker.confirmed());
         let owed = match outcome {
             Ok(Reconciled::Checked { owed }) => owed,
-            Ok(Reconciled::Closed(reason)) => return closed(&reason),
+            Ok(Reconciled::Closed(reason)) => {
+                if worker.confirmed().recovery_needed().is_none() {
+                    return closed(&reason);
+                }
+                self.recover(verifier, &mut worker, certified, &reason)
+                    .await;
+                return;
+            }
             Err(error) => {
                 tracing::warn!(%error, term = certified, "Vera term not checked yet");
                 return;
@@ -136,7 +147,7 @@ impl Follower {
             self.follow.update(worker.confirmed());
             Some(sink)
         };
-        drop(worker);
+        let _ = worker;
         if let Ok(state) = self.light_client.header_chain().fresh_state() {
             self.light_client
                 .cache()
@@ -145,6 +156,64 @@ impl Follower {
         if let Some(sink) = sink {
             sink.settle_owed().await;
         }
+    }
+
+    /// Rebuild the deployment from the node's own state, one bounded page at
+    /// a time, handing each page to the outbox before moving on. The node
+    /// decides nothing until the whole pass has been handed over.
+    async fn recover(
+        &self,
+        verifier: &dyn acp::RecoveryVerifier,
+        worker: &mut regolith::sync::OwnedMutexGuard<NativeWorker>,
+        certified: u64,
+        reason: &str,
+    ) {
+        if self.shared.load(std::sync::atomic::Ordering::Acquire) {
+            closed(reason);
+            return;
+        }
+        let Some(source) = self.recovery.get().cloned() else {
+            tracing::warn!(%reason, "no Vera recovery source is installed");
+            return;
+        };
+        let Some(sink) = self.sink.get().and_then(Weak::upgrade) else {
+            tracing::warn!(%reason, "Vera recovery waits for the node's outbox");
+            return;
+        };
+        while let Some(page) = match source.next(verifier).await {
+            Ok(Some(page)) => Some(page),
+            Ok(None) => None,
+            Err(error) => {
+                tracing::warn!(%error, %reason, "Vera recovery pass did not finish");
+                return;
+            }
+        } {
+            if !page.effects.is_empty() {
+                if let Err(error) = sink.owe_again(&page.effects).await {
+                    tracing::warn!(%error, "Vera recovery state was not owed again");
+                    return;
+                }
+            }
+            if let Err(error) = source.delivered(page.cursor).await {
+                tracing::warn!(%error, "could not record Vera recovery progress");
+                return;
+            }
+            for gap in &page.unrestored {
+                tracing::warn!(target: "acp::audit", gap, "Vera recovery could not prove state");
+            }
+        }
+        if let Err(error) = worker.confirmed().recovered(certified) {
+            tracing::warn!(%error, "could not record a finished Vera recovery");
+            return;
+        }
+        self.follow.update(worker.confirmed());
+        let _ = worker;
+        if let Ok(state) = self.light_client.header_chain().fresh_state() {
+            self.light_client
+                .cache()
+                .invalidate_stale(state.module_state_root);
+        }
+        sink.settle_owed().await;
     }
 }
 

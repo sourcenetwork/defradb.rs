@@ -43,6 +43,9 @@ mod exact_relationship;
 mod genesis;
 mod owed_request;
 mod reach;
+#[cfg(test)]
+#[path = "provider/recovery_tests.rs"]
+mod recovery_tests;
 mod registration_list;
 #[cfg(test)]
 mod signer_tests;
@@ -342,6 +345,7 @@ impl VeraRsProvider {
             worker: worker.clone(),
             follow,
             sink: regolith::sync::OnceCell::new(),
+            recovery: regolith::sync::OnceCell::new(),
             shared: std::sync::atomic::AtomicBool::new(false),
             holds_key: Box::new(move |did| did == own || holds_registered_key(did)),
         });
@@ -373,7 +377,7 @@ impl VeraRsProvider {
             _light_client_observer,
             edge: edge.clone(),
         };
-        provider.follower.check().await;
+        provider.follower.check_with(&provider).await;
         provider.recover_pending().await?;
         Ok(provider)
     }
@@ -386,7 +390,7 @@ impl VeraRsProvider {
         match self.follower.admit() {
             Ok(epoch) => Ok(epoch),
             Err(_) => {
-                self.follower.check().await;
+                self.follower.check_with(self).await;
                 self.follower.admit()
             }
         }
@@ -1049,6 +1053,12 @@ impl VeraProvider for VeraRsProvider {
         }
     }
 
+    fn set_recovery_source(&self, source: Arc<dyn acp::RecoverySource>) {
+        if self.follower.recovery.set(source).is_err() {
+            tracing::warn!("this vera.rs provider already has a recovery source");
+        }
+    }
+
     fn delegation_audience(&self) -> Option<acp::DelegationAudience> {
         Some(acp::DelegationAudience {
             worker: self.worker_did.clone(),
@@ -1075,6 +1085,81 @@ impl VeraProvider for VeraRsProvider {
         let audience = self.delegation_audience()?;
         bearer::caller_of_request_delegation(token, &audience, || request_digest(command))
             .map(|caller| caller.map_err(|error| refused("request delegation", error)))
+    }
+}
+
+#[async_trait]
+impl acp::RecoveryVerifier for VeraRsProvider {
+    async fn term(&self) -> Result<u64, String> {
+        Ok(self.follower.certified())
+    }
+
+    async fn object_owner(
+        &self,
+        term: u64,
+        policy_id: &str,
+        resource: &str,
+        object_id: &str,
+    ) -> Result<(bool, String), String> {
+        if self.follower.certified() != term {
+            return Err(format!("Vera recovery term changed from {term}"));
+        }
+        let policy = Self::policy_id_to_bytes32(policy_id)
+            .map_err(|error| error.to_string())
+            .map(hex::encode)?;
+        let object = acp_light_client::Object {
+            resource: resource.into(),
+            id: object_id.into(),
+        };
+        let owner = verified(self.light_client.header_chain(), || {
+            self.light_client.read_object_owner(&policy, &object)
+        })
+        .await
+        .map_err(|error| {
+            reach::read_error(&self.light_client, "recovery owner proof", error).to_string()
+        })?;
+        Ok(match owner {
+            Some(owner) => (true, did_spelling::defra(owner.0.as_str()).into_owned()),
+            None => (false, String::new()),
+        })
+    }
+
+    async fn actor_relationship(
+        &self,
+        term: u64,
+        policy_id: &str,
+        resource: &str,
+        object_id: &str,
+        relation: &str,
+        subject: &acp::OwedSubject,
+    ) -> Result<bool, String> {
+        if self.follower.certified() != term {
+            return Err(format!("Vera recovery term changed from {term}"));
+        }
+        let subject = acp::Subject::from(subject.clone());
+        let actor = match &subject {
+            acp::Subject::Entity(did) => did.as_str().to_owned(),
+            acp::Subject::Wildcard => "did:key:*".to_owned(),
+            other => return Err(format!("unsupported recovery subject: {other:?}")),
+        };
+        let query = ActorRelationshipQuery {
+            requester: &self.worker_did,
+            actor: &actor,
+            policy: policy_id,
+            resource,
+            object: object_id,
+            relation,
+        };
+        verified(self.light_client.header_chain(), || async {
+            exact_relationship::query(&self.light_client, query)
+                .await
+                .map_err(|error| Box::new(error) as Box<dyn std::error::Error + Send + Sync>)
+        })
+        .await
+        .map_err(|error| match error.downcast::<ProviderError>() {
+            Ok(error) => error.to_string(),
+            Err(error) => error.to_string(),
+        })
     }
 }
 

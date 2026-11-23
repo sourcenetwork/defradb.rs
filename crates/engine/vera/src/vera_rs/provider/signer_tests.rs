@@ -63,6 +63,7 @@ pub(super) async fn provider(
         worker: worker.clone(),
         follow,
         sink: regolith::sync::OnceCell::new(),
+        recovery: regolith::sync::OnceCell::new(),
         shared: std::sync::atomic::AtomicBool::new(false),
         holds_key: Box::new(|_| false),
     });

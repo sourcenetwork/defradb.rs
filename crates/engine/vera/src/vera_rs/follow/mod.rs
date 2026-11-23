@@ -36,7 +36,7 @@ mod lost;
 mod owed;
 
 pub(crate) use chain::ProviderChain;
-pub(crate) use journal::{Confirmation, Journal, JournalError};
+pub(crate) use journal::{Confirmation, Journal, JournalError, RecoveryNeed};
 pub(crate) use owed::owed_again;
 
 use effect::effect_of;
@@ -70,6 +70,7 @@ struct Standing {
     handled: u64,
     undelivered: bool,
     closed: Option<Arc<str>>,
+    recoverable: Option<RecoveryNeed>,
 }
 
 /// [`Standing`], read on every decision without waiting.
@@ -100,7 +101,8 @@ impl Follow {
         self.standing.store(Standing {
             handled: previous.handled.max(journal.handled_term()),
             undelivered: !journal.undelivered().is_empty(),
-            closed: journal.closed().map(Arc::from).or(previous.closed),
+            closed: journal.closed().map(Arc::from),
+            recoverable: journal.recovery_needed(),
         });
     }
 
@@ -195,7 +197,7 @@ where
             let scanned = match scan(journal, chain).await? {
                 Ok(first) => first,
                 Err(reason) => {
-                    journal.close(reason.clone()).map_err(failure)?;
+                    journal.close_recoverable(reason.clone()).map_err(failure)?;
                     return Ok(Reconciled::Closed(reason));
                 }
             };

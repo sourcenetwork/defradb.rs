@@ -43,7 +43,7 @@ use crate::dac::DocumentACP;
 use crate::error::{Error, Result};
 use crate::identity::Identity;
 use crate::outbox::deny::{owed_denial, OwedDenial};
-use crate::outbox::{OwedChanges, StagedCount, TransactionOutbox};
+use crate::outbox::{OwedChanges, OwedSubject, StagedCount, TransactionOutbox};
 use crate::pending::{pending_key, PendingRegistration, PENDING_PREFIX};
 use crate::permission::DocumentPermission;
 
@@ -52,6 +52,7 @@ use crate::permission::DocumentPermission;
 mod deadline_tests;
 mod drain;
 mod owed;
+mod recovery;
 mod registration;
 mod registration_batch;
 mod replica;
@@ -143,6 +144,35 @@ impl<S> ExternalDocumentAcp<S>
 where
     S: Store + 'static,
 {
+    async fn recovery_prepare(
+        &self,
+        policy_id: &str,
+        resource_name: &str,
+        object_id: &str,
+        operation: crate::recovery::RecoveryOperation,
+    ) -> Result<()> {
+        recovery::prepare(self, policy_id, resource_name, object_id, operation).await
+    }
+
+    async fn recovery_settle(
+        &self,
+        policy_id: &str,
+        resource_name: &str,
+        object_id: &str,
+        operation: crate::recovery::RecoveryOperation,
+        applied: bool,
+    ) -> Result<()> {
+        recovery::settle(
+            self,
+            policy_id,
+            resource_name,
+            object_id,
+            operation,
+            applied,
+        )
+        .await
+    }
+
     /// Gate `provider` with the registrations owed in `store`'s ACP namespace.
     pub fn new(provider: Arc<dyn DocumentACP>, store: Arc<S>) -> Self {
         Self {
@@ -616,7 +646,52 @@ where
         identity: &Did,
         objects: &[crate::AcpObject<'_>],
     ) -> std::result::Result<(), crate::RegistrationFailure> {
-        self.provider.register_objects(identity, objects).await
+        for object in objects {
+            self.recovery_prepare(
+                object.policy_id,
+                object.resource,
+                object.object_id,
+                crate::recovery::RecoveryOperation::Register {
+                    actor: self.provider.canonical_actor(identity),
+                },
+            )
+            .await
+            .map_err(|error| crate::RegistrationFailure::new(0, error))?;
+        }
+        match self.provider.register_objects(identity, objects).await {
+            Ok(()) => {
+                for object in objects {
+                    self.recovery_settle(
+                        object.policy_id,
+                        object.resource,
+                        object.object_id,
+                        crate::recovery::RecoveryOperation::Register {
+                            actor: self.provider.canonical_actor(identity),
+                        },
+                        true,
+                    )
+                    .await
+                    .map_err(|error| crate::RegistrationFailure::new(0, error))?;
+                }
+                Ok(())
+            }
+            Err(failure) => {
+                for object in objects {
+                    self.recovery_settle(
+                        object.policy_id,
+                        object.resource,
+                        object.object_id,
+                        crate::recovery::RecoveryOperation::Register {
+                            actor: self.provider.canonical_actor(identity),
+                        },
+                        false,
+                    )
+                    .await
+                    .map_err(|error| crate::RegistrationFailure::new(failure.index, error))?;
+                }
+                Err(failure)
+            }
+        }
     }
 
     async fn register_doc_object(
@@ -626,9 +701,18 @@ where
         resource_name: &str,
         doc_id: &str,
     ) -> Result<()> {
-        self.provider
+        let operation = crate::recovery::RecoveryOperation::Register {
+            actor: self.provider.canonical_actor(identity),
+        };
+        self.recovery_prepare(policy_id, resource_name, doc_id, operation.clone())
+            .await?;
+        let result = self
+            .provider
             .register_doc_object(identity, policy_id, resource_name, doc_id)
-            .await
+            .await;
+        self.recovery_settle(policy_id, resource_name, doc_id, operation, result.is_ok())
+            .await?;
+        result
     }
 
     async fn register_object(
@@ -638,9 +722,24 @@ where
         resource_name: &str,
         object_id: &str,
     ) -> Result<()> {
-        self.provider
+        let operation = crate::recovery::RecoveryOperation::Register {
+            actor: self.provider.canonical_actor(identity),
+        };
+        self.recovery_prepare(policy_id, resource_name, object_id, operation.clone())
+            .await?;
+        let result = self
+            .provider
             .register_object(identity, policy_id, resource_name, object_id)
-            .await
+            .await;
+        self.recovery_settle(
+            policy_id,
+            resource_name,
+            object_id,
+            operation,
+            result.is_ok(),
+        )
+        .await?;
+        result
     }
 
     async fn is_doc_registered(
@@ -838,6 +937,15 @@ where
             .await?;
         self.refuse_revoked(requestor, policy_id, collection_id, doc_id)
             .await?;
+        let operation = crate::recovery::RecoveryOperation::AddRelationship {
+            actor: self.provider.canonical_actor(requestor),
+            relation: relation.to_owned(),
+            subject: OwedSubject::Actor {
+                did: self.provider.canonical_actor(target),
+            },
+        };
+        self.recovery_prepare(policy_id, collection_id, doc_id, operation.clone())
+            .await?;
         let changed = self
             .provider
             .add_actor_relationship(
@@ -849,6 +957,8 @@ where
                 relation,
                 managing_relations,
             )
+            .await?;
+        self.recovery_settle(policy_id, collection_id, doc_id, operation, changed)
             .await?;
         self.object_changed(policy_id, collection_id, doc_id);
         Ok(changed)
@@ -870,6 +980,13 @@ where
             .await?;
         self.refuse_revoked(requestor, policy_id, collection_id, doc_id)
             .await?;
+        let operation = crate::recovery::RecoveryOperation::AddRelationship {
+            actor: self.provider.canonical_actor(requestor),
+            relation: relation.to_owned(),
+            subject: OwedSubject::try_from(target.clone())?,
+        };
+        self.recovery_prepare(policy_id, collection_id, doc_id, operation.clone())
+            .await?;
         let changed = self
             .provider
             .add_relationship(
@@ -881,6 +998,8 @@ where
                 relation,
                 managing_relations,
             )
+            .await?;
+        self.recovery_settle(policy_id, collection_id, doc_id, operation, changed)
             .await?;
         self.object_changed(policy_id, collection_id, doc_id);
         Ok(changed)
@@ -903,6 +1022,15 @@ where
             .await?;
         self.refuse_revoked(requestor, policy_id, collection_id, doc_id)
             .await?;
+        let operation = crate::recovery::RecoveryOperation::DeleteRelationship {
+            actor: self.provider.canonical_actor(requestor),
+            relation: relation.to_owned(),
+            subject: OwedSubject::Actor {
+                did: self.provider.canonical_actor(target),
+            },
+        };
+        self.recovery_prepare(policy_id, collection_id, doc_id, operation.clone())
+            .await?;
         let changed = self
             .provider
             .delete_actor_relationship(
@@ -914,6 +1042,8 @@ where
                 relation,
                 managing_relations,
             )
+            .await?;
+        self.recovery_settle(policy_id, collection_id, doc_id, operation, changed)
             .await?;
         self.object_changed(policy_id, collection_id, doc_id);
         Ok(changed)
@@ -935,6 +1065,13 @@ where
             .await?;
         self.refuse_revoked(requestor, policy_id, collection_id, doc_id)
             .await?;
+        let operation = crate::recovery::RecoveryOperation::DeleteRelationship {
+            actor: self.provider.canonical_actor(requestor),
+            relation: relation.to_owned(),
+            subject: OwedSubject::try_from(target.clone())?,
+        };
+        self.recovery_prepare(policy_id, collection_id, doc_id, operation.clone())
+            .await?;
         let changed = self
             .provider
             .delete_relationship(
@@ -947,6 +1084,8 @@ where
                 managing_relations,
             )
             .await?;
+        self.recovery_settle(policy_id, collection_id, doc_id, operation, changed)
+            .await?;
         self.object_changed(policy_id, collection_id, doc_id);
         Ok(changed)
     }
@@ -957,8 +1096,15 @@ where
         resource_name: &str,
         doc_id: &str,
     ) -> Result<()> {
-        self.provider
+        let operation = crate::recovery::RecoveryOperation::Unregister;
+        self.recovery_prepare(policy_id, resource_name, doc_id, operation.clone())
+            .await?;
+        let result = self
+            .provider
             .unregister_doc_object(policy_id, resource_name, doc_id)
-            .await
+            .await;
+        self.recovery_settle(policy_id, resource_name, doc_id, operation, result.is_ok())
+            .await?;
+        result
     }
 }

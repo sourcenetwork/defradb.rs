@@ -46,6 +46,12 @@ pub(super) fn rejected(result: &ConfirmedSubmission) -> ProviderError {
 
 impl VeraRsProvider {
     pub(super) async fn recover_pending(&self) -> Result<(), ProviderError> {
+        if self.follower.admit().is_err() {
+            tracing::warn!(
+                "a Vera term is not settled; the pending native submission waits for recovery"
+            );
+            return Ok(());
+        }
         let worker = self.worker.clone().lock_owned().await;
         if let Some(wire) = worker.pending().map(<[u8]>::to_vec) {
             let (_, confirmed) = self
