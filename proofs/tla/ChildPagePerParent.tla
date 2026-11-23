@@ -8,6 +8,10 @@
 \* one bound, so the first pages use it up and a later parent is left short.
 \* What must never happen: the scan stops while a parent still has children it
 \* was owed.
+\*
+\* The Rust it models: TypeJoinMany::next_per_parent in
+\* crates/engine/query/src/plan/type_join/type_join_many/children.rs, and
+\* TypeJoinMany::with_limit and with_offset in node.rs beside it.
 
 EXTENDS Naturals, FiniteSets \* numbers, and Cardinality to count a set
 
