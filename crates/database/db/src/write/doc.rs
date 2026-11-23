@@ -610,6 +610,8 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
             &systemstore,
             &collection,
             &canonical_doc_id,
+            context,
+            self.shared_txn()?.owed_staged(),
         )
         .await?;
 

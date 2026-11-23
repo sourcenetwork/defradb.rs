@@ -19,9 +19,6 @@ pub(crate) type ObjectKey = (String, String, String);
 pub(crate) struct Losses {
     /// Changes to owe again, in the order they were confirmed.
     pub owed: Vec<Lost>,
-    /// Archives that are not executed again: access they narrowed is wide
-    /// again, and nothing here can send them.
-    pub archives: Vec<ObjectKey>,
     /// Other requests that were refused, such as a policy creation.
     pub other: usize,
 }
@@ -54,7 +51,6 @@ pub(crate) fn lost_effects(
     }
     match effect {
         Effect::Owed(change) => losses.owed.push(change),
-        Effect::Archive { .. } => losses.archives.extend(object),
         Effect::Other => losses.other += 1,
     }
 }

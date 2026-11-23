@@ -28,6 +28,8 @@ mod first_start;
 #[path = "embedded_vera/projection.rs"]
 mod projection;
 
+#[path = "embedded_vera/archive.rs"]
+mod archive;
 #[path = "embedded_vera/registration_batch.rs"]
 mod registration_batch;
 

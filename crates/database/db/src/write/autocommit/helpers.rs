@@ -573,23 +573,68 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
 }
 
 /// Local ownership disappears in the same commit as the deletion marker. A
-/// remote provider keeps the object: its registration, owed or held, stays,
-/// so the delete and every earlier change replicate to nodes that wait for
-/// the provider to hold the document.
+/// remote provider that archives a deleted document's object
+/// ([`acp::DocumentACP::stages_archive_on_delete`], vera.rs) is owed the
+/// archive in this transaction, as `context`'s identity, so the delete and
+/// the archive commit together; the delete is refused, and nothing is
+/// deleted, unless that identity owns the object
+/// ([`acp::TransactionOutbox::stage_archive`], `proofs/tla/ArchiveOnDelete.tla`).
+/// Any other remote provider keeps the object: its registration, owed or
+/// held, stays, so the delete and every earlier change replicate to nodes
+/// that wait for the provider to hold the document.
 pub(crate) async fn unregister_deleted_doc(
     provider: Option<&Arc<dyn acp::DocumentACP>>,
     systemstore: &NamespaceView,
     collection: &Collection,
     doc_id: &DocID,
+    context: &defra_core::RequestContext,
+    staged: acp::StagedCount,
 ) -> query::error::Result<()> {
-    if let (Some(provider), Some(policy)) = (provider, collection.schema().policy.as_ref()) {
-        let acpstore = systemstore.sibling(storage::namespace::Namespace::Acpstore);
-        if let Some(scoped) = provider.bind_transaction(acpstore) {
-            scoped
-                .unregister_doc_object(&policy.id, &policy.resource_name, &doc_id.to_string())
-                .await
-                .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
-        }
+    let (Some(provider), Some(policy)) = (provider, collection.schema().policy.as_ref()) else {
+        return Ok(());
+    };
+    let acpstore = systemstore.sibling(storage::namespace::Namespace::Acpstore);
+    if let Some(scoped) = provider.bind_transaction(acpstore.clone()) {
+        return scoped
+            .unregister_doc_object(&policy.id, &policy.resource_name, &doc_id.to_string())
+            .await
+            .map_err(|error| query::error::QueryError::execution(error.to_string()));
     }
+    if !provider.stages_archive_on_delete() {
+        return Ok(());
+    }
+    let refused =
+        |error: acp::Error| query::error::QueryError::permission_denied(error.to_string());
+    let actor = context
+        .identity()
+        .map(identity::Did::new)
+        .transpose()
+        .map_err(|error| query::error::QueryError::execution(error.to_string()))?
+        .ok_or_else(|| {
+            refused(acp::Error::NotOwner {
+                operation: "archive the deleted document's object without an identity".into(),
+            })
+        })?;
+    let bound = provider
+        .bind_request(context)
+        .unwrap_or_else(|| Arc::clone(provider));
+    let Some(outbox) = bound.transaction_outbox(&acpstore, staged) else {
+        return Ok(());
+    };
+    outbox
+        .stage_archive(acp::StageArchive {
+            txn: context.txn().map(|txn| txn.0),
+            actor: &actor,
+            policy_id: &policy.id,
+            resource: &policy.resource_name,
+            object: &doc_id.to_string(),
+        })
+        .await
+        .map_err(|error| match error {
+            acp::Error::ProviderUnavailable(_) | acp::Error::OwedCheckUnavailable { .. } => {
+                query::error::QueryError::execution(error.to_string())
+            }
+            other => refused(other),
+        })?;
     Ok(())
 }

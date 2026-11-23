@@ -36,6 +36,7 @@ pub fn typed(command: &PolicyCommand<'_>) -> Result<PolicyCmd, CommandError> {
         PolicyAction::DeleteRelationship { relation, subject } => {
             PolicyCmd::DeleteRelationship(relationship(relation, subject)?)
         }
+        PolicyAction::ArchiveObject => archive_object(command.resource, command.object_id),
     })
 }
 

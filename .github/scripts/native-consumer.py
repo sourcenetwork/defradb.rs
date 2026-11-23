@@ -77,7 +77,7 @@ UNIT_NAMES = (
     "follow::tests::a_replay_cut_short_still_owes_what_it_learnt_and_taints_its_object",
     "follow::tests::a_revocation_on_a_void_block_that_is_refused_again_is_owed_as_a_delete",
     "follow::tests::a_term_that_voided_nothing_of_this_node_is_checked_at_once",
-    "follow::tests::a_void_archive_that_is_refused_again_fails_closed",
+    "follow::tests::a_void_archive_that_is_refused_again_is_owed_again",
     "follow::tests::a_void_older_than_the_journal_fails_closed_for_good",
     "follow::tests::a_void_within_the_journal_after_pruning_is_checked",
     "follow::tests::every_term_is_a_new_epoch_for_cached_decisions",

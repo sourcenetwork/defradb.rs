@@ -27,7 +27,7 @@ use zanzibar::types::Subject;
 
 use super::changes::{OwedChanges, StagedCount};
 use super::deny::{OwedDenial, OwedDenials};
-use super::record::{NewOwedChange, OwedOp, OwedSubject, OwedTuple};
+use super::record::{NewOwedChange, OwedAuthority, OwedOp, OwedState, OwedSubject, OwedTuple};
 use crate::dac::DocumentACP;
 use crate::error::{Error, Result};
 use crate::identity::Identity;
@@ -48,6 +48,17 @@ pub struct StageRelationship<'a> {
     /// The relations whose holders may change `relation`, from the policy.
     pub managing_relations: &'a [String],
     pub op: OwedOp,
+}
+
+/// The archive a document's delete owes, as its caller asks for it.
+pub struct StageArchive<'a> {
+    /// The transaction deleting the document, where its caller knows one.
+    pub txn: Option<u64>,
+    /// The DID the delete runs as, which archives the object.
+    pub actor: &'a Did,
+    pub policy_id: &'a str,
+    pub resource: &'a str,
+    pub object: &'a str,
 }
 
 /// A change recorded in its transaction.
@@ -187,6 +198,9 @@ pub struct TransactionOutbox {
     pending: PendingRegistrations,
     denials: OwedDenials,
     view: datastore::WeakNamespaceView,
+    /// Told once a transaction that staged an archive commits: the node's
+    /// drainer, which sends what is owed by itself.
+    wake: Option<Arc<regolith::sync::Notify>>,
 }
 
 impl TransactionOutbox {
@@ -277,7 +291,15 @@ impl TransactionOutbox {
             pending: PendingRegistrations::new(view),
             denials: OwedDenials::new(view),
             view: view.downgrade(),
+            wake: None,
         }
+    }
+
+    /// This outbox telling `wake` when a transaction that staged an archive
+    /// commits.
+    pub(crate) fn waking(mut self, wake: Arc<regolith::sync::Notify>) -> Self {
+        self.wake = Some(wake);
+        self
     }
 
     /// Whether a delete owed on the object may take away `actor`'s authority
@@ -446,6 +468,101 @@ impl TransactionOutbox {
         })
     }
 
+    /// Record, in the delete's transaction, the archive of its document's
+    /// object (`proofs/tla/ArchiveOnDelete.tla`).
+    ///
+    /// Only the object's owner may archive it, so the delete is refused
+    /// ([`Error::NotOwner`]) unless `request.actor` owns the object: the
+    /// creator of a registration still owed, or the owner the provider
+    /// names. An owner whose request lets the node sign nothing for it has
+    /// its archive parked as awaiting authority: it denies all the same,
+    /// and is sent once the owner hands in a credential. While the provider cannot say who the owner is the delete is
+    /// refused too ([`Error::OwedCheckUnavailable`]): the archive denies
+    /// everyone on the object from the commit on. Earlier changes on the
+    /// object not yet handed to the provider's worker are dropped with the
+    /// delete, each with a note for its actor: the archive takes away
+    /// whatever they would have done. A change already in flight is sent
+    /// before the archive, and the provider refuses any change to an
+    /// archived object.
+    pub async fn stage_archive(&self, request: StageArchive<'_>) -> Result<Staged> {
+        let actor = self.provider.canonical_actor(request.actor);
+        let (policy_id, resource, object) = (request.policy_id, request.resource, request.object);
+        let not_owner = || Error::NotOwner {
+            operation: "archive the deleted document's object".into(),
+        };
+        match self.pending.get(policy_id, resource, object).await? {
+            Some(owed) if self.provider.canonical_actor(&owed.creator) == actor => {}
+            Some(_) => return Err(not_owner()),
+            None => match self
+                .provider
+                .get_doc_owner(policy_id, resource, object)
+                .await
+            {
+                Ok(Some(owner)) if self.provider.canonical_actor(&owner) == actor => {}
+                Ok(_) => return Err(not_owner()),
+                Err(Error::ProviderUnavailable(_)) => {
+                    return Err(Error::OwedCheckUnavailable {
+                        actor: actor.to_string(),
+                        object: object.to_owned(),
+                    })
+                }
+                Err(error) => return Err(error),
+            },
+        }
+        let tuple = OwedTuple::archive(policy_id, resource, object);
+        // The owner may archive; when nothing lets the node sign for it now
+        // (no key, no delegation in the request), the archive waits for its
+        // authority, denying everyone on the object until the owner hands
+        // one in (`reauthorize_owed`).
+        let (authority, awaiting) = match self.provider.command_authority(
+            request.actor,
+            ProviderCommand::Relationship {
+                tuple: &tuple,
+                op: OwedOp::Archive,
+            },
+        ) {
+            Ok(authority) => (authority, None),
+            Err(error @ Error::OwedAuthorityUnavailable { .. }) => {
+                (OwedAuthority::NodeKey, Some(error.to_string()))
+            }
+            Err(error) => return Err(error),
+        };
+        self.changes
+            .drop_unsent_on(policy_id, resource, object)
+            .await?;
+        // One archive per deleted document: the delete bounds them, and a
+        // delete is not refused for the outbox's bounds on new changes.
+        let change = self
+            .changes
+            .stage_restored(NewOwedChange {
+                txn: request.txn,
+                tuple,
+                op: OwedOp::Archive,
+                actor,
+                authority,
+                authority_checked: true,
+            })
+            .await?;
+        if let Some(reason) = awaiting {
+            self.changes
+                .mark(change.seq, OwedState::AwaitingAuthority, 0, Some(reason))
+                .await?;
+        }
+        // A delete has no hook of its own that settles what it staged: the
+        // drainer is told when it commits.
+        if let (Some(wake), Some(view)) = (self.wake.clone(), self.view.upgrade()) {
+            view.on_commit(storage::corekv::OnCommit::Sync(Box::new(move || {
+                wake.notify_one()
+            })))
+            .await
+            .map_err(|error| Error::Storage(error.to_string()))?;
+        }
+        Ok(Staged {
+            seq: change.seq,
+            authority_checked: true,
+        })
+    }
+
     /// Whether `actor` may make the change, as far as can be known now.
     /// `Ok(false)` for an add the provider could not be asked about.
     async fn advise(&self, actor: &Did, request: &StageRelationship<'_>) -> Result<bool> {
@@ -538,7 +655,7 @@ fn rests_on_revoked(sources: Option<&[String]>, deletes: &[OwedTuple], actor: &D
 fn refusal(request: &StageRelationship<'_>) -> Error {
     let verb = match request.op {
         OwedOp::Add => "create",
-        OwedOp::Delete => "delete",
+        OwedOp::Delete | OwedOp::Archive => "delete",
     };
     if request.managing_relations.is_empty() {
         Error::NotOwner {
@@ -554,7 +671,7 @@ fn refusal(request: &StageRelationship<'_>) -> Error {
 /// What staging does when the provider cannot be asked: an add goes on
 /// unchecked, a delete does not go on.
 fn unchecked(actor: &Did, request: &StageRelationship<'_>, reason: &str) -> Result<bool> {
-    if request.op == OwedOp::Delete {
+    if request.op != OwedOp::Add {
         return Err(Error::OwedCheckUnavailable {
             actor: actor.to_string(),
             object: request.object.to_owned(),

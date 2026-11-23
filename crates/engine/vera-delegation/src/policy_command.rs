@@ -31,6 +31,9 @@ pub enum PolicyAction<'a> {
         relation: &'a str,
         subject: PolicySubject<'a>,
     },
+    /// Archive the object: every relationship on it goes and its owner no
+    /// longer counts. Only its owner may.
+    ArchiveObject,
 }
 
 /// The subject of a relationship command, in the two forms a provider is

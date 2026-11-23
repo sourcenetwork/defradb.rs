@@ -697,6 +697,8 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
             &systemstore,
             &collection,
             &canonical_doc_id,
+            context,
+            acp::StagedCount::new(),
         )
         .await?;
 

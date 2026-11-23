@@ -533,11 +533,17 @@ impl VeraProvider for VeraRsProvider {
         self.worker_did.clone()
     }
 
+    /// Nothing is archived after a delete commits: the node that deletes a
+    /// document archives its object as an owed change staged in the
+    /// delete's transaction ([`Self::archives_owed_on_delete`]), refused
+    /// unless its caller owns the object, and a replica that merges the
+    /// delete archives nothing.
     fn archive_object_on_document_delete(&self) -> bool {
-        // A local document tombstone may still be rejected by another
-        // replica. Archiving the shared ACP object here would revoke grants
-        // before the replicated delete has been authorized.
         false
+    }
+
+    fn archives_owed_on_delete(&self) -> bool {
+        true
     }
 
     async fn create_bearer_token(&self, did: &str) -> Result<String, ProviderError> {

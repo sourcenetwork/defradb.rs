@@ -1953,6 +1953,22 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // A document deleted on a node whose provider archives on delete
+        // (vera.rs) owes the archive of its object in the delete's
+        // transaction. Only the owner may archive, so anyone else's delete is
+        // refused before commit; earlier unsent changes on the object go
+        // with the delete; an owed archive denies everyone on the object; a
+        // change already in flight lands before the archive, and Vera refuses
+        // any change to an archived object.
+        family: "ACP soundness + revocation + dual-path commits",
+        name: "INV_DeletedGrantsNothing / INV_NoGrantAfterArchive / INV_DeletedByOwner / LIVE_Retired: a deleted document grants nothing, no grant outlives its archive, only its owner deletes it, and its object ends archived",
+        axis: Tla,
+        anchor: "crates/engine/acp/src/outbox/staging.rs TransactionOutbox::stage_archive; crates/engine/acp/src/outbox/changes.rs OwedChanges::drop_unsent_on; crates/engine/acp/src/outbox/deny.rs owed_denial; crates/engine/acp/src/outbox/ops.rs account, live_on; crates/engine/acp/src/outbox/submission.rs relationship_call; crates/database/db/src/write/autocommit/helpers.rs unregister_deleted_doc",
+        model_ref: "MC_ArchiveOnDelete_{Green,Green_NoDrop,Red_GrantAfterArchive,Red_DeleteWithoutAuthority,Red_NoOverlay}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         // An account's Vera deployment runs on every device, one active at a
         // time; a takeover without a handover voids the blocks above its cut,
         // and the light client's height goes down. The provider decides and

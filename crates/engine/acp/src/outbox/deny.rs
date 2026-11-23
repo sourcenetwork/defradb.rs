@@ -1,5 +1,10 @@
 //! Whom an owed delete denies.
 //!
+//! An owed archive (its document was deleted) denies everyone on its
+//! object, its owner and anonymous callers too, from the delete's commit
+//! until the provider holds it: a deleted document grants nothing
+//! (`proofs/tla/ArchiveOnDelete.tla`).
+//!
 //! While any delete of a tuple is unsettled, its subject is denied on its
 //! object before the provider is asked, whatever the provider still holds:
 //! the revocation takes effect on this node when it commits. An add staged
@@ -69,9 +74,11 @@ where
     R: Reader + ?Sized,
 {
     let object_key = keys::object_key(policy_id, resource, object);
-    let wide = ops::owed_at(reader, &object_key, &ops::staged_parts(&[FIRST]))
-        .await?
-        .first;
+    let on_object = ops::owed_at(reader, &object_key, &ops::staged_parts(&[FIRST, SECOND])).await?;
+    if on_object.second > 0 {
+        return Ok(OwedDenial::Always);
+    }
+    let wide = on_object.first;
     let named = match identity {
         Identity::Authenticated(actor) => {
             let actor = provider.canonical_actor(actor);

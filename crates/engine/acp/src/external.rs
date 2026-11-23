@@ -48,6 +48,9 @@ use crate::pending::{pending_key, PendingRegistration, PENDING_PREFIX};
 use crate::permission::DocumentPermission;
 
 #[cfg(test)]
+#[path = "external/archive_tests.rs"]
+mod archive_tests;
+#[cfg(test)]
 #[path = "external/deadline_tests.rs"]
 mod deadline_tests;
 mod drain;
@@ -457,12 +460,15 @@ where
         view: &datastore::NamespaceView,
         staged: StagedCount,
     ) -> Option<TransactionOutbox> {
-        Some(TransactionOutbox::new(
-            Arc::clone(&self.provider),
-            view,
-            Arc::new(self.store.clone()),
-            staged,
-        ))
+        Some(
+            TransactionOutbox::new(
+                Arc::clone(&self.provider),
+                view,
+                Arc::new(self.store.clone()),
+                staged,
+            )
+            .waking(Arc::clone(&self.wake)),
+        )
     }
 
     fn outbox_authority_provider(&self) -> Option<Arc<dyn DocumentACP>> {
@@ -526,6 +532,24 @@ where
     ) -> Result<()> {
         self.settle_replica_unit(policy_id, resource_name, doc_id)
             .await
+    }
+
+    fn stages_archive_on_delete(&self) -> bool {
+        self.provider.stages_archive_on_delete()
+    }
+
+    async fn archive_doc_object(
+        &self,
+        actor: &Did,
+        policy_id: &str,
+        resource_name: &str,
+        doc_id: &str,
+    ) -> Result<()> {
+        self.provider
+            .archive_doc_object(actor, policy_id, resource_name, doc_id)
+            .await?;
+        self.object_changed(policy_id, resource_name, doc_id);
+        Ok(())
     }
 
     fn submits_subject(&self, subject: &Subject) -> bool {

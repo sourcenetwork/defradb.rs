@@ -44,11 +44,12 @@ fn registrations_and_relationship_changes_are_read_back_with_their_delegation() 
 fn an_archive_and_other_requests_are_told_apart() {
     assert_eq!(
         effect_of(&archive(0, "bae-1")),
-        Effect::Archive {
+        Effect::Owed(Lost::Archive {
             policy_id: POLICY.into(),
             resource: "users".into(),
             object: "bae-1".into(),
-        }
+            token: token(OWNER),
+        })
     );
     assert_eq!(effect_of(b"not a request"), Effect::Other);
 }

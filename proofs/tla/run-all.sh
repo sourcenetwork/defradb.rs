@@ -688,6 +688,11 @@ RUNS=(
   "MC_VerifiedRead_Red_BusyUncapped.cfg VerifiedRead.tla RED" # busy retry without a patience asks past BUSY_PATIENCE (INV_AttemptsBounded)
   "MC_VerifiedRead_Red_PausesOnly.cfg VerifiedRead.tla RED" # patience counts only the pauses: a slow busy node carries asks past BUSY_PATIENCE (INV_AttemptsBounded)
   "MC_VerifiedRead_Red_UndrawnPause.cfg VerifiedRead.tla RED" # patience checked against the shortest pause, the drawn one slept: an ask past BUSY_PATIENCE (INV_AttemptsBounded)
+  "MC_ArchiveOnDelete_Green.cfg ArchiveOnDelete.tla GREEN" # a deleted document grants nothing, no grant outlives the archive, and the archive settles
+  "MC_ArchiveOnDelete_Green_NoDrop.cfg ArchiveOnDelete.tla GREEN" # earlier changes kept: Vera's refusal alone keeps a renewed grant off the archived object
+  "MC_ArchiveOnDelete_Red_GrantAfterArchive.cfg ArchiveOnDelete.tla RED" # changes kept and an archived object takes a grant: a renewed grant lands after the archive (INV_NoGrantAfterArchive)
+  "MC_ArchiveOnDelete_Red_DeleteWithoutAuthority.cfg ArchiveOnDelete.tla RED" # a writer deletes without authority to archive (INV_DeletedByOwner)
+  "MC_ArchiveOnDelete_Red_NoOverlay.cfg ArchiveOnDelete.tla RED" # an owed archive denies nobody: the reader is allowed on the deleted document (INV_DeletedGrantsNothing)
   "MC_FollowDeployment_Green.cfg FollowDeployment.tla GREEN" # takeovers void any part of the chain: no void decision, a revocation always denies, nothing lost, owed again settles
   "MC_FollowDeployment_Green_Window.cfg FollowDeployment.tla GREEN" # a journal of one entry: a takeover that voids the pruned one fails closed
   "MC_FollowDeployment_Red_KeepsCache.cfg FollowDeployment.tla RED" # decisions cached by revision alone: one from the void chain is served (INV_NoVoidDecision)

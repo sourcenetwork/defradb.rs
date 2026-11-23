@@ -60,6 +60,19 @@ where
                 && matches!(authority, acp::OwedAuthority::Delegation { .. }),
             authority,
         },
+        Lost::Archive {
+            policy_id,
+            resource,
+            object,
+            ..
+        } => acp::VoidedEffect::Change(acp::NewOwedChange {
+            txn: None,
+            tuple: acp::OwedTuple::archive(policy_id, resource, object),
+            op: acp::OwedOp::Archive,
+            actor,
+            authority,
+            authority_checked: true,
+        }),
         Lost::Relationship {
             add,
             policy_id,

@@ -827,6 +827,40 @@ impl DocumentACP for VeraDocumentACP {
         Ok(result)
     }
 
+    fn stages_archive_on_delete(&self) -> bool {
+        self.provider.archives_owed_on_delete()
+    }
+
+    async fn archive_doc_object(
+        &self,
+        actor: &Did,
+        policy_id: &str,
+        resource_name: &str,
+        doc_id: &str,
+    ) -> Result<()> {
+        let bearer_token = self.create_bearer_token(actor.as_str()).await?;
+        self.admit_for(
+            actor.as_str(),
+            &bearer_token,
+            &PolicyCommand {
+                policy_id,
+                resource: resource_name,
+                object_id: doc_id,
+                action: PolicyAction::ArchiveObject,
+            },
+        )?;
+        let [policy, resource, doc] = owned([policy_id, resource_name, doc_id]);
+        self.remote(move |provider| async move {
+            provider
+                .archive_object(&bearer_token, &policy, &resource, &doc)
+                .await
+        })
+        .await
+        .map_err(provider_err)?;
+        self.invalidate_cached_access(policy_id);
+        Ok(())
+    }
+
     async fn delete_actor_relationship(
         &self,
         requestor: &Did,

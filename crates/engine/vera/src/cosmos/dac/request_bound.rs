@@ -132,6 +132,7 @@ pub(super) fn with_policy_command<T>(
             let action = |subject| match op {
                 OwedOp::Add => PolicyAction::SetRelationship { relation, subject },
                 OwedOp::Delete => PolicyAction::DeleteRelationship { relation, subject },
+                OwedOp::Archive => PolicyAction::ArchiveObject,
             };
             let sent = |action| PolicyCommand {
                 policy_id: &tuple.policy_id,

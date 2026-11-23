@@ -4,10 +4,10 @@
 //! Every policy command the provider sends is a `bearerPolicyCmd` call: the
 //! actor's delegation, the policy and the command as JSON. A registration or
 //! a relationship change read from one can be owed again through the outbox,
-//! under the actor that issued the delegation. An archive narrows access,
-//! and the outbox has no record for it: one that a term voided and that is
-//! not executed again cannot be put right here. A created policy widens
-//! nothing; one that is lost leaves the documents under it unreadable.
+//! under the actor that issued the delegation, and so can an archive (its
+//! document was deleted), which the outbox owes as any change. A created
+//! policy widens nothing; one that is lost leaves the documents under it
+//! unreadable.
 
 use alloy_sol_types::SolCall as _;
 use serde::{Deserialize, Serialize};
@@ -38,6 +38,12 @@ pub(crate) enum Lost {
         subject: LostSubject,
         token: String,
     },
+    Archive {
+        policy_id: String,
+        resource: String,
+        object: String,
+        token: String,
+    },
 }
 
 /// A relationship's subject, as the outbox records one.
@@ -63,12 +69,6 @@ pub(crate) enum LostSubject {
 pub(crate) enum Effect {
     /// A change the outbox can owe again.
     Owed(Lost),
-    /// An archive, which nothing here can send again.
-    Archive {
-        policy_id: String,
-        resource: String,
-        object: String,
-    },
     /// A policy creation, a checked decision, or anything else that changes
     /// no document's access.
     Other,
@@ -90,13 +90,21 @@ impl Lost {
                 resource,
                 object,
                 ..
+            }
+            | Self::Archive {
+                policy_id,
+                resource,
+                object,
+                ..
             } => (policy_id, resource, object),
         }
     }
 
     pub(crate) fn token(&self) -> &str {
         match self {
-            Self::Registration { token, .. } | Self::Relationship { token, .. } => token,
+            Self::Registration { token, .. }
+            | Self::Relationship { token, .. }
+            | Self::Archive { token, .. } => token,
         }
     }
 }
@@ -109,11 +117,6 @@ impl Effect {
                 let (policy, resource, object) = lost.object();
                 Some((policy.into(), resource.into(), object.into()))
             }
-            Self::Archive {
-                policy_id,
-                resource,
-                object,
-            } => Some((policy_id.clone(), resource.clone(), object.clone())),
             Self::Other => None,
         }
     }
@@ -144,11 +147,12 @@ pub(crate) fn effect_of(wire: &[u8]) -> Effect {
             })
         }
         PolicyCmd::ArchiveObject(object) => {
-            return Effect::Archive {
+            return Effect::Owed(Lost::Archive {
                 policy_id,
                 resource: object.resource,
                 object: object.id,
-            }
+                token,
+            })
         }
         PolicyCmd::SetRelationship(relationship) => (true, relationship),
         PolicyCmd::DeleteRelationship(relationship) => (false, relationship),

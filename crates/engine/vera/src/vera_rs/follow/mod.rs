@@ -233,17 +233,6 @@ where
                 effect_of(&entry.wire),
                 replayed.executed,
             );
-            if let Some(object) = losses.archives.first() {
-                let reason = format!(
-                    "the Vera deployment switched its active device and voided the archive of \
-                     {}/{}/{} this node confirmed; it was refused when sent again, so access it \
-                     removed may be back. Archive the object again, then restart the node with \
-                     a new worker directory",
-                    object.0, object.1, object.2
-                );
-                journal.close(reason.clone()).map_err(failure)?;
-                return Ok(Reconciled::Closed(reason));
-            }
             journal
                 .record(&Confirmation {
                     height: replayed.height,

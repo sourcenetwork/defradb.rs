@@ -30,6 +30,18 @@ certified name and original definition. A malformed stored record is an error,
 not absence. Definitions retain actor roles, descriptions, metadata and Defra
 specification rules when reconstructed through the document ACP provider.
 
+Deleting a document archives its object on the deployment: the delete's
+transaction records the archive as an owed change, settled after the commit in
+order behind anything still in flight on the object, and Vera then removes every
+relationship on it and names no owner. Only the object's owner may archive, so a
+delete by anyone else (a writer the policy lets delete) is refused before it
+commits and nothing is deleted. Changes on the object not yet sent go with the
+delete, each with a note for its actor; from the commit until the archive
+settles, the object denies everyone. A node that merges a replicated delete
+archives nothing. Vera keeps an archived registration: the same document
+identifier cannot be registered again, so a document re-created with identical
+content stays readable by nobody.
+
 Receipt recovery is distinct from caller-level operation idempotency. Retrying
 a completed operation can issue a new request. vera.rs derives a policy's ID
 from its definition, its creator (the node's actor) and a 32-byte nonce, so a

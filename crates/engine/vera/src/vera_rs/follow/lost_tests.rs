@@ -29,12 +29,11 @@ fn a_refused_replay_taints_the_later_ones_on_its_object_only() {
         .iter()
         .map(|lost| match lost {
             Lost::Relationship { object, add, .. } => (object.as_str(), *add),
-            Lost::Registration { .. } => unreachable!(),
+            Lost::Registration { .. } | Lost::Archive { .. } => unreachable!(),
         })
         .collect();
     assert_eq!(owed, vec![("a", false), ("a", true)]);
     assert_eq!(losses.other, 1);
-    assert!(losses.archives.is_empty());
 }
 
 #[test]
