@@ -440,11 +440,49 @@ pub fn response_has_data(response: &QueryResponse) -> bool {
     false
 }
 
+/// Whether an update's run says the request itself is invalid
+/// ([`crate::executor::QueryResponseError::is_invalid_request`]): the stream
+/// sends that response as its last result and ends. A subscription kept past
+/// a transient open check reports a bad request here.
+pub fn update_refused(response: &QueryResponse) -> bool {
+    response
+        .errors
+        .iter()
+        .any(|error| error.is_invalid_request())
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::error::QueryError;
+    use crate::executor::QueryResponseError;
+
+    fn failed_with(error: QueryError) -> QueryResponse {
+        QueryResponse {
+            data: None,
+            errors: vec![QueryResponseError::from_query_error(error)],
+            extensions: None,
+        }
+    }
+
+    /// An update that finds the request invalid ends the stream; one that
+    /// failed for a reason that may pass, or that worked, does not.
+    #[test]
+    fn only_an_invalid_request_refuses_an_update() {
+        assert!(update_refused(&failed_with(QueryError::unknown_field(
+            "In field \"nope\": Unknown field."
+        ))));
+        assert!(!update_refused(&failed_with(QueryError::internal(
+            "the store read failed"
+        ))));
+        assert!(!update_refused(&QueryResponse {
+            data: Some(json!({ "User": [] })),
+            errors: Vec::new(),
+            extensions: None,
+        }));
+    }
 
     /// A root fragment is legal GraphQL and has to reach the same scoped query
     /// a plain root field does.

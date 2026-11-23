@@ -388,13 +388,18 @@ fn subscribe(
             // own task.
             let response = query_runner.execute(request).await;
 
-            // A filter that excluded the document leaves no result.
-            if !crate::subscription::response_has_data(&response) {
+            // An invalid request (kept past a transient open check) is the
+            // last result; a filter that excluded the document leaves none.
+            let refused = query::subscription::update_refused(&response);
+            if !refused && !crate::subscription::response_has_data(&response) {
                 continue;
             }
 
             if let Ok(json) = serde_json::to_string(&response) {
                 result_tx.send_async(json).await;
+            }
+            if refused {
+                return;
             }
         }
     });
