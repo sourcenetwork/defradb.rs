@@ -7,6 +7,7 @@
 use datastore::NamespaceView;
 use defra_core::RequestContext;
 use document::{Document, NormalValue};
+use events::Update;
 use rapidhash::{RapidHashMap, RapidHashSet};
 use storage::corekv::Store;
 use storage::keys::doc_id_index::DocRef;
@@ -37,19 +38,21 @@ pub(crate) struct MergedParent<'a> {
     pub(crate) encrypted: bool,
 }
 
-/// Builds the chunks of each merged text that this node has no document for.
+/// Builds the chunks of each merged text that this node has no document for,
+/// and returns an update event for each one built.
 pub(crate) async fn build_missing<S>(
     db: &DB<S>,
     datastore: &NamespaceView,
     systemstore: &NamespaceView,
     parent: MergedParent<'_>,
-) -> Result<(), MergeError>
+) -> Result<Vec<Update>, MergeError>
 where
     S: Store,
 {
     let schema = parent.collection.schema();
     let blockstore = datastore.sibling(Namespace::Blockstore);
     let headstore = datastore.sibling(Namespace::Headstore);
+    let mut built = Vec::new();
     for chunked in &schema.chunked_fields {
         let field = chunked.field_name.as_str();
         if !parent.merged.contains_key(field) {
@@ -99,11 +102,13 @@ where
             .map_err(failed)?;
         for chunk in distinct(&chunks) {
             if !existing.contains(&chunk.hash) {
-                build(db, &target, &blockstore, &headstore, parent.doc_id, chunk).await?;
+                built.extend(
+                    build(db, &target, &blockstore, &headstore, parent.doc_id, chunk).await?,
+                );
             }
         }
     }
-    Ok(())
+    Ok(built)
 }
 
 async fn encrypts(
@@ -133,7 +138,7 @@ async fn build<S>(
     headstore: &NamespaceView,
     parent_id: &str,
     chunk: &Chunk,
-) -> Result<(), MergeError>
+) -> Result<Option<Update>, MergeError>
 where
     S: Store,
 {
@@ -158,7 +163,7 @@ where
         .map_err(MergeError::Database)?
         .is_some()
     {
-        return Ok(());
+        return Ok(None);
     }
     let identity = DocRef::new(
         collection.resolved_root_id(),
@@ -197,7 +202,7 @@ where
     )
     .await
     .map_err(failed)?;
-    doc.set_id(doc_id);
+    doc.set_id(doc_id.clone());
     write_local_create(
         &target.datastore,
         collection,
@@ -208,5 +213,16 @@ where
     .await
     .map_err(failed)?;
     doc.clear_write_preparation();
-    Ok(())
+    // The same event a merged document gets, so subscribers here see the chunk.
+    Ok(Some(
+        Update::new(
+            doc_id.to_string(),
+            block.cid,
+            collection.version_id().to_string(),
+            block.block,
+            false,
+            true,
+        )
+        .with_observation_collection_id(collection.collection_id().to_string()),
+    ))
 }

@@ -15,6 +15,7 @@ mod chunk_forged;
 mod chunk_parent_reads;
 mod chunk_query_row;
 mod chunk_query_shapes;
+mod chunk_rebuild_events;
 mod chunk_surfaces;
 mod chunk_update_journal;
 mod collection_block_links;
