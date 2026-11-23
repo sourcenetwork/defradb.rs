@@ -342,41 +342,40 @@ async fn a_retryable_send_failure_of_one_chunk_is_retried() {
     one_failed_send_is_retried(Some(2)).await;
 }
 
-#[nuclei::test(start_paused = true)]
-async fn stored_remote_keys_notify_listener_once_per_reply() {
-    #[derive(Default)]
-    struct Recorder(std::sync::Mutex<Vec<Vec<EncryptionCid>>>);
-    impl crate::KeyArrivalListener for Recorder {
-        fn keys_arrived(&self, cids: &[EncryptionCid]) {
-            self.0.lock().unwrap().push(cids.to_vec());
-        }
+struct ArrivalRecorder(regolith::sync::SegQueue<Vec<EncryptionCid>>);
+
+impl ArrivalRecorder {
+    fn new() -> Self {
+        Self(regolith::sync::SegQueue::new())
     }
 
+    fn calls(&self) -> Vec<Vec<EncryptionCid>> {
+        std::iter::from_fn(|| self.0.pop()).collect()
+    }
+}
+
+impl crate::KeyArrivalListener for ArrivalRecorder {
+    fn keys_arrived(&self, cids: &[EncryptionCid]) {
+        self.0.push(cids.to_vec());
+    }
+}
+
+#[nuclei::test(start_paused = true)]
+async fn stored_remote_keys_notify_listener_once_per_reply() {
     let (_, kms, cids) = peer_and_node(3, true).await;
-    let recorder = Arc::new(Recorder::default());
+    let recorder = Arc::new(ArrivalRecorder::new());
     kms.set_key_arrival_listener(recorder.clone());
     let keys = kms
         .get_keys_each(&RequestContext::anonymous(), &cids)
         .await
         .unwrap();
     assert!(keys.iter().all(Result::is_ok));
-    let calls = recorder.0.lock().unwrap();
-    assert_eq!(calls.len(), 1);
-    assert_eq!(calls[0], cids);
+    assert_eq!(recorder.calls(), vec![cids]);
 }
 
 #[nuclei::test(start_paused = true)]
 async fn cancelling_a_reply_notifies_keys_stored_before_a_later_put_blocks() {
     use crate::{KeyStore, StoredKey};
-    use std::sync::Mutex;
-
-    #[derive(Default)]
-    struct Recorder(Mutex<Vec<Vec<EncryptionCid>>>);
-    impl crate::KeyArrivalListener for Recorder {
-        fn keys_arrived(&self, cids: &[EncryptionCid]) {
-            self.0.lock().unwrap().push(cids.to_vec());
-        }
-    }
 
     struct GateStore {
         inner: MemoryKeyStore,
@@ -412,7 +411,7 @@ async fn cancelling_a_reply_notifies_keys_stored_before_a_later_put_blocks() {
         puts: AtomicUsize::new(0),
         second_put: regolith::sync::Notify::new(),
     });
-    let recorder = Arc::new(Recorder::default());
+    let recorder = Arc::new(ArrivalRecorder::new());
     let arrivals = Arc::new(kovan::AtomOption::none());
     arrivals.store_some(recorder.clone() as Arc<dyn crate::KeyArrivalListener>);
     let remote = super::RemoteKeys {
@@ -438,5 +437,5 @@ async fn cancelling_a_reply_notifies_keys_stored_before_a_later_put_blocks() {
 
     assert!(store.get(&cids[0]).await.unwrap().is_some());
     assert!(store.get(&cids[1]).await.unwrap().is_none());
-    assert_eq!(*recorder.0.lock().unwrap(), vec![vec![cids[0]]]);
+    assert_eq!(recorder.calls(), vec![vec![cids[0]]]);
 }

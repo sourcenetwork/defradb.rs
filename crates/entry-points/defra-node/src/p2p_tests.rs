@@ -2677,12 +2677,18 @@ async fn own_transport_peer_id(
     defra_p2p_adapter::TransportPeerId::new(id).expect("a canonical peer ID")
 }
 
+/// The key CIDs a closed [`KeyDeliveryGate`] refused: the first one, and how many.
+struct DeniedKeys {
+    first: regolith::sync::OnceCell<kms::EncryptionCid>,
+    count: std::sync::atomic::AtomicUsize,
+}
+
 /// A receiver-side test gate: deny remote key requests until the test opens it,
 /// while recording the requested CIDs for an independent fetch.
 struct KeyDeliveryGate {
     inner: std::sync::Arc<dyn kms::KeyTransport>,
     closed: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    requested: std::sync::Arc<std::sync::Mutex<Vec<kms::EncryptionCid>>>,
+    requested: std::sync::Arc<DeniedKeys>,
 }
 
 #[async_trait::async_trait]
@@ -2698,13 +2704,16 @@ impl kms::KeyTransport for KeyDeliveryGate {
         if self.closed.load(std::sync::atomic::Ordering::SeqCst) {
             let decoded: kms::FetchEncryptionKeyRequest =
                 defra_core::cbor::from_slice(&request.payload).unwrap();
-            let mut requested = self.requested.lock().unwrap();
-            requested.extend(
-                decoded
-                    .links
-                    .iter()
-                    .filter_map(|link| kms::EncryptionCid::try_from(link.as_slice()).ok()),
-            );
+            for cid in decoded
+                .links
+                .iter()
+                .filter_map(|link| kms::EncryptionCid::try_from(link.as_slice()).ok())
+            {
+                let _ = self.requested.first.set(cid);
+                self.requested
+                    .count
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
             return Err(kms::Error::KeyUnavailable);
         }
         self.inner.send_request(request).await
@@ -2722,13 +2731,16 @@ impl kms::KeyTransport for KeyDeliveryGate {
 #[test]
 #[mantra_macros::req_test("defra.encryption.peer.pending_key_arrival")]
 fn remote_key_arrival_wakes_a_parked_encrypted_merge() {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Arc, Mutex};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     edge::testing::edge()
         .block_on(async {
             let closed = Arc::new(AtomicBool::new(true));
-            let requested = Arc::new(Mutex::new(Vec::new()));
+            let requested = Arc::new(DeniedKeys {
+                first: regolith::sync::OnceCell::new(),
+                count: AtomicUsize::new(0),
+            });
             let wrap_closed = Arc::clone(&closed);
             let wrap_requested = Arc::clone(&requested);
             let wrapper = Arc::new(move |inner: Arc<dyn kms::KeyTransport>| {
@@ -2771,10 +2783,8 @@ fn remote_key_arrival_wakes_a_parked_encrypted_merge() {
             let mut previous_requests = 0;
             let cid = loop {
                 let status = replica.p2p().unwrap().sync_status().await.unwrap();
-                let (cid, request_count) = {
-                    let requested = requested.lock().unwrap();
-                    (requested.first().copied(), requested.len())
-                };
+                let cid = requested.first.get().copied();
+                let request_count = requested.count.load(Ordering::SeqCst);
                 if request_count != previous_requests {
                     previous_requests = request_count;
                     settled_since = None;

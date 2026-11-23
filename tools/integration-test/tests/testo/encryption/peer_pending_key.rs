@@ -10,6 +10,7 @@ use integration_test::test_case::TestCase;
 use serde_json::json;
 
 #[test]
+#[mantra_macros::req_test("defra.encryption.peer.pending_key_arrival")]
 fn an_encrypted_doc_appears_after_its_key_arrives() {
     TestCase {
         id: integration_test::scenario_id!(),
