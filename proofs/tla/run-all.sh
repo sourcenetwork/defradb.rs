@@ -1423,7 +1423,9 @@ RUNS=(
   "MC_ChildLimitPaging_Red_UnorderedStop.cfg ChildLimitPaging.tla RED" # an unordered early stop loses a later parent's page (INV_EveryParentHasPage)
 )
 
-parallelism="${TLA_JOBS:-4}"
+# Each TLC run checks with one worker, so one lane per core keeps every core
+# busy; TLA_JOBS overrides it.
+parallelism="${TLA_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}"
 case "$parallelism" in
   ''|*[!0-9]*) echo "TLA_JOBS must be a positive integer" >&2; exit 2 ;;
 esac
@@ -1455,10 +1457,12 @@ trace_verdict() {
 }
 
 run_model() {
-  local index="$1" row="$2" cfg mod want out got
+  local index="$1" row="$2" cfg mod want out got start
   read -r cfg mod want <<<"$row"
   mkdir -p "$workdir/java-$index"
+  start=$SECONDS
   out=$(TLA_JAVA_TMPDIR="$workdir/java-$index" ./tools/tlc -metadir "$workdir/state-$index" -config "$cfg" "$mod" 2>&1)
+  echo "$((SECONDS-start)) $cfg" >"$workdir/$index.time"
   # Here-strings, not pipes: `grep -q` stops at the first match, and under
   # pipefail the writer's broken pipe would turn a long trace into ERROR.
   case "$want" in
@@ -1496,5 +1500,7 @@ for ((index=1; index<=n; index++)); do
 done
 
 echo "----"
+echo "slowest runs (seconds):"
+cat "$workdir"/*.time 2>/dev/null | sort -rn | head -n 10 | sed 's/^/  /'
 if [ "$fails" -eq 0 ]; then echo "all $n TLA+ runs matched their expected verdict"; else echo "$fails/$n MISMATCHED"; fi
 exit "$((fails > 0))"
