@@ -211,7 +211,7 @@ fn query_one_to_many_with_child_limit_keeps_a_filtered_child_order() {
             AddCollection {
                 sdl: r#"
                     type Book {
-                        name: String @index
+                        name: String
                         rating: Int @index
                         author: Author
                     }
