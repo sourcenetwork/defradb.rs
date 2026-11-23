@@ -24,6 +24,7 @@ fn mutation(query: &str, vars: Value) -> Mutation {
 }
 
 #[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn a_truncate_filter_variable_keeps_its_source_and_the_doc_ids_fold_in_later() {
     let truncate = mutation(
         "mutation($f: UserFilterArg) { truncate_User(docID: [\"a\"], filter: $f) }",
@@ -40,6 +41,7 @@ fn a_truncate_filter_variable_keeps_its_source_and_the_doc_ids_fold_in_later() {
 }
 
 #[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn a_truncate_without_doc_ids_keeps_its_filter() {
     let truncate = mutation(
         "mutation { truncate_User(filter: {name: {_eq: \"x\"}}) }",
@@ -49,6 +51,7 @@ fn a_truncate_without_doc_ids_keeps_its_filter() {
 }
 
 #[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn a_nested_variable_is_recorded_at_its_position() {
     let parsed = parse_request_with_variables(
         "query($n: String) { User(filter: {name: {_eq: $n}}) { name } }",
@@ -73,6 +76,7 @@ fn a_nested_variable_is_recorded_at_its_position() {
 }
 
 #[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn a_count_selector_variable_marks_its_filter() {
     let parsed = parse_request_with_variables(
         "query($t: AuthorBooksFilterArg) { Author { COUNT(books: $t) } }",

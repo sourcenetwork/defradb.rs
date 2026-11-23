@@ -19,6 +19,7 @@ fn parse(request: &str, limits: QueryLimits) -> query::Result<(usize, usize)> {
 /// Two left-out spreads of one fragment expand it once, so reconverging
 /// fragments cost one expansion per definition, not one per path.
 #[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn a_fragment_left_out_twice_is_expanded_once() {
     let request = r#"
         mutation { ...G @skip(if: true) }
@@ -30,6 +31,7 @@ fn a_fragment_left_out_twice_is_expanded_once() {
 
 /// A doubling chain of left-out fragments stays linear in its length.
 #[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn reconverging_left_out_fragments_stay_linear() {
     let mut request = String::from("mutation { ...F0 @skip(if: true) }\n");
     for level in 0..20 {
@@ -45,6 +47,7 @@ fn reconverging_left_out_fragments_stay_linear() {
 /// A left-out visit never stops a later kept spread of the same fragment
 /// from running.
 #[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn a_kept_spread_after_a_left_out_one_still_runs() {
     let request = r#"
         mutation { ...F @skip(if: true) ...F }
@@ -56,6 +59,7 @@ fn a_kept_spread_after_a_left_out_one_still_runs() {
 /// The filter depth limit holds for a left-out mutation as for one that
 /// runs, since its filter is still walked.
 #[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn a_left_out_mutation_is_held_to_the_filter_depth_limit() {
     let limits = QueryLimits {
         max_filter_depth: 1,
@@ -73,6 +77,7 @@ fn a_left_out_mutation_is_held_to_the_filter_depth_limit() {
 
 /// The selection depth limit holds for a left-out mutation too.
 #[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn a_left_out_mutation_is_held_to_the_selection_depth_limit() {
     let limits = QueryLimits {
         max_query_depth: 2,

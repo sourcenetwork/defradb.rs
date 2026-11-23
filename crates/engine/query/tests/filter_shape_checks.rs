@@ -84,6 +84,7 @@ fn message(result: Result<()>) -> String {
 }
 
 #[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn a_relation_selection_without_a_filter_loads_no_other_collection() {
     let provider = provider(50);
     check_with(&provider, "{ Author { name books { title } } }", json!({})).unwrap();
@@ -92,6 +93,7 @@ fn a_relation_selection_without_a_filter_loads_no_other_collection() {
 }
 
 #[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn a_relation_aggregate_without_a_filter_loads_no_other_collection() {
     let provider = provider(50);
     check_with(
@@ -104,6 +106,7 @@ fn a_relation_aggregate_without_a_filter_loads_no_other_collection() {
 }
 
 #[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn a_filtered_relation_selection_is_still_checked() {
     let text = message(check(
         "{ Author { name books(filter: {nope: {_eq: 1}}) { title } } }",
@@ -113,6 +116,7 @@ fn a_filtered_relation_selection_is_still_checked() {
 }
 
 #[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn a_filter_under_an_unfiltered_relation_is_still_checked() {
     let text = message(check(
         "{ Author { books { author(filter: {nope: {_eq: 1}}) { name } } } }",
@@ -122,6 +126,7 @@ fn a_filter_under_an_unfiltered_relation_is_still_checked() {
 }
 
 #[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn a_whole_list_variable_under_and_is_checked() {
     let text = message(check(
         "query($c: [AuthorFilterArg!]) { Author(filter: {_and: $c}) { name } }",
@@ -134,6 +139,7 @@ fn a_whole_list_variable_under_and_is_checked() {
 }
 
 #[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn a_valid_whole_list_variable_under_or_passes() {
     check(
         "query($c: [AuthorFilterArg!]) { Author(filter: {_or: $c}) { name } }",
@@ -143,6 +149,7 @@ fn a_valid_whole_list_variable_under_or_passes() {
 }
 
 #[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn range_operators_on_a_string_field_pass() {
     check(
         r#"{ Author(filter: {name: {_gt: "B", _ge: "B", _geq: "B", _lt: "Z", _le: "Z", _leq: "Z"}}) { name } }"#,
@@ -152,6 +159,7 @@ fn range_operators_on_a_string_field_pass() {
 }
 
 #[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn an_unknown_filter_under_commits_links_is_rejected() {
     assert_eq!(
         message(check(
@@ -163,6 +171,7 @@ fn an_unknown_filter_under_commits_links_is_rejected() {
 }
 
 #[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn an_unknown_filter_under_commits_heads_is_rejected() {
     assert_eq!(
         message(check(
@@ -174,6 +183,7 @@ fn an_unknown_filter_under_commits_heads_is_rejected() {
 }
 
 #[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn an_unknown_filter_under_version_links_is_rejected() {
     assert_eq!(
         message(check(
@@ -185,6 +195,7 @@ fn an_unknown_filter_under_version_links_is_rejected() {
 }
 
 #[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn an_unknown_filter_under_version_heads_is_rejected() {
     assert_eq!(
         message(check(
@@ -196,6 +207,7 @@ fn an_unknown_filter_under_version_heads_is_rejected() {
 }
 
 #[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn a_valid_filter_under_version_links_passes() {
     check(
         "{ Author { name _version { cid links(filter: {fieldName: {_eq: \"age\"}}) { cid } } } }",
@@ -205,6 +217,7 @@ fn a_valid_filter_under_version_links_passes() {
 }
 
 #[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn an_unknown_filter_on_group_is_rejected() {
     assert_eq!(
         message(check(
@@ -216,6 +229,7 @@ fn an_unknown_filter_on_group_is_rejected() {
 }
 
 #[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn a_valid_group_filter_passes() {
     check(
         "{ Author(groupBy: [name]) { name GROUP(filter: {age: {_gt: 1}}) { age } } }",
@@ -228,6 +242,7 @@ fn a_valid_group_filter_passes() {
 /// an encrypted index, so its filter is never checked: the request fails on
 /// the missing field when it runs.
 #[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn an_encrypted_query_without_an_encrypted_index_leaves_its_filter_unchecked() {
     check(
         "{ encrypted_Author(filter: {age: {_eq: 21}}) { docIDs } }",
@@ -239,6 +254,7 @@ fn an_encrypted_query_without_an_encrypted_index_leaves_its_filter_unchecked() {
 /// In a three-collection cycle `A.b -> B.c -> C.a`, `A.b` is a self
 /// reference to B's place in the set: `b`'s filter is B's.
 #[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn a_filter_through_a_three_collection_cycle_is_checked_against_its_target() {
     let provider = provider_for(
         "type A { name: String b: B } type B { title: String c: C } type C { x: Int a: A }",
@@ -265,6 +281,7 @@ fn a_filter_through_a_three_collection_cycle_is_checked_against_its_target() {
 /// large or small one in Go's exponent form, and an integer past `int64`
 /// as the float it became.
 #[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn a_variable_prints_its_numbers_as_go_does() {
     let text = message(check(
         "query($f: AuthorFilterArg) { Author(filter: $f) { name } }",
@@ -279,6 +296,7 @@ fn a_variable_prints_its_numbers_as_go_does() {
 /// A known literal error stands even when the relation lookup a later
 /// selection's filter needs fails.
 #[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn a_literal_error_is_not_replaced_by_a_failed_relation_lookup() {
     let mut provider = provider(0);
     provider.failing_list = true;
@@ -296,6 +314,7 @@ fn a_literal_error_is_not_replaced_by_a_failed_relation_lookup() {
 /// Once a root has a literal error, a later root's collection is not
 /// looked up, so a failed lookup cannot replace that error.
 #[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn a_literal_error_is_not_replaced_by_a_later_roots_failed_lookup() {
     let mut provider = provider(0);
     provider.failing_get = Some("Book");
@@ -313,6 +332,7 @@ fn a_literal_error_is_not_replaced_by_a_later_roots_failed_lookup() {
 /// A root with no filter anywhere below it has nothing to check, so the
 /// filter pass looks nothing up: only the collection check does.
 #[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn a_root_without_a_filter_is_looked_up_once() {
     let provider = provider(0);
     check_with(&provider, "{ Author { _docID } }", json!({})).unwrap();
@@ -323,6 +343,7 @@ fn a_root_without_a_filter_is_looked_up_once() {
 /// Relation filters under several roots load the other collections once
 /// for the request, not once per root.
 #[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn relation_filters_under_several_roots_load_the_collections_once() {
     let provider = provider(0);
     check_with(
@@ -337,6 +358,7 @@ fn relation_filters_under_several_roots_load_the_collections_once() {
 /// With no `encrypted_<Collection>` field to check arguments on, a
 /// non-object filter variable is left to the missing-field error too.
 #[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn an_encrypted_query_without_an_encrypted_index_leaves_a_non_object_variable_unchecked() {
     check(
         "query($f: AuthorEncryptedFilterArg) { encrypted_Author(filter: $f) { docIDs } }",
@@ -348,6 +370,7 @@ fn an_encrypted_query_without_an_encrypted_index_leaves_a_non_object_variable_un
 /// A non-object variable where an operator block belongs fails with the
 /// block's name, as graphql-go's coercion names it.
 #[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn a_non_object_variable_for_an_operator_block_names_the_block() {
     let cases = [
         ("{name: $v}", "StringOperatorBlock"),
@@ -373,6 +396,7 @@ fn a_non_object_variable_for_an_operator_block_names_the_block() {
 
 /// A scalar list's aggregate `filter` is the element's `FilterArg`.
 #[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn a_non_object_aggregate_filter_on_a_scalar_list_names_its_filter_arg() {
     let text = message(check(
         "query($f: NotNullStringFilterArg) { Author { COUNT(tags: {filter: $f}) } }",
@@ -387,6 +411,7 @@ fn a_non_object_aggregate_filter_on_a_scalar_list_names_its_filter_arg() {
 /// A subscription open check refuses only an invalid request: a failed
 /// lookup during validation is not one, an unknown filter field is.
 #[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
 fn a_failed_lookup_does_not_make_the_request_invalid() {
     let mut failing = provider(0);
     failing.failing_list = true;
@@ -401,4 +426,54 @@ fn a_failed_lookup_does_not_make_the_request_invalid() {
     let unknown = check("{ Author(filter: {nope: {_eq: 1}}) { name } }", json!({}))
         .expect_err("an unknown field is refused");
     assert!(unknown.is_invalid_request(), "{unknown}");
+}
+
+/// A cursor argument written wrong is an invalid request, so a subscription
+/// open check refuses it instead of keeping the stream.
+#[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
+fn a_bad_cursor_argument_makes_the_request_invalid() {
+    for request in [
+        "{ _cursor { Author(first: -1) { name } } }",
+        "{ _cursor { Author(first: 1, last: 1) { name } } }",
+        "{ _cursor { Author(after: \"\") { name } } }",
+    ] {
+        let error = check(request, json!({})).expect_err("refused");
+        assert!(error.is_invalid_request(), "{request}: {error}");
+    }
+}
+
+/// Of two bad variables, the one reported is the first the request uses,
+/// whether or not a directive left that mutation out.
+#[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
+fn a_left_out_mutation_s_variable_keeps_its_place_in_the_request() {
+    let request = "mutation($first: AuthorFilterArg, $second: AuthorFilterArg) {
+        a: delete_Author(filter: $first) @skip(if: true) { _docID }
+        b: delete_Author(filter: $second) { _docID }
+    }";
+    let text = message(check(
+        request,
+        json!({ "first": { "nope": { "_eq": 1 } }, "second": { "nada": { "_eq": 1 } } }),
+    ));
+    assert!(text.starts_with("Variable \"$first\""), "{text}");
+}
+
+/// `COUNT(GROUP: …)` filters the grouped collection itself.
+#[test]
+#[mantra_macros::req_test("defra.query.filter.input-validation")]
+fn a_group_count_filter_is_checked_against_its_collection() {
+    let text = message(check(
+        "{ Author(groupBy: [name]) { name COUNT(GROUP: {filter: {nope: {_eq: 1}}}) } }",
+        json!({}),
+    ));
+    assert_eq!(
+        text,
+        "Argument \"GROUP\" has invalid value {filter: {nope: {_eq: 1}}}.\nIn field \"filter\": In field \"nope\": Unknown field."
+    );
+    check(
+        r#"{ Author(groupBy: [name]) { name COUNT(GROUP: {filter: {name: {_eq: "A"}}}) } }"#,
+        json!({}),
+    )
+    .expect("a known field is accepted");
 }
