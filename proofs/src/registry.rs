@@ -3824,10 +3824,10 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Text chunking",
-        name: "INV_ChunksFollowParent / INV_NoForeignChunks / INV_DeletesFollowParent",
+        name: "INV_ChunksFollowParent / INV_NoForeignChunks / INV_DeletesFollowParent / INV_SyncSendsCurrentChunks",
         axis: Tla,
-        anchor: "crates/database/p2p/src/sync/coordinator/broadcast.rs SyncCoordinator::push_jobs, SyncCoordinator::push_followed_document_to_replicators_with_creator; crates/database/db/src/merge/push_docs/follow.rs replica_takes; crates/database/db/src/chunk/sync/write.rs ChunkWrites::publish; crates/database/db/src/merge/broadcast_mutator/mod.rs BroadcastMutator::derived_heads; crates/database/p2p/src/sync/coordinator/event_handler/doc_sync.rs SyncCoordinator::with_followers; crates/database/db/src/merge/head_provider.rs DbHeadProvider::following_doc_ids",
-        model_ref: "MC_ChunkFollow_Green.cfg / MC_ChunkFollow_Red_OwnFilter.cfg / MC_ChunkFollow_Red_AllChunks.cfg / MC_ChunkFollow_Red_SyncParentOnly.cfg",
+        anchor: "crates/database/p2p/src/sync/coordinator/broadcast.rs SyncCoordinator::push_jobs, SyncCoordinator::push_followed_document_to_replicators_with_creator; crates/database/db/src/merge/push_docs/follow.rs replica_takes; crates/database/db/src/chunk/sync/write.rs ChunkWrites::publish; crates/database/db/src/merge/broadcast_mutator/mod.rs BroadcastMutator::derived_heads; crates/database/p2p/src/sync/doc_sync_ids.rs with_followers, check_doc_id_limit; crates/database/p2p/src/sync/coordinator/event_handler/doc_sync.rs SyncCoordinator::handle_doc_sync_request; crates/database/p2p/src/sync/coordinator/pubsub_services.rs DocSyncHandler::handle; crates/database/db/src/merge/head_provider.rs DbHeadProvider::following_doc_ids; crates/database/db/src/chunk/follow.rs current_chunk_ids; crates/database/db/src/chunk/sync/lookup.rs ChunkCollection::chunks_with",
+        model_ref: "MC_ChunkFollow_Green.cfg / MC_ChunkFollow_Red_OwnFilter.cfg / MC_ChunkFollow_Red_AllChunks.cfg / MC_ChunkFollow_Red_SyncParentOnly.cfg / MC_ChunkFollow_Red_SyncHistory.cfg",
         tiers: &[Boundary],
         bound_by: "tools/integration-test/tests/testo/chunk/replicate_filtered.rs a_filtered_replicator_ships_the_matching_parents_chunks; tools/integration-test/tests/testo/chunk/replicate_doc_sync.rs a_document_sync_brings_the_parents_chunks",
     },
