@@ -7,6 +7,10 @@ use std::sync::{Arc, Weak};
 use acp_light_client::AcpLightClient;
 use regolith::sync::{Mutex, OnceCell};
 
+use events::{
+    AcpTakeoverReconciledData, AcpTakeoverSubmission, AcpTakeoverUnrestorable, Bus, Message,
+};
+
 use super::super::follow::{self, owed_again, Follow, ProviderChain, Reconciled};
 use super::super::worker::NativeWorker;
 use crate::provider::ProviderError;
@@ -16,6 +20,8 @@ pub(super) struct Follower {
     pub chain: ProviderChain,
     pub worker: Arc<Mutex<NativeWorker>>,
     pub follow: Follow,
+    /// The node's bus, told once what one takeover's replay came to.
+    pub bus: Option<Arc<dyn Bus>>,
     pub sink: OnceCell<Weak<dyn acp::OweAgain>>,
     /// Whether more than one node's outbox asked for what a term voids.
     pub shared: std::sync::atomic::AtomicBool,
@@ -49,6 +55,19 @@ impl Follower {
         self.follow.epoch()
     }
 
+    /// The cut the newest certified term keeps, as `(height, block)`.
+    pub fn cut(&self) -> (u64, String) {
+        self.light_client.header_chain().term_certificate().map_or(
+            (0, alloy_primitives::B256::ZERO.to_string()),
+            |certificate| {
+                (
+                    certificate.change.cut.height,
+                    certificate.change.cut.block.to_string(),
+                )
+            },
+        )
+    }
+
     /// Checks a certified term that is not checked yet, and hands what it
     /// voided to the outbox. Runs on the task of a provider call that found
     /// the provider not admitted, and once at start, never on a task of its
@@ -76,14 +95,21 @@ impl Follower {
             follow::reconcile(journal, &self.chain, certified, &mut revise).await
         };
         self.follow.update(worker.confirmed());
-        let owed = match outcome {
-            Ok(Reconciled::Checked { owed }) => owed,
-            Ok(Reconciled::Closed(reason)) => return closed(&reason),
+        let (owed, report) = match outcome {
+            Ok(Reconciled::Checked { mut report }) => {
+                let owed = std::mem::take(&mut report.owed);
+                (owed, report)
+            }
+            Ok(Reconciled::Closed { reason, report }) => {
+                self.publish(certified, &report);
+                return closed(&reason);
+            }
             Err(error) => {
                 tracing::warn!(%error, term = certified, "Vera term not checked yet");
                 return;
             }
         };
+        self.publish(certified, &report);
         let sink = if owed.is_empty() {
             None
         } else if self.shared.load(std::sync::atomic::Ordering::Acquire) {
@@ -148,6 +174,153 @@ impl Follower {
     }
 }
 
+impl Follower {
+    /// Tell the node once what one takeover's replay came to. The cut comes
+    /// from the certificate the light client verified; the outcomes come
+    /// from the replay itself.
+    fn publish(&self, term: u64, report: &super::super::follow::TakeoverReport) {
+        let Some(bus) = &self.bus else {
+            return;
+        };
+        let (cut_height, cut_block) = self.cut();
+        bus.publish(Message::acp_takeover_reconciled(takeover_report(
+            term, cut_height, cut_block, report,
+        )));
+    }
+}
+
+fn takeover_report(
+    term: u64,
+    cut_height: u64,
+    cut_block: String,
+    report: &super::super::follow::TakeoverReport,
+) -> AcpTakeoverReconciledData {
+    let to_submission = |lost: &super::super::follow::effect::Lost| {
+        let (policy_id, resource, object) = lost.object();
+        AcpTakeoverSubmission {
+            kind: match lost {
+                super::super::follow::effect::Lost::Registration { .. } => "registration".into(),
+                super::super::follow::effect::Lost::Relationship { .. } => "relationship".into(),
+            },
+            policy_id: policy_id.to_owned(),
+            resource: resource.to_owned(),
+            object: object.to_owned(),
+            relation: match lost {
+                super::super::follow::effect::Lost::Relationship { relation, .. } => {
+                    Some(relation.clone())
+                }
+                _ => None,
+            },
+            subject: match lost {
+                super::super::follow::effect::Lost::Relationship { subject, .. } => {
+                    super::super::follow::owed::subject_string(subject)
+                }
+                _ => None,
+            },
+            add: match lost {
+                super::super::follow::effect::Lost::Relationship { add, .. } => Some(*add),
+                _ => None,
+            },
+            actor: super::super::follow::owed::token_actor(lost.token()),
+        }
+    };
+    let applied_again = report
+        .applied
+        .iter()
+        .map(|applied| match applied {
+            super::super::follow::report::Applied::Change(lost) => to_submission(lost),
+            super::super::follow::report::Applied::PolicyCreation { policy_id } => {
+                AcpTakeoverSubmission {
+                    kind: "policy-creation".into(),
+                    policy_id: policy_id.clone(),
+                    resource: String::new(),
+                    object: String::new(),
+                    relation: None,
+                    subject: None,
+                    add: None,
+                    actor: None,
+                }
+            }
+            super::super::follow::report::Applied::Archive {
+                policy_id,
+                resource,
+                object,
+            } => AcpTakeoverSubmission {
+                kind: "archive".into(),
+                policy_id: policy_id.clone(),
+                resource: resource.clone(),
+                object: object.clone(),
+                relation: None,
+                subject: None,
+                add: None,
+                actor: None,
+            },
+        })
+        .collect();
+    let owed_again = report.owed.iter().map(to_submission).collect();
+    let unrestorable = report
+        .unrestorable
+        .iter()
+        .map(|item| match item {
+            super::super::follow::report::Unrestorable::PolicyCreation { policy_id, reason } => {
+                AcpTakeoverUnrestorable {
+                    kind: "policy-creation".into(),
+                    policy_id: policy_id.clone(),
+                    resource: String::new(),
+                    object: String::new(),
+                    reason: reason.clone(),
+                }
+            }
+            super::super::follow::report::Unrestorable::Archive {
+                policy_id,
+                resource,
+                object,
+                reason,
+            } => AcpTakeoverUnrestorable {
+                kind: "archive".into(),
+                policy_id: policy_id.clone(),
+                resource: resource.clone(),
+                object: object.clone(),
+                reason: reason.clone(),
+            },
+        })
+        .collect();
+    AcpTakeoverReconciledData {
+        term,
+        cut_height,
+        cut_block,
+        applied_again,
+        owed_again,
+        unrestorable,
+    }
+}
+
 fn closed(reason: &str) {
     tracing::error!(target: "acp::audit", %reason, "Vera term check failed closed");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::vera_rs::follow::report::{TakeoverReport, Unrestorable};
+
+    fn policy_id() -> String {
+        "0xlost".into()
+    }
+
+    #[test]
+    fn a_lost_policy_creation_is_named_in_the_event() {
+        let report = TakeoverReport {
+            unrestorable: vec![Unrestorable::PolicyCreation {
+                policy_id: policy_id(),
+                reason: "voided".into(),
+            }],
+            ..TakeoverReport::default()
+        };
+        let data = takeover_report(2, 5, "0xcut".into(), &report);
+        assert_eq!(data.unrestorable.len(), 1);
+        assert_eq!(data.unrestorable[0].kind, "policy-creation");
+        assert_eq!(data.unrestorable[0].policy_id, policy_id());
+        assert_eq!(data.unrestorable[0].reason, "voided");
+    }
 }

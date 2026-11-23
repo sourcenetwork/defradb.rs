@@ -13936,6 +13936,7 @@ dependencies = [
  "commonware-codec",
  "defra-core",
  "edge",
+ "events",
  "futures",
  "hex",
  "identity",

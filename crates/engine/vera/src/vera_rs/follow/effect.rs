@@ -69,6 +69,10 @@ pub(crate) enum Effect {
         resource: String,
         object: String,
     },
+    /// A policy creation, named by the ID its definition, creator and nonce
+    /// derive. It widens nothing by itself, but a lost one cannot be
+    /// restored from the node's record.
+    PolicyCreation { policy_id: String },
     /// A policy creation, a checked decision, or anything else that changes
     /// no document's access.
     Other,
@@ -114,7 +118,7 @@ impl Effect {
                 resource,
                 object,
             } => Some((policy_id.clone(), resource.clone(), object.clone())),
-            Self::Other => None,
+            Self::PolicyCreation { .. } | Self::Other => None,
         }
     }
 }
@@ -126,6 +130,9 @@ pub(crate) fn effect_of(wire: &[u8]) -> Effect {
     let Ok(tx) = NativeTx::decode_wire(wire) else {
         return Effect::Other;
     };
+    if let Some(creation) = policy_creation_of(&tx) {
+        return creation;
+    }
     let Ok(call) = IAcp::bearerPolicyCmdCall::abi_decode(&tx.calldata) else {
         return Effect::Other;
     };
@@ -190,6 +197,21 @@ fn subject(subject: &Subject) -> Option<LostSubject> {
     })
 }
 
+/// The bearer create-policy call, if `wire` is one.
+fn policy_creation_of(tx: &NativeTx) -> Option<Effect> {
+    let call = super::super::abi::IAcp::bearerCreatePolicyCall::abi_decode(&tx.calldata).ok()?;
+    let policy = String::from_utf8_lossy(&call.policy);
+    let creator = super::owed::token_actor(&call.bearerToken)?;
+    let policy_id =
+        crate::vera_rs::predict_policy_id(&policy, crate::PolicyNonce(call.nonce.0), &creator)
+            .ok()?;
+    Some(Effect::PolicyCreation { policy_id })
+}
+
 #[cfg(test)]
 #[path = "effect_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "policy_creation_tests.rs"]
+mod policy_creation_tests;

@@ -21,6 +21,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use defra_core::thread_bounds::MaybeBoxFuture;
+use events::Bus as _;
 use futures::future::BoxFuture;
 use regolith::sync::Atom;
 use serde_json::Value;
@@ -248,6 +249,7 @@ async fn provider(
     genesis: GenesisSource,
     root: &Path,
     edge: &edge::Edge,
+    bus: Option<std::sync::Arc<dyn events::Bus>>,
 ) -> VeraRsProvider {
     let keyring = keyring::FileKeyring::open(root.join("keys"), b"test-password").unwrap();
     let worker = NativeWorker::open(&root.join("worker"), &keyring, CHAIN_ID).unwrap();
@@ -259,7 +261,7 @@ async fn provider(
         &[42; 32],
         worker,
         &AcpTuning::default(),
-        None,
+        bus,
         edge,
     )
     .await
@@ -300,12 +302,15 @@ async fn a_provider_follows_a_confirmed_takeover_and_sends_again_what_it_voided(
         )),
         proof_gate: std::sync::Mutex::new(None),
     });
+    let bus = Arc::new(events::ChannelBus::default());
+    let mut takeover_reports = bus.subscribe(&[events::EventName::AcpTakeoverReconciled]);
     let named = provider(
         transport.clone(),
         &consensus_key,
         GenesisSource::Hosted,
         &root.path().join("named"),
         &edge,
+        Some(bus.clone()),
     )
     .await;
     let unnamed = provider(
@@ -314,6 +319,7 @@ async fn a_provider_follows_a_confirmed_takeover_and_sends_again_what_it_voided(
         GenesisSource::Unnamed,
         &root.path().join("unnamed"),
         &edge,
+        None,
     )
     .await;
     let owner = named.self_did().unwrap();
@@ -432,6 +438,51 @@ async fn a_provider_follows_a_confirmed_takeover_and_sends_again_what_it_voided(
     .await;
     assert!(registered, "the registration the term voided holds again");
     assert_eq!(registrant, owner);
+    let deadline = Instant::now() + followed;
+    let report = loop {
+        match takeover_reports.try_recv() {
+            Ok(report) => {
+                break report
+                    .as_acp_takeover_reconciled()
+                    .expect("takeover report")
+                    .clone();
+            }
+            Err(error) => {
+                assert!(Instant::now() < deadline, "still waiting: {error:?}");
+                nuclei::time::sleep(Duration::from_millis(200)).await;
+            }
+        }
+    };
+    assert_eq!(report.term, 1);
+    assert_eq!(report.cut_height, change.cut.height);
+    assert_eq!(
+        report.cut_block,
+        format!("0x{}", hex::encode(change.cut.block))
+    );
+    assert_eq!(report.owed_again.len(), 0);
+    assert!(report.unrestorable.is_empty());
+    let applied: Vec<(&str, &str)> = report
+        .applied_again
+        .iter()
+        .map(|item| (item.kind.as_str(), item.object.as_str()))
+        .collect();
+    assert_eq!(
+        applied,
+        [("relationship", "kept"), ("registration", "lost")],
+        "one event names both restored submissions"
+    );
+    assert!(report
+        .applied_again
+        .iter()
+        .all(|item| item.policy_id == policy));
+    assert!(report
+        .applied_again
+        .iter()
+        .all(|item| item.resource == "document"));
+    assert!(
+        takeover_reports.try_recv().is_err(),
+        "one report per takeover"
+    );
     // They were sent again exactly as signed: the phone holds the same
     // submissions now.
     assert!(holds(&phone, &granted).await && holds(&phone, &lost).await);

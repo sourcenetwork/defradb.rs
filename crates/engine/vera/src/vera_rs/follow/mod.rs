@@ -33,7 +33,7 @@ pub(crate) mod effect;
 mod fixtures;
 pub(crate) mod journal;
 mod lost;
-mod owed;
+pub(crate) mod owed;
 
 pub(crate) use chain::ProviderChain;
 pub(crate) use journal::{Confirmation, Journal, JournalError};
@@ -42,6 +42,9 @@ pub(crate) use owed::owed_again;
 use effect::effect_of;
 use journal::Floor;
 use lost::{lost_effects, tainted_by, Losses};
+pub(crate) mod report;
+
+pub(crate) use report::TakeoverReport;
 
 /// The deployment, as the provider's reconcile needs to reach it.
 pub(crate) trait Chain {
@@ -156,11 +159,15 @@ fn unchecked(certified: u64) -> ProviderError {
 /// What checking a term came to.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Reconciled {
-    /// The term is checked; `owed` (perhaps empty) is to be owed again.
-    Checked { owed: Vec<effect::Lost> },
+    /// The term is checked; the report says what each replay came to.
+    Checked { report: TakeoverReport },
     /// The node cannot tell what the term voided, for the reason given. It
-    /// is recorded: the node stays closed across restarts.
-    Closed(String),
+    /// is recorded: the node stays closed across restarts. Its partial
+    /// report says what the check had learnt when it stopped.
+    Closed {
+        reason: String,
+        report: TakeoverReport,
+    },
 }
 
 /// Checks term `certified` against `journal` through `chain`: sends again
@@ -179,11 +186,20 @@ where
     R: FnMut(B256, bool) -> Result<(), ProviderError>,
 {
     if let Some(reason) = journal.closed() {
-        return Ok(Reconciled::Closed(reason.to_owned()));
+        return Ok(Reconciled::Closed {
+            reason: reason.to_owned(),
+            report: TakeoverReport {
+                owed: journal.undelivered().to_vec(),
+                ..TakeoverReport::default()
+            },
+        });
     }
     if certified <= journal.handled_term() {
         return Ok(Reconciled::Checked {
-            owed: journal.undelivered().to_vec(),
+            report: TakeoverReport {
+                owed: journal.undelivered().to_vec(),
+                ..TakeoverReport::default()
+            },
         });
     }
     let unfinished = journal.replaying();
@@ -196,7 +212,10 @@ where
                 Ok(first) => first,
                 Err(reason) => {
                     journal.close(reason.clone()).map_err(failure)?;
-                    return Ok(Reconciled::Closed(reason));
+                    return Ok(Reconciled::Closed {
+                        reason,
+                        report: TakeoverReport::default(),
+                    });
                 }
             };
             // An earlier term's replay was cut short: its entries are sent
@@ -233,16 +252,28 @@ where
                 effect_of(&entry.wire),
                 replayed.executed,
             );
-            if let Some(object) = losses.archives.first() {
+            if let Some(crate::vera_rs::follow::report::Unrestorable::Archive {
+                policy_id,
+                resource,
+                object,
+                ..
+            }) = losses.unrestorable.last()
+            {
                 let reason = format!(
                     "the Vera deployment switched its active device and voided the archive of \
                      {}/{}/{} this node confirmed; it was refused when sent again, so access it \
                      removed may be back. Archive the object again, then restart the node with \
                      a new worker directory",
-                    object.0, object.1, object.2
+                    policy_id, resource, object
                 );
                 journal.close(reason.clone()).map_err(failure)?;
-                return Ok(Reconciled::Closed(reason));
+                return Ok(Reconciled::Closed {
+                    reason,
+                    report: TakeoverReport {
+                        unrestorable: std::mem::take(&mut losses.unrestorable),
+                        ..TakeoverReport::default()
+                    },
+                });
             }
             journal
                 .record(&Confirmation {
@@ -262,7 +293,13 @@ where
     journal
         .handled(certified, losses.owed.clone())
         .map_err(failure)?;
-    Ok(Reconciled::Checked { owed: losses.owed })
+    Ok(Reconciled::Checked {
+        report: TakeoverReport {
+            applied: losses.applied,
+            owed: losses.owed,
+            unrestorable: losses.unrestorable,
+        },
+    })
 }
 
 /// The first journaled sequence the deployment no longer holds, asking
