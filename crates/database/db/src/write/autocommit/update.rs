@@ -236,14 +236,13 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         // The parts this update decides on: those its plan compared and those
         // its writes decide on in this run.
         let run = query::update_parts::Run::after(lost.as_ref());
-        let mut dependencies = run.written(
-            collection.crdts(),
-            collection.schema(),
-            collection.write_indexes(),
+        let dependencies = super::selected::dependencies(
+            &collection,
+            run,
             &attempt.modified_fields,
-            |field| attempt.input.pending_op(field).is_some(),
+            &attempt.input,
+            attempt.expected_fields.as_ref(),
         );
-        dependencies.extend(attempt.expected_fields.iter().flatten().cloned());
         let projected = attempt.expected.is_none() || attempt.expected_fields.is_some();
         let fetcher = if projected {
             LensedDocFetcher::new_projected(
@@ -269,21 +268,8 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
             });
         };
         if let Some(expected) = &attempt.expected {
-            let unchanged = if attempt.expected_fields.is_some() {
-                dependencies
-                    .iter()
-                    .all(|field| expected.get(field) == current_doc.get(field))
-            } else {
-                expected.values().len() == current_doc.values().len()
-                    && expected
-                        .values()
-                        .iter()
-                        .all(|(name, value)| current_doc.get(name) == Some(value.value()))
-            };
-            if expected.id() != current_doc.id()
-                || expected.is_deleted() != current_doc.is_deleted()
-                || !unchanged
-            {
+            let compared = attempt.expected_fields.is_some().then_some(&dependencies);
+            if !super::selected::unchanged(expected, compared, &current_doc) {
                 return Err(lost_race());
             }
         }

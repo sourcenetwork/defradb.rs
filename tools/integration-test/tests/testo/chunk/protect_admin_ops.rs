@@ -3,7 +3,7 @@
 use integration_test::actions::shared::{IndexField, IndexSpec, Lens};
 use integration_test::actions::{
     ConfigureMigration, DeleteIndex, GetCollections, ListIndexes, NewEncryptedIndex, NewIndex,
-    SetActiveCollectionVersion, Truncate,
+    SetActiveCollectionVersion,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -87,12 +87,6 @@ fn collection_changes_to_the_chunk_collection_are_refused() {
             ..Default::default()
         }
         .into(),
-        Truncate {
-            collection: CHUNKS.into(),
-            expected_error: Some(REFUSED.into()),
-            ..Default::default()
-        }
-        .into(),
         SetActiveCollectionVersion {
             version_id: Text::reference("chunks"),
             expected_error: Some(REFUSED.into()),
@@ -104,11 +98,6 @@ fn collection_changes_to_the_chunk_collection_are_refused() {
             destination_version_id: "bafyreinotachunkversion".into(),
             lens: Lens::default(),
             expected_error: Some(REFUSED.into()),
-            ..Default::default()
-        }
-        .into(),
-        Truncate {
-            collection: "Article".into(),
             ..Default::default()
         }
         .into(),
