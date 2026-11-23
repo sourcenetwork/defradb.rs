@@ -39,6 +39,7 @@ pub(super) async fn remote_write_authority(
     collections: &dyn CollectionProvider,
     request: &QueryRequest,
     mutations: &[Mutation],
+    inputs: &crate::prepared::PreparedInputMemo,
 ) -> Result<()> {
     // The handle is dropped at once: a savepoint needs every view of the
     // transaction gone.
@@ -94,12 +95,13 @@ pub(super) async fn remote_write_authority(
                                 "missing parent document ID in '{field}'"
                             ))
                         })?;
-                    registration.parent = Some(
-                        provider
-                            .registration_parent(&policy.id, &policy.resource_name, id)
-                            .await
-                            .map_err(refused)?,
-                    );
+                    registration.parent = Some(inputs.registration_parent(
+                        signer,
+                        &request.context,
+                        &policy.id,
+                        &policy.resource_name,
+                        id,
+                    )?);
                 }
                 provider
                     .command_authority(signer, registration.command())

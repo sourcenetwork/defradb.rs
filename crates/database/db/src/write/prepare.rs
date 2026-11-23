@@ -329,6 +329,35 @@ where
             .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
             Ok(std::sync::Arc::from(response))
         }
+        query::prepared::PreparedInputKind::RegistrationParent => {
+            let (actor, policy, child, parent, bearer): (
+                String,
+                String,
+                String,
+                String,
+                Option<String>,
+            ) = serde_json::from_slice(request.exact_request())
+                .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+            if context.creator().or(context.identity()) != Some(actor.as_str())
+                || context.bearer_token_for(&actor) != bearer
+            {
+                return Err(query::error::QueryError::permission_denied(
+                    "parent request differs from its creator",
+                ));
+            }
+            let provider = db
+                .document_acp()
+                .ok_or_else(|| query::error::QueryError::execution("missing document ACP"))?;
+            let actor = identity::Did::new(actor)
+                .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+            let resolved = acp::bound_to_request(provider, context)
+                .authorized_registration_parent(&actor, &policy, &child, &parent)
+                .await
+                .map_err(query::error::QueryError::from_acp)?;
+            let bytes = serde_json::to_vec(&resolved)
+                .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+            Ok(bytes.into())
+        }
         query::prepared::PreparedInputKind::ProjectionAcp => {
             let fields: Vec<serde_json::Value> = serde_json::from_slice(request.exact_request())
                 .map_err(|_| {

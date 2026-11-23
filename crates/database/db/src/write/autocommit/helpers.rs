@@ -159,6 +159,7 @@ pub(crate) async fn register_created_doc(
     doc: &Document,
     doc_short_id: u64,
     block_result: &BlockResult,
+    inputs: Option<&query::prepared::PreparedInputMemo>,
 ) -> query::error::Result<DocID> {
     let doc_id_str = &block_result.doc_id;
 
@@ -234,17 +235,23 @@ pub(crate) async fn register_created_doc(
                     registrar
                         .registration_parent(&policy.id, &policy.resource_name, id)
                         .await
+                        .map_err(query::error::QueryError::from_acp)?
                 } else {
-                    registrar
-                        .authorized_registration_parent(
+                    inputs
+                        .ok_or_else(|| {
+                            query::error::QueryError::execution(
+                                "remote parent registration requires prepared inputs",
+                            )
+                        })?
+                        .registration_parent(
                             &creator,
+                            context,
                             &policy.id,
                             &policy.resource_name,
                             id,
-                        )
-                        .await
+                        )?
                 };
-                Some(parent.map_err(|e| query::error::QueryError::execution(e.to_string()))?)
+                Some(parent)
             }
             None => None,
         };

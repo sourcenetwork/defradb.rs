@@ -380,9 +380,13 @@ where
                             txn_provider.as_ref(),
                             &request,
                             mutations,
+                            &inputs,
                         )
                         .await
                         {
+                            if let QueryError::NeedsInput(input) = error {
+                                return Ok(Turned::NeedsInput(input, txn_ctx.doc_mutator()));
+                            }
                             return Ok(Turned::Done(QueryResponse::error(
                                 QueryResponseError::from_query_error(error),
                             )));
