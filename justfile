@@ -512,8 +512,9 @@ check-ffi-header header:
     c++ -std=c++17 -Wall -Wextra -Wpadded -Werror -fsyntax-only "$work/check.cpp"
 
 # Check this tree's C API against base's, as CI's C API job does: no padding,
-# no function, field, typedef, enum constant or macro removed or changed, and
-# options structs only grown at their end. Needs cbindgen and clang.
+# no function, field, typedef, enum constant or macro removed or changed,
+# options structs only grown at their end, and every exported function with C
+# linkage in C++. Needs cbindgen and clang.
 [group('build')]
 check-c-api base="origin/main":
     bash .github/scripts/check-c-api.sh {{base}}

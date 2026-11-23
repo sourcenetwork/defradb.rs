@@ -9,7 +9,11 @@ Reads both headers through clang's AST and compares what a caller depends on:
   since a reserved field never becomes a field;
 - every other struct is returned or passed by value, so its size is part of
   the ABI and its fields stay exactly as they were;
-- every typedef, enum constant and macro keeps its meaning.
+- every typedef, enum constant and macro keeps its meaning; a macro may be
+  respelled, as long as it evaluates to the same integer or has the same
+  tokens once whitespace and enclosing parentheses are dropped;
+- every exported function has C linkage when C++ includes the header, so a
+  C++ caller links against the symbol the library exports, not a mangled one.
 
 Anything added is allowed. Padding is the header compile's job: `just
 check-ffi-header` builds it with -Wpadded.
@@ -23,14 +27,15 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 
 OPTIONS_SUFFIX = "Options"
 MACRO_RE = re.compile(r"^[ \t]*#[ \t]*define[ \t]+(\w+(?:\([^)]*\))?)[ \t]*(.*?)[ \t]*$", re.MULTILINE)
 
 
-def clang_ast(header):
+def clang_ast(header, language="c", standard="c11"):
     clang = os.environ.get("CLANG", "clang")
-    command = [clang, "-x", "c", "-std=c11", "-fsyntax-only", "-Xclang", "-ast-dump=json", str(header)]
+    command = [clang, "-x", language, f"-std={standard}", "-fsyntax-only", "-Xclang", "-ast-dump=json", str(header)]
     done = subprocess.run(command, capture_output=True, text=True)
     if done.returncode != 0:
         sys.exit(f"clang could not parse {header}:\n{done.stderr}")
@@ -79,9 +84,23 @@ def function_signature(node):
     return f"{storage} {inline}{node['type']['qualType']}"
 
 
+def cxx_linkage(header):
+    """The language linkage each exported function has when C++ includes `header`."""
+    linkage = {}
+    for node in header_decls(clang_ast(header, "c++", "c++17"), header):
+        if node.get("kind") == "LinkageSpecDecl":
+            functions, language = node.get("inner", []), node.get("language", "C++")
+        else:
+            functions, language = [node], "C++"
+        for function in functions:
+            if function.get("kind") == "FunctionDecl" and function.get("storageClass") != "static":
+                linkage[function["name"]] = language
+    return linkage
+
+
 def api(header):
     """What a caller of `header` depends on, by kind and name."""
-    model = {"function": {}, "struct": {}, "typedef": {}, "enum": {}, "macro": {}}
+    model = {"function": {}, "struct": {}, "typedef": {}, "enum": {}, "macro": {}, "linkage": cxx_linkage(header)}
     for node in header_decls(clang_ast(header), header):
         kind, name = node.get("kind"), node.get("name")
         if not name:
@@ -97,7 +116,47 @@ def api(header):
             model["enum"][name] = enum_constants(node)
     text = Path(header).read_text(encoding="utf-8")
     model["macro"] = {name: value for name, value in MACRO_RE.findall(text)}
+    model["header"] = str(header)
     return model
+
+
+def macro_value(header, name):
+    """The integer `name` evaluates to as a constant expression, or None when it is not one."""
+    with tempfile.TemporaryDirectory() as work:
+        probe = Path(work) / "probe.c"
+        probe.write_text(f'#include "{os.path.realpath(header)}"\nenum {{ defra_macro_probe = ({name}) }};\n', encoding="utf-8")
+        clang = os.environ.get("CLANG", "clang")
+        command = [clang, "-x", "c", "-std=c11", "-fsyntax-only", "-Xclang", "-ast-dump=json", str(probe)]
+        done = subprocess.run(command, capture_output=True, text=True)
+    if done.returncode != 0:
+        return None
+    enums = [node for node in json.loads(done.stdout).get("inner", []) if node.get("kind") == "EnumDecl"]
+    constants = dict(enum_constants(enums[-1])) if enums else {}
+    return constants.get("defra_macro_probe")
+
+
+def macro_tokens(text):
+    """`text` without whitespace or parentheses enclosing all of it."""
+    text = re.sub(r"\s+", "", text)
+    while text.startswith("(") and text.endswith(")"):
+        depth = 0
+        for index, char in enumerate(text):
+            depth += {"(": 1, ")": -1}.get(char, 0)
+            if depth == 0 and index < len(text) - 1:
+                return text
+        text = text[1:-1]
+    return text
+
+
+def macro_equivalent(name, old, new):
+    """Whether `name` means the same in both headers: the same integer, or the same tokens."""
+    before, after = old["macro"][name], new["macro"][name]
+    if before == after or macro_tokens(before) == macro_tokens(after):
+        return True
+    if "(" in name:
+        return False
+    old_value, new_value = macro_value(old["header"], name), macro_value(new["header"], name)
+    return old_value is not None and old_value == new_value
 
 
 def field(entry):
@@ -144,8 +203,17 @@ def breaks(old, new):
                 found += struct_breaks(name, before, after)
             elif kind == "enum":
                 found += enum_breaks(name, before, after)
+            elif kind == "macro":
+                if not macro_equivalent(name, old, new):
+                    found.append(f"macro {name} changed from `{before}` to `{after}`")
             elif before != after:
                 found.append(f"{kind} {name} changed from `{before}` to `{after}`")
+    for name, language in new["linkage"].items():
+        if language != "C":
+            found.append(
+                f'function {name} has {language} linkage in C++: a C++ caller links against a mangled symbol '
+                'the library does not export; declare it inside extern "C" (cbindgen\'s cpp_compat)'
+            )
     return found
 
 
