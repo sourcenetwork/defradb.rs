@@ -183,13 +183,20 @@ def panic_site(log):
     return None
 
 
+class Guard(ValueError):
+    """A check of this driver that refused to go on, with a fixed message that names no path or value."""
+
+
 def guard_failure(error):
     """The public name of a guard this driver raised itself.
 
-    Only the exact types the driver raises with a fixed message are named. A subclass comes from a
-    library and may carry private bytes: a decoding error holds the log bytes it could not read.
+    Only `Guard` and the driver's own phase failure are named. Anything else comes from a library
+    and may carry private text: a decoding error holds the bytes it could not read, and a path
+    error holds both paths.
     """
-    if type(error) in (RuntimeError, ValueError) and len(error.args) == 1 and isinstance(error.args[0], str):
+    if type(error) is Guard and len(error.args) == 1 and isinstance(error.args[0], str):
+        return {"error": error.args[0]}
+    if type(error) is RuntimeError and error.args == ("qualification phase failed",):
         return {"error": error.args[0]}
     return {}
 
@@ -219,7 +226,7 @@ def git_pins(text):
             continue
         pin = spec.get("rev")
         if not isinstance(pin, str) or re.fullmatch(r"[0-9a-f]{40}", pin) is None:
-            raise ValueError("SDK revision must be immutable")
+            raise Guard("SDK revision must be immutable")
         pins.append(pin)
     return pins
 
@@ -236,7 +243,7 @@ def sdk_versions(text):
         if crate not in SDK_CRATES:
             continue
         if not isinstance(spec, str) or re.fullmatch(r"\d+\.\d+\.\d+", spec) is None:
-            raise ValueError("published native SDK declarations must be plain versions")
+            raise Guard("published native SDK declarations must be plain versions")
         versions.append(spec)
     return versions
 
@@ -249,18 +256,18 @@ def revision(root):
         pins += git_pins(text)
         versions += sdk_versions(text)
     if len(versions) != 6 or len(set(versions)) != 1:
-        raise ValueError("published native SDK declarations disagree or are missing")
+        raise Guard("published native SDK declarations disagree or are missing")
     if len(pins) != 1:
-        raise ValueError("native harness revision is missing or ambiguous")
+        raise Guard("native harness revision is missing or ambiguous")
     for name in NODE_MANIFESTS:
         if set(git_pins((root / name).read_text())) != {pins[0]}:
-            raise ValueError("node crates and the native harness pin different Vera revisions")
+            raise Guard("node crates and the native harness pin different Vera revisions")
     return pins[0]
 
 
 def runtime_revision(value):
     if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{40}", value) is None:
-        raise ValueError("runtime revision must be a full lowercase commit SHA")
+        raise Guard("runtime revision must be a full lowercase commit SHA")
     return value
 
 
@@ -302,12 +309,12 @@ def artifact(log, name, target):
                 continue
             if item.get("reason") == "compiler-artifact" and item.get("target", {}).get("name") == name and item.get("executable"):
                 if item["profile"]["debug_assertions"]:
-                    raise ValueError("non-release artifact")
+                    raise Guard("non-release artifact")
                 path = Path(item["executable"]).resolve()
                 path.relative_to(target.resolve())
                 found.append(path)
     if len(found) != 1 or not found[0].is_file():
-        raise ValueError("expected one executable")
+        raise Guard("expected one executable")
     return found[0]
 
 
@@ -322,7 +329,7 @@ def passed_tests(log, expected):
             if match:
                 summaries.append(tuple(map(int, match.groups())))
     if sorted(names) != sorted(expected) or summaries != [(len(expected), 0, 0)]:
-        raise ValueError("test selection or result differs")
+        raise Guard("test selection or result differs")
     return len(names)
 
 
@@ -330,7 +337,7 @@ def source(root):
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True, stderr=subprocess.PIPE).strip()
     dirty = subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=no"], cwd=root, stderr=subprocess.PIPE)
     if dirty:
-        raise ValueError("tracked source changed")
+        raise Guard("tracked source changed")
     return {"revision": head, "lock_sha256": digest(root / "Cargo.lock")}
 
 
@@ -365,7 +372,7 @@ class Runner:
         expected = self.sdk_revision if runtime_ref is None else runtime_revision(runtime_ref)
         self.sources = {"defra": source(root), "vera": source(vera)}
         if self.sources["vera"]["revision"] != expected:
-            raise ValueError("runtime does not match selected revision")
+            raise Guard("runtime does not match selected revision")
         self.private = Path(tempfile.mkdtemp(prefix="defra-native-consumer-", dir=temporary))
         self.summary = temporary / "native-consumer-summary.json"
         self.env = clean_environment(os.environ)
@@ -392,7 +399,7 @@ class Runner:
             return False
         binary = directory / "verad"
         if binary.is_symlink() or not binary.is_file() or digest(binary) != record["sha256"]:
-            raise ValueError("cached Vera runtime checksum differs")
+            raise Guard("cached Vera runtime checksum differs")
         shutil.copy2(binary, self.private / "verad")
         self.binaries["verad"] = {"sha256": record["sha256"]}
         self.env["VERAD_BINARY"] = str(self.private / "verad")
@@ -412,10 +419,10 @@ class Runner:
 
     def guard(self):
         if self.sources != {"defra": source(self.root), "vera": source(self.vera)}:
-            raise ValueError("source changed during qualification")
+            raise Guard("source changed during qualification")
         for name, item in self.binaries.items():
             if digest(self.private / name) != item["sha256"]:
-                raise ValueError("staged executable changed")
+                raise Guard("staged executable changed")
 
     def save(self):
         public = [public_phase(record) for record in self.records]

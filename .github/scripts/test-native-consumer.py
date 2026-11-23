@@ -104,14 +104,22 @@ class Tests(unittest.TestCase):
         self.assertNotIn(str(self.root), public)
 
     def test_only_the_drivers_own_guard_messages_are_public(self):
-        self.assertEqual(driver.guard_failure(ValueError('tracked source changed')),
+        self.assertEqual(driver.guard_failure(driver.Guard('tracked source changed')),
                          {'error': 'tracked source changed'})
         self.assertEqual(driver.guard_failure(RuntimeError('qualification phase failed')),
                          {'error': 'qualification phase failed'})
         undecodable = UnicodeDecodeError('utf-8', b'token=secret\xff', 12, 13, 'invalid start byte')
         self.assertEqual(driver.guard_failure(undecodable), {})
+        outside = None
+        try:
+            Path('/private/secret/defradb').relative_to('/staged/target')
+        except ValueError as error:
+            outside = error
+        self.assertEqual(driver.guard_failure(outside), {})
+        self.assertEqual(driver.guard_failure(ValueError('/private/secret/defradb')), {})
+        self.assertEqual(driver.guard_failure(RuntimeError('/private/secret/defradb')), {})
         self.assertEqual(driver.guard_failure(KeyboardInterrupt()), {})
-        self.assertEqual(driver.guard_failure(ValueError(b'bytes')), {})
+        self.assertEqual(driver.guard_failure(driver.Guard(b'bytes')), {})
 
     def test_panic_location_accepts_relative_and_windows_paths_but_not_messages(self):
         log = self.root / 'private.log'
