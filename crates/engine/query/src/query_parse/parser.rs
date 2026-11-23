@@ -82,9 +82,10 @@ pub enum ParsedOperation {
     /// Mutation operations (CREATE, UPDATE, DELETE)
     Mutation {
         mutations: Vec<Mutation>,
-        /// The mutation fields `@skip` or `@include` left out. They never
-        /// run; their filters are checked with the others'.
-        excluded: Vec<Mutation>,
+        /// The mutation fields `@skip` or `@include` left out, in request
+        /// order. They never run; their filters are checked with the others',
+        /// in the order the request writes them all.
+        excluded: Vec<ExcludedMutation>,
         /// Whether @explain directive was used and which type
         explain: Option<ExplainType>,
     },
@@ -101,6 +102,16 @@ pub enum ParsedOperation {
         /// The original query string to be executed against the schema
         query: String,
     },
+}
+
+/// A mutation field `@skip` or `@include` left out, and where the request
+/// wrote it among the mutations that run.
+#[derive(Debug, Clone)]
+pub struct ExcludedMutation {
+    /// How many of the mutations that run the request writes before it.
+    pub after: usize,
+    /// The mutation, parsed so its filters can be checked.
+    pub mutation: Mutation,
 }
 
 /// Type alias for fragment definitions map
@@ -234,7 +245,7 @@ fn matches_mutation_type(condition: Option<&TypeCondition<'_, String>>) -> bool 
 #[derive(Default)]
 struct MutationFields {
     run: Vec<Mutation>,
-    excluded: Vec<Mutation>,
+    excluded: Vec<ExcludedMutation>,
     /// The fragments already expanded where they were left out.
     checked: RapidHashSet<String>,
 }
@@ -256,7 +267,10 @@ fn parse_selection_to_mutations<'a>(
             if included && should_include_selection(&field.directives, variables)? {
                 fields.run.push(mutation);
             } else {
-                fields.excluded.push(mutation);
+                fields.excluded.push(ExcludedMutation {
+                    after: fields.run.len(),
+                    mutation,
+                });
             }
         }
         Selection::FragmentSpread(spread) => {
@@ -682,7 +696,8 @@ pub fn parse_request_with_limits(
         } = mutations;
         // A left-out mutation's filters are still walked, so it is held to
         // the same limits.
-        for mutation in mutations.iter_mut().chain(&mut excluded) {
+        let left_out = excluded.iter_mut().map(|excluded| &mut excluded.mutation);
+        for mutation in mutations.iter_mut().chain(left_out) {
             apply_limits_to_mutation(mutation, limits)?;
             validate_requestable_limits_with(&mutation.fields, limits)?;
         }
