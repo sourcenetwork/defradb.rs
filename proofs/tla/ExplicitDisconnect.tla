@@ -25,7 +25,7 @@ EXTENDS Naturals, FiniteSets
 CONSTANTS
   Nodes,    \* the three peers in the network
   Half,     \* "Libp2p" or "Vinc": which redial path is under test
-  Bug       \* "None", "IgnoresSticky", "ClearsSticky", or "AcceptsInbound"
+  Bug       \* "None", "IgnoresSticky", "ClearsSticky", "AcceptsInbound", or "RefusesAllowed"
 
 NodePairs == Nodes \X Nodes
 
@@ -36,9 +36,11 @@ VARIABLES
   known,           \* peers learned from exchanged lists
   pendingLists,    \* lists in flight: <<receiver, sender, learned peer>>
   backgroundDials, \* discovery dials launched since the last explicit event
-  remoteDials      \* explicit dials launched by the other side
+  remoteDials,     \* accepted remote dials
+  remoteAttempts,  \* remote attempts, whether accepted or refused
+  permittedDials   \* attempts permitted when made, which must produce a link
 
-vars == <<links, markers, obligations, known, pendingLists, backgroundDials, remoteDials>>
+vars == <<links, markers, obligations, known, pendingLists, backgroundDials, remoteDials, remoteAttempts, permittedDials>>
 
 TypeOK ==
   /\ links \subseteq NodePairs
@@ -48,6 +50,8 @@ TypeOK ==
   /\ pendingLists \subseteq Nodes \X Nodes \X Nodes
   /\ backgroundDials \subseteq NodePairs
   /\ remoteDials \subseteq NodePairs
+  /\ remoteAttempts \subseteq NodePairs
+  /\ permittedDials \subseteq NodePairs
 
 Linked(a, b) == <<a, b>> \in links \/ <<b, a>> \in links
 
@@ -61,6 +65,8 @@ Init ==
   /\ pendingLists = {}
   /\ backgroundDials = {}
   /\ remoteDials = {}
+  /\ remoteAttempts = {}
+  /\ permittedDials = {}
 
 \* A caller explicitly connects to a peer. This is the local action that
 \* clears an earlier deliberate disconnect, even when a link already exists.
@@ -72,21 +78,23 @@ ExplicitConnect(a, b) ==
        THEN /\ UNCHANGED <<links, known>>
        ELSE /\ links' = links \cup {<<a, b>>, <<b, a>>}
             /\ known' = [known EXCEPT ![a] = known[a] \cup {b}, ![b] = known[b] \cup {a}]
-  /\ UNCHANGED <<pendingLists, backgroundDials, remoteDials>>
+  /\ UNCHANGED <<pendingLists, backgroundDials, remoteDials, remoteAttempts, permittedDials>>
 
 \* The remote peer explicitly dials in. The local marker stays: accepting the
 \* connection is not the local caller saying "resume discovery".
 RemoteExplicitDial(a, b) ==
   /\ a # b
   /\ ~Linked(a, b)
-  /\ Cardinality(remoteDials) < 1
-  /\ IF Half = "Libp2p" /\ Bug # "AcceptsInbound" THEN ~Marked(b, a) ELSE TRUE
-  /\ links' = links \cup {<<a, b>>, <<b, a>>}
-  /\ markers' = markers
-  /\ UNCHANGED obligations
-  /\ known' = [known EXCEPT ![a] = known[a] \cup {b}, ![b] = known[b] \cup {a}]
-  /\ remoteDials' = remoteDials \cup {<<a, b>>}
-  /\ UNCHANGED <<pendingLists, backgroundDials>>
+  /\ Cardinality(remoteAttempts) < 1
+  /\ LET permitted == Half # "Libp2p" \/ ~Marked(b, a)
+     IN /\ remoteAttempts' = remoteAttempts \cup {<<a, b>>}
+        /\ permittedDials' = IF permitted THEN permittedDials \cup {<<a, b>>} ELSE permittedDials
+        /\ IF (permitted /\ Bug # "RefusesAllowed") \/ Bug = "AcceptsInbound"
+             THEN /\ links' = links \cup {<<a, b>>, <<b, a>>}
+                  /\ known' = [known EXCEPT ![a] = known[a] \cup {b}, ![b] = known[b] \cup {a}]
+                  /\ remoteDials' = remoteDials \cup {<<a, b>>}
+             ELSE /\ UNCHANGED <<links, known, remoteDials>>
+  /\ UNCHANGED <<markers, obligations, pendingLists, backgroundDials>>
 
 \* One connected peer sends a list naming a third peer.
 Exchange(a, b, learned) ==
@@ -96,7 +104,7 @@ Exchange(a, b, learned) ==
   /\ Linked(a, b)
   /\ Cardinality(pendingLists) < 1
   /\ pendingLists' = pendingLists \cup {<<b, a, learned>>}
-  /\ UNCHANGED <<links, markers, obligations, known, backgroundDials, remoteDials>>
+  /\ UNCHANGED <<links, markers, obligations, known, backgroundDials, remoteDials, remoteAttempts, permittedDials>>
 
 \* A list in flight arrives. Learning a name does not itself dial anybody.
 LearnList ==
@@ -104,7 +112,7 @@ LearnList ==
         /\ list[3] # list[1]
         /\ known' = [known EXCEPT ![list[1]] = known[list[1]] \cup {list[3]}]
         /\ pendingLists' = pendingLists \ {list}
-  /\ UNCHANGED <<links, markers, obligations, backgroundDials, remoteDials>>
+  /\ UNCHANGED <<links, markers, obligations, backgroundDials, remoteDials, remoteAttempts, permittedDials>>
 
 \* A normal link loss is not deliberate. It preserves any marker.
 DropLink(a, b) ==
@@ -112,6 +120,8 @@ DropLink(a, b) ==
   /\ Linked(a, b)
   /\ links' = links \ {<<a, b>>, <<b, a>>}
   /\ remoteDials' = remoteDials \ {<<a, b>>, <<b, a>>}
+  /\ remoteAttempts' = remoteAttempts \ {<<a, b>>, <<b, a>>}
+  /\ permittedDials' = permittedDials \ {<<a, b>>, <<b, a>>}
   /\ UNCHANGED <<markers, obligations, known, pendingLists, backgroundDials>>
 
 \* The caller explicitly disconnects. The marker survives later lists and
@@ -123,6 +133,8 @@ ExplicitDisconnect(a, b) ==
   /\ obligations' = obligations \cup {<<a, b>>}
   /\ links' = links \ {<<a, b>>, <<b, a>>}
   /\ remoteDials' = remoteDials \ {<<a, b>>, <<b, a>>}
+  /\ remoteAttempts' = remoteAttempts \ {<<a, b>>, <<b, a>>}
+  /\ permittedDials' = permittedDials \ {<<a, b>>, <<b, a>>}
   /\ backgroundDials' = {dial \in backgroundDials : dial[1] # a}
   /\ UNCHANGED <<known, pendingLists>>
 
@@ -143,7 +155,7 @@ BackgroundDial(a, b) ==
        ELSE UNCHANGED markers
   /\ links' = links \cup {<<a, b>>, <<b, a>>}
   /\ known' = [known EXCEPT ![a] = known[a] \cup {b}, ![b] = known[b] \cup {a}]
-  /\ UNCHANGED <<pendingLists, remoteDials, obligations>>
+  /\ UNCHANGED <<pendingLists, remoteDials, remoteAttempts, permittedDials, obligations>>
 
 Next ==
   \/ \E a, b \in Nodes : ExplicitConnect(a, b)
@@ -162,10 +174,10 @@ INV_NoRedialAfterDeliberateClose ==
   \A a, b \in Nodes :
      <<a, b>> \in obligations => <<a, b>> \notin backgroundDials
 
-\* A remote explicit dial connects where its transport can distinguish it. The
-\* marker is not erased by accepting an inbound connection.
+\* Record each remote attempt, including refusal. A permitted attempt must
+\* connect; accepting an inbound connection never clears the local marker.
 INV_RemoteExplicitDialAccepted ==
-  \A dial \in remoteDials :
+  \A dial \in permittedDials :
      Linked(dial[1], dial[2])
 
 \* Libp2p refuses an inbound explicit dial while the local marker stands. The

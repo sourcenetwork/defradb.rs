@@ -420,6 +420,7 @@ RUNS=(
   "MC_ExplicitDisconnect_Red_ClearOnDial.cfg ExplicitDisconnect.tla RED" # a background dial erases the marker
   "MC_ExplicitDisconnect_Green_Libp2p.cfg ExplicitDisconnect.tla GREEN" # Kademlia excludes a deliberately disconnected peer
   "MC_ExplicitDisconnect_Red_Libp2p.cfg ExplicitDisconnect.tla RED" # Kademlia ignores the marker (INV_NoRedialAfterDeliberateClose)
+  "MC_ExplicitDisconnect_Red_RefuseAllowed.cfg ExplicitDisconnect.tla RED" # a permitted remote dial is refused
   "MC_ExplicitDisconnect_Red_Inbound.cfg ExplicitDisconnect.tla RED" # libp2p accepts a marked inbound dial (INV_MarkedInboundRefused)
   "MC_SchemaPublication_Green.cfg SchemaPublication.tla GREEN"
   "MC_SchemaPublication_Red_EarlyReply.cfg SchemaPublication.tla RED"
