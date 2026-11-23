@@ -69,6 +69,7 @@ async fn gate_allows(
         policy_id,
         resource,
         doc,
+        false,
     )
     .await
     .unwrap()
@@ -152,6 +153,7 @@ fn overlay_checker_applies_branchable_collection_fallback() {
             acp: &acp,
             projection: None,
             identity: &identity,
+            for_commit_history: false,
         };
 
         let public_doc_allowed =

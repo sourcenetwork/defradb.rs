@@ -16,6 +16,7 @@ pub struct OverlayChecker<'a> {
     pub acp: &'a dyn DocumentACP,
     pub projection: Option<&'a AcpRegistrationProjection>,
     pub identity: &'a Identity,
+    pub for_commit_history: bool,
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -50,6 +51,7 @@ impl ObjectAccessChecker for OverlayChecker<'_> {
             policy_id,
             resource_name,
             object_id,
+            self.for_commit_history,
         )
         .await?;
 

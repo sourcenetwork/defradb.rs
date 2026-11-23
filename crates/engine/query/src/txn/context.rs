@@ -32,6 +32,25 @@ pub struct AcpRegistrationProjection {
     denials: Option<acp::OwedDenials>,
 }
 
+/// The owner whose commit history may remain visible on one object while an
+/// archive is owed: only that archive blocks it, not the provider.
+async fn archive_owner(
+    acp: &dyn DocumentACP,
+    projection: Option<&AcpRegistrationProjection>,
+    policy_id: &str,
+    resource_name: &str,
+    doc_id: &str,
+) -> AcpResult<Option<Did>> {
+    match projection {
+        Some(projection) if !acp.supports_transactions() => {
+            projection
+                .archive_actor(acp, policy_id, resource_name, doc_id)
+                .await
+        }
+        _ => Ok(None),
+    }
+}
+
 impl AcpRegistrationProjection {
     /// Read owed registrations through the transaction behind `pending`.
     pub fn new(pending: acp::PendingRegistrations) -> Self {
@@ -96,6 +115,24 @@ impl AcpRegistrationProjection {
             .get(policy_id, resource_name, doc_id)
             .await?
             .map(|owed| owed.creator))
+    }
+
+    /// The actor that staged an archive owed on one object, if it is still
+    /// unsettled.
+    pub(crate) async fn archive_actor(
+        &self,
+        _acp: &dyn DocumentACP,
+        policy_id: &str,
+        resource_name: &str,
+        doc_id: &str,
+    ) -> AcpResult<Option<Did>> {
+        let Some(denials) = &self.denials else {
+            return Ok(None);
+        };
+        denials
+            .archive_actor(policy_id, resource_name, doc_id)
+            .await
+            .map_err(|error| acp::Error::Storage(error.to_string()))
     }
 }
 
@@ -279,6 +316,7 @@ pub async fn is_doc_registered_with_prepared_inputs(
 }
 
 /// Check document access using an explicit request/transaction projection.
+#[allow(clippy::too_many_arguments)]
 pub async fn check_doc_access_with_projection(
     acp: &dyn DocumentACP,
     projection: Option<&AcpRegistrationProjection>,
@@ -287,12 +325,19 @@ pub async fn check_doc_access_with_projection(
     policy_id: &str,
     resource_name: &str,
     doc_id: &str,
+    for_commit_history: bool,
 ) -> AcpResult<bool> {
     if let Some(creator) = owed_creator(acp, projection, policy_id, resource_name, doc_id).await? {
         return Ok(is_creator(identity, &creator));
     }
-    if denied_by_owed_delete(acp, projection, identity, policy_id, resource_name, doc_id).await? {
+    let denial =
+        denied_by_owed_delete(acp, projection, identity, policy_id, resource_name, doc_id).await?;
+    if denial {
         return Ok(false);
+    }
+    let archive_actor = archive_owner(acp, projection, policy_id, resource_name, doc_id).await?;
+    if for_commit_history && archive_actor.is_some_and(|actor| is_creator(identity, &actor)) {
+        return Ok(true);
     }
     acp.check_doc_access(identity, permission, policy_id, resource_name, doc_id)
         .await
@@ -310,6 +355,7 @@ pub async fn check_doc_access_with_prepared_inputs(
     policy_id: &str,
     resource_name: &str,
     doc_id: &str,
+    for_commit_history: bool,
     inputs: Option<&crate::prepared::PreparedInputMemo>,
 ) -> crate::error::Result<bool> {
     // A registration this transaction owes overrides remote state, while
@@ -329,11 +375,12 @@ pub async fn check_doc_access_with_prepared_inputs(
             policy_id,
             resource_name,
             doc_id,
+            for_commit_history,
         )
         .await
         .map_err(crate::error::QueryError::from_acp);
     };
-    if denied_by_owed_delete_with_inputs(
+    let denial = denied_by_owed_delete_with_inputs(
         acp,
         projection,
         identity,
@@ -342,9 +389,15 @@ pub async fn check_doc_access_with_prepared_inputs(
         doc_id,
         inputs,
     )
-    .await?
-    {
+    .await?;
+    if denial {
         return Ok(false);
+    }
+    let archive_actor = archive_owner(acp, projection, policy_id, resource_name, doc_id)
+        .await
+        .map_err(crate::error::QueryError::from_acp)?;
+    if for_commit_history && archive_actor.is_some_and(|actor| is_creator(identity, &actor)) {
+        return Ok(true);
     }
     let bearer = identity
         .did()
@@ -403,7 +456,7 @@ pub async fn check_doc_read_access_with_prepared_inputs(
 /// serves: an authenticated reader whose node access grants it `bypass-dac`
 /// reads every document.
 #[allow(clippy::too_many_arguments)]
-pub async fn check_doc_read_access_as(
+async fn doc_read_access(
     context: &RequestContext,
     acp: &dyn DocumentACP,
     projection: Option<&AcpRegistrationProjection>,
@@ -414,6 +467,7 @@ pub async fn check_doc_read_access_as(
     is_branchable: bool,
     doc_id: &str,
     inputs: Option<&crate::prepared::PreparedInputMemo>,
+    for_commit_history: bool,
 ) -> crate::error::Result<bool> {
     use acp::read_access::DocAccess;
 
@@ -425,6 +479,7 @@ pub async fn check_doc_read_access_as(
             acp,
             projection,
             identity,
+            for_commit_history,
         };
         return acp::read_access::check_doc_read_access(
             &checker,
@@ -446,6 +501,7 @@ pub async fn check_doc_read_access_as(
         resource_name: &str,
         object_id: &str,
         inputs: &crate::prepared::PreparedInputMemo,
+        for_commit_history: bool,
     ) -> crate::error::Result<DocAccess> {
         if let Some(creator) = owed_creator(acp, projection, policy_id, resource_name, object_id)
             .await
@@ -492,6 +548,7 @@ pub async fn check_doc_read_access_as(
             policy_id,
             resource_name,
             object_id,
+            for_commit_history,
             Some(inputs),
         )
         .await?;
@@ -510,6 +567,7 @@ pub async fn check_doc_read_access_as(
             resource_name,
             doc_id,
             inputs,
+            for_commit_history,
         )
         .await?;
         if object.explicit || !is_branchable {
@@ -525,6 +583,7 @@ pub async fn check_doc_read_access_as(
             resource_name,
             collection_id,
             inputs,
+            for_commit_history,
         )
         .await?;
         if !collection.has_access {
@@ -532,6 +591,66 @@ pub async fn check_doc_read_access_as(
         }
     }
     Ok(true)
+}
+
+/// [`doc_read_access`] for a document read.
+#[allow(clippy::too_many_arguments)]
+pub async fn check_doc_read_access_as(
+    context: &RequestContext,
+    acp: &dyn DocumentACP,
+    projection: Option<&AcpRegistrationProjection>,
+    identity: &Identity,
+    policy_id: &str,
+    resource_name: &str,
+    collection_id: &str,
+    is_branchable: bool,
+    doc_id: &str,
+    inputs: Option<&crate::prepared::PreparedInputMemo>,
+) -> crate::error::Result<bool> {
+    doc_read_access(
+        context,
+        acp,
+        projection,
+        identity,
+        policy_id,
+        resource_name,
+        collection_id,
+        is_branchable,
+        doc_id,
+        inputs,
+        false,
+    )
+    .await
+}
+
+/// [`doc_read_access`] for commit history on one document.
+#[allow(clippy::too_many_arguments)]
+pub async fn check_commit_read_access_as(
+    context: &RequestContext,
+    acp: &dyn DocumentACP,
+    projection: Option<&AcpRegistrationProjection>,
+    identity: &Identity,
+    policy_id: &str,
+    resource_name: &str,
+    collection_id: &str,
+    is_branchable: bool,
+    doc_id: &str,
+    inputs: Option<&crate::prepared::PreparedInputMemo>,
+) -> crate::error::Result<bool> {
+    doc_read_access(
+        context,
+        acp,
+        projection,
+        identity,
+        policy_id,
+        resource_name,
+        collection_id,
+        is_branchable,
+        doc_id,
+        inputs,
+        true,
+    )
+    .await
 }
 
 /// Transaction context that provides storage access within a transaction.
@@ -620,6 +739,7 @@ mod tests {
                 acp: &acp,
                 projection: Some(&projection),
                 identity: &Identity::Anonymous,
+                for_commit_history: false,
             };
             let absent = checker
                 .object_access("policy", "User", "doc-1")

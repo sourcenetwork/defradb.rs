@@ -605,15 +605,24 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         if !existed {
             return Ok(DeleteResult::new(canonical_doc_id, existed));
         }
-        crate::write::autocommit::helpers::unregister_deleted_doc(
-            self.db.document_acp(),
-            &systemstore,
-            &collection,
-            &canonical_doc_id,
-            context,
-            self.shared_txn()?.owed_staged(),
-        )
-        .await?;
+        {
+            let txn = &*self.shared_txn()?;
+            // What the delete records as owed names the transaction by its
+            // handle, whether or not the request did.
+            let recorded_in = match (context.txn(), txn.handle_id()) {
+                (None, Some(id)) => context.clone().with_txn(Some(defra_core::TxnId(id))),
+                _ => context.clone(),
+            };
+            crate::write::autocommit::helpers::unregister_deleted_doc(
+                self.db.document_acp(),
+                &systemstore,
+                &collection,
+                &canonical_doc_id,
+                &recorded_in,
+                txn.owed_staged(),
+            )
+            .await?;
+        }
 
         let (doc_cid, doc_block, col_block_data) = {
             let txn = &*self.shared_txn()?;

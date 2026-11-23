@@ -10,7 +10,7 @@ use storage::RegolithStore;
 use super::*;
 use crate::dac::DocumentACP;
 use crate::identity::Identity;
-use crate::outbox::{InFlight, OwedOp, StageArchive, StageRelationship, StagedCount};
+use crate::outbox::{InFlight, OwedDenials, OwedOp, StageArchive, StageRelationship, StagedCount};
 use crate::permission::DocumentPermission;
 
 const OWNER: &str = "did:key:owner";
@@ -335,6 +335,35 @@ fn an_owners_archive_the_node_cannot_sign_yet_waits_for_authority_and_denies() {
             provider.writes().is_empty(),
             "nothing is sent without authority"
         );
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_parked_archive_names_its_owner_for_history_visibility() {
+    workers::block_on(async {
+        let (provider, gate) = gate();
+        let owner = &did(OWNER);
+        let txn = gate.begin(false).await.unwrap();
+        let view = txn.acpstore();
+        let outbox = gate
+            .transaction_outbox(&view, StagedCount::new())
+            .expect("the gate keeps an outbox");
+        outbox.stage_archive(archive(owner)).await.unwrap();
+        let denials = OwedDenials::new(&view);
+        assert_eq!(
+            denials
+                .archive_actor("policy", "users", "bae-1")
+                .await
+                .unwrap(),
+            Some(did(OWNER))
+        );
+        drop(view);
+        drop(outbox);
+        txn.commit().await.unwrap();
+        let (provider, gate) = (provider, gate);
+        assert_eq!(provider.writes(), Vec::<String>::new());
+        assert!(!gate.owed_changes_after(None).await.unwrap().is_empty());
     })
     .unwrap()
 }

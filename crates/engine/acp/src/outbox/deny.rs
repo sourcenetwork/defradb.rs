@@ -31,6 +31,8 @@ use super::ops::{self, Owed, FIRST, SECOND};
 use crate::dac::DocumentACP;
 use crate::error::Result;
 use crate::identity::Identity;
+use crate::outbox::record::{OwedChange, OwedOp};
+use identity::Did;
 
 /// What the changes owed on an object say about one identity.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,6 +92,29 @@ where
     Ok(denial(wide, named))
 }
 
+/// The actor that staged the archive owed on one object, while it is
+/// unsettled: the deleting owner may inspect its own commit history before
+/// the archive settles. A change staged on that tuple commits first aborts
+/// the decision.
+pub(super) async fn archive_actor<R>(
+    reader: &R,
+    policy_id: &str,
+    resource: &str,
+    object: &str,
+) -> Result<Option<Did>>
+where
+    R: Reader + ?Sized,
+{
+    let tuple = crate::outbox::record::OwedTuple::archive(policy_id, resource, object);
+    let Some(state) = ops::tuple_state(reader, &tuple).await? else {
+        return Ok(None);
+    };
+    let change: OwedChange = ops::change(reader, state.oldest).await?.ok_or_else(|| {
+        crate::Error::Serialization(format!("owed ACP change {} has no record", state.oldest))
+    })?;
+    Ok(matches!(change.op, OwedOp::Archive).then_some(change.actor))
+}
+
 /// Owed denials as one transaction sees them: the deletes it has staged
 /// itself over those committed and unsettled. The handle does not keep the
 /// transaction in use; once that is committed, rolled back or dropped,
@@ -97,6 +122,22 @@ where
 #[derive(Clone)]
 pub struct OwedDenials {
     view: WeakNamespaceView,
+}
+
+/// The actor that staged an archive owed on one object, as this transaction
+/// sees it.
+impl OwedDenials {
+    pub async fn archive_actor(
+        &self,
+        policy_id: &str,
+        resource: &str,
+        object: &str,
+    ) -> Result<Option<Did>> {
+        let Some(view) = self.view.upgrade() else {
+            return Ok(None);
+        };
+        archive_actor(&view, policy_id, resource, object).await
+    }
 }
 
 impl OwedDenials {
