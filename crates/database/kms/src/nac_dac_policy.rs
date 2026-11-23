@@ -19,7 +19,7 @@ use regolith::sync::OnceCell;
 use std::sync::Arc;
 
 use crate::error::{Error, Result};
-use crate::policy::{AccessPolicy, DocCollectionLookup, NodeAcpRead};
+use crate::policy::{AccessPolicy, DocCollectionInfo, DocCollectionLookup, NodeAcpRead};
 use crate::types::{KeyScope, PolicyDecision};
 
 /// Default `AccessPolicy` impl for `DefraKms`. Combines DAC for
@@ -57,16 +57,16 @@ impl NacDacPolicy {
         &self,
         actor: Option<&Did>,
         doc_id: &str,
-        required_collection_id: Option<&str>,
+        delegation: Option<Delegation<'_>>,
     ) -> Result<PolicyDecision> {
         let Some(info) = self.doc_lookup.collection_for_doc(doc_id).await? else {
-            return Ok(if required_collection_id.is_some() {
+            return Ok(if delegation.is_some() {
                 PolicyDecision::Deny
             } else {
                 PolicyDecision::Allow
             });
         };
-        if required_collection_id.is_some_and(|id| id != info.collection_id) {
+        if delegation.is_some_and(|delegation| !delegation.covers(&info)) {
             return Ok(PolicyDecision::Deny);
         }
 
@@ -90,6 +90,24 @@ impl NacDacPolicy {
         } else {
             PolicyDecision::Deny
         })
+    }
+}
+
+/// The collection a delegation is bound to, and the collection of the block it asks a key for.
+#[derive(Clone, Copy)]
+struct Delegation<'a> {
+    collection_id: &'a str,
+    block_collection_id: &'a str,
+}
+
+impl Delegation<'_> {
+    /// A replicator of a collection also carries its chunks, under their own
+    /// collection. A replicator of only a chunk collection gets only its blocks.
+    fn covers(&self, info: &DocCollectionInfo) -> bool {
+        let block = self.block_collection_id;
+        let in_document =
+            block == info.collection_id || info.chunk_collection_ids.iter().any(|c| c == block);
+        in_document && (self.collection_id == info.collection_id || self.collection_id == block)
     }
 }
 
@@ -135,10 +153,15 @@ impl AccessPolicy for NacDacPolicy {
         actor: &Did,
         scope: &KeyScope,
         collection_id: &str,
+        block_collection_id: &str,
     ) -> Result<PolicyDecision> {
         match scope {
             KeyScope::Document { doc_id, .. } => {
-                self.check_document_release(Some(actor), doc_id, Some(collection_id))
+                let delegation = Delegation {
+                    collection_id,
+                    block_collection_id,
+                };
+                self.check_document_release(Some(actor), doc_id, Some(delegation))
                     .await
             }
             KeyScope::Collection { .. } => Ok(PolicyDecision::Deny),
