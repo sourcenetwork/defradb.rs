@@ -1,13 +1,18 @@
-//! Route permission table for global auth middleware.
+//! The routes the server serves, and the permission each one needs.
 //!
-//! Maps every registered HTTP route to its required permission level,
-//! ensuring consistent access control enforcement across all endpoints.
+//! [`ROUTES`] is the one list: the auth middleware reads a route's permission
+//! from it, the OpenAPI document is generated from it, and
+//! `tests/route_permissions.rs` proves every row resolves in the router.
+//! Axum exposes no route enumeration, so a route registered without a row here
+//! is caught by the source scan in this module's tests instead.
 
 use std::borrow::Cow;
 
 use axum::http::Method;
 
 use crate::router::NodePermission;
+
+pub use crate::route_table::{Route, ROUTES};
 
 /// Permission requirement for a route.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,23 +29,21 @@ pub enum RoutePermission {
     IdentityOnly,
 }
 
+/// The row for a `MatchedPath` template and method, if the route is listed.
+///
+/// A linear scan: the table is a hundred short strings and most rows differ on
+/// length alone. A hash lookup is the next step if a profile ever asks for it.
+pub fn route(path: &str, method: &Method) -> Option<&'static Route> {
+    let path = normalize_api_version(path);
+    ROUTES
+        .iter()
+        .find(|candidate| candidate.path == path && candidate.matches(method))
+}
+
 /// Whether the route reads its collection before it runs, as Go's
-/// `CollectionMiddleware` does for the collection handler's routes
-/// (`http/handler.go`): such a route checks `get-collection` before its own
-/// permission. `path` is the Axum `MatchedPath` template.
+/// `CollectionMiddleware` does.
 pub fn reads_collection_first(path: &str, method: &Method) -> bool {
-    match normalize_api_version(path).as_ref() {
-        "/api/v0/collections/{name}" => {
-            matches!(*method, Method::POST | Method::PATCH | Method::DELETE)
-        }
-        "/api/v0/collections/{name}/indexes"
-        | "/api/v0/collections/{name}/indexes/{index}"
-        | "/api/v0/collections/{name}/encrypted-indexes"
-        | "/api/v0/collections/{name}/encrypted-indexes/{field}"
-        | "/api/v0/collections/{name}/truncate"
-        | "/api/v0/collections/{name}/document/{docID}" => true,
-        _ => false,
-    }
+    route(path, method).is_some_and(|found| found.collection_first)
 }
 
 /// Look up the permission requirement for a route.
@@ -49,245 +52,12 @@ pub fn reads_collection_first(path: &str, method: &Method) -> bool {
 /// (e.g., `/api/v0/collections/{name}/document/{docID}`). The `method` is the
 /// HTTP method.
 ///
-/// Unknown routes return `Required(DocumentRead)` as a safe default:
-/// when NAC is enabled, this blocks unauthenticated access.
+/// Unknown routes return `Required(DocumentRead)` as a safe default: when NAC
+/// is enabled, this blocks unauthenticated access.
 pub fn route_permission(path: &str, method: &Method) -> RoutePermission {
-    let normalized_path = normalize_api_version(path);
-
-    match normalized_path.as_ref() {
-        // =====================================================================
-        // Exempt routes (no auth needed)
-        // =====================================================================
-        "/health-check" => RoutePermission::Exempt,
-        "/openapi.json" => RoutePermission::Exempt,
-        "/api/v0/version" => RoutePermission::Exempt,
-        "/api/v0/graphql/ws" => RoutePermission::Exempt,
-        "/api/v0/batch/verify" => RoutePermission::Exempt,
-
-        // =====================================================================
-        // GraphQL
-        // =====================================================================
-        "/api/v0/graphql/client-sign" => RoutePermission::Required(NodePermission::DocumentUpdate),
-        "/api/v0/graphql" => match *method {
-            // GET is always a read operation
-            Method::GET => RoutePermission::Required(NodePermission::DocumentRead),
-            // POST determines permission by parsing the query in the handler
-            Method::POST => RoutePermission::Dynamic,
-            _ => RoutePermission::Required(NodePermission::DocumentRead),
-        },
-        "/api/v0/ccip" | "/api/v0/ccip/:sender/:data" | "/api/v0/ccip/{sender}/{data}" => {
-            RoutePermission::Dynamic
-        }
-        "/api/v0/events" => RoutePermission::Dynamic,
-        "/api/v0/actions" => RoutePermission::Required(NodePermission::ActionList),
-        "/api/v0/schema" => RoutePermission::Required(NodePermission::CollectionGet),
-
-        // =====================================================================
-        // Transactions (permissions enforced per-operation within tx)
-        // =====================================================================
-        "/api/v0/tx" => RoutePermission::IdentityOnly,
-        "/api/v0/tx/{id}" => RoutePermission::IdentityOnly,
-
-        // =====================================================================
-        // Collections
-        // =====================================================================
-        "/api/v0/collections" => match *method {
-            Method::GET => RoutePermission::Required(NodePermission::CollectionGet),
-            Method::POST => RoutePermission::Required(NodePermission::CollectionPatch),
-            Method::PATCH => RoutePermission::Required(NodePermission::CollectionPatch),
-            // Dropping collections by name. This fell to the read default
-            // while `delete_collections_by_names` enforced `CollectionPatch`
-            // itself, so the outer gate was weaker than the handler.
-            Method::DELETE => RoutePermission::Required(NodePermission::CollectionPatch),
-            _ => RoutePermission::Required(NodePermission::CollectionGet),
-        },
-        "/api/v0/collections/default" => RoutePermission::Required(NodePermission::CollectionPatch),
-        "/api/v0/collections/versions" => {
-            RoutePermission::Required(NodePermission::CollectionPatch)
-        }
-        "/api/v0/collections/migrations" => RoutePermission::Required(NodePermission::MigrationSet),
-        "/api/v0/collections/indexes" => RoutePermission::Required(NodePermission::IndexList),
-        // PATCH and DELETE here are Go's filtered document operations, not
-        // collection ones, so they are document permissions. Dropping a
-        // collection is `DELETE /collections?name=...`, which keeps
-        // `CollectionPatch`.
-        "/api/v0/collections/{name}" => match *method {
-            Method::GET => RoutePermission::Required(NodePermission::CollectionGet),
-            Method::POST => RoutePermission::Required(NodePermission::DocumentUpdate),
-            Method::PATCH => RoutePermission::Required(NodePermission::DocumentUpdate),
-            Method::DELETE => RoutePermission::Required(NodePermission::DocumentDelete),
-            _ => RoutePermission::Required(NodePermission::CollectionGet),
-        },
-        "/api/v0/collections/{name}/describe" => {
-            RoutePermission::Required(NodePermission::CollectionGet)
-        }
-        "/api/v0/collections/{name}/exists" => {
-            RoutePermission::Required(NodePermission::CollectionGet)
-        }
-        "/api/v0/collections/{name}/truncate" => {
-            RoutePermission::Required(NodePermission::CollectionTruncate)
-        }
-        // A purge is checked against the node permission of a truncate.
-        "/api/v0/collections/{name}/documents/purge" => {
-            RoutePermission::Required(NodePermission::CollectionTruncate)
-        }
-        "/api/v0/collections/{name}/document/{docID}" => match *method {
-            Method::GET => RoutePermission::Required(NodePermission::DocumentRead),
-            Method::PATCH => RoutePermission::Required(NodePermission::DocumentUpdate),
-            Method::DELETE => RoutePermission::Required(NodePermission::DocumentDelete),
-            _ => RoutePermission::Required(NodePermission::DocumentRead),
-        },
-        "/api/v0/collections/{name}/indexes" => match *method {
-            Method::GET => RoutePermission::Required(NodePermission::IndexList),
-            Method::POST => RoutePermission::Required(NodePermission::IndexCreate),
-            _ => RoutePermission::Required(NodePermission::IndexList),
-        },
-        "/api/v0/collections/{name}/indexes/{index}" => {
-            RoutePermission::Required(NodePermission::IndexDelete)
-        }
-        // The edge checks `get-collection` first (`reads_collection_first`)
-        // and leaves the encrypted index permission to the operation, so it
-        // comes after the collection on every server, as in Go.
-        "/api/v0/collections/{name}/encrypted-indexes"
-        | "/api/v0/collections/{name}/encrypted-indexes/{field}" => RoutePermission::IdentityOnly,
-
-        // =====================================================================
-        // P2P
-        // =====================================================================
-        "/api/v0/p2p/info" => RoutePermission::Required(NodePermission::P2pPeerInfo),
-        "/api/v0/p2p/sync/status" => RoutePermission::Required(NodePermission::P2pPeerInfo),
-        "/api/v0/p2p/peers/{peer_id}" => RoutePermission::Required(NodePermission::P2pPeerInfo),
-        "/api/v0/p2p/shareable-address" => RoutePermission::Required(NodePermission::P2pPeerInfo),
-        "/api/v0/p2p/active-peers" => RoutePermission::Required(NodePermission::P2pPeerActive),
-        "/api/v0/p2p/connect" => RoutePermission::Required(NodePermission::P2pPeerConnect),
-        "/api/v0/p2p/disconnect" => RoutePermission::Required(NodePermission::P2pPeerDisconnect),
-        "/api/v0/p2p/replicators" => match *method {
-            Method::GET => RoutePermission::Required(NodePermission::P2pReplicatorList),
-            Method::POST => RoutePermission::Required(NodePermission::P2pReplicatorAdd),
-            Method::DELETE => RoutePermission::Required(NodePermission::P2pReplicatorDelete),
-            _ => RoutePermission::Required(NodePermission::P2pReplicatorList),
-        },
-        "/api/v0/p2p/collections" => match *method {
-            Method::GET => RoutePermission::Required(NodePermission::P2pCollectionList),
-            Method::POST => RoutePermission::Required(NodePermission::P2pCollectionAdd),
-            Method::DELETE => RoutePermission::Required(NodePermission::P2pCollectionDelete),
-            _ => RoutePermission::Required(NodePermission::P2pCollectionList),
-        },
-        "/api/v0/p2p/collections/sync-branchable" => {
-            RoutePermission::Required(NodePermission::P2pSyncBranchableCollection)
-        }
-        "/api/v0/p2p/collections/sync-versions" => {
-            RoutePermission::Required(NodePermission::P2pSyncCollectionVersions)
-        }
-        "/api/v0/p2p/documents" => match *method {
-            Method::GET => RoutePermission::Required(NodePermission::P2pDocumentList),
-            Method::POST => RoutePermission::Required(NodePermission::P2pDocumentAdd),
-            Method::DELETE => RoutePermission::Required(NodePermission::P2pDocumentDelete),
-            _ => RoutePermission::Required(NodePermission::P2pDocumentList),
-        },
-        "/api/v0/p2p/documents/sync" => RoutePermission::Required(NodePermission::P2pSyncDocuments),
-        // Management relay: this node connects to and commands the target peer,
-        // so it reuses the peer-connect permission to prevent an open relay.
-        "/api/v0/p2p/manage" => RoutePermission::Required(NodePermission::P2pPeerConnect),
-        "/api/v0/p2p/manage/query" => RoutePermission::Required(NodePermission::P2pPeerConnect),
-
-        // =====================================================================
-        // ACP (Document Access Control)
-        // =====================================================================
-        "/api/v0/acp/status" => RoutePermission::Required(NodePermission::DacStatus),
-        "/api/v0/acp/document/policy" => RoutePermission::Required(NodePermission::DacPolicyAdd),
-        "/api/v0/acp/policy" => RoutePermission::Required(NodePermission::DacStatus),
-        "/api/v0/acp/policy/{id}" => RoutePermission::Required(NodePermission::DacStatus),
-        "/api/v0/acp/document/decide" => RoutePermission::Required(NodePermission::DacStatus),
-        // Reads the documents in the caller's transaction, as a query does.
-        "/api/v0/acp/document/is-owner" => RoutePermission::Required(NodePermission::DocumentRead),
-        "/api/v0/acp/document/relationship" => match *method {
-            Method::GET => RoutePermission::Dynamic,
-            Method::POST => RoutePermission::Required(NodePermission::DacRelationAdd),
-            Method::DELETE => RoutePermission::Required(NodePermission::DacRelationDelete),
-            _ => RoutePermission::Required(NodePermission::DacRelationAdd),
-        },
-        // Listing is gated by the document's owner or managers in the core.
-        "/api/v0/acp/document/relationships" => match *method {
-            Method::GET => RoutePermission::Dynamic,
-            _ => RoutePermission::Required(NodePermission::DacRelationAdd),
-        },
-
-        // =====================================================================
-        // ACP Node (NAC via Go-compatible /acp/node/* routes)
-        // =====================================================================
-        "/api/v0/acp/node/status" => RoutePermission::Required(NodePermission::NacStatus),
-        // The subject itself, an admin or a `NacStatus` holder: decided in the core.
-        "/api/v0/acp/node/explain" => RoutePermission::Dynamic,
-        "/api/v0/acp/node/enable" => RoutePermission::Dynamic,
-        "/api/v0/acp/node/relationship" => match *method {
-            Method::POST => RoutePermission::Required(NodePermission::NacRelationAdd),
-            Method::DELETE => RoutePermission::Required(NodePermission::NacRelationDelete),
-            _ => RoutePermission::Required(NodePermission::NacRelationAdd),
-        },
-        "/api/v0/acp/node/relationships" => {
-            RoutePermission::Required(NodePermission::NacRelationAdd)
-        }
-        // The transaction's source-grant job checks the caller per edge.
-        "/api/v0/acp/node/source-permission" => RoutePermission::Dynamic,
-        "/api/v0/acp/node/disable" => RoutePermission::Dynamic,
-        "/api/v0/acp/node/re-enable" => RoutePermission::Dynamic,
-
-        // =====================================================================
-        // Backup
-        // =====================================================================
-        "/api/v0/backup/export" => RoutePermission::Required(NodePermission::DocumentRead),
-        "/api/v0/backup/import" => RoutePermission::Required(NodePermission::DocumentUpdate),
-
-        // =====================================================================
-        // Block
-        // =====================================================================
-        "/api/v0/block/verify-signature" | "/api/v0/block/signed" => {
-            RoutePermission::Required(NodePermission::SignatureVerify)
-        }
-
-        // =====================================================================
-        // Lens
-        // =====================================================================
-        "/api/v0/lens" => match *method {
-            Method::POST => RoutePermission::Required(NodePermission::LensCreate),
-            Method::GET => RoutePermission::Required(NodePermission::LensList),
-            _ => RoutePermission::Required(NodePermission::LensList),
-        },
-
-        // =====================================================================
-        // Batch signing
-        // =====================================================================
-        "/api/v0/batch/start" => RoutePermission::Dynamic,
-        "/api/v0/batch/sign" => RoutePermission::Dynamic,
-
-        // =====================================================================
-        // Views
-        // =====================================================================
-        "/api/v0/view" => RoutePermission::Required(NodePermission::ViewAdd),
-        "/api/v0/view/refresh" => RoutePermission::Required(NodePermission::ViewRefresh),
-        // Go has no view GC route.
-        "/api/v0/views/gc" => RoutePermission::Required(NodePermission::ViewGc),
-
-        // =====================================================================
-        // Encrypted indexes (global list)
-        // =====================================================================
-        "/api/v0/encrypted-indexes" => {
-            RoutePermission::Required(NodePermission::EncryptedIndexListAll)
-        }
-
-        // =====================================================================
-        // Utility
-        // =====================================================================
-        "/api/v0/debug/dump" => RoutePermission::Required(NodePermission::DocumentRead),
-        "/api/v0/purge" => RoutePermission::Required(NodePermission::DocumentUpdate),
-        "/api/v0/node/options" => RoutePermission::Required(NodePermission::P2pPeerInfo),
-        "/api/v0/node/identity" => RoutePermission::Required(NodePermission::P2pPeerConnect),
-
-        // =====================================================================
-        // Safe default for unknown routes
-        // =====================================================================
-        _ => {
+    match route(path, method) {
+        Some(found) => found.permission.clone(),
+        None => {
             tracing::warn!(
                 path = path,
                 method = %method,
@@ -302,16 +72,16 @@ pub fn route_permission(path: &str, method: &Method) -> RoutePermission {
 ///
 /// `go_paths::API_PREFIXES` is what `routes.rs` mounts the one route set at,
 /// so it is also what has to be folded here. Deriving from the same constant
-/// is the point: a prefix added there without a matching arm here would mount
-/// the whole route set unfolded, and every route under it would fall to the
-/// `_` arm and be enforced as `DocumentRead`.
+/// is the point: a prefix added there without a matching entry here would look
+/// up the whole route set unfolded, and every route under it would fall to the
+/// safe default and be enforced as `DocumentRead`.
 ///
 /// The longest match wins, so the list stays order-independent: `/api/v0/x`
 /// must fold on `/api/v0` and not on the bare `/api`.
 ///
 /// Note this rewrites rather than rejects: `/api/v2/collections` becomes
-/// `/api/v0/v2/collections`, which is safe only because no table key begins
-/// with `/api/v0/v`, and which lands on the `_` arm as it should.
+/// `/api/v0/v2/collections`, which is safe only because no row's path begins
+/// with `/api/v0/v`, and which lands on the safe default as it should.
 fn normalize_api_version(path: &str) -> Cow<'_, str> {
     let matched = crate::go_paths::API_PREFIXES
         .iter()
@@ -324,5 +94,80 @@ fn normalize_api_version(path: &str) -> Cow<'_, str> {
     match matched {
         Some(suffix) => Cow::Owned(format!("/api/v0{suffix}")),
         None => Cow::Borrowed(path),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A route registered without a row would enforce the safe default on a
+    /// privileged path, and would be missing from the generated OpenAPI
+    /// document. Axum enumerates nothing, so scan the source instead: every
+    /// `.route()` and `.nest()` literal must appear in some row. `/` is the
+    /// nested index route, which every nest prefix implies.
+    #[test]
+    fn every_registered_route_has_a_row() {
+        let source = include_str!("router/routes.rs");
+        let mut literals = Vec::new();
+        for marker in [".route(\n", ".route(", ".nest("] {
+            let mut rest = source;
+            while let Some(at) = rest.find(marker) {
+                rest = &rest[at + marker.len()..];
+                let Some(open) = rest.find('"') else { break };
+                let after = &rest[open + 1..];
+                let Some(close) = after.find('"') else { break };
+                let literal = &after[..close];
+                if literal.starts_with('/') {
+                    literals.push(literal.to_string());
+                }
+            }
+        }
+        assert!(
+            literals.len() > 50,
+            "the scan found only {} paths",
+            literals.len()
+        );
+
+        for literal in literals {
+            if literal == "/" {
+                continue;
+            }
+            let nested = format!("{literal}/");
+            assert!(
+                ROUTES
+                    .iter()
+                    .any(|row| row.path.ends_with(&literal) || row.path.contains(&nested)),
+                "routes.rs registers {literal} and no row in ROUTES covers it"
+            );
+        }
+    }
+
+    #[test]
+    fn no_row_appears_twice() {
+        for (index, row) in ROUTES.iter().enumerate() {
+            for other in &ROUTES[index + 1..] {
+                assert!(
+                    row.path != other.path || row.method != other.method,
+                    "{} {:?} is listed twice",
+                    row.path,
+                    row.method
+                );
+            }
+        }
+    }
+
+    /// Only the GraphQL websocket takes every method; every other row names
+    /// one, so the document can list an operation per method.
+    #[test]
+    fn only_the_websocket_route_takes_every_method() {
+        for row in ROUTES {
+            assert_eq!(
+                row.method.is_none(),
+                row.path == "/api/v0/graphql/ws",
+                "{} has an unexpected method wildcard",
+                row.path
+            );
+        }
     }
 }
