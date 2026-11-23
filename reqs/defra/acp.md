@@ -14,6 +14,6 @@ A store NAC was enabled on comes back with NAC enforced when the node restarts w
 # `defra.acp.vera_takeover_report`: Vera takeover outcomes are published
 
 - **Parents:** ["defra.acp"]
-- **Scenarios:** ["a_provider_follows_a_confirmed_takeover_and_sends_again_what_it_voided"]
+- **Scenarios:** ["term_takeover::a_provider_follows_a_confirmed_takeover_and_sends_again_what_it_voided"]
 
 When a Vera provider follows a takeover that voided submissions it had confirmed, it publishes one `acp-takeover-reconciled` event on the node's bus. The event names the checked term and the takeover cut, and partitions the submissions into those applied again, those owed again and still pending, and those that could not be restored. Every unrestorable item carries the reason. A lost policy creation is named by its derived policy ID.

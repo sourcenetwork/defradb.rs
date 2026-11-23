@@ -13941,6 +13941,7 @@ dependencies = [
  "hex",
  "identity",
  "keyring 0.5.0",
+ "mantra-macros",
  "nuclei",
  "regolith",
  "serde_json",

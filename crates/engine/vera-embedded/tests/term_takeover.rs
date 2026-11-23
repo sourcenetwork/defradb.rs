@@ -269,6 +269,7 @@ async fn provider(
 }
 
 #[nuclei::test]
+#[mantra_macros::req_test("defra.acp.vera_takeover_report")]
 async fn a_provider_follows_a_confirmed_takeover_and_sends_again_what_it_voided() {
     let directories = [tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap()];
     let root = tempfile::tempdir().unwrap();
@@ -438,21 +439,13 @@ async fn a_provider_follows_a_confirmed_takeover_and_sends_again_what_it_voided(
     .await;
     assert!(registered, "the registration the term voided holds again");
     assert_eq!(registrant, owner);
-    let deadline = Instant::now() + followed;
-    let report = loop {
-        match takeover_reports.try_recv() {
-            Ok(report) => {
-                break report
-                    .as_acp_takeover_reconciled()
-                    .expect("takeover report")
-                    .clone();
-            }
-            Err(error) => {
-                assert!(Instant::now() < deadline, "still waiting: {error:?}");
-                nuclei::time::sleep(Duration::from_millis(200)).await;
-            }
-        }
-    };
+    let report = nuclei::time::timeout(followed, takeover_reports.recv())
+        .await
+        .expect("takeover report deadline")
+        .expect("takeover report subscription closed")
+        .as_acp_takeover_reconciled()
+        .expect("takeover report")
+        .clone();
     assert_eq!(report.term, 1);
     assert_eq!(report.cut_height, change.cut.height);
     assert_eq!(

@@ -31,7 +31,7 @@ const EVENT_BUFFER: usize = 4096;
 const EVENTS_DROPPED: &str = "events-dropped";
 
 /// Every event a caller can name, under the names Go's event package uses.
-const NAMEABLE: [EventName; 13] = [
+const NAMEABLE: [EventName; 14] = [
     EventName::WildCard,
     EventName::Update,
     EventName::Merge,
@@ -42,6 +42,7 @@ const NAMEABLE: [EventName; 13] = [
     EventName::SEArtifactReceived,
     EventName::AcpHeightAdvanced,
     EventName::AcpCacheInvalidated,
+    EventName::AcpTakeoverReconciled,
     EventName::PendingDagQuarantined,
     EventName::ActionExecution,
     EventName::UniqueIndexConflict,
@@ -197,6 +198,34 @@ fn fields(message: &Message) -> Value {
             "index": conflict.index,
             "winner_doc_id": conflict.winner_doc_id,
             "unindexed_doc_id": conflict.unindexed_doc_id,
+        });
+    }
+    if let Some(report) = message.as_acp_takeover_reconciled() {
+        let submission = |item: &events::AcpTakeoverSubmission| {
+            json!({
+                "kind": item.kind,
+                "policy_id": item.policy_id,
+                "resource": item.resource,
+                "object": item.object,
+                "relation": item.relation,
+                "subject": item.subject,
+                "add": item.add,
+                "actor": item.actor,
+            })
+        };
+        return json!({
+            "term": report.term,
+            "cut_height": report.cut_height,
+            "cut_block": report.cut_block,
+            "applied_again": report.applied_again.iter().map(submission).collect::<Vec<_>>(),
+            "owed_again": report.owed_again.iter().map(submission).collect::<Vec<_>>(),
+            "unrestorable": report.unrestorable.iter().map(|item| json!({
+                "kind": item.kind,
+                "policy_id": item.policy_id,
+                "resource": item.resource,
+                "object": item.object,
+                "reason": item.reason,
+            })).collect::<Vec<_>>(),
         });
     }
     if let Some(height) = message.as_acp_height_advanced() {

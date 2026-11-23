@@ -83,6 +83,7 @@ events = { path = "../../foundation/events" }
 hex.workspace = true
 keyring = { path = "../../foundation/keyring", default-features = false }
 nuclei.workspace = true
+mantra-macros = "0.9"
 tempfile = "3"
 # The CPU sets the placement test compares.
 workers = { path = "../../foundation/workers" }
