@@ -217,6 +217,7 @@ fn fields(message: &Message) -> Value {
             "term": report.term,
             "cut_height": report.cut_height,
             "cut_block": report.cut_block,
+            "closed": report.closed,
             "applied_again": report.applied_again.iter().map(submission).collect::<Vec<_>>(),
             "owed_again": report.owed_again.iter().map(submission).collect::<Vec<_>>(),
             "unrestorable": report.unrestorable.iter().map(|item| json!({
@@ -224,6 +225,7 @@ fn fields(message: &Message) -> Value {
                 "policy_id": item.policy_id,
                 "resource": item.resource,
                 "object": item.object,
+                "actor": item.actor,
                 "reason": item.reason,
             })).collect::<Vec<_>>(),
         });

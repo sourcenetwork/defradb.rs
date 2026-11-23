@@ -63,18 +63,20 @@ pub(crate) enum LostSubject {
 pub(crate) enum Effect {
     /// A change the outbox can owe again.
     Owed(Lost),
-    /// An archive, which nothing here can send again.
+    /// An archive, which nothing here can send again, and the DID it was
+    /// made as when its delegation names one.
     Archive {
         policy_id: String,
         resource: String,
         object: String,
+        actor: Option<String>,
     },
     /// A policy creation, named by the ID its definition, creator and nonce
     /// derive. It widens nothing by itself, but a lost one cannot be
     /// restored from the node's record.
-    PolicyCreation { policy_id: String },
-    /// A policy creation, a checked decision, or anything else that changes
-    /// no document's access.
+    PolicyCreation { policy_id: String, creator: String },
+    /// A checked decision, or anything else that changes no document's
+    /// access.
     Other,
 }
 
@@ -117,6 +119,7 @@ impl Effect {
                 policy_id,
                 resource,
                 object,
+                ..
             } => Some((policy_id.clone(), resource.clone(), object.clone())),
             Self::PolicyCreation { .. } | Self::Other => None,
         }
@@ -155,6 +158,7 @@ pub(crate) fn effect_of(wire: &[u8]) -> Effect {
                 policy_id,
                 resource: object.resource,
                 object: object.id,
+                actor: super::owed::token_actor(&token),
             }
         }
         PolicyCmd::SetRelationship(relationship) => (true, relationship),
@@ -205,7 +209,7 @@ fn policy_creation_of(tx: &NativeTx) -> Option<Effect> {
     let policy_id =
         crate::vera_rs::predict_policy_id(&policy, crate::PolicyNonce(call.nonce.0), &creator)
             .ok()?;
-    Some(Effect::PolicyCreation { policy_id })
+    Some(Effect::PolicyCreation { policy_id, creator })
 }
 
 #[cfg(test)]

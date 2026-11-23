@@ -7,13 +7,15 @@ use super::effect::Lost;
 pub(crate) enum Applied {
     /// A registration or relationship change.
     Change(Lost),
-    /// A policy creation, named by its derived policy ID.
-    PolicyCreation { policy_id: String },
+    /// A policy creation, named by its derived policy ID and its creator. A
+    /// creation refused because the policy is there is held too.
+    PolicyCreation { policy_id: String, creator: String },
     /// An archive, named by the object it narrowed.
     Archive {
         policy_id: String,
         resource: String,
         object: String,
+        actor: Option<String>,
     },
 }
 
@@ -22,13 +24,18 @@ pub(crate) enum Applied {
 pub(crate) enum Unrestorable {
     /// A policy creation refused when sent again: its documents cannot be
     /// read until the policy is created again.
-    PolicyCreation { policy_id: String, reason: String },
+    PolicyCreation {
+        policy_id: String,
+        creator: String,
+        reason: String,
+    },
     /// An archive refused when sent again: the access it narrowed may be
     /// wide again.
     Archive {
         policy_id: String,
         resource: String,
         object: String,
+        actor: Option<String>,
         reason: String,
     },
 }

@@ -11,7 +11,10 @@ use events::{
     AcpTakeoverReconciledData, AcpTakeoverSubmission, AcpTakeoverUnrestorable, Bus, Message,
 };
 
-use super::super::follow::{self, owed_again, Follow, ProviderChain, Reconciled};
+use super::super::follow::effect::Lost;
+use super::super::follow::owed::{subject_string, token_actor};
+use super::super::follow::report::{Applied, Unrestorable};
+use super::super::follow::{self, owed_again, Follow, ProviderChain, Reconciled, TakeoverReport};
 use super::super::worker::NativeWorker;
 use crate::provider::ProviderError;
 
@@ -20,7 +23,7 @@ pub(super) struct Follower {
     pub chain: ProviderChain,
     pub worker: Arc<Mutex<NativeWorker>>,
     pub follow: Follow,
-    /// The node's bus, told once what one takeover's replay came to.
+    /// The node's bus, told once what the check of each term came to.
     pub bus: Option<Arc<dyn Bus>>,
     pub sink: OnceCell<Weak<dyn acp::OweAgain>>,
     /// Whether more than one node's outbox asked for what a term voids.
@@ -55,17 +58,17 @@ impl Follower {
         self.follow.epoch()
     }
 
-    /// The cut the newest certified term keeps, as `(height, block)`.
-    pub fn cut(&self) -> (u64, String) {
-        self.light_client.header_chain().term_certificate().map_or(
-            (0, alloy_primitives::B256::ZERO.to_string()),
-            |certificate| {
-                (
-                    certificate.change.cut.height,
-                    certificate.change.cut.block.to_string(),
-                )
-            },
-        )
+    /// The newest term the light client holds a certificate of, with the cut
+    /// that certificate keeps.
+    fn certificate(&self) -> Option<TermCut> {
+        self.light_client
+            .header_chain()
+            .term_certificate()
+            .map(|certificate| TermCut {
+                term: certificate.change.term,
+                height: certificate.change.cut.height,
+                block: certificate.change.cut.block.to_string(),
+            })
     }
 
     /// Checks a certified term that is not checked yet, and hands what it
@@ -73,9 +76,14 @@ impl Follower {
     /// the provider not admitted, and once at start, never on a task of its
     /// own: nothing but the provider holds its worker, so dropping the
     /// provider lets go of the worker's directory at once. A check that fails
-    /// is run again by the next call.
+    /// is run again by the next call. The call that checks a term tells the
+    /// bus what it came to, once; a call that only delivers what the term
+    /// left owed tells it nothing more, unless it fails closed.
     pub async fn check(&self) {
-        let certified = self.certified();
+        let certificate = self.certificate();
+        let certified = certificate
+            .as_ref()
+            .map_or(0, |certificate| certificate.term);
         if self.follow.is_closed()
             || (certified <= self.follow.epoch() && !self.follow.has_undelivered())
         {
@@ -87,21 +95,24 @@ impl Follower {
             tracing::debug!(term = certified, "Vera term check waits for the worker");
             return;
         };
-        let outcome = {
+        let (outcome, reported) = {
             let (journal, note) = worker.confirmed_and_note();
+            let reported = certificate
+                .clone()
+                .filter(|_| follow::first_check(journal, certified));
             let mut revise = |submission: alloy_primitives::B256, executed: bool| {
                 note.revise(&format!("{submission:#x}"), executed)
             };
-            follow::reconcile(journal, &self.chain, certified, &mut revise).await
+            (
+                follow::reconcile(journal, &self.chain, certified, &mut revise).await,
+                reported,
+            )
         };
         self.follow.update(worker.confirmed());
-        let (owed, report) = match outcome {
-            Ok(Reconciled::Checked { mut report }) => {
-                let owed = std::mem::take(&mut report.owed);
-                (owed, report)
-            }
+        let report = match outcome {
+            Ok(Reconciled::Checked { report }) => report,
             Ok(Reconciled::Closed { reason, report }) => {
-                self.publish(certified, &report);
+                self.publish(reported.as_ref(), &report, Some(&reason));
                 return closed(&reason);
             }
             Err(error) => {
@@ -109,48 +120,34 @@ impl Follower {
                 return;
             }
         };
-        self.publish(certified, &report);
-        let sink = if owed.is_empty() {
-            None
-        } else if self.shared.load(std::sync::atomic::Ordering::Acquire) {
-            let reason = "the Vera deployment switched its active device and voided changes \
-                          this provider confirmed, and the provider serves several nodes: it \
-                          cannot tell whose outbox owes them. Make the changes again, then \
-                          restart each node with a provider of its own and a new worker \
-                          directory"
-                .to_owned();
-            if let Err(error) = worker.confirmed().close(reason.clone()) {
-                tracing::warn!(%error, "could not record a failed term check");
+        let effects = match self.owed_effects(&report.owed) {
+            Ok(effects) => effects,
+            Err(reason) => {
+                if let Err(error) = worker.confirmed().close(reason.clone()) {
+                    tracing::warn!(%error, "could not record a failed term check");
+                }
+                self.follow.update(worker.confirmed());
+                // A call that only delivers says so too: the term's report
+                // named these changes as owed, and now nothing will send them.
+                self.publish(
+                    reported.as_ref().or(certificate.as_ref()),
+                    &report,
+                    Some(&reason),
+                );
+                return closed(&reason);
             }
-            self.follow.update(worker.confirmed());
-            return closed(&reason);
+        };
+        self.publish(reported.as_ref(), &report, None);
+        let sink = if effects.is_empty() {
+            None
         } else {
             let Some(sink) = self.sink.get().and_then(Weak::upgrade) else {
                 tracing::warn!(
-                    owed = owed.len(),
+                    owed = effects.len(),
                     "changes a Vera term voided wait for the outbox to owe them again"
                 );
                 return;
             };
-            let mut effects = Vec::with_capacity(owed.len());
-            for lost in &owed {
-                let Some(effect) = owed_again(lost, |did| (self.holds_key)(did)) else {
-                    let (policy, resource, object) = lost.object();
-                    let reason = format!(
-                        "the Vera deployment switched its active device and voided a change on \
-                         {policy}/{resource}/{object} this node confirmed, whose delegation names \
-                         no actor it can owe it as; access may differ from what the node \
-                         committed. Make the change again, then restart the node with a new \
-                         worker directory"
-                    );
-                    if let Err(error) = worker.confirmed().close(reason.clone()) {
-                        tracing::warn!(%error, "could not record a failed term check");
-                    }
-                    self.follow.update(worker.confirmed());
-                    return closed(&reason);
-                };
-                effects.push(effect);
-            }
             if let Err(error) = sink.owe_again(&effects).await {
                 tracing::warn!(%error, "changes a Vera term voided are not owed again yet");
                 return;
@@ -172,126 +169,170 @@ impl Follower {
             sink.settle_owed().await;
         }
     }
-}
 
-impl Follower {
-    /// Tell the node once what one takeover's replay came to. The cut comes
-    /// from the certificate the light client verified; the outcomes come
-    /// from the replay itself.
-    fn publish(&self, term: u64, report: &super::super::follow::TakeoverReport) {
-        let Some(bus) = &self.bus else {
+    /// `owed` as the outbox records it, or why the node cannot owe it and
+    /// fails closed: several nodes share the provider, or a change's
+    /// delegation names no actor.
+    fn owed_effects(&self, owed: &[Lost]) -> Result<Vec<acp::VoidedEffect>, String> {
+        if owed.is_empty() {
+            return Ok(Vec::new());
+        }
+        if self.shared.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(
+                "the Vera deployment switched its active device and voided changes \
+                 this provider confirmed, and the provider serves several nodes: it \
+                 cannot tell whose outbox owes them. Make the changes again, then \
+                 restart each node with a provider of its own and a new worker \
+                 directory"
+                    .to_owned(),
+            );
+        }
+        owed.iter()
+            .map(|lost| {
+                owed_again(lost, |did| (self.holds_key)(did)).ok_or_else(|| {
+                    let (policy, resource, object) = lost.object();
+                    format!(
+                        "the Vera deployment switched its active device and voided a change on \
+                         {policy}/{resource}/{object} this node confirmed, whose delegation names \
+                         no actor it can owe it as; access may differ from what the node \
+                         committed. Make the change again, then restart the node with a new \
+                         worker directory"
+                    )
+                })
+            })
+            .collect()
+    }
+
+    /// Tells the node what the check of term `reported` came to, and why it
+    /// failed closed when it did. `None` when this call has nothing to add
+    /// to what the call that checked the term told it.
+    fn publish(&self, reported: Option<&TermCut>, report: &TakeoverReport, closed: Option<&str>) {
+        let (Some(bus), Some(cut)) = (&self.bus, reported) else {
             return;
         };
-        let (cut_height, cut_block) = self.cut();
         bus.publish(Message::acp_takeover_reconciled(takeover_report(
-            term, cut_height, cut_block, report,
+            cut, report, closed,
         )));
     }
 }
 
-fn takeover_report(
+/// A certified term and the cut its certificate keeps, read together so a
+/// report never pairs one term with another's cut.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TermCut {
     term: u64,
-    cut_height: u64,
-    cut_block: String,
-    report: &super::super::follow::TakeoverReport,
-) -> AcpTakeoverReconciledData {
-    let to_submission = |lost: &super::super::follow::effect::Lost| {
-        let (policy_id, resource, object) = lost.object();
-        AcpTakeoverSubmission {
-            kind: match lost {
-                super::super::follow::effect::Lost::Registration { .. } => "registration".into(),
-                super::super::follow::effect::Lost::Relationship { .. } => "relationship".into(),
-            },
-            policy_id: policy_id.to_owned(),
-            resource: resource.to_owned(),
-            object: object.to_owned(),
-            relation: match lost {
-                super::super::follow::effect::Lost::Relationship { relation, .. } => {
-                    Some(relation.clone())
-                }
-                _ => None,
-            },
-            subject: match lost {
-                super::super::follow::effect::Lost::Relationship { subject, .. } => {
-                    super::super::follow::owed::subject_string(subject)
-                }
-                _ => None,
-            },
-            add: match lost {
-                super::super::follow::effect::Lost::Relationship { add, .. } => Some(*add),
-                _ => None,
-            },
-            actor: super::super::follow::owed::token_actor(lost.token()),
-        }
+    height: u64,
+    block: String,
+}
+
+fn submission(lost: &Lost) -> AcpTakeoverSubmission {
+    let (policy_id, resource, object) = lost.object();
+    let (kind, relation, subject, add) = match lost {
+        Lost::Registration { .. } => ("registration", None, None, None),
+        Lost::Relationship {
+            relation,
+            subject,
+            add,
+            ..
+        } => (
+            "relationship",
+            Some(relation.clone()),
+            subject_string(subject),
+            Some(*add),
+        ),
     };
-    let applied_again = report
-        .applied
-        .iter()
-        .map(|applied| match applied {
-            super::super::follow::report::Applied::Change(lost) => to_submission(lost),
-            super::super::follow::report::Applied::PolicyCreation { policy_id } => {
-                AcpTakeoverSubmission {
-                    kind: "policy-creation".into(),
-                    policy_id: policy_id.clone(),
-                    resource: String::new(),
-                    object: String::new(),
-                    relation: None,
-                    subject: None,
-                    add: None,
-                    actor: None,
-                }
-            }
-            super::super::follow::report::Applied::Archive {
-                policy_id,
-                resource,
-                object,
-            } => AcpTakeoverSubmission {
-                kind: "archive".into(),
-                policy_id: policy_id.clone(),
-                resource: resource.clone(),
-                object: object.clone(),
-                relation: None,
-                subject: None,
-                add: None,
-                actor: None,
-            },
-        })
-        .collect();
-    let owed_again = report.owed.iter().map(to_submission).collect();
-    let unrestorable = report
-        .unrestorable
-        .iter()
-        .map(|item| match item {
-            super::super::follow::report::Unrestorable::PolicyCreation { policy_id, reason } => {
-                AcpTakeoverUnrestorable {
-                    kind: "policy-creation".into(),
-                    policy_id: policy_id.clone(),
-                    resource: String::new(),
-                    object: String::new(),
-                    reason: reason.clone(),
-                }
-            }
-            super::super::follow::report::Unrestorable::Archive {
-                policy_id,
-                resource,
-                object,
-                reason,
-            } => AcpTakeoverUnrestorable {
-                kind: "archive".into(),
-                policy_id: policy_id.clone(),
-                resource: resource.clone(),
-                object: object.clone(),
-                reason: reason.clone(),
-            },
-        })
-        .collect();
+    AcpTakeoverSubmission {
+        kind: kind.into(),
+        policy_id: policy_id.to_owned(),
+        resource: resource.to_owned(),
+        object: object.to_owned(),
+        relation,
+        subject,
+        add,
+        actor: token_actor(lost.token()),
+    }
+}
+
+fn applied(applied: &Applied) -> AcpTakeoverSubmission {
+    let (kind, policy_id, resource, object, actor) = match applied {
+        Applied::Change(lost) => return submission(lost),
+        Applied::PolicyCreation { policy_id, creator } => (
+            "policy-creation",
+            policy_id,
+            String::new(),
+            String::new(),
+            Some(creator.clone()),
+        ),
+        Applied::Archive {
+            policy_id,
+            resource,
+            object,
+            actor,
+        } => (
+            "archive",
+            policy_id,
+            resource.clone(),
+            object.clone(),
+            actor.clone(),
+        ),
+    };
+    AcpTakeoverSubmission {
+        kind: kind.into(),
+        policy_id: policy_id.clone(),
+        resource,
+        object,
+        relation: None,
+        subject: None,
+        add: None,
+        actor,
+    }
+}
+
+fn unrestorable(item: &Unrestorable) -> AcpTakeoverUnrestorable {
+    match item {
+        Unrestorable::PolicyCreation {
+            policy_id,
+            creator,
+            reason,
+        } => AcpTakeoverUnrestorable {
+            kind: "policy-creation".into(),
+            policy_id: policy_id.clone(),
+            resource: String::new(),
+            object: String::new(),
+            actor: Some(creator.clone()),
+            reason: reason.clone(),
+        },
+        Unrestorable::Archive {
+            policy_id,
+            resource,
+            object,
+            actor,
+            reason,
+        } => AcpTakeoverUnrestorable {
+            kind: "archive".into(),
+            policy_id: policy_id.clone(),
+            resource: resource.clone(),
+            object: object.clone(),
+            actor: actor.clone(),
+            reason: reason.clone(),
+        },
+    }
+}
+
+/// `report` as the event carries it: every entry of each list, in order.
+fn takeover_report(
+    cut: &TermCut,
+    report: &TakeoverReport,
+    closed: Option<&str>,
+) -> AcpTakeoverReconciledData {
     AcpTakeoverReconciledData {
-        term,
-        cut_height,
-        cut_block,
-        applied_again,
-        owed_again,
-        unrestorable,
+        term: cut.term,
+        cut_height: cut.height,
+        cut_block: cut.block.clone(),
+        closed: closed.map(str::to_owned),
+        applied_again: report.applied.iter().map(applied).collect(),
+        owed_again: report.owed.iter().map(submission).collect(),
+        unrestorable: report.unrestorable.iter().map(unrestorable).collect(),
     }
 }
 
@@ -300,27 +341,5 @@ fn closed(reason: &str) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::vera_rs::follow::report::{TakeoverReport, Unrestorable};
-
-    fn policy_id() -> String {
-        "0xlost".into()
-    }
-
-    #[test]
-    fn a_lost_policy_creation_is_named_in_the_event() {
-        let report = TakeoverReport {
-            unrestorable: vec![Unrestorable::PolicyCreation {
-                policy_id: policy_id(),
-                reason: "voided".into(),
-            }],
-            ..TakeoverReport::default()
-        };
-        let data = takeover_report(2, 5, "0xcut".into(), &report);
-        assert_eq!(data.unrestorable.len(), 1);
-        assert_eq!(data.unrestorable[0].kind, "policy-creation");
-        assert_eq!(data.unrestorable[0].policy_id, policy_id());
-        assert_eq!(data.unrestorable[0].reason, "voided");
-    }
-}
+#[path = "terms_tests.rs"]
+mod tests;

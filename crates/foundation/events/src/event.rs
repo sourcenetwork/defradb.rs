@@ -255,10 +255,14 @@ pub struct AcpTakeoverSubmission {
 /// One submission a takeover voided that could not be restored.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AcpTakeoverUnrestorable {
+    /// `policy-creation` or `archive`.
     pub kind: String,
     pub policy_id: String,
     pub resource: String,
     pub object: String,
+    /// The DID the request acted as, when its delegation named one: the
+    /// creator of a lost policy.
+    pub actor: Option<String>,
     /// Why the effect could not be restored.
     pub reason: String,
 }
@@ -268,13 +272,18 @@ pub struct AcpTakeoverUnrestorable {
 pub struct AcpTakeoverReconciledData {
     /// The term checked.
     pub term: u64,
-    /// The height at or below which the term keeps the old chain.
+    /// The height at or below which the term keeps the old chain, from the
+    /// certificate of `term`.
     pub cut_height: u64,
     /// The block at the cut, as `0x…`.
     pub cut_block: String,
+    /// Why the check failed closed, when it did: the node then refuses every
+    /// Vera decision, and the lists hold what the check had learnt when it
+    /// stopped. `None` for a term that was checked.
+    pub closed: Option<String>,
     /// Submissions sent again and held again.
     pub applied_again: Vec<AcpTakeoverSubmission>,
-    /// Submissions to be sent again with the outbox, still pending.
+    /// Submissions the outbox owes again, pending when the event is published.
     pub owed_again: Vec<AcpTakeoverSubmission>,
     /// Submissions whose effect could not be restored.
     pub unrestorable: Vec<AcpTakeoverUnrestorable>,

@@ -38,7 +38,8 @@ fn a_lost_policy_creation_names_its_derived_id() {
     assert_eq!(
         effect_of(&wire),
         Effect::PolicyCreation {
-            policy_id: expected
+            policy_id: expected,
+            creator,
         }
     );
 }

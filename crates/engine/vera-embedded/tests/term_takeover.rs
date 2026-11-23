@@ -452,6 +452,7 @@ async fn a_provider_follows_a_confirmed_takeover_and_sends_again_what_it_voided(
         report.cut_block,
         format!("0x{}", hex::encode(change.cut.block))
     );
+    assert_eq!(report.closed, None);
     assert_eq!(report.owed_again.len(), 0);
     assert!(report.unrestorable.is_empty());
     let applied: Vec<(&str, &str)> = report
@@ -472,6 +473,10 @@ async fn a_provider_follows_a_confirmed_takeover_and_sends_again_what_it_voided(
         .applied_again
         .iter()
         .all(|item| item.resource == "document"));
+    assert!(report
+        .applied_again
+        .iter()
+        .all(|item| item.actor.as_deref() == Some(owner.as_str())));
     assert!(
         takeover_reports.try_recv().is_err(),
         "one report per takeover"

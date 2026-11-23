@@ -226,6 +226,7 @@ fn takeover_reports_are_nameable_and_include_their_payload() {
         term: 3,
         cut_height: 7,
         cut_block: "0xabc".into(),
+        closed: Some("the journal cannot vouch for the takeover".into()),
         applied_again: vec![submission.clone()],
         owed_again: vec![submission],
         unrestorable: vec![events::AcpTakeoverUnrestorable {
@@ -233,6 +234,7 @@ fn takeover_reports_are_nameable_and_include_their_payload() {
             policy_id: "policy".into(),
             resource: String::new(),
             object: String::new(),
+            actor: Some("did:example:owner".into()),
             reason: "refused".into(),
         }],
     });
@@ -241,6 +243,8 @@ fn takeover_reports_are_nameable_and_include_their_payload() {
     assert_eq!(event["term"], 3);
     assert_eq!(event["cut_height"], 7);
     assert_eq!(event["cut_block"], "0xabc");
+    assert_eq!(event["closed"], "the journal cannot vouch for the takeover");
+    assert_eq!(event["unrestorable"][0]["actor"], "did:example:owner");
     assert_eq!(event["applied_again"][0]["relation"], "reader");
     assert_eq!(event["owed_again"][0]["actor"], "did:example:owner");
     assert_eq!(event["owed_again"][0]["add"], true);

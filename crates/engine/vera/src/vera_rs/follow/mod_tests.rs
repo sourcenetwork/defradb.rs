@@ -157,6 +157,10 @@ fn a_replay_cut_short_still_owes_what_it_learnt_and_taints_its_object() {
 
     assert!(block_on(reconcile(&mut journal, &deployment, 1, &mut ignore)).is_err());
     assert_eq!(journal.handled_term(), 0, "the term is still unchecked");
+    assert!(
+        first_check(&journal, 1),
+        "the run that finishes the check reports it"
+    );
 
     // Run again, the revocation is held (its replay was refused, and spent
     // its sequence); it is sent again all the same, and the grant after it,
@@ -173,6 +177,13 @@ fn a_replay_cut_short_still_owes_what_it_learnt_and_taints_its_object() {
         }
     );
     assert_eq!(journal.replaying(), None);
+    assert!(
+        !first_check(&journal, 1),
+        "a later run only delivers what the term left owed"
+    );
+    assert!(first_check(&journal, 2));
+    journal.close("uncovered".into()).unwrap();
+    assert!(!first_check(&journal, 2), "a closed journal checks nothing");
 }
 
 #[test]

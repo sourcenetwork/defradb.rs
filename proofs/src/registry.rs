@@ -233,6 +233,15 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        family: "vera.rs deployment terms",
+        name: "foldl_push / applied_is_filter / owed_is_filter / unrestorable_is_filter / every_replay_in_one_place / existing_policy_is_applied / owed_is_a_change / unrestorable_is_archive_or_policy / event_keeps_every_entry / event_keeps_names_and_actors / closed_is_told: a takeover report puts every replay in one place and keeps its order, a policy that is there is not reported lost, and the event keeps every entry with its name and actor and says when the check failed closed",
+        axis: Lean,
+        anchor: "crates/engine/vera/src/vera_rs/follow/lost.rs held_again, lost_effects; crates/engine/vera/src/vera_rs/follow/report.rs TakeoverReport, Applied, Unrestorable; crates/engine/vera/src/vera_rs/provider/terms.rs takeover_report",
+        model_ref: "VeraTakeoverReport (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         family: "Explicit embedded signing",
         name: "admitted_binds",
         axis: Lean,
@@ -1976,14 +1985,15 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         // A takeover report is not an internal count: the embedder is told
-        // once which submissions were applied again, which are still owed
-        // again, and which cannot be restored. An unrestorable entry says
-        // why; a lost policy creation names its policy ID.
+        // once per checked term, by the call that checks it, which
+        // submissions were applied again, which are owed again, and which
+        // cannot be restored, with the cut of that term. A check that failed
+        // closed says so. A call that only delivers reports nothing more.
         family: "ACP soundness + revocation + dual-path commits",
-        name: "INV_Classified / INV_Published / LIVE_Reported: every replayed submission is classified as applied again, owed again or unrestorable, an unrestorable outcome carries its reason, and a completed report is published",
+        name: "INV_Classified / INV_Published / INV_PublishedOnce / INV_Complete / INV_CutOfTerm / INV_ClosedNamed / LIVE_Reported: every replayed submission is classified as applied again, owed again or unrestorable, an unrestorable outcome carries its reason, a checked term is reported once, after every replay and with the owed ones, under the cut of its own term, and a check that failed closed says so",
         axis: Tla,
-        anchor: "crates/engine/vera/src/vera_rs/follow/report.rs TakeoverReport, Applied, Unrestorable; crates/engine/vera/src/vera_rs/follow/mod.rs reconcile; crates/engine/vera/src/vera_rs/provider/terms.rs Follower::publish; crates/foundation/events/src/event.rs AcpTakeoverReconciledData",
-        model_ref: "MC_TakeoverReport_{Green,Red_NoPublish,Red_NoReason}.cfg",
+        anchor: "crates/engine/vera/src/vera_rs/follow/report.rs TakeoverReport, Applied, Unrestorable; crates/engine/vera/src/vera_rs/follow/mod.rs reconcile, first_check; crates/engine/vera/src/vera_rs/follow/lost.rs lost_effects; crates/engine/vera/src/vera_rs/provider/terms.rs Follower::check, Follower::certificate, Follower::owed_effects, Follower::publish, takeover_report; crates/foundation/events/src/event.rs AcpTakeoverReconciledData",
+        model_ref: "MC_TakeoverReport_{Green,Red_NoPublish,Red_NoReason,Red_Early,Red_Duplicate,Red_DropsOwed,Red_NewestCut,Red_UnnamedClosed}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },

@@ -41,7 +41,7 @@ pub(crate) use owed::owed_again;
 
 use effect::effect_of;
 use journal::Floor;
-use lost::{lost_effects, tainted_by, Losses};
+use lost::{held_again, lost_effects, tainted_by, Losses};
 pub(crate) mod report;
 
 pub(crate) use report::TakeoverReport;
@@ -61,6 +61,8 @@ pub(crate) trait Chain {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Replayed {
     pub executed: bool,
+    /// Refused because what it creates is already there.
+    pub exists: bool,
     pub height: u64,
 }
 
@@ -170,6 +172,14 @@ pub(crate) enum Reconciled {
     },
 }
 
+/// Whether a check of `certified` that finishes now is the one that checks
+/// it: the journal is open and has not handled the term. Only that check is
+/// reported to the embedder; a later one only delivers what the term left
+/// owed (`proofs/tla/TakeoverReport.tla`).
+pub(crate) fn first_check(journal: &Journal, certified: u64) -> bool {
+    journal.closed().is_none() && certified > journal.handled_term()
+}
+
 /// Checks term `certified` against `journal` through `chain`: sends again
 /// what the term voided and records what is to be owed again. `revise` is
 /// told what each request sent again came to, before it is recorded. An error
@@ -246,12 +256,9 @@ where
             // Whatever else names this request learns what it came to on
             // the history the deployment has now.
             revise(entry.submission, replayed.executed)?;
-            lost_effects(
-                &mut losses,
-                &mut tainted,
-                effect_of(&entry.wire),
-                replayed.executed,
-            );
+            let effect = effect_of(&entry.wire);
+            let held = held_again(&effect, replayed);
+            lost_effects(&mut losses, &mut tainted, effect, held);
             if let Some(crate::vera_rs::follow::report::Unrestorable::Archive {
                 policy_id,
                 resource,

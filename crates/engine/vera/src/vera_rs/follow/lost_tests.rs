@@ -47,3 +47,48 @@ fn what_was_owed_before_a_replay_stopped_still_taints() {
     lost_effects(&mut losses, &mut tainted, change("a", true), true);
     assert_eq!(losses.owed.len(), 1);
 }
+
+fn creation() -> Effect {
+    Effect::PolicyCreation {
+        policy_id: "p".into(),
+        creator: "did:key:creator".into(),
+    }
+}
+
+fn replayed(executed: bool, exists: bool) -> Replayed {
+    Replayed {
+        executed,
+        exists,
+        height: 1,
+    }
+}
+
+#[test]
+fn a_policy_creation_refused_because_the_policy_is_there_is_held_not_lost() {
+    assert!(held_again(&creation(), replayed(true, false)));
+    assert!(held_again(&creation(), replayed(false, true)));
+    assert!(!held_again(&creation(), replayed(false, false)));
+    assert!(
+        !held_again(&change("a", true), replayed(false, true)),
+        "a registration or grant refused as existing is still owed"
+    );
+
+    let mut losses = Losses::default();
+    let mut tainted = RapidHashSet::new();
+    let held = held_again(&creation(), replayed(false, true));
+    lost_effects(&mut losses, &mut tainted, creation(), held);
+    let lost = held_again(&creation(), replayed(false, false));
+    lost_effects(&mut losses, &mut tainted, creation(), lost);
+    assert_eq!(
+        losses.applied,
+        vec![Applied::PolicyCreation {
+            policy_id: "p".into(),
+            creator: "did:key:creator".into(),
+        }]
+    );
+    assert!(matches!(
+        losses.unrestorable.as_slice(),
+        [Unrestorable::PolicyCreation { policy_id, creator, .. }]
+            if policy_id == "p" && creator == "did:key:creator"
+    ));
+}
