@@ -563,7 +563,7 @@ jobs:
       DEFRA_CONFORMANCE_IROH_BINARY: ${{ github.workspace }}/target/ci/defradb-iroh
       DEFRA_WORKSPACE_ROOT: ${{ github.workspace }}
       DEFRA_E2E_KEEP: '1'
-      RUST_LOG: info
+      RUST_LOG: info,p2p::sync=debug,p2p::iroh::endpoint_rpc=debug
       NUCLEI_BACKEND: ${{ matrix.io.backend }}
       DEFRA_NUCLEI_RECV_BUFFERS: ${{ matrix.io.recv }}
     steps:
