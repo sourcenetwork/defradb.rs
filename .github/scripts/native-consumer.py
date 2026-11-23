@@ -162,7 +162,7 @@ LIVE_CASES = (
 )
 CARGO = ["cargo", "+1.99.1"]
 BUILD = ["--release", "--frozen"]
-PUBLIC_FIELDS = ("phase", "exit_code", "seconds", "passed", "panic_site")
+PUBLIC_FIELDS = ("phase", "exit_code", "seconds", "passed", "panic_site", "failure")
 
 
 def public_phase(record):
@@ -178,6 +178,18 @@ def panic_site(log):
                 file, row, column = match.groups()
                 return {"file": file, "line": int(row), "column": int(column)}
     return None
+
+
+def failure_tail(log, limit=16 * 1024):
+    """Return the end of a failed phase's log, bounded for the retained summary."""
+    with log.open("rb") as stream:
+        stream.seek(0, os.SEEK_END)
+        end = stream.tell()
+        start = max(0, end - limit)
+        stream.seek(start)
+        data = stream.read()
+    text = data.decode(errors="replace")
+    return text if start == 0 else "…" + text.lstrip("\r\n")
 
 
 def dependencies(text):
@@ -431,7 +443,8 @@ class Runner:
             site = panic_site(log)
             if site is not None:
                 record["panic_site"] = site
-                self.save()
+            record["failure"] = failure_tail(log)
+            self.save()
         print(json.dumps(public_phase(record)), flush=True)
         if record["exit_code"] != 0:
             raise RuntimeError("qualification phase failed")
