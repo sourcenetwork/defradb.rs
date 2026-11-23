@@ -587,9 +587,9 @@ pub fn or_filter_to_index_scan(
     None
 }
 
-/// `values` in the order the index holds their keys (`descending` when its
-/// first field is), backward when the scan runs backward, each once. A value
-/// that does not encode keeps its place after those that do.
+/// `values` in the order the index holds their keys, backward when the scan
+/// runs backward, each once. A value that does not encode keeps its place
+/// after those that do.
 fn sort_in_key_order(values: &mut Vec<NormalValue>, descending: bool, reverse: bool) {
     let mut keyed: Vec<(Option<Vec<u8>>, NormalValue)> = values
         .drain(..)
@@ -599,7 +599,14 @@ fn sort_in_key_order(values: &mut Vec<NormalValue>, descending: bool, reverse: b
         })
         .collect();
     keyed.sort_by(|(a, _), (b, _)| match (a, b) {
-        (Some(a), Some(b)) => a.cmp(b),
+        (Some(a), Some(b)) => {
+            let ascending = a.cmp(b);
+            if descending {
+                ascending.reverse()
+            } else {
+                ascending
+            }
+        }
         (Some(_), None) => std::cmp::Ordering::Less,
         (None, Some(_)) => std::cmp::Ordering::Greater,
         (None, None) => std::cmp::Ordering::Equal,

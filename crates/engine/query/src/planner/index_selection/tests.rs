@@ -173,6 +173,34 @@ fn test_filter_to_scan_in() {
 }
 
 #[test]
+fn test_filter_to_scan_in_orders_composite_index_keys() {
+    let filter = make_filter(map([(
+        "name".to_string(),
+        json!({"_in": ["Addo", "Andy", "Fred"]}),
+    )]));
+    let mut index = single_field_index("name");
+    index.fields[0].descending = true;
+    index.fields.push(IndexedFieldDescription {
+        name: "age".to_string(),
+        descending: false,
+    });
+
+    let params = filter_to_index_scan(&filter, &index, None, &[], None, 0).unwrap();
+
+    match params.scan_type {
+        IndexScanType::InScan { values, .. } => {
+            assert_eq!(
+                values,
+                ["Addo", "Andy", "Fred"]
+                    .map(|name| NormalValue::String(name.to_string()))
+                    .to_vec()
+            );
+        }
+        _ => panic!("expected InScan scan type"),
+    }
+}
+
+#[test]
 fn test_filter_to_scan_range() {
     let filter = make_filter(map([("age".to_string(), json!({"_gte": 18, "_lt": 65}))]));
     let index = single_field_index("age");
