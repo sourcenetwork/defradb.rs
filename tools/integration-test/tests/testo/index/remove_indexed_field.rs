@@ -20,7 +20,7 @@ fn removing_an_indexed_field_names_the_index_and_keeps_the_collection_usable() {
             }
             .into(),
             PatchCollection {
-                patch: r#"[{"op":"remove","path":"/Users/Fields/name"}]"#.into(),
+                patch: r#"[{"op":"remove","path":"/Users/Fields/2"}]"#.into(),
                 expected_error: Some(
                     "index 'Users_name_ASC' references field 'name' which does not exist in schema"
                         .into(),
@@ -71,7 +71,7 @@ fn removing_a_fulltext_field_names_the_field_and_keeps_the_collection_usable() {
             }
             .into(),
             PatchCollection {
-                patch: r#"[{"op":"remove","path":"/Notes/Fields/body"}]"#.into(),
+                patch: r#"[{"op":"remove","path":"/Notes/Fields/1"}]"#.into(),
                 expected_error: Some(
                     "full-text index on field 'body' references a field which does not exist in schema"
                         .into(),
@@ -107,7 +107,7 @@ fn removing_an_embedding_source_keeps_the_collection_usable() {
                 ..Default::default()
             }.into(),
             PatchCollection {
-                patch: r#"[{"op":"remove","path":"/Users/Fields/name"}]"#.into(),
+                patch: r#"[{"op":"remove","path":"/Users/Fields/1"}]"#.into(),
                 expected_error: Some("the given field does not exist. Embedding generation field: name".into()),
                 ..Default::default()
             }.into(),
