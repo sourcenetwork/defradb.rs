@@ -113,8 +113,9 @@ fn a_registration_that_fails_after_its_commit_is_reported_and_takes_a_fresh_cred
         assert_eq!(
             owed[0].txn,
             txn.as_str()
-                .split_once('-')
-                .and_then(|(_, route)| route.parse().ok())
+                .parse::<defra_core::TxnId>()
+                .ok()
+                .map(|id| id.route)
         );
         assert!(!owed[0].sendable);
         // The grant waits behind it, neither sent nor parked.

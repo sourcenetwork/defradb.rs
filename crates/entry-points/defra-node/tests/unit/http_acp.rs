@@ -331,10 +331,7 @@ async fn exercise_transactional_http_relationships() -> Vec<Value> {
         .send()
         .await
         .unwrap();
-    let other_tx = response.json::<Value>().await.unwrap()["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let other_tx = response.json::<Value>().await.unwrap()["id"].to_string();
     let hidden = client
         .post(&ownership_url)
         .header("Authorization", other_auth.as_str())
@@ -491,10 +488,7 @@ async fn exercise_transactional_http_relationships() -> Vec<Value> {
         .send()
         .await
         .unwrap();
-    let other_tx = response.json::<Value>().await.unwrap()["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let other_tx = response.json::<Value>().await.unwrap()["id"].to_string();
     let nonowner = client
         .post(&ownership_url)
         .header("Authorization", other_auth.as_str())
@@ -557,10 +551,7 @@ async fn exercise_transactional_http_relationships() -> Vec<Value> {
         .send()
         .await
         .unwrap();
-    let revoked_tx = response.json::<Value>().await.unwrap()["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let revoked_tx = response.json::<Value>().await.unwrap()["id"].to_string();
     let after = client
         .post(&ownership_url)
         .header("Authorization", other_auth.as_str())
@@ -602,10 +593,7 @@ async fn exercise_transactional_http_relationships() -> Vec<Value> {
         .send()
         .await
         .unwrap();
-    let unregistered_tx = response.json::<Value>().await.unwrap()["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let unregistered_tx = response.json::<Value>().await.unwrap()["id"].to_string();
     let unregistered = client
         .post(&ownership_url)
         .header("Authorization", auth.as_str())

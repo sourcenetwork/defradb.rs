@@ -186,7 +186,7 @@ fn changes_behind_a_parked_registration_go_once_it_is_given_a_credential() {
         staging.remote.credentials.store(true, Ordering::SeqCst);
         staging.remote.carry_delegation(&alice(), "short");
         let handle = staging.begin().await;
-        let id: u64 = handle.as_str().split_once('-').unwrap().1.parse().unwrap();
+        let id: u64 = handle.as_str().parse::<defra_core::TxnId>().unwrap().route;
         let doc = staging.create(alice(), "shared", Some(&handle)).await;
         let mut grant = Change::new(alice(), &doc, OwedOp::Add, bob());
         grant.txn = Some(id);
@@ -269,7 +269,7 @@ fn a_wait_says_pending_while_the_provider_is_away_and_ends_when_a_record_changes
         let staging = Staging::new().await;
         let doc = staging.create(alice(), "shared", None).await;
         let handle = staging.begin().await;
-        let id: u64 = handle.as_str().split_once('-').unwrap().1.parse().unwrap();
+        let id: u64 = handle.as_str().parse::<defra_core::TxnId>().unwrap().route;
         let mut grant = Change::new(alice(), &doc, OwedOp::Add, bob());
         grant.txn = Some(id);
         staging.stage(&handle, grant).await.unwrap();
@@ -441,7 +441,7 @@ fn a_change_the_provider_never_took_is_reported_as_discarded_and_not_as_settled(
         // Mallory manages nothing. Her add is staged while nobody can check
         // that, and the provider refuses it: its record is deleted.
         let handle = staging.begin().await;
-        let id: u64 = handle.as_str().split_once('-').unwrap().1.parse().unwrap();
+        let id: u64 = handle.as_str().parse::<defra_core::TxnId>().unwrap().route;
         let mut unchecked = Change::new(mallory(), &doc, OwedOp::Add, bob());
         unchecked.txn = Some(id);
         staging.remote.down.store(true, Ordering::SeqCst);
@@ -522,7 +522,7 @@ fn a_wait_is_for_a_transaction_of_this_run_and_for_its_callers_entries() {
         let staging = Staging::new().await;
         let doc = staging.create(alice(), "shared", None).await;
         let handle = staging.begin().await;
-        let id: u64 = handle.as_str().split_once('-').unwrap().1.parse().unwrap();
+        let id: u64 = handle.as_str().parse::<defra_core::TxnId>().unwrap().route;
         let mut grant = Change::new(alice(), &doc, OwedOp::Add, bob());
         grant.txn = Some(id);
         let staged = staging.stage(&handle, grant).await.unwrap();
@@ -638,7 +638,7 @@ fn an_actors_wait_submits_what_is_owed_on_its_own_objects_only() {
         let hers = staging.create(alice(), "hers", None).await;
         let theirs = staging.create(mallory(), "theirs", None).await;
         let handle = staging.begin().await;
-        let id: u64 = handle.as_str().split_once('-').unwrap().1.parse().unwrap();
+        let id: u64 = handle.as_str().parse::<defra_core::TxnId>().unwrap().route;
         for (owner, doc) in [(alice(), &hers), (mallory(), &theirs)] {
             let mut grant = Change::new(owner, doc, OwedOp::Add, bob());
             grant.txn = Some(id);
