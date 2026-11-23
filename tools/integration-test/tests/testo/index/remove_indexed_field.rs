@@ -1,5 +1,6 @@
 use integration_test::actions::{AddCollection, AddDoc, PatchCollection, Request};
 use integration_test::test_case::TestCase;
+use integration_test::ClientType;
 use serde_json::json;
 
 #[test]
@@ -12,7 +13,6 @@ fn removing_an_indexed_field_names_the_index_and_keeps_the_collection_usable() {
                 sdl: r#"
                     type Users {
                         name: String @index
-                        age: Int
                     }
                 "#
                 .into(),
@@ -20,7 +20,7 @@ fn removing_an_indexed_field_names_the_index_and_keeps_the_collection_usable() {
             }
             .into(),
             PatchCollection {
-                patch: r#"[{"op":"remove","path":"/Users/Fields/2"}]"#.into(),
+                patch: r#"[{"op":"remove","path":"/Users/Fields/1"}]"#.into(),
                 expected_error: Some(
                     "index 'Users_name_ASC' references field 'name' which does not exist in schema"
                         .into(),
@@ -33,7 +33,6 @@ fn removing_an_indexed_field_names_the_index_and_keeps_the_collection_usable() {
                     query {
                         Users {
                             name
-                            age
                         }
                     }
                 "#
@@ -44,7 +43,7 @@ fn removing_an_indexed_field_names_the_index_and_keeps_the_collection_usable() {
             .into(),
             AddDoc {
                 collection: "Users".into(),
-                doc_map: Some(json!({"name": "ann", "age": 1})),
+                doc_map: Some(json!({"name": "ann"})),
                 ..Default::default()
             }
             .into(),
@@ -59,6 +58,8 @@ fn removing_an_indexed_field_names_the_index_and_keeps_the_collection_usable() {
 fn removing_a_fulltext_field_names_the_field_and_keeps_the_collection_usable() {
     TestCase {
         id: integration_test::scenario_id!(),
+        // Go's pinned schema parser does not support @fulltext.
+        client_types: Some(&[ClientType::InProcess, ClientType::RustHttp, ClientType::Cli]),
         actions: vec![
             AddCollection {
                 sdl: r#"
