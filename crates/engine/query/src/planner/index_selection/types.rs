@@ -77,6 +77,10 @@ impl ScanValueFilter {
     pub fn matches_value(&self, value: &NormalValue) -> bool {
         // Extract the string from the value (supports both String and JsonLeaf with string)
         let s = match value {
+            // Nil never matches a pattern, as Go's filter: it passes only `_nlike`.
+            NormalValue::Null | NormalValue::NillableString(None) => {
+                return matches!(self, ScanValueFilter::Nlike(_) | ScanValueFilter::Nilike(_))
+            }
             NormalValue::String(s) => s.as_str(),
             NormalValue::NillableString(Some(s)) => s.as_str(),
             NormalValue::Bytes(bytes) | NormalValue::NillableBytes(Some(bytes)) => {
