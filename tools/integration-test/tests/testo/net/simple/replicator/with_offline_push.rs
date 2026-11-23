@@ -1,6 +1,6 @@
 //! A replicator parks a push while its target is offline and delivers it when
 //! the target returns. The counters are defradb.rs's `p2p status`, so the
-//! scenario runs Rust nodes only.
+//! unsupported counter actions are reported by clients that lack them.
 
 use integration_test::actions::{
     AddCollection, AddDoc, AddReplicator, Close, ConnectPeers, NewNode, Request, Start,
@@ -9,7 +9,6 @@ use integration_test::actions::{
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Eventually, Text};
 use integration_test::test_case::TestCase;
-use integration_test::ClientType;
 use serde_json::json;
 
 fn on(node: &str) -> Common {
@@ -159,7 +158,6 @@ fn a_push_to_a_stopped_peer_is_parked_until_it_restarts() {
             }
             .into(),
         ],
-        client_types: Some(&[ClientType::InProcess, ClientType::RustHttp, ClientType::Cli]),
         without_db: true,
         ..Default::default()
     }

@@ -955,10 +955,11 @@ impl BacklogOwner {
             && inner
                 .peer_cooldowns
                 .get(&peer_key)
-                .is_none_or(|cooldown| cooldown.offline_only);
+                .is_none_or(|cooldown| cooldown.offline_only || cooldown.until <= Instant::now());
         let consecutive = inner
             .peer_cooldowns
             .get(&peer_key)
+            .filter(|cooldown| !offline || cooldown.until > Instant::now())
             .map(|cooldown| cooldown.consecutive)
             .unwrap_or(0)
             .saturating_add(1);
@@ -1359,6 +1360,44 @@ mod tests {
             Cid::new_v1(0x55, Code::Sha2_256.digest(cid_seed)),
             Bytes::from_static(b"head-block"),
         )
+    }
+
+    #[test]
+    fn reconnect_clears_offline_park_after_expired_capacity_cooldown() {
+        let peer_state = Arc::new(crate::sync::peer_state::PeerStateTracker::new());
+        let mut owner = BacklogOwner {
+            inner: Inner::default(),
+            waiters: VecDeque::new(),
+            limits: Limits {
+                item_capacity: 4,
+                byte_capacity: usize::MAX,
+                per_peer_active_cap: 1,
+                worker_count: 1,
+                peer_capacity_cooldown_base: DEFAULT_PEER_CAPACITY_COOLDOWN_BASE,
+            },
+            counters: Arc::new(Counters::default()),
+        };
+        assert_eq!(
+            owner.enqueue(job("peer", b"queued")),
+            EnqueueOutcome::Enqueued
+        );
+        owner.handle(Command::ParkPeerAtCapacity {
+            peer_key: "peer".into(),
+            retry_after: None,
+        });
+        owner.inner.peer_cooldowns.get_mut("peer").unwrap().until =
+            Instant::now() - Duration::from_millis(1);
+        owner.handle(Command::ParkPeerOffline {
+            peer_key: "peer".into(),
+            peer_state: Arc::clone(&peer_state),
+        });
+        assert_eq!(owner.inner.peer_cooldowns["peer"].consecutive, 1);
+        peer_state.peer_connected("peer");
+        owner.handle(Command::PeerConnected {
+            peer_key: "peer".into(),
+            peer_state,
+        });
+        assert!(!owner.inner.peer_cooldowns.contains_key("peer"));
     }
 
     #[test]

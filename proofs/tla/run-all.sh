@@ -15,6 +15,7 @@ RUNS=(
   "MC_OfflineReconnect_Red_StalePark.cfg OfflineReconnect.tla RED"
   "MC_OfflineReconnect_Red_StaleConnect.cfg OfflineReconnect.tla RED"
   "MC_OfflineReconnect_Red_Failure.cfg OfflineReconnect.tla RED"
+  "MC_OfflineReconnect_Red_Expired.cfg OfflineReconnect.tla RED"
   "MC_HeaderRetry_Green.cfg HeaderRetry.tla GREEN"
   "MC_HeaderRetry_Red_Drop.cfg HeaderRetry.tla RED"
   "MC_OrderedIndexPage_Green.cfg OrderedIndexPage.tla GREEN"
