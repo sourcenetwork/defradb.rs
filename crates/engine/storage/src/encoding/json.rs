@@ -10,7 +10,7 @@
 use document::{JsonLeafValue, JsonPath, JsonPathPart, JsonScalarValue};
 
 use super::{
-    decode_bool_ascending, decode_bytes_ascending, decode_bytes_descending,
+    decode_bool_ascending, decode_bool_descending, decode_bytes_ascending, decode_bytes_descending,
     decode_float64_ascending, decode_float64_descending, decode_if_null, decode_uvarint_ascending,
     decode_uvarint_descending, encode_bool_ascending, encode_bool_descending,
     encode_bytes_ascending, encode_bytes_descending, encode_float64_ascending,
@@ -406,46 +406,30 @@ fn decode_scalar_ascending(buf: &[u8]) -> Result<(&[u8], JsonScalarValue)> {
 
 /// Decode a JSON scalar value (descending).
 fn decode_scalar_descending(buf: &[u8]) -> Result<(&[u8], JsonScalarValue)> {
-    // For descending, we need to check inverted markers
-    if buf.is_empty() {
-        return Err(Error::Other("empty buffer for JSON scalar".into()));
+    match peek_type(buf) {
+        EncodedType::Null => {
+            let (rest, _) = decode_if_null(buf);
+            Ok((rest, JsonScalarValue::Null))
+        }
+        EncodedType::Bool => {
+            let (rest, v) = decode_bool_descending(buf)?;
+            Ok((rest, JsonScalarValue::Bool(v)))
+        }
+        EncodedType::Float64 => {
+            let (rest, v) = decode_float64_descending(buf)?;
+            Ok((rest, JsonScalarValue::Number(v)))
+        }
+        EncodedType::BytesDesc => {
+            let (rest, v) = decode_bytes_descending(buf)?;
+            let s = String::from_utf8(v)
+                .map_err(|e| Error::Other(format!("invalid utf-8 in JSON string: {}", e)))?;
+            Ok((rest, JsonScalarValue::String(s)))
+        }
+        _ => Err(Error::Other(format!(
+            "cannot decode descending JSON scalar: marker 0x{:02x}",
+            buf.first().unwrap_or(&0)
+        ))),
     }
-
-    let marker = buf[0];
-
-    // Check for inverted null marker
-    if marker == 0xff {
-        // ENCODED_NULL_DESC
-        return Ok((&buf[1..], JsonScalarValue::Null));
-    }
-
-    // Check for inverted bool markers
-    if marker == !super::FALSE_MARKER {
-        return Ok((&buf[1..], JsonScalarValue::Bool(false)));
-    }
-    if marker == !super::TRUE_MARKER {
-        return Ok((&buf[1..], JsonScalarValue::Bool(true)));
-    }
-
-    // Check for float64 descending
-    let inverted = !marker;
-    if (super::FLOAT64_NAN..=super::FLOAT64_NAN_DESC).contains(&inverted) {
-        let (rest, v) = decode_float64_descending(buf)?;
-        return Ok((rest, JsonScalarValue::Number(v)));
-    }
-
-    // Check for bytes descending
-    if marker == super::BYTES_DESC_MARKER {
-        let (rest, v) = decode_bytes_descending(buf)?;
-        let s = String::from_utf8(v)
-            .map_err(|e| Error::Other(format!("invalid utf-8 in JSON string: {}", e)))?;
-        return Ok((rest, JsonScalarValue::String(s)));
-    }
-
-    Err(Error::Other(format!(
-        "cannot decode descending JSON scalar: marker 0x{:02x}",
-        marker
-    )))
 }
 
 #[cfg(test)]
@@ -568,5 +552,28 @@ mod tests {
         assert!(asc_1 < asc_2);
         // Descending: 1 > 2
         assert!(desc_1 > desc_2);
+    }
+
+    #[test]
+    fn descending_scalars_round_trip() {
+        let path = JsonPath::new().append_property("a").append_property("b");
+        for value in [
+            JsonScalarValue::Null,
+            JsonScalarValue::Bool(false),
+            JsonScalarValue::Bool(true),
+            JsonScalarValue::Number(-5.5),
+            JsonScalarValue::Number(0.0),
+            JsonScalarValue::Number(5.0),
+            JsonScalarValue::String("é".into()),
+        ] {
+            for path in [JsonPath::new(), path.clone()] {
+                let leaf = JsonLeafValue::new(path, value.clone());
+                let encoded = encode_json_descending(vec![], &leaf);
+                let (rest, decoded) =
+                    decode_json_descending(&encoded).unwrap_or_else(|e| panic!("{leaf:?}: {e}"));
+                assert!(rest.is_empty());
+                assert_eq!(decoded, leaf);
+            }
+        }
     }
 }
