@@ -114,17 +114,20 @@ fn a_created_document_registers_under_its_selected_parent() {
         let node = node(directory.path()).await;
         let vera = node.vera_acp().unwrap();
         let owner = identity::Did::new(vera.self_did().unwrap()).unwrap();
-        let policy = vera.add_policy(owner.as_str(), &format!(
-            "{POLICY}\n  - name: jobs\n    permissions: [{{name: read}}, {{name: update}}, {{name: delete}}]\n    relations: [{{name: parent, types: [users]}}]\n    create: {{parent: parent, requires: owner}}\n"
-        ), None).await.unwrap();
-        node.add_collection(&format!(
-            "{}\ntype Job @policy(id: \"{policy}\", resource: \"jobs\", parentField: \"parentId\") {{parentId: String!}}",
-            users(&policy),
-        )).await.unwrap();
+        let child_resource = r#"
+  - name: jobs
+    permissions: [{name: read}, {name: update}, {name: delete}]
+    relations: [{name: parent, types: [users]}]
+    create: {parent: parent, requires: owner}
+"#;
+        let definition = format!("{POLICY}{child_resource}");
+        let policy = vera.add_policy(owner.as_str(), &definition, None).await.unwrap();
+        let children = format!(r#"type Job @policy(id: "{policy}", resource: "jobs", parentField: "parentId") {{ parentId: String! }}"#);
+        node.add_collection(&format!("{}\n{children}", users(&policy))).await.unwrap();
         let parent = created(node.execute_request(create_user("parent", &owner)).await);
-        let response = node.execute_request(defra_node::QueryRequest::new(format!(
-            "mutation {{ add_Job(input: {{parentId: \"{parent}\"}}) {{ _docID }} }}"
-        )).with_identity(Some(owner.clone()))).await;
+        let mutation = format!(r#"mutation {{ add_Job(input: {{parentId: "{parent}"}}) {{ _docID }} }}"#);
+        let request = defra_node::QueryRequest::new(mutation).with_identity(Some(owner.clone()));
+        let response = node.execute_request(request).await;
         assert!(!response.has_errors(), "{:?}", response.errors);
         let data = response.data.unwrap();
         let child = data["add_Job"][0]["_docID"].as_str().unwrap();
