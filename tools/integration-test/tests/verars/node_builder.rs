@@ -26,6 +26,7 @@ async fn node_built_with_vera_rs_enforces_verified_document_access() {
             .with_vera_rs(defra_node::VeraRsConfig {
                 rpc_address: hub.node(0).rpc_url(),
                 consensus_key,
+                genesis_id: None,
                 deployment_id: 9001,
                 actor: defra_node::VeraRsActor::Secp256k1Key(
                     hex::decode(&owner.private_key_hex).expect("owner key"),
@@ -66,6 +67,7 @@ async fn node_built_with_a_host_provider_enforces_verified_document_access() {
             vera::VeraRsProvider::new(
                 hub.node(0).rpc_url(),
                 &consensus_key,
+                vera::vera_rs::GenesisSource::Unnamed,
                 &hex::decode(&owner.private_key_hex).expect("owner key"),
                 worker,
                 &vera::AcpTuning::default(),
@@ -93,7 +95,7 @@ async fn exercise(node: &defra_node::Node, rpc_url: &str) {
     let vera = node.vera_acp().expect("vera.rs document ACP").clone();
     let owner_did = identity::Did::new(vera.self_did().expect("actor DID")).unwrap();
     let policy = vera
-        .add_policy(owner_did.as_str(), USER_ACP_POLICY)
+        .add_policy(owner_did.as_str(), USER_ACP_POLICY, None)
         .await
         .expect("policy");
     assert!(helpers::policy_exists(rpc_url, &policy).await);

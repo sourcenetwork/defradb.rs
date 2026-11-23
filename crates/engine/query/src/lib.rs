@@ -1,0 +1,95 @@
+//! DefraDB Query Module
+//!
+//! This crate implements the query system for DefraDB, following the Volcano Iterator Model.
+//! It provides GraphQL query parsing, planning, and execution.
+//!
+//! # Architecture
+//!
+//! ```text
+//! GraphQL String → Parser → Mapper → Planner → Plan Nodes → Executor → Results
+//!                                        ↓
+//!                                Fetcher → Storage
+//! ```
+//!
+//! # Main Components
+//!
+//! - `document`: Document mapping and field positioning
+//! - `mapper`: Query types (Select, Filter, Order, Aggregate)
+//! - `planner`: Plan node trait and execution info
+//! - `plan`: Concrete plan node implementations
+
+pub mod access_hooks;
+pub mod chunk_writes;
+pub(crate) mod collection_provider;
+pub(crate) mod doc;
+pub mod document;
+pub mod documents;
+pub mod error;
+#[cfg(any(test, feature = "testing"))]
+pub mod explain_asserter;
+pub mod json_convert;
+pub mod limits;
+pub mod mapper;
+
+pub mod query_parse;
+pub mod schema_gen;
+pub mod sdl_parse;
+pub mod select_convert;
+
+pub mod executor;
+pub mod rest;
+pub mod runner;
+pub mod subscription;
+#[cfg(test)]
+pub mod test_utils;
+
+pub mod doc_stream;
+pub mod fetcher;
+pub mod mutator;
+pub mod plan;
+pub mod planner;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod pooled;
+pub mod txn;
+pub mod update_parts;
+
+// Re-exports for convenience
+pub use document::{DocumentMapping, RenderKey};
+pub use error::{QueryError, Result, TransactionError};
+pub use executor::{QueryExecutor, QueryRequest, QueryResponse, QueryResponseError};
+pub use fetcher::{CollectionProvider, StaticCollectionProvider};
+pub use limits::{
+    max_fragment_nesting_for_stack, query_thread_stack_bytes, FragmentNestingError, QueryLimits,
+    DEFAULT_MAX_FILTER_DEPTH, DEFAULT_MAX_FRAGMENT_NESTING, DEFAULT_MAX_QUERY_DEPTH,
+    DEFAULT_MAX_QUERY_WIDTH,
+};
+pub use mapper::{Filter, Mutation, MutationType, Select};
+pub use mutator::{
+    BroadcastStatus, CollectionTruncator, CreateResult, DeleteResult, DocMutator, MutationBatch,
+    MutationBatchController, UpdateResult,
+};
+pub use plan::{
+    AddInput, AddNode, DeleteNode, JoinDirection, JoinSide, LimitNode, ScanNode, SelectNode,
+    TypeJoinMany, TypeJoinOne, UpdateInput, UpdateNode, UpsertAction, UpsertInput, UpsertNode,
+};
+pub use planner::{Doc, DocStatus, ExecInfo, PlanNode, Planner};
+pub use query_parse::{
+    parse_filter_string, parse_mutations, parse_mutations_with_limits, parse_query,
+    parse_query_with_limits, parse_request, parse_request_with_limits, ExplainType,
+    ParsedOperation,
+};
+pub use rest::{
+    CollectionDocIdsPage, CollectionDocIdsPagination, RestError, RestOperations,
+    RestOperationsImpl, RestResult,
+};
+pub use runner::{DocFetcher, FetchByIdsResult, NacChecker, QueryRunner, SeQueryTransport};
+pub use sdl_parse::{parse_sdl, parse_sdl_with_known_types};
+pub use select_convert::select_to_go_json;
+pub use txn::{
+    txn_job, NoOpTransactionRegistry, SharedTurn, TransactionContext, TransactionGuard,
+    TransactionHandle, TransactionRegistry, TxnJob, TxnTurn,
+};
+
+pub mod prepared;
+
+pub mod owners;

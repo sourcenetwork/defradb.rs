@@ -1,6 +1,6 @@
 # GovernanceContract — what a merge validator may assume of the database (TLA+ design)
 
-The plugin interface in `crates/db/src/merge/governance/` lets an application
+The plugin interface in `crates/database/db/src/merge/governance/` lets an application
 narrow what the database merges: `MergeValidator::validate` returns Accept,
 Reject or Defer for every composite of a governed collection, reading only
 through `MergeView`. The doc comments on that trait state a purity contract

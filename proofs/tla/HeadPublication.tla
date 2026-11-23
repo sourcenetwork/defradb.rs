@@ -21,7 +21,7 @@
 \*     with the decisions it made.
 \*
 \* WHAT THE CODE DOES, AND WHERE (the correspondence).
-\*   Snapshot(t), the decisions          crates/db/src/block/heads/document.rs `publish`
+\*   Snapshot(t), the decisions          crates/database/db/src/block/heads/document.rs `publish`
 \*     the block's publication record    its priority index entry `h/p/{doc}/{priority}/{cid}`
 \*                                       with the published value; read with `get`, which
 \*                                       regolith validates at commit (an Ordinary key)
@@ -34,7 +34,7 @@
 \*   Commit(t), the refusal              regolith's commit check: a `get` is refused by any
 \*                                       newer write of its key; a read by parts only by an
 \*                                       operand `MergeOperator::touches` says touches a part
-\*                                       (crates/storage/src/backends/regolith/merge/head_set.rs
+\*                                       (crates/engine/storage/src/backends/regolith/merge/head_set.rs
 \*                                       `touches`: an operand touches the names it holds)
 \*   Commit(t), the writes               `Write::{supersede, supersede_ahead, add}` merged as
 \*                                       one operand, and the priority index entry set

@@ -19,7 +19,7 @@ never lays the document out (even one in the same collection, which a
 migration makes when its source is known: it has no fields), and shows the old
 choice did not.
 
-Rust owner: crates/db/src/collection/crud.rs
+Rust owner: crates/database/db/src/collection/crud.rs
 `Collection::save_with_datastore_priorities`. The Rust checks are the testo
 scenarios collection_version::migrations::query::with_p2p::
 collection_migration_query_with_p2_p_replicated_doc_at_much_newer_schema_version_with_schema_history_gap

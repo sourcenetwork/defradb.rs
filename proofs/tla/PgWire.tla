@@ -54,14 +54,14 @@
 \*
 \* What the startup handler must uphold (a contract, with its own RED
 \* configuration): every error it returns is FATAL (StartupErrorsFatal).
-\* DIDAuthHandler::on_startup (crates/pg-compat/src/handler/auth.rs) returns
+\* DIDAuthHandler::on_startup (crates/database/pg-compat/src/handler/auth.rs) returns
 \* InvalidPassword, UnsupportedProtocolVersion, FailedToCoercePasswordMessage
 \* and I/O errors, which pgwire's ErrorInfo maps to FATAL. A handler that
 \* returned a plain ERROR would leave the connection in ReadyForQuery with
 \* nobody logged in, since report() treats the startup message like any
 \* simple message.
 \*
-\* Correspondence with the Rust code (crates/pg-compat/src/wire/ unless
+\* Correspondence with the Rust code (crates/database/pg-compat/src/wire/ unless
 \* named; line numbers are process.rs unless named):
 \*
 \*   | Model              | Rust                                                     |
@@ -147,7 +147,7 @@
 \*   * Terminate is dropped like any message with no handler; the client
 \*     closes after it.
 \*   * Time zero is when serve starts, in the task the listener spawned for
-\*     the connection (crates/pg-compat/src/lib.rs, the accept loop); the
+\*     the connection (crates/database/pg-compat/src/lib.rs, the accept loop); the
 \*     moment between the accept and that task's first poll is not counted.
 
 EXTENDS Naturals, Sequences

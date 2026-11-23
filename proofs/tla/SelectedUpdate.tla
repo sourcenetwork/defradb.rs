@@ -21,9 +21,9 @@
 \*     changed (INV_LosesOnlyToItsFields).
 \*
 \* Code it models:
-\*   crates/db/src/write/autocommit/selected.rs dependencies, unchanged
-\*   crates/db/src/write/autocommit/update.rs   run_update_attempt (the plain path)
-\*   crates/db/src/write/autocommit/one_op.rs   UpdateWork::run (the batch of one, for `@chunk`)
+\*   crates/database/db/src/write/autocommit/selected.rs dependencies, unchanged
+\*   crates/database/db/src/write/autocommit/update.rs   run_update_attempt (the plain path)
+\*   crates/database/db/src/write/autocommit/one_op.rs   UpdateWork::run (the batch of one, for `@chunk`)
 \* Commit validation of what the attempt read is regolith's; the model takes it as given.
 EXTENDS Naturals
 

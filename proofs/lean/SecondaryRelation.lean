@@ -18,9 +18,9 @@ This file proves the two agree and do what Go does:
 * `Document::set` refuses everything the input check refuses, and, since
   every relation-kind field belongs to a relation, nothing more.
 
-Rust owner: crates/query/src/runner/mutation_inputs.rs
+Rust owner: crates/engine/query/src/runner/mutation_inputs.rs
 `normalize_mutation_input_fields` and `input_field_name`;
-crates/document/src/document.rs `Document::set`. The tests are the
+crates/building-blocks/document/src/document.rs `Document::set`. The tests are the
 mutation field_kinds secondary-side scenarios (ed5f5e659).
 -/
 

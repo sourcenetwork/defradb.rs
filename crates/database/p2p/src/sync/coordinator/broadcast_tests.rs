@@ -1,0 +1,655 @@
+use bytes::Bytes;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+
+use async_trait::async_trait;
+use multihash_codetable::{Code, MultihashDigest};
+
+use crate::error::{Result as P2PResult, RATE_LIMITED_MESSAGE};
+use crate::message::{
+    BranchableSyncReply, BranchableSyncRequest, DocSyncReply, DocSyncRequest, PushLogBroadcast,
+    PushLogReply, PushLogRequest, PushSEArtifactsRequest,
+};
+use crate::topics::DefraTopic;
+use crate::transport::{MessageId, P2PTransport, PeerAddr, PeerId};
+use crate::{QueryId, ReplicatorInfo};
+
+use super::super::push_worker::send_head_hint_via_transport;
+use super::*;
+use kovan::Atom;
+use kovan_map::HopscotchMap;
+use kovan_queue::seg_queue::SegQueue;
+
+#[derive(Clone)]
+pub(in crate::sync::coordinator) struct SentPush {
+    pub(in crate::sync::coordinator) peer_id: String,
+    pub(in crate::sync::coordinator) cid: Vec<u8>,
+    pub(in crate::sync::coordinator) block_bytes: usize,
+}
+
+type SentLog = Vec<SentPush>;
+
+#[derive(Clone)]
+pub(in crate::sync::coordinator) struct TestTransport {
+    peer_id: PeerId,
+    pubkey: Vec<u8>,
+    replies: Arc<SegQueue<PushLogReply>>,
+    sent: Arc<Atom<SentLog>>,
+    stalled_peers: Arc<HopscotchMap<String, (), rapidhash::fast::RandomState>>,
+    send_delay: Duration,
+    signs: Arc<AtomicUsize>,
+    sign_failures_remaining: Arc<AtomicUsize>,
+}
+
+impl TestTransport {
+    pub(in crate::sync::coordinator) fn new(replies: Vec<PushLogReply>) -> Self {
+        let reply_queue = SegQueue::new();
+        for reply in replies {
+            reply_queue.push(reply);
+        }
+        Self {
+            peer_id: PeerId::new("local-peer".to_string()),
+            pubkey: vec![1, 2, 3],
+            replies: Arc::new(reply_queue),
+            sent: Arc::new(Atom::new(Vec::new())),
+            stalled_peers: Arc::new(HopscotchMap::with_hasher(
+                rapidhash::fast::RandomState::default(),
+            )),
+            send_delay: Duration::ZERO,
+            signs: Arc::new(AtomicUsize::new(0)),
+            sign_failures_remaining: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    pub(in crate::sync::coordinator) fn with_send_delay(mut self, send_delay: Duration) -> Self {
+        self.send_delay = send_delay;
+        self
+    }
+
+    /// Sends to this peer never complete: a deterministic nonresponsive
+    /// peer for worker fault-injection tests.
+    pub(in crate::sync::coordinator) fn with_stalled_peer(self, peer: &str) -> Self {
+        self.stalled_peers.insert(peer.to_string(), ());
+        self
+    }
+
+    /// Later sends to this peer complete; sends already stalled stay stalled.
+    pub(in crate::sync::coordinator) fn unstall_peer(&self, peer: &str) {
+        self.stalled_peers.remove(peer);
+    }
+
+    pub(in crate::sync::coordinator) fn with_sign_failures(self, count: usize) -> Self {
+        self.sign_failures_remaining.store(count, Ordering::Relaxed);
+        self
+    }
+
+    fn sent_cids(&self) -> Vec<Vec<u8>> {
+        self.sent
+            .peek(|sent| sent.iter().map(|push| push.cid.clone()).collect())
+    }
+
+    pub(in crate::sync::coordinator) fn sent(&self) -> SentLog {
+        self.sent.load_clone()
+    }
+
+    pub(in crate::sync::coordinator) fn sign_count(&self) -> usize {
+        self.signs.load(Ordering::Relaxed)
+    }
+}
+
+#[async_trait]
+impl P2PTransport for TestTransport {
+    type ResponseToken = ();
+
+    fn local_peer_id(&self) -> &PeerId {
+        &self.peer_id
+    }
+
+    fn local_public_key_proto(&self) -> &[u8] {
+        &self.pubkey
+    }
+
+    #[allow(deprecated, reason = "try_update requires Rust 1.95; MSRV is 1.91")]
+    fn sign(&self, _data: &[u8]) -> P2PResult<Vec<u8>> {
+        self.signs.fetch_add(1, Ordering::Relaxed);
+        if self
+            .sign_failures_remaining
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
+                remaining.checked_sub(1)
+            })
+            .is_ok()
+        {
+            return Err(crate::Error::SigningFailed("injected failure".to_string()));
+        }
+        Ok(vec![0])
+    }
+
+    async fn dial(&self, _peer_id: &PeerId, _addrs: Vec<PeerAddr>) -> P2PResult<()> {
+        Ok(())
+    }
+
+    async fn disconnect(&self, _peer_id: &PeerId) -> P2PResult<()> {
+        Ok(())
+    }
+
+    async fn listen(&self, _addr: PeerAddr) -> P2PResult<()> {
+        Ok(())
+    }
+
+    async fn connected_peers(&self) -> P2PResult<Vec<PeerId>> {
+        Ok(Vec::new())
+    }
+
+    async fn listen_addresses(&self) -> P2PResult<Vec<PeerAddr>> {
+        Ok(Vec::new())
+    }
+
+    async fn poll_until_connected(&self, _peer_id: &PeerId, _timeout: Duration) -> P2PResult<()> {
+        Ok(())
+    }
+
+    async fn peer_addresses(&self) -> P2PResult<Vec<String>> {
+        Ok(Vec::new())
+    }
+
+    async fn subscribe(&self, _topic: DefraTopic) -> P2PResult<bool> {
+        Ok(true)
+    }
+
+    async fn unsubscribe(&self, _topic: DefraTopic) -> P2PResult<bool> {
+        Ok(true)
+    }
+
+    async fn publish(&self, _topic: DefraTopic, _msg: PushLogBroadcast) -> P2PResult<MessageId> {
+        Ok(MessageId::new("noop".to_string()))
+    }
+
+    async fn topic_peers(&self, _topic: DefraTopic) -> P2PResult<Vec<PeerId>> {
+        Ok(Vec::new())
+    }
+
+    async fn send_pushlog_response(
+        &self,
+        _token: Self::ResponseToken,
+        _reply: PushLogReply,
+    ) -> P2PResult<()> {
+        Ok(())
+    }
+
+    async fn send_two_stream_request(
+        &self,
+        peer_id: &PeerId,
+        req: PushLogRequest,
+    ) -> P2PResult<PushLogReply> {
+        if self.stalled_peers.contains_key(peer_id.as_str()) {
+            std::future::pending::<()>().await;
+        }
+        let push = SentPush {
+            peer_id: peer_id.to_string(),
+            cid: req.cid.to_vec(),
+            block_bytes: req.block.len(),
+        };
+        self.sent.rcu(|sent| {
+            let mut next = sent.clone();
+            next.push(push.clone());
+            next
+        });
+        if !self.send_delay.is_zero() {
+            crate::rt::time::sleep(self.send_delay).await;
+        }
+        Ok(self
+            .replies
+            .pop()
+            .unwrap_or_else(|| PushLogReply::success("ok")))
+    }
+
+    async fn send_two_stream_response(
+        &self,
+        _peer_id: &PeerId,
+        _reply: PushLogReply,
+    ) -> P2PResult<()> {
+        Ok(())
+    }
+
+    async fn send_doc_sync_request(
+        &self,
+        _peer_id: &PeerId,
+        _req: DocSyncRequest,
+    ) -> P2PResult<()> {
+        Ok(())
+    }
+
+    async fn send_doc_sync_response(
+        &self,
+        _peer_id: &PeerId,
+        _reply: DocSyncReply,
+    ) -> P2PResult<()> {
+        Ok(())
+    }
+
+    async fn send_branchable_sync_request(
+        &self,
+        _peer_id: &PeerId,
+        _req: BranchableSyncRequest,
+    ) -> P2PResult<()> {
+        Ok(())
+    }
+
+    async fn send_branchable_sync_response(
+        &self,
+        _peer_id: &PeerId,
+        _reply: BranchableSyncReply,
+    ) -> P2PResult<()> {
+        Ok(())
+    }
+
+    async fn send_car_request(&self, _peer_id: &PeerId, _root_cid: Cid) -> P2PResult<()> {
+        Ok(())
+    }
+
+    async fn send_car_response(&self, _peer_id: &PeerId, _car_data: Vec<u8>) -> P2PResult<()> {
+        Ok(())
+    }
+
+    async fn send_car_response_token(
+        &self,
+        _token: Self::ResponseToken,
+        _car_data: Vec<u8>,
+    ) -> P2PResult<()> {
+        Ok(())
+    }
+
+    async fn send_doc_sync_response_token(
+        &self,
+        _token: Self::ResponseToken,
+        _reply: DocSyncReply,
+    ) -> P2PResult<()> {
+        Ok(())
+    }
+
+    async fn send_branchable_sync_response_token(
+        &self,
+        _token: Self::ResponseToken,
+        _reply: BranchableSyncReply,
+    ) -> P2PResult<()> {
+        Ok(())
+    }
+
+    async fn send_se_artifacts(
+        &self,
+        _peer_id: &PeerId,
+        _req: PushSEArtifactsRequest,
+    ) -> P2PResult<()> {
+        Ok(())
+    }
+
+    async fn sync_blocks(
+        &self,
+        _root: Cid,
+        _providers: Vec<PeerId>,
+        _missing: Vec<Cid>,
+    ) -> P2PResult<QueryId> {
+        Ok(QueryId(1))
+    }
+
+    async fn cancel_sync(&self, _query_id: QueryId) -> P2PResult<bool> {
+        Ok(true)
+    }
+
+    async fn create_replicator(
+        &self,
+        _peer_id: &PeerId,
+        _collections: Vec<String>,
+    ) -> P2PResult<()> {
+        Ok(())
+    }
+
+    async fn delete_replicator(&self, _peer_id: &PeerId) -> P2PResult<()> {
+        Ok(())
+    }
+
+    async fn list_replicators(&self) -> P2PResult<Vec<ReplicatorInfo>> {
+        Ok(Vec::new())
+    }
+
+    async fn get_replicator(&self, _peer_id: &PeerId) -> P2PResult<Option<ReplicatorInfo>> {
+        Ok(None)
+    }
+
+    async fn remove_replicator_collections(
+        &self,
+        _peer_id: &PeerId,
+        _collections: Vec<String>,
+    ) -> P2PResult<bool> {
+        Ok(false)
+    }
+
+    async fn shutdown(&self) -> P2PResult<()> {
+        Ok(())
+    }
+}
+
+#[nuclei::test]
+async fn rate_limited_head_hint_is_nacked_once_for_durable_redrive() {
+    let transport = TestTransport::new(vec![
+        PushLogReply::error("first", RATE_LIMITED_MESSAGE),
+        PushLogReply::success("first"),
+        PushLogReply::success("second"),
+    ]);
+    let peer_id = PeerId::new("remote-peer".to_string());
+    let cid1 = Cid::new_v1(0x55, Code::Sha2_256.digest(b"cid-1"));
+    let request = PushLogRequest::new(
+        "doc-1".to_string(),
+        Bytes::from(cid1.to_bytes()),
+        "collection".to_string(),
+        "creator".to_string(),
+        Bytes::from_static(b"block-1"),
+    );
+
+    let outcome = send_head_hint_via_transport(
+        &transport,
+        &peer_id,
+        (cid1, request),
+        Duration::from_secs(1),
+    )
+    .await;
+
+    assert!(outcome.failed);
+    assert_eq!(transport.sent_cids(), vec![cid1.to_bytes()]);
+}
+
+#[nuclei::test]
+async fn head_hint_stops_immediately_on_capacity_nack_and_parks_the_peer() {
+    // defradb#1112: a saturated receiver is a PEER-WIDE, structural condition —
+    // it cannot accept any new root until it drains. Answering it with the
+    // rate-limit pacing ladder meant one logical push became 11 resends in
+    // ~3.3s, each costing the receiver a block write plus a full DAG
+    // traversal, all guaranteed to fail. The sender must stop at the first
+    // capacity nack, report it, and let the persisted retry sweep own the
+    // replay.
+    let capacity_nack = crate::error::Error::PendingDagCapacity { max: 1 }
+        .backpressure_reply_message()
+        .expect("capacity error maps to the capacity sentinel");
+    let transport = TestTransport::new(vec![
+        PushLogReply::error("first", capacity_nack),
+        PushLogReply::success("first"),
+        PushLogReply::success("second"),
+    ]);
+    let peer_id = PeerId::new("remote-peer".to_string());
+    let cid1 = Cid::new_v1(0x55, Code::Sha2_256.digest(b"cid-1"));
+    let request = PushLogRequest::new(
+        "doc-1".to_string(),
+        Bytes::from(cid1.to_bytes()),
+        "collection".to_string(),
+        "creator".to_string(),
+        Bytes::from_static(b"block-1"),
+    );
+
+    let outcome = send_head_hint_via_transport(
+        &transport,
+        &peer_id,
+        (cid1, request),
+        Duration::from_secs(1),
+    )
+    .await;
+
+    assert!(outcome.failed, "a capacity nack is a failed push");
+    assert!(
+        outcome.at_capacity,
+        "the caller must learn the receiver is saturated so it can park the peer"
+    );
+    assert_eq!(
+        transport.sent_cids(),
+        vec![cid1.to_bytes()],
+        "the sender must NOT resend the rejected block, and must not push the \
+         rejected head"
+    );
+}
+
+#[nuclei::test]
+async fn head_hint_timeout_is_terminal_for_the_live_attempt() {
+    let transport = TestTransport::new(vec![PushLogReply::success("first")])
+        .with_send_delay(Duration::from_millis(25));
+    let peer_id = PeerId::new("remote-peer".to_string());
+    let cid1 = Cid::new_v1(0x55, Code::Sha2_256.digest(b"cid-1"));
+    let request = PushLogRequest::new(
+        "doc-1".to_string(),
+        Bytes::from(cid1.to_bytes()),
+        "collection".to_string(),
+        "creator".to_string(),
+        Bytes::from_static(b"block-1"),
+    );
+
+    let any_failed = send_head_hint_via_transport(
+        &transport,
+        &peer_id,
+        (cid1, request),
+        Duration::from_millis(1),
+    )
+    .await;
+
+    assert!(any_failed.failed);
+    assert_eq!(transport.sent_cids(), vec![cid1.to_bytes()]);
+}
+
+#[nuclei::test]
+async fn fanout_registration_failure_is_peer_local() {
+    use super::super::access_tests::NoopTransport;
+    use crate::bitswap::{AccessMode, ReplicatorRegistry};
+    use crate::replicator::EqOnlyFilterMatcher;
+    use crate::sync::collection_store::MemoryCollectionStorage;
+    use crate::sync::head_provider::DocumentHeadProvider;
+    use defra_core::{Block, CompositeDeltaPayload, CrdtDelta};
+
+    /// The pushed head is the document's whole frontier.
+    struct PushedHead(Cid);
+
+    #[async_trait]
+    impl DocumentHeadProvider for PushedHead {
+        async fn get_document_heads(&self, _doc_id: &str) -> P2PResult<Vec<Cid>> {
+            Ok(vec![self.0])
+        }
+
+        async fn get_collection_heads(&self, _collection_id: &str) -> P2PResult<Vec<Cid>> {
+            Ok(Vec::new())
+        }
+    }
+
+    let block = Block::new(
+        CrdtDelta::Composite(CompositeDeltaPayload {
+            collection_version_id: "collection1".to_string(),
+            priority: 1,
+            status: 1,
+        }),
+        vec![],
+        vec![],
+    );
+    let data = block.to_dag_cbor().unwrap();
+    let cid = block.generate_cid().unwrap();
+
+    let transport = NoopTransport::new();
+    let store = Arc::new(storage::RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(blockstore::DefraBlockstore::new(store, true));
+    let (mut coordinator, _events) = SyncCoordinator::with_head_provider(
+        transport.clone(),
+        blockstore,
+        crate::network::test_network(),
+        crate::sync::SyncConfig::default(),
+        AccessMode::Open,
+        Arc::new(ReplicatorRegistry::new()),
+        Arc::new(MemoryCollectionStorage::default()),
+        Arc::new(PushedHead(cid)),
+        Arc::new(EqOnlyFilterMatcher),
+    )
+    .await
+    .unwrap();
+    let (failure_tx, mut failure_rx) = crate::rt::mpsc::channel::<crate::sync::PushFailure>(16);
+    coordinator.set_failure_channel(failure_tx);
+    let registrations = Arc::new(Atom::new(Vec::<(String, bool)>::new()));
+    let acked = Arc::new(Atom::new(Vec::<String>::new()));
+    let recorder = {
+        let registrations = Arc::clone(&registrations);
+        let acked = Arc::clone(&acked);
+        crate::rt::spawn(async move {
+            while let Some(mut event) = failure_rx.recv().await {
+                let Some(reply) = event.durable_tx.take() else {
+                    continue;
+                };
+                let registration =
+                    !event.admission_only && !event.acknowledged && !event.create_retry;
+                let generation = if registration {
+                    let accepted = registrations.peek(|seen| seen.len()) != 1;
+                    let entry = (event.peer_id.clone(), accepted);
+                    registrations.rcu(|seen| {
+                        let mut next = seen.clone();
+                        next.push(entry.clone());
+                        next
+                    });
+                    accepted.then_some(1)
+                } else {
+                    if event.acknowledged {
+                        acked.rcu(|peers| {
+                            let mut next = peers.clone();
+                            next.push(event.peer_id.clone());
+                            next
+                        });
+                    }
+                    event.marker_generation
+                };
+                let _ = reply.send(generation);
+            }
+        })
+    };
+    for peer in ["fanout-a", "fanout-b", "fanout-c"] {
+        coordinator.peer_state().peer_connected(peer);
+        transport
+            .create_replicator(
+                &PeerId::new(peer.to_string()),
+                vec!["collection1".to_string()],
+            )
+            .await
+            .unwrap();
+    }
+
+    let error = coordinator
+        .push_to_replicators(&cid, &data, "doc1", "collection1")
+        .await
+        .expect_err("the replicator whose registration failed has no durable marker");
+    assert!(matches!(error, crate::error::Error::DurableHeadMarker(_)));
+
+    let registrations = registrations.load_clone();
+    assert_eq!(
+        registrations.len(),
+        3,
+        "a failed registration must not skip the remaining replicators: {registrations:?}"
+    );
+    let mut registered: Vec<String> = registrations
+        .iter()
+        .filter(|(_, accepted)| *accepted)
+        .map(|(peer, _)| peer.clone())
+        .collect();
+    registered.sort();
+    let snapshot = coordinator.sync_status().await.push_backlog;
+    assert_eq!(snapshot.head_hints_failed_local, 1);
+    assert_eq!(
+        snapshot.enqueued_total, 2,
+        "every registered replicator keeps its job"
+    );
+    let delivered = crate::rt::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let mut peers = acked.load_clone();
+            if peers.len() >= registered.len() {
+                peers.sort();
+                break peers;
+            }
+            crate::rt::yield_now().await;
+        }
+    })
+    .await
+    .expect("registered replicators were never pushed");
+    assert_eq!(delivered, registered);
+
+    coordinator.shutdown().await;
+    recorder.abort();
+}
+
+/// Go pushes an update only to the replicators of its collection
+/// (internal/db/p2p/p2p.go pushLogToReplicators), so a replicator added with
+/// no collections receives nothing. Registries now keep such a replicator
+/// listed (#2702); this pins that keeping it never turns it into a
+/// replicator of every collection.
+#[test]
+fn a_replicator_with_no_collections_gets_no_push_job() {
+    use super::super::access_tests::NoopTransport;
+    use crate::bitswap::{AccessMode, ReplicatorRegistry};
+    use crate::replicator::EqOnlyFilterMatcher;
+    use crate::sync::collection_store::MemoryCollectionStorage;
+    use crate::sync::head_provider::DocumentHeadProvider;
+
+    struct NoHeads;
+
+    #[async_trait]
+    impl DocumentHeadProvider for NoHeads {
+        async fn get_document_heads(&self, _doc_id: &str) -> P2PResult<Vec<Cid>> {
+            Ok(Vec::new())
+        }
+
+        async fn get_collection_heads(&self, _collection_id: &str) -> P2PResult<Vec<Cid>> {
+            Ok(Vec::new())
+        }
+    }
+
+    workers::block_on(async {
+        let transport = NoopTransport::new();
+        let store = Arc::new(storage::RegolithStore::in_memory().unwrap());
+        let blockstore = Arc::new(blockstore::DefraBlockstore::new(store, true));
+        let (coordinator, _events) = SyncCoordinator::with_head_provider(
+            transport.clone(),
+            blockstore,
+            crate::network::test_network(),
+            crate::sync::SyncConfig::default(),
+            AccessMode::Open,
+            Arc::new(ReplicatorRegistry::new()),
+            Arc::new(MemoryCollectionStorage::default()),
+            Arc::new(NoHeads),
+            Arc::new(EqOnlyFilterMatcher),
+        )
+        .await
+        .unwrap();
+        transport
+            .create_replicator(&PeerId::new("no-collections".to_string()), Vec::new())
+            .await
+            .unwrap();
+        transport
+            .create_replicator(
+                &PeerId::new("member".to_string()),
+                vec!["collection1".to_string()],
+            )
+            .await
+            .unwrap();
+
+        let cid = Cid::new_v1(0x71, Code::Sha2_256.digest(b"head"));
+        let jobs = coordinator
+            .push_jobs(&PendingPush {
+                cid,
+                block: Bytes::from_static(b"block"),
+                doc_id: "doc1".to_string(),
+                collection_id: "collection1".to_string(),
+                decided_in: "collection1".to_string(),
+                creator: "creator".to_string(),
+                document: None,
+            })
+            .await
+            .unwrap();
+        let peers: Vec<String> = jobs.iter().map(|job| job.peer_id.to_string()).collect();
+        assert_eq!(
+            peers,
+            vec!["member".to_string()],
+            "a replicator with no collections must not be pushed to"
+        );
+
+        coordinator.shutdown().await;
+    })
+    .unwrap();
+}

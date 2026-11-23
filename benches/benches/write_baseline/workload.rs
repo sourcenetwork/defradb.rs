@@ -13,6 +13,8 @@ use storage::corekv::Store;
 use storage::{RegolithStore, RegolithStoreOptions};
 use telemetry::ConflictMetricsSnapshot;
 
+#[path = "projector.rs"]
+mod projector;
 #[cfg(test)]
 #[path = "verification_tests.rs"]
 mod verification_tests;
@@ -55,16 +57,28 @@ pub enum Scenario {
     Creates,
     SharedUpdates,
     CountersIndexes,
+    /// Increments of a counter with no index, the cost a counter index adds to.
+    Counters,
+    /// Increments of a counter an index covers.
+    CounterIndex,
 }
 
 impl Scenario {
-    pub const ALL: [Self; 3] = [Self::Creates, Self::SharedUpdates, Self::CountersIndexes];
+    pub const ALL: [Self; 5] = [
+        Self::Creates,
+        Self::SharedUpdates,
+        Self::CountersIndexes,
+        Self::Counters,
+        Self::CounterIndex,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Creates => "creates",
             Self::SharedUpdates => "shared_updates",
             Self::CountersIndexes => "counters_indexes",
+            Self::Counters => "counters",
+            Self::CounterIndex => "counter_index",
         }
     }
 
@@ -74,7 +88,7 @@ impl Scenario {
             Self::Creates => format!(
                 r#"mutation {{ add_Sample(input: {{label: "{token}", left: "same", right: "same", count: 0}}) {{ _docID }} }}"#
             ),
-            Self::SharedUpdates | Self::CountersIndexes => {
+            Self::SharedUpdates | Self::CountersIndexes | Self::Counters | Self::CounterIndex => {
                 let id = &ids[operation % ids.len()];
                 let input = match self {
                     Self::SharedUpdates => {
@@ -85,6 +99,7 @@ impl Scenario {
                         };
                         format!(r#"{field}: "{token}""#)
                     }
+                    Self::Counters | Self::CounterIndex => "count: 1".to_string(),
                     _ => format!(r#"count: 1, label: "{token}""#),
                 };
                 format!(
@@ -124,6 +139,9 @@ impl Fixture {
                 .unwrap(),
         );
         let db = Arc::new(DB::open_from_arc(store.clone()).await.unwrap());
+        if projector::requested() {
+            projector::install(&db);
+        }
         match chunk_max_chars() {
             Some(max_chars) => {
                 let sdl = format!(
@@ -134,7 +152,7 @@ impl Fixture {
                         count: Int @crdt(type: "pncounter")
                     }}"#
                 );
-                db.create_collections_atomic(query::parse_sdl(&sdl).unwrap())
+                db.add_collection(&defra_core::RequestContext::ambient(), &sdl)
                     .await
                     .unwrap();
             }
@@ -146,6 +164,19 @@ impl Fixture {
                 Some("by_label"),
                 vec![IndexedFieldDescription {
                     name: "label".into(),
+                    descending: false,
+                }],
+                IndexKind::Ordered(OrderedIndexDescription { unique: false }),
+            )
+            .await
+            .unwrap();
+        }
+        if matches!(scenario, Scenario::CounterIndex) {
+            db.create_index(
+                COLLECTION,
+                Some("by_count"),
+                vec![IndexedFieldDescription {
+                    name: "count".into(),
                     descending: false,
                 }],
                 IndexKind::Ordered(OrderedIndexDescription { unique: false }),

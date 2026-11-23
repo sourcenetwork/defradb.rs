@@ -20,7 +20,7 @@ stands for. `split_run` promises the cut span is the very same tree, so every
 Fugue law in `TextCrdt.Fugue` holds for it unchanged; `run_trav` promises a
 span reads as its characters in order, between its left and right children.
 
-Rust anchors, in `crates/crdt/src/fugue.rs`: `Node::len` is a run's length,
+Rust anchors, in `crates/building-blocks/crdt/src/fugue.rs`: `Node::len` is a run's length,
 `Tree::with_placeholder` builds the one span, and `Tree::split` cuts it
 (`split_run`); `Tree::end_at` and `Tree::start_at` cut where an edit lands;
 `Order` counts a span's characters by its length (`run_trav`).

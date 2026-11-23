@@ -15,13 +15,13 @@ the check lets a caller through exactly when it holds every permission on
 the list; and a caller holding neither is refused `get-collection`, as Go
 refuses it.
 
-Rust owner: crates/acp/src/nac/permission.rs `NodePermission::go_order`
-(the list) and crates/db/src/access/nac.rs `DB::check_node_access_as`,
+Rust owner: crates/engine/acp/src/nac/permission.rs `NodePermission::go_order`
+(the list) and crates/database/db/src/access/nac.rs `DB::check_node_access_as`,
 `DB::check_node_access_in_txn` (the check, first missing first), and, for a
-write in an explicit transaction, crates/query/src/runner/turn.rs
+write in an explicit transaction, crates/engine/query/src/runner/turn.rs
 `QueryRunner::lent` with `lent_node_permission`. A permission checked alone
-includes the P2P adapters' gates, crates/p2p-adapter/src/libp2p.rs
-`P2PAdapter::check_nac` and crates/p2p-adapter/src/iroh.rs
+includes the P2P adapters' gates, crates/surfaces/p2p-adapter/src/libp2p.rs
+`P2PAdapter::check_nac` and crates/surfaces/p2p-adapter/src/iroh.rs
 `IrohP2PAdapter::check_nac`, which run that check for every peer operation,
 the `get-p2p-peer-info` reads among them. The Rust checks are the testo
 scenarios `acp::nac::{add,update,delete}_document`,
@@ -144,9 +144,9 @@ that names no identity never bypasses. A caller can also deny its own request
 the bypass (an embedder signing as a node administrator that must still go
 through document access control); such a request never bypasses.
 
-Rust owner: crates/db/src/read/lensed/fetcher/mod.rs
-`LensedDocFetcher::dac_bypass`, called from crates/query/src/runner/turn.rs
-`QueryRunner::lent`; the denial is crates/defra-core/src/request_context.rs
+Rust owner: crates/database/db/src/read/lensed/fetcher/mod.rs
+`LensedDocFetcher::dac_bypass`, called from crates/engine/query/src/runner/turn.rs
+`QueryRunner::lent`; the denial is crates/foundation/defra-core/src/request_context.rs
 `RequestContext::with_dac_bypass_denied`.
 -/
 

@@ -16,9 +16,9 @@ below `workers`, decoding gives back exactly the worker and the sequence that
 went in, so two different (sequence, worker) pairs never share an ID and a
 request always lands on the worker that owns its transaction.
 
-Rust owner: crates/db/src/txn/owner/id.rs, `TxnId::new` (encode) and
+Rust owner: crates/database/db/src/txn/owner/id.rs, `TxnId::new` (encode) and
 `TxnId::owner` (decode). The tests that run the same cases against the real
-code are in crates/db/src/txn/owner/id.rs and crates/db/src/txn/owner/tests.rs.
+code are in crates/database/db/src/txn/owner/id.rs and crates/database/db/src/txn/owner/tests.rs.
 Rust checks overflow (`checked_mul`, `checked_add`) and refuses an ID that would
 pass `u64::MAX`; this file works on unbounded naturals, so it proves the
 arithmetic, and the overflow refusal is the code's own guard.

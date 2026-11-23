@@ -18,7 +18,7 @@
 \* What must always happen: the healthy message is handled, and no stream
 \* waits for budget forever.
 \*
-\* Code it models (crates/p2p/src):
+\* Code it models (crates/database/p2p/src):
 \*   iroh/endpoint_streams.rs  admit_stream               (tag, length, admit, body read until idle and a total deadline)
 \*   iroh/inbound_budget.rs    InboundDeadlines::body     (idle deadline plus length over the minimum rate, capped)
 \*   iroh/inbound_budget.rs    InboundBudget::admit       (class budget + peer share)

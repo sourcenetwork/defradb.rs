@@ -1,5 +1,5 @@
 ---- MODULE Jwt ----
-\* JWT issuer-binding / algorithm-confusion resistance for crates/identity from_token.
+\* JWT issuer-binding / algorithm-confusion resistance for crates/building-blocks/identity from_token.
 \*
 \* Models the security state machine of identity::token::from_token: a presented
 \* JWT is turned into an authenticated actor DID ONLY IF
@@ -15,11 +15,11 @@
 \* a token (header alg, key_type claim, sub, iss) but cannot forge a signature.
 \*
 \* Anchors (Rust, this tree):
-\*   crates/identity/src/token/mod.rs:263-333  from_token (alg-match + iss-bind)
-\*   crates/identity/src/token/mod.rs:284-294  expected_alg from key_type; header!=expected => reject
-\*   crates/identity/src/token/mod.rs:296-323  reconstruct pubkey from sub; iss == did(pubkey)
-\*   crates/identity/src/token/decoding.rs:61-109  verify_signature under curve chosen by header alg
-\*   crates/identity/src/key_type.rs:19-26  three curves: Ed25519 / Secp256k1 / Secp256r1
+\*   crates/building-blocks/identity/src/token/mod.rs:263-333  from_token (alg-match + iss-bind)
+\*   crates/building-blocks/identity/src/token/mod.rs:284-294  expected_alg from key_type; header!=expected => reject
+\*   crates/building-blocks/identity/src/token/mod.rs:296-323  reconstruct pubkey from sub; iss == did(pubkey)
+\*   crates/building-blocks/identity/src/token/decoding.rs:61-109  verify_signature under curve chosen by header alg
+\*   crates/building-blocks/identity/src/key_type.rs:19-26  three curves: Ed25519 / Secp256k1 / Secp256r1
 \* Anchors (Go, origin/develop):
 \*   acp/identity/factory.go:57-90  FromToken: jwt.Parse(WithVerify(false)); NO sig verify,
 \*                                  NO alg<->key check, NO iss<->did check at construction

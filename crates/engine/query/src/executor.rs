@@ -1,0 +1,1240 @@
+//! Query execution trait for HTTP/API layer integration.
+//!
+//! This module defines the interface between the HTTP layer and the query execution engine.
+//! The HTTP crate depends on this trait, allowing parallel development of HTTP and query execution.
+
+use async_trait::async_trait;
+use defra_core::thread_bounds::{MaybeBoxFuture, MaybeSend};
+use defra_core::RequestContext;
+use identity::Did;
+use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
+use storage::corekv::MaybeSendSync;
+
+use crate::error::{Result, TransactionError};
+use crate::txn::TransactionHandle;
+
+/// Where an asynchronous request's response goes: called once, on the
+/// thread that finished the request (see [`QueryExecutor::execute_then`]).
+/// `Send` on native targets, not required to be in the browser.
+pub trait Respond: FnOnce(QueryResponse) + MaybeSend + 'static {}
+
+impl<F> Respond for F where F: FnOnce(QueryResponse) + MaybeSend + 'static {}
+
+/// A boxed [`Respond`].
+pub type ResponseCallback = Box<dyn Respond>;
+
+/// Stable GraphQL extension code for retryable transaction conflicts.
+pub const TXN_CONFLICT_ERROR_CODE: &str = "TXN_CONFLICT";
+pub const TXN_RETRY_EXHAUSTED_ERROR_CODE: &str = "TXN_RETRY_EXHAUSTED";
+
+/// An explicit authorization refusal, distinct from an empty filtered read.
+pub const PERMISSION_DENIED_ERROR_CODE: &str = "PERMISSION_DENIED";
+
+/// A verified write was refused before anything was written: the node cannot
+/// act for the write's signer on the document ACP provider.
+pub const WRITE_AUTHORITY_UNAVAILABLE_ERROR_CODE: &str = "WRITE_AUTHORITY_UNAVAILABLE";
+
+/// A verified write was refused before anything was written: the delegation
+/// it carries does not hold at the document ACP provider's time. The error's
+/// `providerTime` extension is that time; a delegation issued at it is taken,
+/// so the write may be made again with one.
+pub const DELEGATION_OUTSIDE_WINDOW_ERROR_CODE: &str = "DELEGATION_OUTSIDE_WINDOW";
+
+/// The storage operation failed with a typed disk-full cause. Commit outcome
+/// remains unknown; clients must not infer that replaying a mutation is safe.
+pub const STORAGE_FULL_ERROR_CODE: &str = "STORAGE_FULL";
+
+/// A mutation input named the secondary side of a relation. The collection
+/// API reports it in Go's collection words rather than GraphQL's.
+pub const SECONDARY_RELATION_ERROR_CODE: &str = "SECONDARY_RELATION_INPUT";
+/// A mutation named a collection that does not exist. The collection API
+/// reports it in Go's collection words rather than GraphQL's.
+pub const UNKNOWN_MUTATION_COLLECTION_ERROR_CODE: &str = "UNKNOWN_MUTATION_COLLECTION";
+/// A strict read met a document whose access check the ACP provider did not
+/// answer in time (unreachable, stale, busy or overtaken after its waits):
+/// it returned nothing, and the same read may answer later.
+pub const ACCESS_CHECK_UNAVAILABLE_ERROR_CODE: &str = "ACCESS_CHECK_UNAVAILABLE";
+/// A strict read met a document whose access check failed for another reason
+/// and returned nothing; reading again does not help until the cause is fixed.
+pub const ACCESS_CHECK_FAILED_ERROR_CODE: &str = "ACCESS_CHECK_FAILED";
+/// A subscription sent without `Accept: text/event-stream`; HTTP answers it with 406.
+pub const SUBSCRIPTION_NEEDS_SSE_ERROR_CODE: &str = "SUBSCRIPTION_NEEDS_SSE";
+
+/// Stable conflict message recognized by the remote DefraDB client.
+pub const TXN_CONFLICT_MESSAGE: &str = "transaction conflict. Please retry";
+
+/// Deserialize a string that may be empty as None.
+/// Go sends `"operationName": ""` for anonymous operations.
+fn deserialize_empty_string_as_none<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt: Option<String> = Option::deserialize(deserializer)?;
+    Ok(opt.filter(|s| !s.is_empty()))
+}
+
+/// A GraphQL query request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryRequest {
+    /// The GraphQL query string.
+    pub query: String,
+
+    /// Optional operation name (for multi-operation documents).
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "deserialize_empty_string_as_none"
+    )]
+    pub operation_name: Option<String>,
+
+    /// Optional variables for the query.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variables: Option<JsonValue>,
+
+    /// Identity for ACP permission checks (None = anonymous).
+    /// This is set by the HTTP layer from the Authorization header.
+    #[serde(skip)]
+    pub identity: Option<Did>,
+
+    /// The request's context, built by the boundary that received it.
+    #[serde(skip)]
+    pub context: RequestContext,
+
+    /// The operation as typed structs, for a core caller that builds it
+    /// instead of writing GraphQL text: it is run as parsed, and `query` is
+    /// not read.
+    #[serde(skip)]
+    pub parsed: Option<std::sync::Arc<crate::query_parse::ParsedOperation>>,
+}
+
+impl QueryRequest {
+    /// Create a new query request with just a query string.
+    pub fn new(query: impl Into<String>) -> Self {
+        Self {
+            query: query.into(),
+            operation_name: None,
+            variables: None,
+            identity: None,
+            context: RequestContext::default(),
+            parsed: None,
+        }
+    }
+
+    /// A request for an operation already built as typed structs. It takes
+    /// the same preparation, checks and write path as one parsed from text.
+    pub fn parsed(operation: crate::query_parse::ParsedOperation) -> Self {
+        Self {
+            parsed: Some(std::sync::Arc::new(operation)),
+            ..Self::new(String::new())
+        }
+    }
+
+    /// The operation this request names: the typed one it carries, or its
+    /// text parsed under `limits`.
+    pub(crate) fn operation(
+        &self,
+        variables: Option<&rapidhash::RapidHashMap<String, JsonValue>>,
+        limits: crate::QueryLimits,
+    ) -> Result<crate::query_parse::ParsedOperation> {
+        match &self.parsed {
+            Some(parsed) => Ok((**parsed).clone()),
+            None => crate::query_parse::parse_request_with_limits(
+                &self.query,
+                variables,
+                self.operation_name.as_deref(),
+                limits,
+            ),
+        }
+    }
+
+    /// Set the operation name.
+    pub fn with_operation_name(mut self, name: impl Into<String>) -> Self {
+        self.operation_name = Some(name.into());
+        self
+    }
+
+    /// Set variables.
+    pub fn with_variables(mut self, vars: JsonValue) -> Self {
+        self.variables = Some(vars);
+        self
+    }
+
+    /// Set the identity for ACP permission checks.
+    pub fn with_identity(mut self, identity: Option<Did>) -> Self {
+        self.identity = identity;
+        self
+    }
+
+    /// Set the request's context.
+    pub fn with_context(mut self, context: RequestContext) -> Self {
+        self.context = context;
+        self
+    }
+}
+
+/// A GraphQL query response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryResponse {
+    /// Query result data (null if errors occurred).
+    pub data: Option<JsonValue>,
+
+    /// Errors that occurred during execution.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub errors: Vec<QueryResponseError>,
+
+    /// Extra information about a request that worked, such as warnings.
+    /// Absent when there is nothing to report, so existing responses do not change.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub extensions: Option<GqlExtensions>,
+}
+
+impl QueryResponse {
+    /// Create a successful response with data.
+    pub fn success(data: JsonValue) -> Self {
+        Self {
+            data: Some(data),
+            errors: Vec::new(),
+            extensions: None,
+        }
+    }
+
+    /// Internal control request for an autocommit retry, omitted from JSON.
+    pub fn retry_input(&self) -> Option<&crate::prepared::PreparedInputRequest> {
+        self.errors.iter().find_map(QueryResponseError::retry_input)
+    }
+
+    /// Create an error response.
+    pub fn error(err: impl Into<QueryResponseError>) -> Self {
+        Self {
+            data: None,
+            errors: vec![err.into()],
+            extensions: None,
+        }
+    }
+
+    /// Create a response with both data and errors (partial success).
+    pub fn partial(data: JsonValue, errors: Vec<QueryResponseError>) -> Self {
+        Self {
+            data: Some(data),
+            errors,
+            extensions: None,
+        }
+    }
+
+    /// Check if the response contains errors.
+    pub fn has_errors(&self) -> bool {
+        !self.errors.is_empty()
+    }
+
+    /// Create a retryable transaction conflict response.
+    pub fn transaction_conflict(message: impl Into<String>) -> Self {
+        Self::error(QueryResponseError::new(message).with_code(TXN_CONFLICT_ERROR_CODE))
+    }
+
+    /// Check whether this response is a retryable transaction conflict.
+    pub fn is_transaction_conflict(&self) -> bool {
+        self.data.is_none()
+            && self.errors.len() == 1
+            && self.errors[0].code() == Some(TXN_CONFLICT_ERROR_CODE)
+    }
+
+    /// Whether engine-owned transaction retries reached their limit. This is
+    /// final and must not be retried by the HTTP conflict loop.
+    pub fn is_transaction_retry_exhausted(&self) -> bool {
+        self.data.is_none()
+            && self.errors.len() == 1
+            && self.errors[0].code() == Some(TXN_RETRY_EXHAUSTED_ERROR_CODE)
+    }
+
+    /// Attach warnings, dropping the member entirely when there are none so an
+    /// empty `extensions` is never serialized.
+    pub fn with_warnings(mut self, warnings: Vec<GqlWarning>) -> Self {
+        if !warnings.is_empty() {
+            self.extensions = Some(GqlExtensions { warnings });
+        }
+        self
+    }
+}
+
+/// Sits next to `data` and `errors` in a response. Holds anything that is
+/// neither a result nor an error. A client skips what it does not recognise.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GqlExtensions {
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub warnings: Vec<GqlWarning>,
+}
+
+/// Something that happened during a request that still worked.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GqlWarning {
+    /// Names the warning. Clients match on this, so it does not change once released.
+    pub code: String,
+    /// Explains the warning to a person. The wording can change, so do not read it in code.
+    pub message: String,
+    /// Values belonging to this warning. Sent to the client and possibly logged,
+    /// so no secrets, keys, or counts that reveal documents the caller cannot see.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub detail: Option<serde_json::Map<String, JsonValue>>,
+}
+
+/// A similarity query did not use the vector index on the field it scored.
+/// The results are correct, but the query may cost more as the collection grows.
+/// The `reason` detail says which part of the query shape ruled the index out.
+pub const WARNING_CODE_VECTOR_INDEX_UNUSED: &str = "VECTOR_INDEX_UNUSED";
+
+/// GraphQL error extensions exposed to clients.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryResponseErrorExtensions {
+    /// Stable machine-readable error code.
+    pub code: String,
+    /// The document ACP provider's time, in Unix seconds, for
+    /// [`DELEGATION_OUTSIDE_WINDOW_ERROR_CODE`].
+    #[serde(
+        default,
+        rename = "providerTime",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub provider_time: Option<u64>,
+}
+
+/// A GraphQL error in the response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryResponseError {
+    /// Error message.
+    pub message: String,
+
+    /// Optional path to the field that caused the error.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<Vec<String>>,
+
+    /// Optional locations in the query where the error occurred.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub locations: Option<Vec<ErrorLocation>>,
+
+    /// Machine-readable GraphQL error metadata.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extensions: Option<QueryResponseErrorExtensions>,
+
+    /// Internal retry control. Never serialized to client responses.
+    #[serde(skip)]
+    pub(crate) retry_input: Option<crate::prepared::PreparedInputRequest>,
+}
+
+impl QueryResponseError {
+    /// Create a new error with just a message.
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            path: None,
+            locations: None,
+            extensions: None,
+            retry_input: None,
+        }
+    }
+
+    /// Set the path.
+    pub fn with_path(mut self, path: Vec<String>) -> Self {
+        self.path = Some(path);
+        self
+    }
+
+    /// Set locations.
+    pub fn with_locations(mut self, locations: Vec<ErrorLocation>) -> Self {
+        self.locations = Some(locations);
+        self
+    }
+
+    /// Set a stable machine-readable error code.
+    pub fn with_code(mut self, code: impl Into<String>) -> Self {
+        self.extensions = Some(QueryResponseErrorExtensions {
+            code: code.into(),
+            provider_time: None,
+        });
+        self
+    }
+
+    /// Set the provider time a delegation refusal names.
+    pub fn with_provider_time(mut self, provider_time: u64) -> Self {
+        if let Some(extensions) = self.extensions.as_mut() {
+            extensions.provider_time = Some(provider_time);
+        }
+        self
+    }
+
+    /// The provider time a delegation refusal names, if any.
+    pub fn provider_time(&self) -> Option<u64> {
+        self.extensions
+            .as_ref()
+            .and_then(|extensions| extensions.provider_time)
+    }
+
+    /// Return the machine-readable error code, if present.
+    pub fn code(&self) -> Option<&str> {
+        self.extensions
+            .as_ref()
+            .map(|extensions| extensions.code.as_str())
+    }
+
+    /// Convert a query error while retaining machine-readable failure metadata.
+    pub fn from_query_error(error: crate::error::QueryError) -> Self {
+        let is_transaction_conflict =
+            matches!(&error, crate::error::QueryError::TransactionConflict(_));
+        let is_transaction_retry_exhausted = matches!(
+            &error,
+            crate::error::QueryError::TransactionRetryExhausted(_)
+        );
+        let is_permission_denied = matches!(&error, crate::error::QueryError::PermissionDenied(_));
+        let lacks_write_authority = matches!(
+            &error,
+            crate::error::QueryError::WriteAuthorityUnavailable(_)
+        );
+        let refused_window = match &error {
+            crate::error::QueryError::DelegationOutsideWindow { window, .. } => Some(*window),
+            _ => None,
+        };
+        let is_storage_full = matches!(
+            &error,
+            crate::error::QueryError::Storage(cause) if cause.is_storage_full()
+        );
+        let is_secondary_relation =
+            matches!(&error, crate::error::QueryError::SecondaryRelationInput(_));
+        let is_unknown_mutation_collection = matches!(
+            &error,
+            crate::error::QueryError::UnknownMutationCollection(_)
+        );
+        let needs_sse = matches!(&error, crate::error::QueryError::SubscriptionNeedsSse);
+        let access_check = match &error {
+            crate::error::QueryError::AccessCheckUnavailable { retryable } => Some(*retryable),
+            _ => None,
+        };
+        let retry_input = match &error {
+            crate::error::QueryError::NeedsInput(request) => Some(request.clone()),
+            _ => None,
+        };
+        let response_error = Self::new(error.to_string());
+        let mut response_error = if is_transaction_conflict {
+            response_error.with_code(TXN_CONFLICT_ERROR_CODE)
+        } else if is_transaction_retry_exhausted {
+            response_error.with_code(TXN_RETRY_EXHAUSTED_ERROR_CODE)
+        } else if is_storage_full {
+            response_error.with_code(STORAGE_FULL_ERROR_CODE)
+        } else if is_permission_denied {
+            response_error.with_code(PERMISSION_DENIED_ERROR_CODE)
+        } else if let Some(window) = refused_window {
+            response_error
+                .with_code(DELEGATION_OUTSIDE_WINDOW_ERROR_CODE)
+                .with_provider_time(window.provider_time)
+        } else if lacks_write_authority {
+            response_error.with_code(WRITE_AUTHORITY_UNAVAILABLE_ERROR_CODE)
+        } else if is_secondary_relation {
+            response_error.with_code(SECONDARY_RELATION_ERROR_CODE)
+        } else if is_unknown_mutation_collection {
+            response_error.with_code(UNKNOWN_MUTATION_COLLECTION_ERROR_CODE)
+        } else if needs_sse {
+            response_error.with_code(SUBSCRIPTION_NEEDS_SSE_ERROR_CODE)
+        } else if let Some(retryable) = access_check {
+            response_error.with_code(match retryable {
+                true => ACCESS_CHECK_UNAVAILABLE_ERROR_CODE,
+                false => ACCESS_CHECK_FAILED_ERROR_CODE,
+            })
+        } else {
+            response_error
+        };
+        response_error.retry_input = retry_input;
+        response_error
+    }
+
+    /// Internal retry control, omitted from serialized GraphQL errors.
+    pub fn retry_input(&self) -> Option<&crate::prepared::PreparedInputRequest> {
+        self.retry_input.as_ref()
+    }
+}
+
+#[cfg(test)]
+mod prepared_retry_tests {
+    use super::*;
+
+    #[test]
+    fn needs_input_is_internal_and_wire_bytes_are_not_serialized() {
+        let request = crate::prepared::PreparedInputRequest::new(
+            crate::prepared::PreparedInputKind::Embedding,
+            b"private source and provider context".as_slice(),
+        );
+        let error =
+            QueryResponseError::from_query_error(crate::error::QueryError::NeedsInput(request));
+
+        assert_eq!(error.message, "external input required");
+        assert!(error.retry_input().is_some());
+        let serialized = serde_json::to_string(&error).unwrap();
+        assert!(!serialized.contains("private source"));
+        assert!(!serialized.contains("retry_input"));
+    }
+}
+
+impl<S: Into<String>> From<S> for QueryResponseError {
+    fn from(msg: S) -> Self {
+        Self::new(msg)
+    }
+}
+
+/// Location in the query document where an error occurred.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorLocation {
+    pub line: u32,
+    pub column: u32,
+}
+
+/// Query executor trait.
+///
+/// This is the main interface between HTTP/API layer and query execution.
+/// Implementors handle parsing, planning, and executing GraphQL queries.
+///
+/// # Transaction Support
+///
+/// The executor supports executing queries within transaction contexts:
+///
+/// 1. Call `begin_txn()` to start a new transaction
+/// 2. Execute queries with `execute_in_txn()` using the returned transaction ID
+/// 3. Call `commit_txn()` or `discard_txn()` to end the transaction
+///
+/// # Example
+///
+/// ```ignore
+/// use query::{QueryExecutor, QueryRequest, QueryResponse};
+///
+/// async fn handle_graphql<E: QueryExecutor>(
+///     executor: &E,
+///     request: QueryRequest,
+/// ) -> QueryResponse {
+///     executor.execute(request).await
+/// }
+///
+/// async fn handle_transaction<E: QueryExecutor>(
+///     executor: &E,
+///     queries: Vec<QueryRequest>,
+/// ) -> Result<Vec<QueryResponse>, TransactionError> {
+///     let context = RequestContext::default();
+///     let handle = executor.begin_txn_as(&context, false).await?;
+///     let mut responses = Vec::new();
+///
+///     for query in queries {
+///         let resp = executor.execute_in_txn(query, &handle).await;
+///         if resp.has_errors() {
+///             executor.discard_txn_as(&context, &handle).await.ok();
+///             return Err(TransactionError::execution("query failed"));
+///         }
+///         responses.push(resp);
+///     }
+///
+///     executor.commit_txn_as(&context, &handle).await?;
+///     Ok(responses)
+/// }
+/// ```
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+pub trait QueryExecutor: MaybeSendSync {
+    /// Resolve persistent write inputs before retrying request execution.
+    async fn prepare_request(
+        &self,
+        _request: &QueryRequest,
+    ) -> Result<Option<std::sync::Arc<crate::prepared::PreparedMutations>>> {
+        Ok(None)
+    }
+
+    /// Execute with immutable write inputs prepared for this logical request.
+    async fn execute_prepared(
+        &self,
+        request: QueryRequest,
+        _prepared: Option<std::sync::Arc<crate::prepared::PreparedMutations>>,
+    ) -> QueryResponse {
+        self.execute(request).await
+    }
+
+    /// Resolve a transaction-dependent input after its attempt has ended.
+    /// The returned capsule must memoize the exact response bytes so later
+    /// attempts with the same complete request do not call the provider again.
+    async fn resolve_retry_input(
+        &self,
+        _request: &QueryRequest,
+        _prepared: Option<std::sync::Arc<crate::prepared::PreparedMutations>>,
+        _input: &crate::prepared::PreparedInputRequest,
+    ) -> Result<Option<std::sync::Arc<crate::prepared::PreparedMutations>>> {
+        Err(crate::error::QueryError::execution(
+            "retry input resolution is not supported by this executor",
+        ))
+    }
+
+    /// Execute a GraphQL query and return the response.
+    ///
+    /// This handles the full pipeline: parsing → planning → execution → response.
+    /// Each query runs in its own implicit transaction that is automatically
+    /// committed on success.
+    async fn execute(&self, request: QueryRequest) -> QueryResponse;
+
+    /// Execute a query within an existing transaction context.
+    ///
+    /// This allows batching multiple operations in a single transaction.
+    /// The transaction must have been created with `begin_txn()`.
+    ///
+    /// Returns an error response if the transaction handle is invalid or
+    /// the transaction has already been committed/rolled back.
+    async fn execute_in_txn(
+        &self,
+        request: QueryRequest,
+        handle: &TransactionHandle,
+    ) -> QueryResponse;
+
+    /// Observe owners of known documents through the existing transaction's
+    /// actor, read gates and actually bound local authorization snapshot.
+    /// Missing, hidden or unregistered entries return no owner. Unsupported
+    /// transaction-bound authorization is an error, never an empty inventory.
+    /// `context` owns the transaction handle; `identity` selects document-read
+    /// permissions as in QueryRequest and cannot change that transaction actor.
+    async fn observe_document_owners_in_txn(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        collection: &str,
+        doc_ids: &[String],
+        identity: Option<identity::Did>,
+    ) -> Result<Vec<crate::owners::DocumentOwnerObservation>> {
+        let _ = (context, handle, collection, doc_ids, identity);
+        Err(crate::error::QueryError::execution(
+            "transaction-bound document owner observations are unsupported",
+        ))
+    }
+
+    /// Privileged authorization observations in the transaction's snapshot.
+    /// The caller authenticates the actor and restricts this API to trusted
+    /// native code. Decisions distinguish denial from absence and must not be
+    /// disclosed to untrusted requesters. No document metadata is returned.
+    /// Local ACP and row reads are transaction-bound; application hooks may
+    /// consult external state and are not fenced by this transaction.
+    async fn observe_document_access_in_txn(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        collection: &str,
+        doc_ids: &[String],
+        actor: identity::Did,
+        mode: crate::owners::DocumentAccessMode,
+    ) -> Result<Vec<crate::owners::DocumentAccessDecision>> {
+        let _ = (context, handle, collection, doc_ids, actor, mode);
+        Err(crate::error::QueryError::execution(
+            "transaction-bound access observations are unsupported",
+        ))
+    }
+
+    /// Begin a new transaction.
+    ///
+    /// Returns a transaction handle that can be used with `execute_in_txn()`.
+    /// The transaction remains active until `commit_txn()` or `discard_txn()` is called.
+    ///
+    /// # Arguments
+    /// * `readonly` - If true, the transaction cannot perform write operations
+    ///
+    /// Cancellation must not leave an entry behind: register the transaction
+    /// only when returning its handle, with no intervening await.
+    async fn begin_txn(
+        &self,
+        readonly: bool,
+    ) -> std::result::Result<TransactionHandle, TransactionError>;
+
+    /// [`Self::begin_txn`] for the request `context` serves: the transaction
+    /// belongs to its identity. The default runs `begin_txn` inside
+    /// [`RequestContext::mirror`].
+    async fn begin_txn_as(
+        &self,
+        context: &RequestContext,
+        readonly: bool,
+    ) -> std::result::Result<TransactionHandle, TransactionError> {
+        context.mirror(self.begin_txn(readonly)).await
+    }
+
+    /// Commit a transaction.
+    ///
+    /// All operations performed within the transaction become permanent.
+    /// After commit, the transaction handle is no longer valid.
+    async fn commit_txn(
+        &self,
+        handle: &TransactionHandle,
+    ) -> std::result::Result<(), TransactionError>;
+
+    /// [`Self::commit_txn`] for the request `context` serves. The default runs
+    /// `commit_txn` inside [`RequestContext::mirror`].
+    async fn commit_txn_as(
+        &self,
+        context: &RequestContext,
+        handle: &TransactionHandle,
+    ) -> std::result::Result<(), TransactionError> {
+        context.mirror(self.commit_txn(handle)).await
+    }
+
+    /// Discard a transaction.
+    ///
+    /// All operations performed within the transaction are discarded.
+    /// After discard, the transaction handle is no longer valid.
+    async fn discard_txn(
+        &self,
+        handle: &TransactionHandle,
+    ) -> std::result::Result<(), TransactionError>;
+
+    /// [`Self::discard_txn`] for the request `context` serves. The default
+    /// runs `discard_txn` inside [`RequestContext::mirror`].
+    async fn discard_txn_as(
+        &self,
+        context: &RequestContext,
+        handle: &TransactionHandle,
+    ) -> std::result::Result<(), TransactionError> {
+        context.mirror(self.discard_txn(handle)).await
+    }
+
+    /// [`TransactionRegistry::add_collection_as`](crate::txn::TransactionRegistry::add_collection_as).
+    async fn add_collection_as(
+        &self,
+        context: &RequestContext,
+        sdl: &str,
+    ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
+        let _ = (context, sdl);
+        Err(TransactionError::not_supported(
+            "transaction-scoped schema changes are not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::get_collections_as`](crate::txn::TransactionRegistry::get_collections_as).
+    async fn get_collections_as(
+        &self,
+        context: &RequestContext,
+        selector: &schema::CollectionSelector,
+    ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
+        let _ = (context, selector);
+        Err(TransactionError::not_supported(
+            "this collection operation is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::patch_collection_as`](crate::txn::TransactionRegistry::patch_collection_as).
+    async fn patch_collection_as(
+        &self,
+        context: &RequestContext,
+        patch: &str,
+        migration: Option<lens::LensConfig>,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, patch, migration);
+        Err(TransactionError::not_supported(
+            "this collection operation is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::create_index_in_txn_as`](crate::txn::TransactionRegistry::create_index_in_txn_as).
+    async fn create_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        name: Option<&str>,
+        fields: Vec<schema::IndexedFieldDescription>,
+        kind: schema::IndexKind,
+    ) -> std::result::Result<schema::IndexDescription, TransactionError> {
+        let _ = (context, collection, name, fields, kind);
+        Err(TransactionError::not_supported(
+            "this index operation is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::drop_index_in_txn_as`](crate::txn::TransactionRegistry::drop_index_in_txn_as).
+    async fn drop_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        name: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, collection, name);
+        Err(TransactionError::not_supported(
+            "this index operation is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::indexes_in_txn_as`](crate::txn::TransactionRegistry::indexes_in_txn_as).
+    async fn indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+    ) -> std::result::Result<
+        (
+            schema::CollectionVersion,
+            rapidhash::RapidHashMap<u32, defra_core::ActionExecution>,
+        ),
+        TransactionError,
+    > {
+        let _ = (context, collection);
+        Err(TransactionError::not_supported(
+            "this index operation is not supported by this executor",
+        ))
+    }
+
+    /// Add an equality encrypted index on `field` of `collection` in the
+    /// transaction `context` carries.
+    async fn add_encrypted_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        field: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, collection, field);
+        Err(TransactionError::not_supported(
+            "this encrypted index operation is not supported by this executor",
+        ))
+    }
+
+    /// Delete the encrypted index on `field` of `collection` in the
+    /// transaction `context` carries.
+    async fn delete_encrypted_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        field: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, collection, field);
+        Err(TransactionError::not_supported(
+            "this encrypted index operation is not supported by this executor",
+        ))
+    }
+
+    /// The fields of `collection` with an encrypted index, as the transaction
+    /// `context` carries sees them.
+    async fn encrypted_indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+    ) -> std::result::Result<Vec<String>, TransactionError> {
+        let _ = (context, collection);
+        Err(TransactionError::not_supported(
+            "this encrypted index operation is not supported by this executor",
+        ))
+    }
+
+    /// Every collection's encrypted index fields, by collection name, as the
+    /// transaction `context` carries sees them.
+    async fn all_encrypted_indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<Vec<(String, Vec<String>)>, TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "this encrypted index operation is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::set_active_collection_version_as`](crate::txn::TransactionRegistry::set_active_collection_version_as).
+    async fn set_active_collection_version_as(
+        &self,
+        context: &RequestContext,
+        version_id: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, version_id);
+        Err(TransactionError::not_supported(
+            "this collection operation is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::truncate_collection_as`](crate::txn::TransactionRegistry::truncate_collection_as).
+    async fn truncate_collection_as(
+        &self,
+        context: &RequestContext,
+        name: &str,
+        filter: Option<&crate::documents::Filter>,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, name, filter);
+        Err(TransactionError::not_supported(
+            "this collection operation is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::purge_by_doc_ids_as`](crate::txn::TransactionRegistry::purge_by_doc_ids_as).
+    async fn purge_by_doc_ids_as(
+        &self,
+        context: &RequestContext,
+        name: &str,
+        doc_ids: &[document::DocID],
+    ) -> std::result::Result<usize, TransactionError> {
+        let _ = (context, name, doc_ids);
+        Err(TransactionError::not_supported(
+            "document purge is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::add_dac_policy_as`](crate::txn::TransactionRegistry::add_dac_policy_as).
+    async fn add_dac_policy_as(
+        &self,
+        context: &RequestContext,
+        policy: &str,
+        nonce: Option<acp::PolicyNonce>,
+    ) -> std::result::Result<String, TransactionError> {
+        let _ = (context, policy, nonce);
+        Err(TransactionError::not_supported(
+            "DAC policies are not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::list_dac_policies_as`](crate::txn::TransactionRegistry::list_dac_policies_as).
+    async fn list_dac_policies_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<Vec<acp::Policy>, TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "DAC policies are not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::get_dac_policy_as`](crate::txn::TransactionRegistry::get_dac_policy_as).
+    async fn get_dac_policy_as(
+        &self,
+        context: &RequestContext,
+        policy_id: &str,
+    ) -> std::result::Result<Option<acp::Policy>, TransactionError> {
+        let _ = (context, policy_id);
+        Err(TransactionError::not_supported(
+            "DAC policies are not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::acp_light_client_status_as`](crate::txn::TransactionRegistry::acp_light_client_status_as).
+    async fn acp_light_client_status_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<acp::LightClientStatus, TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "DAC policies are not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::nac_status_as`](crate::txn::TransactionRegistry::nac_status_as).
+    async fn nac_status_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<acp::nac::NacStatus, TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "node access control is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::explain_nac_subject_as`](crate::txn::TransactionRegistry::explain_nac_subject_as).
+    async fn explain_nac_subject_as(
+        &self,
+        context: &RequestContext,
+        subject: &str,
+    ) -> std::result::Result<Vec<acp::nac::PermissionProvenance>, TransactionError> {
+        let _ = (context, subject);
+        Err(TransactionError::not_supported(
+            "node access control is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::disable_nac_as`](crate::txn::TransactionRegistry::disable_nac_as).
+    async fn disable_nac_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "node access control is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::re_enable_nac_as`](crate::txn::TransactionRegistry::re_enable_nac_as).
+    async fn re_enable_nac_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "node access control is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::add_nac_actor_relationship_as`](crate::txn::TransactionRegistry::add_nac_actor_relationship_as).
+    async fn add_nac_actor_relationship_as(
+        &self,
+        context: &RequestContext,
+        relation: &str,
+        target_actor: &str,
+    ) -> std::result::Result<bool, TransactionError> {
+        let _ = (context, relation, target_actor);
+        Err(TransactionError::not_supported(
+            "node access control is not supported by this executor",
+        ))
+    }
+
+    /// Stage a source-specific node permission in the caller's transaction.
+    async fn change_nac_source_permission_as(
+        &self,
+        context: &RequestContext,
+        edge: &crate::txn::SourcePermission,
+    ) -> std::result::Result<bool, TransactionError> {
+        let _ = (context, edge);
+        Err(TransactionError::not_supported(
+            "transactional node source permissions are unavailable",
+        ))
+    }
+
+    /// [`TransactionRegistry::delete_nac_actor_relationship_as`](crate::txn::TransactionRegistry::delete_nac_actor_relationship_as).
+    async fn delete_nac_actor_relationship_as(
+        &self,
+        context: &RequestContext,
+        relation: &str,
+        target_actor: &str,
+    ) -> std::result::Result<bool, TransactionError> {
+        let _ = (context, relation, target_actor);
+        Err(TransactionError::not_supported(
+            "node access control is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::set_migration_as`](crate::txn::TransactionRegistry::set_migration_as).
+    async fn set_migration_as(
+        &self,
+        context: &RequestContext,
+        config: &str,
+    ) -> std::result::Result<String, TransactionError> {
+        let _ = (context, config);
+        Err(TransactionError::not_supported(
+            "transaction-scoped migrations are not supported by this executor",
+        ))
+    }
+
+    /// Register the standalone lens `config` in the transaction `context` carries; the transform ID.
+    async fn add_lens_as(
+        &self,
+        context: &RequestContext,
+        config: lens::LensConfig,
+    ) -> std::result::Result<String, TransactionError> {
+        let _ = (context, config);
+        Err(TransactionError::not_supported(
+            "this transaction operation is not supported by this executor",
+        ))
+    }
+
+    /// The lenses the transaction `context` carries sees, as the JSON map from transform ID to module.
+    async fn list_lenses_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<String, TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "this transaction operation is not supported by this executor",
+        ))
+    }
+
+    /// Delete the collections `targets` names in the transaction `context` carries.
+    async fn delete_collections_as(
+        &self,
+        context: &RequestContext,
+        targets: Vec<String>,
+        active_only: bool,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, targets, active_only);
+        Err(TransactionError::not_supported(
+            "this transaction operation is not supported by this executor",
+        ))
+    }
+
+    /// Set whether collection version `version_id` is active, in the transaction `context` carries.
+    async fn set_collection_active_as(
+        &self,
+        context: &RequestContext,
+        version_id: &str,
+        is_active: bool,
+    ) -> std::result::Result<schema::CollectionVersion, TransactionError> {
+        let _ = (context, version_id, is_active);
+        Err(TransactionError::not_supported(
+            "this transaction operation is not supported by this executor",
+        ))
+    }
+
+    /// Verify the signature of block `cid` against `public_key` in the transaction `context` carries. `key_type` is `ed25519`, `secp256k1` or `secp256r1`.
+    async fn verify_block_signature_as(
+        &self,
+        context: &RequestContext,
+        document_acp: std::sync::Arc<dyn acp::DocumentACP>,
+        cid: &str,
+        public_key: &str,
+        key_type: &str,
+        caller: &acp::Identity,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, document_acp, cid, public_key, key_type, caller);
+        Err(TransactionError::not_supported(
+            "this transaction operation is not supported by this executor",
+        ))
+    }
+
+    /// Remove an abandoned transaction without committing or spawning cleanup.
+    ///
+    /// Called by `TransactionGuard::drop`, including during runtime shutdown.
+    /// Already-finalized handles are a no-op. Requests holding a context may
+    /// finish, but must not make its uncommitted writes durable.
+    fn abandon_txn(&self, handle: &TransactionHandle);
+
+    /// Get the GraphQL schema for introspection.
+    async fn schema(&self) -> Result<String>;
+
+    /// [`execute`](Self::execute) for a caller that is called back instead
+    /// of waiting: runs `request` and calls `done` with its response. The
+    /// returned future completes once the request is under way, so its
+    /// caller waits at most for the request to be admitted. An executor
+    /// that runs requests elsewhere (a worker pool) calls `done` where the
+    /// request ran, and drops it uncalled only when the request never ran
+    /// (shutdown, or a panic); this default runs the request in the
+    /// returned future itself.
+    fn execute_then<'a>(
+        &'a self,
+        request: QueryRequest,
+        done: ResponseCallback,
+    ) -> MaybeBoxFuture<'a, ()> {
+        Box::pin(async move { done(self.execute(request).await) })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_query_request_builder() {
+        let req = QueryRequest::new("{ users { name } }")
+            .with_operation_name("GetUsers")
+            .with_variables(json!({"limit": 10}));
+
+        assert_eq!(req.query, "{ users { name } }");
+        assert_eq!(req.operation_name, Some("GetUsers".to_string()));
+        assert_eq!(req.variables, Some(json!({"limit": 10})));
+    }
+
+    #[test]
+    fn test_query_response_success() {
+        let resp = QueryResponse::success(json!({"users": []}));
+        assert!(!resp.has_errors());
+        assert!(resp.data.is_some());
+    }
+
+    #[test]
+    fn test_query_response_error() {
+        let resp = QueryResponse::error("something went wrong");
+        assert!(resp.has_errors());
+        assert!(resp.data.is_none());
+        assert_eq!(resp.errors[0].message, "something went wrong");
+        assert!(serde_json::to_value(resp).unwrap()["data"].is_null());
+    }
+
+    #[test]
+    fn transaction_conflict_response_has_stable_graphql_code() {
+        let response = QueryResponse::transaction_conflict("transaction conflict");
+
+        assert!(response.is_transaction_conflict());
+        assert_eq!(
+            serde_json::to_value(response).unwrap()["errors"][0]["extensions"]["code"],
+            TXN_CONFLICT_ERROR_CODE
+        );
+    }
+
+    #[test]
+    fn a_delegation_outside_its_window_names_the_providers_time() {
+        let window = acp::DelegationWindow {
+            not_before: 1_030,
+            expires_at: 1_180,
+            provider_time: 1_000,
+            refusal: acp::WindowRefusal::NotYetValid {
+                ahead_by_at_least: 30,
+            },
+        };
+        let refused = QueryResponseError::from_query_error(
+            crate::error::QueryError::DelegationOutsideWindow {
+                reason: window.to_string(),
+                window,
+            },
+        );
+        assert_eq!(refused.code(), Some(DELEGATION_OUTSIDE_WINDOW_ERROR_CODE));
+        assert_eq!(refused.provider_time(), Some(1_000));
+        let wire = serde_json::to_value(&refused).unwrap();
+        assert_eq!(wire["extensions"]["providerTime"], 1_000);
+        assert_eq!(
+            serde_json::from_value::<QueryResponseError>(wire)
+                .unwrap()
+                .provider_time(),
+            Some(1_000)
+        );
+
+        let unavailable = QueryResponseError::from_query_error(
+            crate::error::QueryError::WriteAuthorityUnavailable("no key".into()),
+        );
+        assert_eq!(unavailable.provider_time(), None);
+        assert!(serde_json::to_value(&unavailable).unwrap()["extensions"]
+            .get("providerTime")
+            .is_none());
+    }
+
+    #[test]
+    fn engine_retry_exhaustion_has_stable_final_error_code() {
+        let response = QueryResponseError::from_query_error(
+            crate::error::QueryError::transaction_retry_exhausted("engine retries exhausted"),
+        );
+        let response = QueryResponse::error(response);
+
+        assert!(response.is_transaction_retry_exhausted());
+        assert!(!response.is_transaction_conflict());
+        assert_eq!(
+            serde_json::to_value(response).unwrap()["errors"][0]["extensions"]["code"],
+            TXN_RETRY_EXHAUSTED_ERROR_CODE
+        );
+    }
+
+    #[test]
+    fn explicit_permission_denial_has_stable_graphql_code() {
+        let denied = QueryResponse::error(QueryResponseError::from_query_error(
+            crate::error::QueryError::permission_denied("opaque"),
+        ));
+        assert_eq!(
+            serde_json::to_value(denied).unwrap()["errors"][0]["extensions"]["code"],
+            PERMISSION_DENIED_ERROR_CODE
+        );
+        let other = QueryResponseError::from_query_error(crate::error::QueryError::execution(
+            "permission denied",
+        ));
+        assert_eq!(other.code(), None);
+    }
+
+    #[test]
+    fn test_query_response_partial() {
+        let resp = QueryResponse::partial(
+            json!({"users": []}),
+            vec![QueryResponseError::new("warning")],
+        );
+        assert!(resp.has_errors());
+        assert!(resp.data.is_some());
+    }
+
+    #[test]
+    fn test_request_serialization() {
+        let req = QueryRequest::new("{ users { name } }");
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("users"));
+
+        let parsed: QueryRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.query, req.query);
+    }
+
+    #[test]
+    fn test_response_serialization() {
+        let resp = QueryResponse::success(json!({"data": "test"}));
+        let json = serde_json::to_string(&resp).unwrap();
+
+        // errors should be omitted when empty
+        assert!(!json.contains("errors"));
+    }
+}

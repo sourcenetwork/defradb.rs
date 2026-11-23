@@ -1,4 +1,4 @@
-# Survey: `crates/crypto/`
+# Survey: `crates/foundation/crypto/`
 
 ## Purpose
 Cryptographic primitives library. Key management (secp256k1, secp256r1, Ed25519,

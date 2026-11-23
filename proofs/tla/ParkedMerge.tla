@@ -34,12 +34,12 @@
 \*     - LIVE_RedrivenOnGrant;
 \*   - y does not end merged, whatever happens to x1 - LIVE_OtherBranchMerges.
 \*
-\* Rust owners: crates/db/src/merge/merge_handler/composite.rs
-\* prepare_composite_merge (park); crates/db/src/merge/governance/
-\* awaited.rs WaitKey::AcpObject; crates/db/src/merge/governance/
+\* Rust owners: crates/database/db/src/merge/merge_handler/composite.rs
+\* prepare_composite_merge (park); crates/database/db/src/merge/governance/
+\* awaited.rs WaitKey::AcpObject; crates/database/db/src/merge/governance/
 \* deferred.rs DeferredMerges (defer, park, release,
-\* MAX_WAITERS_PER_DEPENDENCY, MAX_DEFERRED_COMPOSITES); crates/db/src/merge/merge_handler/parked_acp.rs
-\* ParkedRelease, sweep_parked_acp; crates/acp/src/external.rs
+\* MAX_WAITERS_PER_DEPENDENCY, MAX_DEFERRED_COMPOSITES); crates/database/db/src/merge/merge_handler/parked_acp.rs
+\* ParkedRelease, sweep_parked_acp; crates/engine/acp/src/external.rs
 \* ExternalDocumentAcp::watch_object_changes.
 EXTENDS Naturals, FiniteSets
 

@@ -22,6 +22,7 @@ mod simple {
     mod with_embeddings;
     mod with_filter;
     mod with_introspection;
+    mod with_multiple_sources;
     mod with_transform;
     mod with_transform_aggregate;
     mod with_transform_cid;

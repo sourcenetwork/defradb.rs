@@ -33,9 +33,9 @@
 \*   - a block stored again by a sync makes the purge fail instead of
 \*     running again.
 \*
-\* Code it models (crates/db/src/collection/ops/purge.rs):
+\* Code it models (crates/database/db/src/collection/ops/purge.rs):
 \*   DB::purge_by_doc_ids_as (one DB::transact_db attempt, in
-\*   crates/db/src/txn/attempt.rs; a filtered truncate's chunk,
+\*   crates/database/db/src/txn/attempt.rs; a filtered truncate's chunk,
 \*   truncate_filtered_chunk in collection/ops/truncate/filtered.rs, runs
 \*   the same purge_documents in its own attempt),
 \*   purge_documents (values, index entries, primary key, heads, mappings;

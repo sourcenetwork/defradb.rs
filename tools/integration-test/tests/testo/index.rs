@@ -11,6 +11,7 @@ mod backfill_unique_txn;
 mod crdt;
 mod delete;
 mod get;
+mod index_offset_limit;
 mod json;
 mod json_array;
 mod json_composite;
@@ -19,6 +20,8 @@ mod json_unique_array;
 mod list_actions;
 mod list_collection_name;
 mod merged_field {
+    mod counter;
+    mod fulltext;
     mod json;
     mod text;
 }
@@ -43,6 +46,7 @@ mod query_with_index_on_datetime;
 mod query_with_index_only_field_order;
 mod query_with_index_only_filter;
 mod query_with_relation_filter;
+mod query_with_relation_filter_unindexed_fk;
 mod query_with_relation_sub_filter;
 mod query_with_relation_sub_order;
 mod query_with_relation_sub_order_complex;

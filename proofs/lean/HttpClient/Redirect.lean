@@ -35,7 +35,7 @@ added again on every hop (the reviewed bug), with origins compared by host
 alone, and with no redirect limit, a credential reaches another origin or the
 chain runs past the limit.
 
-Rust anchors (crates/net/src/http/client.rs): `Client::execute` (the defaults
+Rust anchors (crates/building-blocks/net/src/http/client.rs): `Client::execute` (the defaults
 merged once), `Client::follow` (the loop of at most `REDIRECT_LIMIT + 1`
 exchanges), `Client::exchange` (the proxy credential added to the copy it
 sends), `redirect` (the method rules and the origin check, `url.origin() !=

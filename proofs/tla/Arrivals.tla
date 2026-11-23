@@ -1,5 +1,5 @@
 ---- MODULE Arrivals ----
-\* Per-collection arrival log: crates/db/src/event/arrivals.rs. A consumer polls
+\* Per-collection arrival log: crates/database/db/src/event/arrivals.rs. A consumer polls
 \* `read(after)` for the documents this node committed past its cursor and moves
 \* its cursor to the page's `next`.
 \*

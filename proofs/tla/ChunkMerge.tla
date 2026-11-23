@@ -50,18 +50,18 @@
 \*   - a reader sees one chunk as two documents (INV_EachChunkOnce).
 \*
 \* Code it models:
-\*   crates/query/src/plan/chunk_parent.rs  parent_hashes (the read rule: cut the text)
-\*   crates/chunk-split/src/list.rs          chunk_list (the list a RED reader trusts)
-\*   crates/db/src/chunk/sync/mod.rs         set_lists (text and list in one write)
-\*   crates/crdt/src/field/lww.rs            merge (the per-field tie break)
-\*   crates/db/src/chunk/guard.rs            check_chunk_merge
-\*   crates/db/src/merge/merge_handler/composite_persist.rs  the guard's call on a chunk merge
-\*   crates/db/src/chunk/peer_delete.rs      delete_must_wait (a chunk delete waits for its article)
-\*   crates/db/src/merge/merge_handler/doc_identity.rs  resolve_composite_doc_id_in_txn (a delete needs its chunk's first block)
-\*   crates/db/src/merge/merge_handler/composite.rs     process_composite_delta_locked (older blocks merge first)
-\*   crates/db/src/chunk/rebuild.rs          build_missing (a merge builds the chunks it lacks)
-\*   crates/db/src/chunk/sync/write.rs       ChunkWrites::create (unsigned chunk blocks)
-\*   crates/db/src/block/builder/write.rs    compute_document_blocks (the DocID is the first block's CID)
+\*   crates/engine/query/src/plan/chunk_parent.rs  parent_hashes (the read rule: cut the text)
+\*   crates/building-blocks/chunk-split/src/list.rs          chunk_list (the list a RED reader trusts)
+\*   crates/database/db/src/chunk/sync/mod.rs         set_lists (text and list in one write)
+\*   crates/building-blocks/crdt/src/field/lww.rs            merge (the per-field tie break)
+\*   crates/database/db/src/chunk/guard.rs            check_chunk_merge
+\*   crates/database/db/src/merge/merge_handler/composite_persist.rs  the guard's call on a chunk merge
+\*   crates/database/db/src/chunk/peer_delete.rs      delete_must_wait (a chunk delete waits for its article)
+\*   crates/database/db/src/merge/merge_handler/doc_identity.rs  resolve_composite_doc_id_in_txn (a delete needs its chunk's first block)
+\*   crates/database/db/src/merge/merge_handler/composite.rs     process_composite_delta_locked (older blocks merge first)
+\*   crates/database/db/src/chunk/rebuild.rs          build_missing (a merge builds the chunks it lacks)
+\*   crates/database/db/src/chunk/sync/write.rs       ChunkWrites::create (unsigned chunk blocks)
+\*   crates/database/db/src/block/builder/write.rs    compute_document_blocks (the DocID is the first block's CID)
 \* The deleted-parent guard, the read-time hash check and races with a reader are
 \* ChunkRead.tla's. An encrypted chunk's hash can't be checked at merge, so that
 \* case is not modelled here.

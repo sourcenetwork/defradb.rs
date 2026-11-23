@@ -36,14 +36,14 @@
 \*   - a chunk left behind after its article was deleted (INV_NoChunkOfDeletedParent);
 \*   - a valid create or update refused because one of its chunks exists (INV_ValidWritesSucceed).
 \*
-\* Code it models (crates/db/src/chunk/sync):
+\* Code it models (crates/database/db/src/chunk/sync):
 \*   mod.rs      set_lists (the list in the parent's write), ChunkWrites::create_missing,
 \*               ChunkWrites::delete_all (missing chunks, and the cascade on delete)
 \*   lookup.rs   ChunkCollection::existing_of (which planned chunks exist, in one scan)
-\*   crates/db/src/write/autocommit/one_op.rs AutoCommitMutator::in_batch (a single write runs as one batch)
-\*   crates/db/src/write/autocommit/batch.rs  BatchMutator::update_as, delete_as (call the hook)
-\*   crates/db/src/write/doc.rs               DbDocMutator update and delete (call the hook)
-\*   crates/db/src/write/prepare.rs           prepare_request_write (a signed create's blocks hold its lists)
+\*   crates/database/db/src/write/autocommit/one_op.rs AutoCommitMutator::in_batch (a single write runs as one batch)
+\*   crates/database/db/src/write/autocommit/batch.rs  BatchMutator::update_as, delete_as (call the hook)
+\*   crates/database/db/src/write/doc.rs               DbDocMutator update and delete (call the hook)
+\*   crates/database/db/src/write/prepare.rs           prepare_request_write (a signed create's blocks hold its lists)
 \* Commit validation itself is regolith's (the deletion marker and the same
 \* document parts written by two updates conflict); the model takes it as given.
 EXTENDS Naturals, Sequences, FiniteSets

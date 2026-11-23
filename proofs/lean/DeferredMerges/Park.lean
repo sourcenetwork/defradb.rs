@@ -13,8 +13,8 @@ another one, or another one's place under a key; a parked composite, with
 room for it, missing from either of its two keys; a parked composite that
 was released by one of its keys still sitting under the other; a parked
 composite its document has no room for holding a place in the index.
-Rust owner: crates/db/src/merge/governance/deferred.rs DeferredMerges::defer,
-DeferredMerges::park; crates/db/src/merge/merge_handler/composite.rs
+Rust owner: crates/database/db/src/merge/governance/deferred.rs DeferredMerges::defer,
+DeferredMerges::park; crates/database/db/src/merge/merge_handler/composite.rs
 prepare_composite_merge, which parks under `WaitKey::acp_object` and
 `WaitKey::Composite` (`Deferral::Parked`). -/
 namespace DeferredMerges

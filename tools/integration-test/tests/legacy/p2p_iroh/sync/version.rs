@@ -9,7 +9,7 @@
 //! Run with:
 //!   cargo test --test legacy -- p2p_iroh::sync::version::
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use integration_test::{extract_p2p_addr, poll_until, TestCluster};
@@ -325,22 +325,25 @@ async fn patch_version_of_unknown_collection() {
     .await;
 }
 
-/// Path to the copy lens WASM module (from the Go repo).
+/// Path to the copy lens WASM module `just build-lenses` builds.
 /// This module copies the value from one field to another (src→dst).
-const COPY_WASM_PATH: &str = concat!(
-    env!("HOME"),
-    "/go/src/github.com/sourcenetwork/defradb",
-    "/tests/lenses/rust_wasm32_copy/target/wasm32-unknown-unknown/debug/rust_wasm32_copy.wasm"
-);
+/// Built from the manifest's parent, since lens hosts refuse a `..` segment.
+fn copy_wasm_path() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("integration-test lives under tools/")
+        .join("lenses/target/wasm32-unknown-unknown/debug/rust_wasm32_copy.wasm")
+}
 
 fn require_lens_wasm() {
+    let path = copy_wasm_path();
     assert!(
-        Path::new(COPY_WASM_PATH).exists(),
+        path.exists(),
         "Lens WASM binary not found at: {}\n\
          Build it first:\n\
          \n\
-         cd ~/go/src/github.com/sourcenetwork/defradb/tests/lenses && make build\n",
-        COPY_WASM_PATH
+         just build-lenses\n",
+        path.display()
     );
 }
 
@@ -350,7 +353,7 @@ fn require_lens_wasm() {
 fn copy_lens_config(src: &str, dst: &str) -> String {
     serde_json::json!({
         "Lenses": [{
-            "Path": COPY_WASM_PATH,
+            "Path": copy_wasm_path(),
             "Arguments": {"src": src, "dst": dst}
         }]
     })

@@ -29,11 +29,12 @@ What must never happen:
   a delegation held past its lifetime by a signer whose clock is right ends
   the same way.
 
-Rust owners: `issue_request_at` in `crates/vera/src/vera_rs/bearer/request.rs`
-and `issue_at` in `crates/vera/src/vera_rs/bearer.rs` write the times;
-`within_window` in `crates/vera/src/vera_rs/bearer/window.rs` is the node's
+Rust owners: `issue_request_at` in `crates/engine/vera-delegation/src/bearer/request.rs`
+and `create_scoped_bearer_token_at` in `crates/engine/vera-delegation/src/bearer.rs`
+write the times;
+`within_window` in `crates/engine/vera/src/vera_rs/bearer/window.rs` is the node's
 check and names the refusal, a `WindowRefusal` of
-`crates/acp/src/delegation_window.rs`. The verifier mirrored is `verify_bearer_token`,
+`crates/engine/acp/src/delegation_window.rs`. The verifier mirrored is `verify_bearer_token`,
 `JwtClaims::authorize` and `OperationId::validate` in vera.rs `vera-crypto`.
 
 Times are natural numbers, as Unix seconds are; a subtraction that would go
@@ -44,7 +45,7 @@ namespace VeraDelegationWindow
 /-- The clock skew allowance, in seconds (`CLOCK_SKEW_ALLOWANCE`). -/
 def allowance : Nat := 30
 
-/-- The longest vera.rs keeps a request open, in seconds (`MAX_OPERATION_TTL`). -/
+/-- The longest vera.rs keeps a request open, in seconds (`DEFAULT_OPERATION_LEAD`). -/
 def maxTtl : Nat := 600
 
 /-- The longest lifetime a request-bound delegation is written with

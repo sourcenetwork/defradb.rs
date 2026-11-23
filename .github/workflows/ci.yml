@@ -247,9 +247,29 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --workspace --no-deps --keep-going
 
+  # Mirrors `just check-c-api`: defra.h as this change generates it against the
+  # one its base generates.
+  c-api:
+    name: C API compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cbindgen,just
+      - name: Test the checker
+        run: python3 .github/scripts/test-check-c-api.py
+      - name: Check the C API against the base
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+        run: |
+          git fetch --depth=1 origin "$BASE"
+          bash .github/scripts/check-c-api.sh "$BASE"
+
   lint:
     name: Lint
-    needs: [ci-scope, lint-default, feature-checks, dependency-checks, docs]
+    needs: [ci-scope, lint-default, feature-checks, dependency-checks, docs, c-api]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -260,6 +280,7 @@ jobs:
           FEATURES: ${{ needs.feature-checks.result }}
           DEPENDENCIES: ${{ needs.dependency-checks.result }}
           DOCS: ${{ needs.docs.result }}
+          C_API: ${{ needs.c-api.result }}
         run: |
           test "$DEFAULT" = success
           # Skipped on a pull request without its ci: label; the merge queue runs them. Only then: a
@@ -267,6 +288,7 @@ jobs:
           test "$FEATURES" = success || { test "$FEATURES" = skipped && test "$RUN_FEATURES" = false; }
           test "$DEPENDENCIES" = success
           test "$DOCS" = success
+          test "$C_API" = success
 
   unit-tests:
     name: Unit tests
@@ -293,20 +315,21 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ~/.cache/defra-harness
-          key: go-defradb-${{ runner.os }}-${{ hashFiles('crates/defra-version/src/lib.rs') }}
+          key: go-defradb-${{ runner.os }}-${{ hashFiles('crates/foundation/defra-version/src/lib.rs') }}
       - name: Install Go toolchain
         if: steps.go-defradb.outputs.cache-hit != 'true'
         uses: actions/setup-go@v7
         with:
           # The pinned GO_COMPAT_COMMIT declares `go 1.26.10`, so an older
-          # toolchain cannot build it.
-          go-version: '1.26'
+          # toolchain cannot build it. Held at 1.26.10: Go 1.26.11 refuses the
+          # LTO section in wasmtime-go's prebuilt libwasmtime.a
+          go-version: '1.26.10'
       - name: Prepare Go DefraDB binary
         id: prepare
         run: |
-          GO_REF=$(grep 'pub const GO_COMPAT_COMMIT' crates/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
-          GO_BRANCH=$(grep 'pub const GO_COMPAT_BRANCH' crates/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
-          GO_TAG=$(grep 'pub const GO_COMPAT_TAG' crates/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
+          GO_REF=$(grep 'pub const GO_COMPAT_COMMIT' crates/foundation/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
+          GO_BRANCH=$(grep 'pub const GO_COMPAT_BRANCH' crates/foundation/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
+          GO_TAG=$(grep 'pub const GO_COMPAT_TAG' crates/foundation/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
 
           if [ -n "$GO_TAG" ]; then
             VER_NUM="${GO_TAG#v}"
@@ -346,47 +369,6 @@ jobs:
         with:
           name: go-defradb
           path: ${{ steps.prepare.outputs.dir }}/defradb
-          retention-days: 1
-      # Lens scenarios load the WASM modules Go's tests/lenses builds, from
-      # DEFRADB_GO_REPO, at the same pin as the Go binary.
-      - name: Restore Go lens modules
-        id: go-lenses
-        uses: actions/cache/restore@v6
-        with:
-          path: ~/.cache/defra-lenses
-          key: go-lenses-${{ runner.os }}-${{ hashFiles('crates/defra-version/src/lib.rs') }}
-      - uses: dtolnay/rust-toolchain@stable
-        if: steps.go-lenses.outputs.cache-hit != 'true'
-        with:
-          targets: wasm32-unknown-unknown
-      - name: Build Go lens modules
-        if: steps.go-lenses.outputs.cache-hit != 'true'
-        env:
-          PIN: ${{ steps.prepare.outputs.pin }}
-          BRANCH: ${{ steps.prepare.outputs.branch }}
-        run: |
-          WORK_DIR="$RUNNER_TEMP/defradb-lenses"
-          git clone --filter=blob:none --no-checkout --branch "$BRANCH" https://github.com/sourcenetwork/defradb "$WORK_DIR"
-          git -C "$WORK_DIR" sparse-checkout set tests/lenses
-          git -C "$WORK_DIR" checkout "$PIN"
-          make -C "$WORK_DIR/tests/lenses" build
-          OUT="$HOME/.cache/defra-lenses"
-          cd "$WORK_DIR"
-          for wasm in tests/lenses/*/target/wasm32-unknown-unknown/debug/*.wasm; do
-            mkdir -p "$OUT/$(dirname "$wasm")"
-            cp "$wasm" "$OUT/$wasm"
-          done
-          find "$OUT" -name '*.wasm' | sort
-      - name: Save Go lens modules
-        if: env.SAVE_CACHE == 'true' && steps.go-lenses.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
-        with:
-          path: ~/.cache/defra-lenses
-          key: ${{ steps.go-lenses.outputs.cache-primary-key }}
-      - uses: actions/upload-artifact@v7
-        with:
-          name: go-lenses
-          path: ~/.cache/defra-lenses
           retention-days: 1
 
   build-binaries:
@@ -495,7 +477,7 @@ jobs:
       - name: Build WASM
         run: >-
           CARGO_PROFILE_RELEASE_OPT_LEVEL=z
-          wasm-pack build crates/wasm --release --target web --out-dir ../../pkg/wasm
+          wasm-pack build crates/surfaces/wasm --release --target web --out-dir ../../../pkg/wasm
       - uses: browser-actions/setup-firefox@0bc507ddf224827e3b1af68e014d5e42ab93e795 # v1
       - uses: browser-actions/setup-geckodriver@eb8b0670366f719ca31703766a8cb7e3ea2c56ed # v0.0.0
         with:
@@ -577,8 +559,14 @@ jobs:
         run: cargo test -p db --lib merge::governance::deferred_conformance_tests::the_index_matches_the_executed_model -- --exact --ignored
       - name: Check HTTP router composition model binding
         run: cargo test -p defra-http --lib server::router_transform_tests::forwarding_filter_matches_executed_model -- --exact --ignored
+      - name: Check owner observation model binding
+        run: cargo test -p defra-node --lib owner_observation_tests
       - name: Check collection head set model binding
         run: cargo test -p db --test block head_conformance::head_queries_match_executable_lean -- --exact
+      - name: Check projection scope model binding
+        run: cargo test -p acp --test projection_scope -- --ignored
+      - name: Check genesis read access model binding
+        run: cargo test -p db --test merge genesis_access::genesis_reader_matches_executed_lean_model -- --exact --ignored
       - name: Check Lean-to-Rust conformance
         run: cargo nextest run -p conformance --lib --test lean_conformance
 
@@ -709,20 +697,20 @@ jobs:
         if: matrix.suite == 'go-compat'
         run: |
           OUT=$(mktemp)
-          (cd crates/p2p/testdata/gen_message_fixtures && go run .) >> "$OUT"
-          (cd crates/p2p/testdata/gen_pubsub_rpc_fixture && go run .) >> "$OUT"
+          (cd crates/database/p2p/testdata/gen_message_fixtures && go run .) >> "$OUT"
+          (cd crates/database/p2p/testdata/gen_pubsub_rpc_fixture && go run .) >> "$OUT"
           HEXES=$(grep -Eo '\(([0-9]+)( bytes)?\): [0-9a-f]+' "$OUT" | awk '{print $NF}')
           test -n "$HEXES"
           while IFS= read -r H; do
-            grep -qR --include='*.rs' -F "$H" crates/p2p/
+            grep -qR --include='*.rs' -F "$H" crates/database/p2p/
           done <<< "$HEXES"
       - name: Verify the pinned rustffi client resolves
         if: matrix.suite == 'go-compat'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          pin=$(sed -nE 's/^pub const GO_FFI_CLIENT_COMMIT: &str = "([0-9a-f]+)";/\1/p' crates/defra-version/src/lib.rs)
-          test -n "$pin" || { echo "GO_FFI_CLIENT_COMMIT not found in crates/defra-version/src/lib.rs"; exit 1; }
+          pin=$(sed -nE 's/^pub const GO_FFI_CLIENT_COMMIT: &str = "([0-9a-f]+)";/\1/p' crates/foundation/defra-version/src/lib.rs)
+          test -n "$pin" || { echo "GO_FFI_CLIENT_COMMIT not found in crates/foundation/defra-version/src/lib.rs"; exit 1; }
           gh api "repos/sourcenetwork/defradb/commits/$pin" --jq .sha > /dev/null \
             || { echo "GO_FFI_CLIENT_COMMIT=$pin does not resolve on sourcenetwork/defradb"; exit 1; }
       - name: Run rust integration tests (basic)
@@ -864,8 +852,6 @@ jobs:
     if: needs.ci-scope.outputs.full == 'true'
     timeout-minutes: 30
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
-    env:
-      DEFRADB_GO_REPO: ${{ github.workspace }}/target/go-repo
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v7
@@ -906,7 +892,6 @@ jobs:
     env:
       DEFRA_RUST_BINARY: ${{ github.workspace }}/target/ci/defradb
       DEFRA_IROH_BINARY: ${{ github.workspace }}/target/ci/defradb-iroh
-      DEFRADB_GO_REPO: ${{ github.workspace }}/target/go-repo
       DEFRA_E2E_KEEP: '1'
       # A failing scenario shows its in-process nodes' P2P trace.
       DEFRA_TEST_TRACE: p2p=debug,defra_p2p_adapter=debug,warn
@@ -949,10 +934,12 @@ jobs:
         with:
           name: go-defradb
           path: target/go
-      - uses: actions/download-artifact@v8
-        with:
-          name: go-lenses
-          path: target/go-repo
+      - name: Build the lens modules
+        # A stray CARGO_TARGET_DIR keeps --target-dir honest (#2350): without
+        # the flag the modules land there and the lens tests can't find them.
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/stray-lens-target
+        run: cargo build --manifest-path tools/lenses/Cargo.toml --target wasm32-unknown-unknown --target-dir tools/lenses/target
       - name: Pick the tests
         env:
           CLIENT: ${{ matrix.client }}
@@ -1087,3 +1074,20 @@ jobs:
             } else {
               await github.rest.issues.createComment({ owner, repo, issue_number, body });
             }
+
+  # The one required check besides Validate title: fails when any job it needs
+  # failed or was cancelled. A job skipped by ci-scope passes; a job skipped
+  # because its dependency failed shows that dependency's failure here. Testo
+  # shards report through Testo summary, which judges their known failures.
+  merge-gate:
+    name: Merge gate
+    needs: [ci-scope, lint, build, wasm-check, lean-conformance, conformance, integration, p2p-linux, testo-summary]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every needed job to pass or be skipped by scope
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          failed=$(jq -r 'to_entries[] | select(.value.result == "failure" or .value.result == "cancelled") | "\(.key)=\(.value.result)"' <<<"$NEEDS")
+          if [ -n "$failed" ]; then echo "::error::Not green: $(echo $failed)"; exit 1; fi

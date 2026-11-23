@@ -1,0 +1,519 @@
+//! Post-parse schema validation for GraphQL operations.
+//!
+//! Validates that all collection names referenced in a parsed operation
+//! actually exist in the database, catching typos at parse time rather
+//! than during execution.
+
+use crate::collection_provider::CollectionProvider;
+use crate::error::{QueryError, Result};
+use std::sync::Arc;
+
+use crate::mapper::{Mutation, Requestable, Select};
+use crate::query_parse::ParsedOperation;
+use schema::{CollectionVersion, FieldKind, ScalarKind};
+
+/// Validate that all collections referenced in a parsed operation exist.
+///
+/// This runs after parsing but before execution, giving clear errors
+/// like "Cannot query collection 'Articel': collection not found"
+/// instead of opaque execution failures.
+pub async fn validate_parsed_operation(
+    op: &ParsedOperation,
+    provider: &dyn CollectionProvider,
+) -> Result<()> {
+    validate_operation(op, provider, true).await
+}
+
+/// [`validate_parsed_operation`] for an operation parsed from GraphQL text
+/// (`graphql_text`) or built as typed structs. A typed one carries no GraphQL
+/// arguments, so argument types are not checked: its `encryptFields` is
+/// checked against the collection when it runs, as Go's collection API does.
+pub async fn validate_operation(
+    op: &ParsedOperation,
+    provider: &dyn CollectionProvider,
+    graphql_text: bool,
+) -> Result<()> {
+    match op {
+        ParsedOperation::Query { selects, .. } => {
+            for select in selects {
+                validate_select_collection(select, provider, "Query").await?;
+            }
+        }
+        ParsedOperation::Mutation { mutations, .. } => {
+            for mutation in mutations {
+                validate_mutation_collection(mutation, provider, graphql_text).await?;
+            }
+        }
+        ParsedOperation::Subscription { select, .. } => {
+            validate_select_collection(select, provider, "Subscription").await?;
+        }
+        ParsedOperation::Introspection { .. } => {}
+    }
+    Ok(())
+}
+
+/// Validate that the collection referenced by a Select exists.
+///
+/// Skips internal collections (`_commits`) and nested relation selects
+/// (those are field names resolved later by the planner).
+async fn validate_select_collection(
+    select: &Select,
+    provider: &dyn CollectionProvider,
+    root_type: &str,
+) -> Result<()> {
+    let name = &select.collection_name;
+
+    if is_internal_collection(name) {
+        return Ok(());
+    }
+
+    let Some(collection) = provider.get_collection(name).await? else {
+        let suggestion = suggest_collection(name, provider).await;
+        let mut msg = format!("Cannot query field \"{}\" on type \"{}\".", name, root_type);
+        if let Some(suggested) = suggestion {
+            msg.push_str(&format!(" Did you mean \"{}\"?", suggested));
+        }
+        return Err(QueryError::parse(msg));
+    };
+
+    if let Some(filter) = &select.filter {
+        filter.without_secondary_relation_ids(&collection)?;
+    }
+
+    validate_similarity(&select.fields, &collection, provider).await
+}
+
+/// Go checks every `SIMILARITY` selection, through fragments, relations and
+/// mutation selections: an argument naming a field that cannot hold a vector
+/// fails validation. An argument naming no field is left to the planner's
+/// `Unknown argument` error, as graphql-go leaves it to the library.
+async fn validate_similarity(
+    fields: &[Requestable],
+    collection: &CollectionVersion,
+    provider: &dyn CollectionProvider,
+) -> Result<()> {
+    let nested = fields
+        .iter()
+        .any(|field| matches!(field, Requestable::Select(sub) if has_similarity(&sub.fields)));
+    // Relation targets are only resolved when a relation selects a SIMILARITY.
+    let mut collections = Vec::new();
+    if nested {
+        for name in provider.list_collections().await? {
+            collections.extend(provider.get_collection(&name).await?);
+        }
+    }
+    check_similarity(fields, collection, &collections)
+}
+
+fn has_similarity(fields: &[Requestable]) -> bool {
+    fields.iter().any(|field| match field {
+        Requestable::Similarity(_) => true,
+        Requestable::Select(sub) => has_similarity(&sub.fields),
+        _ => false,
+    })
+}
+
+fn check_similarity(
+    fields: &[Requestable],
+    collection: &CollectionVersion,
+    collections: &[Arc<CollectionVersion>],
+) -> Result<()> {
+    for field in fields {
+        match field {
+            Requestable::Similarity(similarity) => {
+                let Some(target) = collection.field_by_name(&similarity.target_field) else {
+                    continue;
+                };
+                if !holds_vector(&target.kind) {
+                    return Err(QueryError::execution(format!(
+                        "similarity can only target a numeric array field. Field: {}, Type: {}",
+                        target.name,
+                        target.kind.graphql_type_name()
+                    )));
+                }
+            }
+            Requestable::Select(sub) if has_similarity(&sub.fields) => {
+                let related = collection
+                    .field_by_name(&sub.collection_name)
+                    .and_then(|relation| relation.kind.relation_collection_id())
+                    .and_then(|id| {
+                        if id.is_empty() {
+                            return Some(collection);
+                        }
+                        collections
+                            .iter()
+                            .map(Arc::as_ref)
+                            .find(|c| c.collection_id == id || c.version_id == id || c.name == id)
+                    });
+                if let Some(related) = related {
+                    check_similarity(&sub.fields, related, collections)?;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn holds_vector(kind: &FieldKind) -> bool {
+    matches!(
+        kind,
+        FieldKind::ScalarArray(array) if matches!(
+            array.element_kind(),
+            ScalarKind::NillableInt | ScalarKind::NillableFloat32 | ScalarKind::NillableFloat64
+        )
+    )
+}
+
+/// Validate that the collection referenced by a Mutation exists.
+async fn validate_mutation_collection(
+    mutation: &Mutation,
+    provider: &dyn CollectionProvider,
+    graphql_text: bool,
+) -> Result<()> {
+    let name = &mutation.collection_name;
+
+    let Some(collection) = provider.get_collection(name).await? else {
+        let suggestion = suggest_collection(name, provider).await;
+        let field_name = match mutation.mutation_type {
+            crate::mapper::MutationType::Add => format!("add_{}", name),
+            crate::mapper::MutationType::Update => format!("update_{}", name),
+            crate::mapper::MutationType::Delete => format!("delete_{}", name),
+            crate::mapper::MutationType::Upsert => format!("upsert_{}", name),
+            crate::mapper::MutationType::Truncate => format!("truncate_{}", name),
+        };
+        let mut msg = format!(
+            "Cannot query field \"{}\" on type \"Mutation\".",
+            field_name
+        );
+        if let Some(suggested) = suggestion {
+            msg.push_str(&format!(" Did you mean \"{}\"?", suggested));
+        }
+        return Err(QueryError::UnknownMutationCollection(msg));
+    };
+
+    if graphql_text {
+        validate_encrypt_fields(mutation, &collection)?;
+    }
+    validate_similarity(&mutation.fields, &collection, provider).await
+}
+
+/// Go types `encryptFields` as a list of the collection's `<Name>ExplicitField`
+/// enum, which holds every field not starting with `_`, so a built-in or unknown
+/// field fails GraphQL validation before execution. The text is graphql-go's:
+/// one line per invalid item, each numbered within that item's own messages.
+fn validate_encrypt_fields(mutation: &Mutation, collection: &CollectionVersion) -> Result<()> {
+    let is_explicit =
+        |field: &str| !field.starts_with('_') && collection.fields.iter().any(|f| f.name == field);
+    let mut message = String::new();
+    for invalid in mutation.encrypt_fields.iter().filter(|f| !is_explicit(f)) {
+        message.push_str(&format!(
+            "\nIn element #1: Expected type \"{}ExplicitField\", found {invalid}.",
+            mutation.collection_name
+        ));
+    }
+    if message.is_empty() {
+        return Ok(());
+    }
+    Err(QueryError::execution(format!(
+        "Argument \"encryptFields\" has invalid value [{}].{message}",
+        mutation.encrypt_fields.join(", ")
+    )))
+}
+
+fn is_internal_collection(name: &str) -> bool {
+    name.starts_with('_')
+}
+
+/// Suggest a similar collection name using edit distance.
+async fn suggest_collection(name: &str, provider: &dyn CollectionProvider) -> Option<String> {
+    let collections = provider.list_collections().await.ok()?;
+    let name_lower = name.to_lowercase();
+
+    let mut best: Option<(String, usize)> = None;
+    for candidate in &collections {
+        let dist = edit_distance(&name_lower, &candidate.to_lowercase());
+        let threshold = (name.len() / 3).max(2);
+        if dist <= threshold && best.as_ref().is_none_or(|(_, d)| dist < *d) {
+            best = Some((candidate.clone(), dist));
+        }
+    }
+
+    best.map(|(name, _)| name)
+}
+
+/// Simple Levenshtein edit distance.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let (m, n) = (a.len(), b.len());
+
+    let mut prev = (0..=n).collect::<Vec<_>>();
+    let mut curr = vec![0; n + 1];
+
+    for i in 1..=m {
+        curr[0] = i;
+        for j in 1..=n {
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+
+    prev[n]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::collection_provider::StaticCollectionProvider;
+    use crate::document::DocumentMapping;
+
+    fn make_provider(names: &[&str]) -> StaticCollectionProvider {
+        let collections: Vec<CollectionVersion> = names
+            .iter()
+            .map(|name| serde_json::from_value(serde_json::json!({ "Name": name })).unwrap())
+            .collect();
+        StaticCollectionProvider::new(collections)
+    }
+
+    #[test]
+    fn test_edit_distance() {
+        assert_eq!(edit_distance("Article", "Articel"), 2);
+        assert_eq!(edit_distance("User", "User"), 0);
+        assert_eq!(edit_distance("User", "Users"), 1);
+        assert_eq!(edit_distance("abc", "xyz"), 3);
+    }
+
+    #[test]
+    fn test_valid_query_passes() {
+        workers::block_on(async {
+            let provider = make_provider(&["User", "Article"]);
+            let op = ParsedOperation::Query {
+                selects: vec![Select::new("User")],
+                explain: None,
+                exhaustive: false,
+            };
+            assert!(validate_parsed_operation(&op, &provider).await.is_ok());
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn test_invalid_query_collection() {
+        workers::block_on(async {
+            let provider = make_provider(&["User", "Article"]);
+            let op = ParsedOperation::Query {
+                selects: vec![Select::new("Uzr")],
+                explain: None,
+                exhaustive: false,
+            };
+            let err = validate_parsed_operation(&op, &provider).await.unwrap_err();
+            let msg = err.to_string();
+            assert!(msg.contains("Uzr"), "error should contain collection name");
+            assert!(msg.contains("Cannot query field \"Uzr\" on type \"Query\"."));
+            assert!(
+                msg.contains("Did you mean \"User\""),
+                "error should suggest User, got: {}",
+                msg
+            );
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn test_commits_skipped() {
+        workers::block_on(async {
+            let provider = make_provider(&["User"]);
+            let op = ParsedOperation::Query {
+                selects: vec![Select::new("_commits")],
+                explain: None,
+                exhaustive: false,
+            };
+            assert!(validate_parsed_operation(&op, &provider).await.is_ok());
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn nested_secondary_relation_id_filter_refuses() {
+        workers::block_on(async {
+            let collection = CollectionVersion::new(
+                "Book",
+                "v1",
+                "coll-book",
+                vec![
+                    schema::FieldDescription::new(
+                        "1",
+                        "author",
+                        schema::FieldKind::relation("Author", false),
+                        schema::CType::LwwRegister,
+                    )
+                    .with_relation_name("book_author"),
+                    schema::FieldDescription::new(
+                        "2",
+                        "_authorID",
+                        schema::FieldKind::doc_id(),
+                        schema::CType::LwwRegister,
+                    )
+                    .with_relation_name("book_author"),
+                ],
+            );
+            let provider = StaticCollectionProvider::new(vec![collection]);
+            let op = ParsedOperation::Query {
+                selects: vec![Select {
+                    collection_name: "Book".into(),
+                    filter: Some(crate::mapper::Filter::from_conditions(
+                        serde_json::json!({
+                            "_or": [{"_authorID": {"_eq": "bae-x"}}]
+                        })
+                        .as_object()
+                        .expect("object")
+                        .clone(),
+                    )),
+                    ..Select::new("Book")
+                }],
+                explain: None,
+                exhaustive: false,
+            };
+            let error = validate_parsed_operation(&op, &provider).await.unwrap_err();
+            assert!(error.to_string().contains("top level"));
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_invalid_mutation_collection() {
+        workers::block_on(async {
+            let provider = make_provider(&["User"]);
+            let mutation = Mutation {
+                mutation_type: crate::mapper::MutationType::Add,
+                collection_name: "Usr".to_string(),
+                alias: None,
+                create_input: vec![],
+                update_input: Default::default(),
+                doc_ids: None,
+                filter: None,
+                fields: vec![],
+                document_mapping: DocumentMapping::new(),
+                encrypt_doc: false,
+                encrypt_fields: vec![],
+            };
+            let op = ParsedOperation::Mutation {
+                mutations: vec![mutation],
+                explain: None,
+            };
+            let err = validate_parsed_operation(&op, &provider).await.unwrap_err();
+            let msg = err.to_string();
+            assert!(msg.contains("Cannot query field \"add_Usr\" on type \"Mutation\"."));
+            assert!(msg.contains("Did you mean \"User\""));
+        })
+        .unwrap()
+    }
+
+    fn encrypt_fields_result(encrypt_fields: &[&str]) -> Result<()> {
+        encrypt_fields_checked(encrypt_fields, true)
+    }
+
+    fn encrypt_fields_checked(encrypt_fields: &[&str], graphql_text: bool) -> Result<()> {
+        let collection: CollectionVersion = serde_json::from_value(serde_json::json!({
+            "Name": "Users",
+            "Fields": [{ "Name": "_docID" }, { "Name": "name" }, { "Name": "age" }],
+        }))
+        .unwrap();
+        let mutation = Mutation {
+            mutation_type: crate::mapper::MutationType::Add,
+            collection_name: "Users".to_string(),
+            alias: None,
+            create_input: vec![],
+            update_input: Default::default(),
+            doc_ids: None,
+            filter: None,
+            fields: vec![],
+            document_mapping: DocumentMapping::new(),
+            encrypt_doc: false,
+            encrypt_fields: encrypt_fields.iter().map(|f| f.to_string()).collect(),
+        };
+        let op = ParsedOperation::Mutation {
+            mutations: vec![mutation],
+            explain: None,
+        };
+        let provider = StaticCollectionProvider::new(vec![collection]);
+        workers::block_on(async { validate_operation(&op, &provider, graphql_text).await }).unwrap()
+    }
+
+    #[test]
+    fn test_encrypt_fields_rejects_builtin_field_like_go() {
+        let msg = encrypt_fields_result(&["_docID"]).unwrap_err().to_string();
+        assert_eq!(
+            msg,
+            "Argument \"encryptFields\" has invalid value [_docID].\nIn element #1: Expected type \"UsersExplicitField\", found _docID."
+        );
+    }
+
+    #[test]
+    fn test_encrypt_fields_rejects_unknown_field_like_go() {
+        let msg = encrypt_fields_result(&["name", "points"])
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            msg,
+            "Argument \"encryptFields\" has invalid value [name, points].\nIn element #1: Expected type \"UsersExplicitField\", found points."
+        );
+    }
+
+    #[test]
+    fn test_encrypt_fields_reports_every_invalid_field_like_go() {
+        let msg = encrypt_fields_result(&["_docID", "name", "points"])
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            msg,
+            "Argument \"encryptFields\" has invalid value [_docID, name, points].\nIn element #1: Expected type \"UsersExplicitField\", found _docID.\nIn element #1: Expected type \"UsersExplicitField\", found points."
+        );
+    }
+
+    #[test]
+    fn test_encrypt_fields_accepts_explicit_fields() {
+        assert!(encrypt_fields_result(&["name", "age"]).is_ok());
+        assert!(encrypt_fields_result(&[]).is_ok());
+    }
+
+    /// A typed operation leaves `encryptFields` to the collection API, which
+    /// gives Go's collection errors when the write runs.
+    #[test]
+    fn typed_operations_leave_encrypt_fields_to_the_write() {
+        assert!(encrypt_fields_checked(&["_docID"], false).is_ok());
+        assert!(encrypt_fields_checked(&["name", "points"], false).is_ok());
+        assert!(encrypt_fields_checked(&["_docID"], true).is_err());
+    }
+
+    #[test]
+    fn test_introspection_skipped() {
+        workers::block_on(async {
+            let provider = make_provider(&[]);
+            let op = ParsedOperation::Introspection {
+                query: "{ __schema { types { name } } }".to_string(),
+            };
+            assert!(validate_parsed_operation(&op, &provider).await.is_ok());
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn test_no_suggestion_for_distant_name() {
+        workers::block_on(async {
+            let provider = make_provider(&["User"]);
+            let op = ParsedOperation::Query {
+                selects: vec![Select::new("CompletelyDifferent")],
+                explain: None,
+                exhaustive: false,
+            };
+            let err = validate_parsed_operation(&op, &provider).await.unwrap_err();
+            let msg = err.to_string();
+            assert!(msg.contains("CompletelyDifferent"));
+            assert!(!msg.contains("Did you mean"));
+        })
+        .unwrap()
+    }
+}

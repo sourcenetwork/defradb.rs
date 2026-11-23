@@ -1,0 +1,625 @@
+//! Transaction registry trait and no-op implementation.
+
+use std::time::Duration;
+
+use async_trait::async_trait;
+use defra_core::RequestContext;
+use storage::corekv::{MaybeSend, MaybeSendSync};
+
+use crate::error::TransactionError;
+
+use super::handle::TransactionHandle;
+use super::turn::TxnJob;
+
+/// Registry for managing active transactions.
+///
+/// The database layer implements this. A transaction lives where the registry
+/// keeps it, and every request for it runs there, one at a time, in the
+/// order the requests arrived ([`run`](Self::run)); nothing outside the
+/// registry ever holds the transaction. A transaction belongs to the
+/// identity of the context that began it, and only a request carrying that
+/// identity reaches it again.
+///
+/// Each call comes twice: `*_as` takes the [`RequestContext`] of the request
+/// it serves, and the plain form runs in [`RequestContext::ambient`]. An
+/// implementation that tracks ownership overrides both forms; the `*_as`
+/// defaults run the plain form inside [`RequestContext::mirror`].
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+pub trait TransactionRegistry: MaybeSendSync + 'static {
+    /// Begin a new transaction.
+    ///
+    /// Returns a handle that names it to [`run`](Self::run),
+    /// [`commit`](Self::commit) and [`rollback`](Self::discard).
+    async fn begin(
+        &self,
+        readonly: bool,
+    ) -> std::result::Result<TransactionHandle, TransactionError>;
+
+    /// [`Self::begin`] for the request `context` serves.
+    async fn begin_as(
+        &self,
+        context: &RequestContext,
+        readonly: bool,
+    ) -> std::result::Result<TransactionHandle, TransactionError> {
+        context.mirror(self.begin(readonly)).await
+    }
+
+    /// Runs `job` on the transaction `handle` names, where it lives: after
+    /// every request for it that arrived earlier and before every one that
+    /// arrives later. A job still running after `timeout` is stopped, its
+    /// statement undone, and the call fails with an execution error. A
+    /// handle the caller does not own is not found.
+    async fn run<T>(
+        &self,
+        handle: &TransactionHandle,
+        timeout: Option<Duration>,
+        job: TxnJob<T>,
+    ) -> std::result::Result<T, TransactionError>
+    where
+        T: MaybeSend + 'static,
+    {
+        let _ = (handle, timeout, job);
+        Err(TransactionError::not_supported(
+            "transactions are not supported in this configuration",
+        ))
+    }
+
+    /// [`Self::run`] for the request `context` serves.
+    async fn run_as<T>(
+        &self,
+        context: &RequestContext,
+        handle: &TransactionHandle,
+        timeout: Option<Duration>,
+        job: TxnJob<T>,
+    ) -> std::result::Result<T, TransactionError>
+    where
+        T: MaybeSend + 'static,
+    {
+        context.mirror(self.run(handle, timeout, job)).await
+    }
+
+    /// Runs `job` against a read-only snapshot of its own, which no other
+    /// request sees and nothing registers: a standalone query's implicit
+    /// read. `timeout` stops it as [`run`](Self::run) does.
+    async fn read<T>(
+        &self,
+        timeout: Option<Duration>,
+        job: TxnJob<T>,
+    ) -> std::result::Result<T, TransactionError>
+    where
+        T: MaybeSend + 'static,
+    {
+        let _ = (timeout, job);
+        Err(TransactionError::not_supported(
+            "transactions are not supported in this configuration",
+        ))
+    }
+
+    /// [`Self::read`] for the request `context` serves.
+    async fn read_as<T>(
+        &self,
+        context: &RequestContext,
+        timeout: Option<Duration>,
+        job: TxnJob<T>,
+    ) -> std::result::Result<T, TransactionError>
+    where
+        T: MaybeSend + 'static,
+    {
+        context.mirror(self.read(timeout, job)).await
+    }
+
+    /// Commit a transaction, after every request for it that arrived earlier.
+    ///
+    /// After commit, the handle names nothing.
+    async fn commit(&self, handle: &TransactionHandle)
+        -> std::result::Result<(), TransactionError>;
+
+    /// [`Self::commit`] for the request `context` serves.
+    async fn commit_as(
+        &self,
+        context: &RequestContext,
+        handle: &TransactionHandle,
+    ) -> std::result::Result<(), TransactionError> {
+        context.mirror(self.commit(handle)).await
+    }
+
+    /// [`Self::commit_as`], in one step where the transaction lives, unless
+    /// a provider that cannot join the transaction told it owners
+    /// ([`ObservedOwners`](super::ObservedOwners)): then nothing is
+    /// committed, the transaction stays open, and the requests behind those
+    /// answers come back for the edge to read again and hand to
+    /// [`Self::commit_confirmed_as`]. Empty when it committed.
+    async fn commit_unless_told_as(
+        &self,
+        context: &RequestContext,
+        handle: &TransactionHandle,
+    ) -> std::result::Result<Vec<crate::prepared::PreparedInputRequest>, TransactionError> {
+        self.commit_as(context, handle).await.map(|()| Vec::new())
+    }
+
+    /// [`Self::commit_as`] for a transaction that used provider owner
+    /// answers: it commits only when every one is confirmed as exactly itself
+    /// by `confirmations`, the provider's answers read again at the edge.
+    /// Otherwise it is rolled back and the call fails with a conflict naming
+    /// [`OwnerChanged`](super::OwnerChanged).
+    async fn commit_confirmed_as(
+        &self,
+        context: &RequestContext,
+        handle: &TransactionHandle,
+        confirmations: Vec<super::OwnerAnswer>,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, handle, confirmations);
+        Err(TransactionError::not_supported(
+            "confirming document owners at commit is not supported in this configuration",
+        ))
+    }
+
+    /// Rollback a transaction, after every request for it that arrived
+    /// earlier.
+    ///
+    /// After rollback, the handle names nothing.
+    async fn discard(
+        &self,
+        handle: &TransactionHandle,
+    ) -> std::result::Result<(), TransactionError>;
+
+    /// [`Self::discard`] for the request `context` serves.
+    async fn discard_as(
+        &self,
+        context: &RequestContext,
+        handle: &TransactionHandle,
+    ) -> std::result::Result<(), TransactionError> {
+        context.mirror(self.discard(handle)).await
+    }
+
+    /// Create the collections `sdl` defines in the transaction `context`
+    /// carries. They are visible to requests in it, and to others once it
+    /// commits.
+    async fn add_collection_as(
+        &self,
+        context: &RequestContext,
+        sdl: &str,
+    ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
+        let _ = (context, sdl);
+        Err(TransactionError::not_supported(
+            "transaction-scoped schema changes are not supported in this configuration",
+        ))
+    }
+
+    /// The collection versions `selector` picks for the caller `context`
+    /// names, in the transaction it carries if it carries one (its own
+    /// uncommitted writes included), ordered by name then version ID.
+    async fn get_collections_as(
+        &self,
+        context: &RequestContext,
+        selector: &schema::CollectionSelector,
+    ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
+        let _ = (context, selector);
+        Err(TransactionError::not_supported(
+            "collection reads are not supported in this configuration",
+        ))
+    }
+
+    /// Apply the Go collection patch `patch`, with `migration` as the
+    /// migration to the version it adds, for the caller `context` names.
+    async fn patch_collection_as(
+        &self,
+        context: &RequestContext,
+        patch: &str,
+        migration: Option<lens::LensConfig>,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, patch, migration);
+        Err(TransactionError::not_supported(
+            "collection patches are not supported in this configuration",
+        ))
+    }
+
+    /// Define index `name` (generated when `None`) of `kind` over `fields` of
+    /// collection `collection` in the transaction `context` carries; its
+    /// backfill runs once that transaction commits.
+    async fn create_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        name: Option<&str>,
+        fields: Vec<schema::IndexedFieldDescription>,
+        kind: schema::IndexKind,
+    ) -> std::result::Result<schema::IndexDescription, TransactionError> {
+        let _ = (context, collection, name, fields, kind);
+        Err(TransactionError::not_supported(
+            "index changes inside a transaction are not supported in this configuration",
+        ))
+    }
+
+    /// Drop index `name` of collection `collection` in the transaction
+    /// `context` carries; its entries go once that transaction commits.
+    async fn drop_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        name: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, collection, name);
+        Err(TransactionError::not_supported(
+            "index changes inside a transaction are not supported in this configuration",
+        ))
+    }
+
+    /// Collection `collection` and its index actions by index ID, as the
+    /// transaction `context` carries sees them.
+    async fn indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+    ) -> std::result::Result<
+        (
+            schema::CollectionVersion,
+            rapidhash::RapidHashMap<u32, defra_core::ActionExecution>,
+        ),
+        TransactionError,
+    > {
+        let _ = (context, collection);
+        Err(TransactionError::not_supported(
+            "index reads inside a transaction are not supported in this configuration",
+        ))
+    }
+
+    /// Add an equality encrypted index on `field` of `collection` in the
+    /// transaction `context` carries.
+    async fn add_encrypted_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        field: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, collection, field);
+        Err(TransactionError::not_supported(
+            "encrypted index operations inside a transaction are not supported in this configuration",
+        ))
+    }
+
+    /// Delete the encrypted index on `field` of `collection` in the
+    /// transaction `context` carries.
+    async fn delete_encrypted_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        field: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, collection, field);
+        Err(TransactionError::not_supported(
+            "encrypted index operations inside a transaction are not supported in this configuration",
+        ))
+    }
+
+    /// The fields of `collection` with an encrypted index, as the transaction
+    /// `context` carries sees them.
+    async fn encrypted_indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+    ) -> std::result::Result<Vec<String>, TransactionError> {
+        let _ = (context, collection);
+        Err(TransactionError::not_supported(
+            "encrypted index operations inside a transaction are not supported in this configuration",
+        ))
+    }
+
+    /// Every collection's encrypted index fields, by collection name, as the
+    /// transaction `context` carries sees them.
+    async fn all_encrypted_indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<Vec<(String, Vec<String>)>, TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "encrypted index operations inside a transaction are not supported in this configuration",
+        ))
+    }
+
+    /// Make collection version `version_id` its collection's active one, for
+    /// the caller `context` names, in the transaction it carries if any.
+    async fn set_active_collection_version_as(
+        &self,
+        context: &RequestContext,
+        version_id: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, version_id);
+        Err(TransactionError::not_supported(
+            "collection activation is not supported in this configuration",
+        ))
+    }
+
+    /// Remove the documents of collection `name` that `filter` matches, or
+    /// all of them, for the caller `context` names. Go's
+    /// `Collection.Truncate`, which is not transactional.
+    async fn truncate_collection_as(
+        &self,
+        context: &RequestContext,
+        name: &str,
+        filter: Option<&crate::documents::Filter>,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, name, filter);
+        Err(TransactionError::not_supported(
+            "collection truncate is not supported in this configuration",
+        ))
+    }
+
+    /// Hard-delete the documents of collection `name` named by `doc_ids`, in
+    /// the transaction `context` carries when it carries one; how many were
+    /// purged. Their block history is pruned unless the collection is
+    /// branchable. Go shinzo's `Collection.PurgeByDocIDs`.
+    async fn purge_by_doc_ids_as(
+        &self,
+        context: &RequestContext,
+        name: &str,
+        doc_ids: &[document::DocID],
+    ) -> std::result::Result<usize, TransactionError> {
+        let _ = (context, name, doc_ids);
+        Err(TransactionError::not_supported(
+            "document purge is not supported in this configuration",
+        ))
+    }
+
+    /// Add the YAML DAC `policy` with the identity acting in `context` as its
+    /// creator; its ID. Go's `AddDACPolicy`, which is not transactional.
+    async fn add_dac_policy_as(
+        &self,
+        context: &RequestContext,
+        policy: &str,
+        nonce: Option<acp::PolicyNonce>,
+    ) -> std::result::Result<String, TransactionError> {
+        let _ = (context, policy, nonce);
+        Err(TransactionError::not_supported(
+            "DAC policies are not supported in this configuration",
+        ))
+    }
+
+    /// Every DAC policy the node holds, for the caller `context` names.
+    async fn list_dac_policies_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<Vec<acp::Policy>, TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "DAC policies are not supported in this configuration",
+        ))
+    }
+
+    /// The DAC policy `policy_id`, for the caller `context` names; `None`
+    /// when no ACP has it.
+    async fn get_dac_policy_as(
+        &self,
+        context: &RequestContext,
+        policy_id: &str,
+    ) -> std::result::Result<Option<acp::Policy>, TransactionError> {
+        let _ = (context, policy_id);
+        Err(TransactionError::not_supported(
+            "DAC policies are not supported in this configuration",
+        ))
+    }
+
+    /// The remote ACP's light client status, for the caller `context` names.
+    async fn acp_light_client_status_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<acp::LightClientStatus, TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "DAC policies are not supported in this configuration",
+        ))
+    }
+
+    /// The node's NAC status, for the caller `context` names. Go's
+    /// `GetNACStatus`.
+    async fn nac_status_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<acp::nac::NacStatus, TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "node access control is not supported in this configuration",
+        ))
+    }
+
+    /// Every way `subject` holds each node permission, for a caller who is
+    /// `subject`, an admin, or holds `NacStatus`.
+    async fn explain_nac_subject_as(
+        &self,
+        context: &RequestContext,
+        subject: &str,
+    ) -> std::result::Result<Vec<acp::nac::PermissionProvenance>, TransactionError> {
+        let _ = (context, subject);
+        Err(TransactionError::not_supported(
+            "node access control is not supported in this configuration",
+        ))
+    }
+
+    /// Turn NAC off for the caller `context` names. Go's `DisableNAC`.
+    async fn disable_nac_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "node access control is not supported in this configuration",
+        ))
+    }
+
+    /// Turn NAC back on for the caller `context` names. Go's `ReEnableNAC`.
+    async fn re_enable_nac_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "node access control is not supported in this configuration",
+        ))
+    }
+
+    /// Give `target_actor` `relation` on the node, the caller `context`
+    /// names asking; whether it existed already. Go's
+    /// `AddNACActorRelationship`.
+    async fn add_nac_actor_relationship_as(
+        &self,
+        context: &RequestContext,
+        relation: &str,
+        target_actor: &str,
+    ) -> std::result::Result<bool, TransactionError> {
+        let _ = (context, relation, target_actor);
+        Err(TransactionError::not_supported(
+            "node access control is not supported in this configuration",
+        ))
+    }
+
+    /// Stage a source-specific node permission in the explicit transaction.
+    async fn change_nac_source_permission_as(
+        &self,
+        context: &RequestContext,
+        edge: &crate::txn::SourcePermission,
+    ) -> std::result::Result<bool, TransactionError> {
+        let _ = (context, edge);
+        Err(TransactionError::not_supported(
+            "transactional node source permissions are unavailable",
+        ))
+    }
+
+    /// Take `relation` on the node from `target_actor`, the caller `context`
+    /// names asking; whether it was there. Go's
+    /// `DeleteNACActorRelationship`.
+    async fn delete_nac_actor_relationship_as(
+        &self,
+        context: &RequestContext,
+        relation: &str,
+        target_actor: &str,
+    ) -> std::result::Result<bool, TransactionError> {
+        let _ = (context, relation, target_actor);
+        Err(TransactionError::not_supported(
+            "node access control is not supported in this configuration",
+        ))
+    }
+
+    /// Register the lens migration `config` (JSON) in the transaction
+    /// `context` carries, if any; the transform ID.
+    async fn set_migration_as(
+        &self,
+        context: &RequestContext,
+        config: &str,
+    ) -> std::result::Result<String, TransactionError> {
+        let _ = (context, config);
+        Err(TransactionError::not_supported(
+            "transaction-scoped migrations are not supported in this configuration",
+        ))
+    }
+
+    /// Register the standalone lens `config` in the transaction `context` carries, if any; the transform ID.
+    async fn add_lens_as(
+        &self,
+        context: &RequestContext,
+        config: lens::LensConfig,
+    ) -> std::result::Result<String, TransactionError> {
+        let _ = (context, config);
+        Err(TransactionError::not_supported(
+            "this transaction operation is not supported in this configuration",
+        ))
+    }
+
+    /// The lenses the transaction `context` carries sees, as the JSON map from transform ID to module.
+    async fn list_lenses_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<String, TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "this transaction operation is not supported in this configuration",
+        ))
+    }
+
+    /// Delete the collections `targets` names in the transaction `context` carries.
+    async fn delete_collections_as(
+        &self,
+        context: &RequestContext,
+        targets: Vec<String>,
+        active_only: bool,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, targets, active_only);
+        Err(TransactionError::not_supported(
+            "this transaction operation is not supported in this configuration",
+        ))
+    }
+
+    /// Set whether collection version `version_id` is active, in the transaction `context` carries.
+    async fn set_collection_active_as(
+        &self,
+        context: &RequestContext,
+        version_id: &str,
+        is_active: bool,
+    ) -> std::result::Result<schema::CollectionVersion, TransactionError> {
+        let _ = (context, version_id, is_active);
+        Err(TransactionError::not_supported(
+            "this transaction operation is not supported in this configuration",
+        ))
+    }
+
+    /// Verify the signature of block `cid` against `public_key` in the transaction `context` carries. `key_type` is `ed25519`, `secp256k1` or `secp256r1`.
+    async fn verify_block_signature_as(
+        &self,
+        context: &RequestContext,
+        document_acp: std::sync::Arc<dyn acp::DocumentACP>,
+        cid: &str,
+        public_key: &str,
+        key_type: &str,
+        caller: &acp::Identity,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, document_acp, cid, public_key, key_type, caller);
+        Err(TransactionError::not_supported(
+            "this transaction operation is not supported in this configuration",
+        ))
+    }
+
+    /// Let go of a transaction without committing its writes, at once and
+    /// without waiting: no later request finds it, and it ends after the
+    /// requests already queued for it. Must be idempotent and work without
+    /// an async runtime (a guard's destructor calls it).
+    fn abandon(&self, handle: &TransactionHandle);
+}
+
+/// A no-op transaction registry that doesn't support transactions.
+///
+/// This is used when transactions aren't needed or available.
+#[derive(Debug, Clone, Default)]
+pub struct NoOpTransactionRegistry;
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl TransactionRegistry for NoOpTransactionRegistry {
+    fn abandon(&self, _handle: &TransactionHandle) {}
+
+    async fn begin(
+        &self,
+        _readonly: bool,
+    ) -> std::result::Result<TransactionHandle, TransactionError> {
+        Err(TransactionError::not_supported(
+            "transactions are not supported in this configuration",
+        ))
+    }
+
+    async fn commit(
+        &self,
+        _handle: &TransactionHandle,
+    ) -> std::result::Result<(), TransactionError> {
+        Err(TransactionError::not_supported(
+            "transactions are not supported in this configuration",
+        ))
+    }
+
+    async fn discard(
+        &self,
+        _handle: &TransactionHandle,
+    ) -> std::result::Result<(), TransactionError> {
+        Err(TransactionError::not_supported(
+            "transactions are not supported in this configuration",
+        ))
+    }
+}

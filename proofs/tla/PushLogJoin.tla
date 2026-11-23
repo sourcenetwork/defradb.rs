@@ -21,7 +21,7 @@
 \*   2. two requests process the block at the same time - INV_OneProcessor;
 \*   3. a request that joined waits forever - LIVE_EveryJoinEnds.
 \*
-\* Correspondence with the Rust code, crates/p2p/src/sync/manager/process/pushlog.rs
+\* Correspondence with the Rust code, crates/database/p2p/src/sync/manager/process/pushlog.rs
 \* and join.rs unless named otherwise:
 \*
 \*   | Model        | Rust                                                                     |

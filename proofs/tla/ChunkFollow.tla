@@ -18,15 +18,15 @@
 \*     there (INV_DeletesFollowParent).
 \*
 \* Code it models:
-\*   crates/p2p/src/sync/coordinator/broadcast.rs  SyncCoordinator::push_jobs
+\*   crates/database/p2p/src/sync/coordinator/broadcast.rs  SyncCoordinator::push_jobs
 \*     (a chunk's push is decided by its parent's filter)
-\*   crates/db/src/merge/push_docs/follow.rs  replica_takes (replay and retry decide a
+\*   crates/database/db/src/merge/push_docs/follow.rs  replica_takes (replay and retry decide a
 \*     chunk by its parent too)
-\*   crates/db/src/chunk/sync/write.rs  ChunkWrites::publish (each chunk head
+\*   crates/database/db/src/chunk/sync/write.rs  ChunkWrites::publish (each chunk head
 \*     carries its parent)
-\*   crates/p2p/src/sync/coordinator/event_handler/doc_sync.rs
+\*   crates/database/p2p/src/sync/coordinator/event_handler/doc_sync.rs
 \*     with_followers (a synced article answers with its chunks)
-\*   crates/db/src/merge/head_provider.rs  DbHeadProvider::following_doc_ids
+\*   crates/database/db/src/merge/head_provider.rs  DbHeadProvider::following_doc_ids
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS

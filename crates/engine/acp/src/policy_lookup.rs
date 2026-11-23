@@ -1,0 +1,117 @@
+//! Where a node reads a policy by ID, so a schema can be checked against it.
+
+use async_trait::async_trait;
+use std::sync::Arc;
+use storage::corekv::MaybeSendSync;
+use zanzibar::{Policy, ZanzibarStore};
+
+use crate::DelegationAudience;
+
+/// Reads a stored policy. `Ok(None)` means the policy does not exist; an
+/// error means the backend could not be asked.
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+pub trait PolicyLookup: MaybeSendSync {
+    async fn get_policy(&self, policy_id: &str) -> Result<Option<Policy>, String>;
+}
+
+/// The policies of a local Zanzibar store.
+pub struct StorePolicies(pub Arc<dyn ZanzibarStore>);
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl PolicyLookup for StorePolicies {
+    async fn get_policy(&self, policy_id: &str) -> Result<Option<Policy>, String> {
+        self.0
+            .get_policy(policy_id)
+            .await
+            .map_err(|e| e.to_string())
+    }
+}
+
+/// A remote ACP that owns the node's DAC policies (Vera): it creates them and
+/// answers for them. A node keeps a local copy of each one it uses.
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+pub trait RemotePolicies: MaybeSendSync {
+    /// Create the YAML `policy` on the remote ACP for `creator`, a DID, and
+    /// return the ID the remote ACP gave it. vera.rs derives the ID from the
+    /// definition, the creator and `nonce`; without one it draws its own.
+    /// Sent again with the same nonce, it returns the policy the first call
+    /// made and makes no second one.
+    async fn add_policy(
+        &self,
+        creator: &str,
+        policy: &str,
+        nonce: Option<crate::PolicyNonce>,
+    ) -> Result<String, String>;
+
+    /// The remote ACP's policy `policy_id`; `Ok(None)` when it has none.
+    async fn get_policy(&self, policy_id: &str) -> Result<Option<Policy>, String>;
+
+    /// Where the node's light client of the remote ACP stands.
+    fn light_client_status(&self) -> Result<LightClientStatus, String>;
+
+    async fn certified_assignments(
+        &self,
+        _query: &AssignmentQuery,
+    ) -> Result<CertifiedAssignments, AssignmentReadError> {
+        Err(AssignmentReadError::Unsupported)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum AssignmentReadError {
+    #[error("certified assignment discovery is not available")]
+    Unsupported,
+    #[error("certified assignment read is temporarily unavailable: {0}")]
+    Unavailable(String),
+    #[error("certified assignment read failed: {0}")]
+    Invalid(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AssignmentPosition {
+    pub term: u64,
+    pub height: u64,
+    pub block_hash: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct AssignmentQuery {
+    pub policy: String,
+    pub resource: String,
+    pub relation: String,
+    pub subject: String,
+    pub issuer: String,
+    pub not_before: Option<AssignmentPosition>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CertifiedAssignments {
+    pub object_ids: Vec<String>,
+    pub position: AssignmentPosition,
+    pub timestamp: u64,
+    pub module_state_root: String,
+}
+
+/// The state of a node's light client of its remote ACP.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct LightClientStatus {
+    pub height: u64,
+    pub module_state_root: String,
+    pub cache_entries: usize,
+    pub last_invalidation_height: u64,
+    pub connected: bool,
+    /// The block time of the newest finalized revision the light client
+    /// verified, in Unix seconds: the provider's time, which a caller can
+    /// issue a delegation at so its own clock does not decide whether the
+    /// delegation holds. It may lag the provider's latest block by as long
+    /// as the light client takes to verify one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chain_time: Option<u64>,
+    /// What a caller's own delegation must name for the remote ACP to act
+    /// for that caller through this node; absent when it takes none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegation: Option<DelegationAudience>,
+}

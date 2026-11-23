@@ -32,6 +32,7 @@ mod commits {
     mod with_doc_id_typename;
     mod with_filter_compound;
     mod with_filter_in;
+    mod with_filter_neq;
     mod with_height_filter;
     mod with_link_delta;
     mod with_nested_links;
@@ -168,6 +169,7 @@ mod one_to_one {
     mod with_count_filter;
     mod with_filter;
     mod with_filter_order;
+    mod with_filter_secondary_relation_id;
     mod with_fragments;
     mod with_group_related_id;
     mod with_group_related_id_alias;
@@ -212,6 +214,7 @@ mod simple {
         mod with_eq_blob;
         mod with_eq_datetime;
         mod with_eq_float;
+        mod with_eq_float_zero;
         mod with_eq_int;
         mod with_eq_string;
         mod with_geq_datetime;

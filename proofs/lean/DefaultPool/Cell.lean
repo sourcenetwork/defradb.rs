@@ -24,7 +24,7 @@ at the cell after the turn, the turn given back on a failure), is the TLA+
 model `proofs/tla/DefaultPool.tla`; this file proves the publish law for any
 number of callers.
 
-Rust anchors: `DefaultPool::started` (`crates/workers/src/pool/default.rs`)
+Rust anchors: `DefaultPool::started` (`crates/foundation/workers/src/pool/default.rs`)
 over regolith's `OnceCell::get_or_try_init` and its `publish`, one
 `compare_exchange` from empty (`regolith 0.2.1 src/sync/once_cell.rs`),
 modeled here as its sequential meaning.

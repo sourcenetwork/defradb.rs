@@ -57,16 +57,21 @@ section is the **diff**: what is proven vs. the accepted gap.
 | JWT issuer / algorithm binding | TLA+ | identity |
 | CID content-addressing determinism + Block canonicalization | Lean | defra-core |
 | Deferred-ACP overlay consistency | TLA+ | query |
-| ACP outbox and owed registrations | TLA+ | acp, db, query, defra-node (owed relationship changes specified before the code, #2954) |
+| ACP outbox and owed registrations | TLA+ & Lean | acp, db, query, defra-node, storage, vera (owed relationship changes specified before the code, #2954; owed counts in staged and settled parts, #3070; the drainer's in-flight mark, journal and batches, #3065) |
 | Order-preserving key encoding | Lean | storage |
 | vera.rs actor spelling | Lean | vera |
+| vera.rs policy creation | TLA+ | vera, vera-embedded |
+| Policy nonce text | Lean | acp |
 | vera.rs delegation signing | Lean | vera |
 | vera.rs delegation window | Lean | vera, acp |
-| vera.rs embedded transport | Lean | vera-embedded |
+| vera.rs embedded transport | TLA+ / Lean | vera-embedded |
+| vera.rs deployment terms | Lean | vera |
+| vera.rs receipt wait | Boundary + Contract | over the loop's turns, the node's finalized height and the light client's verified height, with time counted only while the loop waits; that the node serves a receipt from the moment it publishes its block's header is vera.rs's property; unit tests in `crates/engine/vera/src/vera_rs/receipt_wait_tests.rs`, in-process node test `crates/engine/vera-embedded/tests/receipt_wait.rs`; the temporal side is `ReceiptWait.tla` |
 | DiskANN resident code table | Lean | db-index |
 | DiskANN walk cutoff | Lean | db-index (vector) |
 | PQ distance four sums | Lean | db-index (vector) |
 | Query fragment nesting bound | Lean | query |
+| Float filter equality | Lean | query, storage |
 | Index-maintenance consistency | Lean + TLA+ | db-index, db-merge |
 | Concurrent collection-head transitions | TLA+ & Lean | db-block-builder, storage |
 | Commit-ordered document arrivals | TLA+ | db, storage (pinned regolith) |
@@ -81,6 +86,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Peer connection observation | TLA+ / Lean | p2p |
 | HTTP router composition | TLA+ / Lean | http, defra-node |
 | Explicit transaction statement atomicity | TLA+ | query, db, storage |
+| One-to-many child paging | TLA+ | query; a child limit/offset applies per parent so a later parent keeps its page; `crates/engine/query/src/plan/type_join/type_join_many/children.rs` |
 | Engine ticker export | TLA+ & Lean | telemetry, storage |
 | Worker pool CPU ledger | TLA+ & Lean | workers |
 | Signing identity store | TLA+ & Lean | defra-core, defra-node, ffi |
@@ -108,6 +114,8 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Custom CRDT types | TLA+ & Lean | crdt, schema, db-merge, p2p (#2183) |
 | Document write pipeline | TLA+ | db, db-block-builder |
 | Text chunking | TLA+ / Lean | chunk-split, schema, db, query |
+| Prolly tree catch-up | TLA+ / Lean | prolly (the p2p pull is not wired yet, #2977) |
+| Prolly tree node store and cache | TLA+ / Lean | prolly, storage |
 | Postgres wire connection loop | TLA+ | pg-compat |
 | HTTP client redirects and body deadline | Lean | net |
 | Connect fallback race | TLA+ | net |
@@ -122,22 +130,25 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Index changes in a transaction | TLA+ | db, defra-node, http, cli |
 | Encrypted index changes outside a transaction | TLA+ | db, defra-node, cli |
 | Gossip announcement audience | TLA+ | p2p |
-| Collection truncate | TLA+ | db |
+| Collection truncate | TLA+ & Lean | db, storage |
 | Relation-filtered mutation | TLA+ | query, datastore, db |
 | Add DAC policy | TLA+ | db, acp, vera, http, cli, ffi, defra-node |
 | Add view with a lens transform | TLA+ & Lean | defra-node, db, schema, lens (#2724; NAC before the create transaction is a known gap, #2736) |
 | Verify block signature | TLA+ | defra-node, db, acp (#2724) |
 | Node access control operations | TLA+ & Lean | db, acp, http, cli, ffi, defra-node |
 | Filter relation paths and scalar leaves | Lean | query (#2427, #2430) |
+| Relation filter with no matching child | Lean | query (#3087) |
 | Orphan block sweep | TLA+ & Lean | db, storage |
 | Per-peer stream cap | TLA+ | p2p |
 | Receive gate | TLA+ | p2p, db |
 | P2P delivery liveness | TLA+ | p2p, p2p-adapter, db-merge, storage |
 | Document save | TLA+ & Lean | query, defra-node |
+| Per-parent child paging | TLA+ / Lean | query |
 | Mutation value checks | Lean | document, defra-core, query |
 | Cursor tokens | Lean | cursor |
 | Peer key loading | TLA+ / Lean | defra-node, ffi |
 | FFI transaction turns | TLA+ / Lean | ffi |
+| FFI options structs | Lean | ffi |
 | Vector index defaults | Lean | schema |
 | Selected collection version | TLA+ / Lean | db, query, ffi |
 | Per-operation signing choice | Lean | defra-core, http, ffi, cli |
@@ -218,7 +229,7 @@ Transaction & merge-queue concurrency, is now both — a Behavioral no-loss/no-d
 storm leg plus a Boundary internal-serialization leg). One
 of these (`partition::convergence_concurrent_same_doc_writes_merge`) found a real
 Rust-specific CRDT convergence bug — divergent materialization on identical DAGs
-after a restart — which is now **fixed** in `crates/db (merge)/.../field_state.rs`
+after a restart — which is now **fixed** in `crates/database/db (merge)/.../field_state.rs`
 (`reseed_from_document` re-seeds the datastore LWW from the authoritative
 headstore); go↔go vs rust↔rust parity (`parity.rs`) localized it to Rust.
 
@@ -245,14 +256,17 @@ headstore); go↔go vs rust↔rust parity (`parity.rs`) localized it to Rust.
 | P2P capability replay gate | Boundary | P2P-wire internal |
 | JWT issuer / algorithm binding | Boundary | DID-binding via `acp.rs`; forge unreachable via CLI |
 | Order-preserving key encoding | Boundary | ordered query may sort in memory; consts `pub(crate)` |
-| vera.rs actor spelling | Boundary | over an abstract key of a secp256k1 or P-256 curve; that distinct keys have distinct spellings is the `did:key` encoding's injectivity, and which spellings vera.rs takes is vera.rs's property; unit tests in `crates/vera/src/vera_rs/did_spelling.rs`, live case `actor_spelling`, in-process node test `crates/vera-embedded/tests/actor_keys.rs` |
-| vera.rs delegation signing | Boundary | over what the tests observe of a signature, per key kind (ECDSA or Ed25519); that ECDSA and Ed25519 verification are sound is assumed; unit tests in `crates/vera/src/vera_rs/signer/tests.rs`, `crates/vera/src/vera_rs/signer/key_type_tests.rs` and `crates/vera/src/vera_rs/provider/signer_tests.rs`, tokens checked by vera.rs's verifier in `crates/vera/src/vera_rs/bearer/key_types.rs`, token bytes pinned in `crates/vera/src/vera_rs/bearer/pinned.rs` |
-| vera.rs delegation window | Boundary | over the three times a delegation names and the block time, in whole seconds; that the node's clock stays near the provider's is the light client's freshness bound; unit tests in `crates/vera/src/vera_rs/bearer/request.rs` and `crates/vera/src/vera_rs/bearer.rs`, the refusal's wording in `crates/acp/src/delegation_window.rs`, embedded node tests in `crates/defra-node/tests/embedded_vera/clock_skew.rs` |
-| vera.rs embedded transport | Boundary | over the outcome of a call and the moment its answer comes; that the node's method table answers as its network server does is vera.rs's property; unit tests in `crates/vera-embedded/src`, in-process node tests in `crates/vera-embedded/tests/embedded_node.rs` |
-| DiskANN resident code table | Boundary | in-memory search cache, not observable on the wire; `DiskAnnCodes`; unit tests in `crates/db/tests/vector/diskann_resident.rs` |
+| vera.rs actor spelling | Boundary | over an abstract key of a secp256k1 or P-256 curve; that distinct keys have distinct spellings is the `did:key` encoding's injectivity, and which spellings vera.rs takes is vera.rs's property; unit tests in `crates/engine/vera-delegation/src/did_spelling.rs`, live case `actor_spelling`, in-process node test `crates/engine/vera-embedded/tests/actor_keys.rs` |
+| vera.rs delegation signing | Boundary | over what the tests observe of a signature, per key kind (ECDSA or Ed25519); that ECDSA and Ed25519 verification are sound is assumed; unit tests in `crates/engine/vera-delegation/src/signer/tests.rs`, `crates/engine/vera-delegation/src/signer/key_type_tests.rs` and `crates/engine/vera/src/vera_rs/provider/signer_tests.rs`, tokens checked by vera.rs's verifier in `crates/engine/vera-delegation/src/bearer/key_types.rs` and `crates/engine/vera/src/vera_rs/bearer/key_types.rs`, token bytes pinned in `crates/engine/vera-delegation/src/bearer/pinned.rs` |
+| vera.rs delegation window | Boundary | over the three times a delegation names and the block time, in whole seconds; that the node's clock stays near the provider's is the light client's freshness bound; unit tests in `crates/engine/vera/src/vera_rs/bearer/request.rs`, `crates/engine/vera/src/vera_rs/bearer.rs` and `crates/engine/vera-delegation/src/bearer/request.rs`, the refusal's wording in `crates/engine/acp/src/delegation_window.rs`, embedded node tests in `crates/entry-points/defra-node/tests/embedded_vera/clock_skew.rs` |
+| vera.rs embedded transport | Boundary | over the outcome of a call and the moment its answer comes; that the node's method table answers as its network server does is vera.rs's property; unit tests in `crates/engine/vera-embedded/src`, in-process node tests in `crates/engine/vera-embedded/tests/embedded_node.rs` |
+| vera.rs deployment terms | Boundary | over the heights of the journaled confirmations and a takeover's cut; that a confirmation's height never goes down with its sequence is the worker's one request at a time; unit tests in `crates/engine/vera/src/vera_rs/follow`, the takeover between two embedded devices in `crates/engine/vera-embedded/tests/term_takeover.rs`; the temporal side is `FollowDeployment.tla` |
+| DiskANN resident code table | Boundary | in-memory search cache, not observable on the wire; `DiskAnnCodes`; unit tests in `crates/database/db/tests/vector/diskann_resident.rs` |
 | P2P delivery liveness | Behavioral (trace) + Boundary | `model_trace.rs` replays recorded runs through `Trace_P2PDelivery.tla`; eventual connectivity, the bounded instance and the restart scenarios stay Boundary |
-| Cursor tokens | Boundary | `CursorToken`; tokens pinned by `crates/cursor/tests/go_fixtures.rs` |
+| Cursor tokens | Boundary | `CursorToken`; tokens pinned by `crates/foundation/cursor/tests/go_fixtures.rs` |
 | Per-operation signing choice | Boundary | `SigningOverride`; unit tests on each edge and `signature::per_op_signing` (testo) |
+| vera.rs policy creation | Boundary | over abstract IDs: that vera.rs's SHA-256 derivation separates definitions, nonces and creators is vera.rs's and acp's property (their vectors); in-process node tests in `crates/engine/vera-embedded/tests/policy_ids.rs` |
+| Policy nonce text | Boundary | over digit values; that a character reads back as its digit value in either case is the character table's; unit tests in `crates/engine/acp/tests/policy_nonce_tests.rs` |
 
 ```bash
 proofs/verify-all.sh                 # TLA + Lean + conformance (behavioral if binary present)
@@ -265,7 +279,7 @@ cargo test -p conformance            # Lean axis + behavioral; DEFRA_CONFORMANCE
 
 A `defra` built with `--features model-trace` logs one JSON event per
 [`P2PDelivery`](tla/P2PDelivery.tla) action under the `model_trace` log target
-(`crates/p2p/src/model_trace.rs`; the event table and its code sites are in
+(`crates/database/p2p/src/model_trace.rs`; the event table and its code sites are in
 [`P2PDelivery_DESIGN.md`](tla/P2PDelivery_DESIGN.md)). Without the feature the
 `model_trace!` sites compile to nothing. [`src/model_trace.rs`] reads the
 events from each node's log, orders them by time, names the nodes and the heads
@@ -376,7 +390,7 @@ Read this before trusting a verdict; it states the model's honest reach.
 ## Regolith adoption bindings
 
 Document arrivals use the pinned engine's `Transaction::append`, with the document
-arrival marker as `once_key`. `crates/db/src/event/arrivals.rs` never allocates a
+arrival marker as `once_key`. `crates/database/db/src/event/arrivals.rs` never allocates a
 position itself; rows and their cursor positions appear only after commit. The
 binding in `src/registry.rs` is to
 [CommitOrderedAppend.tla](https://github.com/sourcenetwork/regolith/blob/e844baefe838f3af76403afd46c4b42f1a0b98a5/proofs/tla/CommitOrderedAppend.tla).

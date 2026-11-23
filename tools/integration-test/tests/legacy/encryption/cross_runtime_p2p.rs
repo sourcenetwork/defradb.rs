@@ -257,7 +257,7 @@ async fn go_rust_kms_interop(writer_idx: usize, reader_idx: usize) {
 /// the request does not reach Go's KMS serve handler or Go never publishes a
 /// usable reply on `encryption`. Diagnosing this requires Go-side KMS trace
 /// logging (out of scope: RUST-ONLY) and is beyond the encryption-topic-mesh
-/// scope of #976. See the design/976-kms work and `crates/p2p/src/kms/`.
+/// scope of #976. See the design/976-kms work and `crates/database/p2p/src/kms/`.
 #[nuclei::test]
 async fn go_to_rust_encrypted_p2p_replication() {
     edge::compat(async move {

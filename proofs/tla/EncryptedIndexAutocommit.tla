@@ -24,15 +24,15 @@
 \* this model of adds stands for both.
 \*
 \* Code it models:
-\*   crates/db/src/collection/encrypted_index.rs  DB::add_encrypted_index,
+\*   crates/database/db/src/collection/encrypted_index.rs  DB::add_encrypted_index,
 \*                                                 DB::delete_encrypted_index
 \*                                                 (one DB::transact_db attempt
 \*                                                 each), rewrite_definition_in,
 \*                                                 definition_in (the validated read)
-\*   crates/db/src/txn/attempt.rs                 DB::transact_db (the re-run)
-\*   crates/defra-node/src/ops/encrypted_index.rs NodeOps::add_encrypted_index,
+\*   crates/database/db/src/txn/attempt.rs                 DB::transact_db (the re-run)
+\*   crates/entry-points/defra-node/src/ops/encrypted_index.rs NodeOps::add_encrypted_index,
 \*                                                 NodeOps::delete_encrypted_index
-\*   crates/cli/src/encrypted_index_adapter.rs    EncryptedIndexAdapter (the
+\*   crates/entry-points/cli/src/encrypted_index_adapter.rs    EncryptedIndexAdapter (the
 \*                                                 `defradb start` HTTP path)
 EXTENDS Naturals, FiniteSets
 

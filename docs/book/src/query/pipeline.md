@@ -1,6 +1,6 @@
 # The GraphQL pipeline
 
-The pipeline, in one line ([`crates/query/src/lib.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/query/src/lib.rs)):
+The pipeline, in one line ([`crates/engine/query/src/lib.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/query/src/lib.rs)):
 
 ```
 GraphQL string -> Parser -> Mapper -> Planner -> Plan nodes -> Executor -> Results
@@ -21,7 +21,7 @@ introspects is generated from collection definitions (`schema_gen/`).
 
 ## Prepare
 
-Mutation preparation ([`crates/query/src/runner/prepare.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/query/src/runner/prepare.rs)) runs once per request, outside any
+Mutation preparation ([`crates/engine/query/src/runner/prepare.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/query/src/runner/prepare.rs)) runs once per request, outside any
 transaction retry: write preparation resolves KMS keys, embeddings and signatures;
 batches group; ACP-transactional providers bind. Remote inputs are resolved in waves at
 the edge: an input that is not yet local ends the wave (`NeedsInput`), is fetched, and
@@ -47,7 +47,7 @@ Go-compatible order (joins below selects):
 
 ## Execute
 
-The executor ([`crates/query/src/runner/executor.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/query/src/runner/executor.rs)) is a Volcano-style iterator over the plan: each node
+The executor ([`crates/engine/query/src/runner/executor.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/query/src/runner/executor.rs)) is a Volcano-style iterator over the plan: each node
 pulls from its children. Reads stream: a scan yields pages from the storage iterator,
 never a materialized set. Execution happens on a pool worker, routed at the edge; when
 the request names an explicit transaction, it goes to that transaction's owning worker

@@ -1,0 +1,329 @@
+use db::Collection;
+use db::Error;
+use document::Document;
+use schema::CollectionVersion;
+use schema::FieldDescription;
+use schema::FieldKind;
+use schema::ScalarKind;
+
+fn filtered_collection() -> Collection {
+    Collection::new(
+        CollectionVersion::new(
+            "AgentDoc",
+            "agent_doc_version",
+            "agent_doc_collection",
+            vec![
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new(
+                    "2",
+                    "agent_did",
+                    FieldKind::string(),
+                    schema::CType::LwwRegister,
+                )
+                .as_immutable(),
+                FieldDescription::new("3", "body", FieldKind::string(), schema::CType::LwwRegister),
+            ],
+        ),
+        crdt::Crdts::default(),
+    )
+}
+
+#[test]
+fn immutable_field_validation_allows_other_field_changes() {
+    let collection = filtered_collection();
+    let old_doc = Document::from_json_str(
+        r#"{"agent_did":"did:key:z6M","body":"before"}"#,
+        collection.schema_arc(),
+    )
+    .unwrap();
+    let new_doc = Document::from_json_str(
+        r#"{"agent_did":"did:key:z6M","body":"after"}"#,
+        collection.schema_arc(),
+    )
+    .unwrap();
+
+    collection
+        .validate_immutable_fields_unchanged(&old_doc, &new_doc)
+        .unwrap();
+}
+
+#[test]
+fn immutable_field_validation_rejects_key_changes() {
+    let collection = filtered_collection();
+    let old_doc = Document::from_json_str(
+        r#"{"agent_did":"did:key:z6M","body":"before"}"#,
+        collection.schema_arc(),
+    )
+    .unwrap();
+    let new_doc = Document::from_json_str(
+        r#"{"agent_did":"did:key:other","body":"before"}"#,
+        collection.schema_arc(),
+    )
+    .unwrap();
+
+    let result = collection.validate_immutable_fields_unchanged(&old_doc, &new_doc);
+    assert!(
+        matches!(result, Err(Error::InvalidDocument(message)) if message.contains("agent_did"))
+    );
+}
+
+#[test]
+fn non_nillable_field_rejects_null_and_missing_values() {
+    let collection = Collection::new(
+        CollectionVersion::new(
+            "Event",
+            "event_version",
+            "event_collection",
+            vec![FieldDescription::new(
+                "1",
+                "createdAt",
+                FieldKind::Scalar(ScalarKind::DateTime),
+                schema::CType::LwwRegister,
+            )],
+        ),
+        crdt::Crdts::default(),
+    );
+
+    let valid = Document::from_json_str(
+        r#"{"createdAt":"2024-01-01T00:00:00Z"}"#,
+        collection.schema_arc(),
+    )
+    .unwrap();
+    collection.validate_document(&valid).unwrap();
+
+    let null = Document::from_json_str(r#"{"createdAt":null}"#, collection.schema_arc()).unwrap();
+    let error = collection.validate_document(&null).unwrap_err().to_string();
+    assert!(error.contains("null value provided for non-nillable field. Name: createdAt"));
+
+    let missing = Document::from_json_str("{}", collection.schema_arc()).unwrap();
+    let error = collection
+        .validate_document(&missing)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("value not provided for non-nillable field. Name: createdAt"));
+}
+
+#[test]
+fn atomic_creation_rejects_an_unknown_relation_target() {
+    workers::block_on(async {
+        let database = db::DB::open(storage::backends::RegolithStore::in_memory().unwrap())
+            .await
+            .unwrap();
+        let error = database
+            .add_collection(
+                &defra_core::RequestContext::ambient(),
+                r#"type Post { author: Missing @relation(name: "missing_posts") @primary }"#,
+            )
+            .await
+            .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("no type found for given name. Field: author, Kind: Missing"));
+    })
+    .unwrap()
+}
+
+#[test]
+fn creation_rejects_an_invalid_default_value() {
+    workers::block_on(async {
+    let database = db::DB::open(storage::backends::RegolithStore::in_memory().unwrap())
+        .await
+        .unwrap();
+    let count = FieldDescription::new("1", "count", FieldKind::int(), schema::CType::LwwRegister)
+        .with_default(serde_json::json!("not-an-int"));
+    let collection = CollectionVersion::new("Counter", "v-counter", "c-counter", vec![count]);
+
+    let error = database.create_collection(collection).await.unwrap_err();
+
+    assert!(error.to_string().contains(
+        "default field value is invalid. Collection: Counter, Inner: Field 'count' has incompatible type"
+    ));
+})
+    .unwrap()
+}
+
+#[test]
+fn creation_accepts_supported_scalar_defaults() {
+    workers::block_on(async {
+        let database = db::DB::open(storage::backends::RegolithStore::in_memory().unwrap())
+            .await
+            .unwrap();
+        database
+            .add_collection(
+                &defra_core::RequestContext::ambient(),
+                r#"
+        type Defaults {
+            active: Boolean @default(value: true)
+            created: DateTime @default(value: "2000-07-23T03:00:00Z")
+            name: String @default(value: "Bob")
+            age: Int @default(value: 40)
+            points: Float @default(value: 10)
+            metadata: JSON @default(value: "{\"one\":1}")
+            image: Blob @default(value: "ff0099")
+        }
+        "#,
+            )
+            .await
+            .unwrap();
+    })
+    .unwrap()
+}
+
+#[test]
+fn json_validation_preserves_non_json_and_nonfinite_rejection() {
+    use document::NormalValue;
+    let collection = Collection::new(
+        CollectionVersion::new(
+            "JsonDoc",
+            "json_doc_version",
+            "json_doc_collection",
+            vec![FieldDescription::new(
+                "1",
+                "payload",
+                FieldKind::json(),
+                schema::CType::LwwRegister,
+            )],
+        ),
+        crdt::Crdts::default(),
+    );
+    for value in [
+        NormalValue::Bytes(vec![1, 2]),
+        NormalValue::BytesArray(vec![vec![1]]),
+        NormalValue::Document(Box::new(Document::new(collection.schema_arc()))),
+        NormalValue::DocumentArray(vec![Document::new(collection.schema_arc())]),
+        NormalValue::Time(chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z").unwrap()),
+        NormalValue::Float64(f64::NAN),
+        NormalValue::Float64(f64::INFINITY),
+        NormalValue::Float64Array(vec![1.0, f64::NEG_INFINITY]),
+        NormalValue::NillableFloat64ElementArray(vec![None, Some(f64::NAN)]),
+        NormalValue::NillableFloat32ElementArray(vec![None, Some(f32::INFINITY)]),
+    ] {
+        let mut doc = Document::new(collection.schema_arc());
+        doc.set("payload", value.clone()).unwrap();
+        assert!(
+            collection.validate_document(&doc).is_err(),
+            "accepted non-JSON {value:?}"
+        );
+    }
+}
+
+#[test]
+fn retained_json_scalar_values_do_not_relax_other_field_kinds() {
+    use document::NormalValue;
+    let collection = Collection::new(
+        CollectionVersion::new(
+            "StrictDoc",
+            "strict_doc_version",
+            "strict_doc_collection",
+            vec![FieldDescription::new(
+                "1",
+                "payload",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            )],
+        ),
+        crdt::Crdts::default(),
+    );
+    for value in [
+        NormalValue::Bool(true),
+        NormalValue::Int(1),
+        NormalValue::JsonArray(vec![]),
+    ] {
+        let mut doc = Document::new(collection.schema_arc());
+        doc.set("payload", value).unwrap();
+        assert!(collection.validate_document(&doc).is_err());
+    }
+}
+
+fn single_field_collection(name: &str, kind: FieldKind) -> Collection {
+    Collection::new(
+        CollectionVersion::new(
+            "Users",
+            "users_version",
+            "users_collection",
+            vec![FieldDescription::new(
+                "1",
+                name,
+                kind,
+                schema::CType::LwwRegister,
+            )],
+        ),
+        crdt::Crdts::default(),
+    )
+}
+
+#[test]
+fn non_nillable_scalar_array_rejects_null_elements_like_go() {
+    for (kind, json) in [
+        (
+            schema::ScalarArrayKind::IntArray,
+            r#"{"values":[1,null,3]}"#,
+        ),
+        (
+            schema::ScalarArrayKind::Float64Array,
+            r#"{"values":[1.5,null]}"#,
+        ),
+        (
+            schema::ScalarArrayKind::Float32Array,
+            r#"{"values":[null,1.5]}"#,
+        ),
+        (
+            schema::ScalarArrayKind::StringArray,
+            r#"{"values":["a",null]}"#,
+        ),
+        (
+            schema::ScalarArrayKind::BoolArray,
+            r#"{"values":[true,null]}"#,
+        ),
+    ] {
+        let collection = single_field_collection("values", FieldKind::ScalarArray(kind));
+        let doc = Document::from_json_str(json, collection.schema_arc()).unwrap();
+        let error = collection.validate_document(&doc).unwrap_err().to_string();
+        assert!(
+            error.contains("null value provided for non-nillable field. Name: values"),
+            "{kind:?}: {error}"
+        );
+    }
+}
+
+#[test]
+fn relation_id_of_wrong_length_is_rejected_like_go() {
+    let collection = single_field_collection("_authorID", FieldKind::doc_id());
+    let invalid = Document::from_json_str(
+        r#"{"_authorID":"bae-35953ca-518d-9e6b-9ce6cd00eff5"}"#,
+        collection.schema_arc(),
+    )
+    .unwrap();
+    let error = collection
+        .validate_relation_ids(&invalid, None)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains(
+            "uuid: incorrect UUID length 30 in string \"35953ca-518d-9e6b-9ce6cd00eff5\""
+        ),
+        "{error}"
+    );
+
+    let valid = Document::from_json_str(
+        r#"{"_authorID":"bae-c94acbfa-dd53-40d0-97f3-29ce16c333fc"}"#,
+        collection.schema_arc(),
+    )
+    .unwrap();
+    collection.validate_relation_ids(&valid, None).unwrap();
+
+    // Setting a malformed ID over a valid one is refused; keeping a malformed
+    // ID an earlier version stored is not, so other fields stay updatable.
+    assert!(collection
+        .validate_relation_ids(&invalid, Some(&valid))
+        .is_err());
+    collection
+        .validate_relation_ids(&invalid, Some(&invalid))
+        .unwrap();
+}

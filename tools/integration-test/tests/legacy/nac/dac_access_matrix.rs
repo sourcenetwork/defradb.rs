@@ -10,7 +10,7 @@
 //!    enabled, the startup identity — which by default holds the `admin`
 //!    NAC relation and therefore the `DacBypass` permission — can access
 //!    documents owned by other identities. This is served on the HTTP
-//!    query path by [crates/http/src/query_context.rs] via
+//!    query path by [crates/surfaces/http/src/query_context.rs] via
 //!    `should_bypass_dac`, and on the mutation / direct-DB path by the
 //!    node-identity shortcut PR #743 added to `check_doc_permission`.
 //!    This test locks in the *user-visible* behavior across both paths.

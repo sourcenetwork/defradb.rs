@@ -43,10 +43,10 @@ use std::path::Path;
 use Model::{Exact, Scaled};
 use Value::{Count, List, Millis, Secs};
 
-const PENDING: &str = "crates/p2p/src/sync/manager/pending.rs";
-const SYNC_CONFIG: &str = "crates/p2p/src/sync/manager/config.rs";
-const DAG_RETRY: &str = "crates/p2p/src/sync/coordinator/dag_retry.rs";
-const ADAPTER_RETRY: &str = "crates/p2p-adapter/src/retry.rs";
+const PENDING: &str = "crates/database/p2p/src/sync/manager/pending.rs";
+const SYNC_CONFIG: &str = "crates/database/p2p/src/sync/manager/config.rs";
+const DAG_RETRY: &str = "crates/database/p2p/src/sync/coordinator/dag_retry.rs";
+const ADAPTER_RETRY: &str = "crates/surfaces/p2p-adapter/src/retry.rs";
 const DEPTH_CUT_CONFIGS: [&str; 3] = [
     "proofs/tla/MC_DepthCutFetch_Green.cfg",
     "proofs/tla/MC_DepthCutFetch_Red_NoWiden.cfg",
@@ -89,31 +89,31 @@ pub const CONSTANTS: &[Constant] = &[
         ],
     },
     Constant {
-        file: "crates/p2p/src/sync/manager/process/pending_dag.rs",
+        file: "crates/database/p2p/src/sync/manager/process/pending_dag.rs",
         name: "PENDING_DAG_PEER_CAPACITY_DIVISOR",
         value: Count(4),
         models: &[],
     },
     Constant {
-        file: "crates/p2p/src/sync/manager/process/mod.rs",
+        file: "crates/database/p2p/src/sync/manager/process/mod.rs",
         name: "PERSISTED_PENDING_CAP_FACTOR",
         value: Count(4),
         models: &[],
     },
     Constant {
-        file: "crates/p2p/src/sync/manager/process/join.rs",
+        file: "crates/database/p2p/src/sync/manager/process/join.rs",
         name: "PUSHLOG_JOIN_DEADLINE",
         value: Millis(500),
         models: &[Scaled("proofs/tla/PushLogJoin.tla", "Deadline")],
     },
     Constant {
-        file: "crates/p2p/src/sync/mod.rs",
+        file: "crates/database/p2p/src/sync/mod.rs",
         name: "PERSISTED_RETRY_SWEEP_INTERVAL",
         value: Secs(2),
         models: &[],
     },
     Constant {
-        file: "crates/storage/src/stores/retry_info.rs",
+        file: "crates/engine/storage/src/stores/retry_info.rs",
         name: "RETRY_INTERVALS_SECS",
         value: List(&[30, 60, 120, 240, 480, 960, 1920]),
         models: &[Exact(
@@ -182,25 +182,25 @@ pub const CONSTANTS: &[Constant] = &[
         models: &[Scaled("proofs/tla/DagFetchBudget.tla", "MaxFree")],
     },
     Constant {
-        file: "crates/p2p/src/sync/coordinator/dag_fetcher.rs",
+        file: "crates/database/p2p/src/sync/coordinator/dag_fetcher.rs",
         name: "BLOCK_SYNC_COMPLETION_WATCHDOG",
         value: Secs(35),
         models: &[Scaled("proofs/tla/DagFetchBudget.tla", "Window")],
     },
     Constant {
-        file: "crates/p2p/src/sync/coordinator/provider_health.rs",
+        file: "crates/database/p2p/src/sync/coordinator/provider_health.rs",
         name: "COOLDOWN_BASE",
         value: Secs(2),
         models: &[Exact("proofs/lean/ProviderHealth/Ranking.lean", "base")],
     },
     Constant {
-        file: "crates/p2p/src/sync/coordinator/provider_health.rs",
+        file: "crates/database/p2p/src/sync/coordinator/provider_health.rs",
         name: "COOLDOWN_MAX",
         value: Secs(30),
         models: &[Exact("proofs/lean/ProviderHealth/Ranking.lean", "ceiling")],
     },
     Constant {
-        file: "crates/p2p/src/sync/coordinator/closure_depth.rs",
+        file: "crates/database/p2p/src/sync/coordinator/closure_depth.rs",
         name: "INITIAL_CLOSURE_DEPTH",
         value: Count(2),
         models: &[
@@ -210,31 +210,31 @@ pub const CONSTANTS: &[Constant] = &[
         ],
     },
     Constant {
-        file: "crates/p2p/src/sync/car.rs",
+        file: "crates/database/p2p/src/sync/car.rs",
         name: "CAR_MAX_BLOCKS",
         value: Count(10_000),
         models: &[Scaled("proofs/tla/DepthCutFetch.tla", "Cap")],
     },
     Constant {
-        file: "crates/p2p/src/sync/car.rs",
+        file: "crates/database/p2p/src/sync/car.rs",
         name: "CAR_MAX_BYTES",
         value: Count(16 * 1024 * 1024),
         models: &[],
     },
     Constant {
-        file: "crates/p2p/src/iroh/fetch_stats.rs",
+        file: "crates/database/p2p/src/iroh/fetch_stats.rs",
         name: "SCALE",
         value: Count(1_000_000),
         models: &[Exact("proofs/lean/FetchStats/Rolling.lean", "scale")],
     },
     Constant {
-        file: "crates/p2p/src/iroh/fetch_stats.rs",
+        file: "crates/database/p2p/src/iroh/fetch_stats.rs",
         name: "WEIGHT",
         value: Count(8),
         models: &[Exact("proofs/lean/FetchStats/Rolling.lean", "weight")],
     },
     Constant {
-        file: "crates/p2p/src/iroh/protocols.rs",
+        file: "crates/database/p2p/src/iroh/protocols.rs",
         name: "MAX_STREAM_TAG_LEN",
         value: Count(64),
         models: &[Exact("proofs/lean/GossipFrame/Framing.lean", "maxTagLen")],

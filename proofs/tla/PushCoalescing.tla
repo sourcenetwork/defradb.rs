@@ -44,14 +44,14 @@
 \* ladder's read, sends and fenced completion are one step: a registration in between
 \* fails its fence and leaves the marker set.
 \*
-\* Code: crates/p2p/src/sync/coordinator/broadcast.rs (admit_replicator_push),
-\* crates/p2p/src/sync/push_backlog.rs (BacklogOwner::enqueue, is_current, job_done),
-\* crates/p2p/src/sync/coordinator/push_worker.rs (run_push_job, is_whole_frontier,
-\* report_push_ack), crates/p2p-adapter/src/retry.rs (record_failure),
-\* crates/storage/src/stores/peerstore.rs (observe_push_head_with_generation,
+\* Code: crates/database/p2p/src/sync/coordinator/broadcast.rs (admit_replicator_push),
+\* crates/database/p2p/src/sync/push_backlog.rs (BacklogOwner::enqueue, is_current, job_done),
+\* crates/database/p2p/src/sync/coordinator/push_worker.rs (run_push_job, is_whole_frontier,
+\* report_push_ack), crates/surfaces/p2p-adapter/src/retry.rs (record_failure),
+\* crates/engine/storage/src/stores/peerstore.rs (observe_push_head_with_generation,
 \* admit_push_scope, refresh_push_failure_with_generation, complete_retry_scope,
-\* record_acknowledged_heads, acknowledged_heads), crates/db/src/merge/replication_ack.rs,
-\* and the ladder in crates/db/src/merge/push_docs.rs (retry_doc,
+\* record_acknowledged_heads, acknowledged_heads), crates/database/db/src/merge/replication_ack.rs,
+\* and the ladder in crates/database/db/src/merge/push_docs.rs (retry_doc,
 \* complete_document_retry_if_current).
 EXTENDS Naturals, FiniteSets
 

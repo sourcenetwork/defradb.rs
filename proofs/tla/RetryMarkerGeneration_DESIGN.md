@@ -13,15 +13,15 @@ replicator peer. The model checks three things about those markers:
 
 | Model | Code |
 |---|---|
-| `Register` | `crates/storage/src/stores/peerstore.rs` `RegisterScopeMarkerAttempt`: every registration stores a fresh generation |
+| `Register` | `crates/engine/storage/src/stores/peerstore.rs` `RegisterScopeMarkerAttempt`: every registration stores a fresh generation |
 | `Observe`, `Ack` | `complete_retry_scope` compare-deletes only the generation the worker saw |
 | `Forget`, `Readd` | `delete_replicator`, `create_replicator`: the incarnation changes |
 | `BeginClear`, `FinishClear` | `clear_retry_peer_for_incarnation` reads the replicator row and incarnation in the transaction that clears retry state |
 | `Vanish` | `purge_by_doc_ids`, `truncate_collection`: the document's DocID mapping is deleted |
-| `Tick` | `crates/p2p-adapter/src/retry.rs` `run_retry_pass`: a one-marker probe (`Peerstore::get_retry_page(peer, 1)`) answers "any markers?" and "due?"; only a due peer loads `get_retry_page(peer, MAX_MARKERS_PER_PEER_PASS + 1)` |
+| `Tick` | `crates/surfaces/p2p-adapter/src/retry.rs` `run_retry_pass`: a one-marker probe (`Peerstore::get_retry_page(peer, 1)`) answers "any markers?" and "due?"; only a due peer loads `get_retry_page(peer, MAX_MARKERS_PER_PEER_PASS + 1)` |
 | `Load`, `Rotation` | `Peerstore::load_scope_markers`: at most `limit` scopes after `RetryInfo::dispatch_after`, then wrapping round, in key order |
 | `Probe`, `PageRead` | the keys `get_retry_page(peer, 1)` and `get_retry_page(peer, MAX_MARKERS_PER_PEER_PASS + 1)` read; the probe also decides `complete` after the pass |
-| `Step` | `retry_doc` in `crates/db/src/merge/push_docs.rs`; a document with no DocID mapping goes to `complete_document_retry_if_absent` before its collection is resolved |
+| `Step` | `retry_doc` in `crates/database/db/src/merge/push_docs.rs`; a document with no DocID mapping goes to `complete_document_retry_if_absent` before its collection is resolved |
 | end of a failed pass | `reschedule_retry_peer_for_incarnation` / `restart_retry_peer_for_incarnation` with the last marker tried, which becomes `dispatch_after` |
 | `Elapse` | `RetryInfo::is_due` once the ladder deadline passes |
 

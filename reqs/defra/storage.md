@@ -22,6 +22,20 @@ With a unique index on `User.name` and a stored `{"name":"alice","age":1}`, addi
 
 For a field whose CRDT merges by value (text, JSON), the index holds only the current value. After a local edit, or after two nodes edit the field concurrently and replicate to each other, a filter on the merged value fetches one index entry and one document, and a filter on any earlier value fetches none.
 
+# `defra.index.counter`: An index on a counter follows its total
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["index::merged_field::counter::a_counter_index_follows_local_increments", "index::merged_field::counter::a_counter_index_follows_merged_increments", "index::crdt::index_new_with_collection_level_index_on_pn_counter_should_succeed", "index::crdt::index_new_with_composite_index_including_pn_counter_should_succeed", "index::crdt::index_new_with_p_counter_field_should_succeed", "index::crdt::index_new_with_p_counter_field_via_directive_should_succeed", "index::crdt::index_new_with_pn_counter_field_should_succeed", "index::crdt::index_new_with_pn_counter_field_via_directive_should_succeed", "index::crdt::index_new_with_pn_counter_float_field_should_succeed", "index::crdt::index_new_with_unique_index_on_pn_counter_should_succeed"]
+
+A counter field can be indexed. After local increments, or after two nodes increment concurrently and replicate to each other, an equality or range filter on the total fetches one index entry and one document, and a filter on any earlier total fetches none. An index on a counter can be created through the index API or `@index`, alone, in a composite, unique or collection-level index. Go rejects an index on a counter field.
+
+# `defra.index.offset_limit`: Ordered index paging reserves offset in its scan budget
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["index::index_offset_limit::ordered_index_offset_limit_returns_the_requested_page"]
+
+An ordered query over an indexed field with `limit: 3, offset: 2` reads `limit + offset` index entries, returns exactly the page after skipping two, and leaves the query offset to the limit node so it is not applied twice. The same paging is correct when the ordered field is not indexed.
+
 # `defra.collection`: Collection-wide operations
 
 - **Parents:** ["defra"]
@@ -341,6 +355,13 @@ Over iroh, a create or an update whose head block is larger than one gossip broa
 - **Scenarios:** ["query::commits::with_height_filter::commits_filter_on_height_ranges"]
 
 `_commits(docID: [X], filter: {height: …})` takes `_eq`, `_gt`, `_gte`, `_lt` and `_lte`, alone, combined in one condition, under `_and`, or under `_or`. A document created at height 1 and then updated twice has composite commits at heights 1, 2 and 3: `{height: {_gte: 2, _lte: 3}, fieldName: {_eq: "_C"}}` and `{height: {_gte: 2, _lt: 5}, …}` return heights 2 and 3, `{height: {_gt: 1, _lt: 3}, …}` returns 2, `{height: {_eq: 2}, fieldName: {_eq: "age"}}` returns the `age` commit at height 2, and an `_or` of heights 1 and 3 returns both. A range above every height (`_gt: 10`) or an empty one (`_gt: 10, _lt: 5`) returns no commits. Go returns `{"data": null}` for these filters.
+
+# `defra.commits.field_name_neq`: Filtering commits on a field name they do not have
+
+- **Parents:** ["defra.commits"]
+- **Scenarios:** ["query::commits::with_filter_neq::commits_filter_field_name_neq_excludes_the_named_field"]
+
+`CommitsFieldNameFilterArg` names its inequality operator `_neq`, as the standard query filters and Go do, and introspection lists `_eq`, `_in`, `_neq` and `_nin`. For a document with `name` and `age`, `_commits(filter: {fieldName: {_neq: "_C"}})` returns the `age` and `name` commits and not the composite one.
 
 # `defra.commits.immutable_block`: Commits of a shared immutable block
 

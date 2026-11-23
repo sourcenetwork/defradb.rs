@@ -1,4 +1,4 @@
-# Survey: `crates/vera/`
+# Survey: `crates/engine/vera/`
 
 ## Purpose
 Vera ACP client: implements `DocumentACP`/`VeraProvider` against two on-chain

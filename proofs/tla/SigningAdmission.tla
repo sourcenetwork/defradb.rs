@@ -2,7 +2,7 @@
 \* Three clients try to use two signing slots. A connection may close or its
 \* bearer may expire; cleanup returns its slot. No more than two run at once,
 \* and an expired connection eventually releases its slot under fair cleanup.
-\* Rust owners: crates/http/src/client_signing.rs and router/state.rs.
+\* Rust owners: crates/surfaces/http/src/client_signing.rs and router/state.rs.
 EXTENDS Naturals, FiniteSets
 \* RED configurations remove admission or cleanup.
 CONSTANT CheckCapacity, Cleanup

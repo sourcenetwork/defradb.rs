@@ -1,4 +1,4 @@
-# Survey: `crates/identity/`
+# Survey: `crates/building-blocks/identity/`
 
 ## Purpose
 

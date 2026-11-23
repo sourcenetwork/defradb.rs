@@ -7,7 +7,7 @@ validated, whether identical bytes are the same write. This chapter is the compl
 ## The key classes
 
 [regolith](https://sourcenetwork.github.io/regolith/) defines four behavioural classes; defradb.rs assigns each key family to one by
-implementing `KeyClassifier` ([`crates/storage/src/backends/regolith/classifier.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/classifier.rs)):
+implementing `KeyClassifier` ([`crates/engine/storage/src/backends/regolith/classifier.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/classifier.rs)):
 
 - **Ordinary**: last-writer-wins keys. A read of an Ordinary key inside a write
   transaction is validated at commit (an identical rewrite is not a change), and two
@@ -31,9 +31,9 @@ they are simply ordinary.
 ## The family table
 
 The namespace byte comes first (`d` datastore, `b` blockstore, `h` headstore, `s`
-systemstore, `p` peerstore, `e` encstore, `a` acpstore; [`crates/storage/src/namespace.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/namespace.rs)),
+systemstore, `p` peerstore, `e` encstore, `a` acpstore; [`crates/engine/storage/src/namespace.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/namespace.rs)),
 then the family prefix. First match wins; longer prefixes sort before shorter ones
-([`crates/storage/src/backends/regolith/families.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/families.rs)):
+([`crates/engine/storage/src/backends/regolith/families.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/families.rs)):
 
 | Prefix | Class | What lives there |
 |---|---|---|
@@ -78,5 +78,5 @@ The classifier's tests demonstrate the contract in four sentences
 > **Why one static table.** Classification is on the hot path of every write and every
 > validated read. One table, ordered longest-prefix-first, is one binary search over a
 > handful of entries, and a 256-entry first-byte index jumps straight to the candidates
-> ([`crates/storage/src/backends/regolith/families.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/families.rs)). It also makes the layout auditable: this page is the complete list of
+> ([`crates/engine/storage/src/backends/regolith/families.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/families.rs)). It also makes the layout auditable: this page is the complete list of
 > what defradb.rs stores.

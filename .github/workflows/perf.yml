@@ -108,6 +108,7 @@ jobs:
       matrix:
         include:
           - { family: acp, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { family: acp_owed, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: allocs, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: backup, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: block, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
@@ -126,6 +127,7 @@ jobs:
           - { family: identity, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: projected_create, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: introspection, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { family: join_indexed_side, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: memory, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: lens_index, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: merge, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
@@ -308,7 +310,7 @@ jobs:
           cargo build --release -p cli
           command -v wasm-pack >/dev/null 2>&1 || cargo install wasm-pack --locked
           CARGO_PROFILE_RELEASE_OPT_LEVEL=z \
-            wasm-pack build crates/wasm --release --target web --out-dir ../../pkg/wasm
+            wasm-pack build crates/surfaces/wasm --release --target web --out-dir ../../../pkg/wasm
       - name: Weigh them
         run: |
           set -euo pipefail

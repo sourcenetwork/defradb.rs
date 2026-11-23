@@ -6,7 +6,7 @@ flow back to the database.
 
 ## What it is
 
-`crates/vera` defines the `VeraProvider` interface: create policies, register and
+`crates/engine/vera` defines the `VeraProvider` interface: create policies, register and
 archive objects, set and delete relationships, check access. Two implementations:
 
 - **CosmosProvider**: a Cosmos-SDK chain over LCD/gRPC, transactions broadcast to it,
@@ -14,6 +14,29 @@ archive objects, set and delete relationships, check access. Two implementations
 - **VeraRsProvider**: the native vera.rs chain (commonware consensus), commands signed
   and submitted through a worker, and the chain state verified by a light client
   (trusted consensus key, height tracking).
+
+**Policy IDs.** vera.rs names a policy by its definition, its creator and a 32-byte
+nonce the creator picks: `SHA-256("acp/policy-id/v2" || policy hash || nonce ||
+u64be(len(creator)) || creator)`. One definition by two creators gets two IDs, and one
+creator gets a new ID for each nonce. The node's actor is the creator, so a nonce from a
+caller that is not that actor is refused: its ID would come from the actor's DID. A caller that
+supplies the nonce (`Node::add_dac_policy_with_nonce_as`, `?nonce=<64 hex>` on
+`POST /api/v0/acp/document/policy`, `defradb client acp document policy add --nonce`)
+knows the ID before the policy exists (`vera::vera_rs::predict_policy_id`,
+`VeraRsProvider::predict_policy_id`), and a create sent again with the same nonce
+returns the policy the first made: vera.rs refuses the duplicate as already existing,
+and the provider reads the policy under the ID and returns it when its definition,
+owner and nonce are the ones asked for. Without a nonce the provider draws one from
+the operating system for each request, once, so its own sends again reuse it, but a
+caller that repeats the request makes a second policy. A local ACP numbers its
+policies as Go's does and refuses a nonce; vera.rs refuses a counter
+(`add_dac_policy_with_counter_as`). An embedded deployment is seeded with
+`EmbeddedVeraPolicy { definition, nonce, creator }`; `EmbeddedVeraPolicy::id` gives the
+ID, which any node of the deployment reads (`get_dac_policy_as`) and the creator's own
+node adopts by creating the definition under the seed's nonce. A collection names its
+policy's ID, so deployments that replicate one collection to each other seed the policy
+under one creator and one nonce. Modeled by
+`proofs/tla/VeraPolicyCreate.tla` and `DacPolicyAdd.tla`.
 
 Both are wrapped as a `DocumentACP` and installed as the node's document ACP. Because
 the provider cannot join local transactions, the node wraps it in the external-ACP
@@ -110,7 +133,10 @@ recorded outcome and changes nothing; a different command under a used identity 
 rejected. A registration or a grant submitted twice across a crash therefore takes effect
 once, even when the relationship was changed in between.
 
-A signer can make the token before the write runs. `vera::vera_rs::request_digest`
+A signer can make the token before the write runs, without the provider: the
+`vera-delegation` crate holds the signers, both kinds of delegation, `RequestBinding`
+and the typed policy commands, and depends on neither vera.rs's client nor a network
+runtime; `vera` re-exports the same names. `vera::vera_rs::request_digest`
 gives the digest from the same bytes the node submits, so an actor inside the command is
 in the spelling the node sends. A document ID comes from the document's content: the
 client that signs a create's blocks (`ClientCreateSignatures::from_input`) has it before
@@ -259,7 +285,7 @@ provides. Vera is opt-in: without it, local Zanzibar ACP is the whole story.
 External decisions are remote inputs, so they follow the doctrine's remote-input rules:
 resolved at the edge, never inside a retried closure, memoized by request bytes across
 attempts, single-flight, batched, cached (access-decision and policy caches with the
-circuit breaker and tuning knobs in `crates/vera/src/`), with staleness documented and
+circuit breaker and tuning knobs in `crates/engine/vera/src/`), with staleness documented and
 a persisted-decision path for signers to verify via the light client.
 
 > **Why fail closed.** An external decider that times out is not "probably fine": it is

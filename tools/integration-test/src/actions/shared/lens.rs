@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -21,7 +21,7 @@ pub struct Lens {
 
 impl Lens {
     /// Go's `model.Lens`, with each corpus module path (`bin/lenses/<name>.wasm`)
-    /// resolved to the module Go's `tests/lenses` builds.
+    /// resolved to the module `tools/lenses` builds.
     pub fn to_wire(&self) -> Value {
         let modules: Vec<Value> = self
             .lenses
@@ -33,8 +33,8 @@ impl Lens {
     }
 }
 
-/// Where Go's lens module `path` names is built: `DEFRADB_GO_REPO`, else the
-/// Go checkout under `$HOME/go/src`. A path that is not a corpus name is kept.
+/// Where `just build-lenses` puts the module `path` names. A path that is not
+/// a corpus name is kept.
 fn module_path(path: &str) -> String {
     let Some(name) = path
         .strip_prefix("bin/lenses/")
@@ -42,24 +42,19 @@ fn module_path(path: &str) -> String {
     else {
         return path.to_owned();
     };
-    let name = name.replace('-', "_");
-    let crate_name = format!("rust_wasm32_{name}");
-    // Go's std_dev crate names its artifact after the lens alone.
-    let artifact = match name.as_str() {
-        "std_dev" => name.clone(),
-        _ => crate_name.clone(),
-    };
-    let repo = std::env::var_os("DEFRADB_GO_REPO")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
-                .join("go/src/github.com/sourcenetwork/defradb")
-        });
     // A `file://` URL, as Go's lens host requires and Rust accepts.
-    let file = repo
-        .join("tests/lenses")
-        .join(&crate_name)
-        .join("target/wasm32-unknown-unknown/debug")
-        .join(format!("{artifact}.wasm"));
-    format!("file://{}", file.display())
+    format!(
+        "file://{}",
+        lens_module_file(&name.replace('-', "_")).display()
+    )
+}
+
+/// The built WASM module of `tools/lenses/rust_wasm32_<name>`.
+fn lens_module_file(name: &str) -> PathBuf {
+    // Lens hosts refuse a module path with a `..` segment.
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("integration-test lives under tools/")
+        .join("lenses/target/wasm32-unknown-unknown/debug")
+        .join(format!("rust_wasm32_{name}.wasm"))
 }

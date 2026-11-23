@@ -39,7 +39,7 @@
 \*      - INV_WithinLimit;
 \*   7. the connect never ends - LIVE_Ends.
 \*
-\* Correspondence with the Rust code (crates/net/src/connect.rs):
+\* Correspondence with the Rust code (crates/building-blocks/net/src/connect.rs):
 \*
 \*   | Model            | Rust                                                       |
 \*   |------------------|------------------------------------------------------------|

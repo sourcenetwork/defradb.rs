@@ -29,21 +29,21 @@
 \* their parent, or a new collection with the old name would take them over.
 \*
 \* Rust anchors:
-\* * `crates/db/src/merge/merge_handler/definition.rs`
+\* * `crates/database/db/src/merge/merge_handler/definition.rs`
 \*   `process_collection_definition_delta`, with
-\*   `crates/db/src/merge/merge_handler/definition_chunks.rs`
+\*   `crates/database/db/src/merge/merge_handler/definition_chunks.rs`
 \*   `chunk_settings_error`: a first version follows
 \*   `schema::chunk_settings_errors` (FirstCheck) and a patch must keep its
 \*   previous version's settings, `schema::ensure_chunk_settings_kept`
-\*   (MergeGuard). Both compare through `crates/schema/src/chunk_rules.rs`
+\*   (MergeGuard). Both compare through `crates/foundation/schema/src/chunk_rules.rs`
 \*   `chunk_settings_change`, whose `ChunkSettingsChange::Name` branch
 \*   refuses a rename (NameCheck). A block that names a collection and has
 \*   heads is a renaming patch, never a first version, so it meets the same
 \*   guard. Modeled by `MergeFirst` and `MergePatch`.
-\* * `crates/db/src/chunk/user_writes.rs` `ensure_keeps_first_chunk_settings`,
-\*   called from `crates/db/src/collection/ops/version.rs`
+\* * `crates/database/db/src/chunk/user_writes.rs` `ensure_keeps_first_chunk_settings`,
+\*   called from `crates/database/db/src/collection/ops/version.rs`
 \*   `set_active_collection_version_as` and
-\*   `crates/db/src/txn/registry/collections.rs`
+\*   `crates/database/db/src/txn/registry/collections.rs`
 \*   `set_collection_active_in_txn_as` (ActivateGuard). Modeled by `Activate`.
 EXTENDS Naturals
 

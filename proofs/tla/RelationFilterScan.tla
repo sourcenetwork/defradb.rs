@@ -20,9 +20,9 @@
 \* concurrent write to the scanned books.
 \*
 \* Code it models:
-\*   crates/query/src/runner/mutation_inputs.rs  resolve_filter_to_doc_ids, which turns validated scans on while the planner resolves a relation filter
-\*   crates/datastore/src/multistore.rs          SharedTxn::set_scans_validated and SharedTxn::iterator, which opens each scan validated while the flag is on
-\*   crates/db/src/read/doc.rs                   DbDocFetcher::set_scans_validated (and the lensed fetcher's), which set the flag on the fetcher's transaction
+\*   crates/engine/query/src/runner/mutation_inputs.rs  resolve_filter_to_doc_ids, which turns validated scans on while the planner resolves a relation filter
+\*   crates/engine/datastore/src/multistore.rs          SharedTxn::set_scans_validated and SharedTxn::iterator, which opens each scan validated while the flag is on
+\*   crates/database/db/src/read/doc.rs                   DbDocFetcher::set_scans_validated (and the lensed fetcher's), which set the flag on the fetcher's transaction
 EXTENDS FiniteSets   \* sets of books, and comparing them with the empty set
 
 CONSTANTS

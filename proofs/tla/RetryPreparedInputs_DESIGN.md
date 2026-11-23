@@ -1,8 +1,8 @@
 # Prepared external inputs across write retries
 
-`crates/query/src/prepared.rs` keys resolved provider answers by the exact
-request context; `crates/db/src/write/autocommit/{create,update,delete}.rs`
-(with the create pipeline in `crates/db/src/write/create.rs`) turns
+`crates/engine/query/src/prepared.rs` keys resolved provider answers by the exact
+request context; `crates/database/db/src/write/autocommit/{create,update,delete}.rs`
+(with the create pipeline in `crates/database/db/src/write/create.rs`) turns
 `NeedsInput` into an attempt abort, resolves it after the engine releases
 the transaction, then re-enters. `Store::transact_retry` retries commit
 conflicts inside the attempt owner. The model checks that a conflict retains a

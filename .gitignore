@@ -13,7 +13,7 @@ target/
 
 # Generated
 defra.h
-crates/ffi/defra.h
+crates/entry-points/ffi/defra.h
 
 # Test artifacts
 *.profraw

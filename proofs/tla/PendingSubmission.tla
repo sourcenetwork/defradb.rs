@@ -5,11 +5,17 @@
 \* Its worker journals the request before anything is sent, and keeps it
 \* until a verified receipt is acknowledged. Between the two, one loop drives
 \* the request to its receipt (resolve_pending in
-\* crates/vera/src/vera_rs/provider/submission.rs):
+\* crates/engine/vera/src/vera_rs/provider/submission.rs):
 \*   1. ask the node for the receipt. If it has one, the loop is done;
 \*   2. if it has none and no send is known to have reached the node, send
 \*      the request;
-\*   3. sleep, and start again.
+\*   3. wait for a newly verified height, at most a fallback interval, and
+\*      start again (until_receipt in
+\*      crates/engine/vera/src/vera_rs/receipt_wait.rs; that wait is
+\*      ReceiptWait.tla's).
+\* A request the worker has just journaled was never sent: its loop starts
+\* at step 2, the state NoReceiptSend reaches from Init, since no receipt can
+\* exist for it.
 \* The whole loop runs under one deadline (sync_timeout). When the deadline
 \* passes the caller is told the confirmation is unavailable, and the request
 \* stays in the journal: the next call finds it there and runs the loop again
@@ -49,16 +55,18 @@
 \*      node drops and fails only so often - LIVE_RecalledConfirms.
 \*
 \* The Rust code each guard models:
-\*   Resends          resolve_pending: a send that fails with a retryable
-\*                    error leaves awaiting_receipt false, so the next turn
-\*                    sends again (ClientError::retryable in
-\*                    crates/vera/src/vera_rs/client.rs; an in-process call
-\*                    that elapsed is classified the same way,
-\*                    crates/vera-embedded/src/submission.rs);
+\*   Resends          until_receipt: a send that fails with a retryable
+\*                    error, which resolve_pending answers false, leaves
+\*                    `sent` false, so the next turn sends again
+\*                    (ClientError::retryable in
+\*                    crates/engine/vera/src/vera_rs/client.rs; an
+\*                    in-process call that elapsed is classified the same
+\*                    way, crates/engine/vera-embedded/src/submission.rs);
 \*   KeepsTrying      resolve_pending: a retryable error from a send or from
-\*                    a receipt read does not end the loop;
+\*                    a receipt read is answered as no receipt or no send,
+\*                    and does not end the loop;
 \*   RetainsOnTimeout resolve_pending and NativeWorker::acknowledge in
-\*                    crates/vera/src/vera_rs/worker.rs: only an acknowledged
+\*                    crates/engine/vera/src/vera_rs/worker.rs: only an acknowledged
 \*                    receipt clears the journal;
 \*   NodeDedupes      vera.rs itself: a native sequence is spent once. It is
 \*                    the assumption the loop's resend rests on, and
@@ -71,7 +79,7 @@
 \* Not modeled: a refusal of a request the node does not hold. The loop then
 \* waits out its deadline and keeps the request, which is INV_NoEarlyGiveUp
 \* and INV_RetainedUntilConfirmed again. Time is one deadline that passes or
-\* does not; the 200 ms sleep between turns is not counted.
+\* does not; the wait between turns is not counted here.
 
 EXTENDS Naturals  \* numbers, for counting what the node holds and executes
 
