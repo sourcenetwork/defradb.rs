@@ -332,7 +332,7 @@ async fn exercise_transactional_http_relationships() -> Vec<Value> {
         .await
         .unwrap();
     let other_tx = response.json::<Value>().await.unwrap()["id"]
-        .as_u64()
+        .as_str()
         .unwrap()
         .to_string();
     let hidden = client
@@ -492,7 +492,7 @@ async fn exercise_transactional_http_relationships() -> Vec<Value> {
         .await
         .unwrap();
     let other_tx = response.json::<Value>().await.unwrap()["id"]
-        .as_u64()
+        .as_str()
         .unwrap()
         .to_string();
     let nonowner = client
@@ -558,7 +558,7 @@ async fn exercise_transactional_http_relationships() -> Vec<Value> {
         .await
         .unwrap();
     let revoked_tx = response.json::<Value>().await.unwrap()["id"]
-        .as_u64()
+        .as_str()
         .unwrap()
         .to_string();
     let after = client
@@ -603,7 +603,7 @@ async fn exercise_transactional_http_relationships() -> Vec<Value> {
         .await
         .unwrap();
     let unregistered_tx = response.json::<Value>().await.unwrap()["id"]
-        .as_u64()
+        .as_str()
         .unwrap()
         .to_string();
     let unregistered = client
