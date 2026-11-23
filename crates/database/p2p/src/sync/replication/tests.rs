@@ -3035,6 +3035,7 @@ async fn merged_head_forwards_to_configured_replicator_without_gossip_rebroadcas
         )
         .await
         .unwrap();
+    coordinator.peer_state().peer_connected(downstream.as_str());
     let (failure_tx, mut failure_rx) = crate::rt::mpsc::channel(8);
     coordinator.set_failure_channel(failure_tx);
     crate::rt::spawn(async move {
