@@ -162,7 +162,7 @@ LIVE_CASES = (
 )
 CARGO = ["cargo", "+1.99.1"]
 BUILD = ["--release", "--frozen"]
-PUBLIC_FIELDS = ("phase", "exit_code", "seconds", "passed", "panic_site")
+PUBLIC_FIELDS = ("phase", "exit_code", "seconds", "passed", "panic_site", "error")
 
 
 def public_phase(record):
@@ -504,7 +504,11 @@ def main():
         runner.save()
     except BaseException as error:
         (runner.private / "failure.txt").write_text(repr(error) + "\n")
-        runner.records.append({"phase": "qualification", "exit_code": 1})
+        if isinstance(error, (RuntimeError, ValueError)):
+            runner.records.append({"phase": "qualification", "exit_code": 1,
+                                   "error": repr(error)})
+        else:
+            runner.records.append({"phase": "qualification", "exit_code": 1})
         runner.save()
         print('{"phase":"qualification","exit_code":1}', flush=True)
         raise SystemExit(1) from None
