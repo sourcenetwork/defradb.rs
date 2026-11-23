@@ -80,6 +80,83 @@ fn posts() -> CollectionVersion {
     )
 }
 
+fn people_with_name_index() -> CollectionVersion {
+    CollectionVersion::new(
+        "Person",
+        "v1",
+        "coll-person",
+        vec![
+            FieldDescription::new("1", "_docID", FieldKind::doc_id(), CType::LwwRegister),
+            FieldDescription::new("2", "name", FieldKind::string(), CType::LwwRegister),
+            FieldDescription::new(
+                "3",
+                "authoredBooks",
+                FieldKind::relation("Book", true),
+                CType::LwwRegister,
+            )
+            .with_relation_name("author_books"),
+        ],
+    )
+    .with_index(IndexDescription {
+        id: 1,
+        name: "Person_name_ASC".to_string(),
+        unique: false,
+        kind: None,
+        auto_generated: false,
+        fields: vec![IndexedFieldDescription {
+            name: "name".to_string(),
+            descending: false,
+        }],
+    })
+}
+
+fn books_without_author_index() -> CollectionVersion {
+    CollectionVersion::new(
+        "Book",
+        "v1",
+        "coll-book",
+        vec![
+            FieldDescription::new("1", "_docID", FieldKind::doc_id(), CType::LwwRegister),
+            FieldDescription::new("2", "title", FieldKind::string(), CType::LwwRegister),
+            FieldDescription::new(
+                "3",
+                "author",
+                FieldKind::relation("Person", false),
+                CType::LwwRegister,
+            )
+            .with_relation_name("author_books")
+            .as_primary(),
+            FieldDescription::new("4", "_authorID", FieldKind::doc_id(), CType::LwwRegister)
+                .with_relation_name("author_books")
+                .as_primary(),
+        ],
+    )
+}
+
+#[test]
+fn relation_filter_without_parent_fk_index_reads_the_parents_once() {
+    workers::block_on(async {
+        let planner = Planner::new(vec![people_with_name_index(), books_without_author_index()]);
+        let select = Select::new("Book")
+            .with_field(Field::new("title"))
+            .with_filter(filter(json!({
+                "author": {"name": {"_like": "%vid%"}}
+            })));
+
+        let result = planner.plan_with_index_info(&select).unwrap();
+        let join = result.plan.source().unwrap();
+        assert_eq!(join.kind(), "typeIndexJoin");
+
+        let join_explain = join.explain();
+        let direction = join_explain
+            .get("typeIndexJoin")
+            .and_then(|join| join.get("direction"))
+            .and_then(serde_json::Value::as_str);
+        assert_eq!(direction, Some("primary"));
+    })
+    .unwrap()
+}
+
 fn sub_path_filter() -> Filter {
     filter(json!({"jsonField": {"i": {"love": {"_like": "%family%"}}}}))
 }

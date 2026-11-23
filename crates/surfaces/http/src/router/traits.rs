@@ -298,6 +298,39 @@ pub trait CollectionManagementOperations: CollectionLookup {
         -> Result<(), String>;
 }
 
+/// What a relationship change made in a request did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DocRelationshipChange {
+    /// Document ACP joined the request (or its transaction) and holds the
+    /// change. `existed` says whether the relationship was there before.
+    Applied { existed: bool },
+    /// Document ACP is a remote provider: the change is recorded as owed in
+    /// the request's transaction, at place `seq` of the node's queue, and is
+    /// sent to the provider after the commit. `authority_checked` says
+    /// whether the acting DID's authority was checked before staging.
+    Staged { seq: u64, authority_checked: bool },
+}
+
+impl DocRelationshipChange {
+    /// What an add answers as Go does: whether the relationship existed
+    /// already. A staged add is reported as new.
+    pub fn existed_already(self) -> bool {
+        match self {
+            Self::Applied { existed } => existed,
+            Self::Staged { .. } => false,
+        }
+    }
+
+    /// What a delete answers as Go does: whether a relationship was found.
+    /// A staged delete is reported as found.
+    pub fn record_found(self) -> bool {
+        match self {
+            Self::Applied { existed } => existed,
+            Self::Staged { .. } => true,
+        }
+    }
+}
+
 /// Trait for document-level ACP operations.
 ///
 /// Manages per-document access control relationships (e.g., granting a user
@@ -317,11 +350,37 @@ pub trait DocumentAcpOperations: defra_core::thread_bounds::MaybeSendSync {
         None
     }
 
-    /// Whether a bound request stages relationship changes in its named
-    /// transaction. Backends must refuse the request if they cannot bind its
-    /// authorization provider to that transaction.
+    /// Whether a bound request changes relationships in its named
+    /// transaction: in it, with document ACP that joins the transaction, or
+    /// staged in it as owed to a remote provider. Backends must refuse the
+    /// request if they cannot bind its authorization provider to that
+    /// transaction.
     fn supports_transactional_relationships(&self) -> bool {
         false
+    }
+
+    /// Add (`delete` false) or delete a relationship as the bound request's
+    /// caller, saying whether it was applied or staged. The default applies
+    /// it through [`Self::add_doc_relationship`] or
+    /// [`Self::delete_doc_relationship`].
+    async fn change_doc_relationship(
+        &self,
+        requestor: Option<&identity::Did>,
+        target_actor: &str,
+        collection: &str,
+        doc_id: &str,
+        relation: &str,
+        delete: bool,
+    ) -> Result<DocRelationshipChange, String> {
+        let existed = if delete {
+            self.delete_doc_relationship(requestor, target_actor, collection, doc_id, relation)
+                .await?
+        } else {
+            !self
+                .add_doc_relationship(requestor, target_actor, collection, doc_id, relation)
+                .await?
+        };
+        Ok(DocRelationshipChange::Applied { existed })
     }
 
     /// Check whether an actor has a document permission.
@@ -361,6 +420,17 @@ pub trait DocumentAcpOperations: defra_core::thread_bounds::MaybeSendSync {
         doc_id: &str,
     ) -> Result<Vec<acp::DocumentRelationship>, String> {
         let _ = (requestor, collection, doc_id);
+        Err(acp::Error::UnsupportedRelationshipListing.to_string())
+    }
+
+    async fn observe_doc_actor_relationship(
+        &self,
+        _requestor: &identity::Did,
+        _collection: &str,
+        _doc_id: &str,
+        _relation: &str,
+        _target: &str,
+    ) -> Result<bool, String> {
         Err(acp::Error::UnsupportedRelationshipListing.to_string())
     }
 

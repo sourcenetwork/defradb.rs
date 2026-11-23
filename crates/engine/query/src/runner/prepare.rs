@@ -29,6 +29,9 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         }
         let variables = super::executor::convert_variables(&request.variables);
         let parsed = request.operation(variables.as_ref(), self.query_limits)?;
+        if !parsed.has_unexplained_mutations() {
+            return Ok(None);
+        }
         let ParsedOperation::Mutation {
             mutations,
             explain: None,
@@ -359,6 +362,10 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             prepared.mutations.insert(mutation.output_name(), entry);
         }
         prepared.parsed = Some(Arc::new(parsed));
-        Ok(Some(Arc::new(prepared)))
+        // Its input memo holds prepared authorities that wasm32 does not
+        // require to be `Send`; that target runs one thread.
+        #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
+        let prepared = Arc::new(prepared);
+        Ok(Some(prepared))
     }
 }

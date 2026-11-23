@@ -59,6 +59,38 @@ impl ReplicaOwnership for Deployment {
     }
 }
 
+/// The host's opt-in: a `Notes` row's genesis grants `reader` to the node
+/// its immutable `addressee` names. Nothing else is projected.
+struct Addressed;
+
+#[async_trait::async_trait]
+impl db::DocumentMutationProjector for Addressed {
+    fn genesis_read_access(
+        &self,
+        collection: &str,
+        _policy: &str,
+        _resource: &str,
+    ) -> Option<db::GenesisReadAccess> {
+        (collection == "Notes").then_some(db::GenesisReadAccess::AddressedBy("addressee"))
+    }
+
+    async fn reconcile(
+        &self,
+        _context: &db::DocumentMutationContext<'_>,
+    ) -> storage::corekv::Result<()> {
+        Ok(())
+    }
+
+    async fn project(
+        &self,
+        _context: &db::DocumentMutationContext<'_>,
+        _collection: &str,
+        _doc_id: &str,
+    ) -> storage::corekv::Result<()> {
+        Ok(())
+    }
+}
+
 fn keyring(spec: &PeerSpec) -> Arc<dyn keyring::Keyring> {
     Arc::new(keyring::FileKeyring::open(spec.home.join("keys"), b"test-password").expect("keyring"))
 }
@@ -76,6 +108,7 @@ fn signer(spec: &PeerSpec) -> Arc<dyn DelegationSigner> {
 fn builder(spec: &PeerSpec) -> defra_node::NodeBuilder {
     let builder = Node::builder()
         .data_path(spec.home.join("data"))
+        .with_document_projector(Arc::new(Addressed))
         .with_signing_key(SigningKey::Ed25519(spec.owner.key.clone()))
         .with_p2p(P2PConfig {
             peer_key: PeerKeySource::Store,
@@ -112,11 +145,7 @@ pub(crate) async fn own(
                 threshold: 1,
                 operator_keys: vec![ACCOUNT_KEY.to_string()],
                 created: now(),
-                policies: vec![EmbeddedVeraPolicy {
-                    definition: POLICY.to_string(),
-                    counter: 0,
-                    owner: spec.owner.did.to_string(),
-                }],
+                policies: vec![seed()],
             },
             listen: "127.0.0.1:0".parse().expect("address"),
             start_deadline: Duration::from_secs(60),
@@ -131,12 +160,27 @@ pub(crate) async fn own(
         .await
 }
 
+/// The DID every deployment's [`POLICY`] is seeded under. A collection
+/// names its policy's ID, so deployments that replicate one collection to
+/// each other hold the policy under one ID: one creator and one nonce.
+const POLICY_CREATOR: &str = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
+
+/// [`POLICY`] as every deployment is seeded with it.
+pub(crate) fn seed() -> EmbeddedVeraPolicy {
+    EmbeddedVeraPolicy {
+        definition: POLICY.to_string(),
+        nonce: defra_node::PolicyNonce::default(),
+        creator: POLICY_CREATOR.to_string(),
+    }
+}
+
 /// A peer that verifies against another peer's deployment.
 pub(crate) async fn shared(spec: &PeerSpec, rpc: SocketAddr, trust: &EmbeddedVeraTrust) -> Node {
     builder(spec)
         .with_vera_rs(VeraRsConfig {
             rpc_address: format!("http://{rpc}"),
             consensus_key: trust.consensus_key.clone(),
+            genesis_id: None,
             deployment_id: trust.chain_id,
             actor: VeraRsActor::Signer(signer(spec)),
             worker_dir: spec.home.join("worker"),
@@ -170,9 +214,7 @@ where
             .expect("free loopback port");
         match start(rpc).await {
             Ok(started) => return (started, rpc),
-            Err(defra_node::Error::EmbeddedVera(vera_embedded::HostError::Start(reason)))
-                if attempt < 8 && reason.to_string().contains("failed to bind server") =>
-            {
+            Err(defra_node::Error::EmbeddedVera(host)) if attempt < 8 && host.is_rpc_bind() => {
                 attempt += 1
             }
             Err(error) => panic!("node: {error:?}"),

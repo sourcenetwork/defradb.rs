@@ -36,8 +36,7 @@ fn private_key_len(key_type: crypto::KeyType) -> usize {
 /// # Safety
 ///
 /// `key_type` must be null or a valid null-terminated string.
-#[no_mangle]
-pub unsafe extern "C" fn defra_identity_new(key_type: *const c_char) -> DefraNewIdentityResult {
+pub unsafe fn defra_identity_new(key_type: *const c_char) -> DefraNewIdentityResult {
     ffi_entry! {
         let key_type = match parse_key_type(key_type) {
             Ok(key_type) => key_type,
@@ -75,8 +74,7 @@ unsafe fn parse_key_type(key_type: *const c_char) -> Result<crypto::KeyType, Str
 /// # Safety
 ///
 /// `private_key_hex` must be null or a valid null-terminated string.
-#[no_mangle]
-pub unsafe extern "C" fn defra_identity_new_from_private_key(
+pub unsafe fn defra_identity_new_from_private_key(
     private_key_hex: *const c_char,
 ) -> DefraNewIdentityResult {
     ffi_entry! {
@@ -92,8 +90,7 @@ pub unsafe extern "C" fn defra_identity_new_from_private_key(
 ///
 /// `key_type` and `private_key_hex` must be null or valid null-terminated
 /// strings.
-#[no_mangle]
-pub unsafe extern "C" fn defra_identity_new_from_typed_private_key(
+pub unsafe fn defra_identity_new_from_typed_private_key(
     key_type: *const c_char,
     private_key_hex: *const c_char,
 ) -> DefraNewIdentityResult {

@@ -19,6 +19,7 @@ mod collection_block_links;
 mod collection_guard_race;
 mod collection_heads;
 mod collection_predecessor;
+mod genesis_access;
 mod governance;
 mod head_failures;
 mod head_provider;

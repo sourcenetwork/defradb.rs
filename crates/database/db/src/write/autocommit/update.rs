@@ -30,6 +30,7 @@ impl<S: Store + 'static> storage::corekv::RetryAttemptFn for UpdateRetryAttempt<
             let mutator = AutoCommitMutator {
                 db: Arc::clone(&self.db),
                 prepared_inputs: self.prepared_inputs.clone(),
+                creates: std::sync::atomic::AtomicU64::new(0),
             };
             match mutator.run_update_attempt(retry, self).await {
                 Ok(value) => Ok(Box::new(value) as storage::corekv::RetryAttemptValue),
@@ -85,6 +86,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let mutator = Self {
             db: self.db.clone(),
             prepared_inputs: Some(inputs.clone()),
+            creates: std::sync::atomic::AtomicU64::new(0),
         };
         loop {
             match mutator
@@ -101,7 +103,9 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 Err(query::error::QueryError::NeedsInput(request)) => {
                     inputs
                         .answer_wave(&request, |wave| {
-                            self.resolve_prepared_inputs_as(context, wave)
+                            crate::write::prepare::resolve_inputs_with_projection(
+                                &self.db, context, &inputs, wave,
+                            )
                         })
                         .await?;
                 }
@@ -321,6 +325,16 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         })?;
         drop(fetcher);
         if unchanged_skips && modified_fields.is_empty() {
+            let datastore = crate::txn::bind_projection(
+                txn.datastore().map_err(crate::error::commit_query_error)?,
+                &attempt.context,
+                attempt.prepared_inputs.as_ref(),
+            );
+            datastore
+                .project_document(&attempt.collection_name, &attempt.canonical_doc_id)
+                .await
+                .map_err(|error| crate::error::index_write_query_error("update", error.into()))?;
+            drop(datastore);
             // Nothing to write; the attempt still commits its reads, so a
             // concurrent change of a compared field runs it again.
             let (io, callbacks) = txn
@@ -335,7 +349,11 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let datastore = txn.datastore().map_err(|error| {
             query::error::QueryError::execution(format!("failed to get datastore: {error}"))
         })?;
-        let datastore = datastore.with_projection_actor(attempt.context.identity());
+        let datastore = crate::txn::bind_projection(
+            datastore,
+            &attempt.context,
+            attempt.prepared_inputs.as_ref(),
+        );
         let systemstore = txn.systemstore().map_err(|error| {
             query::error::QueryError::execution(format!("failed to get systemstore: {error}"))
         })?;

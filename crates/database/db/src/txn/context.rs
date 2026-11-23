@@ -101,4 +101,8 @@ impl<S: Store + 'static> TransactionContext for DbTransactionContext<S> {
                 .unwrap_or_else(|| Arc::new(AcpRegistrationProjection::detached())),
         )
     }
+
+    fn observed_owners(&self) -> Option<Arc<query::txn::ObservedOwners>> {
+        Some(self.txn.upgrade()?.observed_owners())
+    }
 }

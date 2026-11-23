@@ -8,7 +8,9 @@
 //!
 //! `authority_checked` is such a field. It is written only when it is
 //! `false`, and a record without it reads as checked, so a record of a
-//! checked change keeps the bytes it always had.
+//! checked change keeps the bytes it always had. `in_flight` and `alone` are
+//! written only while they say something: a request carrying the change may
+//! have been sent, or the change must go in a request of its own.
 
 use identity::Did;
 use serde::{Deserialize, Serialize};
@@ -45,6 +47,44 @@ pub fn run_epoch() -> u64 {
 /// transaction `wanted` of this run.
 pub(crate) fn of_this_run(txn: Option<u64>, epoch: Option<u64>, wanted: u64) -> bool {
     txn == Some(wanted) && epoch == Some(run_epoch())
+}
+
+/// The most bytes the provider's name for a request, its digest or its
+/// transaction hash, may take in a record.
+pub const MAX_REQUEST_ID_BYTES: usize = 80;
+
+/// The request a change was put in, stored with the change before anything
+/// is sent: what decides, after a crash or a dropped wait, whether it
+/// landed (see `crate::outbox::OwedJournal`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InFlight {
+    /// The digest of the request's bytes, as the provider names it.
+    pub digest: String,
+    /// The request's transaction hash, once the provider's worker has it in
+    /// its journal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tx: Option<String>,
+    /// The provider's worker sequence when the request was built: a request
+    /// it sent before carries a lower one, so an outcome noted for such a
+    /// request, though its bytes were the same, is not this one's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub floor: Option<u64>,
+}
+
+impl InFlight {
+    /// A mark of the request whose digest is `digest`, refused when the
+    /// provider's name is longer than a record keeps room for.
+    pub fn new(digest: String, tx: Option<String>, floor: Option<u64>) -> Result<Self> {
+        for id in std::iter::once(&digest).chain(&tx) {
+            if id.len() > MAX_REQUEST_ID_BYTES {
+                return Err(Error::Serialization(format!(
+                    "a request name of {} bytes is longer than {MAX_REQUEST_ID_BYTES}",
+                    id.len()
+                )));
+            }
+        }
+        Ok(Self { digest, tx, floor })
+    }
 }
 
 /// What the change does to its tuple.
@@ -182,6 +222,10 @@ fn is_checked(checked: &bool) -> bool {
     *checked
 }
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 /// One relationship change owed to the provider.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OwedChange {
@@ -208,6 +252,20 @@ pub struct OwedChange {
     /// runs were told apart, whose transaction no later run can name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub epoch: Option<u64>,
+    /// The request the change was last put in, while it may have been sent
+    /// and its outcome is not stored yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub in_flight: Option<InFlight>,
+    /// The change goes in a request of its own: a request it shared with
+    /// other changes was refused.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub alone: bool,
+    /// The reader a create's genesis asks for, owed with the document's
+    /// registration (`TransactionOutbox::stage_with_registration`): it is
+    /// in neither the node's admission count nor its actor's, neither when
+    /// it is staged nor when it settles.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub with_registration: bool,
 }
 
 impl OwedChange {
@@ -224,6 +282,9 @@ impl OwedChange {
             last_error: None,
             authority_checked: new.authority_checked,
             epoch: new.txn.map(|_| run_epoch()),
+            in_flight: None,
+            alone: false,
+            with_registration: false,
         }
     }
 
@@ -231,6 +292,7 @@ impl OwedChange {
     /// provider holding it: the change, why it went, and no credential.
     pub(crate) fn discarded(mut self, reason: String) -> Self {
         self.authority = OwedAuthority::NodeKey;
+        self.in_flight = None;
         self.state = OwedState::Refused {
             reason: reason.clone(),
         };
@@ -242,20 +304,35 @@ impl OwedChange {
     /// still fits [`MAX_OWED_CHANGE_BYTES`] in the largest state it can be
     /// parked in later: refused or awaiting authority, with the highest
     /// attempt count and [`RESERVED_REASON_BYTES`] of the provider's words
-    /// twice. A change that could be staged and never parked would be
-    /// submitted again for ever, with its tuple behind it.
+    /// twice, or staged and in flight with the longest request names after
+    /// such an answer. A change that could be staged and never parked or
+    /// marked would be submitted again for ever, with its tuple behind it.
     pub(crate) fn encode_admitted(&self) -> Result<Vec<u8>> {
         let words = "x".repeat(RESERVED_REASON_BYTES);
-        for state in [
-            OwedState::Refused {
-                reason: words.clone(),
-            },
-            OwedState::AwaitingAuthority,
+        let id = "x".repeat(MAX_REQUEST_ID_BYTES);
+        for (state, in_flight) in [
+            (
+                OwedState::Refused {
+                    reason: words.clone(),
+                },
+                None,
+            ),
+            (OwedState::AwaitingAuthority, None),
+            (
+                OwedState::Staged,
+                Some(InFlight {
+                    digest: id.clone(),
+                    tx: Some(id.clone()),
+                    floor: Some(u64::MAX),
+                }),
+            ),
         ] {
             Self {
                 state,
                 attempts: u32::MAX,
                 last_error: Some(words.clone()),
+                in_flight,
+                alone: true,
                 ..self.clone()
             }
             .encode()?;
@@ -338,6 +415,9 @@ mod tests {
             last_error: Some("provider unreachable".into()),
             authority_checked: true,
             epoch: None,
+            in_flight: None,
+            alone: false,
+            with_registration: false,
         }
     }
 
@@ -423,6 +503,41 @@ mod tests {
         let bytes = unchecked.encode().unwrap();
         assert!(String::from_utf8_lossy(&bytes).ends_with(r#","authority_checked":false}"#));
         assert_eq!(OwedChange::decode(&bytes).unwrap(), unchecked);
+    }
+
+    #[test]
+    fn a_mark_in_flight_round_trips_and_an_unmarked_record_keeps_its_bytes() {
+        let mut marked = change(
+            OwedSubject::Wildcard,
+            OwedAuthority::NodeKey,
+            OwedState::Staged,
+        );
+        let unmarked = marked.encode().unwrap();
+        assert!(!String::from_utf8_lossy(&unmarked).contains("in_flight"));
+        assert!(!String::from_utf8_lossy(&unmarked).contains("alone"));
+
+        marked.in_flight = Some(InFlight::new("0xd1".into(), None, None).unwrap());
+        let digest_only = marked.encode().unwrap();
+        assert!(
+            String::from_utf8_lossy(&digest_only).ends_with(r#","in_flight":{"digest":"0xd1"}}"#)
+        );
+        assert_eq!(OwedChange::decode(&digest_only).unwrap(), marked);
+
+        marked.in_flight =
+            Some(InFlight::new("0xd1".into(), Some("0xab".into()), Some(7)).unwrap());
+        marked.alone = true;
+        let hashed = marked.encode().unwrap();
+        assert!(String::from_utf8_lossy(&hashed)
+            .ends_with(r#","in_flight":{"digest":"0xd1","tx":"0xab","floor":7},"alone":true}"#));
+        assert_eq!(OwedChange::decode(&hashed).unwrap(), marked);
+    }
+
+    #[test]
+    fn a_request_name_longer_than_a_record_keeps_room_for_is_refused() {
+        let long = "x".repeat(MAX_REQUEST_ID_BYTES + 1);
+        assert!(InFlight::new(long.clone(), None, None).is_err());
+        assert!(InFlight::new("0xd1".into(), Some(long), None).is_err());
+        assert!(InFlight::new("x".repeat(MAX_REQUEST_ID_BYTES), None, Some(u64::MAX)).is_ok());
     }
 
     #[test]

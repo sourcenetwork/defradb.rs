@@ -50,6 +50,7 @@ async fn native_worker_recovers_pending_and_rejected_submissions() {
                 .to_vec()
                 .into(),
             marshalType: 1,
+            nonce: Default::default(),
         }
         .abi_encode();
         let wire = worker
@@ -167,6 +168,7 @@ async fn native_provider_recovers_pending_before_concurrent_requests() {
                 VeraRsProvider::new(
                     rpc_url,
                     &consensus_key,
+                    vera::vera_rs::GenesisSource::Unnamed,
                     &private_key,
                     worker,
                     &AcpTuning::default(),
@@ -211,8 +213,8 @@ where
     assert_eq!(provider.authorized_account(), did);
     assert_ne!(provider.self_did().unwrap(), did);
     let (first, second) = nuclei::join!(
-        provider.create_policy(integration_test::USER_ACP_POLICY),
-        provider.create_policy(integration_test::USER_ACP_POLICY),
+        provider.create_policy(integration_test::USER_ACP_POLICY, None),
+        provider.create_policy(integration_test::USER_ACP_POLICY, None),
     );
     let first = first.unwrap();
     assert_ne!(first, second.unwrap());

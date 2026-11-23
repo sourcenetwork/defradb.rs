@@ -34,6 +34,7 @@ impl<S: Store + 'static> storage::corekv::RetryAttemptFn for DeleteManyRetryAtte
             let mutator = AutoCommitMutator {
                 db: Arc::clone(&self.db),
                 prepared_inputs: self.prepared_inputs.clone(),
+                creates: std::sync::atomic::AtomicU64::new(0),
             };
             match mutator.run_delete_many_attempt(retry, self).await {
                 Ok(value) => Ok(Box::new(value) as storage::corekv::RetryAttemptValue),
@@ -52,6 +53,7 @@ impl<S: Store + 'static> storage::corekv::RetryAttemptFn for DeleteRetryAttempt<
             let mutator = AutoCommitMutator {
                 db: Arc::clone(&self.db),
                 prepared_inputs: self.prepared_inputs.clone(),
+                creates: std::sync::atomic::AtomicU64::new(0),
             };
             match mutator.run_delete_attempt(retry, self).await {
                 Ok(value) => Ok(Box::new(value) as storage::corekv::RetryAttemptValue),
@@ -75,13 +77,16 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let mutator = Self {
             db: self.db.clone(),
             prepared_inputs: Some(inputs.clone()),
+            creates: std::sync::atomic::AtomicU64::new(0),
         };
         loop {
             match mutator.delete_impl(context, collection_name, doc_id).await {
                 Err(query::error::QueryError::NeedsInput(request)) => {
                     inputs
                         .answer_wave(&request, |wave| {
-                            self.resolve_prepared_inputs_as(context, wave)
+                            crate::write::prepare::resolve_inputs_with_projection(
+                                &self.db, context, &inputs, wave,
+                            )
                         })
                         .await?;
                 }
@@ -115,6 +120,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let mutator = Self {
             db: self.db.clone(),
             prepared_inputs: Some(inputs.clone()),
+            creates: std::sync::atomic::AtomicU64::new(0),
         };
         loop {
             match mutator
@@ -124,7 +130,9 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 Err(query::error::QueryError::NeedsInput(request)) => {
                     inputs
                         .answer_wave(&request, |wave| {
-                            self.resolve_prepared_inputs_as(context, wave)
+                            crate::write::prepare::resolve_inputs_with_projection(
+                                &self.db, context, &inputs, wave,
+                            )
                         })
                         .await?;
                 }
@@ -218,7 +226,11 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let datastore = txn.datastore().map_err(|error| {
             query::error::QueryError::execution(format!("failed to get datastore: {error}"))
         })?;
-        let datastore = datastore.with_projection_actor(attempt.context.identity());
+        let datastore = crate::txn::bind_projection(
+            datastore,
+            &attempt.context,
+            attempt.prepared_inputs.as_ref(),
+        );
         let systemstore = txn.systemstore().map_err(|error| {
             query::error::QueryError::execution(format!("failed to get systemstore: {error}"))
         })?;
@@ -450,7 +462,11 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let datastore = txn.datastore().map_err(|e| {
             query::error::QueryError::execution(format!("failed to get datastore: {e}"))
         })?;
-        let datastore = datastore.with_projection_actor(attempt.context.identity());
+        let datastore = crate::txn::bind_projection(
+            datastore,
+            &attempt.context,
+            attempt.prepared_inputs.as_ref(),
+        );
         let systemstore = txn.systemstore().map_err(|e| {
             query::error::QueryError::execution(format!("failed to get systemstore: {e}"))
         })?;

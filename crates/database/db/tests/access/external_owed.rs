@@ -33,7 +33,7 @@ impl Staging {
 
     /// A document `owner` creates while the provider cannot be reached, so
     /// its registration stays owed.
-    async fn create_unregistered(&self, owner: Did, name: &str) -> String {
+    pub(super) async fn create_unregistered(&self, owner: Did, name: &str) -> String {
         self.remote.down.store(true, Ordering::SeqCst);
         let doc = self.create(owner, name, None).await;
         self.remote.down.store(false, Ordering::SeqCst);
@@ -552,7 +552,7 @@ fn a_wait_is_for_a_transaction_of_this_run_and_for_its_callers_entries() {
             .unwrap();
         txn.acpstore()
             .set(
-                &[b"/acp-owed/q/".as_slice(), &staged.seq.to_be_bytes()].concat(),
+                &[b"/acp-owed2/q/".as_slice(), &staged.seq.to_be_bytes()].concat(),
                 &stale.encode().unwrap(),
             )
             .await

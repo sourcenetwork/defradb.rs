@@ -181,7 +181,7 @@ impl Node {
             set_acp(acp_setup.document_acp.clone());
         }
 
-        let nac_adapter = Self::setup_nac_manager(
+        let nac = Self::setup_nac_manager(
             config,
             user_did.as_ref(),
             database.store().clone(),
@@ -190,28 +190,23 @@ impl Node {
         .await?;
 
         // Wire the NAC manager into the DB so DB-layer `check_node_access` calls
-        // go live (first-call-wins via the DB's OnceCell). Without this the CLI
-        // server's DB-layer NAC checks are inert.
-        if let Some(adapter) = nac_adapter.as_ref() {
-            database.set_nac_manager(adapter.nac_manager());
+        // go live (first-call-wins via the DB's OnceCell). A node NAC was never
+        // configured on gets none: it serves no NAC routes, so every check
+        // would allow for the whole run.
+        if let Some(manager) = nac.enforced() {
+            database.set_nac_manager(manager);
         }
 
         // Populate the manage-channel serve deps now that the controller exists;
         // until this fires the event loop drops inbound manage requests rather
-        // than serving them. The NAC handle gates authorization: when NAC is
-        // enabled we use the real adapter's manager, otherwise we supply a
-        // disabled NacManager whose check_permission returns Ok(true) (parity
-        // with the defra-node assembly, which always populates these hooks).
+        // than serving them. The NAC manager gates authorization.
         if let (Some(hooks), Some(controller), Some(correlator), Some(query_correlator)) = (
             p2p_setup.manage_hooks.as_ref(),
             p2p_setup.manage_controller.as_ref(),
             p2p_setup.manage_correlator.as_ref(),
             p2p_setup.manage_query_correlator.as_ref(),
         ) {
-            let nac: Arc<dyn db::NacManagerApi> = match nac_adapter.as_ref() {
-                Some(adapter) => adapter.nac_manager(),
-                None => Arc::new(db::create_memory_nac_manager(db::NacConfig::new())),
-            };
+            let nac = Arc::clone(&nac.manager);
             let _ = hooks.set(defra_p2p_adapter::manage::hooks::ManageHooks {
                 ops: controller.clone(),
                 nac,
@@ -244,8 +239,8 @@ impl Node {
                 acp_setup.document_acp.clone(),
                 doc_lookup,
             ));
-            if let Some(adapter) = nac_adapter.as_ref() {
-                policy.set_node_acp(Arc::new(db::DbNodeAcpRead::new(adapter.nac_manager())));
+            if let Some(manager) = nac.enforced() {
+                policy.set_node_acp(Arc::new(db::DbNodeAcpRead::new(manager)));
             }
 
             // Node identity used for cross-peer DEK requests. Anonymous nodes
@@ -303,7 +298,7 @@ impl Node {
             config,
             user_did.as_ref(),
             acp_setup.document_acp.clone(),
-            nac_adapter.clone(),
+            nac.configured.then(|| Arc::clone(&nac.adapter)),
             p2p_setup.mutator.clone(),
             p2p_setup.txn_broadcaster.clone(),
             p2p_setup.se_transport.take(),
@@ -344,7 +339,8 @@ impl Node {
             query_setup: &query_setup,
             p2p_adapter: p2p_setup.http_adapter.clone(),
             manage_requester: p2p_setup.manage_requester.clone(),
-            nac_adapter,
+            // The NAC routes, only on a node NAC was configured on.
+            nac_adapter: nac.configured.then_some(nac.adapter),
             acp_setup: &acp_setup,
             zanzibar_store,
             user_did: user_did.as_ref(),
@@ -352,7 +348,12 @@ impl Node {
             edge: http_scope.edge().clone(),
         })?;
         #[cfg(feature = "postgres")]
-        let pg_server = Self::build_pg_server(database.clone(), config, &query_setup, edge)?;
+        let (pg_scope, pg_server) = {
+            let pg_scope = edge.scope();
+            let pg_server =
+                Self::build_pg_server(database.clone(), config, &query_setup, pg_scope.edge())?;
+            (pg_scope, pg_server)
+        };
 
         Ok(ServerSetup {
             database,
@@ -366,6 +367,8 @@ impl Node {
             http_scope,
             #[cfg(feature = "postgres")]
             pg_server,
+            #[cfg(feature = "postgres")]
+            pg_scope,
             #[cfg(feature = "embedded-vera")]
             embedded_vera: acp_setup.embedded_vera,
         })

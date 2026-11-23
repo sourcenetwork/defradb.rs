@@ -15,6 +15,7 @@ pub mod datastore;
 pub mod headstore;
 pub mod multistore;
 pub mod peerstore;
+pub mod prolly_nodes;
 pub mod retry_info;
 pub mod rootstore;
 pub mod systemstore;

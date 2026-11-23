@@ -244,9 +244,7 @@ fn build_warning(reason: &str, field: &str) -> GqlWarning {
     detail.insert("reason".to_string(), JsonValue::String(reason.to_string()));
     GqlWarning {
         code: WARNING_CODE_VECTOR_INDEX_UNUSED.to_string(),
-        message: format!(
-            "similarity query on field '{field}' did not use the vector index and read the whole collection"
-        ),
+        message: format!("similarity query on field '{field}' did not use the vector index"),
         detail: Some(detail),
     }
 }

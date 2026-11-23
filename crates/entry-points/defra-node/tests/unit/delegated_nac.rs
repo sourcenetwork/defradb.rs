@@ -738,6 +738,53 @@ fn http_inspection_routes_apply_the_embedded_gates() {
                     );
                 }
             }
+
+            // An exact observation answers its owner, and refuses anyone
+            // else the same way whether or not the document is registered.
+            let observe = |doc: &str, target: &str| {
+                format!(
+                    "/api/v0/acp/document/relationship?collection=Users&docID={doc}&relation=reader&targetActor={target}"
+                )
+            };
+            let response = get(&holder, observe(&doc, &stranger_did)).await.unwrap();
+            assert!(response.status().is_success());
+            assert!(!response.json::<bool>().await.unwrap());
+            node.add_dac_actor_relationship_as(
+                &context(&holder_did),
+                "Users",
+                &doc,
+                "reader",
+                &stranger_did,
+            )
+            .await
+            .unwrap();
+            let response = get(&holder, observe(&doc, &stranger_did)).await.unwrap();
+            assert!(response.status().is_success());
+            assert!(response.json::<bool>().await.unwrap());
+            assert!(node
+                .observe_dac_actor_relationship_as(
+                    &context(&holder_did),
+                    "Users",
+                    &doc,
+                    "reader",
+                    &stranger_did
+                )
+                .await
+                .unwrap());
+
+            let registered = get(&stranger, observe(&doc, &stranger_did)).await.unwrap();
+            let unregistered = get(&stranger, observe("bae-absent", &stranger_did))
+                .await
+                .unwrap();
+            let (registered_status, unregistered_status) =
+                (registered.status(), unregistered.status());
+            assert!(!registered_status.is_success());
+            assert_eq!(registered_status, unregistered_status);
+            assert_eq!(
+                registered.text().await.unwrap(),
+                unregistered.text().await.unwrap(),
+                "a refusal does not tell a registered document from an absent one"
+            );
             node.shutdown().await.unwrap();
         })
         .unwrap();

@@ -1,101 +1,24 @@
 //! Tests for the multi-collection delete orchestrator (Go #4688 parity).
 
 use db::database::DB;
-use schema::CollectionVersion;
-use schema::FieldDescription;
-use schema::FieldKind;
 use storage::RegolithStore;
 
-fn user_schema() -> CollectionVersion {
-    CollectionVersion::new(
-        "Users",
-        "v-users-1",
-        "col-users",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
-        ],
-    )
-}
-
-fn book_schema() -> CollectionVersion {
-    CollectionVersion::new(
-        "Books",
-        "v-books-1",
-        "col-books",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new(
-                "2",
-                "title",
-                FieldKind::string(),
-                schema::CType::LwwRegister,
-            ),
-        ],
-    )
-}
-
-fn related_schemas() -> Vec<CollectionVersion> {
-    vec![
-        CollectionVersion::new(
-            "Users",
-            "v-users-1",
-            "col-users",
-            vec![
-                FieldDescription::new(
-                    "1",
-                    "_docID",
-                    FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                ),
-                FieldDescription::new(
-                    "2",
-                    "books",
-                    FieldKind::relation("col-books", true),
-                    schema::CType::LwwRegister,
-                )
-                .with_relation_name("user_books"),
-            ],
-        ),
-        CollectionVersion::new(
-            "Books",
-            "v-books-1",
-            "col-books",
-            vec![
-                FieldDescription::new(
-                    "1",
-                    "_docID",
-                    FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                ),
-                FieldDescription::new(
-                    "2",
-                    "owner",
-                    FieldKind::relation("col-users", false),
-                    schema::CType::LwwRegister,
-                )
-                .with_relation_name("user_books")
-                .as_primary(),
-            ],
-        ),
-    ]
-}
+const USERS: &str = "type Users { name: String }";
+const USERS_AND_BOOKS: &str = "type Users { name: String } type Books { title: String }";
+const RELATED: &str = r#"
+    type Users {
+        books: [Books] @relation(name: "user_books")
+    }
+    type Books {
+        owner: Users @relation(name: "user_books") @primary
+    }
+"#;
 
 #[test]
 fn delete_collections_removes_single_name() {
     workers::block_on(async {
         let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
-        db.create_collections_atomic(vec![user_schema()])
+        db.add_collection(&defra_core::RequestContext::ambient(), USERS)
             .await
             .unwrap();
 
@@ -115,7 +38,7 @@ fn delete_collections_removes_single_name() {
 fn delete_collections_removes_multiple_names_atomically() {
     workers::block_on(async {
         let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
-        db.create_collections_atomic(vec![user_schema(), book_schema()])
+        db.add_collection(&defra_core::RequestContext::ambient(), USERS_AND_BOOKS)
             .await
             .unwrap();
 
@@ -157,7 +80,7 @@ fn delete_collections_errors_on_empty_names() {
 fn delete_collections_rejects_empty_name_without_deleting_valid_names() {
     workers::block_on(async {
         let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
-        db.create_collections_atomic(vec![user_schema()])
+        db.add_collection(&defra_core::RequestContext::ambient(), USERS)
             .await
             .unwrap();
 
@@ -176,7 +99,7 @@ fn delete_collections_rejects_empty_name_without_deleting_valid_names() {
 fn delete_collections_errors_on_unknown_name() {
     workers::block_on(async {
         let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
-        db.create_collections_atomic(vec![user_schema()])
+        db.add_collection(&defra_core::RequestContext::ambient(), USERS)
             .await
             .unwrap();
 
@@ -204,7 +127,7 @@ fn delete_collections_errors_on_unknown_name() {
 fn delete_collections_dedupes_repeated_names() {
     workers::block_on(async {
         let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
-        db.create_collections_atomic(vec![user_schema()])
+        db.add_collection(&defra_core::RequestContext::ambient(), USERS)
             .await
             .unwrap();
 
@@ -224,7 +147,7 @@ fn delete_collections_dedupes_repeated_names() {
 fn delete_collections_rejects_dangling_relation_targets() {
     workers::block_on(async {
         let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
-        db.create_collections_atomic(related_schemas())
+        db.add_collection(&defra_core::RequestContext::ambient(), RELATED)
             .await
             .unwrap();
 
@@ -246,7 +169,7 @@ fn delete_collections_rejects_dangling_relation_targets() {
 fn delete_collections_allows_deleting_both_sides_of_relation() {
     workers::block_on(async {
         let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
-        db.create_collections_atomic(related_schemas())
+        db.add_collection(&defra_core::RequestContext::ambient(), RELATED)
             .await
             .unwrap();
 

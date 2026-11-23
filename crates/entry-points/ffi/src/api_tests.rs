@@ -122,20 +122,20 @@ fn an_exported_backup_imports_into_another_node() {
     let file = directory.path().join("backup.json");
     let path = cstr(&file.to_string_lossy());
     ok(unsafe {
-        crate::backup::defra_backup_export(source, path.as_ptr(), ptr::null(), ptr::null(), 1)
+        crate::backup::defra_backup_export(source, path.as_ptr(), ptr::null(), ptr::null(), 1, 0)
     });
     let exported: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
     assert_eq!(exported["User"].as_array().unwrap().len(), 2);
 
     let target = node();
     add_collection(target, "type User { name: String }");
-    ok(unsafe { crate::backup::defra_backup_import(target, path.as_ptr()) });
+    ok(unsafe { crate::backup::defra_backup_import(target, path.as_ptr(), 0) });
     let names = query(target, "{ User(order: {name: ASC}) { name } }");
     assert_eq!(names["data"]["User"], json!([{"name": "A"}, {"name": "B"}]));
 
     let xml = cstr("xml");
     err(unsafe {
-        crate::backup::defra_backup_export(source, path.as_ptr(), ptr::null(), xml.as_ptr(), 0)
+        crate::backup::defra_backup_export(source, path.as_ptr(), ptr::null(), xml.as_ptr(), 0, 0)
     });
     close(source);
     close(target);

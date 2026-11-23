@@ -10,15 +10,22 @@
 //! subject that also holds access by another path waits for the settlement
 //! too. It only ever denies: an owed add grants nothing.
 
+//!
+//! A decision is two point reads, whatever the policy: the object's count of
+//! deletes wider than one actor (a wildcard, a set), and the count of deletes
+//! naming the identity on the object (any relation, and the owner relation).
+//! Both are read through their staged part only: a delete committed after the
+//! read refuses the decision at commit, a settle never does, and a settle the
+//! read did not see only leaves it denying more (`proofs/tla/OwedParts.tla`).
+
 use datastore::{NamespaceView, WeakNamespaceView};
 use storage::corekv::Reader;
 
-use super::ops;
-use super::record::OwedSubject;
+use super::keys;
+use super::ops::{self, Owed, FIRST, SECOND};
 use crate::dac::DocumentACP;
 use crate::error::Result;
 use crate::identity::Identity;
-use crate::relation::OWNER_RELATION;
 
 /// What the changes owed on an object say about one identity.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -32,31 +39,24 @@ pub enum OwedDenial {
     Always,
 }
 
-/// The denial `relation` and `subject` of one owed delete put on `identity`.
-fn denial_of(identity: &Identity, relation: &str, subject: &OwedSubject) -> OwedDenial {
-    match (subject, identity) {
-        (OwedSubject::Actor { did }, Identity::Authenticated(actor)) if did == actor => {
-            if relation == OWNER_RELATION {
-                OwedDenial::Always
-            } else {
-                OwedDenial::UnlessOwner
-            }
-        }
-        (OwedSubject::Actor { .. }, _) => OwedDenial::None,
-        // Who a wildcard or a set stood for is the provider's to say, so the
-        // delete denies everyone it could have stood for.
-        (
-            OwedSubject::Wildcard
-            | OwedSubject::EntitySet { .. }
-            | OwedSubject::TypedWildcard { .. },
-            _,
-        ) => OwedDenial::UnlessOwner,
+/// The denial owed deletes put on an identity: `wide` counts the deletes on
+/// the object whose subject is wider than one actor (who it stood for is the
+/// provider's to say, so it denies everyone it could have stood for), and
+/// `named` the deletes naming the identity, all of them and those of the
+/// owner relation.
+fn denial(wide: u64, named: Owed) -> OwedDenial {
+    if named.second > 0 {
+        OwedDenial::Always
+    } else if wide > 0 || named.first > 0 {
+        OwedDenial::UnlessOwner
+    } else {
+        OwedDenial::None
     }
 }
 
 /// The denial owed deletes put on `identity` on one object, compared in
-/// `provider`'s spelling of it. One point read when nothing is owed on the
-/// object.
+/// `provider`'s spelling of it. Two point reads, validated on what was
+/// staged only.
 pub(crate) async fn owed_denial<R>(
     reader: &R,
     provider: &dyn DocumentACP,
@@ -68,25 +68,19 @@ pub(crate) async fn owed_denial<R>(
 where
     R: Reader + ?Sized,
 {
-    if ops::unsettled_on(reader, policy_id, resource, object).await? == 0 {
-        return Ok(OwedDenial::None);
-    }
-    let identity = &match identity {
-        Identity::Authenticated(actor) => Identity::Authenticated(provider.canonical_actor(actor)),
-        Identity::Anonymous => Identity::Anonymous,
+    let object_key = keys::object_key(policy_id, resource, object);
+    let wide = ops::owed_at(reader, &object_key, &ops::staged_parts(&[FIRST]))
+        .await?
+        .first;
+    let named = match identity {
+        Identity::Authenticated(actor) => {
+            let actor = provider.canonical_actor(actor);
+            let key = keys::subject_key(policy_id, resource, object, &actor);
+            ops::owed_at(reader, &key, &ops::staged_parts(&[FIRST, SECOND])).await?
+        }
+        Identity::Anonymous => Owed::default(),
     };
-    let mut denial = OwedDenial::None;
-    for (relation, subject, state) in ops::tuples_on(reader, policy_id, resource, object).await? {
-        if state.deletes == 0 {
-            continue;
-        }
-        match denial_of(identity, &relation, &subject) {
-            OwedDenial::Always => return Ok(OwedDenial::Always),
-            OwedDenial::UnlessOwner => denial = OwedDenial::UnlessOwner,
-            OwedDenial::None => {}
-        }
-    }
-    Ok(denial)
+    Ok(denial(wide, named))
 }
 
 /// Owed denials as one transaction sees them: the deletes it has staged
@@ -125,61 +119,30 @@ impl OwedDenials {
 
 #[cfg(test)]
 mod tests {
-    use identity::Did;
-
     use super::*;
 
-    fn did(name: &str) -> Did {
-        Did::new(format!("did:key:{name}")).unwrap()
-    }
-
-    fn actor(name: &str) -> OwedSubject {
-        OwedSubject::Actor { did: did(name) }
+    fn named(deletes: u64, owner: u64) -> Owed {
+        Owed {
+            first: deletes,
+            second: owner,
+        }
     }
 
     #[test]
-    fn a_delete_denies_its_own_subject_only() {
-        let bob = Identity::Authenticated(did("bob"));
-        assert_eq!(
-            denial_of(&bob, "reader", &actor("bob")),
-            OwedDenial::UnlessOwner
-        );
-        assert_eq!(denial_of(&bob, "reader", &actor("carol")), OwedDenial::None);
-        assert_eq!(
-            denial_of(&Identity::Anonymous, "reader", &actor("bob")),
-            OwedDenial::None
-        );
+    fn a_delete_naming_the_identity_denies_it_unless_it_owns() {
+        assert_eq!(denial(0, named(1, 0)), OwedDenial::UnlessOwner);
+        assert_eq!(denial(0, named(0, 0)), OwedDenial::None);
     }
 
     #[test]
     fn a_delete_of_the_owner_relation_spares_no_one_it_names() {
-        let bob = Identity::Authenticated(did("bob"));
-        assert_eq!(
-            denial_of(&bob, OWNER_RELATION, &actor("bob")),
-            OwedDenial::Always
-        );
+        assert_eq!(denial(0, named(1, 1)), OwedDenial::Always);
+        assert_eq!(denial(3, named(2, 1)), OwedDenial::Always);
     }
 
     #[test]
     fn a_delete_wider_than_one_actor_denies_everyone_but_the_owner() {
-        let wide = [
-            OwedSubject::Wildcard,
-            OwedSubject::EntitySet {
-                resource: "groups".into(),
-                object: "team".into(),
-                relation: "member".into(),
-            },
-            OwedSubject::TypedWildcard {
-                resource: "groups".into(),
-            },
-        ];
-        for subject in &wide {
-            for identity in [Identity::Anonymous, Identity::Authenticated(did("bob"))] {
-                assert_eq!(
-                    denial_of(&identity, "reader", subject),
-                    OwedDenial::UnlessOwner
-                );
-            }
-        }
+        assert_eq!(denial(1, named(0, 0)), OwedDenial::UnlessOwner);
+        assert_eq!(denial(1, Owed::default()), OwedDenial::UnlessOwner);
     }
 }

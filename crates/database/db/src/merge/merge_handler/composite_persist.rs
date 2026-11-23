@@ -220,15 +220,16 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     ) {
                         let signer = identity::Did::new(signer)
                             .map_err(|error| MergeError::MergeFailed(error.to_string()))?;
-                        scoped
-                            .register_doc_object(
-                                &signer,
-                                &policy.id,
-                                &policy.resource_name,
-                                context.doc_id_str,
-                            )
-                            .await
-                            .map_err(|error| MergeError::MergeFailed(error.to_string()))?;
+                        super::genesis_access::register_signed_genesis(
+                            &*scoped,
+                            &signer,
+                            &policy.id,
+                            &policy.resource_name,
+                            context.doc_id_str,
+                            state.genesis_reader.as_ref(),
+                        )
+                        .await
+                        .map_err(|error| MergeError::MergeFailed(error.to_string()))?;
                     }
                 }
                 self.record_replica(systemstore, context, collection.schema())

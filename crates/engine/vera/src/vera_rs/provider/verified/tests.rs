@@ -5,7 +5,7 @@ use std::time::Duration;
 use acp_light_client::TransportError;
 use inputs::Jitter;
 
-use super::{verified, verified_within, Pace, ATTEMPTS, BUSY_PATIENCE, BUSY_PAUSE};
+use super::{verified, verified_within, Pace, ATTEMPTS, BUSY, BUSY_PATIENCE, BUSY_PAUSE};
 
 /// More than the late answers below take to give way.
 const PATIENT: Duration = Duration::from_secs(10);
@@ -27,6 +27,9 @@ struct TestPace {
     jitter: Jitter,
     slept: RefCell<Vec<Duration>>,
     asked_at: RefCell<Vec<Duration>>,
+    /// When the next fresh revision arrives, if one does.
+    fresh_at: Cell<Option<Duration>>,
+    waited: RefCell<Vec<Duration>>,
 }
 
 impl TestPace {
@@ -36,6 +39,8 @@ impl TestPace {
             jitter: Jitter::new(seed),
             slept: RefCell::new(Vec::new()),
             asked_at: RefCell::new(Vec::new()),
+            fresh_at: Cell::new(None),
+            waited: RefCell::new(Vec::new()),
         }
     }
 
@@ -67,7 +72,24 @@ impl Pace for TestPace {
         self.slept.borrow_mut().push(pause);
         self.now.set(self.now.get() + pause);
     }
+
+    async fn fresh(&self, within: Duration) -> bool {
+        self.waited.borrow_mut().push(within);
+        let now = self.now.get();
+        match self.fresh_at.get() {
+            Some(at) if at <= now + within => {
+                self.now.set(at.max(now));
+                true
+            }
+            _ => {
+                self.now.set(now + within);
+                false
+            }
+        }
+    }
 }
+
+const STALE: &str = "verified revision is stale; wait for a fresh finalized revision";
 
 fn refused(message: &str) -> Failure {
     message.into()
@@ -104,7 +126,8 @@ async fn always_busy(pace: &TestPace, patience: Duration, took: Duration) -> Res
 #[nuclei::test]
 async fn a_read_the_chain_overtook_is_asked_again_until_answered() {
     let asked = Cell::new(0);
-    let outcome = verified(|| {
+    let heads = super::super::transport_tests::silent_heads().await;
+    let outcome = verified(&heads, || {
         asked.set(asked.get() + 1);
         let ask = asked.get();
         async move {
@@ -123,7 +146,8 @@ async fn a_read_the_chain_overtook_is_asked_again_until_answered() {
 #[nuclei::test]
 async fn a_decision_the_chain_overtook_is_asked_again() {
     let asked = Cell::new(0);
-    let outcome = verified(|| {
+    let heads = super::super::transport_tests::silent_heads().await;
+    let outcome = verified(&heads, || {
         asked.set(asked.get() + 1);
         let ask = asked.get();
         async move {
@@ -141,7 +165,8 @@ async fn a_decision_the_chain_overtook_is_asked_again() {
 #[nuclei::test]
 async fn a_read_overtaken_at_every_ask_returns_the_refusal_after_the_last() {
     let asked = Cell::new(0);
-    let outcome: Result<(), _> = verified(|| {
+    let heads = super::super::transport_tests::silent_heads().await;
+    let outcome: Result<(), _> = verified(&heads, || {
         asked.set(asked.get() + 1);
         async { Err(refused(REFUSAL)) }
     })
@@ -153,7 +178,8 @@ async fn a_read_overtaken_at_every_ask_returns_the_refusal_after_the_last() {
 #[nuclei::test]
 async fn any_other_error_is_returned_at_the_first_ask() {
     let asked = Cell::new(0);
-    let outcome: Result<(), _> = verified(|| {
+    let heads = super::super::transport_tests::silent_heads().await;
+    let outcome: Result<(), _> = verified(&heads, || {
         asked.set(asked.get() + 1);
         async { Err(refused("no verified finalized state available")) }
     })
@@ -170,7 +196,8 @@ async fn any_other_error_is_returned_at_the_first_ask() {
 #[nuclei::test]
 async fn another_node_error_is_returned_at_the_first_ask() {
     let asked = Cell::new(0);
-    let outcome: Result<(), _> = verified(|| {
+    let heads = super::super::transport_tests::silent_heads().await;
+    let outcome: Result<(), _> = verified(&heads, || {
         asked.set(asked.get() + 1);
         async {
             Err(Box::new(TransportError::Rpc {
@@ -190,7 +217,8 @@ async fn another_node_error_is_returned_at_the_first_ask() {
 #[nuclei::test]
 async fn a_read_the_node_answered_late_once_is_answered_on_the_wall_clock() {
     let asked = Cell::new(0);
-    let outcome = verified(|| {
+    let heads = super::super::transport_tests::silent_heads().await;
+    let outcome = verified(&heads, || {
         asked.set(asked.get() + 1);
         let ask = asked.get();
         async move {
@@ -322,4 +350,68 @@ async fn late_and_overtaken_answers_are_counted_apart() {
     })
     .await;
     assert_eq!(answered(outcome), Some(LATE_ANSWERS + ATTEMPTS));
+}
+
+/// A read refused for a stale revision waits for the next one and is asked
+/// again when it arrives within the patience.
+#[nuclei::test]
+async fn a_read_at_a_stale_revision_waits_for_the_next_and_is_answered() {
+    let pace = TestPace::new(4);
+    pace.fresh_at.set(Some(Duration::from_secs(12)));
+    let asked = Cell::new(0);
+    let outcome = verified_within(BUSY_PATIENCE, &pace, || {
+        asked.set(asked.get() + 1);
+        let ask = asked.get();
+        pace.ask(Duration::from_millis(10));
+        async move {
+            if ask == 1 {
+                Err(refused(STALE))
+            } else {
+                Ok(ask)
+            }
+        }
+    })
+    .await;
+    assert_eq!(answered(outcome), Some(2));
+    assert_eq!(pace.waited.borrow().len(), 1);
+    assert_eq!(pace.asked_at()[1], Duration::from_secs(12));
+}
+
+/// When no fresh revision arrives within the patience the stale refusal is
+/// the read's outcome: nothing is answered at the stale revision.
+#[nuclei::test]
+async fn a_read_at_a_stale_revision_fails_once_the_patience_is_spent() {
+    let pace = TestPace::new(5);
+    let asked = Cell::new(0);
+    let outcome: Result<usize, Failure> = verified_within(BUSY_PATIENCE, &pace, || {
+        asked.set(asked.get() + 1);
+        pace.ask(Duration::from_millis(10));
+        async { Err(refused(STALE)) }
+    })
+    .await;
+    assert_eq!(outcome.unwrap_err().to_string(), STALE);
+    assert_eq!(asked.get(), 1, "asked once, then waited out");
+    assert_eq!(pace.elapsed(), BUSY_PATIENCE);
+}
+
+#[test]
+fn a_late_read_is_told_from_a_wrong_one() {
+    let busy: Failure = Box::new(TransportError::Rpc {
+        method: "vera_getCurrentRecordProof",
+        code: BUSY,
+        message: "current record evidence deadline exceeded".into(),
+    });
+    assert!(super::late(&busy));
+    let overtaken: Failure = REFUSAL.into();
+    assert!(super::late(&overtaken));
+    let stale: Failure = "verified revision is stale; wait for a fresh finalized revision".into();
+    assert!(super::late(&stale));
+    let answered: Failure = Box::new(TransportError::Rpc {
+        method: "vera_getCurrentRecordProof",
+        code: -32000,
+        message: "no such policy".into(),
+    });
+    assert!(!super::late(&answered));
+    let unverified: Failure = "proof does not verify".into();
+    assert!(!super::late(&unverified));
 }

@@ -73,6 +73,10 @@ name = "acp"
 harness = false
 
 [[bench]]
+name = "acp_owed"
+harness = false
+
+[[bench]]
 name = "allocs"
 harness = false
 
@@ -198,6 +202,10 @@ harness = false
 
 [[bench]]
 name = "query_e2e"
+harness = false
+
+[[bench]]
+name = "join_indexed_side"
 harness = false
 
 [[bench]]

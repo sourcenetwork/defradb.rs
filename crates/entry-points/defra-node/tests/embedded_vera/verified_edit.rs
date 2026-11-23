@@ -11,15 +11,15 @@ use db::block::builder::{
 };
 use defra_core::RequestContext;
 use defra_node::{
-    EmbeddedVeraActor, EmbeddedVeraPolicy, Node, QueryRequest, QueryResponse, SignerCredential,
-    VeraRsActor, VeraRsConfig,
+    EmbeddedVeraActor, Node, QueryRequest, QueryResponse, SignerCredential, VeraRsActor,
+    VeraRsConfig,
 };
 use serde_json::json;
 use vera::vera_rs::{caller_delegation, DelegationSigner, Ed25519Signer};
 use vera::PolicyAction;
 
 use super::verified::{Attempt, Deployed, User, LIFETIME};
-use super::{names, node_serving, read_users, users, POLICY};
+use super::{names, node_serving, read_users, users};
 
 /// What a verified write does to the document.
 #[derive(Clone, Copy)]
@@ -266,11 +266,7 @@ fn a_verified_update_is_refused_when_the_chain_cannot_be_reached() {
         let (chain, rpc) = node_serving(
             &directory.path().join("chain"),
             EmbeddedVeraActor::Signer(Arc::clone(&chain_signer)),
-            vec![EmbeddedVeraPolicy {
-                definition: POLICY.to_string(),
-                counter: 0,
-                owner: chain_signer.did().to_string(),
-            }],
+            vec![super::seed(chain_signer.did())],
         )
         .await;
         let trust = chain.embedded_vera_trust().expect("deployment").clone();
@@ -288,6 +284,7 @@ fn a_verified_update_is_refused_when_the_chain_cannot_be_reached() {
             .with_vera_rs(VeraRsConfig {
                 rpc_address: format!("http://{rpc}"),
                 consensus_key: trust.consensus_key,
+                genesis_id: None,
                 deployment_id: trust.chain_id,
                 actor: VeraRsActor::Signer(Arc::clone(&actor)),
                 worker_dir: home.path().join("worker"),
@@ -297,11 +294,7 @@ fn a_verified_update_is_refused_when_the_chain_cannot_be_reached() {
             .build()
             .await
             .expect("node");
-        let acting = RequestContext::default().with_identity(Some(actor.did().to_string()));
-        let policy = node
-            .add_dac_policy_with_counter_as(&acting, POLICY, 0)
-            .await
-            .expect("seeded policy");
+        let policy = super::seeded_policy(&node, chain_signer.did()).await;
         node.add_collection(&users(&policy))
             .await
             .expect("collection");

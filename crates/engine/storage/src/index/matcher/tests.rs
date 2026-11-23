@@ -184,7 +184,8 @@ fn test_nillable_null_equality() {
 }
 
 #[test]
-fn test_float_equality_epsilon() {
-    let matcher = EqMatcher::new(NormalValue::Float64(0.1 + 0.2));
-    assert!(matcher.matches(&NormalValue::Float64(0.3)));
+fn test_float_equality_is_exact() {
+    let matcher = EqMatcher::new(NormalValue::Float64(0.0));
+    assert!(matcher.matches(&NormalValue::Float64(0.0)));
+    assert!(!matcher.matches(&NormalValue::Float64(1e-300)));
 }

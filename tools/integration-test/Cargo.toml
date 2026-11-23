@@ -21,9 +21,10 @@ path = "tests/verars/main.rs"
 [dependencies]
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 commonware-codec = "=2026.10.0"
-defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "502e60487f585a8303afa4998b07806aab69922c" }
+defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "7993ba38d889d16503f7a6ec9c33ef91375e4c0e" }
 crypto = { path = "../../crates/foundation/crypto" }
 document = { path = "../../crates/building-blocks/document" }
+blockstore = { path = "../../crates/engine/blockstore" }
 edge = { path = "../../crates/foundation/edge", features = ["testing"] }
 nuclei.workspace = true
 net = { path = "../../crates/building-blocks/net" }
@@ -67,7 +68,8 @@ path = "src/bin/gen_scenarios/main.rs"
 required-features = ["generator"]
 
 [dev-dependencies]
-vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "bf4a4352cd620d6b498508e2dbf768edcbf3392b" }
+query = { path = "../../crates/engine/query", features = ["testing"] }
+vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "177783a896068e26d4223c0a0835199870f88d3c" }
 mantra-macros = "0.9"
 keyring = { path = "../../crates/foundation/keyring" }
 vera-client = "0.1.2"

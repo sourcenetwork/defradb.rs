@@ -58,6 +58,7 @@ async fn once_the_node_stops_the_provider_verifies_no_new_decision() {
         transport.clone(),
         transport,
         node.consensus_key(),
+        vera::vera_rs::GenesisSource::Hosted,
         &[42; 32],
         worker,
         &tuning,
@@ -66,7 +67,7 @@ async fn once_the_node_stops_the_provider_verifies_no_new_decision() {
     )
     .await
     .expect("provider");
-    let policy = provider.create_policy(POLICY).await.expect("policy");
+    let policy = provider.create_policy(POLICY, None).await.expect("policy");
     let owner = provider.self_did().expect("actor DID");
     let delegation = provider
         .create_bearer_token(&owner)
@@ -170,4 +171,40 @@ fn now() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .expect("clock")
         .as_secs()
+}
+
+#[nuclei::test]
+async fn a_dropped_provider_lets_go_of_its_worker_at_once() {
+    let directory = tempfile::tempdir().unwrap();
+    let edge = edge::testing::edge();
+    let node = HostedNode::start(config(&directory.path().join("vera")), &edge)
+        .await
+        .expect("hosted node");
+    let tuning = AcpTuning::default();
+    let transport = Arc::new(node.transport(tuning.request_timeout));
+    let keyring = keyring::FileKeyring::open(directory.path().join("keys"), b"test-password")
+        .expect("keyring");
+    let worker_dir = directory.path().join("worker");
+    let provider = VeraRsProvider::with_transport(
+        transport.clone(),
+        transport.clone(),
+        node.consensus_key(),
+        vera::vera_rs::GenesisSource::Hosted,
+        &[42; 32],
+        NativeWorker::open(&worker_dir, &keyring, DEPLOYMENT).expect("worker"),
+        &tuning,
+        None,
+        &edge,
+    )
+    .await
+    .expect("provider");
+    provider.create_policy(POLICY, None).await.expect("policy");
+    drop(provider);
+
+    // No task the provider started may still hold the worker: the next
+    // provider opens its directory straight away.
+    let worker = NativeWorker::open(&worker_dir, &keyring, DEPLOYMENT)
+        .expect("the dropped provider let go of its worker");
+    assert_eq!(worker.next_sequence(), 1);
+    node.stop().await.expect("stop");
 }

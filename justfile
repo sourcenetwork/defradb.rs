@@ -494,6 +494,30 @@ build-wasm:
 [group('build')]
 build-ffi-header:
     cbindgen --config crates/entry-points/ffi/cbindgen.toml --crate ffi --output crates/entry-points/ffi/defradb.h
+    just check-ffi-header crates/entry-points/ffi/defradb.h
+
+# Compile a generated C header as C11 and C++17 with every warning an error,
+# so its inline wrappers and options structs are valid for both. -Wpadded
+# fails on any struct with implicit padding: an options struct only grows at
+# its end, so a gap must be an explicit reserved field.
+[group('build')]
+check-ffi-header header:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    work=$(mktemp -d)
+    trap 'rm -rf "$work"' EXIT
+    echo "#include \"$(realpath {{header}})\"" > "$work/check.c"
+    cp "$work/check.c" "$work/check.cpp"
+    cc -std=c11 -Wall -Wextra -Wpadded -Werror -fsyntax-only "$work/check.c"
+    c++ -std=c++17 -Wall -Wextra -Wpadded -Werror -fsyntax-only "$work/check.cpp"
+
+# Check this tree's C API against base's, as CI's C API job does: no padding,
+# no function, field, typedef, enum constant or macro removed or changed,
+# options structs only grown at their end, and every exported function with C
+# linkage in C++. Needs cbindgen and clang.
+[group('build')]
+check-c-api base="origin/main":
+    bash .github/scripts/check-c-api.sh {{base}}
 
 # Apple .xcframework plus the Swift import smoke test.
 [group('build')]
@@ -557,10 +581,12 @@ test-features:
     cargo nextest run -p cli --cargo-profile {{ profile }} --features otel --test telemetry_dedup
     cargo nextest run -p defra-node --cargo-profile {{ profile }} --features p2p
 
-# The WASM lens modules in tools/lenses that integration tests load.
+# The WASM lens modules in tools/lenses that integration tests load. The
+# target dir is pinned because the tests read tools/lenses/target whatever
+# CARGO_TARGET_DIR says.
 [group('test')]
 build-lenses:
-    cargo build --manifest-path tools/lenses/Cargo.toml --target wasm32-unknown-unknown
+    cargo build --manifest-path tools/lenses/Cargo.toml --target wasm32-unknown-unknown --target-dir tools/lenses/target
 
 # Every integration area, serially. Each spawns real nodes.
 [group('test')]

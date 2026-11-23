@@ -3,11 +3,11 @@ use crate::types::DefraResult;
 use crate::{ffi_async_ok, ffi_entry, try_ffi};
 
 /// Logs every key of the node's store, with its value's size. Unwise on a
-/// large database.
-#[no_mangle]
-pub extern "C" fn defra_print_dump(node_ptr: usize) -> DefraResult {
+/// large database. The caller is `identity_ptr`; as in Go, the dump checks
+/// no permission.
+pub(crate) fn defra_print_dump(node_ptr: usize, identity_ptr: usize) -> DefraResult {
     ffi_entry! {
-        let request = try_ffi!(Request::resolve(node_ptr, 0));
+        let request = try_ffi!(Request::resolve(node_ptr, identity_ptr));
         let node = try_ffi!(request.require_node("print dump"));
         let database = try_ffi!(request.database());
         ffi_async_ok!(node, {

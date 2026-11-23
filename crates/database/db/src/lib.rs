@@ -69,6 +69,7 @@ pub mod search;
 pub mod txn;
 pub(crate) mod view;
 pub mod write;
+pub use datastore::multistore::GenesisReadAccess;
 pub use datastore::NamespaceView as DocumentMutationView;
 pub use document_projection::{DocumentMutationContext, DocumentMutationProjector};
 
@@ -130,7 +131,7 @@ pub use write::doc::DbDocMutator;
 pub use nac::create_persistent_nac_manager;
 pub use nac::{
     create_memory_nac_manager, NacCaller, NacChange, NacConfig, NacInfo, NacManager, NacManagerApi,
-    NacRelation, NacRelationshipRequest,
+    NacRelation, NacRelationshipRequest, NacTarget,
 };
 
 // Re-export related crate types for convenience

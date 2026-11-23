@@ -61,6 +61,123 @@ pub struct Staged {
     pub authority_checked: bool,
 }
 
+/// A relationship change for an external provider, decided at the network
+/// edge before the transaction that stages it
+/// ([`TransactionOutbox::stage_prepared`]): the actor owns the object or holds
+/// a relation that manages the changed one, as [`TransactionOutbox::stage`]
+/// asks, and the authority recorded is the one the provider takes for exactly
+/// this change ([`DocumentACP::command_authority`]). Nothing remote is asked
+/// inside the transaction.
+pub struct PreparedRelationship {
+    provider: Arc<dyn DocumentACP>,
+    outbox_provider: Arc<dyn DocumentACP>,
+    actor: Did,
+    tuple: OwedTuple,
+    op: OwedOp,
+    authority: super::record::OwedAuthority,
+    /// The actor owns the object: a denial that spares only the owner does
+    /// not refuse it.
+    owner: bool,
+    /// The provider answered the check; `false` for an add prepared while it
+    /// could not be reached.
+    checked: bool,
+}
+
+/// Decide `request` for the external provider behind `provider`, outside any
+/// transaction. A refusal is the error a local ACP gives; an unreachable
+/// provider lets an add go unchecked and refuses a delete, as staging does.
+pub async fn prepare_relationship(
+    provider: Arc<dyn DocumentACP>,
+    request: &StageRelationship<'_>,
+) -> Result<PreparedRelationship> {
+    let outbox_provider = provider;
+    let provider = outbox_provider.outbox_authority_provider().ok_or_else(|| {
+        Error::ProviderUnavailable("document ACP does not provide an outbox".into())
+    })?;
+    if !provider.submits_subject(&request.subject) {
+        return Err(Error::UnsupportedSubject(request.subject.to_string()));
+    }
+    let actor = provider.canonical_actor(request.actor);
+    let tuple = owed_tuple(&*provider, request)?;
+    let authority = provider.command_authority(
+        request.actor,
+        ProviderCommand::Relationship {
+            tuple: &tuple,
+            op: request.op,
+        },
+    )?;
+    let (owner, checked) = prepared_authority(&*provider, &actor, request).await?;
+    Ok(PreparedRelationship {
+        provider,
+        outbox_provider,
+        actor,
+        tuple,
+        op: request.op,
+        authority,
+        owner,
+        checked,
+    })
+}
+
+/// Whether `actor` owns the object, and whether the provider could be asked:
+/// the owner, or a holder of a relation that manages the changed one.
+async fn prepared_authority(
+    provider: &dyn DocumentACP,
+    actor: &Did,
+    request: &StageRelationship<'_>,
+) -> Result<(bool, bool)> {
+    let (policy_id, resource, object) = (request.policy_id, request.resource, request.object);
+    let owner = match provider.get_doc_owner(policy_id, resource, object).await {
+        Ok(owner) => owner.map(|owner| provider.canonical_actor(&owner)),
+        Err(Error::ProviderUnavailable(reason)) => {
+            return unchecked(actor, request, &reason).map(|checked| (false, checked))
+        }
+        Err(error) => return Err(error),
+    };
+    match owner {
+        Some(owner) if owner == *actor => return Ok((true, true)),
+        None => return Err(refusal(request)),
+        Some(_) => {}
+    }
+    for manager in request.managing_relations {
+        match provider
+            .check_named_permission(actor, manager, policy_id, resource, object)
+            .await
+        {
+            Ok(true) => return Ok((false, true)),
+            Ok(false) => {}
+            Err(Error::ProviderUnavailable(reason)) => {
+                return unchecked(actor, request, &reason).map(|checked| (false, checked))
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Err(refusal(request))
+}
+
+/// The change `request` names, its actor subject in `provider`'s spelling.
+fn owed_tuple(provider: &dyn DocumentACP, request: &StageRelationship<'_>) -> Result<OwedTuple> {
+    let subject = match OwedSubject::try_from(request.subject.clone())? {
+        OwedSubject::Actor { did } => OwedSubject::Actor {
+            did: provider.canonical_actor(&did),
+        },
+        other => other,
+    };
+    Ok(OwedTuple {
+        policy_id: request.policy_id.to_owned(),
+        resource: request.resource.to_owned(),
+        object: request.object.to_owned(),
+        relation: request.relation.to_owned(),
+        subject,
+    })
+}
+
+impl PreparedRelationship {
+    pub fn outbox_provider(&self) -> Arc<dyn DocumentACP> {
+        Arc::clone(&self.outbox_provider)
+    }
+}
+
 /// The relationship changes one transaction owes an external provider, as
 /// the transaction stages them. A savepoint needs the handle dropped, as it
 /// needs every view of the transaction gone.
@@ -69,9 +186,82 @@ pub struct TransactionOutbox {
     changes: OwedChanges,
     pending: PendingRegistrations,
     denials: OwedDenials,
+    view: datastore::WeakNamespaceView,
 }
 
 impl TransactionOutbox {
+    /// Record `request` with the decision `prepared` made for it before the
+    /// transaction. The preparation is taken only for its own provider,
+    /// actor, change and authority; what this transaction or an earlier one
+    /// owes on the object is read here, so a registration another creator
+    /// owes, or a revocation owed against the actor, still refuses it.
+    pub async fn stage_prepared(
+        &self,
+        request: StageRelationship<'_>,
+        prepared: &PreparedRelationship,
+    ) -> Result<Staged> {
+        let actor = self.provider.canonical_actor(request.actor);
+        let tuple = owed_tuple(&*self.provider, &request)?;
+        let authority = self.provider.command_authority(
+            request.actor,
+            ProviderCommand::Relationship {
+                tuple: &tuple,
+                op: request.op,
+            },
+        )?;
+        if !Arc::ptr_eq(&prepared.provider, &self.provider)
+            || prepared.actor != actor
+            || prepared.tuple != tuple
+            || prepared.op != request.op
+            || authority != prepared.authority
+        {
+            return Err(refusal(&request));
+        }
+        if let Some(pending) = self
+            .pending
+            .get(request.policy_id, request.resource, request.object)
+            .await?
+        {
+            if self.provider.canonical_actor(&pending.creator) != actor {
+                return Err(refusal(&request));
+            }
+        }
+        let denial = self
+            .denials
+            .on(
+                &*self.provider,
+                &Identity::Authenticated(actor.clone()),
+                request.policy_id,
+                request.resource,
+                request.object,
+            )
+            .await?;
+        if denial == OwedDenial::Always
+            || (denial == OwedDenial::UnlessOwner
+                && !prepared.owner
+                && self.authority_revoked(&actor, &request).await?)
+        {
+            return Err(Error::PermissionDenied(format!(
+                "a revocation owed to the provider denies {actor} on {} {}",
+                request.resource, request.object
+            )));
+        }
+        let change = self
+            .changes
+            .stage(NewOwedChange {
+                txn: request.txn,
+                tuple,
+                op: request.op,
+                actor,
+                authority,
+                authority_checked: prepared.checked,
+            })
+            .await?;
+        Ok(Staged {
+            seq: change.seq,
+            authority_checked: prepared.checked,
+        })
+    }
     /// `provider` is the external provider itself, serving the request that
     /// stages; `view` the transaction's ACP namespace, `sequences` the
     /// store's and `staged` the transaction's count.
@@ -86,7 +276,60 @@ impl TransactionOutbox {
             changes: OwedChanges::new(view, sequences, staged),
             pending: PendingRegistrations::new(view),
             denials: OwedDenials::new(view),
+            view: view.downgrade(),
         }
+    }
+
+    /// Whether a delete owed on the object may take away `actor`'s authority
+    /// to make `request`: one of a relation the managers of the changed
+    /// relation are computed from ([`zanzibar::types::Policy::management_sources`]),
+    /// naming `actor` or a subject wider than one actor, whoever staged it
+    /// (`proofs/tla/OwedStagingAuthority.tla`). Without the policy here, any
+    /// such delete may.
+    async fn authority_revoked(
+        &self,
+        actor: &Did,
+        request: &StageRelationship<'_>,
+    ) -> Result<bool> {
+        let Some(view) = self.view.upgrade() else {
+            return Ok(false);
+        };
+        let store = crate::zanzibar::store::TransactionZanzibarStore::new(view.clone());
+        let sources = crate::ZanzibarStore::get_policy(&store, request.policy_id)
+            .await?
+            .map(|policy| policy.management_sources(request.resource, request.relation));
+        let deletes =
+            super::ops::owed_deletes_on(&view, request.policy_id, request.resource, request.object)
+                .await?;
+        Ok(rests_on_revoked(
+            sources.as_deref(),
+            &deletes,
+            &self.provider.canonical_actor(actor),
+        ))
+    }
+
+    /// Whether `subject`'s `relation` on the object has a change owed to the
+    /// provider that this transaction sees: the provider's answer about that
+    /// tuple does not hold yet.
+    pub async fn relationship_unsettled(
+        &self,
+        policy_id: &str,
+        resource: &str,
+        object: &str,
+        relation: &str,
+        subject: &Did,
+    ) -> Result<bool> {
+        self.changes
+            .tuple_unsettled(&OwedTuple {
+                policy_id: policy_id.to_owned(),
+                resource: resource.to_owned(),
+                object: object.to_owned(),
+                relation: relation.to_owned(),
+                subject: OwedSubject::Actor {
+                    did: self.provider.canonical_actor(subject),
+                },
+            })
+            .await
     }
 
     /// The owed changes as this transaction sees them.
@@ -97,6 +340,55 @@ impl TransactionOutbox {
     /// How many changes this transaction has staged and kept so far.
     pub fn staged(&self) -> u32 {
         self.changes.staged()
+    }
+
+    /// Record, in this transaction, the reader a create's genesis asks for:
+    /// an add by the document's creator, behind the registration this
+    /// transaction owes for it. The grant is counted with that registration,
+    /// one per created document, so it is held to none of the bounds on new
+    /// changes and leaves the transaction's count as it was: a batch of
+    /// creates that its registrations allow is never refused for its grants
+    /// (`proofs/tla/RemoteGenesisReader.tla`, `Red_Counted`). Anything else
+    /// is refused as [`Self::stage`] would refuse it: another op, an acting
+    /// DID that is not the owed registration's creator, or an object with no
+    /// owed registration.
+    pub async fn stage_with_registration(&self, request: StageRelationship<'_>) -> Result<Staged> {
+        if !self.provider.submits_subject(&request.subject) {
+            return Err(Error::UnsupportedSubject(request.subject.to_string()));
+        }
+        let actor = self.provider.canonical_actor(request.actor);
+        let owed = self
+            .pending
+            .get(request.policy_id, request.resource, request.object)
+            .await?;
+        if request.op != OwedOp::Add
+            || owed.is_none_or(|owed| self.provider.canonical_actor(&owed.creator) != actor)
+        {
+            return Err(refusal(&request));
+        }
+        let tuple = owed_tuple(&*self.provider, &request)?;
+        let authority = self.provider.command_authority(
+            request.actor,
+            ProviderCommand::Relationship {
+                tuple: &tuple,
+                op: request.op,
+            },
+        )?;
+        let change = self
+            .changes
+            .stage_with_registration(NewOwedChange {
+                txn: request.txn,
+                tuple,
+                op: request.op,
+                actor,
+                authority,
+                authority_checked: true,
+            })
+            .await?;
+        Ok(Staged {
+            seq: change.seq,
+            authority_checked: true,
+        })
     }
 
     /// Record, in this transaction, the change `request` asks for.
@@ -191,7 +483,10 @@ impl TransactionOutbox {
             Ok(owner) => owner.map(|owner| self.provider.canonical_actor(&owner)),
             // A denial that spares only the owner stands while nobody can
             // say who the owner is.
-            Err(Error::ProviderUnavailable(_)) if denial == OwedDenial::UnlessOwner => {
+            Err(Error::ProviderUnavailable(_))
+                if denial == OwedDenial::UnlessOwner
+                    && self.authority_revoked(actor, request).await? =>
+            {
                 return Err(revoked())
             }
             Err(Error::ProviderUnavailable(reason)) => return unchecked(actor, request, &reason),
@@ -199,7 +494,11 @@ impl TransactionOutbox {
         };
         match owner {
             Some(owner) if owner == *actor => return Ok(true),
-            _ if denial == OwedDenial::UnlessOwner => return Err(revoked()),
+            _ if denial == OwedDenial::UnlessOwner
+                && self.authority_revoked(actor, request).await? =>
+            {
+                return Err(revoked())
+            }
             None => return Err(refusal(request)),
             Some(_) => {}
         }
@@ -219,6 +518,19 @@ impl TransactionOutbox {
         }
         Err(refusal(request))
     }
+}
+
+/// Whether one of `deletes` takes away what an actor's authority rests on: a
+/// delete of one of `sources` (any relation when they are unknown) naming
+/// `actor` or a subject wider than one actor.
+fn rests_on_revoked(sources: Option<&[String]>, deletes: &[OwedTuple], actor: &Did) -> bool {
+    deletes.iter().any(|delete| {
+        sources.is_none_or(|sources| sources.contains(&delete.relation))
+            && match &delete.subject {
+                OwedSubject::Actor { did } => did == actor,
+                _ => true,
+            }
+    })
 }
 
 /// The refusal a local ACP gives an actor that neither owns the object nor
@@ -256,4 +568,59 @@ fn unchecked(actor: &Did, request: &StageRelationship<'_>, reason: &str) -> Resu
         "ACP provider unavailable; relationship add staged without the authority check"
     );
     Ok(false)
+}
+
+#[cfg(test)]
+mod authority_tests {
+    use super::*;
+
+    fn delete(relation: &str, subject: OwedSubject) -> OwedTuple {
+        OwedTuple {
+            policy_id: "p".into(),
+            resource: "users".into(),
+            object: "doc".into(),
+            relation: relation.into(),
+            subject,
+        }
+    }
+
+    fn actor(name: &str) -> Did {
+        Did::new(format!("did:key:{name}")).unwrap()
+    }
+
+    #[test]
+    fn only_a_revoked_source_naming_the_actor_or_everyone_takes_its_authority() {
+        let sources = ["manager".to_string()];
+        let mallory = actor("mallory");
+        let named = |relation, who: &str| delete(relation, OwedSubject::Actor { did: actor(who) });
+        assert!(rests_on_revoked(
+            Some(&sources),
+            &[named("manager", "mallory")],
+            &mallory
+        ));
+        assert!(rests_on_revoked(
+            Some(&sources),
+            &[delete("manager", OwedSubject::Wildcard)],
+            &mallory
+        ));
+        assert!(!rests_on_revoked(
+            Some(&sources),
+            &[named("manager", "bob")],
+            &mallory
+        ));
+        assert!(!rests_on_revoked(
+            Some(&sources),
+            &[delete("reader", OwedSubject::Wildcard)],
+            &mallory
+        ));
+        assert!(!rests_on_revoked(
+            Some(&sources),
+            &[named("reader", "mallory")],
+            &mallory
+        ));
+        assert!(
+            rests_on_revoked(None, &[delete("reader", OwedSubject::Wildcard)], &mallory),
+            "without the policy any wide delete may"
+        );
+    }
 }

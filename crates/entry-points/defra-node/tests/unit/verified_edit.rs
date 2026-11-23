@@ -544,6 +544,9 @@ fn what_the_node_owes_decides_before_the_provider() {
             matches!(staged, Ok(RelationshipChange::Staged { .. })),
             "{staged:?}"
         );
+        // The provider takes no write on the document from the commit on,
+        // so the revocation stays owed while the node's drainer runs.
+        on.remote.cut_off(&doc, true);
         on.remote.down.store(true, Ordering::SeqCst);
         on.node.commit_transaction(&txn).await.unwrap();
         on.remote.down.store(false, Ordering::SeqCst);

@@ -136,7 +136,15 @@ fn classify_backend_message(message: &str) -> Option<ErrorStatus> {
     // and ambiguous auth/not-found messages stay privacy-preserving 404s.
     if message_contains_any(
         &message,
-        &["p2p disabled", "p2p is disabled", "database is closed"],
+        &[
+            "p2p disabled",
+            "p2p is disabled",
+            "database is closed",
+            // a remote ACP provider that did not answer: the same call may be
+            // made again
+            "acp provider unavailable",
+            "while the acp provider is unavailable",
+        ],
     ) {
         return Some(ErrorStatus::ServiceUnavailable);
     }
@@ -189,6 +197,8 @@ fn classify_backend_message(message: &str) -> Option<ErrorStatus> {
             "not authorized to perform operation",
             "unauthorized",
             "not authorized",
+            // the request carries no credential the node may act under later
+            "no authority to submit acp changes",
         ],
     ) {
         return Some(ErrorStatus::Unauthorized);
@@ -320,7 +330,9 @@ impl From<TransactionError> for HttpError {
             }
             TransactionError::Storage(_) => HttpError::Internal(message),
             TransactionError::Conflict(_) => HttpError::TransactionConflict,
-            TransactionError::LockPoisoned(_) => HttpError::Internal(message),
+            TransactionError::LockPoisoned(_) | TransactionError::NeedsInput(_) => {
+                HttpError::Internal(message)
+            }
             TransactionError::NotSupported(_) => HttpError::BadRequest(message),
         }
     }
@@ -357,6 +369,29 @@ mod tests {
 
     fn status(error: HttpError) -> StatusCode {
         error.into_response().status()
+    }
+
+    /// What staging a relationship change for a remote provider refuses
+    /// with: no credential to send it under later is an authentication
+    /// failure, and a provider that cannot be asked is one to retry.
+    #[test]
+    fn staging_refusals_map_to_authentication_and_retry() {
+        assert!(matches!(
+            http_error_from_backend_message(
+                "no authority to submit ACP changes as did:key:z6Mk: no delegation".into()
+            ),
+            HttpError::Unauthorized(_)
+        ));
+        assert!(matches!(
+            http_error_from_backend_message(
+                "cannot check did:key:z6Mk's authority to revoke on bae-1 while the ACP provider is unavailable; try again".into()
+            ),
+            HttpError::ServiceUnavailable(_)
+        ));
+        assert!(matches!(
+            http_error_from_backend_message("ACP provider unavailable: timed out".into()),
+            HttpError::ServiceUnavailable(_)
+        ));
     }
 
     #[test]
@@ -502,6 +537,29 @@ mod tests {
         for (error, expected) in cases {
             assert_eq!(status(HttpError::from(error)), expected);
         }
+    }
+
+    #[test]
+    fn transaction_schema_errors_keep_their_source_context() {
+        workers::block_on(async {
+            let error = HttpError::from(TransactionError::operation(
+                "schema error: duplicate field. Name: _docID",
+            ));
+            let response = error.into_response();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+            let body = axum::body::to_bytes(response.into_body(), 1024)
+                .await
+                .unwrap();
+            let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "error": "schema error: duplicate field. Name: _docID"
+                })
+            );
+        })
+        .unwrap()
     }
 }
 

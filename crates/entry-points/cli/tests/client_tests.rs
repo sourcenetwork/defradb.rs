@@ -210,6 +210,7 @@ fn test_client_context_with_identity() {
         url: url.to_string(),
         auth_token: auth_token.clone(),
         identity_key_bytes: None,
+        authorized_account: None,
         tx_id: None,
         development: false,
         verbose: false,

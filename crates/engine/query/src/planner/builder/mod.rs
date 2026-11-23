@@ -87,6 +87,10 @@ pub struct Planner {
     /// The request's DAC bypass (`RequestContext::dac_bypass`); that of
     /// `RequestContext::ambient` until `with_dac_bypass` sets it
     dac_bypass: bool,
+    /// The request's strict access reads
+    /// (`RequestContext::strict_access_reads`); off until
+    /// `with_strict_access` sets it
+    strict_access: bool,
     /// App read validator, applied after ACP
     retry_inputs: Option<crate::prepared::PreparedInputMemo>,
     read_validator: Option<Arc<dyn crate::access_hooks::ReadValidator>>,
@@ -135,6 +139,7 @@ impl Planner {
             acp_registration_projection: None,
             identity_did: None,
             dac_bypass: defra_core::RequestContext::ambient().dac_bypass(),
+            strict_access: false,
             read_validator: None,
             retry_inputs: None,
             fts_scores: RapidHashMap::new(),
@@ -192,6 +197,13 @@ impl Planner {
         self
     }
 
+    /// Set the request's strict access reads for permission filtering in
+    /// plans.
+    pub fn with_strict_access(mut self, strict: bool) -> Self {
+        self.strict_access = strict;
+        self
+    }
+
     pub fn with_acp_registration_projection(
         mut self,
         projection: Option<Arc<crate::txn::AcpRegistrationProjection>>,
@@ -229,6 +241,7 @@ impl Planner {
                 acp: acp.clone(),
                 identity: acp::Identity::from(self.identity_did.clone()),
                 dac_bypass: self.dac_bypass,
+                strict: self.strict_access,
                 policy_id: policy.id.clone(),
                 resource_name: policy.resource_name.clone(),
             }),
@@ -359,7 +372,7 @@ impl Planner {
         computed_field_names.dedup();
 
         // Prepare filter components: scalar, relation, plan-level, complexity flag
-        let filter_parts = self.prepare_filter(select, &collection, &computed_field_names);
+        let filter_parts = self.prepare_filter(select, &collection, &computed_field_names)?;
         let scalar_filter = filter_parts.scalar_filter;
         let relation_filter = filter_parts.relation_filter;
         let filter_for_plan = filter_parts.filter_for_plan;
@@ -372,12 +385,11 @@ impl Planner {
         // scalar selection keeps the choice deterministic rather than dependent
         // on which indexes a collection happens to carry.
         //
-        // A row rejected above the scan is invisible to it, and the scan is what
-        // widens the candidate set when a page comes up short. An `OrderNode`
-        // blocks and consumes everything, so widening cannot instead be driven by
-        // the consumer still pulling. Rather than return a short page, these
-        // shapes take the exhaustive path, which scores every matching document
-        // and is therefore always right.
+        // A row rejected above the scan is invisible to it, so these shapes take
+        // the exhaustive path, which scores every matching document and is
+        // therefore always right. A non-empty scalar filter can change the
+        // candidate set before the similarity order, so it takes the exhaustive
+        // path; an empty filter selects every row and keeps vector routing.
         let rows_rejected_above_the_scan = filter_has_relations
             || is_complex_filter
             || select.group_by.is_some()
@@ -394,7 +406,11 @@ impl Planner {
             vector_routing::first_indexed_similarity(&sim_query.similarities, &collection.indexes);
 
         let vector_route = if let Some(ref fetcher) = self.fetcher {
-            if rows_rejected_above_the_scan {
+            let filter_has_conditions = select
+                .filter
+                .as_ref()
+                .is_some_and(|filter| !filter.conditions().is_empty());
+            if rows_rejected_above_the_scan || filter_has_conditions {
                 if let Some(field) = warning_field {
                     warnings.push(vector_routing::vector_index_unused_warning_for_filter(
                         field,

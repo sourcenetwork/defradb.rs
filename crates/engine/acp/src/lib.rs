@@ -26,6 +26,7 @@
 //! - Intersection (`&`) is not allowed in DPI-enforced policies
 
 mod auth_error;
+mod commit_registrations;
 mod dac;
 mod delegation_audience;
 mod delegation_window;
@@ -34,11 +35,14 @@ mod external;
 mod identity;
 mod local;
 pub mod nac;
+mod object_registration;
 pub mod outbox;
 pub mod pending;
 mod permission;
 mod policy_cache;
 mod policy_lookup;
+mod policy_nonce;
+pub mod projection;
 mod provider_command;
 pub mod replica;
 // Both persistent stores require `S: Store + Send + Sync`, which the wasm
@@ -54,29 +58,36 @@ mod validation;
 pub mod zanzibar;
 
 pub use auth_error::normalize_auth_error;
+pub use commit_registrations::{CommitRegistration, CommitRegistrations};
 pub use dac::{
-    bound_to_request, with_request_bearer, AuthenticatedCaller, DocumentACP, DocumentRelationship,
-    ObjectChangeListener,
+    bound_to_request, with_request_bearer, ActorRelationshipObservation, AuthenticatedCaller,
+    DocumentACP, DocumentRelationship, ObjectChangeListener, OwedRefusalListener,
 };
 pub use delegation_audience::DelegationAudience;
 pub use delegation_window::{DelegationWindow, WindowRefusal, CLOCK_SKEW_ALLOWANCE};
 pub use error::{Error, Result};
 pub use external::{
-    ExternalDocumentAcp, OwedScope, OwedSettlement, RedriveReport, MAX_FAILED_SUBMISSIONS,
+    ExternalDocumentAcp, OweAgain, OwedScope, OwedSettlement, RedriveReport, VoidedEffect,
+    MAX_CHANGES_PER_REQUEST, MAX_FAILED_SUBMISSIONS, OBSERVATION_PATIENCE,
 };
 pub use identity::Identity;
 pub use local::{LocalDocumentACP, MemoryAcpStore};
+pub use object_registration::{AcpObject, RegistrationFailure};
 pub use outbox::{
-    NewOwedChange, OwedAuthority, OwedAuthorityKind, OwedChange, OwedChanges, OwedDenial,
-    OwedDenials, OwedEntry, OwedFilter, OwedHold, OwedOp, OwedOutcome, OwedRef, OwedState,
-    OwedSubject, OwedTuple, OwedTupleState, OwedWait, OwedWhat, StageRelationship, Staged,
-    StagedCount, Submission, TransactionOutbox,
+    InFlight, NewOwedChange, OwedAuthority, OwedAuthorityKind, OwedChange, OwedChanges, OwedDenial,
+    OwedDenials, OwedEntry, OwedFilter, OwedHold, OwedJournal, OwedOp, OwedOutcome, OwedRef,
+    OwedState, OwedSubject, OwedTuple, OwedTupleState, OwedWait, OwedWhat, PreparedRequest,
+    RequestOutcome, StageRelationship, Staged, StagedCount, Submission, TransactionOutbox,
 };
 pub use pending::{PendingRegistration, PendingRegistrations};
 pub use permission::DocumentPermission;
 #[cfg(not(target_arch = "wasm32"))]
 pub use persistent::PersistentAcpStore;
-pub use policy_lookup::{LightClientStatus, PolicyLookup, RemotePolicies, StorePolicies};
+pub use policy_lookup::{
+    AssignmentPosition, AssignmentQuery, AssignmentReadError, CertifiedAssignments,
+    LightClientStatus, PolicyLookup, RemotePolicies, StorePolicies,
+};
+pub use policy_nonce::{PolicyNonce, PolicyNonceError, POLICY_NONCE_BYTES};
 pub use provider_command::ProviderCommand;
 pub use read_access::{check_doc_read_access, DirectChecker, DocAccess, ObjectAccessChecker};
 pub use relation::{

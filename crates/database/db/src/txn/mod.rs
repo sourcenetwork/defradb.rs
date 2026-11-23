@@ -24,6 +24,59 @@ pub(crate) mod lenses;
 pub(crate) mod owner;
 pub mod registry;
 
+pub(crate) struct ProjectionInputs(pub query::prepared::PreparedInputMemo);
+
+/// Bind the request's context and prepared inputs to `view` for the host's
+/// document projector. Without a projector the view is returned as it is: a
+/// mutation pays nothing for a projection it does not run.
+#[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
+pub(crate) fn bind_projection(
+    view: NamespaceView,
+    context: &defra_core::RequestContext,
+    inputs: Option<&query::prepared::PreparedInputMemo>,
+) -> NamespaceView {
+    if !view.has_document_projector() {
+        return view;
+    }
+    view.with_projection_context(context)
+        .with_projection_inputs(Arc::new(ProjectionInputs(
+            inputs.cloned().unwrap_or_default(),
+        )))
+}
+
+pub(crate) struct ProjectionAuthority(pub Arc<acp::outbox::PreparedRelationship>);
+
+impl datastore::multistore::ProjectionAuthority for ProjectionAuthority {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+impl datastore::multistore::ProjectionAcpInputs for ProjectionInputs {
+    fn get(&self, bytes: &[u8]) -> Option<Arc<[u8]>> {
+        let request = query::prepared::PreparedInputRequest::new(
+            query::prepared::PreparedInputKind::ProjectionAcp,
+            bytes.to_vec(),
+        );
+        self.0.get(&request)
+    }
+
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
+    fn authority(
+        &self,
+        bytes: &[u8],
+    ) -> Option<Arc<dyn datastore::multistore::ProjectionAuthority>> {
+        let request = query::prepared::PreparedInputRequest::new(
+            query::prepared::PreparedInputKind::ProjectionAcp,
+            bytes.to_vec(),
+        );
+        self.0.projection_authority(&request).map(|authority| {
+            Arc::new(ProjectionAuthority(authority))
+                as Arc<dyn datastore::multistore::ProjectionAuthority>
+        })
+    }
+}
+
 #[derive(Clone)]
 struct OwedAcpRegistration {
     acp: Arc<dyn acp::DocumentACP>,
@@ -41,15 +94,26 @@ impl OwedAcpRegistration {
             Some(creator.to_string()),
             self.request_bearer_token,
             |acp| async move {
+                // Each collection is decided first, then those still owed are
+                // registered together: an external provider applies them as
+                // one list. One that two schemas name is registered once.
+                let mut owed: Vec<acp::AcpObject<'_>> = Vec::new();
                 for schema in &schemas {
-                    crate::collection::acp::register_collection_if_needed(
+                    if let Some(object) = crate::collection::acp::collection_to_register(
                         acp.as_ref(),
                         Some(&creator),
                         schema,
                     )
-                    .await?;
+                    .await?
+                    {
+                        if !owed.contains(&object) {
+                            owed.push(object);
+                        }
+                    }
                 }
-                Ok::<_, acp::Error>(())
+                acp.register_objects(&creator, &owed)
+                    .await
+                    .map_err(|failure| failure.error)
             },
         )
         .await
@@ -107,6 +171,14 @@ pub struct DbTxn<S: Store> {
     /// transaction has staged (see [`acp::outbox`]). Made when the first one
     /// is staged: a transaction that stages none carries nothing for it.
     owed_staged: regolith::sync::OnceCell<acp::StagedCount>,
+    /// The owners a document ACP that cannot join this transaction told it,
+    /// for its commit to confirm (see [`query::txn::ObservedOwners`]). Made
+    /// when the first one is kept.
+    observed_owners: regolith::sync::OnceCell<Arc<query::txn::ObservedOwners>>,
+    /// The registrations this transaction's creates owe an external document
+    /// ACP, settled together by the first of their commit hooks to run. Made
+    /// when the first one is owed.
+    commit_registrations: regolith::sync::OnceCell<Arc<acp::CommitRegistrations>>,
     /// The CRDT types of the node whose store the transaction runs on, kept
     /// past the commit for the collections it hands out.
     crdts: crdt::Crdts,
@@ -176,6 +248,8 @@ impl<S: Store> DbTxn<S> {
             deferred_drains: None,
             statement_savepoint: None,
             owed_staged: regolith::sync::OnceCell::new(),
+            observed_owners: regolith::sync::OnceCell::new(),
+            commit_registrations: regolith::sync::OnceCell::new(),
             store: None,
         }
     }
@@ -370,7 +444,14 @@ impl<S: Store> DbTxn<S> {
     pub fn datastore(&self) -> Result<NamespaceView> {
         self.txn
             .as_ref()
-            .map(|t| t.datastore())
+            .map(|t| {
+                let view = t.datastore();
+                if view.has_document_projector() {
+                    view.with_projection_staged(self.owed_staged().shared())
+                } else {
+                    view
+                }
+            })
             .ok_or(Error::TxnNotActive)
     }
 
@@ -448,6 +529,23 @@ impl<S: Store> DbTxn<S> {
             .clone()
     }
 
+    /// The requests behind the owners a provider told this transaction, each
+    /// once; none when it was told nothing, without making the record.
+    pub fn observed_owner_requests(&self) -> Vec<query::prepared::PreparedInputRequest> {
+        self.observed_owners
+            .get()
+            .map(|observed| observed.requests())
+            .unwrap_or_default()
+    }
+
+    /// The owners a provider that cannot join this transaction told it, kept
+    /// for its commit to confirm.
+    pub fn observed_owners(&self) -> Arc<query::txn::ObservedOwners> {
+        self.observed_owners
+            .get_or_init_racy(|| Arc::new(query::txn::ObservedOwners::default()))
+            .clone()
+    }
+
     /// Get the rootstore.
     ///
     /// Returns an error if the transaction has been committed or discarded.
@@ -456,6 +554,18 @@ impl<S: Store> DbTxn<S> {
             .as_ref()
             .map(|t| t.rootstore())
             .ok_or(Error::TxnNotActive)
+    }
+
+    /// Owe `registration` at this transaction's commit: its hook settles it
+    /// with every other registration this transaction owes by then
+    /// ([`acp::CommitRegistrations`]). A statement rolled back to its
+    /// savepoint drops its hooks as it drops its records.
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
+    pub fn owe_acp_registration(&self, registration: acp::CommitRegistration) -> Result<()> {
+        let owed = self
+            .commit_registrations
+            .get_or_init_racy(|| Arc::new(acp::CommitRegistrations::default()));
+        self.on_commit(OnCommit::OrderedAsync(owed.owe(registration)))
     }
 
     /// Register `callback` to run once if the transaction commits. A

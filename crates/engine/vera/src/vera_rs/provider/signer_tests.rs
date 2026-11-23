@@ -16,10 +16,13 @@ use serde_json::Value;
 use vera_domain::NativeTx;
 
 use super::transport_tests::{Silent, Workers};
-use super::{trusted_key, IAcp, ProviderError, VeraProvider, VeraRsProvider};
+use super::{
+    trusted_key, Follow, Follower, IAcp, ProviderChain, ProviderError, VeraProvider, VeraRsProvider,
+};
 use crate::vera_rs::client::tests::{Recorded, TRUSTED_KEY};
 use crate::vera_rs::client::VeraRsClient;
 use crate::vera_rs::did_spelling;
+use crate::vera_rs::receipt_wait::Fallback;
 use crate::vera_rs::signer::admission;
 use crate::vera_rs::signer::DelegationSigner as _;
 use vera_delegation::testing::{Recording, Returns};
@@ -40,19 +43,42 @@ pub(super) async fn provider(
         .expect("light client")
     })
     .await;
-    let worker = workers.next();
+    let mut worker = workers.next();
     admission::actor_key(signer.as_ref()).expect("secp256k1 actor");
+    let light_client = Arc::new(light_client);
+    let client = Arc::new(VeraRsClient::with_transport(rpc));
+    let follow = Follow::from_journal(worker.confirmed());
+    let worker_did = worker.did().to_owned();
+    let deployment = worker.deployment_id();
+    let worker = Arc::new(regolith::sync::Mutex::new(worker));
+    let follower = Arc::new(Follower {
+        light_client: light_client.clone(),
+        chain: ProviderChain {
+            client: client.clone(),
+            light_client: light_client.clone(),
+            trusted: trusted_key(TRUSTED_KEY).expect("trusted key"),
+            timeout: Duration::from_secs(5),
+            fallback: Arc::new(Fallback::new(Duration::from_millis(200))),
+        },
+        worker: worker.clone(),
+        follow,
+        sink: regolith::sync::OnceCell::new(),
+        shared: std::sync::atomic::AtomicBool::new(false),
+        holds_key: Box::new(|_| false),
+    });
     VeraRsProvider {
-        light_client: Arc::new(light_client),
-        client: VeraRsClient::with_transport(rpc),
-        worker_did: worker.did().to_owned(),
-        deployment: worker.deployment_id(),
+        light_client,
+        client,
+        follower,
+        worker_did,
+        deployment,
         genesis_id: Arc::new(regolith::sync::OnceCell::new()),
-        worker: Arc::new(regolith::sync::Mutex::new(worker)),
+        worker,
         actor_did: did_spelling::defra(signer.did()).into_owned(),
         trusted: trusted_key(TRUSTED_KEY).expect("trusted key"),
         signer,
         sync_timeout: Duration::from_secs(5),
+        receipt_fallback: Arc::new(Fallback::new(Duration::from_millis(200))),
         light_client_observability: Arc::new(AtomicU64::new(0)),
         _light_client_observer: edge.spawn_service(std::future::pending()),
         edge,
@@ -112,7 +138,7 @@ async fn the_provider_signs_its_delegations_through_its_signer() {
 
     // The node answers nothing, so creation stops at its submission, which
     // carries the token the signer signed.
-    let stopped = provider.create_policy("name: test").await;
+    let stopped = provider.create_policy("name: test", None).await;
     assert!(matches!(stopped, Err(ProviderError::Unavailable(_))));
     let (expected, claims) = signed(&signer);
     assert_eq!(submitted(&rpc), expected);
@@ -139,7 +165,7 @@ async fn a_signature_vera_rs_would_refuse_is_never_sent() {
 
         for refused in [
             provider.create_bearer_token(&actor).await.map(drop),
-            provider.create_policy("name: test").await.map(drop),
+            provider.create_policy("name: test", None).await.map(drop),
         ] {
             assert!(
                 matches!(&refused, Err(ProviderError::Config(said)) if said.contains(reason)),
@@ -149,4 +175,39 @@ async fn a_signature_vera_rs_would_refuse_is_never_sent() {
         assert!(rpc.calls.pop().is_none(), "{returns:?}");
         assert!(provider.worker.lock().await.pending().is_none());
     }
+}
+
+#[nuclei::test]
+async fn the_drainer_sends_nothing_while_the_provider_is_not_admitted() {
+    let signer = Recording::returning(Returns::Genuine);
+    let rpc = Recorded::answering(Ok(Value::Null));
+    let mut workers = Workers::new();
+    let provider = provider(signer, rpc.clone(), &mut workers).await;
+    {
+        let mut worker = provider.worker.clone().lock_owned().await;
+        worker
+            .confirmed()
+            .close("a term voided more than the journal keeps".into())
+            .expect("closed");
+        provider.follower.follow.update(worker.confirmed());
+    }
+    let floor = provider.owed_request_floor().await;
+    let journaled = provider.journal_owed_request(b"request").await;
+    let outcome = provider
+        .owed_request_outcome("0xdigest", None, Some(0))
+        .await;
+    for refused in [floor.err(), journaled.err(), outcome.err()] {
+        assert!(
+            matches!(refused, Some(ProviderError::Unavailable(ref reason)) if reason.contains("voided more")),
+            "{refused:?}"
+        );
+    }
+    assert!(provider
+        .worker
+        .clone()
+        .lock_owned()
+        .await
+        .pending()
+        .is_none());
+    assert!(rpc.calls.pop().is_none(), "nothing reached the node");
 }

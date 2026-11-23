@@ -75,10 +75,38 @@ pub(super) struct RemoteAcp {
     pub(super) credentials: AtomicBool,
     keys: Set<String>,
     delegations: HopscotchMap<String, String, rapidhash::fast::RandomState>,
+    /// Delegations an actor bound to one relationship command: actor,
+    /// document, subject and whether it deletes.
+    bound: HopscotchMap<(String, String, String, bool), String, rapidhash::fast::RandomState>,
     expired: Set<String>,
     /// Other spellings of an actor, by the one the provider keeps.
     spellings: HopscotchMap<String, Did, rapidhash::fast::RandomState>,
+    /// The journal owed changes go through, when the provider keeps one.
+    pub(super) journal: regolith::sync::OnceCell<Arc<dyn acp::OwedJournal>>,
+    /// Run once an exact observation has its answer, before it returns.
+    pub(super) observing: HopscotchMap<(), ObserveHook, rapidhash::fast::RandomState>,
+    /// How long a submission of an owed change on each document takes.
+    pub(super) slow_submits:
+        HopscotchMap<String, std::time::Duration, rapidhash::fast::RandomState>,
+    /// Registration requests: each list and each registration sent alone.
+    pub(super) submissions: AtomicUsize,
+    /// Each registration list sent, its documents in order.
+    lists: SegQueue<Vec<String>>,
+    /// Documents whose registration is refused, alone or in a list.
+    refused_objects: Set<String>,
+    /// The next list is applied and its answer lost.
+    pub(super) lose_list_answer: AtomicBool,
+    /// Documents another settler registers to the caller just before the
+    /// next registration request reaches the provider.
+    raced: SegQueue<String>,
+    /// A registration of a document already held, even for its own owner,
+    /// is refused, as vera.rs refuses one.
+    pub(super) refuse_held: AtomicBool,
 }
+
+/// What a test runs inside an exact observation, after the provider answered.
+pub(super) type ObserveHook =
+    Arc<dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync>;
 
 impl RemoteAcp {
     pub(super) fn new() -> Arc<Self> {
@@ -102,9 +130,40 @@ impl RemoteAcp {
             keys: set(),
             unsigned: set(),
             delegations: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
+            bound: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
             expired: set(),
             spellings: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
+            journal: regolith::sync::OnceCell::new(),
+            observing: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
+            slow_submits: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
+            submissions: AtomicUsize::new(0),
+            lists: SegQueue::new(),
+            refused_objects: set(),
+            lose_list_answer: AtomicBool::new(false),
+            raced: SegQueue::new(),
+            refuse_held: AtomicBool::new(false),
         })
+    }
+
+    /// `did` carries `token`, a delegation bound to one change only: `did`'s
+    /// change of `subject` on `doc_id`, an add or a delete.
+    pub(super) fn bind_delegation(
+        &self,
+        did: &Did,
+        doc_id: &str,
+        subject: &Did,
+        delete: bool,
+        token: &str,
+    ) {
+        self.bound.insert(
+            (
+                did.to_string(),
+                doc_id.to_string(),
+                subject.to_string(),
+                delete,
+            ),
+            token.to_string(),
+        );
     }
 
     /// Answer relationship writes with `error`, or apply them again.
@@ -152,6 +211,31 @@ impl RemoteAcp {
         self.spellings.insert(other.to_string(), kept.clone());
     }
 
+    /// Refuse the registration of `doc_id`, alone or in a list.
+    pub(super) fn refuse_object(&self, doc_id: &str) {
+        self.refused_objects.insert(doc_id.to_string(), ());
+    }
+
+    /// Another settler registers `doc_id` to the caller just before the next
+    /// registration request arrives: after this node asked whether it is
+    /// held, before its own request lands.
+    pub(super) fn race_registration(&self, doc_id: &str) {
+        self.raced.push(doc_id.to_string());
+    }
+
+    /// Apply the registrations another settler made meanwhile.
+    fn others_register(&self, identity: &Did) {
+        while let Some(doc) = self.raced.pop() {
+            self.owners.insert(doc, identity.clone());
+            self.registrations.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    /// The registration lists sent so far, oldest first, taken out.
+    pub(super) fn lists(&self) -> Vec<Vec<String>> {
+        std::iter::from_fn(|| self.lists.pop()).collect()
+    }
+
     /// The relationship writes applied so far, oldest first, taken out.
     pub(super) fn take_writes(&self) -> Vec<(bool, String, String)> {
         std::iter::from_fn(|| self.writes.pop()).collect()
@@ -161,7 +245,7 @@ impl RemoteAcp {
         self.granted(doc_id, subject.as_str())
     }
 
-    fn manages(&self, requestor: &Did, doc_id: &str) -> bool {
+    pub(super) fn manages(&self, requestor: &Did, doc_id: &str) -> bool {
         self.owners.get(doc_id).as_ref() == Some(requestor)
             || self
                 .managers
@@ -233,7 +317,14 @@ impl DocumentACP for RemoteAcp {
         _resource_name: &str,
         doc_id: &str,
     ) -> acp::Result<()> {
+        self.submissions.fetch_add(1, Ordering::SeqCst);
         self.reachable()?;
+        self.others_register(identity);
+        if self.refused_objects.contains_key(doc_id) {
+            return Err(acp::Error::PermissionDenied(format!(
+                "the policy refuses {doc_id}"
+            )));
+        }
         if self.refuse_registration.load(Ordering::SeqCst) {
             return Err(acp::Error::PermissionDenied(
                 "no credentials for the creator".into(),
@@ -246,10 +337,78 @@ impl DocumentACP for RemoteAcp {
             if owner != *identity {
                 return Err(acp::Error::DocumentAlreadyRegistered(doc_id.into()));
             }
+            if self.refuse_held.load(Ordering::SeqCst) {
+                return Err(acp::Error::Storage(format!(
+                    "Vera: transaction error: {doc_id} is registered already"
+                )));
+            }
             return Ok(());
         }
         self.owners.insert(doc_id.to_string(), identity.clone());
         self.registrations.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    /// A list applied all or none, as vera.rs applies one; a refused list is
+    /// sent again one registration at a time, as the vera.rs provider does.
+    async fn register_objects(
+        &self,
+        identity: &Did,
+        objects: &[acp::AcpObject<'_>],
+    ) -> std::result::Result<(), acp::RegistrationFailure> {
+        if objects.len() < 2 {
+            for (index, object) in objects.iter().enumerate() {
+                self.register_doc_object(
+                    identity,
+                    object.policy_id,
+                    object.resource,
+                    object.object_id,
+                )
+                .await
+                .map_err(|error| acp::RegistrationFailure::new(index, error))?;
+            }
+            return Ok(());
+        }
+        self.submissions.fetch_add(1, Ordering::SeqCst);
+        self.lists.push(
+            objects
+                .iter()
+                .map(|object| object.object_id.to_string())
+                .collect(),
+        );
+        self.reachable()
+            .map_err(|error| acp::RegistrationFailure::new(0, error))?;
+        self.others_register(identity);
+        let takes = !self.refuse_registration.load(Ordering::SeqCst)
+            && !self.garble_registration.load(Ordering::SeqCst)
+            && objects.iter().all(|object| {
+                !self.refused_objects.contains_key(object.object_id)
+                    && !self.owners.contains_key(object.object_id)
+            });
+        if takes {
+            for object in objects {
+                self.owners
+                    .insert(object.object_id.to_string(), identity.clone());
+                self.registrations.fetch_add(1, Ordering::SeqCst);
+            }
+            if self.lose_list_answer.swap(false, Ordering::SeqCst) {
+                return Err(acp::RegistrationFailure::new(
+                    0,
+                    acp::Error::ProviderUnavailable("the answer was lost".into()),
+                ));
+            }
+            return Ok(());
+        }
+        for (index, object) in objects.iter().enumerate() {
+            self.register_doc_object(
+                identity,
+                object.policy_id,
+                object.resource,
+                object.object_id,
+            )
+            .await
+            .map_err(|error| acp::RegistrationFailure::new(index, error))?;
+        }
         Ok(())
     }
 
@@ -338,6 +497,33 @@ impl DocumentACP for RemoteAcp {
                 .contains_key(&(doc_id.to_string(), subject.to_string())))
     }
 
+    /// A requester who neither owns the document nor manages its relations
+    /// is refused alike, registered or not, as vera.rs refuses one.
+    async fn observe_actor_relationship(
+        &self,
+        observation: acp::ActorRelationshipObservation<'_>,
+    ) -> acp::Result<bool> {
+        self.reachable()?;
+        if !self.manages(observation.requester, observation.document) {
+            return Err(acp::Error::NotManager {
+                operation: "observe relationship".into(),
+            });
+        }
+        let key = (
+            observation.document.to_string(),
+            observation.target.to_string(),
+        );
+        let held = if observation.relation == MANAGER {
+            self.managers.contains_key(&key)
+        } else {
+            self.grants.contains_key(&key)
+        };
+        if let Some(hook) = self.observing.get(&()) {
+            hook().await;
+        }
+        Ok(held)
+    }
+
     fn canonical_actor(&self, did: &Did) -> Did {
         self.spellings
             .get(did.as_str())
@@ -355,6 +541,31 @@ impl DocumentACP for RemoteAcp {
                 reason: "no key and no delegation".into(),
             }),
         }
+    }
+
+    fn command_authority(
+        &self,
+        actor: &Did,
+        command: acp::ProviderCommand<'_>,
+    ) -> acp::Result<acp::OwedAuthority> {
+        if let acp::ProviderCommand::Relationship { tuple, op } = command {
+            if let acp::OwedSubject::Actor { did } = &tuple.subject {
+                let key = (
+                    actor.to_string(),
+                    tuple.object.clone(),
+                    did.to_string(),
+                    op == acp::OwedOp::Delete,
+                );
+                if let Some(token) = self.bound.get(&key) {
+                    return Ok(acp::OwedAuthority::Delegation { token });
+                }
+            }
+        }
+        self.owed_authority(actor)
+    }
+
+    fn owed_journal(&self) -> Option<Arc<dyn acp::OwedJournal>> {
+        self.journal.get().cloned()
     }
 
     async fn submit_owed_change(&self, change: &acp::OwedChange) -> acp::Submission {
@@ -375,6 +586,9 @@ impl DocumentACP for RemoteAcp {
                     reason: "the recorded authority no longer holds".into(),
                 };
             }
+        }
+        if let Some(took) = self.slow_submits.get(&change.tuple.object) {
+            workers::delay(took).unwrap().await.unwrap();
         }
         acp::outbox::submit_relationship(self, change).await
     }

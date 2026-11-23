@@ -88,6 +88,14 @@ pub(crate) trait AcpOps: Send + Sync {
     ) -> Result<Vec<acp::DocumentRelationship>> {
         Err(Error::Acp(acp::Error::UnsupportedRelationshipListing))
     }
+    async fn observe_dac_actor_relationship(
+        &self,
+        _context: &RequestContext,
+        _identity: &str,
+        _relationship: transactional::Relationship<'_>,
+    ) -> Result<bool> {
+        Err(Error::Acp(acp::Error::UnsupportedRelationshipListing))
+    }
 }
 
 /// A relationship change through the calls that answer a boolean, which
@@ -376,6 +384,42 @@ impl ChangeKind {
 
 #[async_trait::async_trait]
 impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
+    async fn observe_dac_actor_relationship(
+        &self,
+        context: &RequestContext,
+        identity: &str,
+        relationship: transactional::Relationship<'_>,
+    ) -> Result<bool> {
+        let requestor = Did::new(identity).map_err(Error::InvalidIdentityDid)?;
+        let target = Did::new(relationship.target).map_err(Error::InvalidIdentityDid)?;
+        let (_, binding) = self.collection_policy(relationship.collection).await?;
+        if context.txn().is_some() {
+            return self
+                .observe_in_txn(
+                    context,
+                    transactional::Observation {
+                        requester: requestor,
+                        target,
+                        policy: binding.id.clone(),
+                        resource: binding.resource_name.clone(),
+                        document: relationship.doc_id.to_owned(),
+                        relation: relationship.relation.to_owned(),
+                    },
+                )
+                .await;
+        }
+        acp::bound_to_request(&self.document_acp, context)
+            .observe_actor_relationship(acp::ActorRelationshipObservation {
+                requester: &requestor,
+                target: &target,
+                policy: &binding.id,
+                resource: &binding.resource_name,
+                document: relationship.doc_id,
+                relation: relationship.relation,
+            })
+            .await
+            .map_err(Error::Acp)
+    }
     async fn list_dac_relationships(
         &self,
         context: &RequestContext,
@@ -420,12 +464,31 @@ impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
             )
             .into());
         }
-        let job = query::txn::embedded_source_permission_job(actor_context.clone(), edge.clone())?;
         let handle = query::txn::TransactionHandle::new(id.to_string());
-        Ok(self
-            .registry
-            .run_as(transaction_context, &handle, None, job)
-            .await??)
+        // A projection the edge sets off may need a remote input: its
+        // statement is undone, the input answered here, and the edge run again.
+        let inputs = query::prepared::PreparedInputMemo::default();
+        loop {
+            let job = query::txn::embedded_source_permission_job(
+                actor_context.clone(),
+                edge.clone(),
+                inputs.clone(),
+            )?;
+            match self
+                .registry
+                .run_as(transaction_context, &handle, None, job)
+                .await?
+            {
+                Err(query::TransactionError::NeedsInput(request)) => inputs
+                    .answer_wave(&request, |wave| {
+                        self.database
+                            .resolve_projection_inputs(actor_context, &inputs, wave)
+                    })
+                    .await
+                    .map_err(Error::from)?,
+                done => return Ok(done?),
+            }
+        }
     }
     async fn change_dac_relationship_for_in_txn(
         &self,

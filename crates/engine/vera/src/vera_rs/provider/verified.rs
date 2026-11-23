@@ -20,13 +20,21 @@
 //! that takes its full deadline to answer busy spends it in fewer asks. An
 //! idle single-validator deployment finalizes a block only every ten
 //! seconds, so its evidence can be that late.
+//!
+//! The light client also refuses a read outright while its newest revision
+//! is older than its freshness limit ("verified revision is stale"): a
+//! starved host finalized no block for that long. That is late too, not
+//! wrong. The read waits for the header stream to bring the next revision,
+//! for what is left of [`BUSY_PATIENCE`], and is asked again then; it is
+//! never answered at the stale revision, and when none arrives in time the
+//! stale refusal is its outcome.
 
 use std::error::Error;
 use std::fmt::Display;
 use std::future::Future;
 use std::time::{Duration, Instant};
 
-use acp_light_client::TransportError;
+use acp_light_client::{HeaderChain, TransportError};
 use inputs::Jitter;
 use regolith::sync::Lazy;
 
@@ -53,9 +61,14 @@ const BUSY: i64 = -32002;
 /// How the light client's refusal of an overtaken answer starts, both from
 /// `HeaderChain::accept_response` and from
 /// `AcpLightClient::verify_access_decision` (acp-light-client at backbone
-/// 502e604, whose errors carry no type to match). A bump of the light client
+/// 5ca42c8, whose errors carry no type to match). A bump of the light client
 /// rechecks this wording.
 const OVERTAKEN: &str = "ACP state changed during";
+
+/// The light client's refusal to read while its newest revision is older
+/// than its freshness limit (acp-light-client `freshness.rs` at backbone
+/// 5ca42c8). A bump of the light client rechecks this wording.
+const STALE: &str = "verified revision is stale";
 
 /// One jitter for every read in the process: reads that draw from it
 /// together draw different pauses.
@@ -71,14 +84,20 @@ trait Pace {
 
     /// Waits `pause`.
     async fn sleep(&self, pause: Duration);
+
+    /// Waits at most `within` for a revision newer than the stale one the
+    /// light client holds; whether one arrived.
+    async fn fresh(&self, within: Duration) -> bool;
 }
 
-/// The wall clock, with pauses from [`JITTER`].
-struct WallPace {
+/// The wall clock, with pauses from [`JITTER`] and fresh revisions from the
+/// light client's header stream.
+struct WallPace<'a> {
     started: Instant,
+    heads: &'a HeaderChain,
 }
 
-impl Pace for WallPace {
+impl Pace for WallPace<'_> {
     fn elapsed(&self) -> Duration {
         self.started.elapsed()
     }
@@ -90,12 +109,18 @@ impl Pace for WallPace {
     async fn sleep(&self, pause: Duration) {
         nuclei::time::sleep(pause).await;
     }
+
+    async fn fresh(&self, within: Duration) -> bool {
+        let next = self.heads.latest_height().saturating_add(1);
+        self.heads.wait_for_height(next, within).await.is_ok()
+    }
 }
 
 /// Runs `read` again while the chain overtakes its answer, at most
-/// [`ATTEMPTS`] times in all, and while the node answers it is busy, for at
-/// most [`BUSY_PATIENCE`]; any other outcome is returned as it is.
-pub(super) async fn verified<T, E, F, Fut>(read: F) -> Result<T, E>
+/// [`ATTEMPTS`] times in all, and while the node answers it is busy or the
+/// revision `heads` holds is stale, for at most [`BUSY_PATIENCE`]; any other
+/// outcome is returned as it is.
+pub(super) async fn verified<T, E, F, Fut>(heads: &HeaderChain, read: F) -> Result<T, E>
 where
     E: AsRef<dyn Error + Send + Sync + 'static> + Display,
     F: FnMut() -> Fut,
@@ -104,6 +129,7 @@ where
     edge::compat(async {
         let pace = WallPace {
             started: Instant::now(),
+            heads,
         };
         verified_within(BUSY_PATIENCE, &pace, read).await
     })
@@ -111,7 +137,9 @@ where
 }
 
 /// [`verified`], timed on `pace`: a busy read is asked again only when the
-/// drawn pause ends within `patience` of its first ask.
+/// drawn pause ends within `patience` of its first ask, and a read refused
+/// for a stale revision only when a fresh one arrives within it
+/// (`proofs/tla/VerifiedRead.tla`, AskStale, Woken, WaitOut).
 async fn verified_within<T, E, F, Fut, P>(patience: Duration, pace: &P, mut read: F) -> Result<T, E>
 where
     E: AsRef<dyn Error + Send + Sync + 'static> + Display,
@@ -130,6 +158,12 @@ where
                 }
                 pace.sleep(pause).await;
             }
+            Err(error) if stale(&error) => {
+                let left = patience.saturating_sub(pace.elapsed());
+                if left.is_zero() || !pace.fresh(left).await {
+                    return Err(error);
+                }
+            }
             outcome => return outcome,
         }
     }
@@ -137,9 +171,31 @@ where
 
 fn overtaken<E>(error: &E) -> bool
 where
-    E: Display,
+    E: AsRef<dyn Error + Send + Sync + 'static> + Display,
 {
     error.to_string().starts_with(OVERTAKEN)
+        || matches!(
+            error.as_ref().downcast_ref::<crate::ProviderError>(),
+            Some(crate::ProviderError::ProofsOvertaken(_))
+        )
+}
+
+/// Whether a read failed late, not wrong: overtaken by a newer block, refused
+/// at a stale revision, or answered with the node's busy code. A read that
+/// still fails so after [`verified`]'s waits did not get its answer in time.
+pub(super) fn late<E>(error: &E) -> bool
+where
+    E: AsRef<dyn Error + Send + Sync + 'static> + Display,
+{
+    overtaken(error) || stale(error) || busy(error.as_ref())
+}
+
+/// Whether the light client refused to read at a stale revision.
+fn stale<E>(error: &E) -> bool
+where
+    E: Display,
+{
+    error.to_string().contains(STALE)
 }
 
 /// Whether the node answered with its busy code, anywhere in the error's

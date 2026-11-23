@@ -114,9 +114,8 @@ impl super::Planner {
             for index in &collection.indexes {
                 let (can_order, needs_reverse) = can_be_ordered_by_index(order_by, index);
                 if can_order {
-                    // The limit node skips the offset, so the scan only stops early.
-                    let stop = limit.filter(|&l| l > 0).map(|l| l.saturating_add(offset));
-                    let params = order_index_scan_params(index, needs_reverse, stop, 0);
+                    let params =
+                        order_index_scan_params(index, needs_reverse, limit, offset);
                     return Some((params, true));
                 }
             }
@@ -160,7 +159,10 @@ impl super::Planner {
                     limit,
                     offset,
                 ) {
-                    return Some((params, true));
+                    let provides_ordering = order_by
+                        .map(|order| can_be_ordered_by_filtered_index(order, best_index, filter).0)
+                        .unwrap_or(false);
+                    return Some((params, provides_ordering));
                 }
             }
         }
@@ -186,15 +188,17 @@ fn order_index_scan_params(
     limit: Option<u64>,
     offset: u64,
 ) -> IndexScanParams {
+    let fetch_limit = limit.map(|limit| offset.saturating_add(limit));
     IndexScanParams {
         index_name: index.name.clone(),
         scan_type: IndexScanType::PrefixScan {
             prefix_values: vec![],
             reverse: needs_reverse,
         },
-        // Pass limit/offset for early termination when the index provides ordering.
-        limit,
-        offset,
+        // The offset belongs to the LimitNode above the scan. Give the scan a
+        // fetch budget that covers the rows that node will skip.
+        limit: fetch_limit,
+        offset: 0,
         value_filter: None,
         cursor_seek: None,
     }

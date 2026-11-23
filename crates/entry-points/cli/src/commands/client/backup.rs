@@ -133,6 +133,7 @@ mod tests {
             url: "http://localhost:9181".to_string(),
             auth_token: None,
             identity_key_bytes: None,
+            authorized_account: None,
             tx_id: None,
             development,
             verbose: false,

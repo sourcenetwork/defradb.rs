@@ -33,6 +33,8 @@ sha2.workspace = true
 serde_yaml = "0.9"
 kovan.workspace = true
 regolith.workspace = true
+# The deadline an observation waits for an owed change to settle under.
+workers = { path = "../../foundation/workers" }
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 sha2 = { workspace = true, features = ["asm"] }
@@ -40,7 +42,6 @@ sha2 = { workspace = true, features = ["asm"] }
 [dev-dependencies]
 bytes = { workspace = true }
 tempfile = "3"
-workers = { path = "../../foundation/workers" }
 
 [lints]
 workspace = true

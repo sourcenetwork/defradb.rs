@@ -66,6 +66,7 @@ async fn provider(
         transport.clone(),
         transport,
         &hex::encode(node.consensus_key().encode()),
+        vera::vera_rs::GenesisSource::Hosted,
         signer,
         worker,
         &tuning,
@@ -122,7 +123,7 @@ async fn an_actor_of_each_key_type_owns_grants_and_reads_through_vera() {
             "{kind}"
         );
 
-        let policy = provider.create_policy(POLICY).await.expect("policy");
+        let policy = provider.create_policy(POLICY, None).await.expect("policy");
         let delegation = provider
             .create_bearer_token(&owner)
             .await
@@ -187,7 +188,7 @@ async fn a_p256_entity_subject_grant_admits_the_reader() {
         Arc::new(Secp256k1Signer::from_slice(&[42; 32]).expect("key"));
     let owner_did = owner.did().to_owned();
     let provider = provider(&node, &directory.path().join("owner"), owner).await;
-    let policy = provider.create_policy(POLICY).await.expect("policy");
+    let policy = provider.create_policy(POLICY, None).await.expect("policy");
     let delegation = provider
         .create_bearer_token(&owner_did)
         .await

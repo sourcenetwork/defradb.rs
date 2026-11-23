@@ -9,6 +9,7 @@ mod collections;
 mod context;
 mod guard;
 mod handle;
+mod observed_owners;
 mod read_access;
 mod registry;
 mod source_nac;
@@ -26,6 +27,7 @@ pub use context::{
 };
 pub use guard::TransactionGuard;
 pub use handle::TransactionHandle;
+pub use observed_owners::{ObservedOwners, OwnerAnswer, OwnerChanged};
 pub use read_access::OverlayChecker;
 pub use registry::{NoOpTransactionRegistry, TransactionRegistry};
 pub use source_nac::{

@@ -38,6 +38,7 @@ mod json_conflicts;
 mod json_conflicts_tests;
 mod mutation;
 mod mutation_inputs;
+mod owner_confirmation;
 mod owners;
 mod pinned;
 mod plan;
@@ -54,6 +55,7 @@ mod remote_authority;
 mod se_transport;
 #[cfg(test)]
 mod similarity_validation_tests;
+mod strict_access;
 mod turn;
 mod version;
 

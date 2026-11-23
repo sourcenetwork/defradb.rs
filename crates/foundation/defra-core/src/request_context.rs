@@ -67,9 +67,32 @@ struct Fields {
     /// (possibly inactive): its turn pins that version for every lookup of
     /// the collection's name.
     collection_version: Option<String>,
+    /// The caller decides on what this request reads: a document access
+    /// check that could not be answered fails the request instead of
+    /// hiding the row.
+    strict_access_reads: bool,
 }
 
 impl RequestContext {
+    /// This context with strict access reads: a read that meets a document
+    /// whose access check could not be answered (the ACP provider was
+    /// unreachable, late, busy or stale after its waits, or the check broke)
+    /// fails with `query::QueryError::AccessCheckUnavailable` and returns no
+    /// rows, instead of leaving the row out. A denied document is still only
+    /// left out. For a caller that decides on what it reads; the default
+    /// hides the row and keeps reading.
+    #[must_use]
+    pub fn with_strict_access_reads(mut self) -> Self {
+        Arc::make_mut(&mut self.0).strict_access_reads = true;
+        self
+    }
+
+    /// Whether this request asked for strict access reads
+    /// ([`with_strict_access_reads`](Self::with_strict_access_reads)).
+    pub fn strict_access_reads(&self) -> bool {
+        self.0.strict_access_reads
+    }
+
     /// Require each active native authority to be bound to the write transaction.
     pub fn with_transactional_authority_required(mut self) -> Self {
         Arc::make_mut(&mut self.0).require_transactional_authority = true;
@@ -309,6 +332,14 @@ impl RequestContext {
         self
     }
 
+    /// This context signing with `signing` and collecting the blocks it
+    /// commits into that signer's batch session.
+    #[must_use]
+    pub fn with_signing_session(self, signing: Option<SigningConfig>) -> Self {
+        let batch_session = signing.as_ref().map(|config| config.public_key_hex.clone());
+        self.with_signing(signing).with_batch_session(batch_session)
+    }
+
     /// The batch signing session the CIDs of the blocks this request commits
     /// are collected into (see [`crate::batch_signing`]), if it runs in one.
     pub fn batch_session(&self) -> Option<&str> {
@@ -420,6 +451,7 @@ impl fmt::Debug for RequestContext {
         f.debug_struct("RequestContext")
             .field("identity", &self.0.identity)
             .field("dac_bypass", &self.0.dac_bypass)
+            .field("strict_access_reads", &self.0.strict_access_reads)
             .field("encryption", &self.0.encryption)
             .field(
                 "signing",
@@ -487,6 +519,25 @@ mod tests {
             .signing()
             .is_some());
         assert!(signed.with_signing_override(None).signing().is_some());
+    }
+
+    #[test]
+    fn signing_session_sets_and_clears_the_batch_session() {
+        let signing = SigningConfig {
+            key_type: crate::signing::SigningKeyType::Ed25519,
+            private_key_bytes: vec![0xAB; 32],
+            public_key_bytes: Vec::new(),
+            public_key_hex: "public".to_string(),
+            remote_signer: None,
+            signing_authorization: None,
+        };
+        let signed = RequestContext::default().with_signing_session(Some(signing));
+        assert!(signed.signing().is_some());
+        assert_eq!(signed.batch_session(), Some("public"));
+
+        let unsigned = signed.with_signing_session(None);
+        assert!(unsigned.signing().is_none());
+        assert!(unsigned.batch_session().is_none());
     }
 
     #[test]

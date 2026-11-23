@@ -169,6 +169,7 @@ impl VeraProvider for OwedProvider {
     async fn create_policy(
         &self,
         _policy_yaml: &str,
+        _nonce: Option<acp::PolicyNonce>,
     ) -> std::result::Result<String, ProviderError> {
         unreachable!("no policy is created here")
     }
@@ -354,6 +355,9 @@ fn change(actor: &str, authority: OwedAuthority, op: OwedOp) -> OwedChange {
         last_error: None,
         authority_checked: true,
         epoch: None,
+        in_flight: None,
+        alone: false,
+        with_registration: false,
     }
 }
 

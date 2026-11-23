@@ -346,6 +346,42 @@ impl Node {
         .await
     }
 
+    pub async fn observe_dac_actor_relationship_as(
+        &self,
+        context: &defra_core::RequestContext,
+        collection: &str,
+        doc_id: &str,
+        relation: &str,
+        target: &str,
+    ) -> crate::Result<bool> {
+        let identity = context
+            .identity()
+            .ok_or_else(|| query::QueryError::execution("identity required for document ACP"))?
+            .to_owned();
+        let context = context.clone();
+        let ops = std::sync::Arc::clone(&self.acp_ops);
+        let (collection, doc_id, relation, target) = (
+            collection.to_owned(),
+            doc_id.to_owned(),
+            relation.to_owned(),
+            target.to_owned(),
+        );
+        self.on_acp(move || async move {
+            ops.observe_dac_actor_relationship(
+                &context,
+                &identity,
+                crate::acp_ops::transactional::Relationship {
+                    collection: &collection,
+                    doc_id: &doc_id,
+                    relation: &relation,
+                    target: &target,
+                },
+            )
+            .await
+        })
+        .await
+    }
+
     /// Delete a document relationship as the authenticated caller, in its
     /// transaction when the request context names one.
     pub async fn delete_dac_actor_relationship_as(

@@ -13,7 +13,7 @@ pub use factory::create_memory_nac_manager;
 #[cfg(not(target_arch = "wasm32"))]
 pub use factory::create_persistent_nac_manager;
 pub use toggle::NacCaller;
-pub use write::{NacChange, NacRelation, NacRelationshipRequest};
+pub use write::{NacChange, NacRelation, NacRelationshipRequest, NacTarget};
 
 use std::sync::Arc;
 

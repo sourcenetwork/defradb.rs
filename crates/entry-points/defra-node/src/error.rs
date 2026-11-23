@@ -95,6 +95,9 @@ pub enum Error {
     /// The source query of a view selects nothing.
     #[error("invalid view query: no selections found")]
     ViewQueryEmpty,
+    /// The source query of a view selects more than one source type.
+    #[error("invalid view query: multiple selections found")]
+    ViewQueryMultipleSources,
     /// A view's lens transform CID is empty, which Go's `cid.Decode` refuses.
     #[error("cid too short")]
     ViewTransformCidEmpty,
@@ -184,7 +187,7 @@ pub enum Error {
     EmbeddedVera(#[from] vera_embedded::HostError),
 
     /// A call did not run on the worker pool.
-    #[error("the call did not run on the worker pool: {0}")]
+    #[error("{}", .0.report("node call"))]
     WorkerPoolCall(#[source] workers::Error),
     /// The worker pool did not start.
     #[error("the worker pool did not start: {0}")]
@@ -541,3 +544,29 @@ impl Error {
 
 /// Result alias for node operations.
 pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_worker_pool_call_reports_the_caller_sentence_and_keeps_its_source() {
+        let source = workers::Error::Panicked {
+            task: "node call",
+            message: "secret".into(),
+        };
+        let error = Error::WorkerPoolCall(source.clone());
+
+        assert_eq!(
+            error.to_string(),
+            "the request failed on an internal error; see the node's log"
+        );
+        assert!(!error.to_string().contains("secret"));
+        assert!(
+            std::error::Error::source(&error)
+                .and_then(|source| source.downcast_ref::<workers::Error>())
+                .is_some_and(|linked| *linked == source),
+            "the worker error stays linked as the source"
+        );
+    }
+}

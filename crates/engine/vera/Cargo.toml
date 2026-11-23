@@ -45,6 +45,9 @@ tempfile = "3"
 vera-client = "0.1.2"
 vera-domain = "0.1.2"
 vera-modules = "0.1.2"
+vera-permission = "0.1.2"
+# The relationship subject type of the commands read back from a signed request.
+vera-acp = "0.1.2"
 # vera.rs's own token verifier: for a caller's delegation, and for the tokens built here in tests.
 vera-crypto = "0.1.2"
 commonware-codec = "=2026.10.0"
@@ -73,7 +76,7 @@ alloy-sol-types.workspace = true
 alloy-primitives.workspace = true
 
 # Authenticated ACP records and permission evaluation
-acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "502e60487f585a8303afa4998b07806aab69922c" }
+acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "7993ba38d889d16503f7a6ec9c33ef91375e4c0e" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # HTTP for REST/LCD and CometBFT JSON-RPC, and the gRPC channel, on nuclei

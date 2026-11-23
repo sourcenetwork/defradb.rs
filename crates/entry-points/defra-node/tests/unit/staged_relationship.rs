@@ -51,6 +51,10 @@ pub(super) struct Remote {
     /// How many access decisions the provider was asked to record.
     pub(super) decisions: std::sync::atomic::AtomicU64,
     pub(super) down: AtomicBool,
+    /// Objects whose relationship writes fail as unreachable while every
+    /// other call answers: what keeps a change owed on them while the
+    /// node's drainer runs.
+    cut_off: Map<String, ()>,
     /// Its newest verified state is past the freshness limit: every decision
     /// fails as the vera.rs light client's does.
     pub(super) stale: AtomicBool,
@@ -62,6 +66,14 @@ pub(super) struct Remote {
     /// fails as not delivered.
     stalled: AtomicBool,
     released: regolith::sync::Event,
+    /// An owner read waits, once, until `owner_reads_released`, after
+    /// setting `owner_read_waiting`.
+    pub(super) hold_owner_read: AtomicBool,
+    pub(super) owner_read_waiting: regolith::sync::Event,
+    pub(super) owner_reads_released: regolith::sync::Event,
+    /// Objects whose access checks fail as unavailable while every other
+    /// call answers.
+    pub(super) unchecked: Map<String, ()>,
 }
 
 /// The words a delegation bound to one request names `command` by.
@@ -107,11 +119,26 @@ impl Remote {
             lapsed: AtomicBool::new(false),
             decisions: std::sync::atomic::AtomicU64::new(0),
             down: AtomicBool::new(false),
+            cut_off: map(),
             stale: AtomicBool::new(false),
             unverifying: AtomicBool::new(false),
             stalled: AtomicBool::new(false),
             released: regolith::sync::Event::new(),
+            hold_owner_read: AtomicBool::new(false),
+            owner_read_waiting: regolith::sync::Event::new(),
+            owner_reads_released: regolith::sync::Event::new(),
+            unchecked: map(),
         })
+    }
+
+    /// Fail every relationship write on `object` as unreachable, or take
+    /// them again.
+    pub(super) fn cut_off(&self, object: &str, cut: bool) {
+        if cut {
+            self.cut_off.insert(object.to_string(), ());
+        } else {
+            self.cut_off.remove(object);
+        }
     }
 
     fn reachable(&self) -> Result<(), ProviderError> {
@@ -154,6 +181,11 @@ impl Remote {
         }
     }
 
+    /// How many writes reached the provider and were not taken yet.
+    fn pending_writes(&self) -> usize {
+        self.writes.len()
+    }
+
     pub(super) fn take_writes(&self) -> Vec<(bool, String, String)> {
         std::iter::from_fn(|| self.writes.pop()).collect()
     }
@@ -182,6 +214,11 @@ impl Remote {
         subject: &SubjectRef,
     ) -> Result<bool, ProviderError> {
         self.reachable()?;
+        if self.cut_off.contains_key(object) {
+            return Err(ProviderError::Unavailable(format!(
+                "stub provider is cut off from {object}"
+            )));
+        }
         if self.owners.get(object).as_deref() != Some(Self::actor(token)) {
             return Err(ProviderError::Transaction("submission was rejected".into()));
         }
@@ -190,12 +227,14 @@ impl Remote {
             _ => "*".to_string(),
         };
         let key = (object.to_string(), relation.to_string(), subject.clone());
+        // Told before the tuple changes: a test that sees the tuple change
+        // finds the write among the notifications.
+        self.writes.push((add, object.to_string(), subject));
         let changed = if add {
             self.tuples.insert(key, ()).is_none()
         } else {
             self.tuples.remove(&key).is_some()
         };
-        self.writes.push((add, object.to_string(), subject));
         Ok(changed)
     }
 }
@@ -286,7 +325,11 @@ impl VeraProvider for Remote {
         })
     }
 
-    async fn create_policy(&self, policy_yaml: &str) -> Result<String, ProviderError> {
+    async fn create_policy(
+        &self,
+        policy_yaml: &str,
+        _nonce: Option<acp::PolicyNonce>,
+    ) -> Result<String, ProviderError> {
         let parsed = acp::policy_yaml::parse_policy_yaml(policy_yaml)
             .map_err(|error| ProviderError::Config(error.to_string()))?;
         let id = acp::policy_yaml::build_policy(&parsed, 0)
@@ -412,6 +455,10 @@ impl VeraProvider for Remote {
         _resource: &str,
         object_id: &str,
     ) -> Result<(bool, String), ProviderError> {
+        if self.hold_owner_read.swap(false, Ordering::SeqCst) {
+            self.owner_read_waiting.set();
+            self.owner_reads_released.wait().await;
+        }
         self.reachable()?;
         Ok(match self.owners.get(object_id) {
             Some(owner) => (true, owner),
@@ -440,6 +487,11 @@ impl VeraProvider for Remote {
         actor_did: &str,
     ) -> Result<bool, ProviderError> {
         self.reachable()?;
+        if self.unchecked.contains_key(object_id) {
+            return Err(ProviderError::Unavailable(format!(
+                "stub provider cannot check {object_id}"
+            )));
+        }
         if self.stale.load(Ordering::SeqCst) {
             return Err(ProviderError::Unavailable(
                 "verified permission: verified revision is stale; wait for a fresh finalized revision"
@@ -452,6 +504,22 @@ impl VeraProvider for Remote {
             "update" | "delete" => writes,
             _ => writes || self.holds(object_id, actor_did) || self.holds(object_id, "*"),
         })
+    }
+}
+
+/// Wait until `holds` does, for at most 90 seconds: the node's drainer
+/// submits what is owed by itself, after a back-off of up to 60 seconds.
+pub(super) async fn eventually<F, Fut>(what: &str, mut holds: F)
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
+    while !holds().await {
+        assert!(std::time::Instant::now() < deadline, "{what}");
+        edge::testing::edge()
+            .sleep(std::time::Duration::from_millis(100))
+            .await;
     }
 }
 
@@ -755,8 +823,11 @@ fn a_staged_grant_waits_for_the_provider_and_a_staged_revocation_does_not() {
         assert_eq!(read_in_txn(OWNER).await, ["fresh"]);
         assert_eq!(reads(&node, READER).await, ["fresh"], "not committed yet");
 
-        // The provider is down at the commit: the revocation holds on this
-        // node all the same, and the provider still holds the grant.
+        // The provider is down at the commit, and stays unable to take a
+        // write on the document after it, so the node's drainer cannot
+        // submit the revocation either: it holds on this node all the same,
+        // and the provider still holds the grant.
+        remote.cut_off(&doc, true);
         remote.down.store(true, Ordering::SeqCst);
         transaction.commit().await.unwrap();
         remote.down.store(false, Ordering::SeqCst);
@@ -765,7 +836,7 @@ fn a_staged_grant_waits_for_the_provider_and_a_staged_revocation_does_not() {
         assert!(remote.take_writes().is_empty());
 
         // A commit submits what is owed on the documents its own
-        // transaction staged on, and leaves the rest.
+        // transaction staged on, and is not held by what is owed elsewhere.
         let other = created(node.execute_request(create("other")).await);
         let transaction = node.begin_transaction_guard(false).await.unwrap();
         node.add_dac_actor_relationship_change_for_in_txn(
@@ -786,8 +857,9 @@ fn a_staged_grant_waits_for_the_provider_and_a_staged_revocation_does_not() {
         assert!(remote.holds(&doc, READER));
         assert_eq!(reads(&node, READER).await, ["other"]);
 
-        // The next commit that stages on the first document submits the
-        // revocation before its own change.
+        // A change committed on the first document after the revocation
+        // goes after it: once the provider takes writes there again, the
+        // revocation is submitted first.
         let transaction = node.begin_transaction_guard(false).await.unwrap();
         node.add_dac_actor_relationship_change_for_in_txn(
             transaction.handle(),
@@ -800,6 +872,13 @@ fn a_staged_grant_waits_for_the_provider_and_a_staged_revocation_does_not() {
         .await
         .unwrap();
         transaction.commit().await.unwrap();
+        assert!(remote.take_writes().is_empty());
+        remote.cut_off(&doc, false);
+        eventually(
+            "the drainer did not submit what is owed on the document",
+            || async { remote.pending_writes() == 2 && remote.holds(&doc, CALLER) },
+        )
+        .await;
         assert_eq!(
             remote.take_writes(),
             [
@@ -1032,8 +1111,10 @@ fn a_commit_returns_at_the_deadline_with_the_change_still_staged() {
         );
         assert!(!remote.holds(&doc, READER));
 
-        // The stalled submission never lands. The next commit on the
-        // document finds the change still staged and submits it first.
+        // The stalled submission never lands, and the provider takes no
+        // write on the document until the next commit: the change is still
+        // staged, and is submitted before the change committed after it.
+        remote.cut_off(&doc, true);
         remote.stalled.store(false, Ordering::SeqCst);
         remote.released.set();
         let transaction = node.begin_transaction_guard(false).await.unwrap();
@@ -1048,6 +1129,13 @@ fn a_commit_returns_at_the_deadline_with_the_change_still_staged() {
         .await
         .unwrap();
         transaction.commit().await.unwrap();
+        assert!(!remote.holds(&doc, READER));
+        remote.cut_off(&doc, false);
+        eventually(
+            "the drainer did not submit what is owed on the document",
+            || async { remote.pending_writes() == 2 && remote.holds(&doc, CALLER) },
+        )
+        .await;
         assert_eq!(
             remote.take_writes(),
             [
@@ -1108,6 +1196,17 @@ fn a_userset_grant_is_decided_under_its_own_actors_authority() {
             })
         ));
         remote.down.store(false, Ordering::SeqCst);
+        // The node's drainer submits it once the provider is back; the
+        // owner stages after that, so neither commit races the other.
+        let caller = actor(CALLER);
+        eventually("the drainer did not submit the caller's change", || async {
+            node.owed_acp_as(&caller, CALLER)
+                .await
+                .unwrap()
+                .iter()
+                .all(|entry| entry.state != acp::OwedState::Staged)
+        })
+        .await;
         assert!(matches!(
             stage(actor(OWNER)).await,
             Ok(RelationshipChange::Staged {
@@ -1147,91 +1246,55 @@ fn a_userset_grant_is_decided_under_its_own_actors_authority() {
     .unwrap();
 }
 
-/// Over HTTP a relationship change in a transaction is served only by a
-/// provider that joins the transaction: staging on a remote one is refused
-/// before anything is recorded.
-#[cfg(feature = "http")]
+/// A node whose store still owes changes in the layout before the owed
+/// counts were split does not start: it would neither submit them nor deny
+/// by an owed revocation among them. One that owes nothing there starts.
 #[test]
-fn the_http_route_refuses_to_stage_on_a_remote_provider() {
-    use std::time::Duration;
+fn a_node_owing_changes_in_the_earlier_layout_does_not_start() {
+    use storage::corekv::Store as _;
 
     workers::block_on(async {
         let _serial = super::tests::SIGNING_STORE_GUARD.lock().await;
         let remote = Remote::new();
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let node = Node::builder()
-            .with_node_identity_did(node_identity())
-            .with_document_acp_provider(DocumentAcpProvider::new(remote.clone()))
-            .with_http(crate::HttpConfig::with_listener(listener).unwrap())
-            .build()
-            .await
-            .unwrap();
-        provision(&node).await;
-        let doc = created(node.execute_request(create("shared")).await);
-
-        let caller = RawIdentity::from_private_key(crypto::generate_ed25519().unwrap()).unwrap();
-        let token = identity::new_token(
-            &caller,
-            Duration::from_secs(60),
-            Some(address.to_string()),
-            None,
-        )
-        .unwrap();
-        let auth = format!("Bearer {}", String::from_utf8(token).unwrap());
-        let client = net::http::Client::builder(edge::testing::edge())
-            .no_proxy()
-            .timeout(Duration::from_secs(5))
-            .build()
-            .unwrap();
-        let begun = client
-            .post(format!("http://{address}/api/v0/tx"))
-            .header("Authorization", auth.as_str())
-            .send()
-            .await
-            .unwrap();
-        assert!(begun.status().is_success(), "{}", begun.status());
-        let body: serde_json::Value = begun.json().await.unwrap();
-        let tx = body["id"].as_u64().unwrap().to_string();
-
-        let relationship = serde_json::json!({
-            "collection": "Record",
-            "doc_id": doc,
-            "relation": "reader",
-            "target_actor": READER,
-        });
-        let url = format!("http://{address}/api/v0/acp/document/relationship");
-        for delete in [false, true] {
-            let request = if delete {
-                client.delete(&url)
-            } else {
-                client.post(&url)
-            };
-            let refused = request
-                .header("Authorization", auth.as_str())
-                .header("x-defradb-tx", tx.as_str())
-                .json(&relationship)
-                .send()
-                .await
-                .unwrap();
-            assert_eq!(refused.status().as_u16(), 501);
-            let text = refused.text().await.unwrap();
-            assert!(
-                text.contains("transaction-bound document relationships are unavailable"),
-                "{text}"
-            );
+        let node_did = node_identity();
+        for (keys, refused) in [
+            (
+                vec![b"/acp-owed/seq".to_vec(), b"/acp-owed/n".to_vec()],
+                false,
+            ),
+            (
+                vec![[b"/acp-owed/q/".as_slice(), &3u64.to_be_bytes()].concat()],
+                true,
+            ),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let first = start(&node_did, Some(&remote), Some(directory.path())).await;
+            first.shutdown().await.unwrap();
+            drop(first);
+            {
+                let store = Arc::new(storage::RegolithStore::open(directory.path()).unwrap());
+                let acp = storage::namespace::NamespacedStore::new(
+                    store,
+                    storage::namespace::Namespace::Acpstore,
+                );
+                let mut txn = acp.new_txn(false).await.unwrap();
+                for key in &keys {
+                    txn.set(key, b"earlier").await.unwrap();
+                }
+                txn.commit().await.unwrap();
+            }
+            let second = Node::builder()
+                .with_node_identity_did(&node_did)
+                .with_document_acp_provider(DocumentAcpProvider::new(remote.clone()))
+                .data_path(directory.path())
+                .build()
+                .await;
+            match (second, refused) {
+                (Err(crate::Error::Acp(acp::Error::LegacyOwedChanges { count: 1 })), true) => {}
+                (Ok(node), false) => node.shutdown().await.unwrap(),
+                (other, _) => panic!("{keys:?}: {:?}", other.map(|_| "started")),
+            }
         }
-        // Outside a transaction the route serves the provider as before.
-        let outside = client
-            .post(&url)
-            .header("Authorization", auth.as_str())
-            .json(&relationship)
-            .send()
-            .await
-            .unwrap();
-        assert_ne!(outside.status().as_u16(), 501);
-        assert!(remote.take_writes().is_empty());
-        node.shutdown().await.unwrap();
     })
-    .unwrap();
+    .unwrap()
 }

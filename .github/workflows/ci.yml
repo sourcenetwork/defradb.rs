@@ -247,9 +247,29 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --workspace --no-deps --keep-going
 
+  # Mirrors `just check-c-api`: defra.h as this change generates it against the
+  # one its base generates.
+  c-api:
+    name: C API compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cbindgen,just
+      - name: Test the checker
+        run: python3 .github/scripts/test-check-c-api.py
+      - name: Check the C API against the base
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+        run: |
+          git fetch --depth=1 origin "$BASE"
+          bash .github/scripts/check-c-api.sh "$BASE"
+
   lint:
     name: Lint
-    needs: [ci-scope, lint-default, feature-checks, dependency-checks, docs]
+    needs: [ci-scope, lint-default, feature-checks, dependency-checks, docs, c-api]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -260,6 +280,7 @@ jobs:
           FEATURES: ${{ needs.feature-checks.result }}
           DEPENDENCIES: ${{ needs.dependency-checks.result }}
           DOCS: ${{ needs.docs.result }}
+          C_API: ${{ needs.c-api.result }}
         run: |
           test "$DEFAULT" = success
           # Skipped on a pull request without its ci: label; the merge queue runs them. Only then: a
@@ -267,6 +288,7 @@ jobs:
           test "$FEATURES" = success || { test "$FEATURES" = skipped && test "$RUN_FEATURES" = false; }
           test "$DEPENDENCIES" = success
           test "$DOCS" = success
+          test "$C_API" = success
 
   unit-tests:
     name: Unit tests
@@ -299,8 +321,9 @@ jobs:
         uses: actions/setup-go@v7
         with:
           # The pinned GO_COMPAT_COMMIT declares `go 1.26.10`, so an older
-          # toolchain cannot build it.
-          go-version: '1.26'
+          # toolchain cannot build it. Held at 1.26.10: Go 1.26.11 refuses the
+          # LTO section in wasmtime-go's prebuilt libwasmtime.a
+          go-version: '1.26.10'
       - name: Prepare Go DefraDB binary
         id: prepare
         run: |
@@ -536,8 +559,14 @@ jobs:
         run: cargo test -p db --lib merge::governance::deferred_conformance_tests::the_index_matches_the_executed_model -- --exact --ignored
       - name: Check HTTP router composition model binding
         run: cargo test -p defra-http --lib server::router_transform_tests::forwarding_filter_matches_executed_model -- --exact --ignored
+      - name: Check owner observation model binding
+        run: cargo test -p defra-node --lib owner_observation_tests
       - name: Check collection head set model binding
         run: cargo test -p db --test block head_conformance::head_queries_match_executable_lean -- --exact
+      - name: Check projection scope model binding
+        run: cargo test -p acp --test projection_scope -- --ignored
+      - name: Check genesis read access model binding
+        run: cargo test -p db --test merge genesis_access::genesis_reader_matches_executed_lean_model -- --exact --ignored
       - name: Check Lean-to-Rust conformance
         run: cargo nextest run -p conformance --lib --test lean_conformance
 
@@ -906,7 +935,11 @@ jobs:
           name: go-defradb
           path: target/go
       - name: Build the lens modules
-        run: cargo build --manifest-path tools/lenses/Cargo.toml --target wasm32-unknown-unknown
+        # A stray CARGO_TARGET_DIR keeps --target-dir honest (#2350): without
+        # the flag the modules land there and the lens tests can't find them.
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/stray-lens-target
+        run: cargo build --manifest-path tools/lenses/Cargo.toml --target wasm32-unknown-unknown --target-dir tools/lenses/target
       - name: Pick the tests
         env:
           CLIENT: ${{ matrix.client }}
@@ -1041,3 +1074,20 @@ jobs:
             } else {
               await github.rest.issues.createComment({ owner, repo, issue_number, body });
             }
+
+  # The one required check besides Validate title: fails when any job it needs
+  # failed or was cancelled. A job skipped by ci-scope passes; a job skipped
+  # because its dependency failed shows that dependency's failure here. Testo
+  # shards report through Testo summary, which judges their known failures.
+  merge-gate:
+    name: Merge gate
+    needs: [ci-scope, lint, build, wasm-check, lean-conformance, conformance, integration, p2p-linux, testo-summary]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every needed job to pass or be skipped by scope
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          failed=$(jq -r 'to_entries[] | select(.value.result == "failure" or .value.result == "cancelled") | "\(.key)=\(.value.result)"' <<<"$NEEDS")
+          if [ -n "$failed" ]; then echo "::error::Not green: $(echo $failed)"; exit 1; fi

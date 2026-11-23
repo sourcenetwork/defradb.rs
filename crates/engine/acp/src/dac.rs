@@ -10,6 +10,7 @@ use zanzibar::types::Subject;
 
 use crate::error::{Error, Result};
 use crate::identity::Identity;
+use crate::object_registration::{AcpObject, RegistrationFailure};
 use crate::permission::DocumentPermission;
 
 /// Told when this node changes an object's relationships on its provider
@@ -17,6 +18,15 @@ use crate::permission::DocumentPermission;
 /// task that made it, which it must not hold up.
 pub trait ObjectChangeListener: MaybeSendSync {
     fn changed(&self, policy_id: &str, resource_name: &str, object_id: &str);
+}
+
+/// Told when the provider refuses an owed relationship change for good
+/// ([`DocumentACP::watch_owed_refusals`]). `kept` says whether the change
+/// stays parked as refused (its actor was checked at staging) or was
+/// removed. Called after the record is written, on the task that wrote it,
+/// which it must not hold up.
+pub trait OwedRefusalListener: MaybeSendSync {
+    fn refused(&self, change: &crate::outbox::OwedChange, reason: &str, kept: bool);
 }
 
 /// A caller and expiration established by a credential's verification owner.
@@ -32,6 +42,16 @@ pub struct AuthenticatedCaller {
 pub struct DocumentRelationship {
     pub relation: String,
     pub subject: String,
+}
+
+#[derive(Clone, Copy)]
+pub struct ActorRelationshipObservation<'a> {
+    pub requester: &'a Did,
+    pub target: &'a Did,
+    pub policy: &'a str,
+    pub resource: &'a str,
+    pub document: &'a str,
+    pub relation: &'a str,
 }
 
 /// Document ACP interface (matches Go acp/dac/dac.go)
@@ -75,6 +95,13 @@ pub trait DocumentACP: MaybeSendSync {
         None
     }
 
+    /// Whether this provider has a transaction stage the relationship
+    /// changes it makes as owed ([`transaction_outbox`](Self::transaction_outbox)
+    /// gives a place for them), rather than applying them in it or not at all.
+    fn stages_relationship_changes(&self) -> bool {
+        false
+    }
+
     /// Where a transaction stages the relationship changes it owes this
     /// provider, for a provider that cannot join a transaction
     /// ([`bind_transaction`](Self::bind_transaction) is `None`) but keeps
@@ -86,6 +113,10 @@ pub trait DocumentACP: MaybeSendSync {
         _view: &datastore::NamespaceView,
         _staged: crate::outbox::StagedCount,
     ) -> Option<crate::outbox::TransactionOutbox> {
+        None
+    }
+
+    fn outbox_authority_provider(&self) -> Option<std::sync::Arc<dyn DocumentACP>> {
         None
     }
 
@@ -181,6 +212,20 @@ pub trait DocumentACP: MaybeSendSync {
         Ok(crate::outbox::OwedAuthority::NodeKey)
     }
 
+    /// The journal this provider sends owed changes through, when its
+    /// worker keeps each request until a verified receipt lets it go. With
+    /// one, a change is marked in flight before it is sent and decided by
+    /// the journal, a receipt or the provider's note after a crash;
+    /// without, each change goes through
+    /// [`submit_owed_change`](Self::submit_owed_change).
+    fn owed_journal(&self) -> Option<std::sync::Arc<dyn crate::outbox::OwedJournal>> {
+        None
+    }
+
+    /// Tell `listener` of every owed change the provider refuses for good.
+    /// A provider that keeps no outbox has none to tell of.
+    fn watch_owed_refusals(&self, _listener: std::sync::Arc<dyn OwedRefusalListener>) {}
+
     /// Submit one owed relationship change as its acting DID, with the
     /// authority recorded with it and none of the request this provider may
     /// be bound to. Submitting a change the provider already holds is
@@ -199,6 +244,14 @@ pub trait DocumentACP: MaybeSendSync {
         change: &crate::outbox::OwedChange,
     ) -> crate::outbox::Submission {
         crate::outbox::submit_relationship(self, change).await
+    }
+
+    /// Refuse to serve when the store holds what is owed to this provider in
+    /// a layout this version cannot read ([`Error::LegacyOwedChanges`]). A
+    /// node asks once at start. Nothing to refuse for a provider that keeps
+    /// no outbox.
+    async fn check_owed_layout(&self) -> Result<()> {
+        Ok(())
     }
 
     /// Submit the relationship changes owed to this provider that `scope`
@@ -366,6 +419,43 @@ pub trait DocumentACP: MaybeSendSync {
         Ok(())
     }
 
+    /// [`Self::redrive_registration`] for each of `objects`, in their order:
+    /// what each came to. A provider that settles owed registrations sends
+    /// those one owner owes together ([`Self::register_objects`]); every
+    /// object is answered for, whatever became of the others.
+    async fn redrive_registrations(&self, objects: &[AcpObject<'_>]) -> Vec<Result<()>> {
+        let mut outcomes = Vec::with_capacity(objects.len());
+        for object in objects {
+            outcomes.push(
+                self.redrive_registration(object.policy_id, object.resource, object.object_id)
+                    .await,
+            );
+        }
+        outcomes
+    }
+
+    /// Register each of `objects` with `identity` as its owner, in order:
+    /// what [`Self::register_object`] does for each, which a provider that
+    /// can sends as one list it applies all or none. It stops at the first
+    /// that fails, and says which ([`RegistrationFailure`]).
+    async fn register_objects(
+        &self,
+        identity: &Did,
+        objects: &[AcpObject<'_>],
+    ) -> std::result::Result<(), RegistrationFailure> {
+        for (index, object) in objects.iter().enumerate() {
+            self.register_object(
+                identity,
+                object.policy_id,
+                object.resource,
+                object.object_id,
+            )
+            .await
+            .map_err(|error| RegistrationFailure::new(index, error))?;
+        }
+        Ok(())
+    }
+
     /// Register an ACP object with creator as owner.
     ///
     /// Documents use `id = docID`; branchable collections use
@@ -453,6 +543,13 @@ pub trait DocumentACP: MaybeSendSync {
         _resource_name: &str,
         _doc_id: &str,
     ) -> Result<Vec<DocumentRelationship>> {
+        Err(Error::UnsupportedRelationshipListing)
+    }
+
+    async fn observe_actor_relationship(
+        &self,
+        _observation: ActorRelationshipObservation<'_>,
+    ) -> Result<bool> {
         Err(Error::UnsupportedRelationshipListing)
     }
 

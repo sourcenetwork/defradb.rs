@@ -4,14 +4,14 @@
 //! vera.rs acts under a delegation at block time `t` only when `nbf ≤ t ≤
 //! exp`, and under one bound to a request only while its operation identity is
 //! open: `t` before its expiry, and that expiry no more than
-//! [`MAX_OPERATION_TTL`] past `t`. A delegation outside those bounds at the
+//! [`DEFAULT_OPERATION_LEAD`] past `t`. A delegation outside those bounds at the
 //! node's time is refused with the bounds, the time and why, so its signer can
 //! issue it again at the provider's time. Modeled by
 //! proofs/lean/VeraDelegationWindow.lean.
 
 use acp::WindowRefusal;
 use vera_crypto::jwt::JwtClaims;
-use vera_crypto::operation::MAX_OPERATION_TTL;
+use vera_crypto::operation::DEFAULT_OPERATION_LEAD;
 
 /// `Ok` when `claims` hold at `now`, else the window they hold in and why
 /// they do not.
@@ -31,7 +31,7 @@ pub(super) fn within_window(claims: &JwtClaims, now: u64) -> Result<(), acp::Del
         }
     } else if now > claims.exp || request_expiry.is_some_and(|expiry| now >= expiry) {
         WindowRefusal::Expired
-    } else if request_expiry.is_some_and(|expiry| expiry - now > MAX_OPERATION_TTL) {
+    } else if request_expiry.is_some_and(|expiry| expiry - now > DEFAULT_OPERATION_LEAD) {
         WindowRefusal::OutlastsRequest
     } else {
         return Ok(());

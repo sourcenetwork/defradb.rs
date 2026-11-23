@@ -370,16 +370,30 @@ fn owner_visibility_distinguishes_public_rows_from_denied_and_missing_rows() {
     .unwrap();
 }
 
+/// Whether `lake` runs here. The Lean Conformance job sets
+/// `DEFRA_REQUIRE_LAKE=1`, where a missing toolchain fails the test instead of
+/// skipping it.
+fn lake_runs() -> bool {
+    let runs = std::process::Command::new("lake")
+        .current_dir(lean_project())
+        .arg("--version")
+        .output()
+        .is_ok_and(|output| output.status.success());
+    assert!(
+        runs || std::env::var("DEFRA_REQUIRE_LAKE").as_deref() != Ok("1"),
+        "DEFRA_REQUIRE_LAKE=1 and lake is not runnable"
+    );
+    runs
+}
+
+/// The Lean project: `lake` picks its toolchain from the directory it runs in.
+fn lean_project() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../proofs/lean")
+}
+
 fn modeled_access(mode: &str, facts: [bool; 13]) -> super::DocumentAccessDecision {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
     let output = std::process::Command::new("lake")
-        .current_dir(root.join("proofs/lean"))
+        .current_dir(lean_project())
         .args(["env", "lean", "--run", "AccessOracle.lean", mode])
         .args(facts.map(|value| if value { "1" } else { "0" }))
         .output()
@@ -402,11 +416,7 @@ fn unified_access_matches_lean_and_validates_authority_at_commit() {
     use super::{DocumentAccessMode, NodePermission};
     use crypto::Key;
     use identity::Identity as _;
-    if !std::process::Command::new("lake")
-        .arg("--version")
-        .output()
-        .is_ok_and(|output| output.status.success())
-    {
+    if !lake_runs() {
         return;
     }
     let hidden = modeled_access(
@@ -499,6 +509,7 @@ fn unified_access_matches_lean_and_validates_authority_at_commit() {
         node.on_acp(move || async move {
             nac.add_permission_grant(&owner_did, &actor_did, NodePermission::DocumentRead).await.map_err(crate::Error::NacInit)?;
             nac.add_permission_grant(&owner_did, &actor_did, NodePermission::DocumentUpdate).await.map_err(crate::Error::NacInit)?;
+            nac.add_permission_grant(&owner_did, &actor_did, NodePermission::CollectionGet).await.map_err(crate::Error::NacInit)?;
             Ok(())
         }).await.unwrap();
         let principal_context = actor(B);
@@ -584,11 +595,7 @@ fn unified_access_matches_lean_and_validates_authority_at_commit() {
 #[test]
 fn unified_named_access_follows_parent_and_conflicts_on_parent_revoke() {
     use super::{DocumentAccessMode, NodePermission};
-    if !std::process::Command::new("lake")
-        .arg("--version")
-        .output()
-        .is_ok_and(|output| output.status.success())
-    {
+    if !lake_runs() {
         return;
     }
     let allowed = modeled_access(

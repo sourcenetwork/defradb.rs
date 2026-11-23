@@ -174,7 +174,7 @@ async fn denied_by_owed_delete_with_inputs(
     doc_id: &str,
     inputs: &crate::prepared::PreparedInputMemo,
 ) -> crate::error::Result<bool> {
-    let acp_error = |error: acp::Error| crate::error::QueryError::execution(error.to_string());
+    let acp_error = crate::error::QueryError::from_acp;
     let denial = owed_denial(acp, projection, identity, policy_id, resource_name, doc_id)
         .await
         .map_err(acp_error)?;
@@ -238,7 +238,7 @@ pub async fn is_doc_registered_with_prepared_inputs(
 ) -> crate::error::Result<bool> {
     if owed_creator(acp, projection, policy_id, resource_name, doc_id)
         .await
-        .map_err(|error| crate::error::QueryError::execution(error.to_string()))?
+        .map_err(crate::error::QueryError::from_acp)?
         .is_some()
     {
         return Ok(true);
@@ -252,7 +252,7 @@ pub async fn is_doc_registered_with_prepared_inputs(
             doc_id,
         )
         .await
-        .map_err(|error| crate::error::QueryError::execution(error.to_string()));
+        .map_err(crate::error::QueryError::from_acp);
     };
     let bearer = identity
         .did()
@@ -316,7 +316,7 @@ pub async fn check_doc_access_with_prepared_inputs(
     // transaction-capable providers stay live so their reads participate in OCC.
     if let Some(creator) = owed_creator(acp, projection, policy_id, resource_name, doc_id)
         .await
-        .map_err(|error| crate::error::QueryError::execution(error.to_string()))?
+        .map_err(crate::error::QueryError::from_acp)?
     {
         return Ok(is_creator(identity, &creator));
     }
@@ -331,7 +331,7 @@ pub async fn check_doc_access_with_prepared_inputs(
             doc_id,
         )
         .await
-        .map_err(|error| crate::error::QueryError::execution(error.to_string()));
+        .map_err(crate::error::QueryError::from_acp);
     };
     if denied_by_owed_delete_with_inputs(
         acp,
@@ -435,7 +435,7 @@ pub async fn check_doc_read_access_as(
             doc_id,
         )
         .await
-        .map_err(|error| crate::error::QueryError::execution(error.to_string()));
+        .map_err(crate::error::QueryError::from_acp);
     };
 
     async fn access_for_object(
@@ -449,7 +449,7 @@ pub async fn check_doc_read_access_as(
     ) -> crate::error::Result<DocAccess> {
         if let Some(creator) = owed_creator(acp, projection, policy_id, resource_name, object_id)
             .await
-            .map_err(|error| crate::error::QueryError::execution(error.to_string()))?
+            .map_err(crate::error::QueryError::from_acp)?
         {
             return Ok(DocAccess {
                 has_access: is_creator(identity, &creator),
@@ -580,6 +580,13 @@ pub trait TransactionContext: MaybeSendSync {
 
     /// Get transaction-scoped projection for external ACP registration writes.
     fn acp_registration_projection(&self) -> Option<Arc<AcpRegistrationProjection>> {
+        None
+    }
+
+    /// The provider owner answers this transaction used, kept for its commit
+    /// to confirm. `None` where a transaction keeps none: an owner answer from
+    /// a provider that cannot join the transaction is then refused.
+    fn observed_owners(&self) -> Option<Arc<super::ObservedOwners>> {
         None
     }
 

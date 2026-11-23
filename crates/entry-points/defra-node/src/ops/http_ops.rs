@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use defra_core::RequestContext;
 use defra_http::router::{
-    BackupOperations, BlockOperations, DocumentAcpOperations, EncryptedIndexInfo,
-    EncryptedIndexOperations, ImportResult, ViewOperations,
+    BackupOperations, BlockOperations, DocRelationshipChange, DocumentAcpOperations,
+    EncryptedIndexInfo, EncryptedIndexOperations, ImportResult, ViewOperations,
 };
 use schema::CollectionVersion;
 
@@ -145,11 +145,57 @@ impl BackupOperations for HttpNodeOps {
 
 #[async_trait::async_trait]
 impl DocumentAcpOperations for HttpNodeOps {
-    /// Only a provider that joins the transaction serves a relationship
-    /// change in one over HTTP. A remote provider would stage the change,
-    /// and staging is for embedders that call the node directly.
+    /// A provider that joins the transaction applies the change in it; a
+    /// remote one that keeps what is owed to it has it staged in it, under
+    /// the credential the request carries for its caller.
     fn supports_transactional_relationships(&self) -> bool {
-        self.ops.document_acp.supports_transactions()
+        let acp = &self.ops.document_acp;
+        acp.supports_transactions() || acp.stages_relationship_changes()
+    }
+
+    async fn change_doc_relationship(
+        &self,
+        requestor: Option<&identity::Did>,
+        target_actor: &str,
+        collection: &str,
+        doc_id: &str,
+        relation: &str,
+        delete: bool,
+    ) -> Result<DocRelationshipChange, String> {
+        let context = self.request_as(requestor)?;
+        let acp = self.ops.acp_ops.clone();
+        let args = Relationship::new(requestor, target_actor, collection, doc_id, relation);
+        let change = self
+            .ops
+            .on_acp(move || async move {
+                let Relationship(identity, target, collection, doc_id, relation) = args;
+                acp.change_dac_actor_relationship(
+                    &context,
+                    &identity,
+                    crate::acp_ops::transactional::Relationship {
+                        collection: &collection,
+                        doc_id: &doc_id,
+                        relation: &relation,
+                        target: &target,
+                    },
+                    delete,
+                )
+                .await
+            })
+            .await
+            .map_err(text)?;
+        Ok(match change {
+            crate::RelationshipChange::Applied { existed } => {
+                DocRelationshipChange::Applied { existed }
+            }
+            crate::RelationshipChange::Staged {
+                seq,
+                authority_checked,
+            } => DocRelationshipChange::Staged {
+                seq,
+                authority_checked,
+            },
+        })
     }
 
     fn caller_of_delegation(
@@ -218,6 +264,41 @@ impl DocumentAcpOperations for HttpNodeOps {
             .await
             // The core answers whether it existed already; the trait, whether it is new.
             .map(|existed| !existed)
+            .map_err(text)
+    }
+
+    async fn observe_doc_actor_relationship(
+        &self,
+        requestor: &identity::Did,
+        collection: &str,
+        doc_id: &str,
+        relation: &str,
+        target: &str,
+    ) -> Result<bool, String> {
+        let context = self.request_as(Some(requestor))?;
+        let acp = self.ops.acp_ops.clone();
+        let identity = requestor.to_string();
+        let (collection, doc_id, relation, target) = (
+            collection.to_owned(),
+            doc_id.to_owned(),
+            relation.to_owned(),
+            target.to_owned(),
+        );
+        self.ops
+            .on_acp(move || async move {
+                acp.observe_dac_actor_relationship(
+                    &context,
+                    &identity,
+                    crate::acp_ops::transactional::Relationship {
+                        collection: &collection,
+                        doc_id: &doc_id,
+                        relation: &relation,
+                        target: &target,
+                    },
+                )
+                .await
+            })
+            .await
             .map_err(text)
     }
 

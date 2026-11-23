@@ -54,6 +54,9 @@ mod bearer_hook_tests;
 pub struct AutoCommitMutator<S: Store> {
     pub(super) db: Arc<DB<S>>,
     pub(super) prepared_inputs: Option<query::prepared::PreparedInputMemo>,
+    /// Creates this attempt has made: the ordinal that names a create's
+    /// short ID in the memo.
+    pub(super) creates: std::sync::atomic::AtomicU64,
 }
 
 impl<S: Store + 'static> AutoCommitMutator<S> {
@@ -62,6 +65,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         Self {
             db,
             prepared_inputs: None,
+            creates: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -72,6 +76,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         Self {
             db: self.db.clone(),
             prepared_inputs: Some(inputs),
+            creates: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -122,27 +127,16 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
             query::error::QueryError::execution(format!("invalid mutation creator DID: {error}"))
         })?;
 
-        let policy_id = policy.id.clone();
-        let resource_name = policy.resource_name.clone();
         let request_bearer_token = context.bearer_token_for(creator.as_str());
-        let registration = txn.on_commit(OnCommit::OrderedAsync(Box::new(move || {
-            Box::pin(async move {
-                acp::with_request_bearer(
-                    &acp,
-                    Some(creator.to_string()),
-                    request_bearer_token,
-                    |acp| async move {
-                        acp.redrive_registration(&policy_id, &resource_name, &doc_id)
-                            .await
-                            .map_err(|error| {
-                                format!("failed to register document with ACP before publishing update: {error}")
-                            })
-                    },
-                )
-                .await
-            })
-        })));
-        registration.map_err(|error| query::error::QueryError::execution(error.to_string()))
+        txn.owe_acp_registration(acp::CommitRegistration::new(
+            acp,
+            creator,
+            request_bearer_token,
+            policy.id.clone(),
+            policy.resource_name.clone(),
+            doc_id,
+        ))
+        .map_err(|error| query::error::QueryError::execution(error.to_string()))
     }
 
     /// [`Self::register_deleted_doc_with_acp_as`] in [`RequestContext::ambient`].
@@ -244,6 +238,7 @@ impl<S: Store + 'static> DocMutator for AutoCommitMutator<S> {
         Some(Arc::new(Self {
             db: self.db.clone(),
             prepared_inputs: Some(inputs),
+            creates: std::sync::atomic::AtomicU64::new(0),
         }))
     }
 
@@ -288,7 +283,15 @@ impl<S: Store + 'static> DocMutator for AutoCommitMutator<S> {
         context: &RequestContext,
         requests: Vec<query::prepared::PreparedInputRequest>,
     ) -> query::error::Result<Vec<std::sync::Arc<[u8]>>> {
-        crate::write::prepare::resolve_inputs(&self.db, context, requests).await
+        match &self.prepared_inputs {
+            Some(inputs) => {
+                crate::write::prepare::resolve_inputs_with_projection(
+                    &self.db, context, inputs, requests,
+                )
+                .await
+            }
+            None => crate::write::prepare::resolve_inputs(&self.db, context, requests).await,
+        }
     }
 
     async fn prepared_embedding_request(

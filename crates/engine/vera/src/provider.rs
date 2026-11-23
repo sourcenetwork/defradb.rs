@@ -9,6 +9,48 @@ pub struct ProviderPolicyInfo {
     pub raw_policy: Option<String>,
 }
 
+#[derive(Clone, Copy)]
+pub struct ActorRelationshipQuery<'a> {
+    pub requester: &'a str,
+    pub policy: &'a str,
+    pub resource: &'a str,
+    pub object: &'a str,
+    pub relation: &'a str,
+    pub actor: &'a str,
+}
+
+/// Select direct relationship assignments for one subject and issuer.
+#[derive(Clone, Copy)]
+pub struct AssignmentQuery<'a> {
+    pub policy: &'a str,
+    pub resource: &'a str,
+    pub relation: &'a str,
+    pub subject: &'a str,
+    pub issuer: &'a str,
+    /// Reject evidence older than this previously verified position.
+    /// A verified newer term is accepted, including when its height resets.
+    pub not_before: Option<&'a AssignmentPosition>,
+}
+
+/// A finalized block position a consumer can persist between reads.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AssignmentPosition {
+    pub term: u64,
+    pub height: u64,
+    pub block_hash: String,
+}
+
+/// A complete verified assignment set and the evidence that authenticates it.
+/// The evidence can include other subjects' relationships in the same policy.
+#[derive(Debug, Clone)]
+pub struct CertifiedAssignments {
+    pub object_ids: Vec<String>,
+    pub position: AssignmentPosition,
+    pub timestamp: u64,
+    pub module_state_root: String,
+    pub evidence: serde_json::Value,
+}
+
 #[derive(Debug, Clone)]
 pub struct AcpLightClientStatus {
     pub height: u64,
@@ -42,6 +84,13 @@ pub enum ProviderError {
     #[error("unsupported operation: {0}")]
     Unsupported(String),
 
+    #[error("relationship observation is not authorized")]
+    RelationshipObservationDenied,
+    /// Two proofs of one observation were read at different certified
+    /// roots: a block finalized between them. Nothing failed; asked again,
+    /// the observation is answered at one root.
+    #[error("{0} and policy proofs have different roots")]
+    ProofsOvertaken(&'static str),
     /// A delegation does not hold at the provider's time; one issued at
     /// that time is taken.
     #[error("delegation refused: {0}")]
@@ -58,6 +107,35 @@ impl From<vera_delegation::CommandError> for ProviderError {
             other => Self::Config(other.to_string()),
         }
     }
+}
+
+/// The most registrations one request carries: the most commands vera.rs
+/// applies in one ordered list.
+pub const MAX_REGISTRATIONS_PER_REQUEST: usize = vera_modules::acp::MAX_POLICY_COMMAND_LIST;
+
+/// One command of a request built for owed changes, under the bearer token
+/// it is submitted with.
+pub struct OwedCall<'a> {
+    pub bearer_token: &'a str,
+    pub command: crate::PolicyCommand<'a>,
+}
+
+/// What a request journaled for owed changes came to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OwedRequestOutcome {
+    /// It executed and every command in it applied.
+    Applied,
+    /// It executed and was rejected: nothing in it applied.
+    Rejected(String),
+    /// Neither the journal, a verified receipt nor the note knows it.
+    Unknown,
+}
+
+/// The name a provider gives the request `request`: the hex Keccak-256
+/// digest of its bytes, as stored with the changes it carries and as the
+/// note of resolved requests keys it.
+pub fn owed_request_digest(request: &[u8]) -> String {
+    format!("{:#x}", alloy_primitives::keccak256(request))
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -126,7 +204,67 @@ pub trait VeraProvider: MaybeSendSync {
         false
     }
 
-    async fn create_policy(&self, policy_yaml: &str) -> Result<String, ProviderError>;
+    /// Whether this provider's worker journals each request until a
+    /// verified receipt lets it go, so owed changes can be sent through
+    /// [`Self::journal_owed_request`] with an in-flight mark.
+    fn journals_owed_requests(&self) -> bool {
+        false
+    }
+
+    /// The request that submits `calls` in order, applied together or not
+    /// at all: one command alone, several in one batch.
+    fn owed_request(&self, calls: &[OwedCall<'_>]) -> Result<Vec<u8>, ProviderError> {
+        let _ = calls;
+        Err(ProviderError::Unsupported(
+            "this provider journals no requests".into(),
+        ))
+    }
+
+    /// The worker's next sequence: every request journaled from now on is
+    /// numbered from it, and every one resolved before below it.
+    async fn owed_request_floor(&self) -> Result<u64, ProviderError> {
+        Err(ProviderError::Unsupported(
+            "this provider journals no requests".into(),
+        ))
+    }
+
+    /// Have the worker journal `request`, resolving first one it already
+    /// journals (and noting that one's outcome), and return its transaction
+    /// hash. A request the journal holds already is kept as it is.
+    async fn journal_owed_request(&self, request: &[u8]) -> Result<String, ProviderError> {
+        let _ = request;
+        Err(ProviderError::Unsupported(
+            "this provider journals no requests".into(),
+        ))
+    }
+
+    /// What became of the request whose digest is `digest` and, once it
+    /// was journaled, whose transaction hash is `tx`: one still journaled is
+    /// sent and its verified receipt waited for, one out of the journal is
+    /// looked up by its hash, then in the note by its digest among the
+    /// requests numbered from `floor` on.
+    async fn owed_request_outcome(
+        &self,
+        digest: &str,
+        tx: Option<&str>,
+        floor: Option<u64>,
+    ) -> Result<OwedRequestOutcome, ProviderError> {
+        let _ = (digest, tx, floor);
+        Err(ProviderError::Unsupported(
+            "this provider journals no requests".into(),
+        ))
+    }
+
+    /// Create the YAML policy as the provider's actor and return its ID.
+    /// vera.rs derives the ID from the definition, the actor and `nonce`,
+    /// drawing a random nonce when none is given; sent again with the same
+    /// nonce it returns the policy already made and makes no second one.
+    /// A provider whose ACP assigns its own IDs refuses a nonce.
+    async fn create_policy(
+        &self,
+        policy_yaml: &str,
+        nonce: Option<acp::PolicyNonce>,
+    ) -> Result<String, ProviderError>;
 
     async fn register_object(
         &self,
@@ -135,6 +273,22 @@ pub trait VeraProvider: MaybeSendSync {
         resource: &str,
         object_id: &str,
     ) -> Result<(), ProviderError>;
+
+    /// Register each of `objects` under `bearer_token` in one request the
+    /// provider applies in order, all or none, at most
+    /// [`MAX_REGISTRATIONS_PER_REQUEST`] of them. A provider that applies no
+    /// such list refuses it as unsupported, and its registrations are sent
+    /// one at a time ([`Self::register_object`]).
+    async fn register_objects(
+        &self,
+        bearer_token: &str,
+        objects: &[acp::AcpObject<'_>],
+    ) -> Result<(), ProviderError> {
+        let _ = (bearer_token, objects);
+        Err(ProviderError::Unsupported(
+            "this provider registers one object per request".into(),
+        ))
+    }
 
     async fn archive_object(
         &self,
@@ -305,6 +459,25 @@ pub trait VeraProvider: MaybeSendSync {
         object_id: &str,
     ) -> Result<(bool, String), ProviderError>;
 
+    /// Read complete assignment evidence. Callers must authorize its disclosure.
+    async fn read_certified_assignments(
+        &self,
+        _query: AssignmentQuery<'_>,
+    ) -> Result<CertifiedAssignments, ProviderError> {
+        Err(ProviderError::Unsupported(
+            "certified assignment discovery".into(),
+        ))
+    }
+
+    async fn query_actor_relationship(
+        &self,
+        _query: ActorRelationshipQuery<'_>,
+    ) -> Result<bool, ProviderError> {
+        Err(ProviderError::Unsupported(
+            "verified exact actor relationship observation".into(),
+        ))
+    }
+
     async fn verify_access(
         &self,
         policy_id: &str,
@@ -347,6 +520,11 @@ pub trait VeraProvider: MaybeSendSync {
             "ACP light client status is not available for this provider".into(),
         ))
     }
+
+    /// Where this provider hands back the registrations and relationship
+    /// changes it confirmed on blocks a switch of its deployment's active
+    /// device voided, to be owed again. A provider without terms takes none.
+    fn owe_voided_to(&self, _sink: std::sync::Weak<dyn acp::OweAgain>) {}
 
     /// What a caller's own delegation must name for this provider to act
     /// under it, with the deployment's genesis identity when the provider

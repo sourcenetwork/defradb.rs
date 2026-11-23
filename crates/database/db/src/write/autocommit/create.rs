@@ -4,6 +4,7 @@ use storage::corekv::OnCommit;
 
 use crate::block::builder::ComputedBlocks;
 use crate::write::create::{self as pipeline, Created};
+use crate::write::prepare::prepared_identity;
 use crate::write::WriteStores;
 
 struct AcpRegistration {
@@ -24,31 +25,6 @@ struct CreateRetryAttempt<S: Store> {
     prepared_inputs: Option<query::prepared::PreparedInputMemo>,
 }
 
-pub(super) fn acp_registration_retry_callback(
-    acp: Arc<dyn acp::DocumentACP>,
-    creator: identity::Did,
-    policy_id: String,
-    resource_name: String,
-    doc_id: String,
-    bearer_token: Option<String>,
-) -> storage::corekv::CommitHook {
-    Box::new(move || {
-        Box::pin(async move {
-            acp::with_request_bearer(
-                &acp,
-                Some(creator.to_string()),
-                bearer_token,
-                |acp| async move {
-                    acp.redrive_registration(&policy_id, &resource_name, &doc_id)
-                        .await
-                        .map_err(|error| error.to_string())
-                },
-            )
-            .await
-        })
-    })
-}
-
 impl<S> storage::corekv::RetryAttemptFn for CreateRetryAttempt<S>
 where
     S: Store + 'static,
@@ -61,6 +37,7 @@ where
             let mutator = AutoCommitMutator {
                 db: Arc::clone(&self.db),
                 prepared_inputs: self.prepared_inputs.clone(),
+                creates: std::sync::atomic::AtomicU64::new(0),
             };
             match mutator.run_create_attempt(retry, self).await {
                 Ok(value) => Ok(Box::new(value) as storage::corekv::RetryAttemptValue),
@@ -132,6 +109,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let mutator = Self {
             db: self.db.clone(),
             prepared_inputs: Some(inputs.clone()),
+            creates: std::sync::atomic::AtomicU64::new(0),
         };
         let mut docs = docs;
         for doc in &mut docs {
@@ -147,7 +125,9 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 Err(query::error::QueryError::NeedsInput(request)) => {
                     inputs
                         .answer_wave(&request, |wave| {
-                            self.resolve_prepared_inputs_as(context, wave)
+                            crate::write::prepare::resolve_inputs_with_projection(
+                                &self.db, context, &inputs, wave,
+                            )
                         })
                         .await?;
                 }
@@ -221,8 +201,22 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         // the txn; the DocID-mapping duplicate check is the gate.
         let mut identified = Vec::with_capacity(prepared.len());
         for mut doc in prepared {
-            let identity = pipeline::identity(&self.db, &collection, &doc).await?;
-            pipeline::prepare_keys(&self.db, &mut doc, identity, context).await?;
+            let ordinal = self
+                .creates
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let identity = match self.prepared_inputs.as_ref() {
+                Some(memo) if prepared_identity(&doc).is_none() => {
+                    let identity =
+                        pipeline::memo_identity(&self.db, &collection, memo, ordinal).await?;
+                    pipeline::seed_identity(&self.db, &mut doc, identity);
+                    identity
+                }
+                _ => {
+                    let identity = pipeline::identity(&self.db, &collection, &doc).await?;
+                    pipeline::prepare_keys(&self.db, &mut doc, identity, context).await?;
+                    identity
+                }
+            };
             identified.push((doc, identity));
         }
 
@@ -307,7 +301,11 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let datastore = txn.datastore().map_err(|error| {
             query::error::QueryError::execution(format!("failed to get datastore: {error}"))
         })?;
-        let datastore = datastore.with_projection_actor(attempt.context.identity());
+        let datastore = crate::txn::bind_projection(
+            datastore,
+            &attempt.context,
+            attempt.prepared_inputs.as_ref(),
+        );
         let systemstore = txn.systemstore().map_err(|error| {
             query::error::QueryError::execution(format!("failed to get systemstore: {error}"))
         })?;
@@ -376,14 +374,14 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         };
         for created in &created {
             if let Some(registration) = attempt.acp_registration.as_ref() {
-                txn.on_commit(OnCommit::OrderedAsync(acp_registration_retry_callback(
+                txn.owe_acp_registration(acp::CommitRegistration::new(
                     Arc::clone(&registration.acp),
                     registration.creator.clone(),
+                    registration.bearer_token.clone(),
                     registration.policy_id.clone(),
                     registration.resource_name.clone(),
                     created.doc_id.to_string(),
-                    registration.bearer_token.clone(),
-                )))
+                ))
                 .map_err(crate::error::commit_query_error)?;
             }
             if let Some(bus) = self.db.event_bus().cloned() {
