@@ -106,6 +106,8 @@ pub struct CompositeMergeState {
     pub(crate) reads: super::block_reads::BlockReads,
     /// Unique-index collisions this merge resolved, published after commit.
     pub(crate) unique_conflicts: Vec<events::UniqueIndexConflictData>,
+    /// The chunks this merge built for the merged text, published after commit.
+    pub(crate) rebuilt_chunks: Vec<events::Update>,
     /// The document before this composite's field merges, read only when the
     /// collection has an index.
     pub(crate) indexed_before: Option<Option<Document>>,
@@ -698,6 +700,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     )
                     .with_observation_collection_id(context.observation_collection_id()?),
                 ));
+                committed_events.extend(state.rebuilt_chunks.drain(..).map(Message::update));
                 committed_events.push(Message::merge_complete(MergeCompleteData {
                     doc_id: doc_id_str.to_string(),
                     subject_doc_id: None,
@@ -1180,6 +1183,11 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     pending_events.push(PendingMergeEvent {
                         message: Message::update(update),
                     });
+                    for chunk in state.rebuilt_chunks.drain(..) {
+                        pending_events.push(PendingMergeEvent {
+                            message: Message::update(chunk),
+                        });
+                    }
                     for conflict in state.unique_conflicts.drain(..) {
                         pending_events.push(PendingMergeEvent {
                             message: Message::unique_index_conflict(conflict),

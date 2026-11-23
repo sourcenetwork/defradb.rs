@@ -157,8 +157,8 @@ impl SdlParser<'_> {
                 splitter_version: chunk_split::split::SplitterVersion::CURRENT.number(),
             });
 
-            // One index on `_sourceID` and `hash` serves both lookups writes need,
-            // one chunk of a parent and all of them.
+            // One index on `_sourceID` and `hash` lists a parent's chunks with
+            // their hashes, which is all writes need.
             let mut source = field(CHUNK_SOURCE_FIELD, scalar(&spec.parent, false));
             source.directives.is_primary = true;
             source.directives.index.push(IndexConfig {

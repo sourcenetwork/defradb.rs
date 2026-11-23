@@ -19,6 +19,11 @@ use libp2p::{noise, relay, yamux, PeerId};
 use net::libp2p::{authenticated_tcp, TcpTransport, CONNECTION_TIMEOUT};
 
 use crate::error::{Error, Result};
+use crate::P2PHostConfig;
+
+mod resolver;
+
+pub use resolver::ResolverSource;
 
 /// The swarm's executor: each connection's task runs on the network edge,
 /// in the tokio context QUIC and DNS need, until the swarm closes it or the
@@ -42,24 +47,29 @@ impl libp2p::swarm::Executor for Executor {
 /// Every transport of the swarm, as one.
 pub(crate) type SwarmTransport = Boxed<(PeerId, StreamMuxerBox)>;
 
-/// The transport, and the relay client's behaviour when `relay` is on.
+/// The transport, and the relay client's behaviour when `config.enable_relay`
+/// is on. Both DNS layers resolve through the configuration
+/// `config.resolver` names.
 pub(crate) fn build(
     keypair: &Keypair,
-    relay: bool,
+    config: &P2PHostConfig,
 ) -> Result<(SwarmTransport, Option<relay::client::Behaviour>)> {
     let noise = || noise::Config::new(keypair).map_err(|e| Error::Transport(e.to_string()));
-    let dns_error = |e: std::io::Error| Error::Transport(e.to_string());
+    let (dns_config, dns_opts) = resolver::resolver_config(config.resolver.read());
 
     let tcp = authenticated_tcp(keypair).map_err(|e| Error::Transport(e.to_string()))?;
     let quic = libp2p::quic::tokio::Transport::new(libp2p::quic::Config::new(keypair))
         .map(|(peer, muxer), _| (peer, StreamMuxerBox::new(muxer)));
-    let direct = libp2p::dns::tokio::Transport::system(
+    let direct = libp2p::dns::tokio::Transport::custom(
         tcp.or_transport(quic).map(|either, _| either.into_inner()),
-    )
-    .map_err(dns_error)?;
-    let websocket = libp2p::websocket::Config::new(
-        libp2p::dns::tokio::Transport::system(TcpTransport::default()).map_err(dns_error)?,
-    )
+        dns_config.clone(),
+        dns_opts.clone(),
+    );
+    let websocket = libp2p::websocket::Config::new(libp2p::dns::tokio::Transport::custom(
+        TcpTransport::default(),
+        dns_config,
+        dns_opts,
+    ))
     .upgrade(Version::V1Lazy)
     .authenticate(noise()?)
     .multiplex(yamux::Config::default())
@@ -68,7 +78,7 @@ pub(crate) fn build(
         .or_transport(direct)
         .map(|either, _| either.into_inner());
 
-    if !relay {
+    if !config.enable_relay {
         return Ok((
             TransportTimeout::new(transport, CONNECTION_TIMEOUT).boxed(),
             None,
