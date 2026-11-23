@@ -9,6 +9,7 @@ use crate::error::{QueryError, Result};
 use std::sync::Arc;
 
 use crate::mapper::{Mutation, Requestable, Select};
+use crate::query_parse::filter_shape::{self, Root};
 use crate::query_parse::ParsedOperation;
 use schema::{CollectionVersion, FieldKind, ScalarKind};
 
@@ -21,18 +22,24 @@ pub async fn validate_parsed_operation(
     op: &ParsedOperation,
     provider: &dyn CollectionProvider,
 ) -> Result<()> {
-    validate_operation(op, provider, true).await
+    validate_operation(op, provider, true, false).await
 }
 
 /// [`validate_parsed_operation`] for an operation parsed from GraphQL text
 /// (`graphql_text`) or built as typed structs. A typed one carries no GraphQL
 /// arguments, so argument types are not checked: its `encryptFields` is
 /// checked against the collection when it runs, as Go's collection API does.
+/// With `check_filters`, every filter is checked against its generated input
+/// type first, as graphql-go validates the request before it runs.
 pub async fn validate_operation(
     op: &ParsedOperation,
     provider: &dyn CollectionProvider,
     graphql_text: bool,
+    check_filters: bool,
 ) -> Result<()> {
+    if check_filters {
+        check_filter_shapes(op, provider).await?;
+    }
     match op {
         ParsedOperation::Query { selects, .. } => {
             for select in selects {
@@ -48,6 +55,39 @@ pub async fn validate_operation(
             validate_select_collection(select, provider, "Subscription").await?;
         }
         ParsedOperation::Introspection { .. } => {}
+    }
+    Ok(())
+}
+
+/// Every filter in `op` against its generated input type. A collection that
+/// does not exist is left to the collection checks after this one.
+async fn check_filter_shapes(
+    op: &ParsedOperation,
+    provider: &dyn CollectionProvider,
+) -> Result<()> {
+    let selects: &[Select] = match op {
+        ParsedOperation::Query { selects, .. } => selects,
+        ParsedOperation::Subscription { select, .. } => std::slice::from_ref(select.as_ref()),
+        ParsedOperation::Mutation { mutations, .. } => {
+            for mutation in mutations {
+                let collection = provider.get_collection(&mutation.collection_name).await?;
+                if let Some(collection) = collection {
+                    filter_shape::check(Root::Mutation(mutation), Some(&collection), provider)
+                        .await?;
+                }
+            }
+            return Ok(());
+        }
+        ParsedOperation::Introspection { .. } => return Ok(()),
+    };
+    for select in selects {
+        if select.collection_name == "_commits" {
+            filter_shape::check(Root::Select(select), None, provider).await?;
+        } else if !is_internal_collection(&select.collection_name) {
+            if let Some(collection) = provider.get_collection(&select.collection_name).await? {
+                filter_shape::check(Root::Select(select), Some(&collection), provider).await?;
+            }
+        }
     }
     Ok(())
 }
@@ -439,7 +479,8 @@ mod tests {
             explain: None,
         };
         let provider = StaticCollectionProvider::new(vec![collection]);
-        workers::block_on(async { validate_operation(&op, &provider, graphql_text).await }).unwrap()
+        workers::block_on(async { validate_operation(&op, &provider, graphql_text, false).await })
+            .unwrap()
     }
 
     #[test]

@@ -291,7 +291,14 @@ where
 
         // Validate that all referenced collections exist before execution.
         let graphql_text = request.parsed.is_none();
-        if let Err(error) = validate_operation(&parsed, txn_provider.as_ref(), graphql_text).await {
+        if let Err(error) = validate_operation(
+            &parsed,
+            txn_provider.as_ref(),
+            graphql_text,
+            request.checks_filter_shapes(),
+        )
+        .await
+        {
             return Ok(Turned::Done(parse_error(error.to_string())));
         }
 

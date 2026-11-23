@@ -108,6 +108,24 @@ pub struct QueryRequest {
     /// not read.
     #[serde(skip)]
     pub parsed: Option<std::sync::Arc<crate::query_parse::ParsedOperation>>,
+
+    /// Who wrote the request's filters. Never read from the wire, so a
+    /// client cannot turn filter input validation off.
+    #[serde(skip)]
+    pub filter_origin: FilterOrigin,
+}
+
+/// Who wrote a request's filters, which decides whether they are checked
+/// against the generated filter input types.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum FilterOrigin {
+    /// The client wrote the GraphQL: its filters are checked, as graphql-go
+    /// checks them.
+    #[default]
+    Request,
+    /// The collection API built the GraphQL from a filter value, which Go's
+    /// collection API takes unchecked.
+    CollectionApi,
 }
 
 impl QueryRequest {
@@ -120,7 +138,20 @@ impl QueryRequest {
             identity: None,
             context: RequestContext::default(),
             parsed: None,
+            filter_origin: FilterOrigin::Request,
         }
+    }
+
+    /// Set who wrote the request's filters.
+    pub fn with_filter_origin(mut self, origin: FilterOrigin) -> Self {
+        self.filter_origin = origin;
+        self
+    }
+
+    /// Whether the request's filters are checked against their input types:
+    /// GraphQL text a client wrote.
+    pub(crate) fn checks_filter_shapes(&self) -> bool {
+        self.parsed.is_none() && self.filter_origin == FilterOrigin::Request
     }
 
     /// A request for an operation already built as typed structs. It takes
@@ -1227,6 +1258,24 @@ mod tests {
 
         let parsed: QueryRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.query, req.query);
+    }
+
+    #[test]
+    fn a_client_cannot_turn_filter_validation_off() {
+        for body in [
+            r#"{"query":"{ users { name } }","filter_origin":"CollectionApi"}"#,
+            r#"{"query":"{ users { name } }","filterOrigin":"CollectionApi"}"#,
+        ] {
+            let parsed: QueryRequest = serde_json::from_str(body).unwrap();
+            assert_eq!(parsed.filter_origin, FilterOrigin::Request);
+            assert!(parsed.checks_filter_shapes());
+        }
+        let api =
+            QueryRequest::new("{ users { name } }").with_filter_origin(FilterOrigin::CollectionApi);
+        assert!(!serde_json::to_string(&api)
+            .unwrap()
+            .contains("ollectionApi"));
+        assert!(!api.checks_filter_shapes());
     }
 
     #[test]

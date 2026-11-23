@@ -4,8 +4,11 @@
 A subscriber has a bounded queue. A full queue can drop an update. The HTTP
 stream must then end so its client can fetch state again. A query error must
 be sent as an error, even when the query has no rows. An empty successful query
-is still filtered away. This models the decision in `graphql_sse` in
-`crates/surfaces/http/src/handlers/graphql/query.rs`.
+is still filtered away. Before its first event the stream checks the request
+once through the plain path (`open_failure`): a request the plain path refuses
+sends that error and completes. This models the decision in `graphql_sse` in
+`crates/surfaces/http/src/handlers/graphql/query.rs`; the open check's ordering
+is `proofs/tla/SubscriptionOpenCheck.tla`.
 -/
 namespace SseDelivery
 
@@ -68,5 +71,40 @@ theorem denial_has_code : code .permissionDenied = some "PERMISSION_DENIED" := b
 -- An unrelated query failure does not assert a refusal.
 theorem other_has_no_denial : code .other = none := by
   rfl
+
+-- Once subscribed, the stream runs the request once as a plain request,
+-- raced with the server closing. A good request answers that it needs a
+-- stream; a bad one (an unknown filter field) answers with its error.
+inductive OpenCheck where
+  | needsStream | failed | closing
+  deriving DecidableEq
+
+-- What the stream does after that check.
+inductive OpenOutcome where
+  | stream | errorThenComplete | complete
+  deriving DecidableEq
+
+-- The decision `open_failure` makes in `graphql_sse`.
+def openOutcome : OpenCheck → OpenOutcome
+  -- A good request streams its updates.
+  | .needsStream => .stream
+  -- A bad one sends its error as the first result, then completes.
+  | .failed => .errorThenComplete
+  -- A closing server completes the stream without waiting for the check.
+  | .closing => .complete
+
+-- A bad request is told why, and its stream ends.
+theorem bad_open_reports_then_completes : openOutcome .failed = .errorThenComplete := by
+  rfl
+
+-- Closing ends the stream even while its check runs.
+theorem closing_open_completes : openOutcome .closing = .complete := by
+  rfl
+
+-- Only a request the plain path accepted streams.
+theorem only_accepted_opens_stream (check : OpenCheck) :
+    openOutcome check = .stream ↔ check = .needsStream := by
+  -- One case per check answer.
+  cases check <;> simp [openOutcome]
 
 end SseDelivery

@@ -383,6 +383,25 @@ fn cid_argument(cid: &str) -> Value<'static, String> {
     Value::List(vec![Value::String(cid.to_string())])
 }
 
+/// The error a subscription's open check reports, from the response to the
+/// subscription run once as a plain request.
+///
+/// A subscription the plain path accepts answers that it needs a stream
+/// ([`crate::executor::SUBSCRIPTION_NEEDS_SSE_ERROR_CODE`]); any other answer
+/// is the reason the subscription cannot open, such as a filter naming a
+/// field its input type does not define. Go sends that error as the stream's
+/// first result and completes it.
+pub fn open_failure(response: &QueryResponse) -> Option<String> {
+    let needs_stream = response
+        .errors
+        .iter()
+        .any(|error| error.code() == Some(crate::executor::SUBSCRIPTION_NEEDS_SSE_ERROR_CODE));
+    match (needs_stream, response.errors.first()) {
+        (false, Some(error)) => Some(error.message.clone()),
+        _ => None,
+    }
+}
+
 /// Check if a query response has any non-empty data.
 ///
 /// Returns false if data is null/empty or all top-level collection arrays are empty

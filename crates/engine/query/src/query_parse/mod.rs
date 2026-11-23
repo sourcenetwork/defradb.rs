@@ -12,6 +12,7 @@
 mod aggregates;
 mod cursor;
 mod explain;
+mod filter_shape;
 mod filters;
 mod fragment_cycles;
 pub(crate) use fragment_cycles::check_fragment_cycles;

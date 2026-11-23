@@ -636,8 +636,13 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
 
         if matches!(&parsed, ParsedOperation::Query { .. }) {
             let graphql_text = request.parsed.is_none();
-            if let Err(error) =
-                validate_operation(&parsed, self.effective_provider().as_ref(), graphql_text).await
+            if let Err(error) = validate_operation(
+                &parsed,
+                self.effective_provider().as_ref(),
+                graphql_text,
+                request.checks_filter_shapes(),
+            )
+            .await
             {
                 return QueryResponse::error(error.to_string());
             }
@@ -669,8 +674,13 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         // Validate that all referenced collections exist before execution
         let graphql_text = request.parsed.is_none();
         if !matches!(&parsed, ParsedOperation::Query { .. }) {
-            if let Err(e) =
-                validate_operation(&parsed, self.effective_provider().as_ref(), graphql_text).await
+            if let Err(e) = validate_operation(
+                &parsed,
+                self.effective_provider().as_ref(),
+                graphql_text,
+                request.checks_filter_shapes(),
+            )
+            .await
             {
                 return QueryResponse {
                     data: None,

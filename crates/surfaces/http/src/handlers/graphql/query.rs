@@ -213,6 +213,7 @@ pub async fn graphql_get(
         identity: identity.did().cloned(),
         context: Default::default(),
         parsed: None,
+        filter_origin: Default::default(),
     };
 
     let response = execute_with_context(&state, &identity, request).await;
@@ -310,6 +311,7 @@ pub async fn graphql_transactional(
         identity: identity.did().cloned(),
         context: Default::default(),
         parsed: None,
+        filter_origin: Default::default(),
     };
 
     // Check for transaction ID in header first (Go-compatible), then body
@@ -414,7 +416,41 @@ async fn graphql_sse(
 
     let stream = async_stream::stream! {
         let mut closing = std::pin::pin!(closing);
-        while let Some(message) = next_unless_closing(closing.as_mut(), subscription.recv()).await {
+        // Subscribed above; now the request runs once as a plain request,
+        // raced with closing. One the plain path refuses (a filter naming an
+        // unknown field) is this stream's only result, as Go's is.
+        let mut open = QueryRequest::new(query_str.clone()).with_context(bearer.clone());
+        if did.is_some() {
+            open = open.with_identity(did.clone());
+        }
+        if let Some(ref op_name) = operation_name {
+            open = open.with_operation_name(op_name.clone());
+        }
+        if let Some(ref vars) = variables {
+            open = open.with_variables(vars.clone());
+        }
+        let check = async {
+            let dac_bypass = crate::query_context::resolve_dac_bypass(&state, &identity).await;
+            Some(execute_with_resolved_context(
+                &state.edge, executor.clone(), open, signing_config.clone(), dac_bypass, acting_did.clone(),
+            ).await)
+        };
+        let refused = match next_unless_closing(closing.as_mut(), check).await {
+            None => true,
+            Some(response) => match query::subscription::open_failure(&response) {
+                None => false,
+                Some(_) => {
+                    if let Ok(json) = serde_json::to_string(&QueryResponse { data: None, ..response }) {
+                        yield Ok(Event::default().event("next").data(json));
+                    }
+                    true
+                }
+            },
+        };
+        while let Some(message) = match refused {
+            true => None,
+            false => next_unless_closing(closing.as_mut(), subscription.recv()).await,
+        } {
             let dropped = subscription.check_and_reset_dropped();
             if dropped != 0 {
                 tracing::warn!(dropped, "GraphQL subscription lost updates; ending stream for resynchronization");

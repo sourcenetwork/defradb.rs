@@ -319,6 +319,30 @@ fn subscribe(
     let (result_tx, result_rx) = kovan_channel::bounded::<String>(256);
 
     let service = get_rt()?.spawn_service(async move {
+        // Subscribed above, so the ID returns at once; the request then runs
+        // once as a plain request, and one it refuses (a filter naming an
+        // unknown field) is the subscription's only result, as Go's stream's.
+        let mut open = query::QueryRequest::new(query_str.clone()).with_context(context.clone());
+        if did.is_some() {
+            open = open.with_identity(did.clone());
+        }
+        if let Some(ref op_name) = op_name {
+            open = open.with_operation_name(op_name.clone());
+        }
+        if let Some(ref vars) = variables {
+            open = open.with_variables(vars.clone());
+        }
+        let response = query_runner.execute(open).await;
+        if query::subscription::open_failure(&response).is_some() {
+            let refused = query::QueryResponse {
+                data: None,
+                ..response
+            };
+            if let Ok(json) = serde_json::to_string(&refused) {
+                result_tx.send_async(json).await;
+            }
+            return;
+        }
         while let Some(message) = subscription.recv().await {
             let Some(update) = message.as_update() else {
                 continue;

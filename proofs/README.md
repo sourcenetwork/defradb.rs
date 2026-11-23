@@ -28,7 +28,8 @@ section is the **diff**: what is proven vs. the accepted gap.
 | HTTP client-signed create | TLA+ / Lean | http, query, db |
 | HTTP client-signed update | TLA+ / Lean | http, query, db |
 | HTTP client-signed conditional update | Lean | http, query |
-| SSE loss and error delivery | TLA+ / Lean | events, http, query |
+| SSE loss and error delivery | TLA+ / Lean | events, http, query, ffi |
+| Filter input validation | Lean | query |
 | Storage failure classification | TLA+ / Lean | storage, db, query, http |
 | B3 filtered replication | TLA+ | p2p, db-merge |
 | Explicit transactions in the request context | TLA+ / Lean | client, db, query, http, ffi, wasm, defra-node |

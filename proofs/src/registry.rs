@@ -717,6 +717,39 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/foundation/events/tests/unit/channel_bus.rs overflow_wakes_reader_that_drained_before_loss_was_recorded, ordinary_raw_subscription_remains_open_after_overflow; crates/surfaces/http/tests/graphql_sse_recovery.rs typed_permission_refusal_keeps_its_code_in_the_graphql_stream",
     },
     Property {
+        // A subscription is subscribed first and checked once through the
+        // plain path after, raced with closing: a bad filter is the stream's
+        // only result, and no update committed after the open is lost.
+        family: "SSE loss and error delivery",
+        name: "INV_BadNeverStreams / INV_BadIsReported / INV_NoLostUpdate / LIVE_ClosingEnds: a bad filter never streams and is reported, an update committed after the check reaches a valid subscription, closing ends every stream",
+        axis: Tla,
+        anchor: "crates/surfaces/http/src/handlers/graphql/query.rs graphql_sse; crates/entry-points/ffi/src/query/exec.rs subscribe; crates/engine/query/src/subscription.rs open_failure; tools/integration-test/src/actions/query/subscription.rs SubscriptionRequest::open",
+        model_ref: "MC_SubscriptionOpenCheck_{Green,Red_SkipCheck,Red_CheckThenSubscribe,Red_CheckIgnoresClosing}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/surfaces/http/tests/graphql_sse_recovery.rs a_subscription_the_plain_path_refuses_sends_its_error_then_completes; crates/surfaces/http/tests/sse_ends_when_closing.rs a_graphql_subscription_ends_when_its_edge_closes; tools/integration-test/tests/testo/subscription/with_filter_unknown.rs subscription_with_an_unknown_filter_field_is_refused_on_open, subscription_with_a_valid_filter_variable_streams",
+    },
+    Property {
+        family: "SSE loss and error delivery",
+        name: "bad_open_reports_then_completes / closing_open_completes / only_accepted_opens_stream: a refused open sends its error and completes, closing completes it, only an accepted open streams",
+        axis: Lean,
+        anchor: "crates/surfaces/http/src/handlers/graphql/query.rs graphql_sse; crates/engine/query/src/subscription.rs open_failure",
+        model_ref: "SseDelivery (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/surfaces/http/tests/graphql_sse_recovery.rs a_subscription_the_plain_path_refuses_sends_its_error_then_completes",
+    },
+    Property {
+        // graphql-go checks a literal filter's keys against its input type
+        // and treats each variable as valid there; the variable's value is
+        // checked by coercion.
+        family: "Filter input validation",
+        name: "literal_walk_skips_variable_positions / variable_value_never_matters: a literal's unknown-field errors never depend on what its variables hold",
+        axis: Lean,
+        anchor: "crates/engine/query/src/query_parse/filter_shape/walk.rs literal, literal_fields; crates/engine/query/src/query_parse/filter_shape/mod.rs check; crates/engine/query/src/query_parse/validation.rs check_filter_shapes",
+        model_ref: "FilterInputShape (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/engine/query/tests/filter_source.rs a_nested_variable_is_recorded_at_its_position; tools/integration-test/tests/testo/query/simple/with_filter_unknown.rs a_bad_literal_is_reported_before_its_variables, unknown_operator_in_a_nested_variable_is_rejected",
+    },
+    Property {
         family: "HTTP router composition",
         name: "WholeRouter / SingleConstructor / NoBypass / ForwardingPreserved",
         axis: Tla,
