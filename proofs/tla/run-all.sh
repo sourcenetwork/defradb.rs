@@ -212,6 +212,8 @@ RUNS=(
   "MC_ChunkMerge_Red_UnstoredDelete.cfg ChunkMerge.tla RED" # a chunk delete merges before its chunk's first block (INV_ListedChunksStay)
   "MC_ChunkMerge_Red_NoRebuild.cfg ChunkMerge.tla RED" # a merge keeps another peer's text and builds none of its chunks (INV_TextChunksStored)
   "MC_ChunkMerge_Red_SignedChunkIds.cfg ChunkMerge.tla RED" # signed chunk blocks give one chunk a document per peer (INV_EachChunkOnce)
+  "MC_ChunkMerge_Green_Encrypted.cfg ChunkMerge.tla GREEN" # an encrypted text's chunks come with its article, not from the rebuild
+  "MC_ChunkMerge_Red_EncryptedNotShipped.cfg ChunkMerge.tla RED" # encrypted text skipped and its chunks not shipped (INV_TextChunksStored)
   "MC_ChunkRead_Green.cfg ChunkRead.tla GREEN" # a chunk shows only while its parent is live, readable and uses it
   "MC_ChunkRead_Red_NoDeletedCheck.cfg ChunkRead.tla RED" # deleted parent still shows its chunks (INV_ShownIsLiveAndReadable)
   "MC_ChunkRead_Red_NoHashCheck.cfg ChunkRead.tla RED" # forged chunk claims a real hash (INV_ShownIsTheText)
