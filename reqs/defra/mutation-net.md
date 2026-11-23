@@ -266,6 +266,13 @@ An upsert on a `@crdt(type: text)` field that finds no document adds it with the
 
 When `SyncCollectionVersions` fetches a view version whose query source names a lens, the receiving node commits that lens's config as if it had added the lens itself, then registers it. A view on the receiving node can then name the lens with `AddView(transform_cid)`, before and after the node restarts; it never fails with `lens CID not found`.
 
+# `defra.net.sync.migration_transform_is_kept`: A synced migration transform stays attached
+
+- **Parents:** ["go.net.sync"]
+- **Scenarios:** ["net::sync::collection_version::migration_transform::a_synced_migration_transform_stays_attached_to_its_definition"]
+
+A migration transform registered on one node stays attached to the definition a second node syncs, so a document at the source version read through that synced definition has the destination version's transformed fields.
+
 # `defra.net.sync.exact_fetch`: A DAG fetch is sent only what the receiver lacks
 
 - **Parents:** ["defra"]
@@ -292,6 +299,19 @@ Two nodes share 20 updates of a document, then lose touch. One makes 40 more upd
 - **Scenarios:** ["net::sync::exact_fetch::a_receiver_holding_nothing_still_gets_the_whole_document"]
 
 A node that holds none of a document with 31 updates, told of its next head, fetches the whole DAG and converges on it. It is sent no block it holds besides the head it asked for (`car_received_already_held` zero), however many of the writer's heads gossip delivered before the fetch.
+
+# `defra.net.sync.fetch_slots`: A node's P2P status reports what holds its fetch slots
+
+- **Parents:** ["defra"]
+
+A defradb.rs node's `p2p status` carries `pending_dag_fetch_slots`: the slot `limit` (`--p2p-max-concurrent-dag-fetches`, 4 by default), the number `held`, how many are `scheduled`, `claimed`, `running` and `merging`, and a `roots` list naming the root CID and state of each held slot. A Go node has no such status.
+
+# `defra.net.sync.fetch_slots.released`: Fetch slots are free once a fetched DAG merges
+
+- **Parents:** ["defra.net.sync.fetch_slots"]
+- **Scenarios:** ["net::sync::fetch_slots::fetch_slots_are_free_once_a_fetched_dag_merges"]
+
+A node holding none of a document with 11 updates, told of its next head, fetches the whole DAG from its peer (the peer's `car_served_cids` is at least one) and converges on it. Its `pending_dag_fetch_slots.limit` is then 4, and `pending_dag_fetch_slots.held` comes back to zero.
 
 # `defra.net.replicator.list`: A replicator with no collections is listed
 
