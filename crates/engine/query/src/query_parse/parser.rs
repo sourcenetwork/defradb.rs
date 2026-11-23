@@ -235,6 +235,8 @@ fn matches_mutation_type(condition: Option<&TypeCondition<'_, String>>) -> bool 
 struct MutationFields {
     run: Vec<Mutation>,
     excluded: Vec<Mutation>,
+    /// The fragments already expanded where they were left out.
+    checked: RapidHashSet<String>,
 }
 
 /// Parse `selection` into `fields`; with `included` false, an enclosing
@@ -262,7 +264,12 @@ fn parse_selection_to_mutations<'a>(
                 QueryError::parse(format!("Unknown fragment \"{}\".", spread.fragment_name))
             })?;
             let included = included && should_include_selection(&spread.directives, variables)?;
-            if included && visited.contains(&spread.fragment_name) {
+            // A fragment runs once, and is checked once when left out: a
+            // left-out visit never stops a kept one, and a fragment already
+            // kept needs no left-out check.
+            let seen = visited.contains(&spread.fragment_name)
+                || (!included && fields.checked.contains(&spread.fragment_name));
+            if seen {
                 return Ok(());
             }
             visiting.check_nesting()?;
@@ -283,6 +290,8 @@ fn parse_selection_to_mutations<'a>(
             visiting.remove(&spread.fragment_name);
             if included {
                 visited.insert(spread.fragment_name.clone());
+            } else {
+                fields.checked.insert(spread.fragment_name.clone());
             }
         }
         Selection::InlineFragment(fragment) => {
@@ -668,9 +677,12 @@ pub fn parse_request_with_limits(
     } else if has_mutation {
         let MutationFields {
             run: mut mutations,
-            excluded,
+            mut excluded,
+            ..
         } = mutations;
-        for mutation in &mut mutations {
+        // A left-out mutation's filters are still walked, so it is held to
+        // the same limits.
+        for mutation in mutations.iter_mut().chain(&mut excluded) {
             apply_limits_to_mutation(mutation, limits)?;
             validate_requestable_limits_with(&mutation.fields, limits)?;
         }
