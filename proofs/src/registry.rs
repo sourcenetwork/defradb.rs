@@ -2336,11 +2336,13 @@ pub const PROPERTIES: &[Property] = &[
         // owner is the ID modulo the worker count and the sequence is the
         // quotient, so the round trip is exact for every worker below the
         // count, the owner is always a real worker, and two different
-        // (sequence, worker) pairs never share an ID.
+        // (sequence, worker) pairs never share an ID. The start token packs
+        // above the route and unpacks exactly, and the packed ID stays below
+        // 2^53 so a JSON number reader keeps it.
         family: "Explicit transactions in the request context",
-        name: "TxnId.owner_encode / sequence_encode / owner_lt / encode_injective / decode_encode",
+        name: "TxnId.owner_encode / sequence_encode / owner_lt / encode_injective / decode_encode / route_pack / token_pack / pack_json_safe",
         axis: Lean,
-        anchor: "crates/database/db/src/txn/owner/id.rs TxnId::new, TxnId::owner; crates/database/db/src/txn/owner/tests.rs",
+        anchor: "crates/database/db/src/txn/owner/id.rs TxnId::new, TxnId::owner, TxnId::start_token, TxnId::parse; crates/database/db/src/txn/owner/tests.rs",
         model_ref: "TxnId (lake build)",
         tiers: &[Boundary],
         bound_by: "",

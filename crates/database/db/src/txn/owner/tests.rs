@@ -404,3 +404,41 @@ fn a_full_outcome_store_evicts_a_final_result_before_a_live_record() {
     assert_eq!(store.status(older), None);
     assert_eq!(store.status(newer), Some(Outcome::Aborted));
 }
+
+#[test]
+fn a_full_outcome_store_frees_an_eighth_of_its_cap_in_one_pass() {
+    let store: OutcomeStore<&'static str> = OutcomeStore::new(Duration::ZERO, 16);
+    let now = std::time::Instant::now();
+    let record = |status: Outcome, age: u64| OutcomeRecord {
+        status: Arc::new(std::sync::atomic::AtomicU8::new(status as u8)),
+        owner: "alice",
+        finished: now + Duration::from_millis(age),
+    };
+    for index in 0..16 {
+        let status = if index < 4 {
+            Outcome::Open
+        } else {
+            Outcome::Committed
+        };
+        store.insert(TxnId::new(index, 0, 1, 1).unwrap(), record(status, index));
+    }
+
+    store.insert(TxnId::new(16, 0, 1, 1).unwrap(), record(Outcome::Open, 16));
+    assert_eq!(store.evictions(), 2);
+    assert_eq!(store.records.len(), 15);
+    for index in 0..4 {
+        assert_eq!(
+            store.status(TxnId::new(index, 0, 1, 1).unwrap()),
+            Some(Outcome::Open)
+        );
+    }
+    assert_eq!(store.status(TxnId::new(4, 0, 1, 1).unwrap()), None);
+    assert_eq!(store.status(TxnId::new(5, 0, 1, 1).unwrap()), None);
+    assert_eq!(
+        store.status(TxnId::new(6, 0, 1, 1).unwrap()),
+        Some(Outcome::Committed)
+    );
+
+    store.insert(TxnId::new(17, 0, 1, 1).unwrap(), record(Outcome::Open, 17));
+    assert_eq!(store.evictions(), 2);
+}

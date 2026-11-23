@@ -14,6 +14,9 @@ pub struct TxnOutcome {
     pub txn: usize,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub malformed: bool,
+    /// Also check the ID is below 2^53, so a JSON number reader gets it back exact.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub json_safe_id: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_status: Option<u16>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
@@ -62,7 +65,13 @@ impl HttpRun for TxnOutcome {
             let id = if action.malformed {
                 "concurrent".to_owned()
             } else {
-                action.id(state)?.to_string()
+                let id = action.id(state)?;
+                if action.json_safe_id && id.encoded() >= 1 << 53 {
+                    return Err(Failure::operation(format!(
+                        "transaction id {id} is not exact as a JSON number"
+                    )));
+                }
+                id.to_string()
             };
             let (status, body) = state
                 .http_as(action.common.node(), identity, |client| async move {

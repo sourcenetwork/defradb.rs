@@ -19,8 +19,17 @@ pub(crate) struct TxnId {
 
 const START_MASK: u64 = u64::MAX << 32;
 const ROUTE_MASK: u64 = u32::MAX as u64;
+/// The start token's width. With the 32-bit route every new ID stays below
+/// 2^53, so a JavaScript client reading it as a JSON number gets it back exact.
+const START_BITS: u32 = 21;
 
 impl TxnId {
+    /// The start token a registry stamps on its IDs, from a random `draw`:
+    /// never 0, which legacy IDs use, and within `START_BITS`.
+    pub(crate) fn start_token(draw: u32) -> u64 {
+        u64::from((draw & ((1 << START_BITS) - 1)).max(1)) << 32
+    }
+
     /// The ID `start` gives worker `worker` of `workers` for its
     /// `sequence`th transaction; start 0 is reserved for legacy IDs, so a new
     /// ID refuses it. `None` when the worker or route cannot be represented.
@@ -114,6 +123,20 @@ mod tests {
                     assert_eq!(TxnId::parse(&id.to_string()), Some(id));
                 }
             }
+        }
+    }
+
+    #[test]
+    fn every_new_id_survives_a_json_number() {
+        assert_eq!(TxnId::start_token(0), 1u64 << 32);
+        for draw in [0, 1, 0x1F_FFFF, 0x20_0000, u32::MAX] {
+            let start = TxnId::start_token(draw);
+            assert_ne!(start, 0);
+            let id = TxnId::new(ROUTE_MASK, 0, 1, start).unwrap();
+            let encoded = id.start | id.route;
+            assert!(encoded < 1u64 << 53);
+            assert_eq!(encoded as f64 as u64, encoded);
+            assert_eq!(TxnId::parse(&id.to_string()), Some(id));
         }
     }
 

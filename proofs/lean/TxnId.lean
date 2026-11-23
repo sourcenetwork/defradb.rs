@@ -77,4 +77,53 @@ theorem decode_encode (id workers : Nat) :
   rw [Nat.mul_comm]
   exact Nat.div_add_mod id workers
 
+/-!
+## The start token and the JSON-number bound
+
+The number a client sees is the route above packed under a start token: the
+token times 2^32 plus the route. The token is below 2^21 and the route below
+2^32, so the packed number stays below 2^53, the largest range a JavaScript
+JSON number holds exactly. Unpacking takes the quotient and remainder by 2^32
+and gives back the token and route that went in.
+
+Rust owner: crates/database/db/src/txn/owner/id.rs, `TxnId::start_token`,
+`TxnId::new`, `TxnId::parse` and `Display for TxnId`.
+-/
+
+-- 2^32: one past the largest route.
+def routeSpan : Nat := 4294967296
+
+-- 2^21: one past the largest start token.
+def tokenSpan : Nat := 2097152
+
+-- 2^53: one past the largest whole number a JSON number holds exactly.
+def jsonSafe : Nat := 9007199254740992
+
+-- The wire number: the start token above the route.
+def pack (token route : Nat) : Nat :=
+  token * routeSpan + route
+
+-- Promise: the remainder by 2^32 of a packed number is its route.
+theorem route_pack (token route : Nat) (h : route < routeSpan) :
+    pack token route % routeSpan = route := by
+  -- Whole multiples of 2^32 leave no remainder, and the route is its own.
+  unfold pack
+  rw [Nat.add_comm, Nat.add_mul_mod_self_right]
+  exact Nat.mod_eq_of_lt h
+
+-- Promise: the quotient by 2^32 of a packed number is its start token.
+theorem token_pack (token route : Nat) (h : route < routeSpan) :
+    pack token route / routeSpan = token := by
+  -- The route is smaller than one 2^32 and adds nothing to the quotient.
+  unfold pack
+  have pos : 0 < routeSpan := by unfold routeSpan; omega
+  rw [Nat.add_comm, Nat.add_mul_div_right _ _ pos, Nat.div_eq_of_lt h, Nat.zero_add]
+
+-- Promise: every packed number is below 2^53, so a JSON number reader keeps it exact.
+theorem pack_json_safe (token route : Nat) (ht : token < tokenSpan) (hr : route < routeSpan) :
+    pack token route < jsonSafe := by
+  -- The largest token times 2^32, plus a route below 2^32, is still below 2^53.
+  unfold pack routeSpan tokenSpan jsonSafe at *
+  omega
+
 end TxnId

@@ -46,7 +46,11 @@ fn an_outcome_is_visible_to_its_owner_and_malformed_ids_are_refused() {
                 ..Default::default()
             }
             .into(),
-            outcome_action(0, 1, json!({"outcome": "open"})),
+            TxnOutcome {
+                json_safe_id: true,
+                ..outcome(0, 1, json!({"outcome": "open"}))
+            }
+            .into(),
             outcome_action(0, 2, json!({"outcome": "unknown"})),
             TxnCommit {
                 txn: 0,

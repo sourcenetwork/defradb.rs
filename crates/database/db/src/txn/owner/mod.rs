@@ -173,21 +173,50 @@ where
             .and_then(|record| Outcome::try_from(record.status.load(Ordering::Acquire)).ok())
     }
 
-    /// At the cap the oldest final result makes room, and a live transaction's
+    /// At the cap the oldest final results make room, and a live transaction's
     /// record goes only when no final one is left: its result is still to come.
     fn insert(&self, id: TxnId, record: OutcomeRecord<K>) {
         if self.records.len() >= self.cap {
-            let Some((key, _)) = self.records.iter().min_by_key(|(_, candidate)| {
-                let status = Outcome::try_from(candidate.status.load(Ordering::Acquire))
-                    .unwrap_or(Outcome::Open);
-                (u8::from(!status.is_final()), candidate.finished)
-            }) else {
-                return;
-            };
-            self.records.remove(&key);
-            self.evictions.fetch_add(1, Ordering::Relaxed);
+            self.evict();
         }
         self.records.insert(id.key(), record);
+    }
+
+    /// Frees an eighth of the cap in one scan, so a full store pays for the
+    /// scan once per that many inserts instead of on every commit.
+    fn evict(&self) {
+        let batch = (self.cap / 8).max(1);
+        let mut candidates: Vec<((u8, Instant), (u64, u64))> = self
+            .records
+            .iter()
+            .map(|(key, candidate)| {
+                let status = Outcome::try_from(candidate.status.load(Ordering::Acquire))
+                    .unwrap_or(Outcome::Open);
+                ((u8::from(!status.is_final()), candidate.finished), key)
+            })
+            .collect();
+        if candidates.len() > batch {
+            candidates.select_nth_unstable_by_key(batch - 1, |(rank, _)| *rank);
+            candidates.truncate(batch);
+        }
+        let live = candidates
+            .iter()
+            .filter(|((live, _), _)| *live == 1)
+            .count();
+        for (_, key) in &candidates {
+            self.records.remove(key);
+        }
+        let total = self
+            .evictions
+            .fetch_add(candidates.len() as u64, Ordering::Relaxed)
+            + candidates.len() as u64;
+        tracing::warn!(
+            evicted = candidates.len(),
+            live,
+            total,
+            cap = self.cap,
+            "transaction outcome store is full; the oldest outcomes were dropped before their retention ended"
+        );
     }
 
     fn remove(&self, id: TxnId) {
@@ -303,7 +332,7 @@ where
             .collect();
         Self {
             pool,
-            start_token: (random::<u32>().max(1) as u64) << 32,
+            start_token: TxnId::start_token(random()),
             shared: Arc::new(Shared { tables, outcomes }),
             fences,
         }
@@ -320,7 +349,7 @@ where
     #[cfg(target_family = "wasm")]
     pub(crate) fn here(fences: Arc<CommitFences>) -> Self {
         Self {
-            start_token: (random::<u32>().max(1) as u64) << 32,
+            start_token: TxnId::start_token(random()),
             shared: Arc::new(Shared {
                 tables: Box::new([Table::new()]),
                 outcomes: Box::new([OutcomeStore::new(Duration::from_secs(600), OUTCOME_CAP)]),
