@@ -48,7 +48,7 @@ An ordered query over an indexed field with `limit: 3, offset: 2` reads `limit +
 - **Parents:** ["defra.index"]
 - **Scenarios:** ["index::keyspace::a_tagged_index_keyspace_keeps_collections_separate"]
 
-Secondary-index keys begin with the fixed `/index/` family tag before the collection and index IDs. Even at short IDs `100` and `118`, whose untagged bytes would spell the document and version families, each collection's indexed query returns only its own row and its index scan stays within its own `/index/<collection>/<index>/` prefix.
+Collections whose short IDs are `100` and `118`, the bytes `d` and `v` that name the document and version key families, each answer a query filtered on their indexed field with only their own row. Since truncate removes one index at a time (`defra.collection.truncate.other_collections`), no client operation reads or deletes by a whole collection's index prefix, so this scenario also passes on the untagged layout. The fixed `/index/` tag that keeps index keys out of the other families is checked in storage, by `index_keyspace_is_tagged_across_the_byte_boundary` and `index_keyspace_scans_stay_per_collection_across_short_ids`.
 
 # `defra.collection`: Collection-wide operations
 
