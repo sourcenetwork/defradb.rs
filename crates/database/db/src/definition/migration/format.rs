@@ -1,17 +1,11 @@
-//! Rebuild secondary indexes whose on-disk key encoding changed.
+//! Rebuild secondary indexes when their on-disk encoding changes.
 //!
-//! DateTime index keys were one varint of nanoseconds and are now a marker plus
-//! separate seconds and nanos varints, so entries written by an older build are
-//! unreadable by this one. Nothing rebuilds them on its own: the existing
-//! reindex path is driven by schema migration, not by a storage format change.
-//!
-//! Left alone, an upgraded store answers a range query from bounds in the new
-//! format against entries in the old one, so rows go missing, deletes orphan
-//! their entries, and a unique index stops rejecting duplicates. A stamped
-//! version and a rebuild on open is the only thing that keeps those queries
-//! honest.
+//! Older index entries stay in their original namespace, which can overlap
+//! document keys. Rebuilding into the separate current namespace avoids
+//! deleting keys whose ownership cannot be determined from their bytes.
 
-use storage::corekv::Store;
+use storage::corekv::{IterOptions, Iterator as _, Store};
+use storage::keys::systemstore::CollectionKey;
 use tracing::{info, warn};
 
 use crate::error::{Error, Result};
@@ -28,7 +22,66 @@ pub const CURRENT_INDEX_FORMAT: u32 = 5;
 /// Systemstore key holding the format the indexes on disk were written with.
 pub use storage::keys::systemstore::INDEX_FORMAT_KEY;
 
+fn index_format_error(stored: Option<u32>) -> Error {
+    Error::UnsupportedIndexFormat {
+        stored,
+        current: CURRENT_INDEX_FORMAT,
+    }
+}
+
+/// Stamp a fresh store in the transaction that creates its first collection.
+/// A collection made through a constructor that does not run the open sequence
+/// must still be reopenable.
+pub(crate) async fn ensure_index_format_for_collection_creation(
+    systemstore: &datastore::NamespaceView,
+) -> Result<()> {
+    let raw = systemstore
+        .get(INDEX_FORMAT_KEY)
+        .await
+        .map_err(Error::Storage)?;
+    let stored = raw
+        .and_then(|bytes| <[u8; 4]>::try_from(bytes.as_ref()).ok())
+        .map(u32::from_be_bytes);
+    match stored {
+        Some(format) if format == CURRENT_INDEX_FORMAT => return Ok(()),
+        Some(_) => return Err(index_format_error(stored)),
+        None => {}
+    }
+
+    let mut existing = systemstore
+        .iterator(IterOptions::new().with_prefix(CollectionKey::collection_prefix()))
+        .await
+        .map_err(Error::Storage)?;
+    let has_collections = existing.next().await.map_err(Error::Storage)?.is_some();
+    existing.close().await.map_err(Error::Storage)?;
+    if has_collections {
+        return Err(index_format_error(stored));
+    }
+
+    systemstore
+        .set(INDEX_FORMAT_KEY, &CURRENT_INDEX_FORMAT.to_be_bytes())
+        .await
+        .map_err(Error::Storage)
+}
+
 impl<S: Store> DB<S> {
+    /// Refuse a newer index layout before any startup migration writes.
+    pub(crate) async fn check_index_format(&self) -> Result<()>
+    where
+        S: 'static,
+    {
+        let stored = self.stored_index_format().await?;
+        let compatible = match stored {
+            Some(format) => format <= CURRENT_INDEX_FORMAT,
+            None => true,
+        };
+        if compatible {
+            Ok(())
+        } else {
+            Err(index_format_error(stored))
+        }
+    }
+
     /// Rebuild indexes written by an older encoding and indexes kept in a
     /// different mode. The format stamp is written after every rebuild succeeds.
     pub(crate) async fn migrate_index_format(&self) -> Result<()>
@@ -36,6 +89,7 @@ impl<S: Store> DB<S> {
         S: 'static,
     {
         let stored = self.stored_index_format().await?;
+        self.check_index_format().await?;
         if stored == Some(CURRENT_INDEX_FORMAT) {
             self.rebuild_indexes_kept_the_other_way().await?;
         } else {
@@ -115,7 +169,7 @@ impl<S: Store> DB<S> {
         }
 
         for name in stale {
-            if let Err(error) = self.reindex_collection_with_migrations(&name).await {
+            if let Err(error) = self.reindex_for_format(&name).await {
                 // Leaving the stamp unwritten means the next open retries, which
                 // is the honest outcome: a half-rebuilt store must not report
                 // itself as current.

@@ -1,9 +1,13 @@
 //! Database export and import.
 
+mod alias;
+mod batch;
 mod export;
+mod host;
 mod import;
 
 pub use export::{export_database, export_database_as};
+pub use host::{DbJob, ImportHost, RunnerHost};
 pub use import::{import_database, import_database_as, ImportStats};
 
 use serde_json::Value as JsonValue;

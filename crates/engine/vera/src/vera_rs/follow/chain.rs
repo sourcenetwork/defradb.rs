@@ -7,7 +7,7 @@ use std::time::Duration;
 use acp_light_client::AcpLightClient;
 use alloy_primitives::B256;
 use defra_core::thread_bounds::MaybeBoxFuture;
-use vera_domain::{ConsensusPublicKey, NativeTx, ReceiptResponse};
+use vera_domain::{ConsensusPublicKey, NativeTx, ReceiptResponse, RefusalKind, RefusingModule};
 
 use super::{Chain, Replayed};
 use crate::provider::ProviderError;
@@ -80,6 +80,9 @@ impl ProviderChain {
             .map_err(unavailable)?;
         Ok(Replayed {
             executed: receipt.success(),
+            exists: receipt.refusal.as_ref().is_some_and(|refusal| {
+                refusal.module == RefusingModule::Acp && refusal.kind == RefusalKind::AlreadyExists
+            }),
             height: response.revision.height,
         })
     }

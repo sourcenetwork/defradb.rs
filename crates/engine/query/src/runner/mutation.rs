@@ -219,7 +219,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
                 .truncate_as(
                     &self.context(),
                     &mutation.collection_name,
-                    mutation.filter.clone(),
+                    mutation.truncate_filter(),
                 )
                 .await?;
 
