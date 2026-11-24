@@ -39,7 +39,11 @@
 \*   crates/engine/acp/src/outbox/deny.rs         owed_denial (an owed archive denies all),
 \*       archive_actor (who staged it)
 \*   crates/engine/query/src/txn/context.rs       decided_by_owed, spared_by_owed_archive
-\*       (the archive's actor keeps the commit history)
+\*       (the archive's actor keeps the commit history), decided_by_owed_archive (an owed
+\*       archive decides before an owed registration or the registration check)
+\*   crates/engine/query/src/txn/read_access.rs   OverlayChecker::object_access
+\*   crates/engine/acp/src/external.rs            ExternalDocumentAcp::check_doc_access (the
+\*       owed archive before a registration still owed)
 \*   crates/engine/acp/src/outbox/ops.rs          account (the object's archive count)
 \*   crates/engine/acp/src/outbox/submission.rs   relationship_call (OwedOp::Archive)
 \*   crates/database/db/src/write/autocommit/helpers.rs  unregister_deleted_doc (stages

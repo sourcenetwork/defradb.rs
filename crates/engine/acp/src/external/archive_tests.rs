@@ -396,3 +396,36 @@ fn a_parked_archive_names_its_owner_for_history_visibility() {
     })
     .unwrap()
 }
+
+#[test]
+fn a_registration_still_owed_grants_its_creator_nothing_once_the_document_is_deleted() {
+    workers::block_on(async {
+        let (_provider, gate) = gate();
+        let owner = did(OWNER);
+        let txn = gate.begin(false).await.unwrap();
+        let view = txn.acpstore();
+        crate::PendingRegistrations::new(&view)
+            .record(&crate::PendingRegistration::new(
+                owner.clone(),
+                "policy",
+                "users",
+                "bae-1",
+            ))
+            .await
+            .unwrap();
+        drop(view);
+        txn.commit().await.unwrap();
+        assert!(reads(&gate, Identity::Authenticated(owner.clone())).await);
+        let deleter = &owner;
+        in_transaction(&gate, |outbox| async move {
+            outbox.stage_archive(archive(deleter)).await
+        })
+        .await
+        .unwrap();
+        assert!(
+            !reads(&gate, Identity::Authenticated(owner.clone())).await,
+            "the owed archive denies the creator its owed registration named"
+        );
+    })
+    .unwrap()
+}

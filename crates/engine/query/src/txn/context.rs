@@ -177,6 +177,38 @@ async fn owed_denial(
     }
 }
 
+/// What an archive owed on a document decides for `identity`, before
+/// anything else about the document is asked: `Some(false)` for everyone
+/// but the archive's actor reading the commit history, `None` when no
+/// archive is owed. It comes before an owed registration and before the
+/// registration check, so neither a registration still owed to the creator
+/// nor a provider that has dropped the archived object reopens the document.
+pub(crate) async fn decided_by_owed_archive(
+    acp: &dyn DocumentACP,
+    projection: Option<&AcpRegistrationProjection>,
+    identity: &Identity,
+    policy_id: &str,
+    resource_name: &str,
+    doc_id: &str,
+    for_commit_history: bool,
+) -> AcpResult<Option<bool>> {
+    let denial = owed_denial(acp, projection, identity, policy_id, resource_name, doc_id).await?;
+    if !matches!(denial, acp::OwedDenial::Archived) {
+        return Ok(None);
+    }
+    spared_by_owed_archive(
+        acp,
+        projection,
+        identity,
+        policy_id,
+        resource_name,
+        doc_id,
+        for_commit_history,
+    )
+    .await
+    .map(Some)
+}
+
 /// What the changes the transaction sees unsettled on a document, its own
 /// staged ones included, decide for `identity` before the provider is asked:
 /// `Some(false)` when a relationship delete or the document's archive denies
@@ -366,6 +398,19 @@ pub async fn check_doc_access_with_projection(
     doc_id: &str,
     for_commit_history: bool,
 ) -> AcpResult<bool> {
+    if let Some(decided) = decided_by_owed_archive(
+        acp,
+        projection,
+        identity,
+        policy_id,
+        resource_name,
+        doc_id,
+        for_commit_history,
+    )
+    .await?
+    {
+        return Ok(decided);
+    }
     if let Some(creator) = owed_creator(acp, projection, policy_id, resource_name, doc_id).await? {
         return Ok(is_creator(identity, &creator));
     }
@@ -401,6 +446,20 @@ pub async fn check_doc_access_with_prepared_inputs(
     for_commit_history: bool,
     inputs: Option<&crate::prepared::PreparedInputMemo>,
 ) -> crate::error::Result<bool> {
+    if let Some(decided) = decided_by_owed_archive(
+        acp,
+        projection,
+        identity,
+        policy_id,
+        resource_name,
+        doc_id,
+        for_commit_history,
+    )
+    .await
+    .map_err(crate::error::QueryError::from_acp)?
+    {
+        return Ok(decided);
+    }
     // A registration this transaction owes overrides remote state, while
     // transaction-capable providers stay live so their reads participate in OCC.
     if let Some(creator) = owed_creator(acp, projection, policy_id, resource_name, doc_id)
@@ -541,6 +600,23 @@ async fn doc_read_access(
         inputs: &crate::prepared::PreparedInputMemo,
         for_commit_history: bool,
     ) -> crate::error::Result<DocAccess> {
+        if let Some(decided) = decided_by_owed_archive(
+            acp,
+            projection,
+            identity,
+            policy_id,
+            resource_name,
+            object_id,
+            for_commit_history,
+        )
+        .await
+        .map_err(crate::error::QueryError::from_acp)?
+        {
+            return Ok(DocAccess {
+                has_access: decided,
+                explicit: true,
+            });
+        }
         if let Some(creator) = owed_creator(acp, projection, policy_id, resource_name, object_id)
             .await
             .map_err(crate::error::QueryError::from_acp)?

@@ -252,6 +252,26 @@ where
         }
     }
 
+    /// Whether an archive is owed, unsettled, on an object.
+    async fn archive_owed(
+        &self,
+        policy_id: &str,
+        resource_name: &str,
+        object_id: &str,
+    ) -> Result<bool> {
+        let txn = self.store.new_txn(true).await.map_err(storage_error)?;
+        let denial = owed_denial(
+            &txn,
+            &*self.provider,
+            &Identity::Anonymous,
+            policy_id,
+            resource_name,
+            object_id,
+        )
+        .await?;
+        Ok(matches!(denial, OwedDenial::Archived))
+    }
+
     /// Wait until nothing is owed on `tuple`, woken whenever a record of
     /// something owed is written or deleted, until `deadline`. A change at
     /// rest (refused, or waiting for authority) will not settle by itself,
@@ -705,6 +725,11 @@ where
         doc_id: &str,
     ) -> Result<bool> {
         self.owed_layout().await?;
+        // A deleted document's owed archive denies before a registration
+        // still owed to its creator could grant it anything.
+        if self.archive_owed(policy_id, resource_name, doc_id).await? {
+            return Ok(false);
+        }
         if let Some(owed) = self.owed(policy_id, resource_name, doc_id).await? {
             return Ok(matches!(identity, Identity::Authenticated(did) if *did == owed.creator));
         }

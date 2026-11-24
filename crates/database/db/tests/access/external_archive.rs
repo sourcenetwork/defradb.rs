@@ -102,7 +102,108 @@ fn an_owed_archive_leaves_its_actor_the_commit_history_and_nothing_else() {
     .unwrap()
 }
 
+/// Whether `identity` reads [`DOC`], or its commit history, through the
+/// whole read rule (the registration check included), live or with
+/// `inputs`. [`DOC`] is registered nowhere: its creator's registration is
+/// still owed, or the provider no longer has it.
+async fn rule(
+    outbox: &Outbox,
+    identity: &Identity,
+    history: bool,
+    inputs: Option<&PreparedInputMemo>,
+) -> query::error::Result<bool> {
+    let (txn, _) = outbox.begin().await;
+    let view = txn.acpstore();
+    let projection = AcpRegistrationProjection::new(acp::PendingRegistrations::new(&view))
+        .with_owed_denials(OwedDenials::new(&view));
+    let context = defra_core::RequestContext::default();
+    let (projection_ref, gate) = (Some(&projection), &*outbox.gate);
+    let allowed = if history {
+        query::txn::check_commit_read_access_as(
+            &context,
+            gate,
+            projection_ref,
+            identity,
+            POLICY,
+            RESOURCE,
+            "",
+            false,
+            DOC,
+            inputs,
+        )
+        .await
+    } else {
+        query::txn::check_doc_read_access_as(
+            &context,
+            gate,
+            projection_ref,
+            identity,
+            POLICY,
+            RESOURCE,
+            "",
+            false,
+            DOC,
+            inputs,
+        )
+        .await
+    };
+    drop(view);
+    txn.discard().unwrap();
+    allowed
+}
+
+/// [`rule`] decided alike live and with an empty request memo: an owed
+/// archive needs nothing from the provider.
+async fn reads_through_the_rule(outbox: &Outbox, identity: &Identity, history: bool) -> bool {
+    let live = rule(outbox, identity, history, None).await.unwrap();
+    let memo = PreparedInputMemo::default();
+    let prepared = rule(outbox, identity, history, Some(&memo)).await.unwrap();
+    assert_eq!(live, prepared, "both paths decide alike");
+    live
+}
+
 #[test]
+#[mantra_macros::req_test("defra.acp.vera_delete_archive")]
+fn an_owed_archive_denies_before_an_owed_registration_or_an_unregistered_object_could_grant() {
+    workers::block_on(async {
+        let outbox = Outbox::new();
+        let (alice, bob) = (
+            Identity::Authenticated(alice()),
+            Identity::Authenticated(bob()),
+        );
+        assert!(
+            rule(&outbox, &bob, false, None).await.unwrap(),
+            "an object the provider does not have is public"
+        );
+        archive(&outbox).await;
+        for identity in [&alice, &bob, &Identity::Anonymous] {
+            assert!(!reads_through_the_rule(&outbox, identity, false).await);
+        }
+        assert!(reads_through_the_rule(&outbox, &alice, true).await);
+        assert!(!reads_through_the_rule(&outbox, &bob, true).await);
+
+        let (txn, _) = outbox.begin().await;
+        acp::PendingRegistrations::new(&txn.acpstore())
+            .record(&acp::PendingRegistration::new(
+                alice.did().unwrap().clone(),
+                POLICY,
+                RESOURCE,
+                DOC,
+            ))
+            .await
+            .unwrap();
+        txn.commit().await.unwrap();
+        assert!(
+            !reads_through_the_rule(&outbox, &alice, false).await,
+            "the registration still owed to alice grants her nothing"
+        );
+        assert!(!reads(&outbox, &alice, false).await);
+    })
+    .unwrap()
+}
+
+#[test]
+#[mantra_macros::req_test("defra.acp.vera_delete_archive")]
 fn an_owed_delete_of_the_actors_owner_relation_takes_its_commit_history_too() {
     workers::block_on(async {
         let outbox = Outbox::new();

@@ -5,7 +5,8 @@ use acp::{DocumentACP, DocumentPermission, Identity};
 use async_trait::async_trait;
 
 use super::context::{
-    check_doc_access_with_projection, is_doc_registered_with_projection, AcpRegistrationProjection,
+    check_doc_access_with_projection, decided_by_owed_archive, is_doc_registered_with_projection,
+    AcpRegistrationProjection,
 };
 
 /// Object access through a transaction's overlay. The NAC `bypass-dac`
@@ -28,6 +29,22 @@ impl ObjectAccessChecker for OverlayChecker<'_> {
         resource_name: &str,
         object_id: &str,
     ) -> acp::Result<DocAccess> {
+        if let Some(decided) = decided_by_owed_archive(
+            self.acp,
+            self.projection,
+            self.identity,
+            policy_id,
+            resource_name,
+            object_id,
+            self.for_commit_history,
+        )
+        .await?
+        {
+            return Ok(DocAccess {
+                has_access: decided,
+                explicit: true,
+            });
+        }
         if !is_doc_registered_with_projection(
             self.acp,
             self.projection,
