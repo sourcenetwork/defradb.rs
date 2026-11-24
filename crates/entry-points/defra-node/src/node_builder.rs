@@ -364,10 +364,31 @@ impl NodeBuilder {
         self
     }
 
+    /// Hold every explicit transaction commit at `gate` before it is handed
+    /// to its owner, so a test can prove a commit whose HTTP answer passed its
+    /// bound still lands.
+    pub fn with_commit_gate(mut self, gate: Arc<dyn db::CommitGate>) -> Self {
+        self.config.commit_gate = Some(crate::CommitGateHandle(gate));
+        self
+    }
+
     /// Enable the HTTP GraphQL server.
     #[cfg(feature = "http")]
     pub fn with_http(mut self, config: HttpConfig) -> Self {
         self.http_config = Some(config);
+        self
+    }
+
+    /// Set the server-side bound on waiting for a transaction commit.
+    ///
+    /// `Duration::ZERO` disables the bound. A commit still running when the
+    /// bound passes keeps running.
+    #[cfg(feature = "http")]
+    pub fn with_commit_timeout(mut self, timeout: Duration) -> Self {
+        self.http_config
+            .as_mut()
+            .expect("an HTTP config")
+            .commit_timeout = timeout;
         self
     }
 
@@ -652,6 +673,7 @@ impl NodeBuilder {
             let server_config = defra_http::ServerConfig {
                 address: http_cfg.address,
                 request_timeout: crate::timeout_secs(http_cfg.request_timeout),
+                commit_timeout_ms: crate::timeout_millis(http_cfg.commit_timeout),
                 query_limits,
                 no_signing: identity_only,
                 ..Default::default()
