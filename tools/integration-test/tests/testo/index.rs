@@ -11,6 +11,7 @@ mod backfill_under_writes;
 mod backfill_unique;
 mod backfill_unique_txn;
 mod build_in_background;
+mod composite_in_order;
 mod crdt;
 mod delete;
 mod get;
