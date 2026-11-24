@@ -2946,13 +2946,14 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
-        // `sort_in_key_order` is private to the planner, so no contract test
+        // `order_in_values` is private to the planner, so no contract test
         // reaches it; crates/entry-points/defra-node/tests/in_filter_order.rs runs the
-        // queries it orders over an ASC, a DESC and no index. Boundary.
+        // queries it orders over an ASC, a DESC and no index, and the testo
+        // scenarios in index/composite_in_order.rs the unordered ones. Boundary.
         family: "Order-preserving key encoding",
-        name: "lookups_strictly_increasing / reversed_lookups_strictly_decreasing — `_in` point lookups run in key order, each once",
+        name: "lookups_strictly_increasing / reversed_lookups_strictly_decreasing / written_sublist — `_in` point lookups run in key order under an order, as written without one, each once",
         axis: Lean,
-        anchor: "crates/engine/query/src/planner/index_selection/filter_to_scan.rs filter_to_index_scan, sort_in_key_order",
+        anchor: "crates/engine/query/src/planner/index_selection/filter_to_scan.rs filter_to_index_scan, order_in_values",
         model_ref: "OrderEncoding.InLookup (lake build)",
         tiers: &[Boundary],
         bound_by: "",
@@ -3780,9 +3781,9 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Collection truncate",
-        name: "INV_NoRemovalWithoutPermission / INV_NoRemovalFromChunks / INV_FilteredNeverOnBranchable / INV_FilteredRemovesOnlyCommittedMatches / INV_BadFilterRemovesNothing / INV_UnfilteredRemovesAll / INV_UnfilteredEmptiesView / INV_UnfilteredClearsSearchRecords",
+        name: "INV_NoRemovalWithoutPermission / INV_NoRemovalFromChunks / INV_FilteredNeverOnBranchable / INV_FilteredRemovesOnlyCommittedMatches / INV_FilteredRemovesOnlyCurrentMatches / INV_RetryExhaustionKeepsProgress / INV_MetadataExhaustionRefused / INV_BadFilterRemovesNothing / INV_UnfilteredRemovesAll / INV_UnfilteredEmptiesView / INV_UnfilteredClearsSearchRecords",
         axis: Tla,
-        anchor: "crates/database/db/src/collection/ops/truncate/mod.rs DB::truncate_collection_as, DB::truncate_parsed_as, DB::truncate_target, conditions, DB::truncate; crates/database/db/src/collection/ops/truncate/all.rs DB::truncate_all, DB::truncate_metadata_in; crates/database/db/src/collection/ops/truncate/filtered.rs DB::truncate_matching; crates/database/db/src/chunk/user_writes.rs ensure_admin_changeable; crates/database/db/src/merge/se/serve.rs store_artifacts, build_reply",
+        anchor: "crates/database/db/src/collection/ops/truncate/mod.rs DB::truncate_collection_as, DB::truncate_parsed_as, DB::truncate_target, conditions, DB::truncate; crates/database/db/src/collection/ops/truncate/all.rs DB::truncate_all, DB::truncate_documents, DB::truncate_collection_metadata, DB::truncate_metadata_in; crates/database/db/src/collection/ops/truncate/deferred.rs DB::truncate_deferred_indexes; crates/database/db/src/collection/ops/truncate/filtered.rs DB::truncate_matching, matching_doc_ids_in_attempt; crates/database/db/src/chunk/user_writes.rs ensure_admin_changeable; crates/database/db/src/merge/se/serve.rs store_artifacts, build_reply",
         model_ref: "MC_Truncate_{Green,Red_*}.cfg",
         tiers: &[Boundary],
         bound_by: "",
