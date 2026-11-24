@@ -328,6 +328,9 @@ lean_lib NacToggle where
 lean_lib FfiOptions where
 
 @[default_target]
+lean_lib GoConfigLayout where
+
+@[default_target]
 lean_lib NacRelationship where
 
 @[default_target]

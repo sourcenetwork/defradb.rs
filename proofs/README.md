@@ -154,6 +154,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | FFI transaction turns | TLA+ / Lean | ffi |
 | FFI options structs | Lean | ffi |
 | Vector index defaults | Lean | schema |
+| Go config layout | Lean | cli |
 | Selected collection version | TLA+ / Lean | db, query, ffi |
 | Per-operation signing choice | Lean | defra-core, http, ffi, cli |
 | DNS resolver fallback | Lean | p2p |

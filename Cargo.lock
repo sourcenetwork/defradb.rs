@@ -6238,6 +6238,7 @@ dependencies = [
  "chrono",
  "ciborium",
  "cid",
+ "clap",
  "cli",
  "commonware-codec",
  "crypto",
