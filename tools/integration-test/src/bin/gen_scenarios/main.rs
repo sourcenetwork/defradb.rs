@@ -33,13 +33,9 @@ use rapidhash::RapidHashSet;
 use tree::Tree;
 
 /// Go test files that are ported by hand, with their own test file. They are
-/// not generated, but stay in the module tree. The NAC relationship files
-/// carry Go #5342 (an empty target actor is refused), which lands after the
-/// pin; once the pin includes it they go back to being generated.
+/// not generated, but stay in the module tree.
 const HAND_PORTED: &[&str] = &[
     "tests/integration/collection_version/similarity_test.go",
-    "tests/integration/acp/nac/add_nac_relationship_test.go",
-    "tests/integration/acp/nac/delete_nac_relationship_test.go",
     // The peer-leave wait is maintained until the generator can emit it.
     "tests/integration/net/simple/peer/subscribe/document/with_add_remove_test.go",
 ];
