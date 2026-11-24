@@ -23,7 +23,7 @@ pub use error::{Error, Result};
 mod channel;
 
 mod types;
-pub use defra_kms::BlockDocIDResolver;
+pub use defra_kms::{BlockDocIDResolver, BlockOwner};
 pub use types::{EncryptionCid, KeyScope, PolicyDecision};
 
 mod context;

@@ -56,6 +56,10 @@ fn parse_event_filter(event: Option<&str>) -> Result<EventSubscriptionFilter, Ht
             permissions: &[NodePermission::DacStatus],
             events: vec![events::EventName::AcpHeightAdvanced],
         }),
+        Some("acp-takeover-reconciled") => Ok(EventSubscriptionFilter {
+            permissions: &[NodePermission::DacStatus],
+            events: vec![events::EventName::AcpTakeoverReconciled],
+        }),
         Some("update") => Ok(EventSubscriptionFilter {
             permissions: &[NodePermission::DocumentRead],
             events: vec![events::EventName::Update],
@@ -279,6 +283,38 @@ pub async fn events_sse(
                         "entries_invalidated": data.entries_invalidated,
                     }
                 })
+            } else if let Some(data) = message.as_acp_takeover_reconciled() {
+                let submission = |item: &events::AcpTakeoverSubmission| {
+                    serde_json::json!({
+                        "kind": item.kind,
+                        "policy_id": item.policy_id,
+                        "resource": item.resource,
+                        "object": item.object,
+                        "relation": item.relation,
+                        "subject": item.subject,
+                        "add": item.add,
+                        "actor": item.actor,
+                    })
+                };
+                serde_json::json!({
+                    "name": "acp-takeover-reconciled",
+                    "data": {
+                        "term": data.term,
+                        "cut_height": data.cut_height,
+                        "cut_block": data.cut_block,
+                        "closed": data.closed,
+                        "applied_again": data.applied_again.iter().map(submission).collect::<Vec<_>>(),
+                        "owed_again": data.owed_again.iter().map(submission).collect::<Vec<_>>(),
+                        "unrestorable": data.unrestorable.iter().map(|item| serde_json::json!({
+                            "kind": item.kind,
+                            "policy_id": item.policy_id,
+                            "resource": item.resource,
+                            "object": item.object,
+                            "actor": item.actor,
+                            "reason": item.reason,
+                        })).collect::<Vec<_>>(),
+                    }
+                })
             } else if message.name == events::EventName::ReplicatorCompleted {
                 let data = message.as_replicator_completed().filter(|_| can_read_replicators).map_or_else(
                     || serde_json::json!({}),
@@ -316,6 +352,16 @@ mod tests {
     fn parse_event_filter_rejects_unknown_filters() {
         let err = parse_event_filter(Some("typo-event")).unwrap_err();
         assert!(matches!(err, HttpError::BadRequest(_)));
+    }
+
+    #[test]
+    fn parse_event_filter_accepts_takeover_reports() {
+        let filter = parse_event_filter(Some("acp-takeover-reconciled")).expect("takeover filter");
+        assert_eq!(
+            filter.events,
+            vec![events::EventName::AcpTakeoverReconciled]
+        );
+        assert_eq!(filter.permissions, &[NodePermission::DacStatus]);
     }
 
     #[test]

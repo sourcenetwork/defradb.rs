@@ -234,6 +234,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             &local_peer_id,
             Arc::clone(&head_provider),
             Arc::clone(&authorizer) as Arc<dyn AccessAuthorizer>,
+            max_doc_sync_request_doc_ids,
         );
 
         let failure_tx: Arc<kovan::AtomOption<mpsc::Sender<super::PushFailure>>> =

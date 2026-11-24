@@ -8,10 +8,18 @@ use storage::corekv::{
     RetryAttemptError, RetryAttemptFn, RetryAttemptFuture, RetryAttemptValue, RetryTxn, Store,
 };
 
-use crate::txn::DbTxn;
+use crate::txn::{DbTxn, LentTxn};
 use crate::{Error, Result};
 
 struct DbAttempt<S, F>
+where
+    S: Store,
+{
+    db: Arc<crate::database::DB<S>>,
+    run: F,
+}
+
+struct DbAttemptWithTxn<S, F>
 where
     S: Store,
 {
@@ -45,6 +53,33 @@ where
     }
 }
 
+impl<S, F, T> RetryAttemptFn for DbAttemptWithTxn<S, F>
+where
+    S: Store + 'static,
+    F: MaybeSend + for<'t> FnMut(&'t LentTxn<S>) -> MaybeBoxFuture<'t, Result<T>>,
+    T: Send + 'static,
+{
+    fn run<'a>(&'a mut self, retry: &'a mut dyn RetryTxn) -> RetryAttemptFuture<'a> {
+        Box::pin(async move {
+            let io = retry.begin_attempt_io()?;
+            let txn: LentTxn<S> = Arc::new(self.db.new_db_txn(
+                datastore::BasicTxn::from_retry_attempt_io(io, 0, self.db.crdts().clone()),
+            ));
+            let value = (self.run)(&txn)
+                .await
+                .map_err(|error| RetryAttemptError::Abort(Box::new(error)))?;
+            let txn = Arc::try_unwrap(txn).map_err(|_| {
+                RetryAttemptError::Abort(Box::new(crate::Error::Other(
+                    "an attempt transaction was still lent when its work ended".into(),
+                )))
+            })?;
+            let (io, callbacks) = txn.into_retry_attempt()?;
+            retry.finish_attempt_io(io, callbacks)?;
+            Ok(Box::new(value) as RetryAttemptValue)
+        })
+    }
+}
+
 impl<S> crate::database::DB<S>
 where
     S: Store + 'static,
@@ -57,6 +92,32 @@ where
         T: Send + 'static,
     {
         let attempt = DbAttempt {
+            db: Arc::clone(self),
+            run,
+        };
+        let value = self
+            .store()
+            .transact_retry(self.options().retry_options(), Box::new(attempt))
+            .await
+            .map_err(|error| match error.downcast_abort::<Error>() {
+                Ok(error) => error,
+                Err(error) => Error::Storage(error.into_storage()),
+            })?;
+        value
+            .downcast::<T>()
+            .map(|value| *value)
+            .map_err(|_| Error::Other("invalid retried attempt result".into()))
+    }
+
+    /// Run `run` in an engine-retried transaction, lending that transaction
+    /// to the closure for reads. Once the closure returns, every handle is
+    /// gone, so the engine can commit the attempt it read and wrote in.
+    pub(crate) async fn transact_db_with_txn<T, F>(self: &Arc<Self>, run: F) -> Result<T>
+    where
+        F: MaybeSend + 'static + for<'t> FnMut(&'t LentTxn<S>) -> MaybeBoxFuture<'t, Result<T>>,
+        T: Send + 'static,
+    {
+        let attempt = DbAttemptWithTxn {
             db: Arc::clone(self),
             run,
         };

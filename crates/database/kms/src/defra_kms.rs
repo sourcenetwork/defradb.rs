@@ -217,13 +217,13 @@ impl DefraKms {
         cid: &EncryptionCid,
         delegated_actor: Option<(&Did, &str)>,
     ) -> Result<LocalRelease> {
-        let doc_ids = self.doc_resolver.doc_ids_for_block(cid).await?;
-        if doc_ids.is_empty() {
+        let owners = self.doc_resolver.owners_of_block(cid).await?;
+        if owners.is_empty() {
             return Ok(LocalRelease::OwnershipUnknown);
         }
-        for doc_id in doc_ids {
+        for owner in owners {
             let scope = KeyScope::Document {
-                doc_id,
+                doc_id: owner.doc_id,
                 field: None,
             };
             if matches!(
@@ -235,7 +235,12 @@ impl DefraKms {
             if let Some((delegate, collection_id)) = delegated_actor {
                 if matches!(
                     self.policy
-                        .check_delegated_release(delegate, &scope, collection_id)
+                        .check_delegated_release(
+                            delegate,
+                            &scope,
+                            collection_id,
+                            &owner.block_collection_id,
+                        )
                         .await?,
                     PolicyDecision::Allow
                 ) {
@@ -288,12 +293,21 @@ fn remote_error(error: inputs::Error<Error>) -> Error {
     }
 }
 
+/// A document whose readers decide a block's key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockOwner {
+    pub doc_id: String,
+    /// The collection the block itself is in. A chunk's block names its chunk
+    /// collection while its owner is the parent, so a delegation is checked against it.
+    pub block_collection_id: String,
+}
+
 /// Resolves which documents own a block, via the node's
 /// block-CID -> DocID index (mirrors Go's `ResolveBlockDocIDs`).
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait BlockDocIDResolver: defra_core::thread_bounds::MaybeSendSync {
-    async fn doc_ids_for_block(&self, cid: &EncryptionCid) -> Result<Vec<String>>;
+    async fn owners_of_block(&self, cid: &EncryptionCid) -> Result<Vec<BlockOwner>>;
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]

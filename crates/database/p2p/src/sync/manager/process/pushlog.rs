@@ -34,7 +34,9 @@ use crate::error::{Error, Result};
 use crate::message::PushLogBroadcast;
 use crate::model_trace::Outcome;
 use crate::sync::manager::events::SyncEvent;
-use crate::sync::manager::links::find_all_missing_links;
+use crate::sync::manager::links::{
+    extract_ipld_links, find_all_missing_links, frontier_or_unknown,
+};
 use crate::sync::manager::pending::PendingDag;
 use crate::sync::pending_store::{Admission, PersistedPendingDag, Registration};
 use crate::ExplicitReplayAuthorization;
@@ -464,14 +466,19 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         // Check for missing linked blocks at every depth of the reachable DAG.
         // A single-level check can incorrectly declare Collection -> Composite
         // roots complete while nested field blocks are still missing locally.
-        let missing = match find_all_missing_links(self.blockstore.as_ref(), &msg.block).await {
-            Ok(m) => m,
-            Err(e) => {
-                // Block parsing failed - emit error event and propagate error
-                self.emit_sync_error(cid, &e)?;
-                return Err(e);
-            }
-        };
+        // Only the pushed block failing to parse refuses the push. A local
+        // fault reading or parsing a stored descendant leaves the frontier
+        // unknown: the head registers with frontier `[root]` and is acked, and
+        // the receiver clock walks it again.
+        if let Err(e) = extract_ipld_links(&msg.block) {
+            self.emit_sync_error(cid, &e)?;
+            return Err(e);
+        }
+        let missing = frontier_or_unknown(
+            *cid,
+            find_all_missing_links(self.blockstore.as_ref(), &msg.block).await,
+            &self.diagnostics,
+        );
 
         if missing.is_empty() {
             tracing::debug!(
