@@ -90,6 +90,11 @@ pub struct NewNode {
     /// authenticates as a node.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub without_node_identity: bool,
+    /// A Rust node started from this Go-written `config.yaml` body, loaded
+    /// through the CLI's config loader: its `net` section decides whether the
+    /// node runs P2P and where it listens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub go_config: Option<String>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -124,6 +129,7 @@ impl Op for NewNode {
         probe.iroh = false;
         probe.registered_identity = false;
         probe.without_node_identity = false;
+        probe.go_config = None;
         probe.node_identity_seed = None;
         probe.enable_signing = false;
         probe.key_type = None;
@@ -161,10 +167,15 @@ impl Op for NewNode {
             })?)),
             None => None,
         };
+        let (network, listen) = match &self.go_config {
+            Some(body) => go_config_network(body)?,
+            None => (self.network, Vec::new()),
+        };
         let spec = NodeSpec {
-            network: self.network,
+            network,
             dir,
-            listen: Vec::new(),
+            listen,
+            go_config: self.go_config.is_some(),
             admission: self.admission.clone(),
             resolv_conf: self.resolv_conf(state.client_type())?,
             iroh_network: self.iroh,
@@ -183,6 +194,24 @@ impl Op for NewNode {
         state.start_node(self.common.node(), spec);
         Ok(json!({}))
     }
+}
+
+/// Loads a Go-written `config.yaml` through the CLI's loader, as `defradb
+/// --rootdir <dir>` does, and answers whether the node runs P2P and the
+/// addresses it listens on.
+fn go_config_network(body: &str) -> Result<(bool, Vec<String>), Failure> {
+    use clap::Parser;
+    let root = tempfile::tempdir()
+        .map_err(|e| Failure::operation(format!("could not make the node's rootdir: {e}")))?;
+    std::fs::write(root.path().join("config.yaml"), body)
+        .map_err(|e| Failure::operation(format!("could not write config.yaml: {e}")))?;
+    let rootdir = root.path().to_string_lossy().into_owned();
+    let args = ["defradb", "--rootdir", rootdir.as_str(), "version"];
+    let args = cli::cli::Cli::try_parse_from(args)
+        .map_err(|e| Failure::operation(format!("could not parse the CLI arguments: {e}")))?;
+    let config = cli::config::Config::load(&args)
+        .map_err(|e| Failure::operation(format!("could not load config.yaml: {e}")))?;
+    Ok((!config.net.p2p_disabled, config.net.p2p_addresses))
 }
 
 impl NewNode {

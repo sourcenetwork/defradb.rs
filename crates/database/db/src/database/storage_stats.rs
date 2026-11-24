@@ -278,6 +278,9 @@ fn datastore_kind(
     if key.starts_with(b"/collection/vi/") {
         return "indexes";
     }
+    if key.starts_with(b"/index/") {
+        return "indexes";
+    }
     let Some(key) = key.strip_prefix(b"/") else {
         return "other";
     };
@@ -313,6 +316,12 @@ fn datastore_collection(
     key: &[u8],
     layouts: &BTreeMap<u32, Vec<schema::IndexDescription>>,
 ) -> Option<u32> {
+    if let Some(key) = key.strip_prefix(b"/index/") {
+        let (rest, id) = decode_uvarint_ascending(key).ok()?;
+        let id = u32::try_from(id).ok()?;
+        let rest = rest.strip_prefix(b"/")?;
+        return ordered_index_prefix(rest, id, layouts).then_some(id);
+    }
     if let Some(key) = key.strip_prefix(b"/collection/vi/") {
         let (rest, id) = decode_uvarint_ascending(key).ok()?;
         rest.starts_with(b"/").then_some(())?;

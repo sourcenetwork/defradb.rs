@@ -4,6 +4,9 @@
 //! It is primarily used by the `defra` binary but can also be used for testing.
 
 pub(crate) mod backup_adapter;
+#[cfg(test)]
+#[path = "backup_adapter_tests.rs"]
+mod backup_adapter_tests;
 pub(crate) mod block_adapter;
 pub mod cli;
 pub mod commands;

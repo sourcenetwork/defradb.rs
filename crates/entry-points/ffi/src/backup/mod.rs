@@ -7,4 +7,6 @@ pub use export::defra_backup_export;
 pub use import::defra_backup_import;
 
 #[cfg(test)]
+mod import_tests;
+#[cfg(test)]
 mod tests;

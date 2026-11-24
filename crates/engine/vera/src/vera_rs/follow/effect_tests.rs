@@ -48,6 +48,7 @@ fn an_archive_and_other_requests_are_told_apart() {
             policy_id: POLICY.into(),
             resource: "users".into(),
             object: "bae-1".into(),
+            actor: Some(OWNER.into()),
         }
     );
     assert_eq!(effect_of(b"not a request"), Effect::Other);
