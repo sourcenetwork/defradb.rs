@@ -27,12 +27,6 @@ const ENTRIES: &[(&str, &str, &[&str], &str)] = &[
         LENS_3044,
     ),
     (
-        "tests/integration/collection_version/updates/remove/col_source_transform_test.go",
-        "TestColVersionUpdateRemoveCollectionSourceTransform",
-        SECONDARY_INDEX,
-        "TODO(https://github.com/sourcenetwork/defradb.rs/issues/3052): removing the transform leaves the migrated value the reindex wrote.",
-    ),
-    (
         "tests/integration/query/one_to_many/with_sum_filter_order_test.go",
         "TestOneToManyLimitAscOrderSumOfSubTypeAndLimitAscOrderFieldsOfSubtype",
         SECONDARY_INDEX,

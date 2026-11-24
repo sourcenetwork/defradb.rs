@@ -93,6 +93,10 @@ impl InFlight {
 pub enum OwedOp {
     Add,
     Delete,
+    /// Retire the whole object: its document was deleted. The provider
+    /// removes every relationship on it and its owner no longer counts. Its
+    /// tuple is [`OwedTuple::archive`].
+    Archive,
 }
 
 /// The subject of an owed tuple, in a form this module owns: the stored
@@ -165,6 +169,20 @@ pub struct OwedTuple {
     pub object: String,
     pub relation: String,
     pub subject: OwedSubject,
+}
+
+impl OwedTuple {
+    /// The tuple an archive of one object is recorded under: no relation,
+    /// and every subject, since it takes them all.
+    pub fn archive(policy_id: &str, resource: &str, object: &str) -> Self {
+        Self {
+            policy_id: policy_id.to_owned(),
+            resource: resource.to_owned(),
+            object: object.to_owned(),
+            relation: String::new(),
+            subject: OwedSubject::Wildcard,
+        }
+    }
 }
 
 /// What lets the node submit the change as its acting DID.

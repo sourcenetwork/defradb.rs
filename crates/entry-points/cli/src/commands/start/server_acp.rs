@@ -358,6 +358,11 @@ pub(super) fn vera_rs_setup(
     let owed = Arc::downgrade(&gate);
     let owed: std::sync::Weak<dyn acp::OweAgain> = owed;
     vera::VeraProvider::owe_voided_to(provider.as_ref(), owed);
+    // A switch that voided more than the provider's journal keeps is rebuilt
+    // from what the gate recorded.
+    let recovery = Arc::downgrade(&gate);
+    let recovery: std::sync::Weak<dyn acp::RecoverySource> = recovery;
+    vera::VeraProvider::set_recovery_source(provider.as_ref(), recovery);
     DocumentAcpSetup {
         document_acp: gate,
         dac_policies: Arc::new(dac_policies),
