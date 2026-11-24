@@ -578,6 +578,7 @@ RUNS=(
   "MC_Truncate_Red_Shape.cfg Truncate.tla RED" # filter shape check left out: a non-filter removes everything (INV_BadFilterRemovesNothing)
   "MC_Truncate_Red_FirstExhaust.cfg Truncate.tla RED" # the first chunk can exhaust before progress
   "MC_Truncate_Red_PartialRetry.cfg Truncate.tla RED" # retry exhaustion loses committed partial progress (INV_RetryExhaustionKeepsProgress)
+  "MC_Truncate_Red_MetadataError.cfg Truncate.tla RED" # the metadata cleanup runs out of retries after every chunk and the request is reported a success (INV_MetadataExhaustionRefused)
   "MC_Truncate_Red_Reread.cfg Truncate.tla RED" # page reread left out: a stale first read purges a document moved out of the filter (INV_FilteredRemovesOnlyCurrentMatches)
   "MC_Truncate_Red_ViewCache.cfg Truncate.tla RED" # #2703: view cache clear left out: a truncated view still shows its rows (INV_UnfilteredEmptiesView)
   "MC_Truncate_Red_SearchRecords.cfg Truncate.tla RED" # #2728: /se/ prefix delete left out: an encrypted search still finds truncated documents (INV_UnfilteredClearsSearchRecords)

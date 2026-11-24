@@ -3557,9 +3557,9 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Collection truncate",
-        name: "INV_NoRemovalWithoutPermission / INV_NoRemovalFromChunks / INV_FilteredNeverOnBranchable / INV_FilteredRemovesOnlyCommittedMatches / INV_FilteredRemovesOnlyCurrentMatches / INV_RetryExhaustionKeepsProgress / INV_BadFilterRemovesNothing / INV_UnfilteredRemovesAll / INV_UnfilteredEmptiesView / INV_UnfilteredClearsSearchRecords",
+        name: "INV_NoRemovalWithoutPermission / INV_NoRemovalFromChunks / INV_FilteredNeverOnBranchable / INV_FilteredRemovesOnlyCommittedMatches / INV_FilteredRemovesOnlyCurrentMatches / INV_RetryExhaustionKeepsProgress / INV_MetadataExhaustionRefused / INV_BadFilterRemovesNothing / INV_UnfilteredRemovesAll / INV_UnfilteredEmptiesView / INV_UnfilteredClearsSearchRecords",
         axis: Tla,
-        anchor: "crates/database/db/src/collection/ops/truncate/mod.rs DB::truncate_collection_as, DB::truncate_parsed_as, DB::truncate_target, conditions, DB::truncate; crates/database/db/src/collection/ops/truncate/all.rs DB::truncate_all, DB::truncate_metadata_in; crates/database/db/src/collection/ops/truncate/filtered.rs DB::truncate_matching, matching_doc_ids_in_attempt; crates/database/db/src/chunk/user_writes.rs ensure_admin_changeable; crates/database/db/src/merge/se/serve.rs store_artifacts, build_reply",
+        anchor: "crates/database/db/src/collection/ops/truncate/mod.rs DB::truncate_collection_as, DB::truncate_parsed_as, DB::truncate_target, conditions, DB::truncate; crates/database/db/src/collection/ops/truncate/all.rs DB::truncate_all, DB::truncate_documents, DB::truncate_collection_metadata, DB::truncate_metadata_in; crates/database/db/src/collection/ops/truncate/deferred.rs DB::truncate_deferred_indexes; crates/database/db/src/collection/ops/truncate/filtered.rs DB::truncate_matching, matching_doc_ids_in_attempt; crates/database/db/src/chunk/user_writes.rs ensure_admin_changeable; crates/database/db/src/merge/se/serve.rs store_artifacts, build_reply",
         model_ref: "MC_Truncate_{Green,Red_*}.cfg",
         tiers: &[Boundary],
         bound_by: "",
