@@ -21,11 +21,25 @@ use rapidhash::RapidHashSet;
 use schema::CollectionVersion;
 
 /// The embedder's answers about a replicated document's creator.
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 pub trait ReplicaOwnership: MaybeSendSync {
     /// Whether `actor` is one of this deployment's own actors: a document it
     /// created waits for its own registration and is never registered by a
     /// receiving node.
     fn is_own_actor(&self, collection: &str, actor: &Did) -> bool;
+
+    /// Check current membership before treating a signer outside the static
+    /// set as foreign. A deployment with a fixed membership needs no lookup.
+    /// An unavailable membership source leaves the ordinary merge gates in force.
+    async fn allows_foreign_registration(
+        &self,
+        _collection: &CollectionVersion,
+        _actor: &Did,
+        _provider: &dyn acp::DocumentACP,
+    ) -> acp::Result<bool> {
+        Ok(true)
+    }
 
     /// The relationships a receiving node grants on a document it registers.
     /// They must give `creator` the `update` and `delete` permissions of the

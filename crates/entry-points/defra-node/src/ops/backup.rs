@@ -23,7 +23,7 @@ impl Node {
         pretty: bool,
     ) -> Result<String> {
         self.ops()
-            .export_backup(self.caller(context), collections.to_vec(), pretty)
+            .export_backup(self.admitted_caller(context)?, collections.to_vec(), pretty)
             .await
     }
 
@@ -36,7 +36,7 @@ impl Node {
     /// signed and broadcast as any other write. The import runs outside any
     /// transaction `context` names.
     pub async fn import_backup_as(&self, context: &RequestContext, data: &str) -> Result<()> {
-        let context = self.caller(context).with_txn(None);
+        let context = self.admitted_caller(context)?.with_txn(None);
         let host = NodeHost::new(self, context.clone())?;
         self.import_admitted(context, host, data).await.map(drop)
     }

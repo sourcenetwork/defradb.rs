@@ -94,6 +94,9 @@ pub enum MergeError {
     #[error("history requires a resumable merge turn")]
     HistoryRequired,
 
+    #[error("merge requires a remote registration lookup")]
+    NeedsRegistration(Box<super::RegistrationLookup>),
+
     /// Discard the data attempt before recording a history's rejection.
     #[error(transparent)]
     HistoryAborted(Box<HistoryRejection>),
@@ -162,6 +165,7 @@ impl MergeError {
             | Self::Kms(_)
             | Self::NeedsDecryptionKey(_)
             | Self::NeedsBatchDecryptionKey { .. }
+            | Self::NeedsRegistration(_)
             | Self::HistoryRequired
             | Self::HistoryAborted(_) => MergeErrorDisposition::Retryable,
         }
@@ -169,7 +173,9 @@ impl MergeError {
 }
 
 /// A merge the worker pool could not run (it was shutting down, or the task
-/// panicked) stays retryable: nothing of it was applied.
+/// panicked) stays retryable: nothing of it was applied. A panic does not
+/// establish that the block is invalid, so retaining the retry preserves the
+/// merge obligation even when the underlying failure needs investigation.
 impl From<workers::Error> for MergeError {
     fn from(error: workers::Error) -> Self {
         MergeError::Storage(error.report("merge").to_string())

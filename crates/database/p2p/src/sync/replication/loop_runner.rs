@@ -154,7 +154,7 @@ impl ReplicationLoop {
                             "Poll-based DAG fetch started for missing blocks"
                         );
                     }
-                    ReplicationResult::BitswapFetchStarted { root_cid, query_id } => {
+                    ReplicationResult::BlockSyncFetchStarted { root_cid, query_id } => {
                         tracing::debug!(
                             cid = %root_cid,
                             query_id = ?query_id,

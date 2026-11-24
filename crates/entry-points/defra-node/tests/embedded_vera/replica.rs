@@ -256,3 +256,107 @@ fn a_foreign_creators_row_is_registered_by_the_receiving_node_and_its_changes_fo
     })
     .unwrap();
 }
+
+#[test]
+fn replica_membership_requires_the_configured_owner_and_an_admitted_receiver() {
+    workers::block_on(async {
+        let directory = tempfile::tempdir().unwrap();
+        let node = super::node(directory.path()).await;
+        let vera = node.vera_acp().unwrap();
+        let owner = Did::new(vera.self_did().unwrap()).unwrap();
+        let signer = Did::new(super::STRANGER).unwrap();
+        let policy = vera
+            .add_policy(owner.as_str(), super::POLICY, None)
+            .await
+            .unwrap();
+        let group = acp::ReplicaGroup {
+            owner: owner.clone(),
+            policy,
+            resource: "users".into(),
+            object: "group".into(),
+            relation: "reader".into(),
+        };
+        let provider = node.document_acp();
+        assert!(provider
+            .replica_group_member(&group, &signer)
+            .await
+            .is_err());
+        vera.register_doc_object(&owner, &group.policy, &group.resource, &group.object)
+            .await
+            .unwrap();
+        assert!(provider
+            .replica_group_member(&group, &signer)
+            .await
+            .is_err());
+        vera.add_actor_relationship(
+            &owner,
+            &owner,
+            &group.policy,
+            &group.resource,
+            &group.object,
+            &group.relation,
+            &[],
+        )
+        .await
+        .unwrap();
+        assert!(!provider
+            .replica_group_member(&group, &signer)
+            .await
+            .unwrap());
+        vera.add_actor_relationship(
+            &owner,
+            &signer,
+            &group.policy,
+            &group.resource,
+            &group.object,
+            &group.relation,
+            &[],
+        )
+        .await
+        .unwrap();
+        assert!(provider
+            .replica_group_member(&group, &signer)
+            .await
+            .unwrap());
+        let wrong_owner = acp::ReplicaGroup {
+            owner: signer.clone(),
+            ..group.clone()
+        };
+        assert!(provider
+            .replica_group_member(&wrong_owner, &signer)
+            .await
+            .is_err());
+        vera.delete_actor_relationship(
+            &owner,
+            &signer,
+            &group.policy,
+            &group.resource,
+            &group.object,
+            &group.relation,
+            &[],
+        )
+        .await
+        .unwrap();
+        assert!(!provider
+            .replica_group_member(&group, &signer)
+            .await
+            .unwrap());
+        vera.delete_actor_relationship(
+            &owner,
+            &owner,
+            &group.policy,
+            &group.resource,
+            &group.object,
+            &group.relation,
+            &[],
+        )
+        .await
+        .unwrap();
+        assert!(provider
+            .replica_group_member(&group, &signer)
+            .await
+            .is_err());
+        node.shutdown().await.unwrap();
+    })
+    .unwrap()
+}

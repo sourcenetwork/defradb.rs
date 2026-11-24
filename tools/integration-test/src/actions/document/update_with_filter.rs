@@ -40,7 +40,7 @@ impl Op for UpdateWithFilter {
         let identity = self.common.client_identity(Self::name())?;
         state
             .block_on(state.node_on(self.common.node())?.update_with_filter(
-                &state.context_as(self.txn, identity),
+                &state.context_on(self.common.node(), self.txn, identity, None),
                 &self.collection,
                 &self.filter.to_core(),
                 &self.updater,

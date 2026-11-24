@@ -23,7 +23,6 @@ use crate::dac::DocumentACP;
 use crate::error::{Error, Result};
 use crate::outbox::{OwedAuthority, OwedState};
 use crate::pending::PendingRegistration;
-use crate::provider_command::ProviderCommand;
 
 impl<S> ExternalDocumentAcp<S>
 where
@@ -62,16 +61,7 @@ where
             .is_doc_registered(&owed.policy_id, &owed.resource_name, &owed.doc_id)
             .await?;
         let held = registered
-            || match self
-                .registrar(owed, also)?
-                .register_doc_object(
-                    &owed.creator,
-                    &owed.policy_id,
-                    &owed.resource_name,
-                    &owed.doc_id,
-                )
-                .await
-            {
+            || match owed.submit(self.registrar(owed, also)?.as_ref()).await {
                 Ok(()) => false,
                 Err(error) if self.held_after_refusal(owed, &error).await => true,
                 Err(error) => return Err(error),
@@ -162,11 +152,7 @@ where
         owed: &PendingRegistration,
         also: Option<&str>,
     ) -> Result<(Arc<dyn DocumentACP>, bool)> {
-        let command = ProviderCommand::RegisterObject {
-            policy_id: &owed.policy_id,
-            resource: &owed.resource_name,
-            object: &owed.doc_id,
-        };
+        let command = owed.command();
         if self.carries_bearer_for(&owed.creator)
             && self
                 .provider
@@ -205,11 +191,7 @@ where
         owed: &PendingRegistration,
         also: Option<&str>,
     ) -> Result<Arc<dyn DocumentACP>> {
-        let command = ProviderCommand::RegisterObject {
-            policy_id: &owed.policy_id,
-            resource: &owed.resource_name,
-            object: &owed.doc_id,
-        };
+        let command = owed.command();
         let recorded = match &owed.authority {
             Some(OwedAuthority::Delegation { token }) => Some(token.as_str()),
             Some(OwedAuthority::NodeKey) | None => None,
@@ -424,6 +406,51 @@ mod tests {
         Some(OwedAuthority::Delegation {
             token: token.into(),
         })
+    }
+
+    #[test]
+    fn an_owed_parent_registration_confers_no_ownership_or_access() {
+        workers::block_on(async {
+            let gate = ExternalDocumentAcp::new(
+                Arc::new(Unreached),
+                Arc::new(RegolithStore::in_memory().unwrap()),
+            );
+            let creator = Did::new("did:key:creator").unwrap();
+            let mut owed = PendingRegistration::new(creator.clone(), "policy", "jobs", "child");
+            owed.parent = Some(crate::RegistrationParent {
+                resource: "nodes".into(),
+                object_id: "parent".into(),
+            });
+            let mut txn = gate.store.new_txn(false).await.unwrap();
+            txn.set(&owed.key(), &owed.encode().unwrap()).await.unwrap();
+            txn.commit().await.unwrap();
+
+            assert!(matches!(
+                gate.is_doc_registered("policy", "jobs", "child").await,
+                Err(Error::ProviderUnavailable(_))
+            ));
+            assert_eq!(
+                gate.get_doc_owner("policy", "jobs", "child").await.unwrap(),
+                None
+            );
+            for permission in [
+                DocumentPermission::Read,
+                DocumentPermission::Update,
+                DocumentPermission::Delete,
+            ] {
+                assert!(!gate
+                    .check_doc_access(
+                        &Identity::Authenticated(creator.clone()),
+                        permission,
+                        "policy",
+                        "jobs",
+                        "child"
+                    )
+                    .await
+                    .unwrap());
+            }
+        })
+        .unwrap()
     }
 
     #[test]

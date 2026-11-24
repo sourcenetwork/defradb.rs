@@ -416,10 +416,6 @@ impl PlanNode for IndexScanNode {
         true
     }
 
-    fn has_residual_filter(&self) -> bool {
-        self.residual_filter.is_some()
-    }
-
     fn exec_info(&self) -> ExecInfo {
         let mut info = self.exec_info.clone();
         info.indexes_fetched = self.index_fetches;

@@ -324,7 +324,7 @@ where
                     );
                 }
             }
-            ReplicationResult::BitswapFetchStarted { root_cid, query_id }
+            ReplicationResult::BlockSyncFetchStarted { root_cid, query_id }
         }
         Err(e) => {
             tracing::warn!(

@@ -2,6 +2,7 @@ mod cache;
 mod children;
 mod compare;
 mod explain;
+mod fetched;
 mod node;
 mod plan_node;
 #[cfg(test)]

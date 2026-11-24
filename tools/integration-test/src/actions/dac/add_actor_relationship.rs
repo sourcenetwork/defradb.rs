@@ -15,7 +15,7 @@ pub struct AddDACActorRelationship {
     pub doc_id: Text,
     pub relation: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub target_actor: Option<String>,
+    pub target_actor: Option<Text>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_identity_node: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -62,7 +62,7 @@ impl AddDACActorRelationship {
                 })?,
             None => crate::actions::nac::target_actor(
                 Self::name(),
-                self.target_actor.as_deref(),
+                self.target_actor.as_ref().map(Text::as_str),
                 self.target_identity_seed,
                 None,
                 state,
