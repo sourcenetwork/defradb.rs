@@ -83,7 +83,10 @@ fn node_owned_transaction_keeps_the_selected_actor_and_finality() {
         assert!(node.add_dac_actor_relationship_for_in_txn(
             &handle, &owner.clone().with_authorization_expiration(Some(0)), "Record", &doc, "reader", READER,
         ).await.is_err());
-        let mismatched = owner.clone().with_txn(Some(defra_core::TxnId(u64::MAX)));
+        let mismatched = owner.clone().with_txn(Some(defra_core::TxnId {
+            start: 0,
+            route: u64::MAX,
+        }));
         assert!(node.add_dac_actor_relationship_for_in_txn(
             &handle, &mismatched, "Record", &doc, "reader", READER,
         ).await.is_err());
