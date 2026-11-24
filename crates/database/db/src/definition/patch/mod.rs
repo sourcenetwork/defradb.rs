@@ -138,6 +138,8 @@ impl<S: Store> crate::database::DB<S> {
             .map_err(Error::InvalidPatch)?;
         for version in &added {
             validate::check_added_ids(&txn, version).await?;
+            Collection::validate_default_values(version)?;
+            validate_index_fields(version)?;
         }
         for patched in &changed {
             self.validate_changed(&txn, patched).await?;
@@ -227,8 +229,41 @@ impl<S: Store> crate::database::DB<S> {
                 old_schema.name, old_schema.version_id
             )));
         }
+        validate_index_fields(new_schema)?;
         Ok(())
     }
+}
+
+/// Reject indexes that name fields absent from their own collection version.
+/// A vector embedding's fields are checked by `validate_collection_changes`.
+fn validate_index_fields(version: &CollectionVersion) -> Result<()> {
+    for index in &version.indexes {
+        for field in &index.fields {
+            if !version
+                .fields
+                .iter()
+                .any(|schema_field| schema_field.name == field.name)
+            {
+                return Err(Error::InvalidPatch(format!(
+                    "index '{}' references field '{}' which does not exist in schema",
+                    index.name, field.name
+                )));
+            }
+        }
+    }
+    for index in &version.fulltext_indexes {
+        if !version
+            .fields
+            .iter()
+            .any(|schema_field| schema_field.name == index.field_name)
+        {
+            return Err(Error::InvalidPatch(format!(
+                "full-text index on field '{}' references a field which does not exist in schema",
+                index.field_name
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Complete a changed version the way Go does before validating it: keep its
@@ -397,4 +432,51 @@ fn with_leading_slashes(op: &Value) -> Value {
         }
     }
     op
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use schema::{CType, FieldDescription, FieldKind, FullTextIndexDescription, IndexDescription};
+
+    fn version() -> CollectionVersion {
+        CollectionVersion::new(
+            "Users",
+            "v1",
+            "col-users",
+            vec![FieldDescription::new(
+                "1",
+                "name",
+                FieldKind::string(),
+                CType::LwwRegister,
+            )],
+        )
+    }
+
+    #[test]
+    fn a_missing_index_field_is_refused() {
+        let mut version = version();
+        version.indexes = vec![IndexDescription::new("bad").with_field("missing", false)];
+        let error = validate_index_fields(&version).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("index 'bad' references field 'missing'"));
+    }
+
+    #[test]
+    fn a_present_index_field_is_accepted() {
+        let mut version = version();
+        version.indexes = vec![IndexDescription::new("by_name").with_field("name", false)];
+        validate_index_fields(&version).unwrap();
+    }
+
+    #[test]
+    fn a_missing_fulltext_field_is_refused() {
+        let mut version = version();
+        version.fulltext_indexes = vec![FullTextIndexDescription::new("missing")];
+        let error = validate_index_fields(&version).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("full-text index on field 'missing' references a field"));
+    }
 }
