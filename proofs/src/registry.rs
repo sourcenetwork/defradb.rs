@@ -135,6 +135,23 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // When a takeover's cut may lie below the journal's floor, the journal
+        // cannot vouch for what was voided. The provider closes it as
+        // recoverable and rebuilds from the node's own ledger of confirmed
+        // registrations and relationships, in bounded pages. A page is handed
+        // to the outbox before its cursor is written, the pass is complete
+        // only at the ledger's end, a cursor of an older term is not resumed,
+        // and the provider admits nothing until the source says the pass for
+        // the certified term is over, nor after a second outbox asked.
+        family: "ACP soundness + revocation + dual-path commits",
+        name: "INV_NothingLost / INV_TheirsNotLost / INV_RevocationDenies / LIVE_RecoveryEnds: an uncovered takeover recovers without a new worker, page by page through the outbox; no decision is served before everything the deployment lost is owed, nor once a second node's outbox asked, a committed revocation denies throughout, and the pass ends",
+        axis: Tla,
+        anchor: "crates/engine/vera/src/vera_rs/provider/terms.rs Follower::check_with, Follower::recover; crates/engine/vera/src/vera_rs/provider.rs VeraRsProvider::owe_voided_to; crates/engine/vera/src/vera_rs/follow/journal.rs Journal::close_recoverable, Journal::recovery_needed, Journal::recovered; crates/engine/vera/src/vera_rs/follow/mod.rs Follow::admit, reconcile; crates/engine/acp/src/recovery.rs RecoveryLedger::page, RecoveryCursor, RecoverySource; crates/engine/acp/src/external/recovery.rs RecoverySource::next, RecoverySource::delivered; crates/engine/acp/src/external/voided.rs OweAgain::owe_again, OweAgain::settle_owed",
+        model_ref: "MC_FollowDeploymentRecovery_{Green,Green_OneRecordPages,Red_NoGate,Red_NoHandOver,Red_CursorFirst,Red_CompleteEveryPage,Red_NeverDone,Red_NoTermFence,Red_NoSharedFence}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         family: "Transactional node source grants",
         name: "HostSourceNoop actual changes require authority and observations validate",
         axis: Tla,
@@ -319,6 +336,15 @@ pub const PROPERTIES: &[Property] = &[
         axis: Lean,
         anchor: "crates/engine/vera/src/vera_rs/follow/mod.rs reconcile, uncovered; crates/engine/vera/src/vera_rs/follow/journal.rs Journal::record, Journal::prune, Floor",
         model_ref: "VeraConfirmationJournal (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "vera.rs deployment terms",
+        name: "deny_wins / settled_reads_confirmed / confirmed_outranks_grant / settled_is_proven / unanswered_grant_is_unproven / refused_restores / applied_reads_fact / confirmed_reads_fact / last_iff_end / walk_covers: an unanswered denial wins a recovery slot, an unanswered grant neither outranks what was confirmed nor counts as confirmed, a refused change leaves the slot as it was, the newest answer replaces what was unanswered, and pages read one after the other hand over every slot once and end at the last",
+        axis: Lean,
+        anchor: "crates/engine/acp/src/recovery.rs resolve, RecoveryLedger::confirm, RecoveryLedger::prepare, RecoveryLedger::settle, RecoveryLedger::page; crates/engine/acp/src/external/recovery.rs RecoverySource::next",
+        model_ref: "VeraRecoveryLedger (lake build)",
         tiers: &[Boundary],
         bound_by: "",
     },
@@ -2264,7 +2290,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "ACP soundness + revocation + dual-path commits",
         name: "INV_NoVoidDecision / INV_RevocationDenies / INV_NothingLost / LIVE_ResubmittedSettles: no decision is served from a voided revision, a revocation confirmed on a void block still denies, nothing a term voided is taken as kept, and what is owed again settles",
         axis: Tla,
-        anchor: "crates/engine/vera/src/vera_rs/follow/mod.rs Follow::admit, Follow::still, Follow::epoch, reconcile, scan, uncovered; crates/engine/vera/src/vera_rs/follow/journal.rs Journal::record, Journal::begin_replay, Journal::handled, MAX_CONFIRMATIONS, MAX_CONFIRMATION_BYTES; crates/engine/vera/src/vera_rs/follow/lost.rs lost_effects, tainted_by; crates/engine/vera/src/vera_rs/follow/report.rs TakeoverReport, Applied, Unrestorable; crates/engine/vera/src/vera_rs/provider/terms.rs Follower::check, Follower::publish; crates/engine/vera/src/vera_rs/provider.rs decision_state, admitted_read; crates/engine/vera/src/vera_rs/provider/owed_request.rs locked_worker; crates/engine/acp/src/external/voided.rs OweAgain, VoidedEffect; backbone:acp-light-client HeaderChain::voided",
+        anchor: "crates/engine/vera/src/vera_rs/follow/mod.rs Follow::admit, Follow::still, Follow::epoch, reconcile, scan, uncovered; crates/engine/vera/src/vera_rs/follow/journal.rs Journal::record, Journal::begin_replay, Journal::handled, MAX_CONFIRMATIONS, MAX_CONFIRMATION_BYTES; crates/engine/vera/src/vera_rs/follow/lost.rs lost_effects, tainted_by; crates/engine/vera/src/vera_rs/follow/report.rs TakeoverReport, Applied, Unrestorable; crates/engine/vera/src/vera_rs/provider/terms.rs Follower::check_with, Follower::publish; crates/engine/vera/src/vera_rs/provider.rs decision_state, admitted_read; crates/engine/vera/src/vera_rs/provider/owed_request.rs locked_worker; crates/engine/acp/src/external/voided.rs OweAgain, VoidedEffect; backbone:acp-light-client HeaderChain::voided",
         model_ref: "MC_FollowDeployment_{Green,Green_Window,Red_KeepsCache,Red_ForgetsRevocation,Red_NoGate,Red_NoTaint,Red_AssumesWindow,Red_NoMark,Red_NoDeliveryGate,Red_CollapsesBatch}.cfg",
         tiers: &[Boundary],
         bound_by: "",
@@ -2278,7 +2304,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "ACP soundness + revocation + dual-path commits",
         name: "INV_Classified / INV_Published / INV_PublishedOnce / INV_Complete / INV_CutOfTerm / INV_ClosedNamed / LIVE_Reported: every replayed submission is classified as applied again, owed again or unrestorable, an unrestorable outcome carries its reason, a checked term is reported once, after every replay and with the owed ones, under the cut of its own term, and a check that failed closed says so",
         axis: Tla,
-        anchor: "crates/engine/vera/src/vera_rs/follow/report.rs TakeoverReport, Applied, Unrestorable; crates/engine/vera/src/vera_rs/follow/mod.rs reconcile, first_check; crates/engine/vera/src/vera_rs/follow/lost.rs lost_effects; crates/engine/vera/src/vera_rs/provider/terms.rs Follower::check, Follower::certificate, Follower::owed_effects, Follower::publish, takeover_report; crates/engine/vera/src/vera_rs/follow/journal.rs Journal::close; crates/foundation/events/src/event.rs AcpTakeoverReconciledData",
+        anchor: "crates/engine/vera/src/vera_rs/follow/report.rs TakeoverReport, Applied, Unrestorable; crates/engine/vera/src/vera_rs/follow/mod.rs reconcile, first_check; crates/engine/vera/src/vera_rs/follow/lost.rs lost_effects; crates/engine/vera/src/vera_rs/provider/terms.rs Follower::check_with, Follower::certificate, Follower::owed_effects, Follower::publish, takeover_report; crates/engine/vera/src/vera_rs/follow/journal.rs Journal::close; crates/foundation/events/src/event.rs AcpTakeoverReconciledData",
         model_ref: "MC_TakeoverReport_{Green,Red_NoPublish,Red_NoReason,Red_Early,Red_Duplicate,Red_DropsOwed,Red_NewestCut,Red_UnnamedClosed,Red_UnrecordedClose}.cfg",
         tiers: &[Boundary],
         bound_by: "",

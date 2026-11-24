@@ -811,6 +811,15 @@ RUNS=(
   "MC_FollowDeployment_Red_NoMark.cfg FollowDeployment.tla RED" # replay start not written down: a refused replay cut short is held and its revocation forgotten (INV_RevocationDenies)
   "MC_FollowDeployment_Red_NoDeliveryGate.cfg FollowDeployment.tla RED" # a checked term admits before its owed changes reach the outbox (INV_RevocationDenies)
   "MC_FollowDeployment_Red_CollapsesBatch.cfg FollowDeployment.tla RED" # only the first change of an object handed back together is owed: the revocation after it is lost (INV_RevocationDenies)
+  "MC_FollowDeploymentRecovery_Green.cfg FollowDeploymentRecovery.tla GREEN" # an uncovered takeover is rebuilt from the node's own ledger in pages, across a crash and a second takeover: nothing lost is left unowed when the node decides, a revocation denies, the pass ends
+  "MC_FollowDeploymentRecovery_Green_OneRecordPages.cfg FollowDeploymentRecovery.tla GREEN" # the same with pages of one record
+  "MC_FollowDeploymentRecovery_Red_NoGate.cfg FollowDeploymentRecovery.tla RED" # deciding while the journal is closed: a lost revocation not owed yet lets the grant through (INV_RevocationDenies)
+  "MC_FollowDeploymentRecovery_Red_NoHandOver.cfg FollowDeploymentRecovery.tla RED" # a page's lost records never reach the outbox: the node reopens with them unowed (INV_NothingLost)
+  "MC_FollowDeploymentRecovery_Red_CursorFirst.cfg FollowDeploymentRecovery.tla RED" # the cursor is written before the page is handed over: a crash between loses the page (INV_NothingLost)
+  "MC_FollowDeploymentRecovery_Red_CompleteEveryPage.cfg FollowDeploymentRecovery.tla RED" # a page that stopped at its limit marks the pass complete: later records are never checked (INV_NothingLost)
+  "MC_FollowDeploymentRecovery_Red_NeverDone.cfg FollowDeploymentRecovery.tla RED" # the source never says the pass is over: the node never reopens (LIVE_RecoveryEnds)
+  "MC_FollowDeploymentRecovery_Red_NoTermFence.cfg FollowDeploymentRecovery.tla RED" # a cursor of an older term is resumed: what a second takeover lost behind it is never checked (INV_NothingLost)
+  "MC_FollowDeploymentRecovery_Red_NoSharedFence.cfg FollowDeploymentRecovery.tla RED" # a pass that ends after a second outbox asked reopens: what the takeover voided of that node's is owed by nobody (INV_TheirsNotLost)
   "MC_TakeoverReport_Green.cfg TakeoverReport.tla GREEN" # a checked term is reported once, complete, with its own cut, and a closed check says so
   "MC_TakeoverReport_Red_NoPublish.cfg TakeoverReport.tla RED" # a checked term is not published (INV_Published)
   "MC_TakeoverReport_Red_NoReason.cfg TakeoverReport.tla RED" # an unrestorable replay is unnamed (INV_Classified)

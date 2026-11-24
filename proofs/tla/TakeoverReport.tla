@@ -32,7 +32,7 @@
 \*     report the term a second time.
 \*
 \* Code this models:
-\*   crates/engine/vera/src/vera_rs/provider/terms.rs  Follower::check
+\*   crates/engine/vera/src/vera_rs/provider/terms.rs  Follower::check_with
 \*       (Begin, Finish, Deliver, DeliveryFails, LateRefuse),
 \*       Follower::certificate (the term and its cut, read together),
 \*       Follower::owed_effects (Refuse), Follower::publish, takeover_report,

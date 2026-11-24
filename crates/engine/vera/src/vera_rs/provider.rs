@@ -43,6 +43,9 @@ mod exact_relationship;
 mod genesis;
 mod owed_request;
 mod reach;
+#[cfg(test)]
+#[path = "provider/recovery_tests.rs"]
+mod recovery_tests;
 mod registration_list;
 #[cfg(test)]
 mod signer_tests;
@@ -343,6 +346,7 @@ impl VeraRsProvider {
             follow,
             bus: event_bus.clone(),
             sink: regolith::sync::OnceCell::new(),
+            recovery: regolith::sync::OnceCell::new(),
             shared: std::sync::atomic::AtomicBool::new(false),
             holds_key: Box::new(move |did| did == own || holds_registered_key(did)),
         });
@@ -374,7 +378,7 @@ impl VeraRsProvider {
             _light_client_observer,
             edge: edge.clone(),
         };
-        provider.follower.check().await;
+        provider.follower.check_with(&provider).await;
         provider.recover_pending().await?;
         Ok(provider)
     }
@@ -387,7 +391,7 @@ impl VeraRsProvider {
         match self.follower.admit() {
             Ok(epoch) => Ok(epoch),
             Err(_) => {
-                self.follower.check().await;
+                self.follower.check_with(self).await;
                 self.follower.admit()
             }
         }
@@ -1107,6 +1111,12 @@ impl VeraProvider for VeraRsProvider {
         }
     }
 
+    fn set_recovery_source(&self, source: std::sync::Weak<dyn acp::RecoverySource>) {
+        if self.follower.recovery.set(source).is_err() {
+            tracing::warn!("this vera.rs provider already has a recovery source");
+        }
+    }
+
     fn delegation_audience(&self) -> Option<acp::DelegationAudience> {
         Some(acp::DelegationAudience {
             worker: self.worker_did.clone(),
@@ -1133,6 +1143,102 @@ impl VeraProvider for VeraRsProvider {
         let audience = self.delegation_audience()?;
         bearer::caller_of_request_delegation(token, &audience, || request_digest(command))
             .map(|caller| caller.map_err(|error| refused("request delegation", error)))
+    }
+}
+
+impl VeraRsProvider {
+    /// Whether `term` is still the certified one. A pass asks before and
+    /// after each proof it reads, so a page holds only what its term showed.
+    fn still_recovering(&self, term: u64) -> Result<(), String> {
+        if self.follower.certified() == term {
+            return Ok(());
+        }
+        Err(format!("Vera recovery term changed from {term}"))
+    }
+}
+
+#[async_trait]
+impl acp::RecoveryVerifier for VeraRsProvider {
+    async fn term(&self) -> Result<u64, String> {
+        Ok(self.follower.certified())
+    }
+
+    async fn object_owner(
+        &self,
+        term: u64,
+        policy_id: &str,
+        resource: &str,
+        object_id: &str,
+    ) -> Result<Option<String>, String> {
+        self.still_recovering(term)?;
+        let policy = Self::policy_id_to_bytes32(policy_id)
+            .map_err(|error| error.to_string())
+            .map(hex::encode)?;
+        let object = acp_light_client::Object {
+            resource: resource.into(),
+            id: object_id.into(),
+        };
+        let owner = verified(self.light_client.header_chain(), || {
+            self.light_client.read_object_owner(&policy, &object)
+        })
+        .await
+        .map_err(|error| {
+            reach::read_error(&self.light_client, "recovery owner proof", error).to_string()
+        })?;
+        self.still_recovering(term)?;
+        Ok(owner.map(|owner| did_spelling::defra(owner.0.as_str()).into_owned()))
+    }
+
+    async fn relationship(
+        &self,
+        term: u64,
+        owner: &identity::Did,
+        policy_id: &str,
+        resource: &str,
+        object_id: &str,
+        relation: &str,
+        subject: &acp::OwedSubject,
+    ) -> Result<acp::Observed, String> {
+        self.still_recovering(term)?;
+        // The deployment is asked about one explicit actor, as every other
+        // observation is; any other subject cannot be read.
+        let actor = match acp::Subject::from(subject.clone()) {
+            acp::Subject::Entity(did) if !did.is_wildcard() => did.as_str().to_owned(),
+            other => {
+                return Ok(acp::Observed::Unobservable(format!(
+                    "a recovery pass cannot read the subject {other:?}"
+                )))
+            }
+        };
+        // The deployment shows a relationship to the object's owner and to
+        // the relation's managers. The pass reads the node's own record of
+        // the object, whose owner the deployment was just seen to hold.
+        let query = ActorRelationshipQuery {
+            requester: owner.as_str(),
+            actor: &actor,
+            policy: policy_id,
+            resource,
+            object: object_id,
+            relation,
+        };
+        let observed = verified(self.light_client.header_chain(), || async {
+            exact_relationship::query(&self.light_client, query)
+                .await
+                .map_err(|error| Box::new(error) as Box<dyn std::error::Error + Send + Sync>)
+        })
+        .await;
+        self.still_recovering(term)?;
+        match observed {
+            Ok(true) => Ok(acp::Observed::Held),
+            Ok(false) => Ok(acp::Observed::Absent),
+            Err(error) => match error.downcast::<ProviderError>() {
+                Ok(error) if matches!(*error, ProviderError::RelationshipObservationDenied) => {
+                    Ok(acp::Observed::Unobservable(error.to_string()))
+                }
+                Ok(error) => Err(error.to_string()),
+                Err(error) => Err(error.to_string()),
+            },
+        }
     }
 }
 

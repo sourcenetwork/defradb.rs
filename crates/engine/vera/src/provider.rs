@@ -568,6 +568,11 @@ pub trait VeraProvider: MaybeSendSync {
     /// device voided, to be owed again. A provider without terms takes none.
     fn owe_voided_to(&self, _sink: std::sync::Weak<dyn acp::OweAgain>) {}
 
+    /// Give the provider the node's own access-state source. A takeover that
+    /// may have voided more than the journal keeps rebuilds from it instead
+    /// of a new worker.
+    fn set_recovery_source(&self, _source: std::sync::Weak<dyn acp::RecoverySource>) {}
+
     /// What a caller's own delegation must name for this provider to act
     /// under it, with the deployment's genesis identity when the provider
     /// knows it; `None` when the provider takes none.

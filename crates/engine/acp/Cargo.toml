@@ -41,6 +41,7 @@ sha2 = { workspace = true, features = ["asm"] }
 
 [dev-dependencies]
 bytes = { workspace = true }
+mantra-macros = "0.9"
 tempfile = "3"
 
 [lints]
