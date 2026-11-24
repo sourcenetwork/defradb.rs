@@ -86,7 +86,12 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         let mut prepared = PreparedMutations {
             request_time,
             mutations: RapidHashMap::new(),
-            inputs: crate::prepared::PreparedInputMemo::default(),
+            inputs: match &request.known_inputs {
+                Some(known) => {
+                    crate::prepared::PreparedInputMemo::default().with_known(Arc::clone(known))
+                }
+                None => crate::prepared::PreparedInputMemo::default(),
+            },
             engine_managed_retry: !mutations
                 .iter()
                 .any(|mutation| mutation.mutation_type == MutationType::Truncate)

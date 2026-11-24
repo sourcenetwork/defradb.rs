@@ -388,12 +388,19 @@ Under a local policy, with Alice's article about rivers and a public article abo
 
 While the model answers every request with 500, adding an article fails with `embedding error: embedding provider returned 500 Internal Server Error`, and afterwards `Article` and `Article__body_chunk` are both empty.
 
-# `defra.chunk.embed.backup`: Importing a backup embeds the chunks again
+# `defra.chunk.embed.backup`: A backup keeps the chunk vectors
 
 - **Parents:** ["defra.chunk.embed"]
-- **Scenarios:** ["chunk::embed_backup::importing_a_backup_embeds_the_chunks_again", "chunk::embed_backup::importing_a_backup_while_the_model_fails_reports_it"]
+- **Scenarios:** ["chunk::embed_backup::importing_a_backup_keeps_the_chunk_vectors"]
 
-A backup holds no vectors. Importing an article's backup into a second node asks that node's model for each chunk once, and every chunk there holds its vector. While the model answers with 500, the import fails with `embedding error: embedding provider returned 500 Internal Server Error`, and the second node has no `Article` and no chunks.
+A backup of `Article` also holds `Article__body_chunk`: each current chunk's `text` once, with its `body_v`. Importing it into a second node while that node's model answers every request with 500 succeeds and asks the model for nothing. Every chunk there holds the vector from the backup, under the same `_docID` it has on the first node.
+
+# `defra.chunk.embed.backup_reembeds`: A backup without chunk vectors embeds the chunks again
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_backup::importing_a_backup_without_vectors_embeds_the_chunks_again", "chunk::embed_backup::importing_a_backup_without_vectors_while_the_model_fails_reports_it"]
+
+Importing a backup whose `Article` has a body and which holds no `Article__body_chunk` asks the node's model for each chunk once, and every chunk holds its vector. While the model answers with 500, the import fails with `embedding error: embedding provider returned 500 Internal Server Error`, and the node has no `Article` and no chunks.
 
 # `defra.chunk.embed.unconfigured`: A chunk embedding without a model or URL fails the write
 

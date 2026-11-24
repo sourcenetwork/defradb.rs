@@ -214,6 +214,7 @@ pub async fn graphql_get(
         context: Default::default(),
         parsed: None,
         filter_origin: Default::default(),
+        known_inputs: None,
     };
 
     let response = execute_with_context(&state, &identity, request).await;
@@ -312,6 +313,7 @@ pub async fn graphql_transactional(
         context: Default::default(),
         parsed: None,
         filter_origin: Default::default(),
+        known_inputs: None,
     };
 
     // Check for transaction ID in header first (Go-compatible), then body

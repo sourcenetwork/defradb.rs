@@ -4,7 +4,7 @@ use std::sync::Arc;
 use acp::nac::NodePermission;
 use document::Document;
 use query::documents::{self, AddOptions};
-use query::QueryRequest;
+use query::{KnownInputs, QueryRequest};
 use serde_json::{Map, Value as JsonValue};
 
 use storage::corekv::Store;
@@ -120,6 +120,7 @@ where
     }))
     .await?;
 
+    let known = known_vectors(database, root)?;
     let mut imported = Imported::default();
     let mut batch = Batch::default();
 
@@ -139,7 +140,8 @@ where
         };
 
         let schema = collection.schema();
-        // `@chunk` collections are rebuilt from the parents' text, not imported.
+        // `@chunk` collections are rebuilt from the parents' text, not
+        // imported. Their vectors were read before this loop.
         if schema.is_generated() {
             continue;
         }
@@ -212,7 +214,7 @@ where
                 .filter_map(|(_, fk_name)| doc_map.get(fk_name).and_then(JsonValue::as_str))
                 .collect();
             if batch.must_save_before(&aliases, targets) {
-                save(host, database, &target, &mut batch, &mut imported).await?;
+                save(host, database, &known, &target, &mut batch, &mut imported).await?;
             }
 
             // Resolve relation targets through already-imported identities;
@@ -244,7 +246,7 @@ where
             if let Err(e) =
                 Document::from_map(doc_map.clone().into_iter().collect(), schema.clone())
             {
-                save(host, database, &target, &mut batch, &mut imported).await?;
+                save(host, database, &known, &target, &mut batch, &mut imported).await?;
                 return Err(format!(
                     "failed to create document in '{}': {}",
                     collection_name, e
@@ -257,10 +259,10 @@ where
                 deferred,
             });
             if batch.is_full() {
-                save(host, database, &target, &mut batch, &mut imported).await?;
+                save(host, database, &known, &target, &mut batch, &mut imported).await?;
             }
         }
-        save(host, database, &target, &mut batch, &mut imported).await?;
+        save(host, database, &known, &target, &mut batch, &mut imported).await?;
     }
 
     for pending in std::mem::take(&mut imported.relations) {
@@ -302,6 +304,7 @@ where
 async fn save<S>(
     host: &dyn ImportHost,
     database: &Arc<DB<S>>,
+    known: &KnownInputs,
     target: &Target,
     batch: &mut Batch,
     imported: &mut Imported,
@@ -317,14 +320,21 @@ where
         .iter_mut()
         .map(|doc| JsonValue::Object(std::mem::take(&mut doc.fields)))
         .collect();
-    match create(host, database, target, &gathered, &docs).await {
+    match create(host, database, known, target, &gathered, &docs).await {
         Ok(ids) => record(host, database, target, gathered, ids, imported).await,
         Err(error) if gathered.len() == 1 => Err(error),
         Err(_) => {
             for (doc, fields) in gathered.into_iter().zip(&docs) {
                 let one = vec![doc];
-                let ids =
-                    create(host, database, target, &one, std::slice::from_ref(fields)).await?;
+                let ids = create(
+                    host,
+                    database,
+                    known,
+                    target,
+                    &one,
+                    std::slice::from_ref(fields),
+                )
+                .await?;
                 record(host, database, target, one, ids, imported).await?;
             }
             Ok(())
@@ -338,6 +348,7 @@ where
 async fn create<S>(
     host: &dyn ImportHost,
     database: &Arc<DB<S>>,
+    known: &KnownInputs,
     target: &Target,
     gathered: &[Gathered],
     docs: &[JsonValue],
@@ -354,7 +365,7 @@ where
         host.on_db(alias::check_free(database, aliases)).await?;
     }
     documents::save_many(
-        |request| host.run(request),
+        |request| host.run(request.with_known_inputs(Arc::clone(known))),
         &target.name,
         docs,
         &AddOptions::default(),
@@ -435,4 +446,79 @@ fn create_error(collection: &str, message: String) -> String {
         true => ALIAS_TAKEN.to_string(),
         false => format!("failed to create document in '{collection}': {message}"),
     }
+}
+
+/// The embedding answers the file's chunk vectors give: each chunk's text,
+/// asked of this node's model, answered with the vector the file holds.
+fn known_vectors<S>(
+    database: &Arc<DB<S>>,
+    root: &Map<String, JsonValue>,
+) -> Result<KnownInputs, String>
+where
+    S: Store + 'static,
+{
+    let config = database.options().embedding_config();
+    let mut known = RapidHashMap::default();
+    for (collection_name, docs_value) in root {
+        let Some(collection) = database
+            .get_collection(collection_name)
+            .map_err(|e| format!("failed to get collection: {}", e))?
+        else {
+            continue;
+        };
+        let schema = collection.schema();
+        if !schema.is_generated() {
+            continue;
+        }
+        let invalid =
+            |why: String| format!("failed to import chunk vectors in '{collection_name}': {why}");
+        let docs = docs_value
+            .as_array()
+            .ok_or_else(|| invalid("expected a JSON array".into()))?;
+        for doc in docs {
+            let doc_map = doc
+                .as_object()
+                .ok_or_else(|| invalid("expected a JSON object".into()))?;
+            if let Some(key) = doc_map.keys().find(|key| {
+                *key != schema::CHUNK_TEXT_FIELD
+                    && !schema
+                        .vector_embeddings
+                        .iter()
+                        .any(|embedding| embedding.field_name == **key)
+            }) {
+                return Err(format!(
+                    "failed to create document in '{}': the given field does not exist. Name: {}",
+                    collection_name, key
+                ));
+            }
+            let text = doc_map
+                .get(schema::CHUNK_TEXT_FIELD)
+                .and_then(JsonValue::as_str)
+                .ok_or_else(|| invalid("a chunk has no text".into()))?;
+            let mut chunk = Document::new(collection.schema_arc());
+            chunk
+                .set(
+                    schema::CHUNK_TEXT_FIELD,
+                    document::NormalValue::String(text.to_string()),
+                )
+                .map_err(|e| invalid(e.to_string()))?;
+            for embedding in &schema.vector_embeddings {
+                let Some(vector) = doc_map.get(&embedding.field_name) else {
+                    continue;
+                };
+                let vector: Vec<f64> = serde_json::from_value(vector.clone())
+                    .map_err(|e| invalid(format!("{}: {e}", embedding.field_name)))?;
+                // A node without a model or URL for it asks for nothing, so
+                // there is nothing to answer.
+                let Ok(request) = crate::search::embedding::prepared_embedding_request(
+                    embedding, &chunk, &config,
+                ) else {
+                    continue;
+                };
+                let answer = serde_json::to_vec(&vector).map_err(|e| invalid(e.to_string()))?;
+                known.insert(request, Arc::from(answer));
+            }
+        }
+    }
+    Ok(Arc::new(known))
 }

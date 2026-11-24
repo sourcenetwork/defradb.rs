@@ -137,7 +137,12 @@ pub enum PreparedInputKind {
 pub struct PreparedInputMemo {
     answers: Arc<HopscotchMap<PreparedInputRequest, Arc<[u8]>, RandomState>>,
     wanted: Arc<Wanted>,
+    known: Option<KnownInputs>,
 }
+
+/// Answers a caller already holds, such as a backup's chunk vectors, shared
+/// by many requests. A request copies only the ones it reads.
+pub type KnownInputs = Arc<rapidhash::RapidHashMap<PreparedInputRequest, Arc<[u8]>>>;
 
 /// The misses a pass recorded, and the projection authorities prepared for
 /// the request. The authorities' map is made only when a projection asks for
@@ -161,6 +166,7 @@ impl Default for PreparedInputMemo {
                 queue: SegQueue::new(),
                 projection_authorities: regolith::sync::OnceCell::new(),
             }),
+            known: None,
         }
     }
 }
@@ -194,7 +200,17 @@ impl PreparedInputMemo {
             .get_or_insert(request, authority);
     }
     pub fn get(&self, request: &PreparedInputRequest) -> Option<Arc<[u8]>> {
-        self.answers.get(request)
+        if let Some(answer) = self.answers.get(request) {
+            return Some(answer);
+        }
+        let known = self.known.as_ref()?.get(request)?;
+        Some(self.insert(request.clone(), Arc::clone(known)))
+    }
+
+    /// Lets `get` answer from `known` before asking for a wave.
+    pub fn with_known(mut self, known: KnownInputs) -> Self {
+        self.known = Some(known);
+        self
     }
 
     /// The answer to `request`, or, when the memo holds none, a note that the
