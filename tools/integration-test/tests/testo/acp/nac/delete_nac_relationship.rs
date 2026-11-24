@@ -1,6 +1,4 @@
-//! Port of Go `tests/integration/acp/nac/delete_nac_relationship_test.go`, generated at defradb 137dc624052b and
-//! kept by hand (`HAND_PORTED` in gen_scenarios) with Go #5342's changes: an empty target actor is
-//! refused with `acp relationship target actor must not be empty`. Generated again once the Go pin includes #5342.
+//! Generated from the conformance scenarios of tests/integration/acp/nac/delete_nac_relationship_test.go at defradb e152b5cab59d.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
@@ -63,7 +61,6 @@ fn nac_delete_relationship_for_all_identities_all_implicit_identities_access_rev
                 ..Default::default()
             }
             .into(),
-            // An empty target must not revoke the wildcard relationship.
             DeleteNACActorRelationship {
                 relation: "admin".into(),
                 target_actor: Some("".into()),
@@ -192,7 +189,6 @@ fn nac_delete_relationship_still_requires_identity_even_if_all_identities_given_
                 ..Default::default()
             }
             .into(),
-            // The identity is checked first, even when the target is missing too.
             DeleteNACActorRelationship {
                 relation: "admin".into(),
                 target_actor: Some("".into()),
@@ -373,7 +369,6 @@ fn nac_delete_relationship_when_nac_is_enabled_with_invalid_identities_error() {
                 ..Default::default()
             }
             .into(),
-            // A delegated admin hears the same missing-target error as the owner.
             AddNACActorRelationship {
                 relation: "admin".into(),
                 target_identity_seed: Some(2),

@@ -383,6 +383,46 @@ fn cid_argument(cid: &str) -> Value<'static, String> {
     Value::List(vec![Value::String(cid.to_string())])
 }
 
+/// Why a subscription's open check did not accept it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OpenFailure {
+    /// The request itself is invalid, such as a filter naming a field its
+    /// input type does not define: the stream sends this error as its first
+    /// and only result, then completes, as Go's does.
+    Invalid(String),
+    /// The check failed for a reason that may pass (a store or provider
+    /// failure, a deadline): the subscription is kept, where Go's
+    /// `execSSESubscription` would end it.
+    Transient(String),
+}
+
+/// What a subscription's open check says, from the response to the
+/// subscription run once as a plain request.
+///
+/// A subscription the plain path accepts answers that it needs a stream
+/// ([`crate::executor::SUBSCRIPTION_NEEDS_SSE_ERROR_CODE`]). Any other error
+/// is [`OpenFailure::Invalid`] when it says the request itself is invalid
+/// ([`crate::executor::QueryResponseError::is_invalid_request`]), and
+/// [`OpenFailure::Transient`] otherwise.
+pub fn open_failure(response: &QueryResponse) -> Option<OpenFailure> {
+    let needs_stream = response
+        .errors
+        .iter()
+        .any(|error| error.code() == Some(crate::executor::SUBSCRIPTION_NEEDS_SSE_ERROR_CODE));
+    if needs_stream {
+        return None;
+    }
+    let invalid = response
+        .errors
+        .iter()
+        .find(|error| error.is_invalid_request());
+    match (invalid, response.errors.first()) {
+        (Some(error), _) => Some(OpenFailure::Invalid(error.message.clone())),
+        (None, Some(error)) => Some(OpenFailure::Transient(error.message.clone())),
+        (None, None) => None,
+    }
+}
+
 /// Check if a query response has any non-empty data.
 ///
 /// Returns false if data is null/empty or all top-level collection arrays are empty
@@ -400,11 +440,49 @@ pub fn response_has_data(response: &QueryResponse) -> bool {
     false
 }
 
+/// Whether an update's run says the request itself is invalid
+/// ([`crate::executor::QueryResponseError::is_invalid_request`]): the stream
+/// sends that response as its last result and ends. A subscription kept past
+/// a transient open check reports a bad request here.
+pub fn update_refused(response: &QueryResponse) -> bool {
+    response
+        .errors
+        .iter()
+        .any(|error| error.is_invalid_request())
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::error::QueryError;
+    use crate::executor::QueryResponseError;
+
+    fn failed_with(error: QueryError) -> QueryResponse {
+        QueryResponse {
+            data: None,
+            errors: vec![QueryResponseError::from_query_error(error)],
+            extensions: None,
+        }
+    }
+
+    /// An update that finds the request invalid ends the stream; one that
+    /// failed for a reason that may pass, or that worked, does not.
+    #[test]
+    fn only_an_invalid_request_refuses_an_update() {
+        assert!(update_refused(&failed_with(QueryError::unknown_field(
+            "In field \"nope\": Unknown field."
+        ))));
+        assert!(!update_refused(&failed_with(QueryError::internal(
+            "the store read failed"
+        ))));
+        assert!(!update_refused(&QueryResponse {
+            data: Some(json!({ "User": [] })),
+            errors: Vec::new(),
+            extensions: None,
+        }));
+    }
 
     /// A root fragment is legal GraphQL and has to reach the same scoped query
     /// a plain root field does.

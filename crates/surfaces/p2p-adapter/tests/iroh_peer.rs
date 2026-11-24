@@ -9,7 +9,10 @@ use defra_p2p_adapter::{IrohPeer, IrohPeerConfig};
 use p2p::iroh::{IrohDiscoveryConfig, IrohEndpointConfig, IrohRelayModeConfig};
 use storage::RegolithStore;
 
-async fn start_peer(store: Arc<RegolithStore>, strict: bool) -> IrohPeer<RegolithStore> {
+async fn start_peer(
+    store: Arc<RegolithStore>,
+    strict: bool,
+) -> std::sync::Arc<IrohPeer<RegolithStore>> {
     start_peer_with_bus(store, strict, Arc::new(events::ChannelBus::new())).await
 }
 
@@ -17,7 +20,7 @@ async fn start_peer_with_bus(
     store: Arc<RegolithStore>,
     strict: bool,
     event_bus: Arc<dyn events::Bus>,
-) -> IrohPeer<RegolithStore> {
+) -> std::sync::Arc<IrohPeer<RegolithStore>> {
     let database = Arc::new(
         db::DB::open_from_arc(Arc::clone(&store))
             .await

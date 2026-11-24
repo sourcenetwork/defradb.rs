@@ -319,9 +319,9 @@ pub(super) fn build_commit_type() -> Object {
         };
     }
 
-    fn with_commit_link_args(field: Field) -> Field {
+    fn with_commit_link_args(field: Field, description: &'static str) -> Field {
         field
-            .description(d::COMMIT_LINKS)
+            .description(description)
             .argument(
                 InputValue::new("cid", TypeRef::named_nn_list("ID")).description(d::COMMIT_CID_ARG),
             )
@@ -387,15 +387,15 @@ pub(super) fn build_commit_type() -> Object {
         .field(null_field!("delta", TypeRef::named("String")).description(d::COMMIT_DELTA))
         .field(null_field!("docID", TypeRef::named("String")).description(d::COMMIT_DOC_ID))
         .field(null_field!("fieldName", TypeRef::named("String")).description(d::COMMIT_FIELD_NAME))
-        .field(with_commit_link_args(null_field!(
-            "heads",
-            TypeRef::named_list("Commit")
-        )))
+        .field(with_commit_link_args(
+            null_field!("heads", TypeRef::named_list("Commit")),
+            d::COMMIT_HEADS,
+        ))
         .field(null_field!("height", TypeRef::named("Int")).description(d::COMMIT_HEIGHT))
-        .field(with_commit_link_args(null_field!(
-            "links",
-            TypeRef::named_list("Commit")
-        )))
+        .field(with_commit_link_args(
+            null_field!("links", TypeRef::named_list("Commit")),
+            d::COMMIT_LINKS,
+        ))
         .field(
             null_field!("signature", TypeRef::named("Signature")).description(d::COMMIT_SIGNATURE),
         )

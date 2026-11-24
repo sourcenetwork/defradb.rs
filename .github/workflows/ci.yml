@@ -98,12 +98,20 @@ jobs:
               p2p: want('p2p'),
             }));
 
-            // A pull request runs testo through the in-process client only, so a
-            // green pull request has run the scenarios; the queue runs every client.
-            const testoClients = ['in-process', ...['rust-http', 'go-http', 'cli', 'legacy']
+            // A pull request runs testo through the in-process client, plain and
+            // with every field indexed (the secondary-index multiplier), so a green
+            // pull request has run the scenarios; the queue runs every client.
+            const testoClients = ['in-process', 'in-process-secondary-index', ...['rust-http', 'go-http', 'cli', 'legacy']
               .filter((client) => want(`testo-${client}`))];
             core.setOutput('testo_clients', testoClients.join(','));
-            core.setOutput('testo_matrix', JSON.stringify({ include: testoClients.map((client) => ({ client, shard: 1 })) }));
+            core.setOutput('testo_matrix', JSON.stringify({
+              include: testoClients.map((client) => ({
+                client,
+                defra_client: client === 'in-process-secondary-index' ? 'in-process' : client,
+                multipliers: client === 'in-process-secondary-index' ? 'secondary-index' : '',
+                shard: 1,
+              })),
+            }));
 
             const suites = [
               { suite: 'signed-docs', needs_go: false, multipliers: 'signed-docs' },
@@ -537,38 +545,38 @@ jobs:
           use-mathlib-cache: false
       - name: Check client-signed create model cases
         run: python3 proofs/lean/test_client_signed_create.py
-      - name: Check storage failure model binding
-        run: cargo test -p query --test storage_failure -- --ignored
-      - name: Check native listener model binding
-        run: cargo test -p p2p --features iroh-transport --lib iroh::endpoint_config::bind_tests::native_bindings_match_executed_model -- --exact --ignored
-      - name: Check native port mapping model binding
-        run: cargo test -p p2p --features iroh-transport --lib iroh::endpoint_config::bind_tests::native_port_mapping_configuration_matches_executed_model -- --exact --ignored
-      - name: Check client create graph model binding
-        run: cargo test -p db --test block client_create_graph::trusted_create_graph_matches_model_and_rejects_unapproved_waves -- --exact --ignored
-      - name: Check normalized client create intent model binding
-        run: cargo test -p db --test block client_create_graph::normalized_agent_intent_preserves_explicit_null_and_datetime -- --exact --ignored
-      - name: Check client create schema model binding
-        run: cargo test -p db --lib write::create::schema_binding_tests::prepared_create_checks_immutable_definition_even_when_version_is_unchanged -- --exact --ignored
-      - name: Check client signing admission model binding
-        run: cargo test -p defra-http --lib client_signer_tests::admission_and_token_lifetime_match_the_model -- --exact --ignored
-      - name: Check selected document push model binding
-        run: cargo test -p db --test merge selected_document_transfers_match_executed_model -- --ignored
-      - name: Check replica gate model binding
-        run: cargo test -p db --lib merge::gate_conformance_tests::the_acp_hook_matches_the_executed_gate_model -- --exact --ignored
-      - name: Check deferred merge index model binding
-        run: cargo test -p db --lib merge::governance::deferred_conformance_tests::the_index_matches_the_executed_model -- --exact --ignored
-      - name: Check HTTP router composition model binding
-        run: cargo test -p defra-http --lib server::router_transform_tests::forwarding_filter_matches_executed_model -- --exact --ignored
-      - name: Check owner observation model binding
-        run: cargo test -p defra-node --lib owner_observation_tests
-      - name: Check collection head set model binding
-        run: cargo test -p db --test block head_conformance::head_queries_match_executable_lean -- --exact
-      - name: Check projection scope model binding
-        run: cargo test -p acp --test projection_scope -- --ignored
-      - name: Check genesis read access model binding
-        run: cargo test -p db --test merge genesis_access::genesis_reader_matches_executed_lean_model -- --exact --ignored
-      - name: Check Lean-to-Rust conformance
-        run: cargo nextest run -p conformance --lib --test lean_conformance
+      # One build and one run for every model binding and the Lean-to-Rust
+      # conformance tests: separate invocations resolve features per package
+      # and rebuild the shared crates each time.
+      - name: Check model bindings and Lean-to-Rust conformance
+        run: |
+          cargo nextest run --no-fail-fast --run-ignored all \
+            -p query -p p2p -p db -p defra-http -p defra-node -p acp -p conformance \
+            --features p2p/iroh-transport \
+            --lib --test storage_failure --test block --test merge --test projection_scope --test lean_conformance \
+            -E '
+              binary_id(query::storage_failure)
+              | binary_id(p2p) & (
+                test(=iroh::endpoint_config::bind_tests::native_bindings_match_executed_model)
+                | test(=iroh::endpoint_config::bind_tests::native_port_mapping_configuration_matches_executed_model))
+              | binary_id(db::block) & (
+                test(=client_create_graph::trusted_create_graph_matches_model_and_rejects_unapproved_waves)
+                | test(=client_create_graph::normalized_agent_intent_preserves_explicit_null_and_datetime)
+                | test(=head_conformance::head_queries_match_executable_lean))
+              | binary_id(db) & (
+                test(=write::create::schema_binding_tests::prepared_create_checks_immutable_definition_even_when_version_is_unchanged)
+                | test(=merge::gate_conformance_tests::the_acp_hook_matches_the_executed_gate_model)
+                | test(=merge::governance::deferred_conformance_tests::the_index_matches_the_executed_model))
+              | binary_id(defra-http) & (
+                test(=client_signer_tests::admission_and_token_lifetime_match_the_model)
+                | test(=server::router_transform_tests::forwarding_filter_matches_executed_model))
+              | binary_id(db::merge) & (
+                test(selected_document_transfers_match_executed_model)
+                | test(=genesis_access::genesis_reader_matches_executed_lean_model))
+              | binary_id(defra-node) & test(owner_observation_tests)
+              | binary_id(acp::projection_scope)
+              | binary_id(conformance)
+              | binary_id(conformance::lean_conformance)'
 
   conformance:
     name: Conformance${{ matrix.io.name }}
@@ -892,6 +900,7 @@ jobs:
     env:
       DEFRA_RUST_BINARY: ${{ github.workspace }}/target/ci/defradb
       DEFRA_IROH_BINARY: ${{ github.workspace }}/target/ci/defradb-iroh
+      DEFRA_MULTIPLIERS: ${{ matrix.multipliers || '' }}
       DEFRA_E2E_KEEP: '1'
       # A failing scenario shows its in-process nodes' P2P trace.
       DEFRA_TEST_TRACE: p2p=debug,defra_p2p_adapter=debug,warn
@@ -943,6 +952,7 @@ jobs:
       - name: Pick the tests
         env:
           CLIENT: ${{ matrix.client }}
+          DEFRA_CLIENT_NAME: ${{ matrix.defra_client || matrix.client }}
           PIN: ${{ needs.go-defradb.outputs.pin }}
         run: |
           chmod +x target/ci/defradb target/ci/defradb-iroh
@@ -954,7 +964,7 @@ jobs:
           if [ "$CLIENT" = legacy ]; then
             echo "FILTER=$LEGACY_FILTER" >> "$GITHUB_ENV"
           else
-            echo "DEFRA_CLIENT=$CLIENT" >> "$GITHUB_ENV"
+            echo "DEFRA_CLIENT=$DEFRA_CLIENT_NAME" >> "$GITHUB_ENV"
             if [ "$CLIENT" = go-http ]; then
               echo "FILTER=($TESTO_FILTER) $GO_HTTP_FILTER" >> "$GITHUB_ENV"
             else
@@ -1075,19 +1085,97 @@ jobs:
               await github.rest.issues.createComment({ owner, repo, issue_number, body });
             }
 
-  # The one required check besides Validate title: fails when any job it needs
-  # failed or was cancelled. A job skipped by ci-scope passes; a job skipped
-  # because its dependency failed shows that dependency's failure here. Testo
-  # shards report through Testo summary, which judges their known failures.
+  # The one required check besides Validate title. A job passes when it
+  # succeeded, or was skipped and ci-scope did not ask for it; a job skipped
+  # because a dependency failed is reported as well as that dependency.
   merge-gate:
     name: Merge gate
-    needs: [ci-scope, lint, build, wasm-check, lean-conformance, conformance, integration, p2p-linux, testo-summary]
+    needs:
+      - ci-scope
+      - lint-default
+      - feature-checks
+      - dependency-checks
+      - docs
+      - c-api
+      - lint
+      - unit-tests
+      - go-defradb
+      - build-binaries
+      - build
+      - feature-tests
+      - wasm-check
+      - lean-conformance
+      - conformance
+      - integration
+      - p2p-linux
+      - testo-archive
+      - testo
+      - testo-summary
     if: always()
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
-      - name: Require every needed job to pass or be skipped by scope
+      - name: Check every queue job
         env:
-          NEEDS: ${{ toJSON(needs) }}
+          FULL: ${{ needs.ci-scope.outputs.full }}
+          RUN_FEATURE_CHECKS: ${{ fromJson(needs.ci-scope.outputs.run || '{}').feature_checks }}
+          RUN_FEATURE_TESTS: ${{ fromJson(needs.ci-scope.outputs.run || '{}').feature_tests }}
+          RUN_WASM: ${{ fromJson(needs.ci-scope.outputs.run || '{}').wasm }}
+          RUN_LEAN: ${{ fromJson(needs.ci-scope.outputs.run || '{}').lean }}
+          RUN_CONFORMANCE: ${{ fromJson(needs.ci-scope.outputs.run || '{}').conformance }}
+          RUN_INTEGRATION: ${{ fromJson(needs.ci-scope.outputs.run || '{}').integration }}
+          RUN_P2P: ${{ fromJson(needs.ci-scope.outputs.run || '{}').p2p }}
+          CI_SCOPE: ${{ needs.ci-scope.result }}
+          LINT_DEFAULT: ${{ needs.lint-default.result }}
+          FEATURE_CHECKS: ${{ needs.feature-checks.result }}
+          DEPENDENCY_CHECKS: ${{ needs.dependency-checks.result }}
+          DOCS: ${{ needs.docs.result }}
+          C_API: ${{ needs.c-api.result }}
+          LINT: ${{ needs.lint.result }}
+          UNIT_TESTS: ${{ needs.unit-tests.result }}
+          GO_DEFRADB: ${{ needs.go-defradb.result }}
+          BUILD_BINARIES: ${{ needs.build-binaries.result }}
+          BUILD: ${{ needs.build.result }}
+          FEATURE_TESTS: ${{ needs.feature-tests.result }}
+          WASM: ${{ needs.wasm-check.result }}
+          LEAN: ${{ needs.lean-conformance.result }}
+          CONFORMANCE: ${{ needs.conformance.result }}
+          INTEGRATION: ${{ needs.integration.result }}
+          P2P: ${{ needs.p2p-linux.result }}
+          TESTO_ARCHIVE: ${{ needs.testo-archive.result }}
+          TESTO: ${{ needs.testo.result }}
+          TESTO_SUMMARY: ${{ needs.testo-summary.result }}
         run: |
-          failed=$(jq -r 'to_entries[] | select(.value.result == "failure" or .value.result == "cancelled") | "\(.key)=\(.value.result)"' <<<"$NEEDS")
-          if [ -n "$failed" ]; then echo "::error::Not green: $(echo $failed)"; exit 1; fi
+          set -euo pipefail
+
+          failed=0
+          check() {
+            local name="$1" result="$2" expected="$3"
+            if [ "$result" = success ] || { [ "$result" = skipped ] && [ "$expected" = false ]; }; then
+              return 0
+            fi
+            echo "::error::$name was $result"
+            failed=1
+          }
+
+          check "CI scope" "$CI_SCOPE" true
+          check "Lint (default)" "$LINT_DEFAULT" true
+          check "Feature checks" "$FEATURE_CHECKS" "$RUN_FEATURE_CHECKS"
+          check "Dependency checks" "$DEPENDENCY_CHECKS" true
+          check "Docs" "$DOCS" true
+          check "C API compatibility" "$C_API" true
+          check "Lint" "$LINT" true
+          check "Unit tests" "$UNIT_TESTS" "$FULL"
+          check "Go DefraDB binary" "$GO_DEFRADB" "$FULL"
+          check "Build integration binaries" "$BUILD_BINARIES" "$FULL"
+          check "Build & Test" "$BUILD" "$FULL"
+          check "Feature tests" "$FEATURE_TESTS" "$RUN_FEATURE_TESTS"
+          check "WASM Build Check" "$WASM" "$RUN_WASM"
+          check "Lean Conformance" "$LEAN" "$RUN_LEAN"
+          check "Conformance" "$CONFORMANCE" "$RUN_CONFORMANCE"
+          check "Integration" "$INTEGRATION" "$RUN_INTEGRATION"
+          check "P2P Integration" "$P2P" "$RUN_P2P"
+          check "Build testo archive" "$TESTO_ARCHIVE" "$FULL"
+          check "Testo" "$TESTO" "$FULL"
+          check "Testo summary" "$TESTO_SUMMARY" "$FULL"
+          exit "$failed"

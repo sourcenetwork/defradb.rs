@@ -5,6 +5,7 @@ use tracing::instrument;
 
 use super::eval::{eval_op, values_equal};
 use super::op::FilterOp;
+use super::source::{EnclosingArgument, FilterSource};
 use crate::document::DocumentMapping;
 use crate::error::{QueryError, Result};
 use crate::limits::DEFAULT_MAX_FILTER_DEPTH;
@@ -13,20 +14,32 @@ use crate::limits::DEFAULT_MAX_FILTER_DEPTH;
 ///
 /// Conditions map field names to their filter values.
 /// Supports nested conditions for related objects.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Filter {
     /// Parsed filter conditions
     conditions: Map<String, JsonValue>,
     /// Maximum recursive depth for this filter. `0` disables the limit.
     max_depth: usize,
+    /// How the request wrote it, which input validation reads.
+    source: FilterSource,
+    /// The argument it was written inside, when that is not `filter`.
+    enclosing: Option<Box<EnclosingArgument>>,
+    /// The value a variable gave where an object belongs, which input
+    /// validation rejects before the empty conditions can run.
+    not_object: Option<Box<JsonValue>>,
+}
+
+/// Two filters are equal when they select the same documents: where their
+/// conditions came from does not matter.
+impl PartialEq for Filter {
+    fn eq(&self, other: &Self) -> bool {
+        self.conditions == other.conditions && self.max_depth == other.max_depth
+    }
 }
 
 impl Default for Filter {
     fn default() -> Self {
-        Self {
-            conditions: Map::new(),
-            max_depth: DEFAULT_MAX_FILTER_DEPTH,
-        }
+        Self::from_conditions(Map::new())
     }
 }
 
@@ -38,10 +51,7 @@ impl Filter {
 
     /// Create a filter from conditions map
     pub fn from_conditions(conditions: Map<String, JsonValue>) -> Self {
-        Self {
-            conditions,
-            max_depth: DEFAULT_MAX_FILTER_DEPTH,
-        }
+        Self::from_conditions_with_max_depth(conditions, DEFAULT_MAX_FILTER_DEPTH)
     }
 
     /// Create a filter from conditions map with a custom recursive depth limit.
@@ -52,7 +62,45 @@ impl Filter {
         Self {
             conditions,
             max_depth,
+            source: FilterSource::Literal,
+            enclosing: None,
+            not_object: None,
         }
+    }
+
+    /// A filter whose variable gave `value`, which is not an object.
+    pub fn not_object(value: JsonValue) -> Self {
+        Self {
+            not_object: Some(Box::new(value)),
+            ..Self::default()
+        }
+    }
+
+    /// The non-object value a variable gave in place of this filter.
+    pub fn not_object_value(&self) -> Option<&JsonValue> {
+        self.not_object.as_deref()
+    }
+
+    /// This filter, recorded as written the way `source` says.
+    pub fn with_source(mut self, source: FilterSource) -> Self {
+        self.source = source;
+        self
+    }
+
+    /// How the request wrote this filter.
+    pub fn source(&self) -> &FilterSource {
+        &self.source
+    }
+
+    /// This filter, recorded as written inside the argument `enclosing`.
+    pub fn with_enclosing(mut self, enclosing: EnclosingArgument) -> Self {
+        self.enclosing = Some(Box::new(enclosing));
+        self
+    }
+
+    /// The argument this filter was written inside, when that is not `filter`.
+    pub fn enclosing(&self) -> Option<&EnclosingArgument> {
+        self.enclosing.as_deref()
     }
 
     /// Set the maximum recursive depth for this filter. `0` disables the limit.
