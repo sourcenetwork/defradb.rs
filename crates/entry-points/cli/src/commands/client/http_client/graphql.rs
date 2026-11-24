@@ -30,7 +30,7 @@ impl HttpClient {
         };
 
         if !response.status().is_success() {
-            return Err(Self::extract_error(response).await);
+            return Err(Self::extract_error("POST", response).await);
         }
 
         let result: super::GraphQLResponse = response.json().await?;
@@ -48,7 +48,7 @@ impl HttpClient {
         let response = self.post_text(&url, sdl, txn_id).await?;
 
         if !response.status().is_success() {
-            return Err(Self::extract_error(response).await);
+            return Err(Self::extract_error("POST", response).await);
         }
 
         let result: JsonValue = response.json().await?;

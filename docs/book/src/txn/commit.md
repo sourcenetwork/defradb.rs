@@ -71,3 +71,30 @@ replacement.
    any one core: whoever gets to polling first runs it, everyone else's completion
    arrives like any other I/O, and a busy core is never woken to do someone else's
    fsync.
+
+## When a commit fails: what the caller may conclude
+
+A failed commit says which of three things happened (`defra.txn.commit_outcome`):
+
+| Outcome | Meaning | HTTP body | CLI exit |
+|---|---|---|---|
+| committed | durable and visible | 200, empty | 0 |
+| `aborted` | nothing landed: running it again is safe | 409 conflict, the refusal's own status for any other refusal, or 404 for a transaction the registry retains as aborted | 3 |
+| `indeterminate` | it may have landed: only a read after the node recovers tells | 500 or 507, or 404 when nothing or a commit is retained | 4 |
+
+The engine's answer is classed where it is given
+([`commit_failure`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/transaction.rs)):
+regolith documents what it refuses before applying anything (a conflict, a stall, a
+closed handle, a content mismatch, a panicking callback), and every other failure, an
+I/O error while the log record syncs first of all, may come after the record reached
+disk. The storage error carries that class through the database and query layers. The
+registry's `commit_error` answers every other commit failure `aborted`, since each one
+came before the storage commit or was one of those refusals. The registry retains the
+class (`GET /api/v0/tx/{id}` answers it), and the wire sends it as `outcome`.
+
+The Rust client never resends a write after a 408, 500, 502 or 504: the resend would
+hide the answer or apply the write twice, and a 408 leaves the request running on the
+server. When such an answer carries no `outcome`, or a write sent gets no answer back,
+the client concludes `indeterminate` itself and the CLI exits 4. The model is
+[`proofs/tla/CommitOutcome.tla`](https://github.com/sourcenetwork/defradb.rs/blob/main/proofs/tla/CommitOutcome.tla),
+the wire encoding's proof `proofs/lean/CommitOutcome.lean`.

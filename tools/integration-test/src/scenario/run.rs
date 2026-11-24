@@ -219,13 +219,19 @@ where
             Err(failure) => failure.message.contains(wanted),
             Ok(value) => A::GRAPHQL && graphql_errors(value).iter().any(|m| m.contains(wanted)),
         };
-        return match matched {
-            true => Ok(()),
-            false => Err(format!(
+        if !matched {
+            return Err(format!(
                 "expected error containing {wanted:?}; got {}",
                 describe(&outcome)
-            )),
-        };
+            ));
+        }
+        return match_failure_class(&action, &outcome);
+    }
+    if action.expected_commit_outcome().is_some() || action.expected_exit_code().is_some() {
+        return Err(format!(
+            "an expected commit outcome or exit status needs an expected error; got {}",
+            describe(&outcome)
+        ));
     }
     let actual = outcome.map_err(|failure| failure.message)?;
     if A::GRAPHQL && !graphql_errors(&actual).is_empty() {
@@ -244,6 +250,37 @@ where
         }
         let value = pointer(&actual, path).map_err(|e| e.to_string())?.clone();
         state.captures.insert(name.clone(), value);
+    }
+    Ok(())
+}
+
+/// The failure's commit outcome and, under the CLI, its exit status, against
+/// what the action expects. A failure from a client that reports no exit
+/// status (in-process, HTTP) is not checked for one.
+fn match_failure_class<A>(action: &A, outcome: &Result<Value, Failure>) -> Result<(), String>
+where
+    A: Op,
+{
+    let failure = outcome.as_ref().err();
+    if let Some(wanted) = action.expected_commit_outcome() {
+        let got = failure.and_then(|failure| failure.outcome.as_deref());
+        if got != Some(wanted) {
+            return Err(format!(
+                "expected commit outcome {wanted:?}; got {got:?} with {}",
+                describe(outcome)
+            ));
+        }
+    }
+    if let (Some(wanted), Some(got)) = (
+        action.expected_exit_code(),
+        failure.and_then(|failure| failure.exit_code),
+    ) {
+        if got != wanted {
+            return Err(format!(
+                "expected exit status {wanted}; got {got} with {}",
+                describe(outcome)
+            ));
+        }
     }
     Ok(())
 }

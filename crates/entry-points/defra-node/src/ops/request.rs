@@ -216,11 +216,12 @@ fn handle(id: TxnId) -> TransactionHandle {
 }
 
 /// A transaction failure with Go's words: only a missing transaction has its
-/// own text.
+/// own text. The commit outcome the error carries stays with it.
 pub(crate) fn transaction_error(error: TransactionError) -> Error {
+    let outcome = error.commit_outcome();
     match error {
-        TransactionError::NotFound(_) => Error::TransactionNotFound,
-        TransactionError::Conflict(_) => Error::TransactionConflict,
+        TransactionError::NotFound(_) => Error::TransactionNotFound(outcome),
+        TransactionError::Conflict(_) => Error::TransactionConflict(outcome),
         other => Error::Transaction(other),
     }
 }

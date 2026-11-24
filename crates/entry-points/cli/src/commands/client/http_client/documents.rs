@@ -144,6 +144,7 @@ impl HttpClient {
         txn: Option<&str>,
     ) -> Result<Response> {
         let url = format!("{}/api/v0/{path}", self.base_url);
+        let verb = method.as_str().to_owned();
         let mut request = self.add_auth_header(self.client.request(method, url).query(query));
         if let Some(body) = body {
             request = request
@@ -153,10 +154,13 @@ impl HttpClient {
         if let Some(id) = txn {
             request = request.header("x-defradb-tx", id);
         }
-        let response = request.send().await.map_err(Error::HttpRequest)?;
+        let response = request
+            .send()
+            .await
+            .map_err(|error| Self::send_error(&verb, error))?;
         match response.status().is_success() {
             true => Ok(response),
-            false => Err(Self::extract_error(response).await),
+            false => Err(Self::extract_error(&verb, response).await),
         }
     }
 

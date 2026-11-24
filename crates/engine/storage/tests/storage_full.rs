@@ -1,12 +1,8 @@
-#[path = "support/storage_full_env.rs"]
-mod storage_full_env;
-
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use storage::backends::regolith::{RegolithStore, RegolithStoreOptions};
 use storage::corekv::{Error, Store};
-use storage_full_env::FullEnv;
+use storage::testing::{Fault, FaultEnv};
 
 async fn write(store: &RegolithStore, key: &[u8], value: &[u8]) -> storage::Result<()> {
     let mut txn = store.new_txn(false).await?;
@@ -28,7 +24,7 @@ fn full(error: Error) {
 #[test]
 fn disk_full_remains_typed_until_reopen_and_keeps_committed_data() {
     let dir = tempfile::tempdir().unwrap();
-    let env = Arc::new(FullEnv::default());
+    let env = Arc::new(FaultEnv::default());
     let mut options = RegolithStoreOptions::default();
     options.engine = regolith::Options::embedded()
         .env(env.clone())
@@ -39,13 +35,13 @@ fn disk_full_remains_typed_until_reopen_and_keeps_committed_data() {
         write(&store, b"retained", b"committed before the fault")
             .await
             .unwrap();
-        env.full.store(true, Ordering::Release);
+        env.arm(Fault::StorageFull);
         full(
             write(&store, b"uncertain", b"may already be in the WAL")
                 .await
                 .unwrap_err(),
         );
-        env.full.store(false, Ordering::Release);
+        env.disarm();
         full(
             write(&store, b"later", b"must not bypass the latch")
                 .await

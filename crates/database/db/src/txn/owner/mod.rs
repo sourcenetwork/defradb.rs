@@ -88,11 +88,29 @@ pub(crate) enum Outcome {
     Committed,
     /// The transaction ended without a commit.
     Aborted,
+    /// The commit failed while the engine made it durable: it may have
+    /// landed, and only a read after a restart tells.
+    Indeterminate,
 }
 
 impl Outcome {
     fn is_final(self) -> bool {
-        matches!(self, Outcome::Committed | Outcome::Aborted)
+        matches!(
+            self,
+            Outcome::Committed | Outcome::Aborted | Outcome::Indeterminate
+        )
+    }
+
+    /// The outcome a finished commit attempt leaves: committed, aborted, or
+    /// indeterminate when its error says the commit may have landed.
+    pub(crate) fn of<T>(result: &Result<T, query::TransactionError>) -> Self {
+        match result {
+            Ok(_) => Outcome::Committed,
+            Err(error) => match error.commit_outcome() {
+                Some(defra_core::CommitOutcome::Indeterminate) => Outcome::Indeterminate,
+                _ => Outcome::Aborted,
+            },
+        }
     }
 
     pub(crate) fn store_committing_if_open(status: &AtomicU8) {
@@ -118,6 +136,7 @@ impl TryFrom<u8> for Outcome {
             1 => Ok(Outcome::Open),
             2 => Ok(Outcome::Committed),
             3 => Ok(Outcome::Aborted),
+            4 => Ok(Outcome::Indeterminate),
             _ => Err(value),
         }
     }

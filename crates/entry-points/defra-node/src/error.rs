@@ -44,12 +44,13 @@ pub enum Error {
     #[error(transparent)]
     Query(#[from] query::QueryError),
     /// The transaction does not exist, is finished, or belongs to another
-    /// caller. Go's text for all three.
+    /// caller. Go's text for all three. A commit carries what is known of
+    /// the transaction (`defra.txn.commit_outcome.no_open_txn`).
     #[error("transaction not found")]
-    TransactionNotFound,
+    TransactionNotFound(Option<defra_core::CommitOutcome>),
     /// The commit lost a write conflict. Go's text.
     #[error("transaction conflict. Please retry")]
-    TransactionConflict,
+    TransactionConflict(Option<defra_core::CommitOutcome>),
     /// An HTTP server cannot expose transactions keyed only by embedder.
     #[error("HTTP requires identity-owned transactions; embedder-only ownership is local")]
     HttpEmbedderTransactionOwnership,
@@ -539,6 +540,18 @@ impl Error {
     pub(crate) fn worker_pool_call(source: workers::Error) -> Self {
         source.report("node call");
         Self::WorkerPoolCall(source)
+    }
+
+    /// What a failed commit or write lets its caller conclude
+    /// (`defra.txn.commit_outcome`); `None` when the error says nothing about
+    /// a commit.
+    pub fn commit_outcome(&self) -> Option<defra_core::CommitOutcome> {
+        match self {
+            Self::Transaction(error) => error.commit_outcome(),
+            Self::Query(error) => error.commit_outcome(),
+            Self::TransactionNotFound(outcome) | Self::TransactionConflict(outcome) => *outcome,
+            _ => None,
+        }
     }
 
     /// A response lacks `field` in the record rendered by `within`.

@@ -1,3 +1,4 @@
+mod arm_fault;
 mod close;
 mod connect;
 mod get_identity;
@@ -5,6 +6,7 @@ mod new;
 mod restart;
 mod start_nac;
 
+pub use arm_fault::{ArmCommitFault, CommitFault};
 pub use close::Close;
 pub use connect::Connect;
 pub use get_identity::GetNodeIdentity;
