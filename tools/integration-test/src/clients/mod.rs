@@ -4,5 +4,5 @@
 mod cli;
 mod http;
 
-pub use cli::{Cli, CliRun};
+pub use cli::{Cli, CliFailure, CliRun};
 pub use http::{Http, HttpRun};

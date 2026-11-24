@@ -8,9 +8,39 @@ pub struct IoFailure {
     kind: io::ErrorKind,
     raw_os_error: Option<i32>,
     message: String,
+    /// What the commit this failure ended did, when it ended one: it may
+    /// have landed when the engine raised it while it made the commit
+    /// durable (`defra.txn.commit_outcome.indeterminate`), and nothing
+    /// landed when it came before the storage commit
+    /// (`defra.txn.commit_outcome.not_committed`).
+    commit: Option<defra_core::CommitOutcome>,
 }
 
 impl IoFailure {
+    /// Whether the engine raised this while it made a commit durable.
+    pub fn is_at_commit(&self) -> bool {
+        self.commit == Some(defra_core::CommitOutcome::Indeterminate)
+    }
+
+    /// What the commit this failure ended did; `None` outside a commit.
+    pub fn commit_outcome(&self) -> Option<defra_core::CommitOutcome> {
+        self.commit
+    }
+
+    /// This failure, raised while the engine made a commit durable.
+    pub fn at_commit(mut self) -> Self {
+        self.commit = Some(defra_core::CommitOutcome::Indeterminate);
+        self
+    }
+
+    /// This failure, ending a commit before the engine made any of it
+    /// durable. A failure already raised at the commit keeps its class.
+    pub fn before_commit(mut self) -> Self {
+        self.commit
+            .get_or_insert(defra_core::CommitOutcome::NotCommitted);
+        self
+    }
+
     pub fn kind(&self) -> io::ErrorKind {
         self.kind
     }
@@ -31,6 +61,7 @@ impl From<io::Error> for IoFailure {
             kind: error.kind(),
             raw_os_error: error.raw_os_error(),
             message: error.to_string(),
+            commit: None,
         }
     }
 }

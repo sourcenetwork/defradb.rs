@@ -183,6 +183,44 @@ pub(super) fn map_txn_error(error: TransactionError) -> Error {
     }
 }
 
+/// A failed commit, classed by whether it may have landed
+/// (`defra.txn.commit_outcome`). The engine documents what it refuses before
+/// it applies anything: a conflict, a stall, a closed or read-only handle, a
+/// content mismatch, a panicking callback. Anything else, an I/O error first
+/// of all, may come after the commit reached the log.
+pub(super) fn commit_failure(error: TransactionError) -> Error {
+    let may_have_landed =
+        matches!(&error, TransactionError::Engine(engine) if !refused_before_apply(engine));
+    let error = map_txn_error(error);
+    match may_have_landed {
+        true => error.at_commit(),
+        false => error,
+    }
+}
+
+/// The engine errors whose commit applied nothing, by regolith 0.2.5's docs.
+/// `Io`, `Corruption` and `MergeFailed` are not among them, and a variant
+/// added later counts as one that may have landed until it is classified here.
+fn refused_before_apply(error: &regolith::Error) -> bool {
+    matches!(
+        error,
+        regolith::Error::InvalidArgument(_)
+            | regolith::Error::DataBlockLimitExceeded { .. }
+            | regolith::Error::ReadOnly
+            | regolith::Error::Closed
+            | regolith::Error::InvalidColumnFamily(_)
+            | regolith::Error::Busy(_)
+            | regolith::Error::NoMergeOperator
+            | regolith::Error::ContentMismatch
+            | regolith::Error::CallbackPanicked { .. }
+            | regolith::Error::BackgroundFailed { .. }
+            | regolith::Error::LogKeyWrite
+            | regolith::Error::WouldBlock(_)
+            | regolith::Error::KeyProviderRequired
+            | regolith::Error::UnknownKey { .. }
+    )
+}
+
 impl crate::corekv::private::Sealed for RegolithTxn {}
 
 impl crate::corekv::RetryAttemptIO for RegolithTxn {
@@ -402,7 +440,7 @@ impl Txn for RegolithTxn {
         } else {
             txn.commit()
         };
-        match outcome.map_err(map_txn_error) {
+        match outcome.map_err(commit_failure) {
             // Durable from here on: what follows can be reported, never
             // turned into a failed write.
             Ok(_) => {
@@ -572,6 +610,35 @@ mod append_tests {
             );
         })
         .unwrap()
+    }
+
+    /// Only a commit failure that may have landed reports `indeterminate`;
+    /// the I/O cause stays typed. A refusal is not marked here: the registry's
+    /// `commit_error` answers every commit failure that is not indeterminate
+    /// `aborted`.
+    #[test]
+    fn only_a_commit_failure_that_may_have_landed_is_indeterminate() {
+        use super::{commit_failure, map_txn_error, Error, TransactionError};
+        let indeterminate = Some(defra_core::CommitOutcome::Indeterminate);
+        let io = commit_failure(TransactionError::Engine(regolith::Error::Io(
+            std::io::Error::from_raw_os_error(5),
+        )));
+        assert_eq!(io.commit_outcome(), indeterminate);
+        assert!(matches!(&io, Error::Io(cause) if cause.raw_os_error() == Some(5)));
+        let corrupt = commit_failure(TransactionError::Engine(regolith::Error::Corruption(
+            std::io::Error::other("torn record"),
+        )));
+        assert_eq!(corrupt.commit_outcome(), indeterminate);
+        for refused in [regolith::Error::ContentMismatch, regolith::Error::Closed] {
+            assert_eq!(
+                commit_failure(TransactionError::Engine(refused)).commit_outcome(),
+                None
+            );
+        }
+        let read = map_txn_error(TransactionError::Engine(regolith::Error::Io(
+            std::io::Error::from_raw_os_error(5),
+        )));
+        assert_eq!(read.commit_outcome(), None, "an I/O error outside a commit");
     }
 }
 

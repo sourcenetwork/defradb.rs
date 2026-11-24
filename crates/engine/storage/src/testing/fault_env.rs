@@ -1,6 +1,6 @@
 use std::io;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 
 use regolith::env::{
@@ -8,18 +8,62 @@ use regolith::env::{
     WriteFile, WriteMode,
 };
 
+/// The failure an armed [`FaultEnv`] gives every write-ahead-log sync.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fault {
+    /// The device is full: `ENOSPC`, `ErrorKind::StorageFull`.
+    StorageFull,
+    /// The device failed the write: `EIO`.
+    Io,
+}
+
+const OFF: u8 = 0;
+const FULL: u8 = 1;
+const EIO: u8 = 2;
+
+/// The local filesystem, except that once armed every log sync and log
+/// truncation fails with the armed [`Fault`]. A store that sees the failure
+/// latches it until it is reopened, as regolith does after any failed sync.
 #[derive(Debug, Default)]
-pub struct FullEnv {
+pub struct FaultEnv {
     inner: StdEnv,
-    pub full: Arc<AtomicBool>,
+    armed: Arc<AtomicU8>,
 }
 
-struct FullLog {
+impl FaultEnv {
+    /// Fail every log sync from now on with `fault`.
+    pub fn arm(&self, fault: Fault) {
+        let code = match fault {
+            Fault::StorageFull => FULL,
+            Fault::Io => EIO,
+        };
+        self.armed.store(code, Ordering::Release);
+    }
+
+    /// Let log syncs through again.
+    pub fn disarm(&self) {
+        self.armed.store(OFF, Ordering::Release);
+    }
+}
+
+fn injected(armed: &AtomicU8, what: &str) -> io::Result<()> {
+    match armed.load(Ordering::Acquire) {
+        FULL => Err(io::Error::new(
+            io::ErrorKind::StorageFull,
+            format!("injected full storage{what}"),
+        )),
+        // EIO on every unix defradb.rs runs on.
+        EIO => Err(io::Error::from_raw_os_error(5)),
+        _ => Ok(()),
+    }
+}
+
+struct FaultLog {
     inner: Box<dyn LogFile>,
-    full: Arc<AtomicBool>,
+    armed: Arc<AtomicU8>,
 }
 
-impl LogFile for FullLog {
+impl LogFile for FaultLog {
     fn write_all_at(&self, offset: u64, buf: &[u8]) -> io::Result<()> {
         self.inner.write_all_at(offset, buf)
     }
@@ -27,21 +71,11 @@ impl LogFile for FullLog {
         self.inner.write_all_vectored_at(offset, bufs)
     }
     fn sync_data(&self) -> io::Result<()> {
-        if self.full.load(Ordering::Acquire) {
-            return Err(io::Error::new(
-                io::ErrorKind::StorageFull,
-                "injected full storage",
-            ));
-        }
+        injected(&self.armed, "")?;
         self.inner.sync_data()
     }
     fn set_len(&self, len: u64) -> io::Result<()> {
-        if self.full.load(Ordering::Acquire) {
-            return Err(io::Error::new(
-                io::ErrorKind::StorageFull,
-                "injected full storage during WAL rollback",
-            ));
-        }
+        injected(&self.armed, " during WAL rollback")?;
         self.inner.set_len(len)
     }
     fn start_writeback(&self, offset: u64, len: u64) {
@@ -49,7 +83,7 @@ impl LogFile for FullLog {
     }
 }
 
-impl Env for FullEnv {
+impl Env for FaultEnv {
     fn create_dir_all(&self, path: &Path) -> io::Result<()> {
         self.inner.create_dir_all(path)
     }
@@ -63,9 +97,9 @@ impl Env for FullEnv {
         self.inner.open_write(path, mode)
     }
     fn open_log(&self, path: &Path, mode: WriteMode) -> io::Result<Box<dyn LogFile>> {
-        Ok(Box::new(FullLog {
+        Ok(Box::new(FaultLog {
             inner: self.inner.open_log(path, mode)?,
-            full: Arc::clone(&self.full),
+            armed: Arc::clone(&self.armed),
         }))
     }
     fn metadata(&self, path: &Path) -> io::Result<FileMeta> {

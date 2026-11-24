@@ -167,14 +167,25 @@ fn a_commit_while_a_reader_is_still_open_is_refused_and_writes_nothing() {
 
     let refused = registry.commit(&handle).await;
     assert!(
-        matches!(&refused, Err(TransactionError::Execution(message)) if message.contains("still holds the transaction")),
+        matches!(&refused, Err(TransactionError::CommitRefused(message)) if message.contains("still holds the transaction")),
         "{refused:?}"
     );
+    // Refused before anything was durable: `aborted`, now and on a repeat
+    // (`defra.txn.commit_outcome.not_committed`).
+    assert_eq!(
+        refused.unwrap_err().commit_outcome(),
+        Some(defra_core::CommitOutcome::NotCommitted)
+    );
     assert_eq!(registry.active_transaction_count().unwrap(), 0);
-    assert!(matches!(
-        registry.commit(&handle).await,
-        Err(TransactionError::NotFound(_))
-    ));
+    let repeated = registry.commit(&handle).await;
+    assert!(
+        matches!(&repeated, Err(TransactionError::NotFound(_))),
+        "{repeated:?}"
+    );
+    assert_eq!(
+        repeated.unwrap_err().commit_outcome(),
+        Some(defra_core::CommitOutcome::NotCommitted)
+    );
     drop(reader);
 
     let committed = registry

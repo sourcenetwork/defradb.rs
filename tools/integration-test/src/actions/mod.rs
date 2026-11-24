@@ -165,6 +165,7 @@ client_actions! {
         VerifyBlockSignature,
     ],
     shared: [
+        ArmCommitFault,
         Connect,
         Parallel,
         AllowStreamPeer,

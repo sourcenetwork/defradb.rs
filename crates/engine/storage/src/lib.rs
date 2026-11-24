@@ -105,6 +105,8 @@ pub mod namespace;
 
 pub mod index;
 pub mod stores;
+#[cfg(all(feature = "testing", not(target_arch = "wasm32")))]
+pub mod testing;
 
 // See #19 for transaction wrapper module
 

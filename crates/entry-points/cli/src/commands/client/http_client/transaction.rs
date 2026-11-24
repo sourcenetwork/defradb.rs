@@ -26,7 +26,7 @@ impl HttpClient {
         // land, and a second attempt would report it as not found.
         let response = self.send_with_retries("POST", &url, None, 0).await?;
         if !response.status().is_success() {
-            return Err(Self::extract_error(response).await);
+            return Err(Self::extract_error("POST", response).await);
         }
         Ok(())
     }

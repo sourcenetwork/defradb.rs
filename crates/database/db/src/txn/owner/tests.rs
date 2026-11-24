@@ -565,3 +565,23 @@ fn a_full_outcome_store_never_evicts_a_live_record() {
         );
     }
 }
+
+/// A commit that may have landed leaves `Indeterminate`, a final outcome the
+/// status keeps; a refusal leaves `Aborted` (`defra.txn.commit_outcome`).
+#[test]
+fn a_commit_that_may_have_landed_leaves_a_final_indeterminate_outcome() {
+    let io = storage::Error::from(std::io::Error::from_raw_os_error(5)).at_commit();
+    let failed: Result<(), _> = Err(query::TransactionError::Storage(io));
+    assert_eq!(Outcome::of(&failed), Outcome::Indeterminate);
+    let lost: Result<(), _> = Err(query::TransactionError::conflict("lost"));
+    assert_eq!(Outcome::of(&lost), Outcome::Aborted);
+    assert_eq!(
+        Outcome::of(&Ok::<_, query::TransactionError>(())),
+        Outcome::Committed
+    );
+    assert!(Outcome::Indeterminate.is_final());
+    assert_eq!(
+        Outcome::try_from(Outcome::Indeterminate as u8),
+        Ok(Outcome::Indeterminate)
+    );
+}

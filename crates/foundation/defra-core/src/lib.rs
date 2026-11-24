@@ -14,6 +14,7 @@ pub mod block_signature;
 pub mod cbor;
 pub mod cid_encoding;
 pub mod collection;
+pub mod commit_outcome;
 /// The acting identity tests set the old way (see [`ambient`]).
 #[cfg(any(test, feature = "ambient"))]
 pub mod current_identity;
@@ -51,6 +52,7 @@ pub use block::{
     DAG_CBOR_CODEC, DEFAULT_SPLITTER_VERSION, IMMUTABLE_LINK_NAME, SHA2_256_CODE,
 };
 pub use collection::collection_short_id;
+pub use commit_outcome::{CommitOutcome, OUTCOME_HEADER};
 pub use encryption::EncryptionKey;
 pub use error::{Error, Result};
 pub use ipld::{collect_block_links, extract_links, walk_ipld, IpldVisitor};

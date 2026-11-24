@@ -112,7 +112,7 @@ pub(super) async fn transact(
             crate::corekv::TransactionConflict::from(&conflict),
         )),
         Err(regolith::TransactError::Engine(error)) => Err(RetryAttemptError::Storage(
-            super::transaction::map_txn_error(error),
+            super::transaction::commit_failure(error),
         )),
         Err(_other) => Err(RetryAttemptError::Storage(Error::Backend(
             "unknown regolith transaction retry failure".into(),

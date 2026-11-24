@@ -162,6 +162,11 @@ pub enum Error {
 
     #[error("projection requires a prepared ACP observation")]
     ProjectionAcpInput(ProjectionAcpInput),
+
+    /// The engine failed, other than with an I/O error, while it made a
+    /// commit durable: the commit may have landed. The text is the cause's.
+    #[error("{0}")]
+    CommitIndeterminate(Box<Error>),
 }
 
 #[derive(Clone, PartialEq)]
@@ -207,6 +212,34 @@ impl Error {
     /// Check if this error indicates a closed database.
     pub fn is_db_closed(&self) -> bool {
         matches!(self, Error::DBClosed)
+    }
+
+    /// This error, raised by the engine while it made a commit durable. A
+    /// conflict stays a refusal; every other failure may have landed.
+    pub fn at_commit(self) -> Self {
+        match self {
+            Self::Io(cause) => Self::Io(cause.at_commit()),
+            refused @ (Self::TxnConflict
+            | Self::TxnConflictDetails(_)
+            | Self::TxnRetryExhausted(_)
+            | Self::CommitIndeterminate(_)) => refused,
+            other => Self::CommitIndeterminate(Box::new(other)),
+        }
+    }
+
+    /// Whether the write this error ended committed: not, for a conflict or
+    /// an I/O failure before the storage commit; unknown, for a failure while
+    /// the engine made the commit durable; `None` when the error says nothing
+    /// about a commit.
+    pub fn commit_outcome(&self) -> Option<defra_core::CommitOutcome> {
+        match self {
+            Self::Io(cause) => cause.commit_outcome(),
+            Self::CommitIndeterminate(_) => Some(defra_core::CommitOutcome::Indeterminate),
+            Self::TxnConflict | Self::TxnConflictDetails(_) | Self::TxnRetryExhausted(_) => {
+                Some(defra_core::CommitOutcome::NotCommitted)
+            }
+            _ => None,
+        }
     }
 
     /// Check if this error is retriable.

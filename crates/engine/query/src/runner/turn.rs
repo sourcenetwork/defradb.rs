@@ -563,9 +563,11 @@ pub(super) fn answered(
     match outcome {
         Ok(response) => response,
         Err(TransactionError::NotFound(_)) => QueryResponse::error("transaction not found"),
-        Err(TransactionError::Execution(message)) => QueryResponse::error(
-            QueryResponseError::from_query_error(QueryError::execution(message)),
-        ),
+        Err(TransactionError::Execution(message) | TransactionError::CommitRefused(message)) => {
+            QueryResponse::error(QueryResponseError::from_query_error(QueryError::execution(
+                message,
+            )))
+        }
         Err(TransactionError::Storage(cause)) => QueryResponse::error(
             QueryResponseError::from_query_error(QueryError::Storage(cause)),
         ),

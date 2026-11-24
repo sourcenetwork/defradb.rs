@@ -53,6 +53,26 @@ impl State {
             .and_then(|output| client_result(&output))
     }
 
+    /// [`State::defra_client_as`], keeping the exit status of a failed run.
+    pub fn defra_client_status_as(
+        &self,
+        name: &str,
+        txn: Option<usize>,
+        identity: Option<u64>,
+        args: &[&str],
+    ) -> Result<Value, CliFailure> {
+        let output = self
+            .defra_client_output(name, txn, identity, args)
+            .map_err(|stderr| CliFailure {
+                stderr,
+                status: None,
+            })?;
+        client_result(&output).map_err(|stderr| CliFailure {
+            stderr,
+            status: output.status.code(),
+        })
+    }
+
     /// `defra client query` as [`State::defra_client_as`] runs it: what
     /// `query_result` makes of its output.
     pub fn defra_query_as(
@@ -202,4 +222,12 @@ mod tests {
             json!({"data": {"User": []}})
         );
     }
+}
+
+/// A `defra client` run that failed: what it printed to stderr and its exit
+/// status (`None` when it was killed by a signal or never ran).
+#[derive(Clone, Debug)]
+pub struct CliFailure {
+    pub stderr: String,
+    pub status: Option<i32>,
 }

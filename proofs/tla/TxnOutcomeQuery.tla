@@ -4,9 +4,11 @@
 \* A client sends a commit, and the connection may drop before the node tells
 \* it whether the commit landed. The node keeps the transaction's outcome for a
 \* short time. The owner may ask again, and the node answers with the outcome
-\* it saw. While the transaction is still open or committing that answer is
-\* not the end of it: the owner asks again, and a later answer reports the
-\* final outcome. Another client gets only "unknown". An ID written by an earlier
+\* it saw: committed, aborted, or indeterminate when the commit failed while
+\* the storage engine made it durable, so it may have landed. While the
+\* transaction is still open or committing that answer is not the end of it:
+\* the owner asks again, and a later answer reports the final outcome.
+\* Another client gets only "unknown". An ID written by an earlier
 \* server start names no live record of this start, so it also gets "unknown".
 \*
 \* What must hold:
@@ -63,7 +65,7 @@ CONSTANTS
   Cap             \* how many records one worker's store keeps before evicting
 
 VARIABLES
-  status,             \* open, committing, committed or aborted
+  status,             \* open, committing, committed, aborted or indeterminate
   lost,               \* whether the owner lost the commit's answer
   answer,             \* the last answer returned, or "none"
   askedBy,            \* owner, foreign, or none
@@ -89,8 +91,10 @@ others == <<otherLive, otherFinal>>
 OldStart == token # idToken
 \* OldStart says the ID was written by an earlier server start.
 
-Final(state) == state \in {"committed", "aborted"}
-\* Final says the commit or abort has settled and cannot change again.
+Final(state) == state \in {"committed", "aborted", "indeterminate"}
+\* Final says the commit or abort has settled and cannot change again. An
+\* indeterminate commit is final too: this server start never learns more
+\* about it (owner/mod.rs Outcome::is_final).
 
 Size == (IF retained THEN 1 ELSE 0) + otherLive + otherFinal
 \* Size counts every record in the store: ours, if it is still kept, plus the
@@ -125,13 +129,14 @@ QueueCommit ==
 
 FinishCommit ==
   /\ status = "committing"
-  /\ status' \in {"committed", "aborted"}
+  /\ status' \in {"committed", "aborted", "indeterminate"}
   /\ age' = 0
   /\ UNCHANGED <<lost, answer, askedBy, retained, token, idToken,
                  queryToken,
                  ownerMayQuery, querySeenStatus, queryTokenAnswered>>
   /\ UNCHANGED others
-  \* The node decides the commit; either final result is possible here.
+  \* The node decides the commit; any of the three final results is possible
+  \* here (owner/mod.rs Outcome::of).
 
 LoseAnswer ==
   /\ lost' = TRUE

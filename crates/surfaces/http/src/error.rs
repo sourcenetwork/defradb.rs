@@ -62,10 +62,22 @@ pub struct ErrorResponse {
     pub error: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code: Option<&'static str>,
+    /// What a failed write's commit did: `aborted` or `indeterminate`
+    /// (`defra.txn.commit_outcome`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<&'static str>,
 }
 
 impl IntoResponse for HttpError {
     fn into_response(self) -> Response {
+        self.into_response_with(None)
+    }
+}
+
+impl HttpError {
+    /// The response for this error, carrying what the failed write's commit
+    /// did when that is known.
+    pub fn into_response_with(self, outcome: Option<defra_core::CommitOutcome>) -> Response {
         let (status, message) = match &self {
             HttpError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
             HttpError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
@@ -91,6 +103,7 @@ impl IntoResponse for HttpError {
             Json(ErrorResponse {
                 error: message,
                 code,
+                outcome: outcome.and_then(defra_core::CommitOutcome::failure_str),
             }),
         )
             .into_response()
@@ -322,9 +335,9 @@ impl From<TransactionError> for HttpError {
         match err {
             TransactionError::NotFound(_) => HttpError::NotFound(message),
             TransactionError::AlreadyFinalized(_) => HttpError::Conflict(message),
-            TransactionError::Execution(message) | TransactionError::Operation(message) => {
-                http_error_from_backend_message(message)
-            }
+            TransactionError::Execution(message)
+            | TransactionError::CommitRefused(message)
+            | TransactionError::Operation(message) => http_error_from_backend_message(message),
             TransactionError::Storage(cause) if cause.is_storage_full() => {
                 HttpError::StorageFull(message)
             }
@@ -590,6 +603,7 @@ mod storage_failure_tests {
         let response = ErrorResponse {
             error: "failed".into(),
             code: None,
+            outcome: None,
         };
         assert_eq!(
             serde_json::to_value(response).unwrap(),

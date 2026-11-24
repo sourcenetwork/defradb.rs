@@ -18,7 +18,7 @@ async fn only_typed_commit_conflict_carries_abort_receipt() {
         assert_eq!(value["error"], query::executor::TXN_CONFLICT_MESSAGE);
         assert_eq!(value.get("outcome").is_some(), confirmed);
         if confirmed {
-            assert_eq!(value["outcome"], "transaction_conflict_aborted");
+            assert_eq!(value["outcome"], "aborted");
         }
     }
 }
@@ -40,4 +40,51 @@ fn commit_receipt_matches_model() {
         .map(commit_has_abort_receipt)
         .collect();
     assert_eq!(actual, expected);
+}
+
+/// A commit failure says what the commit did: `indeterminate` for one that
+/// failed while the engine made it durable, `aborted` for one refused before
+/// anything was durable, what the registry retained for a transaction it no
+/// longer holds, and nothing for an error that ended no commit
+/// (`defra.txn.commit_outcome`).
+#[nuclei::test]
+async fn a_commit_failure_carries_its_outcome() {
+    let io = storage::Error::from(std::io::Error::from_raw_os_error(5)).at_commit();
+    for (error, status, outcome) in [
+        (
+            TransactionError::Storage(io),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Some("indeterminate"),
+        ),
+        (
+            TransactionError::not_found("1")
+                .with_commit_outcome(defra_core::CommitOutcome::NotCommitted),
+            StatusCode::NOT_FOUND,
+            Some("aborted"),
+        ),
+        (
+            TransactionError::not_found("1")
+                .with_commit_outcome(defra_core::CommitOutcome::Indeterminate),
+            StatusCode::NOT_FOUND,
+            Some("indeterminate"),
+        ),
+        (
+            TransactionError::commit_refused("datastore is closed"),
+            StatusCode::BAD_REQUEST,
+            Some("aborted"),
+        ),
+        (
+            TransactionError::operation("refused"),
+            StatusCode::BAD_REQUEST,
+            None,
+        ),
+    ] {
+        let response = commit_error_response(error);
+        assert_eq!(response.status(), status);
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value.get("outcome").and_then(|v| v.as_str()), outcome);
+    }
 }
