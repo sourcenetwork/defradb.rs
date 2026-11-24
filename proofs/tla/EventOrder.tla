@@ -7,7 +7,10 @@
 \* nothing gets its snapshot as its receipt, which can be older than
 \* receipts that already went out.
 \* Who acts: each transaction opens (takes a snapshot), is bound to the
-\* stream just before it enters regolith, then commits or aborts. Its owner
+\* stream just before it enters regolith, then commits or aborts. A writing
+\* commit is made durable in regolith's ordered step, which hands out its
+\* receipt; its on_commit callback runs later, on its own thread, so the
+\* callbacks of two commits reach the drainer in either order. Its owner
 \* hands its events over once it knows the outcome, may run hooks and later
 \* say they finished, or is cancelled and hands over without hooks. One
 \* drainer applies these messages and sends out the events no commit still
@@ -42,7 +45,8 @@ None == -1
 \* The larger of two numbers.
 Max(a, b) == IF a >= b THEN a ELSE b
 
-\* phase: idle, open (snapshot taken), bound, committed or aborted.
+\* phase: idle, open (snapshot taken), bound, durable (made durable, its
+\* on_commit not yet applied), committed or aborted.
 \* snap: the receipt the snapshot saw. floor: the drainer's highest position
 \* when the Begin was read. receipt: what regolith reported. pos: the
 \* position the drainer gives the commit. order: the how-many-th writing
@@ -139,32 +143,45 @@ Bind(t, h) ==
     /\ UNCHANGED <<snap, receipt, pos, order, attached, hooks, held, settled,
                    ready, published, completed, lastReceipt, commits, arrivals>>
 
-\* A writing commit: regolith reports receipt s through on_commit, and
-\* Drainer::apply_life(Committed) sets position = max(receipt, floor).
+\* A writing commit made durable: regolith's ordered step hands it receipt
+\* s. Nothing reaches the drainer yet; its on_commit runs later (OnCommit).
 NativeCommit(t, s) ==
     \* A bound transaction commits once.
     /\ phase[t] = "bound"
     /\ s \in 1..MaxReceipt
-    \* Regolith's receipts grow; Red_ReceiptRegress lets one go back.
+    \* Receipts grow in durability order; Red_ReceiptRegress lets one go back.
     /\ (s > lastReceipt \/ Mode = "receipt_regress")
+    /\ phase' = [phase EXCEPT ![t] = "durable"]
+    \* The receipt is recorded.
+    /\ receipt' = [receipt EXCEPT ![t] = s]
+    \* It is the next writing commit to be made durable.
+    /\ order' = [order EXCEPT ![t] = commits + 1]
+    /\ commits' = commits + 1
+    \* Regolith's latest receipt.
+    /\ lastReceipt' = Max(lastReceipt, s)
+    /\ UNCHANGED <<snap, floor, pos, wantHooks, attached, hooks, held, settled,
+                   ready, published, completed, arrivals>>
+
+\* The durable commit's on_commit reaches the drainer, in any order against
+\* other commits' callbacks: Drainer::apply_life(Committed) sets position =
+\* max(receipt, floor).
+OnCommit(t) ==
+    \* A durable commit's callback is applied once.
+    /\ phase[t] = "durable"
     \* The position is the receipt raised to the floor; Red_NoFloorClamp
     \* takes the receipt alone.
-    /\ LET p == IF Mode = "no_floor_clamp" THEN s ELSE Max(s, floor[t])
+    /\ LET p == IF Mode = "no_floor_clamp" THEN receipt[t] ELSE Max(receipt[t], floor[t])
        IN /\ phase' = [phase EXCEPT ![t] = "committed"]
-          \* The receipt and position are recorded.
-          /\ receipt' = [receipt EXCEPT ![t] = s]
+          \* The position is recorded.
           /\ pos' = [pos EXCEPT ![t] = p]
-          \* It is the next writing commit to be made durable.
-          /\ order' = [order EXCEPT ![t] = commits + 1]
-          /\ commits' = commits + 1
-          \* Regolith's latest receipt and the drainer's highest position.
-          /\ lastReceipt' = Max(lastReceipt, s)
+          \* The drainer's highest position.
           /\ completed' = Max(completed, p)
           \* Committed calls complete, which fires only when the holds allow.
           /\ IF CanComplete(p, attached[t], hooks[t], settled[t])
                 THEN Complete(t, p, held[t])
                 ELSE Stay
-    /\ UNCHANGED <<snap, floor, wantHooks, attached, hooks, published>>
+    /\ UNCHANGED <<snap, floor, receipt, order, wantHooks, attached, hooks,
+                   published, lastReceipt, commits>>
 
 \* A commit that writes nothing: its receipt is its snapshot, and the clamp
 \* to its floor keeps it from going out before what already went out.
@@ -272,6 +289,7 @@ Dispatch(r) ==
 Next == \/ \E t \in Txns : Open(t)
         \/ \E t \in Txns, h \in BOOLEAN : Bind(t, h)
         \/ \E t \in Txns, s \in 1..MaxReceipt : NativeCommit(t, s)
+        \/ \E t \in Txns : OnCommit(t)
         \/ \E t \in Txns : EmptyCommit(t)
         \/ \E t \in Txns : Abort(t)
         \/ \E t \in Txns, c \in BOOLEAN : Attach(t, c)
@@ -283,7 +301,7 @@ Spec == Init /\ [][Next]_vars
 
 \* Every variable stays in its range.
 TypeOK ==
-    /\ phase \in [Txns -> {"idle", "open", "bound", "committed", "aborted"}]
+    /\ phase \in [Txns -> {"idle", "open", "bound", "durable", "committed", "aborted"}]
     /\ snap \in [Txns -> {None} \cup 0..MaxReceipt]
     /\ floor \in [Txns -> {None} \cup 0..MaxReceipt]
     /\ receipt \in [Txns -> {None} \cup 0..MaxReceipt]

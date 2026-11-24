@@ -49,7 +49,9 @@ total order it can check across collections. The models are
 
 ### The supported pattern
 
-Subscribe first, to document change notifications or a GraphQL subscription. Then
+Subscribe first, to document change notifications or to a GraphQL subscription of
+the collection with no `docID` or `docIDs` argument (one with either wakes only for
+the documents it names, so an update to another can wait unannounced). Then
 read `_documentUpdates` from the saved cursor up to `head`, and save the cursor with
 what the read produced. Read again on every wake-up and every loss signal (a set
 `resync_required`, an ended stream), subscribing again first when the stream ended.
