@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-a217d20c.js";
+            window.path_to_searchindex_js = "searchindex-b5a69179.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-8198d451.js"></script>
@@ -3230,6 +3230,137 @@ Capacity overflow sets <code>resync_required</code>, again visibly.</li>
 wants the invalidation signal. Forging a durable, gap-free stream of <em>arrivals</em> (as
 opposed to revisions) is the <a href="#the-arrival-journal">arrival journal</a>, which
 clients consume by cursor rather than subscription.</p>
+<h2 id="delivery-contract"><a class="header" href="#delivery-contract">Delivery contract</a></h2>
+<p>What each surface promises a consumer, answering the same seven questions for each.
+Every answer cites the test or model invariant that holds it; TBD marks a question
+with no evidence yet. Order is stated per collection only: each journal is per
+collection, and events carry no sequence number, so no surface offers a consumer a
+total order it can check across collections. The models are
+<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/proofs/tla/ChangeDelivery.tla"><code>ChangeDelivery.tla</code></a>
+(publisher, journal and subscriber) and
+<a href="https://github.com/sourcenetwork/defradb.rs/blob/main/proofs/tla/EventOrder.tla"><code>EventOrder.tla</code></a>
+(the receipt-ordered dispatch).</p>
+<h3 id="the-supported-pattern"><a class="header" href="#the-supported-pattern">The supported pattern</a></h3>
+<p>Subscribe first, to document change notifications or to a GraphQL subscription of
+the collection with no <code>docID</code>, <code>docIDs</code> or <code>filter</code> argument (one with any of them wakes
+only for the documents it names or matches, so an update to another can wait unannounced). Then,
+once the subscription request has returned its stream (never concurrently with it),
+read <code>_documentUpdates</code> from the saved cursor up to <code>head</code>, and save the cursor with
+what the read produced. Read again on every wake-up and every loss signal (a set
+<code>resync_required</code>, an ended stream), subscribing again first when the stream ended.
+A subscriber that does this observes every committed update of the collection, local
+or merged, that it is allowed to see, exactly once and in commit order, with no rescan:
+<code>ChangeDelivery.tla</code> <code>INV_ExactlyOnce</code>, <code>INV_CommitOrder</code> and <code>EventuallyObserved</code>
+(GREEN <code>MC_ChangeDelivery_Green_Closing.cfg</code> and <code>MC_ChangeDelivery_Green_Coalescing.cfg</code>).
+Exactly once covers the journal reads and the saved cursor, not what a consumer does with
+a row: one that applies an update and stops before it saves the cursor reads that update
+again, so its effect and the cursor save must commit together, or the effect must be
+idempotent.
+In a collection with a <code>@policy</code>, a row is not shown when its document is deleted or
+purged, or when the reader may not read the document; the cursor moves past it
+anyway, so a row hidden when the reader reads past it is skipped for good, even if
+access is granted later (<code>defra.events.delivery.visibility</code>; <code>INV_HiddenNotShown</code>,
+<code>Red_GateOff</code>, <code>Red_HiddenStalls</code>). An update observed before its document was
+deleted stays observed. In a collection without a policy (other than a <code>@chunk</code> collection, whose rows follow their parent document’s access) every row is shown, a
+deleted document’s included.
+Reading before subscribing can miss an update for good (<code>Red_ReadBeforeSubscribe</code>).
+The raw event subscription is not a wake-up source for this pattern: its loss counter
+wakes nobody (<code>Red_CounterNoWake</code>).</p>
+<h3 id="event-bus-through-the-embedded-api-nodesubscribe"><a class="header" href="#event-bus-through-the-embedded-api-nodesubscribe">Event bus through the embedded API (<code>Node::subscribe</code>)</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Question</th><th>Answer</th><th>Evidence</th></tr>
+</thead>
+<tbody>
+<tr><td>Delivery</td><td>At most once. A full buffer drops the event and adds one to the subscription’s dropped counter; the subscription stays open.</td><td><code>crates/foundation/events/tests/unit/channel_bus.rs</code> <code>ordinary_raw_subscription_remains_open_after_overflow</code></td></tr>
+<tr><td>Duplicates</td><td>TBD: whether one update’s <code>Update</code> event can go out twice (<code>is_retry</code>, a block merged again by a fresh handler).</td><td>none yet</td></tr>
+<tr><td>Order within a collection</td><td>Commit-receipt order, for local writes and P2P merges alike: both register their events as ordered post-commit callbacks (<code>register_ordered_events</code>), which go out in receipt order.</td><td><code>EventOrder.tla</code> <code>Ordered</code>, <code>INV_CommitOrder</code>; <code>crates/engine/storage/src/backends/regolith/event_order.rs</code> <code>a_later_receipt_waits_for_an_earlier_commit_still_in_flight</code>; <code>event_order.rs</code> <code>reversed_concurrent_receipts_dispatch_in_seq_order</code></td></tr>
+<tr><td>Order across collections</td><td>Not stated: events carry no sequence number.</td><td>none</td></tr>
+<tr><td>Restart</td><td>Nothing survives: the bus is in memory and keeps no cursor.</td><td><code>proofs/survey/events.md</code> (live-only)</td></tr>
+<tr><td>Resubscription</td><td>A new subscription sees only events published after it. Subscribe, then read state; reading first can miss an update.</td><td><code>ChangeDelivery.tla</code> <code>Red_ReadBeforeSubscribe</code></td></tr>
+<tr><td>Gap detection</td><td>The dropped counter, read with <code>check_and_reset_dropped()</code>. It is raised for every drop, but it wakes no reader: a reader that drained the buffer and read zero just before the count landed waits with nothing to wake it.</td><td><code>crates/foundation/events/tests/unit/channel_bus.rs</code> <code>raw_overflow_recorded_after_a_drain_is_counted_but_wakes_no_reader</code>; <code>ChangeDelivery.tla</code> <code>Red_CounterNoWake</code></td></tr>
+<tr><td>Combination</td><td>Not supported as the wake-up source of the pattern above.</td><td><code>ChangeDelivery.tla</code> <code>Red_CounterNoWake</code></td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="graphql-subscription-over-sse"><a class="header" href="#graphql-subscription-over-sse">GraphQL subscription over SSE</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Question</th><th>Answer</th><th>Evidence</th></tr>
+</thead>
+<tbody>
+<tr><td>Delivery</td><td>At most once, with the loss signalled: an overflow ends the stream before any result queued behind it.</td><td><code>crates/surfaces/http/tests/graphql_sse_recovery.rs</code> <code>overflow_ends_the_graphql_stream_before_a_queued_result</code>; <code>SseDelivery</code> <code>INV_DetectedLossEnds</code></td></tr>
+<tr><td>Duplicates</td><td>TBD, as for the event bus it is built on.</td><td>none yet</td></tr>
+<tr><td>Order within a collection</td><td>Commit-receipt order, as the event bus.</td><td><code>EventOrder.tla</code> <code>Ordered</code>, <code>INV_CommitOrder</code></td></tr>
+<tr><td>Order across collections</td><td>Not stated.</td><td>none</td></tr>
+<tr><td>Restart</td><td>The stream ends with the process; nothing resumes it.</td><td><code>proofs/survey/events.md</code> (live-only)</td></tr>
+<tr><td>Resubscription</td><td>A new stream sees only what is published after it. Subscribe, then read the journal.</td><td><code>ChangeDelivery.tla</code> <code>Red_ReadBeforeSubscribe</code></td></tr>
+<tr><td>Gap detection</td><td>The stream ends, and the end wakes a reader that already drained what it had.</td><td><code>crates/foundation/events/tests/unit/channel_bus.rs</code> <code>overflow_wakes_reader_that_drained_before_loss_was_recorded</code>; <code>SseDelivery</code> <code>LossEndsStream</code></td></tr>
+<tr><td>Combination</td><td>Supported: on every result and on the end of the stream (subscribing again first), read the update journal from the cursor.</td><td><code>ChangeDelivery.tla</code> <code>MC_ChangeDelivery_Green_Closing.cfg</code></td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="document-change-notifications-subscribe_document_changes-subscribe_collection_changes"><a class="header" href="#document-change-notifications-subscribe_document_changes-subscribe_collection_changes">Document change notifications (<code>subscribe_document_changes</code>, <code>subscribe_collection_changes</code>)</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Question</th><th>Answer</th><th>Evidence</th></tr>
+</thead>
+<tbody>
+<tr><td>Delivery</td><td>A lossless invalidation, not a revision stream: the changed documents’ state is written first, then the reader is woken. Revisions of one document coalesce into one pending entry.</td><td><code>crates/foundation/events/tests/document_changes.rs</code> <code>history_revisions_coalesce_without_changing_raw_events</code>, <code>publishing_races_with_draining_without_losing_a_wake</code></td></tr>
+<tr><td>Duplicates</td><td>Each published update is counted in exactly one batch; a document is reported again only for a later update.</td><td><code>crates/foundation/events/tests/document_changes.rs</code> <code>publishing_races_with_draining_without_losing_a_wake</code> (10 000 published, 10 000 counted), <code>distinct_document_overflow_is_one_bounded_resync_then_recovers</code></td></tr>
+<tr><td>Order within a collection</td><td>Not a sequence: a wake-up names documents, not an order.</td><td>none</td></tr>
+<tr><td>Order across collections</td><td>Not stated.</td><td>none</td></tr>
+<tr><td>Restart</td><td>Nothing survives.</td><td><code>proofs/survey/events.md</code> (live-only)</td></tr>
+<tr><td>Resubscription</td><td>Subscribe, then read; a subscription filtered to collections is woken only by them.</td><td><code>crates/foundation/events/tests/document_changes.rs</code> <code>collection_scope_ignores_other_collections</code>; <code>ChangeDelivery.tla</code> <code>Red_ReadBeforeSubscribe</code></td></tr>
+<tr><td>Gap detection</td><td>Too many distinct pending documents clear the set and set <code>resync_required</code>, once, with a wake-up.</td><td><code>crates/foundation/events/tests/document_changes.rs</code> <code>distinct_document_overflow_is_one_bounded_resync_then_recovers</code></td></tr>
+<tr><td>Combination</td><td>Supported: the recommended wake-up source for the pattern above. P2P merges feed it through the same <code>Update</code> event as local writes (<code>Message::as_update</code>); a test through a merge is TBD.</td><td><code>ChangeDelivery.tla</code> <code>MC_ChangeDelivery_Green_Coalescing.cfg</code>, <code>Red_WakeBeforeState</code></td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="arrival-journal-_documentarrivals"><a class="header" href="#arrival-journal-_documentarrivals">Arrival journal (<code>_documentArrivals</code>)</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Question</th><th>Answer</th><th>Evidence</th></tr>
+</thead>
+<tbody>
+<tr><td>Delivery</td><td>Durable, read by cursor. One row per document, however it arrived. In a collection with a <code>@policy</code>, or a <code>@chunk</code> collection, a reader is handed only the rows of documents it may read.</td><td><code>crates/database/db/tests/read/arrival_transactions.rs</code> <code>rollback_is_atomic_and_duplicate_arrivals_do_not_advance</code>; <code>CommitOrderedAppend.tla</code> (regolith)</td></tr>
+<tr><td>Duplicates</td><td>None: the document is the once key, so a create racing a merge of it keeps one row.</td><td><code>crates/database/db/tests/read/arrival_transactions.rs</code> <code>rollback_is_atomic_and_duplicate_arrivals_do_not_advance</code></td></tr>
+<tr><td>Order within a collection</td><td>Commit order, dense cursors from 1.</td><td><code>crates/database/db/tests/read/arrival_transactions.rs</code> <code>reversed_concurrent_commits_receive_cursors_in_commit_order</code></td></tr>
+<tr><td>Order across collections</td><td>None: each collection has its own cursors.</td><td>none</td></tr>
+<tr><td>Restart</td><td>The journal and a saved cursor survive a reopen. Retention across truncate, purge, backup restore and <code>drop_all</code>: TBD.</td><td><code>crates/database/db/tests/read/arrival_transactions.rs</code> <code>cursor_survives_database_reopen</code></td></tr>
+<tr><td>Resubscription</td><td>A read is a snapshot: the stored rows it covers are a dense prefix up to <code>head</code>. The rows a reader is handed skip those of documents it may not read (see Gap detection).</td><td><code>CommitOrderedAppend.tla</code> (regolith) snapshot prefix</td></tr>
+<tr><td>Gap detection</td><td>The stored rows are dense; in a read without <code>docID</code>, a row missing from storage in the read range is an error, never skipped. A <code>docID</code> read takes each cursor from the document’s once key and does not read the row, so it does not detect a missing row. The cursors a reader is handed are not: a row of a document it may not read is passed silently and <code>next</code> moves past it (<code>execute_arrivals_query</code>). A cursor past <code>head</code> fails with <code>arrival cursor is beyond this node's collection head</code> (a test through a client is TBD).</td><td><code>crates/database/db/src/event/arrivals.rs</code></td></tr>
+<tr><td>Combination</td><td>Read on wake-up, as the update journal.</td><td><code>ChangeDelivery.tla</code> (as for the update journal)</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="update-journal-_documentupdates"><a class="header" href="#update-journal-_documentupdates">Update journal (<code>_documentUpdates</code>)</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Question</th><th>Answer</th><th>Evidence</th></tr>
+</thead>
+<tbody>
+<tr><td>Delivery</td><td>Durable, read by cursor: one row per update that changed its document, local or merged. A create adds no row. In a collection with a <code>@policy</code>, a reader is handed only the rows of documents it may read that are neither deleted nor purged; in a <code>@chunk</code> collection, only the rows whose parent document it may read; the others are hidden from it.</td><td><code>reqs/defra/change-delivery.md</code> <code>defra.events.delivery.merge-once</code>, <code>defra.events.delivery.visibility</code>; <code>tools/integration-test/tests/testo/subscription/delivery/merge_once.rs</code>, <code>visibility.rs</code>; <code>DocumentUpdateJournal.tla</code> <code>INV_Once</code></td></tr>
+<tr><td>Duplicates</td><td>None: (collection, document, block) is the once key, so a block merged a second time (by a handler that does not yet know it was applied) adds no row. A block the node already applied is skipped before the merge, from the durable head set (<code>DbMergeHandler::composite_was_applied</code>), so the once key is held by a database-level test only; no client-level test reaches a second merge.</td><td><code>crates/database/db/tests/merge/update_journal.rs</code> <code>a_block_merged_again_by_another_handler_adds_no_second_row</code>; <code>ChangeDelivery.tla</code> <code>Red_ReMergeAppends</code></td></tr>
+<tr><td>Order within a collection</td><td>Commit order, dense cursors from 1, for local writes and merges.</td><td><code>defra.events.delivery.order</code>; <code>crates/database/db/tests/read/update_transactions.rs</code> <code>commit_order_rollback_and_replayed_updates</code></td></tr>
+<tr><td>Order across collections</td><td>None: each collection has its own cursors.</td><td><code>ChangeDelivery.tla</code> (one collection; out of scope)</td></tr>
+<tr><td>Restart</td><td>The journal and a saved cursor survive a reopen with no gap and no duplicate. Truncate at e222d6b deletes no <code>/arrival/updates/</code> key (<code>collection/ops/truncate/all.rs</code>, <code>filtered.rs</code>), so the rows of truncated documents stay; what a reader is handed for them, and retention across purge, backup restore and <code>drop_all</code>: TBD.</td><td><code>defra.events.delivery.resume</code>; <code>crates/database/db/tests/read/update_transactions.rs</code> <code>updates_and_replay_checkpoint_survive_reopen</code></td></tr>
+<tr><td>Resubscription</td><td>A read is a snapshot of rows up to <code>head</code>; a reader that saves its cursor with its effect resumes exactly.</td><td><code>ChangeDelivery.tla</code> <code>Red_CursorNotDurable</code></td></tr>
+<tr><td>Gap detection</td><td>The stored rows are dense: a row missing from storage is an error, and a cursor past <code>head</code> fails with <code>update cursor is beyond this node's collection head</code> through every client. The cursors a reader is handed are not dense: a row hidden from it (see Delivery) is passed silently, <code>next</code> moves past it, and no error is raised.</td><td><code>defra.events.delivery.beyond-head</code>, <code>defra.events.delivery.visibility</code>; <code>crates/database/db/tests/read/update_transactions.rs</code> <code>a_scan_is_closed_when_a_row_is_missing</code>; <code>crates/database/db/tests/read/update_visibility.rs</code> <code>a_deleted_private_documents_updates_are_shown_to_nobody</code></td></tr>
+<tr><td>Combination</td><td>The durable half of the pattern above, for the rows the reader is allowed to see.</td><td><code>ChangeDelivery.tla</code> <code>INV_ExactlyOnce</code>, <code>INV_CommitOrder</code>, <code>INV_HiddenNotShown</code>, <code>EventuallyObserved</code></td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="what-counts-as-breaking"><a class="header" href="#what-counts-as-breaking">What counts as breaking</a></h3>
+<p>Weakening any answer above is a breaking change: a surface’s delivery class (at most
+once with a signal, lossless invalidation, durable), its order, its loss signal, or how
+long a journal cursor stays valid. Such a change says so in its PR and updates this
+section, the <code>defra.events.delivery</code> requirements and the models in the same change.</p>
 <h2 id="p2p-forwarding"><a class="header" href="#p2p-forwarding">P2P forwarding</a></h2>
 <p>Committed writes are handed to the replication broadcaster (push-to-replicators plus
 gossip): the broadcast marker is written durably, and only then does the committing
