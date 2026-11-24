@@ -125,9 +125,8 @@ impl super::Planner {
 
     /// Try to select an index for a child collection scan.
     ///
-    /// Returns `Some((IndexScanParams, per_parent_scan))` if an index can service
-    /// the filter or ordering, `None` otherwise. `per_parent_scan` is true when
-    /// the index is used (enabling per-parent re-scanning for correct Go metrics).
+    /// Returns the selected scan and whether it provides the requested order,
+    /// or `None` when no index can service the filter or ordering.
     pub(in crate::planner) fn try_select_child_index(
         &self,
         filter: Option<&Filter>,

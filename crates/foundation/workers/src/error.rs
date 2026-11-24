@@ -66,6 +66,14 @@ impl fmt::Display for Error {
 impl std::error::Error for Error {}
 
 impl Error {
+    /// The sentence shown to a caller when work fails on the pool.
+    pub fn caller_message(&self) -> &'static str {
+        match self {
+            Error::ShutDown => "the node is shutting down; try again",
+            _ => "the request failed on an internal error; see the node's log",
+        }
+    }
+
     /// Logs that `work` did not finish on the pool because of this error (a
     /// warning while the pool shuts down, an error otherwise) and returns the
     /// one sentence its caller is told.
@@ -73,12 +81,11 @@ impl Error {
         match self {
             Error::ShutDown => {
                 tracing::warn!(work, "work did not run: the worker pool is shut down");
-                "the node is shutting down; try again"
             }
             error => {
                 tracing::error!(work, %error, "work failed on the worker pool");
-                "the request failed on an internal error; see the node's log"
             }
         }
+        self.caller_message()
     }
 }

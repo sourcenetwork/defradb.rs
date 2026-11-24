@@ -129,7 +129,7 @@ impl ProviderRotation {
         self.responsive.insert(self.current().clone());
     }
 
-    /// The peer answered on a non-block-sync substream yet delivered no block
+    /// The peer answered on a non-Bitswap substream yet delivered no block
     /// across every window of this fetch.
     pub(super) fn is_responsive_but_silent(&self, peer: &PeerId) -> bool {
         self.responsive.contains(peer) && !self.productive.contains(peer)

@@ -11,6 +11,21 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 # event to the settled rest (depth = events + 1), and DEADLOCK:<l> stops with
 # event l next (past the end when l = events + 1).
 RUNS=(
+  "MC_OfflineReconnect_Green.cfg OfflineReconnect.tla GREEN"
+  "MC_OfflineReconnect_Red_StalePark.cfg OfflineReconnect.tla RED"
+  "MC_OfflineReconnect_Red_StaleConnect.cfg OfflineReconnect.tla RED"
+  "MC_OfflineReconnect_Red_Failure.cfg OfflineReconnect.tla RED"
+  "MC_OfflineReconnect_Red_Expired.cfg OfflineReconnect.tla RED"
+  "MC_HeaderRetry_Green.cfg HeaderRetry.tla GREEN"
+  "MC_HeaderRetry_Red_Drop.cfg HeaderRetry.tla RED"
+  "MC_OrderedIndexPage_Green.cfg OrderedIndexPage.tla GREEN"
+  "MC_OrderedIndexPage_Red_DoubleOffset.cfg OrderedIndexPage.tla RED"
+  "MC_SyncedMigrationTransform_Green.cfg SyncedMigrationTransform.tla GREEN"
+  "MC_SyncedMigrationTransform_Red_Drop.cfg SyncedMigrationTransform.tla RED"
+  "MC_SyncedMigrationTransform_Red_Head.cfg SyncedMigrationTransform.tla RED"
+  "MC_AssignmentPosition_Green.cfg AssignmentPosition.tla GREEN"
+  "MC_AssignmentPosition_Red_Stale.cfg AssignmentPosition.tla RED"
+  "MC_AssignmentPosition_Red_Hash.cfg AssignmentPosition.tla RED"
   "MC_ExplainIndexName_Green.cfg ExplainIndexName.tla GREEN"
   "MC_ExplainIndexName_Green_Fallback.cfg ExplainIndexName.tla GREEN"
   "MC_ExplainIndexName_Red_Lookup.cfg ExplainIndexName.tla RED" # direct FK lookup must name its index
@@ -533,8 +548,25 @@ RUNS=(
   "MC_StatementAtomicity_Red_NoSideEffectRollback.cfg StatementAtomicity.tla RED" # failed statement leaves callback side effects
   "MC_StatementAtomicity_Red_NextOperationSkipsCleanup.cfg StatementAtomicity.tla RED" # next statement crosses pending cancellation cleanup
   "MC_StatementAtomicity_Red_CommitSkipsCleanup.cfg StatementAtomicity.tla RED" # transaction commits before cancellation cleanup
-  "MC_EventOrder_Green.cfg EventOrder.tla GREEN"
-  "MC_EventOrder_Red_Arrival.cfg EventOrder.tla RED"
+  "MC_EventOrder_Green.cfg EventOrder.tla GREEN" # #3268: events go out in commit order, after hooks, only for commits, none lost
+  "MC_EventOrder_Red_Arrival.cfg EventOrder.tla RED" # dispatch ignores the floors (Ordered)
+  "MC_EventOrder_Red_ReceiptRegress.cfg EventOrder.tla RED" # a later commit gets a lower receipt (INV_CommitOrder)
+  "MC_EventOrder_Red_NoFloorClamp.cfg EventOrder.tla RED" # an empty commit goes out at its old snapshot (Ordered)
+  "MC_EventOrder_Red_DispatchBeforeAttach.cfg EventOrder.tla RED" # completes before the hand-over, events lost (INV_CommittedEventsKept)
+  "MC_EventOrder_Red_DispatchDuringHooks.cfg EventOrder.tla RED" # events go out while hooks run (INV_HooksBeforeEvents)
+  "MC_EventOrder_Red_AbortPublishes.cfg EventOrder.tla RED" # an aborted commit's events go out (INV_OnlyCommitted)
+  "MC_EventOrder_Red_NotMinSeq.cfg EventOrder.tla RED" # dispatch sends any ready commit (INV_CommitOrder)
+  "MC_ChangeDelivery_Green_Closing.cfg ChangeDelivery.tla GREEN" # #3268: subscribe, then read from the cursor on every wake: once, in order, eventually (SSE)
+  "MC_ChangeDelivery_Green_Coalescing.cfg ChangeDelivery.tla GREEN" # the same over document change notifications
+  "MC_ChangeDelivery_Red_SilentLoss.cfg ChangeDelivery.tla RED" # a drop nobody counts (INV_LossCounted)
+  "MC_ChangeDelivery_Red_ReadBeforeSubscribe.cfg ChangeDelivery.tla RED" # read, then subscribe (EventuallyObserved)
+  "MC_ChangeDelivery_Red_JournalSkipsMerge.cfg ChangeDelivery.tla RED" # a merge gets no row (EventuallyObserved)
+  "MC_ChangeDelivery_Red_ReMergeAppends.cfg ChangeDelivery.tla RED" # no once key: a re-merged block gets a second row (INV_ExactlyOnce)
+  "MC_ChangeDelivery_Red_CounterNoWake.cfg ChangeDelivery.tla RED" # Node::subscribe: a counted drop wakes nobody (EventuallyObserved)
+  "MC_ChangeDelivery_Red_WakeBeforeState.cfg ChangeDelivery.tla RED" # the wake precedes the visible update (EventuallyObserved)
+  "MC_ChangeDelivery_Red_CursorNotDurable.cfg ChangeDelivery.tla RED" # the cursor is not saved with what was observed (INV_ExactlyOnce)
+  "MC_ChangeDelivery_Red_GateOff.cfg ChangeDelivery.tla RED" # the gate shows a deleted or unreadable document's row (INV_HiddenNotShown)
+  "MC_ChangeDelivery_Red_HiddenStalls.cfg ChangeDelivery.tla RED" # a hidden row stops the cursor instead of being passed (EventuallyObserved)
   "MC_TransactionDecisions_Green.cfg TransactionDecisions.tla GREEN"
   "MC_TransactionDecisions_Red_OutsideRead.cfg TransactionDecisions.tla RED"
   "MC_DefraKeyClassifier_Green.cfg DefraKeyClassifier.tla GREEN"
@@ -915,7 +947,7 @@ RUNS=(
   "MC_AdministrativeRelationship_Red_Active.cfg AdministrativeRelationship.tla RED" # INV_Active
   "MC_ChildPagePerParent_Green.cfg ChildPagePerParent.tla GREEN" # each parent completes its exact ordered child page
   "MC_ChildPagePerParent_Green_ShortParent.cfg ChildPagePerParent.tla GREEN" # a parent with fewer children than the limit takes them all
-  "MC_ChildPagePerParent_Red_GlobalBound.cfg ChildPagePerParent.tla RED" # one global child bound lets the first parent consume the bound and leaves B without its page
+  "MC_ChildPagePerParent_Red_GlobalBound.cfg ChildPagePerParent.tla RED" # one global child bound lets the first parent consume the bound and leaves B without its page (INV_SecondParentKeepsPage)
   "MC_ChildPagePerParent_Red_NoEarlyStop.cfg ChildPagePerParent.tla RED" # the per-parent scan reads past a full page (INV_PageWithinLimit)
   "MC_AdministrativeRelationship_Red_NacBound.cfg AdministrativeRelationship.tla RED" # INV_NacBound
   "MC_AdministrativeRelationship_Red_Bypass.cfg AdministrativeRelationship.tla RED" # INV_Bypass
@@ -1505,8 +1537,9 @@ RUNS=(
   "MC_DocumentSave_Red_SplitTxn.cfg DocumentSave.tla RED" # a delete between lookup and write forks the save (INV_NoFork)
   "MC_RelationLinkConflict_Green.cfg RelationLinkConflict.tla GREEN" # a validated link read commits when empty and conflicts after a later first link
   "MC_RelationLinkConflict_Red_Unvalidated.cfg RelationLinkConflict.tla RED" # an unvalidated link read lets both links commit (INV_SecondLinkIsRefused)
-  "MC_ChildLimitPaging_Green.cfg ChildLimitPaging.tla GREEN" # each ordered child page is collected per parent
-  "MC_ChildLimitPaging_Red_UnorderedStop.cfg ChildLimitPaging.tla RED" # an unordered early stop loses a later parent's page (INV_EveryParentHasPage)
+  "MC_ChildLimitPaging_Green.cfg ChildLimitPaging.tla GREEN" # unordered scans run to completion before paging
+  "MC_ChildLimitPaging_Ordered.cfg ChildLimitPaging.tla GREEN" # ordered scans can stop at offset plus limit
+  "MC_ChildLimitPaging_Red_UnorderedStop.cfg ChildLimitPaging.tla RED" # stopping an unordered scan returns the wrong page (INV_CompletedPage)
   "MC_BackupImportWritePath_Green.cfg BackupImportWritePath.tla GREEN" # every import write takes its edge's request path: signed, replicated, owned, drained as one request
   "MC_BackupImportWritePath_Red_OwnMutator.cfg BackupImportWritePath.tla RED" # the old private mutator writes unsigned blocks (INV_ImportSigned)
   "MC_BackupImportWritePath_Red_NoSigningChoice.cfg BackupImportWritePath.tla RED" # the import drops the node's signing choice (INV_ImportSigned)
