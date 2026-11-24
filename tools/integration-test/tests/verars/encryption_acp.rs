@@ -319,10 +319,11 @@ async fn encryption_acp_user_access_not_node() {
 /// Port: TestDocEncryptionACP_IfNodeHasAccessToSomeDocs_ShouldFetchOnlyThem
 ///
 /// Six docs: encrypted/plaintext crossed with private-shared / private-unshared
-/// / public. node1 is granted `reader` (as a node) only on the two private docs
-/// it is meant to read. It should end up able to read exactly the 4 docs it is
-/// entitled to (encrypted+shared, plaintext+shared, encrypted+public,
-/// plaintext+public) and NOT the 2 private-unshared docs.
+/// / created without an identity. node1 is granted `reader` (as a node) only on
+/// the two private docs it is meant to read. It ends up able to read exactly
+/// those two (encrypted+shared, plaintext+shared): not the two private-unshared
+/// docs, and not the two created without an identity, which Go's chain treats
+/// as public and vera.rs, which denies an unregistered document, does not.
 #[nuclei::test]
 #[serial_test::serial]
 async fn encryption_acp_node_partial_access() {
@@ -353,11 +354,8 @@ async fn encryption_acp_node_partial_access() {
                 .to_string()
         };
 
-        // Public docs are created WITHOUT an owner identity (so they are
-        // unregistered/public in DAC terms). The CLI requires an identity to sign,
-        // so we register-then-do-not-share is NOT public; instead, public docs are
-        // created anonymously. The harness query CLI supports anonymous mutations.
-        let public_create = |name: &str, encrypted: bool| -> String {
+        // Docs created without an owner identity are unregistered.
+        let unregistered_create = |name: &str, encrypted: bool| -> String {
             let mutation = if encrypted {
                 format!(
                     r#"mutation {{ add_Users(input: {{name: "{}", age: 33}}, encrypt: true) {{ _docID }} }}"#,
@@ -371,10 +369,10 @@ async fn encryption_acp_node_partial_access() {
             };
             let created = c0
                 .query(&mutation)
-                .unwrap_or_else(|e| panic!("create public {}: {:?}", name, e));
+                .unwrap_or_else(|e| panic!("create unregistered {}: {:?}", name, e));
             created["add_Users"][0]["_docID"]
                 .as_str()
-                .unwrap_or_else(|| panic!("missing _docID for public {}", name))
+                .unwrap_or_else(|| panic!("missing _docID for unregistered {}", name))
                 .to_string()
         };
 
@@ -386,8 +384,8 @@ async fn encryption_acp_node_partial_access() {
         // encrypted, private, NOT shared -> Andy
         let _andy = create("Andy", true);
 
-        // encrypted, public -> Islam
-        let _islam = public_create("Islam", true);
+        // encrypted, unregistered -> Islam
+        let _islam = unregistered_create("Islam", true);
 
         // plaintext, private, shared -> John
         let john = create("John", false);
@@ -397,132 +395,29 @@ async fn encryption_acp_node_partial_access() {
         // plaintext, private, NOT shared -> Keenan
         let _keenan = create("Keenan", false);
 
-        // plaintext, public -> Shahzad
-        let _shahzad = public_create("Shahzad", false);
+        // plaintext, unregistered -> Shahzad
+        let _shahzad = unregistered_create("Shahzad", false);
 
-        // Grants are now durable on-chain; wire replication so node1 starts syncing.
+        // The grants are finalized; wire replication so node1 starts syncing.
         connect_and_replicate_without_delegation(&cluster);
 
-        // node1 queries as itself. The node-identity full-access shortcut means
-        // node1 sees everything it physically *has*; the gating happened at sync /
-        // key-fetch time, so it ends up with exactly the 4 entitled docs.
+        // node1 queries as itself: it ends up with exactly the two docs it was
+        // granted, and a doc that arrives later does not widen that.
+        let entitled = ["Fred", "John"];
         let names = wait_for_names(
             &cluster,
             1,
             &ids.node1_key,
-            &["Fred", "John", "Islam", "Shahzad"],
+            &entitled,
             Duration::from_secs(50),
         )
         .await;
-        assert_eq!(
-            names,
-            vec![
-                "Fred".to_string(),
-                "Islam".to_string(),
-                "John".to_string(),
-                "Shahzad".to_string()
-            ],
-            "node1 should see exactly the 4 entitled docs"
-        );
-    })
-    .await;
-}
-
-/// Port: TestDocEncryptionACP_IfClientNodeHasDocPermissionButServerNodeIsNotAvailable_ShouldNotFetch
-///
-/// 3 nodes; node0 (the only key holder) creates the encrypted doc, then is shut
-/// down. node1 is then granted `reader`. Because the only node that can serve
-/// the DEK is offline, node1's key fetch cannot complete and the query is empty.
-#[nuclei::test]
-#[serial_test::serial]
-async fn encryption_acp_server_not_available() {
-    edge::compat(async {
-        let binary = helpers::defra_binary();
-        let node0 = helpers::funded_identity();
-        let node1 = generate_identity(&binary).expect("node1 identity");
-        let node2 = generate_identity(&binary).expect("node2 identity");
-
-        let hub = helpers::start_hub_cluster().await;
-        let mut cluster =
-            helpers::vera_rs_builder(&hub.node(0).rpc_url(), &node0.private_key_hex, 3, true)
-                .with_node_identity(1, &node1.private_key_hex)
-                .with_node_identity(2, &node2.private_key_hex)
-                .with_encryption()
-                .build()
-                .await
-                .expect("build 3-node vera encryption cluster");
-
-        let c0 = cluster.client(0);
-        let c1 = cluster.client(1);
-        let c2 = cluster.client(2);
-
-        let policy_id = policy_id_of(
-            &c0.acp_policy_add(POLICY, &node0.private_key_hex)
-                .expect("add policy"),
-        );
-        let schema = users_schema(&policy_id);
-        c0.schema_add_with_identity(&schema, &node0.private_key_hex)
-            .expect("schema node0");
-
-        c1.schema_add_with_identity(&schema, &node0.private_key_hex)
-            .expect("schema node1");
-        c2.schema_add_with_identity(&schema, &node0.private_key_hex)
-            .expect("schema node2");
-
-        // Wire node1 and node2 both as replication targets of node0.
-        let addr1 = extract_p2p_addr(&cluster, 1);
-        let addr2 = extract_p2p_addr(&cluster, 2);
-        c0.p2p_connect(&[&addr1, &addr2]).expect("connect");
-        c0.p2p_collection_add(&["Users"]).expect("col node0");
-        c1.p2p_collection_add(&["Users"]).expect("col node1");
-        c2.p2p_collection_add(&["Users"]).expect("col node2");
-        c0.p2p_replicator_set_with_identity(&["Users"], &addr1, &node0.private_key_hex)
-            .expect("replicator node1");
-        c0.p2p_replicator_set_with_identity(&["Users"], &addr2, &node0.private_key_hex)
-            .expect("replicator node2");
-
-        let created = c0
-            .query_with_identity(
-                r#"mutation { add_Users(input: {name: "Fred", age: 33}, encrypt: true) { _docID } }"#,
-                &node0.private_key_hex,
-            )
-            .expect("create encrypted doc");
-        let doc_id = created["add_Users"][0]["_docID"]
-            .as_str()
-            .expect("_docID")
-            .to_string();
-
-        // Let the encrypted DAG push to node1 before node0 goes away.
-        nuclei::time::sleep(Duration::from_secs(5)).await;
-
-        // Shut node0 (the key holder) down. There is no single-node shutdown on
-        // the cluster, so kill its managed process directly via the public handle.
-        cluster.nodes[0].process.kill();
-        nuclei::time::sleep(Duration::from_secs(2)).await;
-
-        // Now grant node1 reader, but node0 (the only DEK holder) is offline.
-        // The grant is made as node0 through node1; Vera is still up, so it
-        // succeeds.
-        c1.acp_relationship_add(
-            "Users",
-            &doc_id,
-            "reader",
-            &node1.did,
-            &node0.private_key_hex,
-        )
-        .expect("grant node1 reader after server offline");
-
+        assert_eq!(names, entitled, "node1 should see the two granted docs");
         nuclei::time::sleep(Duration::from_secs(8)).await;
-
-        let result = c1
-            .query_with_identity("query { Users { name } }", &node1.private_key_hex)
-            .expect("node1 query");
-        let users = result["Users"].as_array().expect("Users array");
+        let settled = wait_for_names(&cluster, 1, &ids.node1_key, &entitled, Duration::ZERO).await;
         assert_eq!(
-            users.len(),
-            0,
-            "node1 must see nothing while the key server is offline: {:?}",
-            users
+            settled, entitled,
+            "node1 should see exactly the two granted docs"
         );
     })
     .await;

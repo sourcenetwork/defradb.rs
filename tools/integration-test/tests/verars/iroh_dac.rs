@@ -37,8 +37,8 @@ fn extract_doc_id(data: &serde_json::Value, mutation_name: &str) -> String {
         .to_string()
 }
 
-/// A vera.rs deployment and two iroh nodes that take document ACP from it,
-/// with the policy and schema on both.
+/// A vera.rs deployment and two iroh nodes that take document ACP from it and
+/// sign their blocks, with the policy and schema on both.
 struct VeraCluster {
     cluster: TestCluster,
     owner_key: String,
@@ -54,6 +54,8 @@ async fn setup_vera_cluster_with_relay(relay_key: Option<&str>) -> VeraCluster {
     let hub = helpers::start_hub_cluster().await;
     let mut builder = helpers::vera_rs_builder(&hub.node(0).rpc_url(), &owner_key, 2, false)
         .with_iroh_transport()
+        // vera.rs decides an inbound update or delete by the block's signer.
+        .with_signing()
         .with_rust_binary(integration_test::BinarySource::Path(
             helpers::defra_iroh_binary(),
         ));
