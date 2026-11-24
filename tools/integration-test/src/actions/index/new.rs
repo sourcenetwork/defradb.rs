@@ -162,7 +162,7 @@ impl HttpRun for NewIndex {
             let fields = action.field_names();
             let name = action.index_name().map(str::to_owned);
             let unique = action.unique();
-            let created = collection.clone();
+            let target = collection.clone();
             let txn = state.txn_id(action.txn);
             let in_txn = txn.is_some();
             if action.r#async && state.client_type() == crate::ClientType::GoHttp {
@@ -172,7 +172,7 @@ impl HttpRun for NewIndex {
             }
             let wait_for_build = !action.r#async && !in_txn;
             let build_in_background = action.r#async && !in_txn;
-            state
+            let created = state
                 .http_as(
                     action.common.node(),
                     action.common.identity_seed,
@@ -180,7 +180,7 @@ impl HttpRun for NewIndex {
                         client
                             .index_create_with_build_mode(
                                 txn.as_deref(),
-                                &created,
+                                &target,
                                 &fields,
                                 name.as_deref(),
                                 unique,
@@ -194,7 +194,7 @@ impl HttpRun for NewIndex {
             // In a transaction the backfill runs once it commits; an async
             // build is left to the scenario's own wait actions.
             if wait_for_build {
-                wait_until_built(state, action, &collection)?;
+                wait_until_built(state, action, &collection, &created.name)?;
             }
             Ok(json!({}))
         });
@@ -204,10 +204,16 @@ impl HttpRun for NewIndex {
 /// How long a backfill may take before the wait gives up.
 const BUILD_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Waits until no index of `collection` is still building, as Go's
-/// `NewIndex` action does: Go builds an index in the background, so a
-/// `ListIndexes` straight after the create would see it mid-backfill.
-fn wait_until_built(state: &State, action: &NewIndex, collection: &str) -> Result<(), Failure> {
+/// Waits until the index `name` of `collection` is no longer building, as
+/// Go's `NewIndex` action does: Go builds an index in the background, so a
+/// `ListIndexes` straight after the create would see it mid-backfill. Another
+/// index of the collection still building in the background does not hold it.
+fn wait_until_built(
+    state: &State,
+    action: &NewIndex,
+    collection: &str,
+    name: &str,
+) -> Result<(), Failure> {
     let deadline = Instant::now() + BUILD_TIMEOUT;
     loop {
         let collection = collection.to_owned();
@@ -224,15 +230,16 @@ fn wait_until_built(state: &State, action: &NewIndex, collection: &str) -> Resul
                 },
             )?
             .map_err(Failure::operation)?;
-        if !indexes
-            .as_array()
-            .is_some_and(|all| all.iter().any(building))
-        {
+        let still_building = indexes.as_array().is_some_and(|all| {
+            all.iter()
+                .any(|index| index["Description"]["Name"] == name && building(index))
+        });
+        if !still_building {
             return Ok(());
         }
         if Instant::now() > deadline {
             return Err(Failure::operation(format!(
-                "{}: an index of {} was still building after {BUILD_TIMEOUT:?}",
+                "{}: index {name} of {} was still building after {BUILD_TIMEOUT:?}",
                 NewIndex::name_of(),
                 action.collection
             )));
