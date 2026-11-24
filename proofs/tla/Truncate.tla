@@ -40,8 +40,8 @@
 \* the last chunk of an unfiltered truncate, the cleanup of the collection's
 \* metadata runs in transactions of its own and can exhaust its budget too:
 \* every document is then removed and stays removed, and the request still
-\* ends refused. A
-\* concurrent write may move documents across the filter after a filtered page
+\* ends refused.
+\* A concurrent write may move documents across the filter after a filtered page
 \* selected its matches and before the page is purged.
 \* Which documents the filter matches in committed state, and which it would
 \* match in the transaction's own view, is chosen up front, as is every check's
@@ -84,7 +84,7 @@ ASSUME Cardinality(Docs) >= 2
 \* "reread" chooses a filtered page's matches again just before purge,
 \* "seprefix" deletes the collection's `/se/` prefix on an unfiltered truncate,
 \* and "sesamespace" stores received records under that same datastore prefix
-\* rather than in the raw root store, and "metaerror" returns the error of a
+\* rather than in the raw root store. "metaerror" returns the error of a
 \* metadata cleanup that ran out of retries to the caller.
 ASSUME Enforced \subseteq {"nac", "chunk", "branchable", "txn", "shape", "reread",
                             "viewcache", "progress", "seprefix", "sesamespace",
