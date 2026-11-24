@@ -249,7 +249,7 @@ After two updates, field blocks at heights 2 and 3 have `signature: nil` while e
 - **Parents:** ["go.signature"]
 - **Go-Tests:** ["signature/commit_test.go::TestSignature_WithPerOpSigningDisabled_ShouldNotSignAnyCommit", "signature/commit_test.go::TestSignature_WithPerOpSigningOverrideOnUpdate", "signature/commit_test.go::TestSignature_WithClientIdentity_ShouldUseItForSigning", "signature/fallback_signer_test.go::TestSignature_IfIdentityHasNoPrivateKey_ShouldUseNodeIdentity"]
 - **Scope:** "per-op override: collection save/named mutation types only (save only on update); fallback signer: http and cli clients only"
-- **Go-Bug-Suspect:** "'TestSignature_WithClientIdentity_ShouldUseItForSigning' is skipped (TODO, Go issue #3573): Go signs with the node identity even when the client identity is supplied."
+- **Go-Bug-Suspect:** "'TestSignature_WithClientIdentity_ShouldUseItForSigning' is skipped (TODO, Go issue #3573). At the pin, Go's `contextForSigning` keeps a request identity that has a private key and signs with it, so the skip does not mean Go signs with the node identity; why the skipped test fails in Go is not measured."
 
 Which identity signs, or whether anything is signed: an add with signing disabled per operation leaves every commit unsigned; disabling it on one update leaves that `_C` block unsigned while re-enabling it on the next signs again; a client identity without a private key (HTTP/CLI) falls back to the node identity; a client identity with a key should sign with that key.
 
@@ -265,14 +265,6 @@ Verifying a block's signature against an expected identity.
 - **Go-Tests:** ["signature/verify_test.go::TestSignatureVerify_WithValidData_ShouldVerify", "signature/verify_test.go::TestSignatureVerify_WithDifferentKeyType_ShouldVerify", "signature/verify_test.go::TestSignatureVerify_WithWrongIdentity_ShouldError", "signature/verify_test.go::TestSignatureVerify_WithWrongCid_ShouldError"]
 
 Verifying the blocks of a create, update and delete against the node identity succeeds (secp256k1 and ed25519 keys); verifying against another node's identity fails with `signature was created by a different key`; verifying an unknown CID fails with an error containing `could not find`.
-
-# `go.signature.verify.acp`: Verification gated by access control
-
-- **Parents:** ["go.signature.verify"]
-- **Go-Tests:** ["signature/acp_test.go::TestSignatureACP_IfHasNoAccessToDoc_ShouldError", "signature/acp_test.go::TestSignatureACP_IfHasAccessToDoc_ValidateSignature", "signature/acp_branchable_test.go::TestSignatureACP_WithBranchableCollection_IfHasNoCollectionAccess_ShouldError", "signature/acp_branchable_test.go::TestSignatureACP_WithBranchableCollection_IfHasCollectionAccess_ValidateSignature"]
-- **Scope:** "document tests: go client only; branchable tests: go and C clients only"
-
-On a DAC-protected collection, verifying a doc's block as an identity without access fails with `missing permission`, while the owner verifies it; on a private `@branchable` collection the collection-level block (no docID) is verifiable only by an identity with read access to the collection object.
 
 # `go.signature.transparency`: Signing does not change query results
 

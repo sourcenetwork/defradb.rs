@@ -63,7 +63,7 @@
 \*     transaction, whose refusal          lent_node_permission: walks go_order once, stops at
 \*     names the first missing one         the first missing permission and names it, never
 \*                                         answers empty
-\*   - the caller with no identity       crates/entry-points/defra-node/src/ops/request.rs Node::caller
+\*   - the caller with no identity       crates/entry-points/defra-node/src/ops/request.rs Node::admitted_caller
 \*   - the HTTP edge's checks            crates/surfaces/http/src/auth_middleware.rs auth_middleware;
 \*                                       crates/surfaces/http/src/route_permissions.rs reads_collection_first,
 \*                                       route_permission; crates/surfaces/http/src/nac_guard.rs require_permissions;

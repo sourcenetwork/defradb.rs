@@ -11,6 +11,7 @@ impl Node {
         context: &RequestContext,
         collection_name: &str,
     ) -> Result<usize> {
+        self.admit(context)?;
         let ops = Arc::clone(&self.schema_ops);
         let context = context.clone();
         let name = collection_name.to_owned();

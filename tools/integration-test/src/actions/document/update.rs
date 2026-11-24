@@ -41,7 +41,7 @@ impl Op for UpdateDoc {
         let identity = self.common.client_identity(Self::name())?;
         state
             .block_on(state.node_on(self.common.node())?.update_doc(
-                &state.context_as(self.txn, identity),
+                &state.context_on(self.common.node(), self.txn, identity, None),
                 &self.collection,
                 self.doc_id.as_str(),
                 &self.doc_map,
