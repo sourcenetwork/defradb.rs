@@ -365,7 +365,7 @@ Creating an article inside an explicit transaction and committing it asks the mo
 - **Parents:** ["defra.chunk.embed"]
 - **Scenarios:** ["chunk::embed_replicate::a_peer_gets_the_vectors_without_calling_the_model"]
 
-With `Article` and `Article__body_chunk` replicated from one node to another, an article created on the first gives the second the same chunks with the same vectors. The model is asked only by the first node, once per chunk.
+With `Article` and `Article__body_chunk` replicated from one node to another, an article created on the first gives the second the same chunks with the same vectors. The model is asked only by the first node, once per chunk. The second node builds none of these chunks itself when it merges the article, so it holds each chunk once.
 
 # `defra.chunk.embed.search`: Passage search ranks chunks across articles
 

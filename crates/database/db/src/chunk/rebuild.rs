@@ -80,6 +80,11 @@ where
         else {
             continue;
         };
+        // Only the author's model gives a chunk its vector, so those chunks
+        // come from the author with the article, as encrypted ones do.
+        if !chunks_col.schema().vector_embeddings.is_empty() {
+            continue;
+        }
         let index_manager = IndexManager::from_collection(
             chunks_col.resolved_root_id(),
             chunks_col.schema(),
