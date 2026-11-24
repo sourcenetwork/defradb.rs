@@ -108,6 +108,11 @@ impl<S: Store> crate::database::DB<S> {
 
         let systemstore = txn.systemstore()?;
 
+        crate::definition::migration::format::ensure_index_format_for_collection_creation(
+            &systemstore,
+        )
+        .await?;
+
         // Assign sequential short ID (matches Go's monotonic counter)
         let short_id =
             crate::collection::ensure_persisted_collection_short_id(&systemstore, collection_id)

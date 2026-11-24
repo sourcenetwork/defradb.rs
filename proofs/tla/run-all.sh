@@ -15,6 +15,9 @@ RUNS=(
   "MC_GenericDisconnectDial_Red_Clear.cfg GenericDisconnectDial.tla RED" # generic dial must not clear the marker
   "MC_PeerDisconnectEvents_Green.cfg PeerDisconnectEvents.tla GREEN"
   "MC_PeerDisconnectEvents_Red_Unannounced.cfg PeerDisconnectEvents.tla RED" # unannounced close stays silent
+  "MC_MissingRelationFilter_Green.cfg MissingRelationFilter.tla GREEN"
+  "MC_MissingRelationFilter_Red_NoId.cfg MissingRelationFilter.tla RED"
+  "MC_MissingRelationFilter_Red_Sibling.cfg MissingRelationFilter.tla RED"
   "MC_DisplacedConnectionRestore_Green.cfg DisplacedConnectionRestore.tla GREEN"
   "MC_DisplacedConnectionRestore_Red_NoEvict.cfg DisplacedConnectionRestore.tla RED"
   "MC_DisplacedConnectionRestore_Red_Closed.cfg DisplacedConnectionRestore.tla RED"
@@ -71,6 +74,21 @@ RUNS=(
   "MC_InlineBatchFlights_Red_Shared.cfg InlineBatchFlights.tla RED"
   "MC_LocalFetchPermit_Green.cfg LocalFetchPermit.tla GREEN"
   "MC_LocalFetchPermit_Red_Hold.cfg LocalFetchPermit.tla RED"
+  "MC_DagReadiness_Green.cfg DagReadiness.tla GREEN"
+  "MC_DagReadiness_Red_SkipNone.cfg DagReadiness.tla RED" # a child deleted before its read is skipped, not missing (INV_AbsentIsMissing)
+  "MC_DagReadiness_Red_DropErr.cfg DagReadiness.tla RED" # the walker drops a failed child read, as main did (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAsEmpty_Start.cfg DagReadiness.tla RED" # the fetch start takes a failed walk as complete (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAsEmpty_RootedCar.cfg DagReadiness.tla RED" # the rooted-CAR check takes a failed walk as complete (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAsEmpty_WalkLoop.cfg DagReadiness.tla RED" # the selective loop takes a failed walk as complete (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAsEmpty_Final.cfg DagReadiness.tla RED" # the final check takes a failed walk as complete (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAsEmpty_DocSync.cfg DagReadiness.tla RED" # the DocSync re-merge takes a failed walk as complete (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAsEmpty_PushAdmission.cfg DagReadiness.tla RED" # the push admission takes a failed walk as complete (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAsEmpty_PendingRetry.cfg DagReadiness.tla RED" # the pending retry takes a failed walk as complete (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAsEmpty_Restore.cfg DagReadiness.tla RED" # the restore sweep takes a failed walk as complete (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAbortsSweep.cfg DagReadiness.tla RED" # one failed walk ends the waiter sweep (INV_SweepTotal)
+  "MC_DagReadiness_Red_ConflictStringified.cfg DagReadiness.tla RED" # a storage conflict loses its type (INV_ConflictTyped)
+  "MC_DagReadiness_Red_RootFaultErrs.cfg DagReadiness.tla RED" # a gone or unreadable root fails the retry (INV_SweepTotal, INV_RegisteredNeverErrors)
+  "MC_DagReadiness_Red_CarFaultBlamesPeer.cfg DagReadiness.tla RED" # a local fault in the CAR size-limit check fails the response (INV_LocalFaultNotBlamed)
   "MC_HeldPubsubRequest_Green.cfg HeldPubsubRequest.tla GREEN"
   "MC_HeldPubsubRequest_Red_NoHold.cfg HeldPubsubRequest.tla RED" # a refused publish fails the sync at once (Delivered)
   "MC_HeldPubsubRequest_Red_NoResend.cfg HeldPubsubRequest.tla RED" # a later subscriber is never sent the request (Delivered)
@@ -205,6 +223,12 @@ RUNS=(
   "MC_SseDelivery_Red_Overflow.cfg SseDelivery.tla RED"
   "MC_SseDelivery_Red_Error.cfg SseDelivery.tla RED"
   "MC_SseDelivery_Red_Wakeup.cfg SseDelivery.tla RED"
+  "MC_SubscriptionOpenCheck_Green.cfg SubscriptionOpenCheck.tla GREEN" # subscribe, then check; bad filter reported, transient failure kept, closing ends it
+  "MC_SubscriptionOpenCheck_Red_SkipCheck.cfg SubscriptionOpenCheck.tla RED" # a bad filter streams results (INV_BadNeverStreams)
+  "MC_SubscriptionOpenCheck_Red_CheckThenSubscribe.cfg SubscriptionOpenCheck.tla RED" # a promised update is lost (INV_NoLostUpdate)
+  "MC_SubscriptionOpenCheck_Red_CheckIgnoresClosing.cfg SubscriptionOpenCheck.tla RED" # a stalled check outlives closing (LIVE_ClosingEnds)
+  "MC_SubscriptionOpenCheck_Red_TransientRefuses.cfg SubscriptionOpenCheck.tla RED" # a good filter is refused on a failure that passes (INV_GoodNeverRefused)
+  "MC_SubscriptionOpenCheck_Red_UpdateDropsInvalid.cfg SubscriptionOpenCheck.tla RED" # a bad request an update finds is never reported (LIVE_BadUpdateReported)
   "MC_HttpRouterComposition_Green.cfg HttpRouterComposition.tla GREEN"
   "MC_HttpRouterComposition_Red_Early.cfg HttpRouterComposition.tla RED"
   "MC_HttpRouterComposition_Red_Fallback.cfg HttpRouterComposition.tla RED"
@@ -472,6 +496,11 @@ RUNS=(
   "MC_ProllyNodeCache_Red_DropOnFail.cfg ProllyNodeCache.tla RED" # a failed write drops its nodes (GetFinds)
   "MC_ProllyNodeCache_Red_PublishBeforeFlush.cfg ProllyNodeCache.tla RED" # a root goes out before its node is stored (PublishedStored)
   "MC_ProllyNodeCache_Red_FinishAfterFail.cfg ProllyNodeCache.tla RED" # a build finishes after a failed put (BuildWhole)
+  "MC_ProllyNodeReclaim_Green.cfg ProllyNodeReclaim.tla GREEN" # a sweep racing a publication never deletes a node the live root names (SweepKeepsLiveRoots)
+  "MC_ProllyNodeReclaim_Red_FixedRoots.cfg ProllyNodeReclaim.tla RED" # the sweep marks from roots read before its transaction (SweepKeepsLiveRoots)
+  "MC_ProllyNodeReclaim_Red_NoValidation.cfg ProllyNodeReclaim.tla RED" # a root published before the commit does not re-run the delete (SweepKeepsLiveRoots)
+  "MC_ProllyNodeReclaim_Red_PutAlone.cfg ProllyNodeReclaim.tla RED" # nodes committed before their root are swept (SweepKeepsLiveRoots)
+  "MC_ProllyNodeReclaim_Red_DeleteMarked.cfg ProllyNodeReclaim.tla RED" # the delete does not skip marked nodes (SweepKeepsLiveRoots)
   "MC_RetryPreparedInputs_Green.cfg RetryPreparedInputs.tla GREEN" # exact-context external answer survives commit retry
   "MC_RetryPreparedInputs_Red_Recompute.cfg RetryPreparedInputs.tla RED" # clearing prepared memo repeats provider work
   "MC_RetryPreparedInputs_Red_InAttempt.cfg RetryPreparedInputs.tla RED" # provider work runs under active transaction
@@ -738,6 +767,15 @@ RUNS=(
   "MC_FollowDeployment_Red_NoMark.cfg FollowDeployment.tla RED" # replay start not written down: a refused replay cut short is held and its revocation forgotten (INV_RevocationDenies)
   "MC_FollowDeployment_Red_NoDeliveryGate.cfg FollowDeployment.tla RED" # a checked term admits before its owed changes reach the outbox (INV_RevocationDenies)
   "MC_FollowDeployment_Red_CollapsesBatch.cfg FollowDeployment.tla RED" # only the first change of an object handed back together is owed: the revocation after it is lost (INV_RevocationDenies)
+  "MC_TakeoverReport_Green.cfg TakeoverReport.tla GREEN" # a checked term is reported once, complete, with its own cut, and a closed check says so
+  "MC_TakeoverReport_Red_NoPublish.cfg TakeoverReport.tla RED" # a checked term is not published (INV_Published)
+  "MC_TakeoverReport_Red_NoReason.cfg TakeoverReport.tla RED" # an unrestorable replay is unnamed (INV_Classified)
+  "MC_TakeoverReport_Red_Early.cfg TakeoverReport.tla RED" # published before every replay is classified (INV_Complete)
+  "MC_TakeoverReport_Red_Duplicate.cfg TakeoverReport.tla RED" # a delivery retry reports the term again (INV_PublishedOnce)
+  "MC_TakeoverReport_Red_DropsOwed.cfg TakeoverReport.tla RED" # owed replays taken out before publication (INV_Complete)
+  "MC_TakeoverReport_Red_NewestCut.cfg TakeoverReport.tla RED" # one term paired with a newer term's cut (INV_CutOfTerm)
+  "MC_TakeoverReport_Red_UnnamedClosed.cfg TakeoverReport.tla RED" # a check that failed closed reads as clean (INV_ClosedNamed)
+  "MC_TakeoverReport_Red_UnrecordedClose.cfg TakeoverReport.tla RED" # says closed before the close is written (INV_ClosedRecorded)
   "MC_PendingSubmission_Green.cfg PendingSubmission.tla GREEN" # a pending submission is resent until confirmed, takes effect once and stays journaled
   "MC_PendingSubmission_Green_Recalled.cfg PendingSubmission.tla GREEN" # a caller that keeps calling is confirmed though calls end early and the node drops the request
   "MC_PendingSubmission_Red_NoResend.cfg PendingSubmission.tla RED" # a lost send taken as sent waits for a receipt that cannot come
@@ -995,6 +1033,13 @@ RUNS=(
   "MC_DeferredIndexMode_Red_KeepRecords.cfg DeferredIndexMode.tla RED" # an inline rebuild keeps stale records that hide the next change (INV_OpenMatchesMode)
   "MC_DeferredIndexMode_Red_NoProgressReset.cfg DeferredIndexMode.tla RED" # a rebuild resumed under the other way mixes both (INV_OpenMatchesMode)
   "MC_DeferredIndexMode_Red_BackfillFirst.cfg DeferredIndexMode.tla RED" # a stopped backfill resumes before the check, which then misses it (INV_OpenMatchesMode)
+  "MC_IndexFormatGuard_Green.cfg IndexFormatGuard.tla GREEN" # rebuild before stamping; future format refused
+  "MC_IndexFormatGuard_Red_SkipRebuild.cfg IndexFormatGuard.tla RED" # old entries are not rebuilt
+  "MC_IndexFormatGuard_Red_EarlyStamp.cfg IndexFormatGuard.tla RED" # stamp before all collections are rebuilt
+  "MC_IndexFormatGuard_Red_DeleteLegacy.cfg IndexFormatGuard.tla RED" # deleting legacy entries can remove other data
+  "MC_IndexFormatGuard_Red_UnguardedRecord.cfg IndexFormatGuard.tla RED" # draining a legacy position record deletes an ambiguous key
+  "MC_IndexFormatGuard_Red_StaleProgress.cfg IndexFormatGuard.tla RED" # a pre-upgrade cursor can skip rebuilding entries
+  "MC_IndexFormatGuard_Red_Future.cfg IndexFormatGuard.tla RED" # a future format is accepted
   "MC_DeferredDrainTask_Green.cfg DeferredDrainTask.tla GREEN" # owed work is always asked for, and a quiet index settles under steady traffic
   "MC_DeferredDrainTask_Red_StopAtFailure.cfg DeferredDrainTask.tla RED" # a failing index ends the pass and the rest is forgotten (INV_OwedKept)
   "MC_DeferredDrainTask_Red_DropFailed.cfg DeferredDrainTask.tla RED" # a failed drain drops its request (INV_OwedKept)
@@ -1436,15 +1481,53 @@ RUNS=(
   "MC_RelationLinkConflict_Red_Unvalidated.cfg RelationLinkConflict.tla RED" # an unvalidated link read lets both links commit (INV_SecondLinkIsRefused)
   "MC_ChildLimitPaging_Green.cfg ChildLimitPaging.tla GREEN" # each ordered child page is collected per parent
   "MC_ChildLimitPaging_Red_UnorderedStop.cfg ChildLimitPaging.tla RED" # an unordered early stop loses a later parent's page (INV_EveryParentHasPage)
+  "MC_BackupImportWritePath_Green.cfg BackupImportWritePath.tla GREEN" # every import write takes its edge's request path: signed, replicated, owned, drained as one request
+  "MC_BackupImportWritePath_Red_OwnMutator.cfg BackupImportWritePath.tla RED" # the old private mutator writes unsigned blocks (INV_ImportSigned)
+  "MC_BackupImportWritePath_Red_NoSigningChoice.cfg BackupImportWritePath.tla RED" # the import drops the node's signing choice (INV_ImportSigned)
+  "MC_BackupImportWritePath_Red_AliasOutsideTxn.cfg BackupImportWritePath.tla RED" # an unvalidated alias write steals another document's alias (INV_AliasNeverStolen)
+  "MC_BackupImportWritePath_Red_AliasCheckAfterCreate.cfg BackupImportWritePath.tla RED" # an unchecked batch saves a stored file ID (INV_NoDuplicateAlias)
+  "MC_BackupImportWritePath_Red_BatchSkipsPendingAlias.cfg BackupImportWritePath.tla RED" # a batch holding the same ID twice saves both (INV_NoDuplicateAlias)
+  "MC_BackupImportWritePath_Red_FfiViaNode.cfg BackupImportWritePath.tla RED" # the FFI import writes through another edge's path (INV_HostFromEdge)
+  "MC_BackupImportWritePath_Red_AdapterOwnHost.cfg BackupImportWritePath.tla RED" # the HTTP adapter ignores the handler's host (INV_HostFromEdge)
+  "MC_BackupImportWritePath_Red_CallerIgnored.cfg BackupImportWritePath.tla RED" # writes run as no one, not the caller (INV_CreatorAsCreate)
+  "MC_BackupImportWritePath_Red_ActorNoOne.cfg BackupImportWritePath.tla RED" # an anonymous import is owned unlike an anonymous create (INV_CreatorAsCreate)
+  "MC_BackupImportWritePath_Red_WritesAdmittedAlone.cfg BackupImportWritePath.tla RED" # writes admitted alone let the drain close the database before a registration (INV_SavedRegistered)
+  "MC_BackupImportWritePath_Red_ImportOnCallerTask.cfg BackupImportWritePath.tla RED" # a caller that stops waiting drops the driver before a registration (INV_SavedRegistered)
+  "MC_BackupImportWritePath_Red_RefusedBatchDropped.cfg BackupImportWritePath.tla RED" # a refused batch loses the documents before the one refused (INV_KeepsPrefix)
+  "MC_BackupImportWritePath_Red_RegistrationAllOrNothing.cfg BackupImportWritePath.tla RED" # one taken ID leaves its batch-mates without theirs (INV_SavedRegistered)
+  "MC_BackupImportWritePath_Red_PrepareOnPool.cfg BackupImportWritePath.tla RED" # the driver runs on a database worker (INV_DriverOnCaller)
+  "MC_BackupImportWritePath_Red_FfiTxnAccepted.cfg BackupImportWritePath.tla RED" # the FFI import runs in a transaction handle (INV_FfiTxnRefused)
+  "MC_BackupImportWritePath_Red_ContentCollisionDropped.cfg BackupImportWritePath.tla RED" # a batch the create refuses for a taken ID loses the documents before it (INV_KeepsPrefix)
+  "MC_BackupImportWritePath_Red_ImportRouteOnPool.cfg BackupImportWritePath.tla RED" # the HTTP import route runs its driver on a database worker (INV_DriverOnCaller)
 )
 
-parallelism="${TLA_JOBS:-4}"
+# Each TLC run checks with one worker, so one lane per core keeps every core
+# busy; TLA_JOBS overrides it.
+parallelism="${TLA_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}"
 case "$parallelism" in
   ''|*[!0-9]*) echo "TLA_JOBS must be a positive integer" >&2; exit 2 ;;
 esac
+parallelism=$((10#$parallelism))
 if [ "$parallelism" -lt 1 ]; then
   echo "TLA_JOBS must be a positive integer" >&2
   exit 2
+fi
+# Half of the machine's memory, shared out between the lanes. When the
+# default lane count would leave a lane under 512 MB, fewer lanes run.
+if [ -z "${TLA_JAVA_HEAP:-}" ]; then
+  if [ -r /proc/meminfo ]; then
+    memory_mb=$(awk '/^MemTotal:/ {print int($2 / 1024)}' /proc/meminfo)
+  else
+    memory_mb=$(( $(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1048576 ))
+  fi
+  if [ "${memory_mb:-0}" -gt 0 ]; then
+    budget_mb=$(( memory_mb / 2 ))
+    if [ -z "${TLA_JOBS:-}" ] && [ $(( budget_mb / parallelism )) -lt 512 ]; then
+      parallelism=$(( budget_mb / 512 ))
+      [ "$parallelism" -lt 1 ] && parallelism=1
+    fi
+    export TLA_JAVA_HEAP="$(( budget_mb / parallelism ))m"
+  fi
 fi
 if ! workdir=$(mktemp -d "${TMPDIR:-/tmp}/defra-tla.XXXXXX"); then
   echo "Could not create TLA scratch directory" >&2
@@ -1470,10 +1553,12 @@ trace_verdict() {
 }
 
 run_model() {
-  local index="$1" row="$2" cfg mod want out got
+  local index="$1" row="$2" cfg mod want out got start
   read -r cfg mod want <<<"$row"
   mkdir -p "$workdir/java-$index"
+  start=$SECONDS
   out=$(TLA_JAVA_TMPDIR="$workdir/java-$index" ./tools/tlc -metadir "$workdir/state-$index" -config "$cfg" "$mod" 2>&1)
+  echo "$((SECONDS-start)) $cfg" >"$workdir/$index.time"
   # Here-strings, not pipes: `grep -q` stops at the first match, and under
   # pipefail the writer's broken pipe would turn a long trace into ERROR.
   case "$want" in
@@ -1511,5 +1596,7 @@ for ((index=1; index<=n; index++)); do
 done
 
 echo "----"
+echo "slowest runs (seconds):"
+sort -rn "$workdir"/*.time 2>/dev/null | sed -n '1,10s/^/  /p'
 if [ "$fails" -eq 0 ]; then echo "all $n TLA+ runs matched their expected verdict"; else echo "$fails/$n MISMATCHED"; fi
 exit "$((fails > 0))"

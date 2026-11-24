@@ -1049,10 +1049,15 @@
   },
   {
     "id": "go.query.one_to_one.filter-relation-id",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
-    "note": "Searched for `_publisherID: {_eq: null}` style filters on the secondary side; none."
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/testo/query/one_to_one/with_filter_secondary_relation_id.rs::query_one_to_one_with_eq_null_filter_on_secondary_relation_id_should_return_orphans",
+      "tools/integration-test/tests/testo/query/one_to_one/with_filter_secondary_relation_id.rs::query_one_to_one_with_neq_null_filter_on_secondary_relation_id_should_return_related",
+      "tools/integration-test/tests/testo/query/one_to_one/with_filter_secondary_relation_id.rs::query_one_to_one_with_eq_filter_on_secondary_relation_id_should_return_related",
+      "tools/integration-test/tests/testo/query/one_to_one/with_filter_secondary_relation_id.rs::query_one_to_one_with_eq_null_filter_on_secondary_relation_id_and_other_field_should_return_matching_orphan"
+    ],
+    "evidence": "The four secondary relation ID scenarios pass in-process and against Go.",
+    "note": "Nested logical secondary ID filters are refused in Rust; Go behavior remains to be verified (#3224)."
   },
   {
     "id": "go.query.one_to_one.order",

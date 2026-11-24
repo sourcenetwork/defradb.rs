@@ -123,7 +123,14 @@ impl IndexManager {
                 .as_deref(),
         )?;
         let new = Self::entry_keys(index, doc_short_id, value_sets)?;
-        for key in old.iter().filter(|key| !new.contains(key)) {
+        let prefix = storage::keys::IndexDataStoreKey::index_prefix(
+            self.collection_short_id,
+            index.description().id,
+        );
+        for key in old
+            .iter()
+            .filter(|key| key.starts_with(&prefix) && !new.contains(key))
+        {
             datastore.delete(key).await.map_err(Error::Storage)?;
         }
         self.place(datastore, index, doc_short_id, value_sets).await
