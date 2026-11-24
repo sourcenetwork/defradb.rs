@@ -388,6 +388,9 @@ lean_lib ExplicitDisconnectGate where
 lean_lib PeerDisconnectEvents where
 
 @[default_target]
+lean_lib RelationLinkConflict where
+
+@[default_target]
 lean_lib SeTruncatePrefix where
 
 @[default_target]
