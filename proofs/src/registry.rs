@@ -2627,6 +2627,26 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/surfaces/http/src/handlers/index/go_api.rs background_build_and_vector_configuration_are_independent",
     },
     Property {
+        // A backfill page never indexes more documents than the configured batch.
+        family: "Schema-evolution operations in the core",
+        name: "INV_BatchBound / INV_SizeBound / INV_Indexed",
+        axis: Tla,
+        anchor: "crates/database/db/src/index/backfill.rs DB::backfill_batches; crates/database/db/src/index/pages.rs DB::run_page, PageAttempt::run",
+        model_ref: "MC_BackfillPageSize_{Green,Green_Large,Red_Uncapped}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/database/db/tests/index/create.rs create_index_honors_a_smaller_backfill_batch",
+    },
+    Property {
+        // Doubling and halving keep a backfill page within the batch limit.
+        family: "Schema-evolution operations in the core",
+        name: "BackfillPageSize.grow_le_limit / grow_le_pageItems / shrink_le_limit / shrink_pos",
+        axis: Lean,
+        anchor: "crates/database/db/src/index/backfill.rs DB::backfill_batches; crates/database/db/src/index/pages.rs DB::run_page, PageAttempt::run",
+        model_ref: "BackfillPageSize (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/database/db/tests/index/create.rs create_index_honors_a_smaller_backfill_batch",
+    },
+    Property {
         // An explain names the direct lookup index, or the child scan index.
         family: "Schema-evolution operations in the core",
         name: "INV_NameMatches",

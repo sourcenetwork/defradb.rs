@@ -15,6 +15,9 @@ RUNS=(
   "MC_HttpIndexBuild_Green_Sync.cfg HttpIndexBuild.tla GREEN"
   "MC_HttpIndexBuild_Red_Vector.cfg HttpIndexBuild.tla RED" # background builds must keep the requested kind
   "MC_HttpIndexBuild_Red_Early.cfg HttpIndexBuild.tla RED" # synchronous requests must wait for backfill
+  "MC_BackfillPageSize_Green.cfg BackfillPageSize.tla GREEN"
+  "MC_BackfillPageSize_Green_Large.cfg BackfillPageSize.tla GREEN"
+  "MC_BackfillPageSize_Red_Uncapped.cfg BackfillPageSize.tla RED" # a doubled page must stay within the configured batch limit
   "MC_OfflineReconnect_Green.cfg OfflineReconnect.tla GREEN"
   "MC_OfflineReconnect_Red_StalePark.cfg OfflineReconnect.tla RED"
   "MC_OfflineReconnect_Red_StaleConnect.cfg OfflineReconnect.tla RED"

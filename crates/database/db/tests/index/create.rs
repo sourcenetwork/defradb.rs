@@ -294,11 +294,29 @@ fn create_index_backfills_more_documents_than_a_batch_holds() {
     .unwrap()
 }
 
+/// Counts the batches a backfill runs and never holds one.
+#[derive(Default)]
+struct BatchCounter {
+    batches: std::sync::atomic::AtomicUsize,
+}
+
+impl IndexBuildGate for BatchCounter {
+    fn enter<'gate>(&'gate self, _collection_id: &'gate str, _index_id: u32) -> GateWait<'gate> {
+        self.batches.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async {})
+    }
+}
+
+/// A committed batch grows the next one, but never past the configured size.
 #[test]
 fn create_index_honors_a_smaller_backfill_batch() {
     workers::block_on(async {
-        let total = 4;
-        let options = db::database::DbOptions::new().with_backfill_batch_docs(2);
+        let total = 8;
+        let batch = 2;
+        let counter = Arc::new(BatchCounter::default());
+        let options = db::database::DbOptions::new()
+            .with_backfill_batch_docs(batch)
+            .with_index_build_gate(counter.clone());
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let db = Arc::new(DB::from_arc_with_options(store, options).unwrap());
         db.create_collection(users_schema("Batched", "batched-v1", "col-index-batched"))
@@ -322,6 +340,10 @@ fn create_index_honors_a_smaller_backfill_batch() {
             .unwrap()
             .contains_key(&index.id));
         assert!(!progress_recorded(&db, "col-index-batched", index.id).await);
+        assert!(
+            counter.batches.load(Ordering::SeqCst) >= total / batch,
+            "no batch may index more than {batch} documents"
+        );
     })
     .unwrap()
 }

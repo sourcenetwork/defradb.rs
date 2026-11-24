@@ -287,7 +287,8 @@ impl<S: Store> DB<S> {
     async fn backfill_batches(&self, plan: &BackfillPlan) -> Result<usize> {
         let mut last = plan.last;
         let mut indexed = 0;
-        let mut max_docs = self.options().backfill_batch_docs();
+        let limit = self.options().backfill_batch_docs();
+        let mut max_docs = limit;
         loop {
             if let Some(gate) = &self.options().index_build_gate {
                 // A close stops the wait, as Go's gate honours its context:
@@ -301,6 +302,8 @@ impl<S: Store> DB<S> {
                 }
             }
             let batch = self.backfill_batch(plan, last, &mut max_docs).await?;
+            // A commit doubles the page; the configured batch still bounds it.
+            max_docs = max_docs.min(limit);
             indexed += batch.indexed;
             if let Some(id) = batch.last_doc_short_id {
                 last = id;

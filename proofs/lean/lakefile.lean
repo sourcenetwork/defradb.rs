@@ -433,6 +433,9 @@ lean_lib ReplicatorEmptyCollections where
 lean_lib IndexBuildMode where
 
 @[default_target]
+lean_lib BackfillPageSize where
+
+@[default_target]
 lean_lib ExplainIndexName where
 
 @[default_target]
