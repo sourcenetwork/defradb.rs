@@ -42,6 +42,8 @@
 \* crates/entry-points/ffi/src/query/exec.rs ExecArgs::read and defra_query_execute_async,
 \* crates/entry-points/ffi/src/txn/lifecycle.rs defra_transaction_commit and
 \* defra_transaction_discard.
+\* The open check `subscribe` (same exec.rs) runs on a subscription takes no
+\* ticket: a subscription runs outside any transaction, so it is not a call here.
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS

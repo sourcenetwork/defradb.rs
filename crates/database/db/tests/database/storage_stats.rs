@@ -225,7 +225,7 @@ fn vector_and_ordinary_keys_with_overlapping_encodings_are_attributed() {
                 VectorAuxKey::new(1, 1, 300, 0xff, b"future-kind").bytes(),
                 IndexDataStoreKey::with_doc_short_id(
                     137,
-                    137,
+                    138,
                     vec![IndexedField::ascending(NormalValue::Int(1))],
                     42,
                 )
@@ -249,7 +249,7 @@ fn vector_and_ordinary_keys_with_overlapping_encodings_are_attributed() {
 }
 
 #[test]
-fn ambiguous_scalar_array_and_unique_override_indexes_are_not_guessed() {
+fn tagged_ordered_indexes_are_attributed_despite_legacy_vector_ambiguity() {
     workers::block_on(async {
         use storage::keys::datastore::VectorIndexKey;
         use storage::keys::{IndexDataStoreKey, IndexedField};
@@ -270,24 +270,25 @@ fn ambiguous_scalar_array_and_unique_override_indexes_are_not_guessed() {
             stats_schema(txn.as_mut(), 1, vec![vector]).await;
             stats_schema(txn.as_mut(), 137, vec![ordered]).await;
             let key = VectorIndexKey::meta(1, 1, 1).bytes();
-            assert_eq!(
-                key,
-                IndexDataStoreKey::with_doc_short_id(
-                    137,
-                    137,
-                    vec![IndexedField::ascending(NormalValue::Int(1))],
-                    u64::from(b'm'),
-                )
-                .bytes()
-            );
+            let ordered_key = IndexDataStoreKey::with_doc_short_id(
+                137,
+                137,
+                vec![IndexedField::ascending(NormalValue::Int(1))],
+                u64::from(b'm'),
+            )
+            .bytes();
+            assert_ne!(key, ordered_key);
             let expected = stats_entries(txn.as_mut(), vec![key]).await;
+            let ordered = stats_entries(txn.as_mut(), vec![ordered_key]).await;
             txn.commit().await.unwrap();
             let txn = store.new_txn(true).await.unwrap();
             let stats = storage_stats::collect(txn.as_ref(), false).await.unwrap();
             assert_eq!(stats.unattributed_datastore, expected);
-            assert_eq!(stats.stores["datastore"], expected);
+            assert_eq!(
+                stats.collections["col-137"].datastore_by_kind["indexes"],
+                ordered
+            );
             assert_eq!(stats.collections["col-1"].datastore.keys, 0);
-            assert_eq!(stats.collections["col-137"].datastore.keys, 0);
         }
     })
     .unwrap()

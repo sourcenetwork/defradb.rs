@@ -173,6 +173,11 @@ pub enum QueryError {
     #[error("Argument \"input\" has invalid value.\nIn field \"{0}\": Unknown field.")]
     SecondaryRelationInput(String),
 
+    /// An argument the request gives does not fit what its field takes, in
+    /// GraphQL validation's words.
+    #[error("{0}")]
+    InvalidArgument(String),
+
     /// A subscription sent as a plain request: it is served only over SSE.
     #[error("parse error: {}", crate::subscription::SUBSCRIPTION_NEEDS_SSE)]
     SubscriptionNeedsSse,
@@ -286,6 +291,51 @@ pub enum QueryError {
 }
 
 impl QueryError {
+    /// Whether this error says the request itself is invalid, so running it
+    /// again unchanged can only fail the same way: it does not parse or
+    /// validate, names what does not exist, or was refused by an access
+    /// decision. A failure of the store, a provider, a deadline or a retry
+    /// budget is not: the same request may succeed later.
+    pub fn is_invalid_request(&self) -> bool {
+        match self {
+            Self::Parse(_)
+            | Self::UnknownMutationCollection(_)
+            | Self::InvalidFilter(_)
+            | Self::FilterFieldNotSelected { .. }
+            | Self::UnknownField(_)
+            | Self::SubSelectionOnLeaf { .. }
+            | Self::CollectionNotFound(_)
+            | Self::InvalidAggregateTarget(_)
+            | Self::TypeMismatch { .. }
+            | Self::UnexpectedType { .. }
+            | Self::SecondaryRelationInput(_)
+            | Self::InvalidArgument(_)
+            | Self::SubscriptionNeedsSse
+            | Self::Schema(_)
+            | Self::InvalidDocId(_)
+            | Self::RequiredFieldMissing(_)
+            | Self::InvalidMutationInput(_)
+            | Self::PermissionDenied(_)
+            | Self::DelegationOutsideWindow { .. }
+            | Self::Introspection(_) => true,
+            Self::Storage(_)
+            | Self::TransactionConflict(_)
+            | Self::TransactionRetryExhausted(_)
+            | Self::AcpProviderUnavailable(_)
+            | Self::AccessCheckUnavailable { .. }
+            | Self::NeedsInput(_)
+            | Self::IndexOwed(_)
+            | Self::Execution(_)
+            | Self::DocumentNotFound(_)
+            | Self::Internal(_)
+            | Self::WriteAuthorityUnavailable(_)
+            | Self::AcpRegistrationFailed { .. }
+            | Self::AcpCheckFailed { .. }
+            | Self::CommitAccessCheckFailed(_)
+            | Self::AcpRegistrationCheckFailed { .. } => false,
+        }
+    }
+
     /// Retain verification diagnostics without exposing them through a query response.
     pub fn commit_access_check_failed(error: Self) -> Self {
         Self::CommitAccessCheckFailed(Box::new(error))
@@ -333,6 +383,11 @@ impl QueryError {
     /// Create a document not found error
     pub fn document_not_found(msg: impl Into<String>) -> Self {
         Self::DocumentNotFound(msg.into())
+    }
+
+    /// Create an invalid argument error
+    pub fn invalid_argument(msg: impl Into<String>) -> Self {
+        Self::InvalidArgument(msg.into())
     }
 
     /// Create an execution error
@@ -414,34 +469,34 @@ impl QueryError {
     /// `"invalid cursor"` — invalid base64, invalid JSON, or empty doc ID.
     /// Mirrors Go's `internal/cursor/errors.go::errInvalidCursor`.
     pub fn cursor_invalid() -> Self {
-        Self::execution("invalid cursor")
+        Self::invalid_argument("invalid cursor")
     }
 
     /// `"_cursor block must contain exactly one collection query"`.
     /// Mirrors Go's `client/request/errors.go::errCursorMustContainQuery`.
     pub fn cursor_must_contain_query() -> Self {
-        Self::execution("_cursor block must contain exactly one collection query")
+        Self::invalid_argument("_cursor block must contain exactly one collection query")
     }
 
     /// `"_cursor block cannot contain multiple collection queries"`.
     /// Mirrors Go's `errMultipleQueriesInCursor`.
     pub fn cursor_multiple_queries() -> Self {
-        Self::execution("_cursor block cannot contain multiple collection queries")
+        Self::invalid_argument("_cursor block cannot contain multiple collection queries")
     }
 
     /// `"first must be non-negative"`.
     pub fn cursor_first_must_be_non_negative() -> Self {
-        Self::execution("first must be non-negative")
+        Self::invalid_argument("first must be non-negative")
     }
 
     /// `"last must be non-negative"`.
     pub fn cursor_last_must_be_non_negative() -> Self {
-        Self::execution("last must be non-negative")
+        Self::invalid_argument("last must be non-negative")
     }
 
     /// `"forward parameters (first/after) cannot be combined with backward parameters (last/before)"`.
     pub fn cursor_forward_backward_conflict() -> Self {
-        Self::execution(
+        Self::invalid_argument(
             "forward parameters (first/after) cannot be combined with backward parameters (last/before)",
         )
     }
@@ -449,7 +504,7 @@ impl QueryError {
     /// `"no supporting index for cursor order field"` — order fields not covered by any index.
     /// Mirrors Go's `internal/planner/errors.go::errNoSupportingIndexForCursor`.
     pub fn cursor_no_supporting_index() -> Self {
-        Self::execution("no supporting index for cursor order field")
+        Self::invalid_argument("no supporting index for cursor order field")
     }
 }
 
@@ -601,5 +656,22 @@ mod cursor_error_tests {
             e.to_string(),
             "forward parameters (first/after) cannot be combined with backward parameters (last/before)"
         );
+    }
+
+    /// A cursor argument written wrong fails the same way on every run, so a
+    /// subscription's open check refuses it instead of keeping the stream.
+    #[test]
+    fn cursor_errors_are_invalid_requests() {
+        for error in [
+            QueryError::cursor_invalid(),
+            QueryError::cursor_must_contain_query(),
+            QueryError::cursor_multiple_queries(),
+            QueryError::cursor_first_must_be_non_negative(),
+            QueryError::cursor_last_must_be_non_negative(),
+            QueryError::cursor_forward_backward_conflict(),
+            QueryError::cursor_no_supporting_index(),
+        ] {
+            assert!(error.is_invalid_request(), "{error}");
+        }
     }
 }

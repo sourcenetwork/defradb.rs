@@ -11,6 +11,36 @@ use super::{IndexManager, IndexType};
 use crate::index::error::{Error, Result};
 
 impl IndexManager {
+    /// Save a local unique entry with only the conflict lookup validated: a
+    /// local write decides on the existing holder, while unrelated explicit
+    /// transaction scans stay snapshot reads.
+    pub(super) async fn save_local_unique_validated(
+        &self,
+        datastore: &mut NamespaceView,
+        index: &IndexType,
+        doc_short_id: u64,
+        values: &[document::NormalValue],
+    ) -> std::result::Result<(), storage::corekv::Error> {
+        let IndexType::Unique(unique) = index else {
+            return self
+                .save_healing_stale_unique(datastore, index, doc_short_id, values)
+                .await;
+        };
+        let restore = RestoreScanValidation {
+            datastore: datastore.clone(),
+            previous: datastore.scans_validated(),
+        };
+        datastore.set_scans_validated(true);
+        unique
+            .conflicting_entry_validated(datastore, values)
+            .await?;
+        let result = self
+            .save_healing_stale_unique(datastore, index, doc_short_id, values)
+            .await;
+        drop(restore);
+        result
+    }
+
     /// Save an index entry, healing stale unique conflicts (#1111/#700).
     ///
     /// A unique violation whose existing entry points at a **deleted or
@@ -201,6 +231,19 @@ impl IndexManager {
         .await
         .map_err(Error::Storage)?;
         Ok(())
+    }
+}
+
+/// Restores a transaction-wide scan-validation setting, including when the
+/// helper's future is dropped while it waits for storage.
+struct RestoreScanValidation {
+    datastore: NamespaceView,
+    previous: bool,
+}
+
+impl Drop for RestoreScanValidation {
+    fn drop(&mut self) {
+        self.datastore.set_scans_validated(self.previous);
     }
 }
 

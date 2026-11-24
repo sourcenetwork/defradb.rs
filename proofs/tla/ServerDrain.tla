@@ -44,6 +44,9 @@
 \*                 used by graphql_sse in
 \*                 crates/surfaces/http/src/handlers/graphql/query.rs and events_sse in
 \*                 crates/surfaces/http/src/handlers/events.rs).
+\*                 graphql_sse races its open check (the request run once
+\*                 through the plain path, SubscriptionOpenCheck.tla) with
+\*                 closing the same way, so a check still running ends too.
 
 EXTENDS Naturals
 
