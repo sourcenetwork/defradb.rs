@@ -94,6 +94,9 @@
 \*   |                   | native.rs own); its claim is choose(), always alone         |
 \*   | GiveUp            | the edge's loop runs out of ATTEMPTS, or choose() finds too |
 \*   |                   | few cores: EdgeCores::sized, holding nothing (edge.rs)      |
+\*   |                   | (a placement that pins nothing on the machine gives up at   |
+\*   |                   | once, before any claim: reserve_on's first check, pins in   |
+\*   |                   | placement/mod.rs)                                           |
 \*   | crowded           | history only, to state INV_TakenAlone; nothing in the Rust  |
 \*   | Plan              | reserve.rs:46-63: free, fit, cores_of; a plan that does not |
 \*   |                   | fit goes to shared() (reserve.rs:55-61, 112-142)            |
@@ -149,7 +152,9 @@
 \*     happen for the process ledger: CpuSet::insert drops ids at or above
 \*     MAX_CPUS (topology/cpuset.rs:55-58), the length of PROCESS. The Lean
 \*     law CpuLedger.hold_outside_fails covers that branch anyway.
-\*   * A pool that holds nothing (Placement::Unpinned, reserve.rs:40-45; Auto
+\*   * A pool that holds nothing (one that pins nothing, reserve.rs:40-45:
+\*     Placement::Unpinned, or the Placement::Auto opt-in on a process that
+\*     may run on every online CPU, placement/mod.rs pins; Workers::Auto
 \*     with no CPU free, reserve.rs:119-130; a driven pool, pool/driven.rs:
 \*     63-77) is not placed and never touches the ledger: here, a slot that
 \*     stays idle.

@@ -19,7 +19,10 @@ pub struct WorkersConfig {
     /// `auto`, or how many workers.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub count: Option<String>,
-    /// `unpinned`, `spread`, `pack`, or CPU lists split by `;`.
+    /// Where workers and network threads run: `spread` (the Linux default),
+    /// `pack`, CPU lists split by `;`, `unpinned` (for processes that share
+    /// their CPUs), or `auto` (pinned only within a CPU set narrowed for the
+    /// process).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub placement: Option<String>,
     /// `physical` or `all`.
@@ -116,6 +119,14 @@ mod tests {
         assert_eq!(unset.placement, defaults.placement);
         assert_eq!(unset.priorities, defaults.priorities);
         assert_eq!(unset.inbox_items, defaults.inbox_items);
+
+        let auto = WorkersConfig {
+            placement: Some("auto".into()),
+            ..WorkersConfig::default()
+        }
+        .pool_config()
+        .unwrap();
+        assert_eq!(auto.placement, workers::Placement::Auto, "an opt-in");
 
         let set = WorkersConfig {
             count: Some("1".into()),

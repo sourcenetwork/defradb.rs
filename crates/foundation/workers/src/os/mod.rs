@@ -94,6 +94,15 @@ pub fn current_affinity() -> Option<CpuSet> {
     system().thread_affinity().ok()
 }
 
+/// Restricts the calling thread to `cpus`, as `taskset` restricts a
+/// process. Threads it starts afterwards inherit the set where the platform
+/// passes it on (Linux), so a pool or network runtime started from it finds
+/// its CPU set narrowed, and one placed `auto` pins within it. Unsupported
+/// where threads cannot be pinned (macOS).
+pub fn set_current_affinity(cpus: &CpuSet) -> io::Result<()> {
+    system().set_thread_affinity(cpus)
+}
+
 /// How a thread is scheduled, as read back from the OS. Each platform builds
 /// only its own variants.
 #[allow(dead_code)]

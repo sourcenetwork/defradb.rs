@@ -1,6 +1,7 @@
 //! Linux: the tree from sysfs, restricted to `sched_getaffinity`'s set (which
-//! already reflects cpusets and container limits), and the cgroup CPU quota
-//! (`cpu.max` on cgroup v2, `cpu.cfs_quota_us` on v1).
+//! already reflects cpusets and container limits), whether that set leaves
+//! out an online CPU, and the cgroup CPU quota (`cpu.max` on cgroup v2,
+//! `cpu.cfs_quota_us` on v1).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -9,12 +10,22 @@ use super::{Core, CoreKind, CpuSet, Node, Source, Topology};
 
 pub(super) fn detect() -> Option<Topology> {
     let allowed = crate::os::current_affinity()?;
-    let nodes = read(Path::new("/sys"), &allowed)?;
+    let sys = Path::new("/sys");
+    let nodes = read(sys, &allowed)?;
     Some(Topology {
         nodes,
         source: Source::Sysfs,
         cpu_quota: cgroup_quota(Path::new("/proc/self/cgroup"), Path::new("/sys/fs/cgroup")),
+        narrowed: narrowed(sys, &allowed),
     })
+}
+
+/// Whether `allowed` leaves out a CPU that sysfs under `sys` lists online.
+/// `false` when the online list cannot be read: nothing shows the set was
+/// narrowed.
+pub(super) fn narrowed(sys: &Path, allowed: &CpuSet) -> bool {
+    read_list(&sys.join("devices/system/cpu/online"))
+        .is_some_and(|online| online.iter().any(|cpu| !allowed.contains(cpu)))
 }
 
 /// The nodes and cores under `sys` (normally `/sys`) holding an online CPU of
@@ -318,6 +329,25 @@ mod tests {
         let nodes = read(&sys.0, &CpuSet::parse("0-1").unwrap()).unwrap();
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].cores.len(), 2);
+    }
+
+    #[test]
+    fn a_set_narrowed_only_when_it_leaves_out_an_online_cpu() {
+        let sys = two_node_machine();
+        sys.write("devices/system/cpu/online", "0-7\n");
+        let narrowed = |list: &str| narrowed(&sys.0, &CpuSet::parse(list).unwrap());
+        assert!(!narrowed("0-7"), "every online CPU: the host is shared");
+        assert!(narrowed("0-3"), "a cpuset or taskset of half the host");
+        assert!(narrowed("0-6"), "one online CPU left out");
+        sys.write("devices/system/cpu/online", "0-5\n");
+        assert!(!narrowed("0-5"), "offline CPUs do not narrow the set");
+        assert!(!narrowed("0-7"), "nor do allowed CPUs that are offline");
+    }
+
+    #[test]
+    fn a_host_without_an_online_list_is_not_narrowed() {
+        let sys = two_node_machine();
+        assert!(!narrowed(&sys.0, &CpuSet::parse("0-3").unwrap()));
     }
 
     #[test]

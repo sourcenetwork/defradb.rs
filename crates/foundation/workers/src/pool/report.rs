@@ -23,6 +23,9 @@ pub struct TopologySummary {
     pub cpus: usize,
     /// The cgroup CPU quota, in whole CPUs.
     pub cpu_quota: Option<usize>,
+    /// Whether the process may run on only part of the host's online CPUs,
+    /// which is when the `auto` placement pins.
+    pub narrowed: bool,
     /// Where the topology was read from.
     pub source: Source,
 }
@@ -36,6 +39,7 @@ impl TopologySummary {
             cores: topology.core_count(),
             cpus: topology.cpu_count(),
             cpu_quota: topology.cpu_quota,
+            narrowed: topology.narrowed,
             source: topology.source,
         }
     }
@@ -119,6 +123,7 @@ impl Report {
             cores = self.topology.cores,
             cpus = self.topology.cpus,
             cpu_quota = ?self.topology.cpu_quota,
+            cpus_narrowed = self.topology.narrowed,
             pinning = pinning.1.as_str(),
             memory_policy = memory.1.as_str(),
             priority = priority.1.as_str(),

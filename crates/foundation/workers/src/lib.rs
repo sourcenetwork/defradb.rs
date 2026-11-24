@@ -33,7 +33,7 @@ pub use config::{
 };
 pub use error::Error;
 pub use hook::{Hook, HookFactory, HookProgress};
-pub use os::{current_affinity, ContextSwitches, Outcome};
+pub use os::{current_affinity, set_current_affinity, ContextSwitches, Outcome};
 #[cfg(not(target_family = "wasm"))]
 pub use placement::{edge_cores, EdgeCores};
 pub use pool::{

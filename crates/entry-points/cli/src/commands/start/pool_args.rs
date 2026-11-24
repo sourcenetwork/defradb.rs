@@ -22,7 +22,10 @@ pub struct WorkerArgs {
     #[arg(long = "workers", env = "DEFRA_WORKERS")]
     pub workers: Option<String>,
 
-    /// Where workers run: unpinned, spread, pack, or CPU lists split by ';'
+    /// Where workers and network threads run: spread (the Linux default),
+    /// pack, CPU lists split by ';', unpinned (for processes that share
+    /// their CPUs), or auto (pinned only within a CPU set narrowed for the
+    /// process)
     #[arg(long, env = "DEFRA_WORKER_PLACEMENT")]
     pub worker_placement: Option<String>,
 

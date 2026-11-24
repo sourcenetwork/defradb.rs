@@ -8,6 +8,11 @@
 //! or a Linux whose sysfs cannot be read, is one node of
 //! `available_parallelism` single-CPU cores. Placement never affects
 //! correctness, so the fallback is a slower placement, never a failure.
+//!
+//! The topology also says whether the process was given part of the host's
+//! CPUs ([`Topology::narrowed`]), which the `Auto` placement reads. That
+//! someone narrowed the set does not make it the process's alone: several
+//! processes may be given the same one.
 
 mod cpuset;
 #[cfg(target_os = "linux")]
@@ -72,6 +77,12 @@ pub struct Topology {
     pub source: Source,
     /// The cgroup CPU quota, in whole CPUs rounded up, when one is set.
     pub cpu_quota: Option<usize>,
+    /// Whether the process may run on only part of the host's online CPUs,
+    /// as a container cpuset, `taskset` or systemd's `CPUAffinity` leaves
+    /// it. Other processes may have been given the same CPUs. A CPU quota
+    /// alone does not narrow the set. `false` where the platform cannot tell
+    /// (macOS, the fallback).
+    pub narrowed: bool,
 }
 
 impl Topology {
@@ -103,6 +114,7 @@ impl Topology {
             nodes: vec![Node { id: 0, cores }],
             source: Source::Fallback,
             cpu_quota: None,
+            narrowed: false,
         }
     }
 

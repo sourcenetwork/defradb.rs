@@ -37,7 +37,19 @@ fn main() -> ExitCode {
             ..Default::default()
         });
     }
-    let runtime = match edge::EdgeRuntime::start(edge::EdgeConfig::default()) {
+    let cli = Cli::parse();
+    // Load configuration (flags → env → config file → defaults)
+    let config = match Config::load(&cli) {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("Error: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let runtime = match edge::EdgeRuntime::start(edge::EdgeConfig {
+        placement: edge_placement(&cli, &config),
+        ..edge::EdgeConfig::default()
+    }) {
         Ok(runtime) => runtime,
         Err(error) => {
             eprintln!("Error: {error}");
@@ -46,7 +58,7 @@ fn main() -> ExitCode {
     };
     let edge = runtime.edge().clone();
     let outcome = edge
-        .block_on(run(edge.clone()))
+        .block_on(run(cli, config, edge.clone()))
         .map_err(|error| error.to_string())
         .and_then(|result| result.map_err(|error| error.to_string()));
     if let Err(error) = runtime.shutdown() {
@@ -77,13 +89,23 @@ fn install_crypto_provider() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
-async fn run(edge: edge::Edge) -> Result<()> {
+/// Where the network runtime's threads run: where `start` places its worker
+/// pool (`--worker-placement`, `DEFRA_WORKER_PLACEMENT`, then
+/// `workers.placement`), so the network threads and the workers follow one
+/// decision. A value the pool cannot read leaves the default here, and
+/// `start` refuses it.
+fn edge_placement(cli: &Cli, config: &Config) -> workers::Placement {
+    let flag = match &cli.command {
+        Command::Start(start) => start.workers.worker_placement.as_deref(),
+        _ => None,
+    };
+    flag.or(config.workers.placement.as_deref())
+        .and_then(|placement| placement.parse().ok())
+        .unwrap_or_default()
+}
+
+async fn run(cli: Cli, config: Config, edge: edge::Edge) -> Result<()> {
     install_crypto_provider();
-
-    let cli = Cli::parse();
-
-    // Load configuration (flags → env → config file → defaults)
-    let config = Config::load(&cli)?;
 
     // Initialize logging based on config. Telemetry only initializes for the
     // `start` command (matching Go, which configures it only in start.go) so

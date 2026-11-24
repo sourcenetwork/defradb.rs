@@ -14,9 +14,15 @@
 //!
 //! A pool that starts plans on the CPUs no other placed pool holds
 //! ([`reserve`]), so pools never share a core.
+//!
+//! Whether a pool, and a network runtime sized from the machine, pins at all
+//! is [`pins`]: the default does; [`Placement::Auto`], an opt-in, pins only
+//! where the process was given part of the host's CPUs; `Unpinned` never.
 
 #[cfg(not(target_family = "wasm"))]
 mod edge;
+#[cfg(all(test, not(target_family = "wasm")))]
+mod pinning_tests;
 #[cfg(not(target_family = "wasm"))]
 mod reserve;
 #[cfg(test)]
@@ -123,12 +129,36 @@ fn edge_holds_cores() -> bool {
     false
 }
 
+/// Whether a pool placed as `placement` pins its threads on `topology`, and
+/// whether a network runtime given `placement` pins its own.
+/// `Spread` (the Linux default), `Pack` and custom sets always pin;
+/// [`Placement::Unpinned`] never does. [`Placement::Auto`] pins only when the
+/// process may run on part of the host's online CPUs
+/// ([`Topology::narrowed`]).
+///
+/// A narrowed mask says only that someone left an online CPU out of the
+/// process's set. It does not say the CPUs in it are this process's alone:
+/// containers given the same `--cpuset-cpus`, units under one systemd slice
+/// with `AllowedCPUs=`, every process on a host booted with `isolcpus=`,
+/// pods in Kubernetes' shared pool, or a CI container that starts many
+/// nodes all share one narrowed set. Each process then has its own ledger,
+/// plans the same seats and pins the same threads to them, under `Auto` as
+/// under `Spread`. Processes that share a set, narrowed or not, run
+/// `Unpinned`.
+pub(crate) fn pins(topology: &Topology, placement: &Placement) -> bool {
+    match placement {
+        Placement::Auto => topology.narrowed,
+        Placement::Unpinned => false,
+        Placement::Spread | Placement::Pack | Placement::Custom(_) => true,
+    }
+}
+
 /// Every worker's place on `topology` under `config`.
 pub(crate) fn plan(topology: &Topology, config: &Config) -> Plan {
     let count = worker_count(topology, config);
     let mut notes = Vec::new();
     let (seats, oversubscribed) = match &config.placement {
-        Placement::Unpinned => (
+        placement if !pins(topology, placement) => (
             vec![
                 Seat {
                     node: 0,
@@ -139,8 +169,8 @@ pub(crate) fn plan(topology: &Topology, config: &Config) -> Plan {
             false,
         ),
         Placement::Custom(sets) => (custom(topology, sets, &mut notes), false),
-        Placement::Spread | Placement::Pack => {
-            let slots = slots(topology, config.placement == Placement::Spread);
+        placement => {
+            let slots = slots(topology, *placement != Placement::Pack);
             let oversubscribed = count > slots.len();
             let seats = slots
                 .iter()

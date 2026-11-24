@@ -113,7 +113,7 @@ fn main() {
             }
         })
     );
-    let server = common::server_edge();
+    let server = common::server_edge(workers::Placement::default());
     let edge = server.edge().clone();
     for scenario in Scenario::ALL {
         let mut groups: Vec<Group> = Vec::new();
