@@ -1446,13 +1446,33 @@ RUNS=(
   "MC_ChildLimitPaging_Red_UnorderedStop.cfg ChildLimitPaging.tla RED" # an unordered early stop loses a later parent's page (INV_EveryParentHasPage)
 )
 
-parallelism="${TLA_JOBS:-4}"
+# Each TLC run checks with one worker, so one lane per core keeps every core
+# busy; TLA_JOBS overrides it.
+parallelism="${TLA_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}"
 case "$parallelism" in
   ''|*[!0-9]*) echo "TLA_JOBS must be a positive integer" >&2; exit 2 ;;
 esac
+parallelism=$((10#$parallelism))
 if [ "$parallelism" -lt 1 ]; then
   echo "TLA_JOBS must be a positive integer" >&2
   exit 2
+fi
+# Half of the machine's memory, shared out between the lanes. When the
+# default lane count would leave a lane under 512 MB, fewer lanes run.
+if [ -z "${TLA_JAVA_HEAP:-}" ]; then
+  if [ -r /proc/meminfo ]; then
+    memory_mb=$(awk '/^MemTotal:/ {print int($2 / 1024)}' /proc/meminfo)
+  else
+    memory_mb=$(( $(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1048576 ))
+  fi
+  if [ "${memory_mb:-0}" -gt 0 ]; then
+    budget_mb=$(( memory_mb / 2 ))
+    if [ -z "${TLA_JOBS:-}" ] && [ $(( budget_mb / parallelism )) -lt 512 ]; then
+      parallelism=$(( budget_mb / 512 ))
+      [ "$parallelism" -lt 1 ] && parallelism=1
+    fi
+    export TLA_JAVA_HEAP="$(( budget_mb / parallelism ))m"
+  fi
 fi
 if ! workdir=$(mktemp -d "${TMPDIR:-/tmp}/defra-tla.XXXXXX"); then
   echo "Could not create TLA scratch directory" >&2
@@ -1478,10 +1498,12 @@ trace_verdict() {
 }
 
 run_model() {
-  local index="$1" row="$2" cfg mod want out got
+  local index="$1" row="$2" cfg mod want out got start
   read -r cfg mod want <<<"$row"
   mkdir -p "$workdir/java-$index"
+  start=$SECONDS
   out=$(TLA_JAVA_TMPDIR="$workdir/java-$index" ./tools/tlc -metadir "$workdir/state-$index" -config "$cfg" "$mod" 2>&1)
+  echo "$((SECONDS-start)) $cfg" >"$workdir/$index.time"
   # Here-strings, not pipes: `grep -q` stops at the first match, and under
   # pipefail the writer's broken pipe would turn a long trace into ERROR.
   case "$want" in
@@ -1519,5 +1541,7 @@ for ((index=1; index<=n; index++)); do
 done
 
 echo "----"
+echo "slowest runs (seconds):"
+sort -rn "$workdir"/*.time 2>/dev/null | sed -n '1,10s/^/  /p'
 if [ "$fails" -eq 0 ]; then echo "all $n TLA+ runs matched their expected verdict"; else echo "$fails/$n MISMATCHED"; fi
 exit "$((fails > 0))"
