@@ -101,7 +101,7 @@ fn operation(row: &Route, path: &str, method: &str) -> Value {
         "operationId": operation_id(method, path),
         "tags": [tag_name(path)],
         "description": description(path),
-        "security": security(&row.permission),
+        "security": security(row),
         "responses": {
             "200": {
                 "description": "The operation's result. No response schema is derived yet (#3263)."
@@ -111,6 +111,8 @@ fn operation(row: &Route, path: &str, method: &str) -> Value {
         "x-defra-permission": permission_name(&row.permission),
     });
 
+    responses_for(path, &mut operation);
+
     let parameters = path_parameters(path);
     if !parameters.is_empty() {
         operation["parameters"] = Value::Array(parameters);
@@ -118,9 +120,33 @@ fn operation(row: &Route, path: &str, method: &str) -> Value {
     operation
 }
 
+/// The routes whose response is not the `200` the default block declares.
+///
+/// Both are GraphQL transports a plain request/response consumer would get
+/// wrong: the signer upgrades the connection, and the websocket route has no
+/// implementation behind it yet.
+fn responses_for(path: &str, operation: &mut Value) {
+    match path.strip_prefix("/api/v0").unwrap_or(path) {
+        "/graphql/client-sign" => {
+            operation["responses"]["101"] = json!({
+                "description": "Switching Protocols: the connection became a WebSocket."
+            });
+        }
+        "/graphql/ws" => {
+            operation["responses"] = json!({
+                "501": {
+                    "description": "Not Implemented: subscriptions over a WebSocket are not served yet."
+                },
+                "default": { "$ref": "#/components/responses/error" }
+            });
+        }
+        _ => {}
+    }
+}
+
 fn description(path: &str) -> &'static str {
-    if path == "/graphql/ws" {
-        "GraphQL subscriptions over a WebSocket upgrade. Any method is accepted."
+    if path.strip_prefix("/api/v0").unwrap_or(path) == "/graphql/ws" {
+        "GraphQL subscriptions over a WebSocket upgrade, which this server does not serve yet: the route answers 501 Not Implemented. Any method is accepted."
     } else {
         "Served by this node. No description or request body is derived yet (#3263)."
     }
@@ -131,14 +157,22 @@ fn description(path: &str) -> &'static str {
 ///
 /// A `Dynamic` route decides for itself and runs unauthenticated when DAC and
 /// NAC are both off, so it declares the scheme as optional — the same
-/// `[{}, {bearerToken: []}]` Go's document puts at the root. `IdentityOnly` and
-/// `Required` need a caller to decide anything, so they declare it required.
-fn security(permission: &RoutePermission) -> Value {
-    match permission {
+/// `[{}, {bearerToken: []}]` Go's document puts at the root.
+///
+/// `Required` and `IdentityOnly` fit the same shape for a different reason: the
+/// permission is checked *against a caller*, and with NAC off there is no check
+/// to fail, so the request is served without a token. Only `IdentityOnly`
+/// routes that cannot act without an identity — and `Dynamic` handlers that
+/// reject an unidentified caller, which is what `caller_required` marks — need
+/// the token unconditionally.
+fn security(row: &Route) -> Value {
+    if row.caller_required || row.permission == RoutePermission::IdentityOnly {
+        return json!([{ "bearerToken": [] }]);
+    }
+    match row.permission {
         RoutePermission::Exempt => json!([]),
-        RoutePermission::Dynamic => json!([{}, { "bearerToken": [] }]),
-        RoutePermission::IdentityOnly | RoutePermission::Required(_) => {
-            json!([{ "bearerToken": [] }])
+        RoutePermission::Dynamic | RoutePermission::IdentityOnly | RoutePermission::Required(_) => {
+            json!([{}, { "bearerToken": [] }])
         }
     }
 }
@@ -435,13 +469,15 @@ mod tests {
         assert_eq!(document["paths"]["/version"]["get"]["security"], json!([]));
         assert_eq!(
             document["paths"]["/p2p/manage"]["post"]["security"],
-            json!([{ "bearerToken": [] }])
+            json!([{}, { "bearerToken": [] }])
         );
     }
 
     /// A `Dynamic` route decides for itself and runs with no caller when DAC and
-    /// NAC are off, so it declares the scheme as optional rather than required.
-    /// A route that needs a caller to decide anything declares it required.
+    /// NAC are off, so it declares the scheme as optional. A node permission is
+    /// checked against a caller and there is no check to fail while NAC is off,
+    /// so it is optional for the same reason. Only a handler that rejects a
+    /// caller it cannot identify declares the scheme required.
     #[test]
     fn security_matches_what_the_edge_actually_requires() {
         let document = document();
@@ -452,8 +488,13 @@ mod tests {
         );
         assert_eq!(
             document["paths"]["/p2p/manage"]["post"]["security"],
+            json!([{}, { "bearerToken": [] }]),
+            "a node permission is not checked while NAC is off"
+        );
+        assert_eq!(
+            document["paths"]["/acp/node/enable"]["post"]["security"],
             json!([{ "bearerToken": [] }]),
-            "a route gated on a node permission needs a caller"
+            "the handler rejects an unidentified caller"
         );
     }
 
@@ -503,5 +544,75 @@ mod tests {
                 }
             }
         }
+    }
+}
+#[cfg(test)]
+mod response_and_security_tests {
+    use super::*;
+
+    /// The operation this server generates for `method path`, or `None` when
+    /// Go's document supplies it and the row is carried verbatim.
+    fn generated(method: &str, path: &str) -> Option<Value> {
+        let row = crate::route_table::ROUTES.iter().find(|row| {
+            row.path == path
+                && row
+                    .method
+                    .as_ref()
+                    .is_none_or(|own| own.as_str().eq_ignore_ascii_case(method))
+        })?;
+        Some(operation(row, path, method))
+    }
+
+    #[test]
+    fn the_signing_upgrade_declares_switching_protocols() {
+        let operation = generated("get", "/api/v0/graphql/client-sign").expect("generated");
+        assert!(
+            operation["responses"]["101"].is_object(),
+            "a successful sign upgrades the connection: {operation}"
+        );
+    }
+
+    #[test]
+    fn the_websocket_route_declares_not_implemented() {
+        let operation = generated("get", "/api/v0/graphql/ws").expect("generated");
+        assert!(
+            operation["responses"]["200"].is_null(),
+            "nothing implements it, so no success is advertised: {operation}"
+        );
+        assert!(
+            operation["responses"]["501"].is_object(),
+            "the handler answers 501: {operation}"
+        );
+        assert!(
+            operation["description"]
+                .as_str()
+                .is_some_and(|text| text.contains("501")),
+            "the description says the same: {operation}"
+        );
+    }
+
+    #[test]
+    fn a_row_that_needs_a_caller_requires_bearer() {
+        for path in [
+            "/api/v0/acp/node/enable",
+            "/api/v0/acp/node/source-permission",
+        ] {
+            let operation = generated("post", path).expect("generated");
+            assert_eq!(
+                operation["security"],
+                json!([{ "bearerToken": [] }]),
+                "{path} rejects a caller it cannot identify"
+            );
+        }
+    }
+
+    #[test]
+    fn a_node_permission_declares_bearer_as_available_not_required() {
+        let operation = generated("get", "/api/v0/p2p/shareable-address").expect("generated");
+        assert_eq!(
+            operation["security"],
+            json!([{}, { "bearerToken": [] }]),
+            "with NAC off there is no check to fail, so the token is optional"
+        );
     }
 }
