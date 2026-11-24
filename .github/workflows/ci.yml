@@ -67,6 +67,7 @@ jobs:
       integration_matrix: ${{ steps.decide.outputs.integration_matrix }}
       io_variants: ${{ steps.decide.outputs.io_variants }}
       run: ${{ steps.decide.outputs.run }}
+      testo: ${{ steps.decide.outputs.testo }}
     steps:
       - id: decide
         uses: actions/github-script@v9
@@ -120,14 +121,19 @@ jobs:
             // tests, in-process testo); `ci:full` runs everything. The queue runs
             // everything unless its tree already passed on the pull request.
             core.setOutput('heavy', heavy ? 'true' : 'false');
+            // Main only warms the caches pull requests restore: its commit is the exact
+            // commit the queue or the pull request already tested. It runs the jobs that
+            // save a cache and skips the ones that only test.
+            const warm = context.eventName === 'push';
+            core.setOutput('testo', warm ? 'false' : 'true');
             core.setOutput('run', JSON.stringify({
               feature_checks: want('feature-checks'),
-              feature_tests: want('feature-tests'),
+              feature_tests: !warm && want('feature-tests'),
               wasm: want('wasm'),
               lean: want('lean'),
-              conformance: want('conformance'),
+              conformance: !warm && want('conformance'),
               integration: want('integration'),
-              p2p: want('p2p'),
+              p2p: !warm && want('p2p'),
             }));
 
             // A pull request runs testo through the in-process client, plain and
@@ -155,7 +161,8 @@ jobs:
             if (want('integration')) {
               suites.push({ suite: 'rust', needs_go: false });
             }
-            core.setOutput('integration_matrix', JSON.stringify({ include: suites }));
+            // go-compat is the suite that saves the integration cache.
+            core.setOutput('integration_matrix', JSON.stringify({ include: warm ? suites.filter((x) => x.suite === 'go-compat') : suites }));
 
             // The other nuclei io backends run in the merge queue and on main.
             const ioVariants = [{ name: '', suffix: '', backend: '', recv: '' }];
@@ -899,7 +906,7 @@ jobs:
   testo-archive:
     name: Build testo archive
     needs: ci-scope
-    if: needs.ci-scope.outputs.full == 'true'
+    if: needs.ci-scope.outputs.full == 'true' && needs.ci-scope.outputs.testo == 'true'
     timeout-minutes: 30
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     steps:
@@ -930,7 +937,7 @@ jobs:
   testo:
     name: ${{ matrix.client == 'legacy' && 'Legacy integration binaries' || format('Testo ({0})', matrix.client) }}
     needs: [ci-scope, build-binaries, go-defradb, testo-archive]
-    if: needs.ci-scope.outputs.full == 'true'
+    if: needs.ci-scope.outputs.full == 'true' && needs.ci-scope.outputs.testo == 'true'
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     timeout-minutes: 90
     strategy:
@@ -1065,7 +1072,7 @@ jobs:
     needs: [ci-scope, testo-archive, testo]
     # Runs whenever testo should have, so a failed archive build, which skips
     # every shard, still shows up here as a failed summary.
-    if: always() && needs.ci-scope.outputs.full == 'true'
+    if: always() && needs.ci-scope.outputs.full == 'true' && needs.ci-scope.outputs.testo == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1192,6 +1199,7 @@ jobs:
           FAST: ${{ needs.ci-scope.outputs.reused != 'true' }}
           HEAVY: ${{ needs.ci-scope.outputs.heavy }}
           TREE: ${{ needs.ci-scope.outputs.tree }}
+          RUN_TESTO: ${{ needs.ci-scope.outputs.full == 'true' && needs.ci-scope.outputs.testo == 'true' }}
           CHANGES_REQUESTED: ${{ steps.reviews.outputs.changes_requested }}
           RUN_FEATURE_CHECKS: ${{ fromJson(needs.ci-scope.outputs.run || '{}').feature_checks }}
           RUN_FEATURE_TESTS: ${{ fromJson(needs.ci-scope.outputs.run || '{}').feature_tests }}
@@ -1250,15 +1258,15 @@ jobs:
           check "Conformance" "$CONFORMANCE" "$RUN_CONFORMANCE"
           check "Integration" "$INTEGRATION" "$RUN_INTEGRATION"
           check "P2P Integration" "$P2P" "$RUN_P2P"
-          check "Build testo archive" "$TESTO_ARCHIVE" "$FULL"
-          check "Testo" "$TESTO" "$FULL"
-          check "Testo summary" "$TESTO_SUMMARY" "$FULL"
+          check "Build testo archive" "$TESTO_ARCHIVE" "$RUN_TESTO"
+          check "Testo" "$TESTO" "$RUN_TESTO"
+          check "Testo summary" "$TESTO_SUMMARY" "$RUN_TESTO"
           if [ -n "$CHANGES_REQUESTED" ]; then
             echo "::error::Changes requested by $CHANGES_REQUESTED; merging waits for their approval or a dismissal"
             failed=1
           fi
           # The notice names the tree this run tested; a queue entry with that tree skips the heavy suite.
-          if [ "$failed" = 0 ] && [ "$HEAVY" = true ] && [ "$FULL" = true ]; then
+          if [ "$failed" = 0 ] && [ "$HEAVY" = true ] && [ "$RUN_TESTO" = true ]; then
             echo "::notice title=Heavy suite passed::tree $TREE"
           fi
           exit "$failed"
