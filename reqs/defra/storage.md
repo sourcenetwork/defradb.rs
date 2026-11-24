@@ -43,6 +43,13 @@ An ordered query over an indexed field with `limit: 3, offset: 2` reads `limit +
 
 A JSON field indexed `DESC` serves `_any` over an array path and `_gt` over a nested scalar path. The path remains in its ordinary encoded order while only the scalar value is inverted, so an array path and a longer property path cannot collide and the path range sentinels bracket every value at that path.
 
+# `defra.index.backfill_under_writes`: An index created under writes finishes its backfill
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["index::backfill_under_writes::an_index_created_under_updates_is_built_and_used", "db::index::create::index_backfill_finishes_when_the_cache_lags_the_stored_definition"]
+
+An index created while documents of its collection are updated is built: its backfill completes, the listing shows no failed backfill, and a filter on the indexed field fetches through the index, for a value an update wrote during the build as for an untouched one. The backfill identifies its index by ID in the definition it reads from the store, so a node whose collection cache is behind the committed index definition still completes it and never fails with `index '<name>' disappeared during backfill`.
+
 # `defra.collection`: Collection-wide operations
 
 - **Parents:** ["defra"]
