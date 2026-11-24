@@ -17,6 +17,7 @@
 //!
 //! ## Transactions
 //! - `POST /api/v1/tx` - Begin a transaction
+//! - `GET /api/v1/tx/{id}` - Query a transaction's outcome
 //! - `POST /api/v1/tx/{id}` - Commit a transaction
 //! - `DELETE /api/v1/tx/{id}` - Discard a transaction
 //!

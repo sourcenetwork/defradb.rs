@@ -98,6 +98,15 @@ pub(super) const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Transaction & merge-queue concurrency",
+        name: "INV_Agreement / INV_Foreign / INV_StartToken / INV_FinalAnswer / INV_OwnerSettled / LIVE_QuestionAnswered: a lost commit answer is queryable only by its owner, under its start token, on every poll, until the idle age, and a full store never drops a live record",
+        axis: Tla,
+        anchor: "crates/database/db/src/txn/owner/mod.rs Owners::outcome, Owners::outcome_status, OutcomeStore, OutcomeStore::insert, OutcomeStore::evict; crates/database/db/src/txn/registry/lifecycle.rs DbTransactionRegistry::outcome_as",
+        model_ref: "MC_TxnOutcomeQuery_{Green,Red_Unknown,Red_Start,Red_Owner,Red_Consume,Red_PollOnce,Red_EvictLive}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Transaction & merge-queue concurrency",
         name: "embedder_admits_every / byIdentity_admits_iff / byIdentity_turns_away_stranger / admits_beginner / default_is_byIdentity",
         axis: Lean,
         anchor: "crates/database/db/src/txn/registry/mod.rs TxnOwnership, DbTransactionRegistry::caller; crates/database/db/src/txn/owner/table.rs Table::admits",
