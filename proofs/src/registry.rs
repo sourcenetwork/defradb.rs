@@ -744,6 +744,73 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/foundation/events/tests/unit/channel_bus.rs overflow_wakes_reader_that_drained_before_loss_was_recorded, ordinary_raw_subscription_remains_open_after_overflow; crates/surfaces/http/tests/graphql_sse_recovery.rs typed_permission_refusal_keeps_its_code_in_the_graphql_stream",
     },
     Property {
+        // A subscription is subscribed first and checked once through the
+        // plain path after, raced with closing: a bad filter is the stream's
+        // only result, a check that failed for a reason that passes keeps
+        // the stream (and the update that finds it bad reports it), and no
+        // update committed after the registration is lost.
+        family: "SSE loss and error delivery",
+        name: "INV_BadNeverStreams / INV_BadIsReported / INV_GoodNeverRefused / INV_NoLostUpdate / LIVE_ClosingEnds / LIVE_BadUpdateReported: a bad filter never streams and is reported, a good one is never refused even when its check met a failure that passes, an update committed while the subscription is registered reaches a valid subscription, closing ends every stream, a bad request kept past a failure that passes is reported by the update that finds it",
+        axis: Tla,
+        anchor: "crates/surfaces/http/src/handlers/graphql/query.rs graphql_sse; crates/entry-points/ffi/src/query/exec.rs subscribe; crates/engine/query/src/subscription.rs open_failure, update_refused; crates/engine/query/src/error.rs QueryError::is_invalid_request; tools/integration-test/src/actions/query/subscription.rs SubscriptionRequest::open",
+        model_ref: "MC_SubscriptionOpenCheck_{Green,Red_SkipCheck,Red_CheckThenSubscribe,Red_CheckIgnoresClosing,Red_TransientRefuses,Red_UpdateDropsInvalid}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/surfaces/http/tests/graphql_sse_recovery.rs a_subscription_the_plain_path_refuses_sends_its_error_then_completes, a_transient_failure_at_open_keeps_the_stream; crates/engine/query/tests/filter_shape_checks.rs a_failed_lookup_does_not_make_the_request_invalid, a_bad_cursor_argument_makes_the_request_invalid; crates/engine/query/src/subscription.rs only_an_invalid_request_refuses_an_update; crates/surfaces/http/tests/sse_ends_when_closing.rs a_graphql_subscription_ends_when_its_edge_closes; tools/integration-test/tests/testo/subscription/with_filter_unknown.rs subscription_with_an_unknown_filter_field_is_refused_on_open, subscription_with_a_valid_filter_variable_streams",
+    },
+    Property {
+        family: "SSE loss and error delivery",
+        name: "bad_open_reports_then_completes / transient_open_keeps_stream / closing_open_completes / only_invalid_open_is_refused / ffi_invalid_update_reports_then_ends / ffi_only_invalid_update_ends: an invalid open sends its error and completes, a check that failed for a reason that passes keeps the stream, closing completes it, only an invalid open is refused, and an FFI update that finds the request invalid sends it and ends the subscription, which nothing else ends",
+        axis: Lean,
+        anchor: "crates/surfaces/http/src/handlers/graphql/query.rs graphql_sse; crates/engine/query/src/subscription.rs open_failure, update_refused; crates/entry-points/ffi/src/query/exec.rs subscribe",
+        model_ref: "SseDelivery (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/surfaces/http/tests/graphql_sse_recovery.rs a_subscription_the_plain_path_refuses_sends_its_error_then_completes, a_transient_failure_at_open_keeps_the_stream; crates/engine/query/src/subscription.rs only_an_invalid_request_refuses_an_update",
+    },
+    Property {
+        // graphql-go checks a literal filter's keys against its input type
+        // and treats each variable as valid there; the variable's value is
+        // checked by coercion.
+        family: "Filter input validation",
+        name: "literal_walk_skips_variable_positions / variable_value_never_matters: a literal's unknown-field errors never depend on what its variables hold",
+        axis: Lean,
+        anchor: "crates/engine/query/src/query_parse/filter_shape/walk.rs literal, literal_fields; crates/engine/query/src/query_parse/filter_shape/mod.rs check; crates/engine/query/src/query_parse/validation.rs check_filter_shapes",
+        model_ref: "FilterInputShape (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/engine/query/tests/filter_source.rs a_nested_variable_is_recorded_at_its_position; tools/integration-test/tests/testo/query/simple/with_filter_unknown.rs a_bad_literal_is_reported_before_its_variables, unknown_operator_in_a_nested_variable_is_rejected",
+    },
+    Property {
+        // An unknown key is one error: the walk does not look below it.
+        family: "Filter input validation",
+        name: "unknown_key_is_one_error: nothing below an unknown key is reported",
+        axis: Lean,
+        anchor: "crates/engine/query/src/query_parse/filter_shape/walk.rs literal_fields",
+        model_ref: "FilterInputShape (lake build)",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/query/simple/with_filter_unknown.rs unknown_field_in_a_literal_filter_is_rejected",
+    },
+    Property {
+        // A variable that stands for a whole `_and`/`_or` list is found at
+        // its position and checked as a list, never skipped.
+        family: "Filter input validation",
+        name: "whole_list_variable_is_checked: a variable at a list key is checked as a list",
+        axis: Lean,
+        anchor: "crates/engine/query/src/query_parse/filter_shape/walk.rs shape_at, variable_list; crates/engine/query/src/query_parse/filter_shape/mod.rs check",
+        model_ref: "FilterInputShape (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/engine/query/tests/filter_shape_checks.rs a_whole_list_variable_under_and_is_checked; tools/integration-test/tests/testo/query/simple/with_filter_unknown.rs unknown_field_in_a_whole_and_list_variable_is_rejected",
+    },
+    Property {
+        // A literal error under any root, an excluded mutation included,
+        // wins over every variable error.
+        family: "Filter input validation",
+        name: "literal_anywhere_wins / excluded_literal_is_reported: literal errors win across roots",
+        axis: Lean,
+        anchor: "crates/engine/query/src/query_parse/filter_shape/mod.rs check, Found; crates/engine/query/src/query_parse/validation.rs check_filter_shapes; crates/engine/query/src/query_parse/parser.rs parse_selection_to_mutations",
+        model_ref: "FilterInputShape (lake build)",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/query/simple/with_filter_unknown.rs a_literal_error_in_a_later_root_wins_over_a_variable_error; tools/integration-test/tests/testo/mutation/delete/with_filter_unknown.rs a_skipped_delete_with_an_unknown_filter_field_is_rejected, a_delete_in_an_excluded_inline_fragment_is_rejected",
+    },
+    Property {
         family: "HTTP router composition",
         name: "WholeRouter / SingleConstructor / NoBypass / ForwardingPreserved",
         axis: Tla,

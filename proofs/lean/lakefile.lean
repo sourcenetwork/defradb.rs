@@ -404,3 +404,6 @@ lean_lib MissingRelationFilter where
 
 @[default_target]
 lean_lib DnsResolverFallback where
+
+@[default_target]
+lean_lib FilterInputShape where

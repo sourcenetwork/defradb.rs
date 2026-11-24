@@ -297,7 +297,7 @@ pub async fn delete_documents_with_filter(
 ) -> Result<Json<DocumentsResult>, HttpError> {
     let request = filtered_request(&body)?;
     let server = Server::new(state, identity, &headers)?;
-    documents::delete_with_filter(|m| server.run(m), &collection, &request.filter())
+    documents::delete_with_filter(|r| server.run_request(r), &collection, &request.filter())
         .await
         .map(Json)
         .map_err(refused)
@@ -317,7 +317,7 @@ pub async fn update_documents_with_filter(
     let request = filtered_request(&body)?;
     let server = Server::new(state, identity, &headers)?;
     documents::update_with_filter(
-        |m| server.run(m),
+        |r| server.run_request(r),
         &collection,
         &request.filter(),
         &request.updater(),

@@ -10165,6 +10165,7 @@ dependencies = [
  "kovan-map",
  "kovan-queue",
  "lens",
+ "mantra-macros",
  "query",
  "rapidhash",
  "regex",
