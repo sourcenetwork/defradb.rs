@@ -6246,6 +6246,7 @@ dependencies = [
  "defra-core",
  "defra-harness",
  "defra-node",
+ "defra-version",
  "document",
  "edge",
  "events",

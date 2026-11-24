@@ -1085,19 +1085,97 @@ jobs:
               await github.rest.issues.createComment({ owner, repo, issue_number, body });
             }
 
-  # The one required check besides Validate title: fails when any job it needs
-  # failed or was cancelled. A job skipped by ci-scope passes; a job skipped
-  # because its dependency failed shows that dependency's failure here. Testo
-  # shards report through Testo summary, which judges their known failures.
+  # The one required check besides Validate title. A job passes when it
+  # succeeded, or was skipped and ci-scope did not ask for it; a job skipped
+  # because a dependency failed is reported as well as that dependency.
   merge-gate:
     name: Merge gate
-    needs: [ci-scope, lint, build, wasm-check, lean-conformance, conformance, integration, p2p-linux, testo-summary]
+    needs:
+      - ci-scope
+      - lint-default
+      - feature-checks
+      - dependency-checks
+      - docs
+      - c-api
+      - lint
+      - unit-tests
+      - go-defradb
+      - build-binaries
+      - build
+      - feature-tests
+      - wasm-check
+      - lean-conformance
+      - conformance
+      - integration
+      - p2p-linux
+      - testo-archive
+      - testo
+      - testo-summary
     if: always()
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
-      - name: Require every needed job to pass or be skipped by scope
+      - name: Check every queue job
         env:
-          NEEDS: ${{ toJSON(needs) }}
+          FULL: ${{ needs.ci-scope.outputs.full }}
+          RUN_FEATURE_CHECKS: ${{ fromJson(needs.ci-scope.outputs.run || '{}').feature_checks }}
+          RUN_FEATURE_TESTS: ${{ fromJson(needs.ci-scope.outputs.run || '{}').feature_tests }}
+          RUN_WASM: ${{ fromJson(needs.ci-scope.outputs.run || '{}').wasm }}
+          RUN_LEAN: ${{ fromJson(needs.ci-scope.outputs.run || '{}').lean }}
+          RUN_CONFORMANCE: ${{ fromJson(needs.ci-scope.outputs.run || '{}').conformance }}
+          RUN_INTEGRATION: ${{ fromJson(needs.ci-scope.outputs.run || '{}').integration }}
+          RUN_P2P: ${{ fromJson(needs.ci-scope.outputs.run || '{}').p2p }}
+          CI_SCOPE: ${{ needs.ci-scope.result }}
+          LINT_DEFAULT: ${{ needs.lint-default.result }}
+          FEATURE_CHECKS: ${{ needs.feature-checks.result }}
+          DEPENDENCY_CHECKS: ${{ needs.dependency-checks.result }}
+          DOCS: ${{ needs.docs.result }}
+          C_API: ${{ needs.c-api.result }}
+          LINT: ${{ needs.lint.result }}
+          UNIT_TESTS: ${{ needs.unit-tests.result }}
+          GO_DEFRADB: ${{ needs.go-defradb.result }}
+          BUILD_BINARIES: ${{ needs.build-binaries.result }}
+          BUILD: ${{ needs.build.result }}
+          FEATURE_TESTS: ${{ needs.feature-tests.result }}
+          WASM: ${{ needs.wasm-check.result }}
+          LEAN: ${{ needs.lean-conformance.result }}
+          CONFORMANCE: ${{ needs.conformance.result }}
+          INTEGRATION: ${{ needs.integration.result }}
+          P2P: ${{ needs.p2p-linux.result }}
+          TESTO_ARCHIVE: ${{ needs.testo-archive.result }}
+          TESTO: ${{ needs.testo.result }}
+          TESTO_SUMMARY: ${{ needs.testo-summary.result }}
         run: |
-          failed=$(jq -r 'to_entries[] | select(.value.result == "failure" or .value.result == "cancelled") | "\(.key)=\(.value.result)"' <<<"$NEEDS")
-          if [ -n "$failed" ]; then echo "::error::Not green: $(echo $failed)"; exit 1; fi
+          set -euo pipefail
+
+          failed=0
+          check() {
+            local name="$1" result="$2" expected="$3"
+            if [ "$result" = success ] || { [ "$result" = skipped ] && [ "$expected" = false ]; }; then
+              return 0
+            fi
+            echo "::error::$name was $result"
+            failed=1
+          }
+
+          check "CI scope" "$CI_SCOPE" true
+          check "Lint (default)" "$LINT_DEFAULT" true
+          check "Feature checks" "$FEATURE_CHECKS" "$RUN_FEATURE_CHECKS"
+          check "Dependency checks" "$DEPENDENCY_CHECKS" true
+          check "Docs" "$DOCS" true
+          check "C API compatibility" "$C_API" true
+          check "Lint" "$LINT" true
+          check "Unit tests" "$UNIT_TESTS" "$FULL"
+          check "Go DefraDB binary" "$GO_DEFRADB" "$FULL"
+          check "Build integration binaries" "$BUILD_BINARIES" "$FULL"
+          check "Build & Test" "$BUILD" "$FULL"
+          check "Feature tests" "$FEATURE_TESTS" "$RUN_FEATURE_TESTS"
+          check "WASM Build Check" "$WASM" "$RUN_WASM"
+          check "Lean Conformance" "$LEAN" "$RUN_LEAN"
+          check "Conformance" "$CONFORMANCE" "$RUN_CONFORMANCE"
+          check "Integration" "$INTEGRATION" "$RUN_INTEGRATION"
+          check "P2P Integration" "$P2P" "$RUN_P2P"
+          check "Build testo archive" "$TESTO_ARCHIVE" "$FULL"
+          check "Testo" "$TESTO" "$FULL"
+          check "Testo summary" "$TESTO_SUMMARY" "$FULL"
+          exit "$failed"
