@@ -15,7 +15,7 @@ A node tells its clients what changed through event subscriptions and through jo
 - **Parents:** ["defra.events.delivery"]
 - **Scenarios:** ["subscription::delivery::resume::a_saved_cursor_resumes_after_a_reopen_in_commit_order"]
 
-A client reads `_documentUpdates(collection: "User", after: "0")`, keeps `next`, and the node closes and reopens on the same data directory. Reading `after` the kept cursor returns exactly the rows committed after it that the reader may see (`defra.events.delivery.visibility`): none committed before it, none twice, none missing. The journal keeps every position across the reopen, so a hidden row is passed, not lost. With all rows visible and updates to Ann and Bob before the reopen (`head` and `next` "2") and to Cy, Ann and Bob after it, `after: "2"` returns cursors "3", "4" and "5" for Cy, Ann and Bob, with `head` and `next` "5".
+A client reads `_documentUpdates(collection: "User", after: "0")`, keeps `next`, and the node closes and reopens on the same data directory. Reading `after` the kept cursor, and again from each returned `next` until it reaches `head` (a page holds at most 1,024 positions), returns exactly the rows committed after it that the reader may see (`defra.events.delivery.visibility`): none committed before it, none twice, none missing. The journal keeps every position across the reopen, so a hidden row is passed, not lost. With all rows visible and updates to Ann and Bob before the reopen (`head` and `next` "2") and to Cy, Ann and Bob after it, `after: "2"` returns cursors "3", "4" and "5" for Cy, Ann and Bob, with `head` and `next` "5".
 
 # `defra.events.delivery.order`: Rows come back in commit order within one collection
 

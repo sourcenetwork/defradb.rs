@@ -51,7 +51,8 @@ total order it can check across collections. The models are
 
 Subscribe first, to document change notifications or to a GraphQL subscription of
 the collection with no `docID` or `docIDs` argument (one with either wakes only for
-the documents it names, so an update to another can wait unannounced). Then
+the documents it names, so an update to another can wait unannounced). Then,
+once the subscription request has returned its stream (never concurrently with it),
 read `_documentUpdates` from the saved cursor up to `head`, and save the cursor with
 what the read produced. Read again on every wake-up and every loss signal (a set
 `resync_required`, an ended stream), subscribing again first when the stream ended.
@@ -59,6 +60,10 @@ A subscriber that does this observes every committed update of the collection, l
 or merged, that it is allowed to see, exactly once and in commit order, with no rescan:
 `ChangeDelivery.tla` `INV_ExactlyOnce`, `INV_CommitOrder` and `EventuallyObserved`
 (GREEN `MC_ChangeDelivery_Green_Closing.cfg` and `MC_ChangeDelivery_Green_Coalescing.cfg`).
+Exactly once covers the journal reads and the saved cursor, not what a consumer does with
+a row: one that applies an update and stops before it saves the cursor reads that update
+again, so its effect and the cursor save must commit together, or the effect must be
+idempotent.
 In a collection with a `@policy`, a row is not shown when its document is deleted or
 purged, or when the reader may not read the document; the cursor moves past it
 anyway, so a row hidden when the reader reads past it is skipped for good, even if
@@ -118,7 +123,7 @@ wakes nobody (`Red_CounterNoWake`).
 | Order within a collection | Commit order, dense cursors from 1. | `crates/database/db/tests/read/arrival_transactions.rs` `reversed_concurrent_commits_receive_cursors_in_commit_order` |
 | Order across collections | None: each collection has its own cursors. | none |
 | Restart | The journal and a saved cursor survive a reopen. Retention across truncate, purge, backup restore and `drop_all`: TBD. | `crates/database/db/tests/read/arrival_transactions.rs` `cursor_survives_database_reopen` |
-| Resubscription | A read is a snapshot: it sees a dense prefix of rows up to `head`. | `CommitOrderedAppend.tla` (regolith) snapshot prefix |
+| Resubscription | A read is a snapshot: the stored rows it covers are a dense prefix up to `head`. The rows a reader is handed skip those of documents it may not read (see Gap detection). | `CommitOrderedAppend.tla` (regolith) snapshot prefix |
 | Gap detection | The stored rows are dense; a row missing from storage in the read range is an error, never skipped. The cursors a reader is handed are not: a row of a document it may not read is passed silently and `next` moves past it (`execute_arrivals_query`). A cursor past `head` fails with `arrival cursor is beyond this node's collection head` (a test through a client is TBD). | `crates/database/db/src/event/arrivals.rs` |
 | Combination | Read on wake-up, as the update journal. | `ChangeDelivery.tla` (as for the update journal) |
 
