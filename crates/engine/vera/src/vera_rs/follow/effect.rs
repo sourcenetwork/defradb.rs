@@ -4,12 +4,12 @@
 //! Every policy command the provider sends is a `bearerPolicyCmd` call: the
 //! actor's delegation, the policy and the command as JSON. A registration or
 //! a relationship change read from one can be owed again through the outbox,
-//! under the actor that issued the delegation. An archive narrows access,
-//! and the outbox has no record for it: one that a term voided and that is
-//! not executed again cannot be put right here. A created policy widens
-//! nothing; one that is lost leaves the documents under it unreadable.
+//! under the actor that issued the delegation, and so can an archive (its
+//! document was deleted), which the outbox owes as any change. A created
+//! policy widens nothing; one that is lost leaves the documents under it
+//! unreadable.
 
-use alloy_sol_types::SolCall as _;
+use alloy_sol_types::SolCall;
 use serde::{Deserialize, Serialize};
 use vera_acp::Subject;
 use vera_domain::NativeTx;
@@ -38,6 +38,12 @@ pub(crate) enum Lost {
         subject: LostSubject,
         token: String,
     },
+    Archive {
+        policy_id: String,
+        resource: String,
+        object: String,
+        token: String,
+    },
 }
 
 /// A relationship's subject, as the outbox records one.
@@ -63,14 +69,6 @@ pub(crate) enum LostSubject {
 pub(crate) enum Effect {
     /// A change the outbox can owe again.
     Owed(Lost),
-    /// An archive, which nothing here can send again, and the DID it was
-    /// made as when its delegation names one.
-    Archive {
-        policy_id: String,
-        resource: String,
-        object: String,
-        actor: Option<String>,
-    },
     /// A policy creation, named by the ID its definition, creator and nonce
     /// derive. It widens nothing by itself, but a lost one cannot be
     /// restored from the node's record.
@@ -78,6 +76,9 @@ pub(crate) enum Effect {
     /// A checked decision, or anything else that changes no document's
     /// access.
     Other,
+    /// The commands of one `batchCalls`, in order, and how many of them were
+    /// not changes the outbox can owe again.
+    Batched(Vec<Lost>, usize),
 }
 
 impl Lost {
@@ -96,18 +97,80 @@ impl Lost {
                 resource,
                 object,
                 ..
+            }
+            | Self::Archive {
+                policy_id,
+                resource,
+                object,
+                ..
             } => (policy_id, resource, object),
         }
     }
 
     pub(crate) fn token(&self) -> &str {
         match self {
-            Self::Registration { token, .. } | Self::Relationship { token, .. } => token,
+            Self::Registration { token, .. }
+            | Self::Relationship { token, .. }
+            | Self::Archive { token, .. } => token,
         }
     }
 }
 
 impl Effect {
+    /// What one policy command did, when it is a command the provider sends.
+    fn from_call(calldata: &[u8]) -> Option<Effect> {
+        let call = IAcp::bearerPolicyCmdCall::abi_decode(calldata).ok()?;
+        let command = serde_json::from_slice::<PolicyCmd>(&call.cmd).ok()?;
+        let policy_id = hex::encode(call.policyId);
+        let token = call.bearerToken;
+        let (add, relationship) = match command {
+            PolicyCmd::RegisterObject(object) => {
+                return Some(Effect::Owed(Lost::Registration {
+                    policy_id,
+                    resource: object.resource,
+                    object: object.id,
+                    token,
+                }))
+            }
+            PolicyCmd::ArchiveObject(object) => {
+                return Some(Effect::Owed(Lost::Archive {
+                    policy_id,
+                    resource: object.resource,
+                    object: object.id,
+                    token,
+                }))
+            }
+            PolicyCmd::SetRelationship(relationship) => (true, relationship),
+            PolicyCmd::DeleteRelationship(relationship) => (false, relationship),
+            _ => return None,
+        };
+        let subject = subject(&relationship.subject)?;
+        Some(Effect::Owed(Lost::Relationship {
+            add,
+            policy_id,
+            resource: relationship.resource,
+            object: relationship.object_id,
+            relation: relationship.relation,
+            subject,
+            token,
+        }))
+    }
+
+    /// What `batchCalls` did. Each command the provider sends stays owed;
+    /// anything else in the same batch contributes only to the batch's
+    /// refused count, so it cannot hide a lost archive.
+    fn join(effects: impl IntoIterator<Item = Effect>) -> Effect {
+        let mut owed = Vec::new();
+        let mut other = 0;
+        for effect in effects {
+            match effect {
+                Effect::Owed(lost) => owed.push(lost),
+                Effect::PolicyCreation { .. } | Effect::Other | Effect::Batched(_, _) => other += 1,
+            }
+        }
+        Effect::Batched(owed, other)
+    }
+
     /// The object an effect is on, when it is on one.
     pub(crate) fn object(&self) -> Option<(String, String, String)> {
         match self {
@@ -115,13 +178,7 @@ impl Effect {
                 let (policy, resource, object) = lost.object();
                 Some((policy.into(), resource.into(), object.into()))
             }
-            Self::Archive {
-                policy_id,
-                resource,
-                object,
-                ..
-            } => Some((policy_id.clone(), resource.clone(), object.clone())),
-            Self::PolicyCreation { .. } | Self::Other => None,
+            Self::PolicyCreation { .. } | Self::Batched(_, _) | Self::Other => None,
         }
     }
 }
@@ -136,47 +193,23 @@ pub(crate) fn effect_of(wire: &[u8]) -> Effect {
     if let Some(creation) = policy_creation_of(&tx) {
         return creation;
     }
-    let Ok(call) = IAcp::bearerPolicyCmdCall::abi_decode(&tx.calldata) else {
-        return Effect::Other;
-    };
-    let Ok(command) = serde_json::from_slice::<PolicyCmd>(&call.cmd) else {
-        return Effect::Other;
-    };
-    let policy_id = hex::encode(call.policyId);
-    let token = call.bearerToken;
-    let (add, relationship) = match command {
-        PolicyCmd::RegisterObject(object) => {
-            return Effect::Owed(Lost::Registration {
-                policy_id,
-                resource: object.resource,
-                object: object.id,
-                token,
+    if tx
+        .calldata
+        .as_ref()
+        .starts_with(<IAcp::batchCallsCall as SolCall>::SELECTOR.as_slice())
+    {
+        return IAcp::batchCallsCall::abi_decode(&tx.calldata)
+            .ok()
+            .map(|batch| {
+                batch
+                    .calls
+                    .into_iter()
+                    .map(|calldata| Effect::from_call(calldata.as_ref()).unwrap_or(Effect::Other))
             })
-        }
-        PolicyCmd::ArchiveObject(object) => {
-            return Effect::Archive {
-                policy_id,
-                resource: object.resource,
-                object: object.id,
-                actor: super::owed::token_actor(&token),
-            }
-        }
-        PolicyCmd::SetRelationship(relationship) => (true, relationship),
-        PolicyCmd::DeleteRelationship(relationship) => (false, relationship),
-        _ => return Effect::Other,
-    };
-    match subject(&relationship.subject) {
-        Some(subject) => Effect::Owed(Lost::Relationship {
-            add,
-            policy_id,
-            resource: relationship.resource,
-            object: relationship.object_id,
-            relation: relationship.relation,
-            subject,
-            token,
-        }),
-        None => Effect::Other,
+            .map(Effect::join)
+            .unwrap_or(Effect::Other);
     }
+    Effect::from_call(&tx.calldata).unwrap_or(Effect::Other)
 }
 
 fn subject(subject: &Subject) -> Option<LostSubject> {

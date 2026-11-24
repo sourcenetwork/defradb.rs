@@ -197,8 +197,9 @@ Interrupt ==
                    undelivered, closedNode, events>>
 
 \* The check cannot vouch for what the term voided (a void older than the
-\* journal, or an archive refused when sent again): the node fails closed
-\* for good and publishes what it had learnt, marked closed.
+\* journal; an archive refused when sent again is owed, not a reason to
+\* close): the node fails closed for good and publishes what it had learnt,
+\* marked closed.
 Close ==
     /\ phase = "replay"                            \* a check is replaying
     /\ closedNode' = TRUE                          \* the node fails closed

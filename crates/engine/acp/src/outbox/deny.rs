@@ -1,5 +1,11 @@
 //! Whom an owed delete denies.
 //!
+//! An owed archive (its document was deleted) denies everyone on its
+//! object, its owner and anonymous callers too, from the delete's commit
+//! until the provider holds it: a deleted document grants nothing
+//! (`proofs/tla/ArchiveOnDelete.tla`). One read is left: the actor that
+//! staged the archive still reads the document's commit history.
+//!
 //! While any delete of a tuple is unsettled, its subject is denied on its
 //! object before the provider is asked, whatever the provider still holds:
 //! the revocation takes effect on this node when it commits. An add staged
@@ -26,6 +32,8 @@ use super::ops::{self, Owed, FIRST, SECOND};
 use crate::dac::DocumentACP;
 use crate::error::Result;
 use crate::identity::Identity;
+use crate::outbox::record::{OwedChange, OwedOp};
+use identity::Did;
 
 /// What the changes owed on an object say about one identity.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -37,6 +45,10 @@ pub enum OwedDenial {
     UnlessOwner,
     /// Denied: the owner relation itself is being taken from it.
     Always,
+    /// Denied: the object's archive is owed. Only the actor that staged the
+    /// archive ([`OwedDenials::archive_actor`]) is spared, and only for the
+    /// document's commit history.
+    Archived,
 }
 
 /// The denial owed deletes put on an identity: `wide` counts the deletes on
@@ -69,9 +81,11 @@ where
     R: Reader + ?Sized,
 {
     let object_key = keys::object_key(policy_id, resource, object);
-    let wide = ops::owed_at(reader, &object_key, &ops::staged_parts(&[FIRST]))
-        .await?
-        .first;
+    let on_object = ops::owed_at(reader, &object_key, &ops::staged_parts(&[FIRST, SECOND])).await?;
+    if on_object.second > 0 {
+        return Ok(OwedDenial::Archived);
+    }
+    let wide = on_object.first;
     let named = match identity {
         Identity::Authenticated(actor) => {
             let actor = provider.canonical_actor(actor);
@@ -83,6 +97,35 @@ where
     Ok(denial(wide, named))
 }
 
+/// The actor that staged the archive owed on one object, while it is
+/// unsettled: the deleting owner may inspect its own commit history before
+/// the archive settles. A change staged on that tuple commits first aborts
+/// the decision. Nobody is named while a delete of that actor's owner
+/// relation is owed too: such a delete spares it nothing.
+pub(super) async fn archive_actor<R>(
+    reader: &R,
+    policy_id: &str,
+    resource: &str,
+    object: &str,
+) -> Result<Option<Did>>
+where
+    R: Reader + ?Sized,
+{
+    let tuple = crate::outbox::record::OwedTuple::archive(policy_id, resource, object);
+    let Some(state) = ops::tuple_state(reader, &tuple).await? else {
+        return Ok(None);
+    };
+    let change: OwedChange = ops::change(reader, state.oldest).await?.ok_or_else(|| {
+        crate::Error::Serialization(format!("owed ACP change {} has no record", state.oldest))
+    })?;
+    if !matches!(change.op, OwedOp::Archive) {
+        return Ok(None);
+    }
+    let key = keys::subject_key(policy_id, resource, object, &change.actor);
+    let named = ops::owed_at(reader, &key, &ops::staged_parts(&[SECOND])).await?;
+    Ok((named.second == 0).then_some(change.actor))
+}
+
 /// Owed denials as one transaction sees them: the deletes it has staged
 /// itself over those committed and unsettled. The handle does not keep the
 /// transaction in use; once that is committed, rolled back or dropped,
@@ -90,6 +133,22 @@ where
 #[derive(Clone)]
 pub struct OwedDenials {
     view: WeakNamespaceView,
+}
+
+/// The actor that staged an archive owed on one object, as this transaction
+/// sees it.
+impl OwedDenials {
+    pub async fn archive_actor(
+        &self,
+        policy_id: &str,
+        resource: &str,
+        object: &str,
+    ) -> Result<Option<Did>> {
+        let Some(view) = self.view.upgrade() else {
+            return Ok(None);
+        };
+        archive_actor(&view, policy_id, resource, object).await
+    }
 }
 
 impl OwedDenials {
