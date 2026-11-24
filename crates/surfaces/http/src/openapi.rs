@@ -1,6 +1,6 @@
 //! The OpenAPI document generated from [`ROUTES`].
 //!
-//! Go's pinned document (`handlers/openapi-go-307364d9d.json`) is the base:
+//! Go's pinned document (`handlers/openapi-go-e152b5cab.json`) is the base:
 //! every operation it describes is carried verbatim, so a client generated
 //! from this document still gets Go's request and response schemas. On top of
 //! that, every route in [`ROUTES`] that Go does not document gets an
@@ -33,7 +33,7 @@ pub const OPENAPI_VERSION: &str = "3.0.3";
 
 /// Go's document, carried as the base. Refreshed with the Go baseline, which
 /// `handlers/openapi.rs` pins.
-const PINNED_GO_DOCUMENT: &str = include_str!("handlers/openapi-go-307364d9d.json");
+const PINNED_GO_DOCUMENT: &str = include_str!("handlers/openapi-go-e152b5cab.json");
 
 /// The document: Go's operations where Go documents the path, `ROUTES`
 /// everywhere else.
@@ -353,7 +353,19 @@ mod tests {
                 compared += 1;
             }
         }
-        assert_eq!(compared, 64, "Go's document has 64 operations");
+        let operations = pinned["paths"]
+            .as_object()
+            .expect("paths")
+            .values()
+            .map(|item| {
+                item.as_object()
+                    .expect("path item")
+                    .keys()
+                    .filter(|key| is_operation(key))
+                    .count()
+            })
+            .sum::<usize>();
+        assert_eq!(compared, operations, "every operation of Go's document");
     }
 
     /// A path template that names a parameter without declaring it is not a
