@@ -2,7 +2,7 @@
 //!
 //! This module handles converting document field values to JSON format.
 
-use chrono::SecondsFormat;
+use document::encoding::format_time_rfc3339_nano;
 use document::NormalValue;
 use serde_json::Value as JsonValue;
 
@@ -18,9 +18,7 @@ pub fn normal_value_to_json(value: &NormalValue) -> Result<JsonValue> {
         NormalValue::Float32(f) => float32_to_json(*f),
         NormalValue::String(s) => Ok(JsonValue::String(s.clone())),
         NormalValue::Bytes(b) => bytes_to_json(b),
-        NormalValue::Time(t) => Ok(JsonValue::String(
-            t.to_rfc3339_opts(SecondsFormat::Nanos, true),
-        )),
+        NormalValue::Time(t) => Ok(JsonValue::String(format_time_rfc3339_nano(t))),
         NormalValue::Json(j) => Ok(j.clone()),
         NormalValue::IntArray(arr) => Ok(JsonValue::Array(
             arr.iter().map(|i| JsonValue::Number((*i).into())).collect(),
@@ -45,7 +43,7 @@ pub fn normal_value_to_json(value: &NormalValue) -> Result<JsonValue> {
         NormalValue::NillableFloat32(opt) => nillable_float32_to_json(*opt),
         NormalValue::NillableTime(opt) => Ok(opt
             .as_ref()
-            .map(|t| JsonValue::String(t.to_rfc3339_opts(SecondsFormat::Nanos, true)))
+            .map(|t| JsonValue::String(format_time_rfc3339_nano(t)))
             .unwrap_or(JsonValue::Null)),
         NormalValue::Document(doc) => Ok(JsonValue::String(format!("<document:{:?}>", doc.id()))),
         NormalValue::DocumentArray(docs) => Ok(JsonValue::Array(
@@ -61,7 +59,7 @@ pub fn normal_value_to_json(value: &NormalValue) -> Result<JsonValue> {
         NormalValue::BytesArray(arr) => bytes_array_to_json(arr),
         NormalValue::TimeArray(arr) => Ok(JsonValue::Array(
             arr.iter()
-                .map(|t| JsonValue::String(t.to_rfc3339_opts(SecondsFormat::Nanos, true)))
+                .map(|t| JsonValue::String(format_time_rfc3339_nano(t)))
                 .collect(),
         )),
         NormalValue::JsonArray(arr) => Ok(JsonValue::Array(arr.clone())),
@@ -87,7 +85,7 @@ pub fn normal_value_to_json(value: &NormalValue) -> Result<JsonValue> {
             .map(|arr| {
                 JsonValue::Array(
                     arr.iter()
-                        .map(|t| JsonValue::String(t.to_rfc3339_opts(SecondsFormat::Nanos, true)))
+                        .map(|t| JsonValue::String(format_time_rfc3339_nano(t)))
                         .collect(),
                 )
             })
@@ -135,7 +133,7 @@ pub fn normal_value_to_json(value: &NormalValue) -> Result<JsonValue> {
             arr.iter()
                 .map(|opt| {
                     opt.as_ref()
-                        .map(|t| JsonValue::String(t.to_rfc3339_opts(SecondsFormat::Nanos, true)))
+                        .map(|t| JsonValue::String(format_time_rfc3339_nano(t)))
                         .unwrap_or(JsonValue::Null)
                 })
                 .collect(),

@@ -18,6 +18,8 @@ RUNS=(
   "MC_BackfillPageSize_Green.cfg BackfillPageSize.tla GREEN"
   "MC_BackfillPageSize_Green_Large.cfg BackfillPageSize.tla GREEN"
   "MC_BackfillPageSize_Red_Uncapped.cfg BackfillPageSize.tla RED" # a doubled page must stay within the configured batch limit
+  "MC_RemovedLensOrigin_Green.cfg RemovedLensOrigin.tla GREEN"
+  "MC_RemovedLensOrigin_Red_Inverse.cfg RemovedLensOrigin.tla RED" # an inverse must not alter a native document
   "MC_OfflineReconnect_Green.cfg OfflineReconnect.tla GREEN"
   "MC_OfflineReconnect_Red_StalePark.cfg OfflineReconnect.tla RED"
   "MC_OfflineReconnect_Red_StaleConnect.cfg OfflineReconnect.tla RED"
@@ -116,6 +118,8 @@ RUNS=(
   "MC_HeldPubsubRequest_Red_LateWatch.cfg HeldPubsubRequest.tla RED" # the wake-up is armed after the publish (Delivered)
   "MC_HeldPubsubRequest_Red_NoDedupe.cfg HeldPubsubRequest.tla RED" # a resend's duplicate reply reaches the caller (OneReplyEach)
   "MC_HeldPubsubRequest_Red_ResendLate.cfg HeldPubsubRequest.tla RED" # a resend goes out after the deadline (NoResendAfterDeadline)
+  "MC_LensSettlement_Green.cfg LensSettlement.tla GREEN"
+  "MC_LensSettlement_Red_Early.cfg LensSettlement.tla RED" # settlement runs before the staged lens registers (INV_SettleAfterLens)
   "MC_FloatEquality_Green.cfg FloatEquality.tla GREEN"
   "MC_FloatEquality_Red_Epsilon.cfg FloatEquality.tla RED" # the old tolerance equates distinct values (INV_ExactOnly)
   "MC_MigratedCounterMerge_Green.cfg MigratedCounterMerge.tla GREEN"
@@ -717,6 +721,11 @@ RUNS=(
   "MC_LensIndexAnswer_Red_SkipIfOwed.cfg LensIndexAnswer.tla RED" # merge skips owing while a record stands (INV_IndexMatchesReads)
   "MC_LensIndexAnswer_Red_NoTokenCheck.cfg LensIndexAnswer.tla RED" # rebuild clears a newer record (INV_IndexMatchesReads)
   "MC_LensIndexAnswer_Red_TrustPlan.cfg LensIndexAnswer.tla RED" # scan trusts a plan made before an owing merge (INV_ScanMatchesReads)
+  "MC_LensIndexAnswer_Red_WalkStamps.cfg LensIndexAnswer.tla RED" # a settlement walk saves the document at the active version (INV_ReadsFollowWrites)
+  "MC_MaterializeResume_Green.cfg MaterializeResume.tla GREEN" # a rebuild walks every document at its level, whatever a stopped walk left
+  "MC_MaterializeResume_Red_Resume.cfg MaterializeResume.tla RED" # a materialization resumes an owed reindex's cursor (INV_RebuiltAll)
+  "MC_MaterializeResume_Red_ResumeAnyMode.cfg MaterializeResume.tla RED" # a write-back rebuild resumes a settlement's cursor (INV_RebuiltAll)
+  "MC_MaterializeResume_Red_SettleIgnoresMode.cfg MaterializeResume.tla RED" # a settlement resumes a write-back record without writing back (INV_RebuiltAll)
   "MC_VerifySignature_Green_Pool.cfg VerifySignature.tla GREEN" # #2724: with no transaction, NAC, block and document ACP read one read-only view
   "MC_VerifySignature_Green_Txn.cfg VerifySignature.tla GREEN" # #2724: in the caller's transaction, all three read its view, pending writes included
   "MC_VerifySignature_Red_NoNac.cfg VerifySignature.tla RED" # NAC check left out (INV_VerifiedAtOnePoint)

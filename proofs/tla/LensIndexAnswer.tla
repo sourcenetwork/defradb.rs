@@ -23,6 +23,13 @@
 (* (issue #2379: before the fix, a collection with any lens never used its *)
 (* index at all).                                                          *)
 (*                                                                         *)
+(* A user may also remove the lens again (issue #3052), which owes a       *)
+(* reindex too. The rebuild a schema change owes only fixes the index: it  *)
+(* leaves the document stored as it was written. What must never happen:   *)
+(* a read stops following what was written, because a rebuild saved the    *)
+(* document at the active version before a lens was added or removed, so  *)
+(* the later lens no longer applies to it, or the removed one still does.  *)
+(*                                                                         *)
 (* How the code keeps the promise: every schema change and every merge     *)
 (* that stores the document off the active version across a lens writes a *)
 (* fresh owed record (a new token) in its own transaction; no index answers *)
@@ -42,6 +49,11 @@
 (*   crates/database/db/src/definition/migration/reindex/owed.rs owe_reindex,       *)
 (*     clear_owed_reindex, settle_owed_reindex                             *)
 (*   crates/database/db/src/definition/migration/reindex/page.rs (the walk)         *)
+(*   crates/database/db/src/definition/migration/reindex/mod.rs            *)
+(*     DB::rebuild_settling (a settlement neither restamps nor persists:  *)
+(*     restamp_identity and persist_migrations are false)                 *)
+(*   crates/database/db/src/definition/patch/in_place.rs                   *)
+(*     update_version_in_place (a removed transform owes a reindex)       *)
 (*   crates/database/db/src/collection/mod.rs queryable (no index while owed)       *)
 (*   crates/database/db/src/merge/merge_handler/stale_version.rs                    *)
 (*     DbMergeHandler::owe_reindex_off_active_version, deciding on the     *)
@@ -88,6 +100,9 @@ CONSTANTS
   \* TRUE when a query's index scan reads the owed record again, in its own
   \* transaction, and falls back to a collection scan when one stands.
   ScanRechecksOwed,
+  \* TRUE when the rebuild walk also saves the document at the active
+  \* version with the value it indexed (a settlement that persists).
+  WalkStamps,
   \* How many steps a behaviour may take, to keep the state space finite.
   MaxSteps
 
@@ -95,7 +110,7 @@ CONSTANTS
 ASSUME /\ Gate \in {"owed", "lens", "none"}
        /\ OweOnSchemaChange \in BOOLEAN /\ OweOnMerge \in BOOLEAN
        /\ SkipIfOwed \in BOOLEAN /\ ClearChecksToken \in BOOLEAN
-       /\ ScanRechecksOwed \in BOOLEAN
+       /\ ScanRechecksOwed \in BOOLEAN /\ WalkStamps \in BOOLEAN
        /\ MaxSteps \in Nat
 
 \* The two versions of the collection.
@@ -121,6 +136,9 @@ VARIABLES
   lens,
   \* The document as stored: the version it was saved at and its value.
   stored,
+  \* The document as its last writer wrote it: the version and the value.
+  \* Only writers change it; it is what reads must keep following.
+  origin,
   \* The value the index entry holds for the document.
   entry,
   \* Whether a reindex record stands.
@@ -138,14 +156,18 @@ VARIABLES
   \* "right" when it saw what reads see, "wrong" when it did not.
   answer
 
-vars == <<active, lens, stored, entry, owed, token, walk, steps, plan, answer>>
+vars == <<active, lens, stored, origin, entry, owed, token, walk, steps, plan, answer>>
 
 \* The variables the query's two steps leave alone.
-world == <<active, lens, stored, entry, owed, token, walk, steps>>
+world == <<active, lens, stored, origin, entry, owed, token, walk, steps>>
 
 \* What a query reads: the stored value, through the lens when the document
 \* sits at the version that is not active.
 Read == IF stored.ver = active \/ ~lens THEN stored.val ELSE Flip(stored.val)
+
+\* What a read should see: the written value, through the lens when it was
+\* written at the version that is not active.
+Expected == IF origin.ver = active \/ ~lens THEN origin.val ELSE Flip(origin.val)
 
 \* Whether an index answers queries, by the gate in use.
 IndexAnswers == CASE Gate = "owed" -> ~owed
@@ -155,6 +177,7 @@ IndexAnswers == CASE Gate = "owed" -> ~owed
 \* Every variable holds a value of its kind.
 TypeOK == /\ active \in Versions /\ lens \in BOOLEAN
           /\ stored \in [ver : Versions, val : Vals] /\ entry \in Vals
+          /\ origin \in [ver : Versions, val : Vals]
           /\ owed \in BOOLEAN /\ token \in Nat /\ walk \in Nat
           /\ steps \in 0..MaxSteps
           /\ plan \in {"idle", "index", "scan", "done"}
@@ -164,6 +187,8 @@ TypeOK == /\ active \in Versions /\ lens \in BOOLEAN
 \* "old" active, no lens, no record.
 Init == /\ active = "old" /\ lens = FALSE
         /\ stored = [ver |-> "old", val |-> 0] /\ entry = 0
+        \* The document was written as it is stored.
+        /\ origin = stored
         /\ owed = FALSE /\ token = 1 /\ walk = NoWalk /\ steps = 0
         \* The query has not planned yet and has no answer.
         /\ plan = "idle" /\ answer = "none"
@@ -180,15 +205,22 @@ Step == steps < MaxSteps /\ steps' = steps + 1
 \* A user registers the migration's lens; the change owes a reindex.
 SetMigration == /\ Step /\ ~lens /\ lens' = TRUE
                 /\ OweForSchemaChange
-                /\ UNCHANGED <<active, stored, entry, walk>>
+                /\ UNCHANGED <<active, stored, origin, entry, walk>>
+
+\* A user removes the lens again (#3052); the change owes a reindex.
+RemoveMigration == /\ Step /\ lens /\ lens' = FALSE
+                   /\ OweForSchemaChange
+                   /\ UNCHANGED <<active, stored, origin, entry, walk>>
 
 \* A user switches the active version; the change owes a reindex.
 SwitchActive == /\ Step /\ active' = Other(active)
                 /\ OweForSchemaChange
-                /\ UNCHANGED <<lens, stored, entry, walk>>
+                /\ UNCHANGED <<lens, stored, origin, entry, walk>>
 
 \* A local writer saves value v at the active version and indexes it.
 LocalWrite(v) == /\ Step /\ stored' = [ver |-> active, val |-> v] /\ entry' = v
+                 \* The writer wrote what is stored.
+                 /\ origin' = stored'
                  /\ UNCHANGED <<active, lens, owed, token, walk>>
 
 \* A peer's merge saves value v at version ver and indexes the value as
@@ -196,25 +228,30 @@ LocalWrite(v) == /\ Step /\ stored' = [ver |-> active, val |-> v] /\ entry' = v
 \* unless the guard is off, or it skips because a record already stands.
 Merge(ver, v) ==
   /\ Step /\ stored' = [ver |-> ver, val |-> v] /\ entry' = v
+  \* The peer wrote what is stored.
+  /\ origin' = stored'
   \* Whether this merge stores the document where reads go through the lens.
   /\ LET acrossLens == ver # active /\ lens
      IN IF OweOnMerge /\ acrossLens /\ ~(SkipIfOwed /\ owed)
           THEN Owe ELSE UNCHANGED <<owed, token>>
   /\ UNCHANGED <<active, lens, walk>>
 
-\* The rebuild's walk, while a record stands: migrate the document to the
-\* active version, index what reads see, and remember the token it saw.
+\* The rebuild's walk, while a record stands: index what reads see, and
+\* remember the token it saw. It leaves the document stored as written,
+\* unless the guard is off and it saves it at the active version too.
 RebuildWalk == /\ Step /\ owed /\ walk = NoWalk
-               /\ stored' = [ver |-> active, val |-> Read] /\ entry' = Read
+               /\ stored' = IF WalkStamps THEN [ver |-> active, val |-> Read]
+                                         ELSE stored
+               /\ entry' = Read
                /\ walk' = token
-               /\ UNCHANGED <<active, lens, owed, token>>
+               /\ UNCHANGED <<active, lens, origin, owed, token>>
 
 \* The rebuild's last page: clear the record, but only the one it started
 \* from when the token check is on; a newer record stays.
 RebuildClear == /\ Step /\ walk # NoWalk /\ walk' = NoWalk
                 /\ IF ~ClearChecksToken \/ walk = token
                      THEN owed' = FALSE ELSE UNCHANGED owed
-                /\ UNCHANGED <<active, lens, stored, entry, token>>
+                /\ UNCHANGED <<active, lens, stored, origin, entry, token>>
 
 \* The query plans: it picks the index when the index answers right now
 \* (the cached collection it plans from), and a collection scan otherwise.
@@ -238,7 +275,7 @@ Scan == /\ plan \in {"index", "scan"}
         /\ UNCHANGED world
 
 \* Any one of the actions above. The world's actions leave the query alone.
-Next == \/ /\ \/ SetMigration \/ SwitchActive
+Next == \/ /\ \/ SetMigration \/ RemoveMigration \/ SwitchActive
               \/ \E v \in Vals : LocalWrite(v)
               \/ \E ver \in Versions, v \in Vals : Merge(ver, v)
               \/ RebuildWalk \/ RebuildClear
@@ -258,4 +295,8 @@ INV_SettledIndexAnswers == (~owed /\ walk = NoWalk /\ entry = Read) => IndexAnsw
 \* A query that planned before a merge and scanned after it still answers
 \* what reads see: no plan is trusted past a reindex owed in between.
 INV_ScanMatchesReads == answer # "wrong"
+
+\* A read always sees what was written, through the lens as it stands now:
+\* no rebuild moves a document past a lens added or removed after it ran.
+INV_ReadsFollowWrites == Read = Expected
 ================================================================================

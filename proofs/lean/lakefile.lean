@@ -439,6 +439,12 @@ lean_lib IndexBuildMode where
 lean_lib BackfillPageSize where
 
 @[default_target]
+lean_lib RemovedLensOrigin where
+
+@[default_target]
+lean_lib MaterializeResume where
+
+@[default_target]
 lean_lib ExplainIndexName where
 
 @[default_target]
