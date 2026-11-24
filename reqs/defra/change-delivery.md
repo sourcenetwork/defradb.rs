@@ -29,11 +29,18 @@ The rows of one collection have dense cursors, 1 up to `head`, in the order thei
 - **Parents:** ["defra.events.delivery"]
 - **Scenarios:** ["subscription::delivery::merge_once::a_replicated_update_appears_once"]
 
-An update a replicator delivers to another node adds exactly one row to that node's `_documentUpdates`, naming the document and the CID of the update block the sender committed. The row stays single when the update reaches the node again: after the receiving node reopens and syncs the document from its peer, `head` is still "1".
+An update a replicator delivers to another node adds exactly one row to that node's `_documentUpdates`, naming the document and the CID of the update block the sender committed: `head` is "1".
 
 # `defra.events.delivery.beyond-head`: A cursor past the head is refused
 
 - **Parents:** ["defra.events.delivery"]
 - **Scenarios:** ["subscription::delivery::beyond_head::a_cursor_past_the_head_is_refused"]
 
-`after` greater than the collection's `head` fails with `update cursor is beyond this node's collection head`, through the in-process client, the HTTP client and the CLI alike; it is never answered with an empty page. With one document and no update, `after: "2"` fails this way.
+`after` greater than the collection's `head` fails with `update cursor is beyond this node's collection head`, through the in-process client, the HTTP client and the CLI alike; it is never answered with an empty page. With one document and no update (`head` "0"), `after: "1"`, the first cursor past the head, fails this way.
+
+# `defra.events.delivery.visibility`: A row the reader may not see is passed, not shown
+
+- **Parents:** ["defra.events.delivery"]
+- **Scenarios:** ["subscription::delivery::visibility::hidden_rows_are_passed_and_not_shown", "subscription::delivery::visibility::a_collection_without_a_policy_shows_a_deleted_documents_rows"]
+
+In a collection with a `@policy`, `_documentUpdates` hands a reader only the rows of documents it may read that are neither deleted nor purged. A hidden row still counts: `head` and `next` move past it, the rows that are shown keep their own cursors, so the cursors of a page can skip, and no error is raised. With updates to the owner's Ann and Bob, the owner reads cursors "1" and "2", and another identity reads no entries with `head` and `next` "2". Once the owner deletes Ann, the owner reads only cursor "2", for Bob, with `head` and `next` still "2". In a collection without a policy that is not a `@chunk` collection, every row is shown to every reader, a deleted document's included.

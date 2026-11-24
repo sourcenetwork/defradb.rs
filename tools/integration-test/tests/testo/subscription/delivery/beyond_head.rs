@@ -27,7 +27,7 @@ fn a_cursor_past_the_head_is_refused() {
         }
         .into(),
         Request {
-            request: r#"query { _documentUpdates(collection: "User", after: "2") { head } }"#
+            request: r#"query { _documentUpdates(collection: "User", after: "1") { head } }"#
                 .into(),
             expected_error: Some("update cursor is beyond this node's collection head".into()),
             ..Default::default()

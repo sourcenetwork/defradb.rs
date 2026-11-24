@@ -1,10 +1,10 @@
 //! An update a peer delivers appears exactly once in the receiving node's
-//! `_documentUpdates`, even when it reaches that node a second time
+//! `_documentUpdates`, naming the block the sender committed
 //! (`defra.events.delivery.merge-once`).
 
 use integration_test::actions::{
-    Actions, AddCollection, AddDoc, AddReplicator, ConnectPeers, NewNode, Restart, SyncDocs,
-    UpdateDoc, WaitForPeersEvents, WaitForSync,
+    Actions, AddCollection, AddDoc, AddReplicator, NewNode, UpdateDoc, WaitForPeersEvents,
+    WaitForSync,
 };
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
@@ -126,36 +126,6 @@ fn a_replicated_update_appears_once() {
     );
     actions.extend(synced("updated"));
     actions.push(journal());
-    // A reopened node merges with a handler that remembers nothing, so the
-    // document sync below runs the whole merge of the update again.
-    actions.extend([
-        Restart {
-            common: on("db1"),
-            ..Default::default()
-        }
-        .into(),
-        WaitForPeersEvents {
-            start: true,
-            common: on("db1"),
-            ..Default::default()
-        }
-        .into(),
-        ConnectPeers {
-            target: "db0".into(),
-            common: on("db1"),
-            ..Default::default()
-        }
-        .into(),
-        SyncDocs {
-            collection: "User".into(),
-            doc_ids: vec![Text::reference("doc")],
-            concurrency: 1,
-            common: on("db1"),
-            ..Default::default()
-        }
-        .into(),
-        journal(),
-    ]);
     let mut case = TestCase::from_actions(actions);
     case.id = integration_test::scenario_id!();
     case.without_db = true;

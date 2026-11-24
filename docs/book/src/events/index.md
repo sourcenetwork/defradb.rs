@@ -54,9 +54,16 @@ read `_documentUpdates` from the saved cursor up to `head`, and save the cursor 
 what the read produced. Read again on every wake-up and every loss signal (a set
 `resync_required`, an ended stream), subscribing again first when the stream ended.
 A subscriber that does this observes every committed update of the collection, local
-or merged, exactly once and in commit order, with no rescan: `ChangeDelivery.tla`
-`INV_ExactlyOnce`, `INV_CommitOrder` and `EventuallyObserved` (GREEN
-`MC_ChangeDelivery_Green_Closing.cfg` and `MC_ChangeDelivery_Green_Coalescing.cfg`).
+or merged, that it is allowed to see, exactly once and in commit order, with no rescan:
+`ChangeDelivery.tla` `INV_ExactlyOnce`, `INV_CommitOrder` and `EventuallyObserved`
+(GREEN `MC_ChangeDelivery_Green_Closing.cfg` and `MC_ChangeDelivery_Green_Coalescing.cfg`).
+In a collection with a `@policy`, a row is not shown when its document is deleted or
+purged, or when the reader may not read the document; the cursor moves past it
+anyway, so a row hidden when the reader reads past it is skipped for good, even if
+access is granted later (`defra.events.delivery.visibility`; `INV_HiddenNotShown`,
+`Red_GateOff`, `Red_HiddenStalls`). An update observed before its document was
+deleted stays observed. In a collection without a policy (other than a `@chunk` collection, whose rows follow their parent document's access) every row is shown, a
+deleted document's included.
 Reading before subscribing can miss an update for good (`Red_ReadBeforeSubscribe`).
 The raw event subscription is not a wake-up source for this pattern: its loss counter
 wakes nobody (`Red_CounterNoWake`).
@@ -104,27 +111,27 @@ wakes nobody (`Red_CounterNoWake`).
 
 | Question | Answer | Evidence |
 |---|---|---|
-| Delivery | Durable, read by cursor. One row per document, however it arrived. | `crates/database/db/tests/read/arrival_transactions.rs` `rollback_is_atomic_and_duplicate_arrivals_do_not_advance`; `CommitOrderedAppend.tla` (regolith) |
+| Delivery | Durable, read by cursor. One row per document, however it arrived. In a collection with a `@policy`, or a `@chunk` collection, a reader is handed only the rows of documents it may read. | `crates/database/db/tests/read/arrival_transactions.rs` `rollback_is_atomic_and_duplicate_arrivals_do_not_advance`; `CommitOrderedAppend.tla` (regolith) |
 | Duplicates | None: the document is the once key, so a create racing a merge of it keeps one row. | `crates/database/db/tests/read/arrival_transactions.rs` `rollback_is_atomic_and_duplicate_arrivals_do_not_advance` |
 | Order within a collection | Commit order, dense cursors from 1. | `crates/database/db/tests/read/arrival_transactions.rs` `reversed_concurrent_commits_receive_cursors_in_commit_order` |
 | Order across collections | None: each collection has its own cursors. | none |
 | Restart | The journal and a saved cursor survive a reopen. Retention across truncate, purge, backup restore and `drop_all`: TBD. | `crates/database/db/tests/read/arrival_transactions.rs` `cursor_survives_database_reopen` |
 | Resubscription | A read is a snapshot: it sees a dense prefix of rows up to `head`. | `CommitOrderedAppend.tla` (regolith) snapshot prefix |
-| Gap detection | Cursors are dense; a missing row in the read range is an error, never skipped. A cursor past `head` fails with `arrival cursor is beyond this node's collection head` (a test through a client is TBD). | `crates/database/db/src/event/arrivals.rs` |
+| Gap detection | The stored rows are dense; a row missing from storage in the read range is an error, never skipped. The cursors a reader is handed are not: a row of a document it may not read is passed silently and `next` moves past it (`execute_arrivals_query`). A cursor past `head` fails with `arrival cursor is beyond this node's collection head` (a test through a client is TBD). | `crates/database/db/src/event/arrivals.rs` |
 | Combination | Read on wake-up, as the update journal. | `ChangeDelivery.tla` (as for the update journal) |
 
 ### Update journal (`_documentUpdates`)
 
 | Question | Answer | Evidence |
 |---|---|---|
-| Delivery | Durable, read by cursor: one row per update that changed its document, local or merged. A create adds no row. | `reqs/defra/change-delivery.md` `defra.events.delivery.merge-once`; `tools/integration-test/tests/testo/subscription/delivery/merge_once.rs`; `DocumentUpdateJournal.tla` `INV_Once` |
-| Duplicates | None: (collection, document, block) is the once key, so a block merged again, or reaching the node again after it reopens, adds no row. | `crates/database/db/tests/merge/update_journal.rs` `a_block_merged_again_by_another_handler_adds_no_second_row`; `ChangeDelivery.tla` `Red_ReMergeAppends` |
+| Delivery | Durable, read by cursor: one row per update that changed its document, local or merged. A create adds no row. In a collection with a `@policy`, a reader is handed only the rows of documents it may read that are neither deleted nor purged; in a `@chunk` collection, only the rows whose parent document it may read; the others are hidden from it. | `reqs/defra/change-delivery.md` `defra.events.delivery.merge-once`, `defra.events.delivery.visibility`; `tools/integration-test/tests/testo/subscription/delivery/merge_once.rs`, `visibility.rs`; `DocumentUpdateJournal.tla` `INV_Once` |
+| Duplicates | None: (collection, document, block) is the once key, so a block merged a second time (by a handler that does not yet know it was applied) adds no row. A block the node already applied is skipped before the merge, from the durable head set (`DbMergeHandler::composite_was_applied`), so the once key is held by a database-level test only; no client-level test reaches a second merge. | `crates/database/db/tests/merge/update_journal.rs` `a_block_merged_again_by_another_handler_adds_no_second_row`; `ChangeDelivery.tla` `Red_ReMergeAppends` |
 | Order within a collection | Commit order, dense cursors from 1, for local writes and merges. | `defra.events.delivery.order`; `crates/database/db/tests/read/update_transactions.rs` `commit_order_rollback_and_replayed_updates` |
 | Order across collections | None: each collection has its own cursors. | `ChangeDelivery.tla` (one collection; out of scope) |
 | Restart | The journal and a saved cursor survive a reopen with no gap and no duplicate. Truncate at e222d6b deletes no `/arrival/updates/` key (`collection/ops/truncate/all.rs`, `filtered.rs`), so the rows of truncated documents stay; what a reader is handed for them, and retention across purge, backup restore and `drop_all`: TBD. | `defra.events.delivery.resume`; `crates/database/db/tests/read/update_transactions.rs` `updates_and_replay_checkpoint_survive_reopen` |
 | Resubscription | A read is a snapshot of rows up to `head`; a reader that saves its cursor with its effect resumes exactly. | `ChangeDelivery.tla` `Red_CursorNotDurable` |
-| Gap detection | Cursors are dense, a missing row is an error, and a cursor past `head` fails with `update cursor is beyond this node's collection head` through every client. | `defra.events.delivery.beyond-head`; `crates/database/db/tests/read/update_transactions.rs` `a_scan_is_closed_when_a_row_is_missing` |
-| Combination | The durable half of the pattern above. | `ChangeDelivery.tla` `INV_ExactlyOnce`, `INV_CommitOrder`, `EventuallyObserved` |
+| Gap detection | The stored rows are dense: a row missing from storage is an error, and a cursor past `head` fails with `update cursor is beyond this node's collection head` through every client. The cursors a reader is handed are not dense: a row hidden from it (see Delivery) is passed silently, `next` moves past it, and no error is raised. | `defra.events.delivery.beyond-head`, `defra.events.delivery.visibility`; `crates/database/db/tests/read/update_transactions.rs` `a_scan_is_closed_when_a_row_is_missing`; `crates/database/db/tests/read/update_visibility.rs` `a_deleted_private_documents_updates_are_shown_to_nobody` |
+| Combination | The durable half of the pattern above, for the rows the reader is allowed to see. | `ChangeDelivery.tla` `INV_ExactlyOnce`, `INV_CommitOrder`, `INV_HiddenNotShown`, `EventuallyObserved` |
 
 ### What counts as breaking
 

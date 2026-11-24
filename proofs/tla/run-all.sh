@@ -539,6 +539,8 @@ RUNS=(
   "MC_ChangeDelivery_Red_CounterNoWake.cfg ChangeDelivery.tla RED" # Node::subscribe: a counted drop wakes nobody (EventuallyObserved)
   "MC_ChangeDelivery_Red_WakeBeforeState.cfg ChangeDelivery.tla RED" # the wake precedes the visible update (EventuallyObserved)
   "MC_ChangeDelivery_Red_CursorNotDurable.cfg ChangeDelivery.tla RED" # the cursor is not saved with what was observed (INV_ExactlyOnce)
+  "MC_ChangeDelivery_Red_GateOff.cfg ChangeDelivery.tla RED" # the gate shows a deleted or unreadable document's row (INV_HiddenNotShown)
+  "MC_ChangeDelivery_Red_HiddenStalls.cfg ChangeDelivery.tla RED" # a hidden row stops the cursor instead of being passed (EventuallyObserved)
   "MC_TransactionDecisions_Green.cfg TransactionDecisions.tla GREEN"
   "MC_TransactionDecisions_Red_OutsideRead.cfg TransactionDecisions.tla RED"
   "MC_DefraKeyClassifier_Green.cfg DefraKeyClassifier.tla GREEN"

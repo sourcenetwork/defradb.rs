@@ -17,15 +17,24 @@
 \* row. Its cursor is saved together with what it observed. The subscriber
 \* can crash: its subscription and every notice in flight are lost, its
 \* cursor and what it observed are kept, and it starts again.
+\* Some updates can be hidden from this reader: in a collection with a
+\* policy, a row is not shown when its document is deleted or purged, or
+\* when the reader may not read the document. Hiding can start or end at any
+\* time (an access grant ends it). A read hands over only the shown rows,
+\* and its cursor still moves past the hidden ones, so a row hidden when the
+\* reader moves past it is skipped for good.
 \* What must never happen: an update observed twice, or out of commit
-\* order, or a drop that nobody counts. What must happen: every committed
-\* update is observed in the end.
+\* order, or a hidden row shown, or a drop that nobody counts. What must
+\* happen: every committed update is, in the end, observed or skipped
+\* because it was hidden.
 \* Out of scope: order across collections (each collection has its own
-\* journal and events carry no global sequence), access control, paging
-\* (a read here takes every row up to the head in one step), and the raw
-\* bus's payload consumers beyond what Red_CounterNoWake shows.
+\* journal and events carry no global sequence), how the gate decides that
+\* a row is hidden (DocumentUpdateJournal.tla models that), paging (a read
+\* here takes every row up to the head in one step), and the raw bus's
+\* payload consumers beyond what Red_CounterNoWake shows.
 \* Rust owners: crates/database/db/src/event/updates.rs (record, read,
-\* once_key), crates/database/db/src/merge/merge_handler/composite_persist.rs
+\* once_key), crates/database/db/src/event/updates/gate.rs (Gate::admits),
+\* crates/database/db/src/merge/merge_handler/composite_persist.rs
 \* (persist_merged_document), crates/foundation/events/src/channel_bus.rs
 \* (ChannelBus::publish_raw, Subscriber::record_overflow),
 \* crates/foundation/events/src/document_changes.rs (ChangePublisher::publish)
@@ -34,11 +43,14 @@ EXTENDS Integers, FiniteSets, Sequences
 
 \* Updates are the update blocks; Merged are the ones a peer delivers; Cap
 \* is the closing channel's queue size; MaxCrashes bounds the crashes;
+\* Hideable are the updates whose document can be hidden from the reader;
 \* Channel picks the notification channel; Mode picks the planted bug.
-CONSTANTS Updates, Merged, Cap, MaxCrashes, Channel, Mode
+CONSTANTS Updates, Merged, Cap, MaxCrashes, Hideable, Channel, Mode
 
 \* Merged updates are updates.
 ASSUME Merged \subseteq Updates
+\* Hideable updates are updates.
+ASSUME Hideable \subseteq Updates
 \* The queue holds at least one notice.
 ASSUME Cap \in Nat \ {0}
 \* The subscriber crashes a bounded number of times.
@@ -48,7 +60,8 @@ ASSUME Channel \in {"closing", "coalescing"}
 \* "safe" is the design; every other mode breaks exactly one guard.
 ASSUME Mode \in {"safe", "silent_loss", "read_before_subscribe",
                  "journal_skips_merge", "remerge_appends", "counter_no_wake",
-                 "wake_before_state", "cursor_not_durable"}
+                 "wake_before_state", "cursor_not_durable", "gate_off",
+                 "hidden_stalls"}
 
 \* Writer state. stage: "new", "announced" (only Red_WakeBeforeState wakes
 \* before it commits) or "committed". cidx: the commit's place in commit
@@ -62,12 +75,15 @@ ASSUME Mode \in {"safe", "silent_loss", "read_before_subscribe",
 \* dropped, recorded: every drop and every count so far, never reset.
 \* Subscriber state. rphase: "down", "reading" (read, not yet subscribed:
 \* only Red_ReadBeforeSubscribe) or "up". needRead: a wake or loss asks
-\* for a read. cursor: the last row observed. obs: what it observed, in
-\* order. crashes: crashes so far.
+\* for a read. cursor: the last row observed or skipped. obs: what it
+\* observed, in order. crashes: crashes so far. skipped: hidden updates the
+\* cursor moved past. leaked: hidden updates shown anyway (only Red_GateOff).
+\* Visibility state. hidden: the updates hidden from the reader right now.
 VARIABLES stage, cidx, remerged, log, toNotify, commits,
           subscribed, inbox, closed, counter, overflowing, wake, dropped,
           recorded,
-          rphase, needRead, cursor, obs, crashes
+          rphase, needRead, cursor, obs, crashes, skipped, leaked,
+          hidden
 
 \* Writer variables.
 writer == <<stage, cidx, remerged, log, toNotify, commits>>
@@ -75,16 +91,31 @@ writer == <<stage, cidx, remerged, log, toNotify, commits>>
 channel == <<subscribed, inbox, closed, counter, overflowing, wake, dropped,
              recorded>>
 \* Subscriber variables.
-reader == <<rphase, needRead, cursor, obs, crashes>>
+reader == <<rphase, needRead, cursor, obs, crashes, skipped, leaked>>
 \* Every variable.
-vars == <<writer, channel, reader>>
+vars == <<writer, channel, reader, hidden>>
 
 \* The updates the subscriber observed.
 ObsSet == {obs[i] : i \in 1..Len(obs)}
-\* The rows from just after the cursor up to the head.
-Unread == SubSeq(log, cursor + 1, Len(log))
+\* The updates in a sequence, as a set.
+Elems(s) == {s[i] : i \in 1..Len(s)}
+\* Whether the gate shows update u: it is not hidden, or Red_GateOff shows
+\* everything.
+Shown(u) == u \notin hidden \/ Mode = "gate_off"
+\* The rows of s the gate shows, in order.
+ShownOf(s) == SelectSeq(s, Shown)
+\* The positions past the cursor whose row is hidden.
+HiddenAhead == {i \in (cursor + 1)..Len(log) : log[i] \in hidden}
+\* Where a read leaves the cursor: the head. Red_HiddenStalls stops it just
+\* before the first hidden row, as a page whose `next` stopped there would.
+ReadTo == IF Mode = "hidden_stalls" /\ HiddenAhead # {}
+             THEN (CHOOSE i \in HiddenAhead : \A j \in HiddenAhead : i <= j) - 1
+             ELSE Len(log)
+\* The rows a read covers.
+ReadRows == SubSeq(log, cursor + 1, ReadTo)
 
-\* Nothing is committed, nobody is subscribed and nothing is observed.
+\* Nothing is committed, nobody is subscribed, nothing is hidden and
+\* nothing is observed.
 Init == /\ stage = [u \in Updates |-> "new"]
         /\ cidx = [u \in Updates |-> 0]
         /\ remerged = [u \in Updates |-> FALSE]
@@ -104,6 +135,9 @@ Init == /\ stage = [u \in Updates |-> "new"]
         /\ cursor = 0
         /\ obs = <<>>
         /\ crashes = 0
+        /\ skipped = {}
+        /\ leaked = {}
+        /\ hidden = {}
 
 \* updates::record: the update gets its row in its own commit, unless
 \* Red_JournalSkipsMerge leaves merged updates out.
@@ -123,7 +157,7 @@ Commit(u) ==
     \* The notice is sent after the commit; Red_WakeBeforeState sent it before.
     /\ toNotify' = IF HasRow(u) /\ Mode # "wake_before_state"
                       THEN toNotify \cup {Len(log) + 1} ELSE toNotify
-    /\ UNCHANGED <<remerged, channel, reader>>
+    /\ UNCHANGED <<remerged, channel, reader, hidden>>
 
 \* Red_WakeBeforeState: the coalescing wake is sent before the update is
 \* visible, so a reader it wakes reads the journal without it.
@@ -134,7 +168,8 @@ Announce(u) ==
     \* The wake bit is set for a live subscription.
     /\ wake' = (wake \/ subscribed)
     /\ UNCHANGED <<cidx, remerged, log, toNotify, commits, subscribed, inbox,
-                   closed, counter, overflowing, dropped, recorded, reader>>
+                   closed, counter, overflowing, dropped, recorded, reader,
+                   hidden>>
 
 \* A merged block arrives again, through another handler. The once key
 \* makes its append a no-op; Red_ReMergeAppends drops the once key, so a
@@ -149,7 +184,7 @@ ReMerge(u) ==
           THEN /\ log' = Append(log, u)
                /\ toNotify' = toNotify \cup {Len(log) + 1}
           ELSE UNCHANGED <<log, toNotify>>
-    /\ UNCHANGED <<stage, cidx, commits, channel, reader>>
+    /\ UNCHANGED <<stage, cidx, commits, channel, reader, hidden>>
 
 \* The node sends row p's notice. Nobody subscribed, or the channel closed:
 \* nobody hears it, and the next subscription's read covers it.
@@ -175,7 +210,7 @@ Notify(p) ==
           /\ overflowing' = IF Mode = "silent_loss" THEN overflowing ELSE overflowing + 1
           /\ UNCHANGED <<inbox, wake>>
     /\ UNCHANGED <<stage, cidx, remerged, log, commits, subscribed, closed,
-                   counter, recorded, reader>>
+                   counter, recorded, reader, hidden>>
 
 \* Subscriber::record_overflow: the drop is counted and the channel closes,
 \* which wakes a reader waiting on it. Red_CounterNoWake counts and does
@@ -187,7 +222,17 @@ RecordOverflow ==
     \* The count lands only on a subscription still alive.
     /\ counter' = IF subscribed THEN counter + 1 ELSE counter
     /\ closed' = IF subscribed /\ Mode # "counter_no_wake" THEN TRUE ELSE closed
-    /\ UNCHANGED <<writer, subscribed, inbox, wake, dropped, reader>>
+    /\ UNCHANGED <<writer, subscribed, inbox, wake, dropped, reader, hidden>>
+
+\* One `_documentUpdates` page from the cursor (updates.rs read,
+\* Gate::admits): the shown rows are observed, the hidden ones skipped, and
+\* the cursor moves to the page's `next`, all in one step.
+ReadStep ==
+    /\ obs' = obs \o ShownOf(ReadRows)
+    /\ skipped' = skipped \cup {u \in Elems(ReadRows) : ~Shown(u)}
+    \* What Red_GateOff shows although it is hidden.
+    /\ leaked' = leaked \cup (Elems(ReadRows) \cap hidden \cap {u \in Updates : Shown(u)})
+    /\ cursor' = ReadTo
 
 \* The subscriber starts: subscribe, then read. Red_ReadBeforeSubscribe
 \* reads first and subscribes in a later step.
@@ -195,15 +240,14 @@ Start ==
     /\ rphase = "down"
     /\ IF Mode = "read_before_subscribe"
           THEN /\ rphase' = "reading"
-               /\ obs' = obs \o Unread
-               /\ cursor' = Len(log)
+               /\ ReadStep
                /\ UNCHANGED <<subscribed, needRead>>
           ELSE /\ rphase' = "up"
                /\ subscribed' = TRUE
                /\ needRead' = TRUE
-               /\ UNCHANGED <<obs, cursor>>
+               /\ UNCHANGED <<obs, cursor, skipped, leaked>>
     /\ UNCHANGED <<writer, inbox, closed, counter, overflowing, wake, dropped,
-                   recorded, crashes>>
+                   recorded, crashes, hidden>>
 
 \* Red_ReadBeforeSubscribe's late subscription, after its read.
 SubscribeLate ==
@@ -211,24 +255,30 @@ SubscribeLate ==
     /\ rphase' = "up"
     /\ subscribed' = TRUE
     /\ UNCHANGED <<writer, inbox, closed, counter, overflowing, wake, dropped,
-                   recorded, needRead, cursor, obs, crashes>>
+                   recorded, needRead, cursor, obs, crashes, skipped, leaked,
+                   hidden>>
 
 \* The subscriber takes the next notice. The next row is applied with its
-\* cursor in one step; an older row is skipped; a gap asks for a read.
-\* Then it checks the drop counter (check_and_reset_dropped): a loss asks
-\* for a read.
+\* cursor in one step (a hidden one moves the cursor and is skipped); an
+\* older row is ignored; a gap asks for a read. Then it checks the drop
+\* counter (check_and_reset_dropped): a loss asks for a read.
 Recv ==
     /\ rphase = "up"
     /\ inbox # <<>>
     /\ LET p == Head(inbox)
            next == p = cursor + 1 /\ p <= Len(log)
        IN /\ inbox' = Tail(inbox)
-          /\ obs' = IF next THEN Append(obs, log[p]) ELSE obs
+          /\ obs' = IF next /\ Shown(log[p]) THEN Append(obs, log[p]) ELSE obs
           /\ cursor' = IF next THEN p ELSE cursor
+          \* A hidden next row is skipped; Red_GateOff shows it.
+          /\ skipped' = IF next /\ ~Shown(log[p])
+                           THEN skipped \cup {log[p]} ELSE skipped
+          /\ leaked' = IF next /\ Shown(log[p]) /\ log[p] \in hidden
+                          THEN leaked \cup {log[p]} ELSE leaked
           /\ needRead' = (needRead \/ p > cursor + 1 \/ counter > 0)
     /\ counter' = 0
     /\ UNCHANGED <<writer, subscribed, closed, overflowing, wake, dropped,
-                   recorded, rphase, crashes>>
+                   recorded, rphase, crashes, hidden>>
 
 \* The coalescing wake: it is taken and asks for a read.
 Wake ==
@@ -237,7 +287,8 @@ Wake ==
     /\ wake' = FALSE
     /\ needRead' = TRUE
     /\ UNCHANGED <<writer, subscribed, inbox, closed, counter, overflowing,
-                   dropped, recorded, rphase, cursor, obs, crashes>>
+                   dropped, recorded, rphase, cursor, obs, crashes, skipped,
+                   leaked, hidden>>
 
 \* A closed, drained channel: subscribe again, then read.
 Resubscribe ==
@@ -248,17 +299,16 @@ Resubscribe ==
     /\ counter' = 0
     /\ needRead' = TRUE
     /\ UNCHANGED <<writer, subscribed, inbox, overflowing, wake, dropped,
-                   recorded, rphase, cursor, obs, crashes>>
+                   recorded, rphase, cursor, obs, crashes, skipped, leaked,
+                   hidden>>
 
-\* `_documentUpdates` from the cursor: every row up to the head, observed
-\* with the cursor in one step.
+\* `_documentUpdates` from the cursor on a wake or a loss signal.
 Read ==
     /\ rphase = "up"
     /\ needRead
     /\ needRead' = FALSE
-    /\ obs' = obs \o Unread
-    /\ cursor' = Len(log)
-    /\ UNCHANGED <<writer, channel, rphase, crashes>>
+    /\ ReadStep
+    /\ UNCHANGED <<writer, channel, rphase, crashes, hidden>>
 
 \* The subscriber crashes: its subscription and every notice in flight are
 \* gone, what it observed is kept, and so is its cursor, saved with it.
@@ -276,17 +326,35 @@ Crash ==
     /\ closed' = FALSE
     /\ counter' = 0
     /\ wake' = FALSE
-    /\ UNCHANGED <<writer, overflowing, dropped, recorded, obs>>
+    /\ UNCHANGED <<writer, overflowing, dropped, recorded, obs, skipped,
+                   leaked, hidden>>
 
-\* One step of a writer, the node, or the subscriber.
+\* A hideable update's document is deleted or purged, or the reader loses
+\* access to it: its rows are hidden from now on.
+Hide(u) ==
+    /\ u \in Hideable
+    /\ u \notin hidden
+    /\ hidden' = hidden \cup {u}
+    /\ UNCHANGED <<writer, channel, reader>>
+
+\* The reader is granted access again: the rows show again to a read that
+\* has not moved past them yet.
+Unhide(u) ==
+    /\ u \in hidden
+    /\ hidden' = hidden \ {u}
+    /\ UNCHANGED <<writer, channel, reader>>
+
+\* One step of a writer, the node, the subscriber or an access change.
 Next == \/ \E u \in Updates : Commit(u) \/ Announce(u) \/ ReMerge(u)
         \/ \E p \in toNotify : Notify(p)
         \/ RecordOverflow
         \/ Start \/ SubscribeLate \/ Recv \/ Wake \/ Resubscribe \/ Read
         \/ Crash
+        \/ \E u \in Updates : Hide(u) \/ Unhide(u)
 
 \* The node and the subscriber keep going; an announced update commits.
-\* Writers need not write and the subscriber need not crash.
+\* Writers need not write, the subscriber need not crash, and access need
+\* not change.
 Fairness == /\ WF_vars(\E p \in toNotify : Notify(p))
             /\ WF_vars(RecordOverflow)
             /\ WF_vars(\E u \in Updates : stage[u] = "announced" /\ Commit(u))
@@ -304,18 +372,27 @@ TypeOK == /\ stage \in [Updates -> {"new", "announced", "committed"}]
           /\ obs \in Seq(Updates)
           /\ cursor \in 0..Len(log)
           /\ rphase \in {"down", "reading", "up"}
+          /\ skipped \subseteq Hideable
+          /\ hidden \subseteq Hideable
 
-\* No update is observed twice, and only committed updates are observed.
+\* No update is observed twice, none is both observed and skipped, and only
+\* committed updates are observed.
 INV_ExactlyOnce == /\ \A i, j \in 1..Len(obs) : i # j => obs[i] # obs[j]
+                   /\ ObsSet \cap skipped = {}
                    /\ \A u \in ObsSet : stage[u] = "committed"
 
 \* Updates are observed in commit order.
 INV_CommitOrder == \A i, j \in 1..Len(obs) : i < j => cidx[obs[i]] < cidx[obs[j]]
 
+\* No row is shown while it is hidden.
+INV_HiddenNotShown == leaked = {}
+
 \* Every drop is counted, or its count is on its way.
 INV_LossCounted == dropped = recorded + overflowing
 
-\* Every committed update is observed in the end.
-EventuallyObserved == \A u \in Updates : [](stage[u] = "committed" => <>(u \in ObsSet))
+\* Every committed update is, in the end, observed, or skipped because it
+\* was hidden when the reader moved past it.
+EventuallyObserved ==
+    \A u \in Updates : [](stage[u] = "committed" => <>(u \in ObsSet \cup skipped))
 
 =============================================================================

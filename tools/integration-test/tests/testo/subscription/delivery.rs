@@ -5,6 +5,7 @@
 mod beyond_head;
 mod merge_once;
 mod resume;
+mod visibility;
 
 use integration_test::actions::Request;
 use integration_test::scenario::{Common, Text};
