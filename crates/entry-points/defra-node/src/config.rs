@@ -52,6 +52,7 @@ pub struct VeraConfig {
 pub struct HttpConfig {
     pub address: std::net::SocketAddr,
     pub(crate) request_timeout: Duration,
+    pub(crate) commit_timeout: Duration,
     pub(crate) transaction_idle_timeout: Duration,
     pub(crate) transaction_cleanup_interval: Duration,
     pub(crate) extra_routes: Option<axum::Router>,
@@ -73,6 +74,9 @@ impl HttpConfig {
             address: addr.into(),
             request_timeout: Duration::from_secs(
                 defra_http::ServerConfig::default().request_timeout,
+            ),
+            commit_timeout: Duration::from_millis(
+                defra_http::ServerConfig::default().commit_timeout_ms,
             ),
             transaction_idle_timeout: DEFAULT_TRANSACTION_IDLE_TIMEOUT,
             transaction_cleanup_interval: DEFAULT_TRANSACTION_CLEANUP_INTERVAL,
@@ -103,6 +107,15 @@ impl HttpConfig {
     /// `Duration::ZERO` disables request timeouts.
     pub fn with_request_timeout(mut self, timeout: Duration) -> Self {
         self.request_timeout = timeout;
+        self
+    }
+
+    /// Set the server-side bound on waiting for a transaction commit.
+    ///
+    /// `Duration::ZERO` disables the bound. A commit still running when the
+    /// bound passes keeps running.
+    pub fn with_commit_timeout(mut self, timeout: Duration) -> Self {
+        self.commit_timeout = timeout;
         self
     }
 
@@ -443,6 +456,9 @@ pub struct NodeConfig {
     /// Documents an index backfill may index in one transaction; `None`
     /// uses the built-in page size.
     pub backfill_batch_docs: Option<usize>,
+    /// The gate explicit transaction commits pass before they are handed to
+    /// their owner.
+    pub commit_gate: Option<CommitGateHandle>,
 }
 
 /// An embedder's [`db::index::build_gate::IndexBuildGate`], compared by
@@ -459,6 +475,24 @@ impl std::fmt::Debug for IndexBuildGateHandle {
 }
 
 impl PartialEq for IndexBuildGateHandle {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+/// An embedder's [`db::CommitGate`], compared by identity.
+#[derive(Clone)]
+pub struct CommitGateHandle(pub Arc<dyn db::CommitGate>);
+
+impl std::fmt::Debug for CommitGateHandle {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CommitGateHandle")
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for CommitGateHandle {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }

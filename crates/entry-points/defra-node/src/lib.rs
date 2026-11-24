@@ -113,14 +113,15 @@ pub use config::SyncTuning;
 #[cfg(feature = "vera")]
 pub use config::VeraConfig;
 pub use config::{
-    DocumentAcpConfig, IndexBuildGateHandle, NodeConfig, NodeSigning, Persistence,
-    ReplicationFilterHandle, SigningKey, TransportConfig,
+    CommitGateHandle, DocumentAcpConfig, IndexBuildGateHandle, NodeConfig, NodeSigning,
+    Persistence, ReplicationFilterHandle, SigningKey, TransportConfig,
 };
 #[cfg(feature = "p2p")]
 pub use config::{P2PConfig, PeerKeySource};
 /// The hook [`NodeBuilder::with_index_build_gate`] takes.
 pub use db::index::build_gate::{GateWait, IndexBuildGate};
 pub use db::merge::{ReplicaOwnership, ReplicaRegistration};
+pub use db::{CommitGate, CommitWait};
 #[cfg(feature = "managed-p2p")]
 pub use defra_p2p_adapter::{
     ReplicationFilter, ReplicationFilters, ReplicatorPushOptions, ReplicatorPushOptionsState,
@@ -1563,6 +1564,11 @@ fn timeout_secs(timeout: Duration) -> u64 {
             .as_secs()
             .saturating_add(u64::from(timeout.subsec_nanos() > 0))
     }
+}
+
+#[cfg(feature = "http")]
+fn timeout_millis(timeout: Duration) -> u64 {
+    timeout.as_millis().try_into().unwrap_or(u64::MAX)
 }
 
 #[cfg(test)]

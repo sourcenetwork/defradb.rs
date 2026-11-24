@@ -92,6 +92,7 @@ where
                 op: None,
                 parked: None,
                 superseded: false,
+                active_result: false,
             });
         }
         let part = state.as_ref().map(|state| state.part());
@@ -142,6 +143,7 @@ where
             op,
             parked: None,
             superseded: false,
+            active_result: false,
         })
     }
 

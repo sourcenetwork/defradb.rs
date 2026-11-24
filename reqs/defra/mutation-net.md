@@ -266,6 +266,21 @@ An upsert on a `@crdt(type: text)` field that finds no document adds it with the
 
 When `SyncCollectionVersions` fetches a view version whose query source names a lens, the receiving node commits that lens's config as if it had added the lens itself, then registers it. A view on the receiving node can then name the lens with `AddView(transform_cid)`, before and after the node restarts; it never fails with `lens CID not found`.
 
+# `defra.net.migrated_counter_merge`: An old-version counter update merges through a lens once
+
+- **Parents:** ["defra"]
+- **Scenarios:** ["issues::t_2916::an_old_version_counter_update_merges_through_a_lens_once", "issues::t_2916::an_old_version_counter_update_merges_through_a_forward_only_lens", "issues::t_2916::an_old_version_counter_update_adds_to_a_counter_a_forward_only_lens_wrote", "issues::t_2916::an_old_version_counter_update_keeps_the_fields_the_lens_wrote", "issues::t_2916::an_old_version_counter_update_lands_on_a_document_stored_at_the_source_version"]
+
+When a peer still at a collection's source version increments a counter and the receiving node has migrated that counter with a lens, the receiving node applies the increment to the source-version projection, then migrates the result once. Later increments from the peer remain visible. With an increment-by-one lens, a source value of one reads as two after migration and three and four after the peer's next two increments; the peer reads two and three.
+
+A lens with no `inverse` export cannot give the source-version projection back. The receiving node then adds the increment to the migrated counter as it is, and the block still merges: with a lens that only copies `name` to `note`, the counter reads one, two and three; with a lens that adds one and then copies, it reads two, three and four.
+
+That answer is exact only for a forward-only lens that leaves the counter alone or shifts it by a constant. A forward-only lens that sets or scales the counter, such as a `set_default` on it or a doubling lens, reads `T(source) + 1` on a node storing the active version and `T(source + 1)` on a node still storing the source version, so the two disagree; such a lens needs an `inverse` export for every node to read the same counter.
+
+The increment changes the counter alone. A field the lens wrote, such as a default `note`, reads the same before and after each increment.
+
+A receiving node that still stores the document at the source version, as it does while the collection has no index, has nothing to translate: it adds the increment to the stored value, and each read migrates the whole document, the counter and the fields the lens writes alike.
+
 # `defra.net.sync.migration_transform_is_kept`: A synced migration transform stays attached
 
 - **Parents:** ["go.net.sync"]

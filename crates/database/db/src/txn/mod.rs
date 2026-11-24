@@ -17,6 +17,7 @@ use storage::keys::systemstore::{CollectionKey, CollectionNameKey};
 
 mod attempt;
 mod catalog;
+pub mod commit_gate;
 pub mod context;
 pub(crate) mod fence;
 pub(crate) mod held;

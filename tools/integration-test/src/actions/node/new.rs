@@ -63,6 +63,13 @@ pub struct NewNode {
     pub client_type: Option<NodeClient>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub index_gate: Option<IndexGate>,
+    /// A Rust node whose explicit commits pass the test's commit gate.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub commit_gate: bool,
+    /// A Rust node whose HTTP server bounds its answer on a commit to this
+    /// many milliseconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit_timeout_ms: Option<u64>,
     /// Kept so corpus scenarios that set it still parse. It changes nothing:
     /// every node gets Go's `NodeIdentity(i)` and runs identity-only unless
     /// it signs.
@@ -141,6 +148,8 @@ impl Op for NewNode {
         probe.kms = false;
         (probe.ttl_millis, probe.tick_millis, probe.buckets) = (None, None, None);
         probe.index_gate = None;
+        probe.commit_gate = false;
+        probe.commit_timeout_ms = None;
         probe.max_txn_retries = None;
         if probe != Self::default() {
             let options = serde_json::to_string(&probe).unwrap_or_default();
@@ -159,6 +168,16 @@ impl Op for NewNode {
             .then(|| self.key_type.unwrap_or_default());
         let txn_ttl = self.txn_ttl(state.client_type())?;
         let index_gate = self.index_gate(state.client_type())?;
+        if (self.commit_gate || self.commit_timeout_ms.is_some())
+            && !matches!(state.client_type(), ClientType::RustHttp | ClientType::Cli)
+        {
+            return Err(Failure::unsupported(format!(
+                "{} arguments commitGate and commitTimeoutMs under {:?}: they need a Rust \
+                 node's HTTP server in this process",
+                Self::name(),
+                state.client_type()
+            )));
+        }
         let max_txn_retries = self.max_txn_retries(state.client_type())?;
         let registered_identity = self.registered_identity(state.client_type())?;
         let dir = match self.database_dir {
@@ -188,6 +207,11 @@ impl Op for NewNode {
             index_gate,
             backfill_batch_docs: (self.index_gate == Some(IndexGate::Watermark))
                 .then_some(GO_BACKFILL_BATCH_DOCS),
+            commit_gate: self
+                .commit_gate
+                .then(crate::commit_gate::TestCommitGate::default)
+                .map(Arc::new),
+            commit_timeout: self.commit_timeout_ms.map(Duration::from_millis),
             max_txn_retries,
             ..Default::default()
         };
