@@ -363,19 +363,14 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             .map_err(|error| P2PError::invalid_input(error.to_string()))?;
         let already_connected = self
             .handle
-            .connected_peers()
+            .dial_explicit(parsed.peer_id, vec![parsed.transport_addr])
             .await
-            .map(|peers| peers.contains(&parsed.peer_id))
-            .unwrap_or(false);
+            .map_err(|error| P2PError::transport(error.to_string()))?;
         if already_connected {
             self.peer_addresses
                 .insert(parsed.peer_id.to_string(), addr.to_string());
             return Ok(());
         }
-        self.handle
-            .dial(parsed.peer_id, vec![parsed.transport_addr])
-            .await
-            .map_err(|error| P2PError::transport(error.to_string()))?;
         self.handle
             .poll_until_connected(parsed.peer_id, std::time::Duration::from_secs(10))
             .await
@@ -504,7 +499,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
         )?;
 
         self.handle
-            .dial(peer_id, vec![parsed.transport_addr])
+            .dial_explicit(peer_id, vec![parsed.transport_addr])
             .await
             .map_err(|error| {
                 P2PError::transport(format!("failed to connect to replicator peer: {error}"))
