@@ -452,6 +452,10 @@ impl PlanNode for IndexScanNode {
             "indexFetches".to_string(),
             serde_json::json!(self.index_fetches),
         );
+        obj.insert(
+            "indexName".to_string(),
+            serde_json::Value::String(self.index_params.index_name.clone()),
+        );
 
         serde_json::Value::Object(obj)
     }

@@ -309,6 +309,17 @@ Over the index suite's ten users (ages 20, 23, 28, 30, 32, 33, 42, 44, 48, 55), 
 
 Transaction behaviour beyond what Go's integration suite checks.
 
+# `defra.txn.http_commit_bound`: A live server bounds its answer on a commit
+
+- **Parents:** ["defra.txn"]
+- **Scenarios:** ["http::commit_bound::a_commit_past_its_bound_answers_unknown_and_keeps_running", "http::commit_bound::the_bound_is_only_for_transaction_commits", "http::commit_bound::a_begin_is_not_bounded_as_a_commit", "txn::http_commit_bound::an_http_commit_past_its_bound_answers_unknown_and_lands"]
+
+The HTTP server bounds only how long it waits to answer an explicit transaction commit. Past that bound, it answers `503` with JSON naming the bound and `outcome: "unknown"`. It does not cancel the commit: the worker-local commit keeps its ticket and lands or fails on its own, so the caller must not treat this as an abort. A transaction begin is not bounded this way, and a bound of `0` disables it.
+
+The bound is `commit_timeout_ms`, in milliseconds, on the HTTP server, and it is opt in: `0`, the default, disables it.
+
+The CLI's `client tx commit` sends a commit once and never retries it, so it reports the bound's answer, `commit outcome unknown after <bound> milliseconds`, rather than a later attempt's "not found".
+
 # `defra.txn.no_neighbour_conflict`: Updating one document does not conflict with its neighbour
 
 - **Parents:** ["defra.txn"]

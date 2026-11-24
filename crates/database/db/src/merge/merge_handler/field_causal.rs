@@ -135,6 +135,7 @@ where
             op: None,
             parked: None,
             superseded: false,
+            active_result: false,
         })
     }
 
