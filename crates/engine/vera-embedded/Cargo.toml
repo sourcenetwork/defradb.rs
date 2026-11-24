@@ -50,10 +50,10 @@ edge = { path = "../../foundation/edge" }
 # The embedded node's in-process method table. The revision is the one
 # `tools/integration-test` pins for `vera-harness`; the native consumer check
 # refuses a difference.
-vera-jsonrpc = { git = "https://github.com/sourcenetwork/vera.rs", rev = "2393539068539f30c84eae86101ad7c345024a99" }
+vera-jsonrpc = { git = "https://github.com/sourcenetwork/vera.rs", rev = "8193eac0c0cf19421ad1920dd678963585259d72" }
 
 # The node a host starts with the `node` feature, at the same revision.
-vera-node = { git = "https://github.com/sourcenetwork/vera.rs", rev = "2393539068539f30c84eae86101ad7c345024a99", optional = true }
+vera-node = { git = "https://github.com/sourcenetwork/vera.rs", rev = "8193eac0c0cf19421ad1920dd678963585259d72", optional = true }
 # The encoding of the node's consensus key, and of the newest block a
 # header subscription starts with.
 commonware-codec = "=2026.10.0"
@@ -69,14 +69,14 @@ thiserror.workspace = true
 
 [dev-dependencies]
 # The light client's freshness limit, at the revision `crates/engine/vera` builds on.
-acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "fa3b581477bf866d33afc6d29dce44e847499cff" }
+acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "a27a1b579ecebd45fe20841d60384debc206d66d" }
 # The document ACP layer the stopped-node test asks through.
 acp = { path = "../../engine/acp" }
 identity = { path = "../../building-blocks/identity" }
 # The term certificate the takeover test approves as the deployment's operator.
 vera-client = "0.2.0"
 # The node the tests host in their own process.
-vera-node = { git = "https://github.com/sourcenetwork/vera.rs", rev = "2393539068539f30c84eae86101ad7c345024a99" }
+vera-node = { git = "https://github.com/sourcenetwork/vera.rs", rev = "8193eac0c0cf19421ad1920dd678963585259d72" }
 commonware-codec = "=2026.10.0"
 edge = { path = "../../foundation/edge", features = ["testing"] }
 events = { path = "../../foundation/events" }
