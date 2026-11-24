@@ -137,6 +137,24 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/database/p2p/src/sync/coordinator/dag_fetcher_tests.rs local_complete_fetch_releases_peer_permit_before_waiting_to_send",
     },
     Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "INV_ReadyImpliesRead / INV_ErrorNeverComplete / INV_AbsentIsMissing / INV_AckedImpliesOwned / INV_RefusedOnlyUnparsed / INV_RegisteredNeverErrors / INV_SweepTotal / INV_ConflictTyped / INV_LocalFaultNotBlamed — a DAG is ready only when its root and every unmerged block were read, a failed walk or root read is the frontier [root], and a local fault is never the provider's failure",
+        axis: Tla,
+        anchor: "crates/database/p2p/src/sync/manager/links.rs find_all_missing_links, frontier_or_unknown; crates/database/p2p/src/sync/coordinator/dag_fetcher.rs poll_fetch_dag, fetch_dag_attempt; crates/database/p2p/src/sync/coordinator/event_handler/doc_sync.rs handle_doc_sync_reply; crates/database/p2p/src/sync/coordinator/event_handler/car.rs car_size_limit_disposition; crates/database/p2p/src/sync/manager/process/pushlog.rs process_block_inner; crates/database/p2p/src/sync/manager/process/pending_dag.rs retry_pending_dag, retry_pending_dags_waiting_on, resync_persisted_pending_dags",
+        model_ref: "MC_DagReadiness_{Green,Red_SkipNone,Red_DropErr,Red_ErrAsEmpty_*,Red_ErrAbortsSweep,Red_ConflictStringified,Red_RootFaultErrs,Red_CarFaultBlamesPeer}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/database/p2p/tests/unit/dag_readiness.rs a_read_fault_at_final_verification_is_not_complete",
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "DagReadiness.ok_nil_implies_all_read / absent_is_missing / failed_fails / unknown_never_empty / error_never_ready / ready_implies_read / retry_ready_implies_read",
+        axis: Lean,
+        anchor: "crates/database/p2p/src/sync/manager/links.rs find_all_missing_links, frontier_or_unknown; crates/database/p2p/src/sync/manager/process/pending_dag.rs retry_pending_dag",
+        model_ref: "DagReadiness (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/database/p2p/tests/unit/dag_readiness.rs an_absent_child_is_missing_and_each_child_is_read_once",
+    },
+    Property {
         family: "Pull sync (doc-sync / sync-branchable)",
         name: "Delivered / OneReplyEach / RefusedOnlyUnsent / NoResendAfterDeadline — a pubsub_rpc request is held until a peer subscribes, resent to each later subscriber, and never resent after its deadline",
         axis: Tla,
@@ -229,6 +247,15 @@ pub const PROPERTIES: &[Property] = &[
         axis: Lean,
         anchor: "crates/engine/vera/src/vera_rs/follow/mod.rs reconcile, uncovered; crates/engine/vera/src/vera_rs/follow/journal.rs Journal::record, Journal::prune, Floor",
         model_ref: "VeraConfirmationJournal (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "vera.rs deployment terms",
+        name: "foldl_push / applied_is_filter / owed_is_filter / unrestorable_is_filter / every_replay_in_one_place / existing_policy_is_applied / owed_is_a_change / unrestorable_is_archive_or_policy / event_keeps_every_entry / event_keeps_names_and_actors / closed_is_told: a takeover report puts every replay in one place and keeps its order, a policy that is there is not reported lost, and the event keeps every entry with its name and actor and says when the check failed closed",
+        axis: Lean,
+        anchor: "crates/engine/vera/src/vera_rs/follow/lost.rs held_again, lost_effects; crates/engine/vera/src/vera_rs/follow/report.rs TakeoverReport, Applied, Unrestorable; crates/engine/vera/src/vera_rs/provider/terms.rs takeover_report",
+        model_ref: "VeraTakeoverReport (lake build)",
         tiers: &[Boundary],
         bound_by: "",
     },
@@ -733,6 +760,73 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "SseDelivery (lake build)",
         tiers: &[Boundary],
         bound_by: "crates/foundation/events/tests/unit/channel_bus.rs overflow_wakes_reader_that_drained_before_loss_was_recorded, ordinary_raw_subscription_remains_open_after_overflow; crates/surfaces/http/tests/graphql_sse_recovery.rs typed_permission_refusal_keeps_its_code_in_the_graphql_stream",
+    },
+    Property {
+        // A subscription is subscribed first and checked once through the
+        // plain path after, raced with closing: a bad filter is the stream's
+        // only result, a check that failed for a reason that passes keeps
+        // the stream (and the update that finds it bad reports it), and no
+        // update committed after the registration is lost.
+        family: "SSE loss and error delivery",
+        name: "INV_BadNeverStreams / INV_BadIsReported / INV_GoodNeverRefused / INV_NoLostUpdate / LIVE_ClosingEnds / LIVE_BadUpdateReported: a bad filter never streams and is reported, a good one is never refused even when its check met a failure that passes, an update committed while the subscription is registered reaches a valid subscription, closing ends every stream, a bad request kept past a failure that passes is reported by the update that finds it",
+        axis: Tla,
+        anchor: "crates/surfaces/http/src/handlers/graphql/query.rs graphql_sse; crates/entry-points/ffi/src/query/exec.rs subscribe; crates/engine/query/src/subscription.rs open_failure, update_refused; crates/engine/query/src/error.rs QueryError::is_invalid_request; tools/integration-test/src/actions/query/subscription.rs SubscriptionRequest::open",
+        model_ref: "MC_SubscriptionOpenCheck_{Green,Red_SkipCheck,Red_CheckThenSubscribe,Red_CheckIgnoresClosing,Red_TransientRefuses,Red_UpdateDropsInvalid}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/surfaces/http/tests/graphql_sse_recovery.rs a_subscription_the_plain_path_refuses_sends_its_error_then_completes, a_transient_failure_at_open_keeps_the_stream; crates/engine/query/tests/filter_shape_checks.rs a_failed_lookup_does_not_make_the_request_invalid, a_bad_cursor_argument_makes_the_request_invalid; crates/engine/query/src/subscription.rs only_an_invalid_request_refuses_an_update; crates/surfaces/http/tests/sse_ends_when_closing.rs a_graphql_subscription_ends_when_its_edge_closes; tools/integration-test/tests/testo/subscription/with_filter_unknown.rs subscription_with_an_unknown_filter_field_is_refused_on_open, subscription_with_a_valid_filter_variable_streams",
+    },
+    Property {
+        family: "SSE loss and error delivery",
+        name: "bad_open_reports_then_completes / transient_open_keeps_stream / closing_open_completes / only_invalid_open_is_refused / ffi_invalid_update_reports_then_ends / ffi_only_invalid_update_ends: an invalid open sends its error and completes, a check that failed for a reason that passes keeps the stream, closing completes it, only an invalid open is refused, and an FFI update that finds the request invalid sends it and ends the subscription, which nothing else ends",
+        axis: Lean,
+        anchor: "crates/surfaces/http/src/handlers/graphql/query.rs graphql_sse; crates/engine/query/src/subscription.rs open_failure, update_refused; crates/entry-points/ffi/src/query/exec.rs subscribe",
+        model_ref: "SseDelivery (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/surfaces/http/tests/graphql_sse_recovery.rs a_subscription_the_plain_path_refuses_sends_its_error_then_completes, a_transient_failure_at_open_keeps_the_stream; crates/engine/query/src/subscription.rs only_an_invalid_request_refuses_an_update",
+    },
+    Property {
+        // graphql-go checks a literal filter's keys against its input type
+        // and treats each variable as valid there; the variable's value is
+        // checked by coercion.
+        family: "Filter input validation",
+        name: "literal_walk_skips_variable_positions / variable_value_never_matters: a literal's unknown-field errors never depend on what its variables hold",
+        axis: Lean,
+        anchor: "crates/engine/query/src/query_parse/filter_shape/walk.rs literal, literal_fields; crates/engine/query/src/query_parse/filter_shape/mod.rs check; crates/engine/query/src/query_parse/validation.rs check_filter_shapes",
+        model_ref: "FilterInputShape (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/engine/query/tests/filter_source.rs a_nested_variable_is_recorded_at_its_position; tools/integration-test/tests/testo/query/simple/with_filter_unknown.rs a_bad_literal_is_reported_before_its_variables, unknown_operator_in_a_nested_variable_is_rejected",
+    },
+    Property {
+        // An unknown key is one error: the walk does not look below it.
+        family: "Filter input validation",
+        name: "unknown_key_is_one_error: nothing below an unknown key is reported",
+        axis: Lean,
+        anchor: "crates/engine/query/src/query_parse/filter_shape/walk.rs literal_fields",
+        model_ref: "FilterInputShape (lake build)",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/query/simple/with_filter_unknown.rs unknown_field_in_a_literal_filter_is_rejected",
+    },
+    Property {
+        // A variable that stands for a whole `_and`/`_or` list is found at
+        // its position and checked as a list, never skipped.
+        family: "Filter input validation",
+        name: "whole_list_variable_is_checked: a variable at a list key is checked as a list",
+        axis: Lean,
+        anchor: "crates/engine/query/src/query_parse/filter_shape/walk.rs shape_at, variable_list; crates/engine/query/src/query_parse/filter_shape/mod.rs check",
+        model_ref: "FilterInputShape (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/engine/query/tests/filter_shape_checks.rs a_whole_list_variable_under_and_is_checked; tools/integration-test/tests/testo/query/simple/with_filter_unknown.rs unknown_field_in_a_whole_and_list_variable_is_rejected",
+    },
+    Property {
+        // A literal error under any root, an excluded mutation included,
+        // wins over every variable error.
+        family: "Filter input validation",
+        name: "literal_anywhere_wins / excluded_literal_is_reported: literal errors win across roots",
+        axis: Lean,
+        anchor: "crates/engine/query/src/query_parse/filter_shape/mod.rs check, Found; crates/engine/query/src/query_parse/validation.rs check_filter_shapes; crates/engine/query/src/query_parse/parser.rs parse_selection_to_mutations",
+        model_ref: "FilterInputShape (lake build)",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/query/simple/with_filter_unknown.rs a_literal_error_in_a_later_root_wins_over_a_variable_error; tools/integration-test/tests/testo/mutation/delete/with_filter_unknown.rs a_skipped_delete_with_an_unknown_filter_field_is_rejected, a_delete_in_an_excluded_inline_fragment_is_rejected",
     },
     Property {
         family: "HTTP router composition",
@@ -1991,12 +2085,27 @@ pub const PROPERTIES: &[Property] = &[
         // term may have voided more than the journal keeps. Where a replay
         // starts is written down before it begins, so one cut short is run
         // again from there; what it leaves to owe is published with the
-        // checked term and blocks admission until the outbox holds it.
+        // checked term and blocks admission until the outbox holds it. The
+        // embedder is also told once what each replay came to.
         family: "ACP soundness + revocation + dual-path commits",
         name: "INV_NoVoidDecision / INV_RevocationDenies / INV_NothingLost / LIVE_ResubmittedSettles: no decision is served from a voided revision, a revocation confirmed on a void block still denies, nothing a term voided is taken as kept, and what is owed again settles",
         axis: Tla,
-        anchor: "crates/engine/vera/src/vera_rs/follow/mod.rs Follow::admit, Follow::still, Follow::epoch, reconcile, scan, uncovered; crates/engine/vera/src/vera_rs/follow/journal.rs Journal::record, Journal::begin_replay, Journal::handled, MAX_CONFIRMATIONS, MAX_CONFIRMATION_BYTES; crates/engine/vera/src/vera_rs/follow/lost.rs lost_effects, tainted_by; crates/engine/vera/src/vera_rs/provider/terms.rs Follower::check; crates/engine/vera/src/vera_rs/provider.rs decision_state, admitted_read; crates/engine/vera/src/vera_rs/provider/owed_request.rs locked_worker; crates/engine/acp/src/external/voided.rs OweAgain, VoidedEffect; backbone:acp-light-client HeaderChain::voided",
+        anchor: "crates/engine/vera/src/vera_rs/follow/mod.rs Follow::admit, Follow::still, Follow::epoch, reconcile, scan, uncovered; crates/engine/vera/src/vera_rs/follow/journal.rs Journal::record, Journal::begin_replay, Journal::handled, MAX_CONFIRMATIONS, MAX_CONFIRMATION_BYTES; crates/engine/vera/src/vera_rs/follow/lost.rs lost_effects, tainted_by; crates/engine/vera/src/vera_rs/follow/report.rs TakeoverReport, Applied, Unrestorable; crates/engine/vera/src/vera_rs/provider/terms.rs Follower::check, Follower::publish; crates/engine/vera/src/vera_rs/provider.rs decision_state, admitted_read; crates/engine/vera/src/vera_rs/provider/owed_request.rs locked_worker; crates/engine/acp/src/external/voided.rs OweAgain, VoidedEffect; backbone:acp-light-client HeaderChain::voided",
         model_ref: "MC_FollowDeployment_{Green,Green_Window,Red_KeepsCache,Red_ForgetsRevocation,Red_NoGate,Red_NoTaint,Red_AssumesWindow,Red_NoMark,Red_NoDeliveryGate,Red_CollapsesBatch}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // A takeover report is not an internal count: the embedder is told
+        // once per checked term, by the call that checks it, which
+        // submissions were applied again, which are owed again, and which
+        // cannot be restored, with the cut of that term. A check that failed
+        // closed says so. A call that only delivers reports nothing more.
+        family: "ACP soundness + revocation + dual-path commits",
+        name: "INV_Classified / INV_Published / INV_PublishedOnce / INV_Complete / INV_CutOfTerm / INV_ClosedNamed / LIVE_Reported: every replayed submission is classified as applied again, owed again or unrestorable, an unrestorable outcome carries its reason, a checked term is reported once, after every replay and with the owed ones, under the cut of its own term, and a check that failed closed says so",
+        axis: Tla,
+        anchor: "crates/engine/vera/src/vera_rs/follow/report.rs TakeoverReport, Applied, Unrestorable; crates/engine/vera/src/vera_rs/follow/mod.rs reconcile, first_check; crates/engine/vera/src/vera_rs/follow/lost.rs lost_effects; crates/engine/vera/src/vera_rs/provider/terms.rs Follower::check, Follower::certificate, Follower::owed_effects, Follower::publish, takeover_report; crates/engine/vera/src/vera_rs/follow/journal.rs Journal::close; crates/foundation/events/src/event.rs AcpTakeoverReconciledData",
+        model_ref: "MC_TakeoverReport_{Green,Red_NoPublish,Red_NoReason,Red_Early,Red_Duplicate,Red_DropsOwed,Red_NewestCut,Red_UnnamedClosed,Red_UnrecordedClose}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },
@@ -2652,6 +2761,18 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // A Go-written config.yaml has each Go key moved onto its Rust key
+        // before it is read: a Rust key already there wins, a file with no
+        // Go keys is untouched, and no two Go keys feed one Rust key.
+        family: "Go config layout",
+        name: "rust_key_wins / rust_config_unchanged / table_injective / go_keys_are_not_rust_keys: a present Rust key is never overwritten, a config with no Go keys loads unchanged, and the table is injective",
+        axis: Lean,
+        anchor: "crates/entry-points/cli/src/config/go_layout/keys.rs KEYS, apply, take, put_default; crates/entry-points/cli/src/config/go_layout/mod.rs apply, set_default",
+        model_ref: "GoConfigLayout (lake build)",
+        tiers: &[Contract],
+        bound_by: "crates/entry-points/cli/src/config/go_layout/keys.rs the_table_matches_the_lean_model",
+    },
+    Property {
         // A document call through a selected collection version (possibly
         // inactive) pins that version in the transaction's catalog for its
         // turn: every name lookup sees it, writes are recorded at it, reads
@@ -2959,6 +3080,24 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "MC_DeferredIndexMode_{Green,Red_NoCheck,Red_OneWay,Red_KeepRecords,Red_NoProgressReset,Red_BackfillFirst}.cfg",
         tiers: &[Boundary],
         bound_by: "crates/database/db/tests/index/merged_crdt.rs",
+    },
+    Property {
+        family: "Index-maintenance consistency",
+        name: "INV_FreshAttempt / INV_OpenCompatible / INV_FailureKeepsStamp / INV_FutureRefusedUntouched / INV_LegacyIntact — rebuild older indexes before stamping; refuse future formats",
+        axis: Tla,
+        anchor: "crates/database/db/src/definition/migration/format.rs CURRENT_INDEX_FORMAT, DB::stored_index_format, DB::migrate_index_format; crates/database/db/src/database/mod.rs DB::finish_open; crates/database/db/src/index/deferred/drain.rs; crates/database/db/src/index/manager/deferred.rs",
+        model_ref: "MC_IndexFormatGuard_{Green,Red_SkipRebuild,Red_EarlyStamp,Red_DeleteLegacy,Red_UnguardedRecord,Red_StaleProgress,Red_Future}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/database/db/tests/definition/format.rs",
+    },
+    Property {
+        family: "Index-maintenance consistency",
+        name: "IndexKeyspace.short_id_bytes_prefix_eq / tag_not_prefix_of_legacy / key_not_in_document_family / key_not_in_version_family — for modeled one-byte IDs and the first two-byte boundary, tagged index keys do not enter the document or version families; IndexKey.bytes is an index prefix, not a complete entry",
+        axis: Lean,
+        anchor: "crates/engine/storage/src/keys/datastore/index_key.rs INDEX_KEYSPACE_PREFIX, IndexDataStoreKey::index_prefix, IndexDataStoreKey::try_bytes",
+        model_ref: "IndexKeyspace.short_id_bytes_prefix_eq / tag_not_prefix_of_legacy / key_not_in_document_family / key_not_in_version_family",
+        tiers: &[Contract],
+        bound_by: "crates/database/db/tests/definition/keyspace.rs index_keyspace_scans_stay_per_collection_across_short_ids; crates/engine/storage/src/keys/datastore/index_key.rs index_keyspace_is_tagged_across_the_byte_boundary, index_integer_encodings_are_prefix_free",
     },
     Property {
         // Every write that owes a deferred index asks for its drain; the
@@ -3850,6 +3989,33 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // A sweep's candidates are one bounded page. The delete transaction
+        // reads the live roots itself, validated, so a root published before
+        // its commit re-runs it. The model trusts that `LiveRoots::read`
+        // returns every live root, and that the caller storing the roots
+        // publishes one in the transaction that writes its nodes: nothing in
+        // the workspace publishes a root yet.
+        family: "Prolly tree node store and cache",
+        name: "SweepKeepsLiveRoots: a page sweep racing a root's publication never deletes a node the live root names",
+        axis: Tla,
+        anchor: "crates/engine/storage/src/stores/prolly_nodes.rs ProllyNodes::reclaim, node_keys, ReclaimNodes::run, mark_roots, LiveRoots::read",
+        model_ref: "MC_ProllyNodeReclaim_Green.cfg (GREEN) / MC_ProllyNodeReclaim_{Red_FixedRoots,Red_NoValidation,Red_PutAlone,Red_DeleteMarked}.cfg (RED)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // The data rule the delete applies: a node is deleted exactly when
+        // it is on the page and the live marks do not name it, so a marked
+        // node never is.
+        family: "Prolly tree node store and cache",
+        name: "reclaimDeletesOnlyUnmarked / reclaimKeepsMarked",
+        axis: Lean,
+        anchor: "crates/engine/storage/src/stores/prolly_nodes.rs ReclaimNodes::run, mark_roots",
+        model_ref: "ProllyTree (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         family: "Text chunking",
         name: "INV_ListMatchesText / INV_ListedChunksExist / INV_NoChunkOfDeletedParent / INV_ValidWritesSucceed",
         axis: Tla,
@@ -4210,6 +4376,24 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        family: "Explicit transaction link reads",
+        name: "INV_SecondLinkIsRefused / LIVE_EmptyReadCommits",
+        axis: Tla,
+        anchor: "crates/database/db/src/index/manager/unique.rs save_local_unique_validated; crates/database/db/src/index/manager/mod.rs on_document_create; crates/engine/query/src/runner/query/nested.rs has_one_to_one_relation_select",
+        model_ref: "MC_RelationLinkConflict_{Green,Red_Unvalidated}.cfg",
+        tiers: &[Behavioral],
+        bound_by: "tools/integration-test/tests/testo/mutation/add/field_kinds/one_to_one_to_one/with_txn.rs transactional_creation_and_linking_of_relational_documents_backward; crates/database/db/tests/write/disjoint_parts.rs an_indexed_create_does_not_validate_later_scans; crates/database/db/tests/write/disjoint_parts.rs a_unique_indexed_create_does_not_validate_later_scans",
+    },
+    Property {
+        family: "Explicit transaction link reads",
+        name: "validated_admits_only_empty / validated_taken_is_refused / unvalidated_admits_both",
+        axis: Lean,
+        anchor: "crates/database/db/src/index/manager/unique.rs save_local_unique_validated; crates/engine/query/src/runner/query/nested.rs has_one_to_one_relation_select",
+        model_ref: "RelationLinkConflict (lake build)",
+        tiers: &[Contract],
+        bound_by: "tools/integration-test/tests/testo/mutation/add/field_kinds/one_to_one_to_one/with_txn.rs transactional_creation_and_linking_of_relational_documents_backward; crates/database/db/tests/write/disjoint_parts.rs an_indexed_create_does_not_validate_later_scans; crates/database/db/tests/write/disjoint_parts.rs a_unique_indexed_create_does_not_validate_later_scans",
+    },
+    Property {
         family: "Document save",
         name: "decide_refuses_deleted / refuse_only_deleted / save_never_forks / save_under_given_id",
         axis: Lean,
@@ -4235,6 +4419,24 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "DocIdText (lake build)",
         tiers: &[Boundary],
         bound_by: "",
+    },
+    Property {
+        family: "Missing relation filters",
+        name: "Safe: a missing child passes only with an ID condition and matching null fields",
+        axis: Tla,
+        anchor: "crates/engine/query/src/plan/type_join/type_join_one.rs check_relation_filter",
+        model_ref: "MC_MissingRelationFilter_{Green,Red_NoId,Red_Sibling}.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/query/one_to_one/with_filter_secondary_relation_id.rs missing_relation_checks_all_conditions_against_null",
+    },
+    Property {
+        family: "Missing relation filters",
+        name: "MissingRelationFilter.without_id_rejected / failing_id_rejected / failing_sibling_rejected / accepted_iff_all_match",
+        axis: Lean,
+        anchor: "crates/engine/query/src/plan/type_join/type_join_one.rs check_relation_filter",
+        model_ref: "MissingRelationFilter (lake build)",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/query/one_to_one/with_filter_secondary_relation_id.rs missing_relation_checks_all_conditions_against_null",
     },
     Property {
         family: "Mutation value checks",
@@ -4270,6 +4472,39 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "SigningOverride (lake build)",
         tiers: &[Boundary],
         bound_by: "crates/foundation/defra-core/src/request_context.rs signing_override_false_hides_the_key_and_others_keep_it; crates/surfaces/http/src/query_context.rs enable_signing_overrides_the_node_either_way; crates/entry-points/ffi/src/document/signing_tests.rs opting_out_of_a_save_many_leaves_the_blocks_unsigned_on_a_signing_node; tools/integration-test/tests/testo/signature/per_op_signing.rs signature_with_per_op_signing_enabled_on_a_node_not_signing_signs_every_commit",
+    },
+    Property {
+        // #2716: every create and relation patch of an import is a request
+        // on the request path of the edge it came in by, so it is signed,
+        // broadcast and owned as that edge's creates are; a Node import is
+        // one admitted request, run as a network task of its own that its
+        // writes continue, so shutdown drains it and a caller that stops
+        // waiting does not cut it short;
+        // a batch's file IDs are checked just before it is saved, a refused
+        // batch is saved again one document at a time, and the IDs are
+        // registered by validated reads in one transaction, one document at
+        // a time when another writer took one meanwhile.
+        family: "Backup import write path",
+        name: "INV_ImportSigned / INV_ImportReplicated / INV_HostFromEdge / INV_DriverOnCaller / INV_NoDuplicateAlias / INV_AliasNeverStolen / INV_FfiTxnRefused / INV_CreatorAsCreate / INV_SavedRegistered / INV_DrainWaitsForImport / INV_KeepsPrefix: an import writes as its edge writes a create",
+        axis: Tla,
+        anchor: "crates/database/db/src/backup/import.rs import_database_as, save, create, record; crates/database/db/src/backup/host.rs ImportHost, RunnerHost; crates/database/db/src/backup/batch.rs Batch::must_save_before; crates/database/db/src/backup/alias.rs register, check_free; crates/entry-points/defra-node/src/ops/backup.rs Node::import_backup_as, Node::import_admitted, NodeOps::import_backup_with, NodeHost; crates/entry-points/defra-node/src/lib.rs Node::as_request, Admit; crates/entry-points/defra-node/src/request_path.rs RequestPath::execute, RequestPath::admitted; crates/foundation/edge/src/handle.rs Edge::spawn_continuation; crates/surfaces/http/src/request_path.rs Server; crates/surfaces/http/src/pool_layer.rs runs_on_pool, ON_EDGE; crates/surfaces/http/src/handlers/backup.rs import; crates/entry-points/cli/src/commands/start/server_query.rs setup_query_runner; crates/entry-points/ffi/src/backup/import.rs defra_backup_import, FfiHost",
+        model_ref: "MC_BackupImportWritePath_{Green,Red_OwnMutator,Red_NoSigningChoice,Red_AliasOutsideTxn,Red_AliasCheckAfterCreate,Red_BatchSkipsPendingAlias,Red_FfiViaNode,Red_AdapterOwnHost,Red_CallerIgnored,Red_ActorNoOne,Red_WritesAdmittedAlone,Red_ImportOnCallerTask,Red_RefusedBatchDropped,Red_RegistrationAllOrNothing,Red_PrepareOnPool,Red_FfiTxnAccepted,Red_ContentCollisionDropped,Red_ImportRouteOnPool}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/entry-points/defra-node/src/ops/backup_tests.rs shutdown_drains_a_running_import_with_its_writes_and_aliases, an_import_after_shutdown_begins_is_refused_before_it_writes, the_driver_runs_off_the_workers_and_saves_a_collection_in_one_write, a_saved_batch_gets_its_aliases_when_the_caller_stops_waiting; crates/entry-points/cli/src/backup_adapter_tests.rs an_id_taken_after_its_check_leaves_every_other_saved_document_its_id; crates/entry-points/ffi/src/backup/import_tests.rs an_import_on_a_signing_node_signs_every_block, node_access_control_refuses_an_import_to_a_stranger; crates/surfaces/http/src/handlers/backup_import_tests.rs the_import_driver_runs_off_the_workers_and_its_writes_on_them; tools/integration-test/tests/testo/backup/signed_import.rs an_import_on_a_signing_node_signs_every_block, an_import_reaches_a_replicator_set_before_it; tools/integration-test/tests/testo/backup/failed_import.rs a_failed_import_keeps_every_document_before_the_one_refused, an_import_refusing_a_value_keeps_every_document_before_it",
+    },
+    Property {
+        // #2716: an import's request is the create request of its edge, so
+        // it signs and is owned as a create; a batch with no file ID twice,
+        // checked as a whole and saved again one document at a time when
+        // refused, saves exactly what one document at a time saves: never a
+        // file ID twice, and every document before the one refused.
+        family: "Backup import write path",
+        name: "BackupImportSigner.import_request_is_create_request / signing_node_signs_every_import / creator_law / cli_start_actor_falls_back_to_its_identity / saveBatch_eq_saveEach / no_duplicate_alias / keeps_prefix_until_refused / dropped_batch_loses_the_prefix / no_flush_saves_a_duplicate",
+        axis: Lean,
+        anchor: "crates/database/db/src/backup/import.rs import_database_as, save, create; crates/database/db/src/backup/batch.rs Batch::must_save_before; crates/entry-points/defra-node/src/lib.rs execute_prepared_request",
+        model_ref: "BackupImportSigner (lake build)",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/backup/import_creator.rs an_anonymous_import_is_owned_as_an_anonymous_create; tools/integration-test/tests/testo/backup/duplicate_alias.rs a_repeated_doc_id_fails_and_keeps_the_first_document; tools/integration-test/tests/testo/backup/failed_import.rs a_failed_import_keeps_every_document_before_the_one_refused",
     },
     Property {
         // #2724: add_view accepts a transform CID only if it is non-empty and
@@ -4324,10 +4559,10 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "One-to-many child paging",
-        name: "LIVE_EveryParentPage / INV_RedSecondParentKeepsPage: a child page is filled per parent, not by one global scan bound",
+        name: "LIVE_EveryParentCompletesOrderedPage / INV_PageIsOrderedPrefix / INV_PageWithinLimit / INV_RedSecondParentKeepsPage: each parent completes its exact ordered child page",
         axis: Tla,
         anchor: "crates/engine/query/src/plan/type_join/type_join_many/children.rs TypeJoinMany::next_per_parent; crates/engine/query/src/plan/type_join/type_join_many/node.rs TypeJoinMany::with_limit, with_offset",
-        model_ref: "MC_ChildPagePerParent_{Green,Red_GlobalBound}.cfg",
+        model_ref: "MC_ChildPagePerParent_{Green,Green_ShortParent,Red_GlobalBound,Red_NoEarlyStop}.cfg",
         tiers: &[Boundary],
         bound_by: "tools/integration-test/tests/testo/query/one_to_many/with_limit.rs query_one_to_many_with_child_limit_keeps_a_two_parent_page",
     },

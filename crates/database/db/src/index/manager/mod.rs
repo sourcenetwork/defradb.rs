@@ -713,9 +713,14 @@ impl IndexManager {
             for values in &value_sets {
                 // Local creates stay strict but self-heal stale unique entries
                 // pointing at a deleted or missing document (#1111/#700).
-                self.save_healing_stale_unique(&mut mutable_datastore, index, doc_short_id, values)
-                    .await
-                    .map_err(|e| Self::naming_the_writer(Error::Storage(e), doc, index, values))?;
+                self.save_local_unique_validated(
+                    &mut mutable_datastore,
+                    index,
+                    doc_short_id,
+                    values,
+                )
+                .await
+                .map_err(|e| Self::naming_the_writer(Error::Storage(e), doc, index, values))?;
             }
         }
 
@@ -764,7 +769,7 @@ impl IndexManager {
                         .map_err(Error::Storage)?;
                 }
                 for new_values in &new_value_sets {
-                    self.save_healing_stale_unique(
+                    self.save_local_unique_validated(
                         &mut mutable_datastore,
                         index,
                         doc_short_id,
@@ -831,7 +836,7 @@ impl IndexManager {
                     .map_err(Error::Storage)?;
             }
             for new_values in &new_value_sets {
-                self.save_healing_stale_unique(
+                self.save_local_unique_validated(
                     &mut mutable_datastore,
                     index,
                     doc_short_id,

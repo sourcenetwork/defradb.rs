@@ -177,7 +177,7 @@ impl Node {
 
 /// `request` running in all of `context` (its DAC bypass, encryption, signing,
 /// batch session, transaction) as `identity`.
-fn request_in(
+pub(super) fn request_in(
     context: &RequestContext,
     identity: Option<Did>,
     request: QueryRequest,

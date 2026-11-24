@@ -18,7 +18,7 @@ pub use error::{Error, Result};
 use serde_json::Value;
 pub use types::{AddOptions, DocumentsResult, Filter};
 
-use crate::executor::{QueryRequest, QueryResponse};
+use crate::executor::{FilterOrigin, QueryRequest, QueryResponse};
 
 /// Add `docs` to `collection` and return their IDs in order.
 ///
@@ -142,11 +142,12 @@ pub async fn update_with_filter<R, F>(
     updater: &str,
 ) -> Result<DocumentsResult>
 where
-    R: FnOnce(String) -> F,
+    R: FnOnce(QueryRequest) -> F,
     F: Future<Output = QueryResponse>,
 {
     let mutation = request::update_with_filter(collection, filter, updater)?;
-    response::doc_ids(run(mutation).await, "update", collection).map(Into::into)
+    let request = QueryRequest::new(mutation).with_filter_origin(FilterOrigin::CollectionApi);
+    response::doc_ids(run(request).await, "update", collection).map(Into::into)
 }
 
 /// Delete every document `filter` matches.
@@ -156,11 +157,12 @@ pub async fn delete_with_filter<R, F>(
     filter: &Filter,
 ) -> Result<DocumentsResult>
 where
-    R: FnOnce(String) -> F,
+    R: FnOnce(QueryRequest) -> F,
     F: Future<Output = QueryResponse>,
 {
     let mutation = request::delete_with_filter(collection, filter)?;
-    response::doc_ids(run(mutation).await, "delete", collection).map(Into::into)
+    let request = QueryRequest::new(mutation).with_filter_origin(FilterOrigin::CollectionApi);
+    response::doc_ids(run(request).await, "delete", collection).map(Into::into)
 }
 
 #[cfg(test)]

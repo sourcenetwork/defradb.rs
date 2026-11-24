@@ -545,40 +545,39 @@ jobs:
           use-mathlib-cache: false
       - name: Check client-signed create model cases
         run: python3 proofs/lean/test_client_signed_create.py
-      - name: Check storage failure model binding
-        run: cargo test -p query --test storage_failure -- --ignored
-      - name: Check native listener model binding
-        run: cargo test -p p2p --features iroh-transport --lib iroh::endpoint_config::bind_tests::native_bindings_match_executed_model -- --exact --ignored
-      - name: Check native port mapping model binding
-        run: cargo test -p p2p --features iroh-transport --lib iroh::endpoint_config::bind_tests::native_port_mapping_configuration_matches_executed_model -- --exact --ignored
-      - name: Check client create graph model binding
-        run: cargo test -p db --test block client_create_graph::trusted_create_graph_matches_model_and_rejects_unapproved_waves -- --exact --ignored
-      - name: Check normalized client create intent model binding
-        run: cargo test -p db --test block client_create_graph::normalized_agent_intent_preserves_explicit_null_and_datetime -- --exact --ignored
-      - name: Check client create schema model binding
-        run: cargo test -p db --lib write::create::schema_binding_tests::prepared_create_checks_immutable_definition_even_when_version_is_unchanged -- --exact --ignored
-      - name: Check client signing admission model binding
-        run: cargo test -p defra-http --lib client_signer_tests::admission_and_token_lifetime_match_the_model -- --exact --ignored
-      - name: Check selected document push model binding
-        run: cargo test -p db --test merge selected_document_transfers_match_executed_model -- --ignored
-      - name: Check replica gate model binding
-        run: cargo test -p db --lib merge::gate_conformance_tests::the_acp_hook_matches_the_executed_gate_model -- --exact --ignored
-      - name: Check deferred merge index model binding
-        run: cargo test -p db --lib merge::governance::deferred_conformance_tests::the_index_matches_the_executed_model -- --exact --ignored
-      - name: Check HTTP router composition model binding
-        run: cargo test -p defra-http --lib server::router_transform_tests::forwarding_filter_matches_executed_model -- --exact --ignored
-      - name: Check owner observation model binding
-        run: cargo test -p defra-node --lib owner_observation_tests
-      - name: Check collection head set model binding
-        run: cargo test -p db --test block head_conformance::head_queries_match_executable_lean -- --exact
-      - name: Check projection scope model binding
-        run: cargo test -p acp --test projection_scope -- --ignored
-      - name: Check parent registration model binding
-        run: cargo test -p acp --test parent_registration -- --ignored
-      - name: Check genesis read access model binding
-        run: cargo test -p db --test merge genesis_access::genesis_reader_matches_executed_lean_model -- --exact --ignored
-      - name: Check Lean-to-Rust conformance
-        run: cargo nextest run -p conformance --lib --test lean_conformance
+      # One build and one run for every model binding and the Lean-to-Rust
+      # conformance tests: separate invocations resolve features per package
+      # and rebuild the shared crates each time.
+      - name: Check model bindings and Lean-to-Rust conformance
+        run: |
+          cargo nextest run --no-fail-fast --run-ignored all \
+            -p query -p p2p -p db -p defra-http -p defra-node -p acp -p conformance \
+            --features p2p/iroh-transport \
+            --lib --test storage_failure --test block --test merge --test projection_scope --test parent_registration --test lean_conformance \
+            -E '
+              binary_id(query::storage_failure)
+              | binary_id(p2p) & (
+                test(=iroh::endpoint_config::bind_tests::native_bindings_match_executed_model)
+                | test(=iroh::endpoint_config::bind_tests::native_port_mapping_configuration_matches_executed_model))
+              | binary_id(db::block) & (
+                test(=client_create_graph::trusted_create_graph_matches_model_and_rejects_unapproved_waves)
+                | test(=client_create_graph::normalized_agent_intent_preserves_explicit_null_and_datetime)
+                | test(=head_conformance::head_queries_match_executable_lean))
+              | binary_id(db) & (
+                test(=write::create::schema_binding_tests::prepared_create_checks_immutable_definition_even_when_version_is_unchanged)
+                | test(=merge::gate_conformance_tests::the_acp_hook_matches_the_executed_gate_model)
+                | test(=merge::governance::deferred_conformance_tests::the_index_matches_the_executed_model))
+              | binary_id(defra-http) & (
+                test(=client_signer_tests::admission_and_token_lifetime_match_the_model)
+                | test(=server::router_transform_tests::forwarding_filter_matches_executed_model))
+              | binary_id(db::merge) & (
+                test(selected_document_transfers_match_executed_model)
+                | test(=genesis_access::genesis_reader_matches_executed_lean_model))
+              | binary_id(defra-node) & test(owner_observation_tests)
+              | binary_id(acp::projection_scope)
+              | binary_id(acp::parent_registration)
+              | binary_id(conformance)
+              | binary_id(conformance::lean_conformance)'
 
   conformance:
     name: Conformance${{ matrix.io.name }}

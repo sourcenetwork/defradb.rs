@@ -87,6 +87,9 @@ impl Node {
 }
 
 const USERS: &str = "type Users { name: String  age: Int  email: String }";
+const TAGS: &str = "type Tags { name: String @index }";
+const UNIQUE_TAGS: &str = "type UniqueTags { name: String @index(unique: true) }";
+const CONFLICTING_TAGS: &str = "type ConflictingTags { name: String @index(unique: true) }";
 const ANN: &str =
     r#"mutation { add_Users(input: {name: "ann", age: 30, email: "ann@old"}) { _docID } }"#;
 
@@ -110,6 +113,71 @@ fn filtered_updates_of_disjoint_fields_both_commit() {
     .await;
     assert_ann(&node, 31, "ann@new").await;
 })
+    .unwrap()
+}
+
+/// An indexed create validates only its own unique lookup; it does not leave
+/// every later scan of the same transaction validated.
+#[test]
+fn an_indexed_create_does_not_validate_later_scans() {
+    workers::block_on(async {
+        let node = Node::new(&format!("{USERS}\n{TAGS}")).await;
+        node.create(ANN).await;
+        node.both_commit(
+            r#"mutation { update_Users(filter: {name: {_eq: "ann"}}, input: {age: 31}) { _docID } }"#,
+            r#"mutation {
+                add_Tags(input: {name: "t"}) { _docID }
+                update_Users(filter: {name: {_eq: "ann"}}, input: {email: "ann@new"}) { _docID }
+            }"#,
+        )
+        .await;
+        assert_ann(&node, 31, "ann@new").await;
+    })
+    .unwrap()
+}
+
+/// A unique index has the same narrow validation boundary as any other index.
+#[test]
+fn a_unique_indexed_create_does_not_validate_later_scans() {
+    workers::block_on(async {
+        let node = Node::new(&format!("{USERS}\n{UNIQUE_TAGS}")).await;
+        node.create(ANN).await;
+        node.both_commit(
+            r#"mutation { update_Users(filter: {name: {_eq: "ann"}}, input: {age: 31}) { _docID } }"#,
+            r#"mutation {
+                add_UniqueTags(input: {name: "t"}) { _docID }
+                update_Users(filter: {name: {_eq: "ann"}}, input: {email: "ann@new"}) { _docID }
+            }"#,
+        )
+        .await;
+        assert_ann(&node, 31, "ann@new").await;
+    })
+    .unwrap()
+}
+
+/// The unique conflict lookup itself is validated: a concurrent writer that
+/// takes the empty range before this transaction commits aborts it.
+#[test]
+fn concurrent_unique_creates_conflict_on_commit() {
+    workers::block_on(async {
+        let node = Node::new(CONFLICTING_TAGS).await;
+        let one = node.queries.begin_txn(false).await.unwrap();
+        let two = node.queries.begin_txn(false).await.unwrap();
+        for txn in [&one, &two] {
+            let response = node
+                .queries
+                .execute_in_txn(
+                    QueryRequest::new(
+                        r#"mutation { add_ConflictingTags(input: {name: "same"}) { _docID } }"#,
+                    ),
+                    txn,
+                )
+                .await;
+            assert!(!response.has_errors(), "{:?}", response.errors);
+        }
+        node.queries.commit_txn(&two).await.unwrap();
+        assert!(node.queries.commit_txn(&one).await.is_err());
+    })
     .unwrap()
 }
 

@@ -89,18 +89,13 @@ pub(super) struct DelegatedAuthority {
     pub acp: Arc<dyn acp::DocumentACP>,
 }
 
-fn parse_error(message: String) -> QueryResponse {
-    QueryResponse {
-        data: None,
-        errors: vec![QueryResponseError {
-            message,
-            path: None,
-            locations: None,
-            extensions: None,
-            retry_input: None,
-        }],
-        extensions: None,
-    }
+/// A request that did not parse or validate, in the error's own words.
+/// A parse failure always means the request is invalid; a validation failure
+/// only when its error says so, since validation also reads collections.
+fn request_error(error: &QueryError, invalid_request: bool) -> QueryResponse {
+    QueryResponse::error(
+        QueryResponseError::new(error.to_string()).with_invalid_request(invalid_request),
+    )
 }
 
 impl<F, R> QueryRunner<F, R>
@@ -200,7 +195,7 @@ where
             Some(parsed) => parsed,
             None => match request.operation(variables.as_ref(), self.query_limits) {
                 Ok(parsed) => parsed,
-                Err(error) => return Turned::Done(parse_error(error.to_string())),
+                Err(error) => return Turned::Done(request_error(&error, true)),
             },
         };
         let statement = !turn.is_readonly()
@@ -291,8 +286,18 @@ where
 
         // Validate that all referenced collections exist before execution.
         let graphql_text = request.parsed.is_none();
-        if let Err(error) = validate_operation(&parsed, txn_provider.as_ref(), graphql_text).await {
-            return Ok(Turned::Done(parse_error(error.to_string())));
+        if let Err(error) = validate_operation(
+            &parsed,
+            txn_provider.as_ref(),
+            graphql_text,
+            request.checks_filter_shapes(),
+        )
+        .await
+        {
+            return Ok(Turned::Done(request_error(
+                &error,
+                error.is_invalid_request(),
+            )));
         }
 
         let require_bound_nac = delegation.is_some();
@@ -483,7 +488,9 @@ where
                             .await
                     }
                 }
-                ParsedOperation::Mutation { explain, mutations } => {
+                ParsedOperation::Mutation {
+                    explain, mutations, ..
+                } => {
                     if let Some(explain_type) = explain {
                         self.with_collection_provider(txn_provider)
                             .explain_mutation_with_identity(&request.query, identity, explain_type)

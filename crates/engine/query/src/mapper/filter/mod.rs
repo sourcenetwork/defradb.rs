@@ -24,6 +24,7 @@ mod json_match;
 pub mod op;
 mod relation;
 mod secondary_id;
+mod source;
 mod split;
 
 // Re-export FilterOp from op module
@@ -32,3 +33,4 @@ pub use op::FilterOp;
 // Re-export everything from filter_impl for backwards compatibility
 pub use eval::like_pattern_match;
 pub use filter_impl::*;
+pub use source::{EnclosingArgument, FilterSource, PathStep, VariablePosition};
