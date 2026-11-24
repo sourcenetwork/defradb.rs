@@ -638,21 +638,30 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         if oversized.is_empty() {
             return Ok(CarIngestDisposition::Completed);
         }
-        let missing = match self
-            .manager
-            .blockstore()
-            .get(root_cid)
-            .await
-            .map_err(crate::error::Error::from_blockstore)?
-        {
-            Some(data) => {
+        // A local fault reading the root or a block below it says nothing
+        // about the provider's notice, so it is counted and the response
+        // completes; the readiness check that follows walks the DAG again.
+        let walk = match self.manager.blockstore().get(root_cid).await {
+            Ok(Some(data)) => {
                 crate::sync::manager::links::find_all_missing_links(
                     self.manager.blockstore().as_ref(),
                     &data,
                 )
-                .await?
+                .await
             }
-            None => vec![*root_cid],
+            Ok(None) => Ok(vec![*root_cid]),
+            Err(error) => Err(crate::error::Error::from_blockstore(error)),
+        };
+        let missing = match walk {
+            Ok(missing) => missing,
+            Err(error) => {
+                self.manager.diagnostics.record_missing_link_walk_error();
+                tracing::warn!(
+                    root_cid = %root_cid, peer_id = %peer_id, error = %error,
+                    "Local DAG walk failed; the provider's size-limit notice is not checked"
+                );
+                return Ok(CarIngestDisposition::Completed);
+            }
         };
         let missing: rapidhash::RapidHashSet<_> = missing.into_iter().collect();
         // A peer's notice is only meaningful for a CID in our own missing

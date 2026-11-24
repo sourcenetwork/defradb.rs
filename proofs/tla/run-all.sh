@@ -82,6 +82,21 @@ RUNS=(
   "MC_InlineBatchFlights_Red_Shared.cfg InlineBatchFlights.tla RED"
   "MC_LocalFetchPermit_Green.cfg LocalFetchPermit.tla GREEN"
   "MC_LocalFetchPermit_Red_Hold.cfg LocalFetchPermit.tla RED"
+  "MC_DagReadiness_Green.cfg DagReadiness.tla GREEN"
+  "MC_DagReadiness_Red_SkipNone.cfg DagReadiness.tla RED" # a child deleted before its read is skipped, not missing (INV_AbsentIsMissing)
+  "MC_DagReadiness_Red_DropErr.cfg DagReadiness.tla RED" # the walker drops a failed child read, as main did (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAsEmpty_Start.cfg DagReadiness.tla RED" # the fetch start takes a failed walk as complete (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAsEmpty_RootedCar.cfg DagReadiness.tla RED" # the rooted-CAR check takes a failed walk as complete (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAsEmpty_WalkLoop.cfg DagReadiness.tla RED" # the selective loop takes a failed walk as complete (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAsEmpty_Final.cfg DagReadiness.tla RED" # the final check takes a failed walk as complete (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAsEmpty_DocSync.cfg DagReadiness.tla RED" # the DocSync re-merge takes a failed walk as complete (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAsEmpty_PushAdmission.cfg DagReadiness.tla RED" # the push admission takes a failed walk as complete (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAsEmpty_PendingRetry.cfg DagReadiness.tla RED" # the pending retry takes a failed walk as complete (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAsEmpty_Restore.cfg DagReadiness.tla RED" # the restore sweep takes a failed walk as complete (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAbortsSweep.cfg DagReadiness.tla RED" # one failed walk ends the waiter sweep (INV_SweepTotal)
+  "MC_DagReadiness_Red_ConflictStringified.cfg DagReadiness.tla RED" # a storage conflict loses its type (INV_ConflictTyped)
+  "MC_DagReadiness_Red_RootFaultErrs.cfg DagReadiness.tla RED" # a gone or unreadable root fails the retry (INV_SweepTotal, INV_RegisteredNeverErrors)
+  "MC_DagReadiness_Red_CarFaultBlamesPeer.cfg DagReadiness.tla RED" # a local fault in the CAR size-limit check fails the response (INV_LocalFaultNotBlamed)
   "MC_HeldPubsubRequest_Green.cfg HeldPubsubRequest.tla GREEN"
   "MC_HeldPubsubRequest_Red_NoHold.cfg HeldPubsubRequest.tla RED" # a refused publish fails the sync at once (Delivered)
   "MC_HeldPubsubRequest_Red_NoResend.cfg HeldPubsubRequest.tla RED" # a later subscriber is never sent the request (Delivered)
@@ -591,6 +606,7 @@ RUNS=(
   "MC_Truncate_Red_Branchable.cfg Truncate.tla RED" # branchable check left out: a filtered truncate splits shared history (INV_FilteredNeverOnBranchable)
   "MC_Truncate_Red_Txn.cfg Truncate.tla RED" # transaction check left out, as before: a filter on the txn view removes an uncommitted match (INV_FilteredRemovesOnlyCommittedMatches)
   "MC_Truncate_Red_Shape.cfg Truncate.tla RED" # filter shape check left out: a non-filter removes everything (INV_BadFilterRemovesNothing)
+  "MC_Truncate_Red_Reread.cfg Truncate.tla RED" # page reread left out: a stale first read purges a document moved out of the filter (INV_FilteredRemovesOnlyCurrentMatches)
   "MC_Truncate_Red_ViewCache.cfg Truncate.tla RED" # #2703: view cache clear left out: a truncated view still shows its rows (INV_UnfilteredEmptiesView)
   "MC_Truncate_Red_SearchRecords.cfg Truncate.tla RED" # #2728: /se/ prefix delete left out: an encrypted search still finds truncated documents (INV_UnfilteredClearsSearchRecords)
   "MC_Truncate_Red_SearchNamespace.cfg Truncate.tla RED" # #2728: received search records in the raw root store survive the prefix delete (INV_UnfilteredClearsSearchRecords)
@@ -867,8 +883,10 @@ RUNS=(
   "MC_AdministrativeRelationship_Green.cfg AdministrativeRelationship.tla GREEN"
   "MC_AdministrativeRelationship_Red_Actor.cfg AdministrativeRelationship.tla RED" # INV_Actor
   "MC_AdministrativeRelationship_Red_Active.cfg AdministrativeRelationship.tla RED" # INV_Active
-  "MC_ChildPagePerParent_Green.cfg ChildPagePerParent.tla GREEN" # a child page is filled per parent, so later parents keep their children
-  "MC_ChildPagePerParent_Red_GlobalBound.cfg ChildPagePerParent.tla RED" # one global child bound lets the first parent starve the second (page B stays empty)
+  "MC_ChildPagePerParent_Green.cfg ChildPagePerParent.tla GREEN" # each parent completes its exact ordered child page
+  "MC_ChildPagePerParent_Green_ShortParent.cfg ChildPagePerParent.tla GREEN" # a parent with fewer children than the limit takes them all
+  "MC_ChildPagePerParent_Red_GlobalBound.cfg ChildPagePerParent.tla RED" # one global child bound lets the first parent consume the bound and leaves B without its page (INV_SecondParentKeepsPage)
+  "MC_ChildPagePerParent_Red_NoEarlyStop.cfg ChildPagePerParent.tla RED" # the per-parent scan reads past a full page (INV_PageWithinLimit)
   "MC_AdministrativeRelationship_Red_NacBound.cfg AdministrativeRelationship.tla RED" # INV_NacBound
   "MC_AdministrativeRelationship_Red_Bypass.cfg AdministrativeRelationship.tla RED" # INV_Bypass
   "MC_AdministrativeRelationship_Red_Operation.cfg AdministrativeRelationship.tla RED" # INV_Operation
@@ -1434,6 +1452,8 @@ RUNS=(
   "MC_DocumentSave_Green.cfg DocumentSave.tla GREEN" # a save refuses a deleted document and never forks
   "MC_DocumentSave_Red_NoDeletedCheck.cfg DocumentSave.tla RED" # a deleted document is written over and forks (INV_NoFork)
   "MC_DocumentSave_Red_SplitTxn.cfg DocumentSave.tla RED" # a delete between lookup and write forks the save (INV_NoFork)
+  "MC_RelationLinkConflict_Green.cfg RelationLinkConflict.tla GREEN" # a validated link read commits when empty and conflicts after a later first link
+  "MC_RelationLinkConflict_Red_Unvalidated.cfg RelationLinkConflict.tla RED" # an unvalidated link read lets both links commit (INV_SecondLinkIsRefused)
   "MC_ChildLimitPaging_Green.cfg ChildLimitPaging.tla GREEN" # unordered scans run to completion before paging
   "MC_ChildLimitPaging_Ordered.cfg ChildLimitPaging.tla GREEN" # ordered scans can stop at offset plus limit
   "MC_ChildLimitPaging_Red_UnorderedStop.cfg ChildLimitPaging.tla RED" # stopping an unordered scan returns the wrong page (INV_CompletedPage)

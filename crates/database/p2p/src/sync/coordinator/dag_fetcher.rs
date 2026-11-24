@@ -29,7 +29,7 @@ use super::provider_health::ProviderHealth;
 use super::DagFetchLimiter;
 use crate::sync::arbitration::AttemptSample;
 use crate::sync::car::MAX_HAVE_CIDS;
-use crate::sync::manager::links::find_all_missing_links;
+use crate::sync::manager::links::{find_all_missing_links, frontier_or_unknown};
 use crate::sync::manager::SyncEvent;
 use crate::sync::manager::{FetchCompletion, SyncDiagnostics};
 use crate::transport::{FetchFailureCause, P2PTransport, PeerId};
@@ -583,10 +583,16 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
 ) -> FetchAttemptOutcome {
     state.providers.begin_attempt();
     let car_missing_watch = match blockstore.get(&root_cid).await {
-        Ok(Some(root_data)) => find_all_missing_links(blockstore.as_ref(), &root_data)
-            .await
-            .ok()
-            .filter(|missing| !missing.is_empty()),
+        Ok(Some(root_data)) => {
+            match find_all_missing_links(blockstore.as_ref(), &root_data).await {
+                Ok(missing) => Some(missing).filter(|missing| !missing.is_empty()),
+                Err(e) => {
+                    state.diagnostics.record_missing_link_walk_error();
+                    warn!(root_cid = %root_cid, error = %e, "find_all_missing_links failed; asking for the whole root");
+                    None
+                }
+            }
+        }
         _ => None,
     };
 
@@ -661,9 +667,13 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
         state.providers.record_progress();
         state.depth.widen();
         if let Ok(Some(root_data)) = blockstore.get(&root_cid).await {
-            let missing = find_all_missing_links(blockstore.as_ref(), &root_data)
-                .await
-                .unwrap_or_default();
+            // A failed walk leaves the frontier unknown: the selective walk
+            // below reads it again and ends the attempt incomplete.
+            let missing = frontier_or_unknown(
+                root_cid,
+                find_all_missing_links(blockstore.as_ref(), &root_data).await,
+                state.diagnostics,
+            );
             if missing.is_empty() {
                 info!(root_cid = %root_cid, doc_id = %context.doc_id, "DAG fetch complete via rooted CAR");
                 return FetchAttemptOutcome::Complete(root_data);
@@ -733,6 +743,7 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
         let missing = match find_all_missing_links(blockstore.as_ref(), &root_data).await {
             Ok(m) => m,
             Err(e) => {
+                state.diagnostics.record_missing_link_walk_error();
                 warn!(root_cid = %root_cid, error = %e, "find_all_missing_links failed");
                 return FetchAttemptOutcome::Incomplete(0, attempt_failures);
             }
@@ -795,9 +806,13 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
         Ok(Some(data)) => data,
         _ => return FetchAttemptOutcome::Incomplete(1, attempt_failures),
     };
-    let remaining = find_all_missing_links(blockstore.as_ref(), &root_data)
-        .await
-        .unwrap_or_default();
+    let remaining = match find_all_missing_links(blockstore.as_ref(), &root_data).await {
+        Ok(remaining) => remaining,
+        Err(e) => {
+            frontier_or_unknown(root_cid, Err(e), state.diagnostics);
+            return FetchAttemptOutcome::Incomplete(1, attempt_failures);
+        }
+    };
 
     if remaining.is_empty() {
         info!(root_cid = %root_cid, doc_id = %context.doc_id, "DAG fetch complete");

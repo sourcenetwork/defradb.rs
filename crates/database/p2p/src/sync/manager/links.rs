@@ -9,6 +9,7 @@ use cid::Cid;
 use blockstore::Blockstore;
 
 use crate::error::{Error, Result};
+use crate::sync::manager::diagnostics::SyncDiagnostics;
 
 /// Parse IPLD block data and return the referenced CIDs that participate in
 /// Block-sync DAG transfer.
@@ -59,10 +60,16 @@ pub(crate) fn extract_ipld_links(block_data: &[u8]) -> Result<Vec<Cid>> {
 /// Walks the entire DAG using a work queue instead of recursion, so stack
 /// depth is constant regardless of DAG depth. Uses `is_merged()` to
 /// short-circuit traversal of already-merged subtrees.
-pub async fn find_all_missing_links<B: Blockstore>(
-    blockstore: &B,
-    block_data: &[u8],
-) -> Result<Vec<Cid>> {
+///
+/// `Ok([])` means every reachable unmerged block was read. A child whose read
+/// fails, or that does not parse, fails the whole walk: the caller does not
+/// know the frontier and must not take the DAG as complete
+/// ([`frontier_or_unknown`]). A storage conflict stays
+/// `Error::BlockstoreTxnConflict`.
+pub async fn find_all_missing_links<B>(blockstore: &B, block_data: &[u8]) -> Result<Vec<Cid>>
+where
+    B: Blockstore,
+{
     let mut missing = Vec::new();
     let mut visited = RapidHashSet::new();
     let mut queue: VecDeque<Bytes> = VecDeque::new();
@@ -89,23 +96,17 @@ pub async fn find_all_missing_links<B: Blockstore>(
                 }
             }
 
-            match blockstore.has(&link_cid).await {
-                Ok(true) => {
-                    // Block exists but not merged — enqueue for further traversal
-                    if let Ok(Some(child_data)) = blockstore.get(&link_cid).await {
-                        queue.push_back(child_data);
-                    }
-                }
-                Ok(false) => {
+            // One read per unmerged child. A block deleted since it was linked
+            // reads as None and is missing; a failed read leaves the frontier
+            // unknown, so it fails the walk instead of passing as present.
+            match blockstore
+                .get(&link_cid)
+                .await
+                .map_err(Error::from_blockstore)?
+            {
+                Some(child_data) => queue.push_back(child_data),
+                None => {
                     tracing::debug!(cid = %link_cid, "Missing block at depth in DAG");
-                    missing.push(link_cid);
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        cid = %link_cid,
-                        error = %e,
-                        "Failed to check if block exists, treating as missing"
-                    );
                     missing.push(link_cid);
                 }
             }
@@ -113,6 +114,29 @@ pub async fn find_all_missing_links<B: Blockstore>(
     }
 
     Ok(missing)
+}
+
+/// The frontier a walk of `root_cid`'s DAG leaves: its missing blocks, or,
+/// when the walk failed, `[root_cid]`, which is never empty, so a local read
+/// fault never reads as a complete DAG. The fault is counted and traced; the
+/// root's owner retries it as it retries any incomplete DAG.
+pub(crate) fn frontier_or_unknown(
+    root_cid: Cid,
+    walk: Result<Vec<Cid>>,
+    diagnostics: &SyncDiagnostics,
+) -> Vec<Cid> {
+    match walk {
+        Ok(missing) => missing,
+        Err(error) => {
+            diagnostics.record_missing_link_walk_error();
+            tracing::warn!(
+                root_cid = %root_cid,
+                error = %error,
+                "DAG walk failed; its frontier is unknown, so the root stays incomplete"
+            );
+            vec![root_cid]
+        }
+    }
 }
 
 #[cfg(test)]
