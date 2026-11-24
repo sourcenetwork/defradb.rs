@@ -8512,9 +8512,9 @@ dependencies = [
 
 [[package]]
 name = "nuclei"
-version = "0.5.8"
+version = "0.5.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "55df2667ae7e12e5800494e832a05940918188f6300ed6daf85a0e1b7cc8a277"
+checksum = "8a2197db20cb0d67d92d45501ae92b7f382f36f4e54a88f4be960622ef553a44"
 dependencies = [
  "futures-core",
  "futures-io",
@@ -8529,9 +8529,9 @@ dependencies = [
 
 [[package]]
 name = "nuclei-macros"
-version = "0.5.8"
+version = "0.5.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "353664366021a4b970ac3ef587f9adbe9f9a89c29b065a1f994f81ee7b9faef7"
+checksum = "9d1ee2ac413a92fd8864f89640633d32c5d4c994e1423dbe48777878f43bd9d1"
 
 [[package]]
 name = "num"
