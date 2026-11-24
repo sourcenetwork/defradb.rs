@@ -21,7 +21,7 @@ use crate::validation::validate_identifier;
 
 /// Go-compatible request to create an index.
 /// Collection is provided in the URL path, not the body.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct GoCreateIndexRequest {
     /// Index name (optional, auto-generated if not provided).
     #[serde(rename = "Name", default)]
@@ -49,7 +49,7 @@ pub struct GoIndexedFieldDescription {
 }
 
 /// Go-compatible index description response.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct GoIndexDescription {
     /// Index name.
     #[serde(rename = "Name")]

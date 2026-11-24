@@ -25,7 +25,7 @@ pub fn chunk_list_field(field: &str) -> String {
 }
 
 /// A `@chunk` field, as the parent collection records it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ChunkedField {
     /// The text field that is chunked.
     #[serde(rename = "Field")]
@@ -62,7 +62,7 @@ impl ChunkedField {
 }
 
 /// The parent field a chunk collection is made from.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ChunkSource {
     /// The parent collection's name.
     #[serde(rename = "Collection")]

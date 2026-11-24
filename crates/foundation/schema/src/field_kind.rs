@@ -23,7 +23,7 @@ use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 /// Scalar field kinds with numeric values matching Go DefraDB.
 ///
 /// These values are stored in the datastore, so they must match exactly.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[repr(u8)]
 #[non_exhaustive]
 pub enum ScalarKind {
@@ -137,7 +137,7 @@ impl ScalarKind {
 }
 
 /// Array field kinds with numeric values matching Go DefraDB.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[repr(u8)]
 #[non_exhaustive]
 pub enum ScalarArrayKind {
@@ -550,6 +550,44 @@ impl FieldKind {
 // Go-compatible JSON serialization
 // ============================================================================
 
+/// The wire view of a [`FieldKind`], for its schema only.
+#[derive(schemars::JsonSchema)]
+#[serde(untagged)]
+#[allow(dead_code)] // only its schema is used
+enum FieldKindWire {
+    Kind(u8),
+    Relation {
+        #[serde(rename = "Array")]
+        is_array: bool,
+        #[serde(rename = "CollectionID")]
+        collection_id: String,
+    },
+    SelfRef {
+        #[serde(rename = "RelativeID")]
+        relative_id: String,
+        #[serde(rename = "Array")]
+        is_array: bool,
+    },
+    Named {
+        #[serde(rename = "Name")]
+        name: String,
+        #[serde(rename = "Array")]
+        is_array: bool,
+    },
+}
+
+/// `FieldKind` writes a `u8` for a scalar or an array, and a two-key object for
+/// a relation, a self reference or a named kind.
+impl schemars::JsonSchema for FieldKind {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "FieldKind".into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        <FieldKindWire as schemars::JsonSchema>::json_schema(generator)
+    }
+}
+
 impl Serialize for FieldKind {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -773,5 +811,55 @@ mod accepts_filter_value_tests {
             is_array: false,
         };
         assert!(!k.accepts_filter_value(&json!("x")));
+    }
+}
+
+#[cfg(test)]
+mod wire_schema_tests {
+    use super::*;
+
+    /// Each `FieldKind` variant's serialized shape has to be one the schema
+    /// admits: an integer for the scalars, a two-key object for the rest.
+    #[test]
+    fn field_kind_schema_admits_every_wire_shape() {
+        let schema = schemars::schema_for!(FieldKind);
+        let schema = serde_json::to_value(&schema).expect("schema serializes");
+        let branches = schema["anyOf"].as_array().expect("anyOf");
+
+        let samples = [
+            serde_json::to_value(FieldKind::from_numeric_kind(2)).unwrap(),
+            serde_json::to_value(FieldKind::Relation {
+                collection_id: "bafkreib".to_string(),
+                is_array: false,
+            })
+            .unwrap(),
+            serde_json::to_value(FieldKind::SelfRef {
+                relative_id: "1".to_string(),
+                is_array: true,
+            })
+            .unwrap(),
+            serde_json::to_value(FieldKind::Named {
+                name: "Text".to_string(),
+                is_array: false,
+            })
+            .unwrap(),
+        ];
+
+        for sample in samples {
+            let keys: Vec<&String> = sample
+                .as_object()
+                .map(|object| object.keys().collect())
+                .unwrap_or_default();
+            let admitted = branches.iter().any(|branch| {
+                if sample.is_number() {
+                    branch["type"] == "integer"
+                } else {
+                    branch["properties"].as_object().is_some_and(|properties| {
+                        keys.iter().all(|key| properties.contains_key(*key))
+                    })
+                }
+            });
+            assert!(admitted, "{sample} is not admitted by {schema}");
+        }
     }
 }

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// Embeddings are AI/ML specific vector representations of document content.
 /// When configured, embeddings may call 3rd party APIs inline with document mutations.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct VectorEmbeddingDescription {
     /// Name of the field on the collection that this embedding applies to.
     #[serde(rename = "FieldName", default)]

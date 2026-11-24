@@ -20,6 +20,7 @@ use crate::handlers::block::SignedBlockResponse;
 use crate::handlers::ccip::CcipResponse;
 use crate::handlers::collections::{CollectionDocIdsResponse, PurgeDocumentsResponse};
 use crate::handlers::graphql::TransactionalQueryRequest;
+use crate::handlers::index::{GoCreateIndexRequest, GoIndexDescription};
 use crate::handlers::lens::{AddLensRequest, SetMigrationResponse};
 use crate::handlers::nac::{
     AddActorRelationshipResult, DeleteActorRelationshipResult, EnableNacRequest,
@@ -32,6 +33,7 @@ use crate::handlers::views::ViewNamesRequest;
 use crate::route_permissions::RoutePermission;
 use crate::router::NodePermission;
 use crate::wire::{DocumentRelationship, DocumentsResult, PermissionProvenance, SourcePermission};
+use schema::CollectionVersion;
 
 use RoutePermission::{Dynamic, Exempt, IdentityOnly};
 
@@ -190,7 +192,7 @@ pub const ROUTES: &[Route] = &[
     row("/api/v0/tx/{id}", DELETE, IdentityOnly, false),
     // Collections
     row_body("/api/v0/collections", GET, required(NodePermission::CollectionGet), false, None, Some(body::<Vec<String>>)),
-    row("/api/v0/collections", POST, required(NodePermission::CollectionPatch), false),
+    row_body("/api/v0/collections", POST, required(NodePermission::CollectionPatch), false, None, Some(body::<Vec<CollectionVersion>>)),
     row("/api/v0/collections", PATCH, required(NodePermission::CollectionPatch), false),
     // Dropping collections by name. This fell to the read default while
     // `delete_collections_by_names` enforced `CollectionPatch` itself, so the
@@ -230,7 +232,7 @@ pub const ROUTES: &[Route] = &[
     row("/api/v0/collections/{name}/document/{docID}", PATCH, required(NodePermission::DocumentUpdate), true),
     row("/api/v0/collections/{name}/document/{docID}", DELETE, required(NodePermission::DocumentDelete), true),
     row("/api/v0/collections/{name}/indexes", GET, required(NodePermission::IndexList), true),
-    row("/api/v0/collections/{name}/indexes", POST, required(NodePermission::IndexCreate), true),
+    row_body("/api/v0/collections/{name}/indexes", POST, required(NodePermission::IndexCreate), true, Some(body::<GoCreateIndexRequest>), Some(body::<GoIndexDescription>)),
     row("/api/v0/collections/{name}/indexes/{index}", DELETE, required(NodePermission::IndexDelete), true),
     // The edge checks `get-collection` first and leaves the encrypted index
     // permission to the operation, so it comes after the collection on every
@@ -322,7 +324,7 @@ pub const ROUTES: &[Route] = &[
     row_body("/api/v0/batch/start", POST, Dynamic, false, None, Some(body::<()>)),
     row_body("/api/v0/batch/sign", POST, Dynamic, false, None, Some(body::<BatchSignResponse>)),
     // Views
-    row("/api/v0/view", POST, required(NodePermission::ViewAdd), false),
+    row_body("/api/v0/view", POST, required(NodePermission::ViewAdd), false, None, Some(body::<Vec<CollectionVersion>>)),
     row_body("/api/v0/view/refresh", POST, required(NodePermission::ViewRefresh), false, None, Some(body::<serde_json::Value>)),
     // Go has no view GC route.
     row_optional_body("/api/v0/views/gc", POST, required(NodePermission::ViewGc), false, body::<ViewNamesRequest>),

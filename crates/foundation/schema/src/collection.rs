@@ -38,7 +38,7 @@ where
 ///
 /// This matches Go's CollectionVersion struct.
 /// Field names use serde rename to match Go's JSON format (PascalCase).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CollectionVersion {
     /// Human-readable collection name
     #[serde(rename = "Name", default)]
