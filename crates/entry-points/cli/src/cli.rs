@@ -79,56 +79,6 @@ pub struct Cli {
     #[arg(long, global = true, env = "DEFRA_NO_KEYRING", num_args = 0..=1, require_equals = true, default_missing_value = "true", value_parser = bool_value_parser())]
     pub no_keyring: Option<bool>,
 
-    /// Vera LCD address used for REST queries
-    #[cfg(feature = "vera")]
-    #[arg(
-        long,
-        alias = "source-hub-address",
-        global = true,
-        env = "DEFRA_VERA_ADDRESS"
-    )]
-    pub vera_address: Option<String>,
-
-    /// Vera gRPC address used for authorization queries
-    #[cfg(feature = "vera")]
-    #[arg(
-        long,
-        alias = "source-hub-grpc-address",
-        global = true,
-        env = "DEFRA_VERA_GRPC_ADDRESS"
-    )]
-    pub vera_grpc_address: Option<String>,
-
-    /// Vera CometBFT RPC address for transaction broadcast
-    #[cfg(feature = "vera")]
-    #[arg(
-        long,
-        alias = "source-hub-comet-address",
-        global = true,
-        env = "DEFRA_VERA_COMET_ADDRESS"
-    )]
-    pub vera_comet_address: Option<String>,
-
-    /// Vera CometBFT WebSocket endpoint for ACP cache invalidation
-    #[cfg(feature = "vera")]
-    #[arg(
-        long,
-        aliases = ["source-hub-events-ws", "sourcehub-events-ws"],
-        global = true,
-        env = "DEFRA_VERA_EVENTS_WS"
-    )]
-    pub vera_events_ws: Option<String>,
-
-    /// Vera chain ID (e.g., "vera-test")
-    #[cfg(feature = "vera")]
-    #[arg(
-        long,
-        alias = "source-hub-chain-id",
-        global = true,
-        env = "DEFRA_VERA_CHAIN_ID"
-    )]
-    pub vera_chain_id: Option<String>,
-
     /// vera.rs JSON-RPC endpoint (e.g., "http://localhost:8545")
     #[cfg(feature = "vera")]
     #[arg(long, global = true, env = "DEFRA_VERA_RS_ADDRESS")]
@@ -267,26 +217,5 @@ impl Cli {
             Command::ServerDump(args) => args.execute(&config).await,
             Command::Storage(args) => args.execute(&config).await,
         }
-    }
-}
-
-#[cfg(all(test, feature = "vera"))]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn vera_events_endpoint_flows_into_config() {
-        let cli = Cli::try_parse_from([
-            "defra",
-            "--vera-events-ws",
-            "ws://127.0.0.1:26657/websocket",
-            "version",
-        ])
-        .unwrap();
-        let mut config = Config::default();
-
-        config.apply_cli_flags(&cli).unwrap();
-
-        assert_eq!(config.acp.vera_events_ws, "ws://127.0.0.1:26657/websocket");
     }
 }

@@ -29,16 +29,6 @@ fn cli_with_defaults() -> Cli {
         keyring_path: None,
         no_keyring: None,
         #[cfg(feature = "vera")]
-        vera_address: None,
-        #[cfg(feature = "vera")]
-        vera_grpc_address: None,
-        #[cfg(feature = "vera")]
-        vera_comet_address: None,
-        #[cfg(feature = "vera")]
-        vera_events_ws: None,
-        #[cfg(feature = "vera")]
-        vera_chain_id: None,
-        #[cfg(feature = "vera")]
         vera_rs_address: None,
         #[cfg(feature = "vera")]
         vera_consensus_key: None,
@@ -169,11 +159,6 @@ fn test_apply_cli_flags_valid_values_succeed() {
     cli.acp_document_type = Some(cli::config::AcpDocumentType::Local);
     #[cfg(feature = "vera")]
     {
-        cli.vera_address = Some("http://localhost:1317".to_string());
-        cli.vera_grpc_address = Some("http://localhost:9090".to_string());
-        cli.vera_comet_address = Some("http://localhost:26657".to_string());
-        cli.vera_events_ws = Some("ws://localhost:26657/websocket".to_string());
-        cli.vera_chain_id = Some("vera-test".to_string());
         cli.vera_rs_address = Some("http://localhost:8545".to_string());
         cli.vera_consensus_key = Some("trusted-key".to_string());
         cli.vera_deployment_id = Some(9001);
@@ -200,11 +185,6 @@ fn test_apply_cli_flags_valid_values_succeed() {
     assert_eq!(config.acp.document_type, AcpDocumentType::Local);
     #[cfg(feature = "vera")]
     {
-        assert_eq!(config.acp.vera_address, "http://localhost:1317");
-        assert_eq!(config.acp.vera_grpc_address, "http://localhost:9090");
-        assert_eq!(config.acp.vera_comet_address, "http://localhost:26657");
-        assert_eq!(config.acp.vera_events_ws, "ws://localhost:26657/websocket");
-        assert_eq!(config.acp.vera_chain_id, "vera-test");
         assert_eq!(config.acp.vera_rs_address, "http://localhost:8545");
         assert_eq!(config.acp.vera_consensus_key, "trusted-key");
         assert_eq!(config.acp.vera_deployment_id, Some(9001));
@@ -225,16 +205,6 @@ const CONFIG_BACKED_GLOBAL_FLAGS: &[&str] = &[
     "keyring-backend",
     "keyring-path",
     "no-keyring",
-    #[cfg(feature = "vera")]
-    "vera-address",
-    #[cfg(feature = "vera")]
-    "vera-grpc-address",
-    #[cfg(feature = "vera")]
-    "vera-comet-address",
-    #[cfg(feature = "vera")]
-    "vera-events-ws",
-    #[cfg(feature = "vera")]
-    "vera-chain-id",
     #[cfg(feature = "vera")]
     "vera-rs-address",
     #[cfg(feature = "vera")]

@@ -665,33 +665,8 @@ pub struct AcpConfig {
     ///
     /// - `none`: No document-level access control (default)
     /// - `local`: Local Zanzibar-based access control
-    /// - `vera`: Remote Vera access control
+    /// - `verars`: Vera access control
     pub document_type: AcpDocumentType,
-
-    /// Vera LCD endpoint (e.g., "http://localhost:1317")
-    #[cfg(feature = "vera")]
-    #[serde(default, alias = "sourcehub_address")]
-    pub vera_address: String,
-
-    /// Vera gRPC endpoint (e.g., "http://localhost:9090")
-    #[cfg(feature = "vera")]
-    #[serde(default, alias = "sourcehub_grpc_address")]
-    pub vera_grpc_address: String,
-
-    /// Vera CometBFT RPC endpoint (e.g., "http://localhost:26657")
-    #[cfg(feature = "vera")]
-    #[serde(default, alias = "sourcehub_comet_address")]
-    pub vera_comet_address: String,
-
-    /// Vera CometBFT WebSocket endpoint for ACP cache invalidation.
-    #[cfg(feature = "vera")]
-    #[serde(default, alias = "sourcehub_events_ws")]
-    pub vera_events_ws: String,
-
-    /// Vera chain ID (e.g., "vera-test")
-    #[cfg(feature = "vera")]
-    #[serde(default, alias = "sourcehub_chain_id")]
-    pub vera_chain_id: String,
 
     /// vera.rs JSON-RPC endpoint (e.g., "http://localhost:8545")
     #[cfg(feature = "vera")]
@@ -741,38 +716,17 @@ pub struct AcpConfig {
     #[serde(default)]
     pub remote_address: String,
 
-    /// Circuit breaker failure threshold before tripping. Default: 3.
-    #[serde(default = "default_acp_cb_threshold")]
-    pub circuit_breaker_threshold: u32,
-
-    /// Circuit breaker reset timeout in seconds. Default: 30.
-    #[serde(default = "default_acp_cb_reset_timeout")]
-    pub circuit_breaker_reset_timeout: u64,
-
-    /// Request timeout in seconds for Vera/vera.rs network calls. Default: 5.
+    /// Request timeout in seconds for vera.rs network calls. Default: 5.
     #[serde(default = "default_acp_request_timeout")]
     pub request_timeout: u64,
-
-    /// Policy cache TTL in seconds. Default: 300.
-    #[serde(default = "default_acp_cache_ttl")]
-    pub cache_ttl: u64,
 
     /// Receipt polling timeout in seconds for vera.rs transactions. Default: 30.
     #[serde(default = "default_acp_receipt_timeout")]
     pub receipt_timeout: u64,
 }
 
-fn default_acp_cb_threshold() -> u32 {
-    3
-}
-fn default_acp_cb_reset_timeout() -> u64 {
-    30
-}
 fn default_acp_request_timeout() -> u64 {
     5
-}
-fn default_acp_cache_ttl() -> u64 {
-    300
 }
 fn default_acp_receipt_timeout() -> u64 {
     30
@@ -788,16 +742,6 @@ impl Default for AcpConfig {
             node_enable: false,
             document_type: AcpDocumentType::None,
             #[cfg(feature = "vera")]
-            vera_address: String::new(),
-            #[cfg(feature = "vera")]
-            vera_grpc_address: String::new(),
-            #[cfg(feature = "vera")]
-            vera_comet_address: String::new(),
-            #[cfg(feature = "vera")]
-            vera_events_ws: String::new(),
-            #[cfg(feature = "vera")]
-            vera_chain_id: String::new(),
-            #[cfg(feature = "vera")]
             vera_rs_address: String::new(),
             #[cfg(feature = "vera")]
             vera_consensus_key: String::new(),
@@ -812,10 +756,7 @@ impl Default for AcpConfig {
             #[cfg(feature = "embedded-vera")]
             vera_embedded_listen: default_vera_embedded_listen(),
             remote_address: String::new(),
-            circuit_breaker_threshold: default_acp_cb_threshold(),
-            circuit_breaker_reset_timeout: default_acp_cb_reset_timeout(),
             request_timeout: default_acp_request_timeout(),
-            cache_ttl: default_acp_cache_ttl(),
             receipt_timeout: default_acp_receipt_timeout(),
         }
     }
@@ -824,31 +765,10 @@ impl Default for AcpConfig {
 impl AcpConfig {
     /// Validate ACP tuning parameters.
     pub fn validate(&self) -> Result<()> {
-        if self.circuit_breaker_threshold == 0 {
-            return Err(Error::InvalidConfig(
-                "acp_circuit_breaker_threshold must be > 0: \
-                 a zero threshold means the circuit breaker trips immediately"
-                    .into(),
-            ));
-        }
-        if self.circuit_breaker_reset_timeout == 0 {
-            return Err(Error::InvalidConfig(
-                "acp_circuit_breaker_reset_timeout must be > 0: \
-                 a zero reset timeout means the circuit breaker never recovers"
-                    .into(),
-            ));
-        }
         if self.request_timeout == 0 {
             return Err(Error::InvalidConfig(
                 "acp_request_timeout must be > 0: \
                  a zero timeout disables the deadline and requests may hang indefinitely"
-                    .into(),
-            ));
-        }
-        if self.cache_ttl == 0 {
-            return Err(Error::InvalidConfig(
-                "acp_cache_ttl must be > 0: \
-                 a zero TTL means every policy lookup bypasses the cache entirely"
                     .into(),
             ));
         }

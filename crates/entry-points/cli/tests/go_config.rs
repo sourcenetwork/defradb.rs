@@ -24,38 +24,44 @@ mod vera {
     use cli::config::AcpDocumentType;
 
     #[test]
-    fn remote_selects_vera_from_flag_and_yaml() {
-        let cli =
-            Cli::try_parse_from(["defradb", "--document-acp-type", "remote", "version"]).unwrap();
-        let mut config = Config::default();
-        config.apply_cli_flags(&cli).unwrap();
-        assert_eq!(config.acp.document_type, AcpDocumentType::Vera);
-
-        let config = load("document:\n  type: remote\n", &[]);
-        assert_eq!(config.acp.document_type, AcpDocumentType::Vera);
+    fn go_remote_document_acp_is_refused_from_flag_and_yaml() {
+        assert!(
+            Cli::try_parse_from(["defradb", "--document-acp-type", "remote", "version"]).is_err()
+        );
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join("config.yaml"),
+            "acp:\n  document:\n    type: remote\n",
+        )
+        .unwrap();
+        let cli = Cli::try_parse_from([
+            "defradb",
+            "--rootdir",
+            root.path().to_str().unwrap(),
+            "version",
+        ])
+        .unwrap();
+        assert!(Config::load(&cli).is_err());
     }
 
     #[test]
-    fn go_nested_remote_keys_fill_the_vera_fields_case_insensitively() {
+    fn go_nested_remote_address_fills_the_rust_key_and_chain_keys_are_dropped() {
         let config = load(
-            "Document:\n  Type: remote\n  Remote:\n    LogID: chain-1\n    GRPCAddress: http://grpc:9090\n    CometRPCAddress: http://comet:26657\n    KeyName: ignored\n    Address: acct-1\n",
+            "Document:\n  Type: verars\n  Remote:\n    LogID: chain-1\n    GRPCAddress: http://grpc:9090\n    CometRPCAddress: http://comet:26657\n    KeyName: ignored\n    Address: acct-1\n",
             &[],
         );
-        assert_eq!(config.acp.document_type, AcpDocumentType::Vera);
-        assert_eq!(config.acp.vera_chain_id, "chain-1");
-        assert_eq!(config.acp.vera_grpc_address, "http://grpc:9090");
-        assert_eq!(config.acp.vera_comet_address, "http://comet:26657");
+        assert_eq!(config.acp.document_type, AcpDocumentType::VeraRs);
         assert_eq!(config.acp.remote_address, "acct-1");
     }
 
     #[test]
     fn rust_keys_win_over_go_keys() {
         let config = load(
-            "document_type: verars\nvera_chain_id: rust-chain\ndocument:\n  type: remote\n  remote:\n    logid: go-chain\n",
+            "document_type: verars\nremote_address: rust-account\ndocument:\n  type: local\n  remote:\n    address: go-account\n",
             &[],
         );
         assert_eq!(config.acp.document_type, AcpDocumentType::VeraRs);
-        assert_eq!(config.acp.vera_chain_id, "rust-chain");
+        assert_eq!(config.acp.remote_address, "rust-account");
     }
 }
 

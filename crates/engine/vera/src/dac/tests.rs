@@ -6,7 +6,7 @@ use kovan_queue::seg_queue::SegQueue;
 use super::*;
 
 mod cache_mutations;
-#[path = "../../../tests/unit/access_cache_race.rs"]
+#[path = "../../tests/unit/access_cache_race.rs"]
 mod cache_race;
 mod owed;
 mod registration_batch;

@@ -54,75 +54,6 @@ impl Node {
         edge: &edge::Edge,
     ) -> Result<DocumentAcpSetup> {
         #[cfg(feature = "vera")]
-        if config.acp.document_type == AcpDocumentType::Vera {
-            if config.acp.vera_address.is_empty() {
-                return Err(Error::InvalidConfig(
-                    "vera_address required when document_type is vera".into(),
-                ));
-            }
-
-            let signer_key_bytes = identity_key_bytes.ok_or_else(|| {
-                Error::InvalidConfig("node identity required for Vera ACP (use --identity)".into())
-            })?;
-
-            let tuning = vera::AcpTuning {
-                request_timeout: std::time::Duration::from_secs(config.acp.request_timeout),
-                circuit_breaker_threshold: config.acp.circuit_breaker_threshold,
-                circuit_breaker_reset_timeout: std::time::Duration::from_secs(
-                    config.acp.circuit_breaker_reset_timeout,
-                ),
-                cache_ttl: std::time::Duration::from_secs(config.acp.cache_ttl),
-                receipt_timeout: std::time::Duration::from_secs(config.acp.receipt_timeout),
-                ..vera::AcpTuning::default()
-            };
-
-            info!(
-                request_timeout_s = config.acp.request_timeout,
-                circuit_breaker_threshold = config.acp.circuit_breaker_threshold,
-                circuit_breaker_reset_timeout_s = config.acp.circuit_breaker_reset_timeout,
-                cache_ttl_s = config.acp.cache_ttl,
-                receipt_timeout_s = config.acp.receipt_timeout,
-                "Resolved ACP tuning (Vera)"
-            );
-
-            let provider = Arc::new(
-                vera::CosmosProvider::new_with_grpc(
-                    config.acp.vera_address.clone(),
-                    if config.acp.vera_grpc_address.is_empty() {
-                        config.acp.vera_address.clone()
-                    } else {
-                        config.acp.vera_grpc_address.clone()
-                    },
-                    config.acp.vera_comet_address.clone(),
-                    signer_key_bytes,
-                    &config.acp.vera_chain_id,
-                    &tuning,
-                    edge,
-                )
-                .map_err(|e| Error::InvalidConfig(format!("Vera provider: {}", e)))?,
-            );
-
-            let document_acp = vera::VeraDocumentACP::tuned(provider, &tuning, Some(edge));
-            let document_acp = if config.acp.vera_events_ws.is_empty() {
-                document_acp
-            } else {
-                document_acp
-                    .with_cosmos_event_invalidation(config.acp.vera_events_ws.clone(), edge)
-                    .map_err(|e| Error::InvalidConfig(format!("Vera event subscriber: {}", e)))?
-            };
-            let document_acp = Arc::new(document_acp);
-            let dac_policies = db::DacPolicies::remote(document_acp.clone(), zanzibar_store);
-
-            info!("Document ACP configured (Vera)");
-            return Ok(DocumentAcpSetup {
-                document_acp: gate_external_acp(document_acp, store, edge),
-                dac_policies: Arc::new(dac_policies),
-                #[cfg(feature = "embedded-vera")]
-                embedded_vera: None,
-            });
-        }
-
-        #[cfg(feature = "vera")]
         if config.acp.document_type == AcpDocumentType::VeraRs {
             if config.acp.vera_rs_address.is_empty() {
                 return Err(Error::InvalidConfig(
@@ -280,18 +211,11 @@ fn gate_external_acp(
 pub(super) fn vera_rs_tuning(config: &Config) -> vera::AcpTuning {
     info!(
         request_timeout_s = config.acp.request_timeout,
-        circuit_breaker_threshold = config.acp.circuit_breaker_threshold,
-        circuit_breaker_reset_timeout_s = config.acp.circuit_breaker_reset_timeout,
         receipt_timeout_s = config.acp.receipt_timeout,
-        "Resolved ACP tuning (vera.rs; access decision cache disabled)"
+        "Resolved ACP tuning (vera.rs)"
     );
     vera::AcpTuning {
         request_timeout: std::time::Duration::from_secs(config.acp.request_timeout),
-        circuit_breaker_threshold: config.acp.circuit_breaker_threshold,
-        circuit_breaker_reset_timeout: std::time::Duration::from_secs(
-            config.acp.circuit_breaker_reset_timeout,
-        ),
-        cache_ttl: std::time::Duration::from_secs(config.acp.cache_ttl),
         receipt_timeout: std::time::Duration::from_secs(config.acp.receipt_timeout),
         ..vera::AcpTuning::default()
     }

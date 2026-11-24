@@ -75,7 +75,7 @@ pub enum ProviderError {
     #[error("config error: {0}")]
     Config(String),
 
-    /// Vera is temporarily unreachable (circuit breaker open or timeout).
+    /// Vera is temporarily unreachable (a timeout or a failed connection).
     /// All access decisions must fail-closed when this is returned.
     #[error("Vera unavailable: {0}")]
     Unavailable(String),

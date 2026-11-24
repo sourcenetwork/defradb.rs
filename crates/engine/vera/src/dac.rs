@@ -1,8 +1,7 @@
 //! Vera DocumentACP implementation.
 //!
 //! Implements the `DocumentACP` trait by delegating to a `VeraProvider`
-//! for all on-chain communication. The provider abstraction allows swapping
-//! between Cosmos SDK and EVM backends.
+//! for all communication with Vera.
 
 use std::future::Future;
 use std::sync::Arc;
@@ -21,19 +20,18 @@ use crate::provider::{
 };
 use crate::{PolicyAction, PolicyCommand, PolicySubject};
 
-/// DocumentACP backed by Vera's on-chain x/acp module.
+/// DocumentACP backed by Vera's ACP module.
 ///
 /// Delegates write and read operations to a `VeraProvider` implementation.
-/// By default it caches `verify_access` results to avoid redundant network
-/// roundtrips. vera.rs can opt out because remote ACP state may change outside
-/// DefraDB's mutation path.
+/// [`new`](Self::new) caches allowed `verify_access` results for a TTL;
+/// [`without_access_cache`](Self::without_access_cache) asks the provider every
+/// time, as a node does, because Vera's ACP state changes outside DefraDB's
+/// mutation path.
 pub struct VeraDocumentACP {
     provider: Arc<dyn VeraProvider>,
     access_cache: Option<Arc<AccessCache>>,
     /// Remote decisions: one call per tuple in flight, a deadline, retries.
     decisions: inputs::Service<RemoteDecisions>,
-    #[cfg(not(target_arch = "wasm32"))]
-    event_subscriber: Option<super::event_subscriber::CosmosEventSubscriber>,
     /// The request this ACP serves, for one bound to it: the bearer tokens
     /// its callers write with.
     context: Option<defra_core::RequestContext>,
@@ -56,8 +54,6 @@ impl VeraDocumentACP {
             decisions: Self::decisions(&provider, inputs::Runtime::on_demand(), DECISION_TIMEOUT),
             provider,
             access_cache,
-            #[cfg(not(target_arch = "wasm32"))]
-            event_subscriber: None,
             context: None,
         }
     }
@@ -76,21 +72,6 @@ impl VeraDocumentACP {
         )
     }
 
-    /// A cached ACP as `tuning` sets it, its remote decisions on the network
-    /// runtime `network` when the node has one, else on the process's
-    /// on-demand runtime.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn tuned(
-        provider: Arc<dyn VeraProvider>,
-        tuning: &crate::AcpTuning,
-        network: Option<&edge::Edge>,
-    ) -> Self {
-        let runtime = network.map_or_else(inputs::Runtime::on_demand, |edge| {
-            inputs::Runtime::edge(edge.clone())
-        });
-        Self::new(provider, tuning.cache_ttl).on_runtime(runtime, tuning.request_timeout)
-    }
-
     /// Remote decisions run on the network runtime `edge`, each within twice
     /// `request_timeout` (one retry).
     #[cfg(not(target_arch = "wasm32"))]
@@ -107,30 +88,6 @@ impl VeraDocumentACP {
     /// The metrics of remote decisions.
     pub fn decision_stats(&self) -> &inputs::Stats {
         self.decisions.stats()
-    }
-
-    /// Invalidate the access cache from the Cosmos chain's ACP events, read
-    /// over a WebSocket that runs on the network runtime `edge`.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn with_cosmos_event_invalidation(
-        mut self,
-        websocket_url: impl Into<String>,
-        edge: &edge::Edge,
-    ) -> std::result::Result<Self, ProviderError> {
-        let cache = self.access_cache.as_ref().ok_or_else(|| {
-            ProviderError::Config(
-                "Cosmos event invalidation requires the access cache to be enabled".into(),
-            )
-        })?;
-        self.event_subscriber = Some(super::event_subscriber::CosmosEventSubscriber::start(
-            websocket_url.into(),
-            Arc::clone(cache),
-            edge,
-        )?);
-        // Events now reach the cache: denials and registrations are cached
-        // too, cut short by the events like allows (D36).
-        cache.receive_events();
-        Ok(self)
     }
 
     fn invalidate_cached_access(&self, policy_id: &str) {
@@ -201,35 +158,14 @@ impl VeraDocumentACP {
         Ok(Some(policy))
     }
 
-    /// Whether the document is registered: from the cache while events
-    /// reach it, else asked of the provider.
+    /// Whether the document is registered, as its provider answers.
     async fn is_registered(
         &self,
         policy_id: &str,
         resource_name: &str,
         doc_id: &str,
     ) -> std::result::Result<bool, acp::Error> {
-        if let Some(registered) = self
-            .access_cache
-            .as_ref()
-            .and_then(|cache| cache.registration(policy_id, resource_name, doc_id))
-        {
-            return Ok(registered);
-        }
-        let generation = self
-            .access_cache
-            .as_ref()
-            .map(|cache| cache.registration_generation());
         let (is_registered, _owner) = self.object_owner(policy_id, resource_name, doc_id).await?;
-        if let (Some(cache), Some(generation)) = (&self.access_cache, generation) {
-            cache.remember_registration(
-                policy_id,
-                resource_name,
-                doc_id,
-                is_registered,
-                generation,
-            );
-        }
         Ok(is_registered)
     }
 
@@ -514,8 +450,6 @@ impl DocumentACP for VeraDocumentACP {
             provider: Arc::clone(&self.provider),
             access_cache: self.access_cache.clone(),
             decisions: self.decisions.clone(),
-            #[cfg(not(target_arch = "wasm32"))]
-            event_subscriber: None,
             context: Some(context.clone()),
         }))
     }
@@ -602,8 +536,6 @@ impl DocumentACP for VeraDocumentACP {
             provider: Arc::clone(&self.provider),
             access_cache: self.access_cache.clone(),
             decisions: self.decisions.clone(),
-            #[cfg(not(target_arch = "wasm32"))]
-            event_subscriber: None,
             context: None,
         });
         Some(Arc::new(owed_journal::VeraOwedJournal { acp }))
@@ -834,16 +766,11 @@ impl DocumentACP for VeraDocumentACP {
                 other => acp::Error::Storage(format!("Vera: {other}")),
             })?;
 
-        // A denial is cached only where invalidation events reach the cache
-        // (D36); an allow always is.
+        // Only an allow is cached: a cached denial would delay seeing a
+        // grant made elsewhere.
         if let Some(pending) = pending {
-            if result
-                || self
-                    .access_cache
-                    .as_ref()
-                    .is_some_and(|cache| cache.caches_denials())
-            {
-                pending.complete(result);
+            if result {
+                pending.complete(true);
             }
         }
 
@@ -1136,7 +1063,8 @@ impl DocumentACP for VeraDocumentACP {
             return Ok(());
         }
 
-        // vera.rs uses node's DID for archive; Cosmos uses the owner's DID
+        // The node archives as its own actor where the provider names one,
+        // else as the object's owner.
         let archive_did = self
             .provider
             .self_did()

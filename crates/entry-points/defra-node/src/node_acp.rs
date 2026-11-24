@@ -37,64 +37,6 @@ where
 {
     match config {
         #[cfg(feature = "vera")]
-        crate::DocumentAcpConfig::Vera(vera_config) => {
-            let tuning = vera::AcpTuning::default();
-            let provider = Arc::new(
-                vera::CosmosProvider::new(
-                    vera_config.grpc_address.clone(),
-                    vera_config.comet_rpc_address.clone(),
-                    &vera_config.signer_key,
-                    &vera_config.chain_id,
-                    &tuning,
-                    &remote_edge(network)?,
-                )
-                .map_err(Error::VeraProvider)?,
-            );
-            let sh_acp = Arc::new(vera::VeraDocumentACP::tuned(provider, &tuning, network));
-            let dac_policies = vera_policies(&sh_acp, &store);
-            let (document_acp, redrive) = gate_external_acp(sh_acp.clone(), store);
-            Ok(DocumentAcpSetup {
-                document_acp,
-                local_zanzibar_store: None,
-                dac_policies,
-                vera_acp: Some(sh_acp),
-                redrive: Some(redrive),
-                #[cfg(feature = "embedded-vera")]
-                embedded_vera: None,
-            })
-        }
-        #[cfg(feature = "vera")]
-        crate::DocumentAcpConfig::VeraWithLcd {
-            config: vera_config,
-            lcd_address,
-        } => {
-            let tuning = vera::AcpTuning::default();
-            let provider = Arc::new(
-                vera::CosmosProvider::new_with_grpc(
-                    lcd_address.clone(),
-                    vera_config.grpc_address.clone(),
-                    vera_config.comet_rpc_address.clone(),
-                    &vera_config.signer_key,
-                    &vera_config.chain_id,
-                    &tuning,
-                    &remote_edge(network)?,
-                )
-                .map_err(Error::VeraProvider)?,
-            );
-            let vera_acp = Arc::new(vera::VeraDocumentACP::tuned(provider, &tuning, network));
-            let dac_policies = vera_policies(&vera_acp, &store);
-            let (document_acp, redrive) = gate_external_acp(vera_acp.clone(), store);
-            Ok(DocumentAcpSetup {
-                document_acp,
-                local_zanzibar_store: None,
-                dac_policies,
-                vera_acp: Some(vera_acp),
-                redrive: Some(redrive),
-                #[cfg(feature = "embedded-vera")]
-                embedded_vera: None,
-            })
-        }
-        #[cfg(feature = "vera")]
         crate::DocumentAcpConfig::VeraRs(config) => {
             let edge = remote_edge(network)?;
             let worker = {

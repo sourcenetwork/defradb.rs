@@ -75,9 +75,6 @@ fn default_start_args() -> StartArgs {
         p2p_transport: None,
         #[cfg(feature = "postgres")]
         pg_address: None,
-        acp_cache_ttl: None,
-        acp_circuit_breaker_threshold: None,
-        acp_circuit_breaker_reset_timeout: None,
         acp_request_timeout: None,
         acp_receipt_timeout: None,
         embedding_url: None,
@@ -210,9 +207,6 @@ fn test_apply_to_config_all_flags() {
         p2p_transport: Some("libp2p".to_string()),
         #[cfg(feature = "postgres")]
         pg_address: Some("127.0.0.1:5433".to_string()),
-        acp_cache_ttl: Some(600),
-        acp_circuit_breaker_threshold: Some(5),
-        acp_circuit_breaker_reset_timeout: Some(45),
         acp_request_timeout: Some(10),
         acp_receipt_timeout: Some(90),
         embedding_url: Some("http://localhost:11434/v1".to_string()),
@@ -273,9 +267,6 @@ fn test_apply_to_config_all_flags() {
     assert_eq!(config.net.transport, TransportType::Libp2p);
     #[cfg(feature = "postgres")]
     assert_eq!(config.api.pg_address, "127.0.0.1:5433");
-    assert_eq!(config.acp.cache_ttl, 600);
-    assert_eq!(config.acp.circuit_breaker_threshold, 5);
-    assert_eq!(config.acp.circuit_breaker_reset_timeout, 45);
     assert_eq!(config.acp.request_timeout, 10);
     assert_eq!(config.acp.receipt_timeout, 90);
     assert_eq!(config.embedding.url, "http://localhost:11434/v1");
@@ -426,13 +417,7 @@ const QUERY_START_FLAGS: &[&str] = &[
 ];
 
 // Consumed by start/server_acp.rs provider construction.
-const ACP_START_FLAGS: &[&str] = &[
-    "acp-circuit-breaker-threshold",
-    "acp-circuit-breaker-reset-timeout",
-    "acp-request-timeout",
-    "acp-cache-ttl",
-    "acp-receipt-timeout",
-];
+const ACP_START_FLAGS: &[&str] = &["acp-request-timeout", "acp-receipt-timeout"];
 
 // Consumed by start/server.rs when constructing DbOptions.
 const EMBEDDING_START_FLAGS: &[&str] =

@@ -426,11 +426,11 @@ fn a_change_records_the_nodes_key_before_the_requests_delegation() {
 fn a_provider_that_takes_no_delegation_is_passed_its_callers_token() {
     let acp = VeraDocumentACP::without_access_cache(OwedProvider::new(false));
     assert_eq!(
-        carrying(&acp, REMOTE, "a.cosmos.token")
+        carrying(&acp, REMOTE, "a.plain.token")
             .owed_authority(&did(REMOTE))
             .unwrap(),
         OwedAuthority::Delegation {
-            token: "a.cosmos.token".into()
+            token: "a.plain.token".into()
         }
     );
 }
@@ -878,7 +878,7 @@ fn a_verified_write_takes_no_delegation_the_node_cannot_verify() {
         .bind_request(
             &RequestContext::default()
                 .with_transactional_authority_required()
-                .with_bearer(Some(REMOTE.to_string()), Some("a.cosmos.token".into())),
+                .with_bearer(Some(REMOTE.to_string()), Some("a.plain.token".into())),
         )
         .expect("a Vera ACP serves the request it is bound to");
     assert!(matches!(

@@ -7,13 +7,10 @@ flow back to the database.
 ## What it is
 
 `crates/engine/vera` defines the `VeraProvider` interface: create policies, register and
-archive objects, set and delete relationships, check access. Two implementations:
-
-- **CosmosProvider**: a Cosmos-SDK chain over LCD/gRPC, transactions broadcast to it,
-  and a WebSocket subscriber for cache invalidation.
-- **VeraRsProvider**: the native vera.rs chain (commonware consensus), commands signed
-  and submitted through a worker, and the chain state verified by a light client
-  (trusted consensus key, height tracking).
+archive objects, set and delete relationships, check access. Its implementation is
+**VeraRsProvider**: the native vera.rs chain (commonware consensus), commands signed
+and submitted through a worker, and the chain state verified by a light client
+(trusted consensus key, height tracking). A host can supply a provider of its own.
 
 **Policy IDs.** vera.rs names a policy by its definition, its creator and a 32-byte
 nonce the creator picks: `SHA-256("acp/policy-id/v2" || policy hash || nonce ||
@@ -85,12 +82,9 @@ transaction as owed to the provider and submitted after the commit
   submitted again after a crash settles, unless the acting DID lost its authority in
   between (then it is parked as refused) or another manager changed the relationship in
   between (then it is applied again).
-- **The Cosmos provider.** A broadcast that timed out or failed in transport leaves the
-  change staged. A transaction the node could not key or sign is the node's own error
-  and counts for nothing. Any other failed transaction is an answer the provider does
-  not classify: the change stays staged, the pass goes on, and five such answers park it
-  as refused. It takes no userset or cross-object subject, so such a change is refused
-  at staging.
+- **A host's own provider** that classifies no refusal. A call that failed leaves the
+  change staged: the pass goes on, and five such answers park it as refused. One that
+  takes no userset or cross-object subject has such a change refused at staging.
 
 ## Acting for a signer: delegations and the one-request form
 
@@ -284,8 +278,8 @@ provides. Vera is opt-in: without it, local Zanzibar ACP is the whole story.
 
 External decisions are remote inputs, so they follow the doctrine's remote-input rules:
 resolved at the edge, never inside a retried closure, memoized by request bytes across
-attempts, single-flight, batched, cached (access-decision and policy caches with the
-circuit breaker and tuning knobs in `crates/engine/vera/src/`), with staleness documented and
+attempts, single-flight, batched, cached (decisions keyed by the verified state they were read at, with the
+tuning knobs in `crates/engine/vera/src/`), with staleness documented and
 a persisted-decision path for signers to verify via the light client.
 
 > **Why fail closed.** An external decider that times out is not "probably fine": it is

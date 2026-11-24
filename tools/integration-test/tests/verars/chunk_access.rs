@@ -3,10 +3,10 @@
 
 use std::time::Duration;
 
-use integration_test::{generate_identity, poll_until, TestCluster, USER_ACP_POLICY};
-use integration_test::{vera_cli_binary, BinarySource};
+use integration_test::{generate_identity, poll_until, USER_ACP_POLICY};
 
 use super::chunk_support::{body, visible_hashes};
+use super::helpers;
 
 const COLLECTIONS: [&str; 2] = ["Article", "Article__body_chunk"];
 
@@ -23,20 +23,13 @@ fn schema(policy_id: &str) -> String {
 #[serial_test::serial]
 async fn a_peer_shows_chunks_only_to_readers_of_the_parent() {
     edge::compat(async {
-        let binary = vera_cli_binary();
-        let jack = generate_identity(&binary).expect("Jack identity");
-        let bob = generate_identity(&binary).expect("Bob identity");
+        let jack = helpers::funded_identity();
+        let bob = generate_identity(&helpers::defra_binary()).expect("Bob identity");
         let (jack_key, bob_key) = (jack.private_key_hex.as_str(), bob.private_key_hex.as_str());
 
-        let cluster = TestCluster::builder()
-            .rust_nodes(2)
-            .with_rust_binary(BinarySource::Path(binary.clone()))
-            .with_vera()
-            .with_identity(jack_key)
-            .with_p2p()
-            .build()
-            .await
-            .expect("Vera p2p cluster");
+        let hub = helpers::start_hub_cluster().await;
+        let cluster =
+            helpers::build_defra_with_vera_rs(&hub.node(0).rpc_url(), jack_key, 2, true).await;
         let (node0, node1) = (cluster.client(0), cluster.client(1));
 
         let policy = node0.acp_policy_add(USER_ACP_POLICY, jack_key).unwrap();
@@ -48,8 +41,6 @@ async fn a_peer_shows_chunks_only_to_readers_of_the_parent() {
         node0
             .schema_add_with_identity(&schema(&policy_id), jack_key)
             .unwrap();
-        node1.acp_policy_add(USER_ACP_POLICY, jack_key).unwrap();
-        nuclei::time::sleep(Duration::from_secs(2)).await;
         node1
             .schema_add_with_identity(&schema(&policy_id), jack_key)
             .unwrap();

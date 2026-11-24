@@ -8,6 +8,8 @@ use std::time::Duration;
 use crate::assemble::check_access_hooks;
 use crate::assemble::{assemble, Extras};
 use crate::config::{NodeConfig, NodeSigning, Persistence, SigningKey, TransportConfig};
+#[cfg(feature = "vera")]
+use crate::DocumentAcpConfig;
 #[cfg(feature = "http")]
 use crate::HttpConfig;
 use crate::Node;
@@ -15,8 +17,6 @@ use crate::Node;
 use crate::TelemetryHandle;
 #[cfg(feature = "p2p")]
 use crate::{AccessHooks, P2PConfig};
-#[cfg(feature = "vera")]
-use crate::{DocumentAcpConfig, VeraConfig};
 use crate::{Error, QueryLimits, Result};
 
 /// Selects which persistent storage backend to use when `data_path` is set.
@@ -228,25 +228,6 @@ impl NodeBuilder {
     /// Set the resolved embedding API key value used for Authorization headers.
     pub fn with_embedding_api_key(mut self, api_key: impl Into<String>) -> Self {
         self.embedding_api_key = Some(api_key.into());
-        self
-    }
-
-    /// Configure the node to use Vera-backed document ACP.
-    ///
-    /// Requires the `vera` feature (on by default).
-    #[cfg(feature = "vera")]
-    pub fn with_vera(mut self, config: VeraConfig) -> Self {
-        self.config.document_acp = DocumentAcpConfig::Vera(config);
-        self
-    }
-
-    /// Configure Vera ACP when LCD and gRPC use distinct endpoints.
-    #[cfg(feature = "vera")]
-    pub fn with_vera_lcd(mut self, config: VeraConfig, lcd_address: impl Into<String>) -> Self {
-        self.config.document_acp = DocumentAcpConfig::VeraWithLcd {
-            config,
-            lcd_address: lcd_address.into(),
-        };
         self
     }
 

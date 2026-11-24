@@ -1,22 +1,22 @@
-//! Encryption ACP key-distribution tests against a real Vera devnet.
+//! Encryption ACP key-distribution tests against a vera.rs deployment.
 //!
 //! Ported from Go: tests/integration/encryption/peer_acp_test.go
 //!
 //! These exercise the KMS dual-gate (PR #4778): a cross-peer DEK fetch is
 //! served only if the *requesting node's* DID has DAC `read` on the document,
-//! evaluated against an on-chain Vera policy. The user-facing query is
+//! evaluated against a Vera policy. The user-facing query is
 //! additionally gated by the querying identity's DAC permission.
 //!
 //! Run with:
-//!   VERA_BINARY=... DEFRA_SKIP_VERSION_CHECK=1 \
-//!     cargo test -p integration-test --test legacy -- vera::encryption_acp:: --nocapture
+//!   VERAD_BINARY=... cargo nextest run -p integration-test --test verars -- encryption_acp::
 //!
-//! Each test spins up a Cosmos devnet + 2-3 DefraDB nodes, so they are slow.
+//! Each test starts a vera.rs validator and 2-3 DefraDB nodes, so they are slow.
 
 use std::time::Duration;
 
 use integration_test::{extract_p2p_addr, generate_identity, TestCluster};
-use integration_test::{vera_cli_binary, BinarySource};
+
+use super::helpers;
 
 /// DAC policy mirroring the Go original (peer_acp_test.go). `owner` is
 /// auto-injected by the system; the `read` permission is satisfied by the
@@ -112,25 +112,18 @@ async fn wait_for_names(
 /// `reader` relations BEFORE node1 ever sees the encrypted block, mirroring
 /// Go's grant-then-`WaitForSync` ordering (peer_acp_test.go).
 ///
-/// `node0` is the Vera-signing owner (its identity is funded at genesis);
-/// `node1` runs under its own distinct DID so granting *that* DID `reader` is
+/// `node0` is the owner; `node1` runs under its own distinct DID so granting *that* DID `reader` is
 /// meaningful for the KMS node-gate.
 async fn setup_two_nodes() -> (TestCluster, String, NodeIds) {
-    let binary = vera_cli_binary();
-    let node0 = generate_identity(&binary).expect("node0 identity");
+    let binary = helpers::defra_binary();
+    let node0 = helpers::funded_identity();
     let node1 = generate_identity(&binary).expect("node1 identity");
 
-    let cluster = TestCluster::builder()
-        .rust_nodes(2)
-        .with_rust_binary(BinarySource::Path(binary.clone()))
-        .with_vera()
-        // Cluster-wide identity (node0) is the one funded in genesis and used
-        // as the Vera tx signer.
-        .with_identity(&node0.private_key_hex)
+    let hub = helpers::start_hub_cluster().await;
+    let cluster = helpers::vera_rs_builder(&hub.node(0).rpc_url(), &node0.private_key_hex, 2, true)
         // node1 runs under its own DID so the KMS node-gate is distinct.
         .with_node_identity(1, &node1.private_key_hex)
         .with_encryption()
-        .with_p2p()
         .build()
         .await
         .expect("build vera encryption cluster");
@@ -147,9 +140,7 @@ async fn setup_two_nodes() -> (TestCluster, String, NodeIds) {
     c0.schema_add_with_identity(&schema, &node0.private_key_hex)
         .expect("schema on node0");
 
-    // node1 deploys the same schema. The policy already lives on-chain (created
-    // by node0); node1 reads it from Vera — node1 cannot itself sign a
-    // Vera write because only node0's account is funded at genesis.
+    // node1 deploys the same schema: it reads the policy node0 created from Vera.
     c1.schema_add_with_identity(&schema, &node0.private_key_hex)
         .expect("schema on node1");
 
@@ -164,6 +155,7 @@ async fn setup_two_nodes() -> (TestCluster, String, NodeIds) {
         cluster,
         policy_id,
         NodeIds {
+            _hub: hub,
             node0_key: node0.private_key_hex,
             node1_key: node1.private_key_hex,
             node1_did: node1.did,
@@ -172,6 +164,7 @@ async fn setup_two_nodes() -> (TestCluster, String, NodeIds) {
 }
 
 struct NodeIds {
+    _hub: vera_harness::cluster::TestCluster,
     node0_key: String,
     node1_key: String,
     node1_did: String,
@@ -330,18 +323,8 @@ async fn encryption_acp_user_access_not_node() {
 /// it is meant to read. It should end up able to read exactly the 4 docs it is
 /// entitled to (encrypted+shared, plaintext+shared, encrypted+public,
 /// plaintext+public) and NOT the 2 private-unshared docs.
-///
-/// IGNORED — blocked by a Vera-harness single-signer funding limitation
-/// (not the DEK-leak race, which is now fixed in #976). This test queries node1
-/// AS node1's own DID (`ids.node1_key`); on the merge side node1 must register
-/// the received docs against its own Vera account, but the devnet genesis
-/// funds only the single cluster-wide signer (node0). node1's account is
-/// "not found" on-chain, so it cannot sign its merge-side ACP registration.
-/// Supporting this needs per-node genesis funding in the Vera harness
-/// (defra-harness / vera-harness, a separate backbone repo).
 #[nuclei::test]
 #[serial_test::serial]
-#[ignore = "Vera harness funds only one account (node0); node1 cannot sign its merge-side ACP doc registration (account not found) — single-signer harness funding limitation, not the DEK-leak race (#976)"]
 async fn encryption_acp_node_partial_access() {
     edge::compat(async {
         let (cluster, _policy_id, ids) = setup_two_nodes().await;
@@ -450,39 +433,24 @@ async fn encryption_acp_node_partial_access() {
 /// 3 nodes; node0 (the only key holder) creates the encrypted doc, then is shut
 /// down. node1 is then granted `reader`. Because the only node that can serve
 /// the DEK is offline, node1's key fetch cannot complete and the query is empty.
-///
-/// IGNORED — blocked by a Vera-harness single-signer funding limitation
-/// (the DEK-leak race is now fixed in #976). The Go original issues the
-/// post-shutdown grant from node1's client as `NodeIdentity(0)`. In the Rust
-/// harness the Vera cosmos signer is the node's *startup* identity, and the
-/// devnet genesis funds only the single cluster-wide identity (node0). node1's
-/// own account is "not found" on-chain, so node1 cannot sign its merge-side ACP
-/// registration, and once node0 (the only funded signer AND the only DEK holder)
-/// is shut down there is no online node able to issue the post-shutdown grant.
-/// Supporting this needs per-node genesis funding in the Vera harness
-/// (defra-harness / vera-harness, a separate backbone repo).
 #[nuclei::test]
 #[serial_test::serial]
-#[ignore = "Vera harness funds only one account (node0); node1 cannot sign its merge-side ACP registration or a post-shutdown grant (account not found) — single-signer harness funding limitation, not the DEK-leak race (#976)"]
 async fn encryption_acp_server_not_available() {
     edge::compat(async {
-        let binary = vera_cli_binary();
-        let node0 = generate_identity(&binary).expect("node0 identity");
+        let binary = helpers::defra_binary();
+        let node0 = helpers::funded_identity();
         let node1 = generate_identity(&binary).expect("node1 identity");
         let node2 = generate_identity(&binary).expect("node2 identity");
 
-        let mut cluster = TestCluster::builder()
-            .rust_nodes(3)
-            .with_rust_binary(BinarySource::Path(binary.clone()))
-            .with_vera()
-            .with_identity(&node0.private_key_hex)
-            .with_node_identity(1, &node1.private_key_hex)
-            .with_node_identity(2, &node2.private_key_hex)
-            .with_encryption()
-            .with_p2p()
-            .build()
-            .await
-            .expect("build 3-node vera encryption cluster");
+        let hub = helpers::start_hub_cluster().await;
+        let mut cluster =
+            helpers::vera_rs_builder(&hub.node(0).rpc_url(), &node0.private_key_hex, 3, true)
+                .with_node_identity(1, &node1.private_key_hex)
+                .with_node_identity(2, &node2.private_key_hex)
+                .with_encryption()
+                .build()
+                .await
+                .expect("build 3-node vera encryption cluster");
 
         let c0 = cluster.client(0);
         let c1 = cluster.client(1);
@@ -496,11 +464,6 @@ async fn encryption_acp_server_not_available() {
         c0.schema_add_with_identity(&schema, &node0.private_key_hex)
             .expect("schema node0");
 
-        for (idx, c) in [(1usize, &c1), (2usize, &c2)] {
-            c.acp_policy_add(POLICY, &node0.private_key_hex)
-                .unwrap_or_else(|e| panic!("cache policy node{}: {:?}", idx, e));
-        }
-        nuclei::time::sleep(Duration::from_secs(2)).await;
         c1.schema_add_with_identity(&schema, &node0.private_key_hex)
             .expect("schema node1");
         c2.schema_add_with_identity(&schema, &node0.private_key_hex)
@@ -538,8 +501,8 @@ async fn encryption_acp_server_not_available() {
         nuclei::time::sleep(Duration::from_secs(2)).await;
 
         // Now grant node1 reader, but node0 (the only DEK holder) is offline.
-        // The grant tx is signed by node0's funded key via node1's CLI; Vera
-        // is still up, so the on-chain grant succeeds.
+        // The grant is made as node0 through node1; Vera is still up, so it
+        // succeeds.
         c1.acp_relationship_add(
             "Users",
             &doc_id,

@@ -18,19 +18,7 @@ pub(super) fn sanitized_node_options(
     let persistent = config.datastore.store == DatastoreType::Regolith;
 
     #[cfg(feature = "vera")]
-    let (vera_chain_id, vera_grpc_address, vera_comet_address) = (
-        redacted_text(!config.acp.vera_chain_id.is_empty()),
-        redacted_text(
-            !config.acp.vera_grpc_address.is_empty() || !config.acp.vera_address.is_empty(),
-        ),
-        redacted_text(!config.acp.vera_comet_address.is_empty()),
-    );
-    #[cfg(not(feature = "vera"))]
-    let (vera_chain_id, vera_grpc_address, vera_comet_address) = ("", "", "");
-    #[cfg(feature = "vera")]
-    let document_signer_present = _user_identity_present
-        && (config.acp.document_type == AcpDocumentType::Vera
-            || config.acp.document_type.is_vera_rs());
+    let document_signer_present = _user_identity_present && config.acp.document_type.is_vera_rs();
     #[cfg(not(feature = "vera"))]
     let document_signer_present = false;
 
@@ -50,9 +38,6 @@ pub(super) fn sanitized_node_options(
             "DocumentACPType": config.acp.document_type.to_string(),
             "Path": redacted_text(config.acp.document_type != AcpDocumentType::None && persistent),
             "Signer": redacted(document_signer_present),
-            "VeraChainID": vera_chain_id,
-            "VeraGRPCAddress": vera_grpc_address,
-            "VeraCometRPCAddress": vera_comet_address,
         },
         "NodeACP": {
             "IsEnabled": config.acp.node_enable,

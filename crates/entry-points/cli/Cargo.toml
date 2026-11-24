@@ -133,13 +133,12 @@ libc = "0.2"
 default = []
 release-full = ["postgres", "vera", "orbis"]
 postgres = ["dep:pg-compat"]
-# Vera/vera.rs on-chain document ACP (`--document-acp-type vera|verars`).
+# Vera document ACP (`--document-acp-type verars`).
 vera = ["dep:vera"]
 # Run a single-validator Vera node in the `defradb` process
 # (`--document-acp-type verars-embedded`). The Vera node builds a runtime of
 # its own; see AGENTS.md.
 embedded-vera = ["vera", "dep:vera-embedded"]
-sourcehub = ["vera"]
 # Orbis ring threshold signing (`--signer-type orbis`).
 orbis = ["dep:orbis"]
 iroh = ["p2p/iroh-transport", "p2p/kms", "defra-p2p-adapter/iroh", "defra-p2p-adapter/kms", "dep:iroh-net", "dep:rand"]

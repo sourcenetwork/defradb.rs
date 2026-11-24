@@ -746,7 +746,7 @@ jobs:
         if: matrix.suite == 'go-compat'
         run: >-
           cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E
-          'test(/^(basic|query|acp|nac|backup|p2p|identity|encryption|vera)::/)'
+          'test(/^(basic|query|acp|nac|backup|p2p|identity|encryption)::/)'
           -- go_
           --skip go_acp_link_collection_nonexistent_policy_reject
           --skip go_acp_link_collection_nonexistent_resource_reject

@@ -12,18 +12,6 @@ use db::{DEFAULT_TRANSACTION_CLEANUP_INTERVAL, DEFAULT_TRANSACTION_IDLE_TIMEOUT}
 pub enum DocumentAcpConfig {
     #[default]
     Local,
-    /// On-chain document ACP via Vera.
-    ///
-    /// Requires the `vera` feature (on by default).
-    #[cfg(feature = "vera")]
-    Vera(VeraConfig),
-    /// On-chain document ACP via Vera with distinct LCD and gRPC
-    /// endpoints.
-    #[cfg(feature = "vera")]
-    VeraWithLcd {
-        config: VeraConfig,
-        lcd_address: String,
-    },
     /// Document ACP via a vera.rs node.
     #[cfg(feature = "vera")]
     VeraRs(crate::VeraRsConfig),
@@ -33,18 +21,6 @@ pub enum DocumentAcpConfig {
     /// Document ACP via a Vera node this node runs in its own process.
     #[cfg(feature = "embedded-vera")]
     EmbeddedVera(crate::EmbeddedVeraConfig),
-}
-
-/// Vera document ACP configuration.
-///
-/// Requires the `vera` feature (on by default).
-#[cfg(feature = "vera")]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VeraConfig {
-    pub grpc_address: String,
-    pub comet_rpc_address: String,
-    pub chain_id: String,
-    pub signer_key: Vec<u8>,
 }
 
 /// Configuration for the optional HTTP GraphQL server.

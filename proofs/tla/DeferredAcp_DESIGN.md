@@ -20,8 +20,8 @@ only one that models the **uncommitted projection → committed transition** its
 between concurrent txns, atomic commit-time hook application, no-op rollback, and the
 fail-closed gate across the projected→committed boundary.
 
-The model assumes public access to unregistered objects, matching the local and
-Cosmos backends. Rust now obtains that rule from
+The model assumes public access to unregistered objects, matching the local
+backend. Rust now obtains that rule from
 `DocumentACP::unregistered_documents_are_public()`. Native Vera returns `false`;
 its missing-registration behavior is covered by Rust and integration tests, not
 by this model. Branchable collection inheritance is also outside this slice.

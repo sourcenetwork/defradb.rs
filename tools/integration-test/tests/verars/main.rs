@@ -1,9 +1,13 @@
 mod actor_spelling;
+mod chunk_access;
+mod chunk_support;
 mod command_kinds;
 mod compartments;
 mod embedded;
+mod encryption_acp;
 mod helpers;
 mod in_process;
+mod iroh_dac;
 mod native_worker;
 mod node_builder;
 mod owed_note;

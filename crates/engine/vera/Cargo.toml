@@ -16,9 +16,6 @@ bench = false
 # The network runtime the clients' connections and the providers' tasks run on.
 edge = { path = "../../foundation/edge" }
 
-# Cosmos SDK transaction building and signing
-cosmrs = "0.22"
-
 # Serialization
 serde.workspace = true
 serde_json.workspace = true
@@ -79,20 +76,13 @@ alloy-primitives.workspace = true
 acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "571ddf742cb17b1f95c171054bf7209e5f57e017" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-# HTTP for REST/LCD and CometBFT JSON-RPC, and the gRPC channel, on nuclei
-# sockets; the browser's fetch on wasm32 (below).
+# HTTP for JSON-RPC on nuclei sockets; the browser's fetch on wasm32 (below).
 net = { path = "../../building-blocks/net" }
 futures.workspace = true
-prost.workspace = true
-tonic.workspace = true
-tonic-prost.workspace = true
-# The Cosmos event stream: a WebSocket over a futures-io stream (net::connect).
-async-tungstenite = "0.35.0"
 nuclei.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 reqwest = { version = "0.13", default-features = false, features = ["json", "charset", "http2"] }
-n0-future.workspace = true
 
 [dev-dependencies]
 edge = { path = "../../foundation/edge", features = ["testing"] }

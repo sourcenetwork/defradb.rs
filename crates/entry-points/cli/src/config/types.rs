@@ -190,7 +190,6 @@ impl std::str::FromStr for TransportType {
 ///
 /// - `None`: No document-level access control (default)
 /// - `Local`: Local Zanzibar-based ACP
-/// - `Vera`: Remote Vera ACP (Cosmos SDK / Go verad), named `remote` in Go
 /// - `VeraRs`: Native Vera ACP
 /// - `VeraRsEmbedded`: Native Vera ACP from a Vera node this process runs
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -200,9 +199,6 @@ pub enum AcpDocumentType {
     #[default]
     None,
     Local,
-    #[cfg(feature = "vera")]
-    #[serde(alias = "sourcehub", alias = "source-hub", alias = "remote")]
-    Vera,
     #[cfg(feature = "vera")]
     #[serde(rename = "verars", alias = "vera-rs")]
     VeraRs,
@@ -231,8 +227,6 @@ impl std::fmt::Display for AcpDocumentType {
             AcpDocumentType::None => write!(f, "none"),
             AcpDocumentType::Local => write!(f, "local"),
             #[cfg(feature = "vera")]
-            AcpDocumentType::Vera => write!(f, "vera"),
-            #[cfg(feature = "vera")]
             AcpDocumentType::VeraRs => write!(f, "verars"),
             #[cfg(feature = "embedded-vera")]
             AcpDocumentType::VeraRsEmbedded => write!(f, "verars-embedded"),
@@ -247,8 +241,6 @@ impl std::str::FromStr for AcpDocumentType {
         match s.to_lowercase().replace('-', "").as_str() {
             "none" | "" => Ok(AcpDocumentType::None),
             "local" => Ok(AcpDocumentType::Local),
-            #[cfg(feature = "vera")]
-            "vera" | "sourcehub" | "remote" => Ok(AcpDocumentType::Vera),
             #[cfg(feature = "vera")]
             "verars" => Ok(AcpDocumentType::VeraRs),
             #[cfg(feature = "embedded-vera")]

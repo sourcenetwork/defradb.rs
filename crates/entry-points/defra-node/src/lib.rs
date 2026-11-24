@@ -110,8 +110,6 @@ pub use config::HttpConfig;
 pub use config::Libp2pConfig;
 #[cfg(any(feature = "p2p", feature = "libp2p"))]
 pub use config::SyncTuning;
-#[cfg(feature = "vera")]
-pub use config::VeraConfig;
 pub use config::{
     DocumentAcpConfig, IndexBuildGateHandle, NodeConfig, NodeSigning, Persistence,
     ReplicationFilterHandle, SigningKey, TransportConfig,

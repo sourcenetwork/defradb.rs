@@ -7,6 +7,20 @@ use integration_test::{BinarySource, TestCluster, TestClusterBuilder, TestIdenti
 
 pub use integration_test::vera_cli_binary as defra_binary;
 
+/// The CLI with the Vera provider and the iroh transport.
+pub fn defra_iroh_binary() -> std::path::PathBuf {
+    static BINARY: regolith::sync::OnceCell<std::path::PathBuf> = regolith::sync::OnceCell::new();
+    BINARY
+        .get_or_init_racy(|| {
+            integration_test::build_cli_variant(
+                &integration_test::workspace_root(),
+                &["iroh", "vera"],
+                "defra-iroh-vera",
+            )
+        })
+        .clone()
+}
+
 const FUNDED_PRIVATE_KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
 pub fn funded_identity() -> TestIdentity {

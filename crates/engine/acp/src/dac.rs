@@ -237,8 +237,7 @@ pub trait DocumentACP: MaybeSendSync {
     /// take effect after one made later through this provider: what is
     /// still in flight when the next is made has to execute before it or
     /// not at all. vera.rs holds one journaled request per worker and
-    /// prepares the next only once that one has a verified receipt; Cosmos
-    /// orders one signer's transactions by account sequence.
+    /// prepares the next only once that one has a verified receipt.
     async fn submit_owed_change(
         &self,
         change: &crate::outbox::OwedChange,
