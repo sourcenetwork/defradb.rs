@@ -285,6 +285,13 @@ A collection patch that adds, removes or modifies a secondary index, or changes 
 
 `POST /api/v0/collections/{name}/indexes` takes an optional boolean `BuildInBackground`, a field Go's request does not have. Left out or `false`, the response is sent once the backfill over the collection's existing documents has ended, so a listing straight after it never shows the index building. With `true`, the response is sent once the index definition has committed, with the same body (`Name`, `ID`, `Fields`, `Unique`, `Kind`), and the backfill goes on by itself: `ListIndexes` reports the index with `Execution` `Status: 1, Action: 3` (building) and filtered queries full-scan until the backfill ends, then `Status: 3, Action: 0` (ready) and queries use the index. The field decides only when the response is sent, never what is built: a `Vector` configuration sent with it creates a vector index, and without one the index is an ordered one. Under `x-defradb-tx` the field changes nothing, because that backfill runs when the transaction commits.
 
+# `defra.txn.indexes.concurrent-encrypted-changes`: Concurrent encrypted index changes outside a transaction
+
+- **Parents:** ["go.txn.indexes"]
+- **Scenarios:** ["txn::new_encrypted_index_concurrent::concurrent_encrypted_index_adds_all_land", "txn::new_encrypted_index_concurrent::a_concurrent_encrypted_index_delete_and_adds_all_land", "txn::new_encrypted_index_concurrent::concurrent_encrypted_index_adds_out_of_retries_fail"]
+
+Encrypted index changes made outside a transaction (`NewEncryptedIndex` and `DeleteEncryptedIndex` with no transaction), at the same time, on different fields of one collection, all succeed and none is lost, as long as the total number of changes does not exceed the node's retry budget (`max_txn_retries` + 1 attempts, 6 by default): a change loses an attempt only to another change's commit, and each change commits once. A change that loses the race runs again on the committed definition, so `ListEncryptedIndexes` afterwards lists every added index and none of the deleted ones. A change that runs out of retries fails with the storage error `transaction retry attempts exhausted: ` followed by the race it last lost (such as `a read lost to a newer put`), and changes nothing.
+
 # `defra.node.identity_only_transactions`: An identity-only node runs requests in the transactions it begins
 
 - **Parents:** ["go.node"]
