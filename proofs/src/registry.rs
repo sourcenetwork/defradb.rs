@@ -54,11 +54,100 @@ use Tier::{Behavioral, Boundary, Contract};
 
 pub const PROPERTIES: &[Property] = &[
     Property {
+        family: "vera.rs embedded transport",
+        name: "INV_Recovers: a queued copy can authenticate after the prefetched head fails transiently",
+        axis: Tla,
+        anchor: "crates/engine/vera-embedded/src/acp.rs prepend_head",
+        model_ref: "MC_HeaderRetry_{Green,Red_Drop}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/engine/vera-embedded/src/acp/tests.rs queued_headers_survive_a_failed_head_authentication",
+    },
+    Property {
+        family: "vera.rs embedded transport",
+        name: "HeaderRetry.failed_head_keeps_queue / retry_remains / old_filter_loses_copy",
+        axis: Lean,
+        anchor: "crates/engine/vera-embedded/src/acp.rs prepend_head",
+        model_ref: "HeaderRetry (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/engine/vera-embedded/src/acp/tests.rs queued_headers_survive_a_failed_head_authentication",
+    },
+    Property {
+        family: "Secondary index equal-key order",
+        name: "INV_Page: an ordered scan reserves a saturated offset plus limit and the LimitNode applies the offset once",
+        axis: Tla,
+        anchor: "crates/engine/query/src/planner/builder/index_methods.rs order_index_scan_params",
+        model_ref: "MC_OrderedIndexPage_{Green,Red_DoubleOffset}.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/index/index_offset_limit.rs",
+    },
+    Property {
+        family: "Schema-evolution operations in the core",
+        name: "INV_Keep / INV_Match / INV_Real: synced definitions preserve only the matching placeholder's transform and leave held definitions unchanged",
+        axis: Tla,
+        anchor: "crates/database/db/src/merge/merge_handler/definition.rs DbMergeHandler::process_collection_definition_delta",
+        model_ref: "MC_SyncedMigrationTransform_{Green,Red_Drop,Red_Head}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/database/db/tests/merge/collection_predecessor.rs",
+    },
+    Property {
+        family: "Schema-evolution operations in the core",
+        name: "SyncedMigrationTransform.matching_preserved / mismatched_not_carried / no_edge_no_transform / real_unchanged / absent_no_transform",
+        axis: Lean,
+        anchor: "crates/database/db/src/merge/merge_handler/definition.rs DbMergeHandler::process_collection_definition_delta",
+        model_ref: "SyncedMigrationTransform (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/database/db/tests/merge/collection_predecessor.rs",
+    },
+    Property {
+        family: "Secondary index equal-key order",
+        name: "OrderedIndexPage.saturating_budget_page: an ordered scan reserves the offset plus limit without dropping the offset twice",
+        axis: Lean,
+        anchor: "crates/engine/query/src/planner/builder/index_methods.rs order_index_scan_params",
+        model_ref: "OrderedIndexPage (lake build)",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/index/index_offset_limit.rs",
+    },
+    Property {
+        family: "ACP soundness + revocation + dual-path commits",
+        name: "INV_NoStale / INV_SameHash / INV_AcceptValid: certified assignments honor the caller's position floor",
+        axis: Tla,
+        anchor: "crates/engine/vera/src/vera_rs/provider/assignments.rs check_position",
+        model_ref: "MC_AssignmentPosition_{Green,Red_Stale,Red_Hash}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/engine/vera/src/vera_rs/provider/assignments.rs position_floor_rejects_replays_and_accepts_a_verified_new_term",
+    },
+    Property {
+        family: "ACP soundness + revocation + dual-path commits",
+        name: "AssignmentPosition.accepted_iff / stale_term_rejected / stale_height_rejected / same_height_hash_rejected / later_term_accepted / later_height_accepted",
+        axis: Lean,
+        anchor: "crates/engine/vera/src/vera_rs/provider/assignments.rs check_position",
+        model_ref: "AssignmentPosition (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/engine/vera/src/vera_rs/provider/assignments.rs position_floor_rejects_replays_and_accepts_a_verified_new_term",
+    },
+    Property {
         family: "Transactional node source grants",
         name: "HostNoopProjection rechecks descendants with the original actor",
         axis: Tla,
         anchor: "crates/engine/query/src/txn/source_nac.rs; crates/database/db/src/document_projection.rs",
         model_ref: "MC_HostNoopProjection_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // When a takeover's cut may lie below the journal's floor, the journal
+        // cannot vouch for what was voided. The provider closes it as
+        // recoverable and rebuilds from the node's own ledger of confirmed
+        // registrations and relationships, in bounded pages. A page is handed
+        // to the outbox before its cursor is written, the pass is complete
+        // only at the ledger's end, a cursor of an older term is not resumed,
+        // and the provider admits nothing until the source says the pass for
+        // the certified term is over, nor after a second outbox asked.
+        family: "ACP soundness + revocation + dual-path commits",
+        name: "INV_NothingLost / INV_TheirsNotLost / INV_RevocationDenies / LIVE_RecoveryEnds: an uncovered takeover recovers without a new worker, page by page through the outbox; no decision is served before everything the deployment lost is owed, nor once a second node's outbox asked, a committed revocation denies throughout, and the pass ends",
+        axis: Tla,
+        anchor: "crates/engine/vera/src/vera_rs/provider/terms.rs Follower::check_with, Follower::recover; crates/engine/vera/src/vera_rs/provider.rs VeraRsProvider::owe_voided_to; crates/engine/vera/src/vera_rs/follow/journal.rs Journal::close_recoverable, Journal::recovery_needed, Journal::recovered; crates/engine/vera/src/vera_rs/follow/mod.rs Follow::admit, reconcile; crates/engine/acp/src/recovery.rs RecoveryLedger::page, RecoveryCursor, RecoverySource; crates/engine/acp/src/external/recovery.rs RecoverySource::next, RecoverySource::delivered; crates/engine/acp/src/external/voided.rs OweAgain::owe_again, OweAgain::settle_owed",
+        model_ref: "MC_FollowDeploymentRecovery_{Green,Green_OneRecordPages,Red_NoGate,Red_NoHandOver,Red_CursorFirst,Red_CompleteEveryPage,Red_NeverDone,Red_NoTermFence,Red_NoSharedFence}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },
@@ -236,10 +325,10 @@ pub const PROPERTIES: &[Property] = &[
         family: "vera.rs embedded transport",
         name: "INV_OnlyFinalized / INV_Current / INV_SentHeadFresh: the light client takes only a header a finalized block certifies, once the stream is drained it stands on the newest fresh finalized block in its term without waiting for another, and the transport never sends a head too old to take",
         axis: Tla,
-        anchor: "crates/engine/vera-embedded/src/acp.rs subscribe_headers, headers_after; crates/engine/vera-embedded/src/acp/head.rs finalized, header, recent; backbone:acp-light-client HeaderChain::start",
+        anchor: "crates/engine/vera-embedded/src/acp.rs subscribe_headers, prepend_head; crates/engine/vera-embedded/src/acp/head.rs finalized, header, recent; backbone:acp-light-client HeaderChain::start",
         model_ref: "MC_FirstHeader_{Green,Red_NoHead,Red_ReadBeforeSubscribe,Red_SendStale,Red_DropLaterTerms,Red_Unverified}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/engine/vera-embedded/src/acp/tests.rs queued_headers_at_or_below_the_fetched_head_are_not_emitted, a_header_of_a_later_term_at_or_below_the_fetched_head_is_emitted; crates/engine/vera-embedded/tests/embedded_node.rs a_fresh_deployments_provider_starts_on_its_first_block; crates/entry-points/defra-node/tests/embedded_vera/first_start.rs a_fresh_deployments_first_start_takes_its_first_block",
+        bound_by: "crates/engine/vera-embedded/src/acp/tests.rs queued_headers_survive_a_failed_head_authentication, a_header_of_a_later_term_at_or_below_the_fetched_head_is_emitted; crates/engine/vera-embedded/tests/embedded_node.rs a_fresh_deployments_provider_starts_on_its_first_block; crates/entry-points/defra-node/tests/embedded_vera/first_start.rs a_fresh_deployments_first_start_takes_its_first_block",
     },
     Property {
         family: "vera.rs deployment terms",
@@ -247,6 +336,15 @@ pub const PROPERTIES: &[Property] = &[
         axis: Lean,
         anchor: "crates/engine/vera/src/vera_rs/follow/mod.rs reconcile, uncovered; crates/engine/vera/src/vera_rs/follow/journal.rs Journal::record, Journal::prune, Floor",
         model_ref: "VeraConfirmationJournal (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "vera.rs deployment terms",
+        name: "deny_wins / settled_reads_confirmed / confirmed_outranks_grant / settled_is_proven / unanswered_grant_is_unproven / refused_restores / applied_reads_fact / confirmed_reads_fact / last_iff_end / walk_covers: an unanswered denial wins a recovery slot, an unanswered grant neither outranks what was confirmed nor counts as confirmed, a refused change leaves the slot as it was, the newest answer replaces what was unanswered, and pages read one after the other hand over every slot once and end at the last",
+        axis: Lean,
+        anchor: "crates/engine/acp/src/recovery.rs resolve, RecoveryLedger::confirm, RecoveryLedger::prepare, RecoveryLedger::settle, RecoveryLedger::page; crates/engine/acp/src/external/recovery.rs RecoverySource::next",
+        model_ref: "VeraRecoveryLedger (lake build)",
         tiers: &[Boundary],
         bound_by: "",
     },
@@ -845,6 +943,24 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "FilterInputShape (lake build)",
         tiers: &[Boundary],
         bound_by: "tools/integration-test/tests/testo/query/simple/with_filter_unknown.rs a_literal_error_in_a_later_root_wins_over_a_variable_error; tools/integration-test/tests/testo/mutation/delete/with_filter_unknown.rs a_skipped_delete_with_an_unknown_filter_field_is_rejected, a_delete_in_an_excluded_inline_fragment_is_rejected",
+    },
+    Property {
+        family: "Receipt-ordered event dispatch",
+        name: "Ordered / INV_CommitOrder / INV_CommittedEventsKept / INV_HooksBeforeEvents / INV_OnlyCommitted — committed events go out in commit-receipt order, a write-free commit no earlier than what already went out, after their commit's hooks, never for an aborted commit and never lost; receipts that come back reversed to the hand-overs still go out in receipt order",
+        axis: Tla,
+        anchor: "crates/engine/storage/src/backends/regolith/event_order.rs EventOrder::bind, EventOrder::hand_over, EventOrder::hooks_done, Binding::hand_over, HooksRunning::done, Drainer::apply_life, Drainer::apply_work, Drainer::complete, Drainer::floor, Drainer::dispatch; crates/database/db/src/event/emission.rs register_ordered_events",
+        model_ref: "MC_EventOrder_Green.cfg / MC_EventOrder_Red_{Arrival,ReceiptRegress,NoFloorClamp,DispatchBeforeAttach,DispatchDuringHooks,AbortPublishes,NotMinSeq}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/engine/storage/tests/ordered_event_receipt.rs eventful_empty_commit_commits_and_dispatches_its_events, accepted_identical_blind_write_keeps_its_event_callback, failed_ordered_hook_keeps_the_commit_its_events_and_later_commits; crates/engine/storage/src/backends/regolith/event_order.rs reversed_concurrent_receipts_dispatch_in_seq_order, a_later_receipt_waits_for_an_earlier_commit_still_in_flight, an_aborted_commit_releases_the_stream_and_sends_nothing, hooks_hold_their_commit_and_everything_after_it, a_write_free_commit_goes_out_no_earlier_than_what_already_went_out",
+    },
+    Property {
+        family: "Change delivery",
+        name: "INV_ExactlyOnce / INV_CommitOrder / INV_HiddenNotShown / INV_LossCounted / EventuallyObserved — a subscriber that subscribes, then reads the update journal from its saved cursor on every wake-up and loss signal, observes every committed update of the collection, local or merged, that it is allowed to see, exactly once, in commit order, across a restart, with no rescan; a row hidden from it (a deleted or purged document, or one it may not read, in a collection with a policy; a chunk whose parent it may not read) is never shown and its cursor is passed, so it is skipped for good; every drop is counted. Not prevented: the raw subscription's counted drop wakes no reader (Red_CounterNoWake), so it is no wake-up source for the pattern",
+        axis: Tla,
+        anchor: "crates/database/db/src/event/updates.rs record, read, once_key; crates/database/db/src/event/updates/gate.rs Gate::admits; crates/database/db/src/merge/merge_handler/composite_persist.rs persist_merged_document; crates/foundation/events/src/channel_bus.rs ChannelBus::publish_raw, Subscriber::record_overflow; crates/foundation/events/src/document_changes.rs ChangePublisher::publish; crates/engine/query/src/runner/arrivals.rs execute_arrivals_query",
+        model_ref: "MC_ChangeDelivery_{Green_Closing,Green_Coalescing}.cfg / MC_ChangeDelivery_Red_{SilentLoss,ReadBeforeSubscribe,JournalSkipsMerge,ReMergeAppends,CounterNoWake,WakeBeforeState,CursorNotDurable,GateOff,HiddenStalls}.cfg",
+        tiers: &[Behavioral],
+        bound_by: "tools/integration-test/tests/testo/subscription/delivery/resume.rs a_saved_cursor_resumes_after_a_reopen_in_commit_order; tools/integration-test/tests/testo/subscription/delivery/merge_once.rs a_replicated_update_appears_once; tools/integration-test/tests/testo/subscription/delivery/beyond_head.rs a_cursor_past_the_head_is_refused; tools/integration-test/tests/testo/subscription/delivery/visibility.rs hidden_rows_are_passed_and_not_shown, a_collection_without_a_policy_shows_a_deleted_documents_rows; crates/database/db/tests/read/update_visibility.rs a_deleted_private_documents_updates_are_shown_to_nobody; crates/database/db/tests/merge/update_journal.rs a_block_merged_again_by_another_handler_adds_no_second_row; crates/surfaces/http/tests/graphql_sse_recovery.rs overflow_ends_the_graphql_stream_before_a_queued_result; crates/foundation/events/tests/unit/channel_bus.rs overflow_wakes_reader_that_drained_before_loss_was_recorded, ordinary_raw_subscription_remains_open_after_overflow, raw_overflow_recorded_after_a_drain_is_counted_but_wakes_no_reader; crates/foundation/events/tests/document_changes.rs distinct_document_overflow_is_one_bounded_resync_then_recovers, publishing_races_with_draining_without_losing_a_wake",
     },
     Property {
         family: "HTTP router composition",
@@ -1811,6 +1927,18 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // The owner rechecks connection state before applying delayed offline
+        // parks or reconnect notifications, and never clears a send failure's
+        // cooldown merely because the peer connected.
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "INV_NoStalePark / INV_KeepFailure / INV_ExpiredCanClear",
+        axis: Tla,
+        anchor: "crates/database/p2p/src/sync/push_backlog.rs BacklogOwner::handle, park_peer; crates/database/p2p/src/sync/coordinator/push_worker.rs run_push_job; crates/database/p2p/src/sync/coordinator/event_handler/mod.rs handle_peer_connected",
+        model_ref: "MC_OfflineReconnect_{Green,Red_StalePark,Red_StaleConnect,Red_Failure,Red_Expired}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/database/p2p/src/sync/coordinator/push_worker_tests.rs reconnect_wakes_offline_queue_and_fences_stale_parks, reconnect_preserves_newer_transport_cooldown; crates/database/p2p/src/sync/push_backlog.rs stale_reconnect_does_not_clear_offline_cooldown, reconnect_clears_offline_park_after_expired_capacity_cooldown",
+    },
+    Property {
         // Admission has two tiers: a head the full map has no entry for is
         // acknowledged on its durable record alone and joins the rotation,
         // instead of being nacked while the store has room, which left the
@@ -2144,7 +2272,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "ACP soundness + revocation + dual-path commits",
         name: "INV_NoVoidDecision / INV_RevocationDenies / INV_NothingLost / LIVE_ResubmittedSettles: no decision is served from a voided revision, a revocation confirmed on a void block still denies, nothing a term voided is taken as kept, and what is owed again settles",
         axis: Tla,
-        anchor: "crates/engine/vera/src/vera_rs/follow/mod.rs Follow::admit, Follow::still, Follow::epoch, reconcile, scan, uncovered; crates/engine/vera/src/vera_rs/follow/journal.rs Journal::record, Journal::begin_replay, Journal::handled, MAX_CONFIRMATIONS, MAX_CONFIRMATION_BYTES; crates/engine/vera/src/vera_rs/follow/lost.rs lost_effects, tainted_by; crates/engine/vera/src/vera_rs/follow/report.rs TakeoverReport, Applied, Unrestorable; crates/engine/vera/src/vera_rs/provider/terms.rs Follower::check, Follower::publish; crates/engine/vera/src/vera_rs/provider.rs decision_state, admitted_read; crates/engine/vera/src/vera_rs/provider/owed_request.rs locked_worker; crates/engine/acp/src/external/voided.rs OweAgain, VoidedEffect; backbone:acp-light-client HeaderChain::voided",
+        anchor: "crates/engine/vera/src/vera_rs/follow/mod.rs Follow::admit, Follow::still, Follow::epoch, reconcile, scan, uncovered; crates/engine/vera/src/vera_rs/follow/journal.rs Journal::record, Journal::begin_replay, Journal::handled, MAX_CONFIRMATIONS, MAX_CONFIRMATION_BYTES; crates/engine/vera/src/vera_rs/follow/lost.rs lost_effects, tainted_by; crates/engine/vera/src/vera_rs/follow/report.rs TakeoverReport, Applied, Unrestorable; crates/engine/vera/src/vera_rs/provider/terms.rs Follower::check_with, Follower::publish; crates/engine/vera/src/vera_rs/provider.rs decision_state, admitted_read; crates/engine/vera/src/vera_rs/provider/owed_request.rs locked_worker; crates/engine/acp/src/external/voided.rs OweAgain, VoidedEffect; backbone:acp-light-client HeaderChain::voided",
         model_ref: "MC_FollowDeployment_{Green,Green_Window,Red_KeepsCache,Red_ForgetsRevocation,Red_NoGate,Red_NoTaint,Red_AssumesWindow,Red_NoMark,Red_NoDeliveryGate,Red_CollapsesBatch}.cfg",
         tiers: &[Boundary],
         bound_by: "",
@@ -2158,7 +2286,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "ACP soundness + revocation + dual-path commits",
         name: "INV_Classified / INV_Published / INV_PublishedOnce / INV_Complete / INV_CutOfTerm / INV_ClosedNamed / LIVE_Reported: every replayed submission is classified as applied again, owed again or unrestorable, an unrestorable outcome carries its reason, a checked term is reported once, after every replay and with the owed ones, under the cut of its own term, and a check that failed closed says so",
         axis: Tla,
-        anchor: "crates/engine/vera/src/vera_rs/follow/report.rs TakeoverReport, Applied, Unrestorable; crates/engine/vera/src/vera_rs/follow/mod.rs reconcile, first_check; crates/engine/vera/src/vera_rs/follow/lost.rs lost_effects; crates/engine/vera/src/vera_rs/provider/terms.rs Follower::check, Follower::certificate, Follower::owed_effects, Follower::publish, takeover_report; crates/engine/vera/src/vera_rs/follow/journal.rs Journal::close; crates/foundation/events/src/event.rs AcpTakeoverReconciledData",
+        anchor: "crates/engine/vera/src/vera_rs/follow/report.rs TakeoverReport, Applied, Unrestorable; crates/engine/vera/src/vera_rs/follow/mod.rs reconcile, first_check; crates/engine/vera/src/vera_rs/follow/lost.rs lost_effects; crates/engine/vera/src/vera_rs/provider/terms.rs Follower::check_with, Follower::certificate, Follower::owed_effects, Follower::publish, takeover_report; crates/engine/vera/src/vera_rs/follow/journal.rs Journal::close; crates/foundation/events/src/event.rs AcpTakeoverReconciledData",
         model_ref: "MC_TakeoverReport_{Green,Red_NoPublish,Red_NoReason,Red_Early,Red_Duplicate,Red_DropsOwed,Red_NewestCut,Red_UnnamedClosed,Red_UnrecordedClose}.cfg",
         tiers: &[Boundary],
         bound_by: "",
@@ -4490,10 +4618,10 @@ pub const PROPERTIES: &[Property] = &[
         // One-to-many child paging (#3051): the scan stays unbounded and each
         // parent stops only when the selected index guarantees the child order.
         family: "Per-parent child paging",
-        name: "INV_EveryParentHasPage / INV_EarlyStopOnlyWhenOrdered",
+        name: "INV_CompletedPage / INV_EarlyStopOnlyWhenOrdered / LIVE_AllPagesComplete",
         axis: Tla,
         anchor: "crates/engine/query/src/planner/joins/child_plan.rs build_relation_child_plan; crates/engine/query/src/plan/type_join/type_join_many/children.rs TypeJoinMany::next_per_parent",
-        model_ref: "MC_ChildLimitPaging_{Green,Red_UnorderedStop}.cfg",
+        model_ref: "MC_ChildLimitPaging_{Green,Ordered,Red_UnorderedStop}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },
@@ -4699,7 +4827,7 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "One-to-many child paging",
-        name: "LIVE_EveryParentCompletesOrderedPage / INV_PageIsOrderedPrefix / INV_PageWithinLimit / INV_RedSecondParentKeepsPage: each parent completes its exact ordered child page",
+        name: "LIVE_EveryParentCompletesOrderedPage / INV_PageIsOrderedPrefix / INV_PageWithinLimit / INV_SecondParentKeepsPage: each parent completes its exact ordered child page, not one cut short by a global scan bound",
         axis: Tla,
         anchor: "crates/engine/query/src/plan/type_join/type_join_many/children.rs TypeJoinMany::next_per_parent; crates/engine/query/src/plan/type_join/type_join_many/node.rs TypeJoinMany::with_limit, with_offset",
         model_ref: "MC_ChildPagePerParent_{Green,Green_ShortParent,Red_GlobalBound,Red_NoEarlyStop}.cfg",

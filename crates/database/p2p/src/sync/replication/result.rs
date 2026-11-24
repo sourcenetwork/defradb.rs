@@ -57,5 +57,5 @@ pub enum ReplicationResult {
     /// Poll-based DAG fetch started for a known source peer
     DagFetchStarted { root_cid: Cid },
     /// Block-sync fetch started for missing blocks
-    BitswapFetchStarted { root_cid: Cid, query_id: QueryId },
+    BlockSyncFetchStarted { root_cid: Cid, query_id: QueryId },
 }

@@ -92,6 +92,9 @@ vera-delegation = { path = "../../engine/vera-delegation", features = ["testing"
 # pinned ones, so a signed or hashed encoding that depends on this feature fails here and not only in a wider build.
 serde_json = { workspace = true, features = ["preserve_order"] }
 kovan-queue.workspace = true
+mantra-macros = "0.9"
+# The store the recovery tests put a gate over.
+storage = { path = "../../engine/storage" }
 
 [lints]
 workspace = true
