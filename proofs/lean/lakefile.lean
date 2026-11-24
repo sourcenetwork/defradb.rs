@@ -316,6 +316,9 @@ lean_lib AdministrativeRelationship where
 lean_lib ProjectionRelationship where
 
 @[default_target]
+lean_lib ParentRegistration where
+
+@[default_target]
 lean_lib ExactRelationshipObservation where
 
 @[default_target]

@@ -145,6 +145,7 @@ where
         let (registrar, serving) = self.registrar_from(owed, None)?;
         let creator = self.provider.canonical_actor(&owed.creator).to_string();
         let sender = match (&owed.authority, serving) {
+            _ if owed.parent.is_some() => None,
             (_, true) if self.serving_binds_one_request() => None,
             (_, true) => Some(Sender::Serving(creator)),
             _ if owed.request_bound => None,
@@ -163,14 +164,8 @@ where
         let mut rest = group.members.as_slice();
         while let Some((_, first)) = rest.first() {
             let sent = if rest.len() == 1 {
-                group
-                    .registrar
-                    .register_doc_object(
-                        &first.creator,
-                        &first.policy_id,
-                        &first.resource_name,
-                        &first.doc_id,
-                    )
+                first
+                    .submit(group.registrar.as_ref())
                     .await
                     .map_err(|error| RegistrationFailure::new(0, error))
             } else {

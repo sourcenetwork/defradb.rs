@@ -21,6 +21,11 @@ pub struct PolicyCommand<'a> {
 pub enum PolicyAction<'a> {
     /// Register the object with the token's actor as its owner.
     RegisterObject,
+    /// Register the object and attach it to the parent authorizing creation.
+    RegisterUnderParent {
+        resource: &'a str,
+        object_id: &'a str,
+    },
     /// Add one relationship.
     SetRelationship {
         relation: &'a str,

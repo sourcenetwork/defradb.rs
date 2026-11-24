@@ -95,6 +95,7 @@ UNIT_NAMES = (
     "outcome_note::tests::an_outcome_survives_a_reopen_and_the_oldest_is_pushed_out",
     "provider::audience_tests::a_provider_checks_the_genesis_identity_it_reports",
     "provider::assignments::tests::position_floor_rejects_replays_and_accepts_a_verified_new_term",
+    "provider::exact_relationship::tests::a_previous_owners_grant_is_not_issued_by_the_new_owner",
     "provider::exact_relationship::tests::a_proof_at_another_root_answers_nothing",
     "provider::exact_relationship::tests::an_absent_owner_refuses_as_a_registered_document_does",
     "provider::exact_relationship::tests::an_observation_overtaken_at_every_ask_ends_in_the_refusal",

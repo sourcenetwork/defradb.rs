@@ -4,11 +4,20 @@ use super::subject::SubjectRestriction;
 use crate::expression::RelationExpression;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreateRule {
+    pub parent: String,
+    pub requires: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Resource {
     pub name: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: String,
     pub relations: Vec<Relation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub create: Option<CreateRule>,
 }
 
 impl Resource {
@@ -17,6 +26,7 @@ impl Resource {
             name: name.into(),
             description: String::new(),
             relations: Vec::new(),
+            create: None,
         }
     }
 

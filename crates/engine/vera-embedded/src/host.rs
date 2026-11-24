@@ -234,6 +234,11 @@ impl HostedNode {
         self.chain_id
     }
 
+    /// The bound JSON-RPC address when the host requested a listener.
+    pub fn rpc_addr(&self) -> Option<SocketAddr> {
+        self.node.as_ref()?.rpc_addr()
+    }
+
     /// The threads this node runs.
     pub fn threads(&self) -> ThreadBudget {
         self.threads

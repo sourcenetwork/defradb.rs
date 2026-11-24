@@ -676,6 +676,41 @@ where
             .await
     }
 
+    async fn registration_parent(
+        &self,
+        policy_id: &str,
+        child: &str,
+        id: &str,
+    ) -> Result<crate::RegistrationParent> {
+        self.provider
+            .registration_parent(policy_id, child, id)
+            .await
+    }
+
+    async fn registration_parent_rule(
+        &self,
+        policy_id: &str,
+        child: &str,
+        id: &str,
+    ) -> Result<(crate::RegistrationParent, String)> {
+        self.provider
+            .registration_parent_rule(policy_id, child, id)
+            .await
+    }
+
+    async fn register_under_parent(
+        &self,
+        identity: &Did,
+        policy_id: &str,
+        resource: &str,
+        object_id: &str,
+        parent: &crate::RegistrationParent,
+    ) -> Result<()> {
+        self.provider
+            .register_under_parent(identity, policy_id, resource, object_id, parent)
+            .await
+    }
+
     async fn register_object(
         &self,
         identity: &Did,
@@ -694,7 +729,13 @@ where
         resource_name: &str,
         doc_id: &str,
     ) -> Result<bool> {
-        if self.owed(policy_id, resource_name, doc_id).await?.is_some() {
+        if let Some(owed) = self.owed(policy_id, resource_name, doc_id).await? {
+            if owed.parent.is_some() {
+                // Returning false could expose this row through a branchable collection.
+                return Err(Error::ProviderUnavailable(
+                    "parent admission is awaiting confirmation".into(),
+                ));
+            }
             return Ok(true);
         }
         self.provider
@@ -709,7 +750,7 @@ where
         doc_id: &str,
     ) -> Result<Option<Did>> {
         if let Some(owed) = self.owed(policy_id, resource_name, doc_id).await? {
-            return Ok(Some(owed.creator));
+            return Ok(owed.parent.is_none().then_some(owed.creator));
         }
         self.provider
             .get_doc_owner(policy_id, resource_name, doc_id)
@@ -731,7 +772,8 @@ where
             return Ok(false);
         }
         if let Some(owed) = self.owed(policy_id, resource_name, doc_id).await? {
-            return Ok(matches!(identity, Identity::Authenticated(did) if *did == owed.creator));
+            return Ok(owed.parent.is_none()
+                && matches!(identity, Identity::Authenticated(did) if *did == owed.creator));
         }
         if self
             .revoked(identity, policy_id, resource_name, doc_id)
@@ -742,6 +784,74 @@ where
         self.provider
             .check_doc_access(identity, permission, policy_id, resource_name, doc_id)
             .await
+    }
+
+    async fn verify_transport_sentinel(
+        &self,
+        query: &crate::TransportSentinelQuery,
+    ) -> Result<bool> {
+        self.owed_layout().await?;
+        let mut deadline = Box::pin(
+            workers::delay(OBSERVATION_PATIENCE)
+                .map_err(|error| Error::Storage(error.to_string()))?,
+        );
+        let Some(_settling) = before(deadline.as_mut(), std::pin::pin!(self.settling.lock())).await
+        else {
+            return Err(unsettled_relationship());
+        };
+        for (resource, object) in [
+            (query.resource.as_str(), query.child.as_str()),
+            ("nodes", query.parent.as_str()),
+            ("nodes", query.device_node.as_str()),
+            ("device_groups", query.group.as_str()),
+        ] {
+            if self.owed(&query.policy, resource, object).await?.is_some() {
+                return Err(Error::ProviderUnavailable(
+                    "sentinel evidence has an unsettled registration".into(),
+                ));
+            }
+        }
+        let present = self.provider.verify_transport_sentinel(query).await?;
+        let device = Did::new(&query.device)
+            .map_err(|error| Error::ProviderUnavailable(error.to_string()))?;
+        let tuples = [
+            crate::outbox::OwedTuple {
+                policy_id: query.policy.clone(),
+                resource: query.resource.clone(),
+                object: query.child.clone(),
+                relation: "parent".into(),
+                subject: crate::outbox::OwedSubject::EntitySet {
+                    resource: "nodes".into(),
+                    object: query.parent.clone(),
+                    relation: String::new(),
+                },
+            },
+            crate::outbox::OwedTuple {
+                policy_id: query.policy.clone(),
+                resource: "nodes".into(),
+                object: query.device_node.clone(),
+                relation: "transport_publisher".into(),
+                subject: crate::outbox::OwedSubject::Actor {
+                    did: self.provider.canonical_actor(&device),
+                },
+            },
+            crate::outbox::OwedTuple {
+                policy_id: query.policy.clone(),
+                resource: "device_groups".into(),
+                object: query.group.clone(),
+                relation: "member".into(),
+                subject: crate::outbox::OwedSubject::Actor {
+                    did: self.provider.canonical_actor(&device),
+                },
+            },
+        ];
+        let txn = self.store.new_txn(true).await.map_err(storage_error)?;
+        for tuple in &tuples {
+            if crate::outbox::tuple_rest(&txn, tuple).await?.is_some() {
+                return Err(unsettled_relationship());
+            }
+        }
+        Ok(present)
     }
 
     async fn observe_actor_relationship(
@@ -816,6 +926,45 @@ where
             // (`proofs/tla/SettleBeforeObserving.tla`).
             self.await_tuple(&tuple, deadline.as_mut()).await?;
         }
+    }
+
+    async fn replica_group_member(
+        &self,
+        group: &crate::ReplicaGroup,
+        signer: &Did,
+    ) -> Result<bool> {
+        let receiver = self
+            .own_actor()
+            .ok_or(Error::UnsupportedReplicaMembership)?;
+        let _settling = self
+            .settling
+            .try_lock()
+            .ok_or_else(unsettled_relationship)?;
+        let member = self.provider.replica_group_member(group, signer).await?;
+        let txn = self.store.new_txn(true).await.map_err(storage_error)?;
+        if txn
+            .get(&pending_key(&group.policy, &group.resource, &group.object))
+            .await
+            .map_err(storage_error)?
+            .is_some()
+        {
+            return Err(unsettled_relationship());
+        }
+        for actor in [&receiver, signer] {
+            let tuple = crate::outbox::OwedTuple {
+                policy_id: group.policy.clone(),
+                resource: group.resource.clone(),
+                object: group.object.clone(),
+                relation: group.relation.clone(),
+                subject: crate::outbox::OwedSubject::Actor {
+                    did: self.provider.canonical_actor(actor),
+                },
+            };
+            if crate::outbox::tuple_rest(&txn, &tuple).await?.is_some() {
+                return Err(unsettled_relationship());
+            }
+        }
+        Ok(member)
     }
 
     async fn check_named_permission(

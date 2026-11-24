@@ -228,7 +228,18 @@ pub(super) fn parse_policy_directive(directive: &Directive<'_, String>) -> Resul
         return Err(QueryError::parse("resource name must not be empty"));
     }
 
+    let parent_field = match get_directive_arg(directive, "parentField") {
+        Some(graphql_parser::schema::Value::String(field)) => Some(field.clone()),
+        Some(value) => {
+            return Err(QueryError::parse(format!(
+                "Argument \"parentField\" has invalid value {}",
+                format_graphql_value(value)
+            )))
+        }
+        None => None,
+    };
     Ok(PolicyConfig {
+        parent_field,
         id: id.unwrap(),
         resource: resource.unwrap(),
     })
