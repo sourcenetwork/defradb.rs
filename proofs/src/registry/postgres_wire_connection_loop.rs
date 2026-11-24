@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "pg-compat";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // One task serves a pg-compat connection: one deadline read at the

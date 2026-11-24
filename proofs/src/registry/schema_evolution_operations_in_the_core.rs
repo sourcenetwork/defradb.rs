@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "client, db, lens, query, http, cli, ffi, defra-node";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         family: "Schema-evolution operations in the core",

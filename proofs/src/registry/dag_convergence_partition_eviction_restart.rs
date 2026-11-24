@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "p2p, db-merge, blockstore";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // Head rediscovery is embedder-owned. Only sender retry markers and

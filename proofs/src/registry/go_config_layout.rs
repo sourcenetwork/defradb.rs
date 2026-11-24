@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "cli";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // A Go-written config.yaml has each Go key moved onto its Rust key

@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "p2p, p2p-adapter, db-merge, storage";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // Composes the sender's markers, the receiver's admission and durable

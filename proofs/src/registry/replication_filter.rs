@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "db-merge";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // The replication filter (#2451): asked between the merge's phases,

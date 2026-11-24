@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "over the loop's turns, the node's finalized height and the light client's verified height, with time counted only while the loop waits; that the node serves a receipt from the moment it publishes its block's header is vera.rs's property; unit tests in `crates/engine/vera/src/vera_rs/receipt_wait_tests.rs`, in-process node test `crates/engine/vera-embedded/tests/receipt_wait.rs`; the temporal side is `ReceiptWait.tla`";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // Between asks for a receipt the provider waits for the light

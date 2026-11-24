@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "query, storage";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // #2965: float equality is exact, both in query filters and in index

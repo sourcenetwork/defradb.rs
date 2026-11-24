@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "gents";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // Per-field LWW is the DefraDB data model: fields are not atomic across

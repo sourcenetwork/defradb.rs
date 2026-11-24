@@ -3,12 +3,12 @@
 //! the real binary.
 //!
 //! One file per family under `registry/`, each with its own `PROPERTIES`
-//! table; `build.rs` collects the family files into `FAMILIES`, in name
-//! order. The family files are the spine: their distinct `family` values are
-//! the modeled families.
-//! `matrix::readme_lists_exactly_the_modeled_families` asserts that
-//! `proofs/README.md`'s *Modeled families* table lists exactly these, so a new
-//! model cannot land without declaring how it is kept honest against the code.
+//! table and the crates it covers in `CRATES`; `build.rs` collects the
+//! family files into `FAMILIES`, in name order. The family files are the
+//! spine: their distinct `family` values are the modeled families.
+//! `matrix::every_family_names_its_crates` asserts that each one names the
+//! crates its models cover, so a new model cannot land without declaring how
+//! it is kept honest against the code.
 
 /// Which proof tool establishes the property.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,7 +34,8 @@ pub enum Tier {
 }
 
 pub struct Property {
-    /// Family name — must match a row in `proofs/README.md`'s Modeled families table.
+    /// Family name — the family's file under `registry/` groups its
+    /// properties, and `matrix::families_table` lists one row per family.
     pub family: &'static str,
     /// The headline invariant or theorem.
     pub name: &'static str,
@@ -52,9 +53,19 @@ pub struct Property {
     pub bound_by: &'static str,
 }
 
+/// One modeled family: a `registry/` file's properties, plus the crates
+/// those models cover — the row `matrix::families_table` prints.
+pub struct Family {
+    /// The crates this family's models cover, verbatim from the family
+    /// file's `CRATES`.
+    pub crates: &'static str,
+    /// Every property of the family, in the family file's order.
+    pub properties: &'static [Property],
+}
+
 include!(concat!(env!("OUT_DIR"), "/registry_families.rs"));
 
 /// Every property of every family file, family files in name order.
 pub fn properties() -> impl Iterator<Item = &'static Property> {
-    FAMILIES.iter().flat_map(|family| family.iter())
+    FAMILIES.iter().flat_map(|family| family.properties.iter())
 }

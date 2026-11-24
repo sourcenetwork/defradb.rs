@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "db, acp, vera, http, cli, ffi, defra-node";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         family: "Add DAC policy",

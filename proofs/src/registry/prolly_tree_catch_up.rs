@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "prolly (the p2p pull is not wired yet, #2977)";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // Lean models chunking under any close rule that reads the item and

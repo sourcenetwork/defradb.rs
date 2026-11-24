@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "identity";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // The DID-binding half (a distinct identity cannot impersonate another)

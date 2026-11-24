@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "db-index";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // Dropping an index while its backfill runs: the drop's commit takes

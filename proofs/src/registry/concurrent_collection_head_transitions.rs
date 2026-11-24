@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "db-block-builder, storage";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // Two writers appending to one collection without seeing each other must

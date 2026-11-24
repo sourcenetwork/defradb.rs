@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "defra-core, http, ffi, cli";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // A write's own enableSigning picks the flag its key is resolved

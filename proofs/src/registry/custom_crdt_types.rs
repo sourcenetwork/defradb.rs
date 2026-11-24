@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "crdt, schema, db-merge, p2p (#2183)";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // Custom CRDT types (#2183). A node without a registered type merges

@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "p2p, edge";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // The first shutdown caller to swap the flag builds the one drain,

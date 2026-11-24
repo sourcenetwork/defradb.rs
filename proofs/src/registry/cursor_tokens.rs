@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "cursor";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // Cursor tokens (#2481): a token is {d, k}, and an older token with an

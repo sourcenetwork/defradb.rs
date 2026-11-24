@@ -1,5 +1,8 @@
 use super::{Axis::*, Property, Tier::*};
 
+/// The crates this family's models cover.
+pub(super) const CRATES: &str = "workers";
+
 pub(super) const PROPERTIES: &[Property] = &[
     Property {
         // `default_pool()` answers the first registered pool that still runs,
