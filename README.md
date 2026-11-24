@@ -220,11 +220,11 @@ cargo nextest run -p integration-test --test query                # A testo area
 cargo nextest run -p integration-test --test legacy -- acp::negative:: # A legacy module (tests/legacy/)
 ```
 
-Areas: `basic`, `query`, `acp`, `nac`, `p2p`, `fts`, `encryption`, `identity`, `backup`, `verars`
+Areas: `basic`, `query`, `acp`, `nac`, `p2p`, `fts`, `encryption`, `identity`, `backup`, `vera`
 
-Vera integration uses the `vera` crate and Cargo feature, and the `verars` test
-suite. Select it with `--document-acp-type verars` and configure it with the
-`--vera-rs-address`, `--vera-consensus-key` and `--vera-deployment-id` flags,
+Vera integration uses the `vera` crate and Cargo feature, and the `vera` test
+suite. Select it with `--document-acp-type vera` and configure it with the
+`--vera-address`, `--vera-consensus-key` and `--vera-deployment-id` flags,
 their `DEFRA_VERA_*` environment variables, or the `vera_*` configuration
 fields (see `crates/engine/vera/README.md`).
 

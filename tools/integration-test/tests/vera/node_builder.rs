@@ -8,7 +8,7 @@ use super::helpers;
 
 #[nuclei::test]
 #[serial_test::serial]
-async fn node_built_with_vera_rs_enforces_verified_document_access() {
+async fn node_built_with_vera_enforces_verified_document_access() {
     edge::compat(async {
         let hub = helpers::start_hub_cluster().await;
         let keys = vera_harness::cluster::KeySet::builder()
@@ -23,12 +23,12 @@ async fn node_built_with_vera_rs_enforces_verified_document_access() {
         );
         let owner = helpers::funded_identity();
         let node = defra_node::Node::builder()
-            .with_vera_rs(defra_node::VeraRsConfig {
+            .with_vera(defra_node::VeraConfig {
                 rpc_address: hub.node(0).rpc_url(),
                 consensus_key,
                 genesis_id: None,
                 deployment_id: 9001,
-                actor: defra_node::VeraRsActor::Secp256k1Key(
+                actor: defra_node::VeraActor::Secp256k1Key(
                     hex::decode(&owner.private_key_hex).expect("owner key"),
                 ),
                 worker_dir: directory.path().join("worker"),

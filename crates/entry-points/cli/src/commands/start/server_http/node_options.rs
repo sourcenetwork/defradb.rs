@@ -18,7 +18,7 @@ pub(super) fn sanitized_node_options(
     let persistent = config.datastore.store == DatastoreType::Regolith;
 
     #[cfg(feature = "vera")]
-    let document_signer_present = _user_identity_present && config.acp.document_type.is_vera_rs();
+    let document_signer_present = _user_identity_present && config.acp.document_type.is_vera();
     #[cfg(not(feature = "vera"))]
     let document_signer_present = false;
 

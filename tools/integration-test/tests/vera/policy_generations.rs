@@ -175,7 +175,7 @@ async fn exercise_policy_generations(replicated: bool) {
     let alice = helpers::funded_identity();
     let bob = generate_identity(&helpers::defra_binary()).expect("Bob identity");
     assert_ne!(admin.did(), alice.did);
-    let mut builder = helpers::vera_rs_builder(
+    let mut builder = helpers::vera_builder(
         &url,
         &alice.private_key_hex,
         if replicated { 2 } else { 1 },

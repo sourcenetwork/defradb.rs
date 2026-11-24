@@ -665,13 +665,13 @@ pub struct AcpConfig {
     ///
     /// - `none`: No document-level access control (default)
     /// - `local`: Local Zanzibar-based access control
-    /// - `verars`: Vera access control
+    /// - `vera`: Vera access control
     pub document_type: AcpDocumentType,
 
     /// vera.rs JSON-RPC endpoint (e.g., "http://localhost:8545")
     #[cfg(feature = "vera")]
     #[serde(default)]
-    pub vera_rs_address: String,
+    pub vera_address: String,
 
     /// Trusted Vera consensus public key from operator configuration (hex).
     #[cfg(feature = "vera")]
@@ -742,7 +742,7 @@ impl Default for AcpConfig {
             node_enable: false,
             document_type: AcpDocumentType::None,
             #[cfg(feature = "vera")]
-            vera_rs_address: String::new(),
+            vera_address: String::new(),
             #[cfg(feature = "vera")]
             vera_consensus_key: String::new(),
             #[cfg(feature = "vera")]

@@ -64,7 +64,7 @@ impl Node {
 
         if let Some(did) = user_did {
             #[cfg(feature = "vera")]
-            let remote_acp = config.acp.document_type.is_vera_rs();
+            let remote_acp = config.acp.document_type.is_vera();
             #[cfg(not(feature = "vera"))]
             let remote_acp = false;
             if !remote_acp {

@@ -5,7 +5,7 @@
 //! table. The second and third share a node configuration, so their
 //! difference is the socket; the first differs from the second by the
 //! daemon's block pacing. Run it with
-//! `cargo test -p integration-test --test verars transport_latency -- --ignored --nocapture`.
+//! `cargo test -p integration-test --test vera transport_latency -- --ignored --nocapture`.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};

@@ -223,7 +223,7 @@
     "verdict": "missing",
     "rust_tests": [],
     "evidence": "",
-    "note": "Searched acp/, nac/, query/, verars/ and crates/*/tests for _commits without docID/cid filters under a policy; every ACP _commits test filters by docID, cid or fieldName. No test asserts the 3/6 commit counts across public and private docs or across two private collections."
+    "note": "Searched acp/, nac/, query/, vera/ and crates/*/tests for _commits without docID/cid filters under a policy; every ACP _commits test filters by docID, cid or fieldName. No test asserts the 3/6 commit counts across public and private docs or across two private collections."
   },
   {
     "id": "go.acp.dac.commits.filtered",
@@ -240,9 +240,9 @@
     "id": "go.acp.dac.commits.version-and-grants",
     "verdict": "partial",
     "rust_tests": [
-      "tools/integration-test/tests/verars/p2p_acp.rs::rust_verars_p2p_acp"
+      "tools/integration-test/tests/vera/p2p_acp.rs::rust_vera_p2p_acp"
     ],
-    "evidence": "verars/p2p_acp.rs:105 _commits(docID:) empty for an ungranted identity; :120 after a reader grant the identity's _commits equal the owner's",
+    "evidence": "vera/p2p_acp.rs:105 _commits(docID:) empty for an ungranted identity; :120 after a reader grant the identity's _commits equal the owner's",
     "note": "The _version sub-select is not tested under ACP (no test pairs _version with an identity). Grant coverage runs on vera.rs, not Local DAC."
   },
   {
@@ -380,23 +380,23 @@
     "id": "go.acp.dac.p2p.remote-dac",
     "verdict": "partial",
     "rust_tests": [
-      "tools/integration-test/tests/legacy/p2p_iroh/acp/dac.rs::create_private_docs_different_nodes",
-      "tools/integration-test/tests/legacy/p2p_iroh/acp/dac.rs::update_private_docs_different_nodes",
-      "tools/integration-test/tests/legacy/p2p_iroh/acp/dac.rs::delete_private_docs_different_nodes",
-      "tools/integration-test/tests/verars/p2p_acp.rs::rust_verars_p2p_acp"
+      "tools/integration-test/tests/vera/iroh_dac.rs::create_private_docs_different_nodes",
+      "tools/integration-test/tests/vera/iroh_dac.rs::update_private_docs_different_nodes",
+      "tools/integration-test/tests/vera/iroh_dac.rs::delete_private_docs_different_nodes",
+      "tools/integration-test/tests/vera/p2p_acp.rs::rust_vera_p2p_acp"
     ],
-    "evidence": "verars/p2p_acp.rs:99-105 the replicated doc is readable by the owner on both nodes and hidden from anonymous and an ungranted identity; p2p_iroh/acp/dac.rs:584 anonymous cannot see the replicated update; deletion replication is polled at dac.rs:638-664",
-    "note": "Not asserted: a subscribing node whose identity lacks access receiving nothing, then syncing after its node identity gets `reader`. The p2p_iroh Vera tests return early with only an eprintln when verad is missing (dac.rs:79-81)."
+    "evidence": "vera/p2p_acp.rs:99-105 the replicated doc is readable by the owner on both nodes and hidden from anonymous and an ungranted identity; vera/iroh_dac.rs update_private_docs_different_nodes: anonymous cannot see the replicated update; deletion replication is polled in delete_private_docs_different_nodes",
+    "note": "Not asserted: a subscribing node whose identity lacks access receiving nothing, then syncing after its node identity gets `reader`."
   },
   {
     "id": "go.acp.dac.p2p.relationship-sync",
     "verdict": "partial",
     "rust_tests": [
-      "tools/integration-test/tests/verars/p2p_acp.rs::rust_verars_p2p_acp",
-      "tools/integration-test/tests/legacy/p2p_iroh/acp/dac.rs::replicator_with_doc_actor_relationship"
+      "tools/integration-test/tests/vera/p2p_acp.rs::rust_vera_p2p_acp",
+      "tools/integration-test/tests/vera/iroh_dac.rs::replicator_with_doc_actor_relationship"
     ],
-    "evidence": "verars/p2p_acp.rs:120 after a grant on node0 the grantee reads the doc and its commits on both nodes; p2p_iroh/acp/dac.rs:878-886 the grantee sees the doc on both nodes",
-    "note": "Not asserted: re-adding on the other node reporting existence (dac.rs:860 discards the result), deleting again reporting not found, and the multi-block non-creator case."
+    "evidence": "vera/p2p_acp.rs:120 after a grant on node0 the grantee reads the doc and its commits on both nodes; vera/iroh_dac.rs replicator_with_doc_actor_relationship: the grantee sees the doc on both nodes",
+    "note": "Not asserted: re-adding on the other node reporting existence (iroh_dac.rs replicator_with_doc_actor_relationship discards the result), deleting again reporting not found, and the multi-block non-creator case."
   },
   {
     "id": "go.acp.dac.p2p.local-dac",
@@ -420,7 +420,7 @@
     "verdict": "missing",
     "rust_tests": [],
     "evidence": "",
-    "note": "Searched for a non-creator updater editing a replicated doc on the receiving node, and for 'corrupted index'. p2p_iroh/acp/dac/strict_updates.rs covers the owner editing through a relay, not a non-creator grantee, and has no indexed field."
+    "note": "Searched for a non-creator updater editing a replicated doc on the receiving node, and for 'corrupted index'. vera/iroh_dac/strict_updates.rs covers the owner editing through a relay, not a non-creator grantee, and has no indexed field."
   },
   {
     "id": "go.acp.nac.lifecycle.start",

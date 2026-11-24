@@ -56,7 +56,7 @@ impl RunningNode {
                 "memory",
                 "--no-p2p",
                 "--document-acp-type",
-                "verars-embedded",
+                "vera-embedded",
                 "--vera-deployment-id",
                 "9407",
             ])

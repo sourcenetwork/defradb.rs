@@ -10,7 +10,7 @@ use super::helpers;
 /// 4. Jack sees the document, anonymous sees nothing
 #[nuclei::test]
 #[serial_test::serial]
-async fn rust_verars_smoke() {
+async fn rust_vera_smoke() {
     edge::compat(async {
         let jack = helpers::funded_identity();
 
@@ -18,7 +18,7 @@ async fn rust_verars_smoke() {
         let hub_rpc_url = hub.node(0).rpc_url();
 
         let cluster =
-            helpers::build_defra_with_vera_rs(&hub_rpc_url, &jack.private_key_hex, 1, false).await;
+            helpers::build_defra_with_vera(&hub_rpc_url, &jack.private_key_hex, 1, false).await;
         let node = cluster.client(0);
 
         let policy_result = node

@@ -1,8 +1,8 @@
 # Vera ACP provider
 
 Build the Defra CLI with `--features vera` and select
-`--document-acp-type verars`. Configure the service endpoint with
-`DEFRA_VERA_RS_ADDRESS`, and supply both `--vera-consensus-key` (hex) and
+`--document-acp-type vera`. Configure the service endpoint with
+`DEFRA_VERA_ADDRESS`, and supply both `--vera-consensus-key` (hex) and
 `--vera-deployment-id` from the deployment's operator configuration. Their
 corresponding environment variables are `DEFRA_VERA_CONSENSUS_KEY` and
 `DEFRA_VERA_DEPLOYMENT_ID`.
@@ -45,9 +45,9 @@ an actor identity retain independent worker identities and submission
 sequences.
 
 The native provider module is `vera::vera_rs`, and its integration suite is
-`cargo test -p integration-test --test verars`. Configure it with the `verars`
-provider selector, `--vera-rs-address`, `DEFRA_VERA_RS_ADDRESS`, or the
-`vera_rs_address` config key.
+`cargo test -p integration-test --test vera`. Configure it with the `vera`
+provider selector, `--vera-address`, `DEFRA_VERA_ADDRESS`, or the
+`vera_address` config key.
 
 The `Native consumer` workflow tests the provider against its pinned Vera runtime.
 Manual runs accept a full commit SHA in `vera_revision`; this selects the service

@@ -8,7 +8,7 @@
 //! additionally gated by the querying identity's DAC permission.
 //!
 //! Run with:
-//!   VERAD_BINARY=... cargo nextest run -p integration-test --test verars -- encryption_acp::
+//!   VERAD_BINARY=... cargo nextest run -p integration-test --test vera -- encryption_acp::
 //!
 //! Each test starts a vera.rs validator and 2-3 DefraDB nodes, so they are slow.
 
@@ -120,7 +120,7 @@ async fn setup_two_nodes() -> (TestCluster, String, NodeIds) {
     let node1 = generate_identity(&binary).expect("node1 identity");
 
     let hub = helpers::start_hub_cluster().await;
-    let cluster = helpers::vera_rs_builder(&hub.node(0).rpc_url(), &node0.private_key_hex, 2, true)
+    let cluster = helpers::vera_builder(&hub.node(0).rpc_url(), &node0.private_key_hex, 2, true)
         // node1 runs under its own DID so the KMS node-gate is distinct.
         .with_node_identity(1, &node1.private_key_hex)
         .with_encryption()

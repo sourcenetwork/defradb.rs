@@ -827,8 +827,8 @@
     "id": "go.signature.commits.update_delete",
     "verdict": "partial",
     "rust_tests": [
-      "tools/integration-test/tests/verars/policy_generations/strict_replication.rs::native_replicated_update_accepts_granted_writer",
-      "tools/integration-test/tests/verars/policy_generations/strict_replication.rs::native_replicated_delete_accepts_granted_writer"
+      "tools/integration-test/tests/vera/policy_generations/strict_replication.rs::native_replicated_update_accepts_granted_writer",
+      "tools/integration-test/tests/vera/policy_generations/strict_replication.rs::native_replicated_delete_accepts_granted_writer"
     ],
     "evidence": "strict_replication.rs:129-136 (via exercise) asserts the height-2 _C commit after an update or delete carries a signature object",
     "note": "Not asserted: field blocks at heights 2 and 3 have signature nil (Rust implements this in crates/database/db/src/block/builder/mod.rs compute_signature, priority > 1, but no test checks it); same identity with distinct values across _C blocks; delete _C signed with the node identity on a plain (non-Vera) node."

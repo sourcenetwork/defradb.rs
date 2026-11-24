@@ -59,7 +59,7 @@ export PATH := tooling_bin + ":" + go_root + "/bin" + ":" + cargo_bin + ":" + el
 
 # Integration areas: the top-level modules of the testo and legacy test binaries
 # in tools/integration-test. An area in both runs in both.
-integration_suites := "acp backup collection collection_version encryption explain export index issues matchers mutation net node query searchable_encryption signature subscription txn view basic cursor fts identity nac p2p p2p_iroh vector vera verars"
+integration_suites := "acp backup collection collection_version encryption explain export index issues matchers mutation net node query searchable_encryption signature subscription txn view basic cursor fts identity nac p2p p2p_iroh vector vera vera"
 
 # Cargo profile for the build and test recipes. `dev` is the stock debug
 # profile and the default; `just profile=super-dev test` opts into the lean

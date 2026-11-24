@@ -56,7 +56,7 @@ async fn native_ungranted_peer_is_filtered_until_explicitly_trusted_replay() {
         assert_ne!(owner.did, peer.did);
         let hub = helpers::start_hub_cluster().await;
         let cluster =
-            helpers::vera_rs_builder(&hub.node(0).rpc_url(), &owner.private_key_hex, 2, true)
+            helpers::vera_builder(&hub.node(0).rpc_url(), &owner.private_key_hex, 2, true)
                 .with_node_identity(1, peer.private_key_hex.clone())
                 .build()
                 .await

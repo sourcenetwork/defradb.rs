@@ -235,14 +235,14 @@ impl NodeBuilder {
     ///
     /// Requires the `vera` feature (on by default).
     #[cfg(feature = "vera")]
-    pub fn with_vera_rs(mut self, config: crate::VeraRsConfig) -> Self {
-        self.config.document_acp = DocumentAcpConfig::VeraRs(config);
+    pub fn with_vera(mut self, config: crate::VeraConfig) -> Self {
+        self.config.document_acp = DocumentAcpConfig::Vera(config);
         self
     }
 
     /// Use a document ACP provider the host built, for example one over a
     /// Vera node it runs itself. The node wires it as it wires
-    /// [`with_vera_rs`](Self::with_vera_rs): verified access decisions without
+    /// [`with_vera`](Self::with_vera): verified access decisions without
     /// a cache, remote policies mirrored locally, owed registrations gated.
     ///
     /// Requires the `vera` feature (on by default).

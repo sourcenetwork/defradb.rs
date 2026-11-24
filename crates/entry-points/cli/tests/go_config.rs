@@ -47,20 +47,20 @@ mod vera {
     #[test]
     fn go_nested_remote_address_fills_the_rust_key_and_chain_keys_are_dropped() {
         let config = load(
-            "Document:\n  Type: verars\n  Remote:\n    LogID: chain-1\n    GRPCAddress: http://grpc:9090\n    CometRPCAddress: http://comet:26657\n    KeyName: ignored\n    Address: acct-1\n",
+            "Document:\n  Type: vera\n  Remote:\n    LogID: chain-1\n    GRPCAddress: http://grpc:9090\n    CometRPCAddress: http://comet:26657\n    KeyName: ignored\n    Address: acct-1\n",
             &[],
         );
-        assert_eq!(config.acp.document_type, AcpDocumentType::VeraRs);
+        assert_eq!(config.acp.document_type, AcpDocumentType::Vera);
         assert_eq!(config.acp.remote_address, "acct-1");
     }
 
     #[test]
     fn rust_keys_win_over_go_keys() {
         let config = load(
-            "document_type: verars\nremote_address: rust-account\ndocument:\n  type: local\n  remote:\n    address: go-account\n",
+            "document_type: vera\nremote_address: rust-account\ndocument:\n  type: local\n  remote:\n    address: go-account\n",
             &[],
         );
-        assert_eq!(config.acp.document_type, AcpDocumentType::VeraRs);
+        assert_eq!(config.acp.document_type, AcpDocumentType::Vera);
         assert_eq!(config.acp.remote_address, "rust-account");
     }
 }

@@ -54,7 +54,7 @@ pub async fn start_hub_cluster() -> vera_harness::cluster::TestCluster {
 }
 
 /// Configure document ACP through arguments retained by the harness on restart.
-pub fn vera_rs_builder(
+pub fn vera_builder(
     hub_rpc_url: &str,
     identity: &str,
     n_nodes: usize,
@@ -71,14 +71,14 @@ pub fn vera_rs_builder(
         .with_keyring()
         .with_rust_binary(BinarySource::Path(defra_binary()))
         .with_extra_rust_args([
-            "--vera-rs-address".to_owned(),
+            "--vera-address".to_owned(),
             hub_rpc_url.to_owned(),
             "--vera-consensus-key".to_owned(),
             trusted_key,
             "--vera-deployment-id".to_owned(),
             "9001".to_owned(),
             "--document-acp-type".to_owned(),
-            "verars".to_owned(),
+            "vera".to_owned(),
         ]);
     for index in 0..n_nodes {
         builder = builder.with_node_identity(index, identity.to_string());
@@ -90,13 +90,13 @@ pub fn vera_rs_builder(
 }
 
 /// Build a DefraDB test cluster configured to use vera.rs for document ACP.
-pub async fn build_defra_with_vera_rs(
+pub async fn build_defra_with_vera(
     hub_rpc_url: &str,
     identity: &str,
     n_nodes: usize,
     p2p: bool,
 ) -> TestCluster {
-    vera_rs_builder(hub_rpc_url, identity, n_nodes, p2p)
+    vera_builder(hub_rpc_url, identity, n_nodes, p2p)
         .build()
         .await
         .expect("build defra cluster")

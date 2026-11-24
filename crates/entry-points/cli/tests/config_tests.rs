@@ -29,7 +29,7 @@ fn cli_with_defaults() -> Cli {
         keyring_path: None,
         no_keyring: None,
         #[cfg(feature = "vera")]
-        vera_rs_address: None,
+        vera_address: None,
         #[cfg(feature = "vera")]
         vera_consensus_key: None,
         #[cfg(feature = "vera")]
@@ -159,7 +159,7 @@ fn test_apply_cli_flags_valid_values_succeed() {
     cli.acp_document_type = Some(cli::config::AcpDocumentType::Local);
     #[cfg(feature = "vera")]
     {
-        cli.vera_rs_address = Some("http://localhost:8545".to_string());
+        cli.vera_address = Some("http://localhost:8545".to_string());
         cli.vera_consensus_key = Some("trusted-key".to_string());
         cli.vera_deployment_id = Some(9001);
     }
@@ -185,7 +185,7 @@ fn test_apply_cli_flags_valid_values_succeed() {
     assert_eq!(config.acp.document_type, AcpDocumentType::Local);
     #[cfg(feature = "vera")]
     {
-        assert_eq!(config.acp.vera_rs_address, "http://localhost:8545");
+        assert_eq!(config.acp.vera_address, "http://localhost:8545");
         assert_eq!(config.acp.vera_consensus_key, "trusted-key");
         assert_eq!(config.acp.vera_deployment_id, Some(9001));
     }
@@ -206,7 +206,7 @@ const CONFIG_BACKED_GLOBAL_FLAGS: &[&str] = &[
     "keyring-path",
     "no-keyring",
     #[cfg(feature = "vera")]
-    "vera-rs-address",
+    "vera-address",
     #[cfg(feature = "vera")]
     "vera-consensus-key",
     #[cfg(feature = "vera")]

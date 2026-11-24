@@ -7,7 +7,7 @@ use std::sync::Arc;
 /// vera.rs document ACP: a Vera node reached over JSON-RPC, with every read
 /// verified against an independently provisioned consensus key.
 #[derive(Clone)]
-pub struct VeraRsConfig {
+pub struct VeraConfig {
     /// HTTP JSON-RPC address of the Vera node; headers arrive over the same
     /// address by WebSocket.
     pub rpc_address: String,
@@ -26,7 +26,7 @@ pub struct VeraRsConfig {
     /// The deployment the node's worker signs for.
     pub deployment_id: u64,
     /// The actor that owns this node's policies.
-    pub actor: VeraRsActor,
+    pub actor: VeraActor,
     /// Where the worker journals a submission until Vera confirms it. It must
     /// survive restarts, or a pending submission is lost.
     pub worker_dir: PathBuf,
@@ -36,10 +36,10 @@ pub struct VeraRsConfig {
     pub tuning: vera::AcpTuning,
 }
 
-impl fmt::Debug for VeraRsConfig {
+impl fmt::Debug for VeraConfig {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("VeraRsConfig")
+            .debug_struct("VeraConfig")
             .field("rpc_address", &self.rpc_address)
             .field("consensus_key", &self.consensus_key)
             .field("genesis_id", &self.genesis_id.map(hex::encode))
@@ -50,7 +50,7 @@ impl fmt::Debug for VeraRsConfig {
     }
 }
 
-impl PartialEq for VeraRsConfig {
+impl PartialEq for VeraConfig {
     fn eq(&self, other: &Self) -> bool {
         self.rpc_address == other.rpc_address
             && self.consensus_key == other.consensus_key
@@ -63,12 +63,12 @@ impl PartialEq for VeraRsConfig {
     }
 }
 
-impl Eq for VeraRsConfig {}
+impl Eq for VeraConfig {}
 
 /// Who a node's Vera policies belong to: the key that signs the delegations
 /// the node's worker acts under.
 #[derive(Clone)]
-pub enum VeraRsActor {
+pub enum VeraActor {
     /// A 32-byte secp256k1 private key this process holds.
     Secp256k1Key(Vec<u8>),
     /// A signer for a key of any type vera.rs accepts (secp256k1, Ed25519,
@@ -78,7 +78,7 @@ pub enum VeraRsActor {
     Signer(Arc<dyn vera::vera_rs::DelegationSigner>),
 }
 
-impl fmt::Debug for VeraRsActor {
+impl fmt::Debug for VeraActor {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Secp256k1Key(_) => formatter.write_str("Secp256k1Key(..)"),
@@ -90,7 +90,7 @@ impl fmt::Debug for VeraRsActor {
     }
 }
 
-impl PartialEq for VeraRsActor {
+impl PartialEq for VeraActor {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Secp256k1Key(a), Self::Secp256k1Key(b)) => a == b,
@@ -100,4 +100,4 @@ impl PartialEq for VeraRsActor {
     }
 }
 
-impl Eq for VeraRsActor {}
+impl Eq for VeraActor {}

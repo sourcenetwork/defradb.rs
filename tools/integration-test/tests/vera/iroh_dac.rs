@@ -52,7 +52,7 @@ async fn setup_vera_cluster() -> VeraCluster {
 async fn setup_vera_cluster_with_relay(relay_key: Option<&str>) -> VeraCluster {
     let owner_key = helpers::funded_identity().private_key_hex;
     let hub = helpers::start_hub_cluster().await;
-    let mut builder = helpers::vera_rs_builder(&hub.node(0).rpc_url(), &owner_key, 2, false)
+    let mut builder = helpers::vera_builder(&hub.node(0).rpc_url(), &owner_key, 2, false)
         .with_iroh_transport()
         // vera.rs decides an inbound update or delete by the block's signer.
         .with_signing()

@@ -29,7 +29,7 @@ async fn a_peer_shows_chunks_only_to_readers_of_the_parent() {
 
         let hub = helpers::start_hub_cluster().await;
         let cluster =
-            helpers::build_defra_with_vera_rs(&hub.node(0).rpc_url(), jack_key, 2, true).await;
+            helpers::build_defra_with_vera(&hub.node(0).rpc_url(), jack_key, 2, true).await;
         let (node0, node1) = (cluster.client(0), cluster.client(1));
 
         let policy = node0.acp_policy_add(USER_ACP_POLICY, jack_key).unwrap();

@@ -15,8 +15,8 @@ name = "legacy"
 path = "tests/legacy/main.rs"
 
 [[test]]
-name = "verars"
-path = "tests/verars/main.rs"
+name = "vera"
+path = "tests/vera/main.rs"
 
 [dependencies]
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }

@@ -79,7 +79,7 @@ mod signer_credential;
 mod start_peer_key;
 mod transaction;
 #[cfg(feature = "vera")]
-mod vera_rs_config;
+mod vera_config;
 pub mod version;
 
 use std::sync::Arc;
@@ -150,7 +150,7 @@ pub use telemetry::{ConflictMetricsSnapshot, RetryLayerSnapshot};
 pub use telemetry::{TelemetryConfig, TelemetryHandle};
 pub use transaction::NodeTransaction;
 #[cfg(feature = "vera")]
-pub use vera_rs_config::{VeraRsActor, VeraRsConfig};
+pub use vera_config::{VeraActor, VeraConfig};
 pub use zeroize::Zeroizing;
 
 use network::NodeEdge;

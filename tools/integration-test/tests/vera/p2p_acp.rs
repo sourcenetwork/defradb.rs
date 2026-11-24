@@ -7,7 +7,7 @@ use super::helpers;
 /// Replicated documents and commit history follow Vera grants and revocation.
 #[nuclei::test]
 #[serial_test::serial]
-async fn rust_verars_p2p_acp() {
+async fn rust_vera_p2p_acp() {
     edge::compat(async {
         let jack = helpers::funded_identity();
         let reader = generate_identity(&helpers::defra_binary()).expect("reader identity");
@@ -16,7 +16,7 @@ async fn rust_verars_p2p_acp() {
         let hub_rpc_url = hub.node(0).rpc_url();
 
         let cluster =
-            helpers::build_defra_with_vera_rs(&hub_rpc_url, &jack.private_key_hex, 2, true).await;
+            helpers::build_defra_with_vera(&hub_rpc_url, &jack.private_key_hex, 2, true).await;
         let node0 = cluster.client(0);
         let node1 = cluster.client(1);
 

@@ -37,7 +37,7 @@ where
 {
     match config {
         #[cfg(feature = "vera")]
-        crate::DocumentAcpConfig::VeraRs(config) => {
+        crate::DocumentAcpConfig::Vera(config) => {
             let edge = remote_edge(network)?;
             let worker = {
                 let (directory, keyring, deployment) = (
@@ -53,7 +53,7 @@ where
                 .map_err(Error::VeraProvider)?
             };
             let provider = match &config.actor {
-                crate::VeraRsActor::Secp256k1Key(key) => {
+                crate::VeraActor::Secp256k1Key(key) => {
                     vera::VeraRsProvider::new(
                         config.rpc_address.clone(),
                         &config.consensus_key,
@@ -66,7 +66,7 @@ where
                     )
                     .await
                 }
-                crate::VeraRsActor::Signer(signer) => {
+                crate::VeraActor::Signer(signer) => {
                     vera::VeraRsProvider::new_with_signer(
                         config.rpc_address.clone(),
                         &config.consensus_key,
@@ -269,7 +269,7 @@ mod tests {
 
     #[cfg(feature = "vera")]
     #[test]
-    fn vera_rs_document_acp_rejects_an_invalid_trusted_key_before_connecting() {
+    fn vera_document_acp_rejects_an_invalid_trusted_key_before_connecting() {
         edge::testing::edge()
             .block_on(async {
                 let directory = tempfile::tempdir().unwrap();
@@ -278,13 +278,13 @@ mod tests {
                         .unwrap(),
                 );
                 let worker_dir = directory.path().join("worker");
-                let config = DocumentAcpConfig::VeraRs(crate::VeraRsConfig {
+                let config = DocumentAcpConfig::Vera(crate::VeraConfig {
                     // Nothing listens here; a connection attempt would fail differently.
                     rpc_address: "http://127.0.0.1:1".into(),
                     consensus_key: "not-a-key".into(),
                     genesis_id: None,
                     deployment_id: 9001,
-                    actor: crate::VeraRsActor::Secp256k1Key(vec![7; 32]),
+                    actor: crate::VeraActor::Secp256k1Key(vec![7; 32]),
                     worker_dir: worker_dir.clone(),
                     keyring,
                     tuning: vera::AcpTuning::default(),

@@ -396,7 +396,7 @@ fn a_node_adopts_a_policy_its_vera_node_was_seeded_with() {
 /// its own actor. What either writes, the other reads.
 #[test]
 fn a_second_node_shares_the_first_nodes_vera_deployment() {
-    use defra_node::{VeraRsActor, VeraRsConfig};
+    use defra_node::{VeraActor, VeraConfig};
     use vera::vera_rs::{DelegationSigner, Ed25519Signer};
 
     workers::block_on(async {
@@ -421,12 +421,12 @@ fn a_second_node_shares_the_first_nodes_vera_deployment() {
             keyring::FileKeyring::open(second_dir.join("keys"), b"test-password").expect("keyring"),
         );
         let second = Node::builder()
-            .with_vera_rs(VeraRsConfig {
+            .with_vera(VeraConfig {
                 rpc_address: format!("http://{rpc}"),
                 consensus_key: trust.consensus_key,
                 genesis_id: None,
                 deployment_id: trust.chain_id,
-                actor: VeraRsActor::Signer(second_signer),
+                actor: VeraActor::Signer(second_signer),
                 worker_dir: second_dir.join("worker"),
                 keyring,
                 tuning: vera::AcpTuning::default(),
@@ -1065,7 +1065,7 @@ fn a_revocation_staged_in_a_transaction_denies_at_the_commit_and_the_chain_follo
 #[test]
 fn a_restart_settles_a_change_the_chain_could_not_take() {
     use acp::RemotePolicies as _;
-    use defra_node::{VeraRsActor, VeraRsConfig};
+    use defra_node::{VeraActor, VeraConfig};
     use vera::vera_rs::{DelegationSigner, Ed25519Signer};
 
     workers::block_on(async {
@@ -1100,12 +1100,12 @@ fn a_restart_settles_a_change_the_chain_could_not_take() {
                     );
                     Node::builder()
                         .data_path(home.join("data"))
-                        .with_vera_rs(VeraRsConfig {
+                        .with_vera(VeraConfig {
                             rpc_address: format!("http://{rpc}"),
                             consensus_key: trust.consensus_key,
                             genesis_id: Some(genesis_id),
                             deployment_id: trust.chain_id,
-                            actor: VeraRsActor::Signer(signer),
+                            actor: VeraActor::Signer(signer),
                             worker_dir: home.join("worker"),
                             keyring,
                             tuning: vera::AcpTuning::default(),
@@ -1198,7 +1198,7 @@ fn a_restart_settles_a_change_the_chain_could_not_take() {
 /// while the provider is away and tries again by itself.
 #[test]
 fn an_idle_node_settles_a_staged_grant_once_its_deployment_is_back() {
-    use defra_node::{VeraRsActor, VeraRsConfig};
+    use defra_node::{VeraActor, VeraConfig};
     use vera::vera_rs::{DelegationSigner, Ed25519Signer};
 
     workers::block_on(async {
@@ -1230,12 +1230,12 @@ fn an_idle_node_settles_a_staged_grant_once_its_deployment_is_back() {
         );
         let node = Node::builder()
             .data_path(home.join("data"))
-            .with_vera_rs(VeraRsConfig {
+            .with_vera(VeraConfig {
                 rpc_address: format!("http://{rpc}"),
                 consensus_key: trust.consensus_key,
                 genesis_id: None,
                 deployment_id: trust.chain_id,
-                actor: VeraRsActor::Signer(Arc::clone(&signer)),
+                actor: VeraActor::Signer(Arc::clone(&signer)),
                 worker_dir: home.join("worker"),
                 keyring,
                 tuning: vera::AcpTuning::default(),

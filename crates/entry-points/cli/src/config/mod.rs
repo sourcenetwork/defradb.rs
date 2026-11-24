@@ -254,8 +254,8 @@ impl Config {
 
         // vera.rs
         #[cfg(feature = "vera")]
-        if let Some(ref addr) = cli.vera_rs_address {
-            self.acp.vera_rs_address = addr.clone();
+        if let Some(ref addr) = cli.vera_address {
+            self.acp.vera_address = addr.clone();
         }
         #[cfg(feature = "vera")]
         if let Some(ref key) = cli.vera_consensus_key {

@@ -43,7 +43,7 @@ async fn exercise(delete: bool, grant: RelayGrant) {
     let relay = generate_identity(&helpers::defra_binary()).expect("distinct relay identity");
     assert_ne!(owner.did, relay.did);
     let hub = helpers::start_hub_cluster().await;
-    let cluster = helpers::vera_rs_builder(&hub.node(0).rpc_url(), &owner.private_key_hex, 2, true)
+    let cluster = helpers::vera_builder(&hub.node(0).rpc_url(), &owner.private_key_hex, 2, true)
         .with_node_identity(1, relay.private_key_hex.clone())
         .with_signing()
         .build()

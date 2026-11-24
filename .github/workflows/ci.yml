@@ -907,7 +907,7 @@ jobs:
       DEFRA_TEST_TRACE: p2p=debug,defra_p2p_adapter=debug,warn
       TESTO_FILTER: binary(testo)
       # Not run anywhere: p2p_interop_bench, whose one test is an ignored
-      # benchmark that prints latencies, and verars, whose cluster needs the
+      # benchmark that prints latencies, and vera, whose cluster needs the
       # verad validator binary from vera.rs, which CI does not build.
       # c_rust_to_go_outage_replay (#2089) flips between runs: the Go receiver
       # sometimes misses the protected document written while it was down. A
