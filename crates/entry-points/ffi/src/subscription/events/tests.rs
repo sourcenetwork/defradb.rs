@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-use super::{defra_event_subscribe, parse_names};
+use super::{defra_event_subscribe, event_json, parse_names};
 use crate::identities::{defra_identity_free, defra_identity_new};
 use crate::subscription::{defra_subscription_close, defra_subscription_poll};
 use crate::test_support::{
@@ -204,4 +204,50 @@ fn events_the_bus_drops_are_reported_before_the_next_one() {
             serde_json::json!({ "name": "replicator-completed" }),
         ]
     );
+}
+
+#[test]
+fn takeover_reports_are_nameable_and_include_their_payload() {
+    assert_eq!(
+        parse_names("acp-takeover-reconciled").unwrap(),
+        [events::EventName::AcpTakeoverReconciled]
+    );
+    let submission = events::AcpTakeoverSubmission {
+        kind: "relationship".into(),
+        policy_id: "policy".into(),
+        resource: "document".into(),
+        object: "doc".into(),
+        relation: Some("reader".into()),
+        subject: Some("did:example:reader".into()),
+        add: Some(true),
+        actor: Some("did:example:owner".into()),
+    };
+    let message = events::Message::acp_takeover_reconciled(events::AcpTakeoverReconciledData {
+        term: 3,
+        cut_height: 7,
+        cut_block: "0xabc".into(),
+        closed: Some("the journal cannot vouch for the takeover".into()),
+        applied_again: vec![submission.clone()],
+        owed_again: vec![submission],
+        unrestorable: vec![events::AcpTakeoverUnrestorable {
+            kind: "policy-creation".into(),
+            policy_id: "policy".into(),
+            resource: String::new(),
+            object: String::new(),
+            actor: Some("did:example:owner".into()),
+            reason: "refused".into(),
+        }],
+    });
+    let event = event_json(&message);
+    assert_eq!(event["name"], "acp-takeover-reconciled");
+    assert_eq!(event["term"], 3);
+    assert_eq!(event["cut_height"], 7);
+    assert_eq!(event["cut_block"], "0xabc");
+    assert_eq!(event["closed"], "the journal cannot vouch for the takeover");
+    assert_eq!(event["unrestorable"][0]["actor"], "did:example:owner");
+    assert_eq!(event["applied_again"][0]["relation"], "reader");
+    assert_eq!(event["owed_again"][0]["actor"], "did:example:owner");
+    assert_eq!(event["owed_again"][0]["add"], true);
+    assert_eq!(event["unrestorable"][0]["policy_id"], "policy");
+    assert_eq!(event["unrestorable"][0]["reason"], "refused");
 }

@@ -677,6 +677,13 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
         }
     }
 
+    fn scans_validated(&self) -> bool {
+        self.shared_txn()
+            .ok()
+            .and_then(|txn| txn.datastore().ok())
+            .is_some_and(|datastore| datastore.scans_validated())
+    }
+
     async fn get_document_at_cid(
         &self,
         cid: &str,

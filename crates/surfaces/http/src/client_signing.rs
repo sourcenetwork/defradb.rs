@@ -179,6 +179,7 @@ fn accepted_mutation(start: &Start, limits: query::QueryLimits) -> bool {
     let Ok(query::query_parse::ParsedOperation::Mutation {
         mutations,
         explain: None,
+        ..
     }) = query::query_parse::parse_request_with_limits(
         &start.query,
         variables.as_ref(),

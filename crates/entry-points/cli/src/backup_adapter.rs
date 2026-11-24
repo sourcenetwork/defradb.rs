@@ -54,10 +54,13 @@ impl<S: Store + 'static> BackupOperations for BackupAdapter<S> {
             .await
     }
 
-    async fn import(&self, data: &str) -> Result<ImportResult, String> {
+    async fn import(
+        &self,
+        data: &str,
+        host: &dyn db::backup::ImportHost,
+    ) -> Result<ImportResult, String> {
         let stats =
-            db::backup::import_database_as(&self.context(), &self.database, &self.runner, data)
-                .await?;
+            db::backup::import_database_as(&self.context(), &self.database, host, data).await?;
 
         Ok(ImportResult {
             documents_imported: stats.documents_imported,
