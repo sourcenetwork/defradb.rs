@@ -21,30 +21,6 @@ const ENTRIES: &[(&str, &str, &[&str], &str)] = &[
          the join drops a relation when both foreign keys are indexed.",
     ),
     (
-        "tests/integration/collection_version/migrations/query/simple_test.go",
-        "TestCollectionMigrationQuery_WithMigrationsAcrossMultipleVersions_AppliesAllMigrations",
-        SECONDARY_INDEX,
-        LENS_3044,
-    ),
-    (
-        "tests/integration/collection_version/migrations/query/with_incremental_migrations_test.go",
-        "TestCollectionMigrationQuery_ThreeIncrementalMigrations_ShouldMigrateAcrossAllThree",
-        SECONDARY_INDEX,
-        LENS_3044,
-    ),
-    (
-        "tests/integration/collection_version/migrations/query/with_incremental_migrations_test.go",
-        "TestCollectionMigrationQuery_IntermediateMigrationRegisteredLast_ShouldProduceFullyMigratedResults",
-        SECONDARY_INDEX,
-        LENS_3044,
-    ),
-    (
-        "tests/integration/collection_version/migrations/query/with_incremental_migrations_test.go",
-        "TestCollectionMigrationQuery_IntermediateStampSurvivesRestart_ShouldRemigrateAfterRestart",
-        SECONDARY_INDEX,
-        LENS_3044,
-    ),
-    (
         "tests/integration/collection_version/migrations/query/with_set_default_test.go",
         "TestCollectionMigrationQuery_WithSetDefaultToOriginalVersionThatDocWasAddedAt_ClearsMigrations",
         SECONDARY_INDEX,
