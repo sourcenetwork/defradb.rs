@@ -158,6 +158,16 @@ pub trait VeraProvider: MaybeSendSync {
         true
     }
 
+    /// Whether a document's delete archives its object on this provider as
+    /// an owed change staged in the delete's transaction, refused before
+    /// commit unless the caller owns the object
+    /// (`acp::TransactionOutbox::stage_archive`). Such a provider archives
+    /// nothing after the commit ([`Self::archive_object_on_document_delete`]
+    /// is `false` for it).
+    fn archives_owed_on_delete(&self) -> bool {
+        false
+    }
+
     fn authorized_account(&self) -> String;
 
     async fn create_bearer_token(&self, did: &str) -> Result<String, ProviderError>;

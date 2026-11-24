@@ -317,6 +317,7 @@ fn submission(lost: &Lost) -> AcpTakeoverSubmission {
     let (policy_id, resource, object) = lost.object();
     let (kind, relation, subject, add) = match lost {
         Lost::Registration { .. } => ("registration", None, None, None),
+        Lost::Archive { .. } => ("archive", None, None, None),
         Lost::Relationship {
             relation,
             subject,
@@ -342,68 +343,34 @@ fn submission(lost: &Lost) -> AcpTakeoverSubmission {
 }
 
 fn applied(applied: &Applied) -> AcpTakeoverSubmission {
-    let (kind, policy_id, resource, object, actor) = match applied {
-        Applied::Change(lost) => return submission(lost),
-        Applied::PolicyCreation { policy_id, creator } => (
-            "policy-creation",
-            policy_id,
-            String::new(),
-            String::new(),
-            Some(creator.clone()),
-        ),
-        Applied::Archive {
-            policy_id,
-            resource,
-            object,
-            actor,
-        } => (
-            "archive",
-            policy_id,
-            resource.clone(),
-            object.clone(),
-            actor.clone(),
-        ),
-    };
-    AcpTakeoverSubmission {
-        kind: kind.into(),
-        policy_id: policy_id.clone(),
-        resource,
-        object,
-        relation: None,
-        subject: None,
-        add: None,
-        actor,
-    }
-}
-
-fn unrestorable(item: &Unrestorable) -> AcpTakeoverUnrestorable {
-    match item {
-        Unrestorable::PolicyCreation {
-            policy_id,
-            creator,
-            reason,
-        } => AcpTakeoverUnrestorable {
+    match applied {
+        Applied::Change(lost) => submission(lost),
+        Applied::PolicyCreation { policy_id, creator } => AcpTakeoverSubmission {
             kind: "policy-creation".into(),
             policy_id: policy_id.clone(),
             resource: String::new(),
             object: String::new(),
+            relation: None,
+            subject: None,
+            add: None,
             actor: Some(creator.clone()),
-            reason: reason.clone(),
         },
-        Unrestorable::Archive {
-            policy_id,
-            resource,
-            object,
-            actor,
-            reason,
-        } => AcpTakeoverUnrestorable {
-            kind: "archive".into(),
-            policy_id: policy_id.clone(),
-            resource: resource.clone(),
-            object: object.clone(),
-            actor: actor.clone(),
-            reason: reason.clone(),
-        },
+    }
+}
+
+fn unrestorable(item: &Unrestorable) -> AcpTakeoverUnrestorable {
+    let Unrestorable::PolicyCreation {
+        policy_id,
+        creator,
+        reason,
+    } = item;
+    AcpTakeoverUnrestorable {
+        kind: "policy-creation".into(),
+        policy_id: policy_id.clone(),
+        resource: String::new(),
+        object: String::new(),
+        actor: Some(creator.clone()),
+        reason: reason.clone(),
     }
 }
 

@@ -47,6 +47,10 @@ pub enum Error {
     #[error("named document permission checks are unsupported by this backend")]
     UnsupportedNamedPermission,
 
+    /// The backend archives no object for an owed change.
+    #[error("archiving an object is unsupported by this backend")]
+    UnsupportedArchive,
+
     /// The backend cannot list a document's relationships.
     #[error("listing document relationships is unsupported by this backend")]
     UnsupportedRelationshipListing,

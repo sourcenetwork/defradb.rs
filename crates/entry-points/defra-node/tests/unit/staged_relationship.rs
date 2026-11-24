@@ -102,6 +102,7 @@ fn named(command: &PolicyCommand<'_>) -> String {
             relation,
             subject: on,
         } => format!("delete {object} {relation} {}", subject(on)),
+        PolicyAction::ArchiveObject => format!("archive {object}"),
     }
 }
 

@@ -78,7 +78,8 @@ pub use outbox::{
     InFlight, NewOwedChange, OwedAuthority, OwedAuthorityKind, OwedChange, OwedChanges, OwedDenial,
     OwedDenials, OwedEntry, OwedFilter, OwedHold, OwedJournal, OwedOp, OwedOutcome, OwedRef,
     OwedState, OwedSubject, OwedTuple, OwedTupleState, OwedWait, OwedWhat, PreparedRequest,
-    RequestOutcome, StageRelationship, Staged, StagedCount, Submission, TransactionOutbox,
+    RequestOutcome, StageArchive, StageRelationship, Staged, StagedCount, Submission,
+    TransactionOutbox,
 };
 pub use pending::{PendingRegistration, PendingRegistrations};
 pub use permission::DocumentPermission;

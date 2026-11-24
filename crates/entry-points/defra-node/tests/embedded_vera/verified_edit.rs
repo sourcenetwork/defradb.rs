@@ -138,7 +138,8 @@ async fn registered(on: &Deployed, user: &User, name: &str, nonce: u8) -> String
 /// A user creates a document under a request-bound delegation, then updates
 /// and deletes it with verified writes and no credential, its key never held
 /// by the node. Another user without the permission is refused before
-/// anything is written.
+/// anything is written. The delete's archive is owed until the owner
+/// authorizes it, then retires the object on the chain.
 #[test]
 fn a_verified_update_and_delete_are_admitted_on_the_chains_permission() {
     workers::block_on(async {
@@ -178,12 +179,49 @@ fn a_verified_update_and_delete_are_admitted_on_the_chains_permission() {
         )
         .await;
         assert!(names(on.node.execute_request(read_users(&user.did)).await).is_empty());
+
+        // The delete carried no credential, so the node cannot archive the
+        // object as its owner: the archive is owed until the owner authorizes
+        // it, and the object stays owned on the chain meanwhile.
+        let caller = RequestContext::default().with_identity(Some(user.did.to_string()));
+        let owed = on
+            .node
+            .owed_acp_as(&caller, user.did.as_str())
+            .await
+            .expect("report");
+        assert_eq!(owed.len(), 1, "{owed:?}");
+        assert!(
+            matches!(
+                owed[0].what,
+                acp::OwedWhat::Change {
+                    op: acp::OwedOp::Archive,
+                    ..
+                }
+            ),
+            "{owed:?}"
+        );
+        assert_eq!(owed[0].object, doc);
+        assert_eq!(owed[0].state, acp::OwedState::AwaitingAuthority);
+        assert_eq!(
+            on.owner_on_chain(&doc).await.as_deref(),
+            Some(user.did.as_str())
+        );
+        let archiving = on.bound(&user, &doc, PolicyAction::ArchiveObject, 2).await;
+        assert_eq!(
+            on.node
+                .reauthorize_owed_acp_as(
+                    &caller,
+                    &owed[0].reference(),
+                    SignerCredential::RequestBound(archiving)
+                )
+                .await
+                .expect("archive"),
+            acp::OwedOutcome::Settled
+        );
+        assert_eq!(on.owner_on_chain(&doc).await, None);
         assert!(on
             .node
-            .owed_acp_as(
-                &RequestContext::default().with_identity(Some(user.did.to_string())),
-                user.did.as_str()
-            )
+            .owed_acp_as(&caller, user.did.as_str())
             .await
             .expect("report")
             .is_empty());

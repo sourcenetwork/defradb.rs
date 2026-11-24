@@ -49,6 +49,9 @@ use crate::permission::DocumentPermission;
 use crate::recovery::RecoveryFact;
 
 #[cfg(test)]
+#[path = "external/archive_tests.rs"]
+mod archive_tests;
+#[cfg(test)]
 #[path = "external/deadline_tests.rs"]
 mod deadline_tests;
 mod drain;
@@ -238,7 +241,8 @@ where
         };
         match (denial, identity) {
             (OwedDenial::None, _) => Ok(false),
-            (OwedDenial::Always, _) | (OwedDenial::UnlessOwner, Identity::Anonymous) => Ok(true),
+            (OwedDenial::Always | OwedDenial::Archived, _)
+            | (OwedDenial::UnlessOwner, Identity::Anonymous) => Ok(true),
             (OwedDenial::UnlessOwner, Identity::Authenticated(actor)) => {
                 let owner = self
                     .provider
@@ -248,6 +252,26 @@ where
                 Ok(owner != Some(self.provider.canonical_actor(actor)))
             }
         }
+    }
+
+    /// Whether an archive is owed, unsettled, on an object.
+    async fn archive_owed(
+        &self,
+        policy_id: &str,
+        resource_name: &str,
+        object_id: &str,
+    ) -> Result<bool> {
+        let txn = self.store.new_txn(true).await.map_err(storage_error)?;
+        let denial = owed_denial(
+            &txn,
+            &*self.provider,
+            &Identity::Anonymous,
+            policy_id,
+            resource_name,
+            object_id,
+        )
+        .await?;
+        Ok(matches!(denial, OwedDenial::Archived))
     }
 
     /// Wait until nothing is owed on `tuple`, woken whenever a record of
@@ -459,12 +483,15 @@ where
         view: &datastore::NamespaceView,
         staged: StagedCount,
     ) -> Option<TransactionOutbox> {
-        Some(TransactionOutbox::new(
-            Arc::clone(&self.provider),
-            view,
-            Arc::new(self.store.clone()),
-            staged,
-        ))
+        Some(
+            TransactionOutbox::new(
+                Arc::clone(&self.provider),
+                view,
+                Arc::new(self.store.clone()),
+                staged,
+            )
+            .waking(Arc::clone(&self.wake)),
+        )
     }
 
     fn outbox_authority_provider(&self) -> Option<Arc<dyn DocumentACP>> {
@@ -528,6 +555,24 @@ where
     ) -> Result<()> {
         self.settle_replica_unit(policy_id, resource_name, doc_id)
             .await
+    }
+
+    fn stages_archive_on_delete(&self) -> bool {
+        self.provider.stages_archive_on_delete()
+    }
+
+    async fn archive_doc_object(
+        &self,
+        actor: &Did,
+        policy_id: &str,
+        resource_name: &str,
+        doc_id: &str,
+    ) -> Result<()> {
+        self.provider
+            .archive_doc_object(actor, policy_id, resource_name, doc_id)
+            .await?;
+        self.object_changed(policy_id, resource_name, doc_id);
+        Ok(())
     }
 
     fn submits_subject(&self, subject: &Subject) -> bool {
@@ -774,6 +819,11 @@ where
         doc_id: &str,
     ) -> Result<bool> {
         self.owed_layout().await?;
+        // A deleted document's owed archive denies before a registration
+        // still owed to its creator could grant it anything.
+        if self.archive_owed(policy_id, resource_name, doc_id).await? {
+            return Ok(false);
+        }
         if let Some(owed) = self.owed(policy_id, resource_name, doc_id).await? {
             return Ok(owed.parent.is_none()
                 && matches!(identity, Identity::Authenticated(did) if *did == owed.creator));

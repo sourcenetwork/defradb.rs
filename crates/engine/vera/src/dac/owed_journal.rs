@@ -67,6 +67,7 @@ impl Call<'_> {
                 action: match self.change.op {
                     OwedOp::Add => PolicyAction::SetRelationship { relation, subject },
                     OwedOp::Delete => PolicyAction::DeleteRelationship { relation, subject },
+                    OwedOp::Archive => PolicyAction::ArchiveObject,
                 },
             },
         }

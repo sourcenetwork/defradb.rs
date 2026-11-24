@@ -267,31 +267,6 @@ where
             let effect = effect_of(&entry.wire);
             let held = held_again(&effect, replayed);
             lost_effects(&mut losses, &mut tainted, effect, held);
-            if let Some(Unrestorable::Archive {
-                policy_id,
-                resource,
-                object,
-                ..
-            }) = losses.unrestorable.last()
-            {
-                let reason = format!(
-                    "the Vera deployment switched its active device and voided the archive of \
-                     {}/{}/{} this node confirmed; it was refused when sent again, so access it \
-                     removed may be back. Archive the object again, then restart the node with \
-                     a new worker directory",
-                    policy_id, resource, object
-                );
-                warn_refused(&losses);
-                journal.close(reason.clone()).map_err(failure)?;
-                return Ok(Reconciled::Closed {
-                    reason,
-                    report: TakeoverReport {
-                        applied: losses.applied,
-                        owed: losses.owed,
-                        unrestorable: losses.unrestorable,
-                    },
-                });
-            }
             journal
                 .record(&Confirmation {
                     height: replayed.height,
@@ -374,13 +349,12 @@ fn failure(error: JournalError) -> ProviderError {
 /// to publish its takeover report to still says so.
 fn warn_refused(losses: &Losses) {
     for lost in &losses.unrestorable {
-        if let Unrestorable::PolicyCreation { policy_id, .. } = lost {
-            tracing::warn!(
-                %policy_id,
-                "a policy a Vera term voided was refused when sent again; it is gone and the \
-                 documents under it cannot be read until it is created again"
-            );
-        }
+        let Unrestorable::PolicyCreation { policy_id, .. } = lost;
+        tracing::warn!(
+            %policy_id,
+            "a policy a Vera term voided was refused when sent again; it is gone and the \
+             documents under it cannot be read until it is created again"
+        );
     }
     if losses.other > 0 {
         tracing::warn!(
