@@ -71,8 +71,8 @@
             pkgs.pkg-config
             pkgs.cmake # aws-lc-sys
             pkgs.perl # openssl-sys, aws-lc-sys
-            pkgs.protobuf # crates/orbis/build.rs, via tonic-prost-build
-            pkgs.rust-cbindgen # crates/ffi C header
+            pkgs.protobuf # crates/building-blocks/orbis/build.rs, via tonic-prost-build
+            pkgs.rust-cbindgen # crates/entry-points/ffi C header
             pkgs.just
             pkgs.git # .cargo/config.toml sets git-fetch-with-cli
             pkgs.jq

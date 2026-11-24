@@ -11,43 +11,43 @@ Zanzibar.  It has two independent halves:
 
 The Lean model is grounded in the Zanzibar expression and evaluator code:
 
-- `crates/zanzibar/src/expression/mod.rs:17-36`: expression constructors:
+- `crates/building-blocks/zanzibar/src/expression/mod.rs:17-36`: expression constructors:
   `This`, `ComputedUserset`, `TupleToUserset`, `Union`, `Intersection`, and
   `Difference`.
-- `crates/zanzibar/src/engine/mod.rs:104-126`: `check` loads a relation's rule
+- `crates/building-blocks/zanzibar/src/engine/mod.rs:104-126`: `check` loads a relation's rule
   and evaluates it with a fresh trail/cache.
-- `crates/zanzibar/src/engine/evaluate.rs:66-69`: `This` delegates to direct
+- `crates/building-blocks/zanzibar/src/engine/evaluate.rs:66-69`: `This` delegates to direct
   tuple lookup.
-- `crates/zanzibar/src/engine/evaluate.rs:72-96`: computed userset checks another
+- `crates/building-blocks/zanzibar/src/engine/evaluate.rs:72-96`: computed userset checks another
   relation on the same object.
-- `crates/zanzibar/src/engine/evaluate.rs:98-191`: tuple-to-userset follows
+- `crates/building-blocks/zanzibar/src/engine/evaluate.rs:98-191`: tuple-to-userset follows
   relation targets/entity sets, with wildcard subjects granting immediately.
-- `crates/zanzibar/src/engine/evaluate.rs:194-261`: union, intersection, and
+- `crates/building-blocks/zanzibar/src/engine/evaluate.rs:194-261`: union, intersection, and
   difference evaluate as OR, AND, and base AND NOT subtract.
-- `crates/zanzibar/src/store/traits.rs:34-57`: store interface for relationship
+- `crates/building-blocks/zanzibar/src/store/traits.rs:34-57`: store interface for relationship
   presence and direct permission checks.
 
 The TLA model is grounded in ACP tuple storage and Vera cache behavior:
 
-- `crates/acp/src/store.rs:42-130`: ACP tuple store operations, including put,
+- `crates/engine/acp/src/store.rs:42-130`: ACP tuple store operations, including put,
   delete, relation scans, and document registration.
-- `crates/acp/src/persistent.rs:163-215`: persistent tuple put/delete/has are
+- `crates/engine/acp/src/persistent.rs:163-215`: persistent tuple put/delete/has are
   transactional store operations.
-- `crates/acp/src/local.rs:50-103`: local ACP checks owner/direct/wildcard tuples
+- `crates/engine/acp/src/local.rs:50-103`: local ACP checks owner/direct/wildcard tuples
   and read-implying relations.
-- `crates/acp/src/local.rs:244-369`: local add/delete relationship operations
+- `crates/engine/acp/src/local.rs:244-369`: local add/delete relationship operations
   write and delete tuples.
-- `crates/acp/src/local.rs:390-439`: local P2P export/replace reconciles
+- `crates/engine/acp/src/local.rs:390-439`: local P2P export/replace reconciles
   document-scoped relationships while preserving owner.
-- `crates/vera/src/access_cache.rs:10-16`: positive access decisions are
+- `crates/engine/vera/src/access_cache.rs:10-16`: positive access decisions are
   cached by actor/policy/resource/doc/permission.
-- `crates/vera/src/access_cache.rs:46-61`: cache hits return unexpired
+- `crates/engine/vera/src/access_cache.rs:46-61`: cache hits return unexpired
   allowed decisions.
-- `crates/vera/src/access_cache.rs:85-95`: object invalidation clears cached
+- `crates/engine/vera/src/access_cache.rs:85-95`: object invalidation clears cached
   decisions for a document.
-- `crates/vera/src/cosmos/dac.rs:186-223`: Vera ACP checks read from
+- `crates/engine/vera/src/cosmos/dac.rs:186-223`: Vera ACP checks read from
   cache first, then calls `verify_access`, and caches only successful results.
-- `crates/vera/src/cosmos/dac.rs:250-307`: Vera relationship grant and
+- `crates/engine/vera/src/cosmos/dac.rs:250-307`: Vera relationship grant and
   revoke invalidate cached access for the object.
 
 ## Brainstorming Outcome

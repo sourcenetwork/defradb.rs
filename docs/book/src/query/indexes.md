@@ -2,7 +2,7 @@
 
 Indexes are maintained inline in the write path: every document write updates exactly
 the indexes whose fields it touched. Four kinds exist
-(`crates/db/src/index/`, `crates/storage/src/index/`):
+(`crates/database/db/src/index/`, `crates/engine/storage/src/index/`):
 
 ## Secondary (ordered)
 
@@ -28,26 +28,26 @@ typed conflict. Two subtleties are deliberate:
 ## Full-text
 
 Tokenized, language-aware inverted indexes with BM25 scoring
-([`crates/storage/src/index/fulltext.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/index/fulltext.rs)), synthesized from `@fulltext` schema directives
+([`crates/engine/storage/src/index/fulltext.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/index/fulltext.rs)), synthesized from `@fulltext` schema directives
 under internal names (`__fulltext__:{field}`). Corpus statistics (document counts, field
 lengths) are maintained as blind STATS merges (checked i128 deltas), so concurrent
 indexers commute. Query time scores with BM25 over the stored statistics.
 
 ## Vector
 
-Four engines behind one interface (`crates/db/src/index/vector/engine/`): **flat**
+Four engines behind one interface (`crates/database/db/src/index/vector/engine/`): **flat**
 (exact brute force), **HNSW** (the Malkov-Yashunin graph; deterministic level seeds;
 links maintained by blind `VECTOR_LINKS` merges), **IVF** (inverted lists with product
 quantization) and **SSG** (Satellite System Graph), plus **DiskANN**-style PQ-coded
 resident graphs sharing code caches on the DB. Structural rules live in the merge
 operator: a blind addition can never raise a node's height or add a self-link, so graph
 maintenance never needs locks. Similarity queries route through the planner to the
-engine ([`crates/query/src/plan/similarity.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/query/src/plan/similarity.rs)); HNSW advisory reads during maintenance are unvalidated
+engine ([`crates/engine/query/src/plan/similarity.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/query/src/plan/similarity.rs)); HNSW advisory reads during maintenance are unvalidated
 part reads, so building never conflicts with querying.
 
 ## Lifecycle
 
-Indexes are created with a bulk backfill (resumable at open, `crates/db/src/index/
+Indexes are created with a bulk backfill (resumable at open, `crates/database/db/src/index/
 backfill.rs`), rebuilt on demand, and re-created when a schema change requires it (owed
 reindexes settle at startup). Deletes remove entries page by page; the unique conflict
 event and index reconciliation have TLA+ models (see

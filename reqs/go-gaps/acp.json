@@ -29,7 +29,7 @@
       "tools/integration-test/tests/legacy/acp/policy_counter_restart.rs::policy_counter_advances_in_session_test",
       "tools/integration-test/tests/legacy/acp/policy_validation.rs::acp_add_policy_multiple_policies_succeed",
       "tools/integration-test/tests/legacy/acp/link_collection.rs::acp_link_collection_multi_dris_accept",
-      "crates/defra-node/src/dac_api_tests.rs::concurrent_identical_policy_adds_get_distinct_ids_across_a_restart"
+      "crates/entry-points/defra-node/src/dac_api_tests.rs::concurrent_identical_policy_adds_get_distinct_ids_across_a_restart"
     ],
     "evidence": "policy_counter_restart.rs asserts identical YAML added twice gets distinct ids (assert_ne in policy_counter_advances_in_session_test); policy_validation.rs:427 distinct policies get distinct ids; link_collection.rs:617 same policy by two creators gets distinct ids; dac_api_tests.rs:505 N identical adds get N ids",
     "note": "Not asserted: the exact Go ids (1239a044...ab81, 166758b3...d850) for the first and second policy, and YAML-vs-JSON of the same policy. Go-Bug-Suspect: Rust matches Go's 'fresh id, no error' behaviour, so no divergence is asserted."
@@ -38,7 +38,7 @@
     "id": "go.acp.dac.policy.missing-input",
     "verdict": "partial",
     "rust_tests": [
-      "crates/defra-node/src/dac_api_tests.rs::add_dac_policy_rejects_empty_identity_and_policy",
+      "crates/entry-points/defra-node/src/dac_api_tests.rs::add_dac_policy_rejects_empty_identity_and_policy",
       "tools/integration-test/tests/legacy/acp/policy_validation.rs::acp_add_policy_empty_data_errors"
     ],
     "evidence": "dac_api_tests.rs:87 asserts 'policy creator can not be empty'; :89 asserts 'policy data can not be empty' (embedded API)",
@@ -53,7 +53,7 @@
       "tools/integration-test/tests/legacy/acp/policy_validation.rs::acp_add_policy_expr_undeclared_relation_errors"
     ],
     "evidence": "policy_validation.rs:253 owner-referencing expr rejected with 'owner' in the error; :210 invalid symbol rejected (lenient match on token/invalid/expression/symbol); :292 undeclared relation rejected (lenient match)",
-    "note": "Not asserted on the add-policy surface: duplicate permission/relation keys ('key \"read\" already set in map') and a resource using another resource's relation ('resource does not have relation'). Unit tests crates/acp/src/policy_yaml/parse.rs:240,281 and validate.rs:163,186,230 assert the exact strings, but check_duplicate_yaml_keys and validate_policy_expressions have no non-test caller, so they do not exercise the add path."
+    "note": "Not asserted on the add-policy surface: duplicate permission/relation keys ('key \"read\" already set in map') and a resource using another resource's relation ('resource does not have relation'). Unit tests crates/engine/acp/src/policy_yaml/parse.rs:240,281 and validate.rs:163,186,230 assert the exact strings, but check_duplicate_yaml_keys and validate_policy_expressions have no non-test caller, so they do not exercise the add path."
   },
   {
     "id": "go.acp.dac.link.accepted",
@@ -141,7 +141,7 @@
       "tools/integration-test/tests/legacy/acp/negative.rs::mutation_denial_precise_test"
     ],
     "evidence": "register_ops.rs:324,343 and negative.rs:197-204 assert the private doc is unchanged after a non-owner update_* mutation",
-    "note": "The 'no error' half is unasserted: both helpers accept Err or Ok (register_ops.rs:137-150, negative.rs:179-189). Code at crates/query/src/runner/mutation.rs:492-494 skips unreadable docs silently, so Rust looks Go-like, but no test pins it."
+    "note": "The 'no error' half is unasserted: both helpers accept Err or Ok (register_ops.rs:137-150, negative.rs:179-189). Code at crates/engine/query/src/runner/mutation.rs:492-494 skips unreadable docs silently, so Rust looks Go-like, but no test pins it."
   },
   {
     "id": "go.acp.dac.ownership.delete",
@@ -231,7 +231,7 @@
     "rust_tests": [
       "tools/integration-test/tests/legacy/acp/negative.rs::commits_acp_denied_test",
       "tools/integration-test/tests/legacy/query/multi_cid_vectors.rs::multi_cid_commits_filters_unreadable_cid_test",
-      "crates/defra-node/src/dac_api_tests.rs::node_identity_does_not_bypass_protected_history_reads"
+      "crates/entry-points/defra-node/src/dac_api_tests.rs::node_identity_does_not_bypass_protected_history_reads"
     ],
     "evidence": "negative.rs:52,71 _commits(docID:) non-empty for owner, empty for another identity; multi_cid_vectors.rs:354 _commits(cid:) drops the private CID for anonymous; dac_api_tests.rs:365 _commits(docID, fieldName:_C) empty for a non-owner",
     "note": "Not asserted: _commits(depth: 1), the exact 5 commits after an update, and anonymous on the docID filter."
@@ -249,9 +249,9 @@
     "id": "go.acp.dac.branchable.commits",
     "verdict": "partial",
     "rust_tests": [
-      "crates/query/tests/cross_object_read_path.rs::overlay_checker_applies_branchable_collection_fallback",
-      "crates/db/tests/collection/acp.rs::branchable_permissioned_with_identity_registers_collection_object_owned_by_creator",
-      "crates/db/tests/collection/acp.rs::branchable_permissioned_no_identity_registers_nothing_public"
+      "crates/engine/query/tests/cross_object_read_path.rs::overlay_checker_applies_branchable_collection_fallback",
+      "crates/database/db/tests/collection/acp.rs::branchable_permissioned_with_identity_registers_collection_object_owned_by_creator",
+      "crates/database/db/tests/collection/acp.rs::branchable_permissioned_no_identity_registers_nothing_public"
     ],
     "evidence": "cross_object_read_path.rs:166-169 a public doc in a private branchable collection is denied to a stranger through the collection object; collection/acp.rs:243-247 a branchable collection created with identity registers a collection object owned by the creator",
     "note": "No query-level test: the commit counts (owner 4, stranger 0), a collection `reader` grant revealing public docs' commits while private docs stay hidden, and an identity-less branchable collection being public are not asserted."
@@ -290,7 +290,7 @@
     "id": "go.acp.dac.relationship.not-applicable",
     "verdict": "partial",
     "rust_tests": [
-      "crates/defra-node/src/dac_api_tests.rs::dac_relationship_requires_a_collection_policy"
+      "crates/entry-points/defra-node/src/dac_api_tests.rs::dac_relationship_requires_a_collection_policy"
     ],
     "evidence": "dac_api_tests.rs:265,273 add/delete on a collection without a policy fail with 'operation requires ACP, but collection has no policy'",
     "note": "Not asserted: add/delete on a public doc (created without identity) failing with 'failed to add/delete document actor relationship with acp'."
@@ -350,7 +350,7 @@
     "id": "go.acp.dac.relationship.all-actors",
     "verdict": "partial",
     "rust_tests": [
-      "crates/defra-node/src/dac_api_tests.rs::dac_wildcard_grant_opens_document_to_every_actor"
+      "crates/entry-points/defra-node/src/dac_api_tests.rs::dac_wildcard_grant_opens_document_to_every_actor"
     ],
     "evidence": "dac_api_tests.rs:247 after granting reader to '*', an anonymous query sees the doc",
     "note": "Not asserted: other identities reading, update/delete still denied, revoking the wildcard, and explicitly granted actors keeping access afterwards."
@@ -361,7 +361,7 @@
     "rust_tests": [
       "tools/integration-test/tests/legacy/acp/relationship.rs::acp_rel_delete_reader_revokes_access",
       "tools/integration-test/tests/legacy/acp/relationship.rs::acp_rel_delete_updater_revokes_update",
-      "crates/defra-node/src/dac_api_tests.rs::dac_share_journey_grant_and_revoke",
+      "crates/entry-points/defra-node/src/dac_api_tests.rs::dac_share_journey_grant_and_revoke",
       "tools/integration-test/tests/legacy/acp/revoke_lifecycle.rs::acp_revoke_lifecycle_test"
     ],
     "evidence": "relationship.rs:661 no read after the reader revoke; :747 a revoked updater's update does not land; dac_api_tests.rs:203 a second revoke returns false (record not found)",
@@ -371,7 +371,7 @@
     "id": "go.acp.dac.relationship.revoke-forbidden",
     "verdict": "partial",
     "rust_tests": [
-      "crates/defra-node/src/dac_api_tests.rs::dac_relationship_rejects_owner_relation"
+      "crates/entry-points/defra-node/src/dac_api_tests.rs::dac_relationship_rejects_owner_relation"
     ],
     "evidence": "dac_api_tests.rs:229 deleting an `owner` relation fails with 'OPERATION_FORBIDDEN: cannot delete owner relation'",
     "note": "That test has the owner revoke `owner` from another DID. Not tested: an admin revoking the owner's relation, the owner revoking its own ownership, and an admin revoking its own admin (Go expects 'failed to delete document actor relationship with acp' for the last two)."
@@ -413,7 +413,7 @@
     "verdict": "missing",
     "rust_tests": [],
     "evidence": "",
-    "note": "Searched for shared/identical block CIDs combined with ACP in tools/integration-test/tests and crates/p2p, crates/db tests; shared-CID tests (commits_suite.rs::shared_field_cid_fans_out_to_every_owner, block/cleanup.rs) carry no ACP or peer grant."
+    "note": "Searched for shared/identical block CIDs combined with ACP in tools/integration-test/tests and crates/database/p2p, crates/database/db tests; shared-CID tests (commits_suite.rs::shared_field_cid_fans_out_to_every_owner, block/cleanup.rs) carry no ACP or peer grant."
   },
   {
     "id": "go.acp.dac.p2p.non-creator-update",
@@ -426,10 +426,10 @@
     "id": "go.acp.nac.lifecycle.start",
     "verdict": "partial",
     "rust_tests": [
-      "crates/ffi/src/acp/nac.rs::test_get_nac_status",
-      "crates/ffi/src/acp/nac.rs::test_enable_nac",
-      "crates/acp/tests/nac_tests.rs::test_nac_starts_not_configured",
-      "crates/defra-node/tests/nac_embedded_test.rs::node_acp_requires_node_identity"
+      "crates/entry-points/ffi/src/acp/nac.rs::test_get_nac_status",
+      "crates/entry-points/ffi/src/acp/nac.rs::test_enable_nac",
+      "crates/engine/acp/tests/nac_tests.rs::test_nac_starts_not_configured",
+      "crates/entry-points/defra-node/tests/nac_embedded_test.rs::node_acp_requires_node_identity"
     ],
     "evidence": "ffi/src/acp/nac.rs:442 status is 'not configured' by default; :469-470 after enable it reports enabled with the owner DID; nac_embedded_test.rs:184 enabling NAC without a node identity fails",
     "note": "Not asserted: the status call denied without identity when NAC is on, and status with an identity while NAC is disabled. Rust's no-identity error is 'node ACP requires a node identity', not Go's 'can not start nac without identity'."
@@ -438,7 +438,7 @@
     "id": "go.acp.nac.lifecycle.restart",
     "verdict": "partial",
     "rust_tests": [
-      "crates/acp/tests/nac_tests.rs::test_load_existing_state"
+      "crates/engine/acp/tests/nac_tests.rs::test_load_existing_state"
     ],
     "evidence": "nac_tests.rs:221-222 a fresh NodeACP over the same store loads Enabled with the original owner",
     "note": "Unit-level on an in-memory store only. No node restart test: restarting with no NAC args, the same identity, or a different identity keeping the original owner."
@@ -447,8 +447,8 @@
     "id": "go.acp.nac.lifecycle.disable",
     "verdict": "partial",
     "rust_tests": [
-      "crates/ffi/src/acp/nac.rs::test_disable_and_re_enable_nac",
-      "crates/acp/tests/nac_tests.rs::test_disable_and_re_enable"
+      "crates/entry-points/ffi/src/acp/nac.rs::test_disable_and_re_enable_nac",
+      "crates/engine/acp/tests/nac_tests.rs::test_disable_and_re_enable"
     ],
     "evidence": "ffi/src/acp/nac.rs:501 the owner disables and status reads 'disabled temporarily'; nac_tests.rs:109 status DisabledTemporarily",
     "note": "Not asserted: 'node acp is not configured' when never configured, the non-owner/anonymous denial with permission disable-nac, 'node acp is already disabled', and the disabled state surviving a restart."
@@ -457,9 +457,9 @@
     "id": "go.acp.nac.lifecycle.re-enable",
     "verdict": "partial",
     "rust_tests": [
-      "crates/ffi/src/acp/nac.rs::test_re_enable_nac_checks_authorization_before_enabled_state",
-      "crates/ffi/src/acp/nac.rs::test_disable_and_re_enable_nac",
-      "crates/acp/tests/nac_tests.rs::test_disable_and_re_enable"
+      "crates/entry-points/ffi/src/acp/nac.rs::test_re_enable_nac_checks_authorization_before_enabled_state",
+      "crates/entry-points/ffi/src/acp/nac.rs::test_disable_and_re_enable_nac",
+      "crates/engine/acp/tests/nac_tests.rs::test_disable_and_re_enable"
     ],
     "evidence": "ffi/src/acp/nac.rs:541-544 anonymous and wrong identity get 'not authorized to perform operation. Permission: re-enable-nac' when already enabled; :551 the owner gets 'node acp is already enabled'; nac_tests.rs:119-125 re-enable restores gating",
     "note": "Not asserted: 'node acp is not configured', non-owner re-enable denied while temporarily disabled, and re-enabled state across a restart."
@@ -469,8 +469,8 @@
     "verdict": "partial",
     "rust_tests": [
       "tools/integration-test/tests/legacy/nac/relation_admin.rs::nac_relation_admin_test",
-      "crates/acp/tests/nac_tests.rs::test_wildcard_admin_grants_all_permissions",
-      "crates/acp/tests/nac_tests.rs::test_write_operations_blocked_when_disabled"
+      "crates/engine/acp/tests/nac_tests.rs::test_wildcard_admin_grants_all_permissions",
+      "crates/engine/acp/tests/nac_tests.rs::test_write_operations_blocked_when_disabled"
     ],
     "evidence": "relation_admin.rs:85,95,114 after the owner grants `admin`, the identity adds schema, reads and creates an index; nac_tests.rs:296-305 a '*' admin grant gives any identity permissions; :242 add_admin fails while disabled",
     "note": "Not asserted: 'node acp is not configured', 'operation requires ACP, but ACP not available', unauthorized requestor denied with add-nac-relation, unknown relation 'relation not in resource', and identity-less requests rejected with 'node acp relationship operation requires identity'."
@@ -481,7 +481,7 @@
     "rust_tests": [
       "tools/integration-test/tests/legacy/nac/relation_admin.rs::nac_relation_admin_test",
       "tools/integration-test/tests/legacy/nac/dac_access_matrix.rs::nac_revoke_admin_removes_access",
-      "crates/acp/tests/nac_tests.rs::test_remove_admin"
+      "crates/engine/acp/tests/nac_tests.rs::test_remove_admin"
     ],
     "evidence": "relation_admin.rs:127-162 after revoking `admin` the identity is denied schema_add and index_create again; nac_tests.rs:169 a revoked admin loses DacBypass",
     "note": "Not asserted: the not-configured/disabled errors, unauthorized requestor with delete-nac-relation, 'relation not in resource', revoking a '*' grant, and the identity-less error."
@@ -490,13 +490,13 @@
     "id": "go.acp.nac.gates.collection-schema",
     "verdict": "partial",
     "rust_tests": [
-      "crates/db/tests/access/enforcement.rs::create_collection_denied_for_non_owner",
-      "crates/db/tests/access/enforcement.rs::delete_collection_gated_by_nac",
-      "crates/db/tests/access/enforcement.rs::set_active_collection_version_denied_for_non_owner",
+      "crates/database/db/tests/access/enforcement.rs::create_collection_denied_for_non_owner",
+      "crates/database/db/tests/access/enforcement.rs::delete_collection_gated_by_nac",
+      "crates/database/db/tests/access/enforcement.rs::set_active_collection_version_denied_for_non_owner",
       "tools/integration-test/tests/legacy/nac/core_operations.rs::nac_core_operations_gate_test"
     ],
     "evidence": "enforcement.rs:174-177 create_collection denied with NotAuthorized for a non-owner and not persisted; delete_collection denied then allowed for the owner; set_active_collection_version denied; core_operations.rs:75-83 truncate denied for anonymous and outsider",
-    "note": "Collection patch is not gated in any test. Owner add/delete is checked only at db level. Rust tests assert only is_err for anonymous/outsider; the 'not authorized to perform operation. Permission: <perm>' text is never asserted. The HTTP NAC guard (crates/http/src/nac_guard.rs:61,74) returns 'not authorized to perform operation' with no permission suffix. Rust maps truncate to truncate-collection, not Go's get-collection (crates/http/tests/route_permissions.rs::all_registered_routes_return_expected_permission)."
+    "note": "Collection patch is not gated in any test. Owner add/delete is checked only at db level. Rust tests assert only is_err for anonymous/outsider; the 'not authorized to perform operation. Permission: <perm>' text is never asserted. The HTTP NAC guard (crates/surfaces/http/src/nac_guard.rs:61,74) returns 'not authorized to perform operation' with no permission suffix. Rust maps truncate to truncate-collection, not Go's get-collection (crates/surfaces/http/tests/route_permissions.rs::all_registered_routes_return_expected_permission)."
   },
   {
     "id": "go.acp.nac.gates.collection-read",
@@ -516,14 +516,14 @@
       "tools/integration-test/tests/legacy/acp/negative.rs::nac_graphql_enforcement_test"
     ],
     "evidence": "core_operations.rs:140-190 collection create/update/delete denied for anonymous and outsider, allowed for the owner; dac_access_matrix.rs:244 anonymous GraphQL read sees nothing; negative.rs:335 owner reads",
-    "note": "Not asserted: update with a filter. GraphQL read denials accept 'error or empty' (negative.rs:348-360). Rust tests assert only is_err for anonymous/outsider; the 'not authorized to perform operation. Permission: <perm>' text is never asserted. The HTTP NAC guard (crates/http/src/nac_guard.rs:61,74) returns 'not authorized to perform operation' with no permission suffix. Rust requires update-document/delete-document/read-document where Go requires get-collection (route_permissions.rs)."
+    "note": "Not asserted: update with a filter. GraphQL read denials accept 'error or empty' (negative.rs:348-360). Rust tests assert only is_err for anonymous/outsider; the 'not authorized to perform operation. Permission: <perm>' text is never asserted. The HTTP NAC guard (crates/surfaces/http/src/nac_guard.rs:61,74) returns 'not authorized to perform operation' with no permission suffix. Rust requires update-document/delete-document/read-document where Go requires get-collection (route_permissions.rs)."
   },
   {
     "id": "go.acp.nac.gates.signature",
     "verdict": "missing",
     "rust_tests": [],
     "evidence": "",
-    "note": "No test calls block verify-signature with NAC on. Only crates/http/tests/route_permissions.rs maps /api/v0/block/verify-signature to SignatureVerify, which checks the route table, not a deny/allow outcome."
+    "note": "No test calls block verify-signature with NAC on. Only crates/surfaces/http/tests/route_permissions.rs maps /api/v0/block/verify-signature to SignatureVerify, which checks the route table, not a deny/allow outcome."
   },
   {
     "id": "go.acp.nac.gates.indexes",
@@ -532,7 +532,7 @@
       "tools/integration-test/tests/legacy/nac/core_operations.rs::nac_core_operations_gate_test"
     ],
     "evidence": "core_operations.rs:88-135 index create/list/delete denied for anonymous and outsider, allowed for the NAC owner",
-    "note": "Rust tests assert only is_err for anonymous/outsider; the 'not authorized to perform operation. Permission: <perm>' text is never asserted. The HTTP NAC guard (crates/http/src/nac_guard.rs:61,74) returns 'not authorized to perform operation' with no permission suffix. Rust maps these to new-index/list-index/delete-index rather than Go's get-collection (route_permissions.rs)."
+    "note": "Rust tests assert only is_err for anonymous/outsider; the 'not authorized to perform operation. Permission: <perm>' text is never asserted. The HTTP NAC guard (crates/surfaces/http/src/nac_guard.rs:61,74) returns 'not authorized to perform operation' with no permission suffix. Rust maps these to new-index/list-index/delete-index rather than Go's get-collection (route_permissions.rs)."
   },
   {
     "id": "go.acp.nac.gates.encrypted-indexes",
@@ -541,13 +541,13 @@
       "tools/integration-test/tests/legacy/nac/operations.rs::nac_operations_gate_test"
     ],
     "evidence": "operations.rs:43-83 encrypted index add/list/delete denied for anonymous and outsider, allowed for the owner",
-    "note": "Listing all encrypted indexes (list-all-encrypted-index) is untested. Rust tests assert only is_err for anonymous/outsider; the 'not authorized to perform operation. Permission: <perm>' text is never asserted. The HTTP NAC guard (crates/http/src/nac_guard.rs:61,74) returns 'not authorized to perform operation' with no permission suffix."
+    "note": "Listing all encrypted indexes (list-all-encrypted-index) is untested. Rust tests assert only is_err for anonymous/outsider; the 'not authorized to perform operation. Permission: <perm>' text is never asserted. The HTTP NAC guard (crates/surfaces/http/src/nac_guard.rs:61,74) returns 'not authorized to perform operation' with no permission suffix."
   },
   {
     "id": "go.acp.nac.gates.dac-admin",
     "verdict": "partial",
     "rust_tests": [
-      "crates/defra-node/src/dac_api_tests.rs::add_dac_policy_is_gated_by_node_access_control"
+      "crates/entry-points/defra-node/src/dac_api_tests.rs::add_dac_policy_is_gated_by_node_access_control"
     ],
     "evidence": "dac_api_tests.rs:407-410 a non-owner adding a DAC policy gets 'not authorized to perform operation. Permission: add-dac-policy'; the node identity succeeds",
     "note": "Not asserted: add/delete document actor relationship gated by add-dac-relation/delete-dac-relation, and the anonymous policy add."
@@ -559,7 +559,7 @@
       "tools/integration-test/tests/legacy/nac/operations.rs::nac_operations_gate_test"
     ],
     "evidence": "operations.rs:88-97 lens list denied for anonymous/outsider and allowed for the owner; :103-111 lens add and :127-141 set-migration denied for anonymous/outsider",
-    "note": "The owner's lens add and set-migration only have to avoid errors containing unauthorized/forbidden/nac (operations.rs:114-120,143-150), so success is not asserted. Rust tests assert only is_err for anonymous/outsider; the 'not authorized to perform operation. Permission: <perm>' text is never asserted. The HTTP NAC guard (crates/http/src/nac_guard.rs:61,74) returns 'not authorized to perform operation' with no permission suffix."
+    "note": "The owner's lens add and set-migration only have to avoid errors containing unauthorized/forbidden/nac (operations.rs:114-120,143-150), so success is not asserted. Rust tests assert only is_err for anonymous/outsider; the 'not authorized to perform operation. Permission: <perm>' text is never asserted. The HTTP NAC guard (crates/surfaces/http/src/nac_guard.rs:61,74) returns 'not authorized to perform operation' with no permission suffix."
   },
   {
     "id": "go.acp.nac.gates.views",
@@ -568,7 +568,7 @@
       "tools/integration-test/tests/legacy/nac/operations.rs::nac_operations_gate_test"
     ],
     "evidence": "operations.rs:157-176 view add and :181-190 view refresh denied for anonymous/outsider, allowed for the owner",
-    "note": "Rust tests assert only is_err for anonymous/outsider; the 'not authorized to perform operation. Permission: <perm>' text is never asserted. The HTTP NAC guard (crates/http/src/nac_guard.rs:61,74) returns 'not authorized to perform operation' with no permission suffix."
+    "note": "Rust tests assert only is_err for anonymous/outsider; the 'not authorized to perform operation. Permission: <perm>' text is never asserted. The HTTP NAC guard (crates/surfaces/http/src/nac_guard.rs:61,74) returns 'not authorized to perform operation' with no permission suffix."
   },
   {
     "id": "go.acp.nac.gates.p2p-peers",
@@ -585,7 +585,7 @@
       "tools/integration-test/tests/legacy/p2p_iroh/acp/nac.rs::nac_active_peers_wrong_identity"
     ],
     "evidence": "p2p_iroh/acp/nac.rs:152,161-164,174-177 peer info allowed for the owner, denied without identity and with a wrong identity; the same three cases for connect and active peers",
-    "note": "Peer disconnect is untested. Rust tests assert only is_err for anonymous/outsider; the 'not authorized to perform operation. Permission: <perm>' text is never asserted. The HTTP NAC guard (crates/http/src/nac_guard.rs:61,74) returns 'not authorized to perform operation' with no permission suffix."
+    "note": "Peer disconnect is untested. Rust tests assert only is_err for anonymous/outsider; the 'not authorized to perform operation. Permission: <perm>' text is never asserted. The HTTP NAC guard (crates/surfaces/http/src/nac_guard.rs:61,74) returns 'not authorized to perform operation' with no permission suffix."
   },
   {
     "id": "go.acp.nac.gates.p2p-replicators",
@@ -600,7 +600,7 @@
       "tools/integration-test/tests/legacy/nac/p2p_management.rs::nac_p2p_management_gate_test"
     ],
     "evidence": "p2p_iroh/acp/nac.rs replicator add/delete: is_ok for the owner, is_err without identity and with a wrong identity; p2p_management.rs:151-158 replicator list denied for anonymous/outsider",
-    "note": "The owner's replicator list only eprintlns on failure (p2p_management.rs:160-162), so the allow case is unasserted. Rust tests assert only is_err for anonymous/outsider; the 'not authorized to perform operation. Permission: <perm>' text is never asserted. The HTTP NAC guard (crates/http/src/nac_guard.rs:61,74) returns 'not authorized to perform operation' with no permission suffix."
+    "note": "The owner's replicator list only eprintlns on failure (p2p_management.rs:160-162), so the allow case is unasserted. Rust tests assert only is_err for anonymous/outsider; the 'not authorized to perform operation. Permission: <perm>' text is never asserted. The HTTP NAC guard (crates/surfaces/http/src/nac_guard.rs:61,74) returns 'not authorized to perform operation' with no permission suffix."
   },
   {
     "id": "go.acp.nac.gates.p2p-collections",
@@ -612,7 +612,7 @@
       "tools/integration-test/tests/legacy/p2p_iroh/acp/nac.rs::nac_collection_add_wrong_identity"
     ],
     "evidence": "p2p_management.rs:40-79 P2P collection add/list/delete denied for anonymous and outsider, allowed for the owner",
-    "note": "Rust tests assert only is_err for anonymous/outsider; the 'not authorized to perform operation. Permission: <perm>' text is never asserted. The HTTP NAC guard (crates/http/src/nac_guard.rs:61,74) returns 'not authorized to perform operation' with no permission suffix."
+    "note": "Rust tests assert only is_err for anonymous/outsider; the 'not authorized to perform operation. Permission: <perm>' text is never asserted. The HTTP NAC guard (crates/surfaces/http/src/nac_guard.rs:61,74) returns 'not authorized to perform operation' with no permission suffix."
   },
   {
     "id": "go.acp.nac.gates.p2p-documents",
@@ -624,7 +624,7 @@
       "tools/integration-test/tests/legacy/p2p_iroh/acp/nac.rs::nac_document_add_wrong_identity"
     ],
     "evidence": "p2p_management.rs:84-123 P2P document add/list/delete denied for anonymous and outsider, allowed for the owner",
-    "note": "Rust tests assert only is_err for anonymous/outsider; the 'not authorized to perform operation. Permission: <perm>' text is never asserted. The HTTP NAC guard (crates/http/src/nac_guard.rs:61,74) returns 'not authorized to perform operation' with no permission suffix."
+    "note": "Rust tests assert only is_err for anonymous/outsider; the 'not authorized to perform operation. Permission: <perm>' text is never asserted. The HTTP NAC guard (crates/surfaces/http/src/nac_guard.rs:61,74) returns 'not authorized to perform operation' with no permission suffix."
   },
   {
     "id": "go.acp.nac.gates.p2p-sync",
@@ -636,7 +636,7 @@
       "tools/integration-test/tests/legacy/p2p_iroh/acp/nac.rs::nac_sync_branchable_no_identity"
     ],
     "evidence": "p2p_management.rs:129-136 document sync denied for anonymous/outsider; operations.rs:269-300 sync collection versions and sync branchable denied for anonymous/outsider",
-    "note": "The owner's sync calls only have to avoid errors containing unauthorized/forbidden/nac (p2p_management.rs:138-145, operations.rs:279-308), so success is not asserted. Rust tests assert only is_err for anonymous/outsider; the 'not authorized to perform operation. Permission: <perm>' text is never asserted. The HTTP NAC guard (crates/http/src/nac_guard.rs:61,74) returns 'not authorized to perform operation' with no permission suffix."
+    "note": "The owner's sync calls only have to avoid errors containing unauthorized/forbidden/nac (p2p_management.rs:138-145, operations.rs:279-308), so success is not asserted. Rust tests assert only is_err for anonymous/outsider; the 'not authorized to perform operation. Permission: <perm>' text is never asserted. The HTTP NAC guard (crates/surfaces/http/src/nac_guard.rs:61,74) returns 'not authorized to perform operation' with no permission suffix."
   },
   {
     "id": "go.acp.nac.dac.nac-on",
@@ -654,13 +654,13 @@
     "verdict": "missing",
     "rust_tests": [],
     "evidence": "",
-    "note": "No test disables NAC and then checks DAC alone. nac/document_acp.rs:146-167 calls acp_node_disable without checking the result, then asserts only that the owner still reads its own doc. acp/node_access.rs ignores disable/status errors. should_bypass_dac (crates/acp/src/nac/dac_bypass.rs:22) returns false unless Enabled, but no test covers the disabled case, the node owner getting no bypass, or other identities' empty results."
+    "note": "No test disables NAC and then checks DAC alone. nac/document_acp.rs:146-167 calls acp_node_disable without checking the result, then asserts only that the owner still reads its own doc. acp/node_access.rs ignores disable/status errors. should_bypass_dac (crates/engine/acp/src/nac/dac_bypass.rs:22) returns false unless Enabled, but no test covers the disabled case, the node owner getting no bypass, or other identities' empty results."
   },
   {
     "id": "go.acp.nac.admin.dac-bypass",
     "verdict": "partial",
     "rust_tests": [
-      "crates/http/src/query_context.rs::a_nac_admin_with_bypass_dac_carries_the_bypass_and_identity_in_its_request",
+      "crates/surfaces/http/src/query_context.rs::a_nac_admin_with_bypass_dac_carries_the_bypass_and_identity_in_its_request",
       "tools/integration-test/tests/legacy/nac/dac_access_matrix.rs::nac_revoke_admin_removes_access"
     ],
     "evidence": "query_context.rs:597 a granted DacBypass identity's request carries dac_bypass=true; dac_access_matrix.rs:305 after admin revoke the identity sees no data",
@@ -670,7 +670,7 @@
     "id": "go.acp.nac.admin.nac-admin",
     "verdict": "partial",
     "rust_tests": [
-      "crates/acp/tests/nac_tests.rs::test_add_admin"
+      "crates/engine/acp/tests/nac_tests.rs::test_add_admin"
     ],
     "evidence": "nac_tests.rs:145 a granted admin holds every NodePermission, including the NAC ones",
     "note": "Unit-level permission check only. No API test of a granted admin getting status, adding/deleting NAC relationships, disabling and re-enabling, or of the pre-grant denials with their permission names."

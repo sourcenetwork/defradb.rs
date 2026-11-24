@@ -55,16 +55,16 @@ not an empty one.
 
 | Symbol in model | Code | Anchor |
 |---|---|---|
-| `status ∈ {NotConfigured,Enabled,DisabledTemporarily}` | `NacStatus` enum | `crates/acp/src/nac/node_acp/mod.rs:51-57` |
-| `disk_disabled` (persisted flag) | `DISABLED_RELATION` sentinel persisted in store | `crates/acp/src/nac/node_acp/mod.rs:33` |
-| `Restart` recovers status from disk | `load()`: status := Disabled iff `_disabled` relationship present | `crates/acp/src/nac/node_acp/mod.rs:96-143` |
-| `Disable` persists the flag | `disable()` stores `_disabled` relationship | `crates/acp/src/nac/node_acp/lifecycle.rs:74-108` (persist at 88-96) |
-| `ReEnable` clears the flag | `re_enable()` deletes `_disabled` relationship | `crates/acp/src/nac/node_acp/lifecycle.rs:120-155` (delete at 132-144) |
-| `IsAdminLive` (permissive while ≠ Enabled) | `is_admin()` returns `Ok(true)` for everyone when `status != Enabled` | `crates/acp/src/nac/node_acp/operations.rs:72-79` |
-| `IsAdminGT` (persisted oracle) | `is_admin_persisted()` checks stored relations regardless of status | `crates/acp/src/nac/node_acp/operations.rs:87-104` |
+| `status ∈ {NotConfigured,Enabled,DisabledTemporarily}` | `NacStatus` enum | `crates/engine/acp/src/nac/node_acp/mod.rs:51-57` |
+| `disk_disabled` (persisted flag) | `DISABLED_RELATION` sentinel persisted in store | `crates/engine/acp/src/nac/node_acp/mod.rs:33` |
+| `Restart` recovers status from disk | `load()`: status := Disabled iff `_disabled` relationship present | `crates/engine/acp/src/nac/node_acp/mod.rs:96-143` |
+| `Disable` persists the flag | `disable()` stores `_disabled` relationship | `crates/engine/acp/src/nac/node_acp/lifecycle.rs:74-108` (persist at 88-96) |
+| `ReEnable` clears the flag | `re_enable()` deletes `_disabled` relationship | `crates/engine/acp/src/nac/node_acp/lifecycle.rs:120-155` (delete at 132-144) |
+| `IsAdminLive` (permissive while ≠ Enabled) | `is_admin()` returns `Ok(true)` for everyone when `status != Enabled` | `crates/engine/acp/src/nac/node_acp/operations.rs:72-79` |
+| `IsAdminGT` (persisted oracle) | `is_admin_persisted()` checks stored relations regardless of status | `crates/engine/acp/src/nac/node_acp/operations.rs:87-104` |
 | write-block while disabled | `add_admin`/`remove_admin`/`add_permission_grant`/`remove_permission_grant` reject with `InvalidPolicy` when `status == DisabledTemporarily` | `operations.rs:110-117, 179-186, 238-250, 307-319` |
-| `Disable` auth via LIVE check | `NacManager::disable_as()` checks the live `NacDisable` permission, which every admin holds | `crates/db/src/nac/toggle.rs` `require` |
-| `ReEnable` auth via PERSISTED check | `NacManager::re_enable_as()` checks `NacReEnable` in the stored relationships — **the crux** | `crates/db/src/nac/toggle.rs` `require` |
+| `Disable` auth via LIVE check | `NacManager::disable_as()` checks the live `NacDisable` permission, which every admin holds | `crates/database/db/src/nac/toggle.rs` `require` |
+| `ReEnable` auth via PERSISTED check | `NacManager::re_enable_as()` checks `NacReEnable` in the stored relationships — **the crux** | `crates/database/db/src/nac/toggle.rs` `require` |
 
 ### Go (origin/develop — the live upstream, not the stale checkout)
 

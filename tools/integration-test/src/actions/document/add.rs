@@ -54,7 +54,7 @@ impl Op for AddDoc {
     }
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
-        let identity = self.check_arguments()?;
+        let identity = self.check_arguments(state)?;
         let (node, context, options) = (
             state.node_on(self.common.node())?,
             state.context_as(self.txn, identity),
@@ -89,22 +89,16 @@ impl Op for AddDoc {
 }
 
 impl AddDoc {
-    /// Fails on the arguments no client supports yet.
-    fn check_arguments(&self) -> Result<Option<u64>, Failure> {
-        let identity = self.common.client_identity(Self::name())?;
-        if self.enable_signing.is_some() {
-            return Err(Failure::unsupported(format!(
-                "{} argument enableSigning",
-                Self::name()
-            )));
-        }
-        Ok(identity)
+    /// The identity the add acts as.
+    fn check_arguments(&self, state: &State) -> Result<Option<u64>, Failure> {
+        self.common.acting_identity(Self::name(), state)
     }
 
     fn options(&self) -> AddOptions {
         AddOptions {
             encrypt_doc: self.is_doc_encrypted.unwrap_or_default(),
             encrypted_fields: self.encrypted_fields.clone().unwrap_or_default(),
+            enable_signing: self.enable_signing,
         }
     }
 
@@ -131,7 +125,7 @@ impl Action for AddDoc {
 impl HttpRun for AddDoc {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            let identity = action.check_arguments()?;
+            let identity = action.check_arguments(state)?;
             let (txn, options) = (state.txn_id(action.txn), action.options());
             let collection = action.collection.clone();
             let failed = |e: cli::error::Error| Failure::operation(e.to_string());
@@ -181,7 +175,7 @@ impl HttpRun for AddDoc {
 impl CliRun for AddDoc {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            let identity = action.check_arguments()?;
+            let identity = action.check_arguments(state)?;
             if action.upsert {
                 return Err(Failure::unsupported(format!(
                     "{} upsert: the CLI has no save command",
@@ -194,6 +188,9 @@ impl CliRun for AddDoc {
             };
             let docs = docs.to_string();
             let fields = action.options().encrypted_fields.join(",");
+            let signing = action
+                .enable_signing
+                .map(|enable| format!("--enable-signing={enable}"));
             let mut args = vec![
                 "document",
                 "--collection-name",
@@ -203,6 +200,9 @@ impl CliRun for AddDoc {
             ];
             if action.options().encrypt_doc {
                 args.push("--encrypt");
+            }
+            if let Some(signing) = &signing {
+                args.push(signing);
             }
             if !fields.is_empty() {
                 args.extend(["--encrypt-fields", &fields]);

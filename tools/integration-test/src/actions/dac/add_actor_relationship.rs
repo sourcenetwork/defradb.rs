@@ -65,6 +65,7 @@ impl AddDACActorRelationship {
                 self.target_actor.as_deref(),
                 self.target_identity_seed,
                 None,
+                state,
             )?,
         };
         Ok(Relationship {

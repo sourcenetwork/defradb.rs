@@ -106,10 +106,10 @@ setup-rust:
         # shellcheck disable=SC1090
         source "${CARGO_HOME:-$HOME/.cargo}/env"
     fi
-    rustup toolchain install stable --profile minimal --no-self-update
-    # ci.yml runs fmt (:64) and 10 clippy invocations; :122 needs the wasm target.
-    rustup component add --toolchain stable rustfmt clippy
-    rustup target add --toolchain stable wasm32-unknown-unknown
+    # rust-toolchain.toml names the toolchain, its components and the wasm32 target. rustup 1.28+
+    # installs it with a bare `toolchain install`; 1.27 needs a toolchain argument there, but its
+    # cargo proxy installs the pinned toolchain on first use.
+    rustup toolchain install --no-self-update 2>/dev/null || cargo --version
     echo "rust: $(rustc --version)"
 
 # jq is required by setup-cargo-tools (lockfile-matched wasm-bindgen) and by
@@ -163,8 +163,8 @@ setup-cargo-tools:
     fi
     echo "wasm-bindgen-cli: $wb_version (matched to Cargo.lock)"
 
-# protoc, required by crates/orbis's build.rs (proto/orbis.proto via tonic-prost-build).
-[doc("protoc, required by crates/orbis's build.rs.")]
+# protoc, required by crates/building-blocks/orbis's build.rs (proto/orbis.proto via tonic-prost-build).
+[doc("protoc, required by crates/building-blocks/orbis's build.rs.")]
 [group('setup')]
 setup-protoc:
     #!/usr/bin/env bash
@@ -488,12 +488,36 @@ build-fast:
 [group('build')]
 build-wasm:
     CARGO_PROFILE_RELEASE_OPT_LEVEL=z \
-        wasm-pack build crates/wasm --release --target web --out-dir ../../pkg/wasm
+        wasm-pack build crates/surfaces/wasm --release --target web --out-dir ../../../pkg/wasm
 
 # Regenerate the C header for the FFI surface.
 [group('build')]
 build-ffi-header:
-    cbindgen --config crates/ffi/cbindgen.toml --crate ffi --output crates/ffi/defradb.h
+    cbindgen --config crates/entry-points/ffi/cbindgen.toml --crate ffi --output crates/entry-points/ffi/defradb.h
+    just check-ffi-header crates/entry-points/ffi/defradb.h
+
+# Compile a generated C header as C11 and C++17 with every warning an error,
+# so its inline wrappers and options structs are valid for both. -Wpadded
+# fails on any struct with implicit padding: an options struct only grows at
+# its end, so a gap must be an explicit reserved field.
+[group('build')]
+check-ffi-header header:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    work=$(mktemp -d)
+    trap 'rm -rf "$work"' EXIT
+    echo "#include \"$(realpath {{header}})\"" > "$work/check.c"
+    cp "$work/check.c" "$work/check.cpp"
+    cc -std=c11 -Wall -Wextra -Wpadded -Werror -fsyntax-only "$work/check.c"
+    c++ -std=c++17 -Wall -Wextra -Wpadded -Werror -fsyntax-only "$work/check.cpp"
+
+# Check this tree's C API against base's, as CI's C API job does: no padding,
+# no function, field, typedef, enum constant or macro removed or changed,
+# options structs only grown at their end, and every exported function with C
+# linkage in C++. Needs cbindgen and clang.
+[group('build')]
+check-c-api base="origin/main":
+    bash .github/scripts/check-c-api.sh {{base}}
 
 # Apple .xcframework plus the Swift import smoke test.
 [group('build')]
@@ -557,14 +581,21 @@ test-features:
     cargo nextest run -p cli --cargo-profile {{ profile }} --features otel --test telemetry_dedup
     cargo nextest run -p defra-node --cargo-profile {{ profile }} --features p2p
 
+# The WASM lens modules in tools/lenses that integration tests load. The
+# target dir is pinned because the tests read tools/lenses/target whatever
+# CARGO_TARGET_DIR says.
+[group('test')]
+build-lenses:
+    cargo build --manifest-path tools/lenses/Cargo.toml --target wasm32-unknown-unknown --target-dir tools/lenses/target
+
 # Every integration area, serially. Each spawns real nodes.
 [group('test')]
-integration:
+integration: build-lenses
     cargo nextest run -p integration-test --cargo-profile {{ profile }}
 
 # One integration area: `just integration-suite acp`, `just integration-suite p2p`.
 [group('test')]
-integration-suite suite *args:
+integration-suite suite *args: build-lenses
     cargo nextest run -p integration-test -E 'test(/^{{ suite }}::/) | binary({{ suite }})' --cargo-profile {{ profile }} {{ args }}
 
 # The basic and query areas with every node's data path on a one-worker pool
@@ -717,7 +748,7 @@ lint-wasm:
 [doc("Build docs with warnings denied (broken links fail CI).")]
 [group('check')]
 doc:
-    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --keep-going
 
 # What to make green before asking for a review.
 [group('check')]
@@ -935,4 +966,4 @@ machete:
 # The Go compatibility baseline, read from its single source of truth.
 [group('misc')]
 go-baseline:
-    @grep -E 'GO_COMPAT_(BRANCH|COMMIT|TAG)' crates/defra-version/src/lib.rs
+    @grep -E 'GO_COMPAT_(BRANCH|COMMIT|TAG)' crates/foundation/defra-version/src/lib.rs

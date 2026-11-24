@@ -24,8 +24,8 @@ What must never happen:
   identity mode, never embedder mode (`default_is_byIdentity`).
 
 Rust anchors: `TxnOwnership` and `DbTransactionRegistry::caller` in
-`crates/db/src/txn/registry/mod.rs`, and `Table::admits` in
-`crates/db/src/txn/owner/table.rs`, which compares the two keys for equality.
+`crates/database/db/src/txn/registry/mod.rs`, and `Table::admits` in
+`crates/database/db/src/txn/owner/table.rs`, which compares the two keys for equality.
 An identity is `Option<String>` in Rust and `Option String` here.
 -/
 

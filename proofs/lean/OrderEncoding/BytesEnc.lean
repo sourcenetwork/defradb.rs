@@ -4,7 +4,7 @@ import OrderEncoding.Bytes
 # OrderEncoding.BytesEnc — escape-based bytes/string encoding monotonicity
 
 The string/`[]byte` encoder is the structurally trickiest order-preserving case
-(`crates/storage/src/encoding/bytes.rs:14`, Go `internal/encoding/bytes.go:50`):
+(`crates/engine/storage/src/encoding/bytes.rs:14`, Go `internal/encoding/bytes.go:50`):
 
 * prefix `BYTES_MARKER` (handled by the cross-type layer; omitted here — we model the
   *body*, i.e. the bytes after the marker);

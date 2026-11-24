@@ -110,7 +110,7 @@
 \* Transaction::appended. A snapshot sees the log as it was at its commit:
 \* entries a later merge truncates are still there for it (MVCC).
 \*
-\* Correspondence with the Rust code (crates/db/src/index/vector/engine/
+\* Correspondence with the Rust code (crates/database/db/src/index/vector/engine/
 \* diskann/, the functions this change adds or touches):
 \*   db           the committed state, one record per commit: the pending
 \*                log (store/kv.rs pending_log_head, iterate_pending_log,

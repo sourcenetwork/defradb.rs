@@ -17,7 +17,7 @@
 \* Records are named by their sequence number: the owner signs exactly one
 \* record per number, so the number says which record it is.
 \*
-\* Code it models (crates/p2p/src/iroh/records):
+\* Code it models (crates/database/p2p/src/iroh/records):
 \*   book.rs      Book::offer     (a record replaces a lower seq or an expired one, and is never expired)
 \*   book.rs      Book::live      (an expired record is never handed out)
 \*   refresh.rs   Refresh::check  (query the owner when its pointer is ahead of the book)

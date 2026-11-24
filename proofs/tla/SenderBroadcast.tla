@@ -30,12 +30,12 @@
 \* announcement with room runs on one lane task, never a task of its own.
 \*
 \* Code it models:
-\*   crates/p2p/src/sync/coordinator/mod.rs  spawn_non_authoritative_broadcast_task  (wait for room, deadline)
-\*   crates/p2p/src/sync/coordinator/broadcast_room.rs  BroadcastRoom::reserve  (the pending set's byte budget)
-\*   crates/p2p/src/sync/coordinator/broadcast_room.rs  BroadcastRoom::run, lane  (the one lane task)
-\*   crates/p2p/src/sync/coordinator/broadcast.rs  broadcast_local_update_with_creator  (the slot after the window)
-\*   crates/p2p/src/sync/coordinator/mod.rs  publish_slot, acquire_non_authoritative_broadcast_slot  (the publish slots)
-\*   crates/db/src/merge/broadcast_mutator/broadcast.rs  spawn_gossip_or_report, broadcast_with_retry_with_creator  (the reports)
+\*   crates/database/p2p/src/sync/coordinator/mod.rs  spawn_non_authoritative_broadcast_task  (wait for room, deadline)
+\*   crates/database/p2p/src/sync/coordinator/broadcast_room.rs  BroadcastRoom::reserve  (the pending set's byte budget)
+\*   crates/database/p2p/src/sync/coordinator/broadcast_room.rs  BroadcastRoom::run, lane  (the one lane task)
+\*   crates/database/p2p/src/sync/coordinator/broadcast.rs  broadcast_local_update_with_creator  (the slot after the window)
+\*   crates/database/p2p/src/sync/coordinator/mod.rs  publish_slot, acquire_non_authoritative_broadcast_slot  (the publish slots)
+\*   crates/database/db/src/merge/broadcast_mutator/broadcast.rs  spawn_gossip_or_report, broadcast_with_creator  (the reports)
 \* Room counts announcements here; the code counts their bytes, which the
 \* same bound covers.
 EXTENDS Naturals, FiniteSets

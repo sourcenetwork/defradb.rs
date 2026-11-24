@@ -5,12 +5,12 @@
 \* whether a registration survives; this one asks what happens when its
 \* merge is retried and DETERMINISTICALLY REJECTED on the block's own
 \* content (e.g. a unique-index violation) rather than failing transiently.
-\* Abstracts crates/db/src/merge/merge_handler/composite.rs
+\* Abstracts crates/database/db/src/merge/merge_handler/composite.rs
 \* (UniqueConstraintViolation -> MergeOutcome::Rejected; MergeOutcome::Rejected
-\* itself in crates/defra-core/src/merge.rs),
-\* crates/p2p/src/sync/replication/handlers.rs (Ok(MergeOutcome::Rejected)
+\* itself in crates/foundation/defra-core/src/merge.rs),
+\* crates/database/p2p/src/sync/replication/handlers.rs (Ok(MergeOutcome::Rejected)
 \* -> quarantine_pending_dag, handle_block_received and process_merge_batch) and
-\* crates/p2p/src/sync/manager/process/pending_dag.rs
+\* crates/database/p2p/src/sync/manager/process/pending_dag.rs
 \* (quarantine_pending_dag's write-quarantine-record-BEFORE-delete-live-record
 \* ordering, and the is_quarantined skip in resync_persisted_pending_dags_inner
 \* that keeps a quarantined root out of re-registration).

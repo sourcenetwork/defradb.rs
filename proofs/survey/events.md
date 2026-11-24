@@ -1,4 +1,4 @@
-# Survey: `crates/events/`
+# Survey: `crates/foundation/events/`
 
 ## Purpose
 In-process pub/sub event bus for DefraDB subscriptions. A `Bus` trait

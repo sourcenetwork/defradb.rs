@@ -1,0 +1,23 @@
+//! Node access control, NAC coverage and enforcement.
+#[path = "../common/mod.rs"]
+mod common;
+
+mod context_enforcement;
+mod coverage;
+mod dac_policy;
+mod enforcement;
+mod external_counts;
+mod external_drainer;
+mod external_genesis_reader;
+mod external_observation;
+mod external_observation_wait;
+mod external_outbox;
+mod external_outbox_gate;
+mod external_overlay;
+mod external_owed;
+mod external_prepared;
+mod external_registration;
+mod external_settlement;
+mod external_staging;
+mod nac_toggle_race;
+mod registration_batch;

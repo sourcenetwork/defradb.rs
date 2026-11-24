@@ -1,4 +1,4 @@
-# Survey: `crates/db/`
+# Survey: `crates/database/db/`
 
 ## Purpose
 High-level database API layer (mirrors Go `internal/db/`). Provides `DB`, `DbTxn`

@@ -60,7 +60,7 @@ jobs:
                 ({ data } = await github.rest.repos.compareCommitsWithBasehead({
                   ...context.repo, basehead: `${from}...${pr.head.sha}`, per_page: 300,
                 }));
-                if (stack) base = data.merge_base_commit.sha;
+                base = data.merge_base_commit.sha;
               } catch (e) {
                 // Measure rather than skip when the diff cannot be read.
                 core.warning(`compare failed, measuring anyway: ${e.message}`);
@@ -128,10 +128,11 @@ jobs:
     steps:
       - if: github.event.pull_request.head.repo.full_name == github.repository
         uses: runs-on/action@v2
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           path: head
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.scope.outputs.base }}
           path: base
@@ -139,7 +140,7 @@ jobs:
       # Its own interpreter rather than the system one: a PEP 668 image refuses
       # to let pip touch the system environment, and this gate must not be the
       # thing that fails before it has checked anything.
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       # A bench target the matrix does not name measures nothing, and nothing
@@ -211,14 +212,14 @@ jobs:
 
       - name: Assemble the four documents
         env:
-          PERF_HEAD: ${{ github.event.pull_request.head.sha }}
-          PERF_BASE: ${{ needs.scope.outputs.base }}
           PERF_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
           # Built from head's checkout in every case: the base may predate the
           # collector, and a document is only comparable when both sides were
           # assembled by the same version of it.
+          PERF_HEAD=$(git -C head rev-parse HEAD)
+          PERF_BASE=$(git -C base rev-parse HEAD)
           for tag in head1 head2 base1 base2; do
             case "$tag" in head*) commit="$PERF_HEAD"; label="pr-$PERF_NUMBER";;
                            base*) commit="$PERF_BASE"; label="base";; esac
@@ -236,6 +237,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p site-head1 site-head2 site-base1 site-base2
+          PERF_HEAD=$(git -C head rev-parse HEAD)
+          PERF_BASE=$(git -C base rev-parse HEAD)
           for tag in head1 head2 base1 base2; do
             python3 head/tools/perf-site/publish.py --site "site-$tag" "platform-$tag.json" >/dev/null
           done
@@ -269,7 +272,7 @@ jobs:
               await github.rest.issues.createComment({ owner, repo, issue_number, body: payload });
             }
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: perf-quick

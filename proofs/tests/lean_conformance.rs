@@ -22,12 +22,12 @@ fn lake_available() -> bool {
     available
 }
 
-/// Mirrors `crates/crdt/src/field/mod.rs` `enum MergeResult`. If a variant is
+/// Mirrors `crates/building-blocks/crdt/src/field/mod.rs` `enum MergeResult`. If a variant is
 /// added/renamed there, update this list and `Conformance.lean` together — the
 /// assertion is what forces that.
 const MERGE_RESULT_VARIANTS: &[&str] = &["Applied", "RejectedLowerPriority", "RejectedTieBreak"];
 
-/// Mirrors `crates/zanzibar/src/expression/mod.rs` `enum RelationExpression`.
+/// Mirrors `crates/building-blocks/zanzibar/src/expression/mod.rs` `enum RelationExpression`.
 const RELATION_EXPRESSION_VARIANTS: &[&str] = &[
     "This",
     "ComputedUserset",

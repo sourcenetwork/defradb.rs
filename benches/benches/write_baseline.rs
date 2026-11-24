@@ -5,7 +5,9 @@
 //! runs 1, 4, 16 and 64 writers, 256 requests each, three times. Override with
 //! DEFRA_BASELINE_WRITERS (comma-separated), DEFRA_BASELINE_OPERATIONS and
 //! DEFRA_BASELINE_REPETITIONS. DEFRA_BASELINE_CHUNK_MAX_CHARS makes `left` a
-//! `@chunk` field and emits the families with a `_chunked` suffix. Raw samples and provenance go to stdout as JSON
+//! `@chunk` field and emits the families with a `_chunked` suffix;
+//! DEFRA_BASELINE_PROJECTOR=empty installs a document projector that changes
+//! nothing. Raw samples and provenance go to stdout as JSON
 //! lines; dashboard families use DEFRA_BENCH_OUT through the existing emitter.
 
 use defra_perf::emit::{Family, Group, Row, Trust};

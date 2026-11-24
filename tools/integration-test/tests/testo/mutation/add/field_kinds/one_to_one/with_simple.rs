@@ -276,6 +276,104 @@ fn mutation_add_one_to_one_secondary_side_collection_api() {
     .execute();
 }
 
+/// A save (an upsert) refuses the secondary side with Go's error on every
+/// client: the HTTP client keeps the server's error code to map it.
+#[test]
+#[mantra_macros::req_test("go.mutation.relation.one_to_one_secondary")]
+fn mutation_save_one_to_one_secondary_side_collection_api() {
+    TestCase {
+        id: integration_test::scenario_id!(),
+        actions: vec![
+            AddCollection {
+                sdl: r#"
+                    type Book {
+                        name: String
+                        author: Author
+                    }
+
+                    type Author {
+                        name: String
+                        published: Book @primary
+                    }
+                "#
+                .into(),
+                ..Default::default()
+            }
+            .into(),
+            AddDoc {
+                collection: "Author".into(),
+                doc_map: Some(json!({ "name": "John Grisham" })),
+                common: Common {
+                    capture: captures([("doc1_0", "/docID")]),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            AddDoc {
+                collection: "Book".into(),
+                doc_map: Some(json!({ "_authorID": m::r("doc1_0"), "name": "Painted House" })),
+                upsert: true,
+                expected_error: Some("cannot set relation from secondary side".into()),
+                ..Default::default()
+            }
+            .into(),
+        ],
+        ..Default::default()
+    }
+    .execute();
+}
+
+/// The typed add that fields to encrypt take keeps Go's secondary-side error.
+#[test]
+#[mantra_macros::req_test("go.mutation.relation.one_to_one_secondary")]
+fn mutation_add_one_to_one_secondary_side_collection_api_encrypted() {
+    TestCase {
+        id: integration_test::scenario_id!(),
+        actions: vec![
+            AddCollection {
+                sdl: r#"
+                    type Book {
+                        name: String
+                        rating: Float
+                        author: Author
+                    }
+
+                    type Author {
+                        name: String
+                        age: Int
+                        verified: Boolean
+                        published: Book @primary
+                    }
+                "#
+                .into(),
+                ..Default::default()
+            }
+            .into(),
+            AddDoc {
+                collection: "Author".into(),
+                doc_map: Some(json!({ "name": "John Grisham" })),
+                common: Common {
+                    capture: captures([("doc1_0", "/docID")]),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            AddDoc {
+                collection: "Book".into(),
+                doc_map: Some(json!({ "author": m::r("doc1_0"), "name": "Painted House" })),
+                encrypted_fields: Some(vec!["name".into()]),
+                expected_error: Some("cannot set relation from secondary side".into()),
+                ..Default::default()
+            }
+            .into(),
+        ],
+        ..Default::default()
+    }
+    .execute();
+}
+
 #[test]
 #[mantra_macros::req_test("go.mutation.relation.one_to_one_secondary")]
 fn mutation_add_one_to_one_secondary_side_gql() {

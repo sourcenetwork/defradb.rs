@@ -20,7 +20,7 @@
       "tools/integration-test/tests/testo/query/simple/with_similarity.rs::query_simple_with_similarity_on_query_should_error"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
-    "note": "Root-level 'query { SIMILARITY }' error 'Cannot query field \"SIMILARITY\" on type \"Query\".' is not asserted by any test (only in crates/query/src/query_parse/parser.rs:106)."
+    "note": "Root-level 'query { SIMILARITY }' error 'Cannot query field \"SIMILARITY\" on type \"Query\".' is not asserted by any test (only in crates/engine/query/src/query_parse/parser.rs:106)."
   },
   {
     "id": "go.query.simple.select.collection-isolation",
@@ -56,7 +56,7 @@
       "tools/integration-test/tests/testo/query/simple/with_typename.rs::query_simple_with_type_name"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
-    "note": "Searched __typename across tools/, crates/*/tests and query runner/planner: only root '{ __typename }' introspection tests (crates/query/src/runner/introspection/mod.rs:415, http unversioned_api_mount). Nothing selects __typename on a collection, under an alias, on groupBy rows or inside GROUP."
+    "note": "Searched __typename across tools/, crates/*/tests and query runner/planner: only root '{ __typename }' introspection tests (crates/engine/query/src/runner/introspection/mod.rs:415, http unversioned_api_mount). Nothing selects __typename on a collection, under an alias, on groupBy rows or inside GROUP."
   },
   {
     "id": "go.query.simple.select.show-deleted",
@@ -74,8 +74,8 @@
     "rust_tests": [
       "tools/integration-test/tests/legacy/query/relation_rendering_1597.rs::duplicate_selection_via_fragment_spread_test",
       "tools/integration-test/tests/legacy/query/relation_rendering_1597.rs::duplicate_selection_via_inline_fragment_test",
-      "crates/query/tests/query_parse_error_tests.rs::test_parse_undefined_fragment_returns_error",
-      "crates/query/tests/query_parse_error_tests.rs::test_parse_nested_fragment_works"
+      "crates/engine/query/tests/query_parse_error_tests.rs::test_parse_undefined_fragment_returns_error",
+      "crates/engine/query/tests/query_parse_error_tests.rs::test_parse_nested_fragment_works"
     ],
     "evidence": "relation_rendering_1597.rs:205,219 assert results of a named fragment spread (alone and mixed with plain fields) and :242 an inline fragment; query_parse_error_tests.rs:102 asserts 'Unknown fragment'; :120 nested spread expands (parse level)",
     "note": "Unverified: fragment selecting an undefined field ('Cannot query field \"Score\" on type \"Users\".'), 'fragment X on Query { COUNT(Users: {}) }', fragment with variables, nested spreads in a real response; exact 'Unknown fragment \"UserInfo\".' text only substring-checked at parse level."
@@ -85,17 +85,17 @@
     "verdict": "missing",
     "rust_tests": [],
     "evidence": "",
-    "note": "'Must provide operation name if query contains multiple operations.' appears only in crates/query/src/query_parse/parser.rs:459; no test sends a multi-operation document with or without operationName (searched operation_name/operationName in tests: only None in crates/cli/tests/http_client_tests.rs)."
+    "note": "'Must provide operation name if query contains multiple operations.' appears only in crates/engine/query/src/query_parse/parser.rs:459; no test sends a multi-operation document with or without operationName (searched operation_name/operationName in tests: only None in crates/entry-points/cli/tests/http_client_tests.rs)."
   },
   {
     "id": "go.query.simple.graphql.variables",
     "verdict": "partial",
     "rust_tests": [
-      "crates/query/src/query_parse/variable_tests.rs::test_variable_in_filter",
-      "crates/query/src/query_parse/variable_tests.rs::test_variable_in_order_direction",
-      "crates/query/src/query_parse/variable_tests.rs::test_variable_default_value_used_when_not_provided",
-      "crates/query/src/query_parse/variable_tests.rs::test_variable_provided_value_overrides_default",
-      "crates/query/src/query_parse/variable_tests.rs::test_no_variables_provided_error"
+      "crates/engine/query/src/query_parse/variable_tests.rs::test_variable_in_filter",
+      "crates/engine/query/src/query_parse/variable_tests.rs::test_variable_in_order_direction",
+      "crates/engine/query/src/query_parse/variable_tests.rs::test_variable_default_value_used_when_not_provided",
+      "crates/engine/query/src/query_parse/variable_tests.rs::test_variable_provided_value_overrides_default",
+      "crates/engine/query/src/query_parse/variable_tests.rs::test_no_variables_provided_error"
     ],
     "evidence": "variable_tests.rs:24 filter substitution, :295 order direction, :339-345 default applied, :366-372 default overridden, :152 missing variable 'was not provided' (all parse level)",
     "note": "Parse-level only, no query result asserted. Unverified: 'Ordering!' and '[UsersOrderArg]' list variables, 'Users__CountSelector' in COUNT(Users: $v), and the exact 'Variable \"$age\" of required type \"Int!\" was not provided.' message."
@@ -108,6 +108,7 @@
       "tools/integration-test/tests/testo/query/simple/with_filter/with_eq_datetime.rs::query_simple_with_date_time_equals_filter_block",
       "tools/integration-test/tests/testo/query/simple/with_filter/with_eq_datetime.rs::query_simple_with_nil_date_time_equals_and_non_nil_filter_block_should_succeed",
       "tools/integration-test/tests/testo/query/simple/with_filter/with_eq_float.rs::query_simple_with_float_equals_filter_block",
+      "tools/integration-test/tests/testo/query/simple/with_filter/with_eq_float_zero.rs::float_zero_equality_is_exact_on_indexed_and_unindexed_fields",
       "tools/integration-test/tests/testo/query/simple/with_filter/with_eq_int.rs::query_simple_with_int_equals_filter_block",
       "tools/integration-test/tests/testo/query/simple/with_filter/with_eq_string.rs::query_simple_with_string_filter_block",
       "tools/integration-test/tests/testo/query/simple/with_filter/with_eq_string.rs::query_simple_with_string_filter_block_and_select_select_different_field_than_filter_with_match",
@@ -138,6 +139,7 @@
       "tools/integration-test/tests/testo/query/simple/with_filter/with_neq_datetime.rs::query_simple_with_date_time_not_equals_filter_block",
       "tools/integration-test/tests/testo/query/simple/with_filter/with_neq_datetime.rs::query_simple_with_nil_date_time_not_equal_and_non_nil_filter_block_should_succeed",
       "tools/integration-test/tests/testo/query/simple/with_filter/with_neq_float.rs::query_simple_with_float_not_equals_filter_block",
+      "tools/integration-test/tests/testo/query/simple/with_filter/with_eq_float_zero.rs::float_zero_inequality_is_exact_on_indexed_and_unindexed_fields",
       "tools/integration-test/tests/testo/query/simple/with_filter/with_neq_int.rs::query_simple_with_int_not_equals_filter_block",
       "tools/integration-test/tests/testo/query/simple/with_filter/with_neq_string.rs::query_simple_with_string_not_equals_filter_block"
     ],
@@ -155,7 +157,7 @@
       "tools/integration-test/tests/testo/query/simple/with_filter/with_neq_string.rs::query_simple_with_string_not_equals_nil_filter_block"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
-    "note": "Searched '_neq: null' / '_ne\": null' in tests: only an index-selection planner test (crates/query/src/planner/builder/tests.rs:1043) that checks scan choice, not results. No test asserts which documents '_neq: null' returns, nor Boolean false counting as a value."
+    "note": "Searched '_neq: null' / '_ne\": null' in tests: only an index-selection planner test (crates/engine/query/src/planner/builder/tests.rs:1043) that checks scan choice, not results. No test asserts which documents '_neq: null' returns, nor Boolean false counting as a value."
   },
   {
     "id": "go.query.simple.filter.range.gt",
@@ -407,7 +409,7 @@
       "tools/integration-test/tests/testo/query/simple/with_doc_id_filter.rs::query_simple_with_doc_id_filter_in_block"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
-    "note": "'_docID: {_in: [...]}' only appears in benchmark helpers (crates/defra-node/src/benchmark_support_tests.rs:680,734) that check row counts under a limit, not the returned IDs."
+    "note": "'_docID: {_in: [...]}' only appears in benchmark helpers (crates/entry-points/defra-node/src/benchmark_support_tests.rs:680,734) that check row counts under a limit, not the returned IDs."
   },
   {
     "id": "go.query.simple.order.single-field",
@@ -723,7 +725,7 @@
       "tools/integration-test/tests/testo/query/simple/with_group_count.rs::query_simple_with_group_by_number_without_rendered_group_and_duplicated_aliased_child_counts"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
-    "note": "No Rust test exercises COUNT(GROUP: {}): searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
+    "note": "No Rust test exercises COUNT(GROUP: {}): searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/engine/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
   },
   {
     "id": "go.query.simple.group.aggregate.sum",
@@ -736,7 +738,7 @@
       "tools/integration-test/tests/testo/query/simple/with_group_sum.rs::query_simple_with_group_by_string_without_rendered_group_and_child_nil_sum"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
-    "note": "No Rust test exercises SUM(GROUP: {field}): searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
+    "note": "No Rust test exercises SUM(GROUP: {field}): searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/engine/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
   },
   {
     "id": "go.query.simple.group.aggregate.average",
@@ -749,7 +751,7 @@
       "tools/integration-test/tests/testo/query/simple/with_group_average.rs::query_simple_with_group_by_string_without_rendered_group_and_child_nil_average"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
-    "note": "No Rust test exercises AVG(GROUP: {field}): searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
+    "note": "No Rust test exercises AVG(GROUP: {field}): searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/engine/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
   },
   {
     "id": "go.query.simple.group.aggregate.min-max",
@@ -767,7 +769,7 @@
       "tools/integration-test/tests/testo/query/simple/with_group_min.rs::query_simple_with_group_by_string_without_rendered_group_and_child_nil_min_succeeds"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
-    "note": "No Rust test exercises MIN/MAX(GROUP: {field}): searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
+    "note": "No Rust test exercises MIN/MAX(GROUP: {field}): searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/engine/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
   },
   {
     "id": "go.query.simple.group.aggregate.multiple",
@@ -779,7 +781,7 @@
       "tools/integration-test/tests/testo/query/simple/with_group_average_sum.rs::query_simple_with_group_by_string_without_rendered_group_and_child_integer_average_and_sum"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
-    "note": "No Rust test exercises several aggregates over one GROUP: searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
+    "note": "No Rust test exercises several aggregates over one GROUP: searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/engine/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
   },
   {
     "id": "go.query.simple.group.aggregate.of-same",
@@ -799,7 +801,7 @@
       "tools/integration-test/tests/testo/query/simple/with_group_sum.rs::query_simple_with_group_by_string_with_inner_group_boolean_and_sum_of_sum_of_sum_of_float"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
-    "note": "No Rust test exercises aggregate-of-aggregate over inner groups: searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
+    "note": "No Rust test exercises aggregate-of-aggregate over inner groups: searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/engine/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
   },
   {
     "id": "go.query.simple.group.aggregate.of-other",
@@ -813,7 +815,7 @@
       "tools/integration-test/tests/testo/query/simple/with_group_count_sum.rs::query_simple_with_group_by_string_with_inner_group_boolean_and_sum_of_count"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
-    "note": "No Rust test exercises aggregate of a different inner-group aggregate: searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
+    "note": "No Rust test exercises aggregate of a different inner-group aggregate: searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/engine/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
   },
   {
     "id": "go.query.simple.group.aggregate.filtered-average",
@@ -829,7 +831,7 @@
       "tools/integration-test/tests/testo/query/simple/with_group_average_filter.rs::query_simple_with_group_by_string_without_rendered_group_and_child_averages_with_different_filters"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
-    "note": "No Rust test exercises AVG(GROUP: {filter}): searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
+    "note": "No Rust test exercises AVG(GROUP: {filter}): searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/engine/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
   },
   {
     "id": "go.query.simple.group.aggregate.filtered-count",
@@ -842,7 +844,7 @@
       "tools/integration-test/tests/testo/query/simple/with_group_count_filter.rs::query_simple_with_group_by_number_without_rendered_group_and_child_counts_with_different_filters"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
-    "note": "No Rust test exercises COUNT(GROUP: {filter}): searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
+    "note": "No Rust test exercises COUNT(GROUP: {filter}): searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/engine/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
   },
   {
     "id": "go.query.simple.group.aggregate.filtered-sum",
@@ -855,7 +857,7 @@
       "tools/integration-test/tests/testo/query/simple/with_group_sum_filter.rs::query_simple_with_group_by_number_without_rendered_group_and_child_sums_with_different_filters"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
-    "note": "No Rust test exercises SUM(GROUP: {filter}): searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
+    "note": "No Rust test exercises SUM(GROUP: {filter}): searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/engine/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
   },
   {
     "id": "go.query.simple.group.aggregate.filtered-min-max",
@@ -873,7 +875,7 @@
       "tools/integration-test/tests/testo/query/simple/with_group_min_filter.rs::query_simple_with_group_by_number_without_rendered_group_and_child_min_with_filter_succeeds"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
-    "note": "No Rust test exercises MIN/MAX(GROUP: {filter}): searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
+    "note": "No Rust test exercises MIN/MAX(GROUP: {filter}): searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/engine/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
   },
   {
     "id": "go.query.simple.group.aggregate.limit-offset",
@@ -893,7 +895,7 @@
       "tools/integration-test/tests/testo/query/simple/with_group_sum_limit_offset.rs::query_simple_with_group_by_string_without_rendered_group_and_child_integer_sum_with_limit_and_offset"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
-    "note": "No Rust test exercises limit/offset inside a GROUP aggregate: searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
+    "note": "No Rust test exercises limit/offset inside a GROUP aggregate: searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/engine/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
   },
   {
     "id": "go.query.simple.group.aggregate.alias-filter",
@@ -906,7 +908,7 @@
       "tools/integration-test/tests/testo/query/simple/with_group_aggregate_alias_filter.rs::query_simple_with_group_sum_alias_filter_filters_results"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
-    "note": "No Rust test exercises filter: {_alias: {...}} on a group aggregate: searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
+    "note": "No Rust test exercises filter: {_alias: {...}} on a group aggregate: searched '(GROUP' / 'GROUP:' in tools/, crates/*/tests, crates/engine/query/src tests, proofs/tests and pg-compat (only the pg-compat SQL bridge source builds COUNT(GROUP), with no result test). Relation aggregates with limit/offset exist (join_order_1596.rs) but are a different surface."
   },
   {
     "id": "go.query.simple.cid.doc-version",
@@ -1069,7 +1071,7 @@
     "id": "go.query.simple.similarity.vector-index-fallback",
     "verdict": "partial",
     "rust_tests": [
-      "crates/defra-node/tests/vector_index_query_path.rs::ascending_order_warns_vector_index_unused",
+      "crates/entry-points/defra-node/tests/vector_index_query_path.rs::ascending_order_warns_vector_index_unused",
       "tools/integration-test/tests/legacy/query/go_vector_parity.rs::go_vector_unrouted_shapes_agree"
     ],
     "evidence": "vector_index_query_path.rs:1027-1031 ASC order returns VECTOR_INDEX_UNUSED (reason notOrderedBySimilarityDesc); go_vector_parity.rs:186-190 ASC results equal Go",

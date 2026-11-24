@@ -24,7 +24,7 @@ is NOT the #1021 bug modeled here and is NOT fixed by this PR.)
 | `blob` (materialized value, queries read it; local writes RMW it) | the CBOR document blob written by `db` crate `doc_mutator` (local increments) and by `db-merge` composite materialization |
 | `acc` (accumulation store) | the pre-#1021 separate counter key; the current code keeps the value only in the counter's part of the document value |
 | `MergeReconcile` (`acc := blob`) | the pre-#1021 reconcile; in the Unified code the part operand reads the stored part when the engine merges it |
-| `MergeCommit` (`acc += δ; blob := acc`) | `apply_field_op_once` in `crates/db/src/merge/merge_handler/field_ops.rs`: one blind operand on the part, summed by `CounterField::merge` (`crates/crdt/src/field/counter.rs`) |
+| `MergeCommit` (`acc += δ; blob := acc`) | `apply_field_op_once` in `crates/database/db/src/merge/merge_handler/field_ops.rs`: one blind operand on the part, summed by `CounterField::merge` (`crates/building-blocks/crdt/src/field/counter.rs`) |
 | `LocalApply` (`blob += 1`, no lock, no `acc`) | local increment via the `db` crate; in the Split (pre-#1021) abstraction it does NOT acquire the shared per-doc guard |
 | `MergeRedeliver` (re-delivery; inline `Dedup` branch) | a delta delivered twice; applied key (`field_ops.rs`) and `is_merged(cid)` merged-set guard (`composite.rs`) (suppresses when `Dedup="On"`) |
 

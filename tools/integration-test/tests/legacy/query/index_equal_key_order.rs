@@ -51,7 +51,7 @@ fn seed_reversed_cid_pair(node: &DefraClient) -> (String, String, String, String
     panic!("could not find a pair whose public DocID order opposes insert order");
 }
 
-fn assert_doc_id_order(
+fn assert_creation_order(
     node: &DefraClient,
     query: &str,
     first_name: &str,
@@ -76,11 +76,12 @@ fn assert_doc_id_order(
 
     assert_eq!(
         got_ids,
-        vec![second_id, first_id],
-        "equal index keys must come back in public DocID order \
-         (inserted {first_name} then {second_name}); got {got_names:?}"
+        vec![first_id, second_id],
+        "equal index keys must come back in the order they were created, as in Go \
+         (inserted {first_name} then {second_name}, whose DocIDs sort the other way); \
+         got {got_names:?}"
     );
-    assert_eq!(got_names, vec![second_name, first_name]);
+    assert_eq!(got_names, vec![first_name, second_name]);
 }
 
 fn add_collection(node: &DefraClient) {
@@ -96,15 +97,15 @@ fn add_collection(node: &DefraClient) {
 }
 
 /// Two documents that share an indexed value, queried with no `order` clause,
-/// must come back in public DocID order (#1602).
+/// come back in the order they were created, as Go returns them (#2712).
 #[nuclei::test]
-async fn rust_equal_index_keys_are_ordered_by_doc_id() {
+async fn rust_equal_index_keys_are_ordered_by_creation() {
     edge::compat(async {
         let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
         let node = cluster.client(0);
         add_collection(&node);
         let (first_name, first_id, second_name, second_id) = seed_reversed_cid_pair(&node);
-        assert_doc_id_order(
+        assert_creation_order(
             &node,
             r#"query { User(filter: {age: {_eq: 21}}) { name _docID } }"#,
             &first_name,
@@ -117,16 +118,16 @@ async fn rust_equal_index_keys_are_ordered_by_doc_id() {
 }
 
 /// `_in` is InScan, not ExactMatch. TypeJoinMany uses InScan whenever there
-/// are two or more parents, so equal-key groups there must use the same
-/// public-DocID tie-break (#1602).
+/// are two or more parents, so equal-key groups there keep creation order too
+/// (#2712).
 #[nuclei::test]
-async fn rust_equal_index_keys_in_filter_are_ordered_by_doc_id() {
+async fn rust_equal_index_keys_in_filter_are_ordered_by_creation() {
     edge::compat(async {
         let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
         let node = cluster.client(0);
         add_collection(&node);
         let (first_name, first_id, second_name, second_id) = seed_reversed_cid_pair(&node);
-        assert_doc_id_order(
+        assert_creation_order(
             &node,
             r#"query { User(filter: {age: {_in: [21]}}) { name _docID } }"#,
             &first_name,
@@ -147,12 +148,13 @@ const PRODUCT_SCHEMA: &str = r#"
 "#;
 
 /// Ranks repeat so one scan covers the order across full keys and the
-/// tie-break within one of them.
-const PRODUCTS: [(&str, i64); 5] = [("p0", 1), ("p1", 1), ("p2", 2), ("p3", 2), ("p4", 3)];
+/// creation order within one of them. They are created out of rank order, so
+/// a scan that kept plain creation order fails.
+const PRODUCTS: [(&str, i64); 5] = [("p0", 2), ("p1", 1), ("p2", 3), ("p3", 1), ("p4", 2)];
 
 /// A partial `_in` over a composite index prefix-scans, so one `_in` value
-/// spans several distinct full index keys. The public-DocID tie-break must
-/// stay inside one key rather than reorder across the secondary field (#1602).
+/// spans several distinct full index keys: rank order across keys, creation
+/// order within one (#2712).
 #[nuclei::test]
 async fn rust_partial_in_over_composite_index_keeps_secondary_field_order() {
     edge::compat(async {
@@ -168,40 +170,23 @@ async fn rust_partial_in_over_composite_index_keeps_secondary_field_order() {
         }
 
         let result = node
-            .query(r#"query { Product(filter: {category: {_in: ["a"]}}) { rank _docID } }"#)
+            .query(r#"query { Product(filter: {category: {_in: ["a"]}}) { name } }"#)
             .expect("partial _in over the composite index");
         let rows = result["Product"]
             .as_array()
             .unwrap_or_else(|| panic!("Product array missing from {result}"));
-        assert_eq!(
-            rows.len(),
-            PRODUCTS.len(),
-            "expected every product, got {result}"
-        );
-
-        let got: Vec<(i64, String)> = rows
+        let got: Vec<&str> = rows
             .iter()
-            .map(|row| {
-                (
-                    row["rank"].as_i64().expect("rank"),
-                    row["_docID"].as_str().expect("_docID").to_string(),
-                )
-            })
+            .map(|row| row["name"].as_str().expect("name"))
             .collect();
 
-        let mut index_order = got.clone();
-        index_order.sort();
-        let mut doc_id_order = got.clone();
-        doc_id_order.sort_by(|a, b| a.1.cmp(&b.1));
-        assert_ne!(
-            index_order, doc_id_order,
-            "the seed must distinguish index order from a flat DocID sort, \
-             otherwise this test cannot fail"
-        );
+        let mut by_rank = PRODUCTS.to_vec();
+        by_rank.sort_by_key(|(_, rank)| *rank);
+        let expected: Vec<&str> = by_rank.iter().map(|(name, _)| *name).collect();
+        assert_eq!(expected, ["p1", "p3", "p0", "p4", "p2"]);
         assert_eq!(
-            got, index_order,
-            "a partial `_in` must return rank order, with the DocID tie-break \
-             applied only within one rank"
+            got, expected,
+            "a partial `_in` must return rank order, and creation order within one rank"
         );
     })
     .await;

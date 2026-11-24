@@ -20,12 +20,12 @@ The temporal story (two senders, failures, the deadline) is the TLA+ model
 trust about one step.
 
 Rust anchors: `ProcessQueue::try_acquire` and `ProcessQueue::release_sync`
-(`crates/p2p/src/sync/queue.rs`, an atomic `insert_if_absent` and `force_remove`
+(`crates/database/p2p/src/sync/queue.rs`, an atomic `insert_if_absent` and `force_remove`
 on a lock-free map, modeled here as their sequential meaning),
-`SyncManager::join_in_flight` (`crates/p2p/src/sync/manager/process/join.rs`),
+`SyncManager::join_in_flight` (`crates/database/p2p/src/sync/manager/process/join.rs`),
 and the root claim a DocSync or branchable reply takes before it fetches
 (`DagFetchLimiter::claim_root` and `RootClaim::drop` in
-`crates/p2p/src/sync/coordinator/mod.rs`, the same `insert_if_absent` and
+`crates/database/p2p/src/sync/coordinator/mod.rs`, the same `insert_if_absent` and
 `remove`; `tryAcquire`, `release` and their laws are its meaning too).
 -/
 

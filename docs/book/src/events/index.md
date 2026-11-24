@@ -7,7 +7,7 @@ to drift.
 
 ## The bus
 
-The event bus (`crates/events`) publishes named events: `Update` (a document create,
+The event bus (`crates/foundation/events`) publishes named events: `Update` (a document create,
 update or delete, with the block payload), `Merge` / `MergeComplete` (replicated
 merges), peer and connection events, replicator completions, ACP height/cache events,
 quarantine events, and unique-index conflicts. Subscribers subscribe by name;
@@ -15,7 +15,7 @@ GraphQL subscriptions are the client surface.
 
 Events fire from **ordered post-commit callbacks**: the transaction registers an
 ordered `on_commit` hook, the engine's receipt stream dispatches ordered callbacks in
-`seq` order across threads ([`crates/storage/src/backends/regolith/event_order.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/event_order.rs)), and
+`seq` order across threads ([`crates/engine/storage/src/backends/regolith/event_order.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/event_order.rs)), and
 a discarded transaction publishes nothing. A commit's events follow its durability,
 never precede it.
 

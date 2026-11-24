@@ -1,7 +1,7 @@
 -------------------------- MODULE HistoryDriver --------------------------
 \* Production construction and linked collection carriers must preserve driver control.
-\* Rust: crates/db/src/merge/replication.rs create_merge_handler_with_max_merge_depth.
-\* Rust: crates/db/src/merge/merge_handler/collection.rs process_collection_delta_body.
+\* Rust: crates/database/db/src/merge/replication.rs create_merge_handler_with_max_merge_depth.
+\* Rust: crates/database/db/src/merge/merge_handler/collection.rs process_collection_delta_body.
 EXTENDS Naturals
 \* One guard returns at the turn boundary; the other propagates a linked history rejection.
 CONSTANT SingleTurn, Propagate, Immediate, Fallback

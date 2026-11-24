@@ -1,0 +1,1472 @@
+//! Pubsub-gossip transport for KMS request/reply, generic over any
+//! [`P2PTransport`] that supports raw gossip (`publish_raw` + `subscribe_raw`
+//! + `register_pubsub_rpc_topic`).
+//!
+//! Wire-compatible with Go's `internal/kms/pubsub.go`, which layers the
+//! `sourcenetwork/go-libp2p-pubsub-rpc` request/response protocol over
+//! gossipsub:
+//!
+//! - The requester publishes a bare-CBOR `FetchEncryptionKeyRequest` on topic
+//!   `"encryption"` and tracks it by `CIDv1(raw, sha256(request_bytes))`.
+//! - The responder runs its handler and publishes the reply NOT on
+//!   `"encryption"` but on the requester's per-peer sub-topic
+//!   `"encryption/<requester_peer_id>/_response"`, wrapped in an
+//!   `internalResponse` dag-cbor envelope `{ID, From, Data, Err}` where `Data`
+//!   is the bare-CBOR `FetchEncryptionKeyReply` and `ID` echoes the request CID.
+//! - The requester, subscribed to `"encryption/<self>/_response"`, decodes the
+//!   envelope, correlates `ID` to the outstanding request, and unwraps the
+//!   ECIES reply blocks. The AAD binds the requester's ephemeral pubkey and the
+//!   responder's peer id — the latter taken from the verified gossip source of
+//!   the `_response` message (Go's `resp.From`).
+//!
+//! This re-uses the Go-fixture-verified [`crate::pubsub_rpc`] primitive
+//! (`Correlator` + envelope + topic naming + request-id derivation) rather than
+//! a bespoke single-slot reply path, so concurrent fetches correlate correctly.
+
+use kms::{
+    EncodedFetchRequest, FetchEncryptionKeyReply, FetchEncryptionKeyRequest, IncomingHandler,
+    KeyTransport, Result as KmsResult, TransportReplyStream,
+};
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::{Arc, Weak};
+
+use cid::Cid;
+use edge::Edge;
+use kovan::AtomOption;
+use kovan_map::HopscotchMap;
+use std::time::Duration;
+use tracing::{debug, warn};
+
+use crate::peer_identity::PeerIdentityResolver;
+#[cfg(feature = "libp2p-transport")]
+use crate::pubsub_rpc::response_topic;
+use crate::pubsub_rpc::{derive_request_id, Correlator, InternalResponse, PublishOptions};
+use crate::topics::{DefraTopic, ENCRYPTION_TOPIC};
+use crate::transport::{P2PTransport, PeerId};
+
+/// Upper bound on how long `send_request` waits for at least one peer to be
+/// known as an encryption-topic subscriber before publishing. gossipsub
+/// propagates SUBSCRIBE control messages on its heartbeat (default 1s), so a
+/// fetch issued immediately on a key-miss can race subscription propagation.
+/// Without this wait, `flood_publish` has zero targets and the publish fails
+/// with `InsufficientPeers` — the request never reaches the wire (#976).
+const SUBSCRIBER_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Gossipsub's heartbeat: it grafts the mesh on this beat, and no event
+/// marks a graft. A wait for a subscriber wakes on the transport's
+/// subscription event, and re-checks at most once a beat for a transport that
+/// surfaces none.
+const GOSSIP_HEARTBEAT: Duration = Duration::from_secs(1);
+
+/// Upper bound on the total wait for a key-holding peer's reply. Mirrors Go's
+/// `fetchEncryptionKeyResponseTimeout` (internal/kms/pubsub.go). Without this
+/// bound a single lost gossip message (request or reply) parks the caller —
+/// and on the merge path, the node's whole replication loop — forever.
+const RESPONSE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How long a single publish may wait for a reply before the request is
+/// republished. Mirrors Go's `fetchEncryptionKeyRetryInterval`: pubsub topic
+/// membership can lag behind direct peer connections (especially right after
+/// a connect), so the first publish can be silently lost even when the
+/// subscriber is already known locally. Republishing (fresh gossipsub seqno ⇒
+/// fresh message id, so no duplicate suppression) re-solicits the reply.
+const REPUBLISH_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Upper bound on requests buffered before a handler is installed. Also the
+/// replay parallelism bound: each buffered request replays as its own task.
+const PENDING_CAP: usize = 32;
+
+/// Gossip-backed `KeyTransport`, generic over the underlying P2P transport.
+///
+/// Outgoing fetches are correlated by request-CID via [`Correlator`]; replies
+/// arrive on the local `encryption/<self>/_response` sub-topic as
+/// `internalResponse` envelopes. Inbound requests on `encryption` are answered
+/// by publishing an envelope on the caller's `_response` sub-topic.
+pub struct PubsubKeyTransport<T: P2PTransport> {
+    transport: T,
+    identity_resolver: Arc<dyn PeerIdentityResolver>,
+    handler: AtomOption<Arc<dyn IncomingHandler>>,
+    correlator: Correlator,
+    /// This node's libp2p peer id (gossip source string form).
+    local_peer_id: String,
+    /// Pre-formatted `encryption/<self>/_response` topic this node subscribes
+    /// to in order to receive replies addressed to it.
+    self_response_topic: String,
+    /// Requests that arrive before a handler is installed, keyed by request
+    /// id so a requester's periodic republishes coalesce, and replayed on
+    /// installation. Runtimes wire this transport into their event loop
+    /// before the KMS itself exists, and a requester's retries give up after
+    /// a few seconds — dropping that window's requests turns into
+    /// `KeyUnavailable` on the requester for no lasting reason.
+    pending_requests: HopscotchMap<Cid, (String, Vec<u8>), rapidhash::fast::RandomState>,
+    /// Back-reference so `install_handler` can replay the buffer through the
+    /// normal dispatch path.
+    self_ref: regolith::sync::OnceCell<Weak<Self>>,
+    /// The network runtime buffered requests are replayed on.
+    edge: Edge,
+    /// Woken when a peer subscribes to the encryption topic
+    /// ([`peer_subscribed`](Self::peer_subscribed)).
+    subscribed: regolith::sync::Notify,
+}
+
+impl<T: P2PTransport> PubsubKeyTransport<T> {
+    /// Construct, subscribe to ENCRYPTION_TOPIC and the local `_response`
+    /// sub-topic, and register both for raw routing. Requests that arrive
+    /// before a handler is installed are replayed on `edge`.
+    pub async fn new(
+        transport: T,
+        identity_resolver: Arc<dyn PeerIdentityResolver>,
+        edge: Edge,
+    ) -> KmsResult<Arc<Self>> {
+        let local_peer_id = transport.local_peer_id().to_string();
+        // Canonicalize through `libp2p::PeerId` when that dep is compiled in
+        // (Go wire-compat guarantee); otherwise -- and for peer ids that do
+        // not parse as libp2p ids, e.g. iroh hex -- join the transport-native
+        // string. For a base58 libp2p id both spellings are identical.
+        #[cfg(feature = "libp2p-transport")]
+        let self_response_topic = match local_peer_id.parse::<libp2p::PeerId>() {
+            Ok(pid) => response_topic(ENCRYPTION_TOPIC, &pid),
+            Err(_) => format!("{ENCRYPTION_TOPIC}/{local_peer_id}/_response"),
+        };
+        #[cfg(not(feature = "libp2p-transport"))]
+        let self_response_topic = format!("{ENCRYPTION_TOPIC}/{local_peer_id}/_response");
+
+        transport
+            .subscribe(DefraTopic::Encryption)
+            .await
+            .map_err(|e| kms::Error::Internal(format!("subscribe encryption topic: {e}")))?;
+        transport
+            .register_pubsub_rpc_topic(ENCRYPTION_TOPIC.to_string())
+            .await
+            .map_err(|e| kms::Error::Internal(format!("register raw routing: {e}")))?;
+        transport
+            .subscribe_raw(self_response_topic.clone())
+            .await
+            .map_err(|e| kms::Error::Internal(format!("subscribe encryption _response: {e}")))?;
+        transport
+            .register_pubsub_rpc_topic(self_response_topic.clone())
+            .await
+            .map_err(|e| kms::Error::Internal(format!("register _response routing: {e}")))?;
+
+        let transport = Arc::new(Self {
+            transport,
+            identity_resolver,
+            handler: AtomOption::none(),
+            correlator: Correlator::new(),
+            local_peer_id,
+            self_response_topic,
+            pending_requests: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
+            self_ref: regolith::sync::OnceCell::new(),
+            edge,
+            subscribed: regolith::sync::Notify::new(),
+        });
+        let _ = transport.self_ref.set(Arc::downgrade(&transport));
+        Ok(transport)
+    }
+
+    /// Called by the sync coordinator when a peer subscribes to `topic`: a
+    /// request waiting for an encryption-topic subscriber looks again.
+    pub fn peer_subscribed(&self, topic: &str) {
+        if topic == ENCRYPTION_TOPIC {
+            self.subscribed.notify_waiters();
+        }
+    }
+
+    /// The `encryption/<self>/_response` sub-topic this transport owns. The
+    /// dispatcher routes inbound messages on this topic here.
+    pub fn self_response_topic(&self) -> &str {
+        &self.self_response_topic
+    }
+
+    /// Called by the sync coordinator when a `GossipRawMessage` arrives on
+    /// the encryption topic or its `_response` sub-topic.
+    ///
+    /// - `topic == encryption`: treat as an inbound request — run the handler
+    ///   and publish the reply envelope on the caller's `_response` sub-topic.
+    /// - `topic == encryption/<self>/_response`: decode the `internalResponse`
+    ///   envelope and route it to the correlator for the waiting `send_request`.
+    pub async fn dispatch_incoming(&self, from_peer: String, topic: String, payload: Vec<u8>) {
+        // `from_peer` is the verified gossip source in transport-native form
+        // (libp2p base58 over libp2p, iroh hex over iroh). It is forwarded
+        // through correlation/AAD as an opaque string and never parsed, so the
+        // KMS pubsub path is transport-agnostic (#976).
+
+        // Reply path: our own `_response` sub-topic.
+        if topic == self.self_response_topic {
+            let envelope = match InternalResponse::from_cbor(&payload) {
+                Ok(e) => e,
+                Err(e) => {
+                    debug!(
+                        from = %from_peer,
+                        error = %e,
+                        payload_len = payload.len(),
+                        "KMS dispatch: failed to decode response envelope; dropping"
+                    );
+                    return;
+                }
+            };
+            let delivered = self.correlator.deliver(from_peer.clone(), envelope);
+            debug!(
+                from = %from_peer,
+                payload_len = payload.len(),
+                delivered,
+                "KMS dispatch: response envelope routed to correlator"
+            );
+            return;
+        }
+
+        // Request path: bare-CBOR FetchEncryptionKeyRequest on the base topic.
+        if topic == ENCRYPTION_TOPIC {
+            self.handle_request(from_peer, payload).await;
+            return;
+        }
+
+        // Any other `encryption/<peer>/_response` topic is addressed to a peer
+        // that is not us — we only subscribe to our own — so it should never
+        // reach here. Drop defensively.
+        debug!(topic = %topic, "KMS dispatch: unexpected topic; dropping");
+    }
+
+    /// Handle an inbound request on the base topic: decode, dispatch to the
+    /// installed handler, then publish the reply on the caller's `_response`
+    /// sub-topic wrapped in an `internalResponse` envelope (Go parity).
+    async fn handle_request(&self, from: String, payload: Vec<u8>) {
+        // Ignore our own request echoed back by the mesh.
+        if from == self.local_peer_id {
+            return;
+        }
+        let handler = self.handler.load().map(|handler| Arc::clone(&handler));
+        let Some(handler) = handler else {
+            if self.pending_requests.len() >= PENDING_CAP {
+                warn!("KMS request buffer full before a handler was installed; dropping");
+            } else {
+                debug!("KMS request arrived before a handler was installed; buffered");
+                self.pending_requests
+                    .insert_if_absent(derive_request_id(&payload), (from, payload));
+            }
+            return;
+        };
+        let req: FetchEncryptionKeyRequest = match defra_core::cbor::from_slice(&payload) {
+            Ok(r) => r,
+            Err(e) => {
+                warn!(error = %e, "KMS dispatch: failed to decode request");
+                return;
+            }
+        };
+        let request_id = crate::pubsub_rpc::derive_request_id(&payload);
+        let authenticated_did = self
+            .identity_resolver
+            .resolve(&PeerId::new(from.clone()))
+            .await;
+        let explicit_replay_authorization =
+            req.explicit_replay_capability
+                .as_deref()
+                .and_then(|capability| {
+                    match crate::verify_explicit_replay_capability_for_key_request(
+                        capability,
+                        &self.local_peer_id,
+                        &from,
+                    ) {
+                        Ok(authorization) => Some(authorization),
+                        Err(error) => {
+                            warn!(
+                                peer_id = %from,
+                                error = %error,
+                                "KMS request carried an invalid explicit-replay capability"
+                            );
+                            None
+                        }
+                    }
+                });
+        let (reply_bytes, err) = match handler
+            .handle(
+                kms::PeerIdentity {
+                    peer_id: from.clone(),
+                    authenticated_did,
+                    explicit_replay_authorization,
+                },
+                req,
+            )
+            .await
+        {
+            Ok(reply) => match defra_core::cbor::to_vec(&reply) {
+                Ok(b) => (b, String::new()),
+                Err(e) => {
+                    warn!(error = %e, "KMS dispatch: failed to encode reply");
+                    return;
+                }
+            },
+            Err(e) => {
+                warn!(error = %e, "KMS handler errored");
+                (Vec::new(), e.to_string())
+            }
+        };
+
+        // Go's serve side returns an empty reply (no blocks) when it holds or
+        // is authorized for nothing; it still publishes a response envelope so
+        // the requester's correlation slot resolves rather than timing out.
+        let envelope = InternalResponse {
+            id: request_id.to_string(),
+            err,
+            data: reply_bytes,
+            from: Vec::new(), // filled in by the recipient from the gossip source
+        };
+        let bytes = match envelope.to_cbor() {
+            Ok(b) => b,
+            Err(e) => {
+                warn!(error = %e, "KMS dispatch: failed to encode response envelope");
+                return;
+            }
+        };
+        // Build the caller's `_response` sub-topic from the transport-native
+        // peer-id string. Identical to `response_topic(ENCRYPTION_TOPIC, &pid)`
+        // for a libp2p base58 `from` (Go wire-compat), and correct for iroh hex
+        // peer ids that do not parse as a `libp2p::PeerId`.
+        let reply_topic = format!("{ENCRYPTION_TOPIC}/{from}/_response");
+        if let Err(e) = self
+            .publish_with_graft_retry(reply_topic.clone(), bytes)
+            .await
+        {
+            warn!(
+                topic = %reply_topic,
+                error = %e,
+                "KMS dispatch: failed to publish reply envelope on _response sub-topic"
+            );
+        } else {
+            debug!(topic = %reply_topic, "KMS dispatch: reply envelope published");
+        }
+    }
+
+    /// Block (bounded) until at least one peer is known to be subscribed to
+    /// the encryption topic, so the subsequent `flood_publish` has a target.
+    ///
+    /// Returns as soon as a subscriber appears, or after
+    /// [`SUBSCRIBER_WAIT_TIMEOUT`]. Timing out is not fatal: the caller still
+    /// attempts the publish (it may yet succeed, or surface a clear error).
+    async fn wait_for_subscriber(&self) {
+        let mut deadline = std::pin::pin!(crate::rt::time::sleep(SUBSCRIBER_WAIT_TIMEOUT));
+        loop {
+            // Registered before the check, so a subscription that lands
+            // between the two still wakes the wait.
+            let subscribed = self.subscribed.notified();
+            match self.transport.topic_peers(DefraTopic::Encryption).await {
+                Ok(peers) if !peers.is_empty() => return,
+                Ok(_) => {}
+                Err(e) => {
+                    debug!(error = %e, "topic_peers query failed while awaiting KMS subscriber");
+                    return;
+                }
+            }
+            if !Self::next_chance(subscribed, deadline.as_mut()).await {
+                warn!(
+                    "no encryption-topic subscriber appeared within {:?}; publishing anyway",
+                    SUBSCRIBER_WAIT_TIMEOUT
+                );
+                return;
+            }
+        }
+    }
+
+    /// Waits for a peer to subscribe to the encryption topic, or for the next
+    /// gossip heartbeat, whichever comes first: `false` once `deadline`
+    /// passes before either.
+    async fn next_chance<D>(subscribed: regolith::sync::Notified<'_>, deadline: Pin<&mut D>) -> bool
+    where
+        D: Future<Output = ()>,
+    {
+        use futures_lite::FutureExt;
+        async {
+            subscribed
+                .or(crate::rt::time::sleep(GOSSIP_HEARTBEAT))
+                .await;
+            true
+        }
+        .or(async {
+            deadline.await;
+            false
+        })
+        .await
+    }
+
+    /// Publish on `topic`, retrying on `InsufficientPeers` once a peer
+    /// subscribes or the mesh's next graft (a gossip heartbeat) may have
+    /// added one, within the same bounded window.
+    ///
+    /// Even after a subscriber is known, the very first publish can still race
+    /// the mesh graft (gossipsub heartbeat). Retry within the same bounded
+    /// window rather than failing outright.
+    async fn publish_with_graft_retry(&self, topic: String, payload: Vec<u8>) -> KmsResult<()> {
+        let mut deadline = std::pin::pin!(crate::rt::time::sleep(SUBSCRIBER_WAIT_TIMEOUT));
+        loop {
+            let subscribed = self.subscribed.notified();
+            match self
+                .transport
+                .publish_raw(topic.clone(), payload.clone())
+                .await
+            {
+                Ok(_) => return Ok(()),
+                Err(ref e @ crate::error::Error::GossipSubPublish(ref message))
+                    if message == "InsufficientPeers" =>
+                {
+                    debug!(topic = %topic, error = %e, "publish not yet ready; retrying");
+                    if !Self::next_chance(subscribed, deadline.as_mut()).await {
+                        return Err(kms::Error::Internal(format!("publish KMS message: {e}")));
+                    }
+                }
+                Err(e) => return Err(kms::Error::Internal(format!("publish KMS message: {e}"))),
+            }
+        }
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+impl<T: P2PTransport> KeyTransport for PubsubKeyTransport<T> {
+    fn name(&self) -> &'static str {
+        "pubsub"
+    }
+
+    fn max_keys_per_request(&self) -> Option<usize> {
+        self.transport
+            .max_raw_publish()
+            .map(super::request_keys::keys_per_request)
+    }
+
+    async fn send_request(&self, req: EncodedFetchRequest) -> KmsResult<TransportReplyStream> {
+        // Register correlation by request-CID, then publish the raw request on
+        // the base topic. Go peers reply on `encryption/<self>/_response`,
+        // which `dispatch_incoming` routes into the correlator.
+        // Multiple peers may answer, and an empty reply only means that peer
+        // did not supply a key. This layer cannot verify ECIES envelopes or
+        // content CIDs, so it keeps listening until the downstream KMS
+        // aggregator verifies all requested keys and closes the receiver, or
+        // until the bounded request deadline expires.
+        let mut prep = self.correlator.publish(
+            req.payload,
+            PublishOptions {
+                multi_response: true,
+                ..PublishOptions::default()
+            },
+        );
+
+        self.wait_for_subscriber().await;
+        if let Err(e) = self
+            .publish_with_graft_retry(ENCRYPTION_TOPIC.to_string(), prep.data.clone())
+            .await
+        {
+            // Drop the correlation slot before returning so it doesn't linger.
+            self.correlator.cancel(&prep.id);
+            return Err(e);
+        }
+        debug!(
+            request_id = %prep.id,
+            payload_len = prep.data.len(),
+            "KMS request published on encryption topic"
+        );
+
+        // Adapt the pubsub_rpc response stream into the KMS reply stream
+        // `(FetchEncryptionKeyReply, responder_peer_id)`. The responder peer id
+        // is the verified gossip source of the `_response` message — exactly
+        // what Go binds into the ECIES AAD via `resp.From`.
+        //
+        // Go parity (internal/kms/pubsub.go): while waiting, republish the
+        // identical request every `REPUBLISH_INTERVAL` and give up after
+        // `RESPONSE_TIMEOUT` — closing the stream so the caller's `wait_all`
+        // resolves instead of hanging forever on a lost gossip message.
+        let (tx, rx) = kms::transport_reply_channel(16);
+        let transport = self.transport.clone();
+        let correlator = self.correlator.clone();
+        drop(self.edge.spawn(async move {
+            let deadline = crate::rt::time::Instant::now() + RESPONSE_TIMEOUT;
+            let mut republish_at = crate::rt::time::Instant::now() + REPUBLISH_INTERVAL;
+            loop {
+                crate::rt::select! {
+                    // Prefer an already-delivered reply over a concurrent
+                    // republish tick — the tick's re-registration drops the
+                    // old channel, and with it any buffered reply.
+                    biased;
+                    _ = tx.closed() => break,
+                    resp = prep.responses.recv() => {
+                        let Some(resp) = resp else {
+                            // The correlation entry was cancelled or replaced.
+                            break;
+                        };
+                        if let Some(err) = &resp.err {
+                            debug!(from = %resp.from, error = %err, "KMS reply carried responder error");
+                            continue;
+                        }
+                        let reply: FetchEncryptionKeyReply = match defra_core::cbor::from_slice(&resp.data) {
+                            Ok(r) => r,
+                            Err(e) => {
+                                warn!(
+                                    from = %resp.from,
+                                    error = %e,
+                                    payload_len = resp.data.len(),
+                                    "KMS reply: failed to decode FetchEncryptionKeyReply from envelope Data"
+                                );
+                                continue;
+                            }
+                        };
+                        if reply.blocks.is_empty() {
+                            debug!(
+                                from = %resp.from,
+                                "KMS peer returned no key blocks; waiting for another peer"
+                            );
+                            continue;
+                        }
+                        if tx.send(Ok((reply, resp.from))).await.is_err() {
+                            break;
+                        }
+                    }
+                    _ = crate::rt::time::sleep_until(republish_at) => {
+                        if crate::rt::time::Instant::now() >= deadline {
+                            warn!(
+                                request_id = %prep.id,
+                                timeout = ?RESPONSE_TIMEOUT,
+                                "KMS fetch got no reply within the response timeout; giving up"
+                            );
+                            let _ = tx.send(Err(kms::Error::KeyUnavailable)).await;
+                            break;
+                        }
+                        // Re-register BEFORE dropping the old handle: identical
+                        // bytes derive the identical request-ID, and
+                        // `PreparedPublish::drop` removes the map entry by ID —
+                        // dropping the old handle after inserting the new one
+                        // would tear down the fresh registration. Drop first,
+                        // then insert.
+                        let data = std::mem::take(&mut prep.data);
+                        let id = prep.id;
+                        drop(prep);
+                        prep = correlator.publish(
+                            data,
+                            PublishOptions {
+                                multi_response: true,
+                                ..PublishOptions::default()
+                            },
+                        );
+                        debug_assert_eq!(prep.id, id, "identical payload must re-derive the same request id");
+                        if let Err(e) = transport
+                            .publish_raw(ENCRYPTION_TOPIC.to_string(), prep.data.clone())
+                            .await
+                        {
+                            debug!(request_id = %prep.id, error = %e, "KMS request republish failed; will retry");
+                        } else {
+                            debug!(request_id = %prep.id, "KMS request republished (no reply yet)");
+                        }
+                        republish_at += REPUBLISH_INTERVAL;
+                    }
+                }
+            }
+        }));
+        Ok(rx)
+    }
+
+    fn install_handler(&self, handler: Arc<dyn IncomingHandler>) {
+        self.handler.store_some(handler);
+        // Requests stop entering the buffer once the handler is visible, so
+        // this drain terminates; looping covers inserts racing installation.
+        let mut buffered: Vec<(String, Vec<u8>)> = Vec::new();
+        loop {
+            let keys: Vec<Cid> = self.pending_requests.keys().collect();
+            if keys.is_empty() {
+                break;
+            }
+            for key in keys {
+                if let Some(entry) = self.pending_requests.remove(&key) {
+                    buffered.push(entry);
+                }
+            }
+        }
+        if buffered.is_empty() {
+            return;
+        }
+        let Some(me) = self.self_ref.get().and_then(Weak::upgrade) else {
+            return;
+        };
+        // One task per request, bounded by PENDING_CAP: a reply that blocks
+        // on publishing cannot head-of-line-block the other buffered callers
+        // past their response timeout. Each request's requester waits on its
+        // own timeout, so the replays run detached.
+        for (from, payload) in buffered {
+            let me = Arc::clone(&me);
+            drop(self.edge.spawn(async move {
+                me.handle_request(from, payload).await;
+            }));
+        }
+    }
+}
+
+#[cfg(all(test, feature = "libp2p-transport"))]
+mod tests {
+    use super::*;
+    use crate::error::{Error, Result};
+    use crate::message::{
+        BranchableSyncReply, BranchableSyncRequest, DocSyncReply, DocSyncRequest, PushLogBroadcast,
+        PushLogReply, PushLogRequest, PushSEArtifactsRequest,
+    };
+    use crate::transport::{MessageId, PeerAddr, PeerId};
+    use crate::{QueryId, ReplicatorInfo};
+    use async_trait::async_trait;
+    use kovan::Atom;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    type PublishedRawMessages = Arc<Atom<Vec<(String, Vec<u8>)>>>;
+
+    fn a_libp2p_peer() -> libp2p::PeerId {
+        libp2p::PeerId::from_public_key(&libp2p::identity::Keypair::generate_ed25519().public())
+    }
+
+    /// Mock transport that records raw publishes and mimics the gossipsub
+    /// subscription-propagation race for `topic_peers`/`publish_raw`.
+    #[derive(Clone)]
+    #[allow(clippy::type_complexity)]
+    struct RacyTransport {
+        local_peer_id: PeerId,
+        peer: PeerId,
+        topic_peers_calls: Arc<AtomicUsize>,
+        subscriber_visible_after: usize,
+        publish_attempts: Arc<AtomicUsize>,
+        published: PublishedRawMessages,
+        closed: Arc<AtomicBool>,
+    }
+
+    impl RacyTransport {
+        fn new(subscriber_visible_after: usize) -> Self {
+            let lp = a_libp2p_peer().to_string();
+            Self {
+                local_peer_id: PeerId::new(lp),
+                peer: PeerId::new(a_libp2p_peer().to_string()),
+                topic_peers_calls: Arc::new(AtomicUsize::new(0)),
+                subscriber_visible_after,
+                publish_attempts: Arc::new(AtomicUsize::new(0)),
+                published: Arc::new(Atom::new(Vec::new())),
+                closed: Arc::new(AtomicBool::new(false)),
+            }
+        }
+
+        fn subscriber_known(&self) -> bool {
+            self.topic_peers_calls.load(Ordering::SeqCst) >= self.subscriber_visible_after
+        }
+
+        fn close(&self) {
+            self.closed.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+    impl crate::transport::P2PTransport for RacyTransport {
+        type ResponseToken = ();
+
+        fn local_peer_id(&self) -> &PeerId {
+            &self.local_peer_id
+        }
+        fn local_public_key_proto(&self) -> &[u8] {
+            &[]
+        }
+        fn sign(&self, _data: &[u8]) -> Result<Vec<u8>> {
+            Ok(Vec::new())
+        }
+        async fn dial(&self, _p: &PeerId, _a: Vec<PeerAddr>) -> Result<()> {
+            Ok(())
+        }
+        async fn disconnect(&self, _p: &PeerId) -> Result<()> {
+            Ok(())
+        }
+        async fn listen(&self, _a: PeerAddr) -> Result<()> {
+            Ok(())
+        }
+        async fn connected_peers(&self) -> Result<Vec<PeerId>> {
+            Ok(vec![self.peer.clone()])
+        }
+        async fn listen_addresses(&self) -> Result<Vec<PeerAddr>> {
+            Ok(Vec::new())
+        }
+        async fn poll_until_connected(&self, _p: &PeerId, _t: Duration) -> Result<()> {
+            Ok(())
+        }
+        async fn peer_addresses(&self) -> Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+        async fn topic_peers(&self, _topic: DefraTopic) -> Result<Vec<PeerId>> {
+            if self.closed.load(Ordering::SeqCst) {
+                return Err(Error::ChannelSend);
+            }
+            let n = self.topic_peers_calls.fetch_add(1, Ordering::SeqCst) + 1;
+            if n >= self.subscriber_visible_after {
+                Ok(vec![self.peer.clone()])
+            } else {
+                Ok(Vec::new())
+            }
+        }
+        async fn subscribe(&self, _t: DefraTopic) -> Result<bool> {
+            Ok(true)
+        }
+        async fn unsubscribe(&self, _t: DefraTopic) -> Result<bool> {
+            Ok(true)
+        }
+        async fn publish(&self, _t: DefraTopic, _m: PushLogBroadcast) -> Result<MessageId> {
+            Ok(MessageId::new("noop".to_string()))
+        }
+        async fn publish_raw(&self, t: String, d: Vec<u8>) -> Result<MessageId> {
+            self.publish_attempts.fetch_add(1, Ordering::SeqCst);
+            if self.closed.load(Ordering::SeqCst) {
+                return Err(Error::ChannelSend);
+            }
+            if self.subscriber_known() {
+                self.published.rcu(|published| {
+                    let mut published = published.clone();
+                    published.push((t.clone(), d.clone()));
+                    published
+                });
+                Ok(MessageId::new("ok".to_string()))
+            } else {
+                Err(Error::GossipSubPublish("InsufficientPeers".to_string()))
+            }
+        }
+        async fn subscribe_raw(&self, _t: String) -> Result<bool> {
+            Ok(true)
+        }
+        async fn register_pubsub_rpc_topic(&self, _t: String) -> Result<()> {
+            Ok(())
+        }
+        async fn send_pushlog_response(&self, _t: (), _r: PushLogReply) -> Result<()> {
+            Ok(())
+        }
+        async fn send_two_stream_request(
+            &self,
+            _p: &PeerId,
+            _r: PushLogRequest,
+        ) -> Result<PushLogReply> {
+            Err(Error::Transport("n/a".to_string()))
+        }
+        async fn send_two_stream_response(&self, _p: &PeerId, _r: PushLogReply) -> Result<()> {
+            Ok(())
+        }
+        async fn send_doc_sync_request(&self, _p: &PeerId, _r: DocSyncRequest) -> Result<()> {
+            Ok(())
+        }
+        async fn send_doc_sync_response(&self, _p: &PeerId, _r: DocSyncReply) -> Result<()> {
+            Ok(())
+        }
+        async fn send_branchable_sync_request(
+            &self,
+            _p: &PeerId,
+            _r: BranchableSyncRequest,
+        ) -> Result<()> {
+            Ok(())
+        }
+        async fn send_branchable_sync_response(
+            &self,
+            _p: &PeerId,
+            _r: BranchableSyncReply,
+        ) -> Result<()> {
+            Ok(())
+        }
+        async fn send_car_request(&self, _p: &PeerId, _c: cid::Cid) -> Result<()> {
+            Ok(())
+        }
+        async fn send_car_response(&self, _p: &PeerId, _c: Vec<u8>) -> Result<()> {
+            Ok(())
+        }
+        async fn send_car_response_token(&self, _t: (), _c: Vec<u8>) -> Result<()> {
+            Ok(())
+        }
+        async fn send_doc_sync_response_token(&self, _t: (), _r: DocSyncReply) -> Result<()> {
+            Ok(())
+        }
+        async fn send_branchable_sync_response_token(
+            &self,
+            _t: (),
+            _r: BranchableSyncReply,
+        ) -> Result<()> {
+            Ok(())
+        }
+        async fn send_se_artifacts(&self, _p: &PeerId, _r: PushSEArtifactsRequest) -> Result<()> {
+            Ok(())
+        }
+        async fn sync_blocks(
+            &self,
+            _r: cid::Cid,
+            _p: Vec<PeerId>,
+            _m: Vec<cid::Cid>,
+        ) -> Result<QueryId> {
+            Ok(QueryId(0))
+        }
+        async fn cancel_sync(&self, _q: QueryId) -> Result<bool> {
+            Ok(true)
+        }
+        async fn create_replicator(&self, _p: &PeerId, _c: Vec<String>) -> Result<()> {
+            Ok(())
+        }
+        async fn delete_replicator(&self, _p: &PeerId) -> Result<()> {
+            Ok(())
+        }
+        async fn list_replicators(&self) -> Result<Vec<ReplicatorInfo>> {
+            Ok(Vec::new())
+        }
+        async fn get_replicator(&self, _p: &PeerId) -> Result<Option<ReplicatorInfo>> {
+            Ok(None)
+        }
+        async fn remove_replicator_collections(
+            &self,
+            _p: &PeerId,
+            _c: Vec<String>,
+        ) -> Result<bool> {
+            Ok(false)
+        }
+        async fn shutdown(&self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Regression test for #976: `send_request` must wait for the encryption
+    /// topic to have a known subscriber before publishing, so a fetch issued
+    /// immediately on a key-miss does not fail with `InsufficientPeers`. The
+    /// request must be published on the base `encryption` topic.
+    #[nuclei::test(start_paused = true)]
+    async fn send_request_waits_for_subscriber_then_publishes() {
+        let transport = RacyTransport::new(3);
+        let publish_attempts = transport.publish_attempts.clone();
+        let published = transport.published.clone();
+        let kt = PubsubKeyTransport::new(
+            transport,
+            Arc::new(crate::AnonymousResolver),
+            edge::testing::edge(),
+        )
+        .await
+        .unwrap();
+
+        let req = EncodedFetchRequest {
+            payload: b"fetch".to_vec(),
+            request_id: "r1".to_string(),
+        };
+        let _rx = kt
+            .send_request(req)
+            .await
+            .expect("send_request must succeed");
+
+        assert_eq!(
+            publish_attempts.load(Ordering::SeqCst),
+            1,
+            "publish should fire exactly once, after the subscriber is known"
+        );
+        let pubs = published.load();
+        assert_eq!(pubs.len(), 1);
+        assert_eq!(pubs[0].0, ENCRYPTION_TOPIC, "request must go on base topic");
+        assert_eq!(pubs[0].1, b"fetch");
+    }
+
+    /// A subscription event wakes a request waiting for a subscriber at once,
+    /// not at the next gossip heartbeat.
+    #[nuclei::test(start_paused = true)]
+    async fn a_subscription_event_wakes_a_waiting_request_before_the_heartbeat() {
+        let transport = RacyTransport::new(2);
+        let published = transport.published.clone();
+        let kt = PubsubKeyTransport::new(
+            transport,
+            Arc::new(crate::AnonymousResolver),
+            edge::testing::edge(),
+        )
+        .await
+        .unwrap();
+        let started = crate::rt::time::Instant::now();
+        let request = EncodedFetchRequest {
+            payload: b"fetch".to_vec(),
+            request_id: "r1".to_string(),
+        };
+        let (sent, ()) = futures::join!(kt.send_request(request), async {
+            crate::rt::time::sleep(Duration::from_millis(10)).await;
+            kt.peer_subscribed(ENCRYPTION_TOPIC);
+        });
+
+        sent.expect("send_request must succeed");
+        assert_eq!(published.load().len(), 1);
+        assert!(
+            started.elapsed() < GOSSIP_HEARTBEAT,
+            "woken by the event: {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[nuclei::test(start_paused = true)]
+    async fn send_request_stops_when_transport_is_closed() {
+        let transport = RacyTransport::new(usize::MAX);
+        let publish_attempts = transport.publish_attempts.clone();
+        let kt = PubsubKeyTransport::new(
+            transport.clone(),
+            Arc::new(crate::AnonymousResolver),
+            edge::testing::edge(),
+        )
+        .await
+        .unwrap();
+        transport.close();
+
+        let request = EncodedFetchRequest {
+            payload: b"fetch".to_vec(),
+            request_id: "r1".to_string(),
+        };
+        let result = crate::rt::time::timeout(Duration::from_secs(1), kt.send_request(request))
+            .await
+            .expect("a closed transport must not consume the subscriber retry window");
+
+        assert!(result.is_err());
+        assert_eq!(publish_attempts.load(Ordering::SeqCst), 1);
+    }
+
+    /// A response envelope arriving on the local `_response` sub-topic must be
+    /// decoded, correlated to the outstanding request, and surfaced on the
+    /// reply stream as `(FetchEncryptionKeyReply, responder_peer_id)`.
+    #[nuclei::test(threads = 0)]
+    async fn response_envelope_routes_to_waiting_request() {
+        let transport = RacyTransport::new(1);
+        let kt = PubsubKeyTransport::new(
+            transport,
+            Arc::new(crate::AnonymousResolver),
+            edge::testing::edge(),
+        )
+        .await
+        .unwrap();
+
+        let payload = b"the-request-bytes".to_vec();
+        let req = EncodedFetchRequest {
+            payload: payload.clone(),
+            request_id: "r1".to_string(),
+        };
+        let mut rx = kt.send_request(req).await.expect("send_request");
+
+        // Build the reply Go would send: bare-CBOR FetchEncryptionKeyReply
+        // wrapped in an internalResponse envelope, ID = CID of the request.
+        let reply = FetchEncryptionKeyReply {
+            links: vec![vec![1, 2, 3]],
+            blocks: vec![vec![4, 5, 6]],
+            ephemeral_public_key: vec![7; 32],
+        };
+        let data = defra_core::cbor::to_vec(&reply).unwrap();
+        let request_id = crate::pubsub_rpc::derive_request_id(&payload);
+        let envelope = InternalResponse {
+            id: request_id.to_string(),
+            err: String::new(),
+            data,
+            from: Vec::new(),
+        };
+        let responder = a_libp2p_peer();
+        kt.dispatch_incoming(
+            responder.to_string(),
+            kt.self_response_topic().to_string(),
+            envelope.to_cbor().unwrap(),
+        )
+        .await;
+
+        let (got_reply, responder_id) = crate::rt::time::timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("reply must arrive within timeout")
+            .expect("reply present")
+            .expect("reply must succeed");
+        assert_eq!(got_reply, reply);
+        assert_eq!(
+            responder_id,
+            responder.to_string(),
+            "responder peer id must be the verified gossip source"
+        );
+    }
+
+    #[nuclei::test(threads = 0)]
+    async fn empty_reply_does_not_hide_later_key_reply() {
+        let transport = RacyTransport::new(1);
+        let kt = PubsubKeyTransport::new(
+            transport,
+            Arc::new(crate::AnonymousResolver),
+            edge::testing::edge(),
+        )
+        .await
+        .unwrap();
+
+        let payload = b"multi-peer-key-request".to_vec();
+        let req = EncodedFetchRequest {
+            payload: payload.clone(),
+            request_id: "r1".to_string(),
+        };
+        let mut rx = kt.send_request(req).await.expect("send_request");
+        let request_id = crate::pubsub_rpc::derive_request_id(&payload);
+
+        let empty_reply = FetchEncryptionKeyReply {
+            links: vec![],
+            blocks: vec![],
+            ephemeral_public_key: vec![],
+        };
+        let empty_envelope = InternalResponse {
+            id: request_id.to_string(),
+            err: String::new(),
+            data: defra_core::cbor::to_vec(&empty_reply).unwrap(),
+            from: Vec::new(),
+        };
+        kt.dispatch_incoming(
+            a_libp2p_peer().to_string(),
+            kt.self_response_topic().to_string(),
+            empty_envelope.to_cbor().unwrap(),
+        )
+        .await;
+
+        let key_reply = FetchEncryptionKeyReply {
+            links: vec![vec![1, 2, 3]],
+            blocks: vec![vec![4, 5, 6]],
+            ephemeral_public_key: vec![7; 32],
+        };
+        let key_responder = a_libp2p_peer();
+        let key_envelope = InternalResponse {
+            id: request_id.to_string(),
+            err: String::new(),
+            data: defra_core::cbor::to_vec(&key_reply).unwrap(),
+            from: Vec::new(),
+        };
+        kt.dispatch_incoming(
+            key_responder.to_string(),
+            kt.self_response_topic().to_string(),
+            key_envelope.to_cbor().unwrap(),
+        )
+        .await;
+
+        let (got_reply, responder_id) = crate::rt::time::timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("key reply must arrive within timeout")
+            .expect("reply present")
+            .expect("reply must succeed");
+        assert_eq!(got_reply, key_reply);
+        assert_eq!(responder_id, key_responder.to_string());
+    }
+
+    #[nuclei::test(threads = 0)]
+    async fn partial_replies_are_collected_until_all_requested_links_arrive() {
+        let transport = RacyTransport::new(1);
+        let kt = PubsubKeyTransport::new(
+            transport,
+            Arc::new(crate::AnonymousResolver),
+            edge::testing::edge(),
+        )
+        .await
+        .unwrap();
+
+        let first_link = vec![1, 2, 3];
+        let second_link = vec![4, 5, 6];
+        let request = FetchEncryptionKeyRequest {
+            identity: b"did:key:zrequester".to_vec(),
+            links: vec![first_link.clone(), second_link.clone()],
+            ephemeral_public_key: vec![9; 32],
+            explicit_replay_capability: None,
+        };
+        let payload = defra_core::cbor::to_vec(&request).unwrap();
+        let req = EncodedFetchRequest {
+            payload: payload.clone(),
+            request_id: "r1".to_string(),
+        };
+        let mut rx = kt.send_request(req).await.expect("send_request");
+        let request_id = crate::pubsub_rpc::derive_request_id(&payload);
+
+        for (link, block) in [
+            (first_link.clone(), vec![7]),
+            (second_link.clone(), vec![8]),
+        ] {
+            let reply = FetchEncryptionKeyReply {
+                links: vec![link],
+                blocks: vec![block],
+                ephemeral_public_key: vec![10; 32],
+            };
+            let envelope = InternalResponse {
+                id: request_id.to_string(),
+                err: String::new(),
+                data: defra_core::cbor::to_vec(&reply).unwrap(),
+                from: Vec::new(),
+            };
+            kt.dispatch_incoming(
+                a_libp2p_peer().to_string(),
+                kt.self_response_topic().to_string(),
+                envelope.to_cbor().unwrap(),
+            )
+            .await;
+        }
+
+        let first = crate::rt::time::timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("first partial reply must arrive")
+            .expect("first partial reply present")
+            .expect("first partial reply succeeds");
+        let second = crate::rt::time::timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("second partial reply must arrive")
+            .expect("second partial reply present")
+            .expect("second partial reply succeeds");
+        assert_eq!(first.0.links, vec![first_link]);
+        assert_eq!(second.0.links, vec![second_link]);
+        drop(rx);
+        crate::rt::time::timeout(Duration::from_secs(1), async {
+            while kt.correlator.in_flight() != 0 {
+                crate::rt::yield_now().await;
+            }
+        })
+        .await
+        .expect("dropping the downstream receiver must cancel correlation");
+    }
+
+    #[nuclei::test(threads = 0)]
+    async fn claimed_complete_reply_does_not_hide_later_verified_candidate() {
+        let transport = RacyTransport::new(1);
+        let kt = PubsubKeyTransport::new(
+            transport,
+            Arc::new(crate::AnonymousResolver),
+            edge::testing::edge(),
+        )
+        .await
+        .unwrap();
+
+        let requested_link = vec![1, 2, 3];
+        let request = FetchEncryptionKeyRequest {
+            identity: b"did:key:zrequester".to_vec(),
+            links: vec![requested_link.clone()],
+            ephemeral_public_key: vec![9; 32],
+            explicit_replay_capability: None,
+        };
+        let payload = defra_core::cbor::to_vec(&request).unwrap();
+        let mut rx = kt
+            .send_request(EncodedFetchRequest {
+                payload: payload.clone(),
+                request_id: "r1".to_string(),
+            })
+            .await
+            .expect("send_request");
+        let request_id = crate::pubsub_rpc::derive_request_id(&payload);
+
+        for block in [vec![0], vec![7]] {
+            let reply = FetchEncryptionKeyReply {
+                links: vec![requested_link.clone()],
+                blocks: vec![block],
+                ephemeral_public_key: vec![10; 32],
+            };
+            let envelope = InternalResponse {
+                id: request_id.to_string(),
+                err: String::new(),
+                data: defra_core::cbor::to_vec(&reply).unwrap(),
+                from: Vec::new(),
+            };
+            kt.dispatch_incoming(
+                a_libp2p_peer().to_string(),
+                kt.self_response_topic().to_string(),
+                envelope.to_cbor().unwrap(),
+            )
+            .await;
+        }
+
+        let first = crate::rt::time::timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("first claimed reply must arrive")
+            .expect("first claimed reply present")
+            .expect("first claimed reply succeeds");
+        let second = crate::rt::time::timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("later candidate must arrive")
+            .expect("later candidate present")
+            .expect("later candidate succeeds");
+        assert_eq!(first.0.blocks, vec![vec![0]]);
+        assert_eq!(second.0.blocks, vec![vec![7]]);
+        drop(rx);
+    }
+
+    /// Go parity (internal/kms/pubsub.go `fetchEncryptionKeyRetryInterval`):
+    /// while no reply arrives, the identical request must be republished every
+    /// `REPUBLISH_INTERVAL`, and a late reply must still be correlated and
+    /// surfaced through the re-registered entry.
+    #[test]
+    fn request_republishes_until_reply_arrives() {
+        edge::testing::paused(|edge| async move {
+            let transport = RacyTransport::new(0);
+            let published = transport.published.clone();
+            let kt = PubsubKeyTransport::new(
+                transport,
+                Arc::new(crate::AnonymousResolver),
+                edge.clone(),
+            )
+            .await
+            .unwrap();
+
+            let payload = b"retry-me".to_vec();
+            let req = EncodedFetchRequest {
+                payload: payload.clone(),
+                request_id: "r1".to_string(),
+            };
+            let mut rx = kt.send_request(req).await.expect("send_request");
+
+            // Two republish intervals with no reply → initial + 2 republishes.
+            crate::rt::time::sleep(REPUBLISH_INTERVAL * 2 + Duration::from_millis(100)).await;
+            {
+                let pubs = published.load();
+                assert_eq!(
+                    pubs.len(),
+                    3,
+                    "one initial publish plus one republish per interval"
+                );
+                assert!(
+                    pubs.iter()
+                        .all(|(t, d)| t == ENCRYPTION_TOPIC && d == &payload),
+                    "republished bytes must be identical (same request-ID)"
+                );
+            }
+
+            // A reply arriving AFTER republishes must still correlate.
+            let reply = FetchEncryptionKeyReply {
+                links: vec![vec![1]],
+                blocks: vec![vec![2]],
+                ephemeral_public_key: vec![7; 32],
+            };
+            let envelope = InternalResponse {
+                id: crate::pubsub_rpc::derive_request_id(&payload).to_string(),
+                err: String::new(),
+                data: defra_core::cbor::to_vec(&reply).unwrap(),
+                from: Vec::new(),
+            };
+            kt.dispatch_incoming(
+                a_libp2p_peer().to_string(),
+                kt.self_response_topic().to_string(),
+                envelope.to_cbor().unwrap(),
+            )
+            .await;
+
+            let (got, _) = crate::rt::time::timeout(Duration::from_secs(1), rx.recv())
+                .await
+                .expect("reply within timeout")
+                .expect("reply present")
+                .expect("reply must succeed");
+            assert_eq!(got, reply);
+        })
+    }
+
+    /// Go parity (`fetchEncryptionKeyResponseTimeout`): with no reply at all,
+    /// the reply stream must report unavailability once the response timeout
+    /// elapses, so callers can retry instead of treating silence as denial.
+    #[test]
+    fn request_with_no_reply_reports_unavailable() {
+        edge::testing::paused(|edge| async move {
+            let transport = RacyTransport::new(0);
+            let kt = PubsubKeyTransport::new(
+                transport,
+                Arc::new(crate::AnonymousResolver),
+                edge.clone(),
+            )
+            .await
+            .unwrap();
+
+            let req = EncodedFetchRequest {
+                payload: b"never-answered".to_vec(),
+                request_id: "r1".to_string(),
+            };
+            let mut rx = kt.send_request(req).await.expect("send_request");
+
+            let error =
+                crate::rt::time::timeout(RESPONSE_TIMEOUT + Duration::from_secs(1), rx.recv())
+                    .await
+                    .expect("stream must resolve at the response timeout, not hang")
+                    .expect("timeout result present")
+                    .expect_err("no reply must be retryable unavailability");
+            assert!(matches!(error, kms::Error::KeyUnavailable));
+            assert!(rx.recv().await.is_none());
+        })
+    }
+
+    /// An inbound request on the base topic must be answered by publishing an
+    /// internalResponse envelope on the caller's `_response` sub-topic.
+    #[nuclei::test(threads = 0)]
+    async fn inbound_request_publishes_reply_on_caller_response_topic() {
+        struct FixedIdentityResolver(identity::Did);
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+        impl PeerIdentityResolver for FixedIdentityResolver {
+            async fn resolve(&self, _peer_id: &PeerId) -> Option<identity::Did> {
+                Some(self.0.clone())
+            }
+        }
+
+        struct EchoHandler {
+            seen: Arc<AtomOption<kms::PeerIdentity>>,
+        }
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+        impl IncomingHandler for EchoHandler {
+            async fn handle(
+                &self,
+                from: kms::PeerIdentity,
+                _req: FetchEncryptionKeyRequest,
+            ) -> KmsResult<FetchEncryptionKeyReply> {
+                self.seen.store_some(from);
+                Ok(FetchEncryptionKeyReply {
+                    links: vec![vec![9]],
+                    blocks: vec![vec![8]],
+                    ephemeral_public_key: vec![1; 32],
+                })
+            }
+        }
+
+        // subscriber_visible_after = 0 ⇒ publish_raw is always "ready" without a
+        // prior topic_peers poll (the serve/reply path doesn't call
+        // wait_for_subscriber).
+        let transport = RacyTransport::new(0);
+        let published = transport.published.clone();
+        let source_peer_id = transport.local_peer_id().to_string();
+        let caller = a_libp2p_peer();
+        let authorizer =
+            identity::RawIdentity::from_private_key(crypto::generate_ed25519().unwrap()).unwrap();
+        let capability = crate::generate_explicit_replay_capability(
+            &authorizer,
+            &source_peer_id,
+            &caller.to_string(),
+            "collection-a",
+            Duration::from_secs(60),
+        )
+        .unwrap();
+        let resolved_did: identity::Did = "did:key:zalice".parse().unwrap();
+        let seen = Arc::new(AtomOption::none());
+        let kt = PubsubKeyTransport::new(
+            transport,
+            Arc::new(FixedIdentityResolver(resolved_did.clone())),
+            edge::testing::edge(),
+        )
+        .await
+        .unwrap();
+        kt.install_handler(Arc::new(EchoHandler { seen: seen.clone() }));
+
+        let req = FetchEncryptionKeyRequest {
+            identity: b"did:key:zalice".to_vec(),
+            links: vec![vec![1]],
+            ephemeral_public_key: vec![2; 32],
+            explicit_replay_capability: Some(capability),
+        };
+        let req_bytes = defra_core::cbor::to_vec(&req).unwrap();
+
+        kt.dispatch_incoming(caller.to_string(), ENCRYPTION_TOPIC.to_string(), req_bytes)
+            .await;
+
+        let pubs = published.load();
+        let expected_topic = response_topic(ENCRYPTION_TOPIC, &caller);
+        let reply_pub = pubs
+            .iter()
+            .find(|(t, _)| *t == expected_topic)
+            .expect("reply must be published on caller's _response sub-topic");
+        let env = InternalResponse::from_cbor(&reply_pub.1).expect("decode envelope");
+        let reply: FetchEncryptionKeyReply =
+            defra_core::cbor::from_slice(&env.data).expect("decode reply");
+        assert_eq!(reply.blocks, vec![vec![8]]);
+        let from = seen
+            .load()
+            .map(|seen| (*seen).clone())
+            .expect("handler must see peer identity");
+        assert_eq!(from.peer_id, caller.to_string());
+        assert_eq!(from.authenticated_did, Some(resolved_did));
+        let authorization = from
+            .explicit_replay_authorization
+            .expect("handler must receive verified replay authorization");
+        assert_eq!(authorization.source_peer_id, source_peer_id);
+        assert_eq!(authorization.target_peer_id, caller.to_string());
+        assert_eq!(authorization.collection_id, "collection-a");
+    }
+
+    /// A request that lands before `install_handler` is buffered and served
+    /// once the handler exists, instead of being dropped into the
+    /// startup-wiring window.
+    #[nuclei::test(threads = 0)]
+    async fn request_before_handler_is_served_after_install() {
+        assert_buffered_request_is_served(|kt, handler| kt.install_handler(handler)).await;
+    }
+
+    /// The replay runs on the network runtime the transport was given, so a
+    /// handler installed from a thread outside any runtime still serves the
+    /// buffered request.
+    #[nuclei::test(threads = 0)]
+    async fn request_before_handler_is_served_when_installed_outside_a_runtime() {
+        assert_buffered_request_is_served(|kt, handler| {
+            std::thread::spawn(move || kt.install_handler(handler))
+                .join()
+                .expect("installing thread panicked");
+        })
+        .await;
+    }
+
+    async fn assert_buffered_request_is_served<I>(install: I)
+    where
+        I: FnOnce(Arc<PubsubKeyTransport<RacyTransport>>, Arc<dyn IncomingHandler>),
+    {
+        struct FixedIdentityResolver(identity::Did);
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+        impl PeerIdentityResolver for FixedIdentityResolver {
+            async fn resolve(&self, _peer_id: &PeerId) -> Option<identity::Did> {
+                Some(self.0.clone())
+            }
+        }
+
+        struct EchoHandler {
+            seen: Arc<AtomOption<kms::PeerIdentity>>,
+        }
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+        impl IncomingHandler for EchoHandler {
+            async fn handle(
+                &self,
+                from: kms::PeerIdentity,
+                _req: FetchEncryptionKeyRequest,
+            ) -> KmsResult<FetchEncryptionKeyReply> {
+                self.seen.store_some(from);
+                Ok(FetchEncryptionKeyReply {
+                    links: vec![vec![9]],
+                    blocks: vec![vec![8]],
+                    ephemeral_public_key: vec![1; 32],
+                })
+            }
+        }
+
+        let transport = RacyTransport::new(0);
+        let published = transport.published.clone();
+        let caller = a_libp2p_peer();
+        let resolved_did: identity::Did = "did:key:zalice".parse().unwrap();
+        let seen = Arc::new(AtomOption::none());
+        let kt = PubsubKeyTransport::new(
+            transport,
+            Arc::new(FixedIdentityResolver(resolved_did.clone())),
+            edge::testing::edge(),
+        )
+        .await
+        .unwrap();
+
+        let req = FetchEncryptionKeyRequest {
+            identity: b"did:key:zalice".to_vec(),
+            links: vec![vec![1]],
+            ephemeral_public_key: vec![2; 32],
+            explicit_replay_capability: None,
+        };
+        let req_bytes = defra_core::cbor::to_vec(&req).unwrap();
+        kt.dispatch_incoming(caller.to_string(), ENCRYPTION_TOPIC.to_string(), req_bytes)
+            .await;
+
+        install(
+            Arc::clone(&kt),
+            Arc::new(EchoHandler { seen: seen.clone() }),
+        );
+
+        let expected_topic = response_topic(ENCRYPTION_TOPIC, &caller);
+        let mut served = false;
+        for _ in 0..100 {
+            if published.load().iter().any(|(t, _)| *t == expected_topic) {
+                served = true;
+                break;
+            }
+            crate::rt::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(
+            served,
+            "buffered request must be served after install_handler"
+        );
+        assert_eq!(
+            seen.load().map(|seen| seen.peer_id.clone()),
+            Some(caller.to_string())
+        );
+    }
+}

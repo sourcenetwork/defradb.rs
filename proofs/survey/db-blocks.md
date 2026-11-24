@@ -1,6 +1,6 @@
 # db-blocks — formal-modelability survey
 
-> **Now a module, not a crate.** `db-blocks` was folded into `db` as `crates/db/src/block/builder/`. The slice below is unchanged; only its location moved.
+> **Now a module, not a crate.** `db-blocks` was folded into `db` as `crates/database/db/src/block/builder/`. The slice below is unchanged; only its location moved.
 
 ## Purpose
 IPLD block *builder* for document mutations. Serializes a `Document` mutation into

@@ -1,10 +1,85 @@
 import Lake
 open Lake DSL
 
+@[default_target]
+lean_lib ChildPage where
+
 package defraConvergence where
 
 @[default_target]
 lean_lib LocalFetchPermit where
+
+@[default_target]
+lean_lib HostMutationProjection where
+
+@[default_target]
+lean_lib ProjectionAccessNotification where
+
+@[default_target]
+lean_lib EmbeddedSigner where
+
+@[default_target]
+lean_lib VeraActorSpelling where
+
+@[default_target]
+lean_lib VeraPolicyNonce where
+
+@[default_target]
+lean_lib VeraRegistrationList where
+
+@[default_target]
+lean_lib VeraDelegationSigner where
+
+@[default_target]
+lean_lib VeraDelegationWindow where
+
+@[default_target]
+lean_lib VeraEmbeddedTransport where
+
+@[default_target]
+lean_lib VeraConfirmationJournal where
+
+@[default_target]
+lean_lib DelegatedRelationship where
+
+@[default_target]
+lean_lib TransactionalRelationship where
+
+@[default_target]
+lean_lib UsersetRelationManager where
+
+@[default_target]
+lean_lib SourceScopedNac where
+
+@[default_target]
+lean_lib NodeAcpDelegation where
+
+@[default_target]
+lean_lib EmbeddedHttpAcp where
+
+@[default_target]
+lean_lib HttpOwnerRegistration where
+
+@[default_target]
+lean_lib SseDelivery where
+
+@[default_target]
+lean_lib ClientSigningCredential where
+
+@[default_target]
+lean_lib ClientSigningAdmission where
+
+@[default_target]
+lean_lib ClientCreateSchema where
+
+@[default_target]
+lean_lib ClientCreateIntent where
+
+@[default_target]
+lean_lib ClientCreateGraph where
+
+@[default_target]
+lean_lib ClientSignedCreate where
 
 @[default_target]
 lean_lib HttpRouterComposition where
@@ -14,6 +89,12 @@ lean_lib EndpointBind where
 
 @[default_target]
 lean_lib DocKeyScopes where
+
+@[default_target]
+lean_lib DocumentUpdateJournal where
+
+@[default_target]
+lean_lib NodeSigningChoice where
 
 @[default_target]
 lean_lib DefraConvergence where
@@ -29,6 +110,9 @@ lean_lib OrderEncoding where
 
 @[default_target]
 lean_lib IndexMaintenance where
+
+@[default_target]
+lean_lib IndexPrefix where
 
 @[default_target]
 lean_lib Conformance where
@@ -61,6 +145,9 @@ lean_lib EngineTickers where
 lean_lib CpuLedger where
 
 @[default_target]
+lean_lib IdentityStore where
+
+@[default_target]
 lean_lib DefaultPool where
 
 @[default_target]
@@ -74,6 +161,9 @@ lean_lib PeerConnection where
 
 @[default_target]
 lean_lib ByteBudget where
+
+@[default_target]
+lean_lib StreamProtocols where
 
 @[default_target]
 lean_lib FetchStats where
@@ -136,16 +226,34 @@ lean_lib RetrySchedule where
 lean_lib ChunkSplit where
 
 @[default_target]
+lean_lib ProllyTree where
+
+@[default_target]
 lean_lib TxnId where
 
 @[default_target]
 lean_lib LensListing where
 
 @[default_target]
+lean_lib LensId where
+
+@[default_target]
+lean_lib DocStoreTarget where
+
+@[default_target]
 lean_lib JsonSubPathCut where
 
 @[default_target]
+lean_lib RelationFilterNoChild where
+
+@[default_target]
+lean_lib CommitsDepthCast where
+
+@[default_target]
 lean_lib CarClosureDepth where
+
+@[default_target]
+lean_lib CarMissingRegion where
 
 @[default_target]
 lean_lib TxnAdmission where
@@ -157,10 +265,67 @@ lean_lib HttpClient where
 lean_lib Arbitration where
 
 @[default_target]
+lean_lib PositionRecord where
+
+@[default_target]
 lean_lib RequestDrain where
 
 @[default_target]
+lean_lib ClientSignedUpdateFilter where
+
+@[default_target]
+lean_lib ClientSignedUpdate where
+
+@[default_target]
+lean_lib ClientSignedDelete where
+
+@[default_target]
+lean_lib ClientSignedDeleteFilter where
+
+@[default_target]
+lean_lib VerifiedCreateHandoff where
+
+@[default_target]
+lean_lib VerifiedMutationHandoff where
+
+@[default_target]
+lean_lib VerifiedRemoteAuthority where
+
+@[default_target]
+lean_lib ReplicaGate where
+
+@[default_target]
+lean_lib DeferredMerges where
+
+@[default_target]
+lean_lib AdministrativeRelationship where
+
+@[default_target]
+lean_lib ProjectionRelationship where
+
+@[default_target]
+lean_lib ExactRelationshipObservation where
+
+@[default_target]
+lean_lib EnrollmentGenesis where
+
+@[default_target]
+lean_lib OwedStagingAuthority where
+
+@[default_target]
+lean_lib CommitConflictReceipt where
+
+@[default_target]
 lean_lib NacToggle where
+
+@[default_target]
+lean_lib FfiOptions where
+
+@[default_target]
+lean_lib NacRelationship where
+
+@[default_target]
+lean_lib NacOrder where
 
 @[default_target]
 lean_lib DocumentSave where
@@ -179,3 +344,48 @@ lean_lib CursorToken where
 
 @[default_target]
 lean_lib ViewQuerySource where
+
+@[default_target]
+lean_lib PeerKeyLoad where
+
+@[default_target]
+lean_lib TxnTurns where
+
+@[default_target]
+lean_lib VectorIndexDefaults where
+
+@[default_target]
+lean_lib CatalogPin where
+
+@[default_target]
+lean_lib IndexEqualKeyOrder where
+
+@[default_target]
+lean_lib KmsChunks where
+
+@[default_target]
+lean_lib SigningOverride where
+
+@[default_target]
+lean_lib FloatEquality where
+
+@[default_target]
+lean_lib OwedParts where
+
+@[default_target]
+lean_lib OwedLive where
+
+@[default_target]
+lean_lib RemoteOwnerAnswer where
+
+@[default_target]
+lean_lib StrictAccessRule where
+
+@[default_target]
+lean_lib SeTruncatePrefix where
+
+@[default_target]
+lean_lib ReplicatorEmptyCollections where
+
+@[default_target]
+lean_lib DnsResolverFallback where

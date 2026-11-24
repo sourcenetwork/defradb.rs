@@ -36,18 +36,12 @@ impl Op for DeleteEncryptedIndex {
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.client_identity(Self::name())?;
-        if self.txn.is_some() {
-            return Err(Failure::unsupported(format!(
-                "{} argument txn",
-                Self::name()
-            )));
-        }
         state
             .block_on(
                 state
                     .node_on(self.common.node())?
                     .delete_encrypted_index_as(
-                        &state.context_as(None, identity),
+                        &state.context_as(self.txn, identity),
                         &self.collection,
                         &self.field_name,
                     ),
@@ -69,16 +63,13 @@ impl HttpRun for DeleteEncryptedIndex {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
             let identity = action.common.client_identity(Self::name())?;
-            if action.txn.is_some() {
-                return Err(Failure::unsupported(format!(
-                    "{} argument txn",
-                    Self::name()
-                )));
-            }
             let (collection, field) = (action.collection.clone(), action.field_name.clone());
+            let txn = state.txn_id(action.txn);
             state
                 .http_as(action.common.node(), identity, |client| async move {
-                    client.encrypted_index_delete(&collection, &field).await
+                    client
+                        .encrypted_index_delete(txn.as_deref(), &collection, &field)
+                        .await
                 })?
                 .map(|()| json!({}))
                 .map_err(|e| Failure::operation(e.to_string()))
@@ -90,12 +81,6 @@ impl CliRun for DeleteEncryptedIndex {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
             let identity = action.common.client_identity(Self::name())?;
-            if action.txn.is_some() {
-                return Err(Failure::unsupported(format!(
-                    "{} argument txn",
-                    Self::name()
-                )));
-            }
             let args = [
                 "encrypted-index",
                 "delete",

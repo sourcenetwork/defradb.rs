@@ -1,0 +1,1074 @@
+use std::sync::Arc;
+use std::time::Duration;
+
+use bytes::Bytes;
+use cid::Cid;
+use kovan::AtomOption;
+use multihash_codetable::{Code, MultihashDigest};
+
+use super::super::broadcast::tests::TestTransport;
+use super::*;
+use crate::sync::push_backlog::EnqueueOutcome;
+use crate::transport::PeerId;
+
+fn test_context(
+    transport: TestTransport,
+    backlog: Arc<PushBacklog>,
+    send_timeout: Duration,
+) -> (
+    Arc<PushWorkerContext<TestTransport>>,
+    crate::rt::mpsc::Receiver<PushFailure>,
+) {
+    test_context_with_admission(transport, backlog, send_timeout, true)
+}
+
+fn test_context_with_admission(
+    transport: TestTransport,
+    backlog: Arc<PushBacklog>,
+    send_timeout: Duration,
+    admit: bool,
+) -> (
+    Arc<PushWorkerContext<TestTransport>>,
+    crate::rt::mpsc::Receiver<PushFailure>,
+) {
+    let (tx, mut events) = crate::rt::mpsc::channel::<PushFailure>(64);
+    let (forward, rx) = crate::rt::mpsc::channel(64);
+    crate::rt::spawn(async move {
+        while let Some(mut event) = events.recv().await {
+            if event.admission_only {
+                // A marker generation admits the push; `None` represents the
+                // durable recorder denying it. The fake recorder supplies a
+                // stable generation when this test job has no prior marker.
+                let generation = admit.then_some(event.marker_generation.unwrap_or(1));
+                event.durable_tx.take().unwrap().send(generation).unwrap();
+            } else {
+                // A durable write/ack also returns the marker generation to
+                // the worker. Resolve it before forwarding the observation so
+                // tests awaiting the worker cannot deadlock on the oneshot.
+                if let Some(durable_tx) = event.durable_tx.take() {
+                    let generation = Some(event.marker_generation.unwrap_or(1));
+                    let _ = durable_tx.send(generation);
+                }
+                if forward.send(event).await.is_err() {
+                    break;
+                }
+            }
+        }
+    })
+    .detach();
+    let context = Arc::new(PushWorkerContext {
+        transport,
+        backlog,
+        selective_car_access: Arc::new(
+            super::super::selective_car_access::SelectiveCarAccess::default(),
+        ),
+        failure_tx: Arc::new(AtomOption::some(tx)),
+        send_timeout,
+        peer_state: Arc::new(crate::sync::peer_state::PeerStateTracker::new()),
+        head_provider: Arc::new(crate::sync::NoOpHeadProvider),
+    });
+    (context, rx)
+}
+
+fn connect_job_peer<T>(context: &PushWorkerContext<T>, job: &PushJobSpec) {
+    context.peer_state.peer_connected(job.peer_id.as_str());
+}
+
+#[nuclei::test]
+async fn persisted_backpressure_denies_live_push_before_transport_send() {
+    let backlog = PushBacklog::new(64, usize::MAX, 1, 1, edge::testing::edge());
+    let transport = TestTransport::new(Vec::new());
+    let (context, _failures) = test_context_with_admission(
+        transport.clone(),
+        backlog.clone(),
+        Duration::from_secs(1),
+        false,
+    );
+    backlog.try_enqueue(job("peer", b"active")).await;
+    let active = backlog.next_job().await.unwrap();
+    connect_job_peer(&context, &active);
+    assert_eq!(run_push_job(&context, &active).await, JobCompletion::Failed);
+    assert!(transport.sent().is_empty());
+    backlog.job_done(&active, JobCompletion::Failed).await;
+    backlog.close();
+}
+
+/// An offline target parks its push instead of counting expected absence as a
+/// transport failure. The retry ladder keeps the obligation until reconnect.
+#[nuclei::test]
+async fn an_offline_peer_parks_its_push_without_transport_failure() {
+    let backlog = PushBacklog::new(64, usize::MAX, 1, 1, edge::testing::edge());
+    let transport = TestTransport::new(Vec::new());
+    let (context, mut failures) = test_context(
+        transport.clone(),
+        Arc::clone(&backlog),
+        Duration::from_secs(1),
+    );
+    let job = job("offline", b"offline");
+    assert_eq!(
+        backlog.try_enqueue(job.clone()).await,
+        EnqueueOutcome::Enqueued
+    );
+    let active = backlog.next_job().await.unwrap();
+
+    let completion = run_push_job(&context, &active).await;
+
+    assert_eq!(completion, JobCompletion::Parked);
+    assert!(transport.sent().is_empty());
+    assert!(
+        crate::rt::time::timeout(Duration::from_millis(50), failures.recv())
+            .await
+            .is_err()
+    );
+    let snapshot = backlog.snapshot().await;
+    assert_eq!(snapshot.head_hints_parked_offline, 1);
+    assert_eq!(snapshot.head_hints_failed_transport, 0);
+    let peer = snapshot
+        .per_peer
+        .iter()
+        .find(|entry| entry.peer_id == "offline")
+        .expect("offline peer is reported");
+    assert!(peer.cooldown_remaining_ms > 0);
+    backlog.job_done(&active, completion).await;
+    let snapshot = backlog.snapshot().await;
+    assert_eq!(snapshot.parked_total, 1);
+    assert_eq!(snapshot.failed_total, 0);
+    let peer = snapshot
+        .per_peer
+        .iter()
+        .find(|entry| entry.peer_id == "offline")
+        .expect("offline peer is reported");
+    assert_eq!(peer.parked_total, 1);
+    assert_eq!(peer.failed_total, 0);
+    backlog.close();
+}
+
+/// An offline probe parks without demoting the peer's queued jobs; they wait
+/// for the reconnect window instead of moving to the durable retry ledger.
+#[test]
+fn an_offline_probe_keeps_queued_jobs() {
+    edge::testing::paused(|edge| async move {
+        let backlog = PushBacklog::new(64, usize::MAX, 4, 8, edge.clone());
+        let transport = TestTransport::new(Vec::new());
+        let (context, _failures) = test_context(
+            transport.clone(),
+            Arc::clone(&backlog),
+            Duration::from_secs(1),
+        );
+        for seed in [b"1", b"2", b"3"] {
+            assert_eq!(
+                backlog.try_enqueue(job("offline", seed)).await,
+                EnqueueOutcome::Enqueued
+            );
+        }
+        let first = backlog.next_job().await.unwrap();
+        assert_eq!(run_push_job(&context, &first).await, JobCompletion::Parked);
+        backlog.job_done(&first, JobCompletion::Parked).await;
+        nuclei::time::advance(Duration::from_secs(60)).await;
+
+        let probe = backlog.next_job().await.unwrap();
+        assert_eq!(run_push_job(&context, &probe).await, JobCompletion::Parked);
+        backlog.job_done(&probe, JobCompletion::Parked).await;
+        assert_eq!(
+            backlog.snapshot().await.queued_items,
+            1,
+            "an offline probe must leave the peer's queued job in the backlog"
+        );
+        backlog.close();
+    })
+}
+
+/// A durable recorder that denies an offline push still fails the job; it is
+/// not counted as parked and does not park the peer.
+#[nuclei::test]
+async fn a_denied_offline_push_is_failed_not_parked() {
+    let backlog = PushBacklog::new(64, usize::MAX, 1, 1, edge::testing::edge());
+    let transport = TestTransport::new(Vec::new());
+    let (context, _failures) = test_context_with_admission(
+        transport.clone(),
+        backlog.clone(),
+        Duration::from_secs(1),
+        false,
+    );
+    backlog.try_enqueue(job("offline", b"offline")).await;
+    let active = backlog.next_job().await.unwrap();
+
+    assert_eq!(run_push_job(&context, &active).await, JobCompletion::Failed);
+    assert!(transport.sent().is_empty());
+    backlog.job_done(&active, JobCompletion::Failed).await;
+    let snapshot = backlog.snapshot().await;
+    assert_eq!(snapshot.head_hints_parked_offline, 0);
+    assert_eq!(snapshot.parked_total, 0);
+    assert_eq!(snapshot.failed_total, 1);
+    backlog.close();
+}
+
+fn job(peer: &str, cid_seed: &[u8]) -> PushJobSpec {
+    PushJobSpec::new(
+        PeerId::new(peer.to_string()),
+        format!("doc-{peer}-{}", hex::encode(cid_seed)),
+        "collection".to_string(),
+        "creator".to_string(),
+        Cid::new_v1(0x55, Code::Sha2_256.digest(cid_seed)),
+        Bytes::from_static(b"head-block"),
+    )
+}
+
+fn versioned_job(peer: &str, priority: u64) -> PushJobSpec {
+    use defra_core::{Block, CompositeDeltaPayload, CrdtDelta};
+
+    let doc_id = "doc-versioned";
+    let block = Block::new_with_options(
+        CrdtDelta::Composite(CompositeDeltaPayload {
+            collection_version_id: "schema".to_string(),
+            priority,
+            status: 1,
+        }),
+        vec![],
+        vec![],
+        None,
+        None,
+    );
+    let head_block = Bytes::from(block.to_dag_cbor().unwrap());
+    PushJobSpec::new(
+        PeerId::new(peer.to_string()),
+        doc_id.to_string(),
+        "collection".to_string(),
+        "creator".to_string(),
+        defra_core::block::generate_cid_from_bytes(&head_block).unwrap(),
+        head_block,
+    )
+}
+
+/// #1099 fairness: a nonresponsive peer occupying its per-peer cap must
+/// not stop healthy peers from draining through the remaining workers.
+#[nuclei::test]
+async fn slow_peer_does_not_starve_healthy_peers() {
+    let backlog = PushBacklog::new(1024, usize::MAX, 1, 2, edge::testing::edge());
+    let transport = TestTransport::new(Vec::new()).with_stalled_peer("slow");
+    let (context, _failure_rx) = test_context(
+        transport.clone(),
+        Arc::clone(&backlog),
+        Duration::from_secs(60),
+    );
+    context.peer_state.peer_connected("slow");
+    context.peer_state.peer_connected("healthy");
+    let shutdown = SyncShutdownHandle::new(4, crate::network::test_network());
+    spawn_push_workers(context, &shutdown);
+
+    backlog.try_enqueue(job("slow", b"slow-1")).await;
+    for index in 0..5u8 {
+        backlog.try_enqueue(job("healthy", &[index])).await;
+    }
+
+    // A push is sent before its reply, ack and job_done land, so wait on the
+    // completions themselves.
+    let deadline = crate::rt::time::Instant::now() + Duration::from_secs(5);
+    let mut backoff = Duration::from_millis(1);
+    let snap = loop {
+        let snap = backlog.snapshot().await;
+        if snap.completed_total >= 5 {
+            break snap;
+        }
+        assert!(
+            crate::rt::time::Instant::now() < deadline,
+            "healthy peer starved: only {}/5 pushes completed while a slow peer holds a worker",
+            snap.completed_total
+        );
+        crate::rt::time::sleep(backoff).await;
+        backoff = (backoff * 2).min(Duration::from_millis(50));
+    };
+
+    assert!(snap.active_jobs <= 2);
+    let healthy_sent = transport
+        .sent()
+        .iter()
+        .filter(|push| push.peer_id == "healthy")
+        .count();
+    assert_eq!(healthy_sent, 5);
+    backlog.close();
+}
+
+/// Audit F24: with the default pool (8 workers, 4 per peer) two replicators
+/// whose sends never answer hold every worker until their first sends time
+/// out. A timed-out peer is then parked, and the unreachable peers together
+/// stay within one peer's cap, so the healthy peer drains right after that
+/// first timeout instead of a few jobs per timeout.
+#[test]
+fn two_stalled_replicators_do_not_starve_healthy_peer() {
+    edge::testing::paused(|edge| async move {
+        use crate::sync::{
+            DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER, DEFAULT_MAX_CONCURRENT_PUSH_TASKS,
+            DEFAULT_PUSH_QUEUE_BYTE_CAPACITY, DEFAULT_PUSH_QUEUE_CAPACITY,
+            DEFAULT_PUSH_SEND_TIMEOUT,
+        };
+
+        const WRITES: u8 = 50;
+        let backlog = PushBacklog::new(
+            DEFAULT_PUSH_QUEUE_CAPACITY,
+            DEFAULT_PUSH_QUEUE_BYTE_CAPACITY,
+            DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER,
+            DEFAULT_MAX_CONCURRENT_PUSH_TASKS,
+            edge.clone(),
+        );
+        let transport = TestTransport::new(Vec::new())
+            .with_stalled_peer("dead-1")
+            .with_stalled_peer("dead-2");
+        let (context, mut failures) = test_context(
+            transport.clone(),
+            Arc::clone(&backlog),
+            DEFAULT_PUSH_SEND_TIMEOUT,
+        );
+        crate::rt::spawn(async move { while failures.recv().await.is_some() {} }).detach();
+        let shutdown = SyncShutdownHandle::new(4, crate::network::Network::on(edge.clone()));
+        for peer in ["dead-1", "dead-2", "healthy"] {
+            context.peer_state.peer_connected(peer);
+        }
+        spawn_push_workers(context, &shutdown);
+        crate::rt::yield_now().await;
+
+        let started = crate::rt::time::Instant::now();
+        for write in 0..WRITES {
+            for peer in ["dead-1", "dead-2", "healthy"] {
+                assert_eq!(
+                    backlog.try_enqueue(job(peer, &[write])).await,
+                    EnqueueOutcome::Enqueued
+                );
+            }
+        }
+
+        let limit = DEFAULT_PUSH_SEND_TIMEOUT * 2;
+        loop {
+            let healthy_sent = transport
+                .sent()
+                .iter()
+                .filter(|push| push.peer_id == "healthy")
+                .count();
+            if healthy_sent == usize::from(WRITES) {
+                break;
+            }
+            assert!(
+                started.elapsed() <= limit,
+                "two stalled replicators starved the healthy peer: {healthy_sent}/{WRITES} sent after {:?}",
+                started.elapsed()
+            );
+            crate::rt::time::sleep(Duration::from_millis(100)).await;
+        }
+        backlog.close();
+    })
+}
+
+/// A peer whose first sends time out and that answers right afterwards keeps
+/// its queued jobs live. The timeouts park it, and only a failed probe (a send
+/// started after the park's cooldown ran out) moves its queue to the ledger.
+#[test]
+fn transient_transport_failure_keeps_queued_jobs_live() {
+    edge::testing::paused(|edge| async move {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use crate::sync::{
+            DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER, DEFAULT_MAX_CONCURRENT_PUSH_TASKS,
+            DEFAULT_PUSH_QUEUE_BYTE_CAPACITY, DEFAULT_PUSH_QUEUE_CAPACITY,
+            DEFAULT_PUSH_SEND_TIMEOUT,
+        };
+
+        const JOBS: u8 = 20;
+        let backlog = PushBacklog::new(
+            DEFAULT_PUSH_QUEUE_CAPACITY,
+            DEFAULT_PUSH_QUEUE_BYTE_CAPACITY,
+            DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER,
+            DEFAULT_MAX_CONCURRENT_PUSH_TASKS,
+            edge.clone(),
+        );
+        let transport = TestTransport::new(Vec::new()).with_stalled_peer("flaky");
+        let (context, mut failures) = test_context(
+            transport.clone(),
+            Arc::clone(&backlog),
+            DEFAULT_PUSH_SEND_TIMEOUT,
+        );
+        let ledger = Arc::new(AtomicUsize::new(0));
+        let recorded = Arc::clone(&ledger);
+        crate::rt::spawn(async move {
+            while let Some(event) = failures.recv().await {
+                if event.create_retry {
+                    recorded.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        })
+        .detach();
+        let shutdown = SyncShutdownHandle::new(4, crate::network::Network::on(edge.clone()));
+        context.peer_state.peer_connected("flaky");
+        spawn_push_workers(context, &shutdown);
+        crate::rt::yield_now().await;
+
+        for seed in 0..JOBS {
+            assert_eq!(
+                backlog.try_enqueue(job("flaky", &[seed])).await,
+                EnqueueOutcome::Enqueued
+            );
+        }
+        crate::rt::time::sleep(Duration::from_secs(1)).await;
+        transport.unstall_peer("flaky");
+
+        let live = usize::from(JOBS) - DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER;
+        let started = crate::rt::time::Instant::now();
+        let limit = DEFAULT_PUSH_SEND_TIMEOUT * 2;
+        loop {
+            let sent = transport.sent().len();
+            if sent == live {
+                break;
+            }
+            assert!(
+                started.elapsed() <= limit,
+                "one transport failure cost a peer that answers its queue: {sent}/{live} sent live, {} handed to the ledger after {:?}",
+                ledger.load(Ordering::Relaxed),
+                started.elapsed()
+            );
+            crate::rt::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert_eq!(
+            ledger.load(Ordering::Relaxed),
+            DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER
+        );
+        backlog.close();
+    })
+}
+
+/// A stalled send fails via the send timeout, frees the worker, and lands
+/// in the persisted retry ladder through the failure channel.
+#[nuclei::test]
+async fn stalled_send_times_out_and_reports_push_failure() {
+    let backlog = PushBacklog::new(1024, usize::MAX, 1, 1, edge::testing::edge());
+    let transport = TestTransport::new(Vec::new()).with_stalled_peer("slow");
+    let (context, mut failure_rx) =
+        test_context(transport, Arc::clone(&backlog), Duration::from_millis(50));
+    context.peer_state.peer_connected("slow");
+    let shutdown = SyncShutdownHandle::new(4, crate::network::test_network());
+    spawn_push_workers(context, &shutdown);
+
+    backlog.try_enqueue(job("slow", b"slow-1")).await;
+
+    let failure = crate::rt::time::timeout(Duration::from_secs(5), failure_rx.recv())
+        .await
+        .expect("timed-out push must report a failure")
+        .expect("failure channel open");
+    assert_eq!(failure.peer_id, "slow");
+    assert_eq!(failure.doc_id, "doc-slow-736c6f772d31");
+
+    let deadline = crate::rt::time::Instant::now() + Duration::from_secs(2);
+    while backlog.snapshot().await.failed_total == 0 {
+        assert!(crate::rt::time::Instant::now() < deadline);
+        crate::rt::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert_eq!(backlog.snapshot().await.active_jobs, 0);
+    backlog.close();
+}
+
+#[nuclei::test]
+async fn capacity_nack_demotes_queued_peer_work_to_persisted_retry() {
+    let backlog = PushBacklog::new(64, usize::MAX, 1, 1, edge::testing::edge());
+    let capacity_nack = crate::error::Error::PendingDagCapacity { max: 1 }
+        .backpressure_reply_message()
+        .expect("capacity error maps to the capacity sentinel");
+    let transport = TestTransport::new(vec![crate::message::PushLogReply::error(
+        "full",
+        capacity_nack,
+    )]);
+    let (context, mut failure_rx) =
+        test_context(transport, Arc::clone(&backlog), Duration::from_secs(1));
+
+    let active = job("peer", b"active");
+    let queued_a = job("peer", b"queued-a");
+    let queued_b = job("peer", b"queued-b");
+    let mut expected_docs = vec![
+        active.doc_id.clone(),
+        queued_a.doc_id.clone(),
+        queued_b.doc_id.clone(),
+    ];
+    for job in [active, queued_a, queued_b] {
+        assert_eq!(backlog.try_enqueue(job).await, EnqueueOutcome::Enqueued);
+    }
+    let active = backlog.next_job().await.expect("active job");
+    connect_job_peer(&context, &active);
+
+    let completion = run_push_job(&context, &active).await;
+
+    assert_eq!(completion, JobCompletion::Failed);
+    let mut failed_docs = Vec::new();
+    for _ in 0..expected_docs.len() {
+        let failure = crate::rt::time::timeout(Duration::from_secs(1), failure_rx.recv())
+            .await
+            .expect("capacity failure must reach the retry recorder")
+            .expect("failure channel open");
+        assert!(failure.create_retry);
+        failed_docs.push(failure.doc_id);
+    }
+    expected_docs.sort();
+    failed_docs.sort();
+    assert_eq!(failed_docs, expected_docs);
+    assert_eq!(backlog.snapshot().await.queued_items, 0);
+    assert_eq!(backlog.snapshot().await.queued_bytes, 0);
+
+    backlog.job_done(&active, completion).await;
+    backlog.close();
+}
+
+#[nuclei::test]
+async fn retry_after_rate_nack_parks_live_peer_and_hands_off_queued_hints() {
+    let backlog = PushBacklog::new(64, usize::MAX, 1, 1, edge::testing::edge());
+    let mut reply =
+        crate::message::PushLogReply::error("limited", crate::error::RATE_LIMITED_MESSAGE);
+    reply.retry_after_ms = Some(45_000);
+    let (context, mut failures) = test_context(
+        TestTransport::new(vec![reply]),
+        backlog.clone(),
+        Duration::from_secs(1),
+    );
+    backlog.try_enqueue(job("peer", b"active")).await;
+    backlog.try_enqueue(job("peer", b"queued")).await;
+    let active = backlog.next_job().await.unwrap();
+    connect_job_peer(&context, &active);
+    assert_eq!(run_push_job(&context, &active).await, JobCompletion::Failed);
+    for _ in 0..2 {
+        let failure = failures.recv().await.unwrap();
+        assert_eq!(failure.retry_after, Some(Duration::from_secs(45)));
+    }
+    let state = backlog.snapshot().await;
+    assert_eq!(state.queued_items, 0);
+    assert!(state.per_peer[0].cooldown_remaining_ms > 44_000);
+    backlog.close();
+}
+
+#[nuclei::test]
+async fn head_hint_signing_failure_sends_no_dependency_pushlogs() {
+    use defra_core::{Block, CompositeDeltaPayload, CrdtDelta};
+
+    let backlog = PushBacklog::new(1024, usize::MAX, 1, 1, edge::testing::edge());
+    let transport = TestTransport::new(Vec::new()).with_sign_failures(1);
+    let (context, mut failure_rx) = test_context(
+        transport.clone(),
+        Arc::clone(&backlog),
+        Duration::from_secs(1),
+    );
+    let dependency = Bytes::from_static(b"dependency");
+    let dependency_cid = defra_core::block::generate_cid_from_bytes(&dependency).unwrap();
+    let root = Block::new_with_options(
+        CrdtDelta::Composite(CompositeDeltaPayload {
+            collection_version_id: "schema".to_string(),
+            priority: 1,
+            status: 1,
+        }),
+        vec![dependency_cid],
+        vec![],
+        None,
+        None,
+    );
+    let root = Bytes::from(root.to_dag_cbor().unwrap());
+    let root_cid = defra_core::block::generate_cid_from_bytes(&root).unwrap();
+    let job = PushJobSpec::new(
+        PeerId::new("peer".to_string()),
+        "doc".to_string(),
+        "collection".to_string(),
+        "creator".to_string(),
+        root_cid,
+        root,
+    );
+    assert_eq!(backlog.try_enqueue(job).await, EnqueueOutcome::Enqueued);
+    let active = backlog.next_job().await.unwrap();
+    connect_job_peer(&context, &active);
+
+    let completion = run_push_job(&context, &active).await;
+
+    assert_eq!(completion, JobCompletion::Failed);
+    assert_eq!(transport.sign_count(), 1);
+    assert!(transport.sent().is_empty());
+    assert_eq!(failure_rx.recv().await.unwrap().cid, root_cid.to_string());
+    backlog.job_done(&active, completion).await;
+    backlog.close();
+}
+
+/// A root-only push installs its bounded root capability before sending. The
+/// CAR handler validates requested linked CIDs against that root on demand.
+#[nuclei::test]
+async fn root_only_push_installs_receiver_pull_authority() {
+    use defra_core::{Block, CompositeDeltaPayload, CrdtDelta, DAGLink};
+
+    let backlog = PushBacklog::new(1024, usize::MAX, 1, 1, edge::testing::edge());
+    let transport = TestTransport::new(Vec::new());
+    let (context, _failure_rx) = test_context(
+        transport.clone(),
+        Arc::clone(&backlog),
+        Duration::from_secs(1),
+    );
+
+    let child_data = Bytes::from_static(b"child-block");
+    let child_cid = defra_core::block::generate_cid_from_bytes(&child_data).unwrap();
+
+    let root = Block::new(
+        CrdtDelta::Composite(CompositeDeltaPayload {
+            collection_version_id: "schema".to_string(),
+            priority: 1,
+            status: 1,
+        }),
+        vec![],
+        vec![DAGLink::new("child", child_cid)],
+    );
+    let root_bytes = Bytes::from(root.to_dag_cbor().unwrap());
+    let root_cid = defra_core::block::generate_cid_from_bytes(&root_bytes).unwrap();
+
+    let peer = PeerId::new("peer".to_string());
+    let job = PushJobSpec::new(
+        peer.clone(),
+        "doc".to_string(),
+        "collection".to_string(),
+        "creator".to_string(),
+        root_cid,
+        root_bytes,
+    );
+    assert_eq!(backlog.try_enqueue(job).await, EnqueueOutcome::Enqueued);
+    let active = backlog.next_job().await.unwrap();
+    connect_job_peer(&context, &active);
+
+    let completion = run_push_job(&context, &active).await;
+
+    assert_eq!(completion, JobCompletion::Succeeded);
+    assert!(
+        context.selective_car_access.allows_root(&peer, &root_cid),
+        "root-only push must still grant the child block for receiver recovery"
+    );
+    backlog.job_done(&active, completion).await;
+    backlog.close();
+}
+
+#[derive(Debug)]
+struct OwnershipArm {
+    scheduled: u64,
+    transmitted: usize,
+    announced_bytes: usize,
+    terminal_success: u64,
+    child_announced_as_head: bool,
+    child_car_authorized: bool,
+}
+
+async fn run_ownership_arm(expand_dag: bool) -> OwnershipArm {
+    use defra_core::{Block, CompositeDeltaPayload, CrdtDelta, DAGLink, LwwDeltaPayload};
+
+    let backlog = PushBacklog::new(8, usize::MAX, 1, 1, edge::testing::edge());
+    let transport = TestTransport::new(Vec::new());
+    let (context, _failure_rx) = test_context(
+        transport.clone(),
+        Arc::clone(&backlog),
+        Duration::from_secs(1),
+    );
+
+    let child = Block::new(
+        CrdtDelta::Lww(LwwDeltaPayload {
+            field_name: "value".to_string(),
+            priority: 1,
+            collection_version_id: "schema".to_string(),
+            data: b"current".to_vec(),
+        }),
+        vec![],
+        vec![],
+    );
+    let child_bytes = Bytes::from(child.to_dag_cbor().unwrap());
+    let child_cid = defra_core::block::generate_cid_from_bytes(&child_bytes).unwrap();
+
+    let root = Block::new(
+        CrdtDelta::Composite(CompositeDeltaPayload {
+            collection_version_id: "schema".to_string(),
+            priority: 1,
+            status: 1,
+        }),
+        vec![],
+        vec![DAGLink::new("value", child_cid)],
+    );
+    let root_bytes = Bytes::from(root.to_dag_cbor().unwrap());
+    let root_cid = defra_core::block::generate_cid_from_bytes(&root_bytes).unwrap();
+
+    let peer = PeerId::new("receiver".to_string());
+    if expand_dag {
+        // Frozen reference arm for the superseded sender: dependencies were
+        // signed and presented as standalone PushLog heads before the root.
+        // Keeping this only in the A/B harness ensures the regression test
+        // remains capable of distinguishing the two ownership models after
+        // production expansion is removed.
+        let mut child_request = crate::message::PushLogRequest::new(
+            "doc".to_string(),
+            Bytes::from(child_cid.to_bytes()),
+            "collection".to_string(),
+            "creator".to_string(),
+            child_bytes,
+        );
+        crate::signing::sign_with_transport(&transport, &mut child_request).unwrap();
+        transport
+            .send_two_stream_request(&peer, child_request)
+            .await
+            .unwrap();
+    }
+    let job = PushJobSpec::new(
+        peer.clone(),
+        "doc".to_string(),
+        "collection".to_string(),
+        "creator".to_string(),
+        root_cid,
+        root_bytes,
+    );
+    assert_eq!(backlog.try_enqueue(job).await, EnqueueOutcome::Enqueued);
+    let active = backlog.next_job().await.unwrap();
+    connect_job_peer(&context, &active);
+    let completion = run_push_job(&context, &active).await;
+    assert_eq!(completion, JobCompletion::Succeeded);
+    backlog.job_done(&active, completion).await;
+
+    let sent = transport.sent();
+    let snapshot = backlog.snapshot().await;
+    let result = OwnershipArm {
+        scheduled: snapshot.enqueued_total,
+        transmitted: sent.len(),
+        announced_bytes: sent.iter().map(|push| push.block_bytes).sum(),
+        terminal_success: snapshot.completed_total,
+        child_announced_as_head: sent.iter().any(|push| push.cid == child_cid.to_bytes()),
+        child_car_authorized: context.selective_car_access.allows_root(&peer, &root_cid),
+    };
+    backlog.close();
+    result
+}
+
+/// Delivery-shape fence for #1116: the frozen full-DAG arm announces a field
+/// block as a standalone PushLog, while the production arm announces one
+/// composite head and preserves rooted CAR authority. Receiver convergence is
+/// covered separately by
+/// `ownership_ab_full_dag_amplifies_admission_and_requires_sender_retry`.
+#[nuclei::test]
+async fn delivery_shape_full_dag_vs_head_hint_only() {
+    let full_dag = run_ownership_arm(true).await;
+    let head_hint = run_ownership_arm(false).await;
+
+    assert_eq!(full_dag.scheduled, 1);
+    assert_eq!(head_hint.scheduled, 1);
+    assert_eq!(full_dag.terminal_success, 1);
+    assert_eq!(head_hint.terminal_success, 1);
+    assert!(full_dag.child_announced_as_head);
+    assert!(!head_hint.child_announced_as_head);
+    assert_eq!(full_dag.transmitted, 2);
+    assert_eq!(head_hint.transmitted, 1);
+    assert!(full_dag.announced_bytes > head_hint.announced_bytes);
+    assert!(full_dag.child_car_authorized);
+    assert!(head_hint.child_car_authorized);
+}
+
+#[nuclei::test]
+async fn superseded_active_failure_never_enters_persisted_retry() {
+    let backlog = PushBacklog::new(1024, usize::MAX, 1, 1, edge::testing::edge());
+    let transport = TestTransport::new(vec![
+        crate::message::PushLogReply::error("old", "rejected"),
+        crate::message::PushLogReply::success("new"),
+    ])
+    .with_send_delay(Duration::from_millis(50));
+    let (context, mut failure_rx) = test_context(
+        transport.clone(),
+        Arc::clone(&backlog),
+        Duration::from_secs(1),
+    );
+    context.peer_state.peer_connected("peer");
+    let shutdown = SyncShutdownHandle::new(4, crate::network::test_network());
+    spawn_push_workers(context, &shutdown);
+
+    backlog.try_enqueue(versioned_job("peer", 1)).await;
+    let deadline = crate::rt::time::Instant::now() + Duration::from_secs(1);
+    while transport.sent().is_empty() {
+        assert!(crate::rt::time::Instant::now() < deadline);
+        crate::rt::time::sleep(Duration::from_millis(2)).await;
+    }
+    backlog.try_enqueue(versioned_job("peer", 2)).await;
+
+    let deadline = crate::rt::time::Instant::now() + Duration::from_secs(2);
+    while backlog.snapshot().await.completed_total < 1 {
+        assert!(crate::rt::time::Instant::now() < deadline);
+        crate::rt::time::sleep(Duration::from_millis(5)).await;
+    }
+    let events: Vec<_> = std::iter::from_fn(|| failure_rx.try_recv().ok()).collect();
+    assert!(events.iter().any(|event| !event.create_retry));
+    assert!(events.iter().all(|event| !event.create_retry));
+    assert_eq!(backlog.snapshot().await.stale_head_retirements_total, 1);
+    backlog.close();
+}
+
+/// The document's frontier is this one head.
+struct Frontier(Cid);
+
+#[async_trait::async_trait]
+impl crate::sync::DocumentHeadProvider for Frontier {
+    async fn get_document_heads(&self, _doc_id: &str) -> crate::error::Result<Vec<Cid>> {
+        Ok(vec![self.0])
+    }
+
+    async fn get_collection_heads(&self, _collection_id: &str) -> crate::error::Result<Vec<Cid>> {
+        Ok(Vec::new())
+    }
+}
+
+/// Runs the push of an older head (priority 1) of one document until a newer
+/// head (priority 2) is queued behind it, with the older or the newer head as
+/// the document's frontier, and returns what reached the recorder.
+async fn retire_older_head(
+    older_generation: u64,
+    newer_generation: u64,
+    frontier_is_older: bool,
+) -> Vec<PushFailure> {
+    let backlog = PushBacklog::new(64, usize::MAX, 1, 1, edge::testing::edge());
+    let transport = TestTransport::new(Vec::new()).with_send_delay(Duration::from_millis(50));
+    let (context, mut failures) =
+        test_context(transport.clone(), backlog.clone(), Duration::from_secs(1));
+    let mut older = versioned_job("peer", 1);
+    older.marker_generation = Some(older_generation);
+    let mut newer = versioned_job("peer", 2);
+    newer.marker_generation = Some(newer_generation);
+    let frontier = if frontier_is_older {
+        older.root_cid
+    } else {
+        newer.root_cid
+    };
+    let context = Arc::new(PushWorkerContext {
+        head_provider: Arc::new(Frontier(frontier)),
+        ..Arc::try_unwrap(context).ok().unwrap()
+    });
+    backlog.try_enqueue(older).await;
+    let active = backlog.next_job().await.unwrap();
+    connect_job_peer(&context, &active);
+    let push = {
+        let (context, active) = (Arc::clone(&context), active.clone());
+        crate::rt::spawn(async move { run_push_job(&context, &active).await })
+    };
+    let deadline = crate::rt::time::Instant::now() + Duration::from_secs(1);
+    while transport.sent().is_empty() {
+        assert!(crate::rt::time::Instant::now() < deadline);
+        crate::rt::time::sleep(Duration::from_millis(2)).await;
+    }
+    backlog.try_enqueue(newer).await;
+
+    assert_eq!(push.join().await.unwrap(), JobCompletion::Retired);
+    backlog.job_done(&active, JobCompletion::Retired).await;
+    backlog.close();
+    // The fake recorder forwards on its own task; wait for it to go quiet.
+    let mut reported = Vec::new();
+    while let Ok(Some(event)) =
+        crate::rt::time::timeout(Duration::from_millis(200), failures.recv()).await
+    {
+        reported.push(event);
+    }
+    reported
+}
+
+/// A push the peer acknowledged after a newer job for its document was
+/// queued, while its head is still the whole frontier, reports its delivery
+/// with the generation that fences it, so the peer's retry clock sees it.
+#[nuclei::test]
+async fn superseded_acknowledged_push_reports_its_delivery() {
+    let reported = retire_older_head(7, 8, true).await;
+    assert_eq!(reported.len(), 1, "the delivery never reached the recorder");
+    assert!(reported[0].acknowledged);
+    assert_eq!(reported[0].marker_generation, Some(7));
+}
+
+/// Two live writes to one document: generations are allocated after commit,
+/// so the write with the older head can hold the newer generation (8), and
+/// its marker replaces the newer head's (7). Its ack, retired by the newer
+/// head, must not complete that marker, because the newer head has not landed
+/// (`LiveMarkerGeneration.tla` `Red_NoHeadFence`).
+#[nuclei::test]
+async fn retired_older_head_with_newer_generation_leaves_the_marker() {
+    let reported = retire_older_head(8, 7, false).await;
+    assert!(
+        reported.iter().all(|event| !event.acknowledged),
+        "a retired head that is not the frontier completed its scope: {:?}",
+        reported
+            .iter()
+            .map(|event| event.marker_generation)
+            .collect::<Vec<_>>()
+    );
+}
+
+/// The rejection-to-retry handoff must be lossless: a full failure
+/// channel applies backpressure instead of dropping the retry record.
+#[nuclei::test]
+async fn report_push_failure_backpressures_instead_of_dropping() {
+    let (tx, mut rx) = crate::rt::mpsc::channel::<PushFailure>(1);
+    tx.send(PushFailure {
+        peer_id: "occupant".to_string(),
+        doc_id: "occupant-doc".to_string(),
+        collection_id: "collection".to_string(),
+        cid: Cid::new_v1(0x55, Code::Sha2_256.digest(b"occupant")).to_string(),
+        head_priority: 0,
+        create_retry: true,
+        initial_registration: false,
+        acknowledged: false,
+        marker_generation: None,
+        durable_tx: None,
+        retry_after: None,
+        admission_only: false,
+    })
+    .await
+    .unwrap();
+    let slot = Arc::new(AtomOption::some(tx));
+
+    let peer = PeerId::new("slow".to_string());
+    let reporter = {
+        let slot = Arc::clone(&slot);
+        crate::rt::spawn(async move {
+            report_push_failure(
+                &slot,
+                &peer,
+                "doc-slow".to_string(),
+                "collection".to_string(),
+                Some(Cid::new_v1(0x55, Code::Sha2_256.digest(b"slow"))),
+                0,
+            )
+            .await;
+        })
+    };
+
+    // Channel full: the reporter must wait, not drop.
+    crate::rt::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        !reporter.is_finished(),
+        "reporter must block on a full channel"
+    );
+
+    assert_eq!(rx.recv().await.unwrap().doc_id, "occupant-doc");
+    let mut delivered = crate::rt::time::timeout(Duration::from_secs(2), rx.recv())
+        .await
+        .expect("failure must be delivered once capacity frees")
+        .unwrap();
+    assert_eq!(delivered.doc_id, "doc-slow");
+    delivered.durable_tx.take().unwrap().send(Some(1)).unwrap();
+    reporter.join().await.unwrap();
+}
+
+#[nuclei::test]
+async fn collection_commit_failure_enters_the_retry_channel_with_its_cid() {
+    let (tx, mut rx) = crate::rt::mpsc::channel::<PushFailure>(1);
+    let slot = Arc::new(AtomOption::some(tx));
+    let cid = Cid::new_v1(0x55, Code::Sha2_256.digest(b"collection-commit"));
+
+    let reporter = crate::rt::spawn(async move {
+        report_push_failure(
+            &slot,
+            &PeerId::new("peer".to_string()),
+            String::new(),
+            "collection".to_string(),
+            Some(cid),
+            1,
+        )
+        .await;
+    });
+
+    // defradb#1113: the obligation must reach the ledger. It is doc-less, so
+    // it is keyed and replayed by CID; dropping it made failed
+    // collection-commit pushes permanent (source-inc/gents#696).
+    let mut failure = rx.recv().await.expect("commit failure must be recorded");
+    assert_eq!(failure.doc_id, "");
+    assert_eq!(failure.collection_id, "collection");
+    assert_eq!(failure.cid, cid.to_string());
+    assert!(failure.create_retry);
+    failure.durable_tx.take().unwrap().send(Some(1)).unwrap();
+    reporter.join().await.unwrap();
+}
+
+/// A doc-less failure with no CID has nothing to replay and is still
+/// dropped (the versionless SE-artifact path).
+#[nuclei::test]
+async fn versionless_collection_failure_is_not_recorded() {
+    let (tx, mut rx) = crate::rt::mpsc::channel::<PushFailure>(1);
+    let slot = Arc::new(AtomOption::some(tx));
+
+    report_push_failure(
+        &slot,
+        &PeerId::new("peer".to_string()),
+        String::new(),
+        "collection".to_string(),
+        None,
+        1,
+    )
+    .await;
+
+    assert!(rx.try_recv().is_err());
+}
+
+/// Workers exit promptly when the backlog closes; the worker handles are
+/// the only retained push handles.
+#[nuclei::test]
+async fn workers_exit_on_close() {
+    let backlog = PushBacklog::new(1024, usize::MAX, 4, 3, edge::testing::edge());
+    let transport = TestTransport::new(Vec::new());
+    let (context, _failure_rx) =
+        test_context(transport, Arc::clone(&backlog), Duration::from_secs(1));
+    let shutdown = SyncShutdownHandle::new(4, crate::network::test_network());
+    spawn_push_workers(context, &shutdown);
+    assert_eq!(shutdown.retained_task_count(), 3);
+
+    backlog.close();
+    let started = crate::rt::time::Instant::now();
+    shutdown.shutdown().await;
+    assert!(started.elapsed() < Duration::from_secs(1));
+}
+
+fn heads_pushed(
+    context: &PushWorkerContext<TestTransport>,
+    peer: &str,
+) -> crate::sync::SyncOutcomes {
+    context
+        .peer_state
+        .history(peer)
+        .map(|history| history.heads_pushed)
+        .unwrap_or_default()
+}
+
+#[nuclei::test]
+async fn acknowledged_push_records_head_acked() {
+    let backlog = PushBacklog::new(64, usize::MAX, 1, 1, edge::testing::edge());
+    let (context, _failures) = test_context(
+        TestTransport::new(Vec::new()),
+        backlog.clone(),
+        Duration::from_secs(1),
+    );
+    backlog.try_enqueue(job("peer", b"acked")).await;
+    let active = backlog.next_job().await.unwrap();
+    connect_job_peer(&context, &active);
+
+    assert_eq!(
+        run_push_job(&context, &active).await,
+        JobCompletion::Succeeded
+    );
+    let pushed = heads_pushed(&context, "peer");
+    assert_eq!((pushed.succeeded, pushed.failed), (1, 0));
+    assert!(pushed.last_succeeded_at.is_some());
+    backlog.job_done(&active, JobCompletion::Succeeded).await;
+    backlog.close();
+}
+
+#[nuclei::test]
+async fn rejected_push_records_the_peer_error() {
+    let backlog = PushBacklog::new(64, usize::MAX, 1, 1, edge::testing::edge());
+    let reply = crate::message::PushLogReply::error("rejected", "merge failed");
+    let (context, _failures) = test_context(
+        TestTransport::new(vec![reply]),
+        backlog.clone(),
+        Duration::from_secs(1),
+    );
+    backlog.try_enqueue(job("peer", b"rejected")).await;
+    let active = backlog.next_job().await.unwrap();
+    connect_job_peer(&context, &active);
+
+    assert_eq!(run_push_job(&context, &active).await, JobCompletion::Failed);
+    let pushed = heads_pushed(&context, "peer");
+    assert_eq!((pushed.succeeded, pushed.failed), (0, 1));
+    assert_eq!(pushed.last_succeeded_at, None);
+    assert_eq!(
+        pushed.last_failure.map(|failure| failure.error),
+        Some("rejected by peer: merge failed".to_string())
+    );
+    backlog.job_done(&active, JobCompletion::Failed).await;
+    backlog.close();
+}

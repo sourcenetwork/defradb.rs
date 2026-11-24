@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`crates/zanzibar/` is a standalone Google-Zanzibar permission engine with a
+`crates/building-blocks/zanzibar/` is a standalone Google-Zanzibar permission engine with a
 pluggable KV backend (`ZanzibarStore` trait). It evaluates userset-rewrite rules
 (`This / ComputedUserset / TupleToUserset / Union / Intersection / Difference`)
 via a goal-tree search with cycle detection (`NodeTrail`) and per-check

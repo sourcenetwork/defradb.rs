@@ -27,13 +27,13 @@ Assumed, not modelled: `within` has no visited set and no response cap. The
 Rust walk matches `within_iff_level` only because it is breadth-first, with the
 visited check on pop, so a block is first taken at its shortest distance from a
 wanted block; `depth_cut_keeps_blocks_within_their_shortest_distance_of_a_root`
-(`crates/p2p/tests/unit/car_depth.rs`) guards that order. The `CAR_MAX_BLOCKS`
+(`crates/database/p2p/tests/unit/car_depth.rs`) guards that order. The `CAR_MAX_BLOCKS`
 and byte caps can serve fewer blocks than the cut allows. `cut_ge_pow` carries
 the logarithmic round bound.
 
-Rust anchors: `collect_dag_blocks_within` (`crates/p2p/src/sync/car.rs`),
+Rust anchors: `collect_dag_blocks_within` (`crates/database/p2p/src/sync/car.rs`),
 `ClosureDepth::initial` and `ClosureDepth::widen`
-(`crates/p2p/src/sync/coordinator/closure_depth.rs`).
+(`crates/database/p2p/src/sync/coordinator/closure_depth.rs`).
 -/
 namespace CarClosureDepth
 

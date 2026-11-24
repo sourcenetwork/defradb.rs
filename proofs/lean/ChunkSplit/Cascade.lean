@@ -14,7 +14,7 @@ The story, in plain words.
   holding the name.
 
 Rust anchors:
-* `crates/db/src/collection/ops/delete.rs` `delete_collection_with_txn`: deletes
+* `crates/database/db/src/collection/ops/delete.rs` `delete_collection_with_txn`: deletes
   the collection and then each of its chunk collections. Modeled by `delete`.
 * The same file's `delete_collections_as` adds each parent's chunk collections
   to the names it deletes. Modeled by `delete` too.

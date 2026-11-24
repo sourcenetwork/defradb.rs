@@ -1,0 +1,65 @@
+//! Query plan nodes implementing the Volcano Iterator Model
+
+pub mod aggregate;
+mod alldocs;
+mod bm25;
+mod cached_view_fetcher;
+pub(crate) mod chunk_gate;
+mod chunk_parent;
+mod cursor;
+pub mod groupby;
+mod index_scan;
+pub mod lens_node;
+mod limit;
+pub mod mutation;
+mod orderby;
+mod orphan;
+mod permission_filter;
+mod scan;
+mod se_filter;
+mod select;
+mod sequence;
+mod similarity;
+mod type_join;
+pub mod view;
+pub mod view_cache;
+
+use crate::mapper::Filter;
+pub use aggregate::{
+    AverageNode, AvgSourceMeta, CountNode, CountSourceMeta, MaxNode, MaxSourceMeta, MinNode,
+    MinSourceMeta, SumNode, SumSourceMeta,
+};
+pub use alldocs::AllDocsNode;
+pub use bm25::BM25Node;
+pub use cached_view_fetcher::CachedViewFetcher;
+pub(crate) use chunk_gate::{get_projected, ChunkGate};
+pub(crate) use chunk_parent::{chunk_fields, parent_fields, parent_hashes, ChunkFields};
+pub use cursor::{CursorDirection, CursorNode, CursorPageInfo};
+pub use groupby::{ChildSelectMeta, DocumentGroup, GroupAlias, GroupByNode, InnerAggregateDef};
+pub use index_scan::IndexScanNode;
+pub use lens_node::LensNode;
+pub use limit::LimitNode;
+pub use mutation::{
+    AddInput, AddNode, DeleteNode, UpdateInput, UpdateNode, UpsertAction, UpsertInput, UpsertNode,
+};
+pub use orderby::OrderByNode;
+pub use orphan::{new_shared_yielded_ids, OrphanNode, SharedYieldedIds};
+pub(crate) use permission_filter::AcpReadCheck;
+pub use permission_filter::{AcpRead, PermissionFilterNode};
+pub use scan::ScanNode;
+pub use se_filter::{SEFilterCondition, SEFilterNode};
+pub use select::SelectNode;
+pub use sequence::SequenceNode;
+pub use similarity::SimilarityNode;
+pub use type_join::{
+    compare_json_values, resolve_nested_field, JoinDirection, JoinSide, RelationFilter,
+    TypeJoinMany, TypeJoinOne,
+};
+pub use view::ViewNode;
+
+/// Strip `_docID` conditions from filter for explain output.
+/// Go handles docIDs as prefix scans and strips them from filter display.
+/// This handles `_docID` at any nesting level within `_and`/`_or` arrays.
+pub(crate) fn strip_docid_from_filter(filter: &Filter) -> serde_json::Value {
+    filter.to_explain_json_without_docid()
+}

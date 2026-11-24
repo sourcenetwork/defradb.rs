@@ -1,4 +1,6 @@
 mod gossip_admission;
+mod iroh_large_update;
+mod stream_protocols;
 mod info {
     mod connect_peers;
     mod disconnect_peers;
@@ -71,11 +73,15 @@ mod simple {
         mod with_add_update;
         mod with_delete;
         mod with_filter;
+        mod with_no_collections;
+        mod with_offline_push;
         mod with_shared_field;
         mod with_update;
     }
 }
 mod sync {
+    mod exact_fetch;
+    mod fetch_slots;
     mod branchable_collection {
         mod complex_network;
         mod simple;
@@ -83,6 +89,7 @@ mod sync {
         mod versions;
     }
     mod collection_version {
+        mod migration_transform;
         mod patch;
         mod simple;
         mod view;

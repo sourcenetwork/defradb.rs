@@ -1,0 +1,118 @@
+use std::path::Path;
+use std::process::Command;
+
+fn main() {
+    println!("cargo:rerun-if-env-changed=DEFRA_NODE_GIT_HASH_OVERRIDE");
+    println!("cargo:rerun-if-env-changed=DEFRA_NODE_GIT_DIRTY_OVERRIDE");
+    println!("cargo:rerun-if-env-changed=DEFRA_NODE_RELEASE_TAG_OVERRIDE");
+    println!("cargo:rerun-if-env-changed=DEFRA_NODE_BUILD_TIME_OVERRIDE");
+
+    // Git commit hash
+    let git_hash = std::env::var("DEFRA_NODE_GIT_HASH_OVERRIDE")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            Command::new("git")
+                .args(["rev-parse", "--short=12", "HEAD"])
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+        })
+        .unwrap_or_else(|| "unknown".into());
+    println!("cargo:rustc-env=DEFRA_NODE_GIT_HASH={}", git_hash.trim());
+
+    // Git dirty flag
+    let dirty = std::env::var("DEFRA_NODE_GIT_DIRTY_OVERRIDE")
+        .ok()
+        .unwrap_or_else(|| {
+            let dirty = Command::new("git")
+                .args(["status", "--porcelain", "--untracked-files=no"])
+                .output()
+                .ok()
+                .map(|o| !o.stdout.is_empty())
+                .unwrap_or(false);
+            if dirty {
+                "-dirty".into()
+            } else {
+                String::new()
+            }
+        });
+    println!("cargo:rustc-env=DEFRA_NODE_GIT_DIRTY={}", dirty.trim());
+
+    let release_tag = std::env::var("DEFRA_NODE_RELEASE_TAG_OVERRIDE")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            Command::new("git")
+                .args(["describe", "--tags", "--exact-match", "HEAD"])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+        })
+        .unwrap_or_default();
+    println!(
+        "cargo:rustc-env=DEFRA_NODE_RELEASE_TAG={}",
+        release_tag.trim()
+    );
+
+    // Build timestamp (UTC). CI pins it: a per-second value changes this
+    // crate's compile inputs on every build, so nothing above it hits sccache.
+    let now = std::env::var("DEFRA_NODE_BUILD_TIME_OVERRIDE")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            Command::new("date")
+                .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+        })
+        .unwrap_or_else(|| "unknown".into());
+    println!("cargo:rustc-env=DEFRA_NODE_BUILD_TIME={}", now.trim());
+
+    // Target triple
+    println!(
+        "cargo:rustc-env=DEFRA_NODE_TARGET={}",
+        std::env::var("TARGET").unwrap_or_else(|_| "unknown".into())
+    );
+
+    // Rustc version
+    let rustc = Command::new("rustc")
+        .args(["--version"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .unwrap_or_else(|| "unknown".into());
+    println!("cargo:rustc-env=DEFRA_NODE_RUSTC={}", rustc.trim());
+
+    // Rebuild on git branch / index changes so version metadata tracks commits.
+    // Resolved as in defra-version's build script: `--git-path` finds each
+    // file in a linked worktree, refs/heads is watched as a directory so a
+    // packed branch that moves is seen, and reftable covers that backend.
+    // `index` is watched too, for the dirty flag.
+    for entry in ["HEAD", "index", "refs/heads", "packed-refs", "reftable"] {
+        if let Some(path) = git(&["rev-parse", "--git-path", entry]) {
+            rerun_if_exists(&path);
+        }
+    }
+    if let Some(dir) = git(&["rev-parse", "--git-common-dir"]) {
+        rerun_if_exists(&format!("{dir}/reftable"));
+    }
+}
+
+fn git(args: &[&str]) -> Option<String> {
+    Command::new("git")
+        .args(args)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+}
+
+/// A watched path that does not exist counts as changed on every build.
+fn rerun_if_exists(path: &str) {
+    if Path::new(path).exists() {
+        println!("cargo:rerun-if-changed={path}");
+    }
+}

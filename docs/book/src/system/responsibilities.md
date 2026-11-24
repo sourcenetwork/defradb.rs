@@ -11,7 +11,7 @@ below is the whole story; the rest of this book walks each box. (The participant
 **The client** talks to defradb.rs over GraphQL, either over HTTP or through the embedded
 API. It owns its own agent logic: leases, claims, streaming segments, event consumption.
 
-**The network edge** is one tokio runtime, held in one place (`crates/edge`). It terminates
+**The network edge** is one tokio runtime, held in one place (`crates/foundation/edge`). It terminates
 HTTP, P2P, the KMS transport, the Orbis, Vera and embeddings clients, and telemetry export.
 It is the only place in the process where a tokio runtime exists; no data-path crate depends
 on tokio. The edge also resolves *remote inputs*: KMS keys, signatures, Vera decisions,
@@ -19,7 +19,7 @@ embeddings. These are fetched before the transaction that needs them, with singl
 deduplication, batching and caching, because nothing remote may run inside a transaction
 closure that can re-run.
 
-**The thread-per-core pool** is where every database decision runs (`crates/workers`). Each
+**The thread-per-core pool** is where every database decision runs (`crates/foundation/workers`). Each
 core runs one pinned executor with no task stealing; a task spawned with `spawn_local`
 lives and dies on its core. The pool owns query planning, DAG block construction, CRDT
 rules, index maintenance, ACP decisions, lens migrations, and the business logic that
@@ -31,7 +31,7 @@ head sets, document part operands, and their `touches`), the arrival journal's l
 the conflict event listener, and the key provider for encryption at rest. regolith's
 mechanisms carry no downstream names; they are generic over exactly these traits. In the
 code the installed set is slightly larger than the diagram: a `PrefixExtractor`
-([`crates/storage/src/backends/regolith/prefix.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/storage/src/backends/regolith/prefix.rs)) for prefix bloom filters, and
+([`crates/engine/storage/src/backends/regolith/prefix.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/storage/src/backends/regolith/prefix.rs)) for prefix bloom filters, and
 `TransactionHooks` for per-transaction telemetry.
 
 **regolith's DefraLevel mechanisms** are the transactional vocabulary: key classes, blind

@@ -23,7 +23,7 @@ The temporal story (the raise comes before the caller's swap, a reader looks
 at the count, wakes) is the TLA+ model `proofs/tla/CommitFence.tla`; this file
 carries the law that model takes on trust about the two swaps.
 
-Rust anchors: `Fence::abandon` and `Fence::finish` (`crates/db/src/txn/fence.rs`),
+Rust anchors: `Fence::abandon` and `Fence::finish` (`crates/database/db/src/txn/fence.rs`),
 two `compare_exchange` calls on one `AtomicU8`, modeled here as their
 sequential meaning.
 -/

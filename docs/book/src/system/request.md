@@ -16,7 +16,7 @@ mutation names. Everything else about the query is parsed and planned on a worke
 the pool, routed once, here, at the edge. A mutation naming exactly one document goes to that
 document's core, so its writes and merges run one at a time; everything else goes to the
 least-loaded core
-([`crates/query/src/pooled/route.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/query/src/pooled/route.rs), [`crates/workers/src/pool/routing.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/workers/src/pool/routing.rs)). No request
+([`crates/engine/query/src/pooled/route.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/query/src/pooled/route.rs), [`crates/foundation/workers/src/pool/routing.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/foundation/workers/src/pool/routing.rs)). No request
 hops from core to core.
 
 ## 2. Prepare outside effects
@@ -24,7 +24,7 @@ hops from core to core.
 Before any database worker is involved, the caller (the edge task) prepares everything
 with an effect outside the transaction: KMS keys, embeddings, signatures, short IDs.
 Only then is the prepared work submitted to the pool
-([`crates/query/src/runner/prepare.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/query/src/runner/prepare.rs)). A transaction closure may run more than once, so
+([`crates/engine/query/src/runner/prepare.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/engine/query/src/runner/prepare.rs)). A transaction closure may run more than once, so
 anything with an outside effect must already be in hand. Remote inputs that depend on the
 transaction's own reads end the attempt, get resolved at the edge (single-flight, batched,
 cached), and the attempt re-runs with them memoized.

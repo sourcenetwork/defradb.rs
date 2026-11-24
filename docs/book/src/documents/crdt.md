@@ -10,7 +10,7 @@ exception and are covered below.) defradb.rs uses four.
 
 The workhorse. A field value with a priority: given two writes, the higher priority
 wins; equal priorities break ties deterministically on the value bytes
-([`crates/crdt/src/lww.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/crdt/src/lww.rs)). Empty data is a tombstone whose priority still counts, so a
+([`crates/building-blocks/crdt/src/lww.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/building-blocks/crdt/src/lww.rs)). Empty data is a tombstone whose priority still counts, so a
 delete beats a lower-priority write and loses to a higher one. Every ordinary field is
 an LWW register by default.
 
@@ -21,7 +21,7 @@ an LWW register by default.
 ## Counter
 
 A single accumulated value with blind-merge increments
-([`crates/crdt/src/counter.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/crdt/src/counter.rs)). This is deliberately *not* a classic PN-counter with two
+([`crates/building-blocks/crdt/src/counter.rs`](https://github.com/sourcenetwork/defradb.rs/blob/main/crates/building-blocks/crdt/src/counter.rs)). This is deliberately *not* a classic PN-counter with two
 registers: an increment is a document-part operand (kind `INT64`/`FLOAT32`/`FLOAT64`),
 and i64 addition is wrapping and order-independent (proven in Lean), so any grouping of
 increments folds to the same sum. Idempotence of replicated application is enforced one

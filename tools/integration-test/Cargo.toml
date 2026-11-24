@@ -20,31 +20,34 @@ path = "tests/verars/main.rs"
 
 [dependencies]
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "523de40514848e9f0349f3bf7d5a0e9d161402c9" }
 commonware-codec = "=2026.10.0"
-defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "0959bd78d13463ac9a4104b3ae0f3c46fb54547b" }
-crypto = { path = "../../crates/crypto" }
-document = { path = "../../crates/document" }
-edge = { path = "../../crates/edge", features = ["testing"] }
+defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "7993ba38d889d16503f7a6ec9c33ef91375e4c0e" }
+crypto = { path = "../../crates/foundation/crypto" }
+document = { path = "../../crates/building-blocks/document" }
+blockstore = { path = "../../crates/engine/blockstore" }
+edge = { path = "../../crates/foundation/edge", features = ["testing"] }
 nuclei.workspace = true
-net = { path = "../../crates/net" }
+net = { path = "../../crates/building-blocks/net" }
 serde_json = "1.0"
 graphql-parser.workspace = true
 futures.workspace = true
 paste = "1.0"
-ctor = "0.2"
+ctor = "1.0"
 chrono = { version = "0.4" }
-defra-node = { path = "../../crates/defra-node", features = ["http", "libp2p"] }
-events = { path = "../../crates/events" }
+defra-node = { path = "../../crates/entry-points/defra-node", features = ["http", "libp2p", "p2p"] }
+# Embedder stream protocols: the testo actions register and open them on iroh nodes.
+p2p = { path = "../../crates/database/p2p", features = ["iroh-transport"] }
+async-trait = { workspace = true }
+events = { path = "../../crates/foundation/events" }
 async-channel = "2"
-cli = { path = "../../crates/cli" }
-query = { path = "../../crates/query" }
-schema = { path = "../../crates/schema" }
-defra-core = { path = "../../crates/defra-core" }
+cli = { path = "../../crates/entry-points/cli" }
+query = { path = "../../crates/engine/query" }
+schema = { path = "../../crates/foundation/schema" }
+defra-core = { path = "../../crates/foundation/defra-core" }
 serde.workspace = true
 tempfile = "3.17"
 thiserror.workspace = true
-workers = { path = "../../crates/workers" }
+workers = { path = "../../crates/foundation/workers" }
 testo = { git = "https://github.com/sourcenetwork/testo.rs", rev = "dc53fa515d5c39511845407dcd42a7650c07f66c" }
 kovan.workspace = true
 regolith.workspace = true
@@ -52,7 +55,9 @@ rapidhash.workspace = true
 cid = { workspace = true }
 base64 = "0.23"
 hex = "0.4"
-identity = { path = "../../crates/identity" }
+# Holds a stopped Go node's P2P port with SO_REUSEPORT until it restarts.
+socket2 = { version = "0.6", features = ["all"] }
+identity = { path = "../../crates/building-blocks/identity" }
 
 [features]
 generator = ["serde_json/preserve_order"]
@@ -63,22 +68,25 @@ path = "src/bin/gen_scenarios/main.rs"
 required-features = ["generator"]
 
 [dev-dependencies]
+query = { path = "../../crates/engine/query", features = ["testing"] }
+vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "177783a896068e26d4223c0a0835199870f88d3c" }
 mantra-macros = "0.9"
-keyring = { path = "../../crates/keyring" }
-vera-client = { git = "https://github.com/sourcenetwork/vera.rs", rev = "523de40514848e9f0349f3bf7d5a0e9d161402c9" }
-vera-domain = { git = "https://github.com/sourcenetwork/vera.rs", rev = "523de40514848e9f0349f3bf7d5a0e9d161402c9" }
-vera-modules = { git = "https://github.com/sourcenetwork/vera.rs", rev = "523de40514848e9f0349f3bf7d5a0e9d161402c9" }
+keyring = { path = "../../crates/foundation/keyring" }
+vera-client = "0.1.2"
+vera-domain = "0.1.2"
+vera-modules = "0.1.2"
 alloy-sol-types.workspace = true
-acp = { path = "../../crates/acp" }
-vera = { path = "../../crates/vera" }
+acp = { path = "../../crates/engine/acp" }
+vera = { path = "../../crates/engine/vera" }
+# The Vera node the in-process provider tests host themselves.
+vera-embedded = { path = "../../crates/engine/vera-embedded", features = ["node"] }
 libc = "0.2"
-p2p = { path = "../../crates/p2p", features = ["iroh-transport"] }
 ciborium = { workspace = true }
-serial_test = "3"
+serial_test = "4"
 
 [lints]
 workspace = true
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
-mach2 = "0.4"
+mach2 = "0.6"
 

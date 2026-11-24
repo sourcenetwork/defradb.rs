@@ -1,0 +1,1929 @@
+//! Bounded, per-peer-fair admission queue for outbound replicator pushes.
+//!
+//! Resource contract (#1099): outbound push work is admitted here as compact
+//! job specs (head block + identifiers only — never expanded DAG payloads)
+//! before any task exists to execute it. A fixed worker pool drains the queue,
+//! so resident outbound state is bounded by the queue caps plus the worker
+//! count, independent of total write arrival count:
+//!
+//! - `queued_items <= item_capacity`
+//! - `queued_bytes <= max(byte_capacity, one job)` — a job larger than the
+//!   byte cap is admitted only when the queue is empty so it cannot wedge.
+//! - one peer holds at most `min(per_peer_active_cap, worker_count)` workers,
+//!   and ready peers are served round-robin, so a nonresponsive peer cannot
+//!   starve healthy peers.
+//! - a peer whose send failed on transport is parked, and until it answers
+//!   again it shares one `per_peer_active_cap` with every other such peer, so
+//!   any number of dead peers hold the workers of one slow peer at most. Its
+//!   queued jobs move to the retry ledger only when a probe (a job started
+//!   after the park's cooldown ran out) fails on transport too.
+//! - at most `item_capacity + worker_count` peers keep parking state; past
+//!   that, a peer with nothing queued or running gives its state up first.
+//! - every admission has an explicit outcome; rejection is counted and the
+//!   caller reports it to the persisted retry ladder. Nothing is silently
+//!   dropped and no waiting task is allocated.
+//!
+//! Coalescing retains only the greatest `(priority, cid)` version for each
+//! `(document, peer)`. Superseded active work may finish, but workers re-check
+//! the version before transmission and before durable failure handoff, so it can
+//! never recreate a stale retry obligation (#1102).
+//!
+//! Failed jobs leave volatile state immediately and are redriven only by the
+//! durable scope-marker ladder.
+
+use rapidhash::RapidHashMap;
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+
+use crate::rt::time::Instant;
+
+use crate::rt::oneshot;
+use bytes::Bytes;
+use cid::Cid;
+use futures::FutureExt;
+
+use crate::transport::PeerId;
+
+/// Fixed per-job accounting overhead added to the payload/identifier bytes.
+const PUSH_JOB_FIXED_OVERHEAD_BYTES: usize = 128;
+
+/// Base peer-wide cooldown applied when a receiver reports it is at capacity.
+/// Escalates exponentially (capped) while the peer keeps rejecting, and is
+/// jittered so a fleet of senders does not re-fire in lockstep (defradb#1112:
+/// 19 nodes hitting one saturated hub in unison is the storm).
+pub const DEFAULT_PEER_CAPACITY_COOLDOWN_BASE: Duration = Duration::from_secs(2);
+
+/// Peer-cooldown escalation cap: base << PEER_CAPACITY_COOLDOWN_MAX_SHIFT.
+const PEER_CAPACITY_COOLDOWN_MAX_SHIFT: u32 = 5;
+
+/// Compact description of one outbound push to one peer.
+#[derive(Debug, Clone)]
+pub struct PushJobSpec {
+    pub peer_id: PeerId,
+    pub doc_id: String,
+    pub collection_id: String,
+    pub creator: String,
+    pub root_cid: Cid,
+    /// The current head block only. Linked blocks are receiver-pulled via CAR.
+    pub head_block: Bytes,
+    /// Generation of the durable retry marker registered before queueing.
+    pub marker_generation: Option<u64>,
+    key: JobKey,
+    version: HeadVersion,
+    /// Set when the job was started as a probe: its peer's unreachable spell.
+    probe_of: Option<u64>,
+}
+
+impl PushJobSpec {
+    pub(crate) fn new(
+        peer_id: PeerId,
+        doc_id: String,
+        collection_id: String,
+        creator: String,
+        root_cid: Cid,
+        head_block: Bytes,
+    ) -> Self {
+        let (priority, decoded) = match defra_core::Block::from_dag_cbor(&head_block) {
+            Ok(block) => (block.delta.priority(), true),
+            Err(error) => {
+                tracing::warn!(%root_cid, %error, "push head priority decode failed; disabling document-level retirement");
+                (0, false)
+            }
+        };
+        let key_doc_id = if doc_id.is_empty() || !decoded {
+            format!("cid:{root_cid}")
+        } else {
+            doc_id.clone()
+        };
+        let key = JobKey {
+            peer_id: peer_id.to_string(),
+            collection_id: collection_id.clone(),
+            doc_id: key_doc_id,
+        };
+        Self {
+            peer_id,
+            doc_id,
+            collection_id,
+            creator,
+            root_cid,
+            head_block,
+            marker_generation: None,
+            key,
+            version: HeadVersion {
+                priority,
+                cid: root_cid,
+            },
+            probe_of: None,
+        }
+    }
+
+    pub fn resident_bytes(&self) -> usize {
+        self.head_block.len()
+            + self.doc_id.len()
+            + self.collection_id.len()
+            + self.creator.len()
+            + self.peer_id.to_string().len()
+            + PUSH_JOB_FIXED_OVERHEAD_BYTES
+    }
+
+    fn key(&self) -> &JobKey {
+        &self.key
+    }
+
+    fn version(&self) -> HeadVersion {
+        self.version
+    }
+
+    pub(crate) fn head_priority(&self) -> u64 {
+        self.version().priority
+    }
+
+    fn live_head(&self) -> LiveHead {
+        LiveHead {
+            version: self.version,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct JobKey {
+    peer_id: String,
+    collection_id: String,
+    doc_id: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct HeadVersion {
+    priority: u64,
+    cid: Cid,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LiveHead {
+    version: HeadVersion,
+}
+
+/// Every admission resolves to exactly one of these.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnqueueOutcome {
+    Enqueued,
+    /// The same `(document, peer, version)` with equal or stronger delivery
+    /// scope is already queued or active.
+    Coalesced,
+    /// The arriving head was older than the current `(document, peer)` head.
+    RetiredStale,
+    RejectedItems,
+    RejectedBytes,
+    Closed,
+}
+
+impl EnqueueOutcome {
+    pub fn is_rejected(&self) -> bool {
+        matches!(self, Self::RejectedItems | Self::RejectedBytes)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JobCompletion {
+    Succeeded,
+    Failed,
+    Retired,
+    Parked,
+}
+
+/// Peer-wide parking state for a saturated or unreachable receiver. The entry
+/// outlives `until`, so the next park escalates from `consecutive`; a success
+/// after the park ran out removes it.
+#[derive(Debug, Clone)]
+struct PeerCooldown {
+    until: Instant,
+    consecutive: u32,
+    /// The unreachable spell the peer is in: its last send failed on transport
+    /// and it has not answered since. Until it answers again, the peer stays
+    /// within the unreachable peers' shared cap.
+    unreachable: Option<u64>,
+}
+
+/// A peer's push accounting, kept beside its queue and cooldown state.
+#[derive(Debug, Default, Clone, Copy)]
+struct PeerMetrics {
+    failed: u64,
+    parked: u64,
+    last_success_ms: u64,
+    last_activity_seq: u128,
+}
+
+#[derive(Default)]
+struct Inner {
+    /// Per-peer FIFO of queued jobs. A peer key is present in `ready` iff its
+    /// deque is non-empty.
+    queues: RapidHashMap<String, VecDeque<PushJobSpec>>,
+    ready: VecDeque<String>,
+    active: RapidHashMap<String, usize>,
+    /// Greatest live version per `(document, peer)` across queued and active
+    /// work. Absence or a newer version makes an active job stale.
+    latest: RapidHashMap<JobKey, LiveHead>,
+    /// PEER-WIDE cooldown for a receiver that reported its pending-DAG registry
+    /// full. Unlike `retries`, this parks every CID for the peer: a saturated
+    /// receiver rejects the next root for the same reason, so letting other CIDs
+    /// through just manufactures more guaranteed-failing work. Without this, a
+    /// per-CID cooldown gave each distinct CID its own fresh burst and provided
+    /// essentially no protection (defradb#1112).
+    peer_cooldowns: RapidHashMap<String, PeerCooldown>,
+    metrics: RapidHashMap<String, PeerMetrics>,
+    metrics_sequence: u128,
+    /// Numbers each new unreachable spell (`PeerCooldown::unreachable`).
+    unreachable_spells: u64,
+    queued_items: usize,
+    queued_bytes: usize,
+    active_jobs: usize,
+    /// How many times a peer was parked because its receiver was saturated.
+    /// Operator signal that backpressure is engaging (defradb#1112).
+    peer_capacity_parks_total: u64,
+    closed: bool,
+}
+
+/// Live per-peer occupancy so slot starvation is visible to operators
+/// (source-inc/gents#630: a dead peer monopolizing the slots was invisible in
+/// connection-level diagnostics).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct PeerBacklogSnapshot {
+    pub peer_id: String,
+    pub queued_items: usize,
+    pub queued_bytes: usize,
+    pub active_jobs: usize,
+    pub consecutive_failures: u32,
+    pub cooldown_remaining_ms: u64,
+    pub failed_total: u64,
+    pub parked_total: u64,
+    pub last_success_at_ms: u64,
+}
+
+/// Point-in-time view of the backlog for diagnostics and conformance tests.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct PushBacklogSnapshot {
+    pub queue_item_capacity: usize,
+    pub queue_byte_capacity: usize,
+    pub per_peer_active_cap: usize,
+    pub worker_count: usize,
+    pub queued_items: usize,
+    pub queued_bytes: usize,
+    pub active_jobs: usize,
+    pub enqueued_total: u64,
+    pub coalesced_total: u64,
+    pub rejected_items_total: u64,
+    pub rejected_bytes_total: u64,
+    pub completed_total: u64,
+    pub failed_total: u64,
+    pub parked_total: u64,
+    pub stale_head_retirements_total: u64,
+    pub head_hints_enqueued_document: u64,
+    pub head_hints_enqueued_collection: u64,
+    pub head_hints_sent_document: u64,
+    pub head_hints_sent_collection: u64,
+    pub head_hints_acked_document: u64,
+    pub head_hints_acked_collection: u64,
+    pub head_hints_nacked_capacity: u64,
+    pub head_hints_nacked_other: u64,
+    pub head_hints_failed_transport: u64,
+    pub head_hints_failed_local: u64,
+    pub head_hints_parked_offline: u64,
+    /// Times a peer was parked because its receiver reported saturation. Proves
+    /// sender-side backpressure is engaging instead of storming (defradb#1112).
+    pub peer_capacity_parks_total: u64,
+    pub per_peer: Vec<PeerBacklogSnapshot>,
+}
+
+/// Immutable caps resolved once at construction.
+#[derive(Debug, Clone, Copy)]
+struct Limits {
+    item_capacity: usize,
+    byte_capacity: usize,
+    per_peer_active_cap: usize,
+    worker_count: usize,
+    peer_capacity_cooldown_base: Duration,
+}
+
+#[derive(Default)]
+struct Counters {
+    enqueued_total: AtomicU64,
+    coalesced_total: AtomicU64,
+    rejected_items_total: AtomicU64,
+    rejected_bytes_total: AtomicU64,
+    completed_total: AtomicU64,
+    failed_total: AtomicU64,
+    parked_total: AtomicU64,
+    stale_head_retirements_total: AtomicU64,
+    head_hints_enqueued_document: AtomicU64,
+    head_hints_enqueued_collection: AtomicU64,
+    head_hints_sent_document: AtomicU64,
+    head_hints_sent_collection: AtomicU64,
+    head_hints_acked_document: AtomicU64,
+    head_hints_acked_collection: AtomicU64,
+    head_hints_nacked_capacity: AtomicU64,
+    head_hints_nacked_other: AtomicU64,
+    head_hints_failed_transport: AtomicU64,
+    head_hints_failed_local: AtomicU64,
+    head_hints_parked_offline: AtomicU64,
+}
+
+/// The queue-owned half of a snapshot, produced by the owner task.
+#[derive(Default)]
+struct QueueState {
+    queued_items: usize,
+    queued_bytes: usize,
+    active_jobs: usize,
+    peer_capacity_parks_total: u64,
+    per_peer: Vec<PeerBacklogSnapshot>,
+}
+
+impl Counters {
+    fn snapshot(&self, limits: &Limits, state: QueueState) -> PushBacklogSnapshot {
+        PushBacklogSnapshot {
+            queue_item_capacity: limits.item_capacity,
+            queue_byte_capacity: limits.byte_capacity,
+            per_peer_active_cap: limits.per_peer_active_cap,
+            worker_count: limits.worker_count,
+            queued_items: state.queued_items,
+            queued_bytes: state.queued_bytes,
+            active_jobs: state.active_jobs,
+            enqueued_total: self.enqueued_total.load(Ordering::Relaxed),
+            coalesced_total: self.coalesced_total.load(Ordering::Relaxed),
+            rejected_items_total: self.rejected_items_total.load(Ordering::Relaxed),
+            rejected_bytes_total: self.rejected_bytes_total.load(Ordering::Relaxed),
+            completed_total: self.completed_total.load(Ordering::Relaxed),
+            failed_total: self.failed_total.load(Ordering::Relaxed),
+            parked_total: self.parked_total.load(Ordering::Relaxed),
+            stale_head_retirements_total: self.stale_head_retirements_total.load(Ordering::Relaxed),
+            head_hints_enqueued_document: self.head_hints_enqueued_document.load(Ordering::Relaxed),
+            head_hints_enqueued_collection: self
+                .head_hints_enqueued_collection
+                .load(Ordering::Relaxed),
+            head_hints_sent_document: self.head_hints_sent_document.load(Ordering::Relaxed),
+            head_hints_sent_collection: self.head_hints_sent_collection.load(Ordering::Relaxed),
+            head_hints_acked_document: self.head_hints_acked_document.load(Ordering::Relaxed),
+            head_hints_acked_collection: self.head_hints_acked_collection.load(Ordering::Relaxed),
+            head_hints_nacked_capacity: self.head_hints_nacked_capacity.load(Ordering::Relaxed),
+            head_hints_nacked_other: self.head_hints_nacked_other.load(Ordering::Relaxed),
+            head_hints_failed_transport: self.head_hints_failed_transport.load(Ordering::Relaxed),
+            head_hints_failed_local: self.head_hints_failed_local.load(Ordering::Relaxed),
+            head_hints_parked_offline: self.head_hints_parked_offline.load(Ordering::Relaxed),
+            peer_capacity_parks_total: state.peer_capacity_parks_total,
+            per_peer: state.per_peer,
+        }
+    }
+}
+
+struct JobDoneRequest {
+    peer_key: String,
+    job_key: JobKey,
+    head: LiveHead,
+    collection_scope: bool,
+    completion: JobCompletion,
+    /// `false` when no active slot was held for the peer, which is a caller bug.
+    reply: oneshot::Sender<bool>,
+}
+
+enum Command {
+    Enqueue {
+        job: Box<PushJobSpec>,
+        reply: oneshot::Sender<EnqueueOutcome>,
+    },
+    NextJob {
+        reply: oneshot::Sender<Option<PushJobSpec>>,
+    },
+    JobDone(Box<JobDoneRequest>),
+    ParkPeerAtCapacity {
+        peer_key: String,
+        retry_after: Option<Duration>,
+    },
+    ParkPeerUnreachable {
+        peer_key: String,
+        probe_of: Option<u64>,
+        reply: oneshot::Sender<Vec<PushJobSpec>>,
+    },
+    ParkPeerOffline {
+        peer_key: String,
+    },
+    PeerAnswered {
+        peer_key: String,
+    },
+    TakeQueuedForPeer {
+        peer_key: String,
+        reply: oneshot::Sender<Vec<PushJobSpec>>,
+    },
+    IsCurrent {
+        job_key: JobKey,
+        head: LiveHead,
+        reply: oneshot::Sender<bool>,
+    },
+    Snapshot {
+        reply: oneshot::Sender<PushBacklogSnapshot>,
+    },
+    Close,
+}
+
+/// Bounded admission queue drained by a fixed worker pool.
+///
+/// Admission is one indivisible decision over the whole queue state (version
+/// compare, in-place coalescing, byte accounting, the ready ring), so that
+/// state is owned by a single task reached only through `commands`; the
+/// counters below are shared with it directly because each stands alone.
+pub struct PushBacklog {
+    commands: kovan_channel::unbounded::Sender<Command>,
+    limits: Limits,
+    counters: Arc<Counters>,
+}
+
+impl PushBacklog {
+    pub fn new(
+        item_capacity: usize,
+        byte_capacity: usize,
+        per_peer_active_cap: usize,
+        worker_count: usize,
+        edge: edge::Edge,
+    ) -> Arc<Self> {
+        let worker_count = worker_count.max(1);
+        let limits = Limits {
+            item_capacity: item_capacity.max(1),
+            byte_capacity: byte_capacity.max(1),
+            per_peer_active_cap: per_peer_active_cap.max(1).min(worker_count),
+            worker_count,
+            peer_capacity_cooldown_base: DEFAULT_PEER_CAPACITY_COOLDOWN_BASE,
+        };
+        let counters = Arc::new(Counters::default());
+        let (commands, requests) = kovan_channel::unbounded();
+        let owner = BacklogOwner {
+            inner: Inner::default(),
+            waiters: VecDeque::new(),
+            limits,
+            counters: Arc::clone(&counters),
+        };
+        // It serves the backlog for as long as one is held, or until its edge
+        // stops accepting.
+        edge.spawn_service(owner.run(requests)).detach();
+        Arc::new(Self {
+            commands,
+            limits,
+            counters,
+        })
+    }
+
+    pub fn worker_count(&self) -> usize {
+        self.limits.worker_count
+    }
+
+    /// Admit a job. Never blocks and never allocates a task.
+    pub async fn try_enqueue(&self, job: PushJobSpec) -> EnqueueOutcome {
+        let (reply, outcome) = oneshot::channel();
+        self.commands.send(Command::Enqueue {
+            job: Box::new(job),
+            reply,
+        });
+        outcome.await.unwrap_or(EnqueueOutcome::Closed)
+    }
+
+    /// Park every job for a peer whose receiver reported it is at capacity.
+    ///
+    /// The condition is structural and peer-wide: the receiver cannot accept any
+    /// new root until it drains, so admitting other CIDs for this peer only
+    /// manufactures work that is certain to be rejected. Escalates while the
+    /// peer keeps rejecting and jitters the wake time so a fleet of senders does
+    /// not re-fire in unison (defradb#1112).
+    pub fn park_peer_at_capacity(&self, peer_id: &PeerId) {
+        self.park_peer_with_retry_after(peer_id, None);
+    }
+
+    pub(crate) fn park_peer_with_retry_after(
+        &self,
+        peer_id: &PeerId,
+        retry_after: Option<Duration>,
+    ) {
+        self.commands.send(Command::ParkPeerAtCapacity {
+            peer_key: peer_id.to_string(),
+            retry_after,
+        });
+    }
+
+    /// Park the peer of a job whose send got no reply (timeout or lost
+    /// connection), returning the queued jobs to hand to the retry ledger.
+    ///
+    /// The cooldown escalates while sends keep failing, and once it elapses
+    /// the peer's jobs count against the one `per_peer_active_cap` that every
+    /// unreachable peer shares, until a reply arrives (`record_peer_answered`).
+    /// The queued jobs are returned only when `job` was a probe of the peer's
+    /// current unreachable spell, so a peer that answers right after one failed
+    /// round keeps its queue live.
+    pub(crate) async fn park_peer_unreachable(&self, job: &PushJobSpec) -> Vec<PushJobSpec> {
+        let (reply, jobs) = oneshot::channel();
+        self.commands.send(Command::ParkPeerUnreachable {
+            peer_key: job.peer_id.to_string(),
+            probe_of: job.probe_of,
+            reply,
+        });
+        jobs.await.unwrap_or_default()
+    }
+
+    /// Park the peer of a job the transport already reported offline. Unlike
+    /// a failed probe, this keeps its queued jobs in the backlog for the
+    /// reconnect window.
+    pub(crate) fn park_peer_offline(&self, job: &PushJobSpec) {
+        self.commands.send(Command::ParkPeerOffline {
+            peer_key: job.peer_id.to_string(),
+        });
+    }
+
+    /// The peer replied to a send, so it is no longer treated as unreachable.
+    pub(crate) fn record_peer_answered(&self, peer_id: &PeerId) {
+        self.commands.send(Command::PeerAnswered {
+            peer_key: peer_id.to_string(),
+        });
+    }
+
+    /// Remove a saturated peer's queued work so the durable retry ledger can
+    /// own it instead of leaving it parked in volatile memory.
+    pub(crate) async fn take_queued_for_peer(&self, peer_id: &PeerId) -> Vec<PushJobSpec> {
+        let (reply, jobs) = oneshot::channel();
+        self.commands.send(Command::TakeQueuedForPeer {
+            peer_key: peer_id.to_string(),
+            reply,
+        });
+        jobs.await.unwrap_or_default()
+    }
+
+    /// Whether this exact head remains the newest live obligation for its
+    /// `(document, peer)` pair.
+    pub async fn is_current(&self, job: &PushJobSpec) -> bool {
+        let (reply, current) = oneshot::channel();
+        self.commands.send(Command::IsCurrent {
+            job_key: job.key().clone(),
+            head: job.live_head(),
+            reply,
+        });
+        current.await.unwrap_or(false)
+    }
+
+    pub(crate) fn record_head_hint_sent(&self, job: &PushJobSpec) {
+        if job.doc_id.is_empty() {
+            self.counters
+                .head_hints_sent_collection
+                .fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.counters
+                .head_hints_sent_document
+                .fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    pub(crate) fn record_head_hint_failure(&self, reason: HeadHintFailureReason) {
+        let counter = match reason {
+            HeadHintFailureReason::CapacityNack => &self.counters.head_hints_nacked_capacity,
+            HeadHintFailureReason::OtherNack => &self.counters.head_hints_nacked_other,
+            HeadHintFailureReason::Transport => &self.counters.head_hints_failed_transport,
+            HeadHintFailureReason::Local => &self.counters.head_hints_failed_local,
+        };
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_head_hint_parked_offline(&self) {
+        self.counters
+            .head_hints_parked_offline
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Next job whose peer is below its active cap and not cooling down,
+    /// round-robin across ready peers. Parks until one is eligible (waking at
+    /// the earliest cooldown expiry); `None` once the backlog is closed.
+    pub async fn next_job(&self) -> Option<PushJobSpec> {
+        let (reply, job) = oneshot::channel();
+        self.commands.send(Command::NextJob { reply });
+        job.await.unwrap_or(None)
+    }
+
+    /// Release the peer slot taken by `next_job`.
+    /// Must be called exactly once per job returned by `next_job`. A call
+    /// with no active slot for the peer is a caller bug and is ignored so it
+    /// cannot desync the accounting.
+    pub async fn job_done(&self, job: &PushJobSpec, completion: JobCompletion) {
+        let (reply, released) = oneshot::channel();
+        self.commands
+            .send(Command::JobDone(Box::new(JobDoneRequest {
+                peer_key: job.peer_id.to_string(),
+                job_key: job.key().clone(),
+                head: job.live_head(),
+                collection_scope: job.doc_id.is_empty(),
+                completion,
+                reply,
+            })));
+        let released = released.await.unwrap_or(true);
+        debug_assert!(
+            released,
+            "job_done without an active job for {}",
+            job.peer_id
+        );
+    }
+
+    /// Stop admission and wake parked workers. Queued jobs are discarded:
+    /// close is a shutdown-path operation and draining could take minutes of
+    /// network sends, while the durable retry ladder already covers loss.
+    pub fn close(&self) {
+        self.commands.send(Command::Close);
+    }
+
+    pub async fn snapshot(&self) -> PushBacklogSnapshot {
+        let (reply, snapshot) = oneshot::channel();
+        self.commands.send(Command::Snapshot { reply });
+        match snapshot.await {
+            Ok(snapshot) => snapshot,
+            Err(_) => {
+                tracing::error!("Push backlog queue owner stopped; queue occupancy is unavailable");
+                self.counters.snapshot(&self.limits, QueueState::default())
+            }
+        }
+    }
+}
+
+/// Sole owner of the queue state. Every mutation and every read of it happens
+/// here, one command at a time.
+struct BacklogOwner {
+    inner: Inner,
+    waiters: VecDeque<oneshot::Sender<Option<PushJobSpec>>>,
+    limits: Limits,
+    counters: Arc<Counters>,
+}
+
+impl BacklogOwner {
+    async fn run(mut self, commands: kovan_channel::unbounded::Receiver<Command>) {
+        loop {
+            let command = match self.serve_waiters() {
+                Some(wake_at) => futures::select! {
+                    command = commands.recv_async().fuse() => command,
+                    _ = crate::rt::time::sleep_until(wake_at).fuse() => continue,
+                },
+                None => commands.recv_async().await,
+            };
+            let Some(command) = command else {
+                return;
+            };
+            self.handle(command);
+        }
+    }
+
+    fn handle(&mut self, command: Command) {
+        match command {
+            Command::Enqueue { job, reply } => {
+                let outcome = self.enqueue(*job);
+                let _ = reply.send(outcome);
+            }
+            Command::NextJob { reply } => self.waiters.push_back(reply),
+            Command::JobDone(request) => self.job_done(*request),
+            Command::ParkPeerAtCapacity {
+                peer_key,
+                retry_after,
+            } => self.park_peer(peer_key, retry_after, false),
+            Command::ParkPeerUnreachable {
+                peer_key,
+                probe_of,
+                reply,
+            } => {
+                let jobs = self.park_peer_unreachable(peer_key, probe_of);
+                let _ = reply.send(jobs);
+            }
+            Command::ParkPeerOffline { peer_key } => {
+                self.park_peer(peer_key, None, true);
+            }
+            Command::PeerAnswered { peer_key } => self.peer_answered(&peer_key),
+            Command::TakeQueuedForPeer { peer_key, reply } => {
+                let jobs = self.take_queued_for_peer(&peer_key);
+                let _ = reply.send(jobs);
+            }
+            Command::IsCurrent {
+                job_key,
+                head,
+                reply,
+            } => {
+                let current = self
+                    .inner
+                    .latest
+                    .get(&job_key)
+                    .is_some_and(|live| *live == head);
+                let _ = reply.send(current);
+            }
+            Command::Snapshot { reply } => {
+                let snapshot = self.snapshot();
+                let _ = reply.send(snapshot);
+            }
+            Command::Close => self.close(),
+        }
+    }
+
+    /// Hand eligible jobs to parked workers, returning the earliest cooldown
+    /// expiry to wake at when a waiter is held back only by a cooling peer.
+    fn serve_waiters(&mut self) -> Option<Instant> {
+        if self.inner.closed {
+            for reply in self.waiters.drain(..) {
+                let _ = reply.send(None);
+            }
+            return None;
+        }
+        loop {
+            while self.waiters.front().is_some_and(|reply| reply.is_closed()) {
+                self.waiters.pop_front();
+            }
+            if self.waiters.is_empty() {
+                return None;
+            }
+            match Self::pop_eligible(
+                &mut self.inner,
+                self.limits.per_peer_active_cap,
+                Instant::now(),
+            ) {
+                Ok(job) => {
+                    let reply = self.waiters.pop_front().expect("waiter is present");
+                    if let Err(Some(job)) = reply.send(Some(job)) {
+                        self.requeue(job);
+                    }
+                }
+                Err(next_wake) => return next_wake,
+            }
+        }
+    }
+
+    /// Undo `pop_eligible` for a job whose worker disappeared before it could
+    /// take delivery, so admitted work is never dropped on the floor.
+    fn requeue(&mut self, job: PushJobSpec) {
+        let peer_key = job.peer_id.to_string();
+        if let Some(count) = self.inner.active.get_mut(&peer_key) {
+            *count -= 1;
+            if *count == 0 {
+                self.inner.active.remove(&peer_key);
+            }
+        }
+        self.inner.active_jobs = self.inner.active_jobs.saturating_sub(1);
+        self.inner.queued_items += 1;
+        self.inner.queued_bytes += job.resident_bytes();
+        let queue = self.inner.queues.entry(peer_key.clone()).or_default();
+        let was_empty = queue.is_empty();
+        queue.push_front(job);
+        if was_empty {
+            self.inner.ready.push_front(peer_key);
+        }
+    }
+
+    fn enqueue(&mut self, job: PushJobSpec) -> EnqueueOutcome {
+        let cost = job.resident_bytes();
+        let peer_key = job.peer_id.to_string();
+        let is_collection_scope = job.doc_id.is_empty();
+        let job_key = job.key().clone();
+        let version = job.version();
+        let live_head = job.live_head();
+        let inner = &mut self.inner;
+
+        if inner.closed {
+            return EnqueueOutcome::Closed;
+        }
+        if let Some(current) = inner.latest.get(&job_key).copied() {
+            match version.cmp(&current.version) {
+                std::cmp::Ordering::Less => {
+                    self.counters
+                        .stale_head_retirements_total
+                        .fetch_add(1, Ordering::Relaxed);
+                    return EnqueueOutcome::RetiredStale;
+                }
+                std::cmp::Ordering::Equal => {
+                    let merged = inner
+                        .queues
+                        .get_mut(&peer_key)
+                        .and_then(|queue| queue.iter_mut().find(|queued| queued.key() == &job_key))
+                        .map(|existing| {
+                            let old_cost = existing.resident_bytes();
+                            *existing = job.clone();
+                            let new_cost = existing.resident_bytes();
+                            (old_cost, new_cost, existing.live_head())
+                        });
+                    if let Some((old_cost, new_cost, merged_head)) = merged {
+                        inner.queued_bytes = inner.queued_bytes - old_cost + new_cost;
+                        inner.latest.insert(job_key, merged_head);
+                        self.counters
+                            .coalesced_total
+                            .fetch_add(1, Ordering::Relaxed);
+                        return EnqueueOutcome::Coalesced;
+                    }
+                    self.counters
+                        .coalesced_total
+                        .fetch_add(1, Ordering::Relaxed);
+                    return EnqueueOutcome::Coalesced;
+                }
+                std::cmp::Ordering::Greater => {
+                    Self::remove_queued_job(inner, &peer_key, &job_key);
+                    inner.latest.remove(&job_key);
+                    self.counters
+                        .stale_head_retirements_total
+                        .fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        }
+
+        if inner.queued_items >= self.limits.item_capacity {
+            self.counters
+                .rejected_items_total
+                .fetch_add(1, Ordering::Relaxed);
+            return EnqueueOutcome::RejectedItems;
+        }
+        // One peer may hold at most a quarter of the item budget, so a dead
+        // peer's parked jobs cannot squat the whole queue and starve healthy
+        // peers' admissions (source-inc/gents#630 req 1).
+        let peer_quota = (self.limits.item_capacity / 4).max(1);
+        if inner
+            .queues
+            .get(&peer_key)
+            .is_some_and(|queue| queue.len() >= peer_quota)
+        {
+            self.counters
+                .rejected_items_total
+                .fetch_add(1, Ordering::Relaxed);
+            return EnqueueOutcome::RejectedItems;
+        }
+        if inner.queued_items > 0 && inner.queued_bytes + cost > self.limits.byte_capacity {
+            self.counters
+                .rejected_bytes_total
+                .fetch_add(1, Ordering::Relaxed);
+            return EnqueueOutcome::RejectedBytes;
+        }
+
+        let was_empty = inner
+            .queues
+            .get(&peer_key)
+            .map(|queue| queue.is_empty())
+            .unwrap_or(true);
+        inner
+            .queues
+            .entry(peer_key.clone())
+            .or_default()
+            .push_back(job);
+        if was_empty {
+            inner.ready.push_back(peer_key);
+        }
+        inner.queued_items += 1;
+        inner.queued_bytes += cost;
+        inner.latest.insert(job_key, live_head);
+        self.counters.enqueued_total.fetch_add(1, Ordering::Relaxed);
+        if is_collection_scope {
+            self.counters
+                .head_hints_enqueued_collection
+                .fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.counters
+                .head_hints_enqueued_document
+                .fetch_add(1, Ordering::Relaxed);
+        }
+        EnqueueOutcome::Enqueued
+    }
+
+    fn remove_queued_job(inner: &mut Inner, peer_key: &str, job_key: &JobKey) {
+        let removed = inner.queues.get_mut(peer_key).and_then(|queue| {
+            let position = queue.iter().position(|queued| queued.key() == job_key)?;
+            queue.remove(position)
+        });
+        let Some(removed) = removed else {
+            return;
+        };
+
+        inner.queued_items -= 1;
+        inner.queued_bytes -= removed.resident_bytes();
+        if inner.queues.get(peer_key).is_some_and(VecDeque::is_empty) {
+            inner.queues.remove(peer_key);
+            inner.ready.retain(|ready_peer| ready_peer != peer_key);
+        }
+    }
+
+    fn park_peer(&mut self, peer_key: String, retry_after: Option<Duration>, unreachable: bool) {
+        let inner = &mut self.inner;
+        let consecutive = inner
+            .peer_cooldowns
+            .get(&peer_key)
+            .map(|cooldown| cooldown.consecutive)
+            .unwrap_or(0)
+            .saturating_add(1);
+        let current_spell = inner
+            .peer_cooldowns
+            .get(&peer_key)
+            .and_then(|cooldown| cooldown.unreachable);
+        let spell = match (unreachable, current_spell) {
+            (false, _) => None,
+            (true, Some(spell)) => Some(spell),
+            (true, None) => {
+                inner.unreachable_spells = inner.unreachable_spells.wrapping_add(1);
+                Some(inner.unreachable_spells)
+            }
+        };
+        let shift = (consecutive - 1).min(PEER_CAPACITY_COOLDOWN_MAX_SHIFT);
+        let base = self
+            .limits
+            .peer_capacity_cooldown_base
+            .saturating_mul(1 << shift);
+        // Deterministic jitter in [base, 1.5*base) keyed on the peer, so peers
+        // spread out instead of re-firing together.
+        let jitter_bp = {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            std::hash::Hash::hash(&(&peer_key, consecutive), &mut hasher);
+            std::hash::Hasher::finish(&hasher) % 500
+        };
+        let jittered = base + (base * jitter_bp as u32) / 1000;
+        let cooldown = retry_after.map_or(jittered, |hint| hint.max(jittered));
+        let until = (Instant::now() + cooldown).max(
+            inner
+                .peer_cooldowns
+                .get(&peer_key)
+                .map_or(Instant::now(), |cooldown| cooldown.until),
+        );
+        inner.peer_cooldowns.insert(
+            peer_key,
+            PeerCooldown {
+                until,
+                consecutive,
+                unreachable: spell,
+            },
+        );
+        if !unreachable {
+            inner.peer_capacity_parks_total = inner.peer_capacity_parks_total.saturating_add(1);
+        }
+        self.retire_idle_cooldowns();
+    }
+
+    /// Keep `peer_cooldowns` within `item_capacity + worker_count` entries,
+    /// which is at least the number of peers with queued or running work. A
+    /// peer with neither gives its entry up first, the one whose park ended
+    /// earliest.
+    fn retire_idle_cooldowns(&mut self) {
+        let bound = self
+            .limits
+            .item_capacity
+            .saturating_add(self.limits.worker_count);
+        let inner = &mut self.inner;
+        while inner.peer_cooldowns.len() > bound {
+            let Some(idle) = inner
+                .peer_cooldowns
+                .iter()
+                .filter(|(peer_key, _)| {
+                    !inner.queues.contains_key(*peer_key) && !inner.active.contains_key(*peer_key)
+                })
+                .min_by_key(|(_, cooldown)| cooldown.until)
+                .map(|(peer_key, _)| peer_key.clone())
+            else {
+                return;
+            };
+            inner.peer_cooldowns.remove(&idle);
+        }
+    }
+
+    /// Keep `metrics` within `item_capacity + worker_count` entries. A peer
+    /// with no queue, active work, or cooldown gives its accounting up first;
+    /// among those, the least recently active entry is evicted.
+    fn retire_idle_metrics(&mut self) {
+        let bound = self
+            .limits
+            .item_capacity
+            .saturating_add(self.limits.worker_count);
+        let inner = &mut self.inner;
+        while inner.metrics.len() > bound {
+            let Some(idle) = inner
+                .metrics
+                .iter()
+                .filter(|(peer_key, _)| {
+                    !inner.queues.contains_key(*peer_key)
+                        && !inner.active.contains_key(*peer_key)
+                        && !inner.peer_cooldowns.contains_key(*peer_key)
+                })
+                .min_by_key(|(_, metrics)| metrics.last_activity_seq)
+                .map(|(peer_key, _)| peer_key.clone())
+            else {
+                return;
+            };
+            inner.metrics.remove(&idle);
+        }
+    }
+
+    /// Only a failed probe of the peer's current unreachable spell demotes its
+    /// queue: the failures of the round that started the spell do not.
+    fn park_peer_unreachable(
+        &mut self,
+        peer_key: String,
+        probe_of: Option<u64>,
+    ) -> Vec<PushJobSpec> {
+        let failed_probe = probe_of.is_some()
+            && self
+                .inner
+                .peer_cooldowns
+                .get(&peer_key)
+                .and_then(|cooldown| cooldown.unreachable)
+                == probe_of;
+        self.park_peer(peer_key.clone(), None, true);
+        if failed_probe {
+            self.take_queued_for_peer(&peer_key)
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn peer_answered(&mut self, peer_key: &str) {
+        if self
+            .inner
+            .peer_cooldowns
+            .get(peer_key)
+            .is_some_and(|cooldown| cooldown.unreachable.is_some())
+        {
+            self.inner.peer_cooldowns.remove(peer_key);
+        }
+    }
+
+    fn take_queued_for_peer(&mut self, peer_key: &str) -> Vec<PushJobSpec> {
+        let inner = &mut self.inner;
+        let Some(queue) = inner.queues.remove(peer_key) else {
+            return Vec::new();
+        };
+        inner.ready.retain(|ready_peer| ready_peer != peer_key);
+
+        let jobs: Vec<_> = queue.into_iter().collect();
+        for job in &jobs {
+            inner.queued_items -= 1;
+            inner.queued_bytes -= job.resident_bytes();
+            if inner
+                .latest
+                .get(job.key())
+                .is_some_and(|head| *head == job.live_head())
+            {
+                inner.latest.remove(job.key());
+            }
+        }
+        jobs
+    }
+
+    /// Pop the next eligible job, or return the earliest cooldown expiry among
+    /// peers that were skipped only because they are cooling down.
+    fn pop_eligible(
+        inner: &mut Inner,
+        per_peer_active_cap: usize,
+        now: Instant,
+    ) -> std::result::Result<PushJobSpec, Option<Instant>> {
+        let mut next_wake: Option<Instant> = None;
+        let unreachable_active: usize = inner
+            .active
+            .iter()
+            .filter(|(peer_key, _)| {
+                inner
+                    .peer_cooldowns
+                    .get(*peer_key)
+                    .is_some_and(|cooldown| cooldown.unreachable.is_some())
+            })
+            .map(|(_, count)| count)
+            .sum();
+        for _ in 0..inner.ready.len() {
+            let Some(peer_key) = inner.ready.pop_front() else {
+                break;
+            };
+            let at_cap = inner
+                .active
+                .get(&peer_key)
+                .is_some_and(|count| *count >= per_peer_active_cap);
+            if at_cap {
+                inner.ready.push_back(peer_key);
+                continue;
+            }
+            // A saturated receiver parks ALL of its work, not just the CID that
+            // was rejected (defradb#1112).
+            let mut probe_of = None;
+            if let Some(cooldown) = inner.peer_cooldowns.get(&peer_key) {
+                if cooldown.until > now {
+                    next_wake = Some(match next_wake {
+                        Some(wake_at) => wake_at.min(cooldown.until),
+                        None => cooldown.until,
+                    });
+                    inner.ready.push_back(peer_key);
+                    continue;
+                }
+                // Unreachable peers together stay within one peer's cap; a
+                // job_done wakes the waiters again.
+                if let Some(spell) = cooldown.unreachable {
+                    if unreachable_active >= per_peer_active_cap {
+                        inner.ready.push_back(peer_key);
+                        continue;
+                    }
+                    probe_of = Some(spell);
+                }
+            }
+            let queue = inner
+                .queues
+                .get_mut(&peer_key)
+                .expect("ready peer has a queue");
+            let mut job = queue.pop_front().expect("ready peer queue is non-empty");
+            job.probe_of = probe_of;
+            if queue.is_empty() {
+                inner.queues.remove(&peer_key);
+            } else {
+                inner.ready.push_back(peer_key.clone());
+            }
+            inner.queued_items -= 1;
+            inner.queued_bytes -= job.resident_bytes();
+            *inner.active.entry(peer_key).or_insert(0) += 1;
+            inner.active_jobs += 1;
+            return Ok(job);
+        }
+        Err(next_wake)
+    }
+
+    fn job_done(&mut self, request: JobDoneRequest) {
+        let JobDoneRequest {
+            peer_key,
+            job_key,
+            head,
+            collection_scope,
+            completion,
+            reply,
+        } = request;
+        let Some(count) = self.inner.active.get_mut(&peer_key) else {
+            tracing::debug!(
+                peer_id = %peer_key,
+                "job_done called without an active job; ignoring"
+            );
+            let _ = reply.send(false);
+            return;
+        };
+        *count -= 1;
+        if *count == 0 {
+            self.inner.active.remove(&peer_key);
+        }
+        self.inner.active_jobs = self.inner.active_jobs.saturating_sub(1);
+        if self
+            .inner
+            .latest
+            .get(&job_key)
+            .is_some_and(|live| *live == head)
+        {
+            self.inner.latest.remove(&job_key);
+        }
+        match completion {
+            JobCompletion::Succeeded => {
+                if self
+                    .inner
+                    .peer_cooldowns
+                    .get(&peer_key)
+                    .is_some_and(|cooldown| cooldown.until <= Instant::now())
+                {
+                    self.inner.peer_cooldowns.remove(&peer_key);
+                }
+                self.counters
+                    .completed_total
+                    .fetch_add(1, Ordering::Relaxed);
+                if collection_scope {
+                    self.counters
+                        .head_hints_acked_collection
+                        .fetch_add(1, Ordering::Relaxed);
+                } else {
+                    self.counters
+                        .head_hints_acked_document
+                        .fetch_add(1, Ordering::Relaxed);
+                }
+            }
+            JobCompletion::Failed => {
+                self.counters.failed_total.fetch_add(1, Ordering::Relaxed);
+            }
+            JobCompletion::Parked => {
+                self.counters.parked_total.fetch_add(1, Ordering::Relaxed);
+            }
+            JobCompletion::Retired => {}
+        }
+        let metrics = self.inner.metrics.entry(peer_key).or_default();
+        self.inner.metrics_sequence = self.inner.metrics_sequence.saturating_add(1);
+        metrics.last_activity_seq = self.inner.metrics_sequence;
+        match completion {
+            JobCompletion::Succeeded => {
+                metrics.last_success_ms = web_time::SystemTime::now()
+                    .duration_since(web_time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+            }
+            JobCompletion::Failed => metrics.failed = metrics.failed.saturating_add(1),
+            JobCompletion::Parked => metrics.parked = metrics.parked.saturating_add(1),
+            JobCompletion::Retired => {}
+        }
+        self.retire_idle_metrics();
+        let _ = reply.send(true);
+    }
+
+    fn close(&mut self) {
+        let inner = &mut self.inner;
+        inner.closed = true;
+        inner.queues.clear();
+        inner.ready.clear();
+        inner.latest.clear();
+        inner.queued_items = 0;
+        inner.queued_bytes = 0;
+    }
+
+    fn snapshot(&self) -> PushBacklogSnapshot {
+        let inner = &self.inner;
+        let now = Instant::now();
+        let mut peers: rapidhash::RapidHashSet<&String> = inner.queues.keys().collect();
+        peers.extend(inner.active.keys());
+        peers.extend(inner.peer_cooldowns.keys());
+        peers.extend(inner.metrics.keys());
+        let mut per_peer: Vec<PeerBacklogSnapshot> = peers
+            .into_iter()
+            .map(|peer| {
+                let queued = inner.queues.get(peer);
+                let cooldown = inner.peer_cooldowns.get(peer);
+                PeerBacklogSnapshot {
+                    peer_id: peer.clone(),
+                    queued_items: queued.map(|jobs| jobs.len()).unwrap_or(0),
+                    queued_bytes: queued
+                        .map(|jobs| jobs.iter().map(PushJobSpec::resident_bytes).sum())
+                        .unwrap_or(0),
+                    active_jobs: inner.active.get(peer).copied().unwrap_or(0),
+                    consecutive_failures: cooldown.map(|value| value.consecutive).unwrap_or(0),
+                    cooldown_remaining_ms: cooldown
+                        .map(|value| value.until.saturating_duration_since(now).as_millis() as u64)
+                        .unwrap_or(0),
+                    failed_total: inner
+                        .metrics
+                        .get(peer)
+                        .map(|metrics| metrics.failed)
+                        .unwrap_or(0),
+                    parked_total: inner
+                        .metrics
+                        .get(peer)
+                        .map(|metrics| metrics.parked)
+                        .unwrap_or(0),
+                    last_success_at_ms: inner
+                        .metrics
+                        .get(peer)
+                        .map(|metrics| metrics.last_success_ms)
+                        .unwrap_or(0),
+                }
+            })
+            .collect();
+        per_peer.sort_by(|a, b| a.peer_id.cmp(&b.peer_id));
+        self.counters.snapshot(
+            &self.limits,
+            QueueState {
+                queued_items: inner.queued_items,
+                queued_bytes: inner.queued_bytes,
+                active_jobs: inner.active_jobs,
+                peer_capacity_parks_total: inner.peer_capacity_parks_total,
+                per_peer,
+            },
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HeadHintFailureReason {
+    CapacityNack,
+    OtherNack,
+    Transport,
+    Local,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use multihash_codetable::{Code, MultihashDigest};
+
+    use super::*;
+
+    fn job(peer: &str, cid_seed: &[u8]) -> PushJobSpec {
+        PushJobSpec::new(
+            PeerId::new(peer.to_string()),
+            format!("doc-{}", hex::encode(cid_seed)),
+            "collection".to_string(),
+            "creator".to_string(),
+            Cid::new_v1(0x55, Code::Sha2_256.digest(cid_seed)),
+            Bytes::from_static(b"head-block"),
+        )
+    }
+
+    fn versioned_job(peer: &str, doc_id: &str, priority: u64) -> PushJobSpec {
+        use defra_core::{Block, CompositeDeltaPayload, CrdtDelta};
+
+        let block = Block::new_with_options(
+            CrdtDelta::Composite(CompositeDeltaPayload {
+                collection_version_id: "schema".to_string(),
+                priority,
+                status: 1,
+            }),
+            vec![],
+            vec![],
+            None,
+            None,
+        );
+        let head_block = Bytes::from(block.to_dag_cbor().unwrap());
+        PushJobSpec::new(
+            PeerId::new(peer.to_string()),
+            doc_id.to_string(),
+            "collection".to_string(),
+            "creator".to_string(),
+            defra_core::block::generate_cid_from_bytes(&head_block).unwrap(),
+            head_block,
+        )
+    }
+
+    async fn cooldown_remaining_ms(backlog: &PushBacklog, peer: &str) -> u64 {
+        backlog
+            .snapshot()
+            .await
+            .per_peer
+            .into_iter()
+            .find(|entry| entry.peer_id == peer)
+            .expect("parked peer is reported")
+            .cooldown_remaining_ms
+    }
+
+    #[test]
+    fn retry_after_parks_live_queue_without_blocking_other_peers() {
+        edge::testing::paused(|edge| async move {
+            let backlog = PushBacklog::new(100, usize::MAX, 1, 2, edge);
+            let peer = PeerId::new("limited".into());
+            backlog.park_peer_with_retry_after(&peer, Some(Duration::from_secs(45)));
+            backlog.try_enqueue(job("limited", b"a")).await;
+            backlog.try_enqueue(job("healthy", b"b")).await;
+            let healthy = backlog.next_job().await.unwrap();
+            assert_eq!(healthy.peer_id.as_str(), "healthy");
+            backlog.job_done(&healthy, JobCompletion::Succeeded).await;
+            nuclei::time::advance(Duration::from_secs(44)).await;
+            backlog.park_peer_with_retry_after(&peer, Some(Duration::from_millis(1)));
+            let remaining = cooldown_remaining_ms(&backlog, "limited").await;
+            assert!(
+                (4_000..6_000).contains(&remaining),
+                "a shorter hint cut the escalated park to {remaining}ms"
+            );
+            let waiting = crate::rt::spawn({
+                let backlog = backlog.clone();
+                async move { backlog.next_job().await }
+            });
+            crate::rt::yield_now().await;
+            assert!(!waiting.is_finished());
+            nuclei::time::advance(Duration::from_millis(remaining)).await;
+            assert_eq!(
+                waiting.join().await.unwrap().unwrap().peer_id.as_str(),
+                "limited"
+            );
+            backlog.close();
+        })
+    }
+
+    /// defradb#1112: a saturated receiver parks the WHOLE peer, not just the CID
+    /// that was rejected.
+    ///
+    /// The receiver's pending-DAG registry being full is a structural, peer-wide
+    /// condition — it cannot accept any new root until it drains. The per-CID
+    /// cooldown gave every other CID for that peer a fresh burst, which is why
+    /// bounding the receiver did not stop the storm.
+    #[nuclei::test(threads = 0)]
+    async fn peer_at_capacity_parks_every_cid_for_that_peer() {
+        let backlog = PushBacklog::new(64, 1 << 20, 2, 2, edge::testing::edge());
+        let peer = PeerId::new("peer".to_string());
+        let other = PeerId::new("other".to_string());
+
+        for (target, seed) in [("peer", b"a".as_slice()), ("peer", b"b"), ("other", b"c")] {
+            assert_eq!(
+                backlog.try_enqueue(job(target, seed)).await,
+                EnqueueOutcome::Enqueued
+            );
+        }
+        let _ = &other;
+
+        backlog.park_peer_at_capacity(&peer);
+
+        // The parked peer yields nothing — including CIDs that never failed.
+        // Only the healthy peer drains.
+        let drained = backlog.next_job().await.expect("healthy peer must drain");
+        assert_eq!(drained.peer_id.to_string(), "other");
+
+        let parked = crate::rt::time::timeout(Duration::from_millis(150), backlog.next_job()).await;
+        assert!(
+            parked.is_err(),
+            "a saturated peer must not hand out more work while parked"
+        );
+
+        let snapshot = backlog.snapshot().await;
+        assert_eq!(snapshot.peer_capacity_parks_total, 1);
+    }
+
+    /// The park escalates while the peer keeps rejecting, so a receiver that
+    /// stays full is backed off further rather than re-probed at a fixed rate.
+    #[nuclei::test(threads = 0)]
+    async fn repeated_capacity_parks_escalate() {
+        let backlog = PushBacklog::new(64, 1 << 20, 2, 2, edge::testing::edge());
+        let peer = PeerId::new("peer".to_string());
+        assert_eq!(
+            backlog.try_enqueue(job("peer", b"a")).await,
+            EnqueueOutcome::Enqueued
+        );
+
+        backlog.park_peer_at_capacity(&peer);
+        let first = cooldown_remaining_ms(&backlog, "peer").await;
+        backlog.park_peer_at_capacity(&peer);
+        let second = cooldown_remaining_ms(&backlog, "peer").await;
+
+        assert!(
+            second > first,
+            "a peer that stays saturated must be backed off further"
+        );
+        assert_eq!(backlog.snapshot().await.peer_capacity_parks_total, 2);
+    }
+
+    /// Audit F26: a capacity park outlives its cooldown, so a peer nacked again
+    /// after the park ran out is backed off further, and a receiver's shorter
+    /// `retry_after` hint does not cut that escalation. A success after the park
+    /// ran out ends it.
+    #[test]
+    fn capacity_park_escalates_across_pops_until_a_success() {
+        edge::testing::paused(|edge| async move {
+            let backlog = PushBacklog::new(64, usize::MAX, 1, 2, edge.clone());
+            let peer = PeerId::new("peer".to_string());
+            for seed in [b"1", b"2"] {
+                assert_eq!(
+                    backlog.try_enqueue(job("peer", seed)).await,
+                    EnqueueOutcome::Enqueued
+                );
+            }
+
+            backlog.park_peer_at_capacity(&peer);
+            let first = cooldown_remaining_ms(&backlog, "peer").await;
+            nuclei::time::advance(Duration::from_millis(first)).await;
+            let nacked = backlog.next_job().await.unwrap();
+            backlog.park_peer_with_retry_after(&peer, Some(Duration::from_millis(1)));
+            backlog.job_done(&nacked, JobCompletion::Failed).await;
+            let escalated = cooldown_remaining_ms(&backlog, "peer").await;
+            assert!(
+                (4_000..6_000).contains(&escalated),
+                "a nack after the park ran out got {escalated}ms, the first park was {first}ms"
+            );
+
+            nuclei::time::advance(Duration::from_millis(escalated)).await;
+            let acked = backlog.next_job().await.unwrap();
+            backlog.job_done(&acked, JobCompletion::Succeeded).await;
+            backlog.park_peer_at_capacity(&peer);
+            assert_eq!(cooldown_remaining_ms(&backlog, "peer").await, first);
+            backlog.close();
+        })
+    }
+
+    /// Parking state outlives the park, so it is bounded: past `item_capacity +
+    /// worker_count` peers, a peer with nothing queued or running gives its
+    /// entry up first, and a peer with queued work keeps it.
+    #[test]
+    fn idle_parking_state_is_retired_past_the_bound() {
+        edge::testing::paused(|edge| async move {
+            let backlog = PushBacklog::new(2, usize::MAX, 1, 2, edge.clone());
+            assert_eq!(
+                backlog.try_enqueue(job("busy", b"1")).await,
+                EnqueueOutcome::Enqueued
+            );
+            backlog.park_peer_at_capacity(&PeerId::new("busy".to_string()));
+            for departed in 0..8 {
+                let departed = job(&format!("departed-{departed}"), b"0");
+                assert!(backlog.park_peer_unreachable(&departed).await.is_empty());
+                nuclei::time::advance(Duration::from_secs(4)).await;
+            }
+
+            let parked: Vec<_> = backlog
+                .snapshot()
+                .await
+                .per_peer
+                .into_iter()
+                .filter(|peer| peer.consecutive_failures > 0)
+                .map(|peer| peer.peer_id)
+                .collect();
+            assert_eq!(parked, ["busy", "departed-5", "departed-6", "departed-7"]);
+            backlog.close();
+        })
+    }
+
+    async fn drain_eligible(backlog: &PushBacklog) -> Vec<String> {
+        let mut peers = Vec::new();
+        while let Ok(Some(job)) =
+            crate::rt::time::timeout(Duration::from_millis(10), backlog.next_job()).await
+        {
+            peers.push(job.peer_id.to_string());
+        }
+        peers.sort();
+        peers
+    }
+
+    /// Audit F24: once their cooldowns elapse, unreachable peers together stay
+    /// within one peer's cap, so the rest of the pool serves reachable peers,
+    /// and a reply takes a peer out of the shared cap.
+    #[test]
+    fn unreachable_peers_share_one_peer_cap() {
+        edge::testing::paused(|edge| async move {
+            let backlog = PushBacklog::new(64, usize::MAX, 2, 4, edge.clone());
+            for peer in ["dead-a", "dead-b", "dead-c", "healthy"] {
+                for seed in [b"1", b"2"] {
+                    assert_eq!(
+                        backlog.try_enqueue(job(peer, seed)).await,
+                        EnqueueOutcome::Enqueued
+                    );
+                }
+            }
+            for peer in ["dead-a", "dead-b", "dead-c"] {
+                assert!(backlog
+                    .park_peer_unreachable(&job(peer, b"0"))
+                    .await
+                    .is_empty());
+            }
+            let cooling = backlog
+                .snapshot()
+                .await
+                .per_peer
+                .iter()
+                .filter(|peer| peer.cooldown_remaining_ms > 0)
+                .count();
+            assert_eq!(cooling, 3);
+            nuclei::time::advance(Duration::from_secs(60)).await;
+
+            assert_eq!(
+                drain_eligible(&backlog).await,
+                ["dead-a", "dead-b", "healthy", "healthy"]
+            );
+            assert_eq!(backlog.snapshot().await.peer_capacity_parks_total, 0);
+
+            let dead_a = PeerId::new("dead-a".to_string());
+            backlog.record_peer_answered(&dead_a);
+            backlog
+                .job_done(&job("dead-a", b"1"), JobCompletion::Succeeded)
+                .await;
+            assert_eq!(drain_eligible(&backlog).await, ["dead-a", "dead-b"]);
+            backlog.close();
+        })
+    }
+
+    /// A failed round parks an unreachable peer and keeps its queue. A failed
+    /// probe of the same spell hands the queue to the ledger, and a probe of a
+    /// spell a reply has ended does not.
+    #[test]
+    fn only_a_failed_probe_demotes_an_unreachable_peer() {
+        edge::testing::paused(|edge| async move {
+            let backlog = PushBacklog::new(64, usize::MAX, 4, 8, edge.clone());
+            for seed in [b"1", b"2", b"3", b"4", b"5", b"6"] {
+                assert_eq!(
+                    backlog.try_enqueue(job("peer", seed)).await,
+                    EnqueueOutcome::Enqueued
+                );
+            }
+            let first = backlog.next_job().await.unwrap();
+            assert!(backlog.park_peer_unreachable(&first).await.is_empty());
+            backlog.job_done(&first, JobCompletion::Failed).await;
+            nuclei::time::advance(Duration::from_secs(60)).await;
+
+            let answered = backlog.next_job().await.unwrap();
+            let stale_probe = backlog.next_job().await.unwrap();
+            backlog.record_peer_answered(&answered.peer_id);
+            backlog.job_done(&answered, JobCompletion::Succeeded).await;
+            let reachable = backlog.next_job().await.unwrap();
+            assert!(backlog.park_peer_unreachable(&reachable).await.is_empty());
+            backlog.job_done(&reachable, JobCompletion::Failed).await;
+            assert!(backlog.park_peer_unreachable(&stale_probe).await.is_empty());
+            backlog.job_done(&stale_probe, JobCompletion::Failed).await;
+            nuclei::time::advance(Duration::from_secs(60)).await;
+
+            let probe = backlog.next_job().await.unwrap();
+            let demoted: Vec<_> = backlog
+                .park_peer_unreachable(&probe)
+                .await
+                .into_iter()
+                .map(|job| job.doc_id)
+                .collect();
+            assert_eq!(demoted, [job("peer", b"6").doc_id]);
+            backlog.job_done(&probe, JobCompletion::Failed).await;
+            assert_eq!(backlog.snapshot().await.queued_items, 0);
+            backlog.close();
+        })
+    }
+
+    #[nuclei::test(threads = 0)]
+    async fn enqueue_respects_item_capacity() {
+        let backlog = PushBacklog::new(2, usize::MAX, 4, 4, edge::testing::edge());
+        assert_eq!(
+            backlog.try_enqueue(job("a", b"1")).await,
+            EnqueueOutcome::Enqueued
+        );
+        assert_eq!(
+            backlog.try_enqueue(job("b", b"2")).await,
+            EnqueueOutcome::Enqueued
+        );
+        assert_eq!(
+            backlog.try_enqueue(job("c", b"3")).await,
+            EnqueueOutcome::RejectedItems
+        );
+
+        let snap = backlog.snapshot().await;
+        assert_eq!(snap.queued_items, 2);
+        assert_eq!(snap.enqueued_total, 2);
+        assert_eq!(snap.rejected_items_total, 1);
+    }
+
+    #[nuclei::test(threads = 0)]
+    async fn enqueue_respects_byte_capacity() {
+        let cost = job("a", b"1").resident_bytes();
+        let backlog = PushBacklog::new(1024, cost + cost / 2, 4, 4, edge::testing::edge());
+        assert_eq!(
+            backlog.try_enqueue(job("a", b"1")).await,
+            EnqueueOutcome::Enqueued
+        );
+        assert_eq!(
+            backlog.try_enqueue(job("a", b"2")).await,
+            EnqueueOutcome::RejectedBytes
+        );
+
+        let snap = backlog.snapshot().await;
+        assert_eq!(snap.queued_items, 1);
+        assert_eq!(snap.rejected_bytes_total, 1);
+        assert!(snap.queued_bytes <= snap.queue_byte_capacity);
+    }
+
+    #[nuclei::test(threads = 0)]
+    async fn oversized_job_admitted_only_when_queue_is_empty() {
+        let backlog = PushBacklog::new(1024, 1, 4, 4, edge::testing::edge());
+        assert_eq!(
+            backlog.try_enqueue(job("a", b"1")).await,
+            EnqueueOutcome::Enqueued
+        );
+        assert_eq!(
+            backlog.try_enqueue(job("a", b"2")).await,
+            EnqueueOutcome::RejectedBytes
+        );
+    }
+
+    #[nuclei::test(threads = 0)]
+    async fn coalesce_retires_older_head_for_same_document_peer() {
+        let backlog = PushBacklog::new(1024, usize::MAX, 4, 4, edge::testing::edge());
+        let old = versioned_job("a", "doc", 1);
+        assert_eq!(
+            backlog.try_enqueue(old.clone()).await,
+            EnqueueOutcome::Enqueued
+        );
+
+        let duplicate = old;
+        assert_eq!(
+            backlog.try_enqueue(duplicate).await,
+            EnqueueOutcome::Coalesced
+        );
+        let newest = versioned_job("a", "doc", 2);
+        assert_eq!(
+            backlog.try_enqueue(newest.clone()).await,
+            EnqueueOutcome::Enqueued
+        );
+        assert_eq!(
+            backlog.try_enqueue(versioned_job("a", "doc", 1)).await,
+            EnqueueOutcome::RetiredStale
+        );
+        assert_eq!(
+            backlog.try_enqueue(versioned_job("b", "doc", 1)).await,
+            EnqueueOutcome::Enqueued
+        );
+
+        let snap = backlog.snapshot().await;
+        assert_eq!(snap.queued_items, 2);
+        assert_eq!(snap.coalesced_total, 1);
+        assert_eq!(snap.stale_head_retirements_total, 2);
+        let popped = backlog.next_job().await.unwrap();
+        if popped.peer_id.to_string() == "a" {
+            assert_eq!(popped.root_cid, newest.root_cid);
+        }
+    }
+
+    #[nuclei::test(threads = 0)]
+    async fn undecodable_head_cannot_be_retired_by_document_version_order() {
+        let backlog = PushBacklog::new(1024, usize::MAX, 2, 2, edge::testing::edge());
+        assert_eq!(
+            backlog.try_enqueue(versioned_job("a", "doc", 100)).await,
+            EnqueueOutcome::Enqueued
+        );
+        let undecodable = PushJobSpec::new(
+            PeerId::new("a".to_string()),
+            "doc".to_string(),
+            "collection".to_string(),
+            "creator".to_string(),
+            Cid::new_v1(0x55, Code::Sha2_256.digest(b"undecodable")),
+            Bytes::from_static(b"not dag-cbor"),
+        );
+        assert_eq!(
+            backlog.try_enqueue(undecodable).await,
+            EnqueueOutcome::Enqueued
+        );
+        assert_eq!(backlog.snapshot().await.queued_items, 2);
+    }
+
+    #[nuclei::test(threads = 0)]
+    async fn collection_commit_does_not_compete_with_its_document_head() {
+        let backlog = PushBacklog::new(1024, usize::MAX, 4, 4, edge::testing::edge());
+        let document = versioned_job("a", "doc", 2);
+        let mut collection = versioned_job("a", "doc", 1);
+        collection.doc_id.clear();
+        // Reconstruct after changing the semantic ID so the cached key is
+        // CID-scoped exactly as the transactional broadcaster supplies it.
+        collection = PushJobSpec::new(
+            collection.peer_id,
+            collection.doc_id,
+            collection.collection_id,
+            collection.creator,
+            collection.root_cid,
+            collection.head_block,
+        );
+
+        assert_eq!(
+            backlog.try_enqueue(document).await,
+            EnqueueOutcome::Enqueued
+        );
+        assert_eq!(
+            backlog.try_enqueue(collection).await,
+            EnqueueOutcome::Enqueued
+        );
+        assert_eq!(backlog.snapshot().await.queued_items, 2);
+
+        assert!(backlog.next_job().await.is_some());
+        assert!(backlog.next_job().await.is_some());
+    }
+
+    #[nuclei::test(threads = 0)]
+    async fn next_job_round_robins_across_peers() {
+        let backlog = PushBacklog::new(1024, usize::MAX, 4, 4, edge::testing::edge());
+        backlog.try_enqueue(job("a", b"1")).await;
+        backlog.try_enqueue(job("a", b"2")).await;
+        backlog.try_enqueue(job("b", b"3")).await;
+
+        let first = backlog.next_job().await.unwrap();
+        let second = backlog.next_job().await.unwrap();
+        let third = backlog.next_job().await.unwrap();
+        assert_eq!(first.peer_id.to_string(), "a");
+        assert_eq!(second.peer_id.to_string(), "b");
+        assert_eq!(third.peer_id.to_string(), "a");
+    }
+
+    #[nuclei::test(threads = 0)]
+    async fn per_peer_active_cap_holds_back_saturated_peer() {
+        let backlog = PushBacklog::new(1024, usize::MAX, 1, 4, edge::testing::edge());
+        backlog.try_enqueue(job("slow", b"1")).await;
+        backlog.try_enqueue(job("slow", b"2")).await;
+        backlog.try_enqueue(job("healthy", b"3")).await;
+
+        let slow_job = backlog.next_job().await.unwrap();
+        assert_eq!(slow_job.peer_id.to_string(), "slow");
+
+        // "slow" is at its cap: the next eligible job is the healthy peer's.
+        let healthy_job = backlog.next_job().await.unwrap();
+        assert_eq!(healthy_job.peer_id.to_string(), "healthy");
+
+        // Nothing else is eligible until a slow slot frees.
+        let parked = crate::rt::time::timeout(Duration::from_millis(50), backlog.next_job()).await;
+        assert!(parked.is_err(), "slow peer above cap must not be served");
+
+        backlog.job_done(&slow_job, JobCompletion::Succeeded).await;
+        let released = crate::rt::time::timeout(Duration::from_millis(200), backlog.next_job())
+            .await
+            .expect("released slot must unblock the queued job")
+            .unwrap();
+        assert_eq!(released.peer_id.to_string(), "slow");
+    }
+
+    #[nuclei::test(threads = 0)]
+    async fn close_wakes_workers_and_rejects_enqueue() {
+        let backlog = PushBacklog::new(1024, usize::MAX, 4, 4, edge::testing::edge());
+        let waiter = {
+            let backlog = Arc::clone(&backlog);
+            crate::rt::spawn(async move { backlog.next_job().await })
+        };
+        crate::rt::time::sleep(Duration::from_millis(20)).await;
+        backlog.close();
+
+        let parked_result = crate::rt::time::timeout(Duration::from_millis(200), waiter.join())
+            .await
+            .expect("close must wake parked workers")
+            .unwrap();
+        assert!(parked_result.is_none());
+        assert_eq!(
+            backlog.try_enqueue(job("a", b"1")).await,
+            EnqueueOutcome::Closed
+        );
+        assert_eq!(backlog.snapshot().await.queued_items, 0);
+    }
+
+    #[nuclei::test(threads = 0)]
+    async fn snapshot_tracks_active_and_completion_counters() {
+        let backlog = PushBacklog::new(1024, usize::MAX, 4, 4, edge::testing::edge());
+        backlog.try_enqueue(job("a", b"1")).await;
+        backlog.try_enqueue(job("b", b"2")).await;
+
+        let first = backlog.next_job().await.unwrap();
+        assert_eq!(backlog.snapshot().await.active_jobs, 1);
+        backlog.job_done(&first, JobCompletion::Succeeded).await;
+
+        let second = backlog.next_job().await.unwrap();
+        backlog.job_done(&second, JobCompletion::Failed).await;
+
+        let snap = backlog.snapshot().await;
+        assert_eq!(snap.active_jobs, 0);
+        assert_eq!(snap.completed_total, 1);
+        assert_eq!(snap.failed_total, 1);
+        assert_eq!(snap.queued_items, 0);
+        assert_eq!(snap.queued_bytes, 0);
+    }
+
+    /// Amy canary req 1 (source-inc/gents#630): one peer's backlog must not squat
+    /// the whole global item budget.
+    #[nuclei::test(threads = 0)]
+    async fn one_peer_cannot_fill_the_whole_queue() {
+        let backlog = PushBacklog::new(8, usize::MAX, 4, 4, edge::testing::edge());
+        let mut dead_enqueued = 0;
+        for index in 0..8u8 {
+            if backlog.try_enqueue(job("dead", &[index])).await == EnqueueOutcome::Enqueued {
+                dead_enqueued += 1;
+            }
+        }
+        assert_eq!(dead_enqueued, 2, "peer quota is a quarter of the item cap");
+        assert_eq!(
+            backlog.try_enqueue(job("healthy", b"h1")).await,
+            EnqueueOutcome::Enqueued,
+            "healthy peer must still be admitted"
+        );
+    }
+
+    /// A `job_done` with no matching active job (caller bug) must not desync
+    /// the accounting.
+    #[nuclei::test(threads = 0)]
+    #[cfg_attr(
+        debug_assertions,
+        should_panic(expected = "job_done without an active job")
+    )]
+    async fn spurious_job_done_is_ignored() {
+        let backlog = PushBacklog::new(1024, usize::MAX, 4, 4, edge::testing::edge());
+        backlog.try_enqueue(job("a", b"1")).await;
+        let popped = backlog.next_job().await.unwrap();
+        backlog.job_done(&popped, JobCompletion::Succeeded).await;
+        assert_eq!(backlog.snapshot().await.active_jobs, 0);
+
+        backlog.job_done(&popped, JobCompletion::Failed).await;
+        let snap = backlog.snapshot().await;
+        assert_eq!(snap.active_jobs, 0);
+        assert_eq!(
+            snap.failed_total, 0,
+            "spurious call must not count a failure"
+        );
+        assert!(!snap.per_peer.iter().any(|entry| entry.peer_id == "a"));
+    }
+
+    #[nuclei::test(threads = 0)]
+    async fn snapshot_reports_per_peer_backlog_occupancy() {
+        let backlog = PushBacklog::new(1024, usize::MAX, 4, 4, edge::testing::edge());
+        backlog.try_enqueue(job("a", b"1")).await;
+        backlog.try_enqueue(job("a", b"2")).await;
+        backlog.try_enqueue(job("b", b"3")).await;
+        let active = backlog.next_job().await.unwrap();
+
+        let snap = backlog.snapshot().await;
+        let a = snap
+            .per_peer
+            .iter()
+            .find(|entry| entry.peer_id == "a")
+            .expect("peer a present");
+        assert_eq!(a.queued_items + a.active_jobs, 2);
+        assert!(a.queued_bytes > 0);
+        let b = snap
+            .per_peer
+            .iter()
+            .find(|entry| entry.peer_id == "b")
+            .expect("peer b present");
+        assert_eq!(b.queued_items, 1);
+        backlog.job_done(&active, JobCompletion::Succeeded).await;
+    }
+
+    /// Idle peer accounting is bounded like queue and cooldown state; a
+    /// long-running node cannot retain an unbounded map of every peer seen.
+    #[nuclei::test(threads = 0)]
+    async fn idle_peer_metrics_are_bounded() {
+        let backlog = PushBacklog::new(1, usize::MAX, 1, 1, edge::testing::edge());
+        for peer in ["a", "b", "c"] {
+            backlog.try_enqueue(job(peer, peer.as_bytes())).await;
+            let active = backlog.next_job().await.unwrap();
+            backlog.job_done(&active, JobCompletion::Succeeded).await;
+        }
+
+        let snapshot = backlog.snapshot().await;
+        assert!(snapshot.per_peer.len() <= 2);
+        assert!(snapshot.per_peer.iter().any(|entry| entry.peer_id == "c"));
+    }
+
+    #[nuclei::test(threads = 0)]
+    async fn caps_are_normalized_to_sane_minimums() {
+        let backlog = PushBacklog::new(0, 0, 0, 0, edge::testing::edge());
+        let snap = backlog.snapshot().await;
+        assert_eq!(snap.queue_item_capacity, 1);
+        assert_eq!(snap.queue_byte_capacity, 1);
+        assert_eq!(snap.per_peer_active_cap, 1);
+        assert_eq!(snap.worker_count, 1);
+    }
+}

@@ -54,6 +54,8 @@ pub(super) async fn check(fixture: &Fixture, scenario: Scenario, successes: &[(u
                     &format!("{id}.{field}"),
                 );
             }
+        } else if matches!(scenario, Scenario::Counters | Scenario::CounterIndex) {
+            assert_eq!(doc["count"].as_u64().unwrap(), updates.len() as u64);
         } else {
             assert_eq!(doc["count"].as_u64().unwrap(), updates.len() as u64);
             assert_last_write(
@@ -62,6 +64,48 @@ pub(super) async fn check(fixture: &Fixture, scenario: Scenario, successes: &[(u
                 &format!("seed-{index}"),
                 &format!("{id}.label"),
             );
+        }
+    }
+    if matches!(scenario, Scenario::CounterIndex) {
+        fixture.db.drain_deferred_indexes().await.unwrap();
+        let fetcher = db::LensedAutoCommitFetcher::new(fixture.db.clone());
+        let scan = |scan_type| IndexScanParams {
+            index_name: "by_count".into(),
+            scan_type,
+            limit: None,
+            offset: 0,
+            value_filter: None,
+            cursor_seek: None,
+        };
+        let all = fetcher
+            .get_by_index_scan(
+                COLLECTION,
+                &scan(IndexScanType::PrefixScan {
+                    prefix_values: Vec::new(),
+                    reverse: false,
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            all.raw_fetches(),
+            docs.len() as u64,
+            "one count entry per document"
+        );
+        for doc in docs {
+            let count = doc["count"].as_i64().unwrap();
+            let exact = fetcher
+                .get_by_index_scan(
+                    COLLECTION,
+                    &scan(IndexScanType::ExactMatch {
+                        values: vec![NormalValue::Int(count)],
+                    }),
+                )
+                .await
+                .unwrap();
+            assert!(exact
+                .doc_ids()
+                .contains(&doc["_docID"].as_str().unwrap().to_owned()));
         }
     }
     if matches!(scenario, Scenario::CountersIndexes) {

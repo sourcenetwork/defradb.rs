@@ -21,6 +21,10 @@ pub struct AddCollection {
     pub expected_results: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_error: Option<String>,
+    /// Index every field once the SDL's captures are resolved, for the
+    /// secondary-index multiplier.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub index_every_field: bool,
     #[serde(flatten)]
     pub common: Common,
 }
@@ -40,6 +44,13 @@ impl Op for AddCollection {
 
     fn expected_error(&self) -> Option<&str> {
         self.expected_error.as_deref()
+    }
+
+    fn resolved(self) -> Self {
+        match self.index_every_field {
+            true => crate::multiplier::secondary_index::with_indexes(&self),
+            false => self,
+        }
     }
 
     fn run(&self, state: &State) -> Result<Value, Failure> {

@@ -1,12 +1,14 @@
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Output, Stdio};
+
+use integration_test::cli_command;
 
 fn defra_binary() -> PathBuf {
     integration_test::rust_binary()
 }
 
 fn defra_keyring(binary: &Path, keyring_dir: &Path, args: &[&str]) -> Output {
-    Command::new(binary)
+    cli_command(binary)
         .arg("--keyring-backend")
         .arg("file")
         .arg("--keyring-path")
@@ -51,7 +53,7 @@ fn rust_add_and_get_require_development_mode() {
     let out = defra_keyring(&binary, kr, &["add", "dev-key", hex_key]);
     assert_requires_development(&out);
 
-    let out = Command::new(&binary)
+    let out = cli_command(&binary)
         .arg("--development")
         .arg("--keyring-backend")
         .arg("file")

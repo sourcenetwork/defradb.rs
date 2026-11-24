@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 // Counts testo scenario outcomes per area for one client, and checks the
-// known-failure lists.
+// known-failure lists and the go-http deliberate divergences.
 //
-//     bun testo-report.ts shard <junit.xml> <list.json> <client> <shard>/<shards> <known-failures.txt> <out.json>
-//     bun testo-report.ts summary <dir of shard json files> <known-failures dir>
+//     bun testo-report.ts shard <junit.xml> <list.json> <client> <shard>/<shards> <known-failures.txt> <out.json> [<divergences.txt>]
+//     bun testo-report.ts summary <dir of shard json files> <known-failures dir> [<divergences.txt>]
 //
 // `<list.json>` is `cargo nextest list --message-format json` for the shard's
 // selection: the tests it was meant to run, which JUnit alone cannot say,
@@ -17,18 +17,34 @@
 // `#` is a comment. A shard fails when a test fails that is not listed, when a
 // listed test passes ("fixed: remove from the list"), so a list only shrinks,
 // or when a listed test it selected left no result. `summary` fails on a line
-// without an issue or whose issue is closed, on a listed test no shard selected
-// (renamed, removed or filtered out: "missing"), and on a client with a shard
-// that never reported; it compares each list's size with the base branch's
-// copy, and warns on every entry the pull request adds.
+// without an issue or whose issue is closed, on a test a shard reported as an
+// unexpected failure or as selected but left no result, on a listed test no
+// shard selected (renamed, removed or filtered out: "missing"), and on a
+// client with a shard that never reported, and on a listed test that passed
+// ("fixed"), so the change that fixes a test removes its entry before it
+// merges (#3207). It compares each list's size with the base branch's copy
+// and warns on every entry the pull request adds.
+//
+// The deliberate divergences list names go-http tests that fail because
+// defradb.rs deliberately differs from Go. It applies to the go-http client
+// only. Each entry is `<binary> <test>`, with a `#` comment above it saying why, and
+// needs no issue. A listed failure counts as `divergent`; otherwise it is
+// checked like a known failure: a listed test that passes ("converged: remove
+// from the list") fails its shard and `summary`, a listed test a shard
+// selected but left no result for, or that no shard selected, fails, and every
+// entry the pull request adds is warned on. A test listed both here and in
+// go-http's known-failures list fails `summary`.
 
 import { appendFileSync, existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const UNSUPPORTED = /unsupported op: ([^\n\r]*)/;
 const ENTRY = /^(\S+)\s+(\S+)\s+#(\d+)\s*$/;
+const DIVERGENCE = /^(\S+)\s+(\S+)(?:\s+.*)?$/;
 const CLIENTS = ["in-process", "rust-http", "go-http", "cli", "legacy"];
-const COLUMNS = ["pass", "fail", "known", "unsupported"];
+/// The one client the deliberate divergences list applies to.
+const DIVERGENT_CLIENT = "go-http";
+const COLUMNS = ["pass", "fail", "known", "divergent", "unsupported"];
 
 type Counts = Record<string, number>;
 type Known = Map<string, number>;
@@ -40,9 +56,13 @@ interface Report {
   unsupported_ops: Counts;
   unexpected: string[];
   fixed: string[];
+  /// Deliberate divergences that passed.
+  converged?: string[];
   missing: string[];
   /// The listed tests this shard selected, so `summary` can find the ones no shard did.
   selected_known: string[];
+  /// The deliberate divergences this shard selected.
+  selected_divergent?: string[];
 }
 
 /// The `<binary> <test>` ids a `cargo nextest list --message-format json`
@@ -87,6 +107,25 @@ function readKnown(path: string) {
   return parseKnown(existsSync(path) ? readFileSync(path, "utf8") : "", path);
 }
 
+function parseDivergences(text: string, source: string): { divergent: Set<string>; bad: string[] } {
+  const divergent = new Set<string>();
+  const bad: string[] = [];
+  text.split("\n").forEach((raw, index) => {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) return;
+    const match = DIVERGENCE.exec(line);
+    if (match) divergent.add(key(match[1], match[2]));
+    else bad.push(`${source}:${index + 1}: expected \`<binary> <test> [reason]\`, got \`${line}\``);
+  });
+  return { divergent, bad };
+}
+
+/// The deliberate divergences `client` is held to: the list for go-http, none for any other client.
+function readDivergences(path: string | undefined, client: string) {
+  if (!path || client !== DIVERGENT_CLIENT) return { divergent: new Set<string>(), bad: [] as string[] };
+  return parseDivergences(existsSync(path) ? readFileSync(path, "utf8") : "", path);
+}
+
 function unescapeXml(text: string): string {
   return text
     .replace(/&lt;/g, "<")
@@ -127,16 +166,28 @@ const bump = (counts: Counts, name: string, by = 1) => {
   counts[name] = (counts[name] ?? 0) + by;
 };
 
+function totals(binaries: Record<string, Counts>): Counts {
+  const total: Counts = {};
+  for (const row of Object.values(binaries)) for (const [name, count] of Object.entries(row)) bump(total, name, count);
+  return total;
+}
+
 function writeTable(binaries: Record<string, Counts>) {
   write(`| area | ${COLUMNS.join(" | ")} |\n`);
   write(`|---|${"---:|".repeat(COLUMNS.length)}\n`);
-  const total: Counts = {};
   for (const binary of Object.keys(binaries).sort()) {
     const row = binaries[binary];
-    for (const [name, count] of Object.entries(row)) bump(total, name, count);
     write(`| ${binary} | ${COLUMNS.map((c) => row[c] ?? 0).join(" | ")} |\n`);
   }
+  const total = totals(binaries);
   write(`| **total** | ${COLUMNS.map((c) => `**${total[c] ?? 0}**`).join(" | ")} |\n`);
+}
+
+/// A collapsed section; GitHub needs the blank line after `<summary>` to render the markdown inside.
+function writeDetails(title: string, open: boolean, body: () => void) {
+  write(`<details${open ? " open" : ""}><summary>${title}</summary>\n\n`);
+  body();
+  write("\n</details>\n\n");
 }
 
 function shard(
@@ -146,8 +197,11 @@ function shard(
   part: string,
   knownPath: string,
   out: string,
+  divergencesPath?: string,
 ): number {
-  const { known, bad } = readKnown(knownPath);
+  const { known, bad: badKnown } = readKnown(knownPath);
+  const { divergent, bad: badDivergent } = readDivergences(divergencesPath, client);
+  const bad = [...badKnown, ...badDivergent];
   for (const line of bad) console.log(`::error::${line}`);
   const [shardIndex, shards] = part.split("/").map(Number);
   const selected = selectedTests(readFileSync(list, "utf8"));
@@ -155,29 +209,41 @@ function shard(
   const ops: Counts = {};
   const unexpected: string[] = [];
   const fixed: string[] = [];
+  const converged: string[] = [];
   const reported = new Set<string>();
   let knownSeen = 0;
+  let divergentSeen = 0;
   for (const testCase of testCases(readFileSync(junit, "utf8"))) {
     const binary = testCase.classname.split("::").at(-1) ?? "";
     const id = key(binary, testCase.name);
     reported.add(id);
     let [result, op] = outcome(testCase.body);
     const listed = known.has(id);
+    const diverges = divergent.has(id);
     if (op) bump(ops, op);
     if (result === "fail" && listed) {
       result = "known";
       knownSeen++;
+    } else if (result === "fail" && diverges) {
+      result = "divergent";
+      divergentSeen++;
     } else if (result === "fail") {
       unexpected.push(id);
     } else if (listed && result === "pass") {
       fixed.push(`${id} #${known.get(id)}`);
+    } else if (diverges && result === "pass") {
+      converged.push(id);
     }
     const area = `${binary === "testo" ? "" : `${binary} `}${testCase.name.split("::")[0]}`;
     binaries[area] ??= {};
     bump(binaries[area], result);
   }
   const selectedKnown = [...known.keys()].filter((id) => selected.has(id));
-  const missing = selectedKnown.filter((id) => !reported.has(id)).map((id) => `${id} #${known.get(id)}`);
+  const selectedDivergent = [...divergent].filter((id) => selected.has(id));
+  const missing = [
+    ...selectedKnown.filter((id) => !reported.has(id)).map((id) => `${id} #${known.get(id)}`),
+    ...selectedDivergent.filter((id) => !reported.has(id)),
+  ];
   const report: Report = {
     client,
     shard: shardIndex,
@@ -186,8 +252,10 @@ function shard(
     unsupported_ops: ops,
     unexpected,
     fixed,
+    converged,
     missing,
     selected_known: selectedKnown,
+    selected_divergent: selectedDivergent,
   };
   writeFileSync(out, JSON.stringify(report, null, 1));
   write(`### ${client}, shard ${part}\n\n`);
@@ -195,6 +263,7 @@ function shard(
   for (const [title, tests] of [
     ["Failing, not in the known-failures list", unexpected],
     ["fixed: remove from the list", fixed],
+    ["converged: remove from the deliberate divergences", converged],
     ["missing: listed and selected, but no result", missing],
   ] as const) {
     if (tests.length) {
@@ -205,12 +274,15 @@ function shard(
   flushSummary();
   for (const test of unexpected) console.log(`::error::${client}: ${test} failed and is not in ${knownPath}`);
   for (const test of fixed) console.log(`::error::${client}: ${test} passed. fixed: remove from the list ${knownPath}`);
+  for (const test of converged) {
+    console.log(`::error::${client}: ${test} passed. converged: remove from the list ${divergencesPath}`);
+  }
   for (const test of missing) console.log(`::error::${client}: ${test} was selected but left no result. missing`);
   console.log(
     `${client} ${part}: ${unexpected.length} unexpected failures, ${knownSeen} known, ` +
-      `${fixed.length} fixed, ${missing.length} missing`,
+      `${divergentSeen} divergent, ${fixed.length} fixed, ${converged.length} converged, ${missing.length} missing`,
   );
-  return unexpected.length || fixed.length || missing.length || bad.length ? 1 : 0;
+  return unexpected.length || fixed.length || converged.length || missing.length || bad.length ? 1 : 0;
 }
 
 function gh(...args: string[]) {
@@ -229,7 +301,8 @@ function issueState(issue: number): string {
   return states.get(issue)!;
 }
 
-function baseKnown(path: string): { known: Known; ref: string } {
+/// `path` on the base branch, or `null` when it cannot be read there.
+function baseFile(path: string): { text: string | null; ref: string } {
   const ref = process.env.GITHUB_BASE_REF || "main";
   const result = gh(
     "api",
@@ -237,7 +310,17 @@ function baseKnown(path: string): { known: Known; ref: string } {
     "Accept: application/vnd.github.raw",
     `repos/${repository()}/contents/${path}?ref=${ref}`,
   );
-  return { known: result.ok ? parseKnown(result.stdout, `${ref}:${path}`).known : new Map(), ref };
+  return { text: result.ok ? result.stdout : null, ref };
+}
+
+function baseKnown(path: string): { known: Known; ref: string } {
+  const { text, ref } = baseFile(path);
+  return { known: text === null ? new Map() : parseKnown(text, `${ref}:${path}`).known, ref };
+}
+
+function baseDivergences(path: string): Set<string> {
+  const { text, ref } = baseFile(path);
+  return text === null ? new Set() : parseDivergences(text, `${ref}:${path}`).divergent;
 }
 
 function pullRequest(): string {
@@ -245,11 +328,21 @@ function pullRequest(): string {
   return match ? `#${match[1]}` : process.env.GITHUB_REF_NAME ?? "this change";
 }
 
-function checkLists(knownDir: string): number {
+interface Lists {
+  errors: number;
+  /// Per client: entries in its list here and on the base branch.
+  sizes: Map<string, { entries: number; base: number }>;
+  /// Entries in the deliberate divergences list here and on the base branch, when one was given.
+  divergences: { entries: number; base: number } | null;
+  notes: string[];
+  ref: string;
+}
+
+function checkLists(knownDir: string, divergencesPath?: string): Lists {
   let errors = 0;
   const notes: string[] = [];
+  const sizes = new Map<string, { entries: number; base: number }>();
   let ref = "main";
-  write("## Known-failure lists\n\n| list | entries | base | change |\n|---|---:|---:|---:|\n");
   for (const client of CLIENTS) {
     const path = join(knownDir, `${client}.txt`);
     const { known, bad } = readKnown(path);
@@ -267,8 +360,7 @@ function checkLists(knownDir: string): number {
     }
     const base = baseKnown(path);
     ref = base.ref;
-    const change = known.size - base.known.size;
-    write(`| ${client} | ${known.size} | ${base.known.size} | ${change >= 0 ? "+" : ""}${change} |\n`);
+    sizes.set(client, { entries: known.size, base: base.known.size });
     for (const [id, issue] of entries) {
       if (!base.known.has(id)) {
         const note = `${pullRequest()} adds ${id} #${issue} to ${path}`;
@@ -277,12 +369,32 @@ function checkLists(knownDir: string): number {
       }
     }
   }
-  if (notes.length) {
-    write(`\n**Added against ${ref}** (${notes.length})\n\n`);
-    for (const note of notes.slice(0, 300)) write(`- ${note}\n`);
+  let divergences: Lists["divergences"] = null;
+  if (divergencesPath) {
+    const { divergent, bad } = readDivergences(divergencesPath, DIVERGENT_CLIENT);
+    for (const line of bad) {
+      console.log(`::error::${line}`);
+      errors++;
+    }
+    const goKnown = readKnown(join(knownDir, `${DIVERGENT_CLIENT}.txt`)).known;
+    const entries = [...divergent].sort();
+    for (const id of entries) {
+      if (goKnown.has(id)) {
+        console.log(`::error::${divergencesPath}: ${id} is also in ${DIVERGENT_CLIENT}'s known-failures list; keep one`);
+        errors++;
+      }
+    }
+    const base = baseDivergences(divergencesPath);
+    divergences = { entries: divergent.size, base: base.size };
+    for (const id of entries) {
+      if (!base.has(id)) {
+        const note = `${pullRequest()} adds ${id} to ${divergencesPath}`;
+        console.log(`::warning::${note}`);
+        notes.push(note);
+      }
+    }
   }
-  write("\n");
-  return errors;
+  return { errors, sizes, divergences, notes, ref };
 }
 
 function* jsonFiles(directory: string): Generator<string> {
@@ -299,6 +411,15 @@ interface Merged {
   shards: number;
   reported: Set<number>;
   selectedKnown: Set<string>;
+  selectedDivergent: Set<string>;
+  /// Failing tests no known-failures list names, as `<binary> <test>`.
+  unexpected: string[];
+  /// Listed tests a shard selected but got no result for, and listed tests
+  /// that passed, as `<binary> <test> #<issue>`.
+  missing: string[];
+  fixed: string[];
+  /// Deliberate divergences that passed, as `<binary> <test>`.
+  converged: string[];
 }
 
 /// Why a client's totals are partial, or `null` when every shard reported.
@@ -309,7 +430,7 @@ function incomplete(merged: Merged): string | null {
 
 /// Listed tests that no shard of a fully reported client selected: renamed,
 /// removed or filtered out, so the entry checks nothing.
-function checkMissing(clients: Map<string, Merged>, knownDir: string): number {
+function checkMissing(clients: Map<string, Merged>, knownDir: string, divergencesPath?: string): number {
   let errors = 0;
   for (const [client, merged] of clients) {
     if (incomplete(merged)) continue;
@@ -320,63 +441,123 @@ function checkMissing(clients: Map<string, Merged>, knownDir: string): number {
         errors++;
       }
     }
+    for (const id of readDivergences(divergencesPath, client).divergent) {
+      if (!merged.selectedDivergent.has(id)) {
+        console.log(`::error::${divergencesPath}: ${id} matches no selected test. missing: remove or rename it`);
+        errors++;
+      }
+    }
   }
   return errors;
 }
 
-function summary(directory: string, knownDir: string): number {
+function summary(directory: string, knownDir: string, divergencesPath?: string): number {
   const clients = new Map<string, Merged>();
   for (const path of jsonFiles(directory)) {
     const report = JSON.parse(readFileSync(path, "utf8")) as Report;
     if (typeof report !== "object" || Array.isArray(report) || !report.client) continue;
     if (!clients.has(report.client)) {
-      clients.set(report.client, { binaries: {}, ops: {}, shards: report.shards, reported: new Set(), selectedKnown: new Set() });
+      clients.set(report.client, {
+        binaries: {},
+        ops: {},
+        shards: report.shards,
+        reported: new Set(),
+        selectedKnown: new Set(),
+        selectedDivergent: new Set(),
+        unexpected: [],
+        missing: [],
+        fixed: [],
+        converged: [],
+      });
     }
     const merged = clients.get(report.client)!;
     merged.shards = Math.max(merged.shards, report.shards);
     merged.reported.add(report.shard);
     for (const id of report.selected_known) merged.selectedKnown.add(id);
+    for (const id of report.selected_divergent ?? []) merged.selectedDivergent.add(id);
+    merged.unexpected.push(...report.unexpected);
+    merged.missing.push(...report.missing);
+    merged.fixed.push(...report.fixed);
+    merged.converged.push(...(report.converged ?? []));
     for (const [binary, counts] of Object.entries(report.binaries)) {
       merged.binaries[binary] ??= {};
       for (const [name, count] of Object.entries(counts)) bump(merged.binaries[binary], name, count);
     }
     for (const [op, count] of Object.entries(report.unsupported_ops)) bump(merged.ops, op, count);
   }
-  let errors = checkLists(knownDir) + checkMissing(clients, knownDir);
-  write("## Outcomes per client\n\n");
+  const lists = checkLists(knownDir, divergencesPath);
+  let errors = lists.errors + checkMissing(clients, knownDir, divergencesPath);
+  // A known failure is fine; a failure no list names fails the summary, the
+  // one testo check the merge queue requires.
+  for (const [client, merged] of clients) {
+    for (const test of merged.unexpected) console.log(`::error::${client}: ${test} failed and is not in its known-failures list`);
+    for (const test of merged.missing) console.log(`::error::${client}: ${test} was selected but left no result`);
+    errors += merged.unexpected.length + merged.missing.length;
+    // A listed test that passed fails the summary too: as a warning, #3137
+    // merged with two fixed go-http entries and left main's shard red (#3207).
+    for (const test of merged.fixed) console.log(`::error::${client}: ${test} passed. fixed: remove it from its known-failures list`);
+    for (const test of merged.converged) {
+      console.log(`::error::${client}: ${test} passed. converged: remove it from the deliberate divergences list`);
+    }
+    errors += merged.fixed.length + merged.converged.length;
+  }
   write(
     "`fail` is unexpected, `known` is listed in `.github/testo/known-failures/<client>.txt`, " +
-      "`unsupported` stopped at an action the client does not implement.\n\n",
+      `\`divergent\` is a ${DIVERGENT_CLIENT} test listed in \`${divergencesPath ?? "the deliberate divergences list"}\`, ` +
+      "`unsupported` stopped at an action the client does not implement; `list` is the known-failures file's size " +
+      `and its change against \`${lists.ref}\`.\n\n`,
   );
+  write(`| client | ${COLUMNS.join(" | ")} | list |\n|---|${"---:|".repeat(COLUMNS.length + 1)}\n`);
+  // A pull request runs only some clients; a client it did not run is left out.
+  const expected = process.env.TESTO_CLIENTS ? process.env.TESTO_CLIENTS.split(",") : CLIENTS;
   for (const client of CLIENTS) {
+    if (!expected.includes(client) && !clients.has(client)) continue;
+    const size = lists.sizes.get(client);
+    const change = size ? size.entries - size.base : 0;
+    const list = size ? `${size.entries} (${change >= 0 ? "+" : ""}${change})` : "—";
     const merged = clients.get(client);
-    if (!merged) {
-      write(`### ${client}\n\nno report\n\n`);
-      errors++;
-      continue;
-    }
-    const partial = incomplete(merged);
+    const partial = merged ? incomplete(merged) : "no report";
     if (partial) {
       console.log(`::error::${client}: ${partial}`);
       errors++;
     }
-    write(`### ${client}${partial ? ` (${partial})` : ""}\n\n`);
-    writeTable(merged.binaries);
-    const ops = Object.entries(merged.ops)
-      .sort(([, a], [, b]) => b - a)
-      .slice(0, 15);
-    if (ops.length) {
-      write("\nMost common unsupported actions:\n\n");
-      for (const [op, count] of ops) write(`- ${count} × \`${op}\`\n`);
-    }
-    write("\n");
+    const total = merged ? totals(merged.binaries) : {};
+    const cells = COLUMNS.map((c) => (c === "fail" && total[c] ? `**${total[c]}**` : (total[c] ?? 0)));
+    write(`| ${client}${partial ? ` ⚠️ ${partial}` : ""} | ${cells.join(" | ")} | ${list} |\n`);
+  }
+  write("\n");
+  if (lists.divergences) {
+    const change = lists.divergences.entries - lists.divergences.base;
+    write(
+      `Deliberate divergences (${DIVERGENT_CLIENT}): ${lists.divergences.entries} ` +
+        `(${change >= 0 ? "+" : ""}${change}) against \`${lists.ref}\`.\n\n`,
+    );
+  }
+  if (lists.notes.length) {
+    writeDetails(`Added to the lists against <code>${lists.ref}</code> (${lists.notes.length})`, false, () => {
+      for (const note of lists.notes.slice(0, 300)) write(`- ${note}\n`);
+    });
+  }
+  for (const client of CLIENTS) {
+    const merged = clients.get(client);
+    if (!merged) continue;
+    writeDetails(`${client}: per area`, (totals(merged.binaries).fail ?? 0) > 0, () => {
+      writeTable(merged.binaries);
+      const ops = Object.entries(merged.ops)
+        .sort(([, a], [, b]) => b - a)
+        .slice(0, 15);
+      if (ops.length) {
+        write("\nMost common unsupported actions:\n\n");
+        for (const [op, count] of ops) write(`- ${count} × \`${op}\`\n`);
+      }
+    });
   }
   flushSummary();
   return errors ? 1 : 0;
 }
 
 const [mode, ...args] = process.argv.slice(2);
-if (mode === "shard") process.exit(shard(args[0], args[1], args[2], args[3], args[4], args[5]));
-if (mode === "summary") process.exit(summary(args[0], args[1]));
+if (mode === "shard") process.exit(shard(args[0], args[1], args[2], args[3], args[4], args[5], args[6]));
+if (mode === "summary") process.exit(summary(args[0], args[1], args[2]));
 console.error(`unknown mode ${mode}`);
 process.exit(2);
