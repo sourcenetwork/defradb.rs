@@ -203,6 +203,29 @@ pub trait DocumentACP: MaybeSendSync {
         matches!(subject, Subject::Entity(_) | Subject::Wildcard)
     }
 
+    /// Whether deleting a document archives its object on this provider as
+    /// an owed change staged in the delete's transaction
+    /// ([`crate::TransactionOutbox::stage_archive`]), so the delete is
+    /// refused before it commits when its caller may not archive. The
+    /// default archives nothing that way.
+    fn stages_archive_on_delete(&self) -> bool {
+        false
+    }
+
+    /// Archive one object as `actor`: the provider removes every
+    /// relationship on it and its owner no longer counts. Sent for an owed
+    /// archive ([`crate::OwedOp::Archive`]). The default takes none.
+    async fn archive_doc_object(
+        &self,
+        actor: &Did,
+        policy_id: &str,
+        resource_name: &str,
+        doc_id: &str,
+    ) -> Result<()> {
+        let _ = (actor, policy_id, resource_name, doc_id);
+        Err(Error::UnsupportedArchive)
+    }
+
     /// What lets the node submit a relationship change as `actor` after the
     /// request that made it is gone: the node's own key for `actor`, or the
     /// delegation the request this provider serves carries for it. With

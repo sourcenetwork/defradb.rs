@@ -64,6 +64,7 @@ use crate::outbox::{
     InFlight, OwedAuthority, OwedChange, OwedState, OwedSubject, OwedTuple, StagedCount, Submission,
 };
 use crate::pending::PendingRegistration;
+use crate::recovery::RecoveryLedger;
 
 /// How many submissions in a row the provider may answer with an
 /// unclassified error before the change is taken as refused. Only the
@@ -683,7 +684,19 @@ where
         view.set_scans_validated(true);
         let changes = self.owed_changes(&view, StagedCount::new());
         let written = match write {
-            Write::Settle => changes.settle(seq).await,
+            // What the provider now holds is kept for a recovery pass, in
+            // the commit that drops the change from the outbox.
+            Write::Settle => match changes.get(seq).await {
+                Ok(Some(change)) => match changes.settle(seq).await {
+                    Ok(true) => RecoveryLedger::new(view.clone())
+                        .confirm(&self.settled_fact(&change))
+                        .await
+                        .map(|()| true),
+                    other => other,
+                },
+                Ok(None) => Ok(false),
+                Err(error) => Err(error),
+            },
             Write::Mark(state, attempts, reason) => {
                 changes.mark(seq, state, attempts, Some(reason)).await
             }

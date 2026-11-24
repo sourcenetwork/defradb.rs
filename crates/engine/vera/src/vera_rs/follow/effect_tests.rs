@@ -44,12 +44,40 @@ fn registrations_and_relationship_changes_are_read_back_with_their_delegation() 
 fn an_archive_and_other_requests_are_told_apart() {
     assert_eq!(
         effect_of(&archive(0, "bae-1")),
-        Effect::Archive {
+        Effect::Owed(Lost::Archive {
             policy_id: POLICY.into(),
             resource: "users".into(),
             object: "bae-1".into(),
-            actor: Some(OWNER.into()),
-        }
+            token: token(OWNER),
+        })
     );
     assert_eq!(effect_of(b"not a request"), Effect::Other);
+}
+
+#[test]
+fn a_voided_batch_keeps_every_archive_it_carried_and_counts_the_rest() {
+    let batch = batch(
+        3,
+        [archive_calldata("bae-1"), archive_calldata("bae-2"), vec![]],
+    );
+    assert_eq!(
+        effect_of(&batch),
+        Effect::Batched(
+            vec![
+                Lost::Archive {
+                    policy_id: POLICY.into(),
+                    resource: "users".into(),
+                    object: "bae-1".into(),
+                    token: token(OWNER),
+                },
+                Lost::Archive {
+                    policy_id: POLICY.into(),
+                    resource: "users".into(),
+                    object: "bae-2".into(),
+                    token: token(OWNER),
+                },
+            ],
+            1,
+        )
+    );
 }

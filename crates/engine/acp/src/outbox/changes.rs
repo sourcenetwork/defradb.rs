@@ -33,6 +33,10 @@ pub const MAX_UNSETTLED_OWED_CHANGES_PER_ACTOR: u64 = 1_000;
 /// them.
 pub const VALIDATED_WITHIN_OF_NODE_LIMIT: u64 = 4 * MAX_OWED_CHANGES_PER_TRANSACTION as u64;
 
+/// Why a change was dropped when its document was deleted.
+const DROPPED_WITH_DELETE: &str =
+    "its document was deleted: the object is archived and every relationship on it goes";
+
 /// Records read into memory per page of the queue, bounded by their encoded
 /// size.
 const PAGE_BYTES: usize = 256 * 1024;
@@ -173,16 +177,38 @@ impl OwedChanges {
         ops::stage(&self.active_view()?, self.sequences.as_ref(), new, true).await
     }
 
-    /// Record, in this transaction, a change the provider confirmed once and
-    /// a switch of its deployment's active device voided, and give it its
-    /// sequence. It was committed and counted when first staged, so none of
-    /// the bounds on new changes applies to it (`ExternalDocumentAcp`'s
-    /// `owe_again`).
+    /// Record, in this transaction, a change none of the bounds on new
+    /// changes applies to, and give it its sequence: one the provider
+    /// confirmed once and a switch of its deployment's active device voided
+    /// (committed and counted when first staged; `ExternalDocumentAcp`'s
+    /// `owe_again`), or the archive of a deleted document, one per delete.
     pub async fn stage_restored(&self, new: NewOwedChange) -> Result<OwedChange> {
         let view = self.active_view()?;
         let change = ops::stage(&view, self.sequences.as_ref(), new, false).await?;
         self.staged.0.fetch_add(1, Ordering::Relaxed);
         Ok(change)
+    }
+
+    /// Drop, in this transaction, every change unsettled on one object that
+    /// is not in flight: its document is deleted and archived after them.
+    /// Each leaves a note for its actor. Returns how many were dropped.
+    pub async fn drop_unsent_on(
+        &self,
+        policy_id: &str,
+        resource: &str,
+        object: &str,
+    ) -> Result<u64> {
+        let view = self.active_view()?;
+        let mut dropped = 0;
+        for seq in ops::live_on(&view, policy_id, resource, object).await? {
+            let Some(change) = ops::change(&view, seq).await? else {
+                continue;
+            };
+            if change.in_flight.is_none() && ops::discard(&view, seq, DROPPED_WITH_DELETE).await? {
+                dropped += 1;
+            }
+        }
+        Ok(dropped)
     }
 
     /// The owed change at `seq`, if it is unsettled.

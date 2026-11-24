@@ -358,7 +358,7 @@ fn a_journal_begun_after_the_worker_signed_cannot_vouch_for_a_void_reaching_back
 }
 
 #[test]
-fn a_void_archive_that_is_refused_again_fails_closed() {
+fn a_void_archive_that_is_refused_again_is_owed_again() {
     let directory = tempfile::tempdir().unwrap();
     let kept = confirmed(wire(0, "bae-0", register()), 5);
     let applied = confirmed(wire(1, "bae-1", register()), 6);
@@ -371,16 +371,27 @@ fn a_void_archive_that_is_refused_again_fails_closed() {
     let deployment = Deployment::holding([&kept]).refuse(&owed).refuse(&archived);
 
     let outcome = block_on(reconcile(&mut journal, &deployment, 1, &mut ignore)).unwrap();
-    let Reconciled::Closed { reason, report } = outcome else {
-        panic!("a refused archive must fail closed");
+    let Reconciled::Checked { report } = outcome else {
+        panic!("a refused archive is owed again, not a reason to close");
     };
-    assert!(reason.contains("archive"));
     assert_eq!(
         report.applied,
         vec![report::Applied::Change(lost_registration("bae-1"))]
     );
-    assert_eq!(report.owed, vec![lost_registration("bae-2")]);
-    assert_eq!(report.unrestorable.len(), 1);
+    assert_eq!(
+        report.owed,
+        vec![
+            lost_registration("bae-2"),
+            Lost::Archive {
+                policy_id: POLICY.into(),
+                resource: "users".into(),
+                object: "bae-3".into(),
+                token: token(OWNER),
+            },
+        ]
+    );
+    assert!(report.unrestorable.is_empty());
+    assert!(journal.closed().is_none());
 }
 
 #[test]

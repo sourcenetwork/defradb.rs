@@ -800,6 +800,14 @@ RUNS=(
   "MC_VerifiedRead_Red_BusyUncapped.cfg VerifiedRead.tla RED" # busy retry without a patience asks past BUSY_PATIENCE (INV_AttemptsBounded)
   "MC_VerifiedRead_Red_PausesOnly.cfg VerifiedRead.tla RED" # patience counts only the pauses: a slow busy node carries asks past BUSY_PATIENCE (INV_AttemptsBounded)
   "MC_VerifiedRead_Red_UndrawnPause.cfg VerifiedRead.tla RED" # patience checked against the shortest pause, the drawn one slept: an ask past BUSY_PATIENCE (INV_AttemptsBounded)
+  "MC_ArchiveOnDelete_Green.cfg ArchiveOnDelete.tla GREEN" # a deleted document grants nothing, no grant outlives the archive, and the archive settles
+  "MC_ArchiveOnDelete_Green_NoDrop.cfg ArchiveOnDelete.tla GREEN" # earlier changes kept: Vera's refusal alone keeps a renewed grant off the archived object
+  "MC_ArchiveOnDelete_Red_GrantAfterArchive.cfg ArchiveOnDelete.tla RED" # changes kept and an archived object takes a grant: a renewed grant lands after the archive (INV_NoGrantAfterArchive)
+  "MC_ArchiveOnDelete_Red_DeleteWithoutAuthority.cfg ArchiveOnDelete.tla RED" # a writer deletes without authority to archive (INV_DeletedByOwner)
+  "MC_ArchiveOnDelete_Red_NoOverlay.cfg ArchiveOnDelete.tla RED" # an owed archive denies nobody: the reader is allowed on the deleted document (INV_DeletedGrantsNothing)
+  "MC_ArchiveOnDelete_Red_HistoryForAll.cfg ArchiveOnDelete.tla RED" # an owed archive leaves the commit history to everyone: the reader reads a deleted document's history (INV_HistoryOnlyToDeleter)
+  "MC_ArchiveOnDelete_Red_OwedRegistrationFirst.cfg ArchiveOnDelete.tla RED" # the owed registration decides before the owed archive: the creator reads its deleted document (INV_DeletedGrantsNothing)
+  "MC_ArchiveOnDelete_Red_UnregisteredFirst.cfg ArchiveOnDelete.tla RED" # the unregistered rule decides before the owed archive: a dropped object's deleted document is public (INV_DeletedGrantsNothing)
   "MC_FollowDeployment_Green.cfg FollowDeployment.tla GREEN" # takeovers void any part of the chain: no void decision, a revocation always denies, nothing lost, owed again settles
   "MC_FollowDeployment_Green_Window.cfg FollowDeployment.tla GREEN" # a journal of one entry: a takeover that voids the pruned one fails closed
   "MC_FollowDeployment_Red_KeepsCache.cfg FollowDeployment.tla RED" # decisions cached by revision alone: one from the void chain is served (INV_NoVoidDecision)
@@ -810,6 +818,15 @@ RUNS=(
   "MC_FollowDeployment_Red_NoMark.cfg FollowDeployment.tla RED" # replay start not written down: a refused replay cut short is held and its revocation forgotten (INV_RevocationDenies)
   "MC_FollowDeployment_Red_NoDeliveryGate.cfg FollowDeployment.tla RED" # a checked term admits before its owed changes reach the outbox (INV_RevocationDenies)
   "MC_FollowDeployment_Red_CollapsesBatch.cfg FollowDeployment.tla RED" # only the first change of an object handed back together is owed: the revocation after it is lost (INV_RevocationDenies)
+  "MC_FollowDeploymentRecovery_Green.cfg FollowDeploymentRecovery.tla GREEN" # an uncovered takeover is rebuilt from the node's own ledger in pages, across a crash and a second takeover: nothing lost is left unowed when the node decides, a revocation denies, the pass ends
+  "MC_FollowDeploymentRecovery_Green_OneRecordPages.cfg FollowDeploymentRecovery.tla GREEN" # the same with pages of one record
+  "MC_FollowDeploymentRecovery_Red_NoGate.cfg FollowDeploymentRecovery.tla RED" # deciding while the journal is closed: a lost revocation not owed yet lets the grant through (INV_RevocationDenies)
+  "MC_FollowDeploymentRecovery_Red_NoHandOver.cfg FollowDeploymentRecovery.tla RED" # a page's lost records never reach the outbox: the node reopens with them unowed (INV_NothingLost)
+  "MC_FollowDeploymentRecovery_Red_CursorFirst.cfg FollowDeploymentRecovery.tla RED" # the cursor is written before the page is handed over: a crash between loses the page (INV_NothingLost)
+  "MC_FollowDeploymentRecovery_Red_CompleteEveryPage.cfg FollowDeploymentRecovery.tla RED" # a page that stopped at its limit marks the pass complete: later records are never checked (INV_NothingLost)
+  "MC_FollowDeploymentRecovery_Red_NeverDone.cfg FollowDeploymentRecovery.tla RED" # the source never says the pass is over: the node never reopens (LIVE_RecoveryEnds)
+  "MC_FollowDeploymentRecovery_Red_NoTermFence.cfg FollowDeploymentRecovery.tla RED" # a cursor of an older term is resumed: what a second takeover lost behind it is never checked (INV_NothingLost)
+  "MC_FollowDeploymentRecovery_Red_NoSharedFence.cfg FollowDeploymentRecovery.tla RED" # a pass that ends after a second outbox asked reopens: what the takeover voided of that node's is owed by nobody (INV_TheirsNotLost)
   "MC_TakeoverReport_Green.cfg TakeoverReport.tla GREEN" # a checked term is reported once, complete, with its own cut, and a closed check says so
   "MC_TakeoverReport_Red_NoPublish.cfg TakeoverReport.tla RED" # a checked term is not published (INV_Published)
   "MC_TakeoverReport_Red_NoReason.cfg TakeoverReport.tla RED" # an unrestorable replay is unnamed (INV_Classified)
