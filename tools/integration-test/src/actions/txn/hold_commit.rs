@@ -99,7 +99,14 @@ impl Op for HoldCommit {
                 )))
             }
         };
-        if !gate.entered.is_set() {
+        // The 503 can reach the client before the handler's commit reaches the gate.
+        if state
+            .block_on(workers::timeout(
+                Duration::from_secs(10),
+                gate.entered.wait(),
+            ))
+            .is_err()
+        {
             return Err(Failure::operation(format!(
                 "the commit answered {error:?} without reaching its gate"
             )));
