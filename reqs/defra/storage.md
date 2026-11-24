@@ -43,6 +43,13 @@ A counter field can be indexed. After local increments, or after two nodes incre
 
 An ordered query over an indexed field with `limit: 3, offset: 2` reads `limit + offset` index entries, returns exactly the page after skipping two, and leaves the query offset to the limit node so it is not applied twice. The same paging is correct when the ordered field is not indexed.
 
+# `defra.index.keyspace`: Collection short IDs cannot collide with another family
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["index::keyspace::a_tagged_index_keyspace_keeps_collections_separate"]
+
+Collections whose short IDs are `100` and `118`, the bytes `d` and `v` that name the document and version key families, each answer a query filtered on their indexed field with only their own row. Since truncate removes one index at a time (`defra.collection.truncate.other_collections`), no client operation reads or deletes by a whole collection's index prefix, so this scenario also passes on the untagged layout. The fixed `/index/` tag that keeps index keys out of the other families is checked in storage, by `index_keyspace_is_tagged_across_the_byte_boundary` and `index_keyspace_scans_stay_per_collection_across_short_ids`.
+
 # `defra.index.patch_indexed_field`: A patch refuses to remove an indexed field
 
 - **Parents:** ["defra.index"]
@@ -53,13 +60,6 @@ A collection patch that removes a field named by an index, full-text index, or v
 - a regular index: `index '<index name>' references field '<field>' which does not exist in schema`, e.g. `index 'Users_name_ASC' references field 'name' which does not exist in schema`;
 - a full-text index: `full-text index on field '<field>' references a field which does not exist in schema`;
 - a vector embedding's source field: `the given field does not exist. Embedding generation field: <field>`.
-
-# `defra.index.keyspace`: Collection short IDs cannot collide with another family
-
-- **Parents:** ["defra.index"]
-- **Scenarios:** ["index::keyspace::a_tagged_index_keyspace_keeps_collections_separate"]
-
-Collections whose short IDs are `100` and `118`, the bytes `d` and `v` that name the document and version key families, each answer a query filtered on their indexed field with only their own row. Since truncate removes one index at a time (`defra.collection.truncate.other_collections`), no client operation reads or deletes by a whole collection's index prefix, so this scenario also passes on the untagged layout. The fixed `/index/` tag that keeps index keys out of the other families is checked in storage, by `index_keyspace_is_tagged_across_the_byte_boundary` and `index_keyspace_scans_stay_per_collection_across_short_ids`.
 
 # `defra.index.backfill_under_writes`: An index created under writes finishes its backfill
 
