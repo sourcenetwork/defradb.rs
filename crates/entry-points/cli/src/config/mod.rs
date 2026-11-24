@@ -56,6 +56,10 @@ pub struct Config {
     /// The worker pool the data path runs on.
     #[serde(default)]
     pub workers: WorkersConfig,
+    /// One message per Go key `config.yaml` set that defradb.rs ignores, logged
+    /// once logging is up.
+    #[serde(skip)]
+    pub ignored_go_keys: Vec<String>,
 }
 
 fn default_replicator_retry_intervals() -> Vec<u32> {
@@ -78,6 +82,7 @@ impl Default for Config {
             telemetry_disabled: false,
             replicator_retry_intervals: default_replicator_retry_intervals(),
             workers: WorkersConfig::default(),
+            ignored_go_keys: Vec::new(),
         }
     }
 }
@@ -166,8 +171,12 @@ impl Config {
             source,
         };
         let mut value: serde_yaml::Value = serde_yaml::from_str(&contents).map_err(parse_error)?;
-        go_layout::apply(&mut value);
-        serde_yaml::from_value(value).map_err(parse_error)
+        let ignored_go_keys = go_layout::apply(&mut value);
+        let config: Self = serde_yaml::from_value(value).map_err(parse_error)?;
+        Ok(Self {
+            ignored_go_keys,
+            ..config
+        })
     }
 
     fn load_secret_file(&self) -> Result<()> {

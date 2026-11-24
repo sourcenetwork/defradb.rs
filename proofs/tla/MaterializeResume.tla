@@ -36,7 +36,7 @@
 \*   crates/database/db/src/definition/migration/reindex/mod.rs
 \*     DB::reindex_in_pages (the owed reindex is resumed only by a rebuild
 \*     that does not restamp and does not write back more than the record;
-\*     otherwise a new token is owed)
+\*     otherwise, or on a format rebuild's reset, a new token is owed)
 \*   crates/database/db/src/definition/migration/reindex/owed.rs
 \*     OwedReindex::persists_migrations (the record's level)
 \*   crates/database/db/src/definition/migration/reindex/page.rs

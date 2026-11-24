@@ -1,11 +1,17 @@
 use std::ffi::c_char;
 use std::fs;
 
+use acp::nac::NodePermission;
+use db::backup::{DbJob, ImportHost};
+use defra_core::thread_bounds::MaybeBoxFuture;
+use query::{QueryRequest, QueryResponse};
+
+use crate::document::run::DocumentCall;
 use crate::ffi_entry;
 use crate::request::Request;
 use crate::state::NODES;
 use crate::target::go_string;
-use crate::types::DefraResult;
+use crate::types::{CollectionOptions, DefraResult};
 use crate::{ffi_async_ok, try_ffi, ERR_INVALID_NODE_HANDLE};
 
 /// Import documents from a JSON backup file.
@@ -19,7 +25,9 @@ use crate::{ffi_async_ok, try_ffi, ERR_INVALID_NODE_HANDLE};
 /// ```
 ///
 /// Self-referencing FK fields are stripped before creation and applied
-/// via update afterward, matching Go DefraDB behavior.
+/// via update afterward, matching Go DefraDB behavior. Every create and
+/// patch is a document call of the caller, signed and broadcast as
+/// `defra_document_add`'s writes are.
 ///
 /// # Safety
 ///
@@ -34,17 +42,22 @@ pub unsafe fn defra_backup_import(
         let node_ptr = try_ffi!(request.require_node("backup import"));
         let path_str = go_string(filepath);
 
-        let (database, runner) = match NODES.get(node_ptr, |state| {
-            (state.database.clone(), state.query_runner.clone())
+        let (database, pool) = match NODES.get(node_ptr, |state| {
+            (state.database.clone(), state.database.pool().cloned())
         }) {
             Some(r) => r,
             None => return DefraResult::error(ERR_INVALID_NODE_HANDLE),
         };
-
-        // The caller creates the imported documents, as a GraphQL write's
-        // caller does: document ACP registers the creator as their owner.
-        let context = request.context().with_creator(request.identity.clone());
-        ffi_async_ok!(node_ptr, {
+        let call = try_ffi!(DocumentCall::begin(
+            node_ptr,
+            &CollectionOptions::default(),
+            identity_ptr,
+            NodePermission::DocumentUpdate,
+        ));
+        let context = call.context();
+        let target = call.target().clone();
+        let host = FfiHost { call, pool };
+        ffi_async_ok!(target &target, {
             let content = fs::read_to_string(&path_str).map_err(|e| {
                 if e.kind() == std::io::ErrorKind::NotFound {
                     format!("failed to open file '{}': {}", path_str, e)
@@ -53,9 +66,30 @@ pub unsafe fn defra_backup_import(
                 }
             })?;
 
-            db::backup::import_database_as(&context, &database, &runner, &content)
+            db::backup::import_database_as(&context, &database, &host, &content)
                 .await
                 .map(|_| ())
+        })
+    }
+}
+
+/// The FFI's request path for an import's writes: each is a document call
+/// of the caller; store jobs go to the node's workers.
+struct FfiHost {
+    call: DocumentCall,
+    pool: Option<workers::Pool>,
+}
+
+impl ImportHost for FfiHost {
+    fn run(&self, request: QueryRequest) -> MaybeBoxFuture<'_, QueryResponse> {
+        Box::pin(self.call.execute(request))
+    }
+
+    fn on_db(&self, job: DbJob) -> MaybeBoxFuture<'_, Result<(), String>> {
+        Box::pin(async move {
+            workers::run_on(self.pool.as_ref(), workers::Target::LeastLoaded, job)
+                .await
+                .unwrap_or_else(|error| Err(error.to_string()))
         })
     }
 }

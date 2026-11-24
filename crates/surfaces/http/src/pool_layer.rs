@@ -12,7 +12,8 @@
 //! store ([`OnPool::with_local_acp`]); a remote provider is reached through
 //! the network.
 //!
-//! Every other route stays on the network edge: the explicit transaction
+//! Every other route stays on the network edge: the backup import
+//! ([`ON_EDGE`]), whose every write reaches the pool on its own, the explicit transaction
 //! routes (their requests go to the worker that owns the transaction), the
 //! P2P routes (they reach peers through the network), event and GraphQL
 //! subscription streams, and the routes with no storage behind them. GraphQL
@@ -46,10 +47,18 @@ pub const ON_POOL: [&str; 10] = [
     "/purge",
 ];
 
+/// The routes under an [`ON_POOL`] prefix that stay on the edge. The backup
+/// import drives a request per batch through the server's request path,
+/// which places each on the pool; run on a worker itself, the driver and
+/// every request's preparation would run there
+/// (`proofs/tla/BackupImportWritePath.tla` `INV_DriverOnCaller`).
+pub const ON_EDGE: [&str; 1] = ["/backup/import"];
+
 /// Whether the route `path` (as matched) runs on the pool.
 pub fn runs_on_pool(path: &str) -> bool {
     api_route(path, |route| {
-        route == "/schema" || ON_POOL.iter().any(|prefix| under(route, prefix))
+        route == "/schema"
+            || (ON_POOL.iter().any(|prefix| under(route, prefix)) && !ON_EDGE.contains(&route))
     })
 }
 
@@ -192,6 +201,8 @@ mod tests {
         for path in [
             "/api/v0/graphql",
             "/api/v0/tx/{id}",
+            "/api/v0/backup/import",
+            "/api/v1/backup/import",
             "/api/v0/p2p/replicators",
             "/api/v0/acp/policy",
             "/api/v0/events",

@@ -79,7 +79,7 @@ where
 
     /// Rebuild a collection's indexes for the reindex owed to it under `token`.
     pub(super) async fn rebuild_settling(&self, collection_name: &str, token: u64) -> Result<()> {
-        self.reindex_in_pages(collection_name, Some(token), false, None, false)
+        self.reindex_in_pages(collection_name, Some(token), false, None, false, false)
             .await
             .map(|_| ())
     }
@@ -93,7 +93,14 @@ where
         if self.get_collection(collection_name)?.is_none() {
             return Ok(());
         }
-        self.reindex_in_pages(collection_name, None, false, None, true)
+        self.reindex_in_pages(collection_name, None, false, None, true, false)
+            .await
+            .map(|_| ())
+    }
+
+    /// Restart a format rebuild, discarding progress from an earlier encoding.
+    pub(crate) async fn reindex_for_format(&self, collection_name: &str) -> Result<()> {
+        self.reindex_in_pages(collection_name, None, false, None, true, true)
             .await
             .map(|_| ())
     }
@@ -104,7 +111,7 @@ where
         collection_name: &str,
         indexes: Vec<u32>,
     ) -> Result<()> {
-        self.reindex_in_pages(collection_name, None, false, Some(indexes), true)
+        self.reindex_in_pages(collection_name, None, false, Some(indexes), true, false)
             .await
             .map(|_| ())
     }
@@ -128,7 +135,7 @@ where
     ) -> Result<usize> {
         self.check_node_access_as(context, acp::nac::NodePermission::CollectionPatch)
             .await?;
-        self.reindex_in_pages(collection_name, None, true, None, true)
+        self.reindex_in_pages(collection_name, None, true, None, true, false)
             .await
     }
 
@@ -136,8 +143,9 @@ where
     /// under `settles`, or for a rebuild of `indexes` (all, for `None`) asked
     /// for directly, the one already owed if it covers them, this rebuild
     /// does not restamp, and it writes transformed values back whenever this
-    /// rebuild does, else a new one its first page records. Returns how many
-    /// documents had their stored version advanced.
+    /// rebuild does, else a new one its first page records; a `reset` always
+    /// starts a new one. Returns how many documents had their stored version
+    /// advanced.
     async fn reindex_in_pages(
         &self,
         collection_name: &str,
@@ -145,13 +153,15 @@ where
         restamp_identity: bool,
         indexes: Option<Vec<u32>>,
         persist_migrations: bool,
+        reset: bool,
     ) -> Result<usize> {
         let collection = self
             .get_collection(collection_name)?
             .ok_or_else(|| Error::CollectionNotFound(collection_name.to_string()))?;
-        let (token, mut owe, indexes) = match settles {
-            Some(token) => (token, false, None),
-            None => match self.owed(collection.collection_id()).await? {
+        let (token, mut owe, indexes) = match (settles, reset) {
+            (Some(token), _) => (token, false, None),
+            (None, true) => (rand::random(), true, None),
+            (None, false) => match self.owed(collection.collection_id()).await? {
                 Some(owed)
                     if !restamp_identity
                         && (owed.persists_migrations || !persist_migrations)

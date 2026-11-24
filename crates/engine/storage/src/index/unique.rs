@@ -175,6 +175,33 @@ impl UniqueIndex {
         }
     }
 
+    /// The doc short ID holding `values`, read as a validated index range.
+    ///
+    /// A unique conflict decision is a set decision: a concurrent write inside
+    /// the exact key range aborts it at commit, even when this read finds the
+    /// range empty. Unlike [`Self::conflicting_doc_id`], this opens an index
+    /// iterator rather than a point read.
+    pub async fn conflicting_entry_validated<R: Reader + MaybeSend>(
+        &self,
+        txn: &R,
+        values: &[NormalValue],
+    ) -> Result<Option<u64>> {
+        if Self::has_nil_field(values) {
+            return Ok(None);
+        }
+        let fields = self.build_indexed_fields(values);
+        let key =
+            IndexDataStoreKey::new(self.collection_short_id, self.desc.id, fields).try_bytes()?;
+        let options = IterOptions::default().with_prefix(key.clone());
+        let mut entries = txn.iterator(options).await?;
+        let holder = match entries.next().await? {
+            Some(entry) if !entry.value.is_empty() => Some(decode_doc_short_id(&entry.value)?),
+            _ => None,
+        };
+        entries.close().await?;
+        Ok(holder)
+    }
+
     /// Get the entry with exact field values.
     ///
     /// Returns an iterator that yields at most one document (uniqueness constraint).
