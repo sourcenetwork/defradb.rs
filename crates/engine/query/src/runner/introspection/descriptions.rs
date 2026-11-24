@@ -33,6 +33,7 @@ pub(super) const COMMIT_DELTA: &str =
     "\nThe CBOR encoded representation of the value that is saved as part of this commit.\n";
 pub(super) const COMMIT_DOC_ID: &str = "\nThe docID of the document that this commit is for.\n";
 pub(super) const COMMIT_FIELD_NAME: &str = "\nThe name of the field that this commit was committed against. The value is \"_C\" for composite\n blocks and null for collection blocks.\n";
+pub(super) const COMMIT_HEADS: &str = "\nPrior commits in the DAG that this commit was built upon to advance history.\n Composite commits link to prior composite commits for the document.\n Field commits link to prior field commits for the same field. Collection\n commits link to prior collection commits.\n";
 pub(super) const COMMIT_LINKS: &str = "\nChild commits in the DAG that contribute to the composition of this commit.\n Composite commits will link to the field commits for the fields modified during\n the single mutation.  Collection commits will link to composites.\n";
 pub(super) const COMMIT_CID_ARG: &str = "\nAn optional value that specifies the commit IDs of the commits to return. If a\n matching commit is not found then an empty set will be returned.\n";
 pub(super) const COMMIT_DOC_ID_ARG: &str = "\nAn optional docID parameter for this commit query. Only commits for a document\n with a matching docID will be returned.  If no documents match, the result\n set will be empty.\n";

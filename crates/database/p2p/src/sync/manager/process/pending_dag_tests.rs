@@ -64,6 +64,7 @@ fn pending_dag_from(doc_id: &str, source_peer: Option<&str>, inserted_at: Instan
         fetch_failures: 0,
         last_fetch_error: None,
         next_retry_at: crate::rt::time::Instant::now(),
+        key_arrival_pending: false,
         dispatches: 0,
         incomplete_attempts: 0,
         merge_continuation: false,
@@ -169,6 +170,56 @@ async fn pending_dag_wakeup_requires_registration_and_preserves_backoff() {
     manager.mark_pending_dag_recovery_registered(&root, inserted_at);
     assert!(manager.pending_dag_ready().now_or_never().is_some());
     assert!(!manager.try_claim_pending_dag_dispatch(&root, now));
+}
+
+#[nuclei::test]
+async fn key_arrival_promotes_pending_retries() {
+    use futures::FutureExt;
+
+    let manager = test_manager();
+    let first = test_cid(930);
+    let second = test_cid(931);
+    let now = crate::rt::time::Instant::now();
+    for cid in [first, second] {
+        let mut dag = pending_dag("blocked", Instant::now());
+        dag.next_retry_at = now + Duration::from_secs(60);
+        manager.insert_pending_dag(cid, dag);
+    }
+
+    assert!(manager.due_pending_dag_retries(now).is_empty());
+    manager.promote_pending_retries();
+    assert!(manager.pending_dag_ready().now_or_never().is_some());
+    let due = manager.due_pending_dag_retries(crate::rt::time::Instant::now());
+    assert_eq!(
+        due.iter().map(|(cid, _)| *cid).collect::<Vec<_>>(),
+        vec![first, second]
+    );
+
+    let now = crate::rt::time::Instant::now();
+    assert!(manager.try_claim_pending_dag_dispatch(&first, now));
+    assert!(!manager.try_claim_pending_dag_dispatch(&first, now));
+    let still_due = manager
+        .due_pending_dag_retries(crate::rt::time::Instant::now())
+        .iter()
+        .map(|(cid, _)| *cid)
+        .collect::<Vec<_>>();
+    assert_eq!(still_due, vec![second]);
+}
+
+#[test]
+fn key_arrival_during_attempt_survives_rearm() {
+    let manager = test_manager();
+    let root = test_cid(932);
+    manager.insert_pending_dag(root, pending_dag("blocked", Instant::now()));
+    let now = crate::rt::time::Instant::now();
+    assert!(manager.try_claim_pending_dag_dispatch(&root, now));
+    let lease = manager.pending_dag_lease(root);
+    manager.promote_pending_retries();
+    lease.finish_attempt(false, crate::sync::arbitration::AttemptSample::Skipped);
+    assert!(manager
+        .due_pending_dag_retries(crate::rt::time::Instant::now())
+        .iter()
+        .any(|(cid, _)| *cid == root));
 }
 
 /// Holds the first removal before its transaction until the test releases

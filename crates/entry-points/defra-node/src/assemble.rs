@@ -19,6 +19,10 @@ use crate::TelemetryHandle;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::TransactionCleanupConfig;
 
+#[cfg(all(test, feature = "p2p"))]
+pub(crate) type TestKmsTransportWrapper =
+    Arc<dyn Fn(Arc<dyn kms::KeyTransport>) -> Arc<dyn kms::KeyTransport> + Send + Sync>;
+
 /// What a build takes besides its [`NodeConfig`]: the settings that are not
 /// plain values, and the ones only [`crate::NodeBuilder`] sets.
 #[derive(Default)]
@@ -29,6 +33,8 @@ pub(crate) struct Extras {
     pub txn_ownership: db::TxnOwnership,
     pub document_projector: Option<Arc<dyn db::DocumentMutationProjector>>,
     pub replica_registration: Option<db::merge::ReplicaRegistration>,
+    #[cfg(all(test, feature = "p2p"))]
+    pub kms_transport_wrapper: Option<TestKmsTransportWrapper>,
     #[cfg(not(target_arch = "wasm32"))]
     pub transaction_cleanup: Option<TransactionCleanupConfig>,
     #[cfg(feature = "http")]
@@ -432,7 +438,15 @@ where
 
             #[cfg(any(feature = "p2p", feature = "libp2p"))]
             let transports: Vec<Arc<dyn kms::KeyTransport>> = match p2p_setup.as_ref() {
-                Some(setup) => vec![setup.kms_transport.clone()],
+                Some(setup) => {
+                    let transport = setup.kms_transport.clone();
+                    #[cfg(all(test, feature = "p2p"))]
+                    let transport = match &extras.kms_transport_wrapper {
+                        Some(wrap) => wrap(transport),
+                        None => transport,
+                    };
+                    vec![transport]
+                }
                 None => vec![],
             };
             #[cfg(not(any(feature = "p2p", feature = "libp2p")))]

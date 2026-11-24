@@ -80,6 +80,8 @@ pub struct PendingDag {
     /// which advances this by `retry_backoff(dispatches)`, the receiver's
     /// re-arm pacing (#1112 inbound half, #1116 stage 2).
     pub next_retry_at: crate::rt::time::Instant,
+    /// A key arrived since the last claim, so its retry must survive re-arming.
+    pub key_arrival_pending: bool,
     /// Fetch dispatches claimed for this root (drives the backoff rung).
     pub dispatches: u32,
     /// Clock-dispatched fetch attempts that ended with this root's DAG still
