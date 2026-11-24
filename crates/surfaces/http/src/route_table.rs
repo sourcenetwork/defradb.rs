@@ -7,10 +7,27 @@
 
 use axum::http::Method;
 use schemars::{JsonSchema, Schema, SchemaGenerator};
+use serde_json::{Map, Value};
 
-use crate::handlers::acp::{OwnDocumentsRequest, OwnDocumentsResponse, PolicyInfo};
+use crate::handlers::acp::{
+    AddPolicyResponse, DocDecisionRequest, DocDecisionResponse, DocRelationshipDeleteResponse,
+    DocRelationshipRequest, DocRelationshipResponse, OwnDocumentsRequest, OwnDocumentsResponse,
+    PolicyInfo,
+};
+use crate::handlers::backup::ExportRequest;
 use crate::handlers::batch::{BatchSignResponse, BatchVerifyRequest};
 use crate::handlers::block::SignedBlockResponse;
+use crate::handlers::ccip::CcipResponse;
+use crate::handlers::collections::{CollectionDocIdsResponse, PurgeDocumentsResponse};
+use crate::handlers::graphql::TransactionalQueryRequest;
+use crate::handlers::lens::{AddLensRequest, SetMigrationResponse};
+use crate::handlers::nac::{
+    AddActorRelationshipResult, DeleteActorRelationshipResult, EnableNacRequest,
+    GoNacRelationshipRequest,
+};
+use crate::handlers::p2p::ReplicatorDeleteRequest;
+use crate::handlers::p2p::ShareableAddressResponse;
+use crate::handlers::utility::NodeIdentityResponse;
 use crate::handlers::views::ViewNamesRequest;
 use crate::route_permissions::RoutePermission;
 use crate::router::NodePermission;
@@ -161,8 +178,8 @@ pub const ROUTES: &[Route] = &[
     // GET is always a read operation; POST determines permission by parsing
     // the query in the handler.
     row("/api/v0/graphql", GET, required(NodePermission::DocumentRead), false),
-    row("/api/v0/graphql", POST, Dynamic, false),
-    row("/api/v0/ccip", POST, Dynamic, false),
+    row_body("/api/v0/graphql", POST, Dynamic, false, Some(body::<TransactionalQueryRequest>), None),
+    row_body("/api/v0/ccip", POST, Dynamic, false, None, Some(body::<CcipResponse>)),
     row("/api/v0/ccip/{sender}/{data}", GET, Dynamic, false),
     row("/api/v0/events", GET, Dynamic, false),
     row("/api/v0/actions", GET, required(NodePermission::ActionList), false),
@@ -172,7 +189,7 @@ pub const ROUTES: &[Route] = &[
     row("/api/v0/tx/{id}", POST, IdentityOnly, false),
     row("/api/v0/tx/{id}", DELETE, IdentityOnly, false),
     // Collections
-    row("/api/v0/collections", GET, required(NodePermission::CollectionGet), false),
+    row_body("/api/v0/collections", GET, required(NodePermission::CollectionGet), false, None, Some(body::<Vec<String>>)),
     row("/api/v0/collections", POST, required(NodePermission::CollectionPatch), false),
     row("/api/v0/collections", PATCH, required(NodePermission::CollectionPatch), false),
     // Dropping collections by name. This fell to the read default while
@@ -180,14 +197,14 @@ pub const ROUTES: &[Route] = &[
     // outer gate was weaker than the handler.
     row("/api/v0/collections", DELETE, required(NodePermission::CollectionPatch), false),
     row("/api/v0/collections/default", POST, required(NodePermission::CollectionPatch), false),
-    row("/api/v0/collections/versions", DELETE, required(NodePermission::CollectionPatch), false),
-    row("/api/v0/collections/migrations", POST, required(NodePermission::MigrationSet), false),
+    row_body("/api/v0/collections/versions", DELETE, required(NodePermission::CollectionPatch), false, Some(body::<Vec<String>>), Some(body::<serde_json::Value>)),
+    row_body("/api/v0/collections/migrations", POST, required(NodePermission::MigrationSet), false, None, Some(body::<SetMigrationResponse>)),
     row("/api/v0/collections/indexes", GET, required(NodePermission::IndexList), false),
-    row("/api/v0/collections/{name}", GET, required(NodePermission::CollectionGet), false),
+    row_body("/api/v0/collections/{name}", GET, required(NodePermission::CollectionGet), false, None, Some(body::<CollectionDocIdsResponse>)),
     // POST and PATCH here are Go's filtered document operations, not
     // collection ones, so they are document permissions. Dropping a collection
     // is `DELETE /collections?name=...`, which keeps `CollectionPatch`.
-    row("/api/v0/collections/{name}", POST, required(NodePermission::DocumentUpdate), true),
+    row_body("/api/v0/collections/{name}", POST, required(NodePermission::DocumentUpdate), true, None, Some(body::<Vec<String>>)),
     row_body(
         "/api/v0/collections/{name}",
         PATCH,
@@ -204,12 +221,12 @@ pub const ROUTES: &[Route] = &[
         None,
         Some(body::<DocumentsResult>),
     ),
-    row("/api/v0/collections/{name}/describe", GET, required(NodePermission::CollectionGet), false),
-    row("/api/v0/collections/{name}/exists", GET, required(NodePermission::CollectionGet), false),
-    row("/api/v0/collections/{name}/truncate", DELETE, required(NodePermission::CollectionTruncate), true),
+    row_body("/api/v0/collections/{name}/describe", GET, required(NodePermission::CollectionGet), false, None, Some(body::<serde_json::Value>)),
+    row_body("/api/v0/collections/{name}/exists", GET, required(NodePermission::CollectionGet), false, None, Some(body::<serde_json::Value>)),
+    row_body("/api/v0/collections/{name}/truncate", DELETE, required(NodePermission::CollectionTruncate), true, None, Some(body::<()>)),
     // A purge is checked against the node permission of a truncate.
-    row("/api/v0/collections/{name}/documents/purge", DELETE, required(NodePermission::CollectionTruncate), false),
-    row("/api/v0/collections/{name}/document/{docID}", GET, required(NodePermission::DocumentRead), true),
+    row_body("/api/v0/collections/{name}/documents/purge", DELETE, required(NodePermission::CollectionTruncate), false, None, Some(body::<PurgeDocumentsResponse>)),
+    row_body("/api/v0/collections/{name}/document/{docID}", GET, required(NodePermission::DocumentRead), true, None, Some(body::<Value>)),
     row("/api/v0/collections/{name}/document/{docID}", PATCH, required(NodePermission::DocumentUpdate), true),
     row("/api/v0/collections/{name}/document/{docID}", DELETE, required(NodePermission::DocumentDelete), true),
     row("/api/v0/collections/{name}/indexes", GET, required(NodePermission::IndexList), true),
@@ -223,39 +240,39 @@ pub const ROUTES: &[Route] = &[
     row("/api/v0/collections/{name}/encrypted-indexes/{field}", DELETE, IdentityOnly, true),
     // P2P
     row("/api/v0/p2p/info", GET, required(NodePermission::P2pPeerInfo), false),
-    row("/api/v0/p2p/sync/status", GET, required(NodePermission::P2pPeerInfo), false),
-    row("/api/v0/p2p/shareable-address", GET, required(NodePermission::P2pPeerInfo), false),
-    row("/api/v0/p2p/active-peers", GET, required(NodePermission::P2pPeerActive), false),
-    row("/api/v0/p2p/connect", POST, required(NodePermission::P2pPeerConnect), false),
-    row("/api/v0/p2p/disconnect", POST, required(NodePermission::P2pPeerDisconnect), false),
-    row("/api/v0/p2p/peers/{peer_id}", GET, required(NodePermission::P2pPeerInfo), false),
+    row_body("/api/v0/p2p/sync/status", GET, required(NodePermission::P2pPeerInfo), false, None, Some(body::<serde_json::Value>)),
+    row_body("/api/v0/p2p/shareable-address", GET, required(NodePermission::P2pPeerInfo), false, None, Some(body::<ShareableAddressResponse>)),
+    row_body("/api/v0/p2p/active-peers", GET, required(NodePermission::P2pPeerActive), false, None, Some(body::<Vec<String>>)),
+    row_body("/api/v0/p2p/connect", POST, required(NodePermission::P2pPeerConnect), false, Some(body::<Vec<String>>), None),
+    row_body("/api/v0/p2p/disconnect", POST, required(NodePermission::P2pPeerDisconnect), false, Some(body::<Vec<String>>), None),
+    row_body("/api/v0/p2p/peers/{peer_id}", GET, required(NodePermission::P2pPeerInfo), false, None, Some(body::<serde_json::Value>)),
     row("/api/v0/p2p/replicators", GET, required(NodePermission::P2pReplicatorList), false),
-    row("/api/v0/p2p/replicators", POST, required(NodePermission::P2pReplicatorAdd), false),
-    row("/api/v0/p2p/replicators", DELETE, required(NodePermission::P2pReplicatorDelete), false),
-    row("/api/v0/p2p/collections", GET, required(NodePermission::P2pCollectionList), false),
-    row("/api/v0/p2p/collections", POST, required(NodePermission::P2pCollectionAdd), false),
-    row("/api/v0/p2p/collections", DELETE, required(NodePermission::P2pCollectionDelete), false),
-    row("/api/v0/p2p/collections/sync-branchable", POST, required(NodePermission::P2pSyncBranchableCollection), false),
-    row("/api/v0/p2p/collections/sync-versions", POST, required(NodePermission::P2pSyncCollectionVersions), false),
-    row("/api/v0/p2p/documents", GET, required(NodePermission::P2pDocumentList), false),
-    row("/api/v0/p2p/documents", POST, required(NodePermission::P2pDocumentAdd), false),
-    row("/api/v0/p2p/documents", DELETE, required(NodePermission::P2pDocumentDelete), false),
-    row("/api/v0/p2p/documents/sync", POST, required(NodePermission::P2pSyncDocuments), false),
+    row_body("/api/v0/p2p/replicators", POST, required(NodePermission::P2pReplicatorAdd), false, None, Some(body::<()>)),
+    row_body("/api/v0/p2p/replicators", DELETE, required(NodePermission::P2pReplicatorDelete), false, Some(body::<ReplicatorDeleteRequest>), None),
+    row_body("/api/v0/p2p/collections", GET, required(NodePermission::P2pCollectionList), false, None, Some(body::<Vec<String>>)),
+    row_body("/api/v0/p2p/collections", POST, required(NodePermission::P2pCollectionAdd), false, Some(body::<Vec<String>>), None),
+    row_body("/api/v0/p2p/collections", DELETE, required(NodePermission::P2pCollectionDelete), false, Some(body::<Vec<String>>), None),
+    row_body("/api/v0/p2p/collections/sync-branchable", POST, required(NodePermission::P2pSyncBranchableCollection), false, None, Some(body::<()>)),
+    row_body("/api/v0/p2p/collections/sync-versions", POST, required(NodePermission::P2pSyncCollectionVersions), false, None, Some(body::<()>)),
+    row_body("/api/v0/p2p/documents", GET, required(NodePermission::P2pDocumentList), false, None, Some(body::<Vec<String>>)),
+    row_body("/api/v0/p2p/documents", POST, required(NodePermission::P2pDocumentAdd), false, Some(body::<Vec<String>>), None),
+    row_body("/api/v0/p2p/documents", DELETE, required(NodePermission::P2pDocumentDelete), false, Some(body::<Vec<String>>), None),
+    row_body("/api/v0/p2p/documents/sync", POST, required(NodePermission::P2pSyncDocuments), false, None, Some(body::<()>)),
     // Management relay: this node connects to and commands the target peer, so
     // it reuses the peer-connect permission to prevent an open relay.
-    row("/api/v0/p2p/manage", POST, required(NodePermission::P2pPeerConnect), false),
+    row_body("/api/v0/p2p/manage", POST, required(NodePermission::P2pPeerConnect), false, None, Some(body::<()>)),
     row("/api/v0/p2p/manage/query", POST, required(NodePermission::P2pPeerConnect), false),
     // ACP (Document Access Control)
     row("/api/v0/acp/status", GET, required(NodePermission::DacStatus), false),
-    row("/api/v0/acp/document/policy", POST, required(NodePermission::DacPolicyAdd), false),
-    row("/api/v0/acp/policy", GET, required(NodePermission::DacStatus), false),
+    row_body("/api/v0/acp/document/policy", POST, required(NodePermission::DacPolicyAdd), false, None, Some(body::<AddPolicyResponse>)),
+    row_body("/api/v0/acp/policy", GET, required(NodePermission::DacStatus), false, None, Some(body::<Vec<PolicyInfo>>)),
     row_body("/api/v0/acp/policy/{id}", GET, required(NodePermission::DacStatus), false, None, Some(body::<PolicyInfo>)),
-    row("/api/v0/acp/document/decide", POST, required(NodePermission::DacStatus), false),
+    row_body("/api/v0/acp/document/decide", POST, required(NodePermission::DacStatus), false, Some(body::<DocDecisionRequest>), Some(body::<DocDecisionResponse>)),
     // Reads the documents in the caller's transaction, as a query does.
     row_body("/api/v0/acp/document/is-owner", POST, required(NodePermission::DocumentRead), false, Some(body::<OwnDocumentsRequest>), Some(body::<OwnDocumentsResponse>)),
-    row("/api/v0/acp/document/relationship", GET, Dynamic, false),
-    row("/api/v0/acp/document/relationship", POST, required(NodePermission::DacRelationAdd), false),
-    row("/api/v0/acp/document/relationship", DELETE, required(NodePermission::DacRelationDelete), false),
+    row_body("/api/v0/acp/document/relationship", GET, Dynamic, false, None, Some(body::<bool>)),
+    row_body("/api/v0/acp/document/relationship", POST, required(NodePermission::DacRelationAdd), false, Some(body::<DocRelationshipRequest>), Some(body::<DocRelationshipResponse>)),
+    row_body("/api/v0/acp/document/relationship", DELETE, required(NodePermission::DacRelationDelete), false, Some(body::<DocRelationshipRequest>), Some(body::<DocRelationshipDeleteResponse>)),
     // Listing is gated by the document's owner or managers in the core.
     row_body(
         "/api/v0/acp/document/relationships",
@@ -265,7 +282,7 @@ pub const ROUTES: &[Route] = &[
         None,
         Some(body::<Vec<DocumentRelationship>>),
     ),
-    row("/api/v0/acp/document/relationships", POST, required(NodePermission::DacRelationAdd), false),
+    row_body("/api/v0/acp/document/relationships", POST, required(NodePermission::DacRelationAdd), false, Some(body::<Vec<DocRelationshipRequest>>), Some(body::<Vec<DocRelationshipResponse>>)),
     // ACP Node (NAC via Go-compatible /acp/node/* routes)
     row("/api/v0/acp/node/status", GET, required(NodePermission::NacStatus), false),
     // The subject itself, an admin or a `NacStatus` holder: decided in the core.
@@ -277,10 +294,10 @@ pub const ROUTES: &[Route] = &[
         None,
         Some(body::<Vec<PermissionProvenance>>),
     ),
-    row("/api/v0/acp/node/enable", POST, Dynamic, false),
-    row("/api/v0/acp/node/relationship", POST, required(NodePermission::NacRelationAdd), false),
-    row("/api/v0/acp/node/relationship", DELETE, required(NodePermission::NacRelationDelete), false),
-    row("/api/v0/acp/node/relationships", POST, required(NodePermission::NacRelationAdd), false),
+    row_body("/api/v0/acp/node/enable", POST, Dynamic, false, Some(body::<EnableNacRequest>), None),
+    row_body("/api/v0/acp/node/relationship", POST, required(NodePermission::NacRelationAdd), false, Some(body::<GoNacRelationshipRequest>), Some(body::<AddActorRelationshipResult>)),
+    row_body("/api/v0/acp/node/relationship", DELETE, required(NodePermission::NacRelationDelete), false, Some(body::<GoNacRelationshipRequest>), Some(body::<DeleteActorRelationshipResult>)),
+    row_body("/api/v0/acp/node/relationships", POST, required(NodePermission::NacRelationAdd), false, Some(body::<Vec<GoNacRelationshipRequest>>), Some(body::<Vec<AddActorRelationshipResult>>)),
     // The transaction's source-grant job checks the caller per edge.
     row_body(
         "/api/v0/acp/node/source-permission",
@@ -290,30 +307,30 @@ pub const ROUTES: &[Route] = &[
         Some(body::<SourcePermission>),
         None,
     ),
-    row("/api/v0/acp/node/disable", POST, Dynamic, false),
-    row("/api/v0/acp/node/re-enable", POST, Dynamic, false),
+    row_body("/api/v0/acp/node/disable", POST, Dynamic, false, None, Some(body::<()>)),
+    row_body("/api/v0/acp/node/re-enable", POST, Dynamic, false, None, Some(body::<()>)),
     // Backup
-    row("/api/v0/backup/export", POST, required(NodePermission::DocumentRead), false),
+    row_body("/api/v0/backup/export", POST, required(NodePermission::DocumentRead), false, Some(body::<ExportRequest>), None),
     row("/api/v0/backup/import", POST, required(NodePermission::DocumentUpdate), false),
     // Block
     row("/api/v0/block/verify-signature", GET, required(NodePermission::SignatureVerify), false),
     row_body("/api/v0/block/signed", GET, required(NodePermission::SignatureVerify), false, None, Some(body::<SignedBlockResponse>)),
     // Lens
-    row("/api/v0/lens", POST, required(NodePermission::LensCreate), false),
-    row("/api/v0/lens", GET, required(NodePermission::LensList), false),
+    row_body("/api/v0/lens", POST, required(NodePermission::LensCreate), false, Some(body::<AddLensRequest>), Some(body::<SetMigrationResponse>)),
+    row_body("/api/v0/lens", GET, required(NodePermission::LensList), false, None, Some(body::<serde_json::Value>)),
     // Batch signing
-    row("/api/v0/batch/start", POST, Dynamic, false),
+    row_body("/api/v0/batch/start", POST, Dynamic, false, None, Some(body::<()>)),
     row_body("/api/v0/batch/sign", POST, Dynamic, false, None, Some(body::<BatchSignResponse>)),
     // Views
     row("/api/v0/view", POST, required(NodePermission::ViewAdd), false),
-    row("/api/v0/view/refresh", POST, required(NodePermission::ViewRefresh), false),
+    row_body("/api/v0/view/refresh", POST, required(NodePermission::ViewRefresh), false, None, Some(body::<serde_json::Value>)),
     // Go has no view GC route.
     row_optional_body("/api/v0/views/gc", POST, required(NodePermission::ViewGc), false, body::<ViewNamesRequest>),
     // Encrypted indexes (global list)
     row("/api/v0/encrypted-indexes", GET, required(NodePermission::EncryptedIndexListAll), false),
     // Utility
-    row("/api/v0/debug/dump", GET, required(NodePermission::DocumentRead), false),
+    row_body("/api/v0/debug/dump", GET, required(NodePermission::DocumentRead), false, None, Some(body::<Vec<String>>)),
     row("/api/v0/purge", POST, required(NodePermission::DocumentUpdate), false),
-    row("/api/v0/node/options", GET, required(NodePermission::P2pPeerInfo), false),
-    row("/api/v0/node/identity", GET, required(NodePermission::P2pPeerConnect), false),
+    row_body("/api/v0/node/options", GET, required(NodePermission::P2pPeerInfo), false, None, Some(body::<Map<String, Value>>)),
+    row_body("/api/v0/node/identity", GET, required(NodePermission::P2pPeerConnect), false, None, Some(body::<NodeIdentityResponse>)),
 ];

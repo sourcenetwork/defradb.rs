@@ -23,7 +23,7 @@ struct CcipRequest {
     data: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct CcipResponse {
     pub data: String,
 }

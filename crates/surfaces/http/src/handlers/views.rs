@@ -12,7 +12,7 @@ use crate::router::{AppState, NodePermission};
 use schema::CollectionVersion;
 
 /// Request body for adding a view (Go-compatible format).
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AddViewRequest {
     #[serde(rename = "Query")]
     pub query: String,

@@ -11,7 +11,7 @@ use crate::request_scope::bound;
 use crate::router::{AppState, NodePermission};
 
 /// Query parameters for block verify-signature (Go-compatible).
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct VerifySignatureParams {
     pub cid: String,
     #[serde(rename = "public-key")]
@@ -20,7 +20,7 @@ pub struct VerifySignatureParams {
     pub key_type: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SignedBlockParams {
     pub cid: String,
 }

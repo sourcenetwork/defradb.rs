@@ -16,7 +16,7 @@ use crate::identity_extractor::ExtractIdentity;
 use crate::router::AppState;
 
 /// The ID of a stored lens.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct SetMigrationResponse {
     #[serde(rename = "lensId")]
     pub lens_id: String,
@@ -51,7 +51,7 @@ pub async fn set_migration(
 }
 
 /// Go's request body for storing a lens.
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AddLensRequest {
     pub lens: serde_json::Value,
 }

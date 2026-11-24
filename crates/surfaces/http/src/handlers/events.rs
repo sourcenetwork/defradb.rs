@@ -21,7 +21,7 @@ use crate::query_context::{
 use crate::router::AppState;
 use crate::router::NodePermission;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct EventsQuery {
     pub event: Option<String>,
 }

@@ -27,7 +27,7 @@ const DEFAULT_DOC_IDS_LIMIT: usize = 100;
 const MAX_DOC_IDS_LIMIT: usize = 1000;
 
 /// Response for listing document IDs in a collection.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct CollectionDocIdsResponse {
     pub doc_ids: Vec<String>,
     pub total: usize,
@@ -232,7 +232,7 @@ struct PurgeDocumentsRequest {
 }
 
 /// How many documents a purge removed.
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct PurgeDocumentsResponse {
     pub count: usize,
 }

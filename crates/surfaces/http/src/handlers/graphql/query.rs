@@ -167,7 +167,7 @@ pub async fn graphql(
 }
 
 /// GraphQL GET request query parameters.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct GraphqlQueryParams {
     pub query: String,
     #[serde(rename = "operationName")]
@@ -224,7 +224,7 @@ pub async fn graphql_get(
 }
 
 /// Extended GraphQL request with optional transaction ID.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct TransactionalQueryRequest {
     pub query: String,
     #[serde(

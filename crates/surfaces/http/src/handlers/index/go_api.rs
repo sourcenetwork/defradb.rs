@@ -38,7 +38,7 @@ pub struct GoCreateIndexRequest {
 }
 
 /// Go-compatible indexed field description.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct GoIndexedFieldDescription {
     /// Field name.
     #[serde(rename = "Name")]

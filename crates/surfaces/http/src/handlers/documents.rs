@@ -136,7 +136,7 @@ fn json_body(body: &Bytes) -> Result<JsonValue, HttpError> {
 }
 
 /// Go's `encrypt`, `encryptFields` and `enableSigning` query parameters.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 pub struct AddParams {
     #[serde(default)]
     encrypt: Option<String>,
@@ -147,7 +147,7 @@ pub struct AddParams {
 }
 
 /// Go's `enableSigning` query parameter: the write's own signing choice.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 pub struct SigningParams {
     #[serde(default, rename = "enableSigning")]
     enable_signing: Option<String>,
@@ -253,7 +253,7 @@ pub async fn delete_document(
 
 /// Go's `DeleteCollectionRequest` and `UpdateCollectionRequest`: the filter
 /// is an object or its GraphQL source, and the updater is JSON text.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct FilteredRequest {
     #[serde(default)]
     filter: JsonValue,

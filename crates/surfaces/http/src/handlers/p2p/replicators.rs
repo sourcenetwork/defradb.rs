@@ -31,7 +31,7 @@ pub struct ReplicatorRequest {
 
 /// Request body for replicator removal (Go-compatible).
 /// Go DefraDB uses body JSON with ID and Collections fields.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct ReplicatorDeleteRequest {
     #[serde(rename = "ID", default)]
     pub id: String,

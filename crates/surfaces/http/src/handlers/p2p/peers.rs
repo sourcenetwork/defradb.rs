@@ -22,7 +22,7 @@ use crate::router::{peer, AppState, NodePermission};
 pub type P2pInfoResponse = Vec<String>;
 
 /// Response for the single best shareable P2P address.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct ShareableAddressResponse {
     pub address: Option<String>,
 }

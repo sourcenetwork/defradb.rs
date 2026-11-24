@@ -18,7 +18,7 @@ use crate::router::{AppState, EncryptedIndexInfo, NodePermission};
 use crate::validation::validate_identifier;
 
 /// Go-compatible request to add an encrypted index.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct GoAddEncryptedIndexRequest {
     /// Field name to create the encrypted index on.
     #[serde(rename = "FieldName")]

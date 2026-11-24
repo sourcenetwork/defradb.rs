@@ -36,7 +36,7 @@ const OPERATION_REQUIRES_DEVELOPER_MODE: &str =
     "operation not permitted whilst development mode is disabled";
 
 /// Request body for export (Go-compatible format).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct ExportRequest {
     /// Collections to export (if empty, exports all).
     #[serde(default)]
@@ -56,7 +56,7 @@ pub struct ExportRequest {
 
 /// Request body for Go-compatible import.
 /// Go DefraDB expects: `{"filepath": "/path/to/backup.json"}`
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct GoImportRequest {
     /// File path to import from (Go format).
     pub filepath: Option<String>,
@@ -241,7 +241,7 @@ pub async fn import(
 }
 
 /// Response for import operation.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub struct ImportResponse {
     /// Whether the import completed successfully.
     pub success: bool,
