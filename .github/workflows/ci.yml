@@ -1115,10 +1115,40 @@ jobs:
     if: always()
     timeout-minutes: 10
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
+      # A changes request from a reviewer with write access blocks the merge until
+      # it is approved or dismissed (#3312). The reviews are read when this job runs,
+      # and review-gate.yml reruns this job alone on each review, so a review never
+      # reruns the rest of CI.
+      - id: reviews
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const decision = new Map();
+            const reviews = await github.paginate(github.rest.pulls.listReviews, {
+              ...context.repo, pull_number: context.payload.pull_request.number, per_page: 100,
+            });
+            // A reviewer's latest approving, blocking or dismissed review is their decision.
+            for (const r of reviews) {
+              if (['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'].includes(r.state)) decision.set(r.user.login, r.state);
+            }
+            const blocking = [];
+            for (const [login, state] of decision) {
+              if (state !== 'CHANGES_REQUESTED') continue;
+              // A reviewer whose permission can't be read still blocks.
+              const level = await github.rest.repos.getCollaboratorPermissionLevel({ ...context.repo, username: login })
+                .then((r) => r.data.permission, () => 'admin');
+              if (['admin', 'maintain', 'write'].includes(level)) blocking.push(login);
+            }
+            core.setOutput('changes_requested', blocking.join(','));
       - name: Check every queue job
         env:
           FULL: ${{ needs.ci-scope.outputs.full }}
+          CHANGES_REQUESTED: ${{ steps.reviews.outputs.changes_requested }}
           RUN_FEATURE_CHECKS: ${{ fromJson(needs.ci-scope.outputs.run || '{}').feature_checks }}
           RUN_FEATURE_TESTS: ${{ fromJson(needs.ci-scope.outputs.run || '{}').feature_tests }}
           RUN_WASM: ${{ fromJson(needs.ci-scope.outputs.run || '{}').wasm }}
@@ -1179,4 +1209,8 @@ jobs:
           check "Build testo archive" "$TESTO_ARCHIVE" "$FULL"
           check "Testo" "$TESTO" "$FULL"
           check "Testo summary" "$TESTO_SUMMARY" "$FULL"
+          if [ -n "$CHANGES_REQUESTED" ]; then
+            echo "::error::Changes requested by $CHANGES_REQUESTED; merging waits for their approval or a dismissal"
+            failed=1
+          fi
           exit "$failed"

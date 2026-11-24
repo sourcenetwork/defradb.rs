@@ -1,0 +1,49 @@
+name: Review gate
+
+# A review changes only whether Merge gate blocks (#3312), so it reruns that one
+# job of the pull request's latest finished CI run. Merge gate reads the reviews
+# itself; every other job keeps its result. A CI run still in progress reads the
+# reviews when its Merge gate starts, so it needs nothing. A fork's token cannot
+# rerun jobs, so for a fork this run only succeeds a Fork relay job, and
+# review-gate-relay.yml reruns Merge gate with the base repository's token.
+on:
+  pull_request_review:
+    types: [submitted, dismissed]
+
+permissions:
+  actions: write
+
+concurrency:
+  group: review-gate-${{ github.event.pull_request.number }}
+
+jobs:
+  rerun-merge-gate:
+    name: Rerun Merge gate
+    if: github.event.review.state != 'commented' && !github.event.pull_request.head.repo.fork
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v9
+        with:
+          script: |
+            const head = context.payload.pull_request.head.sha;
+            const runs = (await github.rest.actions.listWorkflowRuns({
+              ...context.repo, workflow_id: 'ci.yml', head_sha: head, event: 'pull_request', per_page: 1,
+            })).data.workflow_runs;
+            const run = runs[0];
+            if (!run) return core.info(`No CI run for ${head} yet.`);
+            if (run.status !== 'completed') return core.info(`CI run ${run.id} is ${run.status}; its Merge gate reads the reviews when it starts.`);
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+              ...context.repo, run_id: run.id, filter: 'latest', per_page: 100,
+            });
+            const gate = jobs.find((j) => j.name === 'Merge gate');
+            if (!gate) return core.setFailed(`CI run ${run.id} has no Merge gate job.`);
+            await github.rest.actions.reRunJobForWorkflowRun({ ...context.repo, job_id: gate.id });
+            core.info(`Reran Merge gate (job ${gate.id}) of CI run ${run.id}.`);
+
+  fork-relay:
+    name: Fork relay
+    if: github.event.review.state != 'commented' && github.event.pull_request.head.repo.fork
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - run: echo "review-gate-relay.yml reruns Merge gate for this fork pull request."
