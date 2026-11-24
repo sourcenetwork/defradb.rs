@@ -35,6 +35,104 @@ wants the invalidation signal. Forging a durable, gap-free stream of *arrivals* 
 opposed to revisions) is the [arrival journal](../documents/arrival-journal.md), which
 clients consume by cursor rather than subscription.
 
+## Delivery contract
+
+What each surface promises a consumer, answering the same seven questions for each.
+Every answer cites the test or model invariant that holds it; TBD marks a question
+with no evidence yet. Order is stated per collection only: each journal is per
+collection, and events carry no sequence number, so no surface offers a consumer a
+total order it can check across collections. The models are
+[`ChangeDelivery.tla`](https://github.com/sourcenetwork/defradb.rs/blob/main/proofs/tla/ChangeDelivery.tla)
+(publisher, journal and subscriber) and
+[`EventOrder.tla`](https://github.com/sourcenetwork/defradb.rs/blob/main/proofs/tla/EventOrder.tla)
+(the receipt-ordered dispatch).
+
+### The supported pattern
+
+Subscribe first, to document change notifications or a GraphQL subscription. Then
+read `_documentUpdates` from the saved cursor up to `head`, and save the cursor with
+what the read produced. Read again on every wake-up and every loss signal (a set
+`resync_required`, an ended stream), subscribing again first when the stream ended.
+A subscriber that does this observes every committed update of the collection, local
+or merged, exactly once and in commit order, with no rescan: `ChangeDelivery.tla`
+`INV_ExactlyOnce`, `INV_CommitOrder` and `EventuallyObserved` (GREEN
+`MC_ChangeDelivery_Green_Closing.cfg` and `MC_ChangeDelivery_Green_Coalescing.cfg`).
+Reading before subscribing can miss an update for good (`Red_ReadBeforeSubscribe`).
+The raw event subscription is not a wake-up source for this pattern: its loss counter
+wakes nobody (`Red_CounterNoWake`).
+
+### Event bus through the embedded API (`Node::subscribe`)
+
+| Question | Answer | Evidence |
+|---|---|---|
+| Delivery | At most once. A full buffer drops the event and adds one to the subscription's dropped counter; the subscription stays open. | `crates/foundation/events/tests/unit/channel_bus.rs` `ordinary_raw_subscription_remains_open_after_overflow` |
+| Duplicates | TBD: whether one update's `Update` event can go out twice (`is_retry`, a block merged again by a fresh handler). | none yet |
+| Order within a collection | Commit-receipt order, for local writes and P2P merges alike: both register their events as ordered post-commit callbacks (`register_ordered_events`), which go out in receipt order. | `EventOrder.tla` `Ordered`, `INV_CommitOrder`; `crates/engine/storage/src/backends/regolith/event_order.rs` `a_later_receipt_waits_for_an_earlier_commit_still_in_flight`; `event_order.rs` `reversed_concurrent_receipts_dispatch_in_seq_order` |
+| Order across collections | Not stated: events carry no sequence number. | none |
+| Restart | Nothing survives: the bus is in memory and keeps no cursor. | `proofs/survey/events.md` (live-only) |
+| Resubscription | A new subscription sees only events published after it. Subscribe, then read state; reading first can miss an update. | `ChangeDelivery.tla` `Red_ReadBeforeSubscribe` |
+| Gap detection | The dropped counter, read with `check_and_reset_dropped()`. It is raised for every drop, but it wakes no reader: a reader that drained the buffer and read zero just before the count landed waits with nothing to wake it. | `crates/foundation/events/tests/unit/channel_bus.rs` `raw_overflow_recorded_after_a_drain_is_counted_but_wakes_no_reader`; `ChangeDelivery.tla` `Red_CounterNoWake` |
+| Combination | Not supported as the wake-up source of the pattern above. | `ChangeDelivery.tla` `Red_CounterNoWake` |
+
+### GraphQL subscription over SSE
+
+| Question | Answer | Evidence |
+|---|---|---|
+| Delivery | At most once, with the loss signalled: an overflow ends the stream before any result queued behind it. | `crates/surfaces/http/tests/graphql_sse_recovery.rs` `overflow_ends_the_graphql_stream_before_a_queued_result`; `SseDelivery` `INV_DetectedLossEnds` |
+| Duplicates | TBD, as for the event bus it is built on. | none yet |
+| Order within a collection | Commit-receipt order, as the event bus. | `EventOrder.tla` `Ordered`, `INV_CommitOrder` |
+| Order across collections | Not stated. | none |
+| Restart | The stream ends with the process; nothing resumes it. | `proofs/survey/events.md` (live-only) |
+| Resubscription | A new stream sees only what is published after it. Subscribe, then read the journal. | `ChangeDelivery.tla` `Red_ReadBeforeSubscribe` |
+| Gap detection | The stream ends, and the end wakes a reader that already drained what it had. | `crates/foundation/events/tests/unit/channel_bus.rs` `overflow_wakes_reader_that_drained_before_loss_was_recorded`; `SseDelivery` `LossEndsStream` |
+| Combination | Supported: on every result and on the end of the stream (subscribing again first), read the update journal from the cursor. | `ChangeDelivery.tla` `MC_ChangeDelivery_Green_Closing.cfg` |
+
+### Document change notifications (`subscribe_document_changes`, `subscribe_collection_changes`)
+
+| Question | Answer | Evidence |
+|---|---|---|
+| Delivery | A lossless invalidation, not a revision stream: the changed documents' state is written first, then the reader is woken. Revisions of one document coalesce into one pending entry. | `crates/foundation/events/tests/document_changes.rs` `history_revisions_coalesce_without_changing_raw_events`, `publishing_races_with_draining_without_losing_a_wake` |
+| Duplicates | Each published update is counted in exactly one batch; a document is reported again only for a later update. | `crates/foundation/events/tests/document_changes.rs` `publishing_races_with_draining_without_losing_a_wake` (10 000 published, 10 000 counted), `distinct_document_overflow_is_one_bounded_resync_then_recovers` |
+| Order within a collection | Not a sequence: a wake-up names documents, not an order. | none |
+| Order across collections | Not stated. | none |
+| Restart | Nothing survives. | `proofs/survey/events.md` (live-only) |
+| Resubscription | Subscribe, then read; a subscription filtered to collections is woken only by them. | `crates/foundation/events/tests/document_changes.rs` `collection_scope_ignores_other_collections`; `ChangeDelivery.tla` `Red_ReadBeforeSubscribe` |
+| Gap detection | Too many distinct pending documents clear the set and set `resync_required`, once, with a wake-up. | `crates/foundation/events/tests/document_changes.rs` `distinct_document_overflow_is_one_bounded_resync_then_recovers` |
+| Combination | Supported: the recommended wake-up source for the pattern above. P2P merges feed it through the same `Update` event as local writes (`Message::as_update`); a test through a merge is TBD. | `ChangeDelivery.tla` `MC_ChangeDelivery_Green_Coalescing.cfg`, `Red_WakeBeforeState` |
+
+### Arrival journal (`_documentArrivals`)
+
+| Question | Answer | Evidence |
+|---|---|---|
+| Delivery | Durable, read by cursor. One row per document, however it arrived. | `crates/database/db/tests/read/arrival_transactions.rs` `rollback_is_atomic_and_duplicate_arrivals_do_not_advance`; `CommitOrderedAppend.tla` (regolith) |
+| Duplicates | None: the document is the once key, so a create racing a merge of it keeps one row. | `crates/database/db/tests/read/arrival_transactions.rs` `rollback_is_atomic_and_duplicate_arrivals_do_not_advance` |
+| Order within a collection | Commit order, dense cursors from 1. | `crates/database/db/tests/read/arrival_transactions.rs` `reversed_concurrent_commits_receive_cursors_in_commit_order` |
+| Order across collections | None: each collection has its own cursors. | none |
+| Restart | The journal and a saved cursor survive a reopen. Retention across truncate, purge, backup restore and `drop_all`: TBD. | `crates/database/db/tests/read/arrival_transactions.rs` `cursor_survives_database_reopen` |
+| Resubscription | A read is a snapshot: it sees a dense prefix of rows up to `head`. | `CommitOrderedAppend.tla` (regolith) snapshot prefix |
+| Gap detection | Cursors are dense; a missing row in the read range is an error, never skipped. A cursor past `head` fails with `arrival cursor is beyond this node's collection head` (a test through a client is TBD). | `crates/database/db/src/event/arrivals.rs` |
+| Combination | Read on wake-up, as the update journal. | `ChangeDelivery.tla` (as for the update journal) |
+
+### Update journal (`_documentUpdates`)
+
+| Question | Answer | Evidence |
+|---|---|---|
+| Delivery | Durable, read by cursor: one row per update that changed its document, local or merged. A create adds no row. | `reqs/defra/change-delivery.md` `defra.events.delivery.merge-once`; `tools/integration-test/tests/testo/subscription/delivery/merge_once.rs`; `DocumentUpdateJournal.tla` `INV_Once` |
+| Duplicates | None: (collection, document, block) is the once key, so a block merged again, or reaching the node again after it reopens, adds no row. | `crates/database/db/tests/merge/update_journal.rs` `a_block_merged_again_by_another_handler_adds_no_second_row`; `ChangeDelivery.tla` `Red_ReMergeAppends` |
+| Order within a collection | Commit order, dense cursors from 1, for local writes and merges. | `defra.events.delivery.order`; `crates/database/db/tests/read/update_transactions.rs` `commit_order_rollback_and_replayed_updates` |
+| Order across collections | None: each collection has its own cursors. | `ChangeDelivery.tla` (one collection; out of scope) |
+| Restart | The journal and a saved cursor survive a reopen with no gap and no duplicate. Truncate at e222d6b deletes no `/arrival/updates/` key (`collection/ops/truncate/all.rs`, `filtered.rs`), so the rows of truncated documents stay; what a reader is handed for them, and retention across purge, backup restore and `drop_all`: TBD. | `defra.events.delivery.resume`; `crates/database/db/tests/read/update_transactions.rs` `updates_and_replay_checkpoint_survive_reopen` |
+| Resubscription | A read is a snapshot of rows up to `head`; a reader that saves its cursor with its effect resumes exactly. | `ChangeDelivery.tla` `Red_CursorNotDurable` |
+| Gap detection | Cursors are dense, a missing row is an error, and a cursor past `head` fails with `update cursor is beyond this node's collection head` through every client. | `defra.events.delivery.beyond-head`; `crates/database/db/tests/read/update_transactions.rs` `a_scan_is_closed_when_a_row_is_missing` |
+| Combination | The durable half of the pattern above. | `ChangeDelivery.tla` `INV_ExactlyOnce`, `INV_CommitOrder`, `EventuallyObserved` |
+
+### What counts as breaking
+
+Weakening any answer above is a breaking change: a surface's delivery class (at most
+once with a signal, lossless invalidation, durable), its order, its loss signal, or how
+long a journal cursor stays valid. Such a change says so in its PR and updates this
+section, the `defra.events.delivery` requirements and the models in the same change.
+
 ## P2P forwarding
 
 Committed writes are handed to the replication broadcaster (push-to-replicators plus

@@ -522,8 +522,23 @@ RUNS=(
   "MC_StatementAtomicity_Red_NoSideEffectRollback.cfg StatementAtomicity.tla RED" # failed statement leaves callback side effects
   "MC_StatementAtomicity_Red_NextOperationSkipsCleanup.cfg StatementAtomicity.tla RED" # next statement crosses pending cancellation cleanup
   "MC_StatementAtomicity_Red_CommitSkipsCleanup.cfg StatementAtomicity.tla RED" # transaction commits before cancellation cleanup
-  "MC_EventOrder_Green.cfg EventOrder.tla GREEN"
-  "MC_EventOrder_Red_Arrival.cfg EventOrder.tla RED"
+  "MC_EventOrder_Green.cfg EventOrder.tla GREEN" # #3268: events go out in commit order, after hooks, only for commits, none lost
+  "MC_EventOrder_Red_Arrival.cfg EventOrder.tla RED" # dispatch ignores the floors (Ordered)
+  "MC_EventOrder_Red_ReceiptRegress.cfg EventOrder.tla RED" # a later commit gets a lower receipt (INV_CommitOrder)
+  "MC_EventOrder_Red_NoFloorClamp.cfg EventOrder.tla RED" # an empty commit goes out at its old snapshot (Ordered)
+  "MC_EventOrder_Red_DispatchBeforeAttach.cfg EventOrder.tla RED" # completes before the hand-over, events lost (INV_CommittedEventsKept)
+  "MC_EventOrder_Red_DispatchDuringHooks.cfg EventOrder.tla RED" # events go out while hooks run (INV_HooksBeforeEvents)
+  "MC_EventOrder_Red_AbortPublishes.cfg EventOrder.tla RED" # an aborted commit's events go out (INV_OnlyCommitted)
+  "MC_EventOrder_Red_NotMinSeq.cfg EventOrder.tla RED" # dispatch sends any ready commit (INV_CommitOrder)
+  "MC_ChangeDelivery_Green_Closing.cfg ChangeDelivery.tla GREEN" # #3268: subscribe, then read from the cursor on every wake: once, in order, eventually (SSE)
+  "MC_ChangeDelivery_Green_Coalescing.cfg ChangeDelivery.tla GREEN" # the same over document change notifications
+  "MC_ChangeDelivery_Red_SilentLoss.cfg ChangeDelivery.tla RED" # a drop nobody counts (INV_LossCounted)
+  "MC_ChangeDelivery_Red_ReadBeforeSubscribe.cfg ChangeDelivery.tla RED" # read, then subscribe (EventuallyObserved)
+  "MC_ChangeDelivery_Red_JournalSkipsMerge.cfg ChangeDelivery.tla RED" # a merge gets no row (EventuallyObserved)
+  "MC_ChangeDelivery_Red_ReMergeAppends.cfg ChangeDelivery.tla RED" # no once key: a re-merged block gets a second row (INV_ExactlyOnce)
+  "MC_ChangeDelivery_Red_CounterNoWake.cfg ChangeDelivery.tla RED" # Node::subscribe: a counted drop wakes nobody (EventuallyObserved)
+  "MC_ChangeDelivery_Red_WakeBeforeState.cfg ChangeDelivery.tla RED" # the wake precedes the visible update (EventuallyObserved)
+  "MC_ChangeDelivery_Red_CursorNotDurable.cfg ChangeDelivery.tla RED" # the cursor is not saved with what was observed (INV_ExactlyOnce)
   "MC_TransactionDecisions_Green.cfg TransactionDecisions.tla GREEN"
   "MC_TransactionDecisions_Red_OutsideRead.cfg TransactionDecisions.tla RED"
   "MC_DefraKeyClassifier_Green.cfg DefraKeyClassifier.tla GREEN"
