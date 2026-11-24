@@ -32,6 +32,7 @@ use crate::handlers::p2p::{ManageQueryRequestBody, ManageRequestBody, ShareableA
 use crate::handlers::utility::NodeIdentityResponse;
 use crate::handlers::views::ViewNamesRequest;
 use crate::route_permissions::RoutePermission;
+use crate::router::EncryptedIndexInfo;
 use crate::router::NodePermission;
 use crate::wire::{
     ActionExecution, DocumentRelationship, DocumentsResult, LightClientStatus,
@@ -241,8 +242,8 @@ pub const ROUTES: &[Route] = &[
     // The edge checks `get-collection` first and leaves the encrypted index
     // permission to the operation, so it comes after the collection on every
     // server, as in Go.
-    row("/api/v0/collections/{name}/encrypted-indexes", GET, IdentityOnly, true),
-    row("/api/v0/collections/{name}/encrypted-indexes", POST, IdentityOnly, true),
+    row_body("/api/v0/collections/{name}/encrypted-indexes", GET, IdentityOnly, true, None, Some(body::<Vec<EncryptedIndexInfo>>)),
+    row_body("/api/v0/collections/{name}/encrypted-indexes", POST, IdentityOnly, true, None, Some(body::<EncryptedIndexInfo>)),
     row("/api/v0/collections/{name}/encrypted-indexes/{field}", DELETE, IdentityOnly, true),
     // P2P
     row("/api/v0/p2p/info", GET, required(NodePermission::P2pPeerInfo), false),

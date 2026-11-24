@@ -855,8 +855,8 @@ mod tests {
             .filter(|row| row.request.is_some() || row.response.is_some())
             .count();
         assert!(
-            typed >= 72,
-            "only {typed} rows name a body; 72 did when this floor was written"
+            typed >= 74,
+            "only {typed} rows name a body; 74 did when this floor was written"
         );
     }
 

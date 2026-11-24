@@ -106,7 +106,7 @@ pub trait EncryptedIndexOperations: defra_core::thread_bounds::MaybeSendSync {
 }
 
 /// Encrypted index information for HTTP responses.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct EncryptedIndexInfo {
     /// Collection name (used for grouping in list-all responses, not serialized in per-collection responses).
     #[serde(skip)]
