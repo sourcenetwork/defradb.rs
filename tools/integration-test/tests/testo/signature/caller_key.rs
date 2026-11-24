@@ -4,8 +4,8 @@
 
 use integration_test::actions::shared::KeyType;
 use integration_test::actions::{
-    AddCollection, AddDoc, NewNode, UpdateDoc, VerifyBlockSignature, WaitForPeersEvents,
-    WaitForSync,
+    AddCollection, AddDoc, DeleteDoc, NewNode, Request, UpdateDoc, VerifyBlockSignature,
+    WaitForPeersEvents, WaitForSync,
 };
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
@@ -127,6 +127,77 @@ fn signature_in_process_write_without_identity_signs_with_the_node_key() {
             head("created").into(),
             verify("created", None, None).into(),
             verify("created", Some(1), Some(OTHER_KEY)).into(),
+        ],
+        client_types: Some(&[ClientType::InProcess]),
+        ..Default::default()
+    }
+    .execute();
+}
+
+/// The newest-first `_commits` of the collection, the first `N` captured
+/// under `names`.
+fn commits<const N: usize>(names: [&str; N]) -> Request {
+    let pointers: Vec<String> = (0..N).map(|i| format!("/data/_commits/{i}/cid")).collect();
+    let mut capture = captures([]);
+    for (name, pointer) in names.iter().zip(&pointers) {
+        capture.insert((*name).to_owned(), pointer.clone());
+    }
+    Request {
+        request: "query { _commits(order: {height: DESC}) { cid } }".into(),
+        common: Common {
+            capture,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+#[test]
+#[mantra_macros::req_test("defra.signature.embedded_caller_key")]
+fn signature_in_process_field_and_delete_blocks_sign_with_the_callers_key() {
+    TestCase {
+        id: integration_test::scenario_id!(),
+        actions: vec![
+            NewNode {
+                enable_signing: true,
+                key_type: Some(KeyType::Secp256k1),
+                ..Default::default()
+            }
+            .into(),
+            AddCollection {
+                sdl: "type Users { name: String age: Int }".into(),
+                ..Default::default()
+            }
+            .into(),
+            Request {
+                request: r#"mutation { add_Users(input: {name: "John", age: 21}) { _docID } }"#
+                    .into(),
+                common: Common {
+                    identity_seed: Some(1),
+                    capture: captures([("doc", "/data/add_Users/0/_docID")]),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            commits(["first", "second", "third"]).into(),
+            verify("first", Some(1), None).into(),
+            verify("second", Some(1), None).into(),
+            verify("third", Some(1), None).into(),
+            verify("first", None, Some(OTHER_KEY)).into(),
+            DeleteDoc {
+                collection: "Users".into(),
+                doc_id: Text::reference("doc"),
+                common: Common {
+                    identity_seed: Some(1),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            commits(["deleted"]).into(),
+            verify("deleted", Some(1), None).into(),
+            verify("deleted", None, Some(OTHER_KEY)).into(),
         ],
         client_types: Some(&[ClientType::InProcess]),
         ..Default::default()

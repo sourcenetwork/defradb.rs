@@ -346,9 +346,9 @@ A node that holds a node identity but was started without signing (`--no-signing
 # `defra.signature.embedded_caller_key`: An in-process write signs with the acting identity's own key
 
 - **Parents:** ["defra.signature"]
-- **Scenarios:** ["signature::caller_key::signature_in_process_write_signs_with_the_callers_key", "signature::caller_key::signature_in_process_write_without_identity_signs_with_the_node_key"]
+- **Scenarios:** ["signature::caller_key::signature_in_process_write_signs_with_the_callers_key", "signature::caller_key::signature_in_process_write_without_identity_signs_with_the_node_key", "signature::caller_key::signature_in_process_field_and_delete_blocks_sign_with_the_callers_key"]
 
-An in-process (embedded) write whose request carries the acting client identity's own local secp256k1 or Ed25519 key signs its blocks with that key whenever the write signs: the priority-1 field blocks, the `_C` block, and a `@branchable` collection's collection-level block, as Go's in-process client does with a `FullIdentity`. Verifying such a block against that identity's public key succeeds, and against the node's key fails with `signature was created by a different key`; the same holds for the blocks of a later update by that identity. A write whose request carries no key falls back to the node key: verifying its blocks against the node's key succeeds.
+An in-process (embedded) write whose request carries the acting client identity's own local secp256k1 or Ed25519 key signs its blocks with that key whenever the write signs: the priority-1 field blocks, the `_C` block, and a `@branchable` collection's collection-level block, as Go's in-process client does with a `FullIdentity`. Verifying such a block against that identity's public key succeeds, and against the node's key fails with `signature was created by a different key`; the same holds for the blocks of a later update and the `_C` block of a delete by that identity, through the document API and a GraphQL mutation alike. A write whose request carries no key falls back to the node key: verifying its blocks against the node's key succeeds.
 
 # `go.signature.verify.acp`: Verification gated by access control
 
