@@ -60,6 +60,9 @@ fn removing_a_fulltext_field_names_the_field_and_keeps_the_collection_usable() {
         id: integration_test::scenario_id!(),
         // Go's pinned schema parser does not support @fulltext.
         client_types: Some(&[ClientType::InProcess, ClientType::RustHttp, ClientType::Cli]),
+        // The secondary-index multiplier also puts a regular index on `body`,
+        // which the patch names first.
+        multiplier_excludes: &["secondary-index"],
         actions: vec![
             AddCollection {
                 sdl: r#"
