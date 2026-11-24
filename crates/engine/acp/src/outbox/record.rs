@@ -284,6 +284,12 @@ pub struct OwedChange {
     /// it is staged nor when it settles.
     #[serde(default, skip_serializing_if = "is_false")]
     pub with_registration: bool,
+    /// An archive its actor, the object's owner, staged by deleting the
+    /// document itself: that actor still reads the document's commit
+    /// history while the archive is owed. An archive staged for a delete
+    /// someone else made, or restored after a switch, spares nobody.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub deleted_by_actor: bool,
 }
 
 impl OwedChange {
@@ -303,6 +309,7 @@ impl OwedChange {
             in_flight: None,
             alone: false,
             with_registration: false,
+            deleted_by_actor: false,
         }
     }
 
@@ -436,6 +443,7 @@ mod tests {
             in_flight: None,
             alone: false,
             with_registration: false,
+            deleted_by_actor: false,
         }
     }
 

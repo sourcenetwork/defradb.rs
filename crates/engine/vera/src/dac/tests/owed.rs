@@ -363,6 +363,7 @@ fn change(actor: &str, authority: OwedAuthority, op: OwedOp) -> OwedChange {
         in_flight: None,
         alone: false,
         with_registration: false,
+        deleted_by_actor: false,
     }
 }
 

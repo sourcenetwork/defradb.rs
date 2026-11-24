@@ -159,8 +159,8 @@ pub trait VeraProvider: MaybeSendSync {
     }
 
     /// Whether a document's delete archives its object on this provider as
-    /// an owed change staged in the delete's transaction, refused before
-    /// commit unless the caller owns the object
+    /// an owed change staged in the delete's transaction and made as the
+    /// object's owner, whoever deletes
     /// (`acp::TransactionOutbox::stage_archive`). Such a provider archives
     /// nothing after the commit ([`Self::archive_object_on_document_delete`]
     /// is `false` for it).

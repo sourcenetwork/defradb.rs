@@ -7,7 +7,7 @@ use datastore::{NamespaceView, WeakNamespaceView};
 use storage::corekv::Store;
 
 use super::keys::OwedTupleState;
-use super::ops;
+use super::ops::{self, StageMarks};
 use super::record::{InFlight, NewOwedChange, OwedAuthority, OwedChange, OwedState, OwedTuple};
 use crate::error::{Error, Result};
 
@@ -161,7 +161,7 @@ impl OwedChanges {
                 limit: MAX_UNSETTLED_OWED_CHANGES_PER_ACTOR,
             });
         }
-        let change = ops::stage(&view, self.sequences.as_ref(), new, false).await?;
+        let change = ops::stage(&view, self.sequences.as_ref(), new, StageMarks::default()).await?;
         self.staged.0.fetch_add(1, Ordering::Relaxed);
         Ok(change)
     }
@@ -174,7 +174,16 @@ impl OwedChanges {
     /// actor's admission counts when it is staged and when it settles
     /// (`TransactionOutbox::stage_with_registration`).
     pub async fn stage_with_registration(&self, new: NewOwedChange) -> Result<OwedChange> {
-        ops::stage(&self.active_view()?, self.sequences.as_ref(), new, true).await
+        ops::stage(
+            &self.active_view()?,
+            self.sequences.as_ref(),
+            new,
+            StageMarks {
+                with_registration: true,
+                ..StageMarks::default()
+            },
+        )
+        .await
     }
 
     /// Record, in this transaction, a change none of the bounds on new
@@ -183,8 +192,32 @@ impl OwedChanges {
     /// (committed and counted when first staged; `ExternalDocumentAcp`'s
     /// `owe_again`), or the archive of a deleted document, one per delete.
     pub async fn stage_restored(&self, new: NewOwedChange) -> Result<OwedChange> {
+        self.stage_unbounded(new, StageMarks::default()).await
+    }
+
+    /// Record, in this transaction, the archive of a deleted document's
+    /// object, one per delete, which none of the bounds on new changes
+    /// limits. `deleted_by_actor` says the archive's actor made the delete
+    /// itself, so it keeps the document's commit history while the archive
+    /// is owed ([`OwedChange::deleted_by_actor`]).
+    pub async fn stage_archive(
+        &self,
+        new: NewOwedChange,
+        deleted_by_actor: bool,
+    ) -> Result<OwedChange> {
+        self.stage_unbounded(
+            new,
+            StageMarks {
+                deleted_by_actor,
+                ..StageMarks::default()
+            },
+        )
+        .await
+    }
+
+    async fn stage_unbounded(&self, new: NewOwedChange, marks: StageMarks) -> Result<OwedChange> {
         let view = self.active_view()?;
-        let change = ops::stage(&view, self.sequences.as_ref(), new, false).await?;
+        let change = ops::stage(&view, self.sequences.as_ref(), new, marks).await?;
         self.staged.0.fetch_add(1, Ordering::Relaxed);
         Ok(change)
     }

@@ -33,12 +33,16 @@ specification rules when reconstructed through the document ACP provider.
 Deleting a document archives its object on the deployment: the delete's
 transaction records the archive as an owed change, settled after the commit in
 order behind anything still in flight on the object, and Vera then removes every
-relationship on it and names no owner. Only the object's owner may archive, so a
-delete by anyone else (a writer the policy lets delete) is refused before it
-commits and nothing is deleted. Changes on the object not yet sent go with the
-delete, each with a note for its actor; from the commit until the archive
-settles, the object denies everyone, and only the owner that deleted the
-document still reads its commit history. A node that merges a replicated delete
+relationship on it and names no owner. Only the object's owner may archive, so
+the archive is always made as the owner, whoever the policy lets delete: it is
+signed with the owner's authority when the node holds it (a key for the owner's
+DID, or the owner's delegation on the owner's own delete) and otherwise waits,
+parked, until the owner hands one in. A writer's delete is never refused for
+not owning the document, and the archive is never sent under the writer's
+authority. Changes on the object not yet sent go with the delete, each with a
+note for its actor; from the commit until the archive settles, the object
+denies everyone, and only an owner that deleted the document itself still
+reads its commit history. A node that merges a replicated delete
 archives nothing. Vera keeps an archived registration: the same document
 identifier cannot be registered again, so a document re-created with identical
 content stays readable by nobody.

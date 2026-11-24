@@ -258,6 +258,15 @@ in place, so it lands. Otherwise the delete and the changes before it would wait
 ever on every node that waits for the provider to hold the document. A document whose
 creator lost its last grant stays registered and refuses that creator.
 
+On vera.rs a local delete archives the object instead, in the delete's transaction
+(`defra.acp.vera_delete_archive`, `proofs/tla/ArchiveOnDelete.tla`). Anyone the
+policy lets delete may delete; the archive is always made as the document's owner,
+signed with the owner's authority when the node holds it (a key for the owner's DID,
+or the owner's own delegation when the owner deletes) and otherwise parked until the
+owner hands in a credential. From the commit until the archive settles the document
+is denied to everyone; only an owner that deleted it itself still reads its commit
+history.
+
 **Parked refusals.** Under a remote provider, a signed change whose signer the
 provider refuses is parked by its document, because a later grant can change the
 answer. A change whose history holds a parked one is parked with it: it cannot merge

@@ -440,6 +440,16 @@ where
     merge(txn, &keys::actor_key(&change.actor), &actor).await
 }
 
+/// What a change's record says about how it was staged, beside the change.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct StageMarks {
+    /// Owed with its object's registration ([`OwedChange::with_registration`]).
+    pub with_registration: bool,
+    /// An archive staged by its actor's own delete
+    /// ([`OwedChange::deleted_by_actor`]).
+    pub deleted_by_actor: bool,
+}
+
 /// Record `new` in `txn`. The tuple's head key is read before the sequence
 /// is allocated and written after: a transaction that stages the same tuple
 /// and commits first aborts this one, and the attempt that then commits read
@@ -449,7 +459,7 @@ pub(super) async fn stage<T>(
     txn: &T,
     sequences: &dyn Store,
     new: NewOwedChange,
-    with_registration: bool,
+    marks: StageMarks,
 ) -> Result<OwedChange>
 where
     T: Reader + Writer + ?Sized,
@@ -462,7 +472,8 @@ where
         .map_err(storage_error)?
         .start;
     let change = OwedChange {
-        with_registration,
+        with_registration: marks.with_registration,
+        deleted_by_actor: marks.deleted_by_actor,
         ..OwedChange::staged(seq, new)
     };
     let record = change.encode_admitted()?;

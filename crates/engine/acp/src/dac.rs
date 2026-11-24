@@ -205,9 +205,9 @@ pub trait DocumentACP: MaybeSendSync {
 
     /// Whether deleting a document archives its object on this provider as
     /// an owed change staged in the delete's transaction
-    /// ([`crate::TransactionOutbox::stage_archive`]), so the delete is
-    /// refused before it commits when its caller may not archive. The
-    /// default archives nothing that way.
+    /// ([`crate::TransactionOutbox::stage_archive`]), made as the object's
+    /// owner whoever deletes; the delete is refused before it commits when
+    /// the archive cannot be staged. The default archives nothing that way.
     fn stages_archive_on_delete(&self) -> bool {
         false
     }

@@ -11,9 +11,14 @@
 \* former reader still holds its grant on the deployment, and a later
 \* document with the same identifier inherits it. So the delete records, in
 \* its own transaction, an owed "archive" of the object. Vera removes every
-\* relationship of an archived object and its owner no longer counts. Only
-\* the owner may archive, so a delete by anyone else (a writer the policy
-\* lets delete) is refused before it commits: nothing is deleted.
+\* relationship of an archived object and its owner no longer counts. Anyone
+\* the policy lets delete may delete: the owner, or a writer. Someone the
+\* policy does not let delete (a stranger) is refused before the delete
+\* commits: nothing is deleted. Only the owner may archive on Vera, so the
+\* archive is made as the owner whoever deleted, and sent only under the
+\* owner's authority: a key the node holds for the owner, or the owner's own
+\* delegation. When the node has none, the archive is parked until the owner
+\* hands one in; it is never sent under the writer's authority.
 \*
 \* Changes still owed on the object when it is deleted cannot matter any
 \* more: those not yet handed to the worker are dropped with the delete.
@@ -22,8 +27,9 @@
 \* archived object, so no grant lands after the archive. From the delete's
 \* commit on, the owed archive denies everyone on the object, the owner
 \* too, until the deployment holds it. One read is left while it is owed:
-\* whoever staged the archive (the deleting owner) still reads the
-\* document's commit history, so it can see the delete it just made.
+\* an owner that deleted the document itself still reads its commit
+\* history, so it can see the delete it just made. After a writer's delete
+\* nobody does: the archive's actor (the owner) did not make it.
 \*
 \* Two more things can stand behind a read of the object. The owner's
 \* registration can still be owed (the create recorded it, the deployment
@@ -38,15 +44,19 @@
 \*   * a deleted document grants anything to anyone;
 \*   * anyone but its deleter reads a deleted document's commit history;
 \*   * a grant that holds on the deployment after the archive settled;
-\*   * a document deleted by someone who may not archive it.
+\*   * a document deleted by someone the policy does not let delete;
+\*   * an archive owed, or sent, as anyone but the owner.
 \* What must happen: the archive settles, and the deployment then holds no
 \* relationship and no live owner for the object.
 \*
 \* Code this models (defradb.rs, vera.rs at 45cd086b):
-\*   crates/engine/acp/src/outbox/staging.rs      TransactionOutbox::stage_archive (owner
-\*       check before commit, earlier unsent changes on the object dropped)
+\*   crates/engine/query/src/runner/mutation.rs   the delete permission check before the
+\*       delete is made
+\*   crates/engine/acp/src/outbox/staging.rs      TransactionOutbox::stage_archive (the
+\*       archive made as the owner under the owner's authority or parked, earlier unsent
+\*       changes on the object dropped)
 \*   crates/engine/acp/src/outbox/deny.rs         owed_denial (an owed archive denies all),
-\*       archive_actor (who staged it)
+\*       archive_actor (its actor, when that actor deleted the document itself)
 \*   crates/engine/query/src/txn/context.rs       decided_by_owed, spared_by_owed_archive
 \*       (the archive's actor keeps the commit history), decided_by_owed_archive (an owed
 \*       archive decides before an owed registration or the registration check)
@@ -67,12 +77,16 @@
 \* Correspondence table (model -> Rust):
 \*   queue, inflight      the outbox queue in sequence order; a change whose request the
 \*                        worker journaled (its in-flight mark with a hash)
-\*   Delete, CheckOwner   unregister_deleted_doc -> stage_archive; NotOwner refuses the delete
+\*   Delete, CheckPermission  the mutation runner's delete check refuses a stranger
+\*   ArchiveAsOwner       stage_archive records the owner as the archive's actor and asks
+\*                        command_authority for the owner, never for the deleter
 \*   Drop                 stage_archive discards earlier unsent changes on the object,
 \*                        parked ones included
 \*   Park, Renew          a change parked awaiting authority; reauthorize_owed
-\*   ParkArchive          stage_archive parks the owner's archive when its request lets the
-\*                        node sign nothing (OwedAuthorityUnavailable); it still denies
+\*   ParkArchive          stage_archive parks the archive when nothing lets the node sign
+\*                        for the owner (OwedAuthorityUnavailable): no key for it, and no
+\*                        delegation of the owner's own delete; it still denies
+\*   RenewArchive         reauthorize_owed by the owner (the archive's actor)
 \*   Settle, VeraRefuses  the drainer's pass; Vera's management check refuses a change to an
 \*                        archived object
 \*   Overlay              owed_denial: an unsettled archive on the object denies everyone
@@ -93,20 +107,28 @@
 \*                        for the commit history. archive_actor names nobody while a
 \*                        delete of that actor's owner relation is owed too (the model
 \*                        has one owner, whose owner relation nobody deletes)
+\*   SpareOnlyDeleter     OwedChange::deleted_by_actor: archive_actor names the actor only
+\*                        when it made the delete
 EXTENDS Naturals, Sequences
 
 CONSTANTS
-    CheckOwner,   \* TRUE: a delete by anyone but the owner is refused before commit
+    CheckPermission, \* TRUE: a delete by someone the policy does not let delete is refused
+    ArchiveAsOwner,  \* TRUE: the archive is made as the owner, whoever deleted
     Drop,         \* TRUE: earlier unsent changes on the object go with the delete
     VeraRefuses,  \* TRUE: Vera refuses a change to an archived object
     Overlay,      \* TRUE: an owed archive denies everyone on the object
     HistoryActorOnly, \* TRUE: an owed archive leaves the commit history to its actor alone
+    SpareOnlyDeleter, \* TRUE: and to that actor only when it made the delete
     First         \* which check a read of the object asks first: "archive" (the owed
                   \* archive, as the code does), "owedRegistration" (the registration
                   \* still owed to the creator) or "unregistered" (the unregistered rule)
 
-\* Who acts: the owner, and a writer the policy lets delete.
-People == {"owner", "writer"}
+\* Who acts: the owner, a writer the policy lets delete, and a stranger it
+\* does not.
+People == {"owner", "writer", "stranger"}
+
+\* Whom the policy lets delete.
+Deleters == {"owner", "writer"}
 
 \* Who asks for the commit history: they, and the reader the owner granted.
 Askers == People \cup {"reader"}
@@ -128,6 +150,10 @@ VARIABLES
     servedHistory  \* TRUE once someone other than its deleter read a deleted document's history
 
 vars == <<owedReg, unknown, doc, deleter, queue, parked, parkedArchive, renewed, granted, archived, grants, servedWide, lateGrant, servedHistory>>
+
+\* Who the archive is made as: the owner, or with ~ArchiveAsOwner whoever
+\* deleted.
+ArchiveActor == IF ArchiveAsOwner THEN "owner" ELSE deleter
 
 \* Whether an archive is owed.
 ArchiveOwed == parkedArchive \/ \E i \in DOMAIN queue : queue[i].op = "archive"
@@ -169,17 +195,18 @@ Journal ==
     /\ queue' = [queue EXCEPT ![1].inflight = TRUE]  \* now it is
     /\ UNCHANGED <<owedReg, unknown, doc, deleter, parked, parkedArchive, renewed, granted, archived, grants, servedWide, lateGrant, servedHistory>>  \* nothing else moves
 
-\* Someone deletes the document. With CheckOwner only the owner may: anyone
-\* else is refused and nothing commits. The delete records the archive in
-\* its own transaction; with Drop, earlier changes not yet handed to the
-\* worker go with it.
+\* Someone deletes the document. With CheckPermission only whom the policy
+\* lets delete may: anyone else is refused and nothing commits. The delete
+\* records the archive in its own transaction, as ArchiveActor; with Drop,
+\* earlier changes not yet handed to the worker go with it.
 Delete ==
     /\ doc = "live"                             \* there is a document to delete
     /\ \E who \in People :
-        /\ (~CheckOwner \/ who = "owner")       \* the refusal before commit
+        /\ (~CheckPermission \/ who \in Deleters)  \* the refusal before commit
         /\ doc' = "deleted" /\ deleter' = who   \* the delete commits
         /\ LET kept == IF Drop THEN SelectSeq(queue, LAMBDA c : c.inflight) ELSE queue
-           IN queue' = Append(kept, [op |-> "archive", actor |-> who, inflight |-> FALSE])
+               actor == IF ArchiveAsOwner THEN "owner" ELSE who
+           IN queue' = Append(kept, [op |-> "archive", actor |-> actor, inflight |-> FALSE])
         /\ parked' = IF Drop THEN 0 ELSE parked  \* parked grants go too
         /\ UNCHANGED <<parkedArchive, renewed>>
     /\ UNCHANGED <<owedReg, unknown, granted, archived, grants, servedWide, lateGrant, servedHistory>>  \* the deployment has not seen it
@@ -217,19 +244,19 @@ Renew ==
     /\ parked' = parked - 1
     /\ UNCHANGED <<owedReg, unknown, doc, deleter, parkedArchive, renewed, granted, archived, grants, servedWide, lateGrant, servedHistory>>  \* nothing else moves
 
-\* The owner deleted through a request that lets the node sign nothing for
-\* it: the archive at the head waits for the owner's authority. It still
-\* denies (ArchiveOwed).
+\* Nothing lets the node sign for the archive's actor (no key for it, and a
+\* delete that carried no delegation of its): the archive at the head waits
+\* for that authority. It still denies (ArchiveOwed).
 ParkArchive ==
     /\ queue # <<>> /\ queue[1].op = "archive" /\ ~queue[1].inflight  \* an unsent archive at the head
     /\ ~renewed                                  \* not the one sent under a credential handed in
     /\ queue' = Tail(queue) /\ parkedArchive' = TRUE  \* it waits aside
     /\ UNCHANGED <<owedReg, unknown, doc, deleter, parked, renewed, granted, archived, grants, servedWide, lateGrant, servedHistory>>  \* nothing else moves
 
-\* The owner hands in a credential: the archive is owed again.
+\* The archive's actor hands in a credential: the archive is owed again.
 RenewArchive ==
     /\ parkedArchive                             \* the archive waits aside
-    /\ queue' = Append(queue, [op |-> "archive", actor |-> "owner", inflight |-> FALSE])
+    /\ queue' = Append(queue, [op |-> "archive", actor |-> ArchiveActor, inflight |-> FALSE])
     /\ parkedArchive' = FALSE /\ renewed' = TRUE  \* now it carries the owner's credential
     /\ UNCHANGED <<owedReg, unknown, doc, deleter, parked, granted, archived, grants, servedWide, lateGrant, servedHistory>>  \* nothing else moves
 
@@ -296,15 +323,18 @@ Decide ==
     /\ UNCHANGED <<owedReg, unknown, doc, deleter, queue, parked, parkedArchive, renewed, granted, archived, grants, lateGrant, servedHistory>>  \* nothing else moves
 
 \* Someone asks for the document's commit history. While the archive is
-\* owed the node answers by itself: with HistoryActorOnly only whoever
-\* staged the archive (the deleter) reads it. Otherwise the other checks
+\* owed the node answers by itself: with HistoryActorOnly only the
+\* archive's actor reads it, and with SpareOnlyDeleter only when that actor
+\* made the delete. Otherwise the other checks
 \* answer, in the code's order: the owed registration, the unregistered
 \* rule, then the deployment (the owner of an object it has not archived,
 \* and the reader while its grant holds).
 ReadHistory ==
     /\ \E who \in Askers :
         LET allows == IF Overlay /\ ArchiveOwed                       \* the owed archive answers
-                      THEN ~HistoryActorOnly \/ who = deleter         \* its actor alone
+                      THEN \/ ~HistoryActorOnly                       \* everyone
+                           \/ /\ who = ArchiveActor                    \* its actor alone,
+                              /\ (~SpareOnlyDeleter \/ who = deleter)   \* if it deleted
                       ELSE ArchiveFirst(who)                          \* the rest, in the code's order
         IN servedHistory' = (servedHistory \/ (allows /\ doc = "deleted" /\ who # deleter))  \* someone else's read?
     /\ UNCHANGED <<owedReg, unknown, doc, deleter, queue, parked, parkedArchive, renewed, granted, archived, grants, servedWide, lateGrant>>  \* nothing else moves
@@ -326,8 +356,14 @@ INV_NoGrantAfterArchive == ~lateGrant
 \* Nobody but its deleter reads a deleted document's commit history.
 INV_HistoryOnlyToDeleter == ~servedHistory
 
-\* A document is deleted only by someone who may archive it.
-INV_DeletedByOwner == doc = "deleted" => deleter = "owner"
+\* A document is deleted only by someone the policy lets delete.
+INV_DeletedByPermitted == doc = "deleted" => deleter \in Deleters
+
+\* Every archive owed, queued or parked, is made as the owner: none is ever
+\* sent under anyone else's authority.
+INV_ArchiveAsOwner ==
+    /\ \A i \in DOMAIN queue : queue[i].op = "archive" => queue[i].actor = "owner"
+    /\ parkedArchive => ArchiveActor = "owner"
 
 \* A deleted document ends archived, with no relationship left.
 LIVE_Retired == (doc = "deleted") ~> (archived /\ ~granted)
