@@ -25,6 +25,14 @@ pub struct TxnBroadcastEvent {
     pub document_json: Option<serde_json::Value>,
     pub collection_block: Option<(Cid, Bytes)>,
     pub creator_did: Option<String>,
+    pub follows: Option<FollowedParent>,
+}
+
+/// The parent a derived write follows. A filtered replicator decides the write by it.
+#[derive(Debug, Clone)]
+pub struct FollowedParent {
+    pub collection_id: String,
+    pub document: Option<serde_json::Value>,
 }
 
 /// Hook for forwarding committed transactional writes to the P2P stack.
@@ -78,6 +86,7 @@ pub(crate) fn register_update_event_callback<S>(
     document_json: Option<serde_json::Value>,
     collection_block: Option<(Cid, Bytes)>,
     creator_did: Option<String>,
+    follows: Option<FollowedParent>,
 ) -> Result<()>
 where
     S: Store + 'static,
@@ -101,6 +110,7 @@ where
         document_json,
         collection_block,
         creator_did,
+        follows,
     };
     txn.on_commit(OnCommit::Ordered(Box::new(move || {
         if let Some(bus) = &bus {

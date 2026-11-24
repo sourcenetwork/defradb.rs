@@ -136,10 +136,26 @@ async fn broadcast<B, T>(
         document_json,
         collection_block,
         creator_did,
+        follows,
     } = event;
 
     let creator_ref = creator_did.as_deref();
-    if let Some(document_json) = document_json.as_ref() {
+    if let Some(parent) = follows.as_ref() {
+        if let Err(error) = sync
+            .push_followed_document_to_replicators_with_creator(
+                &doc_cid,
+                &doc_block,
+                &doc_id,
+                &collection_id,
+                &parent.collection_id,
+                parent.document.as_ref(),
+                creator_ref,
+            )
+            .await
+        {
+            tracing::error!(%error, %doc_id, %collection_id, "Committed transaction has an undurable P2P document marker");
+        }
+    } else if let Some(document_json) = document_json.as_ref() {
         if let Err(error) = sync
             .push_document_to_replicators_with_creator(
                 &doc_cid,

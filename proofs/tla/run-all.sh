@@ -11,6 +11,11 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 # event to the settled rest (depth = events + 1), and DEADLOCK:<l> stops with
 # event l next (past the end when l = events + 1).
 RUNS=(
+  "MC_DisplacedConnectionRestore_Green.cfg DisplacedConnectionRestore.tla GREEN"
+  "MC_DisplacedConnectionRestore_Red_NoEvict.cfg DisplacedConnectionRestore.tla RED"
+  "MC_DisplacedConnectionRestore_Red_Closed.cfg DisplacedConnectionRestore.tla RED"
+  "MC_DisplacedConnectionRestore_Red_EvictAny.cfg DisplacedConnectionRestore.tla RED" # a newer connection is evicted (FreshKept)
+  "MC_DisplacedConnectionRestore_Red_Overwrite.cfg DisplacedConnectionRestore.tla RED" # the restore overwrites a newer connection (FreshKept)
   "MC_DocumentUpdateJournal_Green.cfg DocumentUpdateJournal.tla GREEN"
   "MC_DocumentUpdateJournal_Green_Outside.cfg DocumentUpdateJournal.tla GREEN"
   "MC_DocumentUpdateJournal_Red_Detached.cfg DocumentUpdateJournal.tla RED"
@@ -62,6 +67,21 @@ RUNS=(
   "MC_InlineBatchFlights_Red_Shared.cfg InlineBatchFlights.tla RED"
   "MC_LocalFetchPermit_Green.cfg LocalFetchPermit.tla GREEN"
   "MC_LocalFetchPermit_Red_Hold.cfg LocalFetchPermit.tla RED"
+  "MC_DagReadiness_Green.cfg DagReadiness.tla GREEN"
+  "MC_DagReadiness_Red_SkipNone.cfg DagReadiness.tla RED" # a child deleted before its read is skipped, not missing (INV_AbsentIsMissing)
+  "MC_DagReadiness_Red_DropErr.cfg DagReadiness.tla RED" # the walker drops a failed child read, as main did (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAsEmpty_Start.cfg DagReadiness.tla RED" # the fetch start takes a failed walk as complete (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAsEmpty_RootedCar.cfg DagReadiness.tla RED" # the rooted-CAR check takes a failed walk as complete (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAsEmpty_WalkLoop.cfg DagReadiness.tla RED" # the selective loop takes a failed walk as complete (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAsEmpty_Final.cfg DagReadiness.tla RED" # the final check takes a failed walk as complete (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAsEmpty_DocSync.cfg DagReadiness.tla RED" # the DocSync re-merge takes a failed walk as complete (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAsEmpty_PushAdmission.cfg DagReadiness.tla RED" # the push admission takes a failed walk as complete (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAsEmpty_PendingRetry.cfg DagReadiness.tla RED" # the pending retry takes a failed walk as complete (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAsEmpty_Restore.cfg DagReadiness.tla RED" # the restore sweep takes a failed walk as complete (INV_ReadyImpliesRead)
+  "MC_DagReadiness_Red_ErrAbortsSweep.cfg DagReadiness.tla RED" # one failed walk ends the waiter sweep (INV_SweepTotal)
+  "MC_DagReadiness_Red_ConflictStringified.cfg DagReadiness.tla RED" # a storage conflict loses its type (INV_ConflictTyped)
+  "MC_DagReadiness_Red_RootFaultErrs.cfg DagReadiness.tla RED" # a gone or unreadable root fails the retry (INV_SweepTotal, INV_RegisteredNeverErrors)
+  "MC_DagReadiness_Red_CarFaultBlamesPeer.cfg DagReadiness.tla RED" # a local fault in the CAR size-limit check fails the response (INV_LocalFaultNotBlamed)
   "MC_HeldPubsubRequest_Green.cfg HeldPubsubRequest.tla GREEN"
   "MC_HeldPubsubRequest_Red_NoHold.cfg HeldPubsubRequest.tla RED" # a refused publish fails the sync at once (Delivered)
   "MC_HeldPubsubRequest_Red_NoResend.cfg HeldPubsubRequest.tla RED" # a later subscriber is never sent the request (Delivered)
@@ -210,6 +230,10 @@ RUNS=(
   "MC_ChunkMerge_Red_ListedDeleteOnly.cfg ChunkMerge.tla RED" # merge holds back only a listed chunk's delete (INV_ListedChunksStay)
   "MC_ChunkMerge_Red_RefuseDelete.cfg ChunkMerge.tla RED" # merge refuses an early chunk delete for good (INV_DeletesNotLost)
   "MC_ChunkMerge_Red_UnstoredDelete.cfg ChunkMerge.tla RED" # a chunk delete merges before its chunk's first block (INV_ListedChunksStay)
+  "MC_ChunkMerge_Red_NoRebuild.cfg ChunkMerge.tla RED" # a merge keeps another peer's text and builds none of its chunks (INV_TextChunksStored)
+  "MC_ChunkMerge_Red_SignedChunkIds.cfg ChunkMerge.tla RED" # signed chunk blocks give one chunk a document per peer (INV_EachChunkOnce)
+  "MC_ChunkMerge_Green_Encrypted.cfg ChunkMerge.tla GREEN" # an encrypted text's chunks come with its article, not from the rebuild
+  "MC_ChunkMerge_Red_EncryptedNotShipped.cfg ChunkMerge.tla RED" # encrypted text skipped and its chunks not shipped (INV_TextChunksStored)
   "MC_ChunkRead_Green.cfg ChunkRead.tla GREEN" # a chunk shows only while its parent is live, readable and uses it
   "MC_ChunkRead_Red_NoDeletedCheck.cfg ChunkRead.tla RED" # deleted parent still shows its chunks (INV_ShownIsLiveAndReadable)
   "MC_ChunkRead_Red_NoHashCheck.cfg ChunkRead.tla RED" # forged chunk claims a real hash (INV_ShownIsTheText)
@@ -220,6 +244,10 @@ RUNS=(
   "MC_ChunkRead_Red_NoResolveCheck.cfg ChunkRead.tla RED" # a chunk of an unknown collection is served as public (INV_ServedIsReadable)
   "MC_ChunkRead_Red_TrustList.cfg ChunkRead.tla RED" # a padded list shows chunks of old text (INV_ShownIsTheText)
   "MC_ChunkRead_Red_NoOwnAppCheck.cfg ChunkRead.tla RED" # chunk collection's own app check skipped (INV_ShownPassesOwnApp)
+  "MC_ChunkRead_Red_DelegationScope.cfg ChunkRead.tla RED" # a chunk delegation gets the article's own keys (INV_DelegatedKeyInScope)
+  "MC_SelectedUpdate_Green.cfg SelectedUpdate.tla GREEN" # an update of a selected document loses only to a change of a field it depends on
+  "MC_SelectedUpdate_Red_ExpectedOnly.cfg SelectedUpdate.tla RED" # a written field is not compared and a change to it is written over (INV_NoSilentOverwrite)
+  "MC_SelectedUpdate_Red_Whole.cfg SelectedUpdate.tla RED" # every field is compared and an unrelated change loses the race (INV_LosesOnlyToItsFields)
   "MC_EndpointBind_Green.cfg EndpointBind.tla GREEN"
   "MC_EndpointBind_Red_Retain.cfg EndpointBind.tla RED"
   "MC_EndpointBind_Red_Address.cfg EndpointBind.tla RED"
@@ -368,6 +396,22 @@ RUNS=(
   "MC_OwnerObservation_Red_RegistrationSnapshot.cfg OwnerObservation.tla RED"
   "MC_OwnerObservation_Red_Visibility.cfg OwnerObservation.tla RED"
   "MC_OwnerObservation_Red_VisibilitySnapshot.cfg OwnerObservation.tla RED"
+  "MC_ParentChunks_Green.cfg ParentChunks.tla GREEN" # #2241: list and missing chunks in the parent's transaction, cascade delete
+  "MC_ParentChunks_Red_SeparateTxn.cfg ParentChunks.tla RED" # chunks created in a follow-up transaction (INV_ListedChunksExist)
+  "MC_ParentChunks_Red_NoCascade.cfg ParentChunks.tla RED" # delete leaves chunks behind (INV_NoChunkOfDeletedParent)
+  "MC_ParentChunks_Red_NoValidation.cfg ParentChunks.tla RED" # stale update after a delete creates chunks (INV_NoChunkOfDeletedParent)
+  "MC_ParentChunks_Red_CreateWithoutList.cfg ParentChunks.tla RED" # signed create blocks without the list, first update ties (INV_ListMatchesText)
+  "MC_ParentChunks_Red_NoLookup.cfg ParentChunks.tla RED" # a write creates chunks that arrived first, a valid create fails (INV_ValidWritesSucceed)
+  "MC_ChunkFollow_Green.cfg ChunkFollow.tla GREEN" # #2310: a chunk's push and sync follow its parent
+  "MC_ChunkFollow_Red_OwnFilter.cfg ChunkFollow.tla RED" # filter run on the chunk drops every chunk (INV_ChunksFollowParent)
+  "MC_ChunkFollow_Red_AllChunks.cfg ChunkFollow.tla RED" # chunks pushed unfiltered leak (INV_NoForeignChunks)
+  "MC_ChunkFollow_Red_SyncParentOnly.cfg ChunkFollow.tla RED" # doc sync without the chunks (INV_ChunksFollowParent)
+  "MC_ChunkFollow_Red_SyncHistory.cfg ChunkFollow.tla RED" # doc sync sends the old texts' chunks too (INV_SyncSendsCurrentChunks)
+  "MC_TruncateChunks_Green.cfg TruncateChunks.tla GREEN" # truncate empties chunks before parents
+  "MC_TruncateChunks_Red_ParentsFirst.cfg TruncateChunks.tla RED" # parents first strands a racing create (INV_LiveParentHasChunks)
+  "MC_TruncateChunks_Red_PurgeLeavesChunks.cfg TruncateChunks.tla RED" # purge leaves the chunks of purged articles (INV_PurgedHaveNoChunks)
+  "MC_ChunkMarkerHandoff_Green.cfg ChunkMarkerHandoff.tla GREEN" # a committed head keeps its marker registration past the request deadline
+  "MC_ChunkMarkerHandoff_Red_RequestOwned.cfg ChunkMarkerHandoff.tla RED" # the deadline drops the chunks not registered yet (INV_CommittedHeadOwned)
   "MC_StrictAccessRead_Green.cfg StrictAccessRead.tla GREEN"
   "MC_StrictAccessRead_Red_Partial.cfg StrictAccessRead.tla RED"
   "MC_StrictAccessRead_Red_DenialErrors.cfg StrictAccessRead.tla RED"
@@ -547,6 +591,7 @@ RUNS=(
   "MC_Truncate_Red_Branchable.cfg Truncate.tla RED" # branchable check left out: a filtered truncate splits shared history (INV_FilteredNeverOnBranchable)
   "MC_Truncate_Red_Txn.cfg Truncate.tla RED" # transaction check left out, as before: a filter on the txn view removes an uncommitted match (INV_FilteredRemovesOnlyCommittedMatches)
   "MC_Truncate_Red_Shape.cfg Truncate.tla RED" # filter shape check left out: a non-filter removes everything (INV_BadFilterRemovesNothing)
+  "MC_Truncate_Red_Reread.cfg Truncate.tla RED" # page reread left out: a stale first read purges a document moved out of the filter (INV_FilteredRemovesOnlyCurrentMatches)
   "MC_Truncate_Red_ViewCache.cfg Truncate.tla RED" # #2703: view cache clear left out: a truncated view still shows its rows (INV_UnfilteredEmptiesView)
   "MC_Truncate_Red_SearchRecords.cfg Truncate.tla RED" # #2728: /se/ prefix delete left out: an encrypted search still finds truncated documents (INV_UnfilteredClearsSearchRecords)
   "MC_Truncate_Red_SearchNamespace.cfg Truncate.tla RED" # #2728: received search records in the raw root store survive the prefix delete (INV_UnfilteredClearsSearchRecords)
@@ -832,8 +877,10 @@ RUNS=(
   "MC_AdministrativeRelationship_Green.cfg AdministrativeRelationship.tla GREEN"
   "MC_AdministrativeRelationship_Red_Actor.cfg AdministrativeRelationship.tla RED" # INV_Actor
   "MC_AdministrativeRelationship_Red_Active.cfg AdministrativeRelationship.tla RED" # INV_Active
-  "MC_ChildPagePerParent_Green.cfg ChildPagePerParent.tla GREEN" # a child page is filled per parent, so later parents keep their children
-  "MC_ChildPagePerParent_Red_GlobalBound.cfg ChildPagePerParent.tla RED" # one global child bound lets the first parent starve the second (page B stays empty)
+  "MC_ChildPagePerParent_Green.cfg ChildPagePerParent.tla GREEN" # each parent completes its exact ordered child page
+  "MC_ChildPagePerParent_Green_ShortParent.cfg ChildPagePerParent.tla GREEN" # a parent with fewer children than the limit takes them all
+  "MC_ChildPagePerParent_Red_GlobalBound.cfg ChildPagePerParent.tla RED" # one global child bound lets the first parent consume the bound and leaves B without its page
+  "MC_ChildPagePerParent_Red_NoEarlyStop.cfg ChildPagePerParent.tla RED" # the per-parent scan reads past a full page (INV_PageWithinLimit)
   "MC_AdministrativeRelationship_Red_NacBound.cfg AdministrativeRelationship.tla RED" # INV_NacBound
   "MC_AdministrativeRelationship_Red_Bypass.cfg AdministrativeRelationship.tla RED" # INV_Bypass
   "MC_AdministrativeRelationship_Red_Operation.cfg AdministrativeRelationship.tla RED" # INV_Operation
@@ -1399,6 +1446,8 @@ RUNS=(
   "MC_DocumentSave_Green.cfg DocumentSave.tla GREEN" # a save refuses a deleted document and never forks
   "MC_DocumentSave_Red_NoDeletedCheck.cfg DocumentSave.tla RED" # a deleted document is written over and forks (INV_NoFork)
   "MC_DocumentSave_Red_SplitTxn.cfg DocumentSave.tla RED" # a delete between lookup and write forks the save (INV_NoFork)
+  "MC_RelationLinkConflict_Green.cfg RelationLinkConflict.tla GREEN" # a validated link read commits when empty and conflicts after a later first link
+  "MC_RelationLinkConflict_Red_Unvalidated.cfg RelationLinkConflict.tla RED" # an unvalidated link read lets both links commit (INV_SecondLinkIsRefused)
   "MC_ChildLimitPaging_Green.cfg ChildLimitPaging.tla GREEN" # each ordered child page is collected per parent
   "MC_ChildLimitPaging_Red_UnorderedStop.cfg ChildLimitPaging.tla RED" # an unordered early stop loses a later parent's page (INV_EveryParentHasPage)
 )

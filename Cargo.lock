@@ -9139,6 +9139,7 @@ dependencies = [
  "futures-lite",
  "getrandom 0.3.4",
  "hex",
+ "hickory-resolver",
  "identity",
  "ipld-core",
  "iroh",

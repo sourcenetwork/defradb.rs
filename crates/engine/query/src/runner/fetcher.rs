@@ -183,6 +183,14 @@ impl DocFetcher for FetcherWrapper {
             })
     }
 
+    fn set_scans_validated(&self, validated: bool) {
+        self.get_fetcher().set_scans_validated(validated);
+    }
+
+    fn scans_validated(&self) -> bool {
+        self.get_fetcher().scans_validated()
+    }
+
     async fn get_by_ids(
         &self,
         collection_name: &str,

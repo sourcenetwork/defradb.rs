@@ -348,6 +348,11 @@ pub trait DocFetcher: MaybeSendSync {
     /// to validate.
     fn set_scans_validated(&self, _validated: bool) {}
 
+    /// Whether scans this fetcher's transaction opens now validate their range.
+    fn scans_validated(&self) -> bool {
+        false
+    }
+
     /// Get documents by their IDs.
     ///
     /// Returns both the found documents and the IDs that were not found.
