@@ -4,8 +4,22 @@ use axum::response::IntoResponse;
 const OPENAPI_JSON: &str = include_str!("openapi-go-e152b5cab.json");
 
 /// GET /openapi.json
+///
+/// Go's pinned document, byte for byte: a client generated from Go's spec keeps
+/// working, and `document_tracks_the_pinned_go_baseline` keeps it current.
 pub async fn get() -> impl IntoResponse {
     ([(CONTENT_TYPE, "application/json")], OPENAPI_JSON)
+}
+
+/// GET /openapi.rs.json
+///
+/// The same API as this server actually serves it: Go's operations carried
+/// verbatim, every route in `route_permissions::ROUTES` added (#3263).
+pub async fn generated() -> impl IntoResponse {
+    (
+        [(CONTENT_TYPE, "application/json")],
+        crate::openapi::document().to_string(),
+    )
 }
 
 #[cfg(test)]
@@ -57,6 +71,36 @@ mod tests {
             64
         );
         assert_eq!(body.as_ref(), OPENAPI_JSON.as_bytes());
+    }
+
+    /// The generated document is served, lists a route Go does not document,
+    /// and keeps Go's schemas for the routes Go does.
+    #[nuclei::test]
+    async fn serves_the_document_generated_from_the_route_table() {
+        let response = Server::new(MockQueryExecutor::new(), edge::testing::edge())
+            .router()
+            .unwrap()
+            .oneshot(
+                Request::builder()
+                    .uri("/openapi.rs.json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[CONTENT_TYPE], "application/json");
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let document: Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(document["openapi"], crate::openapi::OPENAPI_VERSION);
+        // Rust-only, so only this endpoint documents it.
+        assert!(document["paths"]["/p2p/manage"]["post"].is_object());
+        // Root-mounted, so it cannot inherit the document's `/api/v0` servers.
+        assert_eq!(document["paths"]["/health-check"]["servers"][0]["url"], "/");
+        // Go-documented, so Go's request body rides along.
+        assert!(document["paths"]["/collections/{name}"]["post"]["requestBody"].is_object());
     }
 
     #[nuclei::test]

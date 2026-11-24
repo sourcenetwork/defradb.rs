@@ -120,6 +120,8 @@ pub mod nac_adapter;
 #[cfg(feature = "server")]
 pub mod nac_guard;
 #[cfg(feature = "server")]
+pub mod openapi;
+#[cfg(feature = "server")]
 pub mod pool_layer;
 #[cfg(feature = "server")]
 pub mod query_context;
