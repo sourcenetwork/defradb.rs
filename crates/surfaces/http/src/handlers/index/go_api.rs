@@ -69,14 +69,14 @@ pub struct GoIndexDescription {
 }
 
 /// Go v1 index description paired with its lifecycle state.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct GoListIndexesResult {
     #[serde(rename = "Description")]
     pub description: GoIndexDescription,
     #[serde(rename = "CollectionName")]
     pub collection_name: String,
     #[serde(rename = "Execution")]
-    pub execution: ActionExecution,
+    pub execution: crate::wire::ActionExecution,
 }
 
 fn index_kind(kind: Option<schema::IndexKind>, unique: bool) -> schema::IndexKind {
@@ -115,7 +115,7 @@ fn txn_listing(
                 unique: index.unique,
             },
             collection_name: version.name.clone(),
-            execution,
+            execution: execution.into(),
         })
         .collect()
 }
@@ -144,7 +144,7 @@ fn listed_index(index: crate::router::IndexInfo) -> GoListIndexesResult {
     GoListIndexesResult {
         description,
         collection_name: index.collection,
-        execution,
+        execution: execution.into(),
     }
 }
 

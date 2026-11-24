@@ -8,9 +8,9 @@ mod traits;
 
 #[cfg_attr(not(feature = "server"), allow(unused_imports))]
 pub(crate) use defra_p2p_adapter::{
-    peer, ExplicitReplayCapabilityInput, ManageRequester, P2PError, P2POperations, RemoteManageOp,
-    RemoteManageQueryOp, RemoteManageQueryResult, ReplicationFilters, SyncBranchableRequest,
-    SyncDocumentsRequest, SyncVersionsRequest, TransportPeerId, MANAGE_UNAUTHORIZED,
+    peer, ExplicitReplayCapabilityInput, ManageRequester, P2PError, P2POperations,
+    ReplicationFilters, SyncBranchableRequest, SyncDocumentsRequest, SyncVersionsRequest,
+    TransportPeerId, MANAGE_UNAUTHORIZED,
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub(crate) use defra_p2p_adapter::{

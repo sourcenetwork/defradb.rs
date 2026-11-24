@@ -10,10 +10,7 @@ use serde::Deserialize;
 use crate::error::HttpError;
 use crate::identity_extractor::ExtractIdentity;
 use crate::nac_guard::require_permission;
-use crate::router::{
-    AppState, NodePermission, RemoteManageOp, RemoteManageQueryOp, RemoteManageQueryResult,
-    MANAGE_UNAUTHORIZED,
-};
+use crate::router::{AppState, NodePermission, MANAGE_UNAUTHORIZED};
 
 /// Map a [`ManageRequester`](crate::router::ManageRequester) error string to an
 /// HTTP error. A remote NAC denial surfaces as `"unauthorized"` → 403 Forbidden;
@@ -27,7 +24,7 @@ fn map_manage_err(message: String) -> HttpError {
 }
 
 /// Request body for a relayed mutating management operation.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct ManageRequestBody {
     /// Target peer address that node A dials.
     #[serde(rename = "Target")]
@@ -37,11 +34,11 @@ pub struct ManageRequestBody {
     pub auth_token: String,
     /// The management operation to relay.
     #[serde(rename = "Op")]
-    pub op: RemoteManageOp,
+    pub op: crate::wire::RemoteManageOp,
 }
 
 /// Request body for a relayed read-only management query.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct ManageQueryRequestBody {
     /// Target peer address that node A dials.
     #[serde(rename = "Target")]
@@ -51,7 +48,7 @@ pub struct ManageQueryRequestBody {
     pub auth_token: String,
     /// The read-only management query to relay.
     #[serde(rename = "Op")]
-    pub op: RemoteManageQueryOp,
+    pub op: crate::wire::RemoteManageQueryOp,
 }
 
 /// Relay a mutating management request to a P2P-only peer.
@@ -72,7 +69,7 @@ pub async fn manage(
     let manage = state.require_manage()?;
 
     manage
-        .manage(&body.target, body.auth_token.into_bytes(), body.op)
+        .manage(&body.target, body.auth_token.into_bytes(), body.op.into())
         .await
         .map_err(map_manage_err)?;
 
@@ -90,17 +87,17 @@ pub async fn manage_query(
     State(state): State<AppState>,
     identity: ExtractIdentity,
     Json(body): Json<ManageQueryRequestBody>,
-) -> Result<Json<RemoteManageQueryResult>, HttpError> {
+) -> Result<Json<crate::wire::RemoteManageQueryResult>, HttpError> {
     require_permission(&state, &identity, NodePermission::P2pPeerConnect).await?;
 
     let manage = state.require_manage()?;
 
     let result = manage
-        .manage_query(&body.target, body.auth_token.into_bytes(), body.op)
+        .manage_query(&body.target, body.auth_token.into_bytes(), body.op.into())
         .await
         .map_err(map_manage_err)?;
 
-    Ok(Json(result))
+    Ok(Json(crate::wire::RemoteManageQueryResult::from(result)))
 }
 
 #[cfg(test)]
@@ -130,7 +127,10 @@ mod tests {
         }"#;
         let body: ManageRequestBody = serde_json::from_str(json).unwrap();
         assert_eq!(body.auth_token, "header.payload.sig");
-        assert!(matches!(body.op, RemoteManageOp::CollectionAdd { .. }));
+        assert!(matches!(
+            body.op,
+            crate::wire::RemoteManageOp::CollectionAdd { .. }
+        ));
     }
 
     #[test]
@@ -141,6 +141,9 @@ mod tests {
             "Op": {"Kind": "ReplicatorList"}
         }"#;
         let body: ManageQueryRequestBody = serde_json::from_str(json).unwrap();
-        assert!(matches!(body.op, RemoteManageQueryOp::ReplicatorList));
+        assert!(matches!(
+            body.op,
+            crate::wire::RemoteManageQueryOp::ReplicatorList
+        ));
     }
 }

@@ -330,13 +330,15 @@ mod tests {
     };
     use crate::router::{
         DocumentAcpOperations, ManageRequester, P2POperations, P2PResult, P2pDocumentInfo,
-        P2pDocumentRequest, RemoteManageOp, RemoteManageQueryOp, RemoteManageQueryResult,
-        ReplicatorInfo,
+        P2pDocumentRequest, ReplicatorInfo,
     };
+    // The managest relay's own request and result types, used by the test
+    // doubles below.
     use axum::{
         body::{to_bytes, Body},
         http::{Method, Request, StatusCode},
     };
+    use defra_p2p_adapter::{RemoteManageOp, RemoteManageQueryOp, RemoteManageQueryResult};
     use regolith::sync::Notify;
     use std::time::Duration;
     use tower::ServiceExt;

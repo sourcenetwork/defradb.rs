@@ -12,12 +12,19 @@
 
 mod acp;
 mod acp_status;
+mod action;
 mod lens;
+mod p2p_manage;
 mod query;
 mod version;
 
 pub use acp::{DocumentRelationship, PermissionProvenance, PermissionVia};
 pub use acp_status::{DelegationAudience, LightClientStatus};
+pub use action::ActionExecution;
 pub use lens::{LensConfig, LensModule};
+pub use p2p_manage::{
+    RemoteManageDocRef, RemoteManageOp, RemoteManageQueryOp, RemoteManageQueryResult,
+    ReplicationFilter, ReplicationFilters, ReplicatorInfo,
+};
 pub use query::{DocumentsResult, SourcePermission};
 pub use version::{GoCompat, VersionInfo};

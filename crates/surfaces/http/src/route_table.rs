@@ -21,21 +21,21 @@ use crate::handlers::ccip::CcipResponse;
 use crate::handlers::collections::PatchCollectionRequest;
 use crate::handlers::collections::{CollectionDocIdsResponse, PurgeDocumentsResponse};
 use crate::handlers::graphql::TransactionalQueryRequest;
-use crate::handlers::index::{GoCreateIndexRequest, GoIndexDescription};
+use crate::handlers::index::{GoCreateIndexRequest, GoIndexDescription, GoListIndexesResult};
 use crate::handlers::lens::{AddLensRequest, SetMigrationResponse};
 use crate::handlers::nac::{
     AddActorRelationshipResult, DeleteActorRelationshipResult, EnableNacRequest,
     GoNacRelationshipRequest, NacStatusResult,
 };
 use crate::handlers::p2p::ReplicatorDeleteRequest;
-use crate::handlers::p2p::ShareableAddressResponse;
+use crate::handlers::p2p::{ManageQueryRequestBody, ManageRequestBody, ShareableAddressResponse};
 use crate::handlers::utility::NodeIdentityResponse;
 use crate::handlers::views::ViewNamesRequest;
 use crate::route_permissions::RoutePermission;
 use crate::router::NodePermission;
 use crate::wire::{
-    DocumentRelationship, DocumentsResult, LightClientStatus, PermissionProvenance,
-    SourcePermission, VersionInfo,
+    ActionExecution, DocumentRelationship, DocumentsResult, LightClientStatus,
+    PermissionProvenance, SourcePermission, VersionInfo,
 };
 use schema::CollectionVersion;
 
@@ -188,7 +188,7 @@ pub const ROUTES: &[Route] = &[
     row_body("/api/v0/ccip", POST, Dynamic, false, None, Some(body::<CcipResponse>)),
     row("/api/v0/ccip/{sender}/{data}", GET, Dynamic, false),
     row("/api/v0/events", GET, Dynamic, false),
-    row("/api/v0/actions", GET, required(NodePermission::ActionList), false),
+    row_body("/api/v0/actions", GET, required(NodePermission::ActionList), false, None, Some(body::<Vec<ActionExecution>>)),
     row("/api/v0/schema", GET, required(NodePermission::CollectionGet), false),
     // Transactions (permissions enforced per-operation within tx)
     row("/api/v0/tx", POST, IdentityOnly, false),
@@ -235,7 +235,7 @@ pub const ROUTES: &[Route] = &[
     row_body("/api/v0/collections/{name}/document/{docID}", GET, required(NodePermission::DocumentRead), true, None, Some(body::<Value>)),
     row("/api/v0/collections/{name}/document/{docID}", PATCH, required(NodePermission::DocumentUpdate), true),
     row("/api/v0/collections/{name}/document/{docID}", DELETE, required(NodePermission::DocumentDelete), true),
-    row("/api/v0/collections/{name}/indexes", GET, required(NodePermission::IndexList), true),
+    row_body("/api/v0/collections/{name}/indexes", GET, required(NodePermission::IndexList), true, None, Some(body::<Vec<GoListIndexesResult>>)),
     row_body("/api/v0/collections/{name}/indexes", POST, required(NodePermission::IndexCreate), true, Some(body::<GoCreateIndexRequest>), Some(body::<GoIndexDescription>)),
     row("/api/v0/collections/{name}/indexes/{index}", DELETE, required(NodePermission::IndexDelete), true),
     // The edge checks `get-collection` first and leaves the encrypted index
@@ -266,8 +266,8 @@ pub const ROUTES: &[Route] = &[
     row_body("/api/v0/p2p/documents/sync", POST, required(NodePermission::P2pSyncDocuments), false, None, Some(body::<()>)),
     // Management relay: this node connects to and commands the target peer, so
     // it reuses the peer-connect permission to prevent an open relay.
-    row_body("/api/v0/p2p/manage", POST, required(NodePermission::P2pPeerConnect), false, None, Some(body::<()>)),
-    row("/api/v0/p2p/manage/query", POST, required(NodePermission::P2pPeerConnect), false),
+    row_body("/api/v0/p2p/manage", POST, required(NodePermission::P2pPeerConnect), false, Some(body::<ManageRequestBody>), None),
+    row_body("/api/v0/p2p/manage/query", POST, required(NodePermission::P2pPeerConnect), false, Some(body::<ManageQueryRequestBody>), Some(body::<crate::wire::RemoteManageQueryResult>)),
     // ACP (Document Access Control)
     row_body("/api/v0/acp/status", GET, required(NodePermission::DacStatus), false, None, Some(body::<LightClientStatus>)),
     row_body("/api/v0/acp/document/policy", POST, required(NodePermission::DacPolicyAdd), false, None, Some(body::<AddPolicyResponse>)),

@@ -8,5 +8,5 @@ mod go_api;
 
 pub use go_api::{
     go_create_index, go_delete_index, go_list_all_indexes, go_list_indexes, GoCreateIndexRequest,
-    GoIndexDescription, GoIndexedFieldDescription,
+    GoIndexDescription, GoIndexedFieldDescription, GoListIndexesResult,
 };
