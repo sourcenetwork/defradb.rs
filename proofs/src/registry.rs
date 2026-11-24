@@ -2613,6 +2613,39 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/database/db/tests/merge/merge_handler_tests.rs counter_merge_of_an_unmaterialized_document_waits_for_its_composite, counter_merge_marks_cid_merged",
     },
     Property {
+        // A counter increment from a peer still at the source schema version
+        // applies to that source projection, then the result migrates once.
+        // A lens with no inverse cannot give that projection back, so the
+        // increment is added to the migrated value as it is and still lands.
+        // That agrees with a source-version receiver only for a lens that
+        // shifts the counter or leaves it alone; a forward-only doubling lens
+        // is the checked limit.
+        // A whole active-document put is used for the translated result so a
+        // linked non-operation field cannot make the merge skip it.
+        family: "Schema-evolution operations in the core",
+        name: "INV_TransformedOnce: an old-version counter increment is translated once",
+        axis: Tla,
+        anchor: "crates/database/db/src/merge/merge_handler/field_ops.rs counter_on_active_version, apply_field_op_once; crates/database/db/src/merge/merge_handler/composite_persist.rs persist_merged_document",
+        model_ref: "MC_MigratedCounterMerge_{Green,Green_ForwardOnly,Green_Scale,Green_ScaleForwardOnly,Red_Double,Red_Stuck,Red_ScaleForwardOnly}.cfg",
+        tiers: &[Contract],
+        bound_by: "tools/integration-test/tests/testo/issues/t_2916.rs an_old_version_counter_update_merges_through_a_lens_once, an_old_version_counter_update_merges_through_a_forward_only_lens, an_old_version_counter_update_adds_to_a_counter_a_forward_only_lens_wrote, an_old_version_counter_update_keeps_the_fields_the_lens_wrote, an_old_version_counter_update_lands_on_a_document_stored_at_the_source_version",
+    },
+    Property {
+        // The Lean rule behind the TLA+ invariant: the source value plus the
+        // peer's delta migrates once, while translating the already-migrated
+        // value again can differ. Adding the delta to the migrated value
+        // gives the same answer for a lens that shifts the counter or leaves
+        // it alone, which is what a forward-only lens gets, and not for a
+        // lens that doubles it.
+        family: "Schema-evolution operations in the core",
+        name: "MigratedCounterMerge.translated_once / double_apply_differs / direct_add_matches_shift / direct_add_matches_untouched / direct_add_misses_scale",
+        axis: Lean,
+        anchor: "crates/database/db/src/merge/merge_handler/field_ops.rs counter_on_active_version, apply_field_op_once; crates/database/db/src/merge/merge_handler/composite_persist.rs persist_merged_document",
+        model_ref: "MigratedCounterMerge (lake build)",
+        tiers: &[Contract],
+        bound_by: "tools/integration-test/tests/testo/issues/t_2916.rs an_old_version_counter_update_merges_through_a_lens_once, an_old_version_counter_update_merges_through_a_forward_only_lens, an_old_version_counter_update_adds_to_a_counter_a_forward_only_lens_wrote, an_old_version_counter_update_keeps_the_fields_the_lens_wrote, an_old_version_counter_update_lands_on_a_document_stored_at_the_source_version",
+    },
+    Property {
         // A commit begins when it is handed to its transaction's owner, or,
         // if a request is running the transaction then, when the owner takes
         // it; a caller that stops waiting before that abandons it. One that
