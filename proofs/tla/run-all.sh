@@ -766,6 +766,8 @@ RUNS=(
   "MC_ArchiveOnDelete_Red_DeleteWithoutAuthority.cfg ArchiveOnDelete.tla RED" # a writer deletes without authority to archive (INV_DeletedByOwner)
   "MC_ArchiveOnDelete_Red_NoOverlay.cfg ArchiveOnDelete.tla RED" # an owed archive denies nobody: the reader is allowed on the deleted document (INV_DeletedGrantsNothing)
   "MC_ArchiveOnDelete_Red_HistoryForAll.cfg ArchiveOnDelete.tla RED" # an owed archive leaves the commit history to everyone: the reader reads a deleted document's history (INV_HistoryOnlyToDeleter)
+  "MC_ArchiveOnDelete_Red_OwedRegistrationFirst.cfg ArchiveOnDelete.tla RED" # the owed registration decides before the owed archive: the creator reads its deleted document (INV_DeletedGrantsNothing)
+  "MC_ArchiveOnDelete_Red_UnregisteredFirst.cfg ArchiveOnDelete.tla RED" # the unregistered rule decides before the owed archive: a dropped object's deleted document is public (INV_DeletedGrantsNothing)
   "MC_FollowDeployment_Green.cfg FollowDeployment.tla GREEN" # takeovers void any part of the chain: no void decision, a revocation always denies, nothing lost, owed again settles
   "MC_FollowDeployment_Green_Window.cfg FollowDeployment.tla GREEN" # a journal of one entry: a takeover that voids the pruned one fails closed
   "MC_FollowDeployment_Red_KeepsCache.cfg FollowDeployment.tla RED" # decisions cached by revision alone: one from the void chain is served (INV_NoVoidDecision)

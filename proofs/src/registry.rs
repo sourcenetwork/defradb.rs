@@ -2097,16 +2097,17 @@ pub const PROPERTIES: &[Property] = &[
         // transaction. Only the owner may archive, so anyone else's delete is
         // refused before commit; earlier unsent changes on the object go
         // with the delete; an owed archive denies everyone on the object,
-        // leaving only its actor the document's commit history; a change
-        // already in flight lands before the archive, and Vera refuses any
-        // change to an archived object.
+        // leaving only its actor the document's commit history, and decides
+        // before a registration still owed to the creator or the
+        // unregistered rule; a change already in flight lands before the
+        // archive, and Vera refuses any change to an archived object.
         family: "ACP soundness + revocation + dual-path commits",
         name: "INV_DeletedGrantsNothing / INV_NoGrantAfterArchive / INV_DeletedByOwner / INV_HistoryOnlyToDeleter / LIVE_Retired: a deleted document grants nothing, no grant outlives its archive, only its owner deletes it, only its deleter reads its commit history, and its object ends archived",
         axis: Tla,
-        anchor: "crates/engine/acp/src/outbox/staging.rs TransactionOutbox::stage_archive; crates/engine/acp/src/outbox/changes.rs OwedChanges::drop_unsent_on; crates/engine/acp/src/outbox/deny.rs owed_denial, archive_actor; crates/engine/acp/src/outbox/ops.rs account, live_on; crates/engine/acp/src/outbox/submission.rs relationship_call; crates/database/db/src/write/autocommit/helpers.rs unregister_deleted_doc; crates/engine/query/src/txn/context.rs decided_by_owed, spared_by_owed_archive",
-        model_ref: "MC_ArchiveOnDelete_{Green,Green_NoDrop,Red_GrantAfterArchive,Red_DeleteWithoutAuthority,Red_NoOverlay,Red_HistoryForAll}.cfg",
+        anchor: "crates/engine/acp/src/outbox/staging.rs TransactionOutbox::stage_archive; crates/engine/acp/src/outbox/changes.rs OwedChanges::drop_unsent_on; crates/engine/acp/src/outbox/deny.rs owed_denial, archive_actor; crates/engine/acp/src/outbox/ops.rs account, live_on; crates/engine/acp/src/outbox/submission.rs relationship_call; crates/database/db/src/write/autocommit/helpers.rs unregister_deleted_doc; crates/engine/query/src/txn/context.rs decided_by_owed, spared_by_owed_archive, decided_by_owed_archive; crates/engine/query/src/txn/read_access.rs OverlayChecker::object_access; crates/engine/acp/src/external.rs ExternalDocumentAcp::check_doc_access",
+        model_ref: "MC_ArchiveOnDelete_{Green,Green_NoDrop,Red_GrantAfterArchive,Red_DeleteWithoutAuthority,Red_NoOverlay,Red_HistoryForAll,Red_OwedRegistrationFirst,Red_UnregisteredFirst}.cfg",
         tiers: &[Boundary, Contract],
-        bound_by: "crates/database/db/tests/access/external_archive.rs an_owed_archive_leaves_its_actor_the_commit_history_and_nothing_else",
+        bound_by: "crates/database/db/tests/access/external_archive.rs an_owed_archive_leaves_its_actor_the_commit_history_and_nothing_else, an_owed_archive_denies_before_an_owed_registration_or_an_unregistered_object_could_grant",
     },
     Property {
         // An account's Vera deployment runs on every device, one active at a
