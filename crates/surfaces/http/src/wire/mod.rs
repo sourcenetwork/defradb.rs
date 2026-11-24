@@ -13,6 +13,7 @@
 mod acp;
 mod acp_status;
 mod action;
+mod graphql;
 mod lens;
 mod p2p_manage;
 mod p2p_replicator;
@@ -22,6 +23,7 @@ mod version;
 pub use acp::{DocumentRelationship, PermissionProvenance, PermissionVia};
 pub use acp_status::{DelegationAudience, LightClientStatus};
 pub use action::ActionExecution;
+pub use graphql::{GqlExtensions, GqlWarning, QueryResponse, QueryResponseError};
 pub use lens::{LensConfig, LensModule};
 pub use p2p_manage::{
     RemoteManageDocRef, RemoteManageOp, RemoteManageQueryOp, RemoteManageQueryResult,

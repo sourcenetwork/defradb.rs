@@ -34,11 +34,11 @@ use crate::handlers::views::ViewNamesRequest;
 use crate::route_permissions::RoutePermission;
 use crate::router::EncryptedIndexInfo;
 use crate::router::NodePermission;
-use crate::wire::Replicator;
 use crate::wire::{
     ActionExecution, DocumentRelationship, DocumentsResult, LightClientStatus,
     PermissionProvenance, SourcePermission, VersionInfo,
 };
+use crate::wire::{QueryResponse, Replicator};
 use schema::CollectionVersion;
 
 use RoutePermission::{Dynamic, Exempt, IdentityOnly};
@@ -185,7 +185,7 @@ pub const ROUTES: &[Route] = &[
     row("/api/v0/graphql/client-sign", GET, required(NodePermission::DocumentUpdate), false),
     // GET is always a read operation; POST determines permission by parsing
     // the query in the handler.
-    row("/api/v0/graphql", GET, required(NodePermission::DocumentRead), false),
+    row_body("/api/v0/graphql", GET, required(NodePermission::DocumentRead), false, None, Some(body::<QueryResponse>)),
     row_body("/api/v0/graphql", POST, Dynamic, false, Some(body::<TransactionalQueryRequest>), None),
     row_body("/api/v0/ccip", POST, Dynamic, false, None, Some(body::<CcipResponse>)),
     row("/api/v0/ccip/{sender}/{data}", GET, Dynamic, false),
