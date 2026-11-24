@@ -46,3 +46,5 @@ testo query::relation_order_with_filter::selected_relation_id::indexed
 testo query::relation_order_with_filter::selected_relation_id_unfiltered::indexed
 testo query::relation_order_with_filter::selected_relation_id_unfiltered_with_limit::indexed
 testo query::relation_order_with_filter::selected_relation_id_with_limit::indexed
+# Without an index, Go's badger validates the filter scan and aborts the second explicit commit of an equal value with "transaction conflict. Please retry"; Rust's scan is a query read that decides nothing (AGENTS.md § Reads and writes), so both commit.
+testo txn::unique_isolation::without_an_index_both_commit

@@ -26,6 +26,7 @@ mod set_migration;
 mod truncate;
 mod ttl;
 mod txn_context;
+mod unique_isolation;
 mod update_doc;
 mod verify_signature;
 mod view_nac;

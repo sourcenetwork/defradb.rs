@@ -2483,8 +2483,10 @@ dependencies = [
  "edge",
  "nuclei",
  "p2p",
+ "query",
  "serde",
  "serde_json",
+ "storage",
  "thiserror 2.0.21",
 ]
 

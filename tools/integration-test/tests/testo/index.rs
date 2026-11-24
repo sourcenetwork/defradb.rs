@@ -72,6 +72,7 @@ mod range_filter;
 mod remove_indexed_field;
 mod resume_after_open;
 mod status;
+mod unique_refusal_code;
 mod unique_writer;
 mod update_unique;
 mod update_unique_composite;

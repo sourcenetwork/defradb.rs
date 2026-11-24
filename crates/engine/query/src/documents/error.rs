@@ -10,6 +10,9 @@ pub enum Error {
     /// The commit lost a write conflict. Go's text.
     #[error("transaction conflict. Please retry")]
     Conflict,
+    /// A unique index refused the write; its message, unchanged.
+    #[error("{0}")]
+    UniqueViolation(String),
     /// The save named a document that has been deleted. Go's text.
     #[error("a document with the given ID has been deleted. DocID: {0}")]
     Deleted(String),

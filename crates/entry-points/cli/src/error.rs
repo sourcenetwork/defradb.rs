@@ -175,11 +175,32 @@ pub enum Error {
 }
 
 impl Error {
-    /// The stable code a server refusal carries, when it carries one.
+    /// The stable code a server refusal carries, when it carries one: a
+    /// unique refusal keeps `UNIQUE_CONSTRAINT_VIOLATION` after it is typed.
     pub fn code(&self) -> Option<&str> {
         match self {
             Self::ServerRefused { code, .. } => Some(code),
+            Self::Documents(query::documents::Error::UniqueViolation(_)) => {
+                Some(query::executor::UNIQUE_CONSTRAINT_VIOLATION_ERROR_CODE)
+            }
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Error;
+
+    #[test]
+    fn a_typed_unique_refusal_keeps_its_code() {
+        let refused = Error::Documents(query::documents::Error::UniqueViolation(
+            "can not index a doc's field(s) that violates unique index".into(),
+        ));
+
+        assert_eq!(
+            refused.code(),
+            Some(query::executor::UNIQUE_CONSTRAINT_VIOLATION_ERROR_CODE)
+        );
     }
 }

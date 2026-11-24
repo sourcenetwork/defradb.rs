@@ -57,8 +57,22 @@ fn index_write_query_error_preserves_unique_constraint_message() {
     assert!(error.is_unique_constraint_violation());
     assert!(matches!(
         index_write_query_error("create", error),
-        query::error::QueryError::Execution(message)
+        query::error::QueryError::UniqueViolation(message)
             if message == storage::corekv::UNIQUE_CONSTRAINT_VIOLATION_MESSAGE
+    ));
+}
+
+#[test]
+fn index_write_query_error_keeps_the_writer_of_a_unique_violation() {
+    let message = format!(
+        "{}. DocID: bae-1, name: alice",
+        storage::corekv::UNIQUE_CONSTRAINT_VIOLATION_MESSAGE
+    );
+    let error = Error::UniqueViolation(message.clone());
+
+    assert!(matches!(
+        index_write_query_error("create", error),
+        query::error::QueryError::UniqueViolation(text) if text == message
     ));
 }
 

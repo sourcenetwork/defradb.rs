@@ -30,10 +30,14 @@ grounded facts for B3 live in [DESIGN.md](DESIGN.md); each later slice has its o
 Run all configured models at once with `./run-all.sh` (red/green oracle, exits non-zero
 on mismatch). It discovers every top-level `*.cfg` here and takes each one's module and
 expected verdict from the cfg's first line, a
-`\* run-all: <Module>.tla <GREEN|RED|TRACE:<n>|DEADLOCK:<n>>` header. Every cfg carries
-one, and a cfg without a valid header fails the run. The cfg's name decides nothing, but
-it may not say otherwise: a name with a `Green` word (underscore-separated) needs a GREEN
-or TRACE header and one with a `Red` word a RED or DEADLOCK header, or the run fails.
+`\* run-all: <Module>.tla <GREEN|RED|DEFECT|TRACE:<n>|DEADLOCK:<n>>` header. Every cfg
+carries one, and a cfg without a valid header fails the run. GREEN expects no error and
+RED an invariant violation; DEFECT also expects a violation, but marks a cfg that models
+today's code with no bug planted and fails on a known defect, so it turns GREEN once that
+defect is fixed (the two `MC_ClientUniqueAdmission_Red_FilterReadDecides*` cfgs). The
+cfg's name decides nothing, but it may not say otherwise: a name with a `Green` word
+(underscore-separated) and no `Red` word needs a GREEN or TRACE header, and one with a
+`Red` word and no `Green` word a RED, DEFECT or DEADLOCK header, or the run fails.
 
 ---
 

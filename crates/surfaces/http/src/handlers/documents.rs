@@ -71,6 +71,7 @@ fn refused(error: documents::Error) -> HttpError {
     match error {
         documents::Error::DocumentNotFound => HttpError::NotFound(message),
         documents::Error::Conflict => HttpError::TransactionConflict,
+        documents::Error::UniqueViolation(_) => HttpError::UniqueViolation(message),
         documents::Error::Request(_)
         | documents::Error::SecondaryRelation(_)
         | documents::Error::CollectionNotFound
@@ -276,7 +277,16 @@ pub async fn update_documents_with_filter(
 
 #[cfg(test)]
 mod tests {
-    use super::{signing_choice, HttpError};
+    use super::{refused, signing_choice, HttpError};
+
+    #[test]
+    fn a_document_write_a_unique_index_refused_is_a_unique_violation() {
+        let message = "can not index a doc's field(s) that violates unique index. DocID: bae-1";
+        match refused(query::documents::Error::UniqueViolation(message.into())) {
+            HttpError::UniqueViolation(text) => assert_eq!(text, message),
+            other => panic!("expected a unique violation, got {other:?}"),
+        }
+    }
 
     #[test]
     fn enable_signing_parses_as_go_parse_bool() {

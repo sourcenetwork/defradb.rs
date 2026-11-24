@@ -3,7 +3,7 @@ use serde_json::Value;
 
 use crate::executor::{
     QueryResponse, SECONDARY_RELATION_ERROR_CODE, TXN_CONFLICT_ERROR_CODE,
-    UNKNOWN_MUTATION_COLLECTION_ERROR_CODE,
+    UNIQUE_CONSTRAINT_VIOLATION_ERROR_CODE, UNKNOWN_MUTATION_COLLECTION_ERROR_CODE,
 };
 
 /// The `_docID` of each document mutation `op` on `collection` returned, or
@@ -53,6 +53,9 @@ fn refused(response: &QueryResponse) -> Result<()> {
         None => Ok(()),
         Some(error) => Err(match error.code() {
             Some(TXN_CONFLICT_ERROR_CODE) => Error::Conflict,
+            Some(UNIQUE_CONSTRAINT_VIOLATION_ERROR_CODE) => {
+                Error::UniqueViolation(error.message.clone())
+            }
             Some(SECONDARY_RELATION_ERROR_CODE) => {
                 Error::SecondaryRelation(quoted_field(&error.message))
             }
