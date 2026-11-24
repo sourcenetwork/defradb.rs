@@ -32,6 +32,33 @@ async fn within<F: std::future::Future>(
 }
 
 impl<S: Store + 'static> DbTransactionRegistry<S> {
+    /// Runs `commit` once the database's commit gate, if it has one, lets it
+    /// through, and tells the gate when it has its outcome.
+    async fn gated<F>(&self, commit: F) -> F::Output
+    where
+        F: std::future::Future,
+    {
+        self.gated_unless_kept(commit, |_| false).await
+    }
+
+    /// As [`Self::gated`], but an outcome `kept` names left the transaction
+    /// open and uncommitted, so the gate is not told it ended.
+    async fn gated_unless_kept<F, K>(&self, commit: F, kept: K) -> F::Output
+    where
+        F: std::future::Future,
+        K: FnOnce(&F::Output) -> bool,
+    {
+        let Some(gate) = self.db.options().commit_gate.clone() else {
+            return commit.await;
+        };
+        gate.enter().await;
+        let outcome = commit.await;
+        if !kept(&outcome) {
+            gate.ended();
+        }
+        outcome
+    }
+
     /// Trusted embedded-host only: the owner admits the transaction turn and
     /// native NAC checks that owner on the same view. Never expose this
     /// capability as an HTTP or GraphQL request parameter.
@@ -215,19 +242,50 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         })?;
         let label = handle.to_string();
         let queued = Instant::now();
-        self.owners()
-            .map_err(|error| unavailable(error, handle))?
-            .finish(id, &self.caller(context), move |owned| {
-                Box::pin(async move {
-                    report_slow_phase("commit", "queue", queued);
-                    let started = Instant::now();
-                    let result = owned.commit().await;
-                    report_slow_phase("commit", "execute", started);
-                    result.map_err(|error| commit_error(&label, error))
+        self.gated(async {
+            self.owners()
+                .map_err(|error| unavailable(error, handle))?
+                .finish(id, &self.caller(context), move |owned| {
+                    Box::pin(async move {
+                        report_slow_phase("commit", "queue", queued);
+                        let started = Instant::now();
+                        let result = owned.commit().await;
+                        report_slow_phase("commit", "execute", started);
+                        result.map_err(|error| commit_error(&label, error))
+                    })
                 })
-            })
-            .await
-            .map_err(|error| unavailable(error, handle))?
+                .await
+                .map_err(|error| unavailable(error, handle))?
+        })
+        .await
+    }
+
+    async fn commit_detached_as(
+        &self,
+        context: &RequestContext,
+        handle: &TransactionHandle,
+    ) -> std::result::Result<(), TransactionError> {
+        let id = TxnId::parse(handle).ok_or_else(|| {
+            TransactionError::not_found(format!("transaction '{handle}' not found"))
+        })?;
+        let label = handle.to_string();
+        let queued = Instant::now();
+        self.gated(async {
+            self.owners()
+                .map_err(|error| unavailable(error, handle))?
+                .finish_detached(id, &self.caller(context), move |owned| {
+                    Box::pin(async move {
+                        report_slow_phase("commit", "queue", queued);
+                        let started = Instant::now();
+                        let result = owned.commit().await;
+                        report_slow_phase("commit", "execute", started);
+                        result.map_err(|error| commit_error(&label, error))
+                    })
+                })
+                .await
+                .map_err(|error| unavailable(error, handle))?
+        })
+        .await
     }
 
     async fn commit_unless_told_as(
@@ -240,31 +298,37 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         })?;
         let label = handle.to_string();
         let queued = Instant::now();
-        self.owners()
-            .map_err(|error| unavailable(error, handle))?
-            .finish_unless(id, &self.caller(context), move |owned| {
-                Box::pin(async move {
-                    report_slow_phase("commit", "queue", queued);
-                    let started = Instant::now();
-                    let ending = match owned.commit_unless_told().await {
-                        crate::txn::owner::Ending::Ended(result) => {
-                            crate::txn::owner::Ending::Ended(
-                                result.map_err(|error| commit_error(&label, error)),
-                            )
-                        }
-                        crate::txn::owner::Ending::Kept(owned, result) => {
-                            crate::txn::owner::Ending::Kept(
-                                owned,
-                                result.map_err(|error| commit_error(&label, error)),
-                            )
-                        }
-                    };
-                    report_slow_phase("commit", "execute", started);
-                    ending
-                })
-            })
-            .await
-            .map_err(|error| unavailable(error, handle))?
+        self.gated_unless_kept(
+            async {
+                self.owners()
+                    .map_err(|error| unavailable(error, handle))?
+                    .finish_unless(id, &self.caller(context), move |owned| {
+                        Box::pin(async move {
+                            report_slow_phase("commit", "queue", queued);
+                            let started = Instant::now();
+                            let ending = match owned.commit_unless_told().await {
+                                crate::txn::owner::Ending::Ended(result) => {
+                                    crate::txn::owner::Ending::Ended(
+                                        result.map_err(|error| commit_error(&label, error)),
+                                    )
+                                }
+                                crate::txn::owner::Ending::Kept(owned, result) => {
+                                    crate::txn::owner::Ending::Kept(
+                                        owned,
+                                        result.map_err(|error| commit_error(&label, error)),
+                                    )
+                                }
+                            };
+                            report_slow_phase("commit", "execute", started);
+                            ending
+                        })
+                    })
+                    .await
+                    .map_err(|error| unavailable(error, handle))?
+            },
+            |outcome| matches!(outcome, Ok(requests) if !requests.is_empty()),
+        )
+        .await
     }
 
     async fn commit_confirmed_as(
@@ -277,18 +341,21 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             TransactionError::not_found(format!("transaction '{handle}' not found"))
         })?;
         let label = handle.to_string();
-        self.owners()
-            .map_err(|error| unavailable(error, handle))?
-            .finish(id, &self.caller(context), move |owned| {
-                Box::pin(async move {
-                    owned
-                        .commit_confirmed(&confirmations)
-                        .await
-                        .map_err(|error| commit_error(&label, error))
+        self.gated(async {
+            self.owners()
+                .map_err(|error| unavailable(error, handle))?
+                .finish(id, &self.caller(context), move |owned| {
+                    Box::pin(async move {
+                        owned
+                            .commit_confirmed(&confirmations)
+                            .await
+                            .map_err(|error| commit_error(&label, error))
+                    })
                 })
-            })
-            .await
-            .map_err(|error| unavailable(error, handle))?
+                .await
+                .map_err(|error| unavailable(error, handle))?
+        })
+        .await
     }
 
     async fn add_collection_as(
