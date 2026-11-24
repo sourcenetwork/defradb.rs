@@ -26,6 +26,7 @@ mod json_composite;
 mod json_descending_range;
 mod json_unique;
 mod json_unique_array;
+mod keyspace;
 mod like_nil;
 mod list_actions;
 mod list_collection_name;

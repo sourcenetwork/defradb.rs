@@ -34,7 +34,7 @@ proptest! {
 /// The name a table records: stable, and naming this extractor alone.
 #[test]
 fn the_extractor_is_named_for_its_cuts() {
-    assert_eq!(DefraPrefixExtractor.name(), "defradb-entities-v2");
+    assert_eq!(DefraPrefixExtractor.name(), "defradb-entities-v3");
     assert_ne!(
         DefraPrefixExtractor.name(),
         regolith::FixedLengthPrefix(4).name()
@@ -70,7 +70,7 @@ fn a_prefix_scan_reads_what_it_did_and_skips_tables_without_its_entity() {
                 [b"h/r/".as_slice(), &[entity], b"/field/b"].concat(),
                 [b"h/p/".as_slice(), &[entity], b"/0000000000000001/a"].concat(),
                 [b"d/d/col".as_slice(), &[digit], b"/\x01"].concat(),
-                [b"d/\x01/".as_slice(), &[entity], b"/value/\x01"].concat(),
+                [b"d/index/\x01/".as_slice(), &[entity], b"/value/\x01"].concat(),
                 [
                     b"a/zanzibar/1/rel/users/bae-".as_slice(),
                     &[digit],
@@ -97,7 +97,7 @@ fn a_prefix_scan_reads_what_it_did_and_skips_tables_without_its_entity() {
                 [b"h/r/".as_slice(), &[entity], b"/field/"].concat(),
                 [b"h/p/".as_slice(), &[entity], b"/"].concat(),
                 [b"d/d/col".as_slice(), &[digit], b"/"].concat(),
-                [b"d/\x01/".as_slice(), &[entity], b"/value/"].concat(),
+                [b"d/index/\x01/".as_slice(), &[entity], b"/value/"].concat(),
                 [b"a/zanzibar/1/rel/users/bae-".as_slice(), &[digit], b"/"].concat(),
             ]);
         }
@@ -120,7 +120,7 @@ fn a_prefix_scan_reads_what_it_did_and_skips_tables_without_its_entity() {
             b"h/r/\x02/".as_slice(),
             b"h/p/\x02/",
             b"d/d/col2/",
-            b"d/\x01/\x02/",
+            b"d/index/\x01/\x02/",
             b"a/zanzibar/1/rel/users/bae-2/",
         ] {
             let options = IterOptions::new().with_prefix(absent.to_vec());

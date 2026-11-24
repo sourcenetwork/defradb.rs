@@ -128,10 +128,14 @@ impl BackupOperations for HttpNodeOps {
             .map_err(text)
     }
 
-    async fn import(&self, data: &str) -> Result<ImportResult, String> {
+    async fn import(
+        &self,
+        data: &str,
+        host: &dyn db::backup::ImportHost,
+    ) -> Result<ImportResult, String> {
         let stats = self
             .ops
-            .import_backup(self.context(), data.to_owned())
+            .import_backup_with(self.context(), host, data)
             .await
             .map_err(text)?;
         Ok(ImportResult {
