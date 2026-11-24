@@ -29,6 +29,10 @@ pub struct FieldMergeResult {
     /// A state that lost to a different state already stored: the field keeps
     /// the value it had. A repeat of the stored state is not superseded.
     pub(crate) superseded: bool,
+    /// The value is already in the active collection's representation, even
+    /// though the block named another version. Its composite must store it
+    /// there instead of running the migration again.
+    pub(crate) active_result: bool,
 }
 
 impl FieldMergeResult {
@@ -141,6 +145,7 @@ where
                     op: None,
                     parked: Some(crdt),
                     superseded: false,
+                    active_result: false,
                 })
             }
             Err(error) => return Err(MergeError::UnsupportedDelta(error.to_string())),

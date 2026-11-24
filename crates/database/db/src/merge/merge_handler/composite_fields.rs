@@ -343,6 +343,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 if result.applied {
                     state.any_field_applied = true;
                 }
+                if result.active_result {
+                    state.active_result = true;
+                }
                 if !result.superseded {
                     state.any_field_stands = true;
                 }
