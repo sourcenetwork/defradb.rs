@@ -8,6 +8,7 @@ mod async_backfill;
 mod async_backfill_migration;
 mod backfill_large;
 mod backfill_txn;
+mod backfill_under_writes;
 mod backfill_unique;
 mod backfill_unique_txn;
 mod child_offset_per_parent;

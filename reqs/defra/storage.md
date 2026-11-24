@@ -57,6 +57,13 @@ A counter field can be indexed. After local increments, or after two nodes incre
 
 An ordered query over an indexed field with `limit: 3, offset: 2` reads `limit + offset` index entries, returns exactly the page after skipping two, and leaves the query offset to the limit node so it is not applied twice. The same paging is correct when the ordered field is not indexed.
 
+# `defra.index.backfill_under_writes`: An index created under writes finishes its backfill
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["index::backfill_under_writes::an_index_created_under_updates_is_built_and_used", "db::index::create::index_backfill_finishes_when_the_cache_lags_the_stored_definition"]
+
+An index created while documents of its collection are updated is built: its backfill completes, the listing shows no failed backfill, and a filter on the indexed field fetches through the index, for a value an update wrote during the build as for an untouched one. The backfill identifies its index by ID in the definition it reads from the store, so a node whose collection cache is behind the committed index definition still completes it and never fails with `index '<name>' disappeared during backfill`.
+
 # `defra.collection`: Collection-wide operations
 
 - **Parents:** ["defra"]
