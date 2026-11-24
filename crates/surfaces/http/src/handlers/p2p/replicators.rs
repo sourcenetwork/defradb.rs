@@ -3,8 +3,6 @@
 use axum::{extract::State, Json};
 use serde::Deserialize;
 
-use defra_p2p_adapter::peer::Replicator;
-
 use crate::error::{peer_refused, HttpError};
 use crate::identity_extractor::ExtractIdentity;
 use crate::nac_guard::require_permission;
@@ -101,6 +99,10 @@ pub async fn remove_replicator(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The handler answers the mirror; this file's tests still build the
+    /// adapter type it converts from.
+    use defra_p2p_adapter::peer::Replicator;
 
     #[test]
     fn test_replicator_request_deserialize() {
