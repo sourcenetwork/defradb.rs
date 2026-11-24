@@ -108,10 +108,23 @@ fn an_old_format_entry_falls_outside_new_format_range_bounds() {
     );
 }
 
-/// A format-3 descending JSON index must be rebuilt before a path range query
-/// uses format-4 bounds. Removing the entries models keys the new scan cannot read.
+/// A store stamped before the index keyspace tag and descending JSON paths is
+/// rebuilt to the current format in one pass.
 #[test]
 fn a_format_three_descending_json_index_is_rebuilt_on_open() {
+    rebuilds_a_descending_json_index_stamped(3);
+}
+
+/// A store stamped by the index keyspace tag is rebuilt for descending JSON paths.
+#[test]
+fn a_format_four_descending_json_index_is_rebuilt_on_open() {
+    rebuilds_a_descending_json_index_stamped(4);
+}
+
+/// A descending JSON index stamped `stored` must be rebuilt before a path range
+/// query uses current bounds. Removing the entries models keys the new scan
+/// cannot read.
+fn rebuilds_a_descending_json_index_stamped(stored: u32) {
     use std::sync::Arc;
 
     use db::{AutoCommitMutator, LensedAutoCommitFetcher, DB};
@@ -160,7 +173,7 @@ fn a_format_three_descending_json_index_is_rebuilt_on_open() {
         drop(datastore);
         txn.systemstore()
             .unwrap()
-            .set(INDEX_FORMAT_KEY, &3u32.to_be_bytes())
+            .set(INDEX_FORMAT_KEY, &stored.to_be_bytes())
             .await
             .unwrap();
         txn.commit().await.unwrap();
@@ -183,10 +196,8 @@ fn a_format_three_descending_json_index_is_rebuilt_on_open() {
             result.data.unwrap(),
             serde_json::json!({"User": [{"name": "John"}]})
         );
-        assert_eq!(
-            reopened.stored_index_format().await.unwrap(),
-            Some(CURRENT_INDEX_FORMAT)
-        );
+        assert_eq!(CURRENT_INDEX_FORMAT, 5);
+        assert_eq!(reopened.stored_index_format().await.unwrap(), Some(5));
     })
     .unwrap();
 }
