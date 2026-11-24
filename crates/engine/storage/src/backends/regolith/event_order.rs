@@ -465,6 +465,19 @@ mod tests {
     }
 
     #[test]
+    fn reversed_concurrent_receipts_dispatch_in_seq_order() {
+        let fixture = Fixture::new();
+        let (first, first_binding) = fixture.bound(b"a", 1, false);
+        let (second, second_binding) = fixture.bound(b"b", 2, false);
+        second.commit().unwrap();
+        first.commit().unwrap();
+        first_binding.hand_over(true);
+        assert!(fixture.out().is_empty());
+        second_binding.hand_over(true);
+        assert_eq!(fixture.out(), vec![2, 1]);
+    }
+
+    #[test]
     fn events_from_one_commit_keep_registration_order() {
         let fixture = Fixture::new();
         let mut txn = fixture.db.begin(&TxnOptions::new());
