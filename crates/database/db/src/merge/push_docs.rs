@@ -9,6 +9,7 @@ use p2p::P2PTransport;
 use storage::corekv::{Reader, Store};
 use storage::stores::peerstore::ReplayMarkerWrite;
 
+mod follow;
 mod selected;
 mod selection;
 mod stop;
@@ -374,18 +375,19 @@ where
                     continue;
                 }
 
-                if let Some(filter) = filters.get(collection.collection_id()).filter(|_| !selected) {
-                    if !document_matches_filter(
+                if !selected
+                    && !follow::replica_takes(
+                        db,
                         &datastore,
+                        &systemstore,
                         &collection,
                         *doc_short_id,
-                        filter,
+                        filters,
                         matcher,
                     )
                     .await?
-                    {
-                        continue;
-                    }
+                {
+                    continue;
                 }
 
                 let creator =
@@ -938,7 +940,7 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
         .find_collection_by_id(collection_id)
         .map_err(|e| format!("failed to get collection: {}", e))?
         .ok_or_else(|| format!("collection '{}' not found", collection_id))?;
-    if let Some(filter) = filters.get(collection_id) {
+    if !filters.is_empty() {
         let peerstore = db.peerstore();
         let txn = db
             .new_txn(true)
@@ -947,7 +949,20 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
         let datastore = txn
             .datastore()
             .map_err(|e| format!("failed to get datastore: {}", e))?;
-        if !document_matches_filter(&datastore, &collection, doc_short_id, filter, matcher).await? {
+        let systemstore = txn
+            .systemstore()
+            .map_err(|e| format!("failed to get systemstore: {}", e))?;
+        if !follow::replica_takes(
+            db,
+            &datastore,
+            &systemstore,
+            &collection,
+            doc_short_id,
+            filters,
+            matcher,
+        )
+        .await?
+        {
             peerstore
                 .complete_retry_scope(
                     peer_id.as_str(),

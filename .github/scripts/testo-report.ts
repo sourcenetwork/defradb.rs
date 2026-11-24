@@ -41,7 +41,7 @@ import { join } from "node:path";
 const UNSUPPORTED = /unsupported op: ([^\n\r]*)/;
 const ENTRY = /^(\S+)\s+(\S+)\s+#(\d+)\s*$/;
 const DIVERGENCE = /^(\S+)\s+(\S+)(?:\s+.*)?$/;
-const CLIENTS = ["in-process", "rust-http", "go-http", "cli", "legacy"];
+const CLIENTS = ["in-process", "in-process-secondary-index", "rust-http", "go-http", "cli", "legacy"];
 /// The one client the deliberate divergences list applies to.
 const DIVERGENT_CLIENT = "go-http";
 const COLUMNS = ["pass", "fail", "known", "divergent", "unsupported"];
