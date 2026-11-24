@@ -667,9 +667,11 @@ tla-model cfg module:
     cd proofs/tla && ./tools/tlc -config {{ cfg }} {{ module }}
 
 # Lean proofs. Must build clean with zero `sorry`.
+# A new top-level `.lean` file is built with no lakefile edit; `-R` makes Lake
+# list the directory again.
 [group('proofs')]
 lean:
-    cd proofs/lean && lake build
+    cd proofs/lean && lake build -R
 
 # Model-to-code binding. The Lean axis needs no binary; the TLA axis drives the
 # real release binary and is serial because each test spins up real nodes.

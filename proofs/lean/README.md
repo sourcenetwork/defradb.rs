@@ -12,8 +12,12 @@ Run:
 
 ```bash
 cd proofs/lean
-lake build
+lake build -R
 ```
+
+A new top-level `.lean` file is built with no lakefile edit; `-R` makes Lake
+list the directory again (it caches the elaborated lakefile, so without `-R` a
+newly added file is not seen).
 
 The model proves:
 

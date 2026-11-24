@@ -107,9 +107,9 @@ Main theorems:
 - `Acp.check_deterministic` and `Acp.eval_terminates`: executable checks are
   deterministic and return a finite Boolean result for every budget.
 
-The existing lakefile only declares `lean_lib DefraConvergence`; it was not
-edited.  Integrator action: add `lean_lib Acp` if ACP should be included in
-`lake build`.
+The lakefile builds every top-level `.lean` file as a root of one library, so
+ACP is included automatically; no lakefile edit is needed (build with
+`lake build -R`).
 
 Lean command run:
 

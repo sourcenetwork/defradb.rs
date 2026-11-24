@@ -58,7 +58,10 @@ proofs/verify-all.sh
 
 # or each half on its own:
 cd proofs/tla && ./run-all.sh   # all TLA+ models (red+green oracle, non-zero on any mismatch)
-cd proofs/lean && lake build    # all Lean proofs (builds clean, zero `sorry`)
+cd proofs/lean && lake build -R # all Lean proofs (builds clean, zero `sorry`)
+                               # a new top-level `.lean` file is built with no
+                               # lakefile edit; `-R` makes Lake list the
+                               # directory again
 ```
 
 `proofs/tla/tools/tla2tools.jar` is git-ignored; the wrapper re-downloads it if missing.
