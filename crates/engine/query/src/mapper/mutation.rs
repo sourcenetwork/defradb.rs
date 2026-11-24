@@ -189,6 +189,22 @@ impl Mutation {
         }
     }
 
+    /// The documents a truncate removes, as Go's mapper folds its arguments:
+    /// `docID` and `filter` together are `{_and: [{_docID: {_in: ids}}, filter]}`,
+    /// either alone is itself, and neither is every document (`None`).
+    pub fn truncate_filter(&self) -> Option<Filter> {
+        let Some(doc_ids) = &self.doc_ids else {
+            return self.filter.clone();
+        };
+        let mut conditions = serde_json::Map::new();
+        conditions.insert("_docID".to_owned(), serde_json::json!({ "_in": doc_ids }));
+        let by_doc_id = Filter::from_conditions(conditions);
+        Some(match &self.filter {
+            Some(filter) => by_doc_id.and(filter.clone()),
+            None => by_doc_id,
+        })
+    }
+
     /// Set the GraphQL alias for this mutation.
     pub fn with_alias(mut self, alias: impl Into<String>) -> Self {
         self.alias = Some(alias.into());

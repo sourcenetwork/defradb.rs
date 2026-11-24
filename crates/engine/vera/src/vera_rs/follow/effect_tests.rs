@@ -55,7 +55,7 @@ fn an_archive_and_other_requests_are_told_apart() {
 }
 
 #[test]
-fn a_voided_batch_keeps_every_archive_it_carried() {
+fn a_voided_batch_keeps_every_archive_it_carried_and_counts_the_rest() {
     let batch = batch(
         3,
         [archive_calldata("bae-1"), archive_calldata("bae-2"), vec![]],
@@ -77,7 +77,7 @@ fn a_voided_batch_keeps_every_archive_it_carried() {
                     token: token(OWNER),
                 },
             ],
-            0,
+            1,
         )
     );
 }

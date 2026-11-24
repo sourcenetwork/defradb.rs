@@ -69,8 +69,12 @@ pub(crate) enum LostSubject {
 pub(crate) enum Effect {
     /// A change the outbox can owe again.
     Owed(Lost),
-    /// A policy creation, a checked decision, or anything else that changes
-    /// no document's access.
+    /// A policy creation, named by the ID its definition, creator and nonce
+    /// derive. It widens nothing by itself, but a lost one cannot be
+    /// restored from the node's record.
+    PolicyCreation { policy_id: String, creator: String },
+    /// A checked decision, or anything else that changes no document's
+    /// access.
     Other,
     /// The commands of one `batchCalls`, in order, and how many of them were
     /// not changes the outbox can owe again.
@@ -161,8 +165,7 @@ impl Effect {
         for effect in effects {
             match effect {
                 Effect::Owed(lost) => owed.push(lost),
-                Effect::Other => other += 1,
-                Effect::Batched(_, _) => unreachable!(),
+                Effect::PolicyCreation { .. } | Effect::Other | Effect::Batched(_, _) => other += 1,
             }
         }
         Effect::Batched(owed, other)
@@ -175,8 +178,7 @@ impl Effect {
                 let (policy, resource, object) = lost.object();
                 Some((policy.into(), resource.into(), object.into()))
             }
-            Self::Batched(_, _) => None,
-            Self::Other => None,
+            Self::PolicyCreation { .. } | Self::Batched(_, _) | Self::Other => None,
         }
     }
 }
@@ -188,6 +190,9 @@ pub(crate) fn effect_of(wire: &[u8]) -> Effect {
     let Ok(tx) = NativeTx::decode_wire(wire) else {
         return Effect::Other;
     };
+    if let Some(creation) = policy_creation_of(&tx) {
+        return creation;
+    }
     if tx
         .calldata
         .as_ref()
@@ -199,7 +204,7 @@ pub(crate) fn effect_of(wire: &[u8]) -> Effect {
                 batch
                     .calls
                     .into_iter()
-                    .filter_map(|calldata| Effect::from_call(calldata.as_ref()))
+                    .map(|calldata| Effect::from_call(calldata.as_ref()).unwrap_or(Effect::Other))
             })
             .map(Effect::join)
             .unwrap_or(Effect::Other);
@@ -229,6 +234,21 @@ fn subject(subject: &Subject) -> Option<LostSubject> {
     })
 }
 
+/// The bearer create-policy call, if `wire` is one.
+fn policy_creation_of(tx: &NativeTx) -> Option<Effect> {
+    let call = super::super::abi::IAcp::bearerCreatePolicyCall::abi_decode(&tx.calldata).ok()?;
+    let policy = String::from_utf8_lossy(&call.policy);
+    let creator = super::owed::token_actor(&call.bearerToken)?;
+    let policy_id =
+        crate::vera_rs::predict_policy_id(&policy, crate::PolicyNonce(call.nonce.0), &creator)
+            .ok()?;
+    Some(Effect::PolicyCreation { policy_id, creator })
+}
+
 #[cfg(test)]
 #[path = "effect_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "policy_creation_tests.rs"]
+mod policy_creation_tests;

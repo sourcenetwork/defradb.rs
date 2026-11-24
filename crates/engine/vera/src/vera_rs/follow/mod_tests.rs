@@ -42,6 +42,15 @@ fn ignore(_: alloy_primitives::B256, _: bool) -> Result<(), ProviderError> {
     Ok(())
 }
 
+fn expected_checked(owed: Vec<Lost>) -> Reconciled {
+    Reconciled::Checked {
+        report: TakeoverReport {
+            owed,
+            ..TakeoverReport::default()
+        },
+    }
+}
+
 fn block_on<F>(future: F) -> F::Output
 where
     F: std::future::Future,
@@ -63,7 +72,7 @@ fn a_term_that_voided_nothing_of_this_node_is_checked_at_once() {
     assert!(follow.admit(1).is_err(), "an unchecked term admits nothing");
 
     let checked = block_on(reconcile(&mut journal, &deployment, 1, &mut ignore)).unwrap();
-    assert_eq!(checked, Reconciled::Checked { owed: Vec::new() });
+    assert_eq!(checked, expected_checked(Vec::new()));
     assert!(deployment.replayed().is_empty());
     follow.update(&journal);
     assert_eq!(follow.epoch(), 1);
@@ -92,7 +101,10 @@ fn a_missing_registration_and_grant_are_sent_again_and_what_is_refused_is_owed_i
     assert_eq!(
         checked,
         Reconciled::Checked {
-            owed: vec![lost_registration("bae-1"), lost_grant(true)]
+            report: TakeoverReport {
+                owed: vec![lost_registration("bae-1"), lost_grant(true)],
+                ..TakeoverReport::default()
+            },
         }
     );
     // The journal keeps both at the height they were executed at again, and
@@ -124,7 +136,10 @@ fn a_revocation_on_a_void_block_that_is_refused_again_is_owed_as_a_delete() {
     assert_eq!(
         checked,
         Reconciled::Checked {
-            owed: vec![lost_grant(false)]
+            report: TakeoverReport {
+                owed: vec![lost_grant(false)],
+                ..TakeoverReport::default()
+            },
         }
     );
 }
@@ -142,6 +157,10 @@ fn a_replay_cut_short_still_owes_what_it_learnt_and_taints_its_object() {
 
     assert!(block_on(reconcile(&mut journal, &deployment, 1, &mut ignore)).is_err());
     assert_eq!(journal.handled_term(), 0, "the term is still unchecked");
+    assert!(
+        first_check(&journal, 1),
+        "the run that finishes the check reports it"
+    );
 
     // Run again, the revocation is held (its replay was refused, and spent
     // its sequence); it is sent again all the same, and the grant after it,
@@ -151,10 +170,20 @@ fn a_replay_cut_short_still_owes_what_it_learnt_and_taints_its_object() {
     assert_eq!(
         checked,
         Reconciled::Checked {
-            owed: vec![lost_grant(false), lost_grant(true)]
+            report: TakeoverReport {
+                owed: vec![lost_grant(false), lost_grant(true)],
+                ..TakeoverReport::default()
+            },
         }
     );
     assert_eq!(journal.replaying(), None);
+    assert!(
+        !first_check(&journal, 1),
+        "a later run only delivers what the term left owed"
+    );
+    assert!(first_check(&journal, 2));
+    journal.close("uncovered".into()).unwrap();
+    assert!(!first_check(&journal, 2), "a closed journal checks nothing");
 }
 
 #[test]
@@ -178,7 +207,10 @@ fn a_refused_revocation_whose_answer_was_lost_is_still_owed_after_a_restart() {
     assert_eq!(
         checked,
         Reconciled::Checked {
-            owed: vec![lost_grant(false)]
+            report: TakeoverReport {
+                owed: vec![lost_grant(false)],
+                ..TakeoverReport::default()
+            },
         },
         "the revocation is owed although the deployment holds its refused replay"
     );
@@ -201,7 +233,10 @@ fn a_replay_an_earlier_term_left_unfinished_is_sent_again_under_the_next() {
     assert_eq!(
         checked,
         Reconciled::Checked {
-            owed: vec![lost_grant(false)]
+            report: TakeoverReport {
+                owed: vec![lost_grant(false)],
+                ..TakeoverReport::default()
+            },
         }
     );
 }
@@ -265,7 +300,7 @@ fn a_void_older_than_the_journal_fails_closed_for_good() {
     // below the newest entry it pruned.
     let deployment = Deployment::holding(&confirmations[..1]);
 
-    let Reconciled::Closed(reason) =
+    let Reconciled::Closed { reason, .. } =
         block_on(reconcile(&mut journal, &deployment, 1, &mut ignore)).unwrap()
     else {
         panic!("a void the journal cannot vouch for must fail closed");
@@ -294,7 +329,16 @@ fn a_void_within_the_journal_after_pruning_is_checked() {
     let deployment = Deployment::holding(&confirmations[..held]);
 
     let checked = block_on(reconcile(&mut journal, &deployment, 1, &mut ignore)).unwrap();
-    assert_eq!(checked, Reconciled::Checked { owed: Vec::new() });
+    assert_eq!(
+        checked,
+        Reconciled::Checked {
+            report: TakeoverReport {
+                applied: vec![report::Applied::Change(lost_registration("bae-1"))],
+                owed: Vec::new(),
+                unrestorable: Vec::new(),
+            },
+        }
+    );
     assert_eq!(deployment.replayed(), vec![held as u64]);
 }
 
@@ -307,29 +351,47 @@ fn a_journal_begun_after_the_worker_signed_cannot_vouch_for_a_void_reaching_back
     let deployment = Deployment::default();
 
     let outcome = block_on(reconcile(&mut journal, &deployment, 1, &mut ignore)).unwrap();
-    assert!(matches!(outcome, Reconciled::Closed(reason) if reason.contains("below 3")));
+    assert!(matches!(
+        outcome,
+        Reconciled::Closed { ref reason, .. } if reason.contains("below 3")
+    ));
 }
 
 #[test]
 fn a_void_archive_that_is_refused_again_is_owed_again() {
     let directory = tempfile::tempdir().unwrap();
-    let kept = confirmed(wire(0, "bae-1", register()), 5);
-    let archived = confirmed(archive(1, "bae-1"), 6);
-    let mut journal = journal(directory.path(), &[kept.clone(), archived.clone()]);
-    let deployment = Deployment::holding([&kept]).refuse(&archived);
+    let kept = confirmed(wire(0, "bae-0", register()), 5);
+    let applied = confirmed(wire(1, "bae-1", register()), 6);
+    let owed = confirmed(wire(2, "bae-2", register()), 7);
+    let archived = confirmed(archive(3, "bae-3"), 8);
+    let mut journal = journal(
+        directory.path(),
+        &[kept.clone(), applied, owed.clone(), archived.clone()],
+    );
+    let deployment = Deployment::holding([&kept]).refuse(&owed).refuse(&archived);
 
     let outcome = block_on(reconcile(&mut journal, &deployment, 1, &mut ignore)).unwrap();
+    let Reconciled::Checked { report } = outcome else {
+        panic!("a refused archive is owed again, not a reason to close");
+    };
     assert_eq!(
-        outcome,
-        Reconciled::Checked {
-            owed: vec![Lost::Archive {
+        report.applied,
+        vec![report::Applied::Change(lost_registration("bae-1"))]
+    );
+    assert_eq!(
+        report.owed,
+        vec![
+            lost_registration("bae-2"),
+            Lost::Archive {
                 policy_id: POLICY.into(),
                 resource: "users".into(),
-                object: "bae-1".into(),
+                object: "bae-3".into(),
                 token: token(OWNER),
-            }]
-        }
+            },
+        ]
     );
+    assert!(report.unrestorable.is_empty());
+    assert!(journal.closed().is_none());
 }
 
 #[test]

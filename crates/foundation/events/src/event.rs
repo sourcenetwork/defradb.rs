@@ -28,6 +28,9 @@ pub enum EventName {
     AcpHeightAdvanced,
     /// ACP light client invalidated cached entries after a root change.
     AcpCacheInvalidated,
+    /// A Vera takeover was checked: what was applied again, owed again, and
+    /// what could not be restored.
+    AcpTakeoverReconciled,
     /// A pending-DAG root was quarantined after a deterministic merge
     /// rejection (#1128) — the operator-facing forensics signal.
     PendingDagQuarantined,
@@ -71,6 +74,7 @@ impl std::fmt::Display for EventName {
             EventName::SEArtifactReceived => write!(f, "se-artifact-received"),
             EventName::AcpHeightAdvanced => write!(f, "acp-height-advanced"),
             EventName::AcpCacheInvalidated => write!(f, "acp-cache-invalidated"),
+            EventName::AcpTakeoverReconciled => write!(f, "acp-takeover-reconciled"),
             EventName::PendingDagQuarantined => write!(f, "pending-dag-quarantined"),
             EventName::ActionExecution => write!(f, "action-execution"),
             EventName::UniqueIndexConflict => write!(f, "unique-index-conflict"),
@@ -230,6 +234,61 @@ pub struct AcpCacheInvalidatedData {
     pub entries_invalidated: usize,
 }
 
+/// One submission reported by a Vera takeover reconciliation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AcpTakeoverSubmission {
+    /// `registration`, `relationship`, `policy-creation`, or `archive`.
+    pub kind: String,
+    pub policy_id: String,
+    pub resource: String,
+    pub object: String,
+    /// The relationship changed, for a relationship.
+    pub relation: Option<String>,
+    /// The relationship's subject, for a relationship.
+    pub subject: Option<String>,
+    /// `Some(true)` adds and `Some(false)` deletes a relationship.
+    pub add: Option<bool>,
+    /// The DID the request acted as, when its delegation named one.
+    pub actor: Option<String>,
+}
+
+/// One submission a takeover voided that could not be restored.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AcpTakeoverUnrestorable {
+    /// `policy-creation`. A refused archive is owed again instead.
+    pub kind: String,
+    pub policy_id: String,
+    pub resource: String,
+    pub object: String,
+    /// The DID the request acted as, when its delegation named one: the
+    /// creator of a lost policy.
+    pub actor: Option<String>,
+    /// Why the effect could not be restored.
+    pub reason: String,
+}
+
+/// The outcome of following a Vera term after a takeover.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AcpTakeoverReconciledData {
+    /// The term checked.
+    pub term: u64,
+    /// The height at or below which the term keeps the old chain, from the
+    /// certificate of `term`.
+    pub cut_height: u64,
+    /// The block at the cut, as `0x…`.
+    pub cut_block: String,
+    /// Why the check failed closed, when it did: the node then refuses every
+    /// Vera decision, and the lists hold what the check had learnt when it
+    /// stopped. `None` for a term that was checked.
+    pub closed: Option<String>,
+    /// Submissions sent again and held again.
+    pub applied_again: Vec<AcpTakeoverSubmission>,
+    /// Submissions the outbox owes again, pending when the event is published.
+    pub owed_again: Vec<AcpTakeoverSubmission>,
+    /// Submissions whose effect could not be restored.
+    pub unrestorable: Vec<AcpTakeoverUnrestorable>,
+}
+
 /// Document update event data.
 #[derive(Debug, Clone)]
 pub struct Update {
@@ -358,6 +417,8 @@ pub enum MessageData {
     AcpHeightAdvanced(AcpHeightAdvancedData),
     /// ACP light client cache invalidated after a root change.
     AcpCacheInvalidated(AcpCacheInvalidatedData),
+    /// A Vera takeover's replay was reconciled.
+    AcpTakeoverReconciled(AcpTakeoverReconciledData),
     /// Pending-DAG root quarantined after a deterministic merge rejection.
     PendingDagQuarantined(PendingDagQuarantinedData),
     /// Long-running database action changed state.
@@ -456,6 +517,14 @@ impl Message {
         Self {
             name: EventName::AcpCacheInvalidated,
             data: MessageData::AcpCacheInvalidated(data),
+        }
+    }
+
+    /// Create a new Vera takeover reconciliation message.
+    pub fn acp_takeover_reconciled(data: AcpTakeoverReconciledData) -> Self {
+        Self {
+            name: EventName::AcpTakeoverReconciled,
+            data: MessageData::AcpTakeoverReconciled(data),
         }
     }
 
@@ -559,6 +628,14 @@ impl Message {
     pub fn as_acp_cache_invalidated(&self) -> Option<&AcpCacheInvalidatedData> {
         match &self.data {
             MessageData::AcpCacheInvalidated(d) => Some(d),
+            _ => None,
+        }
+    }
+
+    /// Get the AcpTakeoverReconciledData if this is an ACP takeover reconciliation message.
+    pub fn as_acp_takeover_reconciled(&self) -> Option<&AcpTakeoverReconciledData> {
+        match &self.data {
+            MessageData::AcpTakeoverReconciled(d) => Some(d),
             _ => None,
         }
     }

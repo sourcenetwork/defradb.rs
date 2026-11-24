@@ -102,6 +102,22 @@ where
     })
 }
 
+/// The DID `lost`'s delegation names, without checking it: the deployment
+/// checked it when the request was confirmed.
+pub(crate) fn token_actor(token: &str) -> Option<String> {
+    let payload = token.split('.').nth(1)?;
+    let claims = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload)
+        .ok()?;
+    let claims: serde_json::Value = serde_json::from_slice(&claims).ok()?;
+    Some(super::super::did_spelling::defra(claims.get("iss")?.as_str()?).into_owned())
+}
+
+/// The subject, as the permission engine writes it.
+pub(crate) fn subject_string(subject: &LostSubject) -> Option<String> {
+    owed_subject(subject).map(|subject| acp::Subject::from(subject).to_string())
+}
+
 fn owed_subject(subject: &LostSubject) -> Option<acp::OwedSubject> {
     Some(match subject {
         LostSubject::Actor { did } => acp::OwedSubject::Actor {

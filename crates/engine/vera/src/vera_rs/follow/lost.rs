@@ -10,6 +10,8 @@
 use rapidhash::{HashSetExt, RapidHashSet};
 
 use super::effect::{Effect, Lost};
+use super::report::{Applied, Unrestorable};
+use super::Replayed;
 
 /// An object, as `(policy, resource, object)`.
 pub(crate) type ObjectKey = (String, String, String);
@@ -17,9 +19,13 @@ pub(crate) type ObjectKey = (String, String, String);
 /// What the replays of a term's lost submissions leave to put right.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Losses {
+    /// Submissions sent again and held by the deployment, in order.
+    pub applied: Vec<Applied>,
     /// Changes to owe again, in the order they were confirmed.
     pub owed: Vec<Lost>,
-    /// Other requests that were refused, such as a policy creation.
+    /// Submissions whose effect cannot be restored here.
+    pub unrestorable: Vec<Unrestorable>,
+    /// Refused submissions whose effect cannot be named.
     pub other: usize,
 }
 
@@ -34,7 +40,16 @@ pub(crate) fn tainted_by(owed: &[Lost]) -> RapidHashSet<ObjectKey> {
     objects
 }
 
-/// Adds the replay of `effect`, executed again when `executed`, to `losses`.
+/// Whether the deployment holds what `effect` did after its replay came to
+/// `replayed`: it executed again, or it is a policy creation refused because
+/// the policy is there. A policy's ID derives from its definition, creator
+/// and nonce, so the policy found under it is the one the request created.
+pub(crate) fn held_again(effect: &Effect, replayed: Replayed) -> bool {
+    replayed.executed || (replayed.exists && matches!(effect, Effect::PolicyCreation { .. }))
+}
+
+/// Adds the replay of `effect`, held again when `executed`
+/// ([`held_again`]), to `losses`.
 ///
 /// A batch keeps its commands together: one refusal taints every object it
 /// carried, so a later refused archive cannot overtake an earlier lost one.
@@ -53,21 +68,45 @@ pub(crate) fn lost_effects(
                 lost_effects(losses, tainted, Effect::Owed(effect), executed);
             }
         }
-        Effect::Owed(_) | Effect::Other => {
-            let object = effect.object();
-            let lost = !executed || object.as_ref().is_some_and(|key| tainted.contains(key));
-            if !lost {
-                return;
+        effect => single_effect(losses, tainted, effect, executed),
+    }
+}
+
+fn single_effect(
+    losses: &mut Losses,
+    tainted: &mut RapidHashSet<ObjectKey>,
+    effect: Effect,
+    executed: bool,
+) {
+    let object = effect.object();
+    let lost = !executed || object.as_ref().is_some_and(|key| tainted.contains(key));
+    if !lost {
+        match effect {
+            Effect::Owed(change) => losses.applied.push(Applied::Change(change)),
+            Effect::PolicyCreation { policy_id, creator } => {
+                losses
+                    .applied
+                    .push(Applied::PolicyCreation { policy_id, creator });
             }
-            if let Some(key) = object {
-                tainted.insert(key);
-            }
-            match effect {
-                Effect::Owed(change) => losses.owed.push(change),
-                Effect::Other => losses.other += 1,
-                Effect::Batched(_, _) => unreachable!(),
-            }
+            Effect::Other | Effect::Batched(_, _) => {}
         }
+        return;
+    }
+    if let Some(key) = object {
+        tainted.insert(key);
+    }
+    match effect {
+        Effect::Owed(change) => losses.owed.push(change),
+        Effect::PolicyCreation { policy_id, creator } => {
+            losses.unrestorable.push(Unrestorable::PolicyCreation {
+                policy_id,
+                creator,
+                reason: "the Vera deployment switched its active device and voided the policy; \
+                         it was refused when sent again"
+                    .into(),
+            });
+        }
+        Effect::Other | Effect::Batched(_, _) => losses.other += 1,
     }
 }
 
