@@ -44,18 +44,25 @@ jobs:
             if (number) {
               const tree = (await github.rest.git.getCommit({ ...context.repo, commit_sha: context.sha })).data.tree.sha;
               const head = (await github.rest.pulls.get({ ...context.repo, pull_number: Number(number) })).data.head.sha;
-              const gates = (await github.rest.checks.listForRef({
-                ...context.repo, ref: head, check_name: 'Merge gate', filter: 'latest',
-              })).data.check_runs.filter((r) => r.conclusion === 'success');
+              // A stamp counts only on a job of this repository's own pull_request run of
+              // the workflow, never on a check run another workflow or an app created.
+              const passed = async (workflow, sha, name) => {
+                const runs = (await github.rest.actions.listWorkflowRuns({ ...context.repo, workflow_id: workflow, head_sha: sha, event: 'pull_request', per_page: 20 })).data.workflow_runs;
+                const jobs = [];
+                for (const run of runs) {
+                  jobs.push(...(await github.paginate(github.rest.actions.listJobsForWorkflowRun, { ...context.repo, run_id: run.id, filter: 'latest', per_page: 100 }))
+                    .filter((j) => j.name === name && j.conclusion === 'success'));
+                }
+                return jobs;
+              };
+              const gates = await passed('ci.yml', head, 'Merge gate');
               let stamped = false;
               for (const gate of gates) {
                 const notes = await github.paginate(github.rest.checks.listAnnotations, { ...context.repo, check_run_id: gate.id });
                 if (notes.some((a) => a.title === 'Heavy suite passed' && a.message === `tree ${tree}`)) stamped = true;
               }
               let macos = false;
-              const stamps = (await github.rest.checks.listForRef({
-                ...context.repo, ref: head, check_name: 'macOS passed', filter: 'latest',
-              })).data.check_runs.filter((r) => r.conclusion === 'success');
+              const stamps = await passed('ci-macos.yml', head, 'macOS passed');
               for (const run of stamps) {
                 const notes = await github.paginate(github.rest.checks.listAnnotations, { ...context.repo, check_run_id: run.id });
                 if (notes.some((a) => a.message === `tree ${tree}`)) macos = true;

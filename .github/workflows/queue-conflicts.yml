@@ -18,6 +18,7 @@ on:
     branches: [main]
 
 permissions:
+  actions: read
   contents: read
   pull-requests: read
   checks: write
@@ -76,9 +77,19 @@ jobs:
             };
             // The trees a ci:full run on this head passed (Merge gate's stamp, ci.yml); the
             // queue reuses that run for an entry whose tree is one of them.
+            // A stamp counts only on a job of this repository's own pull_request run of
+            // the workflow, never on a check run another workflow or an app created.
+            const passed = async (workflow, sha, name) => {
+              const runs = (await github.rest.actions.listWorkflowRuns({ ...context.repo, workflow_id: workflow, head_sha: sha, event: 'pull_request', per_page: 20 })).data.workflow_runs;
+              const jobs = [];
+              for (const run of runs) {
+                jobs.push(...(await github.paginate(github.rest.actions.listJobsForWorkflowRun, { ...context.repo, run_id: run.id, filter: 'latest', per_page: 100 }))
+                  .filter((j) => j.name === name && j.conclusion === 'success'));
+              }
+              return jobs;
+            };
             const stamped = async (sha) => {
-              const gates = (await github.rest.checks.listForRef({ owner, repo, ref: sha, check_name: 'Merge gate', filter: 'latest' }))
-                .data.check_runs.filter((r) => r.conclusion === 'success');
+              const gates = await passed('ci.yml', sha, 'Merge gate');
               const trees = [];
               for (const gate of gates) {
                 const notes = await github.paginate(github.rest.checks.listAnnotations, { owner, repo, check_run_id: gate.id });
@@ -115,7 +126,7 @@ jobs:
                 output.summary += (await stamped(t.headRefOid)).includes(tree)
                   ? '\n\nThe queue would build a tree a ci:full run here already passed, so it reruns only Merge gate.'
                   : last
-                    ? `\n\nThe queue will run full CI on it. To skip that, rebase onto #${last.pullRequest.number}'s merge-group commit and run ci:full here.`
+                    ? `\n\nThe queue will run full CI on it, because #${last.pullRequest.number} and the entries before it are not in main yet.`
                     : '\n\nThe queue will run full CI on it. To skip that, run ci:full here against the current main.';
               }
               core.info(`#${t.number}: ${output.title}`);
