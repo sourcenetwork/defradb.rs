@@ -273,6 +273,48 @@ impl State {
         }
     }
 
+    /// [`State::context_as`] for an in-process write to node `node`, carrying
+    /// the acting client identity's own secp256k1 key when Go's in-process
+    /// client would sign with it: Go's `contextForSigning` keeps a request
+    /// identity that holds a private key, and signs with it when signing is
+    /// on. The key is attached only when all three hold:
+    ///
+    /// - the write signs in Go: `enable_signing` is `Some(true)`, or it is
+    ///   unset and node `node` signs; never when it is `Some(false)`, since
+    ///   defradb.rs signs with any key a caller attaches;
+    /// - the context does not bypass DAC, which explicit signing refuses;
+    /// - the identity is a client seed. An `identityNode` write attaches
+    ///   nothing, so the node signs with its own key of its own type, as
+    ///   Go's `NodeIdentity` does.
+    ///
+    /// The harness's client keys are all secp256k1, so Go's Ed25519
+    /// client-key test (`signature_with_client_identity_should_use_it_for_signing`)
+    /// stays skipped, as Go skips it. The key is never put in the process's
+    /// signing registry: a client identity there would let the HTTP and CLI
+    /// routes sign with it too, where Go falls back to the node key.
+    pub fn context_on(
+        &self,
+        node: &str,
+        txn: Option<usize>,
+        identity: Option<u64>,
+        enable_signing: Option<bool>,
+    ) -> RequestContext {
+        let context = self.context_as(txn, identity);
+        let Some(seed) =
+            identity.filter(|seed| *seed < crate::scenario::identity::NODE_IDENTITY_BASE)
+        else {
+            return context;
+        };
+        let signs = enable_signing.unwrap_or_else(|| {
+            self.slot(node)
+                .is_some_and(|slot| slot.spec.signing.is_some())
+        });
+        if !signs || context.dac_bypass() {
+            return context;
+        }
+        context.with_signing(Some(crate::scenario::identity::signing_config(seed)))
+    }
+
     /// Transaction number `txn`'s ID as the HTTP API and the CLI write it.
     pub fn txn_id(&self, txn: Option<usize>) -> Option<String> {
         self.context(txn).txn().map(|id| id.to_string())

@@ -447,14 +447,6 @@ With NAC enabled, getting a collection by ID, by name, by version and listing co
 
 With NAC enabled, adding, reading (GraphQL query), updating (by ID or with a filter) and deleting documents succeed for the NAC owner; without identity or with a wrong identity they fail with `not authorized to perform operation. Permission: get-collection`.
 
-# `go.acp.nac.gates.signature`: Block signature verification is gated
-
-- **Parents:** ["go.acp.nac.gates"]
-- **Go-Tests:** ["acp/nac/verify_signature_test.go::TestNAC_GatesVerifySignature_AuthorizedIdentity_AllowAccess", "acp/nac/verify_signature_test.go::TestNAC_GatesVerifySignature_GoClient_AuthorizedIdentity_AllowAccess", "acp/nac/verify_signature_test.go::TestNAC_GatesVerifySignature_NoIdentity_NotAuthorizedError", "acp/nac/verify_signature_test.go::TestNAC_GatesVerifySignature_WrongIdentity_NotAuthorizedError"]
-- **Scope:** "authorized-identity tests run on HTTP and CLI clients (default signer) or Go and C clients (signed documents), one test each"
-
-With NAC enabled, verifying a block signature succeed for the NAC owner and fail without identity or with a wrong identity with `not authorized to perform operation. Permission: verify-signature`.
-
 # `go.acp.nac.gates.indexes`: Index operations are gated
 
 - **Parents:** ["go.acp.nac.gates"]

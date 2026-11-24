@@ -1,5 +1,6 @@
 //! The round trip: every generated test, exported, must equal its corpus
-//! scenario after the documented normalizations.
+//! scenario after the documented normalizations and its deviation, if any
+//! (`deviations.rs`).
 
 use std::path::Path;
 
@@ -127,7 +128,11 @@ pub fn run(loaded: &[Loaded], exported: &Path, originals: &Path) -> Result<Outco
         let mut original_path = originals.to_path_buf();
         original_path.extend(&item.dir);
         original_path.push(format!("{}.json", item.stem));
-        let original = normalize(&read(&original_path)?);
+        let mut original = read(&original_path)?;
+        if let Some(steps) = original.get_mut("steps").and_then(Value::as_array_mut) {
+            super::deviations::apply(&item.scenario.id, steps);
+        }
+        let original = normalize(&original);
         let rebuilt = normalize(&read(&path)?);
         outcome.checked += 1;
         if !json_eq(&original, &rebuilt) {

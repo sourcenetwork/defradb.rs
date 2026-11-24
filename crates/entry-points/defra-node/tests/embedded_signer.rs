@@ -20,6 +20,38 @@ fn key() -> (String, SigningConfig) {
     )
 }
 
+fn secp256k1_key() -> (String, SigningConfig) {
+    let private = crypto::generate_secp256k1().unwrap();
+    let identity = RawIdentity::from_secp256k1(private.clone()).unwrap();
+    let public = identity.public_key_bytes();
+    (
+        identity.did().unwrap().to_string(),
+        SigningConfig {
+            key_type: SigningKeyType::Secp256k1,
+            private_key_bytes: private.raw().to_vec(),
+            public_key_hex: hex::encode(&public),
+            public_key_bytes: public,
+            remote_signer: None,
+            signing_authorization: None,
+        },
+    )
+}
+
+/// A secp256k1 key whose private bytes are the curve order, which is no key.
+fn malformed_secp256k1_key() -> SigningConfig {
+    let (_, mut config) = secp256k1_key();
+    config.private_key_bytes =
+        hex::decode("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141").unwrap();
+    config
+}
+
+fn refusal(config: SigningConfig) -> String {
+    match EmbeddedSigner::from_config(config) {
+        Ok(_) => panic!("the key must be refused"),
+        Err(error) => error.to_string(),
+    }
+}
+
 fn request(query: impl Into<String>, actor: &str) -> QueryRequest {
     QueryRequest::new(query.into()).with_identity(Some(Did::new(actor).unwrap()))
 }
@@ -151,9 +183,86 @@ fn invalid_or_missing_local_key_is_rejected() {
     let (_, mut malformed) = key();
     malformed.private_key_bytes[0] ^= 1;
     assert!(EmbeddedSigner::from_config(malformed).is_err());
-    let (_, mut unsupported) = key();
-    unsupported.key_type = SigningKeyType::Secp256k1;
-    assert!(EmbeddedSigner::from_config(unsupported).is_err());
+    let (_, mut mislabelled) = key();
+    mislabelled.key_type = SigningKeyType::Secp256k1;
+    assert!(EmbeddedSigner::from_config(mislabelled).is_err());
+
+    const UNSUPPORTED: &str =
+        "embedded signing requires a local Ed25519 or secp256k1 key without a remote signer";
+    let (_, mut secp256r1) = secp256k1_key();
+    secp256r1.key_type = SigningKeyType::Secp256r1;
+    assert_eq!(refusal(secp256r1), UNSUPPORTED);
+    let (_, mut bls) = secp256k1_key();
+    bls.key_type = SigningKeyType::BlsAugV1;
+    assert_eq!(refusal(bls), UNSUPPORTED);
+    let (_, mut ed25519_missing) = key();
+    ed25519_missing.private_key_bytes.clear();
+    assert_eq!(refusal(ed25519_missing), UNSUPPORTED);
+    assert_eq!(
+        refusal(malformed_secp256k1_key()),
+        "invalid secp256k1 private key"
+    );
+    let (_, mut secp256k1_mismatch) = secp256k1_key();
+    secp256k1_mismatch.public_key_bytes = secp256k1_key().1.public_key_bytes.clone();
+    assert_eq!(
+        refusal(secp256k1_mismatch),
+        "private and public signing keys do not match"
+    );
+}
+
+/// A local secp256k1 key signs as its actor, as an Ed25519 key does, and
+/// still names only that actor.
+#[test]
+fn a_secp256k1_key_signs_as_its_actor() {
+    workers::block_on(async {
+        let (node_did, node_key) = key();
+        let (actor, actor_key) = secp256k1_key();
+        let (other, _) = secp256k1_key();
+        defra_core::signing::store_identity(&node_did, node_key)
+            .expect("the store takes the identity");
+        let signer = EmbeddedSigner::from_config(actor_key).unwrap();
+        assert_eq!(signer.did(), actor);
+        let node = Node::builder()
+            .with_node_identity_did(&node_did)
+            .build()
+            .await
+            .unwrap();
+        node.add_collection("type SignedFact { value: String }")
+            .await
+            .unwrap();
+        let create = node
+            .execute_request(signer.attach(request(
+                r#"mutation { add_SignedFact(input: {value: "one"}) { _docID } }"#,
+                &actor,
+            )))
+            .await;
+        assert!(!create.has_errors(), "{:?}", create.errors);
+        let doc = create.data.unwrap()["add_SignedFact"][0]["_docID"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let commits = node
+            .execute(&format!(
+                r#"{{ _commits(docID: "{doc}") {{ cid fieldName }} }}"#
+            ))
+            .await;
+        let commits = commits.data.unwrap();
+        let commits = commits["_commits"].as_array().unwrap();
+        assert!(!commits.is_empty());
+        for commit in commits {
+            let cid = commit["cid"].as_str().unwrap();
+            assert_eq!(node.verified_block_signer_did(cid).await.unwrap(), actor);
+        }
+        let mismatched = node
+            .execute_request(signer.attach(request(
+                r#"mutation { add_SignedFact(input: {value: "two"}) { _docID } }"#,
+                &other,
+            )))
+            .await;
+        assert!(mismatched.has_errors());
+        node.shutdown().await.unwrap();
+    })
+    .unwrap();
 }
 
 #[test]
@@ -210,13 +319,36 @@ fn native_admission_matches_executed_lean_model() {
         node.add_collection("type ModelFact { value: String }")
             .await
             .unwrap();
-        let signer = EmbeddedSigner::from_config(actor_key.clone()).unwrap();
+        let (secp_actor, secp_key) = secp256k1_key();
+        // The key the caller attaches for a case: the signer's own key of the
+        // case's kind, broken when the case says the key is not valid.
+        let config = |input: &serde_json::Value| -> SigningConfig {
+            let valid = input["keyValid"].as_bool().unwrap();
+            let mut config = match input["signer"].as_str() {
+                Some(did) if did == secp_actor => secp_key.clone(),
+                _ => actor_key.clone(),
+            };
+            match (input["keyType"].as_str().unwrap(), valid) {
+                ("ed25519", false) => config.private_key_bytes.clear(),
+                ("secp256k1", false) => {
+                    config.private_key_bytes = malformed_secp256k1_key().private_key_bytes.clone()
+                }
+                ("other", _) => config.key_type = SigningKeyType::Secp256r1,
+                _ => {}
+            }
+            config
+        };
         let inputs = serde_json::json!([
-            {"actor": actor, "signer": actor, "keyValid": true, "bypass": false},
-            {"actor": other, "signer": actor, "keyValid": true, "bypass": false},
-            {"actor": null, "signer": actor, "keyValid": true, "bypass": false},
-            {"actor": actor, "signer": actor, "keyValid": false, "bypass": false},
-            {"actor": actor, "signer": actor, "keyValid": true, "bypass": true}
+            {"actor": actor, "signer": actor, "keyType": "ed25519", "keyValid": true, "bypass": false},
+            {"actor": other, "signer": actor, "keyType": "ed25519", "keyValid": true, "bypass": false},
+            {"actor": null, "signer": actor, "keyType": "ed25519", "keyValid": true, "bypass": false},
+            {"actor": actor, "signer": actor, "keyType": "ed25519", "keyValid": false, "bypass": false},
+            {"actor": actor, "signer": actor, "keyType": "ed25519", "keyValid": true, "bypass": true},
+            {"actor": secp_actor, "signer": secp_actor, "keyType": "secp256k1", "keyValid": true, "bypass": false},
+            {"actor": other, "signer": secp_actor, "keyType": "secp256k1", "keyValid": true, "bypass": false},
+            {"actor": secp_actor, "signer": secp_actor, "keyType": "secp256k1", "keyValid": false, "bypass": false},
+            {"actor": secp_actor, "signer": secp_actor, "keyType": "secp256k1", "keyValid": true, "bypass": true},
+            {"actor": secp_actor, "signer": secp_actor, "keyType": "other", "keyValid": true, "bypass": false}
         ]);
         let mut lean = Command::new("lake")
             .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../proofs/lean"))
@@ -229,31 +361,22 @@ fn native_admission_matches_executed_lean_model() {
         let output = lean.wait_with_output().unwrap();
         assert!(output.status.success());
         let cases: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-        for case in cases.as_array().unwrap() {
-            if !case["input"]["keyValid"].as_bool().unwrap() {
-                let mut invalid = actor_key.clone();
-                invalid.private_key_bytes.clear();
-                assert_eq!(
-                    EmbeddedSigner::from_config(invalid).is_ok(),
-                    case["admitted"].as_bool().unwrap()
-                );
-                continue;
-            }
+        let cases = cases.as_array().unwrap();
+        assert_eq!(cases.len(), inputs.as_array().unwrap().len());
+        for case in cases {
+            let input = &case["input"];
             let query = QueryRequest::new("{ ModelFact { value } }")
-                .with_identity(
-                    case["input"]["actor"]
-                        .as_str()
-                        .map(|did| Did::new(did).unwrap()),
-                )
+                .with_identity(input["actor"].as_str().map(|did| Did::new(did).unwrap()))
                 .with_context(
                     defra_core::RequestContext::default()
-                        .with_dac_bypass(case["input"]["bypass"].as_bool().unwrap()),
+                        .with_dac_bypass(input["bypass"].as_bool().unwrap())
+                        .with_signing(Some(config(input))),
                 );
-            let result = node.execute_request(signer.attach(query)).await;
+            let result = node.execute_request(query).await;
             assert_eq!(
                 !result.has_errors(),
                 case["admitted"].as_bool().unwrap(),
-                "{:?}",
+                "{input}: {:?}",
                 result.errors
             );
         }
