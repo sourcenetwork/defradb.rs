@@ -333,6 +333,7 @@ API rather than the offline command for an at-rest-encrypted store.
 - [DefraDB (Go)](https://github.com/sourcenetwork/defradb) — concepts, architecture, specifications
 - [DefraDB Docs](https://docs.source.network/defradb) — user documentation
 - `AGENTS.md` — development workflow and conventions
+- [Getting a change to main](AGENTS.md#getting-a-change-to-main) — CI labels, review, the merge queue and batches
 
 ## License
 
