@@ -478,7 +478,13 @@ pub trait BackupOperations: defra_core::thread_bounds::MaybeSendSync {
     /// The `data` parameter should be valid JSON matching the export format.
     /// Returns `ImportResult` with details about what was imported, skipped, and any errors.
     /// A fatal error (e.g., completely malformed data) returns `Err(message)`.
-    async fn import(&self, data: &str) -> Result<ImportResult, String>;
+    /// Every create and relation patch is a request sent through `host`, the
+    /// request path of the edge the import came in by.
+    async fn import(
+        &self,
+        data: &str,
+        host: &dyn db::backup::ImportHost,
+    ) -> Result<ImportResult, String>;
 }
 
 /// Trait for view operations.

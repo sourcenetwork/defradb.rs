@@ -15,16 +15,15 @@ use axum::{
     Json,
 };
 use query::documents::{self, AddOptions, DocumentsResult, Filter};
-use query::executor::{QueryRequest, QueryResponse};
-use query::txn::TransactionHandle;
+use query::executor::QueryRequest;
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
 
-use crate::error::{http_error_from_backend_message, pool_failure, HttpError};
-use crate::handlers::txn_header::{rest_for_request, txn_id_from_headers};
+use crate::error::{http_error_from_backend_message, HttpError};
+use crate::handlers::txn_header::rest_for_request;
 use crate::identity_extractor::ExtractIdentity;
 use crate::nac_guard::require_permission;
-use crate::query_context::{execute_in_txn_with_context, execute_with_context};
+use crate::request_path::Server;
 use crate::router::{AppState, NodePermission};
 
 /// Get a single document by ID.
@@ -63,58 +62,6 @@ pub async fn get_document(
             );
             Err(e.into())
         }
-    }
-}
-
-/// This server's request path for a document write: the request runs as
-/// `identity`, in the transaction `headers` names or on its own worker, as
-/// the GraphQL route runs it.
-struct Server {
-    state: AppState,
-    identity: ExtractIdentity,
-    txn: Option<TransactionHandle>,
-}
-
-impl Server {
-    fn new(
-        state: AppState,
-        identity: ExtractIdentity,
-        headers: &HeaderMap,
-    ) -> Result<Self, HttpError> {
-        let txn = txn_id_from_headers(headers)?
-            .map(|id| {
-                id.parse()
-                    .map_err(|_| HttpError::BadRequest("invalid transaction id".into()))
-            })
-            .transpose()?;
-        Ok(Self {
-            state,
-            identity,
-            txn,
-        })
-    }
-
-    async fn run(self, mutation: String) -> QueryResponse {
-        self.run_request(QueryRequest::new(mutation)).await
-    }
-
-    async fn run_request(self, request: QueryRequest) -> QueryResponse {
-        let Self {
-            state,
-            identity,
-            txn,
-        } = self;
-        let request = request.with_identity(identity.did().cloned());
-        if let Some(handle) = txn {
-            return execute_in_txn_with_context(&state, &identity, request, handle).await;
-        }
-        let target = query::pooled::request_target(&request);
-        let pool = state.pool.clone();
-        workers::run_on(pool.as_ref(), target, move || async move {
-            execute_with_context(&state, &identity, request).await
-        })
-        .await
-        .unwrap_or_else(|error| QueryResponse::error(pool_failure("documents", error).to_string()))
     }
 }
 

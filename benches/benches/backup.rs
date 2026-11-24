@@ -151,5 +151,50 @@ fn import(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, export, import);
+/// Restore through a signing node's own request path, into an empty node:
+/// what `defradb client backup import` costs once every block is signed.
+fn import_signed_node(c: &mut Criterion) {
+    let rt = common::owned_runtime();
+    let mut group = c.benchmark_group("backup_import_signed_node");
+    group.sample_size(10);
+    let names = vec![COLLECTION.to_string()];
+    let context = defra_core::RequestContext::default();
+    for count in CORPUS {
+        let source = rt.block_on(fixture(count));
+        let dump = rt
+            .block_on(db::backup::export_database(
+                &source.db,
+                &source.runner,
+                &names,
+                false,
+            ))
+            .expect("the export to succeed");
+        group.throughput(Throughput::Elements(count as u64));
+        group.bench_with_input(BenchmarkId::from_parameter(count), &dump, |b, dump| {
+            b.iter_batched_ref(
+                || {
+                    rt.block_on(async {
+                        let node = defra_node::Node::builder()
+                            .enable_signing()
+                            .build()
+                            .await
+                            .expect("a signing node");
+                        node.add_collection("type User { name: String city: String age: Int }")
+                            .await
+                            .expect("the collection to register");
+                        node
+                    })
+                },
+                |node| {
+                    rt.block_on(node.import_backup_as(&context, black_box(dump)))
+                        .expect("the import to succeed")
+                },
+                criterion::BatchSize::LargeInput,
+            )
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(benches, export, import, import_signed_node);
 criterion_main!(benches);
