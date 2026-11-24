@@ -106,9 +106,9 @@ A query without `order` filtered through a composite index returns documents in 
 # `go.index.order.composite-in`: `_in` through a composite index with a reversed field
 
 - **Parents:** ["go.index.order"]
-- **Scenarios:** ["index.query-with-composite-index-with-in-filter-on-first-field-with-reverted-order-should-fetch", "index.query-with-composite-index-with-in-filter-on-second-field-with-reverted-order-should-fetch"]
+- **Scenarios:** ["index.query-with-composite-index-with-in-filter-on-first-field-with-reverted-order-should-fetch", "index.query-with-composite-index-with-in-filter-on-second-field-with-reverted-order-should-fetch", "index::composite_in_order::in_on_descending_first_field_without_order_keeps_the_written_order", "index::composite_in_order::in_on_ascending_first_field_without_order_keeps_the_written_order", "index::composite_in_order::in_on_descending_first_field_ordered_descending_follows_the_order", "index::composite_in_order::in_on_descending_first_field_ordered_ascending_follows_the_order"]
 
-`_in` on the first or second field of a composite index with one DESC field returns the matching documents.
+`_in` on the first or second field of a composite index with one DESC field returns the matching documents. Without `order`, `_in` on the first field returns them in the order the filter lists its values, whichever direction that field is indexed in: over Users named Shahzad, Bruno, Fred, Andy, Addo and Chris with `@index(includes: [{field: "name", direction: DESC}, {field: "age", direction: ASC}])`, `User(filter: {name: {_in: ["Fred", "Addo", "Andy"]}})` returns Fred, Addo, Andy, and so does the same query with `name` ASC and `age` DESC. A value listed twice returns its documents once. With `order` on that field the order decides, not the list: `order: {name: DESC}` returns Fred, Andy, Addo and `order: {name: ASC}` returns Addo, Andy, Fred. Go ignores `order` there and returns the listed order.
 
 # `go.index.order.composite-range`: Range filters on a composite index's first field
 

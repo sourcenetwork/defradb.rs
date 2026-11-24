@@ -503,10 +503,14 @@ impl Planner {
                 if is_complex_filter && filter.has_alias_filter() {
                     let (non_alias, _alias) = filter.split_alias();
                     if let Some(f) = non_alias {
-                        index_scan_node = index_scan_node.with_residual_filter(f);
+                        index_scan_node = index_scan_node
+                            .with_explain_filter(f.clone())
+                            .with_residual_filter(f);
                     }
                 } else {
-                    index_scan_node = index_scan_node.with_residual_filter(filter.clone());
+                    index_scan_node = index_scan_node
+                        .with_explain_filter(filter.clone())
+                        .with_residual_filter(filter.clone());
                 }
             }
             Box::new(index_scan_node)

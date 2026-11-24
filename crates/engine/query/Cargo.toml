@@ -84,6 +84,7 @@ sha2 = { workspace = true, features = ["asm"] }
 
 [dev-dependencies]
 defra-core = { path = "../../foundation/defra-core", features = ["ambient"] }
+mantra-macros = "0.9"
 query = { path = ".", features = ["testing"] }
 
 [lints]

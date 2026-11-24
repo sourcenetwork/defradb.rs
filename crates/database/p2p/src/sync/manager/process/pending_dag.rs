@@ -12,7 +12,9 @@ use blockstore::Blockstore;
 use crate::error::{Error, Result};
 use crate::sync::arbitration::AttemptSample;
 use crate::sync::manager::events::SyncEvent;
-use crate::sync::manager::links::{extract_ipld_links, find_all_missing_links};
+use crate::sync::manager::links::{
+    extract_ipld_links, find_all_missing_links, frontier_or_unknown,
+};
 use crate::sync::manager::pending::{
     retry_backoff, PendingDag, PendingDagRegistry, PendingOrigin, SharedPendingDags,
     PENDING_ROTATE_AFTER_DISPATCHES,
@@ -104,11 +106,12 @@ impl PendingDagLease {
             if rotates {
                 pending.remove(&self.root_cid);
             } else if let Some(dag) = pending.get_mut(&self.root_cid) {
-                dag.next_retry_at = if preempted {
+                dag.next_retry_at = if preempted || dag.key_arrival_pending {
                     now
                 } else {
                     dag.next_retry_at.max(now + retry_backoff(dag.dispatches))
                 };
+                dag.key_arrival_pending = false;
                 dag.estimates.observe(sample);
             }
         });
@@ -674,6 +677,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 {
                     return false;
                 }
+                dag.key_arrival_pending = false;
                 if dag.merge_continuation {
                     // A committed yield makes the root ready again; errors or lost claims keep retry pacing.
                     dag.next_retry_at = now + super::super::pending::PENDING_RETRY_BASE;
@@ -739,6 +743,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                         fetch_failures: 0,
                         last_fetch_error: None,
                         next_retry_at: next,
+                        key_arrival_pending: false,
                         dispatches: 0,
                         incomplete_attempts: 0,
                         merge_continuation: true,
@@ -804,6 +809,35 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             })
         });
         if registered == Some(true) {
+            self.pending_dag_ready.notify_one();
+        }
+    }
+
+    /// Make every pending root due for the next receiver-clock pass, without
+    /// advancing its backoff rung. A newly available key can resolve any of
+    /// them, and this caller carries no root-to-key map.
+    pub fn promote_pending_retries(&self) {
+        let changed = self.pending_dags.update(|pending| {
+            let now = crate::rt::time::Instant::now();
+            let roots: Vec<Cid> = pending
+                .iter()
+                .filter(|(_, dag)| !dag.key_arrival_pending || dag.next_retry_at > now)
+                .map(|(cid, _)| *cid)
+                .collect();
+            let mut changed = false;
+            for root_cid in roots {
+                if let Some(dag) = pending.get_mut(&root_cid) {
+                    changed |= !dag.key_arrival_pending;
+                    dag.key_arrival_pending = true;
+                    if dag.next_retry_at > now {
+                        dag.next_retry_at = now;
+                        changed = true;
+                    }
+                }
+            }
+            changed
+        });
+        if changed {
             self.pending_dag_ready.notify_one();
         }
     }
@@ -934,40 +968,27 @@ impl<B: Blockstore + 'static> SyncManager<B> {
 
         self.diagnostics.record_missing_link_retry();
 
-        // Load the root block from blockstore
-        let block_data = match self.blockstore.get(root_cid).await {
-            Ok(Some(data)) => data,
-            Ok(None) => {
-                tracing::error!(
-                    root_cid = %root_cid,
-                    "Root block not found in blockstore during retry"
-                );
-                return Err(Error::BlockstoreError("Root block not found".to_string()));
-            }
-            Err(e) => {
-                tracing::error!(
-                    root_cid = %root_cid,
-                    error = %e,
-                    "Failed to load root block from blockstore"
-                );
-                return Err(Error::from_blockstore(e));
-            }
-        };
-
         // Recursively check ALL missing links at every depth of the DAG.
         // This is critical for multi-level DAGs like Collection → Composite → LWW
         // where a single-level check would declare the DAG "ready" prematurely.
-        let missing = match find_all_missing_links(self.blockstore.as_ref(), &block_data).await {
-            Ok(missing) => missing,
-            Err(e) => {
-                tracing::error!(
-                    root_cid = %root_cid,
-                    error = %e,
-                    "Failed to re-check missing links for pending DAG"
-                );
-                return Err(e);
+        // A root that is gone is missing itself, and a local fault reading the
+        // root or a block below it leaves the frontier unknown: either way the
+        // frontier is `[root]`, the receiver clock keeps the root and retries
+        // it after its backoff, and a sweep over other roots goes on.
+        let walk = match self.blockstore.get(root_cid).await {
+            Ok(Some(block_data)) => {
+                find_all_missing_links(self.blockstore.as_ref(), &block_data).await
             }
+            Ok(None) => {
+                tracing::warn!(
+                    root_cid = %root_cid,
+                    "Root block not found in blockstore during retry; it is missing"
+                );
+                Ok(vec![*root_cid])
+            }
+            Err(e) => Err(Error::from_blockstore(e)),
         };
+        let missing = frontier_or_unknown(*root_cid, walk, &self.diagnostics);
 
         tracing::debug!(
             root_cid = %root_cid,
@@ -1203,9 +1224,11 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             }
 
             let missing = match &data {
-                Some(data) => find_all_missing_links(self.blockstore.as_ref(), data)
-                    .await
-                    .unwrap_or_else(|_| vec![root_cid]),
+                Some(data) => frontier_or_unknown(
+                    root_cid,
+                    find_all_missing_links(self.blockstore.as_ref(), data).await,
+                    &self.diagnostics,
+                ),
                 None => vec![root_cid],
             };
             let head_priority = decoded_head_priority.or(record.head_priority);
@@ -1256,6 +1279,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 fetch_failures: 0,
                 last_fetch_error: None,
                 next_retry_at: crate::rt::time::Instant::now(),
+                key_arrival_pending: false,
                 dispatches: 0,
                 incomplete_attempts: 0,
                 merge_continuation: false,

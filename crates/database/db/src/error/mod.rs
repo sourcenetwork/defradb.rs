@@ -88,6 +88,12 @@ pub enum Error {
     #[error("database is closed")]
     DatabaseClosed,
 
+    #[error(
+        "store index format {stored:?} is not readable by this node's format {current}: open it \
+         with the node version that wrote it"
+    )]
+    UnsupportedIndexFormat { stored: Option<u32>, current: u32 },
+
     #[error("the database has no network runtime: set one before P2P work")]
     NetworkNotSet,
 

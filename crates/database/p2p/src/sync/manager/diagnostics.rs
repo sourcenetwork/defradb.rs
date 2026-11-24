@@ -136,6 +136,7 @@ pub struct SyncDiagnostics {
     provider_demotions: AtomicU64,
     provider_cooldown_skips: AtomicU64,
     missing_link_retries: AtomicU64,
+    missing_link_walk_errors: AtomicU64,
     pending_dag_resolved: AtomicU64,
     pending_dag_registered: AtomicU64,
     pending_dag_expired: AtomicU64,
@@ -177,6 +178,9 @@ pub struct SyncDiagnosticsSnapshot {
     pub provider_demotions: u64,
     pub provider_cooldown_skips: u64,
     pub missing_link_retries: u64,
+    /// DAG walks that failed on a local read or parse, leaving the root's
+    /// frontier unknown (`links::frontier_or_unknown`).
+    pub missing_link_walk_errors: u64,
     pub pending_dag_resolved: u64,
     pub pending_dag_registered: u64,
     pub pending_dag_expired: u64,
@@ -225,6 +229,7 @@ impl SyncDiagnostics {
             provider_demotions: self.provider_demotions.load(Ordering::Relaxed),
             provider_cooldown_skips: self.provider_cooldown_skips.load(Ordering::Relaxed),
             missing_link_retries: self.missing_link_retries.load(Ordering::Relaxed),
+            missing_link_walk_errors: self.missing_link_walk_errors.load(Ordering::Relaxed),
             pending_dag_resolved: self.pending_dag_resolved.load(Ordering::Relaxed),
             pending_dag_registered: self.pending_dag_registered.load(Ordering::Relaxed),
             pending_dag_expired: self.pending_dag_expired.load(Ordering::Relaxed),
@@ -310,6 +315,11 @@ impl SyncDiagnostics {
 
     pub fn record_missing_link_retry(&self) {
         self.missing_link_retries.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_missing_link_walk_error(&self) {
+        self.missing_link_walk_errors
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn record_pending_dag_resolved(&self) {
