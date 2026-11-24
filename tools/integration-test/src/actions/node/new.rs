@@ -45,6 +45,10 @@ pub struct NewNode {
     pub tick_millis: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ttl_millis: Option<u64>,
+    /// A Rust node that re-runs a transaction that lost a race at most this
+    /// many times, in place of its default retry budget.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_txn_retries: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub database_dir: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -73,6 +77,10 @@ pub struct NewNode {
     /// rather than loading it from a key it is given.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub registered_identity: bool,
+    /// A Rust node whose libp2p DNS layers read this `resolv.conf` text in
+    /// place of the host's file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolv_conf: Option<String>,
     /// A Rust node with no node identity at all, neither one of Go's
     /// `NodeIdentity(i)` nor a key of its own, so it neither signs nor
     /// authenticates as a node.
@@ -108,6 +116,7 @@ impl Op for NewNode {
         probe.network = false;
         probe.database_dir = None;
         probe.admission = None;
+        probe.resolv_conf = None;
         probe.iroh = false;
         probe.registered_identity = false;
         probe.without_node_identity = false;
@@ -122,6 +131,7 @@ impl Op for NewNode {
         probe.kms = false;
         (probe.ttl_millis, probe.tick_millis, probe.buckets) = (None, None, None);
         probe.index_gate = None;
+        probe.max_txn_retries = None;
         if probe != Self::default() {
             let options = serde_json::to_string(&probe).unwrap_or_default();
             return Err(Failure::unsupported(format!("{} {options}", Self::name())));
@@ -139,6 +149,7 @@ impl Op for NewNode {
             .then(|| self.key_type.unwrap_or_default());
         let txn_ttl = self.txn_ttl(state.client_type())?;
         let index_gate = self.index_gate(state.client_type())?;
+        let max_txn_retries = self.max_txn_retries(state.client_type())?;
         let registered_identity = self.registered_identity(state.client_type())?;
         let dir = match self.database_dir {
             Some(_) => Some(Arc::new(tempfile::tempdir().map_err(|e| {
@@ -151,6 +162,7 @@ impl Op for NewNode {
             dir,
             listen: Vec::new(),
             admission: self.admission.clone(),
+            resolv_conf: self.resolv_conf(state.client_type())?,
             iroh_network: self.iroh,
             node_identity,
             registered_identity,
@@ -159,6 +171,7 @@ impl Op for NewNode {
             txn_ttl,
             se_key: self.searchable_encryption_key()?,
             index_gate,
+            max_txn_retries,
             ..Default::default()
         };
         state.start_node(self.common.node(), spec);
@@ -178,6 +191,18 @@ impl NewNode {
         key.try_into()
             .map(Some)
             .map_err(|_| Failure::operation("an AES-256 key is 32 bytes".into()))
+    }
+
+    /// The `resolv.conf` text the node's DNS layers read. Only a unix host
+    /// reads one, so elsewhere the option is unsupported.
+    fn resolv_conf(&self, client: ClientType) -> Result<Option<String>, Failure> {
+        match (&self.resolv_conf, cfg!(unix)) {
+            (Some(_), false) => Err(Failure::unsupported(format!(
+                "{} argument resolvConf under {client:?}: only a unix host reads resolv.conf",
+                Self::name()
+            ))),
+            (text, _) => Ok(text.clone()),
+        }
     }
 
     /// The gate the node's index backfills pass, Go's `db.IndexBuildGate`. It
@@ -237,6 +262,18 @@ impl NewNode {
             )));
         }
         Ok(true)
+    }
+
+    /// How many times the node re-runs a transaction that lost a race. Go's
+    /// harness has no such option, so a Go node cannot take it.
+    fn max_txn_retries(&self, client: ClientType) -> Result<Option<u32>, Failure> {
+        if self.max_txn_retries.is_some() && client == ClientType::GoHttp {
+            return Err(Failure::unsupported(format!(
+                "{} argument maxTxnRetries under {client:?}",
+                Self::name()
+            )));
+        }
+        Ok(self.max_txn_retries)
     }
 
     /// How long an idle explicit transaction lives and how often the node

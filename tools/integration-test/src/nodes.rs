@@ -42,6 +42,9 @@ pub struct NodeSpec {
     pub nac_owner: Option<u64>,
     /// The node's admission limits, if not the defaults.
     pub admission: Option<crate::actions::AdmissionSpec>,
+    /// The `resolv.conf` text the node's libp2p DNS layers read in place of
+    /// the host's file.
+    pub resolv_conf: Option<String>,
     /// The node's network is iroh rather than libp2p.
     pub iroh_network: bool,
     /// The node's own identity, Go's `NodeIdentity(seed)`; the node signs as it.
@@ -56,6 +59,9 @@ pub struct NodeSpec {
     pub signing: Option<crate::actions::shared::KeyType>,
     /// How long an idle explicit transaction lives and the sweep interval.
     pub txn_ttl: Option<(Duration, Duration)>,
+    /// How many times the node re-runs a transaction that lost a race, if
+    /// not the default.
+    pub max_txn_retries: Option<u32>,
     /// The node's own searchable-encryption key, as Go's harness gives each
     /// node one under `EnableSearchableEncryption`.
     pub se_key: Option<[u8; 32]>,
@@ -109,10 +115,13 @@ impl TestNode {
             Some(address) => address.clone(),
             None => "/ip4/127.0.0.1/tcp/0".to_owned(),
         };
-        // Admission limits and iroh are a Rust node's options: under go-http
-        // the node is a Rust node reached over HTTP, as rust-http does.
+        // Admission limits, iroh and a resolv.conf are a Rust node's options:
+        // under go-http the node is a Rust node reached over HTTP, as
+        // rust-http does.
         let client_type = match client_type {
-            ClientType::GoHttp if spec.admission.is_some() || spec.iroh_network => {
+            ClientType::GoHttp
+                if spec.admission.is_some() || spec.iroh_network || spec.resolv_conf.is_some() =>
+            {
                 ClientType::RustHttp
             }
             other => other,
@@ -355,10 +364,17 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
             },
         ));
     }
+    #[cfg(unix)]
+    if let Some(text) = &spec.resolv_conf {
+        builder = builder.with_resolver_source(p2p::ResolverSource::ResolvConf(text.clone()));
+    }
     if let Some(config) = http {
         builder = builder.with_http(config);
     } else if let Some((ttl, tick)) = spec.txn_ttl {
         builder = builder.with_transaction_idle_timeout(ttl, tick);
+    }
+    if let Some(retries) = spec.max_txn_retries {
+        builder = builder.with_max_txn_retries(retries);
     }
     if let Some(gate) = &spec.index_gate {
         builder = builder.with_index_build_gate(gate.clone());
