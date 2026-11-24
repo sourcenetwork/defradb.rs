@@ -70,6 +70,7 @@ impl Node {
             max_schema_size: config.api.max_schema_size,
             max_backup_size: config.api.max_backup_size,
             request_timeout: config.api.request_timeout,
+            commit_timeout_ms: config.api.commit_timeout_ms,
             max_concurrent_requests: config.api.max_concurrent_requests,
             no_signing: config.datastore.no_signing,
             query_limits,

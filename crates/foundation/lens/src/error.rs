@@ -17,6 +17,10 @@ pub enum Error {
     #[error("WASM transform execution failed: {0}")]
     WasmExecution(String),
 
+    /// A backward call reached a module that exports no `inverse`.
+    #[error("WASM transform execution failed: Export `inverse` does not exist")]
+    InverseNotExported,
+
     /// A lens call ran past its sandbox's time for one input document.
     #[error("lens transform ran past its time limit for one document")]
     TimeLimit,
