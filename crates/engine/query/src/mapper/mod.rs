@@ -8,7 +8,10 @@ mod mutation_selection;
 mod types;
 
 pub use cursor::{CursorAliases, CursorPageInfoFields, CursorParams};
-pub use filter::{like_pattern_match, Filter, FilterOp};
+pub use filter::{
+    like_pattern_match, EnclosingArgument, Filter, FilterOp, FilterSource, PathStep,
+    VariablePosition,
+};
 pub(crate) use input_op::two_ops;
 pub use input_op::{split_update_input, InputOp, FIELD_OPS};
 pub use mutation::{parse_mutation_name, Mutation, MutationType};

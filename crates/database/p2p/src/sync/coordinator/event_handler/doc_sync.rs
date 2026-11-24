@@ -313,12 +313,15 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             for (cid, doc_id) in cids_to_remerge {
                 match self.manager.blockstore().get(&cid).await {
                     Ok(Some(data)) => {
-                        let missing = crate::sync::manager::links::find_all_missing_links(
-                            self.manager.blockstore().as_ref(),
-                            &data,
-                        )
-                        .await
-                        .unwrap_or_default();
+                        let missing = crate::sync::manager::links::frontier_or_unknown(
+                            cid,
+                            crate::sync::manager::links::find_all_missing_links(
+                                self.manager.blockstore().as_ref(),
+                                &data,
+                            )
+                            .await,
+                            &self.manager.diagnostics(),
+                        );
 
                         if missing.is_empty() {
                             let mut context = DagFetchContext::new(

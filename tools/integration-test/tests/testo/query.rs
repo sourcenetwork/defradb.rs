@@ -129,6 +129,7 @@ mod one_to_many {
     mod with_group_related_id_alias;
     mod with_id_field;
     mod with_limit;
+    mod with_limit_aggregate;
     mod with_max;
     mod with_min;
     mod with_order_filter;
@@ -193,6 +194,7 @@ mod one_to_two_many {
     mod with_order;
 }
 mod simple {
+    mod count_filter_unknown;
     mod simple;
     mod with_aggregate_nonnillable;
     mod with_average;
@@ -210,6 +212,7 @@ mod simple {
     mod with_doc_id;
     mod with_doc_id_filter;
     mod with_doc_ids;
+    mod with_filter_unknown;
     mod with_filter {
         mod with_alias;
         mod with_and;
