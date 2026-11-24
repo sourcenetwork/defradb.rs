@@ -148,6 +148,8 @@ jobs:
       - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
+          # Experiment (#3321): a unique key so every job misses the Actions cache.
+          prefix-key: nocache-${{ github.run_id }}
           save-if: ${{ env.SAVE_CACHE == 'true' }}
       - run: cargo clippy --all --all-targets -- -D warnings
       - name: Data path confinement
@@ -211,6 +213,8 @@ jobs:
       - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
+          # Experiment (#3321): a unique key so every job misses the Actions cache.
+          prefix-key: nocache-${{ github.run_id }}
           shared-key: feature
           save-if: ${{ env.SAVE_CACHE == 'true' && matrix.group == 'release' }}
       - name: Run feature checks
@@ -227,6 +231,8 @@ jobs:
       - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
+          # Experiment (#3321): a unique key so every job misses the Actions cache.
+          prefix-key: nocache-${{ github.run_id }}
           save-if: ${{ env.SAVE_CACHE == 'true' }}
       - name: Install cargo-machete
         run: command -v cargo-machete >/dev/null 2>&1 || cargo install cargo-machete --locked
@@ -248,6 +254,8 @@ jobs:
       - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
+          # Experiment (#3321): a unique key so every job misses the Actions cache.
+          prefix-key: nocache-${{ github.run_id }}
           shared-key: docs
           save-if: ${{ env.SAVE_CACHE == 'true' }}
       - name: Build docs with warnings denied
@@ -393,6 +401,8 @@ jobs:
       - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
+          # Experiment (#3321): a unique key so every job misses the Actions cache.
+          prefix-key: nocache-${{ github.run_id }}
           shared-key: integration-binaries
           save-if: ${{ env.SAVE_CACHE == 'true' }}
       - name: Build binaries
@@ -445,6 +455,8 @@ jobs:
       - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
+          # Experiment (#3321): a unique key so every job misses the Actions cache.
+          prefix-key: nocache-${{ github.run_id }}
           shared-key: integration-binaries
           save-if: false
       - run: cargo nextest run --cargo-profile super-dev -p telemetry --features otlp
@@ -472,6 +484,8 @@ jobs:
       - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
+          # Experiment (#3321): a unique key so every job misses the Actions cache.
+          prefix-key: nocache-${{ github.run_id }}
           shared-key: wasm
           save-if: ${{ env.SAVE_CACHE == 'true' }}
       - name: Isolate the WASM dependency graph
@@ -533,6 +547,8 @@ jobs:
       - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
+          # Experiment (#3321): a unique key so every job misses the Actions cache.
+          prefix-key: nocache-${{ github.run_id }}
           shared-key: lean-conformance
           save-if: ${{ env.SAVE_CACHE == 'true' }}
       - name: Build Lean proofs
@@ -609,6 +625,8 @@ jobs:
       - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
+          # Experiment (#3321): a unique key so every job misses the Actions cache.
+          prefix-key: nocache-${{ github.run_id }}
           shared-key: integration
           save-if: false
       - uses: actions/download-artifact@v8
@@ -668,6 +686,8 @@ jobs:
       - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
+          # Experiment (#3321): a unique key so every job misses the Actions cache.
+          prefix-key: nocache-${{ github.run_id }}
           shared-key: integration
           save-if: ${{ env.SAVE_CACHE == 'true' && matrix.suite == 'go-compat' }}
       - uses: actions/download-artifact@v8
@@ -816,6 +836,8 @@ jobs:
       - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
+          # Experiment (#3321): a unique key so every job misses the Actions cache.
+          prefix-key: nocache-${{ github.run_id }}
           shared-key: integration
           save-if: false
       - uses: actions/download-artifact@v8
@@ -873,6 +895,8 @@ jobs:
       - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
+          # Experiment (#3321): a unique key so every job misses the Actions cache.
+          prefix-key: nocache-${{ github.run_id }}
           shared-key: integration
           save-if: false
       - name: Archive the test binaries
