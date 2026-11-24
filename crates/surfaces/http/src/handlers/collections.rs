@@ -130,12 +130,12 @@ pub async fn get_collection_doc_ids(
 
 /// Go's request body for patching the collections: the patch, as its text
 /// or as the array itself, and the lens that migrates to the new versions.
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct PatchCollectionRequest {
     #[serde(rename = "Patch")]
     pub patch: serde_json::Value,
     #[serde(rename = "Migration", default)]
-    pub migration: Option<lens::LensConfig>,
+    pub migration: Option<crate::wire::LensConfig>,
 }
 
 /// Patch the collections.
@@ -152,8 +152,9 @@ pub async fn patch_collection(
         serde_json::Value::String(text) => text,
         ops => ops.to_string(),
     };
+    let migration = body.migration.map(lens::LensConfig::from);
     if !state.dev_mode {
-        if let Some(migration) = &body.migration {
+        if let Some(migration) = &migration {
             migration
                 .validate_for_http()
                 .map_err(|e| HttpError::BadRequest(e.to_string()))?;
@@ -161,7 +162,7 @@ pub async fn patch_collection(
     }
     state
         .executor
-        .patch_collection_as(&context, &patch, body.migration)
+        .patch_collection_as(&context, &patch, migration)
         .await?;
     Ok(StatusCode::OK)
 }

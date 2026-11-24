@@ -18,6 +18,7 @@ use crate::handlers::backup::ExportRequest;
 use crate::handlers::batch::{BatchSignResponse, BatchVerifyRequest};
 use crate::handlers::block::SignedBlockResponse;
 use crate::handlers::ccip::CcipResponse;
+use crate::handlers::collections::PatchCollectionRequest;
 use crate::handlers::collections::{CollectionDocIdsResponse, PurgeDocumentsResponse};
 use crate::handlers::graphql::TransactionalQueryRequest;
 use crate::handlers::index::{GoCreateIndexRequest, GoIndexDescription};
@@ -196,7 +197,7 @@ pub const ROUTES: &[Route] = &[
     // Collections
     row_body("/api/v0/collections", GET, required(NodePermission::CollectionGet), false, None, Some(body::<Vec<String>>)),
     row_body("/api/v0/collections", POST, required(NodePermission::CollectionPatch), false, None, Some(body::<Vec<CollectionVersion>>)),
-    row("/api/v0/collections", PATCH, required(NodePermission::CollectionPatch), false),
+    row_body("/api/v0/collections", PATCH, required(NodePermission::CollectionPatch), false, Some(body::<PatchCollectionRequest>), None),
     // Dropping collections by name. This fell to the read default while
     // `delete_collections_by_names` enforced `CollectionPatch` itself, so the
     // outer gate was weaker than the handler.
