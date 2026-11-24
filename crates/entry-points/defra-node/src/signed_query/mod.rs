@@ -10,6 +10,8 @@ use defra_core::signing::SigningConfig;
 use edge::{Edge, EdgeError};
 use query::{QueryExecutor, QueryRequest, QueryResponse, TransactionHandle};
 
+use crate::Admit;
+
 #[cfg(test)]
 mod tests;
 
@@ -18,6 +20,28 @@ mod tests;
 /// or `None` on an identity-only node, whose request keeps its context's own
 /// identity so it matches the owner of the transaction it runs in.
 pub(super) async fn execute_with_signing_context(
+    edge: &Edge,
+    executor: Arc<dyn QueryExecutor>,
+    request: QueryRequest,
+    txn_handle: Option<TransactionHandle>,
+    signing_config: SigningConfig,
+    principal: Option<String>,
+) -> QueryResponse {
+    execute_signed(
+        Admit::Request,
+        edge,
+        executor,
+        request,
+        txn_handle,
+        signing_config,
+        principal,
+    )
+    .await
+}
+
+/// [`execute_with_signing_context`], admitted on `edge` as `admit` says.
+pub(super) async fn execute_signed(
+    admit: Admit,
     edge: &Edge,
     executor: Arc<dyn QueryExecutor>,
     mut request: QueryRequest,
@@ -31,15 +55,19 @@ pub(super) async fn execute_with_signing_context(
     };
     request.context = context.with_signing_session(Some(signing_config));
     let context = request.context.clone();
-    edge.spawn(context.mirror(async move {
-        match txn_handle {
-            Some(txn_handle) => executor.execute_in_txn(request, &txn_handle).await,
-            None => super::execute_autocommit_request(executor.as_ref(), request).await,
-        }
-    }))
-    .within(std::time::Duration::MAX)
-    .await
-    .unwrap_or_else(refused_response)
+    admit
+        .spawn(
+            edge,
+            context.mirror(async move {
+                match txn_handle {
+                    Some(txn_handle) => executor.execute_in_txn(request, &txn_handle).await,
+                    None => super::execute_autocommit_request(executor.as_ref(), request).await,
+                }
+            }),
+        )
+        .within(std::time::Duration::MAX)
+        .await
+        .unwrap_or_else(refused_response)
 }
 
 /// The answer to a query its task never finished: refused because the node

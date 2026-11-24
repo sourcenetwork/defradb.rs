@@ -2827,6 +2827,18 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // A Go-written config.yaml has each Go key moved onto its Rust key
+        // before it is read: a Rust key already there wins, a file with no
+        // Go keys is untouched, and no two Go keys feed one Rust key.
+        family: "Go config layout",
+        name: "rust_key_wins / rust_config_unchanged / table_injective / go_keys_are_not_rust_keys: a present Rust key is never overwritten, a config with no Go keys loads unchanged, and the table is injective",
+        axis: Lean,
+        anchor: "crates/entry-points/cli/src/config/go_layout/keys.rs KEYS, apply, take, put_default; crates/entry-points/cli/src/config/go_layout/mod.rs apply, set_default",
+        model_ref: "GoConfigLayout (lake build)",
+        tiers: &[Contract],
+        bound_by: "crates/entry-points/cli/src/config/go_layout/keys.rs the_table_matches_the_lean_model",
+    },
+    Property {
         // A document call through a selected collection version (possibly
         // inactive) pins that version in the transaction's catalog for its
         // turn: every name lookup sees it, writes are recorded at it, reads
@@ -4043,6 +4055,33 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // A sweep's candidates are one bounded page. The delete transaction
+        // reads the live roots itself, validated, so a root published before
+        // its commit re-runs it. The model trusts that `LiveRoots::read`
+        // returns every live root, and that the caller storing the roots
+        // publishes one in the transaction that writes its nodes: nothing in
+        // the workspace publishes a root yet.
+        family: "Prolly tree node store and cache",
+        name: "SweepKeepsLiveRoots: a page sweep racing a root's publication never deletes a node the live root names",
+        axis: Tla,
+        anchor: "crates/engine/storage/src/stores/prolly_nodes.rs ProllyNodes::reclaim, node_keys, ReclaimNodes::run, mark_roots, LiveRoots::read",
+        model_ref: "MC_ProllyNodeReclaim_Green.cfg (GREEN) / MC_ProllyNodeReclaim_{Red_FixedRoots,Red_NoValidation,Red_PutAlone,Red_DeleteMarked}.cfg (RED)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // The data rule the delete applies: a node is deleted exactly when
+        // it is on the page and the live marks do not name it, so a marked
+        // node never is.
+        family: "Prolly tree node store and cache",
+        name: "reclaimDeletesOnlyUnmarked / reclaimKeepsMarked",
+        axis: Lean,
+        anchor: "crates/engine/storage/src/stores/prolly_nodes.rs ReclaimNodes::run, mark_roots",
+        model_ref: "ProllyTree (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         family: "Text chunking",
         name: "INV_ListMatchesText / INV_ListedChunksExist / INV_NoChunkOfDeletedParent / INV_ValidWritesSucceed",
         axis: Tla,
@@ -4499,6 +4538,39 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "SigningOverride (lake build)",
         tiers: &[Boundary],
         bound_by: "crates/foundation/defra-core/src/request_context.rs signing_override_false_hides_the_key_and_others_keep_it; crates/surfaces/http/src/query_context.rs enable_signing_overrides_the_node_either_way; crates/entry-points/ffi/src/document/signing_tests.rs opting_out_of_a_save_many_leaves_the_blocks_unsigned_on_a_signing_node; tools/integration-test/tests/testo/signature/per_op_signing.rs signature_with_per_op_signing_enabled_on_a_node_not_signing_signs_every_commit",
+    },
+    Property {
+        // #2716: every create and relation patch of an import is a request
+        // on the request path of the edge it came in by, so it is signed,
+        // broadcast and owned as that edge's creates are; a Node import is
+        // one admitted request, run as a network task of its own that its
+        // writes continue, so shutdown drains it and a caller that stops
+        // waiting does not cut it short;
+        // a batch's file IDs are checked just before it is saved, a refused
+        // batch is saved again one document at a time, and the IDs are
+        // registered by validated reads in one transaction, one document at
+        // a time when another writer took one meanwhile.
+        family: "Backup import write path",
+        name: "INV_ImportSigned / INV_ImportReplicated / INV_HostFromEdge / INV_DriverOnCaller / INV_NoDuplicateAlias / INV_AliasNeverStolen / INV_FfiTxnRefused / INV_CreatorAsCreate / INV_SavedRegistered / INV_DrainWaitsForImport / INV_KeepsPrefix: an import writes as its edge writes a create",
+        axis: Tla,
+        anchor: "crates/database/db/src/backup/import.rs import_database_as, save, create, record; crates/database/db/src/backup/host.rs ImportHost, RunnerHost; crates/database/db/src/backup/batch.rs Batch::must_save_before; crates/database/db/src/backup/alias.rs register, check_free; crates/entry-points/defra-node/src/ops/backup.rs Node::import_backup_as, Node::import_admitted, NodeOps::import_backup_with, NodeHost; crates/entry-points/defra-node/src/lib.rs Node::as_request, Admit; crates/entry-points/defra-node/src/request_path.rs RequestPath::execute, RequestPath::admitted; crates/foundation/edge/src/handle.rs Edge::spawn_continuation; crates/surfaces/http/src/request_path.rs Server; crates/surfaces/http/src/pool_layer.rs runs_on_pool, ON_EDGE; crates/surfaces/http/src/handlers/backup.rs import; crates/entry-points/cli/src/commands/start/server_query.rs setup_query_runner; crates/entry-points/ffi/src/backup/import.rs defra_backup_import, FfiHost",
+        model_ref: "MC_BackupImportWritePath_{Green,Red_OwnMutator,Red_NoSigningChoice,Red_AliasOutsideTxn,Red_AliasCheckAfterCreate,Red_BatchSkipsPendingAlias,Red_FfiViaNode,Red_AdapterOwnHost,Red_CallerIgnored,Red_ActorNoOne,Red_WritesAdmittedAlone,Red_ImportOnCallerTask,Red_RefusedBatchDropped,Red_RegistrationAllOrNothing,Red_PrepareOnPool,Red_FfiTxnAccepted,Red_ContentCollisionDropped,Red_ImportRouteOnPool}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/entry-points/defra-node/src/ops/backup_tests.rs shutdown_drains_a_running_import_with_its_writes_and_aliases, an_import_after_shutdown_begins_is_refused_before_it_writes, the_driver_runs_off_the_workers_and_saves_a_collection_in_one_write, a_saved_batch_gets_its_aliases_when_the_caller_stops_waiting; crates/entry-points/cli/src/backup_adapter_tests.rs an_id_taken_after_its_check_leaves_every_other_saved_document_its_id; crates/entry-points/ffi/src/backup/import_tests.rs an_import_on_a_signing_node_signs_every_block, node_access_control_refuses_an_import_to_a_stranger; crates/surfaces/http/src/handlers/backup_import_tests.rs the_import_driver_runs_off_the_workers_and_its_writes_on_them; tools/integration-test/tests/testo/backup/signed_import.rs an_import_on_a_signing_node_signs_every_block, an_import_reaches_a_replicator_set_before_it; tools/integration-test/tests/testo/backup/failed_import.rs a_failed_import_keeps_every_document_before_the_one_refused, an_import_refusing_a_value_keeps_every_document_before_it",
+    },
+    Property {
+        // #2716: an import's request is the create request of its edge, so
+        // it signs and is owned as a create; a batch with no file ID twice,
+        // checked as a whole and saved again one document at a time when
+        // refused, saves exactly what one document at a time saves: never a
+        // file ID twice, and every document before the one refused.
+        family: "Backup import write path",
+        name: "BackupImportSigner.import_request_is_create_request / signing_node_signs_every_import / creator_law / cli_start_actor_falls_back_to_its_identity / saveBatch_eq_saveEach / no_duplicate_alias / keeps_prefix_until_refused / dropped_batch_loses_the_prefix / no_flush_saves_a_duplicate",
+        axis: Lean,
+        anchor: "crates/database/db/src/backup/import.rs import_database_as, save, create; crates/database/db/src/backup/batch.rs Batch::must_save_before; crates/entry-points/defra-node/src/lib.rs execute_prepared_request",
+        model_ref: "BackupImportSigner (lake build)",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/backup/import_creator.rs an_anonymous_import_is_owned_as_an_anonymous_create; tools/integration-test/tests/testo/backup/duplicate_alias.rs a_repeated_doc_id_fails_and_keeps_the_first_document; tools/integration-test/tests/testo/backup/failed_import.rs a_failed_import_keeps_every_document_before_the_one_refused",
     },
     Property {
         // #2724: add_view accepts a transform CID only if it is non-empty and
