@@ -433,6 +433,12 @@ lean_lib SeTruncatePrefix where
 lean_lib ReplicatorEmptyCollections where
 
 @[default_target]
+lean_lib RemovedLensOrigin where
+
+@[default_target]
+lean_lib MaterializeResume where
+
+@[default_target]
 lean_lib ExplainIndexName where
 
 @[default_target]

@@ -2651,6 +2651,26 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // Removing a transform must not invert native documents.
+        family: "Schema-evolution operations in the core",
+        name: "INV_NativePreserved",
+        axis: Tla,
+        anchor: "crates/database/db/src/definition/migration/reindex/page.rs ReindexPage::walk",
+        model_ref: "MC_RemovedLensOrigin_{Green,Red_Inverse}.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/collection_version/updates/remove/removed_transform_reindex.rs removing_transform_preserves_old_and_new_documents",
+    },
+    Property {
+        // Native and materialized documents can have identical stored values.
+        family: "Schema-evolution operations in the core",
+        name: "RemovedLensOrigin.inverse_changes_native / preserving_keeps_native / same_stored_value_different_origins",
+        axis: Lean,
+        anchor: "crates/database/db/src/definition/migration/reindex/page.rs ReindexPage::walk",
+        model_ref: "RemovedLensOrigin (lake build)",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/collection_version/updates/remove/removed_transform_reindex.rs removing_transform_preserves_old_and_new_documents",
+    },
+    Property {
         // An explain names the direct lookup index, or the child scan index.
         family: "Schema-evolution operations in the core",
         name: "INV_NameMatches",
@@ -2686,6 +2706,42 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "MC_LensIndexAnswer_{Green,Red_*}.cfg",
         tiers: &[Boundary],
         bound_by: "crates/database/db/tests/merge/plan_scan_race.rs",
+    },
+    Property {
+        // #3052: the reindex a schema change owes fixes only the index and
+        // leaves each document stored as written, so a lens added or removed
+        // afterwards still applies to it as it stands (Red_WalkStamps).
+        family: "Schema-evolution operations in the core",
+        name: "INV_ReadsFollowWrites",
+        axis: Tla,
+        anchor: "crates/database/db/src/definition/migration/reindex/mod.rs DB::rebuild_settling; crates/database/db/src/definition/migration/reindex/page.rs ReindexPage::walk; crates/database/db/src/definition/patch/in_place.rs update_version_in_place",
+        model_ref: "MC_LensIndexAnswer_{Green,Red_WalkStamps}.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/collection_version/migrations/identity_settlement.rs identity_settlement_before_transform_should_apply_later_migration",
+    },
+    Property {
+        // #3052: a materialization never resumes an owed reindex, a rebuild
+        // that writes values back resumes only a record that does too, and a
+        // resumed page walks the way its record says.
+        family: "Schema-evolution operations in the core",
+        name: "INV_RebuiltAll",
+        axis: Tla,
+        anchor: "crates/database/db/src/definition/migration/reindex/mod.rs DB::reindex_in_pages; crates/database/db/src/definition/migration/reindex/page.rs ReindexPage::step; crates/database/db/src/definition/migration/reindex/progress.rs read",
+        model_ref: "MC_MaterializeResume_{Green,Red_Resume,Red_ResumeAnyMode,Red_SettleIgnoresMode}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/database/db/tests/index/deferred.rs materializing_after_a_stopped_settlement_advances_every_document, reindexing_with_migrations_after_a_stopped_settlement_writes_back_every_document",
+    },
+    Property {
+        // A walk from the start saves every document; one resumed from a
+        // settlement's cursor misses those the settlement walked. The resume
+        // decision reuses a record only for a rebuild it already serves.
+        family: "Schema-evolution operations in the core",
+        name: "MaterializeResume.start_over_saves_all / resume_misses / reuses_serves",
+        axis: Lean,
+        anchor: "crates/database/db/src/definition/migration/reindex/mod.rs DB::reindex_in_pages",
+        model_ref: "MaterializeResume (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/database/db/tests/index/deferred.rs materializing_after_a_stopped_settlement_advances_every_document, reindexing_with_migrations_after_a_stopped_settlement_writes_back_every_document",
     },
     Property {
         // An explicit transaction's ID is `sequence * workers + worker`. The
@@ -4816,6 +4872,17 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/entry-points/defra-node/src/db_impls.rs DbSchemaOps::add_view; crates/database/db/src/collection/ops/create.rs DB::create_view_collections_as, DB::stage_new_collections, DB::require_view_transforms; crates/database/db/src/definition/migration/committed_lenses.rs DB::add_lens, DB::commit_synced_lens, write_lens_config; crates/surfaces/p2p-adapter/src/version_syncer.rs sync_lens; crates/surfaces/p2p-adapter/src/transport_version_syncer.rs sync_lens",
         model_ref: "MC_AddViewTransform_{Green,Green_NacBefore,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // #3052: a patch commits its version, registers any lens it staged,
+        // and only then settles a reindex owed by that patch.
+        family: "Patch lens settlement",
+        name: "INV_SettleAfterLens",
+        axis: Tla,
+        anchor: "crates/database/db/src/definition/patch/mod.rs DB::patch_collection; crates/database/db/src/definition/patch/in_place.rs DB::update_version_in_place; crates/database/db/src/definition/migration/reindex/page.rs ReindexPage::walk",
+        model_ref: "MC_LensSettlement_{Green,Red_Early}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },
