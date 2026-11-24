@@ -3,7 +3,7 @@ use schema::{FieldDescription, FieldKind, IndexDescription, IndexedFieldDescript
 use serde_json::{json, Map, Value as JsonValue};
 use storage::index::Bound;
 
-use crate::mapper::{Filter, FilterOp};
+use crate::mapper::{Filter, FilterOp, OrderBy, OrderCondition, OrderDirection};
 
 use super::values::json_to_normal_value;
 use super::*;
@@ -170,6 +170,54 @@ fn test_filter_to_scan_in() {
         }
         _ => panic!("expected InScan scan type"),
     }
+}
+
+fn descending_name_in_values(order: Option<OrderDirection>) -> Vec<NormalValue> {
+    let filter = make_filter(map([(
+        "name".to_string(),
+        json!({"_in": ["Fred", "Addo", "Fred", "Andy"]}),
+    )]));
+    let mut index = single_field_index("name");
+    index.fields[0].descending = true;
+    index.fields.push(IndexedFieldDescription {
+        name: "age".to_string(),
+        descending: false,
+    });
+    let order = order
+        .map(|direction| OrderBy::new().with_condition(OrderCondition::new("name", direction)));
+
+    let params = filter_to_index_scan(&filter, &index, order.as_ref(), &[], None, 0).unwrap();
+
+    match params.scan_type {
+        IndexScanType::InScan { values, .. } => values,
+        _ => panic!("expected InScan scan type"),
+    }
+}
+
+fn names<const N: usize>(names: [&str; N]) -> Vec<NormalValue> {
+    names
+        .map(|name| NormalValue::String(name.to_string()))
+        .to_vec()
+}
+
+#[test]
+fn test_filter_to_scan_in_without_order_keeps_written_values_once() {
+    assert_eq!(
+        descending_name_in_values(None),
+        names(["Fred", "Addo", "Andy"])
+    );
+}
+
+#[test]
+fn test_filter_to_scan_in_with_order_follows_the_scan() {
+    assert_eq!(
+        descending_name_in_values(Some(OrderDirection::Desc)),
+        names(["Fred", "Andy", "Addo"])
+    );
+    assert_eq!(
+        descending_name_in_values(Some(OrderDirection::Asc)),
+        names(["Addo", "Andy", "Fred"])
+    );
 }
 
 #[test]

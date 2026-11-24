@@ -52,8 +52,5 @@ testo query::cyclic_fragments::a_fragment_spreading_itself_fails_validation #261
 testo query::cyclic_fragments::fragments_spreading_each_other_fail_validation #2619
 testo query::cyclic_fragments::a_cycle_no_field_spreads_still_fails_validation #2619
 testo net::info::connect_peers::net_info_connect_multiple_peers #2726
-testo acp::nac::add_nac_relationship::nac_add_relationship_when_nac_is_enabled_with_invalid_identities_error #3060
-testo acp::nac::delete_nac_relationship::nac_delete_relationship_when_nac_is_enabled_with_invalid_identities_error #3060
-testo acp::nac::delete_nac_relationship::nac_delete_relationship_for_all_identities_all_implicit_identities_access_revoked #3060
 testo index::query_with_relation_filter_unindexed_fk::relation_filter_keeps_another_selected_relation #3153
 testo query::one_to_many::with_relation_filter_indexed_fk::relation_filter_through_an_indexed_fk_keeps_another_joined_relation #3153
