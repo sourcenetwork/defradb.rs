@@ -82,7 +82,7 @@ const ENTRIES: &[(&str, &str, &[&str], &str)] = &[
 ];
 
 const INDEXED_FIELD_REMOVAL: &str =
-    "Removing an indexed field is refused, as Go refuses it: https://github.com/sourcenetwork/defradb/issues/4722";
+    "Rust refuses removing an indexed field up front; Go accepts the patch and later writes fail: https://github.com/sourcenetwork/defradb/issues/4722";
 
 const LENS_3044: &str = "TODO(https://github.com/sourcenetwork/defradb.rs/issues/3044): \
                          with indexes, a query after a migration returns unmigrated fields.";

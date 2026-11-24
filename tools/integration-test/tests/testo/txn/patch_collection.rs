@@ -59,7 +59,7 @@ fn txn_patch_collection_with_commit_succeeds() {
             }
             .into(),
         ],
-        // Removing an indexed field is refused, as Go refuses it: https://github.com/sourcenetwork/defradb/issues/4722
+        // Rust refuses removing an indexed field up front; Go accepts the patch and later writes fail: https://github.com/sourcenetwork/defradb/issues/4722
         multiplier_excludes: &["secondary-index"],
         ..Default::default()
     }
@@ -118,7 +118,7 @@ fn txn_patch_collection_without_commit_patch_not_applied() {
             }
             .into(),
         ],
-        // Removing an indexed field is refused, as Go refuses it: https://github.com/sourcenetwork/defradb/issues/4722
+        // Rust refuses removing an indexed field up front; Go accepts the patch and later writes fail: https://github.com/sourcenetwork/defradb/issues/4722
         multiplier_excludes: &["secondary-index"],
         ..Default::default()
     }

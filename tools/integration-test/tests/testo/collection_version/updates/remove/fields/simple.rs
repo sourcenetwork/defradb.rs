@@ -46,7 +46,7 @@ fn collection_version_updates_remove_all_fields() {
             }
             .into(),
         ],
-        // Removing an indexed field is refused, as Go refuses it: https://github.com/sourcenetwork/defradb/issues/4722
+        // Rust refuses removing an indexed field up front; Go accepts the patch and later writes fail: https://github.com/sourcenetwork/defradb/issues/4722
         multiplier_excludes: &["secondary-index"],
         ..Default::default()
     }
@@ -216,7 +216,7 @@ fn collection_version_updates_remove_field() {
             }
             .into(),
         ],
-        // Removing an indexed field is refused, as Go refuses it: https://github.com/sourcenetwork/defradb/issues/4722
+        // Rust refuses removing an indexed field up front; Go accepts the patch and later writes fail: https://github.com/sourcenetwork/defradb/issues/4722
         multiplier_excludes: &["secondary-index"],
         ..Default::default()
     }
