@@ -267,19 +267,27 @@ fn an_old_format_entry_falls_outside_new_format_range_bounds() {
 /// rebuilt to the current format in one pass.
 #[test]
 fn a_format_three_descending_json_index_is_rebuilt_on_open() {
-    rebuilds_a_descending_json_index_stamped(3);
+    rebuilds_a_descending_json_index_stamped(3, false);
+}
+
+/// A full reindex a format-3 build left part-way through its walk is started
+/// over, not resumed past the documents whose keys it never rewrote.
+#[test]
+fn a_format_three_walk_left_part_way_is_restarted_on_open() {
+    rebuilds_a_descending_json_index_stamped(3, true);
 }
 
 /// A store stamped by the index keyspace tag is rebuilt for descending JSON paths.
 #[test]
 fn a_format_four_descending_json_index_is_rebuilt_on_open() {
-    rebuilds_a_descending_json_index_stamped(4);
+    rebuilds_a_descending_json_index_stamped(4, false);
 }
 
 /// A descending JSON index stamped `stored` must be rebuilt before a path range
 /// query uses current bounds. Removing the entries models keys the new scan
-/// cannot read.
-fn rebuilds_a_descending_json_index_stamped(stored: u32) {
+/// cannot read. With `stale_walk`, an older build's reindex is owed and its
+/// walk cursor already sits past the document.
+fn rebuilds_a_descending_json_index_stamped(stored: u32, stale_walk: bool) {
     use std::sync::Arc;
 
     use db::{AutoCommitMutator, LensedAutoCommitFetcher, DB};
@@ -326,11 +334,29 @@ fn rebuilds_a_descending_json_index_stamped(stored: u32) {
             datastore.delete(&key).await.unwrap();
         }
         drop(datastore);
-        txn.systemstore()
-            .unwrap()
+        let systemstore = txn.systemstore().unwrap();
+        systemstore
             .set(INDEX_FORMAT_KEY, &stored.to_be_bytes())
             .await
             .unwrap();
+        if stale_walk {
+            let collection_id = collection.collection_id();
+            systemstore
+                .set(
+                    format!("/reindex/owed/{collection_id}").as_bytes(),
+                    br#"{"token":7,"migration_destination":null}"#,
+                )
+                .await
+                .unwrap();
+            systemstore
+                .set(
+                    format!("/reindex/progress/{collection_id}").as_bytes(),
+                    br#"{"token":7,"stage":{"Walk":{"fence":1000000,"last":1000000}},"deferred":[]}"#,
+                )
+                .await
+                .unwrap();
+        }
+        drop(systemstore);
         txn.commit().await.unwrap();
         drop(db);
 
