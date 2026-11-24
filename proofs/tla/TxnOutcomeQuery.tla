@@ -4,7 +4,9 @@
 \* A client sends a commit, and the connection may drop before the node tells
 \* it whether the commit landed. The node keeps the transaction's outcome for a
 \* short time. The owner may ask again, and the node answers with the outcome
-\* it saw. Another client gets only "unknown". An ID written by an earlier
+\* it saw. While the transaction is still open or committing that answer is
+\* not the end of it: the owner asks again, and a later answer reports the
+\* final outcome. Another client gets only "unknown". An ID written by an earlier
 \* server start names no live record of this start, so it also gets "unknown".
 \*
 \* What must hold:
@@ -12,17 +14,22 @@
 \*   2. another client never receives a concrete outcome;
 \*   3. a query from an old start never receives a concrete outcome;
 \*   4. a lost final answer is either not asked for yet, the outcome the
-\*      owner's query saw, or safely unknown.
+\*      owner's query saw, or safely unknown;
+\*   5. an owner that stopped asking holds a final outcome or "unknown",
+\*      never a stale "open" or "committing".
 \*
 \* The model gives the owner a fair chance to ask before the record expires
 \* (ownerMayQuery). That is the timing premise behind the liveness promise:
 \* retention is finite, so an owner that never asks before expiry may get only
-\* "unknown".
+\* "unknown". The owner keeps that chance while every answer it got was
+\* "open" or "committing", so polling mid-commit does not use it up.
 \*
 \* RED configs remove one guard:
 \*   * QueryWorks=FALSE answers every owner query "unknown";
 \*   * BrokenStart=TRUE answers an old-start ID as if it were current;
-\*   * LeaksOwner=TRUE answers another client with the owner's outcome.
+\*   * LeaksOwner=TRUE answers another client with the owner's outcome;
+\*   * ConsumesOnRead=TRUE drops the record when the owner reads it, so an
+\*     owner that polled mid-commit gets "unknown" for the final outcome.
 
 EXTENDS Naturals
 
@@ -32,7 +39,8 @@ CONSTANTS
   CheckToken,    \* TRUE when the query checks the server-start token
   CheckOwner,    \* TRUE when the query checks the caller's ownership
   BrokenStart,   \* TRUE plants a query that ignores the start token
-  LeaksOwner     \* TRUE plants a foreign-state leak
+  LeaksOwner,    \* TRUE plants a foreign-state leak
+  ConsumesOnRead \* TRUE plants a query that removes the record it reads
 
 VARIABLES
   status,             \* open, committing, committed or aborted
@@ -85,8 +93,7 @@ FinishCommit ==
   /\ status = "committing"
   /\ status' \in {"committed", "aborted"}
   /\ age' = 0
-  /\ retained' = TRUE
-  /\ UNCHANGED <<lost, answer, askedBy, token, idToken,
+  /\ UNCHANGED <<lost, answer, askedBy, retained, token, idToken,
                  queryToken,
                  ownerMayQuery, querySeenStatus, queryTokenAnswered>>
   \* The node decides the commit; either final result is possible here.
@@ -110,11 +117,14 @@ OwnerQuery ==
        ELSE IF QueryWorks /\ retained
             THEN status
             ELSE "unknown"
-  /\ ownerMayQuery' = FALSE
+  /\ ownerMayQuery' = (answer' \in {"open", "committing"})
+  \* An answer that is not final yet leaves the owner asking again.
+  /\ retained' = (retained /\ ~ConsumesOnRead)
+  \* A correct read leaves the record; the planted bug removes it.
   /\ querySeenStatus' = status
   /\ queryTokenAnswered' = (answer' # "unknown")
   /\ queryToken' = token
-  /\ UNCHANGED <<status, lost, retained, token, idToken, age>>
+  /\ UNCHANGED <<status, lost, token, idToken, age>>
   \* The owner asks about its lost answer; a correct node answers the outcome
   \* it still retains, or unknown after expiry or for an old-start ID.
   \* querySeenStatus records the real status at the moment of the query, not
@@ -190,6 +200,12 @@ INV_FinalAnswer ==
 INV_Bounded ==
   age <= Idle
   \* Retention ages only to the configured idle limit.
+
+INV_OwnerSettled ==
+  (askedBy = "owner" /\ ~ownerMayQuery) =>
+    answer \in {"committed", "aborted", "unknown"}
+  \* An owner that stopped asking was left with a final outcome or unknown,
+  \* never with an "open" or "committing" that the commit has since outgrown.
 
 LIVE_QuestionAnswered ==
   [](lost /\ Final(status) /\ ~OldStart /\ ownerMayQuery

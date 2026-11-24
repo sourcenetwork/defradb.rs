@@ -774,9 +774,6 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             .owners()
             .map_err(|error| unavailable(error, handle))?
             .outcome_status(id, &self.caller(context));
-        if let Some(outcome) = outcome.as_ref() {
-            crate::txn::owner::Outcome::store_committing_if_open(outcome);
-        }
         self.owners()
             .map_err(|error| unavailable(error, handle))?
             .finish(id, &self.caller(context), move |owned| {

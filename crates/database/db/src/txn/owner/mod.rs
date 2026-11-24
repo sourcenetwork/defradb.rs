@@ -26,7 +26,7 @@ mod table;
 mod tests;
 
 use std::future::Future;
-use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
@@ -53,8 +53,8 @@ pub(crate) enum Unavailable {
     /// No such transaction on its owner: it never existed, it ended, or the
     /// caller does not own it.
     NotFound,
-    /// Every transaction ID was handed out.
-    Exhausted,
+    /// The worker that began the transaction cannot be named in its ID.
+    Unroutable,
     /// The pool could not run the request.
     Pool(workers::Error),
 }
@@ -63,7 +63,9 @@ impl std::fmt::Display for Unavailable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Unavailable::NotFound => f.write_str("transaction not found"),
-            Unavailable::Exhausted => f.write_str("no transaction IDs are left on this worker"),
+            Unavailable::Unroutable => {
+                f.write_str("the worker cannot be named in a transaction ID")
+            }
             Unavailable::Pool(error) => write!(f, "{error}"),
         }
     }
@@ -151,6 +153,8 @@ where
     records: HopscotchMap<(u64, u64), OutcomeRecord<K>, RandomState>,
     retention_nanos: AtomicU64,
     evictions: AtomicU64,
+    /// The size at which an insert scans for final results to drop.
+    next_evict: AtomicUsize,
     cap: usize,
 }
 
@@ -163,6 +167,7 @@ where
             records: HopscotchMap::with_hasher(RandomState::default()),
             retention_nanos: AtomicU64::new(retention.as_nanos() as u64),
             evictions: AtomicU64::new(0),
+            next_evict: AtomicUsize::new(cap),
             cap,
         }
     }
@@ -173,49 +178,60 @@ where
             .and_then(|record| Outcome::try_from(record.status.load(Ordering::Acquire)).ok())
     }
 
-    /// At the cap the oldest final results make room, and a live transaction's
-    /// record goes only when no final one is left: its result is still to come.
+    /// At the cap the oldest final results make room. A live transaction's
+    /// record is never evicted: there is one per open transaction, as there is
+    /// a table entry, and its result is still to come.
     fn insert(&self, id: TxnId, record: OutcomeRecord<K>) {
-        if self.records.len() >= self.cap {
+        if self.records.len() >= self.next_evict.load(Ordering::Relaxed) {
             self.evict();
         }
         self.records.insert(id.key(), record);
     }
 
-    /// Frees an eighth of the cap in one scan, so a full store pays for the
-    /// scan once per that many inserts instead of on every commit.
+    /// Drops the oldest final results, in one scan, until the store is an
+    /// eighth below the cap or holds only live records. The next scan waits
+    /// for at least that many more inserts, so a store full of live records
+    /// is not rescanned on every begin.
     fn evict(&self) {
         let batch = (self.cap / 8).max(1);
-        let mut candidates: Vec<((u8, Instant), (u64, u64))> = self
+        let mut live = 0;
+        let mut finals: Vec<(Instant, (u64, u64))> = self
             .records
             .iter()
-            .map(|(key, candidate)| {
+            .filter_map(|(key, candidate)| {
                 let status = Outcome::try_from(candidate.status.load(Ordering::Acquire))
                     .unwrap_or(Outcome::Open);
-                ((u8::from(!status.is_final()), candidate.finished), key)
+                if !status.is_final() {
+                    live += 1;
+                    return None;
+                }
+                Some((candidate.finished, key))
             })
             .collect();
-        if candidates.len() > batch {
-            candidates.select_nth_unstable_by_key(batch - 1, |(rank, _)| *rank);
-            candidates.truncate(batch);
+        let keep = self.cap.saturating_sub(batch).saturating_sub(live);
+        let excess = finals.len().saturating_sub(keep);
+        if excess > 0 && excess < finals.len() {
+            finals.select_nth_unstable_by_key(excess - 1, |(finished, _)| *finished);
         }
-        let live = candidates
-            .iter()
-            .filter(|((live, _), _)| *live == 1)
-            .count();
-        for (_, key) in &candidates {
+        finals.truncate(excess);
+        for (_, key) in &finals {
             self.records.remove(key);
+        }
+        self.next_evict
+            .store(self.cap.max(live + batch), Ordering::Relaxed);
+        if finals.is_empty() {
+            return;
         }
         let total = self
             .evictions
-            .fetch_add(candidates.len() as u64, Ordering::Relaxed)
-            + candidates.len() as u64;
+            .fetch_add(finals.len() as u64, Ordering::Relaxed)
+            + finals.len() as u64;
         tracing::warn!(
-            evicted = candidates.len(),
+            evicted = finals.len(),
             live,
             total,
             cap = self.cap,
-            "transaction outcome store is full; the oldest outcomes were dropped before their retention ended"
+            "transaction outcome store is full; the oldest final outcomes were dropped before their retention ended"
         );
     }
 
@@ -443,8 +459,8 @@ where
                 Some(tables) => tables.tables[worker].draw(),
                 None => return Err(Unavailable::NotFound),
             };
-            let id =
-                TxnId::new(sequence, worker, workers, start_token).ok_or(Unavailable::Exhausted)?;
+            let id = TxnId::new(sequence, worker, workers, start_token)
+                .ok_or(Unavailable::Unroutable)?;
             let txn = match open(id).await {
                 Ok(txn) => txn,
                 Err(error) => return Ok(Err(error)),

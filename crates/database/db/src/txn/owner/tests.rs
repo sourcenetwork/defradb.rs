@@ -300,18 +300,29 @@ fn an_outcome_is_open_then_final_only_for_its_owner() {
 }
 
 #[test]
-fn an_id_from_another_start_names_no_retained_outcome() {
+fn an_id_from_another_start_names_neither_the_live_transaction_nor_its_outcome() {
     let owners = Probes::new(pool(1));
     let dropped = Arc::new(AtomicUsize::new(0));
     let id = begin(&owners, "alice", &dropped);
+    let (start, route) = id.key();
+    let foreign = TxnId::from_key((start ^ (1u64 << 32), route));
+    assert_eq!(foreign.owner(1), id.owner(1));
+
+    assert_eq!(owners.outcome(id, &"alice"), Some(Outcome::Open));
+    assert_eq!(owners.outcome(foreign, &"alice"), None);
+    assert!(owners.outcome_status(foreign, &"alice").is_none());
+    assert_eq!(
+        block_on(owners.run(foreign, &"alice", |_| Box::pin(async {}))).unwrap(),
+        Err(Unavailable::NotFound)
+    );
+
     let status = owners.outcome_status(id, &"alice").unwrap();
     Outcome::Committed.store(&status);
     block_on(owners.finish(id, &"alice", |probe| Box::pin(async move { drop(probe) })))
         .unwrap()
         .unwrap();
-
-    let restarted = Probes::new(pool(1));
-    assert_eq!(restarted.outcome(id, &"alice"), None);
+    assert_eq!(owners.outcome(id, &"alice"), Some(Outcome::Committed));
+    assert_eq!(owners.outcome(foreign, &"alice"), None);
 }
 
 #[test]
@@ -441,4 +452,48 @@ fn a_full_outcome_store_frees_an_eighth_of_its_cap_in_one_pass() {
 
     store.insert(TxnId::new(17, 0, 1, 1).unwrap(), record(Outcome::Open, 17));
     assert_eq!(store.evictions(), 2);
+}
+
+#[test]
+fn a_full_outcome_store_never_evicts_a_live_record() {
+    let store: OutcomeStore<&'static str> = OutcomeStore::new(Duration::ZERO, 4);
+    let now = std::time::Instant::now();
+    let cells: Vec<_> = (0..6)
+        .map(|index| {
+            let cell = Arc::new(std::sync::atomic::AtomicU8::new(Outcome::Open as u8));
+            store.insert(
+                TxnId::new(index, 0, 1, 1).unwrap(),
+                OutcomeRecord {
+                    status: Arc::clone(&cell),
+                    owner: "alice",
+                    finished: now + Duration::from_millis(index),
+                },
+            );
+            cell
+        })
+        .collect();
+    assert_eq!(store.evictions(), 0);
+    assert_eq!(store.records.len(), 6);
+
+    for cell in &cells[..3] {
+        Outcome::Committed.store(cell);
+    }
+    store.insert(
+        TxnId::new(6, 0, 1, 1).unwrap(),
+        OutcomeRecord {
+            status: Arc::new(std::sync::atomic::AtomicU8::new(Outcome::Open as u8)),
+            owner: "alice",
+            finished: now + Duration::from_millis(6),
+        },
+    );
+    assert_eq!(store.evictions(), 3);
+    for index in 0..3 {
+        assert_eq!(store.status(TxnId::new(index, 0, 1, 1).unwrap()), None);
+    }
+    for index in 3..7 {
+        assert_eq!(
+            store.status(TxnId::new(index, 0, 1, 1).unwrap()),
+            Some(Outcome::Open)
+        );
+    }
 }

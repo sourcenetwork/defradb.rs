@@ -2338,11 +2338,13 @@ pub const PROPERTIES: &[Property] = &[
         // count, the owner is always a real worker, and two different
         // (sequence, worker) pairs never share an ID. The start token packs
         // above the route and unpacks exactly, and the packed ID stays below
-        // 2^53 so a JSON number reader keeps it.
+        // 2^53 so a JSON number reader keeps it. A worker past its routes
+        // rolls to the next nonzero token, and its route still fits and still
+        // names it.
         family: "Explicit transactions in the request context",
-        name: "TxnId.owner_encode / sequence_encode / owner_lt / encode_injective / decode_encode / route_pack / token_pack / pack_json_safe",
+        name: "TxnId.owner_encode / sequence_encode / owner_lt / encode_injective / decode_encode / route_pack / token_pack / pack_json_safe / rolled_route_lt / rolled_owner / rolled_injective / advance_pos / advance_lt",
         axis: Lean,
-        anchor: "crates/database/db/src/txn/owner/id.rs TxnId::new, TxnId::owner, TxnId::start_token, TxnId::parse; crates/database/db/src/txn/owner/tests.rs",
+        anchor: "crates/database/db/src/txn/owner/id.rs TxnId::new, TxnId::advance, TxnId::owner, TxnId::start_token, TxnId::parse; crates/database/db/src/txn/owner/tests.rs",
         model_ref: "TxnId (lake build)",
         tiers: &[Boundary],
         bound_by: "",
@@ -2474,10 +2476,10 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Transaction & merge-queue concurrency",
-        name: "INV_Agreement / INV_Foreign / INV_StartToken / INV_FinalAnswer / LIVE_QuestionAnswered: a lost commit answer is queryable only by its owner, under its start token, until the idle age",
+        name: "INV_Agreement / INV_Foreign / INV_StartToken / INV_FinalAnswer / INV_OwnerSettled / LIVE_QuestionAnswered: a lost commit answer is queryable only by its owner, under its start token, on every poll, until the idle age",
         axis: Tla,
         anchor: "crates/database/db/src/txn/owner/mod.rs Owners::outcome, Owners::outcome_status, OutcomeStore; crates/database/db/src/txn/registry/lifecycle.rs DbTransactionRegistry::outcome_as",
-        model_ref: "MC_TxnOutcomeQuery_{Green,Red_Unknown,Red_Start,Red_Owner}.cfg",
+        model_ref: "MC_TxnOutcomeQuery_{Green,Red_Unknown,Red_Start,Red_Owner,Red_Consume}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },

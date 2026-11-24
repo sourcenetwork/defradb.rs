@@ -19,9 +19,9 @@ request always lands on the worker that owns its transaction.
 Rust owner: crates/database/db/src/txn/owner/id.rs, `TxnId::new` (encode) and
 `TxnId::owner` (decode). The tests that run the same cases against the real
 code are in crates/database/db/src/txn/owner/id.rs and crates/database/db/src/txn/owner/tests.rs.
-Rust checks overflow (`checked_mul`, `checked_add`) and refuses an ID that would
-pass `u64::MAX`; this file works on unbounded naturals, so it proves the
-arithmetic, and the overflow refusal is the code's own guard.
+This file works on unbounded naturals; the last section proves that the route
+Rust builds stays below 2^32, because a worker that runs out of routes moves to
+the next start token instead.
 -/
 
 namespace TxnId
@@ -124,6 +124,85 @@ theorem pack_json_safe (token route : Nat) (ht : token < tokenSpan) (hr : route 
     pack token route < jsonSafe := by
   -- The largest token times 2^32, plus a route below 2^32, is still below 2^53.
   unfold pack routeSpan tokenSpan jsonSafe at *
+  omega
+
+/-!
+## When a worker runs out of routes
+
+A worker's routes stop at 2^32. Instead of refusing the next transaction, the
+worker keeps counting its sequence and moves to the next start token. The
+sequences that fit under one token are `perToken = 2^32 / workers`; a sequence
+uses route `(sequence % perToken) * workers + worker` under the token
+`sequence / perToken` steps after the first. Tokens cycle through 1 up to
+2^21 - 1, never the legacy 0. This section proves the route still fits in 32
+bits and still names its worker, that two sequences under the same token never
+share a route, and that the token stays a nonzero number below 2^21.
+
+Rust owner: crates/database/db/src/txn/owner/id.rs, `TxnId::new` and
+`TxnId::advance`.
+-/
+
+-- How many sequences of one worker fit under one start token.
+def perToken (workers : Nat) : Nat :=
+  routeSpan / workers
+
+-- The route a worker's `sequence`th transaction uses under its token.
+def rolledRoute (seq worker workers : Nat) : Nat :=
+  encode (seq % perToken workers) worker workers
+
+-- The token `steps` tokens after `token`, cycling through 1 .. 2^21 - 1.
+def advance (token steps : Nat) : Nat :=
+  ((token - 1) % (tokenSpan - 1) + steps % (tokenSpan - 1)) % (tokenSpan - 1) + 1
+
+-- Promise: a rolled route stays below 2^32, so it still packs under a token.
+theorem rolled_route_lt (seq worker workers : Nat) (h : worker < workers)
+    (hp : 0 < perToken workers) : rolledRoute seq worker workers < routeSpan := by
+  -- The sequence part is at most perToken - 1, so the route is below
+  -- perToken * workers, which is at most 2^32.
+  unfold rolledRoute encode
+  have hm : seq % perToken workers < perToken workers := Nat.mod_lt _ hp
+  have hle : seq % perToken workers + 1 ≤ perToken workers := hm
+  have hspan : perToken workers * workers ≤ routeSpan := by
+    unfold perToken
+    exact Nat.div_mul_le_self routeSpan workers
+  have step : seq % perToken workers * workers + worker <
+      (seq % perToken workers + 1) * workers := by
+    rw [Nat.succ_mul]
+    omega
+  have grow : (seq % perToken workers + 1) * workers ≤ perToken workers * workers :=
+    Nat.mul_le_mul_right workers hle
+  omega
+
+-- Promise: a rolled route still names the worker that drew it.
+theorem rolled_owner (seq worker workers : Nat) (h : worker < workers) :
+    owner (rolledRoute seq worker workers) workers = worker := by
+  -- The rolled route is an ordinary encoded ID, so the first promise applies.
+  unfold rolledRoute
+  exact owner_encode _ worker workers h
+
+-- Promise: two sequences of one worker under the same token never share a route.
+theorem rolled_injective (s₁ s₂ worker workers : Nat) (h : worker < workers)
+    (sameToken : s₁ / perToken workers = s₂ / perToken workers)
+    (same : rolledRoute s₁ worker workers = rolledRoute s₂ worker workers) : s₁ = s₂ := by
+  -- Equal routes give equal remainders; with equal quotients the division
+  -- identity rebuilds the same sequence on both sides.
+  unfold rolledRoute at same
+  have rem := (encode_injective _ worker _ worker workers h h same).1
+  rw [← Nat.div_add_mod s₁ (perToken workers), ← Nat.div_add_mod s₂ (perToken workers),
+    sameToken, rem]
+
+-- Promise: a rolled token is never the legacy token 0.
+theorem advance_pos (token steps : Nat) : 0 < advance token steps := by
+  -- It is some remainder plus one.
+  unfold advance
+  omega
+
+-- Promise: a rolled token stays below 2^21, so the packed ID stays JSON-safe.
+theorem advance_lt (token steps : Nat) : advance token steps < tokenSpan := by
+  -- A remainder by 2^21 - 1 is at most 2^21 - 2; adding one stays below 2^21.
+  unfold advance
+  have pos : 0 < tokenSpan - 1 := by unfold tokenSpan; omega
+  have := Nat.mod_lt (((token - 1) % (tokenSpan - 1) + steps % (tokenSpan - 1))) pos
   omega
 
 end TxnId

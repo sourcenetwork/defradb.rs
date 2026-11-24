@@ -42,7 +42,7 @@ impl TxnId {
     }
 }
 
-/// The text was not `<start>-<route>`.
+/// The text was not a decimal `u64`, the packed start token and route.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 #[error("invalid transaction id")]
 pub struct TxnIdParseError;
