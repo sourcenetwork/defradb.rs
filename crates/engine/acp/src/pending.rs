@@ -52,6 +52,8 @@ pub struct PendingRegistration {
     pub policy_id: String,
     pub resource_name: String,
     pub doc_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<crate::RegistrationParent>,
     /// What lets the node send the registration as `creator`: its own key
     /// for that DID, or the delegation the create carried, as presented.
     /// `None` when the create carried nothing the provider takes: the
@@ -94,6 +96,7 @@ impl PendingRegistration {
             policy_id: policy_id.to_string(),
             resource_name: resource_name.to_string(),
             doc_id: doc_id.to_string(),
+            parent: None,
             authority: None,
             request_bound: false,
             txn: None,
@@ -102,6 +105,48 @@ impl PendingRegistration {
             attempts: 0,
             last_error: None,
             replica_of: None,
+        }
+    }
+
+    pub fn command(&self) -> crate::ProviderCommand<'_> {
+        match &self.parent {
+            Some(parent) => crate::ProviderCommand::RegisterUnderParent {
+                policy_id: &self.policy_id,
+                resource: &self.resource_name,
+                object: &self.doc_id,
+                parent,
+            },
+            None => crate::ProviderCommand::RegisterObject {
+                policy_id: &self.policy_id,
+                resource: &self.resource_name,
+                object: &self.doc_id,
+            },
+        }
+    }
+
+    pub(crate) async fn submit(&self, provider: &dyn crate::DocumentACP) -> Result<()> {
+        match &self.parent {
+            Some(parent) => {
+                provider
+                    .register_under_parent(
+                        &self.creator,
+                        &self.policy_id,
+                        &self.resource_name,
+                        &self.doc_id,
+                        parent,
+                    )
+                    .await
+            }
+            None => {
+                provider
+                    .register_doc_object(
+                        &self.creator,
+                        &self.policy_id,
+                        &self.resource_name,
+                        &self.doc_id,
+                    )
+                    .await
+            }
         }
     }
 
@@ -292,6 +337,21 @@ mod tests {
         );
         assert_eq!(pending.key(), pending_key("policy", "users", "bae-1"));
         assert!(pending.key().starts_with(PENDING_PREFIX));
+    }
+
+    #[test]
+    fn redrive_rebuilds_the_same_parent_bound_command() {
+        let mut owed =
+            PendingRegistration::new(Did::new("did:key:creator").unwrap(), "policy", "jobs", "j");
+        owed.parent = Some(crate::RegistrationParent {
+            resource: "nodes".into(),
+            object_id: "n".into(),
+        });
+        let restored = PendingRegistration::decode(&owed.encode().unwrap()).unwrap();
+        assert!(
+            matches!(restored.command(), crate::ProviderCommand::RegisterUnderParent { resource: "jobs", object: "j", parent, .. } if parent.resource == "nodes" && parent.object_id == "n")
+        );
+        assert_eq!(owed.command(), restored.command());
     }
 
     #[test]

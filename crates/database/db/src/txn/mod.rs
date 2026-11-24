@@ -83,6 +83,7 @@ struct OwedAcpRegistration {
     acp: Arc<dyn acp::DocumentACP>,
     creator: identity::Did,
     request_bearer_token: Option<String>,
+    shared_transport_sentinel: Option<defra_core::SharedTransportSentinel>,
     schemas: Vec<CollectionVersion>,
 }
 
@@ -90,6 +91,7 @@ impl OwedAcpRegistration {
     async fn run(self) -> Result<()> {
         let creator = self.creator;
         let schemas = self.schemas;
+        let restoration = self.shared_transport_sentinel;
         acp::with_request_bearer(
             &self.acp,
             Some(creator.to_string()),
@@ -100,6 +102,23 @@ impl OwedAcpRegistration {
                 // one list. One that two schemas name is registered once.
                 let mut owed: Vec<acp::AcpObject<'_>> = Vec::new();
                 for schema in &schemas {
+                    if let Some(query) = &restoration {
+                        let matching = schemas.len() == 1
+                            && schema.is_branchable
+                            && schema.collection_id == query.child
+                            && creator.as_str() == query.device
+                            && schema.policy.as_ref().is_some_and(|policy| {
+                                policy.id == query.policy
+                                    && policy.resource_name == query.resource
+                                    && policy.parent_field.is_some()
+                            });
+                        if !matching || !acp.verify_transport_sentinel(query).await? {
+                            return Err(acp::Error::PermissionDenied(
+                                "shared transport sentinel evidence does not match".into(),
+                            ));
+                        }
+                        continue;
+                    }
                     if let Some(object) = crate::collection::acp::collection_to_register(
                         acp.as_ref(),
                         Some(&creator),
@@ -1031,6 +1050,7 @@ impl<S: Store> DbTxn<S> {
             acp,
             creator,
             request_bearer_token,
+            shared_transport_sentinel: context.shared_transport_sentinel().cloned(),
             schemas,
         });
     }

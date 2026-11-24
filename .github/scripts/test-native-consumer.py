@@ -450,7 +450,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(runs['compile-native'][3]['VERAD_BINARY'], '/staged/verad')
         tests = [c for c in runner.calls if c[0] == 'test']
         self.assertEqual(len(tests), 26)
-        self.assertEqual(len(tests[0][4]), 103)
+        self.assertEqual(len(tests[0][4]), 104)
         self.assertEqual({c[1] for c in tests[1:]}, {phase for phase, _ in driver.LIVE_CASES})
         for _, _, _, selectors, expected in tests[1:]:
             self.assertEqual(selectors, [expected[0], '--exact'])

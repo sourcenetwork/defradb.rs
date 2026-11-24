@@ -927,6 +927,12 @@ RUNS=(
   "MC_AdministrativeRelationship_Red_Revocation.cfg AdministrativeRelationship.tla RED" # INV_Revocation
   "MC_AdministrativeRelationship_Red_Rollback.cfg AdministrativeRelationship.tla RED" # INV_Rollback
   "MC_AdministrativeRelationship_Red_Route.cfg AdministrativeRelationship.tla RED" # INV_EmbedderRoute
+  "MC_ParentRegistration_Green.cfg ParentRegistration.tla GREEN" # a document is registered and linked only under a parent its actor is permitted on, and keeps one
+  "MC_ParentRegistration_Red_UngatedCreate.cfg ParentRegistration.tla RED" # AuthorizedAtWrite
+  "MC_ParentRegistration_Red_UngatedReplica.cfg ParentRegistration.tla RED" # AuthorizedAtWrite
+  "MC_ParentRegistration_Red_UngatedLink.cfg ParentRegistration.tla RED" # AuthorizedAtWrite
+  "MC_ParentRegistration_Red_LastUnlink.cfg ParentRegistration.tla RED" # RegistrationHasParent
+  "MC_ParentRegistration_Red_MovedField.cfg ParentRegistration.tla RED" # FieldNamesAdmittedParent
   "MC_GenesisReadAccess_Green.cfg GenesisReadAccess.tla GREEN" # a signed genesis grants its opted-in reader once, at the first registration
   "MC_GenesisReadAccess_Red_Replay.cfg GenesisReadAccess.tla RED" # INV_RevocationStands
   "MC_GenesisReadAccess_Red_Address.cfg GenesisReadAccess.tla RED" # INV_OptedIn
