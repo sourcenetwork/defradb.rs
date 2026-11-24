@@ -1,6 +1,8 @@
-//! A filtered similarity query on articles widens its chunk search until the
-//! page fills (`defra.chunk.rank.widen`).
+//! A filtered similarity query on articles scores every matching article from
+//! its chunks, as a single-vector field does, and says why
+//! (`defra.chunk.rank.filtered`).
 
+use integration_test::m;
 use integration_test::test_case::TestCase;
 use serde_json::json;
 
@@ -8,44 +10,30 @@ use super::embed_support::{add_embedded_collection, model_embedded};
 use integration_test::actions::Request;
 use integration_test::scenario::Text;
 
-use super::rank_support::{
-    add_article, add_article_about, body_about, explained, ranked, score, ARTICLE_FIELDS,
-    CHUNK_FIELDS, CHUNK_VECTOR_INDEX,
-};
+use super::rank_support::{add_article, add_article_about, body_about, ranked, score};
 
 const KEPT: &str = r#", limit: 1, filter: {title: {_eq: "kept"}}"#;
 
 #[test]
-#[mantra_macros::req_test("defra.chunk.rank.widen")]
-fn a_filtered_query_widens_past_the_chunks_of_filtered_out_articles() {
+#[mantra_macros::req_test("defra.chunk.rank.filtered")]
+fn a_filtered_query_scores_the_matching_articles_without_the_index() {
     let mut actions = vec![model_embedded(&[]), add_embedded_collection(None)];
     for draft in ["draft 1", "draft 2", "draft 3"] {
         actions.push(add_article_about(draft, &["rivers"], None));
     }
     actions.push(add_article_about("kept", &["rivers and engines"], None));
-    actions.push(
-        ranked(
-            KEPT,
-            json!([{ "title": "kept", "sim": score([1.0, 1.0, 0.0]) }]),
-        )
-        .into(),
+    let mut kept = ranked(
+        KEPT,
+        json!([{ "title": "kept", "sim": score([1.0, 1.0, 0.0]) }]),
     );
-    // One chunk, then two, then four: the fourth nearest is the kept article's.
-    // Four chunks and their four articles; the kept article's one listed chunk
-    // was among them, so nothing is read again.
-    actions.push(
-        explained(
-            KEPT,
-            json!({
-                "iterations": 2,
-                "docFetches": 8,
-                "fieldFetches": 4 * CHUNK_FIELDS + 4 * ARTICLE_FIELDS,
-                "indexFetches": 3,
-                "vectorIndex": CHUNK_VECTOR_INDEX,
-            }),
-        )
-        .into(),
-    );
+    kept.expected_extensions = json!(m::object(json!({
+        "warnings": [m::object(json!({
+            "code": "VECTOR_INDEX_UNUSED",
+            "detail": { "field": "body_v", "reason": "filter" },
+            "message": m::nonempty_string(),
+        }))],
+    })));
+    actions.push(kept.into());
     TestCase::from_actions(actions).execute();
 }
 

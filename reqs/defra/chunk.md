@@ -429,13 +429,12 @@ An `upsert_Article` that finds no article creates one, asks the model for each o
 
 With an article whose second paragraph is about rivers, one about rivers and engines, and one about music, `Article(order: {_alias: {sim: DESC}}, limit: 2) { title sim: SIMILARITY(body_v: {vector: [1, 0, 0]}) }` returns the first with similarity 1 and the second with similarity 0.7071. Under `@explain(type: execute)`, the article scan names the chunk collection's vector index in `vectorIndex` and reads it once.
 
-# `defra.chunk.rank.widen`: A filtered query widens its chunk search
+# `defra.chunk.rank.filtered`: A filtered query scores the matching articles without the index
 
 - **Parents:** ["defra.chunk.rank"]
-- **Scenarios:** ["chunk::rank_filtered::a_filtered_query_widens_past_the_chunks_of_filtered_out_articles"]
+- **Scenarios:** ["chunk::rank_filtered::a_filtered_query_scores_the_matching_articles_without_the_index"]
 
-With three draft articles about rivers and one titled `kept` about rivers and engines, the same query with `limit: 1, filter: {title: {_eq: "kept"}}` returns `kept` with similarity 0.7071. The chunk index is read three times, for one, two and then four chunks.
-
+With three draft articles about rivers and one titled `kept` about rivers and engines, the same query with `limit: 1, filter: {title: {_eq: "kept"}}` returns `kept` with similarity 0.7071, scored from its chunks. It warns `VECTOR_INDEX_UNUSED` with reason `filter`, as a single-vector field does: a scalar filter can change which articles qualify before the similarity order.
 # `defra.chunk.rank.unrouted`: An unrouted query scores every article from its chunks
 
 - **Parents:** ["defra.chunk.rank"]
