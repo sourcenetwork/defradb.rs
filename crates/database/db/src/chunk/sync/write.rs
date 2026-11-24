@@ -108,12 +108,30 @@ where
                 target.collection.name()
             ))
         })?;
+        let config = self.db.options().embedding_config();
+        // A chunk is never written again, so one stored without its vector
+        // would stay without one for good.
+        for embedding in embeddings {
+            if let Err(missing) =
+                crate::search::embedding::resolve_embedding_config(embedding, &config)
+            {
+                let missing = match missing {
+                    crate::search::embedding::MissingEmbeddingConfig::Url => "URL",
+                    crate::search::embedding::MissingEmbeddingConfig::Model => "model",
+                };
+                return Err(QueryError::execution(format!(
+                    "a chunk embedding needs a {missing}: set it on the @embedding or in the node's embedding config. Field: {}.{}",
+                    target.collection.name(),
+                    embedding.field_name
+                )));
+            }
+        }
         match crate::search::embedding::set_embedding_from_inputs(
             embeddings,
             doc,
             true,
             &RapidHashSet::default(),
-            &self.db.options().embedding_config(),
+            &config,
             inputs,
         ) {
             Ok(_) => Ok(None),

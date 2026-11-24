@@ -24,26 +24,29 @@
 \*   - a write asks the model for a chunk that already existed when its
 \*     attempt read the store, so an unchanged paragraph is never embedded
 \*     again (INV_UnchangedChunkNoCall);
+\*   - a node with no model or URL for the embedding stores a chunk with no
+\*     vector; it refuses the write instead (INV_ListedChunkHasVector);
 \*   - a request needs more than one embedding wave (INV_OneWave). Other
 \*     inputs a write needs (keys, signatures) may take waves of their own;
 \*     the model leaves them out.
 \*
 \* Code it models:
-\*   crates/db/src/chunk/sync/mod.rs ChunkWrites::create_missing (skip existing
-\*     chunks, look up every missing vector, end the attempt on a miss)
-\*   crates/db/src/chunk/sync/write.rs ChunkWrites::embed (the memo lookup)
-\*   crates/db/src/search/embedding.rs set_embedding_from_inputs,
+\*   crates/database/db/src/chunk/sync/mod.rs ChunkWrites::create_missing (skip
+\*     existing chunks, look up every missing vector, end the attempt on a miss)
+\*   crates/database/db/src/chunk/sync/write.rs ChunkWrites::embed (the memo
+\*     lookup, and the refusal when the model or URL is missing)
+\*   crates/database/db/src/search/embedding.rs set_embedding_from_inputs,
 \*     prepared_embedding_request (the memo key is the exact request)
-\*   crates/query/src/prepared.rs PreparedInputMemo::get_or_want, answer_wave,
-\*     FirstMiss (a write of several documents carries on past a miss, so the
-\*     misses of all its documents go into one wave)
-\*   crates/query/src/mutator.rs DocMutator::create_many_as,
-\*     crates/db/src/write/autocommit/one_op.rs CreateWork::run and
-\*     crates/query/src/plan/mutation/update.rs UpdateNode::next (those loops)
-\*   crates/db/src/write/autocommit/one_op.rs AutoCommitMutator::in_batch,
-\*     crates/query/src/runner/turn.rs QueryRunner::drive,
-\*     crates/query/src/runner/executor.rs QueryRunner::execute and
-\*     crates/query/src/runner/mutation.rs QueryRunner::execute_mutation_with_identity_and_vars
+\*   crates/engine/query/src/prepared.rs PreparedInputMemo::get_or_want,
+\*     answer_wave, FirstMiss (a write of several documents carries on past a
+\*     miss, so the misses of all its documents go into one wave)
+\*   crates/engine/query/src/mutator.rs DocMutator::create_many_as,
+\*     crates/database/db/src/write/autocommit/one_op.rs CreateWork::run and
+\*     crates/engine/query/src/plan/mutation/update.rs UpdateNode::next (those loops)
+\*   crates/database/db/src/write/autocommit/one_op.rs AutoCommitMutator::in_batch,
+\*     crates/engine/query/src/runner/turn.rs QueryRunner::drive,
+\*     crates/engine/query/src/runner/executor.rs QueryRunner::execute and
+\*     crates/engine/query/src/runner/mutation.rs QueryRunner::execute_mutation_with_identity_and_vars
 \*     (the wave between attempts)
 \* Commit validation is regolith's; the model takes it as given.
 EXTENDS Naturals, Sequences, FiniteSets, TLC
@@ -53,12 +56,15 @@ CONSTANTS
   WantOnlyMissing,  \* TRUE: only chunks that don't exist yet are embedded; FALSE: every chunk
   ResolveOutside,   \* TRUE: a miss ends the attempt; FALSE: the model is asked on the spot
   WantEveryMiss,    \* TRUE: the attempt goes on past a miss and wants them all; FALSE: it stops at the first
-  CommitNeedsVectors \* TRUE: an attempt commits only with every vector; FALSE: it commits with misses
+  CommitNeedsVectors, \* TRUE: an attempt commits only with every vector; FALSE: it commits with misses
+  Unconfigured,     \* TRUE: the node has no model or URL for the embedding
+  RefuseUnconfigured \* TRUE: such a node refuses a write that creates chunks; FALSE: it skips the vector
 
 \* Each switch is yes or no.
 ASSUME KeyByText \in BOOLEAN /\ WantOnlyMissing \in BOOLEAN
 ASSUME ResolveOutside \in BOOLEAN /\ WantEveryMiss \in BOOLEAN
 ASSUME CommitNeedsVectors \in BOOLEAN
+ASSUME Unconfigured \in BOOLEAN /\ RefuseUnconfigured \in BOOLEAN
 
 \* Two requests and two articles.
 Requests == {"r1", "r2"}
@@ -159,8 +165,12 @@ Answer(r, n) == IF Answered(r, n) THEN (CHOOSE m \in memo[r] : m[1] = Key(n))[2]
 \* bug embeds all chunks.
 ToCreate(r) == {n \in Needed(r) : ~WantOnlyMissing \/ <<n[1], n[2]>> \notin snap[r]}
 
-\* The chunks of ToCreate(r) whose vector the memo lacks.
-Misses(r) == {n \in ToCreate(r) : ~Answered(r, n)}
+\* The chunks of ToCreate(r) whose vector the memo lacks. A node with no model
+\* or URL asks for nothing, so it misses nothing.
+Misses(r) == IF Unconfigured THEN {} ELSE {n \in ToCreate(r) : ~Answered(r, n)}
+
+\* The attempt must refuse: it creates chunks, and nothing can give them vectors.
+MustRefuse(r) == Unconfigured /\ RefuseUnconfigured /\ ToCreate(r) # {}
 
 \* Request r opens an attempt and reads the store.
 Begin(r) ==
@@ -214,6 +224,8 @@ Commit(r) ==
   \* The attempt is open and the memo answers every chunk it creates, unless the bug lets it commit anyway,
   /\ pc[r] = "txn"
   /\ CommitNeedsVectors => Misses(r) = {}
+  \* and it is not one that must refuse,
+  /\ ~MustRefuse(r)
   \* and no other commit changed what it read.
   /\ chunks = snap[r] /\ text = snapText[r]
   \* The request's texts are written,
@@ -228,6 +240,16 @@ Commit(r) ==
   \* The request is finished.
   /\ pc' = [pc EXCEPT ![r] = "done"]
   /\ UNCHANGED <<snap, snapText, memo, wanted, waves, callInTxn, reEmbedded>>
+
+\* With no model or URL, an attempt that creates chunks fails the write and
+\* writes nothing.
+Refuse(r) ==
+  \* The attempt is open and must refuse.
+  /\ pc[r] = "txn"
+  /\ MustRefuse(r)
+  \* The request ends with its error; nothing is stored.
+  /\ pc' = [pc EXCEPT ![r] = "done"]
+  /\ UNCHANGED <<text, chunks, vecOf, snap, snapText, memo, wanted, waves, callInTxn, reEmbedded>>
 
 \* Another request committed since the attempt read the store: regolith
 \* aborts it, and it runs again.
@@ -269,6 +291,8 @@ Next ==
     \* commit it or lose it to another commit,
     \/ Commit(r)
     \/ Abort(r)
+    \* refuse it for lack of a model,
+    \/ Refuse(r)
     \* or ask the model between attempts.
     \/ Wave(r)
 

@@ -425,6 +425,8 @@ RUNS=(
   "MC_ChunkEmbedding_Red_MemoKeyedByPosition.cfg ChunkEmbedding.tla RED" # memo keyed by position hands out another text's vector (INV_VectorIsItsText)
   "MC_ChunkEmbedding_Red_FirstMissOnly.cfg ChunkEmbedding.tla RED" # one miss per attempt needs a wave per chunk (INV_OneWave)
   "MC_ChunkEmbedding_Red_CommitWithMisses.cfg ChunkEmbedding.tla RED" # commit with a vector missing stores a chunk without one (INV_ListedChunkHasVector)
+  "MC_ChunkEmbedding_Green_Unconfigured.cfg ChunkEmbedding.tla GREEN" # no model or URL: a write that creates chunks is refused
+  "MC_ChunkEmbedding_Red_SkipUnconfigured.cfg ChunkEmbedding.tla RED" # no model or URL skips the vector and stores a chunk without one (INV_ListedChunkHasVector)
   "MC_ChunkMarkerHandoff_Green.cfg ChunkMarkerHandoff.tla GREEN" # a committed head keeps its marker registration past the request deadline
   "MC_ChunkMarkerHandoff_Red_RequestOwned.cfg ChunkMarkerHandoff.tla RED" # the deadline drops the chunks not registered yet (INV_CommittedHeadOwned)
   "MC_StrictAccessRead_Green.cfg StrictAccessRead.tla GREEN"
