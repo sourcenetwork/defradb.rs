@@ -27,7 +27,7 @@ fn a_deleted_document_is_archived_on_the_deployment_and_only_its_owner_may_delet
         let reader = identity::Did::new(STRANGER).unwrap();
         let writer = identity::Did::new(WRITER).unwrap();
         let policy = vera
-            .add_policy(owner.as_str(), POLICY)
+            .add_policy(owner.as_str(), POLICY, None)
             .await
             .expect("policy");
         node.add_collection(&users(&policy))
