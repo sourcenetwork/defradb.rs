@@ -50,7 +50,29 @@ pub(crate) fn held_again(effect: &Effect, replayed: Replayed) -> bool {
 
 /// Adds the replay of `effect`, held again when `executed`
 /// ([`held_again`]), to `losses`.
+///
+/// A batch keeps its commands together: one refusal taints every object it
+/// carried, so a later refused archive cannot overtake an earlier lost one.
 pub(crate) fn lost_effects(
+    losses: &mut Losses,
+    tainted: &mut RapidHashSet<ObjectKey>,
+    effect: Effect,
+    executed: bool,
+) {
+    match effect {
+        Effect::Batched(effects, other) => {
+            if !executed {
+                losses.other += other;
+            }
+            for effect in effects {
+                lost_effects(losses, tainted, Effect::Owed(effect), executed);
+            }
+        }
+        effect => single_effect(losses, tainted, effect, executed),
+    }
+}
+
+fn single_effect(
     losses: &mut Losses,
     tainted: &mut RapidHashSet<ObjectKey>,
     effect: Effect,
@@ -66,42 +88,15 @@ pub(crate) fn lost_effects(
                     .applied
                     .push(Applied::PolicyCreation { policy_id, creator });
             }
-            Effect::Archive {
-                policy_id,
-                resource,
-                object,
-                actor,
-            } => losses.applied.push(Applied::Archive {
-                policy_id,
-                resource,
-                object,
-                actor,
-            }),
-            Effect::Other => {}
+            Effect::Other | Effect::Batched(_, _) => {}
         }
         return;
     }
-    if let Some(key) = object.clone() {
+    if let Some(key) = object {
         tainted.insert(key);
     }
     match effect {
         Effect::Owed(change) => losses.owed.push(change),
-        Effect::Archive {
-            policy_id,
-            resource,
-            object,
-            actor,
-        } => {
-            losses.unrestorable.push(Unrestorable::Archive {
-                policy_id,
-                resource,
-                object,
-                actor,
-                reason: "the Vera deployment switched its active device and voided the archive; \
-                         it was refused when sent again"
-                    .into(),
-            });
-        }
         Effect::PolicyCreation { policy_id, creator } => {
             losses.unrestorable.push(Unrestorable::PolicyCreation {
                 policy_id,
@@ -111,7 +106,7 @@ pub(crate) fn lost_effects(
                     .into(),
             });
         }
-        Effect::Other => losses.other += 1,
+        Effect::Other | Effect::Batched(_, _) => losses.other += 1,
     }
 }
 

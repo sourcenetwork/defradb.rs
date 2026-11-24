@@ -64,6 +64,7 @@ pub(super) async fn provider(
         follow,
         bus: None,
         sink: regolith::sync::OnceCell::new(),
+        recovery: regolith::sync::OnceCell::new(),
         shared: std::sync::atomic::AtomicBool::new(false),
         holds_key: Box::new(|_| false),
     });

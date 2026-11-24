@@ -37,6 +37,7 @@ use tree::Tree;
 /// not generated, but stay in the module tree.
 const HAND_PORTED: &[&str] = &[
     "tests/integration/collection_version/similarity_test.go",
+    // The peer-leave wait is maintained until the generator can emit it.
     "tests/integration/net/simple/peer/subscribe/document/with_add_remove_test.go",
 ];
 

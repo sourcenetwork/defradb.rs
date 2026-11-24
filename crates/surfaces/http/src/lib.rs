@@ -130,6 +130,8 @@ mod request_path;
 pub mod request_scope;
 #[cfg(feature = "server")]
 pub mod route_permissions;
+#[cfg(feature = "server")]
+mod route_table;
 pub mod router;
 #[cfg(feature = "server")]
 pub mod server;

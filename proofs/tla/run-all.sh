@@ -11,6 +11,21 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 # event to the settled rest (depth = events + 1), and DEADLOCK:<l> stops with
 # event l next (past the end when l = events + 1).
 RUNS=(
+  "MC_OfflineReconnect_Green.cfg OfflineReconnect.tla GREEN"
+  "MC_OfflineReconnect_Red_StalePark.cfg OfflineReconnect.tla RED"
+  "MC_OfflineReconnect_Red_StaleConnect.cfg OfflineReconnect.tla RED"
+  "MC_OfflineReconnect_Red_Failure.cfg OfflineReconnect.tla RED"
+  "MC_OfflineReconnect_Red_Expired.cfg OfflineReconnect.tla RED"
+  "MC_HeaderRetry_Green.cfg HeaderRetry.tla GREEN"
+  "MC_HeaderRetry_Red_Drop.cfg HeaderRetry.tla RED"
+  "MC_OrderedIndexPage_Green.cfg OrderedIndexPage.tla GREEN"
+  "MC_OrderedIndexPage_Red_DoubleOffset.cfg OrderedIndexPage.tla RED"
+  "MC_SyncedMigrationTransform_Green.cfg SyncedMigrationTransform.tla GREEN"
+  "MC_SyncedMigrationTransform_Red_Drop.cfg SyncedMigrationTransform.tla RED"
+  "MC_SyncedMigrationTransform_Red_Head.cfg SyncedMigrationTransform.tla RED"
+  "MC_AssignmentPosition_Green.cfg AssignmentPosition.tla GREEN"
+  "MC_AssignmentPosition_Red_Stale.cfg AssignmentPosition.tla RED"
+  "MC_AssignmentPosition_Red_Hash.cfg AssignmentPosition.tla RED"
   "MC_ExplainIndexName_Green.cfg ExplainIndexName.tla GREEN"
   "MC_ExplainIndexName_Green_Fallback.cfg ExplainIndexName.tla GREEN"
   "MC_ExplainIndexName_Red_Lookup.cfg ExplainIndexName.tla RED" # direct FK lookup must name its index
@@ -533,8 +548,25 @@ RUNS=(
   "MC_StatementAtomicity_Red_NoSideEffectRollback.cfg StatementAtomicity.tla RED" # failed statement leaves callback side effects
   "MC_StatementAtomicity_Red_NextOperationSkipsCleanup.cfg StatementAtomicity.tla RED" # next statement crosses pending cancellation cleanup
   "MC_StatementAtomicity_Red_CommitSkipsCleanup.cfg StatementAtomicity.tla RED" # transaction commits before cancellation cleanup
-  "MC_EventOrder_Green.cfg EventOrder.tla GREEN"
-  "MC_EventOrder_Red_Arrival.cfg EventOrder.tla RED"
+  "MC_EventOrder_Green.cfg EventOrder.tla GREEN" # #3268: events go out in commit order, after hooks, only for commits, none lost
+  "MC_EventOrder_Red_Arrival.cfg EventOrder.tla RED" # dispatch ignores the floors (Ordered)
+  "MC_EventOrder_Red_ReceiptRegress.cfg EventOrder.tla RED" # a later commit gets a lower receipt (INV_CommitOrder)
+  "MC_EventOrder_Red_NoFloorClamp.cfg EventOrder.tla RED" # an empty commit goes out at its old snapshot (Ordered)
+  "MC_EventOrder_Red_DispatchBeforeAttach.cfg EventOrder.tla RED" # completes before the hand-over, events lost (INV_CommittedEventsKept)
+  "MC_EventOrder_Red_DispatchDuringHooks.cfg EventOrder.tla RED" # events go out while hooks run (INV_HooksBeforeEvents)
+  "MC_EventOrder_Red_AbortPublishes.cfg EventOrder.tla RED" # an aborted commit's events go out (INV_OnlyCommitted)
+  "MC_EventOrder_Red_NotMinSeq.cfg EventOrder.tla RED" # dispatch sends any ready commit (INV_CommitOrder)
+  "MC_ChangeDelivery_Green_Closing.cfg ChangeDelivery.tla GREEN" # #3268: subscribe, then read from the cursor on every wake: once, in order, eventually (SSE)
+  "MC_ChangeDelivery_Green_Coalescing.cfg ChangeDelivery.tla GREEN" # the same over document change notifications
+  "MC_ChangeDelivery_Red_SilentLoss.cfg ChangeDelivery.tla RED" # a drop nobody counts (INV_LossCounted)
+  "MC_ChangeDelivery_Red_ReadBeforeSubscribe.cfg ChangeDelivery.tla RED" # read, then subscribe (EventuallyObserved)
+  "MC_ChangeDelivery_Red_JournalSkipsMerge.cfg ChangeDelivery.tla RED" # a merge gets no row (EventuallyObserved)
+  "MC_ChangeDelivery_Red_ReMergeAppends.cfg ChangeDelivery.tla RED" # no once key: a re-merged block gets a second row (INV_ExactlyOnce)
+  "MC_ChangeDelivery_Red_CounterNoWake.cfg ChangeDelivery.tla RED" # Node::subscribe: a counted drop wakes nobody (EventuallyObserved)
+  "MC_ChangeDelivery_Red_WakeBeforeState.cfg ChangeDelivery.tla RED" # the wake precedes the visible update (EventuallyObserved)
+  "MC_ChangeDelivery_Red_CursorNotDurable.cfg ChangeDelivery.tla RED" # the cursor is not saved with what was observed (INV_ExactlyOnce)
+  "MC_ChangeDelivery_Red_GateOff.cfg ChangeDelivery.tla RED" # the gate shows a deleted or unreadable document's row (INV_HiddenNotShown)
+  "MC_ChangeDelivery_Red_HiddenStalls.cfg ChangeDelivery.tla RED" # a hidden row stops the cursor instead of being passed (EventuallyObserved)
   "MC_TransactionDecisions_Green.cfg TransactionDecisions.tla GREEN"
   "MC_TransactionDecisions_Red_OutsideRead.cfg TransactionDecisions.tla RED"
   "MC_DefraKeyClassifier_Green.cfg DefraKeyClassifier.tla GREEN"
@@ -761,6 +793,14 @@ RUNS=(
   "MC_VerifiedRead_Red_BusyUncapped.cfg VerifiedRead.tla RED" # busy retry without a patience asks past BUSY_PATIENCE (INV_AttemptsBounded)
   "MC_VerifiedRead_Red_PausesOnly.cfg VerifiedRead.tla RED" # patience counts only the pauses: a slow busy node carries asks past BUSY_PATIENCE (INV_AttemptsBounded)
   "MC_VerifiedRead_Red_UndrawnPause.cfg VerifiedRead.tla RED" # patience checked against the shortest pause, the drawn one slept: an ask past BUSY_PATIENCE (INV_AttemptsBounded)
+  "MC_ArchiveOnDelete_Green.cfg ArchiveOnDelete.tla GREEN" # a deleted document grants nothing, no grant outlives the archive, and the archive settles
+  "MC_ArchiveOnDelete_Green_NoDrop.cfg ArchiveOnDelete.tla GREEN" # earlier changes kept: Vera's refusal alone keeps a renewed grant off the archived object
+  "MC_ArchiveOnDelete_Red_GrantAfterArchive.cfg ArchiveOnDelete.tla RED" # changes kept and an archived object takes a grant: a renewed grant lands after the archive (INV_NoGrantAfterArchive)
+  "MC_ArchiveOnDelete_Red_DeleteWithoutAuthority.cfg ArchiveOnDelete.tla RED" # a writer deletes without authority to archive (INV_DeletedByOwner)
+  "MC_ArchiveOnDelete_Red_NoOverlay.cfg ArchiveOnDelete.tla RED" # an owed archive denies nobody: the reader is allowed on the deleted document (INV_DeletedGrantsNothing)
+  "MC_ArchiveOnDelete_Red_HistoryForAll.cfg ArchiveOnDelete.tla RED" # an owed archive leaves the commit history to everyone: the reader reads a deleted document's history (INV_HistoryOnlyToDeleter)
+  "MC_ArchiveOnDelete_Red_OwedRegistrationFirst.cfg ArchiveOnDelete.tla RED" # the owed registration decides before the owed archive: the creator reads its deleted document (INV_DeletedGrantsNothing)
+  "MC_ArchiveOnDelete_Red_UnregisteredFirst.cfg ArchiveOnDelete.tla RED" # the unregistered rule decides before the owed archive: a dropped object's deleted document is public (INV_DeletedGrantsNothing)
   "MC_FollowDeployment_Green.cfg FollowDeployment.tla GREEN" # takeovers void any part of the chain: no void decision, a revocation always denies, nothing lost, owed again settles
   "MC_FollowDeployment_Green_Window.cfg FollowDeployment.tla GREEN" # a journal of one entry: a takeover that voids the pruned one fails closed
   "MC_FollowDeployment_Red_KeepsCache.cfg FollowDeployment.tla RED" # decisions cached by revision alone: one from the void chain is served (INV_NoVoidDecision)
@@ -771,6 +811,15 @@ RUNS=(
   "MC_FollowDeployment_Red_NoMark.cfg FollowDeployment.tla RED" # replay start not written down: a refused replay cut short is held and its revocation forgotten (INV_RevocationDenies)
   "MC_FollowDeployment_Red_NoDeliveryGate.cfg FollowDeployment.tla RED" # a checked term admits before its owed changes reach the outbox (INV_RevocationDenies)
   "MC_FollowDeployment_Red_CollapsesBatch.cfg FollowDeployment.tla RED" # only the first change of an object handed back together is owed: the revocation after it is lost (INV_RevocationDenies)
+  "MC_FollowDeploymentRecovery_Green.cfg FollowDeploymentRecovery.tla GREEN" # an uncovered takeover is rebuilt from the node's own ledger in pages, across a crash and a second takeover: nothing lost is left unowed when the node decides, a revocation denies, the pass ends
+  "MC_FollowDeploymentRecovery_Green_OneRecordPages.cfg FollowDeploymentRecovery.tla GREEN" # the same with pages of one record
+  "MC_FollowDeploymentRecovery_Red_NoGate.cfg FollowDeploymentRecovery.tla RED" # deciding while the journal is closed: a lost revocation not owed yet lets the grant through (INV_RevocationDenies)
+  "MC_FollowDeploymentRecovery_Red_NoHandOver.cfg FollowDeploymentRecovery.tla RED" # a page's lost records never reach the outbox: the node reopens with them unowed (INV_NothingLost)
+  "MC_FollowDeploymentRecovery_Red_CursorFirst.cfg FollowDeploymentRecovery.tla RED" # the cursor is written before the page is handed over: a crash between loses the page (INV_NothingLost)
+  "MC_FollowDeploymentRecovery_Red_CompleteEveryPage.cfg FollowDeploymentRecovery.tla RED" # a page that stopped at its limit marks the pass complete: later records are never checked (INV_NothingLost)
+  "MC_FollowDeploymentRecovery_Red_NeverDone.cfg FollowDeploymentRecovery.tla RED" # the source never says the pass is over: the node never reopens (LIVE_RecoveryEnds)
+  "MC_FollowDeploymentRecovery_Red_NoTermFence.cfg FollowDeploymentRecovery.tla RED" # a cursor of an older term is resumed: what a second takeover lost behind it is never checked (INV_NothingLost)
+  "MC_FollowDeploymentRecovery_Red_NoSharedFence.cfg FollowDeploymentRecovery.tla RED" # a pass that ends after a second outbox asked reopens: what the takeover voided of that node's is owed by nobody (INV_TheirsNotLost)
   "MC_TakeoverReport_Green.cfg TakeoverReport.tla GREEN" # a checked term is reported once, complete, with its own cut, and a closed check says so
   "MC_TakeoverReport_Red_NoPublish.cfg TakeoverReport.tla RED" # a checked term is not published (INV_Published)
   "MC_TakeoverReport_Red_NoReason.cfg TakeoverReport.tla RED" # an unrestorable replay is unnamed (INV_Classified)
@@ -907,7 +956,7 @@ RUNS=(
   "MC_AdministrativeRelationship_Red_Active.cfg AdministrativeRelationship.tla RED" # INV_Active
   "MC_ChildPagePerParent_Green.cfg ChildPagePerParent.tla GREEN" # each parent completes its exact ordered child page
   "MC_ChildPagePerParent_Green_ShortParent.cfg ChildPagePerParent.tla GREEN" # a parent with fewer children than the limit takes them all
-  "MC_ChildPagePerParent_Red_GlobalBound.cfg ChildPagePerParent.tla RED" # one global child bound lets the first parent consume the bound and leaves B without its page
+  "MC_ChildPagePerParent_Red_GlobalBound.cfg ChildPagePerParent.tla RED" # one global child bound lets the first parent consume the bound and leaves B without its page (INV_SecondParentKeepsPage)
   "MC_ChildPagePerParent_Red_NoEarlyStop.cfg ChildPagePerParent.tla RED" # the per-parent scan reads past a full page (INV_PageWithinLimit)
   "MC_AdministrativeRelationship_Red_NacBound.cfg AdministrativeRelationship.tla RED" # INV_NacBound
   "MC_AdministrativeRelationship_Red_Bypass.cfg AdministrativeRelationship.tla RED" # INV_Bypass
@@ -1504,8 +1553,9 @@ RUNS=(
   "MC_DocumentSave_Red_SplitTxn.cfg DocumentSave.tla RED" # a delete between lookup and write forks the save (INV_NoFork)
   "MC_RelationLinkConflict_Green.cfg RelationLinkConflict.tla GREEN" # a validated link read commits when empty and conflicts after a later first link
   "MC_RelationLinkConflict_Red_Unvalidated.cfg RelationLinkConflict.tla RED" # an unvalidated link read lets both links commit (INV_SecondLinkIsRefused)
-  "MC_ChildLimitPaging_Green.cfg ChildLimitPaging.tla GREEN" # each ordered child page is collected per parent
-  "MC_ChildLimitPaging_Red_UnorderedStop.cfg ChildLimitPaging.tla RED" # an unordered early stop loses a later parent's page (INV_EveryParentHasPage)
+  "MC_ChildLimitPaging_Green.cfg ChildLimitPaging.tla GREEN" # unordered scans run to completion before paging
+  "MC_ChildLimitPaging_Ordered.cfg ChildLimitPaging.tla GREEN" # ordered scans can stop at offset plus limit
+  "MC_ChildLimitPaging_Red_UnorderedStop.cfg ChildLimitPaging.tla RED" # stopping an unordered scan returns the wrong page (INV_CompletedPage)
   "MC_BackupImportWritePath_Green.cfg BackupImportWritePath.tla GREEN" # every import write takes its edge's request path: signed, replicated, owned, drained as one request
   "MC_BackupImportWritePath_Red_OwnMutator.cfg BackupImportWritePath.tla RED" # the old private mutator writes unsigned blocks (INV_ImportSigned)
   "MC_BackupImportWritePath_Red_NoSigningChoice.cfg BackupImportWritePath.tla RED" # the import drops the node's signing choice (INV_ImportSigned)

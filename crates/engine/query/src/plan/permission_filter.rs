@@ -90,6 +90,7 @@ impl AcpReadCheck {
             self.policy_id.as_ref(),
             self.resource_name.as_ref(),
             doc_id,
+            false,
             self.retry_inputs.as_ref(),
         )
         .await
