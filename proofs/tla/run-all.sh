@@ -11,6 +11,11 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 # event to the settled rest (depth = events + 1), and DEADLOCK:<l> stops with
 # event l next (past the end when l = events + 1).
 RUNS=(
+  "MC_DisplacedConnectionRestore_Green.cfg DisplacedConnectionRestore.tla GREEN"
+  "MC_DisplacedConnectionRestore_Red_NoEvict.cfg DisplacedConnectionRestore.tla RED"
+  "MC_DisplacedConnectionRestore_Red_Closed.cfg DisplacedConnectionRestore.tla RED"
+  "MC_DisplacedConnectionRestore_Red_EvictAny.cfg DisplacedConnectionRestore.tla RED" # a newer connection is evicted (FreshKept)
+  "MC_DisplacedConnectionRestore_Red_Overwrite.cfg DisplacedConnectionRestore.tla RED" # the restore overwrites a newer connection (FreshKept)
   "MC_DocumentUpdateJournal_Green.cfg DocumentUpdateJournal.tla GREEN"
   "MC_DocumentUpdateJournal_Green_Outside.cfg DocumentUpdateJournal.tla GREEN"
   "MC_DocumentUpdateJournal_Red_Detached.cfg DocumentUpdateJournal.tla RED"
@@ -571,6 +576,7 @@ RUNS=(
   "MC_Truncate_Red_Branchable.cfg Truncate.tla RED" # branchable check left out: a filtered truncate splits shared history (INV_FilteredNeverOnBranchable)
   "MC_Truncate_Red_Txn.cfg Truncate.tla RED" # transaction check left out, as before: a filter on the txn view removes an uncommitted match (INV_FilteredRemovesOnlyCommittedMatches)
   "MC_Truncate_Red_Shape.cfg Truncate.tla RED" # filter shape check left out: a non-filter removes everything (INV_BadFilterRemovesNothing)
+  "MC_Truncate_Red_Reread.cfg Truncate.tla RED" # page reread left out: a stale first read purges a document moved out of the filter (INV_FilteredRemovesOnlyCurrentMatches)
   "MC_Truncate_Red_ViewCache.cfg Truncate.tla RED" # #2703: view cache clear left out: a truncated view still shows its rows (INV_UnfilteredEmptiesView)
   "MC_Truncate_Red_SearchRecords.cfg Truncate.tla RED" # #2728: /se/ prefix delete left out: an encrypted search still finds truncated documents (INV_UnfilteredClearsSearchRecords)
   "MC_Truncate_Red_SearchNamespace.cfg Truncate.tla RED" # #2728: received search records in the raw root store survive the prefix delete (INV_UnfilteredClearsSearchRecords)

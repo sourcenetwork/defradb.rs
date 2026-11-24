@@ -98,12 +98,20 @@ jobs:
               p2p: want('p2p'),
             }));
 
-            // A pull request runs testo through the in-process client only, so a
-            // green pull request has run the scenarios; the queue runs every client.
-            const testoClients = ['in-process', ...['rust-http', 'go-http', 'cli', 'legacy']
+            // A pull request runs testo through the in-process client, plain and
+            // with every field indexed (the secondary-index multiplier), so a green
+            // pull request has run the scenarios; the queue runs every client.
+            const testoClients = ['in-process', 'in-process-secondary-index', ...['rust-http', 'go-http', 'cli', 'legacy']
               .filter((client) => want(`testo-${client}`))];
             core.setOutput('testo_clients', testoClients.join(','));
-            core.setOutput('testo_matrix', JSON.stringify({ include: testoClients.map((client) => ({ client, shard: 1 })) }));
+            core.setOutput('testo_matrix', JSON.stringify({
+              include: testoClients.map((client) => ({
+                client,
+                defra_client: client === 'in-process-secondary-index' ? 'in-process' : client,
+                multipliers: client === 'in-process-secondary-index' ? 'secondary-index' : '',
+                shard: 1,
+              })),
+            }));
 
             const suites = [
               { suite: 'signed-docs', needs_go: false, multipliers: 'signed-docs' },
@@ -894,6 +902,7 @@ jobs:
     env:
       DEFRA_RUST_BINARY: ${{ github.workspace }}/target/ci/defradb
       DEFRA_IROH_BINARY: ${{ github.workspace }}/target/ci/defradb-iroh
+      DEFRA_MULTIPLIERS: ${{ matrix.multipliers || '' }}
       DEFRA_E2E_KEEP: '1'
       # A failing scenario shows its in-process nodes' P2P trace.
       DEFRA_TEST_TRACE: p2p=debug,defra_p2p_adapter=debug,warn
@@ -945,6 +954,7 @@ jobs:
       - name: Pick the tests
         env:
           CLIENT: ${{ matrix.client }}
+          DEFRA_CLIENT_NAME: ${{ matrix.defra_client || matrix.client }}
           PIN: ${{ needs.go-defradb.outputs.pin }}
         run: |
           chmod +x target/ci/defradb target/ci/defradb-iroh
@@ -956,7 +966,7 @@ jobs:
           if [ "$CLIENT" = legacy ]; then
             echo "FILTER=$LEGACY_FILTER" >> "$GITHUB_ENV"
           else
-            echo "DEFRA_CLIENT=$CLIENT" >> "$GITHUB_ENV"
+            echo "DEFRA_CLIENT=$DEFRA_CLIENT_NAME" >> "$GITHUB_ENV"
             if [ "$CLIENT" = go-http ]; then
               echo "FILTER=($TESTO_FILTER) $GO_HTTP_FILTER" >> "$GITHUB_ENV"
             else
