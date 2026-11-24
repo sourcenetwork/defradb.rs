@@ -193,6 +193,7 @@ mod one_to_two_many {
     mod with_order;
 }
 mod simple {
+    mod count_filter_unknown;
     mod simple;
     mod with_aggregate_nonnillable;
     mod with_average;
@@ -210,6 +211,7 @@ mod simple {
     mod with_doc_id;
     mod with_doc_id_filter;
     mod with_doc_ids;
+    mod with_filter_unknown;
     mod with_filter {
         mod with_alias;
         mod with_and;

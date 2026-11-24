@@ -38,7 +38,7 @@ pub unsafe fn defra_document_delete(
                 }
                 Selection::Filter(filter) => {
                     let filter = query::documents::Filter::from(filter_value(&filter)?);
-                    let deleted = query::documents::delete_with_filter(run, &name, &filter)
+                    let deleted = query::documents::delete_with_filter(|r| call.execute(r), &name, &filter)
                         .await
                         .map_err(|e| e.to_string())?;
                     serde_json::to_string(&deleted).map_err(|e| e.to_string())

@@ -65,6 +65,8 @@ mod ops;
 mod owed;
 #[cfg(feature = "vera")]
 mod owed_drainer;
+#[cfg(test)]
+mod storage_open_tests;
 pub use ops::{EncryptedIndexListing, IndexListing};
 #[cfg(any(feature = "p2p", feature = "libp2p"))]
 mod p2p_runtime;
@@ -525,6 +527,7 @@ impl Node {
         let Ok(query::query_parse::ParsedOperation::Mutation {
             mutations,
             explain: None,
+            ..
         }) = query::query_parse::parse_request_with_limits(
             &request.query,
             variables.as_ref(),

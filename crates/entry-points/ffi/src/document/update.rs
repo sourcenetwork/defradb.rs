@@ -45,7 +45,7 @@ pub unsafe fn defra_document_update(
                 Selection::Filter(filter) => {
                     let filter = query::documents::Filter::from(filter_value(&filter)?);
                     let updated =
-                        query::documents::update_with_filter(run, &name, &filter, &updater)
+                        query::documents::update_with_filter(|r| call.execute(r), &name, &filter, &updater)
                             .await
                             .map_err(|e| e.to_string())?;
                     serde_json::to_string(&updated).map_err(|e| e.to_string())
