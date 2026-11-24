@@ -54,6 +54,78 @@ use Tier::{Behavioral, Boundary, Contract};
 
 pub const PROPERTIES: &[Property] = &[
     Property {
+        family: "vera.rs embedded transport",
+        name: "INV_Recovers: a queued copy can authenticate after the prefetched head fails transiently",
+        axis: Tla,
+        anchor: "crates/engine/vera-embedded/src/acp.rs prepend_head",
+        model_ref: "MC_HeaderRetry_{Green,Red_Drop}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/engine/vera-embedded/src/acp/tests.rs queued_headers_survive_a_failed_head_authentication",
+    },
+    Property {
+        family: "vera.rs embedded transport",
+        name: "HeaderRetry.failed_head_keeps_queue / retry_remains / old_filter_loses_copy",
+        axis: Lean,
+        anchor: "crates/engine/vera-embedded/src/acp.rs prepend_head",
+        model_ref: "HeaderRetry (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/engine/vera-embedded/src/acp/tests.rs queued_headers_survive_a_failed_head_authentication",
+    },
+    Property {
+        family: "Secondary index equal-key order",
+        name: "INV_Page: an ordered scan reserves a saturated offset plus limit and the LimitNode applies the offset once",
+        axis: Tla,
+        anchor: "crates/engine/query/src/planner/builder/index_methods.rs order_index_scan_params",
+        model_ref: "MC_OrderedIndexPage_{Green,Red_DoubleOffset}.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/index/index_offset_limit.rs",
+    },
+    Property {
+        family: "Schema-evolution operations in the core",
+        name: "INV_Keep / INV_Match / INV_Real: synced definitions preserve only the matching placeholder's transform and leave held definitions unchanged",
+        axis: Tla,
+        anchor: "crates/database/db/src/merge/merge_handler/definition.rs DbMergeHandler::process_collection_definition_delta",
+        model_ref: "MC_SyncedMigrationTransform_{Green,Red_Drop,Red_Head}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/database/db/tests/merge/collection_predecessor.rs",
+    },
+    Property {
+        family: "Schema-evolution operations in the core",
+        name: "SyncedMigrationTransform.matching_preserved / mismatched_not_carried / no_edge_no_transform / real_unchanged / absent_no_transform",
+        axis: Lean,
+        anchor: "crates/database/db/src/merge/merge_handler/definition.rs DbMergeHandler::process_collection_definition_delta",
+        model_ref: "SyncedMigrationTransform (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/database/db/tests/merge/collection_predecessor.rs",
+    },
+    Property {
+        family: "Secondary index equal-key order",
+        name: "OrderedIndexPage.saturating_budget_page: an ordered scan reserves the offset plus limit without dropping the offset twice",
+        axis: Lean,
+        anchor: "crates/engine/query/src/planner/builder/index_methods.rs order_index_scan_params",
+        model_ref: "OrderedIndexPage (lake build)",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/index/index_offset_limit.rs",
+    },
+    Property {
+        family: "ACP soundness + revocation + dual-path commits",
+        name: "INV_NoStale / INV_SameHash / INV_AcceptValid: certified assignments honor the caller's position floor",
+        axis: Tla,
+        anchor: "crates/engine/vera/src/vera_rs/provider/assignments.rs check_position",
+        model_ref: "MC_AssignmentPosition_{Green,Red_Stale,Red_Hash}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/engine/vera/src/vera_rs/provider/assignments.rs position_floor_rejects_replays_and_accepts_a_verified_new_term",
+    },
+    Property {
+        family: "ACP soundness + revocation + dual-path commits",
+        name: "AssignmentPosition.accepted_iff / stale_term_rejected / stale_height_rejected / same_height_hash_rejected / later_term_accepted / later_height_accepted",
+        axis: Lean,
+        anchor: "crates/engine/vera/src/vera_rs/provider/assignments.rs check_position",
+        model_ref: "AssignmentPosition (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/engine/vera/src/vera_rs/provider/assignments.rs position_floor_rejects_replays_and_accepts_a_verified_new_term",
+    },
+    Property {
         family: "Transactional node source grants",
         name: "HostNoopProjection rechecks descendants with the original actor",
         axis: Tla,
@@ -236,10 +308,10 @@ pub const PROPERTIES: &[Property] = &[
         family: "vera.rs embedded transport",
         name: "INV_OnlyFinalized / INV_Current / INV_SentHeadFresh: the light client takes only a header a finalized block certifies, once the stream is drained it stands on the newest fresh finalized block in its term without waiting for another, and the transport never sends a head too old to take",
         axis: Tla,
-        anchor: "crates/engine/vera-embedded/src/acp.rs subscribe_headers, headers_after; crates/engine/vera-embedded/src/acp/head.rs finalized, header, recent; backbone:acp-light-client HeaderChain::start",
+        anchor: "crates/engine/vera-embedded/src/acp.rs subscribe_headers, prepend_head; crates/engine/vera-embedded/src/acp/head.rs finalized, header, recent; backbone:acp-light-client HeaderChain::start",
         model_ref: "MC_FirstHeader_{Green,Red_NoHead,Red_ReadBeforeSubscribe,Red_SendStale,Red_DropLaterTerms,Red_Unverified}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/engine/vera-embedded/src/acp/tests.rs queued_headers_at_or_below_the_fetched_head_are_not_emitted, a_header_of_a_later_term_at_or_below_the_fetched_head_is_emitted; crates/engine/vera-embedded/tests/embedded_node.rs a_fresh_deployments_provider_starts_on_its_first_block; crates/entry-points/defra-node/tests/embedded_vera/first_start.rs a_fresh_deployments_first_start_takes_its_first_block",
+        bound_by: "crates/engine/vera-embedded/src/acp/tests.rs queued_headers_survive_a_failed_head_authentication, a_header_of_a_later_term_at_or_below_the_fetched_head_is_emitted; crates/engine/vera-embedded/tests/embedded_node.rs a_fresh_deployments_provider_starts_on_its_first_block; crates/entry-points/defra-node/tests/embedded_vera/first_start.rs a_fresh_deployments_first_start_takes_its_first_block",
     },
     Property {
         family: "vera.rs deployment terms",
@@ -1827,6 +1899,18 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "MC_PushBacklog_{Green,Green_TwoDead,Green_SharedCap,Red_TwoDead,Red_DemoteEveryTimeout,Red_OfflineQueue,Red_NoPeerCap,Red_SpawnPerItem,Red_PermitLeak,Red_RetainHandles}.cfg",
         tiers: &[Boundary],
         bound_by: "",
+    },
+    Property {
+        // The owner rechecks connection state before applying delayed offline
+        // parks or reconnect notifications, and never clears a send failure's
+        // cooldown merely because the peer connected.
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "INV_NoStalePark / INV_KeepFailure / INV_ExpiredCanClear",
+        axis: Tla,
+        anchor: "crates/database/p2p/src/sync/push_backlog.rs BacklogOwner::handle, park_peer; crates/database/p2p/src/sync/coordinator/push_worker.rs run_push_job; crates/database/p2p/src/sync/coordinator/event_handler/mod.rs handle_peer_connected",
+        model_ref: "MC_OfflineReconnect_{Green,Red_StalePark,Red_StaleConnect,Red_Failure,Red_Expired}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/database/p2p/src/sync/coordinator/push_worker_tests.rs reconnect_wakes_offline_queue_and_fences_stale_parks, reconnect_preserves_newer_transport_cooldown; crates/database/p2p/src/sync/push_backlog.rs stale_reconnect_does_not_clear_offline_cooldown, reconnect_clears_offline_park_after_expired_capacity_cooldown",
     },
     Property {
         // Admission has two tiers: a head the full map has no entry for is
@@ -4508,10 +4592,10 @@ pub const PROPERTIES: &[Property] = &[
         // One-to-many child paging (#3051): the scan stays unbounded and each
         // parent stops only when the selected index guarantees the child order.
         family: "Per-parent child paging",
-        name: "INV_EveryParentHasPage / INV_EarlyStopOnlyWhenOrdered",
+        name: "INV_CompletedPage / INV_EarlyStopOnlyWhenOrdered / LIVE_AllPagesComplete",
         axis: Tla,
         anchor: "crates/engine/query/src/planner/joins/child_plan.rs build_relation_child_plan; crates/engine/query/src/plan/type_join/type_join_many/children.rs TypeJoinMany::next_per_parent",
-        model_ref: "MC_ChildLimitPaging_{Green,Red_UnorderedStop}.cfg",
+        model_ref: "MC_ChildLimitPaging_{Green,Ordered,Red_UnorderedStop}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },
@@ -4717,7 +4801,7 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "One-to-many child paging",
-        name: "LIVE_EveryParentCompletesOrderedPage / INV_PageIsOrderedPrefix / INV_PageWithinLimit / INV_RedSecondParentKeepsPage: each parent completes its exact ordered child page",
+        name: "LIVE_EveryParentCompletesOrderedPage / INV_PageIsOrderedPrefix / INV_PageWithinLimit / INV_SecondParentKeepsPage: each parent completes its exact ordered child page, not one cut short by a global scan bound",
         axis: Tla,
         anchor: "crates/engine/query/src/plan/type_join/type_join_many/children.rs TypeJoinMany::next_per_parent; crates/engine/query/src/plan/type_join/type_join_many/node.rs TypeJoinMany::with_limit, with_offset",
         model_ref: "MC_ChildPagePerParent_{Green,Green_ShortParent,Red_GlobalBound,Red_NoEarlyStop}.cfg",

@@ -6,7 +6,6 @@
 use integration_test::actions::{AddCollection, GetCollections};
 use integration_test::m;
 use integration_test::test_case::TestCase;
-use integration_test::ClientType;
 use serde_json::json;
 
 /// `Foo`'s version ID for this SDL, the same on every run.
@@ -18,61 +17,53 @@ fn a_collection_beside_a_longer_namesake_gets_one_id() {
     for _ in 0..5 {
         TestCase {
             actions: vec![
-            AddCollection {
-                sdl: "type Foo { name: String }  type FooBar { name: String }".into(),
-                ..Default::default()
-            }
-            .into(),
-            GetCollections {
-                collection_name: Some("Foo".into()),
-                filtered: true,
-                // Indexes, as the secondary-index multiplier adds, keep these IDs.
-                expected_data: json!({ "collections": [m::object(json!({
-                    "CollectionID": FOO_VERSION_ID,
-                    "Fields": [
-                        {
-                            "DefaultValue": null,
-                            "FieldID": "bafyreihqzhiz3iwro4jozp6kphq4sosg6ccoqcbiaf7rg5dmvea7aux55a",
-                            "IsPrimary": false,
-                            "Kind": 1,
-                            "Name": "_docID",
-                            "RelationName": null,
-                            "Size": 0,
-                            "Typ": 0,
-                        },
-                        {
-                            "DefaultValue": null,
-                            "FieldID": "bafyreiaezc5g33yzhyzcgbyiv476lovyztyoliotzksdfogoep5ktgpedq",
-                            "IsPrimary": false,
-                            "Kind": 11,
-                            "Name": "name",
-                            "RelationName": null,
-                            "Size": 0,
-                            "Typ": 1,
-                        },
-                    ],
-                    "IsActive": true,
-                    "IsBranchable": false,
-                    "IsEmbeddedOnly": false,
-                    "IsMaterialized": true,
-                    "IsPlaceholder": false,
-                    "Name": "Foo",
-                    "PreviousVersion": null,
-                    "VectorEmbeddings": [],
-                    "VersionID": FOO_VERSION_ID,
-                }))] }),
+                AddCollection {
+                    sdl: "type Foo { name: String }  type FooBar { name: String }".into(),
+                    ..Default::default()
+                }
+                .into(),
+                GetCollections {
+                    collection_name: Some("Foo".into()),
+                    filtered: true,
+                    // Indexes, as the secondary-index multiplier adds, keep these IDs.
+                    expected_data: json!({ "collections": [m::object(json!({
+                        "CollectionID": FOO_VERSION_ID,
+                        "Fields": [
+                            {
+                                "DefaultValue": null,
+                                "FieldID": "bafyreihqzhiz3iwro4jozp6kphq4sosg6ccoqcbiaf7rg5dmvea7aux55a",
+                                "IsPrimary": false,
+                                "Kind": 1,
+                                "Name": "_docID",
+                                "RelationName": null,
+                                "Size": 0,
+                                "Typ": 0,
+                            },
+                            {
+                                "DefaultValue": null,
+                                "FieldID": "bafyreiaezc5g33yzhyzcgbyiv476lovyztyoliotzksdfogoep5ktgpedq",
+                                "IsPrimary": false,
+                                "Kind": 11,
+                                "Name": "name",
+                                "RelationName": null,
+                                "Size": 0,
+                                "Typ": 1,
+                            },
+                        ],
+                        "IsActive": true,
+                        "IsBranchable": false,
+                        "IsEmbeddedOnly": false,
+                        "IsMaterialized": true,
+                        "IsPlaceholder": false,
+                        "Name": "Foo",
+                        "PreviousVersion": null,
+                        "VectorEmbeddings": [],
+                        "VersionID": FOO_VERSION_ID,
+                    }))] }),
                 ..Default::default()
             }
             .into(),
             ],
-            // Go's parity pin reads the wrong collection when one name is a
-            // prefix of another, so Rust keeps the deterministic-ID coverage
-            // on its own clients until Go fixes the head scan.
-            client_types: Some(&[
-                ClientType::InProcess,
-                ClientType::RustHttp,
-                ClientType::Cli,
-            ]),
             ..Default::default()
         }
         .execute();

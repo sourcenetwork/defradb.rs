@@ -11,6 +11,21 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 # event to the settled rest (depth = events + 1), and DEADLOCK:<l> stops with
 # event l next (past the end when l = events + 1).
 RUNS=(
+  "MC_OfflineReconnect_Green.cfg OfflineReconnect.tla GREEN"
+  "MC_OfflineReconnect_Red_StalePark.cfg OfflineReconnect.tla RED"
+  "MC_OfflineReconnect_Red_StaleConnect.cfg OfflineReconnect.tla RED"
+  "MC_OfflineReconnect_Red_Failure.cfg OfflineReconnect.tla RED"
+  "MC_OfflineReconnect_Red_Expired.cfg OfflineReconnect.tla RED"
+  "MC_HeaderRetry_Green.cfg HeaderRetry.tla GREEN"
+  "MC_HeaderRetry_Red_Drop.cfg HeaderRetry.tla RED"
+  "MC_OrderedIndexPage_Green.cfg OrderedIndexPage.tla GREEN"
+  "MC_OrderedIndexPage_Red_DoubleOffset.cfg OrderedIndexPage.tla RED"
+  "MC_SyncedMigrationTransform_Green.cfg SyncedMigrationTransform.tla GREEN"
+  "MC_SyncedMigrationTransform_Red_Drop.cfg SyncedMigrationTransform.tla RED"
+  "MC_SyncedMigrationTransform_Red_Head.cfg SyncedMigrationTransform.tla RED"
+  "MC_AssignmentPosition_Green.cfg AssignmentPosition.tla GREEN"
+  "MC_AssignmentPosition_Red_Stale.cfg AssignmentPosition.tla RED"
+  "MC_AssignmentPosition_Red_Hash.cfg AssignmentPosition.tla RED"
   "MC_ExplainIndexName_Green.cfg ExplainIndexName.tla GREEN"
   "MC_ExplainIndexName_Green_Fallback.cfg ExplainIndexName.tla GREEN"
   "MC_ExplainIndexName_Red_Lookup.cfg ExplainIndexName.tla RED" # direct FK lookup must name its index
@@ -924,7 +939,7 @@ RUNS=(
   "MC_AdministrativeRelationship_Red_Active.cfg AdministrativeRelationship.tla RED" # INV_Active
   "MC_ChildPagePerParent_Green.cfg ChildPagePerParent.tla GREEN" # each parent completes its exact ordered child page
   "MC_ChildPagePerParent_Green_ShortParent.cfg ChildPagePerParent.tla GREEN" # a parent with fewer children than the limit takes them all
-  "MC_ChildPagePerParent_Red_GlobalBound.cfg ChildPagePerParent.tla RED" # one global child bound lets the first parent consume the bound and leaves B without its page
+  "MC_ChildPagePerParent_Red_GlobalBound.cfg ChildPagePerParent.tla RED" # one global child bound lets the first parent consume the bound and leaves B without its page (INV_SecondParentKeepsPage)
   "MC_ChildPagePerParent_Red_NoEarlyStop.cfg ChildPagePerParent.tla RED" # the per-parent scan reads past a full page (INV_PageWithinLimit)
   "MC_AdministrativeRelationship_Red_NacBound.cfg AdministrativeRelationship.tla RED" # INV_NacBound
   "MC_AdministrativeRelationship_Red_Bypass.cfg AdministrativeRelationship.tla RED" # INV_Bypass
@@ -1514,8 +1529,9 @@ RUNS=(
   "MC_DocumentSave_Red_SplitTxn.cfg DocumentSave.tla RED" # a delete between lookup and write forks the save (INV_NoFork)
   "MC_RelationLinkConflict_Green.cfg RelationLinkConflict.tla GREEN" # a validated link read commits when empty and conflicts after a later first link
   "MC_RelationLinkConflict_Red_Unvalidated.cfg RelationLinkConflict.tla RED" # an unvalidated link read lets both links commit (INV_SecondLinkIsRefused)
-  "MC_ChildLimitPaging_Green.cfg ChildLimitPaging.tla GREEN" # each ordered child page is collected per parent
-  "MC_ChildLimitPaging_Red_UnorderedStop.cfg ChildLimitPaging.tla RED" # an unordered early stop loses a later parent's page (INV_EveryParentHasPage)
+  "MC_ChildLimitPaging_Green.cfg ChildLimitPaging.tla GREEN" # unordered scans run to completion before paging
+  "MC_ChildLimitPaging_Ordered.cfg ChildLimitPaging.tla GREEN" # ordered scans can stop at offset plus limit
+  "MC_ChildLimitPaging_Red_UnorderedStop.cfg ChildLimitPaging.tla RED" # stopping an unordered scan returns the wrong page (INV_CompletedPage)
   "MC_BackupImportWritePath_Green.cfg BackupImportWritePath.tla GREEN" # every import write takes its edge's request path: signed, replicated, owned, drained as one request
   "MC_BackupImportWritePath_Red_OwnMutator.cfg BackupImportWritePath.tla RED" # the old private mutator writes unsigned blocks (INV_ImportSigned)
   "MC_BackupImportWritePath_Red_NoSigningChoice.cfg BackupImportWritePath.tla RED" # the import drops the node's signing choice (INV_ImportSigned)

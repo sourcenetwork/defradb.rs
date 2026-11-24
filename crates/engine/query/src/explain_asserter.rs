@@ -130,7 +130,13 @@ impl<'a> ExplainAsserter<'a> {
         self.path
             .iter()
             .try_fold(self.root, |value, segment| descend(value, segment))
-            .unwrap_or_else(|| panic!("missing explain node at path [{}]", self.path.join(", ")))
+            .unwrap_or_else(|| {
+                panic!(
+                    "missing explain node at path [{}]: {}",
+                    self.path.join(", "),
+                    self.root
+                )
+            })
     }
 
     fn count(self, name: &str, expected: impl Into<ExpectedCount>) -> Self {
@@ -153,7 +159,7 @@ impl<'a> ExplainAsserter<'a> {
 
         assert!(
             expected.bounds().contains(&actual),
-            "'{name}' at path [{}] expected {}, got {actual}",
+            "'{name}' at path [{}] expected {}, got {actual}: {node}",
             self.path.join(", "),
             describe(expected),
         );
@@ -273,6 +279,7 @@ mod tests {
         assert!(message.contains("path [selectNode]"));
         assert!(message.contains("expected 2..=2"));
         assert!(message.contains("got 3"));
+        assert!(message.contains(r#"{"iterations":3}"#));
     }
 
     #[test]
@@ -285,6 +292,7 @@ mod tests {
         });
 
         assert!(message.contains("path [selectNode, typeIndexJoin, typeJoinOne]"));
+        assert!(message.contains(r#"{"selectNode":{}}"#));
     }
 
     #[test]

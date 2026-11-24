@@ -660,7 +660,7 @@ pub trait P2PTransport: Clone + Send + Sync + 'static {
 
     /// Whether `sync_blocks(root, providers, [])` is a cancellable recursive
     /// CAR request.  The iroh transport provides that contract; libp2p's
-    /// implementation is exact-CID block sync, where an empty set is a no-op.
+    /// implementation is exact-CID Bitswap, where an empty set is a no-op.
     fn supports_cancellable_rooted_sync(&self) -> bool {
         false
     }
