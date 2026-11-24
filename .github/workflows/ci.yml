@@ -52,8 +52,15 @@ jobs:
   ci-scope:
     name: CI scope
     runs-on: ubuntu-latest
+    # In the queue it reads the head pull request's checks.
+    permissions:
+      checks: read
+      contents: read
+      pull-requests: read
     outputs:
       full: ${{ steps.decide.outputs.full }}
+      reused: ${{ steps.decide.outputs.reused }}
+      tree: ${{ steps.decide.outputs.tree }}
       heavy: ${{ steps.decide.outputs.heavy }}
       testo_clients: ${{ steps.decide.outputs.testo_clients }}
       testo_matrix: ${{ steps.decide.outputs.testo_matrix }}
@@ -70,9 +77,33 @@ jobs:
             // and ci:full runs all of them. queue-failure-labels.yml adds the
             // label of each job that ejected the pull request from the queue.
             const labels = pr ? context.payload.pull_request.labels.map((l) => l.name) : [];
-            const heavy = !pr || labels.includes('ci:full');
+            // The tree this run tests. A pull request run tests its head merged with
+            // its base, which is not always the head's own tree.
+            const tree = async (sha) => (await github.rest.git.getCommit({ ...context.repo, commit_sha: sha })).data.tree.sha;
+            const tested = await tree(context.sha);
+            core.setOutput('tree', tested);
+            // A queue entry whose tree a pull request run already passed with the heavy
+            // suite (`ci:full`) runs nothing but Merge gate: the queue would build and
+            // test the same bytes again (#3315). That holds when the pull request was
+            // rebased onto the queue tail (main when the queue is empty).
+            let reused = false;
+            if (context.eventName === 'merge_group') {
+              const number = (context.payload.merge_group.head_ref.match(/\/pr-(\d+)-[0-9a-f]+$/) || [])[1];
+              if (number) {
+                const head = (await github.rest.pulls.get({ ...context.repo, pull_number: Number(number) })).data.head.sha;
+                const gates = (await github.rest.checks.listForRef({
+                  ...context.repo, ref: head, check_name: 'Merge gate', filter: 'latest',
+                })).data.check_runs.filter((r) => r.conclusion === 'success');
+                for (const gate of gates) {
+                  const notes = await github.paginate(github.rest.checks.listAnnotations, { ...context.repo, check_run_id: gate.id });
+                  if (notes.some((a) => a.title === 'Heavy suite passed' && a.message === `tree ${tested}`)) reused = true;
+                }
+                core.info(`queue entry #${number}: reuses its pull request run = ${reused}`);
+              }
+            }
+            const heavy = !reused && (!pr || labels.includes('ci:full'));
             const want = (job) => heavy || labels.includes(`ci:${job}`);
-            let full = true;
+            let full = !reused;
             // A labelled pull request runs its jobs wherever it sits in a stack.
             if (pr && !labels.some((l) => l.startsWith('ci:'))) {
               const stack = context.payload.pull_request && context.payload.pull_request.stack;
@@ -84,9 +115,10 @@ jobs:
               }
             }
             core.setOutput('full', full ? 'true' : 'false');
+            core.setOutput('reused', reused ? 'true' : 'false');
             // A pull request runs the fast checks (lint, dependency checks, unit
-            // tests, in-process testo). The merge queue and main run everything else, once per batch
-            // instead of once per push.
+            // tests, in-process testo); `ci:full` runs everything. The queue runs
+            // everything unless its tree already passed on the pull request.
             core.setOutput('heavy', heavy ? 'true' : 'false');
             core.setOutput('run', JSON.stringify({
               feature_checks: want('feature-checks'),
@@ -135,6 +167,8 @@ jobs:
 
   lint-default:
     name: Lint (default)
+    needs: ci-scope
+    if: needs.ci-scope.outputs.reused != 'true'
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     steps:
       - uses: runs-on/action@v2
@@ -218,6 +252,8 @@ jobs:
 
   dependency-checks:
     name: Dependency checks
+    needs: ci-scope
+    if: needs.ci-scope.outputs.reused != 'true'
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     steps:
       - uses: runs-on/action@v2
@@ -238,6 +274,8 @@ jobs:
   # Mirrors `just doc`: a broken intra-doc link or malformed doc comment fails.
   docs:
     name: Docs
+    needs: ci-scope
+    if: needs.ci-scope.outputs.reused != 'true'
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     steps:
       - uses: runs-on/action@v2
@@ -259,6 +297,8 @@ jobs:
   # one its base generates.
   c-api:
     name: C API compatibility
+    needs: ci-scope
+    if: needs.ci-scope.outputs.reused != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -278,7 +318,8 @@ jobs:
   lint:
     name: Lint
     needs: [ci-scope, lint-default, feature-checks, dependency-checks, docs, c-api]
-    if: always()
+    # A queue entry that reuses its pull request run already passed lint there.
+    if: always() && needs.ci-scope.outputs.reused != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Check lint results
@@ -1148,6 +1189,9 @@ jobs:
       - name: Check every queue job
         env:
           FULL: ${{ needs.ci-scope.outputs.full }}
+          FAST: ${{ needs.ci-scope.outputs.reused != 'true' }}
+          HEAVY: ${{ needs.ci-scope.outputs.heavy }}
+          TREE: ${{ needs.ci-scope.outputs.tree }}
           CHANGES_REQUESTED: ${{ steps.reviews.outputs.changes_requested }}
           RUN_FEATURE_CHECKS: ${{ fromJson(needs.ci-scope.outputs.run || '{}').feature_checks }}
           RUN_FEATURE_TESTS: ${{ fromJson(needs.ci-scope.outputs.run || '{}').feature_tests }}
@@ -1190,12 +1234,12 @@ jobs:
           }
 
           check "CI scope" "$CI_SCOPE" true
-          check "Lint (default)" "$LINT_DEFAULT" true
+          check "Lint (default)" "$LINT_DEFAULT" "$FAST"
           check "Feature checks" "$FEATURE_CHECKS" "$RUN_FEATURE_CHECKS"
-          check "Dependency checks" "$DEPENDENCY_CHECKS" true
-          check "Docs" "$DOCS" true
-          check "C API compatibility" "$C_API" true
-          check "Lint" "$LINT" true
+          check "Dependency checks" "$DEPENDENCY_CHECKS" "$FAST"
+          check "Docs" "$DOCS" "$FAST"
+          check "C API compatibility" "$C_API" "$FAST"
+          check "Lint" "$LINT" "$FAST"
           check "Unit tests" "$UNIT_TESTS" "$FULL"
           check "Go DefraDB binary" "$GO_DEFRADB" "$FULL"
           check "Build integration binaries" "$BUILD_BINARIES" "$FULL"
@@ -1212,5 +1256,9 @@ jobs:
           if [ -n "$CHANGES_REQUESTED" ]; then
             echo "::error::Changes requested by $CHANGES_REQUESTED; merging waits for their approval or a dismissal"
             failed=1
+          fi
+          # The notice names the tree this run tested; a queue entry with that tree skips the heavy suite.
+          if [ "$failed" = 0 ] && [ "$HEAVY" = true ] && [ "$FULL" = true ]; then
+            echo "::notice title=Heavy suite passed::tree $TREE"
           fi
           exit "$failed"
