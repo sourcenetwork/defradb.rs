@@ -50,6 +50,17 @@ An ordered query over an indexed field with `limit: 3, offset: 2` reads `limit +
 
 Collections whose short IDs are `100` and `118`, the bytes `d` and `v` that name the document and version key families, each answer a query filtered on their indexed field with only their own row. Since truncate removes one index at a time (`defra.collection.truncate.other_collections`), no client operation reads or deletes by a whole collection's index prefix, so this scenario also passes on the untagged layout. The fixed `/index/` tag that keeps index keys out of the other families is checked in storage, by `index_keyspace_is_tagged_across_the_byte_boundary` and `index_keyspace_scans_stay_per_collection_across_short_ids`.
 
+# `defra.index.patch_indexed_field`: A patch refuses to remove an indexed field
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["index::remove_indexed_field::removing_an_indexed_field_names_the_index_and_keeps_the_collection_usable", "index::remove_indexed_field::removing_a_fulltext_field_names_the_field_and_keeps_the_collection_usable", "index::remove_indexed_field::removing_an_embedding_source_keeps_the_collection_usable"]
+
+A collection patch that removes a field named by an index, full-text index, or vector embedding is refused, and nothing changes: the collection keeps the field and its index or embedding, and documents can still be written. The error names what still uses the field:
+
+- a regular index: `index '<index name>' references field '<field>' which does not exist in schema`, e.g. `index 'Users_name_ASC' references field 'name' which does not exist in schema`;
+- a full-text index: `full-text index on field '<field>' references a field which does not exist in schema`;
+- a vector embedding's source field: `the given field does not exist. Embedding generation field: <field>`.
+
 # `defra.index.backfill_under_writes`: An index created under writes finishes its backfill
 
 - **Parents:** ["defra.index"]
