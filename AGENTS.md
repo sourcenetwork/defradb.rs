@@ -592,6 +592,63 @@ git worktree remove ../defradb.rs-foo              # Remove worktree
 3. `cargo fmt --all` applied
 4. If touching core behavior: `cargo nextest run -p integration-test` passes
 
+## Getting a Change to Main
+
+Main moves only through the merge queue, and a person always puts a PR in it:
+nothing enqueues on its own. Agents never enqueue or merge unless asked to.
+
+```
+open PR ──▶ lean CI ──▶ approval ──▶ "Merge when ready" ──▶ queue ──▶ main
+               │                          ▲                   │
+               └── ci:full (optional) ────┘     full CI, unless the tree
+                                                already passed ci:full
+```
+
+### On the pull request
+
+- **Lean CI by default:** lint, dependency checks, docs, C API, unit tests and
+  in-process testo. A PR in the middle of a stack runs only the fast checks.
+- **Labels add jobs:** `ci:full` runs everything, `ci:<job>` one queue job,
+  `ci:macos` the macOS unit tests.
+- **One commit.** Its subject is the PR title, or the title followed by `(#N)` for
+  this PR. The queue rebase-merges, so every commit lands on main as it is:
+  squash before queueing. A PR with several commits is a batch (below).
+- **Review.** One approval and every thread resolved. A changes request from a
+  reviewer with write access fails `Merge gate` until it is approved or
+  dismissed. A review or a title edit reruns only `Merge gate`.
+- **`Queue conflicts`** (advisory) names the first queue entry this PR
+  conflicts with, and says whether the queue would reuse a `ci:full` run on
+  this head. It is neutral when part of the queue could not be checked. It
+  covers only PRs based on main, and a fork PR gets no result from its own
+  pushes: it is checked again only when the queue changes.
+
+### In the queue
+
+The queue runs full CI on each entry, unless the entry's tree is one a `ci:full`
+run on the PR already passed; then only `Merge gate` runs. To get that, rebase
+onto main, run `ci:full`, then queue while nothing is ahead of it. A PR keeps
+its own commit only, so it is never rebased onto a queue entry. The queue
+reads the passed tree only from a `Merge gate` job of a `ci.yml` pull request
+run, never from a check run another workflow or app created.
+A push to main runs only the jobs that save caches.
+
+### Batches
+
+A batch is one PR carrying several approved PRs, so they share one full run.
+
+- One commit per carried PR, each its squash, with the subject `<title> (#N)`.
+  #N is open, approved, free of writer changes requests, and green on its own
+  `Merge gate` and `Validate title`.
+- Each commit carries exactly #N's change: replaying #N onto the commit's
+  parent gives the commit's files. A clean rebase passes; any other edit fails
+  `Merge gate`. The gate checks the heads it reads when it runs, so keep
+  carried PRs unchanged until the batch lands; after a push to #N, rerun the
+  batch's `Merge gate`.
+- PRs that touch the same lines go in a batch as a stack: B is based on A, so
+  B's diff holds the resolution and B's reviewer approved it.
+- The batch PR needs its own approval. Once it lands, close each carried PR
+  with `Landed in #<batch>`.
+
 ## ACP / Searchable Encryption
 
 - When fixing ACP (Access Control Policy) filtering, always verify BOTH User queries AND Commits queries are filtered. These are two separate code paths that both require ACP checks.
