@@ -609,6 +609,9 @@ RUNS=(
   "MC_Truncate_Red_Branchable.cfg Truncate.tla RED" # branchable check left out: a filtered truncate splits shared history (INV_FilteredNeverOnBranchable)
   "MC_Truncate_Red_Txn.cfg Truncate.tla RED" # transaction check left out, as before: a filter on the txn view removes an uncommitted match (INV_FilteredRemovesOnlyCommittedMatches)
   "MC_Truncate_Red_Shape.cfg Truncate.tla RED" # filter shape check left out: a non-filter removes everything (INV_BadFilterRemovesNothing)
+  "MC_Truncate_Red_FirstExhaust.cfg Truncate.tla RED" # the first chunk can exhaust before progress
+  "MC_Truncate_Red_PartialRetry.cfg Truncate.tla RED" # retry exhaustion loses committed partial progress (INV_RetryExhaustionKeepsProgress)
+  "MC_Truncate_Red_MetadataError.cfg Truncate.tla RED" # the metadata cleanup runs out of retries after every chunk and the request is reported a success (INV_MetadataExhaustionRefused)
   "MC_Truncate_Red_Reread.cfg Truncate.tla RED" # page reread left out: a stale first read purges a document moved out of the filter (INV_FilteredRemovesOnlyCurrentMatches)
   "MC_Truncate_Red_ViewCache.cfg Truncate.tla RED" # #2703: view cache clear left out: a truncated view still shows its rows (INV_UnfilteredEmptiesView)
   "MC_Truncate_Red_SearchRecords.cfg Truncate.tla RED" # #2728: /se/ prefix delete left out: an encrypted search still finds truncated documents (INV_UnfilteredClearsSearchRecords)
@@ -1200,6 +1203,11 @@ RUNS=(
   "MC_SyncOwnership_Red_UndrainedMarker.cfg SyncOwnership.tla RED" # P2P stops with a marker registration pending and the dropped task acknowledges the commit
   "MC_SyncOwnership_Red_ShedAsStall.cfg SyncOwnership.tla RED" # a provider's busy CAR reply is rotated past and deferred, never counted as a stalled window or terminal exhaustion
   "MC_SyncOwnership_Green_Dispatch.cfg MC_SyncOwnership_Dispatch.tla GREEN" # one attempt per fetch slot, re-armed from its end, acked heads kept: due roots go in order and every acked head merges across a restart
+  "MC_KeyBatchNotification_Green.cfg KeyBatchNotification.tla GREEN"
+  "MC_KeyBatchNotification_Red_Cancel.cfg KeyBatchNotification.tla RED" # cancellation drops stored keys without notification
+  "MC_PendingKeyArrival_Green.cfg PendingKeyArrival.tla GREEN"
+  "MC_PendingKeyArrival_Red_LostPromotion.cfg PendingKeyArrival.tla RED" # a key arrival promotes every backoff root while the clock still dispatches them
+  "MC_PendingKeyArrival_Red_NoPromotion.cfg PendingKeyArrival.tla RED" # without promotion, a key arrival cannot clear blocked roots
   "MC_SyncOwnership_Red_HeldSlot.cfg MC_SyncOwnership_Dispatch.tla RED" # old rule: a fetch holds its slot through every attempt and starts the next attempt ahead of an acked root (ACT_AttemptsStartInDueOrder)
   "MC_SyncOwnership_Red_ClaimTimeRearm.cfg MC_SyncOwnership_Dispatch.tla RED" # next due time fixed at claim: a failed root ends due ahead of roots acked during its attempt (ACT_EndedAttemptQueuesBehind)
   "MC_SyncOwnership_Red_AckedTtl.cfg MC_SyncOwnership_Dispatch.tla RED" # the pending TTL drops an acked head its sender already forgot (ACT_AckedRootLeavesOwned)
