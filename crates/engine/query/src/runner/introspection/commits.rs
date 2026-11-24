@@ -93,7 +93,7 @@ pub(super) fn build_commit_fields_enum() -> Enum {
 pub(super) fn build_commit_count_field_arg() -> Enum {
     Enum::new("commitCountFieldArg")
         .description(d::COUNT)
-        .item(EnumItem::new("heads").description(d::COMMIT_LINKS))
+        .item(EnumItem::new("heads").description(d::COMMIT_HEADS))
         .item(EnumItem::new("links").description(d::COMMIT_LINKS))
 }
 

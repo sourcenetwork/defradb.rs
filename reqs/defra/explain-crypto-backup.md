@@ -122,9 +122,9 @@ A collection `filter` (string or integer `_eq`, `_gt`, `_and`, `_or`, `_in`, a J
 # `go.explain.default.index`: Indexed filter and order plans
 
 - **Parents:** ["go.explain.default"]
-- **Scenarios:** ["explain.default.default-explain-with-index-on-filter", "explain.default.default-explain-with-index-on-order", "explain.default.default-explain-with-index-on-subquery-nested-relation-order", "explain.simple.simple-explain-with-index-on-filter", "explain.simple.simple-explain-with-index-on-order", "explain.simple.simple-explain-with-index-on-subquery-nested-relation-order"]
+- **Scenarios:** ["explain.default.default-explain-with-index-on-filter", "explain.default.default-explain-with-index-on-order", "explain.default.default-explain-with-index-on-subquery-nested-relation-order", "explain.simple.simple-explain-with-index-on-filter", "explain.simple.simple-explain-with-index-on-order", "explain.simple.simple-explain-with-index-on-subquery-nested-relation-order", "explain::default::with_index_shape::indexed_scan_explains_the_selected_index", "explain::default::with_index_shape::go_indexed_scan_explains_the_selected_index", "explain::default::with_index_shape::explain_relation_filter_uses_the_indexed_child_scan"]
 
-On a collection with `@index` on `age`, filtering on or ordering by `age` explains as `selectTopNode > selectNode > scanNode` with no `orderNode`; ordering a child by an indexed field of a related collection with `limit: 2` puts a `limitNode` but no `orderNode` in the child plan. Holds for default and `simple` types.
+On a collection with `@index` on `age`, filtering on or ordering by `age` explains as `selectTopNode > selectNode > scanNode` with no `orderNode`. The plan scan names the collection and shows the selecting filter and root prefix. Rust also includes the selected index and index fields; Go omits those fields. Ordering a child by an indexed field of a related collection with `limit: 2` puts a `limitNode` but no `orderNode` in the child plan. Holds for default and `simple` types.
 
 # `go.explain.default.group.selection`: Group node attributes for filters and docIDs
 
@@ -370,6 +370,13 @@ Over iroh, the key-holding node's KMS releases a document's key to the node iden
 - **Scenarios:** ["encryption::peer_iroh_acp_branchable::an_ungranted_iroh_peer_receives_the_blocks_but_not_the_key"]
 
 The same two iroh nodes and collection with no `reader` grant to the peer: the encrypted document's blocks still replicate to the subscribed peer, but the key holder's KMS withholds the key, so the owner querying `Users { name }` on the peer gets `[]`, and still gets `[]` after the peer has had time to fetch the key.
+
+# `defra.encryption.peer.pending_key_arrival`: A pending merge appears when its key arrives
+
+- **Parents:** ["go.encryption.peer"]
+- **Scenarios:** ["encryption::peer_pending_key::an_encrypted_doc_appears_after_its_key_arrives", "p2p_tests::remote_key_arrival_wakes_a_parked_encrypted_merge"]
+
+After a subscribed peer receives an encrypted document's blocks but not yet its key, the document can wait as a pending merge. When the KMS delivers the key, that pending merge wakes, the document becomes queryable, and its plaintext fields are returned.
 
 # `defra.backup.import.signed_and_replicated`: An imported document is signed and replicated as a created one is
 

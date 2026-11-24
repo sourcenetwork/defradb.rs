@@ -1,6 +1,7 @@
 //! Core filter-to-index-scan conversion.
 
 use document::{JsonLeafValue, JsonPath, JsonScalarValue, NormalValue};
+use rapidhash::RapidHashSet;
 use schema::{FieldKind, IndexDescription, ScalarKind};
 use storage::index::Bound;
 
@@ -369,11 +370,16 @@ pub fn filter_to_index_scan(
     } else if has_in {
         let mut wrapped_values =
             wrap_values_for_json_path(in_values.unwrap(), in_json_path.as_ref());
-        // The lookups run in the index's key order, as a range scan would,
-        // and backward when the scan is: the planner relies on the index for
-        // the requested order, so `_in: [55, 25]` must not come back as written.
-        // Sorting after the JSON wrap orders them by the keys the index stores.
-        sort_in_key_order(&mut wrapped_values, first_field_descending, reverse);
+        // Without `order` the lookups run as the filter lists them, as Go's
+        // do. With one the planner relies on the index for it, so they run in
+        // the index's key order, backward when the scan is: `_in: [55, 25]`
+        // must not come back as written. The keys are encoded after the JSON
+        // wrap, so they are the ones the index stores.
+        order_in_values(
+            &mut wrapped_values,
+            first_field_descending,
+            order_by.map(|_| reverse),
+        );
         // For composite indexes, check if subsequent fields have Eq conditions.
         // If so, attach them as suffix_values to enable exact-match lookups
         // instead of prefix scans (e.g., _in on first field + _eq on second).
@@ -605,26 +611,32 @@ fn path_high_end(path: &JsonPath, descending: bool) -> Bound {
     }
 }
 
-/// `values` in the order the index holds their keys (`descending` when its
-/// first field is), backward when the scan runs backward, each once. A value
-/// that does not encode keeps its place after those that do.
-fn sort_in_key_order(values: &mut Vec<NormalValue>, descending: bool, reverse: bool) {
+/// `values`, each once. With `scan_reverse` set they go in the order the
+/// index holds their keys, backward when it is `true`; without it they keep
+/// the order they came in. A value that does not encode is never a duplicate,
+/// and sorts after those that do.
+fn order_in_values(values: &mut Vec<NormalValue>, descending: bool, scan_reverse: Option<bool>) {
+    let mut seen = RapidHashSet::default();
     let mut keyed: Vec<(Option<Vec<u8>>, NormalValue)> = values
         .drain(..)
-        .map(|value| {
+        .filter_map(|value| {
             let key = storage::field_value::encode_field_value(Vec::new(), &value, descending).ok();
-            (key, value)
+            match &key {
+                Some(key) if !seen.insert(key.clone()) => None,
+                _ => Some((key, value)),
+            }
         })
         .collect();
-    keyed.sort_by(|(a, _), (b, _)| match (a, b) {
-        (Some(a), Some(b)) => a.cmp(b),
-        (Some(_), None) => std::cmp::Ordering::Less,
-        (None, Some(_)) => std::cmp::Ordering::Greater,
-        (None, None) => std::cmp::Ordering::Equal,
-    });
-    keyed.dedup_by(|(a, _), (b, _)| a.is_some() && a == b);
-    if reverse {
-        keyed.reverse();
+    if let Some(reverse) = scan_reverse {
+        keyed.sort_by(|(a, _), (b, _)| match (a, b) {
+            (Some(a), Some(b)) => a.cmp(b),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        });
+        if reverse {
+            keyed.reverse();
+        }
     }
     values.extend(keyed.into_iter().map(|(_, value)| value));
 }
