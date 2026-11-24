@@ -1073,6 +1073,8 @@ RUNS=(
   "MC_TxnOutcomeQuery_Red_Start.cfg TxnOutcomeQuery.tla RED" # a restart rewrites the old ID: its state is served to a new transaction (INV_StartToken)
   "MC_TxnOutcomeQuery_Red_Owner.cfg TxnOutcomeQuery.tla RED" # a foreign query leaks the state (INV_Foreign)
   "MC_TxnOutcomeQuery_Red_Consume.cfg TxnOutcomeQuery.tla RED" # a read drops the record: an owner that polled mid-commit never learns the result (LIVE_QuestionAnswered)
+  "MC_TxnOutcomeQuery_Red_PollOnce.cfg TxnOutcomeQuery.tla RED" # the owner stops asking after one answer: it keeps a stale "open" or "committing" (INV_OwnerSettled)
+  "MC_TxnOutcomeQuery_Red_EvictLive.cfg TxnOutcomeQuery.tla RED" # a full store drops a live record: the owner gets "unknown" for a commit that landed (LIVE_QuestionAnswered)
   "MC_VersionPin_Green.cfg VersionPin.tla GREEN" # requests pin an old version, the active one or nothing while DDL changes the active version: pins stay in their turn, unpinned turns see the active version, old-version reads change nothing, writes land at the selected version
   "MC_VersionPin_Red_PinLeaks.cfg VersionPin.tla RED" # a turn leaves its pin behind: the next request still sees the old version (INV_PinScoped)
   "MC_VersionPin_Red_WriteBackOnPin.cfg VersionPin.tla RED" # a read through an old version stores the migrated document back (INV_ReadNoSideEffect)

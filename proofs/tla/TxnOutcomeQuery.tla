@@ -24,12 +24,29 @@
 \* "unknown". The owner keeps that chance while every answer it got was
 \* "open" or "committing", so polling mid-commit does not use it up.
 \*
+\* The node keeps at most Cap records per worker. When a new transaction begins
+\* and the store is full, the oldest final results make room; a live record
+\* (an open or committing transaction) is never dropped, because its result is
+\* still to come. A store holding only live records grows past the cap rather
+\* than forget one. Other transactions' records are counted, not named: how
+\* many are live and how many are final.
+\*
+\* The code this models: crates/database/db/src/txn/owner/mod.rs, OutcomeStore
+\* (insert, evict, expire, mark) and Owners::outcome / Owners::outcome_status;
+\* crates/database/db/src/txn/registry/lifecycle.rs,
+\* DbTransactionRegistry::outcome_as.
+\*
 \* RED configs remove one guard:
 \*   * QueryWorks=FALSE answers every owner query "unknown";
 \*   * BrokenStart=TRUE answers an old-start ID as if it were current;
 \*   * LeaksOwner=TRUE answers another client with the owner's outcome;
 \*   * ConsumesOnRead=TRUE drops the record when the owner reads it, so an
-\*     owner that polled mid-commit gets "unknown" for the final outcome.
+\*     owner that polled mid-commit gets "unknown" for the final outcome;
+\*   * PollsOnce=TRUE ends the owner's asking after its first answer, so an
+\*     owner that polled mid-commit is left holding "open" or "committing";
+\*   * EvictsLive=TRUE brings back the old last-resort eviction: a full store
+\*     with no final result to drop drops a live record, so the owner later
+\*     gets "unknown" for a commit that landed.
 
 EXTENDS Naturals
 
@@ -40,7 +57,10 @@ CONSTANTS
   CheckOwner,    \* TRUE when the query checks the caller's ownership
   BrokenStart,   \* TRUE plants a query that ignores the start token
   LeaksOwner,    \* TRUE plants a foreign-state leak
-  ConsumesOnRead \* TRUE plants a query that removes the record it reads
+  ConsumesOnRead, \* TRUE plants a query that removes the record it reads
+  PollsOnce,      \* TRUE plants an owner that stops asking after one answer
+  EvictsLive,     \* TRUE plants a full store that drops a live record
+  Cap             \* how many records one worker's store keeps before evicting
 
 VARIABLES
   status,             \* open, committing, committed or aborted
@@ -54,16 +74,27 @@ VARIABLES
   ownerMayQuery,      \* the owner still has its fair chance before expiry
   querySeenStatus,    \* the real status at the moment of the last query
   queryTokenAnswered, \* whether a concrete answer was issued under the ID's token
-  queryToken          \* the server-start token the last query saw
+  queryToken,         \* the server-start token the last query saw
+  otherLive,          \* how many other transactions' live records are stored
+  otherFinal          \* how many other transactions' final results are stored
 
 vars == <<status, lost, answer, askedBy, retained, token, idToken, age,
-          ownerMayQuery, querySeenStatus, queryTokenAnswered, queryToken>>
+          ownerMayQuery, querySeenStatus, queryTokenAnswered, queryToken,
+          otherLive, otherFinal>>
+\* Every variable, so a step that leaves them all alone is a stutter.
+
+others == <<otherLive, otherFinal>>
+\* The other transactions' records, which most steps leave alone.
 
 OldStart == token # idToken
 \* OldStart says the ID was written by an earlier server start.
 
 Final(state) == state \in {"committed", "aborted"}
 \* Final says the commit or abort has settled and cannot change again.
+
+Size == (IF retained THEN 1 ELSE 0) + otherLive + otherFinal
+\* Size counts every record in the store: ours, if it is still kept, plus the
+\* other transactions' live records and final results.
 
 Init ==
   /\ status = "open"
@@ -78,8 +109,10 @@ Init ==
   /\ querySeenStatus = "none"
   /\ queryTokenAnswered = FALSE
   /\ queryToken = 1
+  /\ otherLive = 0
+  /\ otherFinal = 0
   \* Every transaction starts open, under the current start token, before any
-  \* query has answered.
+  \* query has answered, in a store that holds only its record.
 
 QueueCommit ==
   /\ status = "open"
@@ -87,6 +120,7 @@ QueueCommit ==
   /\ UNCHANGED <<lost, answer, askedBy, retained, token, idToken, age,
                  queryToken,
                  ownerMayQuery, querySeenStatus, queryTokenAnswered>>
+  /\ UNCHANGED others
   \* A commit arrives, but its answer has not been decided yet.
 
 FinishCommit ==
@@ -96,6 +130,7 @@ FinishCommit ==
   /\ UNCHANGED <<lost, answer, askedBy, retained, token, idToken,
                  queryToken,
                  ownerMayQuery, querySeenStatus, queryTokenAnswered>>
+  /\ UNCHANGED others
   \* The node decides the commit; either final result is possible here.
 
 LoseAnswer ==
@@ -103,6 +138,7 @@ LoseAnswer ==
   /\ UNCHANGED <<status, answer, askedBy, retained, token, idToken, age,
                  queryToken,
                  ownerMayQuery, querySeenStatus, queryTokenAnswered>>
+  /\ UNCHANGED others
   \* The connection drops before the client receives an answer.
 
 OwnerQuery ==
@@ -117,14 +153,18 @@ OwnerQuery ==
        ELSE IF QueryWorks /\ retained
             THEN status
             ELSE "unknown"
-  /\ ownerMayQuery' = (answer' \in {"open", "committing"})
-  \* An answer that is not final yet leaves the owner asking again.
+  /\ ownerMayQuery' = IF PollsOnce
+                      THEN FALSE
+                      ELSE (answer' \in {"open", "committing"})
+  \* An answer that is not final yet leaves the owner asking again; the
+  \* planted bug stops it after the first answer, whatever that answer was.
   /\ retained' = (retained /\ ~ConsumesOnRead)
   \* A correct read leaves the record; the planted bug removes it.
   /\ querySeenStatus' = status
   /\ queryTokenAnswered' = (answer' # "unknown")
   /\ queryToken' = token
   /\ UNCHANGED <<status, lost, token, idToken, age>>
+  /\ UNCHANGED others
   \* The owner asks about its lost answer; a correct node answers the outcome
   \* it still retains, or unknown after expiry or for an old-start ID.
   \* querySeenStatus records the real status at the moment of the query, not
@@ -138,6 +178,7 @@ ForeignQuery ==
   /\ queryToken' = token
   /\ UNCHANGED <<status, lost, retained, token, idToken, age,
                  ownerMayQuery>>
+  /\ UNCHANGED others
   \* Another client asks. A correct node says only unknown, because it cannot
   \* disclose another caller's transaction.
 
@@ -147,6 +188,7 @@ Restart ==
   /\ token' = 2
   /\ UNCHANGED <<status, lost, answer, askedBy, retained, idToken, age,
                  ownerMayQuery, querySeenStatus, queryTokenAnswered, queryToken>>
+  /\ UNCHANGED others
   \* A restart mints a new token only after the owner's query chance. One
   \* transition is enough without creating unbounded token values. A RED
   \* BrokenStart model begins with an old ID instead.
@@ -156,11 +198,58 @@ Expire ==
   /\ Final(status)
   /\ age < Idle
   /\ age' = age + 1
-  /\ retained' = ((age + 1) < Idle)
+  /\ retained' = (retained /\ ((age + 1) < Idle))
+  \* A record the cap already dropped stays dropped.
   /\ UNCHANGED <<status, lost, answer, askedBy, token, idToken,
                  ownerMayQuery, querySeenStatus, queryTokenAnswered, queryToken>>
+  /\ UNCHANGED others
   \* The record ages only after a final outcome, and only after the owner has
   \* had its fair chance to ask; after Idle ticks it is no longer retained.
+
+OtherBegin ==
+  /\ otherLive < Cap
+  \* Bound the other live transactions so the model stays finite.
+  /\ IF Size < Cap
+     THEN UNCHANGED <<retained, otherFinal>>
+     \* Below the cap the new record just goes in.
+     ELSE IF otherFinal > 0
+     THEN /\ otherFinal' = otherFinal - 1
+          /\ UNCHANGED retained
+     \* At the cap the oldest final result makes room. Another transaction's
+     \* final result counts as older than ours: ours is protected by the
+     \* timing premise below.
+     ELSE IF retained /\ Final(status)
+     THEN /\ ~ownerMayQuery
+          /\ retained' = FALSE
+          /\ UNCHANGED otherFinal
+     \* Our final result is the only one left, so it makes room, but only
+     \* after the owner's fair chance to ask: the cap is retention too, and
+     \* the same premise as Expire applies.
+     ELSE /\ retained' = (retained /\ ~EvictsLive)
+          /\ UNCHANGED otherFinal
+     \* Only live records are left. A correct store drops none of them and
+     \* grows past the cap; the planted bug drops our live record.
+  /\ otherLive' = otherLive + 1
+  \* The new transaction's live record is stored.
+  /\ UNCHANGED <<status, lost, answer, askedBy, token, idToken, age,
+                 ownerMayQuery, querySeenStatus, queryTokenAnswered, queryToken>>
+  \* Another transaction begins, which is the moment the store may evict.
+
+OtherFinish ==
+  /\ otherLive > 0
+  /\ otherLive' = otherLive - 1
+  /\ otherFinal' = otherFinal + 1
+  /\ UNCHANGED <<status, lost, answer, askedBy, retained, token, idToken, age,
+                 ownerMayQuery, querySeenStatus, queryTokenAnswered, queryToken>>
+  \* Another transaction commits or aborts; its record becomes a final result.
+
+OtherExpire ==
+  /\ otherFinal > 0
+  /\ otherFinal' = otherFinal - 1
+  /\ UNCHANGED <<status, lost, answer, askedBy, retained, token, idToken, age,
+                 ownerMayQuery, querySeenStatus, queryTokenAnswered, queryToken,
+                 otherLive>>
+  \* Another transaction's final result outlives its retention and is dropped.
 
 Next ==
   \/ QueueCommit
@@ -170,6 +259,9 @@ Next ==
   \/ ForeignQuery
   \/ Restart
   \/ Expire
+  \/ OtherBegin
+  \/ OtherFinish
+  \/ OtherExpire
   \* Any one enabled action may be the next step.
 
 Fair == WF_vars(OwnerQuery)
