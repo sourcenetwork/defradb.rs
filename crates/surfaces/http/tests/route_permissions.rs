@@ -565,6 +565,20 @@ fn an_implicit_head_takes_the_get_rows_permission() {
         reads_collection_first("/api/v0/collections/{name}/document/{docID}", &Method::HEAD),
         "the collection-first check follows the GET row for HEAD"
     );
+
+    // The `match` this table replaced gave these two paths' HEAD the
+    // `DacRelationAdd` its per-path `_` arm fell to. The GET handler axum runs
+    // for HEAD is `Dynamic`, so HEAD now answers what actually executes.
+    for path in [
+        "/api/v0/acp/document/relationship",
+        "/api/v0/acp/document/relationships",
+    ] {
+        assert_eq!(
+            route_permission(path, &Method::HEAD),
+            RoutePermission::Dynamic,
+            "HEAD {path}"
+        );
+    }
 }
 
 /// The fallback is for HEAD alone: a method the router does not register still
