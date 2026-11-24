@@ -299,10 +299,10 @@ pub(super) fn restore_displaced_connection(
     refused: &iroh::endpoint::Connection,
     displaced: Option<iroh::endpoint::Connection>,
 ) {
-    let Some(displaced) = displaced else {
+    evict_connection(cache, refused.remote_id(), refused);
+    let Some(displaced) = displaced.filter(|displaced| displaced.close_reason().is_none()) else {
         return;
     };
-    evict_connection(cache, refused.remote_id(), refused);
     let connections = match displaced.alpn() {
         protocols::ALPN_MUX => &cache.connections,
         protocols::ALPN_MUX_V1 => &cache.legacy_connections,
@@ -1850,6 +1850,90 @@ mod tests {
             assert_eq!(cached.stable_id(), newer.stable_id());
             assert!(newer.close_reason().is_none());
             assert!(old.close_reason().is_some());
+
+            accept_task.abort();
+        })
+        .await
+    }
+
+    #[nuclei::test]
+    async fn a_closed_displaced_restore_spares_a_concurrent_replacement() {
+        edge::compat(async {
+            let accept_ep = localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
+            let dial_ep = localhost_endpoint(vec![]).await;
+            let accept_task = crate::rt::spawn(edge::compat({
+                let ep = accept_ep.clone();
+                async move {
+                    let mut held = Vec::new();
+                    while let Some(connection) = ep.accept().await {
+                        held.push(connection.await.expect("accepted connection"));
+                    }
+                }
+            }));
+
+            let displaced = dial_ep
+                .connect(accept_ep.addr(), protocols::ALPN_MUX)
+                .await
+                .expect("connect displaced");
+            let refused = dial_ep
+                .connect(accept_ep.addr(), protocols::ALPN_MUX)
+                .await
+                .expect("connect refused");
+            let third = dial_ep
+                .connect(accept_ep.addr(), protocols::ALPN_MUX)
+                .await
+                .expect("connect third");
+            let peer = PeerId::new(accept_ep.id().to_string());
+            let cache = new_connection_cache(GossipHandle::new());
+
+            remember_connection(&cache, &displaced);
+            remember_connection(&cache, &refused);
+            remember_connection(&cache, &third);
+            displaced.close(0u32.into(), b"closed before restore");
+            restore_displaced_connection(&cache, &refused, Some(displaced.clone()));
+
+            let cached = cached_connection(&cache, &peer)
+                .expect("read cache")
+                .expect("the third connection must remain cached");
+            assert_eq!(cached.stable_id(), third.stable_id());
+            assert!(third.close_reason().is_none());
+
+            accept_task.abort();
+        })
+        .await
+    }
+
+    #[nuclei::test]
+    async fn a_closed_displaced_handle_evicts_the_refused_connection() {
+        edge::compat(async {
+            let accept_ep = localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
+            let accept_task = crate::rt::spawn(edge::compat({
+                let ep = accept_ep.clone();
+                async move {
+                    while let Some(connection) = ep.accept().await {
+                        let _ = connection.await.expect("accepted connection");
+                    }
+                }
+            }));
+
+            let dial_ep = localhost_endpoint(vec![]).await;
+            let displaced = dial_ep
+                .connect(accept_ep.addr(), protocols::ALPN_MUX)
+                .await
+                .expect("connect displaced");
+            let refused = dial_ep
+                .connect(accept_ep.addr(), protocols::ALPN_MUX)
+                .await
+                .expect("connect refused");
+            let peer = PeerId::new(accept_ep.id().to_string());
+            let endpoint_id = parse_endpoint_id(&peer).expect("parse endpoint id");
+            let cache = new_connection_cache(GossipHandle::new());
+
+            displaced.close(0u32.into(), b"closed before restore");
+            remember_connection(&cache, &refused);
+            restore_displaced_connection(&cache, &refused, Some(displaced.clone()));
+
+            assert!(cache.connections.get(&endpoint_id).is_none());
 
             accept_task.abort();
         })
