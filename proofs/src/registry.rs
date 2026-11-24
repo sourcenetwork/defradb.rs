@@ -3971,6 +3971,33 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // A sweep's candidates are one bounded page. The delete transaction
+        // reads the live roots itself, validated, so a root published before
+        // its commit re-runs it. The model trusts that `LiveRoots::read`
+        // returns every live root, and that the caller storing the roots
+        // publishes one in the transaction that writes its nodes: nothing in
+        // the workspace publishes a root yet.
+        family: "Prolly tree node store and cache",
+        name: "SweepKeepsLiveRoots: a page sweep racing a root's publication never deletes a node the live root names",
+        axis: Tla,
+        anchor: "crates/engine/storage/src/stores/prolly_nodes.rs ProllyNodes::reclaim, node_keys, ReclaimNodes::run, mark_roots, LiveRoots::read",
+        model_ref: "MC_ProllyNodeReclaim_Green.cfg (GREEN) / MC_ProllyNodeReclaim_{Red_FixedRoots,Red_NoValidation,Red_PutAlone,Red_DeleteMarked}.cfg (RED)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // The data rule the delete applies: a node is deleted exactly when
+        // it is on the page and the live marks do not name it, so a marked
+        // node never is.
+        family: "Prolly tree node store and cache",
+        name: "reclaimDeletesOnlyUnmarked / reclaimKeepsMarked",
+        axis: Lean,
+        anchor: "crates/engine/storage/src/stores/prolly_nodes.rs ReclaimNodes::run, mark_roots",
+        model_ref: "ProllyTree (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         family: "Text chunking",
         name: "INV_ListMatchesText / INV_ListedChunksExist / INV_NoChunkOfDeletedParent / INV_ValidWritesSucceed",
         axis: Tla,
