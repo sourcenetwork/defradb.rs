@@ -106,9 +106,9 @@ A query without `order` filtered through a composite index returns documents in 
 # `go.index.order.composite-in`: `_in` through a composite index with a reversed field
 
 - **Parents:** ["go.index.order"]
-- **Scenarios:** ["index.query-with-composite-index-with-in-filter-on-first-field-with-reverted-order-should-fetch", "index.query-with-composite-index-with-in-filter-on-second-field-with-reverted-order-should-fetch"]
+- **Scenarios:** ["index.query-with-composite-index-with-in-filter-on-first-field-with-reverted-order-should-fetch", "index.query-with-composite-index-with-in-filter-on-second-field-with-reverted-order-should-fetch", "index::composite_in_order::in_on_descending_first_field_without_order_keeps_the_written_order", "index::composite_in_order::in_on_ascending_first_field_without_order_keeps_the_written_order", "index::composite_in_order::in_on_descending_first_field_ordered_descending_follows_the_order", "index::composite_in_order::in_on_descending_first_field_ordered_ascending_follows_the_order"]
 
-`_in` on the first or second field of a composite index with one DESC field returns the matching documents.
+`_in` on the first or second field of a composite index with one DESC field returns the matching documents. Without `order`, `_in` on the first field returns them in the order the filter lists its values, whichever direction that field is indexed in: over Users named Shahzad, Bruno, Fred, Andy, Addo and Chris with `@index(includes: [{field: "name", direction: DESC}, {field: "age", direction: ASC}])`, `User(filter: {name: {_in: ["Fred", "Addo", "Andy"]}})` returns Fred, Addo, Andy, and so does the same query with `name` ASC and `age` DESC. A value listed twice returns its documents once. With `order` on that field the order decides, not the list: `order: {name: DESC}` returns Fred, Andy, Addo and `order: {name: ASC}` returns Addo, Andy, Fred. Go ignores `order` there and returns the listed order.
 
 # `go.index.order.composite-range`: Range filters on a composite index's first field
 
@@ -277,6 +277,13 @@ A collection patch that adds, removes or modifies a secondary index, or changes 
 - **Scenarios:** ["txn::list_all_encrypted_indexes::txn_list_all_encrypted_indexes_sees_its_own_changes_until_commit"]
 
 `ListAllEncryptedIndexes` given a transaction (the embedded node's request context, the HTTP `x-defradb-tx` header on `GET /api/v0/encrypted-indexes`, the CLI's `encrypted-index list --tx` without `--collection`) lists every collection's encrypted indexes as that transaction sees them, as Go's `ensureContextTxn` does: an index added in the transaction is listed and one deleted in it is gone, while a listing outside the transaction still returns the committed indexes until it commits. The answer is Go's: an object keyed by collection name, each a list of `{FieldName, Type: "equality"}`, with collections that have no encrypted index left out. NAC checks `list-all-encrypted-index` in the transaction; a caller without it gets `not authorized to perform operation. Permission: list-all-encrypted-index`.
+
+# `defra.txn.indexes.concurrent-encrypted-changes`: Concurrent encrypted index changes outside a transaction
+
+- **Parents:** ["go.txn.indexes"]
+- **Scenarios:** ["txn::new_encrypted_index_concurrent::concurrent_encrypted_index_adds_all_land", "txn::new_encrypted_index_concurrent::a_concurrent_encrypted_index_delete_and_adds_all_land", "txn::new_encrypted_index_concurrent::concurrent_encrypted_index_adds_out_of_retries_fail"]
+
+Encrypted index changes made outside a transaction (`NewEncryptedIndex` and `DeleteEncryptedIndex` with no transaction), at the same time, on different fields of one collection, all succeed and none is lost, as long as the total number of changes does not exceed the node's retry budget (`max_txn_retries` + 1 attempts, 6 by default): a change loses an attempt only to another change's commit, and each change commits once. A change that loses the race runs again on the committed definition, so `ListEncryptedIndexes` afterwards lists every added index and none of the deleted ones. A change that runs out of retries fails with the storage error `transaction retry attempts exhausted: ` followed by the race it last lost (such as `a read lost to a newer put`), and changes nothing.
 
 # `defra.node.identity_only_transactions`: An identity-only node runs requests in the transactions it begins
 

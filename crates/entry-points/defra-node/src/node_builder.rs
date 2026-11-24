@@ -70,10 +70,16 @@ pub struct NodeBuilder {
     txn_ownership: db::TxnOwnership,
     document_projector: Option<Arc<dyn db::DocumentMutationProjector>>,
     replica_registration: Option<db::merge::ReplicaRegistration>,
+    #[cfg(all(test, feature = "p2p"))]
+    kms_transport_wrapper: Option<crate::assemble::TestKmsTransportWrapper>,
     /// How long an idle explicit transaction lives, and how often the sweep
     /// looks; when set, it takes precedence over an HTTP config's setting.
     #[cfg(not(target_arch = "wasm32"))]
     transaction_idle: Option<(Duration, Duration)>,
+    /// Where a libp2p transport's DNS layers read the resolver
+    /// configuration, when not the system's.
+    #[cfg(feature = "libp2p")]
+    resolver_source: Option<p2p::ResolverSource>,
 }
 
 /// Durability is a separate builder setting, so it is applied over the
@@ -106,6 +112,15 @@ fn with_at_rest_keys(
 }
 
 impl NodeBuilder {
+    #[cfg(all(test, feature = "p2p"))]
+    pub(crate) fn with_test_kms_transport_wrapper(
+        mut self,
+        wrap: crate::assemble::TestKmsTransportWrapper,
+    ) -> Self {
+        self.kms_transport_wrapper = Some(wrap);
+        self
+    }
+
     /// Install a trusted in-process document projector. It stages its changes
     /// through the mutation's transaction and cannot be selected over HTTP.
     pub fn with_document_projector(
@@ -434,6 +449,14 @@ impl NodeBuilder {
         self
     }
 
+    /// Read the libp2p transport's DNS resolver configuration from `source`
+    /// rather than the system's, whichever libp2p transport the builder runs.
+    #[cfg(feature = "libp2p")]
+    pub fn with_resolver_source(mut self, source: p2p::ResolverSource) -> Self {
+        self.resolver_source = Some(source);
+        self
+    }
+
     /// Keep the transport identity in an application-owned keyring.
     ///
     /// The backend must provide durable storage and its own namespace per node.
@@ -587,6 +610,8 @@ impl NodeBuilder {
             txn_ownership: self.txn_ownership,
             document_projector: self.document_projector.take(),
             replica_registration: self.replica_registration.take(),
+            #[cfg(all(test, feature = "p2p"))]
+            kms_transport_wrapper: self.kms_transport_wrapper.take(),
             #[cfg(not(target_arch = "wasm32"))]
             transaction_cleanup,
             #[cfg(feature = "http")]
@@ -599,6 +624,12 @@ impl NodeBuilder {
             telemetry: self.telemetry_handle.take(),
         };
 
+        #[cfg(feature = "libp2p")]
+        if let (Some(source), TransportConfig::Libp2p(libp2p)) =
+            (self.resolver_source.take(), &mut self.config.transport)
+        {
+            libp2p.resolver = source;
+        }
         self.config.persistence = if self.data_path.is_some() {
             Persistence::Persistent
         } else {

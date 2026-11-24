@@ -23,7 +23,7 @@ pub use error::{Error, Result};
 mod channel;
 
 mod types;
-pub use defra_kms::BlockDocIDResolver;
+pub use defra_kms::{BlockDocIDResolver, BlockOwner};
 pub use types::{EncryptionCid, KeyScope, PolicyDecision};
 
 mod context;
@@ -36,7 +36,7 @@ mod wire;
 pub use wire::{FetchEncryptionKeyReply, FetchEncryptionKeyRequest};
 
 mod service;
-pub use service::{KmsService, PeerIdentity};
+pub use service::{KeyArrivalListener, KmsService, PeerIdentity};
 
 mod store;
 pub use store::{KeyStore, StoredKey};

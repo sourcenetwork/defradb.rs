@@ -1,6 +1,11 @@
 //! The P2P operation surface (`P2POperations` and the `peer` core every edge
 //! calls) and the adapters that implement it over libp2p and iroh.
 
+#[cfg(feature = "kms")]
+mod key_arrival;
+#[cfg(feature = "kms")]
+pub use key_arrival::key_arrival_promoter;
+
 use std::sync::Arc;
 
 use kovan::Atom;
@@ -107,6 +112,27 @@ where
         .into_iter()
         .map(|c| resolve(&c).unwrap_or(c))
         .collect()
+}
+
+/// `names` plus their `@chunk` collections, which replicate and subscribe with
+/// their parent. A filtered parent's filter decides its chunks too.
+#[cfg(any(feature = "iroh", feature = "libp2p"))]
+pub fn with_chunk_collections(
+    pusher: Option<&Arc<dyn TransportDocPusher>>,
+    names: Vec<String>,
+) -> Vec<String> {
+    let Some(pusher) = pusher else {
+        return names;
+    };
+    let mut all = names.clone();
+    for name in &names {
+        for chunks in pusher.chunk_collections(name) {
+            if !all.contains(&chunks) {
+                all.push(chunks);
+            }
+        }
+    }
+    all
 }
 
 /// Collections that need an initial document replay when adding a replicator.

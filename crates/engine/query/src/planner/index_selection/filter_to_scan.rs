@@ -1,6 +1,7 @@
 //! Core filter-to-index-scan conversion.
 
 use document::{JsonLeafValue, JsonPath, JsonScalarValue, NormalValue};
+use rapidhash::RapidHashSet;
 use schema::{FieldKind, IndexDescription, ScalarKind};
 use storage::index::Bound;
 
@@ -107,15 +108,30 @@ pub fn filter_to_index_scan(
         .and_then(FieldKind::as_scalar)
         .is_some_and(|kind| kind.base_kind() == ScalarKind::NillableJson);
 
+    // An empty array matches `_all` but has no index entry to find it by.
+    if first_field_is_json
+        && conditions.iter().any(|c| {
+            &c.field_name == first_field
+                && c.json_path.is_none()
+                && c.array_op == Some(FilterOp::All)
+        })
+    {
+        return None;
+    }
+
     // Find conditions on the first index field
     // For JSON fields, ensure top-level conditions get an empty json_path
     let first_field_conditions: Vec<_> = conditions
         .iter()
         .map(|c| {
             if &c.field_name == first_field && first_field_is_json && c.json_path.is_none() {
-                // Top-level JSON filter (e.g., custom: {_gt: 20}) needs an empty path
+                // Top-level JSON filter (e.g., custom: {_gt: 20}) needs an empty path.
+                // Under `_any`/`_all` only array elements match, as Go's index marker.
                 let mut c = c.clone();
-                c.json_path = Some(JsonPath::new());
+                c.json_path = Some(match c.array_op {
+                    Some(_) => JsonPath::new().append_index(),
+                    None => JsonPath::new(),
+                });
                 c
             } else {
                 c.clone()
@@ -354,11 +370,16 @@ pub fn filter_to_index_scan(
     } else if has_in {
         let mut wrapped_values =
             wrap_values_for_json_path(in_values.unwrap(), in_json_path.as_ref());
-        // The lookups run in the index's key order, as a range scan would,
-        // and backward when the scan is: the planner relies on the index for
-        // the requested order, so `_in: [55, 25]` must not come back as written.
-        // Sorting after the JSON wrap orders them by the keys the index stores.
-        sort_in_key_order(&mut wrapped_values, first_field_descending, reverse);
+        // Without `order` the lookups run as the filter lists them, as Go's
+        // do. With one the planner relies on the index for it, so they run in
+        // the index's key order, backward when the scan is: `_in: [55, 25]`
+        // must not come back as written. The keys are encoded after the JSON
+        // wrap, so they are the ones the index stores.
+        order_in_values(
+            &mut wrapped_values,
+            first_field_descending,
+            order_by.map(|_| reverse),
+        );
         // For composite indexes, check if subsequent fields have Eq conditions.
         // If so, attach them as suffix_values to enable exact-match lookups
         // instead of prefix scans (e.g., _in on first field + _eq on second).
@@ -406,20 +427,11 @@ pub fn filter_to_index_scan(
                 Bound::Exclusive(wrap_value_for_json_path(v, range_json_path.as_ref()))
             }
             Bound::Unbounded => {
-                // For JSON paths with non-empty path, use PathMin to constrain lower bound.
                 // For empty paths (top-level JSON), leave unbounded to match Go behavior:
                 // Go scans from value to end of entire index, counting all keys.
-                if let Some(path) = &range_json_path {
-                    if !path.is_empty() {
-                        Bound::Inclusive(NormalValue::JsonLeaf(JsonLeafValue::new(
-                            path.clone(),
-                            JsonScalarValue::PathMin,
-                        )))
-                    } else {
-                        Bound::Unbounded
-                    }
-                } else {
-                    Bound::Unbounded
+                match &range_json_path {
+                    Some(path) if !path.is_empty() => path_low_end(path, first_field_descending),
+                    _ => Bound::Unbounded,
                 }
             }
             _ => Bound::Unbounded,
@@ -431,22 +443,10 @@ pub fn filter_to_index_scan(
             Bound::Exclusive(v) => {
                 Bound::Exclusive(wrap_value_for_json_path(v, range_json_path.as_ref()))
             }
-            Bound::Unbounded => {
-                // For JSON paths with non-empty path, use PathMax to constrain upper bound.
-                // For empty paths (top-level JSON), leave unbounded to match Go behavior.
-                if let Some(path) = &range_json_path {
-                    if !path.is_empty() {
-                        Bound::Exclusive(NormalValue::JsonLeaf(JsonLeafValue::new(
-                            path.clone(),
-                            JsonScalarValue::PathMax,
-                        )))
-                    } else {
-                        Bound::Unbounded
-                    }
-                } else {
-                    Bound::Unbounded
-                }
-            }
+            Bound::Unbounded => match &range_json_path {
+                Some(path) if !path.is_empty() => path_high_end(path, first_field_descending),
+                _ => Bound::Unbounded,
+            },
             _ => Bound::Unbounded,
         };
         IndexScanType::RangeScan {
@@ -463,14 +463,8 @@ pub fn filter_to_index_scan(
             if !path.is_empty() {
                 IndexScanType::RangeScan {
                     prefix_values: vec![],
-                    lower: Bound::Inclusive(NormalValue::JsonLeaf(JsonLeafValue::new(
-                        path.clone(),
-                        JsonScalarValue::PathMin,
-                    ))),
-                    upper: Bound::Exclusive(NormalValue::JsonLeaf(JsonLeafValue::new(
-                        path.clone(),
-                        JsonScalarValue::PathMax,
-                    ))),
+                    lower: path_low_end(path, first_field_descending),
+                    upper: path_high_end(path, first_field_descending),
                     reverse,
                 }
             } else {
@@ -587,26 +581,62 @@ pub fn or_filter_to_index_scan(
     None
 }
 
-/// `values` in the order the index holds their keys (`descending` when its
-/// first field is), backward when the scan runs backward, each once. A value
-/// that does not encode keeps its place after those that do.
-fn sort_in_key_order(values: &mut Vec<NormalValue>, descending: bool, reverse: bool) {
+/// A bound below every value at `path`. A descending index inverts the
+/// bytes, so `PathMax` is its low end.
+fn path_low_end(path: &JsonPath, descending: bool) -> Bound {
+    let sentinel = if descending {
+        JsonScalarValue::PathMax
+    } else {
+        JsonScalarValue::PathMin
+    };
+    Bound::Inclusive(NormalValue::JsonLeaf(JsonLeafValue::new(
+        path.clone(),
+        sentinel,
+    )))
+}
+
+/// A bound above every value at `path`. On a descending index `PathMin` is a
+/// null, the last value, so it stays inclusive.
+fn path_high_end(path: &JsonPath, descending: bool) -> Bound {
+    if descending {
+        Bound::Inclusive(NormalValue::JsonLeaf(JsonLeafValue::new(
+            path.clone(),
+            JsonScalarValue::PathMin,
+        )))
+    } else {
+        Bound::Exclusive(NormalValue::JsonLeaf(JsonLeafValue::new(
+            path.clone(),
+            JsonScalarValue::PathMax,
+        )))
+    }
+}
+
+/// `values`, each once. With `scan_reverse` set they go in the order the
+/// index holds their keys, backward when it is `true`; without it they keep
+/// the order they came in. A value that does not encode is never a duplicate,
+/// and sorts after those that do.
+fn order_in_values(values: &mut Vec<NormalValue>, descending: bool, scan_reverse: Option<bool>) {
+    let mut seen = RapidHashSet::default();
     let mut keyed: Vec<(Option<Vec<u8>>, NormalValue)> = values
         .drain(..)
-        .map(|value| {
+        .filter_map(|value| {
             let key = storage::field_value::encode_field_value(Vec::new(), &value, descending).ok();
-            (key, value)
+            match &key {
+                Some(key) if !seen.insert(key.clone()) => None,
+                _ => Some((key, value)),
+            }
         })
         .collect();
-    keyed.sort_by(|(a, _), (b, _)| match (a, b) {
-        (Some(a), Some(b)) => a.cmp(b),
-        (Some(_), None) => std::cmp::Ordering::Less,
-        (None, Some(_)) => std::cmp::Ordering::Greater,
-        (None, None) => std::cmp::Ordering::Equal,
-    });
-    keyed.dedup_by(|(a, _), (b, _)| a.is_some() && a == b);
-    if reverse {
-        keyed.reverse();
+    if let Some(reverse) = scan_reverse {
+        keyed.sort_by(|(a, _), (b, _)| match (a, b) {
+            (Some(a), Some(b)) => a.cmp(b),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        });
+        if reverse {
+            keyed.reverse();
+        }
     }
     values.extend(keyed.into_iter().map(|(_, value)| value));
 }

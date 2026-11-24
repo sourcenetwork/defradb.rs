@@ -116,6 +116,11 @@ pub trait PlanNode: MaybeSend {
         false
     }
 
+    /// Whether this node filters rows after its underlying index fetch.
+    fn has_residual_filter(&self) -> bool {
+        false
+    }
+
     /// Returns cursor page-info if this node is (or wraps) a `CursorNode`.
     ///
     /// Called after iteration is complete. `CursorNode` returns `Some(...)`;
@@ -124,6 +129,11 @@ pub trait PlanNode: MaybeSend {
     /// Default: `None`.
     fn page_info(&self) -> Option<CursorPageInfo> {
         None
+    }
+
+    /// Whether this scalar index is on a relation-ID field.
+    fn is_relation_id_index_scan(&self) -> bool {
+        false
     }
 
     /// Generate an explanation of this node for EXPLAIN queries.

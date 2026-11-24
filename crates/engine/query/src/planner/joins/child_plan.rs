@@ -24,6 +24,8 @@ pub(super) struct RelationChildPlan {
     pub nested_limit: Option<u64>,
     pub nested_offset: u64,
     pub nested_order_by: Option<OrderBy>,
+    pub child_scan_provides_order: bool,
+    pub child_scan_orders_parent: bool,
     pub parent_order_for_child: Option<OrderBy>,
     pub parent_relation_filter_for_child: Option<Filter>,
     pub child_uses_index: bool,
@@ -146,30 +148,19 @@ impl Planner {
         // For ordering, extract parent's order_by conditions that reference this relation
         // and convert them to child-level order_by. e.g., parent's `{device: {model: ASC}}`
         // becomes child's `{model: ASC}` for index selection on the Device collection.
-        let parent_order_for_child: Option<OrderBy> = select.order_by.as_ref().and_then(|o| {
-            let child_conditions: Vec<OrderCondition> = o
-                .conditions
-                .iter()
-                .filter_map(|c| {
-                    if c.fields.len() >= 2 && c.fields[0] == *relation_field_name {
-                        // Convert nested path to child-relative path
-                        Some(OrderCondition {
-                            fields: c.fields[1..].to_vec(),
-                            direction: c.direction,
-                        })
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            if child_conditions.is_empty() {
-                None
-            } else {
-                Some(OrderBy {
-                    conditions: child_conditions,
-                })
-            }
-        });
+        // Only the first order condition can drive the join, as Go's
+        // tryOptimizeJoinDirectionByOrder: a later one is only a tie-break.
+        let parent_order_for_child: Option<OrderBy> = select
+            .order_by
+            .as_ref()
+            .and_then(|o| o.conditions.first())
+            .filter(|c| c.fields.len() >= 2 && c.fields[0] == *relation_field_name)
+            .map(|c| OrderBy {
+                conditions: vec![OrderCondition {
+                    fields: c.fields[1..].to_vec(),
+                    direction: c.direction,
+                }],
+            });
 
         // Combine child's own order_by with parent's order for this relation
         let combined_child_order = match (&nested_select.order_by, &parent_order_for_child) {
@@ -268,20 +259,37 @@ impl Planner {
             None
         };
 
+        // A child limit/offset applies to each parent. Passing either into the
+        // scan bounds the whole relation once and shortchanges later parents,
+        // so TypeJoinMany applies the page while streaming per-parent scans.
         let child_index_result =
             if force_child_full_scan_for_relation_order || vector_route.is_some() {
                 None
             } else {
+                let (scan_limit, scan_offset) = if relation_field.kind.is_array() {
+                    (None, 0)
+                } else {
+                    (nested_limit, nested_offset)
+                };
                 self.try_select_child_index(
                     child_filter_for_index.as_ref(),
                     combined_child_order.as_ref(),
                     &target_collection,
-                    nested_limit,
-                    nested_offset,
+                    scan_limit,
+                    scan_offset,
                 )
             };
         let child_uses_index = child_index_result.is_some();
-
+        // A filter-only index can service the scan without ordering it. Only the
+        // selected index that orders the child's page may stop that page before
+        // a sort.
+        let child_scan_provides_order = child_index_result
+            .as_ref()
+            .is_some_and(|(_, provides_ordering)| *provides_ordering);
+        // An index picked for the filter or the child's own order may not follow the parent's.
+        let child_scan_orders_parent = child_scan_provides_order
+            && parent_order_for_child.is_some()
+            && combined_child_order == parent_order_for_child;
         // Create the child scan plan with scan_mapping (includes FK fields for joins)
         let child_plan: Box<dyn PlanNode> = if let Some((params, _)) = child_index_result {
             let mut index_scan = IndexScanNode::new(
@@ -292,6 +300,13 @@ impl Planner {
             .with_show_deleted(select.show_deleted);
             if let Some(ref fetcher) = self.fetcher {
                 index_scan = index_scan.with_fetcher(fetcher.clone());
+            }
+            if let Some(filter) = child_filter_for_index
+                .as_ref()
+                .cloned()
+                .or_else(|| agg_scan_filter.clone())
+            {
+                index_scan = index_scan.with_explain_filter(filter);
             }
             if let Some(filter) = agg_scan_filter {
                 index_scan = index_scan.with_residual_filter(filter);
@@ -384,6 +399,7 @@ impl Planner {
                         if let Some(ref fetcher) = self.fetcher {
                             index_scan = index_scan.with_fetcher(fetcher.clone());
                         }
+                        let index_scan = index_scan.with_explain_filter(rel_filter.clone());
                         Some(Box::new(index_scan) as Box<dyn PlanNode>)
                     } else {
                         None // No index for filter, use in-memory evaluation
@@ -463,6 +479,8 @@ impl Planner {
             nested_limit,
             nested_offset,
             nested_order_by,
+            child_scan_provides_order,
+            child_scan_orders_parent,
             parent_order_for_child,
             parent_relation_filter_for_child,
             child_uses_index,

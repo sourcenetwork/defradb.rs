@@ -113,6 +113,7 @@ where
                 enable_pubsub: config.enable_pubsub,
                 enable_relay: config.enable_relay,
                 resource_limits: config.resource_limits,
+                resolver: config.resolver.clone(),
                 stream_timeout: config
                     .stream_timeout_secs
                     .unwrap_or(p2p::P2PHostConfig::default().stream_timeout),
@@ -219,6 +220,7 @@ where
     };
     coordinator.install_kms_transport(kms_transport.clone());
     let merge_handler_inner_for_kms = replication.merge_handler_inner.clone();
+    let coordinator_for_kms = Arc::downgrade(&coordinator);
 
     let coordinator_for_restore = coordinator.clone();
     let pending_dag_resync_task = spawn_node_task(edge, async move {
@@ -455,6 +457,9 @@ where
         kms_transport: kms_transport as Arc<dyn kms::KeyTransport>,
         local_peer_id,
         wire_kms: Some(Box::new(move |kms| {
+            kms.set_key_arrival_listener(defra_p2p_adapter::key_arrival_promoter(
+                coordinator_for_kms,
+            ));
             merge_handler_inner_for_kms.set_kms(kms);
         })),
         wire_document_acp: Some(Box::new(move |acp, strict| {

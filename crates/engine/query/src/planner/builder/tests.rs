@@ -749,6 +749,53 @@ fn test_plan_relation_with_limit() {
     .unwrap()
 }
 
+// ========================================================================
+// Nested Relation Filter Tests
+// ========================================================================
+#[test]
+fn test_plan_one_to_many_child_limit_does_not_bound_index_scan() {
+    workers::block_on(async {
+        let planner = Planner::new(vec![make_users_collection(), make_posts_collection()]);
+
+        let posts_collection = planner.collection("posts").unwrap();
+        let posts_collection =
+            CollectionVersion::clone(posts_collection).with_index(IndexDescription {
+                id: 1,
+                name: "posts_title_ASC".to_string(),
+                unique: false,
+                kind: None,
+                auto_generated: false,
+                fields: vec![IndexedFieldDescription {
+                    name: "title".to_string(),
+                    descending: false,
+                }],
+            });
+        let planner = Planner::new(vec![make_users_collection(), posts_collection]);
+
+        let posts_select = Select::new("posts")
+            .with_field_name("posts")
+            .with_field(Field::new("title"))
+            .with_order(OrderBy {
+                conditions: vec![OrderCondition {
+                    fields: vec!["title".to_string()],
+                    direction: OrderDirection::Asc,
+                }],
+            })
+            .with_limit(1);
+        let select = Select::new("users")
+            .with_field(Field::new("name"))
+            .with_select(posts_select);
+
+        let result = planner.plan_with_index_info(&select).unwrap();
+        let join = result.plan.source().unwrap();
+        let explain = join.explain();
+        let index_scan = find_index_scan(&explain).expect("indexed child scan expected");
+        assert_eq!(index_scan["indexLimit"], serde_json::Value::Null);
+        assert_eq!(index_scan["indexOffset"], 0);
+    })
+    .unwrap()
+}
+
 #[test]
 fn ordered_index_scan_reserves_offset_for_limit_node() {
     workers::block_on(async {
@@ -769,6 +816,14 @@ fn ordered_index_scan_reserves_offset_for_limit_node() {
     .unwrap()
 }
 
+fn find_index_scan(value: &serde_json::Value) -> Option<&serde_json::Value> {
+    if value.get("indexName").is_some() {
+        return Some(value);
+    }
+    value
+        .as_object()
+        .and_then(|object| object.values().find_map(find_index_scan))
+}
 // ========================================================================
 // Nested Relation Filter Tests
 // ========================================================================

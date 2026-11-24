@@ -1,10 +1,16 @@
 import Lake
 open Lake DSL
 
+@[default_target]
+lean_lib ChildPage where
+
 package defraConvergence where
 
 @[default_target]
 lean_lib LocalFetchPermit where
+
+@[default_target]
+lean_lib DagReadiness where
 
 @[default_target]
 lean_lib HostMutationProjection where
@@ -35,6 +41,9 @@ lean_lib VeraEmbeddedTransport where
 
 @[default_target]
 lean_lib VeraConfirmationJournal where
+
+@[default_target]
+lean_lib VeraTakeoverReport where
 
 @[default_target]
 lean_lib DelegatedRelationship where
@@ -244,6 +253,9 @@ lean_lib JsonSubPathCut where
 lean_lib RelationFilterNoChild where
 
 @[default_target]
+lean_lib CommitsDepthCast where
+
+@[default_target]
 lean_lib CarClosureDepth where
 
 @[default_target]
@@ -316,6 +328,9 @@ lean_lib NacToggle where
 lean_lib FfiOptions where
 
 @[default_target]
+lean_lib GoConfigLayout where
+
+@[default_target]
 lean_lib NacRelationship where
 
 @[default_target]
@@ -355,10 +370,16 @@ lean_lib CatalogPin where
 lean_lib IndexEqualKeyOrder where
 
 @[default_target]
+lean_lib IndexKeyspace where
+
+@[default_target]
 lean_lib KmsChunks where
 
 @[default_target]
 lean_lib SigningOverride where
+
+@[default_target]
+lean_lib BackupImportSigner where
 
 @[default_target]
 lean_lib FloatEquality where
@@ -379,7 +400,22 @@ lean_lib RemoteOwnerAnswer where
 lean_lib StrictAccessRule where
 
 @[default_target]
+lean_lib RelationLinkConflict where
+
+@[default_target]
 lean_lib SeTruncatePrefix where
 
 @[default_target]
 lean_lib ReplicatorEmptyCollections where
+
+@[default_target]
+lean_lib PendingKeyArrival where
+
+@[default_target]
+lean_lib MissingRelationFilter where
+
+@[default_target]
+lean_lib DnsResolverFallback where
+
+@[default_target]
+lean_lib FilterInputShape where

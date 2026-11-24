@@ -17,6 +17,7 @@ use crate::error::{Error, Result};
 use crate::policy::AccessPolicy;
 use crate::remote::{RemoteKey, RemoteKeys};
 use crate::results::KeyResults;
+use crate::service::KeyArrivalListener;
 use crate::service::{KmsService, PeerIdentity};
 use crate::store::KeyStore;
 use crate::tier::KeyTier;
@@ -80,6 +81,7 @@ pub struct DefraKms {
     remote: inputs::Service<RemoteKeys>,
     policy: Arc<dyn AccessPolicy>,
     doc_resolver: Arc<dyn BlockDocIDResolver>,
+    arrivals: Arc<AtomOption<Arc<dyn KeyArrivalListener>>>,
     /// This node's transport-level peer id, bound into the ECIES AAD of
     /// served replies (Go's `makeAssociatedData`). Empty until the node
     /// wiring sets it from the P2P transport.
@@ -123,6 +125,7 @@ impl DefraKms {
     ) -> Self {
         let tier = Arc::new(KeyTier::new(store, inputs.key_tier_bytes));
         let test_ephemeral = Arc::new(AtomOption::none());
+        let arrivals = Arc::new(AtomOption::none());
         let mut remote_config = inputs.remote;
         // A transport that carries fewer keys per request than a batch holds
         // (iroh gossip, #2842) gets the batch as chunks, each its own round
@@ -141,6 +144,7 @@ impl DefraKms {
                 transports,
                 node_identity,
                 test_ephemeral: Arc::clone(&test_ephemeral),
+                arrivals: Arc::clone(&arrivals),
             },
             remote_config,
             inputs.runtime,
@@ -150,6 +154,7 @@ impl DefraKms {
             remote,
             policy,
             doc_resolver,
+            arrivals,
             local_peer_id: Atom::new(String::new()),
             #[cfg(test)]
             test_ephemeral,
@@ -212,13 +217,13 @@ impl DefraKms {
         cid: &EncryptionCid,
         delegated_actor: Option<(&Did, &str)>,
     ) -> Result<LocalRelease> {
-        let doc_ids = self.doc_resolver.doc_ids_for_block(cid).await?;
-        if doc_ids.is_empty() {
+        let owners = self.doc_resolver.owners_of_block(cid).await?;
+        if owners.is_empty() {
             return Ok(LocalRelease::OwnershipUnknown);
         }
-        for doc_id in doc_ids {
+        for owner in owners {
             let scope = KeyScope::Document {
-                doc_id,
+                doc_id: owner.doc_id,
                 field: None,
             };
             if matches!(
@@ -230,7 +235,12 @@ impl DefraKms {
             if let Some((delegate, collection_id)) = delegated_actor {
                 if matches!(
                     self.policy
-                        .check_delegated_release(delegate, &scope, collection_id)
+                        .check_delegated_release(
+                            delegate,
+                            &scope,
+                            collection_id,
+                            &owner.block_collection_id,
+                        )
                         .await?,
                     PolicyDecision::Allow
                 ) {
@@ -283,12 +293,21 @@ fn remote_error(error: inputs::Error<Error>) -> Error {
     }
 }
 
+/// A document whose readers decide a block's key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockOwner {
+    pub doc_id: String,
+    /// The collection the block itself is in. A chunk's block names its chunk
+    /// collection while its owner is the parent, so a delegation is checked against it.
+    pub block_collection_id: String,
+}
+
 /// Resolves which documents own a block, via the node's
 /// block-CID -> DocID index (mirrors Go's `ResolveBlockDocIDs`).
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait BlockDocIDResolver: defra_core::thread_bounds::MaybeSendSync {
-    async fn doc_ids_for_block(&self, cid: &EncryptionCid) -> Result<Vec<String>>;
+    async fn owners_of_block(&self, cid: &EncryptionCid) -> Result<Vec<BlockOwner>>;
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -480,6 +499,10 @@ impl KmsService for DefraKms {
 
     fn set_local_peer_id(&self, id: String) {
         self.local_peer_id.store(id);
+    }
+
+    fn set_key_arrival_listener(&self, listener: Arc<dyn KeyArrivalListener>) {
+        self.arrivals.store_some(listener);
     }
 }
 

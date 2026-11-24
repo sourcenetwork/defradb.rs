@@ -125,6 +125,7 @@ impl Planner {
                 if let Some(ref fetcher) = self.fetcher {
                     index_scan = index_scan.with_fetcher(fetcher.clone());
                 }
+                let index_scan = index_scan.with_explain_filter(nested_conditions.clone());
                 Box::new(index_scan)
             } else {
                 let mut child_scan =

@@ -41,9 +41,11 @@ async-trait = { workspace = true }
 events = { path = "../../crates/foundation/events" }
 async-channel = "2"
 cli = { path = "../../crates/entry-points/cli" }
+clap = "4.5"
 query = { path = "../../crates/engine/query" }
 schema = { path = "../../crates/foundation/schema" }
 defra-core = { path = "../../crates/foundation/defra-core" }
+defra-version = { path = "../../crates/foundation/defra-version" }
 serde.workspace = true
 tempfile = "3.17"
 thiserror.workspace = true

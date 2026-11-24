@@ -1,0 +1,13 @@
+# Failures inherited from in-process or seen with the secondary-index multiplier.
+# Keep entries as `<binary> <test> #<issue>`; remove any test that passes.
+testo issues::t_2569::p2_p_update_with_pn_counter_float_overflow_decrement_prevents_querying #2711
+testo issues::t_2569::p2_p_update_with_pn_counter_float_overflow_increment_prevents_querying #2711
+testo issues::t_2569::p2_p_update_with_pn_counter_float_overflow_prevents_collection_get #2711
+testo collection_version::introspection_golden::introspection_matches_golden_simple #2649
+testo collection_version::introspection_golden::introspection_matches_golden_related_one #2649
+testo collection_version::introspection_golden::introspection_matches_golden_related_many #2649
+testo signature::acp::signature_acp_if_has_access_to_doc_validate_signature #2723
+testo signature::acp_branchable::signature_acp_with_branchable_collection_if_has_collection_access_validate_signature #2723
+testo signature::acp_branchable::signature_acp_with_branchable_collection_if_has_no_collection_access_should_error #2723
+testo acp::nac::verify_signature::nac_gates_verify_signature_go_client_authorized_identity_allow_access #2723
+testo acp::nac::relation_admin::verify_signature::nac_admin_relation_go_client_can_verify_signature #2723
