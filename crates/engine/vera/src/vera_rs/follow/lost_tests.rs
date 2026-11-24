@@ -29,7 +29,7 @@ fn a_refused_replay_taints_the_later_ones_on_its_object_only() {
         .iter()
         .map(|lost| match lost {
             Lost::Relationship { object, add, .. } => (object.as_str(), *add),
-            Lost::Registration { .. } => unreachable!(),
+            Lost::Registration { .. } | Lost::Archive { .. } => unreachable!(),
         })
         .collect();
     assert_eq!(owed, vec![("a", false), ("a", true)]);
@@ -91,4 +91,34 @@ fn a_policy_creation_refused_because_the_policy_is_there_is_held_not_lost() {
         [Unrestorable::PolicyCreation { policy_id, creator, .. }]
             if policy_id == "p" && creator == "did:key:creator"
     ));
+}
+
+fn archive(object: &str) -> Lost {
+    Lost::Archive {
+        policy_id: "p".into(),
+        resource: "users".into(),
+        object: object.into(),
+        token: "t".into(),
+    }
+}
+
+#[test]
+fn a_refused_archive_is_owed_again_and_nothing_is_unrestorable() {
+    let mut losses = Losses::default();
+    let mut tainted = RapidHashSet::new();
+    lost_effects(&mut losses, &mut tainted, Effect::Owed(archive("a")), false);
+    assert_eq!(losses.owed, vec![archive("a")]);
+    assert!(losses.unrestorable.is_empty());
+    assert_eq!(losses.other, 0);
+}
+
+#[test]
+fn a_refused_batch_owes_its_archives_and_counts_what_it_could_not_read() {
+    let mut losses = Losses::default();
+    let mut tainted = RapidHashSet::new();
+    let batch = Effect::Batched(vec![archive("a"), archive("b")], 1);
+    lost_effects(&mut losses, &mut tainted, batch, false);
+    assert_eq!(losses.owed, vec![archive("a"), archive("b")]);
+    assert_eq!(losses.other, 1);
+    assert!(losses.unrestorable.is_empty());
 }

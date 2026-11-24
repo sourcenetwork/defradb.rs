@@ -547,8 +547,9 @@ impl lens::TransformStore for TimesTen {
 }
 
 /// Stores a document at the collection version `version`, owed to the index,
-/// as a peer's increment of a document no one migrated leaves it.
-async fn seed_owed_at(db: &Arc<DB<RegolithStore>>, version: &str, name: &str, count: i64) {
+/// as a peer's increment of a document no one migrated leaves it. Returns its
+/// short ID.
+async fn seed_owed_at(db: &Arc<DB<RegolithStore>>, version: &str, name: &str, count: i64) -> u64 {
     let collection = db.require_collection(COLLECTION).unwrap();
     let manager = db::index::IndexManager::from_collection(
         collection.resolved_root_id(),
@@ -590,6 +591,7 @@ async fn seed_owed_at(db: &Arc<DB<RegolithStore>>, version: &str, name: &str, co
         .unwrap();
     drop((datastore, systemstore));
     txn.commit().await.unwrap();
+    short_id
 }
 
 #[test]
@@ -679,6 +681,106 @@ async fn migrated(options: db::DbOptions) -> (Node, String, Arc<TimesTen>) {
     .await
     .unwrap();
     (node, v1, lenses)
+}
+
+#[test]
+#[mantra_macros::req_test("defra.collection_version.removed_transform_reindex")]
+fn removing_a_transform_preserves_materialized_and_native_values() {
+    workers::block_on(async {
+        let (node, source_version, _) = migrated(db::DbOptions::default()).await;
+        seed_owed_at(&node.db, &source_version, "materialized", 1).await;
+        assert_eq!(node.db.materialize_collection(COLLECTION).await.unwrap(), 1);
+
+        let node = Node::on_db(Arc::clone(&node.db)).await;
+        node.create("native", 40).await;
+        node.db
+            .patch_collection(
+                &defra_core::RequestContext::default(),
+                r#"[{"op":"remove","path":"/Tallies/PreviousVersion/Transform"}]"#,
+                None,
+            )
+            .await
+            .unwrap();
+
+        let node = Node::on_db(Arc::clone(&node.db)).await;
+        assert_eq!(
+            node.names("{count: {_eq: 10}}", "{count: ASC}").await,
+            ["materialized"]
+        );
+        assert_eq!(
+            node.names("{count: {_eq: 40}}", "{count: ASC}").await,
+            ["native"]
+        );
+    })
+    .unwrap();
+}
+
+/// A materialization that finds a settlement stopped part way walks every
+/// document again: the settlement's pages moved no document's version
+/// (`proofs/tla/MaterializeResume.tla`).
+#[test]
+fn materializing_after_a_stopped_settlement_advances_every_document() {
+    workers::block_on(async {
+        let (node, source_version, _) = migrated(db::DbOptions::default()).await;
+        let first = seed_owed_at(&node.db, &source_version, "first", 1).await;
+        seed_owed_at(&node.db, &source_version, "second", 2).await;
+        stop_settlement_after(&node, first).await;
+
+        assert_eq!(node.db.materialize_collection(COLLECTION).await.unwrap(), 2);
+    })
+    .unwrap();
+}
+
+/// A rebuild that writes transformed values back and finds a settlement
+/// stopped part way starts over: the settlement's pages wrote nothing back,
+/// so resuming its cursor would leave the first document at its source
+/// version (`proofs/tla/MaterializeResume.tla`).
+#[test]
+fn reindexing_with_migrations_after_a_stopped_settlement_writes_back_every_document() {
+    workers::block_on(async {
+        let (node, source_version, _) = migrated(db::DbOptions::default()).await;
+        let first = seed_owed_at(&node.db, &source_version, "first", 1).await;
+        seed_owed_at(&node.db, &source_version, "second", 2).await;
+        stop_settlement_after(&node, first).await;
+
+        node.db
+            .reindex_collection_with_migrations(COLLECTION)
+            .await
+            .unwrap();
+
+        assert_eq!(node.db.materialize_collection(COLLECTION).await.unwrap(), 0);
+    })
+    .unwrap();
+}
+
+/// Leaves the collection owed a settlement whose pages committed up to
+/// `last`, as a settlement a crash stopped there leaves it.
+async fn stop_settlement_after(node: &Node, last: u64) {
+    let collection_id = node
+        .db
+        .require_collection(COLLECTION)
+        .unwrap()
+        .collection_id()
+        .to_string();
+    let owed = serde_json::json!({ "token": 7, "migration_destination": null, "indexes": null });
+    let progress = serde_json::json!({
+        "token": 7,
+        "stage": { "Walk": { "fence": null, "last": last } },
+        "deferred": [node.index_id],
+    });
+    let txn = node.db.new_txn(false).await.unwrap();
+    let systemstore = txn.systemstore().unwrap();
+    for (prefix, value) in [("/reindex/owed/", owed), ("/reindex/progress/", progress)] {
+        systemstore
+            .set(
+                format!("{prefix}{collection_id}").as_bytes(),
+                &serde_json::to_vec(&value).unwrap(),
+            )
+            .await
+            .unwrap();
+    }
+    drop(systemstore);
+    txn.commit().await.unwrap();
 }
 
 impl Node {

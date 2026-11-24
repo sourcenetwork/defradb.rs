@@ -55,6 +55,9 @@ lean_lib VeraEmbeddedTransport where
 lean_lib VeraConfirmationJournal where
 
 @[default_target]
+lean_lib VeraRecoveryLedger where
+
+@[default_target]
 lean_lib VeraTakeoverReport where
 
 @[default_target]
@@ -431,6 +434,12 @@ lean_lib ReplicatorEmptyCollections where
 
 @[default_target]
 lean_lib ReplicatorAddedAt where
+
+@[default_target]
+lean_lib RemovedLensOrigin where
+
+@[default_target]
+lean_lib MaterializeResume where
 
 @[default_target]
 lean_lib ExplainIndexName where

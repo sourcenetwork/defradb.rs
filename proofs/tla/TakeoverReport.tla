@@ -32,7 +32,7 @@
 \*     report the term a second time.
 \*
 \* Code this models:
-\*   crates/engine/vera/src/vera_rs/provider/terms.rs  Follower::check
+\*   crates/engine/vera/src/vera_rs/provider/terms.rs  Follower::check_with
 \*       (Begin, Finish, Deliver, DeliveryFails, LateRefuse),
 \*       Follower::certificate (the term and its cut, read together),
 \*       Follower::owed_effects (Refuse), Follower::publish, takeover_report,
@@ -197,8 +197,9 @@ Interrupt ==
                    undelivered, closedNode, events>>
 
 \* The check cannot vouch for what the term voided (a void older than the
-\* journal, or an archive refused when sent again): the node fails closed
-\* for good and publishes what it had learnt, marked closed.
+\* journal; an archive refused when sent again is owed, not a reason to
+\* close): the node fails closed for good and publishes what it had learnt,
+\* marked closed.
 Close ==
     /\ phase = "replay"                            \* a check is replaying
     /\ closedNode' = TRUE                          \* the node fails closed

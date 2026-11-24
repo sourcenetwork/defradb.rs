@@ -36,7 +36,7 @@ fn inconsistent(what: &str, seq: u64) -> Error {
 /// actor on an object; deletes naming an actor on an object.
 pub(super) const FIRST: usize = 0;
 /// The second counter: deletes of the owner relation naming an actor on an
-/// object. The node's and an object's leave it at zero.
+/// object; archives of an object. The node's leaves it at zero.
 pub(super) const SECOND: usize = 1;
 /// How far the settled part sits from the staged one.
 const SETTLED: usize = 2;
@@ -244,6 +244,36 @@ where
     Ok(count)
 }
 
+/// The sequences unsettled on one object, in order: its tuples' live
+/// sequences. Read by the delete that archives it, which drops those not
+/// yet sent; nothing decided rests on it.
+pub(super) async fn live_on<R>(
+    reader: &R,
+    policy_id: &str,
+    resource: &str,
+    object: &str,
+) -> Result<Vec<u64>>
+where
+    R: Reader + ?Sized,
+{
+    let prefix = keys::object_live_prefix(policy_id, resource, object);
+    let mut iter = reader
+        .iterator(IterOptions::new().with_prefix(prefix))
+        .await
+        .map_err(storage_error)?;
+    let mut seqs = Vec::new();
+    while let Some(entry) = iter.next().await.map_err(storage_error)? {
+        let tail = entry
+            .key
+            .len()
+            .checked_sub(8)
+            .ok_or_else(|| Error::Serialization("owed ACP live key is malformed".into()))?;
+        seqs.push(keys::live_seq(&entry.key, &entry.key[..tail])?);
+    }
+    seqs.sort_unstable();
+    Ok(seqs)
+}
+
 /// The node's count, read without validation: every staging and settling
 /// transaction merges into it, and none may conflict on it.
 pub(super) async fn unsettled<R>(reader: &R) -> Result<u64>
@@ -387,6 +417,10 @@ where
         let object = keys::object_key(&tuple.policy_id, &tuple.resource, &tuple.object);
         merge(txn, &object, &delta(true, false)).await?;
     }
+    if change.op == OwedOp::Archive {
+        let object = keys::object_key(&tuple.policy_id, &tuple.resource, &tuple.object);
+        merge(txn, &object, &delta(false, true)).await?;
+    }
     if let (true, OwedSubject::Actor { did }) = (delete, &tuple.subject) {
         let subject = keys::subject_key(&tuple.policy_id, &tuple.resource, &tuple.object, did);
         merge(
@@ -435,7 +469,7 @@ where
 
     put(txn, &keys::queue_key(seq), &record).await?;
     put(txn, &head_key, &seq.to_be_bytes()).await?;
-    let live = if change.op == OwedOp::Delete {
+    let live = if change.op != OwedOp::Add {
         LIVE_DELETE
     } else {
         LIVE_ADD

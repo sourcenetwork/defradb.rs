@@ -144,3 +144,50 @@ fn caller_holding_both_passes_the_edge() {
         "{status}: {body}"
     );
 }
+
+/// `HEAD` is dispatched to a route's GET registration, so a public health probe
+/// stays public when NAC is enabled. It fell to the read default before the
+/// route table handled implicit HEAD.
+#[test]
+fn health_probe_head_stays_public() {
+    let (owner, _) = common::nac_owner();
+    let nac = Arc::new(Counting {
+        inner: MockNodeAcpOperations::enabled_with_owner(owner),
+        single: AtomicUsize::new(0),
+        batched: AtomicUsize::new(0),
+    });
+    let (status, _, batched, single) = edge::testing::edge()
+        .block_on(async {
+            let response = Server::new(MockQueryExecutor::new(), edge::testing::edge())
+                .with_nac_arc(nac.clone())
+                .router()
+                .unwrap()
+                .oneshot(
+                    Request::builder()
+                        .method("HEAD")
+                        .uri("/health-check")
+                        .header(HOST, TEST_HOST)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            (
+                response.status(),
+                (),
+                nac.batched.load(Ordering::SeqCst),
+                nac.single.load(Ordering::SeqCst),
+            )
+        })
+        .unwrap();
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a HEAD health probe needs no caller"
+    );
+    assert_eq!(
+        (batched, single),
+        (0, 0),
+        "an exempt route checks no permission"
+    );
+}
