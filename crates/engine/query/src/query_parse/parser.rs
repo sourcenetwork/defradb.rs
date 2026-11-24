@@ -82,6 +82,10 @@ pub enum ParsedOperation {
     /// Mutation operations (CREATE, UPDATE, DELETE)
     Mutation {
         mutations: Vec<Mutation>,
+        /// The mutation fields `@skip` or `@include` left out, in request
+        /// order. They never run; their filters are checked with the others',
+        /// in the order the request writes them all.
+        excluded: Vec<ExcludedMutation>,
         /// Whether @explain directive was used and which type
         explain: Option<ExplainType>,
     },
@@ -98,6 +102,16 @@ pub enum ParsedOperation {
         /// The original query string to be executed against the schema
         query: String,
     },
+}
+
+/// A mutation field `@skip` or `@include` left out, and where the request
+/// wrote it among the mutations that run.
+#[derive(Debug, Clone)]
+pub struct ExcludedMutation {
+    /// How many of the mutations that run the request writes before it.
+    pub after: usize,
+    /// The mutation, parsed so its filters can be checked.
+    pub mutation: Mutation,
 }
 
 /// Type alias for fragment definitions map
@@ -225,27 +239,51 @@ fn matches_mutation_type(condition: Option<&TypeCondition<'_, String>>) -> bool 
     }
 }
 
+/// A mutation operation's fields: those its directives keep, which run, and
+/// those `@skip` or `@include` leave out, which only have their filters
+/// checked, as graphql-go validates the whole document.
+#[derive(Default)]
+struct MutationFields {
+    run: Vec<Mutation>,
+    excluded: Vec<ExcludedMutation>,
+    /// The fragments already expanded where they were left out.
+    checked: RapidHashSet<String>,
+}
+
+/// Parse `selection` into `fields`; with `included` false, an enclosing
+/// directive already left it out.
 fn parse_selection_to_mutations<'a>(
     selection: &'a Selection<'a, String>,
     variables: Option<&RapidHashMap<String, JsonValue>>,
     fragments: &FragmentMap<'a>,
-    mutations: &mut Vec<Mutation>,
+    fields: &mut MutationFields,
+    included: bool,
     visiting: &mut FragmentPath,
     visited: &mut RapidHashSet<String>,
 ) -> Result<()> {
     match selection {
         Selection::Field(field) => {
-            if should_include_selection(&field.directives, variables)? {
-                mutations.push(parse_field_to_mutation(field, variables)?);
+            let mutation = parse_field_to_mutation(field, variables)?;
+            if included && should_include_selection(&field.directives, variables)? {
+                fields.run.push(mutation);
+            } else {
+                fields.excluded.push(ExcludedMutation {
+                    after: fields.run.len(),
+                    mutation,
+                });
             }
         }
         Selection::FragmentSpread(spread) => {
             let fragment = fragments.get(&spread.fragment_name).ok_or_else(|| {
                 QueryError::parse(format!("Unknown fragment \"{}\".", spread.fragment_name))
             })?;
-            if !should_include_selection(&spread.directives, variables)?
-                || visited.contains(&spread.fragment_name)
-            {
+            let included = included && should_include_selection(&spread.directives, variables)?;
+            // A fragment runs once, and is checked once when left out: a
+            // left-out visit never stops a kept one, and a fragment already
+            // kept needs no left-out check.
+            let seen = visited.contains(&spread.fragment_name)
+                || (!included && fields.checked.contains(&spread.fragment_name));
+            if seen {
                 return Ok(());
             }
             visiting.check_nesting()?;
@@ -259,20 +297,24 @@ fn parse_selection_to_mutations<'a>(
             if matches_mutation_type(Some(&fragment.type_condition)) {
                 for selection in &fragment.selection_set.items {
                     parse_selection_to_mutations(
-                        selection, variables, fragments, mutations, visiting, visited,
+                        selection, variables, fragments, fields, included, visiting, visited,
                     )?;
                 }
             }
             visiting.remove(&spread.fragment_name);
-            visited.insert(spread.fragment_name.clone());
+            if included {
+                visited.insert(spread.fragment_name.clone());
+            } else {
+                fields.checked.insert(spread.fragment_name.clone());
+            }
         }
         Selection::InlineFragment(fragment) => {
-            if should_include_selection(&fragment.directives, variables)?
-                && matches_mutation_type(fragment.type_condition.as_ref())
-            {
+            if matches_mutation_type(fragment.type_condition.as_ref()) {
+                let included =
+                    included && should_include_selection(&fragment.directives, variables)?;
                 for selection in &fragment.selection_set.items {
                     parse_selection_to_mutations(
-                        selection, variables, fragments, mutations, visiting, visited,
+                        selection, variables, fragments, fields, included, visiting, visited,
                     )?;
                 }
             }
@@ -480,7 +522,7 @@ pub fn parse_request_with_limits(
     }
 
     let mut selects = Vec::new();
-    let mut mutations = Vec::new();
+    let mut mutations = MutationFields::default();
     let mut subscription_selects = Vec::new();
     let mut has_query = false;
     let mut has_mutation = false;
@@ -581,6 +623,7 @@ pub fn parse_request_with_limits(
                                 effective_vars_ref,
                                 &fragments,
                                 &mut mutations,
+                                true,
                                 &mut visiting,
                                 &mut visited,
                             )?;
@@ -646,11 +689,23 @@ pub fn parse_request_with_limits(
             select: Box::new(select),
         })
     } else if has_mutation {
-        for mutation in &mut mutations {
+        let MutationFields {
+            run: mut mutations,
+            mut excluded,
+            ..
+        } = mutations;
+        // A left-out mutation's filters are still walked, so it is held to
+        // the same limits.
+        let left_out = excluded.iter_mut().map(|excluded| &mut excluded.mutation);
+        for mutation in mutations.iter_mut().chain(left_out) {
             apply_limits_to_mutation(mutation, limits)?;
             validate_requestable_limits_with(&mutation.fields, limits)?;
         }
-        Ok(ParsedOperation::Mutation { mutations, explain })
+        Ok(ParsedOperation::Mutation {
+            mutations,
+            excluded,
+            explain,
+        })
     } else {
         for select in &mut selects {
             apply_limits_to_select(select, limits)?;
@@ -878,12 +933,19 @@ pub(super) fn parse_field_to_select(
             "depth" => {
                 // depth is only valid for _commits queries
                 if collection_name == "_commits" {
-                    // null means "no limit" (None), not an error
+                    // null means "no limit" (None), not an error. -1 is no
+                    // limit too; Go casts every negative depth to a huge one,
+                    // defradb.rs refuses the others.
                     if let Some(depth_val) = parse_optional_int_value(arg_value, variables)? {
-                        if depth_val < 0 {
-                            return Err(QueryError::parse("depth must be non-negative"));
-                        }
-                        select.depth = Some(depth_val as u64);
+                        select.depth = Some(match depth_val {
+                            -1 => u64::MAX,
+                            ..=-2 => {
+                                return Err(QueryError::parse(
+                                    "depth must be non-negative, or -1 for no limit",
+                                ));
+                            }
+                            depth => depth as u64,
+                        });
                     }
                     // else depth remains None (unlimited)
                 } else {

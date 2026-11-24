@@ -244,6 +244,9 @@ pub struct P2PHostConfig {
     pub access_mode: AccessMode,
     /// Resource budget overrides. Default: none, the detected budget.
     pub resource_limits: ResourceLimits,
+    /// Where the DNS layers read the resolver configuration. Default: the
+    /// system's.
+    pub resolver: super::transport::ResolverSource,
 }
 
 impl Default for P2PHostConfig {
@@ -261,6 +264,7 @@ impl Default for P2PHostConfig {
             max_connections_per_peer: 4,
             access_mode: AccessMode::Open,
             resource_limits: ResourceLimits::default(),
+            resolver: super::transport::ResolverSource::System,
         }
     }
 }
@@ -506,7 +510,7 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
         )
         .await?;
 
-        let (transport, relay_client) = super::transport::build(&keypair, config.enable_relay)?;
+        let (transport, relay_client) = super::transport::build(&keypair, &config)?;
         behaviour.relay = Toggle::from(relay_client);
         let swarm = Swarm::new(
             transport,

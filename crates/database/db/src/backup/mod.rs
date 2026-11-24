@@ -1,9 +1,13 @@
 //! Database export and import.
 
+mod alias;
+mod batch;
 mod export;
+mod host;
 mod import;
 
 pub use export::{export_database, export_database_as};
+pub use host::{DbJob, ImportHost, RunnerHost};
 pub use import::{import_database, import_database_as, ImportStats};
 
 use serde_json::Value as JsonValue;
@@ -27,6 +31,14 @@ pub fn classify_schema_fields(schema: &CollectionVersion) -> Vec<FieldInfo> {
 
     for field in &schema.fields {
         if field.name == "_docID" {
+            continue;
+        }
+        // Import rebuilds a `@chunk` list from its text.
+        if schema
+            .chunked_fields
+            .iter()
+            .any(|chunked| chunked.list_field() == field.name)
+        {
             continue;
         }
 

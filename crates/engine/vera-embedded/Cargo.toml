@@ -79,9 +79,11 @@ vera-client = "0.1.2"
 vera-node = { git = "https://github.com/sourcenetwork/vera.rs", rev = "177783a896068e26d4223c0a0835199870f88d3c" }
 commonware-codec = "=2026.10.0"
 edge = { path = "../../foundation/edge", features = ["testing"] }
+events = { path = "../../foundation/events" }
 hex.workspace = true
 keyring = { path = "../../foundation/keyring", default-features = false }
 nuclei.workspace = true
+mantra-macros = "0.9"
 tempfile = "3"
 # The CPU sets the placement test compares.
 workers = { path = "../../foundation/workers" }

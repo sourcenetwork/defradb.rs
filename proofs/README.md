@@ -28,10 +28,12 @@ section is the **diff**: what is proven vs. the accepted gap.
 | HTTP client-signed create | TLA+ / Lean | http, query, db |
 | HTTP client-signed update | TLA+ / Lean | http, query, db |
 | HTTP client-signed conditional update | Lean | http, query |
-| SSE loss and error delivery | TLA+ / Lean | events, http, query |
+| SSE loss and error delivery | TLA+ / Lean | events, http, query, ffi |
+| Filter input validation | Lean | query |
 | Storage failure classification | TLA+ / Lean | storage, db, query, http |
 | B3 filtered replication | TLA+ | p2p, db-merge |
 | Explicit transactions in the request context | TLA+ / Lean | client, db, query, http, ffi, wasm, defra-node |
+| Explicit transaction link reads | TLA+ / Lean | db, datastore, query |
 | Transactional document relationships | TLA+ / Lean | acp, query, http, defra-node |
 | Transactional node source grants | TLA+ / Lean | acp, query, http, defra-node |
 | Held-bounded node permission delegation | Lean | acp, db, defra-node |
@@ -71,7 +73,8 @@ section is the **diff**: what is proven vs. the accepted gap.
 | DiskANN walk cutoff | Lean | db-index (vector) |
 | PQ distance four sums | Lean | db-index (vector) |
 | Query fragment nesting bound | Lean | query |
-| Float filter equality | Lean | query, storage |
+| Missing relation filters | TLA+ & Lean | query |
+| Float filter equality | TLA+ & Lean | query, storage |
 | Index-maintenance consistency | Lean + TLA+ | db-index, db-merge |
 | Concurrent collection-head transitions | TLA+ & Lean | db-block-builder, storage |
 | Commit-ordered document arrivals | TLA+ | db, storage (pinned regolith) |
@@ -138,6 +141,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Node access control operations | TLA+ & Lean | db, acp, http, cli, ffi, defra-node |
 | Filter relation paths and scalar leaves | Lean | query (#2427, #2430) |
 | Relation filter with no matching child | Lean | query (#3087) |
+| Commits depth traversal | Lean | query, db (#2098) |
 | Orphan block sweep | TLA+ & Lean | db, storage |
 | Per-peer stream cap | TLA+ | p2p |
 | Receive gate | TLA+ | p2p, db |
@@ -150,8 +154,11 @@ section is the **diff**: what is proven vs. the accepted gap.
 | FFI transaction turns | TLA+ / Lean | ffi |
 | FFI options structs | Lean | ffi |
 | Vector index defaults | Lean | schema |
+| Go config layout | Lean | cli |
 | Selected collection version | TLA+ / Lean | db, query, ffi |
 | Per-operation signing choice | Lean | defra-core, http, ffi, cli |
+| DNS resolver fallback | Lean | p2p |
+| Backup import write path | TLA+ / Lean | db, defra-node, http, ffi, cli |
 
 ### Backlog — current retry-era gaps
 This inventory includes legacy models and does not mean every current mechanism is
@@ -260,11 +267,12 @@ headstore); go↔go vs rust↔rust parity (`parity.rs`) localized it to Rust.
 | vera.rs delegation signing | Boundary | over what the tests observe of a signature, per key kind (ECDSA or Ed25519); that ECDSA and Ed25519 verification are sound is assumed; unit tests in `crates/engine/vera-delegation/src/signer/tests.rs`, `crates/engine/vera-delegation/src/signer/key_type_tests.rs` and `crates/engine/vera/src/vera_rs/provider/signer_tests.rs`, tokens checked by vera.rs's verifier in `crates/engine/vera-delegation/src/bearer/key_types.rs` and `crates/engine/vera/src/vera_rs/bearer/key_types.rs`, token bytes pinned in `crates/engine/vera-delegation/src/bearer/pinned.rs` |
 | vera.rs delegation window | Boundary | over the three times a delegation names and the block time, in whole seconds; that the node's clock stays near the provider's is the light client's freshness bound; unit tests in `crates/engine/vera/src/vera_rs/bearer/request.rs`, `crates/engine/vera/src/vera_rs/bearer.rs` and `crates/engine/vera-delegation/src/bearer/request.rs`, the refusal's wording in `crates/engine/acp/src/delegation_window.rs`, embedded node tests in `crates/entry-points/defra-node/tests/embedded_vera/clock_skew.rs` |
 | vera.rs embedded transport | Boundary | over the outcome of a call and the moment its answer comes; that the node's method table answers as its network server does is vera.rs's property; unit tests in `crates/engine/vera-embedded/src`, in-process node tests in `crates/engine/vera-embedded/tests/embedded_node.rs` |
-| vera.rs deployment terms | Boundary | over the heights of the journaled confirmations and a takeover's cut; that a confirmation's height never goes down with its sequence is the worker's one request at a time; unit tests in `crates/engine/vera/src/vera_rs/follow`, the takeover between two embedded devices in `crates/engine/vera-embedded/tests/term_takeover.rs`; the temporal side is `FollowDeployment.tla` |
+| vera.rs deployment terms | Boundary | over the heights of the journaled confirmations and a takeover's cut, and over the report an embedder receives once per checked term, with the place each replay holds in it (`VeraTakeoverReport`); that a confirmation's height never goes down with its sequence is the worker's one request at a time; unit tests in `crates/engine/vera/src/vera_rs/follow`, the takeover between two embedded devices in `crates/engine/vera-embedded/tests/term_takeover.rs`; the temporal side is `FollowDeployment.tla` and `TakeoverReport.tla` |
 | DiskANN resident code table | Boundary | in-memory search cache, not observable on the wire; `DiskAnnCodes`; unit tests in `crates/database/db/tests/vector/diskann_resident.rs` |
 | P2P delivery liveness | Behavioral (trace) + Boundary | `model_trace.rs` replays recorded runs through `Trace_P2PDelivery.tla`; eventual connectivity, the bounded instance and the restart scenarios stay Boundary |
 | Cursor tokens | Boundary | `CursorToken`; tokens pinned by `crates/foundation/cursor/tests/go_fixtures.rs` |
 | Per-operation signing choice | Boundary | `SigningOverride`; unit tests on each edge and `signature::per_op_signing` (testo) |
+| Backup import write path | Boundary | `BackupImportWritePath.tla`, `BackupImportSigner`; unit tests on each edge and `backup::signed_import`, `backup::import_creator`, `backup::duplicate_alias`, `backup::failed_import` (testo); the drain's deadline is not modelled |
 | vera.rs policy creation | Boundary | over abstract IDs: that vera.rs's SHA-256 derivation separates definitions, nonces and creators is vera.rs's and acp's property (their vectors); in-process node tests in `crates/engine/vera-embedded/tests/policy_ids.rs` |
 | Policy nonce text | Boundary | over digit values; that a character reads back as its digit value in either case is the character table's; unit tests in `crates/engine/acp/tests/policy_nonce_tests.rs` |
 

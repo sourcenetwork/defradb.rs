@@ -4,8 +4,8 @@ use std::time::Duration;
 use defra_core::RequestContext;
 use events::{EventName, Message};
 use query::subscription::{
-    response_has_data, subscription_accepts_doc_id, subscription_doc_ids,
-    subscription_to_scoped_query, validate_subscription,
+    open_failure, response_has_data, subscription_accepts_doc_id, subscription_doc_ids,
+    subscription_to_scoped_query, validate_subscription, OpenFailure,
 };
 use rapidhash::{HashMapExt, RapidHashMap};
 use regolith::sync::Atom;
@@ -31,6 +31,9 @@ pub struct SubscriptionRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(rename = "query")]
     pub request: Option<Text>,
+    /// The subscription's variables, sent with it and with every event's query.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variables: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_count: Option<i64>,
     pub subscription: String,
@@ -47,9 +50,12 @@ pub struct SubscriptionRequest {
 pub struct OpenSubscription {
     node: String,
     query: String,
+    variables: Option<Value>,
     context: RequestContext,
     expected: Option<usize>,
     source: Source,
+    /// A response the HTTP stream sent while the open waited for its check.
+    first: Option<Value>,
 }
 
 /// Where an open subscription's responses come from.
@@ -128,8 +134,26 @@ impl SubscriptionRequest {
         validate_subscription(query, None).map_err(|e| Failure::operation(e.to_string()))?;
         let node = state.node_on(self.common.node())?;
         let events = node.subscribe(&[EventName::Update]).into_receiver();
-        self.keep(state, query, identity, Source::Node(events));
+        // Subscribed first, then checked once as a plain request, as the
+        // HTTP stream opens: an invalid request fails the open.
+        let response = state
+            .block_on(node.execute_request_as(
+                &state.context_as(None, identity),
+                self.with_variables(query::QueryRequest::new(query)),
+            ))
+            .map_err(|e| Failure::operation(e.to_string()))?;
+        if let Some(OpenFailure::Invalid(error)) = open_failure(&response) {
+            return Err(Failure::operation(error));
+        }
+        self.keep(state, query, identity, Source::Node(events), None);
         Ok(json!({ "data": null }))
+    }
+
+    fn with_variables(&self, request: query::QueryRequest) -> query::QueryRequest {
+        match &self.variables {
+            Some(variables) => request.with_variables(variables.clone()),
+            None => request,
+        }
     }
 
     /// Open the subscription as the HTTP API serves it: a GraphQL request
@@ -150,7 +174,10 @@ impl SubscriptionRequest {
             )
             .expect("a token for a test identity")
         });
-        let body = json!({ "query": query });
+        let body = match &self.variables {
+            Some(variables) => json!({ "query": query, "variables": variables }),
+            None => json!({ "query": query }),
+        };
         let edge = network_edge();
         let response = state
             .block_on(edge.spawn({
@@ -178,19 +205,59 @@ impl SubscriptionRequest {
         }
         let (sender, responses) = async_channel::unbounded();
         let reader = edge.spawn(read_events(response, sender));
-        self.keep(state, query, identity, Source::Http { responses, reader });
+        // The stream's open check sends a refusal as its first event, before
+        // any update; a valid stream sends nothing until one. An open that
+        // expects a refusal waits for it as long as for any expected event,
+        // so a loaded server's late refusal is not taken for an idle stream.
+        let first_wait = if self.expected_error.is_some() {
+            EVENT_WAIT
+        } else {
+            IDLE_WAIT
+        };
+        let first = match state.block_on(workers::timeout(first_wait, responses.recv())) {
+            Ok(Ok(Err(error))) => return Err(Failure::operation(error)),
+            Ok(Ok(Ok(response))) => match response.get("errors").filter(|e| !e.is_null()) {
+                Some(errors) => {
+                    reader.abort();
+                    let first = errors
+                        .get(0)
+                        .and_then(|e| e.get("message"))
+                        .and_then(Value::as_str)
+                        .map_or_else(|| errors.to_string(), str::to_owned);
+                    return Err(Failure::operation(first));
+                }
+                None => Some(response),
+            },
+            _ => None,
+        };
+        self.keep(
+            state,
+            query,
+            identity,
+            Source::Http { responses, reader },
+            first,
+        );
         Ok(json!({ "data": null }))
     }
 
-    fn keep(&self, state: &State, query: &str, identity: Option<u64>, source: Source) {
+    fn keep(
+        &self,
+        state: &State,
+        query: &str,
+        identity: Option<u64>,
+        source: Source,
+        first: Option<Value>,
+    ) {
         state.subscriptions.open(
             &self.subscription,
             OpenSubscription {
                 node: self.common.node().to_owned(),
                 query: query.to_owned(),
+                variables: self.variables.clone(),
                 context: state.context_as(None, identity),
                 expected: self.expected_count.and_then(|n| usize::try_from(n).ok()),
                 source,
+                first,
             },
         );
     }
@@ -222,7 +289,7 @@ impl SubscriptionRequest {
         events: &async_channel::Receiver<Message>,
     ) -> Result<Vec<Value>, Failure> {
         let node = state.node_on(&open.node)?;
-        let doc_ids = subscription_doc_ids(&open.query, None, None);
+        let doc_ids = subscription_doc_ids(&open.query, open.variables.as_ref(), None);
         let mut delivered = Vec::new();
         while open
             .expected
@@ -245,8 +312,12 @@ impl SubscriptionRequest {
                 None,
             )
             .map_err(|e| Failure::operation(e.to_string()))?;
+            let mut request = query::QueryRequest::new(scoped);
+            if let Some(variables) = &open.variables {
+                request = request.with_variables(variables.clone());
+            }
             let response = state
-                .block_on(node.execute_request_as(&open.context, query::QueryRequest::new(scoped)))
+                .block_on(node.execute_request_as(&open.context, request))
                 .map_err(|e| Failure::operation(e.to_string()))?;
             if response_has_data(&response) {
                 delivered.push(json!({ "data": response.data }));
@@ -273,7 +344,11 @@ fn read_http(
     open: &OpenSubscription,
     responses: &async_channel::Receiver<Result<Value, String>>,
 ) -> Result<Vec<Value>, Failure> {
-    let mut delivered = Vec::new();
+    let mut delivered: Vec<Value> = open
+        .first
+        .iter()
+        .map(|response| json!({ "data": response.get("data").cloned().unwrap_or(Value::Null) }))
+        .collect();
     while open
         .expected
         .is_none_or(|expected| delivered.len() < expected)

@@ -5,7 +5,7 @@ mod add;
 mod delete;
 mod get;
 mod purge;
-mod run;
+pub(crate) mod run;
 mod save_many;
 mod update;
 

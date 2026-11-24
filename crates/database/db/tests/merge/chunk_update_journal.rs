@@ -186,9 +186,14 @@ pub(super) async fn merge_outcome_in(
         .await
 }
 
+/// Merges a block into `to`. The peer's own write may already hold the same chunk.
 async fn merge(from: &Node, to: &Node, cid: &cid::Cid, doc_id: &str) {
     let outcome = merge_outcome(from, to, cid, doc_id).await.unwrap();
-    assert!(outcome.is_merged(), "{outcome:?}");
+    let applied = match &outcome {
+        MergeOutcome::Skipped { reason, .. } => MergeOutcome::skip_reason_is_applied(reason),
+        other => other.is_merged(),
+    };
+    assert!(applied, "{outcome:?}");
 }
 
 /// A chunk of `body`'s first piece, created on `author` for `parent`.

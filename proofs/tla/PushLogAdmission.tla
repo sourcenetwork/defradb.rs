@@ -77,7 +77,8 @@
 \* Abstractions: the heads are one announcing peer's pushes, which its share and the
 \* global capacity both bound; other peers' pushes contend only for the global capacity,
 \* so they are left out. The pusher is one per-head ack/retry record; heads of different
-\* scopes are independent. HOW a push comes to have missing links is abstracted:
+\* scopes are independent. HOW a push comes to have missing links is abstracted (a walk
+\* that fails to read a stored child registers the frontier [root] and acks: DagReadiness.tla):
 \* HubComplete models an arrival whose DAG is already complete, HubAdmit/HubOverflow*
 \* one that is not. Merging a head merges its whole DAG, so its ancestors' pending
 \* records go with it (in the code the clock or the resync sweep finds them merged

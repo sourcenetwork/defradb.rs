@@ -230,3 +230,28 @@ fn test_filter_with_nested_and() {
 
     assert!(selects[0].filter.is_some());
 }
+
+fn parse_commits_depth(value: &str) -> query::Result<Option<u64>> {
+    let query = format!("{{ _commits(depth: {value}) {{ cid }} }}");
+    parse_query(&query).map(|selects| selects[0].depth)
+}
+
+#[test]
+fn test_parse_commits_depth_minus_one_is_unlimited() {
+    assert_eq!(parse_commits_depth("-1").unwrap(), Some(u64::MAX));
+    assert_eq!(parse_commits_depth("0").unwrap(), Some(0));
+    assert_eq!(parse_commits_depth("3").unwrap(), Some(3));
+    assert_eq!(parse_commits_depth("null").unwrap(), None);
+}
+
+#[test]
+fn test_parse_commits_depth_other_negative_returns_error() {
+    for value in ["-2".to_string(), "-7".to_string(), i64::MIN.to_string()] {
+        let err = parse_commits_depth(&value).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("depth must be non-negative, or -1 for no limit"),
+            "depth {value}: {err}"
+        );
+    }
+}
