@@ -122,10 +122,12 @@ fn a_service_drains_its_task_set_when_its_scope_closes() {
     let finished = Arc::new(AtomicBool::new(false));
     let task_finished = Arc::clone(&finished);
     let (ready_tx, ready_rx) = futures::channel::oneshot::channel();
+    let (started, ready) = futures::channel::oneshot::channel();
 
     let service = service_edge.spawn(async move {
         let mut connections = crate::TaskSet::new(task_edge.clone());
         connections.spawn(async move {
+            let _ = started.send(());
             task_edge.sleep(Duration::from_millis(50)).await;
             task_finished.store(true, Ordering::SeqCst);
         });
@@ -141,6 +143,7 @@ fn a_service_drains_its_task_set_when_its_scope_closes() {
         while connections.join_next().await.is_some() {}
     });
     edge.block_on(ready_rx).unwrap().unwrap();
+    edge.block_on(ready).unwrap().unwrap();
     let drained = edge.block_on(scope.drain(Duration::from_secs(5))).unwrap();
     assert!(drained.is_complete());
     assert!(finished.load(Ordering::SeqCst));

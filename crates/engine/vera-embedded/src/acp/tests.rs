@@ -31,7 +31,7 @@ fn header_in(height: u64, term: u64) -> GossipHeader {
 }
 
 #[test]
-fn queued_headers_at_or_below_the_fetched_head_are_not_emitted() {
+fn queued_headers_survive_a_failed_head_authentication() {
     let head = header(7);
     let queued = futures::stream::iter([
         Ok(header(6)),
@@ -41,17 +41,19 @@ fn queued_headers_at_or_below_the_fetched_head_are_not_emitted() {
         Ok(header(6)),
     ])
     .boxed();
-    let mut headers = headers_after(head, queued);
+    let mut headers = prepend_head(head, queued);
 
     let first = futures::executor::block_on(headers.next())
         .expect("head")
         .expect("head");
-    let second = futures::executor::block_on(headers.next())
-        .expect("next header")
-        .expect("next header");
-    let ended = futures::executor::block_on(headers.next());
-    assert_eq!((first.height, second.height), (7, 8));
-    assert!(ended.is_none());
+    // The consumer failed to authenticate the prefetched head. It can still
+    // authenticate the queued notifications without another block arriving.
+    assert_eq!(first.height, 7);
+    let remaining: Vec<_> = futures::executor::block_on(headers.collect::<Vec<_>>())
+        .into_iter()
+        .map(|header| header.expect("queued header").height)
+        .collect();
+    assert_eq!(remaining, [6, 7, 8, 7, 6]);
 }
 
 /// A takeover of the deployment's active device voids blocks above its
@@ -68,12 +70,12 @@ fn a_header_of_a_later_term_at_or_below_the_fetched_head_is_emitted() {
     ])
     .boxed();
     let headers: Vec<(u64, u64)> =
-        futures::executor::block_on(headers_after(head, queued).collect::<Vec<_>>())
+        futures::executor::block_on(prepend_head(head, queued).collect::<Vec<_>>())
             .into_iter()
             .map(|header| header.expect("header"))
             .map(|header| (header.height, header.term))
             .collect();
-    assert_eq!(headers, [(7, 0), (6, 1), (7, 1)]);
+    assert_eq!(headers, [(7, 0), (6, 0), (6, 1), (7, 1), (7, 0)]);
 }
 
 #[test]

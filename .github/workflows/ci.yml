@@ -553,7 +553,7 @@ jobs:
           cargo nextest run --no-fail-fast --run-ignored all \
             -p query -p p2p -p db -p defra-http -p defra-node -p acp -p conformance \
             --features p2p/iroh-transport \
-            --lib --test storage_failure --test block --test merge --test projection_scope --test lean_conformance \
+            --lib --test storage_failure --test block --test merge --test projection_scope --test parent_registration --test lean_conformance \
             -E '
               binary_id(query::storage_failure)
               | binary_id(p2p) & (
@@ -575,6 +575,7 @@ jobs:
                 | test(=genesis_access::genesis_reader_matches_executed_lean_model))
               | binary_id(defra-node) & test(owner_observation_tests)
               | binary_id(acp::projection_scope)
+              | binary_id(acp::parent_registration)
               | binary_id(conformance)
               | binary_id(conformance::lean_conformance)'
 

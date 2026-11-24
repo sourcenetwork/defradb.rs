@@ -170,6 +170,33 @@ impl DocumentACP for ChainView {
         Ok(())
     }
 
+    async fn registration_parent(
+        &self,
+        _: &str,
+        _: &str,
+        id: &str,
+    ) -> acp::Result<acp::RegistrationParent> {
+        Ok(acp::RegistrationParent {
+            resource: "nodes".into(),
+            object_id: id.into(),
+        })
+    }
+
+    async fn register_under_parent(
+        &self,
+        actor: &Did,
+        policy: &str,
+        child: &str,
+        doc: &str,
+        parent: &acp::RegistrationParent,
+    ) -> acp::Result<()> {
+        if parent.resource != "nodes" || self.chain.owner(&parent.object_id).as_ref() != Some(actor)
+        {
+            return Err(acp::Error::PermissionDenied("parent requires owner".into()));
+        }
+        self.register_doc_object(actor, policy, child, doc).await
+    }
+
     async fn is_doc_registered(&self, _: &str, _: &str, doc: &str) -> acp::Result<bool> {
         self.read();
         Ok(self.chain.owners.contains_key(doc))
@@ -449,6 +476,15 @@ impl Receiver {
         replicas: Option<Arc<dyn ReplicaOwnership>>,
         strict: bool,
     ) -> Self {
+        Self::open_collection(users(), acp, replicas, strict).await
+    }
+
+    pub(crate) async fn open_collection(
+        definition: CollectionVersion,
+        acp: impl FnOnce(Arc<RegolithStore>) -> Arc<dyn DocumentACP>,
+        replicas: Option<Arc<dyn ReplicaOwnership>>,
+        strict: bool,
+    ) -> Self {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let acp = acp(store.clone());
         let node =
@@ -458,7 +494,7 @@ impl Receiver {
             DB::from_arc_with_options(store.clone(), DbOptions::new().with_node_identity(node))
                 .unwrap(),
         );
-        db.create_collection(users()).await.unwrap();
+        db.create_collection(definition).await.unwrap();
         if let Some(ownership) = replicas {
             db.set_replica_registration(ReplicaRegistration::new(["Users"], ownership));
         }
@@ -482,6 +518,32 @@ impl Receiver {
         doc_id: &str,
         composite: &Composite,
     ) -> MergeOutcome {
+        self.try_receive(from, doc_id, composite).await.unwrap()
+    }
+
+    pub(crate) async fn try_receive(
+        &self,
+        from: &Source,
+        doc_id: &str,
+        composite: &Composite,
+    ) -> Result<MergeOutcome, db::merge::merge_handler::MergeError> {
+        self.copy_blocks(from, composite).await;
+        self.handler
+            .handle_block(
+                &composite.0,
+                &composite.1,
+                BlockMetadata::normal(
+                    doc_id,
+                    COLLECTION_ID,
+                    "did:key:z6MkCarrier",
+                    Some("peer"),
+                    false,
+                ),
+            )
+            .await
+    }
+
+    async fn copy_blocks(&self, from: &Source, composite: &Composite) {
         let mut pending = vec![composite.0];
         while let Some(cid) = pending.pop() {
             if self.blocks.get(&cid).await.unwrap().is_some() {
@@ -497,20 +559,34 @@ impl Receiver {
             }
             self.blocks.put(&cid, &data).await.unwrap();
         }
-        self.handler
-            .handle_block(
-                &composite.0,
-                &composite.1,
-                BlockMetadata::normal(
-                    doc_id,
-                    COLLECTION_ID,
-                    "did:key:z6MkCarrier",
-                    Some("peer"),
-                    false,
-                ),
-            )
+    }
+
+    pub(crate) async fn receive_in_batch(
+        &self,
+        from: &Source,
+        doc_id: &str,
+        composite: &Composite,
+    ) -> MergeOutcome {
+        self.copy_blocks(from, composite).await;
+        let block = defra_core::merge::MergeBlock {
+            cid: composite.0,
+            block_data: composite.1.clone(),
+            doc_id: doc_id.to_owned(),
+            collection_id: COLLECTION_ID.into(),
+            creator: "did:key:z6MkCarrier".into(),
+            sender_peer: Some("peer".into()),
+            is_explicit_replicator: false,
+            explicit_replay_authorization: None,
+            verified_creator: None,
+        };
+        let mut results = self
+            .handler
+            .inner()
+            .try_batch_merge(&[block])
             .await
-            .unwrap()
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        results.pop().unwrap().unwrap()
     }
 
     /// Re-drive what is ready to be tried again.

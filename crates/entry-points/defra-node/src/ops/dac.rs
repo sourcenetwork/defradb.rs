@@ -86,7 +86,7 @@ impl Node {
     /// Every DAC policy the node holds.
     pub async fn list_dac_policies_as(&self, context: &RequestContext) -> Result<Vec<acp::Policy>> {
         let runner = Arc::clone(self.runner());
-        let context = self.caller(context);
+        let context = self.admitted_caller(context)?;
         self.on_acp(move || async move {
             runner
                 .list_dac_policies_as(&context)
@@ -103,7 +103,7 @@ impl Node {
         policy_id: &str,
     ) -> Result<Option<acp::Policy>> {
         let runner = Arc::clone(self.runner());
-        let (context, policy_id) = (self.caller(context), policy_id.to_owned());
+        let (context, policy_id) = (self.admitted_caller(context)?, policy_id.to_owned());
         self.on_acp(move || async move {
             runner
                 .get_dac_policy_as(&context, &policy_id)
@@ -119,7 +119,7 @@ impl Node {
         context: &RequestContext,
     ) -> Result<acp::LightClientStatus> {
         self.runner()
-            .acp_light_client_status_as(&self.caller(context))
+            .acp_light_client_status_as(&self.admitted_caller(context)?)
             .await
             .map_err(transaction_error)
     }
@@ -130,7 +130,7 @@ impl Node {
         query: acp::AssignmentQuery,
     ) -> Result<acp::CertifiedAssignments> {
         let database = Arc::clone(self.database());
-        let context = self.caller(context);
+        let context = self.admitted_caller(context)?;
         self.on_acp(move || async move {
             Ok(database.certified_assignments_as(&context, &query).await?)
         })

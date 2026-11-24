@@ -8,6 +8,8 @@ split by the kind of obligation each is good at:
 | [`tla/`](tla/) | TLA+ / TLC | **temporal / distributed / concurrent** properties — convergence, "eventually merges", safety under adversarial interleavings | [`tla/README.md`](tla/README.md) |
 | [`lean/`](lean/) | Lean 4 | **functional / algebraic** properties — CRDT merge laws (commutativity, associativity, idempotence), order-independence | [`lean/README.md`](lean/README.md) |
 
+**Guarantees.** What each change-observing surface promises a consumer (delivery class, order, restart, resubscription, gap detection, and the supported subscribe-then-read-the-journal pattern) is the delivery contract in [`docs/book/src/events/index.md`](../docs/book/src/events/index.md#delivery-contract), each answer cited to a test or to an invariant of the families "Receipt-ordered event dispatch" and "Change delivery" below. Weakening any of it is a breaking change.
+
 Some results need both. **DAG convergence = (TLA+: every node receives every delta
 under eventual connectivity) × (Lean: applying deltas in any order yields the same
 state).** Neither half alone is convergence.
@@ -30,6 +32,8 @@ section is the **diff**: what is proven vs. the accepted gap.
 | HTTP client-signed conditional update | Lean | http, query |
 | SSE loss and error delivery | TLA+ / Lean | events, http, query, ffi |
 | Filter input validation | Lean | query |
+| Receipt-ordered event dispatch | TLA+ | storage, events, db |
+| Change delivery | TLA+ | events, db, db-merge, query, http |
 | Storage failure classification | TLA+ / Lean | storage, db, query, http |
 | B3 filtered replication | TLA+ | p2p, db-merge |
 | Explicit transactions in the request context | TLA+ / Lean | client, db, query, http, ffi, wasm, defra-node |
@@ -141,6 +145,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Node access control operations | TLA+ & Lean | db, acp, http, cli, ffi, defra-node |
 | Filter relation paths and scalar leaves | Lean | query (#2427, #2430) |
 | Relation filter with no matching child | Lean | query (#3087) |
+| Joins on a parent read by key | Lean | query (#3042) |
 | Commits depth traversal | Lean | query, db (#2098) |
 | Orphan block sweep | TLA+ & Lean | db, storage |
 | Per-peer stream cap | TLA+ | p2p |

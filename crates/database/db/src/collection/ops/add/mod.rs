@@ -39,7 +39,7 @@ where
             return Ok(());
         }
         for policy in collections.iter().filter_map(|c| c.policy.as_ref()) {
-            self.validate_resource_interface(&policy.id, &policy.resource_name)
+            self.validate_collection_policy(policy)
                 .await
                 .map_err(|e| AddCollectionError::Policy(e.to_string()))?;
         }
