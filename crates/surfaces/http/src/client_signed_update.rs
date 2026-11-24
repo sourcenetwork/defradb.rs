@@ -49,6 +49,7 @@ fn response_key(request: &QueryRequest, graph: &ClientUpdateSignatures) -> Optio
     let Ok(query::query_parse::ParsedOperation::Mutation {
         mutations,
         explain: None,
+        ..
     }) = query::query_parse::parse_request_with_limits(
         &request.query,
         variables.as_ref(),

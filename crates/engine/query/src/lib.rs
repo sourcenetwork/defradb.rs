@@ -56,7 +56,7 @@ pub mod update_parts;
 // Re-exports for convenience
 pub use document::{DocumentMapping, RenderKey};
 pub use error::{QueryError, Result, TransactionError};
-pub use executor::{QueryExecutor, QueryRequest, QueryResponse, QueryResponseError};
+pub use executor::{FilterOrigin, QueryExecutor, QueryRequest, QueryResponse, QueryResponseError};
 pub use fetcher::{CollectionProvider, StaticCollectionProvider};
 pub use limits::{
     max_fragment_nesting_for_stack, query_thread_stack_bytes, FragmentNestingError, QueryLimits,

@@ -111,7 +111,7 @@ impl Node {
         updater: &str,
     ) -> Result<DocumentsResult> {
         let identity = acting_identity(context)?;
-        let run = |mutation| self.run_as_identity(context, identity, QueryRequest::new(mutation));
+        let run = |request| self.run_as_identity(context, identity, request);
         Ok(documents::update_with_filter(run, collection, filter, updater).await?)
     }
 
@@ -124,7 +124,7 @@ impl Node {
         filter: &Filter,
     ) -> Result<DocumentsResult> {
         let identity = acting_identity(context)?;
-        let run = |mutation| self.run_as_identity(context, identity, QueryRequest::new(mutation));
+        let run = |request| self.run_as_identity(context, identity, request);
         Ok(documents::delete_with_filter(run, collection, filter).await?)
     }
 }

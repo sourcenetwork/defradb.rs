@@ -1,8 +1,7 @@
-//! A store from before deferred indexes holds inline entries and no position
-//! records. Opening it must give those entries records, or a drain never
-//! finds the old entry to remove.
+//! An index kept the other way on an earlier start gets its records rebuilt on
+//! open, so a drain finds every entry to remove.
 
-use db::definition::migration::format::INDEX_FORMAT_KEY;
+use db::definition::migration::format::{CURRENT_INDEX_FORMAT, INDEX_FORMAT_KEY};
 use schema::{IndexKind, IndexedFieldDescription, OrderedIndexDescription};
 use storage::corekv::{IterOptions, Iterator as _};
 use storage::keys::IndexDataStoreKey;
@@ -10,7 +9,7 @@ use storage::RegolithStore;
 
 use super::{count_keys, Node, COLLECTION};
 
-/// Keeps the entries and drops every record, with the format stamp an older build wrote.
+/// Keeps the entries and drops every record, with the current format stamp.
 async fn forget_records(node: &Node) {
     let short_id = node
         .db
@@ -43,7 +42,7 @@ async fn forget_records(node: &Node) {
         }
         txn.systemstore()
             .unwrap()
-            .set(INDEX_FORMAT_KEY, &2u32.to_be_bytes())
+            .set(INDEX_FORMAT_KEY, &CURRENT_INDEX_FORMAT.to_be_bytes())
             .await
             .unwrap();
     }
@@ -51,7 +50,7 @@ async fn forget_records(node: &Node) {
 }
 
 #[test]
-fn entries_from_before_deferred_indexes_move_and_go() {
+fn records_from_the_other_deferred_mode_move_and_go() {
     workers::block_on(async {
         let dir = tempfile::tempdir().unwrap();
         let (a, b) = {
@@ -119,7 +118,7 @@ async fn forget_entries(node: &Node, short_id: u32, index_id: u32) {
 }
 
 #[test]
-fn an_upgrade_rebuilds_only_the_deferred_index() {
+fn a_reopen_rebuilds_only_the_deferred_index() {
     workers::block_on(async {
         let dir = tempfile::tempdir().unwrap();
         let (short_id, by_name) = {

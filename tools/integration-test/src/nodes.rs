@@ -47,6 +47,9 @@ pub struct NodeSpec {
     pub resolv_conf: Option<String>,
     /// The node's network is iroh rather than libp2p.
     pub iroh_network: bool,
+    /// The node was configured from a Go-written `config.yaml` through the
+    /// Rust CLI's loader, so it is a Rust node under every client.
+    pub go_config: bool,
     /// The node's own identity, Go's `NodeIdentity(seed)`; the node signs as it.
     pub node_identity: Option<u64>,
     /// The node takes `node_identity` from the process's signing registry,
@@ -59,6 +62,9 @@ pub struct NodeSpec {
     pub signing: Option<crate::actions::shared::KeyType>,
     /// How long an idle explicit transaction lives and the sweep interval.
     pub txn_ttl: Option<(Duration, Duration)>,
+    /// How many times the node re-runs a transaction that lost a race, if
+    /// not the default.
+    pub max_txn_retries: Option<u32>,
     /// The node's own searchable-encryption key, as Go's harness gives each
     /// node one under `EnableSearchableEncryption`.
     pub se_key: Option<[u8; 32]>,
@@ -112,12 +118,15 @@ impl TestNode {
             Some(address) => address.clone(),
             None => "/ip4/127.0.0.1/tcp/0".to_owned(),
         };
-        // Admission limits, iroh and a resolv.conf are a Rust node's options:
-        // under go-http the node is a Rust node reached over HTTP, as
-        // rust-http does.
+        // Admission limits, iroh, a resolv.conf and a loaded Go config are a
+        // Rust node's options: under go-http the node is a Rust node reached
+        // over HTTP, as rust-http does.
         let client_type = match client_type {
             ClientType::GoHttp
-                if spec.admission.is_some() || spec.iroh_network || spec.resolv_conf.is_some() =>
+                if spec.admission.is_some()
+                    || spec.iroh_network
+                    || spec.resolv_conf.is_some()
+                    || spec.go_config =>
             {
                 ClientType::RustHttp
             }
@@ -369,6 +378,9 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
         builder = builder.with_http(config);
     } else if let Some((ttl, tick)) = spec.txn_ttl {
         builder = builder.with_transaction_idle_timeout(ttl, tick);
+    }
+    if let Some(retries) = spec.max_txn_retries {
+        builder = builder.with_max_txn_retries(retries);
     }
     if let Some(gate) = &spec.index_gate {
         builder = builder.with_index_build_gate(gate.clone());

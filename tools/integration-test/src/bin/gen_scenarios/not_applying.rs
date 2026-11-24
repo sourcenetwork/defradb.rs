@@ -3,14 +3,15 @@
 
 const ENTRIES: &[(&str, &str, &str)] = &[
     (
-        "mutation.add.field_kinds.one_to_one_to_one.transactional-creation-and-linking-of-relational-documents-backward",
-        "GoBugSuspect",
-        "Go fails the second commit with \"transaction conflict\", an SSI anti-dependency on the \
-         publisher each transaction read (go.mutation.txn.conflict). The transactions write \
-         disjoint books and publishers, so regolith commits both and both books link correctly.",
+        "mutation.update.crdt.pncounter-float-overflow-increment",
+        "Interop",
+        NON_FINITE,
     ),
-    ("mutation.update.crdt.pncounter-float-overflow-increment", "Interop", NON_FINITE),
-    ("mutation.update.crdt.pncounter-float-overflow-decrement", "Interop", NON_FINITE),
+    (
+        "mutation.update.crdt.pncounter-float-overflow-decrement",
+        "Interop",
+        NON_FINITE,
+    ),
 ];
 
 const NON_FINITE: &str =

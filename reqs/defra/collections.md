@@ -342,6 +342,13 @@ Migrations configured before or after the patch are still applied to queries aft
 
 Truncating an empty collection, or the same collection twice, succeeds; truncating while documents are added in parallel deletes every document that existed before the truncate.
 
+# `defra.collection.truncate_isolation`: Truncating preserves other collections
+
+- **Parents:** ["go.collection.truncate"]
+- **Scenarios:** ["collection.truncate.isolation.truncate_preserves_other_collections"]
+
+Truncating an indexed collection removes its documents and leaves the documents, collection definitions and indexes of every other collection intact, including when legacy index prefixes overlap other datastore key families.
+
 # `go.collection.truncate.re_add`: Re-adding documents after truncate
 
 - **Parents:** ["go.collection.truncate"]
