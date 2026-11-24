@@ -19,8 +19,8 @@
 \* crates/database/db/src/merge/merge_handler/composite_persist.rs read the
 \* parent from the document; register_under_parent, check_parent_link and
 \* check_parent_unlink in crates/engine/acp/src/zanzibar/acp/document_acp.rs
-\* decide in the transaction that writes; refuse_parent_change in
-\* crates/database/db/src/write/update.rs guards the field.
+\* decide in the transaction that writes; validate_immutable_fields in
+\* crates/database/db/src/collection/validation.rs guards the field.
 \* No library module is needed: sets and functions are built in.
 
 \* Bug names the one guard a RED configuration breaks; "none" breaks nothing.

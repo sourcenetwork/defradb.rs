@@ -70,6 +70,8 @@ pub struct NodeBuilder {
     txn_ownership: db::TxnOwnership,
     document_projector: Option<Arc<dyn db::DocumentMutationProjector>>,
     replica_registration: Option<db::merge::ReplicaRegistration>,
+    #[cfg(all(test, feature = "p2p"))]
+    kms_transport_wrapper: Option<crate::assemble::TestKmsTransportWrapper>,
     /// How long an idle explicit transaction lives, and how often the sweep
     /// looks; when set, it takes precedence over an HTTP config's setting.
     #[cfg(not(target_arch = "wasm32"))]
@@ -110,6 +112,15 @@ fn with_at_rest_keys(
 }
 
 impl NodeBuilder {
+    #[cfg(all(test, feature = "p2p"))]
+    pub(crate) fn with_test_kms_transport_wrapper(
+        mut self,
+        wrap: crate::assemble::TestKmsTransportWrapper,
+    ) -> Self {
+        self.kms_transport_wrapper = Some(wrap);
+        self
+    }
+
     /// Install a trusted in-process document projector. It stages its changes
     /// through the mutation's transaction and cannot be selected over HTTP.
     pub fn with_document_projector(
@@ -334,10 +345,31 @@ impl NodeBuilder {
         self
     }
 
+    /// Hold every explicit transaction commit at `gate` before it is handed
+    /// to its owner, so a test can prove a commit whose HTTP answer passed its
+    /// bound still lands.
+    pub fn with_commit_gate(mut self, gate: Arc<dyn db::CommitGate>) -> Self {
+        self.config.commit_gate = Some(crate::CommitGateHandle(gate));
+        self
+    }
+
     /// Enable the HTTP GraphQL server.
     #[cfg(feature = "http")]
     pub fn with_http(mut self, config: HttpConfig) -> Self {
         self.http_config = Some(config);
+        self
+    }
+
+    /// Set the server-side bound on waiting for a transaction commit.
+    ///
+    /// `Duration::ZERO` disables the bound. A commit still running when the
+    /// bound passes keeps running.
+    #[cfg(feature = "http")]
+    pub fn with_commit_timeout(mut self, timeout: Duration) -> Self {
+        self.http_config
+            .as_mut()
+            .expect("an HTTP config")
+            .commit_timeout = timeout;
         self
     }
 
@@ -580,6 +612,8 @@ impl NodeBuilder {
             txn_ownership: self.txn_ownership,
             document_projector: self.document_projector.take(),
             replica_registration: self.replica_registration.take(),
+            #[cfg(all(test, feature = "p2p"))]
+            kms_transport_wrapper: self.kms_transport_wrapper.take(),
             #[cfg(not(target_arch = "wasm32"))]
             transaction_cleanup,
             #[cfg(feature = "http")]
@@ -620,6 +654,7 @@ impl NodeBuilder {
             let server_config = defra_http::ServerConfig {
                 address: http_cfg.address,
                 request_timeout: crate::timeout_secs(http_cfg.request_timeout),
+                commit_timeout_ms: crate::timeout_millis(http_cfg.commit_timeout),
                 query_limits,
                 no_signing: identity_only,
                 ..Default::default()

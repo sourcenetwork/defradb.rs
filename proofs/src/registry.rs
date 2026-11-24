@@ -263,19 +263,37 @@ pub const PROPERTIES: &[Property] = &[
         family: "Explicit embedded signing",
         name: "admitted_binds",
         axis: Lean,
-        anchor: "crates/entry-points/defra-node/src/embedded_signer.rs admitted_signer; crates/entry-points/defra-node/src/lib.rs execute_prepared_request",
+        anchor: "crates/entry-points/defra-node/src/embedded_signer.rs EmbeddedSigner::from_config, admitted_signer; crates/entry-points/defra-node/src/request_path.rs RequestPath::execute",
         model_ref: "EmbeddedSigner (lake build); embedded_signer::native_admission_matches_executed_lean_model",
         tiers: &[Boundary, Contract],
         bound_by: "crates/entry-points/defra-node/tests/embedded_signer.rs native_admission_matches_executed_lean_model",
     },
     Property {
         family: "Explicit embedded signing",
-        name: "INV_Bound",
+        name: "unsupported_refused",
+        axis: Lean,
+        anchor: "crates/entry-points/defra-node/src/embedded_signer.rs EmbeddedSigner::from_config",
+        model_ref: "EmbeddedSigner (lake build); embedded_signer::native_admission_matches_executed_lean_model",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/entry-points/defra-node/tests/embedded_signer.rs invalid_or_missing_local_key_is_rejected, native_admission_matches_executed_lean_model",
+    },
+    Property {
+        family: "Explicit embedded signing",
+        name: "caller_signs_only_as_actor / no_key_signs_with_node / refused_only_a_bad_key: a caller's key signs only as the actor it belongs to, a call without a key is signed by the node, and only a call whose key is not admitted is refused",
+        axis: Lean,
+        anchor: "crates/entry-points/defra-node/src/embedded_signer.rs admitted_signer; crates/entry-points/defra-node/src/ops/request.rs Node::admit, Node::admitted_caller; crates/entry-points/defra-node/src/request_path.rs RequestPath::execute; crates/entry-points/defra-node/src/lib.rs Node::execute_as",
+        model_ref: "EmbeddedSigner (lake build)",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/entry-points/defra-node/tests/caller_key_admission.rs execute_as_refuses_a_key_of_another_actor, execute_as_does_not_sign_with_a_key_registered_for_the_request_did, execute_as_signs_with_the_callers_own_key",
+    },
+    Property {
+        family: "Explicit embedded signing",
+        name: "INV_NoForgery / INV_PresentedOnly / INV_Verifiable / INV_UnderDac: every entry point that writes goes through the one admission check, so no block is signed by another actor's key, by a key the caller did not hand over, by an unverifiable key, or under DAC bypass",
         axis: Tla,
-        anchor: "crates/entry-points/defra-node/src/embedded_signer.rs admitted_signer; crates/entry-points/defra-node/src/lib.rs execute_prepared_request",
+        anchor: "crates/entry-points/defra-node/src/embedded_signer.rs EmbeddedSigner::from_config, admitted_signer; crates/entry-points/defra-node/src/ops/request.rs Node::admit, Node::admitted_caller; crates/entry-points/defra-node/src/request_path.rs RequestPath::execute; crates/entry-points/defra-node/src/lib.rs Node::execute_as; crates/entry-points/defra-node/src/ops/backup.rs Node::import_backup_as",
         model_ref: "MC_EmbeddedSigner_{Green,Red_*}.cfg",
         tiers: &[Boundary, Contract],
-        bound_by: "crates/entry-points/defra-node/tests/embedded_signer.rs selected_actor_signs_create_update_and_respects_transaction_finality, selected_signer_does_not_bypass_document_acp",
+        bound_by: "crates/entry-points/defra-node/tests/caller_key_admission.rs every_writing_entry_refuses_a_key_of_another_actor, import_backup_as_refuses_a_key_of_another_actor, import_backup_as_refuses_a_key_with_dac_bypass, execute_as_refuses_a_key_with_dac_bypass, execute_as_refuses_an_unsupported_key; crates/entry-points/defra-node/tests/embedded_signer.rs selected_actor_signs_create_update_and_respects_transaction_finality, selected_signer_does_not_bypass_document_acp",
     },
     Property {
         family: "Verified client graph transaction",
@@ -549,7 +567,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Transactional document relationships",
         name: "AuthorizedAtWrite / RegistrationHasParent / FieldNamesAdmittedParent for parent-gated registration",
         axis: Tla,
-        anchor: "crates/engine/acp/src/zanzibar/acp/document_acp.rs register_under_parent, check_parent_link, check_parent_unlink; crates/database/db/src/write/autocommit/helpers.rs register_created_doc; crates/database/db/src/merge/merge_handler/composite_persist.rs persist_merged_document; crates/database/db/src/write/update.rs refuse_parent_change",
+        anchor: "crates/engine/acp/src/zanzibar/acp/document_acp.rs register_under_parent, check_parent_link, check_parent_unlink; crates/database/db/src/write/autocommit/helpers.rs register_created_doc; crates/database/db/src/merge/merge_handler/composite_persist.rs persist_merged_document; crates/database/db/src/collection/validation.rs validate_immutable_fields",
         model_ref: "MC_ParentRegistration_{Green,Red_*}.cfg",
         tiers: &[Boundary],
         bound_by: "crates/engine/acp/tests/parent_registration.rs local_registration_checks_parent_before_writing_child, a_registered_child_keeps_its_last_parent_link",
@@ -558,7 +576,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Transactional document relationships",
         name: "resolve_takes_type_from_policy_and_id_from_document / unpermitted_denied / registered_has_parent / unlink_keeps_a_parent / field_keeps_admitted_parent",
         axis: Lean,
-        anchor: "crates/engine/acp/src/object_registration.rs RegistrationParent::from_policy; crates/engine/acp/src/zanzibar/acp/document_acp.rs register_under_parent, check_parent_unlink; crates/database/db/src/write/update.rs refuse_parent_change",
+        anchor: "crates/engine/acp/src/object_registration.rs RegistrationParent::from_policy; crates/engine/acp/src/zanzibar/acp/document_acp.rs register_under_parent, check_parent_unlink; crates/database/db/src/collection/validation.rs validate_immutable_fields",
         model_ref: "ParentRegistration (lake build)",
         tiers: &[Boundary, Contract],
         bound_by: "crates/engine/acp/tests/parent_registration.rs registration_parent_matches_executed_lean_model, parent_unlink_matches_executed_lean_model",
@@ -1047,6 +1065,42 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "MC_ContinuationSlot_{Green,Red_LateClaim}.cfg",
         tiers: &[Boundary],
         bound_by: "",
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "INV_KeyArrivalPromotes / LIVE_PromotedBackoffDrains: a verified key arrival empties every retry backoff into the due queue, and the promoted roots remain available to the clock",
+        axis: Tla,
+        anchor: "crates/database/p2p/src/sync/manager/process/pending_dag.rs promote_pending_retries; crates/database/kms/src/service.rs set_key_arrival_listener",
+        model_ref: "MC_PendingKeyArrival_{Green,Red_NoPromotion,Red_LostPromotion}.cfg",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/database/p2p/src/sync/manager/process/pending_dag_tests.rs key_arrival_promotes_pending_retries, key_arrival_during_attempt_survives_rearm",
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "INV_StoredKeysNotified — a finished or cancelled reply notifies every stored key",
+        axis: Tla,
+        anchor: "crates/database/kms/src/remote.rs RemoteKeys::fetch_batch, ArrivedKeys::drop",
+        model_ref: "MC_KeyBatchNotification_{Green,Red_Cancel}.cfg",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/database/kms/src/remote_tests.rs cancelling_a_reply_notifies_keys_stored_before_a_later_put_blocks",
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "stored_key_is_notified — flushing includes each stored key",
+        axis: Lean,
+        anchor: "crates/database/kms/src/remote.rs ArrivedKeys::drop",
+        model_ref: "PendingKeyArrival (lake build)",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/database/kms/src/remote_tests.rs cancelling_a_reply_notifies_keys_stored_before_a_later_put_blocks",
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "arrival_survives_finish — an in-flight key arrival keeps the retry due",
+        axis: Lean,
+        anchor: "crates/database/p2p/src/sync/manager/process/pending_dag.rs promote_pending_retries, PendingDagLease::finish_attempt",
+        model_ref: "PendingKeyArrival (lake build)",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/database/p2p/src/sync/manager/process/pending_dag_tests.rs key_arrival_during_attempt_survives_rearm",
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
@@ -2451,6 +2505,26 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // An explain names the direct lookup index, or the child scan index.
+        family: "Schema-evolution operations in the core",
+        name: "INV_NameMatches",
+        axis: Tla,
+        anchor: "crates/engine/query/src/plan/type_join/mod.rs scan_node_with_index_name; crates/engine/query/src/plan/type_join/type_join_one.rs explain_execute_inner",
+        model_ref: "MC_ExplainIndexName_{Green,Green_Fallback,Red_Lookup}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/engine/query/src/plan/type_join/mod.rs direct_lookup_index_takes_precedence_over_child_plan_index",
+    },
+    Property {
+        // A lookup name takes precedence, with the child name as fallback.
+        family: "Schema-evolution operations in the core",
+        name: "ExplainIndexName.lookup_wins / child_is_fallback / no_index_no_name",
+        axis: Lean,
+        anchor: "crates/engine/query/src/plan/type_join/mod.rs scan_node_with_index_name",
+        model_ref: "ExplainIndexName (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/engine/query/src/plan/type_join/mod.rs direct_lookup_index_takes_precedence_over_child_plan_index",
+    },
+    Property {
         // #2379: an index answers queries only while no reindex is owed;
         // schema changes and merges that store a document off the active
         // version across a lens owe a fresh record, and a rebuild clears only
@@ -2575,6 +2649,39 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/database/db/tests/merge/merge_handler_tests.rs counter_merge_of_an_unmaterialized_document_waits_for_its_composite, counter_merge_marks_cid_merged",
     },
     Property {
+        // A counter increment from a peer still at the source schema version
+        // applies to that source projection, then the result migrates once.
+        // A lens with no inverse cannot give that projection back, so the
+        // increment is added to the migrated value as it is and still lands.
+        // That agrees with a source-version receiver only for a lens that
+        // shifts the counter or leaves it alone; a forward-only doubling lens
+        // is the checked limit.
+        // A whole active-document put is used for the translated result so a
+        // linked non-operation field cannot make the merge skip it.
+        family: "Schema-evolution operations in the core",
+        name: "INV_TransformedOnce: an old-version counter increment is translated once",
+        axis: Tla,
+        anchor: "crates/database/db/src/merge/merge_handler/field_ops.rs counter_on_active_version, apply_field_op_once; crates/database/db/src/merge/merge_handler/composite_persist.rs persist_merged_document",
+        model_ref: "MC_MigratedCounterMerge_{Green,Green_ForwardOnly,Green_Scale,Green_ScaleForwardOnly,Red_Double,Red_Stuck,Red_ScaleForwardOnly}.cfg",
+        tiers: &[Contract],
+        bound_by: "tools/integration-test/tests/testo/issues/t_2916.rs an_old_version_counter_update_merges_through_a_lens_once, an_old_version_counter_update_merges_through_a_forward_only_lens, an_old_version_counter_update_adds_to_a_counter_a_forward_only_lens_wrote, an_old_version_counter_update_keeps_the_fields_the_lens_wrote, an_old_version_counter_update_lands_on_a_document_stored_at_the_source_version",
+    },
+    Property {
+        // The Lean rule behind the TLA+ invariant: the source value plus the
+        // peer's delta migrates once, while translating the already-migrated
+        // value again can differ. Adding the delta to the migrated value
+        // gives the same answer for a lens that shifts the counter or leaves
+        // it alone, which is what a forward-only lens gets, and not for a
+        // lens that doubles it.
+        family: "Schema-evolution operations in the core",
+        name: "MigratedCounterMerge.translated_once / double_apply_differs / direct_add_matches_shift / direct_add_matches_untouched / direct_add_misses_scale",
+        axis: Lean,
+        anchor: "crates/database/db/src/merge/merge_handler/field_ops.rs counter_on_active_version, apply_field_op_once; crates/database/db/src/merge/merge_handler/composite_persist.rs persist_merged_document",
+        model_ref: "MigratedCounterMerge (lake build)",
+        tiers: &[Contract],
+        bound_by: "tools/integration-test/tests/testo/issues/t_2916.rs an_old_version_counter_update_merges_through_a_lens_once, an_old_version_counter_update_merges_through_a_forward_only_lens, an_old_version_counter_update_adds_to_a_counter_a_forward_only_lens_wrote, an_old_version_counter_update_keeps_the_fields_the_lens_wrote, an_old_version_counter_update_lands_on_a_document_stored_at_the_source_version",
+    },
+    Property {
         // A commit begins when it is handed to its transaction's owner, or,
         // if a request is running the transaction then, when the owner takes
         // it; a caller that stops waiting before that abandons it. One that
@@ -2589,6 +2696,29 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/database/db/src/txn/fence.rs CommitFences, Fence::abandon, Fence::finish; crates/database/db/src/txn/owner/mod.rs Owners::run, Owners::finish, FenceOnDrop; crates/database/db/src/txn/owner/actor.rs own; crates/database/db/src/database/mod.rs DB::new_txn",
         model_ref: "MC_CommitFence_{Green,Red_RaiseAfterSwap,Red_OwnerNoSwap,Red_ReaderNoWait,Red_ForgetFailed,Red_UndoNoWake,Red_SkipBegun,Red_RunAbandoned}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // A live HTTP server bounds its own wait to answer a transaction
+        // commit. Past the bound, and only then, it answers "unknown"; the
+        // worker-local commit keeps its ticket, so the answer never says or
+        // causes an abort. Without the bound, a queued or running commit can
+        // leave a live client waiting forever.
+        family: "Transaction & merge-queue concurrency",
+        name: "ClientSettles / UnknownIsNotAbort / AnswerOnlyAfterSend: the server settles a wedged commit answer by its own bound without cancelling it",
+        axis: Tla,
+        anchor: "crates/surfaces/http/src/server.rs Server::router commit bound, admitted handler task; crates/database/db/src/txn/owner/mod.rs Owners::finish, Owners::finish_detached; crates/database/db/src/txn/owner/actor.rs own",
+        model_ref: "MC_CommitResponseWait_{Green,Red_NoBound,Red_Cancel}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/surfaces/http/tests/commit_bound.rs a_commit_past_its_bound_answers_unknown_and_keeps_running, the_bound_is_only_for_transaction_commits, a_begin_is_not_bounded_as_a_commit; tools/integration-test/tests/testo/txn/http_commit_bound.rs an_http_commit_past_its_bound_answers_unknown_and_lands",
+    },
+    Property {
+        family: "Transaction & merge-queue concurrency",
+        name: "bound_answers_unknown / unknown_keeps_ticket / no_bound_waits: a passed bound answers unknown and keeps the commit ticket",
+        axis: Lean,
+        anchor: "crates/surfaces/http/src/server.rs Server::router commit bound",
+        model_ref: "CommitResponseWait (lake build)",
         tiers: &[Boundary],
         bound_by: "",
     },
@@ -2880,13 +3010,14 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
-        // `sort_in_key_order` is private to the planner, so no contract test
+        // `order_in_values` is private to the planner, so no contract test
         // reaches it; crates/entry-points/defra-node/tests/in_filter_order.rs runs the
-        // queries it orders over an ASC, a DESC and no index. Boundary.
+        // queries it orders over an ASC, a DESC and no index, and the testo
+        // scenarios in index/composite_in_order.rs the unordered ones. Boundary.
         family: "Order-preserving key encoding",
-        name: "lookups_strictly_increasing / reversed_lookups_strictly_decreasing — `_in` point lookups run in key order, each once",
+        name: "lookups_strictly_increasing / reversed_lookups_strictly_decreasing / written_sublist — `_in` point lookups run in key order under an order, as written without one, each once",
         axis: Lean,
-        anchor: "crates/engine/query/src/planner/index_selection/filter_to_scan.rs filter_to_index_scan, sort_in_key_order",
+        anchor: "crates/engine/query/src/planner/index_selection/filter_to_scan.rs filter_to_index_scan, order_in_values",
         model_ref: "OrderEncoding.InLookup (lake build)",
         tiers: &[Boundary],
         bound_by: "",
@@ -2942,6 +3073,15 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "RelationFilterNoChild.empty_cache_keeps_nothing / shortcut_same_rows / orphans_need_the_walk",
         tiers: &[Contract],
         bound_by: "crates/engine/query/src/planner/joins/relation_filter_execution_tests.rs no_matching_child_reads_no_parent, no_matching_child_reads_no_parent_of_an_index_ordered_scan",
+    },
+    Property {
+        family: "Joins on a parent read by key",
+        name: "lookup_same_rows / lookup_keeps_only_passing / raw_attach_keeps_a_rejected_parent / lookup_many_same_rows / lookup_many_keeps_only_passing / pass_through_drops_the_children — a parent an index-driven join reads by key is joined by the plan that join wraps, a list relation with all its children, so the rows are those of the full walk and a parent whose other relation fails its filter is not returned",
+        axis: Lean,
+        anchor: "crates/engine/query/src/plan/type_join/type_join_one.rs TypeJoinOne::join_fetched, TypeJoinOne::child_of_fetched, TypeJoinOne::next_inverted_index, TypeJoinOne::next_ordered_primary_inner; crates/engine/query/src/plan/type_join/type_join_many/plan_node.rs TypeJoinMany::join_fetched; crates/engine/query/src/plan/type_join/type_join_many/fetched.rs TypeJoinMany::join_children_of_fetched",
+        model_ref: "JoinFetchedParent.lookup_same_rows / lookup_keeps_only_passing / raw_attach_keeps_a_rejected_parent / lookup_many_same_rows / lookup_many_keeps_only_passing / pass_through_drops_the_children",
+        tiers: &[Contract],
+        bound_by: "tools/integration-test/tests/testo/query/one_to_many/with_relation_filter_indexed_fk.rs relation_filter_through_an_indexed_fk_keeps_a_nested_joined_relation, relation_filter_through_an_indexed_fk_keeps_a_second_relation_filter, relation_filter_through_an_indexed_fk_keeps_a_joined_list_relation, relation_filter_through_an_indexed_fk_keeps_a_list_relation_filter",
     },
     Property {
         family: "Commits depth traversal",
@@ -3714,9 +3854,9 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Collection truncate",
-        name: "INV_NoRemovalWithoutPermission / INV_NoRemovalFromChunks / INV_FilteredNeverOnBranchable / INV_FilteredRemovesOnlyCommittedMatches / INV_BadFilterRemovesNothing / INV_UnfilteredRemovesAll / INV_UnfilteredEmptiesView / INV_UnfilteredClearsSearchRecords",
+        name: "INV_NoRemovalWithoutPermission / INV_NoRemovalFromChunks / INV_FilteredNeverOnBranchable / INV_FilteredRemovesOnlyCommittedMatches / INV_FilteredRemovesOnlyCurrentMatches / INV_RetryExhaustionKeepsProgress / INV_MetadataExhaustionRefused / INV_BadFilterRemovesNothing / INV_UnfilteredRemovesAll / INV_UnfilteredEmptiesView / INV_UnfilteredClearsSearchRecords",
         axis: Tla,
-        anchor: "crates/database/db/src/collection/ops/truncate/mod.rs DB::truncate_collection_as, DB::truncate_parsed_as, DB::truncate_target, conditions, DB::truncate; crates/database/db/src/collection/ops/truncate/all.rs DB::truncate_all, DB::truncate_metadata_in; crates/database/db/src/collection/ops/truncate/filtered.rs DB::truncate_matching; crates/database/db/src/chunk/user_writes.rs ensure_admin_changeable; crates/database/db/src/merge/se/serve.rs store_artifacts, build_reply",
+        anchor: "crates/database/db/src/collection/ops/truncate/mod.rs DB::truncate_collection_as, DB::truncate_parsed_as, DB::truncate_target, conditions, DB::truncate; crates/database/db/src/collection/ops/truncate/all.rs DB::truncate_all, DB::truncate_documents, DB::truncate_collection_metadata, DB::truncate_metadata_in; crates/database/db/src/collection/ops/truncate/deferred.rs DB::truncate_deferred_indexes; crates/database/db/src/collection/ops/truncate/filtered.rs DB::truncate_matching, matching_doc_ids_in_attempt; crates/database/db/src/chunk/user_writes.rs ensure_admin_changeable; crates/database/db/src/merge/se/serve.rs store_artifacts, build_reply",
         model_ref: "MC_Truncate_{Green,Red_*}.cfg",
         tiers: &[Boundary],
         bound_by: "",
@@ -3865,7 +4005,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Node access control operations",
         name: "INV_NoEffectWithoutPermission / INV_RefusalNamesGoFirst / INV_EdgeSeesReturnedRevoke",
         axis: Tla,
-        anchor: "crates/engine/acp/src/nac/permission.rs NodePermission::go_order; crates/database/db/src/access/nac.rs check_node_access_as, check_node_access_in_txn; crates/database/db/src/write/autocommit/batch.rs check_attempt_node_access; crates/database/db/src/txn/registry/indexes.rs check_access_in; crates/engine/query/src/runner/turn.rs lent, lent_node_permission; crates/entry-points/defra-node/src/ops/request.rs caller, txn_owner; crates/surfaces/http/src/auth_middleware.rs auth_middleware; crates/surfaces/http/src/route_permissions.rs reads_collection_first, route_permission; crates/surfaces/http/src/nac_guard.rs require_permissions; crates/surfaces/http/src/nac_adapter.rs NacAdapter::check_permissions; crates/database/db/src/nac/mod.rs NacManager::check_permissions; crates/database/db/src/nac/edge.rs refresh_edge, refresh_edge_on_commit, refresh_guard, RefreshGuard, reload_after_commit, EdgeGrants::publish, EdgeSnapshot::check, check_all, decide; crates/engine/acp/src/nac/node_acp/snapshot.rs copy_into; crates/database/db/src/nac/write.rs in_write; crates/database/db/src/nac/mod.rs initialize, enable, purge; crates/entry-points/defra-node/src/node_builder.rs NodeBuilder::build",
+        anchor: "crates/engine/acp/src/nac/permission.rs NodePermission::go_order; crates/database/db/src/access/nac.rs check_node_access_as, check_node_access_in_txn; crates/database/db/src/write/autocommit/batch.rs check_attempt_node_access; crates/database/db/src/txn/registry/indexes.rs check_access_in; crates/engine/query/src/runner/turn.rs lent, lent_node_permission; crates/entry-points/defra-node/src/ops/request.rs admitted_caller, txn_owner; crates/surfaces/http/src/auth_middleware.rs auth_middleware; crates/surfaces/http/src/route_permissions.rs reads_collection_first, route_permission; crates/surfaces/http/src/nac_guard.rs require_permissions; crates/surfaces/http/src/nac_adapter.rs NacAdapter::check_permissions; crates/database/db/src/nac/mod.rs NacManager::check_permissions; crates/database/db/src/nac/edge.rs refresh_edge, refresh_edge_on_commit, refresh_guard, RefreshGuard, reload_after_commit, EdgeGrants::publish, EdgeSnapshot::check, check_all, decide; crates/engine/acp/src/nac/node_acp/snapshot.rs copy_into; crates/database/db/src/nac/write.rs in_write; crates/database/db/src/nac/mod.rs initialize, enable, purge; crates/entry-points/defra-node/src/node_builder.rs NodeBuilder::build",
         model_ref: "MC_NacOrder_{Green,Red_SkipGet,Red_OwnFirst,Red_AnonAsNode,Red_OutsideTxn,Red_EdgeOwnOnly,Red_StaleEdge,Red_NoWithdraw}.cfg",
         tiers: &[Boundary],
         bound_by: "crates/entry-points/cli/src/nac_adapter_tests.rs a_returned_revocation_refuses_the_next_edge_check, the_snapshot_decides_every_permission_as_the_engine_does; crates/database/db/tests/nac/dropped_write.rs a_revoke_dropped_after_its_commit_still_checks_the_edge",

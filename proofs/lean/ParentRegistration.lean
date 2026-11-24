@@ -11,7 +11,7 @@ deleted, and an update cannot write another parent into its field.
 The code: `RegistrationParent::from_policy` in
 `crates/engine/acp/src/object_registration.rs`; `register_under_parent` and
 `check_parent_unlink` in `crates/engine/acp/src/zanzibar/acp/document_acp.rs`;
-`refuse_parent_change` in `crates/database/db/src/write/update.rs`. -/
+`validate_immutable_fields` in `crates/database/db/src/collection/validation.rs`. -/
 namespace ParentRegistration
 open Lean
 

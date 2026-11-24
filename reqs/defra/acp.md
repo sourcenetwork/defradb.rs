@@ -70,3 +70,11 @@ When a Vera provider follows a takeover that voided submissions it had confirmed
 A `defradb start` server whose document ACP is Vera (`--document-acp-type vera` or `vera-embedded`) takes a caller's Vera delegation as its credential in `Authorization: Bearer <token>`, as an in-process node does. The token is one the caller signed with the scope `acp:policy` for the worker and deployment the server names under `delegation` in `GET /api/v0/acp/status`. The request then acts as the delegation's issuer, and the server registers documents that caller creates under that delegation without holding the caller's key; the creator owns them and other callers do not see them. A caller presenting only a DefraDB identity token, whose key the server does not hold, has its document created but not registered: the server logs `failed to register ACP document <docID>: no authority to submit ACP changes as <DID>: the node holds no key for it and the request carries no delegation` and sends Vera nothing.
 
 A token that declares itself a Vera delegation and fails a check is refused with 403 `Token verification failed: …` before the request runs, and is never read as an identity token: a signature that does not verify against its issuer, a malformed token, one over 16 KiB, a validity interval that does not hold at the server's time, a scope other than `acp:policy`, a request-bound delegation, or another worker or deployment.
+
+# `go.acp.nac.gates.signature`: Block signature verification is gated
+
+- **Parents:** ["go.acp.nac.gates"]
+- **Scenarios:** ["acp::nac::verify_signature::nac_gates_verify_signature_authorized_identity_allow_access", "acp::nac::verify_signature::nac_gates_verify_signature_go_client_authorized_identity_allow_access", "acp::nac::verify_signature::nac_gates_verify_signature_no_identity_not_authorized_error", "acp::nac::verify_signature::nac_gates_verify_signature_wrong_identity_not_authorized_error"]
+- **Scope:** "authorized-identity tests run on HTTP and CLI clients (default signer) or Go and C clients (signed documents), one test each"
+
+With NAC enabled, verifying a block signature succeed for the NAC owner and fail without identity or with a wrong identity with `not authorized to perform operation. Permission: verify-signature`.

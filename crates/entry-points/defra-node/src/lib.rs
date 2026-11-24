@@ -111,14 +111,15 @@ pub use config::Libp2pConfig;
 #[cfg(any(feature = "p2p", feature = "libp2p"))]
 pub use config::SyncTuning;
 pub use config::{
-    DocumentAcpConfig, IndexBuildGateHandle, NodeConfig, NodeSigning, Persistence,
-    ReplicationFilterHandle, SigningKey, TransportConfig,
+    CommitGateHandle, DocumentAcpConfig, IndexBuildGateHandle, NodeConfig, NodeSigning,
+    Persistence, ReplicationFilterHandle, SigningKey, TransportConfig,
 };
 #[cfg(feature = "p2p")]
 pub use config::{P2PConfig, PeerKeySource};
 /// The hook [`NodeBuilder::with_index_build_gate`] takes.
 pub use db::index::build_gate::{GateWait, IndexBuildGate};
 pub use db::merge::{ReplicaOwnership, ReplicaRegistration};
+pub use db::{CommitGate, CommitWait};
 #[cfg(feature = "managed-p2p")]
 pub use defra_p2p_adapter::{
     ReplicationFilter, ReplicationFilters, ReplicatorPushOptions, ReplicatorPushOptionsState,
@@ -828,7 +829,12 @@ impl Node {
         transform: Option<&str>,
     ) -> Result<Vec<CollectionVersion>> {
         self.ops()
-            .add_view(&self.caller(context), source_query, target_sdl, transform)
+            .add_view(
+                &self.admitted_caller(context)?,
+                source_query,
+                target_sdl,
+                transform,
+            )
             .await
     }
 
@@ -840,7 +846,7 @@ impl Node {
         selector: db::CollectionSelector,
     ) -> Result<()> {
         self.ops()
-            .refresh_views(&self.caller(context), selector)
+            .refresh_views(&self.admitted_caller(context)?, selector)
             .await
     }
 
@@ -1168,33 +1174,36 @@ impl Node {
     /// [`Self::execute`] as `context` serves, rather than as the node.
     /// Admitted as a request (see [`Self::shutdown`]).
     pub async fn execute_as(&self, context: &RequestContext, query_str: &str) -> QueryResponse {
+        // A caller's key signs only once admitted. Without one the node signs
+        // with its own key, looked up by the node's DID alone: a key the
+        // process holds for the request's DID is not the caller's to use.
+        let caller_signer = match self.admit(context) {
+            Ok(signer) => signer,
+            Err(error) => return QueryResponse::error(error.to_string()),
+        };
         let runner = Arc::clone(&self.runner);
         let mut request = QueryRequest::new(query_str).with_context(context.clone());
-        let signing_config = if request.context.signing().is_some() {
-            request.context.signing().cloned()
-        } else if request.context.signing_override() == Some(false) {
-            None
-        } else if self.node_identity_did.is_some()
-            && (self.node_signs || request.context.signing_override() == Some(true))
-        {
-            defra_core::signing::resolve_signing_config_with_flag(
-                request.context.identity(),
-                self.node_identity_did.as_deref(),
-                true,
-            )
-        } else {
-            None
+        let override_flag = request.context.signing_override();
+        let node_signs = self.node_identity_did.is_some()
+            && override_flag != Some(false)
+            && (self.node_signs || override_flag == Some(true));
+        let signing_config = match caller_signer {
+            Some(config) => Some(config),
+            None if node_signs => {
+                let node_key = defra_core::signing::resolve_signing_config_with_flag(
+                    None,
+                    self.node_identity_did.as_deref(),
+                    true,
+                );
+                if node_key.is_none() {
+                    return unavailable_node_signer_response(
+                        self.node_identity_did.as_deref().unwrap_or("node"),
+                    );
+                }
+                node_key
+            }
+            None => None,
         };
-
-        if self.node_identity_did.is_some()
-            && (self.node_signs || request.context.signing_override() == Some(true))
-            && request.context.signing_override() != Some(false)
-            && signing_config.is_none()
-        {
-            return unavailable_node_signer_response(
-                self.node_identity_did.as_deref().unwrap_or("node"),
-            );
-        }
         match signing_config {
             Some(signing_config) => {
                 request.context = request
@@ -1569,6 +1578,11 @@ fn timeout_secs(timeout: Duration) -> u64 {
             .as_secs()
             .saturating_add(u64::from(timeout.subsec_nanos() > 0))
     }
+}
+
+#[cfg(feature = "http")]
+fn timeout_millis(timeout: Duration) -> u64 {
+    timeout.as_millis().try_into().unwrap_or(u64::MAX)
 }
 
 #[cfg(test)]

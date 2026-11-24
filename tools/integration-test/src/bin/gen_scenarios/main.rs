@@ -11,6 +11,7 @@
 
 mod check;
 mod corpus;
+mod deviations;
 mod emit;
 mod error;
 mod go_source;
@@ -33,13 +34,9 @@ use rapidhash::RapidHashSet;
 use tree::Tree;
 
 /// Go test files that are ported by hand, with their own test file. They are
-/// not generated, but stay in the module tree. The NAC relationship files
-/// carry Go #5342 (an empty target actor is refused), which lands after the
-/// pin; once the pin includes it they go back to being generated.
+/// not generated, but stay in the module tree.
 const HAND_PORTED: &[&str] = &[
     "tests/integration/collection_version/similarity_test.go",
-    "tests/integration/acp/nac/add_nac_relationship_test.go",
-    "tests/integration/acp/nac/delete_nac_relationship_test.go",
     "tests/integration/net/simple/peer/subscribe/document/with_add_remove_test.go",
 ];
 
@@ -176,7 +173,11 @@ fn generate(args: &Args) -> Result<()> {
                 name.push_str("_2");
             }
             let key = mantra::key(&item.scenario.source.path, &item.scenario.source.test);
-            let leaf = leaves.get(&key).or_else(|| leaves.get(&item.scenario.id));
+            let testo = format!("{}::{name}", path.join("::"));
+            let leaf = leaves
+                .get(&key)
+                .or_else(|| leaves.get(&item.scenario.id))
+                .or_else(|| leaves.get(&testo));
             if leaf.is_none() {
                 unmapped.push(format!("{} ({key})", item.scenario.id));
             }

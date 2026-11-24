@@ -106,9 +106,9 @@ A query without `order` filtered through a composite index returns documents in 
 # `go.index.order.composite-in`: `_in` through a composite index with a reversed field
 
 - **Parents:** ["go.index.order"]
-- **Scenarios:** ["index.query-with-composite-index-with-in-filter-on-first-field-with-reverted-order-should-fetch", "index.query-with-composite-index-with-in-filter-on-second-field-with-reverted-order-should-fetch"]
+- **Scenarios:** ["index.query-with-composite-index-with-in-filter-on-first-field-with-reverted-order-should-fetch", "index.query-with-composite-index-with-in-filter-on-second-field-with-reverted-order-should-fetch", "index::composite_in_order::in_on_descending_first_field_without_order_keeps_the_written_order", "index::composite_in_order::in_on_ascending_first_field_without_order_keeps_the_written_order", "index::composite_in_order::in_on_descending_first_field_ordered_descending_follows_the_order", "index::composite_in_order::in_on_descending_first_field_ordered_ascending_follows_the_order"]
 
-`_in` on the first or second field of a composite index with one DESC field returns the matching documents.
+`_in` on the first or second field of a composite index with one DESC field returns the matching documents. Without `order`, `_in` on the first field returns them in the order the filter lists its values, whichever direction that field is indexed in: over Users named Shahzad, Bruno, Fred, Andy, Addo and Chris with `@index(includes: [{field: "name", direction: DESC}, {field: "age", direction: ASC}])`, `User(filter: {name: {_in: ["Fred", "Addo", "Andy"]}})` returns Fred, Addo, Andy, and so does the same query with `name` ASC and `age` DESC. A value listed twice returns its documents once. With `order` on that field the order decides, not the list: `order: {name: DESC}` returns Fred, Andy, Addo and `order: {name: ASC}` returns Addo, Andy, Fred. Go ignores `order` there and returns the listed order.
 
 # `go.index.order.composite-range`: Range filters on a composite index's first field
 
@@ -137,6 +137,13 @@ Filtering on an indexed field of a one-to-one related document, from the primary
 - **Scenarios:** ["index.index-group-by-with-filter-on-indexed-relation-returns-group-by-field-value", "index.index-query-with-index-on-one-to-many-relation-and-filter-data", "index.index-query-with-index-on-one-to-many-relation-and-filter-no-data", "index.index-query-with-index-on-one-to-many-relation-not-filter-data", "index.index-query-with-index-on-one-to-many-relation-not-filter-no-data", "index.index-query-with-index-on-one-to-many-relation-or-filter-data", "index.index-query-with-index-on-one-to-many-relation-or-filter-no-data", "index.query-with-composite-index-on-many-to-one-with-multiple-indexed-child-nodes-should-succeed", "index.query-with-index-with-filter-on2-relations-should-filter", "index.query-with-index-with-multiple-scalars-and-relation-filter-should-apply-all-as-and", "index.query-with-index-with-scalar-and-relation-filter-at-top-level-should-apply-both-as-and"]
 
 Scalar and relation conditions at the top level apply as an AND; `_and`, `_or` and `_not` over an indexed one-to-many relation return the right documents or none; filters on two relations, `groupBy` with a filter on an indexed relation, and a composite index on several indexed child fields all return correct results.
+
+# `defra.index.relation.filter_keeps_joined_parent`: An indexed FK filter keeps joined relations
+
+- **Parents:** ["go.index.relation"]
+- **Scenarios:** ["query::one_to_many::with_relation_filter_indexed_fk::relation_filter_through_an_indexed_fk_keeps_a_joined_list_relation", "query::one_to_many::with_relation_filter_indexed_fk::relation_filter_through_an_indexed_fk_keeps_a_list_relation_filter", "query::one_to_many::with_relation_filter_indexed_fk::relation_filter_through_an_indexed_fk_keeps_a_nested_joined_relation", "query::one_to_many::with_relation_filter_indexed_fk::relation_filter_through_an_indexed_fk_keeps_a_second_relation_filter", "query::one_to_many::with_relation_filter_indexed_fk::relation_filter_through_an_indexed_fk_keeps_another_joined_relation"]
+
+When a parent-side foreign key is indexed and the query filters through it, a relation already joined into the parent plan, such as a selected publisher, survives the FK lookups and is rendered with the matching parent, together with the relations nested under it (the publisher's owner). A list relation, such as the book's reviews, survives the same way with all its children. A filter on that other relation still applies: a parent whose publisher fails it, or none of whose reviews pass it, is not returned.
 
 # `go.index.relation.sub-filter`: Child sub-filters through indexes
 

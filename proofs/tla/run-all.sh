@@ -11,6 +11,9 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 # event to the settled rest (depth = events + 1), and DEADLOCK:<l> stops with
 # event l next (past the end when l = events + 1).
 RUNS=(
+  "MC_ExplainIndexName_Green.cfg ExplainIndexName.tla GREEN"
+  "MC_ExplainIndexName_Green_Fallback.cfg ExplainIndexName.tla GREEN"
+  "MC_ExplainIndexName_Red_Lookup.cfg ExplainIndexName.tla RED" # direct FK lookup must name its index
   "MC_MissingRelationFilter_Green.cfg MissingRelationFilter.tla GREEN"
   "MC_MissingRelationFilter_Red_NoId.cfg MissingRelationFilter.tla RED"
   "MC_MissingRelationFilter_Red_Sibling.cfg MissingRelationFilter.tla RED"
@@ -93,6 +96,13 @@ RUNS=(
   "MC_HeldPubsubRequest_Red_ResendLate.cfg HeldPubsubRequest.tla RED" # a resend goes out after the deadline (NoResendAfterDeadline)
   "MC_FloatEquality_Green.cfg FloatEquality.tla GREEN"
   "MC_FloatEquality_Red_Epsilon.cfg FloatEquality.tla RED" # the old tolerance equates distinct values (INV_ExactOnly)
+  "MC_MigratedCounterMerge_Green.cfg MigratedCounterMerge.tla GREEN"
+  "MC_MigratedCounterMerge_Green_ForwardOnly.cfg MigratedCounterMerge.tla GREEN"
+  "MC_MigratedCounterMerge_Green_Scale.cfg MigratedCounterMerge.tla GREEN"
+  "MC_MigratedCounterMerge_Green_ScaleForwardOnly.cfg MigratedCounterMerge.tla GREEN"
+  "MC_MigratedCounterMerge_Red_Double.cfg MigratedCounterMerge.tla RED" # the active value is migrated twice (INV_TransformedOnce)
+  "MC_MigratedCounterMerge_Red_Stuck.cfg MigratedCounterMerge.tla RED" # a forward-only lens leaves the increment unmerged (INV_TransformedOnce)
+  "MC_MigratedCounterMerge_Red_ScaleForwardOnly.cfg MigratedCounterMerge.tla RED" # a forward-only doubling lens leaves receivers disagreeing, the recorded limit (INV_ReceiversAgree)
   "MC_VerifiedClientGraph_Green.cfg VerifiedClientGraph.tla GREEN"
   "MC_VerifiedClientGraph_Red_SingleMutation.cfg VerifiedClientGraph.tla RED" # a multi-mutation request is accepted (INV_SingleMutation)
   "MC_VerifiedClientGraph_Red_Unencrypted.cfg VerifiedClientGraph.tla RED" # the request adds encryption outside the approved graph (INV_Unencrypted)
@@ -186,12 +196,13 @@ RUNS=(
   "MC_SourceScopedNac_Red_BorrowNode.cfg SourceScopedNac.tla RED"
   "MC_SourceScopedNac_Red_UntrustedReplay.cfg SourceScopedNac.tla RED"
   "MC_EmbeddedSigner_Green.cfg EmbeddedSigner.tla GREEN"
-  "MC_EmbeddedSigner_Red_Actor.cfg EmbeddedSigner.tla RED"
-  "MC_EmbeddedSigner_Red_Match.cfg EmbeddedSigner.tla RED"
-  "MC_EmbeddedSigner_Red_Key.cfg EmbeddedSigner.tla RED"
-  "MC_EmbeddedSigner_Red_Owner.cfg EmbeddedSigner.tla RED"
-  "MC_EmbeddedSigner_Red_Acp.cfg EmbeddedSigner.tla RED"
-  "MC_EmbeddedSigner_Red_Bypass.cfg EmbeddedSigner.tla RED"
+  "MC_EmbeddedSigner_Red_Actor.cfg EmbeddedSigner.tla RED" # another actor's key signs (INV_NoForgery)
+  "MC_EmbeddedSigner_Red_Key.cfg EmbeddedSigner.tla RED" # a mismatched key signs (INV_Verifiable)
+  "MC_EmbeddedSigner_Red_KeyType.cfg EmbeddedSigner.tla RED" # an unsupported key type signs (INV_Verifiable)
+  "MC_EmbeddedSigner_Red_Bypass.cfg EmbeddedSigner.tla RED" # a bypassing caller signs (INV_UnderDac)
+  "MC_EmbeddedSigner_Red_Skip.cfg EmbeddedSigner.tla RED" # one entry point skips admission (INV_NoForgery)
+  "MC_EmbeddedSigner_Red_Registry.cfg EmbeddedSigner.tla RED" # a registry key for the request DID signs (INV_PresentedOnly)
+  "MC_EmbeddedSigner_Red_Vacuity.cfg EmbeddedSigner.tla RED" # admitted calls do write (NothingWritten)
   "MC_SigningCredential_Green.cfg SigningCredential.tla GREEN"
   "MC_SigningCredential_Red_Format.cfg SigningCredential.tla RED"
   "MC_SigningCredential_Red_Expiry.cfg SigningCredential.tla RED"
@@ -605,6 +616,9 @@ RUNS=(
   "MC_Truncate_Red_Branchable.cfg Truncate.tla RED" # branchable check left out: a filtered truncate splits shared history (INV_FilteredNeverOnBranchable)
   "MC_Truncate_Red_Txn.cfg Truncate.tla RED" # transaction check left out, as before: a filter on the txn view removes an uncommitted match (INV_FilteredRemovesOnlyCommittedMatches)
   "MC_Truncate_Red_Shape.cfg Truncate.tla RED" # filter shape check left out: a non-filter removes everything (INV_BadFilterRemovesNothing)
+  "MC_Truncate_Red_FirstExhaust.cfg Truncate.tla RED" # the first chunk can exhaust before progress
+  "MC_Truncate_Red_PartialRetry.cfg Truncate.tla RED" # retry exhaustion loses committed partial progress (INV_RetryExhaustionKeepsProgress)
+  "MC_Truncate_Red_MetadataError.cfg Truncate.tla RED" # the metadata cleanup runs out of retries after every chunk and the request is reported a success (INV_MetadataExhaustionRefused)
   "MC_Truncate_Red_Reread.cfg Truncate.tla RED" # page reread left out: a stale first read purges a document moved out of the filter (INV_FilteredRemovesOnlyCurrentMatches)
   "MC_Truncate_Red_ViewCache.cfg Truncate.tla RED" # #2703: view cache clear left out: a truncated view still shows its rows (INV_UnfilteredEmptiesView)
   "MC_Truncate_Red_SearchRecords.cfg Truncate.tla RED" # #2728: /se/ prefix delete left out: an encrypted search still finds truncated documents (INV_UnfilteredClearsSearchRecords)
@@ -1080,6 +1094,9 @@ RUNS=(
   "MC_CommitFence_Red_UndoNoWake.cfg CommitFence.tla RED" # caller's undo reaches zero without a wake: a reader sleeps forever (LIVE_ReaderProceeds)
   "MC_CommitFence_Red_SkipBegun.cfg CommitFence.tla RED" # owner abandons a commit that began at hand-off once its caller left (INV_BegunEndRuns)
   "MC_CommitFence_Red_RunAbandoned.cfg CommitFence.tla RED" # owner commits an end whose caller left before it began (INV_AbandonedEndDiscarded)
+  "MC_CommitResponseWait_Green.cfg CommitResponseWait.tla GREEN" # a live server answers a wedged commit by its own bound, and unknown does not cancel the ticket
+  "MC_CommitResponseWait_Red_NoBound.cfg CommitResponseWait.tla RED" # no server bound: a wedged commit leaves the client waiting (ClientSettles)
+  "MC_CommitResponseWait_Red_Cancel.cfg CommitResponseWait.tla RED" # bound answers by cancelling the commit (UnknownIsNotAbort)
   "MC_TxnAdmission_Green.cfg TxnAdmission.tla GREEN" # the embedder reaches its transactions as any identity; HTTP only its own
   "MC_TxnAdmission_Red_IdentityOnFfi.cfg TxnAdmission.tla RED" # embedded registry keys by identity, #2335 (INV_FfiReaches)
   "MC_TxnAdmission_Red_EmbedderOnHttp.cfg TxnAdmission.tla RED" # HTTP registry gives every request one key (INV_HttpOwnerOnly)
@@ -1197,6 +1214,11 @@ RUNS=(
   "MC_SyncOwnership_Red_UndrainedMarker.cfg SyncOwnership.tla RED" # P2P stops with a marker registration pending and the dropped task acknowledges the commit
   "MC_SyncOwnership_Red_ShedAsStall.cfg SyncOwnership.tla RED" # a provider's busy CAR reply is rotated past and deferred, never counted as a stalled window or terminal exhaustion
   "MC_SyncOwnership_Green_Dispatch.cfg MC_SyncOwnership_Dispatch.tla GREEN" # one attempt per fetch slot, re-armed from its end, acked heads kept: due roots go in order and every acked head merges across a restart
+  "MC_KeyBatchNotification_Green.cfg KeyBatchNotification.tla GREEN"
+  "MC_KeyBatchNotification_Red_Cancel.cfg KeyBatchNotification.tla RED" # cancellation drops stored keys without notification
+  "MC_PendingKeyArrival_Green.cfg PendingKeyArrival.tla GREEN"
+  "MC_PendingKeyArrival_Red_LostPromotion.cfg PendingKeyArrival.tla RED" # a key arrival promotes every backoff root while the clock still dispatches them
+  "MC_PendingKeyArrival_Red_NoPromotion.cfg PendingKeyArrival.tla RED" # without promotion, a key arrival cannot clear blocked roots
   "MC_SyncOwnership_Red_HeldSlot.cfg MC_SyncOwnership_Dispatch.tla RED" # old rule: a fetch holds its slot through every attempt and starts the next attempt ahead of an acked root (ACT_AttemptsStartInDueOrder)
   "MC_SyncOwnership_Red_ClaimTimeRearm.cfg MC_SyncOwnership_Dispatch.tla RED" # next due time fixed at claim: a failed root ends due ahead of roots acked during its attempt (ACT_EndedAttemptQueuesBehind)
   "MC_SyncOwnership_Red_AckedTtl.cfg MC_SyncOwnership_Dispatch.tla RED" # the pending TTL drops an acked head its sender already forgot (ACT_AckedRootLeavesOwned)

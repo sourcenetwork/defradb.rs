@@ -31,7 +31,7 @@ crypto = { path = "../../foundation/crypto" }
 identity = { path = "../../building-blocks/identity" }
 kms = { path = "../../database/kms" }
 p2p = { path = "../../database/p2p", features = ["libp2p-transport"] }
-defra-p2p-adapter = { path = "../../surfaces/p2p-adapter", default-features = false, features = ["libp2p"] }
+defra-p2p-adapter = { path = "../../surfaces/p2p-adapter", default-features = false, features = ["libp2p", "kms"] }
 defra-http = { path = "../../surfaces/http" }
 edge = { path = "../../foundation/edge" }
 # The worker pool the node's data path runs on.
