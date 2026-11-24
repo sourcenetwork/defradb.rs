@@ -14,6 +14,7 @@ use defra_p2p_adapter::ReplicatorPushOptions;
 use defra_p2p_adapter::ReplicatorPushOptionsState;
 
 pub(crate) type WireKmsCallback = Box<dyn FnOnce(Arc<dyn kms::KmsService>) + Send>;
+
 #[cfg(feature = "libp2p")]
 pub(crate) type WireDocumentAcpCallback = Box<dyn FnOnce(Arc<dyn acp::DocumentACP>, bool) + Send>;
 
@@ -197,14 +198,14 @@ where
     system.set_manage_requester(Arc::clone(&peer.manage.requester));
     system.set_iroh_transport(peer.transport.clone());
 
-    let merge_handler_for_kms = Arc::clone(&peer.replication.merge_handler_inner);
+    let peer_for_kms = Arc::clone(&peer);
     Ok(P2PSetup {
         system,
         mutator: peer.replication.broadcast_mutator.clone(),
         txn_broadcaster: Arc::clone(&peer.replication.txn_broadcaster),
         kms_transport: peer.kms_transport.clone() as Arc<dyn kms::KeyTransport>,
         local_peer_id: peer.local_peer_id.clone(),
-        wire_kms: Some(Box::new(move |kms| merge_handler_for_kms.set_kms(kms))),
+        wire_kms: Some(Box::new(move |kms| peer_for_kms.wire_kms(kms))),
         #[cfg(feature = "libp2p")]
         wire_document_acp: None,
         se_transport,

@@ -241,5 +241,8 @@ from the byte-emitting definitions. -/
 #print axioms OrderEncoding.reversed_lookups_strictly_decreasing
 #print axioms OrderEncoding.mem_lookups
 #print axioms OrderEncoding.lookups_nodup
+#print axioms OrderEncoding.mem_written
+#print axioms OrderEncoding.written_sublist
+#print axioms OrderEncoding.written_nodup
 #print axioms OrderEncoding.neg_written_order_not_increasing
 #print axioms OrderEncoding.neg_keep_dup_not_increasing
