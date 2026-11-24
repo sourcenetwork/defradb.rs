@@ -23,6 +23,9 @@ testo index::json_array_filter::all_keeps_an_empty_array
 # With an index on the related field, Go returns ties in index order and ignores the second order condition; Rust applies it.
 testo index::query_with_relation_tie_order::a_page_of_ties_follows_the_second_condition_with_an_index
 testo index::query_with_relation_tie_order::ties_follow_the_second_condition_with_an_index
+# With `_in` on an indexed field Go ignores `order` on that field and returns the rows as the filter lists them; Rust applies it.
+testo index::composite_in_order::in_on_descending_first_field_ordered_ascending_follows_the_order
+testo index::composite_in_order::in_on_descending_first_field_ordered_descending_follows_the_order
 # Rust re-runs an encrypted index change that loses a race, so concurrent changes on different fields all land; Go answers
 # the loser with "transaction conflict. Please retry".
 testo txn::new_encrypted_index_concurrent::a_concurrent_encrypted_index_delete_and_adds_all_land

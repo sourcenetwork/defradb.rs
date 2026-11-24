@@ -409,6 +409,9 @@ lean_lib ReplicatorEmptyCollections where
 lean_lib PartialLensPath where
 
 @[default_target]
+lean_lib PendingKeyArrival where
+
+@[default_target]
 lean_lib MissingRelationFilter where
 
 @[default_target]
