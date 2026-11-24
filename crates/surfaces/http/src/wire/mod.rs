@@ -15,6 +15,7 @@ mod acp_status;
 mod action;
 mod lens;
 mod p2p_manage;
+mod p2p_replicator;
 mod query;
 mod version;
 
@@ -26,5 +27,6 @@ pub use p2p_manage::{
     RemoteManageDocRef, RemoteManageOp, RemoteManageQueryOp, RemoteManageQueryResult,
     ReplicationFilter, ReplicationFilters, ReplicatorInfo,
 };
+pub use p2p_replicator::Replicator;
 pub use query::{DocumentsResult, SourcePermission};
 pub use version::{GoCompat, VersionInfo};

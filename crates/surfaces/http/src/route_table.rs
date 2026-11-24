@@ -34,6 +34,7 @@ use crate::handlers::views::ViewNamesRequest;
 use crate::route_permissions::RoutePermission;
 use crate::router::EncryptedIndexInfo;
 use crate::router::NodePermission;
+use crate::wire::Replicator;
 use crate::wire::{
     ActionExecution, DocumentRelationship, DocumentsResult, LightClientStatus,
     PermissionProvenance, SourcePermission, VersionInfo,
@@ -246,14 +247,14 @@ pub const ROUTES: &[Route] = &[
     row_body("/api/v0/collections/{name}/encrypted-indexes", POST, IdentityOnly, true, None, Some(body::<EncryptedIndexInfo>)),
     row("/api/v0/collections/{name}/encrypted-indexes/{field}", DELETE, IdentityOnly, true),
     // P2P
-    row("/api/v0/p2p/info", GET, required(NodePermission::P2pPeerInfo), false),
+    row_body("/api/v0/p2p/info", GET, required(NodePermission::P2pPeerInfo), false, None, Some(body::<Vec<String>>)),
     row_body("/api/v0/p2p/sync/status", GET, required(NodePermission::P2pPeerInfo), false, None, Some(body::<serde_json::Value>)),
     row_body("/api/v0/p2p/shareable-address", GET, required(NodePermission::P2pPeerInfo), false, None, Some(body::<ShareableAddressResponse>)),
     row_body("/api/v0/p2p/active-peers", GET, required(NodePermission::P2pPeerActive), false, None, Some(body::<Vec<String>>)),
     row_body("/api/v0/p2p/connect", POST, required(NodePermission::P2pPeerConnect), false, Some(body::<Vec<String>>), None),
     row_body("/api/v0/p2p/disconnect", POST, required(NodePermission::P2pPeerDisconnect), false, Some(body::<Vec<String>>), None),
     row_body("/api/v0/p2p/peers/{peer_id}", GET, required(NodePermission::P2pPeerInfo), false, None, Some(body::<serde_json::Value>)),
-    row("/api/v0/p2p/replicators", GET, required(NodePermission::P2pReplicatorList), false),
+    row_body("/api/v0/p2p/replicators", GET, required(NodePermission::P2pReplicatorList), false, None, Some(body::<Vec<Replicator>>)),
     row_body("/api/v0/p2p/replicators", POST, required(NodePermission::P2pReplicatorAdd), false, None, Some(body::<()>)),
     row_body("/api/v0/p2p/replicators", DELETE, required(NodePermission::P2pReplicatorDelete), false, Some(body::<ReplicatorDeleteRequest>), None),
     row_body("/api/v0/p2p/collections", GET, required(NodePermission::P2pCollectionList), false, None, Some(body::<Vec<String>>)),

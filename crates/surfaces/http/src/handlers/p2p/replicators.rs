@@ -51,11 +51,16 @@ pub struct ReplicatorDeleteRequest {
 pub async fn list_replicators(
     State(state): State<AppState>,
     identity: ExtractIdentity,
-) -> Result<Json<Vec<Replicator>>, HttpError> {
+) -> Result<Json<Vec<crate::wire::Replicator>>, HttpError> {
     require_permission(&state, &identity, NodePermission::P2pReplicatorList).await?;
     let p2p = bound(state.require_p2p()?, &identity.context());
     Ok(Json(
-        peer::list_replicators(&*p2p).await.map_err(peer_refused)?,
+        peer::list_replicators(&*p2p)
+            .await
+            .map_err(peer_refused)?
+            .into_iter()
+            .map(crate::wire::Replicator::from)
+            .collect(),
     ))
 }
 
