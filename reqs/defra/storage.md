@@ -50,6 +50,13 @@ An ordered query over an indexed field with `limit: 3, offset: 2` reads `limit +
 
 Collections whose short IDs are `100` and `118`, the bytes `d` and `v` that name the document and version key families, each answer a query filtered on their indexed field with only their own row. Since truncate removes one index at a time (`defra.collection.truncate.other_collections`), no client operation reads or deletes by a whole collection's index prefix, so this scenario also passes on the untagged layout. The fixed `/index/` tag that keeps index keys out of the other families is checked in storage, by `index_keyspace_is_tagged_across_the_byte_boundary` and `index_keyspace_scans_stay_per_collection_across_short_ids`.
 
+# `defra.index.backfill_under_writes`: An index created under writes finishes its backfill
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["index::backfill_under_writes::an_index_created_under_updates_is_built_and_used", "db::index::create::index_backfill_finishes_when_the_cache_lags_the_stored_definition"]
+
+An index created while documents of its collection are updated is built: its backfill completes, the listing shows no failed backfill, and a filter on the indexed field fetches through the index, for a value an update wrote during the build as for an untouched one. The backfill identifies its index by ID in the definition it reads from the store, so a node whose collection cache is behind the committed index definition still completes it and never fails with `index '<name>' disappeared during backfill`.
+
 # `defra.collection`: Collection-wide operations
 
 - **Parents:** ["defra"]
