@@ -480,6 +480,9 @@ impl<S: Store> DB<S> {
     {
         self.check_stored_crdts().await?;
         self.load_collections().await?;
+        // Before any migration can rewrite an incompatible store, decide
+        // whether this build can read its index keys at all.
+        self.check_index_format().await?;
         self.initialize_migrations().await?;
         self.migrate_document_parts().await?;
         // Counters move into their document part, so they need the part IDs the step above gives

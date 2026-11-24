@@ -31,6 +31,7 @@ pub(super) fn operation(
         .collect::<Result<Vec<_>>>()?;
     Ok(ParsedOperation::Mutation {
         mutations,
+        excluded: Vec::new(),
         explain: None,
     })
 }

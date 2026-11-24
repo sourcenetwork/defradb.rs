@@ -62,7 +62,11 @@ impl BackupOperations for MockBackupOperations {
         }
     }
 
-    async fn import(&self, data: &str) -> Result<ImportResult, String> {
+    async fn import(
+        &self,
+        data: &str,
+        _host: &dyn db::backup::ImportHost,
+    ) -> Result<ImportResult, String> {
         // Parse the incoming data to validate it
         let parsed: serde_json::Value =
             serde_json::from_str(data).map_err(|e| format!("invalid JSON: {}", e))?;
@@ -117,7 +121,11 @@ impl BackupOperations for FailingMockBackupOperations {
         Err(self.error.clone())
     }
 
-    async fn import(&self, _data: &str) -> Result<ImportResult, String> {
+    async fn import(
+        &self,
+        _data: &str,
+        _host: &dyn db::backup::ImportHost,
+    ) -> Result<ImportResult, String> {
         Err(self.error.clone())
     }
 }

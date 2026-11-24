@@ -9,7 +9,8 @@ use crate::error::{QueryError, Result};
 use std::sync::Arc;
 
 use crate::mapper::{Mutation, Requestable, Select};
-use crate::query_parse::ParsedOperation;
+use crate::query_parse::filter_shape::{self, Root};
+use crate::query_parse::{ExcludedMutation, ParsedOperation};
 use schema::{CollectionVersion, FieldKind, ScalarKind};
 
 /// Validate that all collections referenced in a parsed operation exist.
@@ -21,18 +22,24 @@ pub async fn validate_parsed_operation(
     op: &ParsedOperation,
     provider: &dyn CollectionProvider,
 ) -> Result<()> {
-    validate_operation(op, provider, true).await
+    validate_operation(op, provider, true, false).await
 }
 
 /// [`validate_parsed_operation`] for an operation parsed from GraphQL text
 /// (`graphql_text`) or built as typed structs. A typed one carries no GraphQL
 /// arguments, so argument types are not checked: its `encryptFields` is
 /// checked against the collection when it runs, as Go's collection API does.
+/// With `check_filters`, every filter is checked against its generated input
+/// type first, as graphql-go validates the request before it runs.
 pub async fn validate_operation(
     op: &ParsedOperation,
     provider: &dyn CollectionProvider,
     graphql_text: bool,
+    check_filters: bool,
 ) -> Result<()> {
+    if check_filters {
+        check_filter_shapes(op, provider).await?;
+    }
     match op {
         ParsedOperation::Query { selects, .. } => {
             for select in selects {
@@ -50,6 +57,75 @@ pub async fn validate_operation(
         ParsedOperation::Introspection { .. } => {}
     }
     Ok(())
+}
+
+/// The mutations that run and those left out, merged back into the order the
+/// request writes them, so the first bad variable is the first one used.
+fn in_request_order<'o>(
+    mutations: &'o [Mutation],
+    excluded: &'o [ExcludedMutation],
+) -> Vec<&'o Mutation> {
+    let mut ordered = Vec::with_capacity(mutations.len() + excluded.len());
+    let mut left_out = excluded.iter().peekable();
+    for (index, mutation) in mutations.iter().enumerate() {
+        while let Some(skipped) = left_out.next_if(|skipped| skipped.after <= index) {
+            ordered.push(&skipped.mutation);
+        }
+        ordered.push(mutation);
+    }
+    ordered.extend(left_out.map(|skipped| &skipped.mutation));
+    ordered
+}
+
+/// Every filter in `op` against its generated input type. A collection that
+/// does not exist is left to the collection checks after this one.
+async fn check_filter_shapes(
+    op: &ParsedOperation,
+    provider: &dyn CollectionProvider,
+) -> Result<()> {
+    let mut found = filter_shape::Found::default();
+    let selects: &[Select] = match op {
+        ParsedOperation::Query { selects, .. } => selects,
+        ParsedOperation::Subscription { select, .. } => std::slice::from_ref(select.as_ref()),
+        ParsedOperation::Mutation {
+            mutations,
+            excluded,
+            ..
+        } => {
+            for mutation in in_request_order(mutations, excluded) {
+                let root = Root::Mutation(mutation);
+                if found.has_literal() {
+                    break;
+                }
+                if !root.has_filter() {
+                    continue;
+                }
+                let collection = provider.get_collection(&mutation.collection_name).await?;
+                if let Some(collection) = collection {
+                    filter_shape::check(&mut found, root, Some(&collection), provider).await?;
+                }
+            }
+            return found.into_result();
+        }
+        ParsedOperation::Introspection { .. } => return Ok(()),
+    };
+    for select in selects {
+        let root = Root::Select(select);
+        if found.has_literal() {
+            break;
+        }
+        if !root.has_filter() {
+            continue;
+        }
+        if select.collection_name == "_commits" {
+            filter_shape::check(&mut found, root, None, provider).await?;
+        } else if !is_internal_collection(&select.collection_name) {
+            if let Some(collection) = provider.get_collection(&select.collection_name).await? {
+                filter_shape::check(&mut found, root, Some(&collection), provider).await?;
+            }
+        }
+    }
+    found.into_result()
 }
 
 /// Validate that the collection referenced by a Select exists.
@@ -125,7 +201,7 @@ fn check_similarity(
                     continue;
                 };
                 if !holds_vector(&target.kind) {
-                    return Err(QueryError::execution(format!(
+                    return Err(QueryError::invalid_argument(format!(
                         "similarity can only target a numeric array field. Field: {}, Type: {}",
                         target.name,
                         target.kind.graphql_type_name()
@@ -215,7 +291,7 @@ fn validate_encrypt_fields(mutation: &Mutation, collection: &CollectionVersion) 
     if message.is_empty() {
         return Ok(());
     }
-    Err(QueryError::execution(format!(
+    Err(QueryError::invalid_argument(format!(
         "Argument \"encryptFields\" has invalid value [{}].{message}",
         mutation.encrypt_fields.join(", ")
     )))
@@ -401,6 +477,7 @@ mod tests {
             };
             let op = ParsedOperation::Mutation {
                 mutations: vec![mutation],
+                excluded: Vec::new(),
                 explain: None,
             };
             let err = validate_parsed_operation(&op, &provider).await.unwrap_err();
@@ -436,10 +513,12 @@ mod tests {
         };
         let op = ParsedOperation::Mutation {
             mutations: vec![mutation],
+            excluded: Vec::new(),
             explain: None,
         };
         let provider = StaticCollectionProvider::new(vec![collection]);
-        workers::block_on(async { validate_operation(&op, &provider, graphql_text).await }).unwrap()
+        workers::block_on(async { validate_operation(&op, &provider, graphql_text, false).await })
+            .unwrap()
     }
 
     #[test]
