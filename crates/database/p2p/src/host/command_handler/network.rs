@@ -71,10 +71,11 @@ impl<S: Store> P2PHost<S> {
         &mut self,
         peer_id: PeerId,
         addrs: Vec<Multiaddr>,
-        response: crate::rt::oneshot::Sender<Result<()>>,
+        response: crate::rt::oneshot::Sender<Result<bool>>,
     ) {
         self.swarm.behaviour_mut().disconnect_gate.unblock(&peer_id);
-        let result = self.dial_peer(peer_id, addrs);
+        let already_connected = self.swarm.is_connected(&peer_id);
+        let result = self.dial_peer(peer_id, addrs).map(|()| already_connected);
         if response.send(result).is_err() {
             debug!(peer_id = %peer_id, "Explicit dial command response dropped - caller cancelled");
         }

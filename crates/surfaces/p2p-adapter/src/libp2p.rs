@@ -363,11 +363,6 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             .map_err(|error| P2PError::invalid_input(error.to_string()))?;
         let already_connected = self
             .handle
-            .connected_peers()
-            .await
-            .map(|peers| peers.contains(&parsed.peer_id))
-            .unwrap_or(false);
-        self.handle
             .dial_explicit(parsed.peer_id, vec![parsed.transport_addr])
             .await
             .map_err(|error| P2PError::transport(error.to_string()))?;

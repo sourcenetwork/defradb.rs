@@ -451,6 +451,7 @@ RUNS=(
   "MC_ExplicitDisconnect_Red_Libp2p.cfg ExplicitDisconnect.tla RED" # Kademlia ignores the marker (INV_NoRedialAfterDeliberateClose)
   "MC_ExplicitDisconnect_Red_RefuseAllowed.cfg ExplicitDisconnect.tla RED" # a permitted remote dial is refused
   "MC_ExplicitDisconnect_Red_Inbound.cfg ExplicitDisconnect.tla RED" # libp2p accepts a marked inbound dial (INV_MarkedInboundRefused)
+  "MC_ExplicitDisconnect_Red_BackgroundInbound.cfg ExplicitDisconnect.tla RED" # libp2p accepts a marked background dial (INV_MarkedInboundRefused)
   "MC_SchemaPublication_Green.cfg SchemaPublication.tla GREEN"
   "MC_SchemaPublication_Red_EarlyReply.cfg SchemaPublication.tla RED"
   "MC_ChunkSettingsSync_Green.cfg ChunkSettingsSync.tla GREEN"

@@ -132,7 +132,10 @@ impl P2PHostHandle {
     }
 
     /// Dial a peer for an explicit caller, undoing an explicit disconnect.
-    pub async fn dial_explicit(&self, peer_id: PeerId, addrs: Vec<Multiaddr>) -> Result<()> {
+    ///
+    /// Returns `true` when the peer was already connected as the host handled
+    /// the dial, so no new connection was started.
+    pub async fn dial_explicit(&self, peer_id: PeerId, addrs: Vec<Multiaddr>) -> Result<bool> {
         let (response_tx, response_rx) = oneshot::channel();
         self.command_tx
             .send(HostCommand::ExplicitDial {

@@ -30,11 +30,12 @@ pub enum HostCommand {
     },
 
     /// Dial a peer on behalf of an explicit caller, undoing an explicit
-    /// disconnect.
+    /// disconnect. Answers whether the peer was already connected when the
+    /// host handled the command.
     ExplicitDial {
         peer_id: PeerId,
         addrs: Vec<Multiaddr>,
-        response: oneshot::Sender<Result<()>>,
+        response: oneshot::Sender<Result<bool>>,
     },
 
     /// Disconnect from a peer, hanging up any live connection.
