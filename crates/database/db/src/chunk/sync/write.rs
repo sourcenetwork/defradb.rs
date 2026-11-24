@@ -109,8 +109,8 @@ where
             ))
         })?;
         let config = self.db.options().embedding_config();
-        // A chunk is never written again, so one stored without its vector
-        // would stay without one for good.
+        // Schema checks make this unreachable today. A chunk is never written
+        // again, so one stored without its vector would stay without one.
         for embedding in embeddings {
             if let Err(missing) =
                 crate::search::embedding::resolve_embedding_config(embedding, &config)
