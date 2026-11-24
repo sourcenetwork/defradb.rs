@@ -105,10 +105,11 @@
       "tools/integration-test/tests/testo/explain/default/with_index.rs::default_explain_with_index_on_subquery_nested_relation_order",
       "tools/integration-test/tests/testo/explain/simple/with_index.rs::simple_explain_with_index_on_filter",
       "tools/integration-test/tests/testo/explain/simple/with_index.rs::simple_explain_with_index_on_order",
-      "tools/integration-test/tests/testo/explain/simple/with_index.rs::simple_explain_with_index_on_subquery_nested_relation_order"
+      "tools/integration-test/tests/testo/explain/simple/with_index.rs::simple_explain_with_index_on_subquery_nested_relation_order",
+      "tools/integration-test/tests/testo/explain/default/with_index_shape.rs::indexed_scan_explains_the_selected_index"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
-    "note": "Only the indexed-filter case is checked, and only that an index is named, not the selectTopNode>selectNode>scanNode shape. Unverified: ordering by an indexed field with no orderNode, and a child ordered by an indexed related field with limit giving limitNode but no orderNode."
+    "note": "The hand-written default-filter scenario pins the selectTopNode>selectNode>scanNode shape, selected index, selecting filter and root prefix. Unverified: ordering by an indexed field with no orderNode, and a child ordered by an indexed related field with limit giving limitNode but no orderNode."
   },
   {
     "id": "go.explain.default.group.selection",

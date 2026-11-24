@@ -27,46 +27,10 @@ impl TypeJoinMany {
 
         let mut children: Vec<Doc> = docs.iter().map(|d| d.deep_clone()).collect();
 
-        // Apply ordering if specified. Without one, the cache order is kept: it is
-        // the child scan order, which follows the doc short ID (insertion order),
-        // matching Go DefraDB.
-        if let Some(ref order_by) = self.child_order_by {
-            let child_mapping = self.child_plan.document_map();
-            children.sort_by(|a, b| {
-                for condition in &order_by.conditions {
-                    let field_name = condition.fields.first().map(|s| s.as_str()).unwrap_or("");
-                    let field_idx = child_mapping
-                        .try_find_index_from_render_key(field_name)
-                        .or_else(|| child_mapping.first_index_of_name(field_name));
-
-                    if let Some(idx) = field_idx {
-                        let val_a = a.get(idx);
-                        let val_b = b.get(idx);
-
-                        // Resolve nested field paths (e.g., ["course", "name"])
-                        let (resolved_a, resolved_b) = if condition.fields.len() > 1 {
-                            let nested_path = &condition.fields[1..];
-                            (
-                                resolve_nested_field(val_a, nested_path),
-                                resolve_nested_field(val_b, nested_path),
-                            )
-                        } else {
-                            (val_a.cloned(), val_b.cloned())
-                        };
-
-                        let cmp = compare_json_values(resolved_a.as_ref(), resolved_b.as_ref());
-                        let cmp = match condition.direction {
-                            OrderDirection::Asc => cmp,
-                            OrderDirection::Desc => cmp.reverse(),
-                        };
-                        if cmp != Ordering::Equal {
-                            return cmp;
-                        }
-                    }
-                }
-                Ordering::Equal
-            });
-        }
+        // Without an ordering, the cache order is kept: it is the child scan
+        // order, which follows the doc short ID (insertion order), matching Go
+        // DefraDB.
+        self.order_children(&mut children);
 
         // NOTE: Limit/offset are NOT applied here. They are applied in the runner's
         // apply_relation_limits() after compute_relation_aggregates() has counted
@@ -74,6 +38,48 @@ impl TypeJoinMany {
         // when published(limit: 1) limits the rendered output.
 
         children
+    }
+
+    /// Sort children by the join's child ordering, if it has one.
+    pub(super) fn order_children(&self, children: &mut [Doc]) {
+        let Some(ref order_by) = self.child_order_by else {
+            return;
+        };
+        let child_mapping = self.child_plan.document_map();
+        children.sort_by(|a, b| {
+            for condition in &order_by.conditions {
+                let field_name = condition.fields.first().map(|s| s.as_str()).unwrap_or("");
+                let field_idx = child_mapping
+                    .try_find_index_from_render_key(field_name)
+                    .or_else(|| child_mapping.first_index_of_name(field_name));
+
+                if let Some(idx) = field_idx {
+                    let val_a = a.get(idx);
+                    let val_b = b.get(idx);
+
+                    // Resolve nested field paths (e.g., ["course", "name"])
+                    let (resolved_a, resolved_b) = if condition.fields.len() > 1 {
+                        let nested_path = &condition.fields[1..];
+                        (
+                            resolve_nested_field(val_a, nested_path),
+                            resolve_nested_field(val_b, nested_path),
+                        )
+                    } else {
+                        (val_a.cloned(), val_b.cloned())
+                    };
+
+                    let cmp = compare_json_values(resolved_a.as_ref(), resolved_b.as_ref());
+                    let cmp = match condition.direction {
+                        OrderDirection::Asc => cmp,
+                        OrderDirection::Desc => cmp.reverse(),
+                    };
+                    if cmp != Ordering::Equal {
+                        return cmp;
+                    }
+                }
+            }
+            Ordering::Equal
+        });
     }
 
     /// Build the child cache by scanning child_plan once.
@@ -503,6 +509,30 @@ impl TypeJoinMany {
         Ok(false)
     }
 
+    /// Whether a parent with these children passes the relation filter.
+    ///
+    /// Children the indexed filter plan found decide when the join has that
+    /// plan; `children`, all the parent's children, decide otherwise. A join
+    /// with no relation filter passes every parent.
+    pub(super) fn parent_passes_filter(
+        &self,
+        parent_doc_id: &str,
+        children: &[Doc],
+    ) -> Result<bool> {
+        let Some(ref rel_filter) = self.relation_filter else {
+            return Ok(true);
+        };
+        if self.filter_child_plan.is_none() {
+            return self.check_relation_filter(children, rel_filter, false);
+        }
+        let filter_children = self
+            .filter_child_cache
+            .get(parent_doc_id)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        self.check_relation_filter(filter_children, rel_filter, true)
+    }
+
     /// Per-parent child scanning: re-run child plan for each parent.
     /// Matches Go's behavior where each parent triggers a fresh index scan.
     pub(super) async fn next_per_parent(&mut self) -> Result<bool> {
@@ -527,110 +557,14 @@ impl TypeJoinMany {
                 }
             };
 
-            // Re-run child plan for this parent
-            self.child_plan
-                .set_vector_parent(self.child_fk_index, &parent_doc_id);
-            self.child_plan.init().await?;
-            self.child_plan.start().await?;
+            let mut all_children = self.scan_children_of(&parent_doc_id).await?;
 
-            let mut all_children = Vec::new();
-            let mut matching_count = 0u64;
-            let mut total_scanned = 0u64;
-            let can_stop_at_limit = self.relation_filter.is_none()
-                && (self.child_order_by.is_none()
-                    || (self.child_plan_provides_ordering && !self.preserve_ordered_orphans));
-
-            while self.child_plan.next().await? {
-                total_scanned += 1;
-                let child_doc = self.child_plan.value();
-                let child_fk_value = child_doc.get(self.child_fk_index);
-
-                // Check FK match with parent
-                let fk_matches = child_fk_value
-                    .and_then(|v| v.as_str())
-                    .map(|fk| fk == parent_doc_id)
-                    .unwrap_or(false);
-
-                if fk_matches {
-                    matching_count += 1;
-                    all_children.push(child_doc.deep_clone());
-                    // Early termination is safe for unordered child scans, and for
-                    // ordered scans when the child plan is already streaming in that
-                    // order. Exhaustive relation ordering still needs the full scope
-                    // so orphan/null children can be merged before applying limit.
-                    if can_stop_at_limit {
-                        if let Some(limit) = self.child_limit {
-                            let effective_needed = self.child_offset + limit;
-                            if matching_count >= effective_needed {
-                                break;
-                            }
-                        }
-                    }
-                }
+            if !self.parent_passes_filter(&parent_doc_id, &all_children)? {
+                continue;
             }
 
-            // Capture child plan metrics for this parent scan
-            let child_info = self.child_plan.exec_info();
-            self.go_child_metrics.iterations += total_scanned + 1; // scanned entries + 1 false
-            self.go_child_metrics.doc_fetches += child_info.docs_fetched;
-            self.go_child_metrics.field_fetches += child_info.fields_fetched;
-            self.go_child_metrics.index_fetches += child_info.indexes_fetched;
-
-            self.child_plan.close().await?;
-
-            // Apply relation filter if present
-            if let Some(ref rel_filter) = self.relation_filter {
-                // Use filter_child_cache (from indexed filter plan) when available,
-                // otherwise use per-parent scanned children.
-                let use_filter = self.filter_child_plan.is_some();
-                let filter_children = if use_filter {
-                    self.filter_child_cache
-                        .get(&parent_doc_id)
-                        .map(|docs| docs.iter().map(|d| d.deep_clone()).collect())
-                        .unwrap_or_default()
-                } else {
-                    all_children.clone()
-                };
-                if !self.check_relation_filter(&filter_children, rel_filter, use_filter)? {
-                    continue;
-                }
-            }
-
-            // Apply ordering if specified (needed when filter index != ordering index)
-            if let Some(ref order_by) = self.child_order_by {
-                let child_mapping = self.child_plan.document_map();
-                all_children.sort_by(|a, b| {
-                    for condition in &order_by.conditions {
-                        let field_name = condition.fields.first().map(|s| s.as_str()).unwrap_or("");
-                        let field_idx = child_mapping
-                            .try_find_index_from_render_key(field_name)
-                            .or_else(|| child_mapping.first_index_of_name(field_name));
-                        if let Some(idx) = field_idx {
-                            let val_a = a.get(idx);
-                            let val_b = b.get(idx);
-                            let (resolved_a, resolved_b) = if condition.fields.len() > 1 {
-                                let nested_path = &condition.fields[1..];
-                                (
-                                    resolve_nested_field(val_a, nested_path),
-                                    resolve_nested_field(val_b, nested_path),
-                                )
-                            } else {
-                                (val_a.cloned(), val_b.cloned())
-                            };
-
-                            let cmp = compare_json_values(resolved_a.as_ref(), resolved_b.as_ref());
-                            let cmp = match condition.direction {
-                                OrderDirection::Asc => cmp,
-                                OrderDirection::Desc => cmp.reverse(),
-                            };
-                            if cmp != std::cmp::Ordering::Equal {
-                                return cmp;
-                            }
-                        }
-                    }
-                    std::cmp::Ordering::Equal
-                });
-            }
+            // Needed when the filter index is not the ordering index.
+            self.order_children(&mut all_children);
 
             self.record_child_limit_iterations(all_children.len());
 
@@ -643,12 +577,61 @@ impl TypeJoinMany {
         }
     }
 
-    /// Get all children for a parent (unfiltered, for filter checking).
-    /// This returns all children before limit/offset is applied.
-    pub(super) fn get_all_children(&self, parent_doc_id: &str) -> Vec<Doc> {
-        self.child_cache
-            .get(parent_doc_id)
-            .map(|docs| docs.iter().map(|d| d.deep_clone()).collect())
-            .unwrap_or_default()
+    /// Run the child plan for one parent, returning its children in scan order.
+    ///
+    /// Matches Go, where each parent triggers a fresh child scan; the scan's
+    /// reads accumulate in `go_child_metrics`.
+    pub(super) async fn scan_children_of(&mut self, parent_doc_id: &str) -> Result<Vec<Doc>> {
+        self.child_plan
+            .set_vector_parent(self.child_fk_index, parent_doc_id);
+        self.child_plan.init().await?;
+        self.child_plan.start().await?;
+
+        let mut all_children = Vec::new();
+        let mut matching_count = 0u64;
+        let mut total_scanned = 0u64;
+        let can_stop_at_limit = self.relation_filter.is_none()
+            && (self.child_order_by.is_none()
+                || (self.child_plan_provides_ordering && !self.preserve_ordered_orphans));
+
+        while self.child_plan.next().await? {
+            total_scanned += 1;
+            let child_doc = self.child_plan.value();
+            let child_fk_value = child_doc.get(self.child_fk_index);
+
+            // Check FK match with parent
+            let fk_matches = child_fk_value
+                .and_then(|v| v.as_str())
+                .map(|fk| fk == parent_doc_id)
+                .unwrap_or(false);
+
+            if fk_matches {
+                matching_count += 1;
+                all_children.push(child_doc.deep_clone());
+                // Early termination is safe for unordered child scans, and for
+                // ordered scans when the child plan is already streaming in that
+                // order. Exhaustive relation ordering still needs the full scope
+                // so orphan/null children can be merged before applying limit.
+                if can_stop_at_limit {
+                    if let Some(limit) = self.child_limit {
+                        let effective_needed = self.child_offset + limit;
+                        if matching_count >= effective_needed {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Capture child plan metrics for this parent scan
+        let child_info = self.child_plan.exec_info();
+        self.go_child_metrics.iterations += total_scanned + 1; // scanned entries + 1 false
+        self.go_child_metrics.doc_fetches += child_info.docs_fetched;
+        self.go_child_metrics.field_fetches += child_info.fields_fetched;
+        self.go_child_metrics.index_fetches += child_info.indexes_fetched;
+
+        self.child_plan.close().await?;
+
+        Ok(all_children)
     }
 }

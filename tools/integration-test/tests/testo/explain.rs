@@ -85,6 +85,7 @@ mod default {
     mod with_filter;
     mod with_filter_doc_id;
     mod with_index;
+    mod with_index_shape;
     mod with_limit;
     mod with_limit_count;
     mod with_limit_join;
@@ -102,6 +103,7 @@ mod execute {
     mod dagscan;
     mod delete;
     mod group;
+    mod index_name;
     mod query_deleted_docs;
     mod scan;
     mod top_level;
