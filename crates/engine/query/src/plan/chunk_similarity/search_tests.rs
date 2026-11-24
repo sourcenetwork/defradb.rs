@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 use chunk_split::list::text_hash;
+use chunk_split::split::{split, ChunkConfig};
 use defra_core::vector::Metric;
 use document::{DocID, Document, NormalValue};
 use schema::{CType, ChunkedField, CollectionBuilder, FieldDescription, FieldKind, ScalarKind};
@@ -24,7 +25,7 @@ const CHUNKS: &str = "Article__body_chunk";
 struct IndexedChunk {
     parent: &'static str,
     text: String,
-    /// Whether the parent's current list names it.
+    /// Whether the parent's current text holds it.
     listed: bool,
     /// Whether its hash matches its text.
     honest: bool,
@@ -37,7 +38,8 @@ struct IndexedChunk {
 fn chunk(parent: &'static str, nearness: f64) -> IndexedChunk {
     IndexedChunk {
         parent,
-        text: format!("{parent} chunk at {nearness}"),
+        // Long enough that the splitter never packs two into one chunk.
+        text: format!("{parent} chunk at {nearness}, a paragraph of its own here."),
         listed: true,
         honest: true,
         indexed: true,
@@ -102,13 +104,14 @@ impl Index {
             DocID::new_v0_from_seed(&format!("chunk {short_id}")),
             loose(&["_sourceID", "text", "hash", "v"]),
         );
+        let text = self.stored_text(indexed);
         let hash = match indexed.honest {
-            true => text_hash(&indexed.text),
+            true => text_hash(&text),
             false => text_hash("other text"),
         };
         let set = [
             ("_sourceID", NormalValue::String(parent_id(indexed.parent))),
-            ("text", NormalValue::String(indexed.text.clone())),
+            ("text", NormalValue::String(text)),
             ("hash", NormalValue::String(hash)),
             (
                 "v",
@@ -127,20 +130,8 @@ impl Index {
             .iter()
             .map(|chunk| chunk.parent)
             .find(|parent| parent_id(parent) == id)?;
-        let body = format!("the body of {name}");
-        let mut list = vec![text_hash(&body)];
-        list.extend(
-            self.chunks
-                .iter()
-                .filter(|chunk| chunk.parent == name && chunk.listed)
-                .map(|chunk| text_hash(&chunk.text)),
-        );
-        let mut doc = Document::with_id(
-            DocID::from_string(id).unwrap(),
-            loose(&["body", "_body_chunks"]),
-        );
-        doc.set("body", NormalValue::String(body)).unwrap();
-        doc.set("_body_chunks", NormalValue::StringArray(list))
+        let mut doc = Document::with_id(DocID::from_string(id).unwrap(), loose(&["body"]));
+        doc.set("body", NormalValue::String(self.body_of(name)))
             .unwrap();
         doc.set_deleted(self.deleted.contains(&name));
         Some(doc)
@@ -148,6 +139,30 @@ impl Index {
 }
 
 impl Index {
+    /// A parent's text: one paragraph per chunk it holds, so its cut gives them back.
+    fn body_of(&self, parent: &str) -> String {
+        self.chunks
+            .iter()
+            .filter(|chunk| chunk.parent == parent && chunk.listed)
+            .map(|chunk| chunk.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+
+    /// The text a chunk stores: the piece its parent's cut gives for it, or
+    /// its own text when the parent's text no longer holds it.
+    fn stored_text(&self, indexed: &IndexedChunk) -> String {
+        if !indexed.listed {
+            return indexed.text.clone();
+        }
+        let config = ChunkConfig::new(defra_core::DEFAULT_SPLITTER_VERSION, 64, 0).unwrap();
+        split(&self.body_of(indexed.parent), &config)
+            .into_iter()
+            .map(|chunk| chunk.text)
+            .find(|text| text.trim_end() == indexed.text)
+            .expect("each paragraph is one chunk")
+    }
+
     /// The `[_sourceID, hash]` entries of one parent's stored chunks.
     fn entries_of<'a>(&'a self, parent: &'a str) -> impl Iterator<Item = (u64, String)> + 'a {
         (0..self.chunks.len() as u64)
