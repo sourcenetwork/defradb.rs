@@ -364,6 +364,13 @@ Over iroh, the key-holding node's KMS releases a document's key to the node iden
 
 The same two iroh nodes and collection with no `reader` grant to the peer: the encrypted document's blocks still replicate to the subscribed peer, but the key holder's KMS withholds the key, so the owner querying `Users { name }` on the peer gets `[]`, and still gets `[]` after the peer has had time to fetch the key.
 
+# `defra.encryption.peer.pending_key_arrival`: A pending merge appears when its key arrives
+
+- **Parents:** ["go.encryption.peer"]
+- **Scenarios:** ["encryption::peer_pending_key::an_encrypted_doc_appears_after_its_key_arrives", "p2p_tests::remote_key_arrival_wakes_a_parked_encrypted_merge"]
+
+After a subscribed peer receives an encrypted document's blocks but not yet its key, the document can wait as a pending merge. When the KMS delivers the key, that pending merge wakes, the document becomes queryable, and its plaintext fields are returned.
+
 # `defra.backup.import.signed_and_replicated`: An imported document is signed and replicated as a created one is
 
 - **Parents:** ["go.backup.import"]

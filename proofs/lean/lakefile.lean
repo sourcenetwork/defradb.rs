@@ -406,6 +406,9 @@ lean_lib SeTruncatePrefix where
 lean_lib ReplicatorEmptyCollections where
 
 @[default_target]
+lean_lib PendingKeyArrival where
+
+@[default_target]
 lean_lib MissingRelationFilter where
 
 @[default_target]
