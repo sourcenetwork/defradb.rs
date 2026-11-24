@@ -16,6 +16,9 @@ pub enum Error {
     /// A DID or identity key was rejected.
     #[error(transparent)]
     Identity(#[from] identity::Error),
+    /// The caller's signing key may not sign for the caller.
+    #[error(transparent)]
+    CallerKey(#[from] crate::embedded_signer::EmbeddedSignerError),
     /// An HTTP request to an embedding service failed.
     #[cfg(not(target_arch = "wasm32"))]
     #[error(transparent)]

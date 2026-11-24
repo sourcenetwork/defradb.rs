@@ -108,11 +108,8 @@ fn execute_as_signs_writes_and_keeps_the_caller_identity() {
         let (_, node_identity, node_private, _) = identity_from_key(node_signing_key);
         let (caller_did, caller_identity, caller_private, caller_public) =
             identity_from_key(crypto::generate_ed25519().unwrap());
-        defra_core::signing::store_identity(
-            caller_did.as_ref(),
-            signing_config(caller_private, caller_public),
-        )
-        .unwrap();
+        let caller_key = signing_config(caller_private, caller_public);
+        defra_core::signing::store_identity(caller_did.as_ref(), caller_key.clone()).unwrap();
 
         let node = Node::builder()
             .with_signing_key(SigningKey::Ed25519(node_private))
@@ -145,12 +142,22 @@ fn execute_as_signs_writes_and_keeps_the_caller_identity() {
             "node-key writes must be signed by the node: {rows:?}"
         );
 
+        // A key the process registered for the caller's DID is not the
+        // caller's to sign with: without a key of its own the node signs.
         let caller = RequestContext::default().with_identity(Some(caller_did.to_string()));
-        let doc_id = create(&node, &caller, "caller-signed").await;
+        let doc_id = create(&node, &caller, "registered-caller").await;
+        let rows = commit_signatures(&node, &caller, &doc_id).await;
+        assert!(
+            signed_by(&rows, &node_identity),
+            "a caller without a key must be signed by the node: {rows:?}"
+        );
+
+        let keyed = caller.clone().with_signing(Some(caller_key));
+        let doc_id = create(&node, &keyed, "caller-signed").await;
         let rows = commit_signatures(&node, &caller, &doc_id).await;
         assert!(
             signed_by(&rows, &caller_identity),
-            "registered caller writes must be signed by the caller: {rows:?}"
+            "a caller's own key must sign its writes: {rows:?}"
         );
 
         let regression_response = node
