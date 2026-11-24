@@ -26,6 +26,11 @@ pub trait DocumentHeadProvider: defra_core::thread_bounds::MaybeSendSync {
     /// Returns the CIDs stored at /c/{collection_short_id}/{cid} in the headstore.
     /// Returns an empty vector if the collection has no heads.
     async fn get_collection_heads(&self, collection_id: &str) -> Result<Vec<Cid>>;
+
+    /// The documents that sync with `doc_id`, such as a parent's `@chunk` chunks.
+    async fn following_doc_ids(&self, _doc_id: &str) -> Result<Vec<String>> {
+        Ok(Vec::new())
+    }
 }
 
 /// No-op implementation that returns empty heads.

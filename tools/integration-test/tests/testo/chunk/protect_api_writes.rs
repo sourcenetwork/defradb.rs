@@ -1,6 +1,7 @@
 //! The collection API cannot write chunks or the chunk list (`defra.chunk.protect.api_writes`).
 
 use integration_test::actions::{AddDoc, Request, UpdateDoc};
+use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
 use serde_json::json;
@@ -46,7 +47,10 @@ fn the_collection_api_cannot_write_chunks_or_the_chunk_list() {
         .into(),
         Request {
             request: format!("query {{ {CHUNKS} {{ text }} Article {{ _body_chunks }} }}").into(),
-            expected_data: json!({ CHUNKS: [], "Article": [{ "_body_chunks": null }] }),
+            expected_data: json!({
+                CHUNKS: [{ "text": "Some text." }],
+                "Article": [{ "_body_chunks": [m::same("text_hash"), m::same("text_hash")] }],
+            }),
             ..Default::default()
         }
         .into(),

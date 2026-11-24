@@ -39,7 +39,8 @@
 \* rule); crates/database/p2p/src/sync/coordinator/haves.rs haves_from_heads (a head
 \* and its ancestors) and dag_fetcher.rs root_haves (a held root's heads); crates/database/p2p/src/sync/coordinator/dag_fetcher.rs
 \* fetch_dag_attempt (ask again from the missing frontier, merge only when
-\* find_all_missing_links is empty); crates/database/p2p/src/sync/coordinator/
+\* find_all_missing_links is empty, and a failed walk is never empty: links.rs
+\* frontier_or_unknown, DagReadiness.tla); crates/database/p2p/src/sync/coordinator/
 \* event_handler/car.rs handle_car_fetch_response_inner (verify_block_cid on
 \* every block, drop_held_blocks before storing). The root starts out of
 \* rhas here; in the code gossip often stores it first, and the response

@@ -87,12 +87,21 @@ fn chunks_of_two_parents_are_decided_per_parent() {
         let (my_chunk, _) = merge_chunk(&author, &peer, &mine, &mine_body, None).await;
         let (their_chunk, _) = merge_chunk(&author, &peer, &theirs, &theirs_body, None).await;
 
-        for (reader, chunk) in [(owner(), my_chunk), (stranger(), their_chunk)] {
-            assert_eq!(
-                chunks(&peer, Some(reader.clone())).await,
-                std::slice::from_ref(&chunk)
+        // The peer's own writes add the rest of each parent's chunks.
+        for (reader, chunk, other) in [
+            (owner(), my_chunk.clone(), their_chunk.clone()),
+            (stranger(), their_chunk, my_chunk),
+        ] {
+            let shown = chunks(&peer, Some(reader.clone())).await;
+            assert!(
+                shown.contains(&chunk) && !shown.contains(&other),
+                "{shown:?}"
             );
-            assert_eq!(arrivals(&peer, Some(reader)).await, [chunk]);
+            let arrived = arrivals(&peer, Some(reader)).await;
+            assert!(
+                arrived.contains(&chunk) && !arrived.contains(&other),
+                "{arrived:?}"
+            );
         }
         // Both first chunks are the shared sentence, so only the parent tells them apart.
         let hash = |reader| {

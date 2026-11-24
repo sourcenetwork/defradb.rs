@@ -82,6 +82,21 @@ impl BroadcastStatus {
     }
 }
 
+/// A document a write changed besides its own, such as a `@chunk` chunk.
+#[derive(Debug, Clone)]
+pub struct DerivedWrite {
+    pub collection_name: String,
+    /// The collection's ID, which its blocks are published under.
+    pub collection_id: String,
+    pub doc_id: DocID,
+    /// The created document, or `None` for a delete.
+    pub document: Option<Document>,
+    /// The CID of the committed composite block.
+    pub commit_cid: Cid,
+    /// The committed composite block's bytes.
+    pub commit_block: Bytes,
+}
+
 /// Result of a create mutation, including the generated DocID and the document.
 #[derive(Debug, Clone)]
 pub struct CreateResult {
@@ -100,6 +115,8 @@ pub struct CreateResult {
     pub broadcast_cid: Option<Cid>,
     /// For branchable collections: the collection block bytes to broadcast.
     pub broadcast_block: Option<Bytes>,
+    /// Other documents this write created or deleted, for the broadcast wrapper to publish.
+    pub derived: Vec<DerivedWrite>,
 }
 
 impl CreateResult {
@@ -113,6 +130,7 @@ impl CreateResult {
             commit_block: None,
             broadcast_cid: None,
             broadcast_block: None,
+            derived: Vec::new(),
         }
     }
 
@@ -131,6 +149,7 @@ impl CreateResult {
             commit_block: Some(commit_block),
             broadcast_cid: None,
             broadcast_block: None,
+            derived: Vec::new(),
         }
     }
 
@@ -148,6 +167,7 @@ impl CreateResult {
             commit_block: None,
             broadcast_cid: None,
             broadcast_block: None,
+            derived: Vec::new(),
         }
     }
 
@@ -167,6 +187,7 @@ impl CreateResult {
             commit_block: Some(commit_block),
             broadcast_cid: None,
             broadcast_block: None,
+            derived: Vec::new(),
         }
     }
 }
@@ -188,6 +209,8 @@ pub struct UpdateResult {
     pub broadcast_cid: Option<Cid>,
     /// For branchable collections: the collection block bytes to broadcast.
     pub broadcast_block: Option<Bytes>,
+    /// Other documents this write created or deleted, for the broadcast wrapper to publish.
+    pub derived: Vec<DerivedWrite>,
 }
 
 impl UpdateResult {
@@ -201,6 +224,7 @@ impl UpdateResult {
             commit_block: None,
             broadcast_cid: None,
             broadcast_block: None,
+            derived: Vec::new(),
         }
     }
 
@@ -219,6 +243,7 @@ impl UpdateResult {
             commit_block: Some(commit_block),
             broadcast_cid: None,
             broadcast_block: None,
+            derived: Vec::new(),
         }
     }
 
@@ -236,6 +261,7 @@ impl UpdateResult {
             commit_block: None,
             broadcast_cid: None,
             broadcast_block: None,
+            derived: Vec::new(),
         }
     }
 }
@@ -261,6 +287,8 @@ pub struct DeleteResult {
     /// For branchable collections: the raw bytes of the collection-level head
     /// block written alongside the composite delete (for P2P broadcast).
     pub broadcast_block: Option<Bytes>,
+    /// Other documents this write created or deleted, for the broadcast wrapper to publish.
+    pub derived: Vec<DerivedWrite>,
 }
 
 impl DeleteResult {
@@ -274,6 +302,7 @@ impl DeleteResult {
             commit_block: None,
             broadcast_cid: None,
             broadcast_block: None,
+            derived: Vec::new(),
         }
     }
 
@@ -287,6 +316,7 @@ impl DeleteResult {
             commit_block: Some(commit_block),
             broadcast_cid: None,
             broadcast_block: None,
+            derived: Vec::new(),
         }
     }
 
@@ -300,6 +330,7 @@ impl DeleteResult {
             commit_block: None,
             broadcast_cid: None,
             broadcast_block: None,
+            derived: Vec::new(),
         }
     }
 }

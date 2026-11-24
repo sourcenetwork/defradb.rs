@@ -10,6 +10,9 @@ package defraConvergence where
 lean_lib LocalFetchPermit where
 
 @[default_target]
+lean_lib DagReadiness where
+
+@[default_target]
 lean_lib HostMutationProjection where
 
 @[default_target]
@@ -247,6 +250,9 @@ lean_lib JsonSubPathCut where
 lean_lib RelationFilterNoChild where
 
 @[default_target]
+lean_lib CommitsDepthCast where
+
+@[default_target]
 lean_lib CarClosureDepth where
 
 @[default_target]
@@ -379,7 +385,13 @@ lean_lib RemoteOwnerAnswer where
 lean_lib StrictAccessRule where
 
 @[default_target]
+lean_lib RelationLinkConflict where
+
+@[default_target]
 lean_lib SeTruncatePrefix where
 
 @[default_target]
 lean_lib ReplicatorEmptyCollections where
+
+@[default_target]
+lean_lib DnsResolverFallback where

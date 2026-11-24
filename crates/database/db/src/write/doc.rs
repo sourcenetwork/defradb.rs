@@ -14,7 +14,7 @@ use crate::block::builder::DocRef;
 use crate::collection::loader::{get_collection_with_index_manager, get_collection_with_lazy_load};
 use crate::collection::Collection;
 use crate::database::DB;
-use crate::event::emission::register_update_event_callback;
+use crate::event::emission::{register_update_event_callback, FollowedParent};
 use crate::txn::held::Held;
 use crate::txn::{DbTxn, LentTxn};
 use crate::write::autocommit::helpers::write_branchable_collection_block;
@@ -140,6 +140,23 @@ impl<S: Store + 'static> DbDocMutator<S> {
         pipeline::memo_identity(&self.db, collection, &self.prepared_inputs, ordinal).await
     }
 
+    // This mutator's broadcaster already publishes derived writes, so the
+    // result carries none to publish again.
+    fn chunk_writes<'a>(
+        &'a self,
+        txn: &'a crate::txn::DbTxn<S>,
+        context: &'a RequestContext,
+    ) -> crate::chunk::sync::ChunkWrites<'a, S> {
+        crate::chunk::sync::ChunkWrites {
+            db: &self.db,
+            txn,
+            context,
+            prepared_inputs: Some(&self.prepared_inputs),
+            broadcaster: self.broadcaster.as_ref(),
+            follows: None,
+        }
+    }
+
     async fn ensure_collection_can_write(
         &self,
         collection_name: &str,
@@ -199,6 +216,7 @@ impl<S: Store + 'static> DbDocMutator<S> {
             document_json,
             collection_block,
             creator_did,
+            None,
         )
         .map_err(|e| {
             query::error::QueryError::execution(format!(
@@ -329,6 +347,12 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
             .await?;
         crate::chunk::user_writes::ensure_user_writable(collection.schema())?;
         crate::chunk::user_writes::refuse_list_writes(collection.schema(), &doc, None)?;
+        let chunk_plans = crate::chunk::sync::set_lists(
+            collection.schema(),
+            &mut doc,
+            None,
+            context.encryption(),
+        )?;
 
         let inputs = Some(&self.prepared_inputs);
         pipeline::embed(&self.db, &collection, &mut doc, inputs).await?;
@@ -373,19 +397,33 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         let mut doc = created.doc;
         doc.clear_write_preparation();
 
+        let document_json = document_json_value(&doc);
+        let parent = FollowedParent {
+            collection_id: collection.collection_id().to_string(),
+            document: document_json.clone(),
+        };
         self.register_update_callback(
             collection_name.to_string(),
             collection.collection_id().to_string(),
             created.doc_id.to_string(),
             created.cid,
             created.block,
-            document_json_value(&doc),
+            document_json,
             created.collection_block,
             context.creator().map(str::to_owned),
         )
         .await?;
+        let derived = {
+            let txn = self.shared_txn()?;
+            self.chunk_writes(&txn, context)
+                .following(parent)
+                .create_missing(&created.doc_id.to_string(), chunk_plans)
+                .await?
+        };
 
-        Ok(CreateResult::new(created.doc_id, doc))
+        let mut result = CreateResult::new(created.doc_id, doc);
+        result.derived = derived;
+        Ok(result)
     }
 
     async fn update(
@@ -434,6 +472,12 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
             collection.schema(),
             &doc,
             Some(&modified_fields),
+        )?;
+        let chunk_plans = crate::chunk::sync::set_lists(
+            collection.schema(),
+            &mut doc,
+            Some(&mut modified_fields),
+            context.encryption(),
         )?;
 
         let update_doc_id = doc
@@ -527,6 +571,11 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         )
         .await?;
 
+        let document_json = document_json_value(&doc);
+        let parent = FollowedParent {
+            collection_id: collection.collection_id().to_string(),
+            document: document_json.clone(),
+        };
         if let Some(doc_id) = doc.id().cloned() {
             self.register_update_callback(
                 collection_name.to_string(),
@@ -534,11 +583,19 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
                 doc_id.to_string(),
                 doc_cid,
                 doc_block,
-                document_json_value(&doc),
+                document_json,
                 col_block_data,
                 context.creator().map(str::to_owned),
             )
             .await?;
+        }
+
+        {
+            let txn = self.shared_txn()?;
+            self.chunk_writes(&txn, context)
+                .following(parent)
+                .create_missing(&canonical_doc_id.to_string(), chunk_plans)
+                .await?;
         }
 
         let fields_modified = modified_fields.len();
@@ -685,11 +742,21 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
             canonical_doc_id.to_string(),
             doc_cid,
             doc_block,
-            pre_delete_document_json,
+            pre_delete_document_json.clone(),
             col_block_data,
             context.creator().map(str::to_owned),
         )
         .await?;
+        {
+            let txn = self.shared_txn()?;
+            self.chunk_writes(&txn, context)
+                .following(FollowedParent {
+                    collection_id: collection.collection_id().to_string(),
+                    document: pre_delete_document_json,
+                })
+                .delete_all(collection.schema(), &canonical_doc_id.to_string())
+                .await?;
+        }
 
         Ok(DeleteResult::new(canonical_doc_id, existed))
     }

@@ -32,6 +32,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Storage failure classification | TLA+ / Lean | storage, db, query, http |
 | B3 filtered replication | TLA+ | p2p, db-merge |
 | Explicit transactions in the request context | TLA+ / Lean | client, db, query, http, ffi, wasm, defra-node |
+| Explicit transaction link reads | TLA+ / Lean | db, datastore, query |
 | Transactional document relationships | TLA+ / Lean | acp, query, http, defra-node |
 | Transactional node source grants | TLA+ / Lean | acp, query, http, defra-node |
 | Held-bounded node permission delegation | Lean | acp, db, defra-node |
@@ -138,6 +139,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Node access control operations | TLA+ & Lean | db, acp, http, cli, ffi, defra-node |
 | Filter relation paths and scalar leaves | Lean | query (#2427, #2430) |
 | Relation filter with no matching child | Lean | query (#3087) |
+| Commits depth traversal | Lean | query, db (#2098) |
 | Orphan block sweep | TLA+ & Lean | db, storage |
 | Per-peer stream cap | TLA+ | p2p |
 | Receive gate | TLA+ | p2p, db |
@@ -152,6 +154,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Vector index defaults | Lean | schema |
 | Selected collection version | TLA+ / Lean | db, query, ffi |
 | Per-operation signing choice | Lean | defra-core, http, ffi, cli |
+| DNS resolver fallback | Lean | p2p |
 
 ### Backlog — current retry-era gaps
 This inventory includes legacy models and does not mean every current mechanism is
