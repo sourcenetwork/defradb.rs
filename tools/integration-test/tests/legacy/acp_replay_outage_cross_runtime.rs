@@ -19,7 +19,6 @@
 //! Go live push hangs without it (see the report); set
 //! `DEFRA_L2_NO_SUBSCRIBE=1` to turn it off.
 
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use integration_test::{
@@ -48,13 +47,7 @@ const SENDER_NEEDLES: [&str; 7] = [
 ];
 
 fn go_binary() -> BinarySource {
-    let path = std::env::var("DEFRA_GO_BINARY").unwrap_or_else(|_| {
-        format!(
-            "{}/.cache/defra-harness/307364d9d/defradb",
-            std::env::var("HOME").expect("HOME")
-        )
-    });
-    BinarySource::Path(PathBuf::from(path))
+    BinarySource::Path(integration_test::go_compat_binary())
 }
 
 fn log_lines_matching(cluster: &TestCluster, index: usize, needle: &str) -> Vec<String> {
