@@ -2862,13 +2862,14 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
-        // `sort_in_key_order` is private to the planner, so no contract test
+        // `order_in_values` is private to the planner, so no contract test
         // reaches it; crates/entry-points/defra-node/tests/in_filter_order.rs runs the
-        // queries it orders over an ASC, a DESC and no index. Boundary.
+        // queries it orders over an ASC, a DESC and no index, and the testo
+        // scenarios in index/composite_in_order.rs the unordered ones. Boundary.
         family: "Order-preserving key encoding",
-        name: "lookups_strictly_increasing / reversed_lookups_strictly_decreasing — `_in` point lookups run in key order, each once",
+        name: "lookups_strictly_increasing / reversed_lookups_strictly_decreasing / written_sublist — `_in` point lookups run in key order under an order, as written without one, each once",
         axis: Lean,
-        anchor: "crates/engine/query/src/planner/index_selection/filter_to_scan.rs filter_to_index_scan, sort_in_key_order",
+        anchor: "crates/engine/query/src/planner/index_selection/filter_to_scan.rs filter_to_index_scan, order_in_values",
         model_ref: "OrderEncoding.InLookup (lake build)",
         tiers: &[Boundary],
         bound_by: "",

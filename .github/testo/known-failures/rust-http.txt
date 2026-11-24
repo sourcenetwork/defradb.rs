@@ -2,7 +2,6 @@
 # - each line is `<binary> <test> #<issue>`, and the issue must be open;
 # - a listed test that passes fails the job ("fixed: remove from the list"), so the list only shrinks;
 # - an entry a pull request adds is printed as a warning naming that pull request.
-testo index::query_with_composite_index_field_order::query_with_composite_index_with_in_filter_on_first_field_with_reverted_order_should_fetch #3199
 testo collection_version::introspection_golden::introspection_matches_golden_simple #2649
 testo collection_version::introspection_golden::introspection_matches_golden_related_one #2649
 testo collection_version::introspection_golden::introspection_matches_golden_related_many #2649
