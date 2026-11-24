@@ -706,6 +706,7 @@ RUNS=(
   "MC_TakeoverReport_Red_DropsOwed.cfg TakeoverReport.tla RED" # owed replays taken out before publication (INV_Complete)
   "MC_TakeoverReport_Red_NewestCut.cfg TakeoverReport.tla RED" # one term paired with a newer term's cut (INV_CutOfTerm)
   "MC_TakeoverReport_Red_UnnamedClosed.cfg TakeoverReport.tla RED" # a check that failed closed reads as clean (INV_ClosedNamed)
+  "MC_TakeoverReport_Red_UnrecordedClose.cfg TakeoverReport.tla RED" # says closed before the close is written (INV_ClosedRecorded)
   "MC_PendingSubmission_Green.cfg PendingSubmission.tla GREEN" # a pending submission is resent until confirmed, takes effect once and stays journaled
   "MC_PendingSubmission_Green_Recalled.cfg PendingSubmission.tla GREEN" # a caller that keeps calling is confirmed though calls end early and the node drops the request
   "MC_PendingSubmission_Red_NoResend.cfg PendingSubmission.tla RED" # a lost send taken as sent waits for a receipt that cannot come

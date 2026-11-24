@@ -26,13 +26,17 @@
 \*     leaves a replay out;
 \*   * a report that names one term and another term's cut;
 \*   * an unrestorable replay with no reason;
-\*   * a node that failed closed and never said so.
+\*   * a node that failed closed and never said so;
+\*   * a report that says the node closed while its journal does not (the
+\*     write of the close failed): the next call closes again and would
+\*     report the term a second time.
 \*
 \* Code this models:
 \*   crates/engine/vera/src/vera_rs/provider/terms.rs  Follower::check
 \*       (Begin, Finish, Deliver, DeliveryFails, LateRefuse),
 \*       Follower::certificate (the term and its cut, read together),
-\*       Follower::owed_effects (Refuse), Follower::publish, takeover_report
+\*       Follower::owed_effects (Refuse), Follower::publish, takeover_report,
+\*       Journal::close (the recorded flag of Finish and LateRefuse)
 \*   crates/engine/vera/src/vera_rs/follow/mod.rs      first_check (Begin),
 \*       reconcile (Replay, Interrupt, Close)
 \*   crates/engine/vera/src/vera_rs/follow/lost.rs     lost_effects (Replay)
@@ -56,7 +60,8 @@ CONSTANTS
     KeepOwed,         \* TRUE: the report keeps the replays owed again
     CutOfTerm,        \* TRUE: the cut is read with the term it belongs to
     NameUnrestorable, \* TRUE: an unrestorable replay says why
-    NameClosed        \* TRUE: a check that failed closed says so
+    NameClosed,       \* TRUE: a check that failed closed says so
+    Recorded          \* TRUE: an event says closed only once the journal does
 
 VARIABLES
     certified,   \* the newest term the light client holds a certificate of
@@ -208,21 +213,26 @@ Close ==
 \* Every replay is classified: the term is checked, and the report is
 \* published once. If something is owed that the node cannot owe (a shared
 \* provider, a change with no actor), it fails closed instead and the report
-\* says so.
-Finish(refuse) ==
+\* says so. Closing is a journal write that can fail (`recorded` FALSE, a
+\* fault): the node is then not closed, the term stays checked with its owed
+\* work waiting, and the report goes out as a checked term's. A provider that
+\* does not wait for the write (Recorded off) says closed anyway.
+Finish(refuse, recorded) ==
     /\ phase = "replay"                            \* a check is replaying
     /\ replayed = Submissions                      \* and every replay has run
     /\ refuse => Of(replayed, outcome, "owed") # {} \* only owed work can be refused
+    /\ ~recorded => refuse /\ faults < MaxFaults   \* only a close write can fail
+    /\ faults' = IF recorded THEN faults ELSE faults + 1 \* a failed write is counted
     /\ handled' = checking                         \* the term is checked
     /\ undelivered' = (Of(replayed, outcome, "owed") # {}) \* owed work waits
-    /\ closedNode' = refuse                        \* refused: the node closes
+    /\ closedNode' = (refuse /\ recorded)          \* refused and written: closed
     /\ phase' = IF refuse THEN "idle" ELSE "deliver" \* else delivery is next
-    /\ checking' = IF refuse THEN 0 ELSE checking  \* a closed call holds no term
+    /\ checking' = IF refuse THEN 0 ELSE checking  \* a refusing call holds no term
     /\ events' = IF Publish                        \* the one report of the term
                  THEN Append(events, Report(checking, certified, replayed, outcome,
-                                            refuse /\ NameClosed))
+                                            refuse /\ (recorded \/ ~Recorded) /\ NameClosed))
                  ELSE events
-    /\ UNCHANGED <<certified, first, replayed, outcome, reason, faults>>
+    /\ UNCHANGED <<certified, first, replayed, outcome, reason>>
 
 \* The outbox takes what is owed (or nothing was owed): the call is done.
 Deliver ==
@@ -246,21 +256,26 @@ DeliveryFails ==
                    undelivered, closedNode, events>>
 
 \* A later call finds it cannot owe what the term left (the provider came to
-\* serve several nodes since): the node fails closed, and says so in one more
-\* event that names the changes still owed.
-LateRefuse ==
+\* serve several nodes since, or a close write failed before): the node fails
+\* closed, and says so in one more event that names the changes still owed.
+\* If the close write fails again (`recorded` FALSE, a fault) nothing changes
+\* and nothing is published; a provider that does not wait for the write
+\* (Recorded off) says closed anyway.
+LateRefuse(recorded) ==
     /\ phase = "deliver"                           \* a call is delivering
     /\ ~first                                      \* one that did not check the term
     /\ undelivered                                 \* something is owed
-    /\ closedNode' = TRUE                          \* the node fails closed
+    /\ ~recorded => faults < MaxFaults             \* the model allows a fault
+    /\ faults' = IF recorded THEN faults ELSE faults + 1 \* a failed write is counted
+    /\ closedNode' = recorded                      \* written: the node fails closed
     /\ phase' = "idle"                             \* the call is over
     /\ checking' = 0                               \* and holds no term
-    /\ events' = IF Publish                        \* the embedder is told
+    /\ events' = IF Publish /\ (recorded \/ ~Recorded) \* the embedder is told
                  THEN Append(events, Report(checking, certified,
                                             Of(replayed, outcome, "owed"), outcome, NameClosed))
                  ELSE events
     /\ UNCHANGED <<certified, handled, first, replayed, outcome, reason,
-                   undelivered, faults>>
+                   undelivered>>
 
 \* Whether nothing is left to do: the node closed, or every term the model
 \* certifies is checked and delivered.
@@ -283,10 +298,10 @@ Next ==
     \/ \E i \in Submissions : \E kind \in Kinds : Replay(i, kind) \* a replay
     \/ Interrupt                                   \* a replay is cut short
     \/ Close                                       \* a check fails closed
-    \/ \E refuse \in BOOLEAN : Finish(refuse)      \* a check completes
+    \/ \E refuse, recorded \in BOOLEAN : Finish(refuse, recorded) \* a check completes
     \/ Deliver                                     \* owed work is handed over
     \/ DeliveryFails                               \* or is not, yet
-    \/ LateRefuse                                  \* or cannot be owed
+    \/ \E recorded \in BOOLEAN : LateRefuse(recorded) \* or cannot be owed
     \/ Stop                                        \* or nothing is left
 
 \* The system starts at Init, takes Next steps, and does not stop while a
@@ -327,6 +342,11 @@ INV_CutOfTerm ==
 \* A node that failed closed told the embedder so.
 INV_ClosedNamed ==
     closedNode => \E k \in DOMAIN events : events[k].closed \* an event says closed
+
+\* An event that says the node closed is backed by the journal: the node is
+\* closed, so no later call closes again and reports the term once more.
+INV_ClosedRecorded ==
+    \A k \in DOMAIN events : events[k].closed => closedNode \* the close is written
 
 \* In the end every certified term is checked and delivered, or the node is
 \* closed; with the invariants above, the embedder was told either way.

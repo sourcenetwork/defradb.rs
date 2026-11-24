@@ -124,7 +124,13 @@ impl Follower {
             Ok(effects) => effects,
             Err(reason) => {
                 if let Err(error) = worker.confirmed().close(reason.clone()) {
+                    // The term is checked and its owed changes wait, so the
+                    // node still admits nothing. The event says closed only
+                    // once the journal does: the next call closes again and
+                    // tells the bus then.
                     tracing::warn!(%error, "could not record a failed term check");
+                    self.publish(reported.as_ref(), &report, None);
+                    return;
                 }
                 self.follow.update(worker.confirmed());
                 // A call that only delivers says so too: the term's report

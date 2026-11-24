@@ -43,6 +43,7 @@ use effect::effect_of;
 use journal::Floor;
 use lost::{held_again, lost_effects, tainted_by, Losses};
 pub(crate) mod report;
+use report::Unrestorable;
 
 pub(crate) use report::TakeoverReport;
 
@@ -259,7 +260,7 @@ where
             let effect = effect_of(&entry.wire);
             let held = held_again(&effect, replayed);
             lost_effects(&mut losses, &mut tainted, effect, held);
-            if let Some(crate::vera_rs::follow::report::Unrestorable::Archive {
+            if let Some(Unrestorable::Archive {
                 policy_id,
                 resource,
                 object,
@@ -273,6 +274,7 @@ where
                      a new worker directory",
                     policy_id, resource, object
                 );
+                warn_refused(&losses);
                 journal.close(reason.clone()).map_err(failure)?;
                 return Ok(Reconciled::Closed {
                     reason,
@@ -291,13 +293,7 @@ where
                 .map_err(failure)?;
         }
     }
-    if losses.other > 0 {
-        tracing::warn!(
-            refused = losses.other,
-            "requests a Vera term voided were refused when sent again; a policy they created \
-             is gone and the documents under it cannot be read until it is created again"
-        );
-    }
+    warn_refused(&losses);
     journal
         .handled(certified, losses.owed.clone())
         .map_err(failure)?;
@@ -365,6 +361,28 @@ where
 
 fn failure(error: JournalError) -> ProviderError {
     ProviderError::Unavailable(error.to_string())
+}
+
+/// Logs the replays that left documents unreadable, so a node with no bus
+/// to publish its takeover report to still says so.
+fn warn_refused(losses: &Losses) {
+    for lost in &losses.unrestorable {
+        if let Unrestorable::PolicyCreation { policy_id, .. } = lost {
+            tracing::warn!(
+                %policy_id,
+                "a policy a Vera term voided was refused when sent again; it is gone and the \
+                 documents under it cannot be read until it is created again"
+            );
+        }
+    }
+    if losses.other > 0 {
+        tracing::warn!(
+            refused = losses.other,
+            "requests a Vera term voided were refused when sent again and could not be read; \
+             if one created a policy, the documents under it cannot be read until it is \
+             created again"
+        );
+    }
 }
 
 #[cfg(test)]
