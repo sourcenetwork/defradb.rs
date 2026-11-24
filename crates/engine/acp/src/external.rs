@@ -43,15 +43,17 @@ use crate::dac::DocumentACP;
 use crate::error::{Error, Result};
 use crate::identity::Identity;
 use crate::outbox::deny::{owed_denial, OwedDenial};
-use crate::outbox::{OwedChanges, StagedCount, TransactionOutbox};
+use crate::outbox::{OwedChanges, OwedSubject, StagedCount, TransactionOutbox};
 use crate::pending::{pending_key, PendingRegistration, PENDING_PREFIX};
 use crate::permission::DocumentPermission;
+use crate::recovery::RecoveryFact;
 
 #[cfg(test)]
 #[path = "external/deadline_tests.rs"]
 mod deadline_tests;
 mod drain;
 mod owed;
+mod recovery;
 mod registration;
 mod registration_batch;
 mod replica;
@@ -616,7 +618,40 @@ where
         identity: &Did,
         objects: &[crate::AcpObject<'_>],
     ) -> std::result::Result<(), crate::RegistrationFailure> {
-        self.provider.register_objects(identity, objects).await
+        let owner = self.provider.canonical_actor(identity);
+        let facts: Vec<RecoveryFact> = objects
+            .iter()
+            .map(|object| {
+                RecoveryFact::registered(
+                    object.policy_id,
+                    object.resource,
+                    object.object_id,
+                    owner.clone(),
+                )
+            })
+            .collect();
+        self.recovery_prepare(&facts)
+            .await
+            .map_err(|error| crate::RegistrationFailure::new(0, error))?;
+        let sent = self.provider.register_objects(identity, objects).await;
+        // The objects before a failure are registered. After a refusal the
+        // rest are not: the one refused, and the ones after it that were not
+        // tried. A provider that could not be reached may have taken the
+        // one it stopped at and every one after it, so their intents stay.
+        let (registered, answered) = match &sent {
+            Ok(()) => (facts.len(), facts.len()),
+            Err(failure) if matches!(failure.error, Error::ProviderUnavailable(_)) => {
+                (failure.index, failure.index)
+            }
+            Err(failure) => (failure.index, facts.len()),
+        };
+        let answers: Vec<(&RecoveryFact, bool)> = facts[..answered.min(facts.len())]
+            .iter()
+            .enumerate()
+            .map(|(index, fact)| (fact, index < registered))
+            .collect();
+        self.recovery_answered(&answers).await;
+        sent
     }
 
     async fn register_doc_object(
@@ -626,9 +661,18 @@ where
         resource_name: &str,
         doc_id: &str,
     ) -> Result<()> {
-        self.provider
-            .register_doc_object(identity, policy_id, resource_name, doc_id)
-            .await
+        let fact = RecoveryFact::registered(
+            policy_id,
+            resource_name,
+            doc_id,
+            self.provider.canonical_actor(identity),
+        );
+        self.recorded(
+            fact,
+            self.provider
+                .register_doc_object(identity, policy_id, resource_name, doc_id),
+        )
+        .await
     }
 
     async fn registration_parent(
@@ -673,9 +717,18 @@ where
         resource_name: &str,
         object_id: &str,
     ) -> Result<()> {
-        self.provider
-            .register_object(identity, policy_id, resource_name, object_id)
-            .await
+        let fact = RecoveryFact::registered(
+            policy_id,
+            resource_name,
+            object_id,
+            self.provider.canonical_actor(identity),
+        );
+        self.recorded(
+            fact,
+            self.provider
+                .register_object(identity, policy_id, resource_name, object_id),
+        )
+        .await
     }
 
     async fn is_doc_registered(
@@ -987,16 +1040,25 @@ where
             .await?;
         self.refuse_revoked(requestor, policy_id, collection_id, doc_id)
             .await?;
+        let fact = self.relationship_fact(
+            requestor,
+            OwedSubject::try_from(subject)?,
+            (policy_id, collection_id, doc_id),
+            relation,
+            true,
+        );
         let changed = self
-            .provider
-            .add_actor_relationship(
-                requestor,
-                target,
-                policy_id,
-                collection_id,
-                doc_id,
-                relation,
-                managing_relations,
+            .recorded(
+                fact,
+                self.provider.add_actor_relationship(
+                    requestor,
+                    target,
+                    policy_id,
+                    collection_id,
+                    doc_id,
+                    relation,
+                    managing_relations,
+                ),
             )
             .await?;
         self.object_changed(policy_id, collection_id, doc_id);
@@ -1019,16 +1081,25 @@ where
             .await?;
         self.refuse_revoked(requestor, policy_id, collection_id, doc_id)
             .await?;
+        let fact = self.relationship_fact(
+            requestor,
+            OwedSubject::try_from(target.clone())?,
+            (policy_id, collection_id, doc_id),
+            relation,
+            true,
+        );
         let changed = self
-            .provider
-            .add_relationship(
-                requestor,
-                target,
-                policy_id,
-                collection_id,
-                doc_id,
-                relation,
-                managing_relations,
+            .recorded(
+                fact,
+                self.provider.add_relationship(
+                    requestor,
+                    target,
+                    policy_id,
+                    collection_id,
+                    doc_id,
+                    relation,
+                    managing_relations,
+                ),
             )
             .await?;
         self.object_changed(policy_id, collection_id, doc_id);
@@ -1052,16 +1123,25 @@ where
             .await?;
         self.refuse_revoked(requestor, policy_id, collection_id, doc_id)
             .await?;
+        let fact = self.relationship_fact(
+            requestor,
+            OwedSubject::try_from(subject)?,
+            (policy_id, collection_id, doc_id),
+            relation,
+            false,
+        );
         let changed = self
-            .provider
-            .delete_actor_relationship(
-                requestor,
-                target,
-                policy_id,
-                collection_id,
-                doc_id,
-                relation,
-                managing_relations,
+            .recorded(
+                fact,
+                self.provider.delete_actor_relationship(
+                    requestor,
+                    target,
+                    policy_id,
+                    collection_id,
+                    doc_id,
+                    relation,
+                    managing_relations,
+                ),
             )
             .await?;
         self.object_changed(policy_id, collection_id, doc_id);
@@ -1084,16 +1164,25 @@ where
             .await?;
         self.refuse_revoked(requestor, policy_id, collection_id, doc_id)
             .await?;
+        let fact = self.relationship_fact(
+            requestor,
+            OwedSubject::try_from(target.clone())?,
+            (policy_id, collection_id, doc_id),
+            relation,
+            false,
+        );
         let changed = self
-            .provider
-            .delete_relationship(
-                requestor,
-                target,
-                policy_id,
-                collection_id,
-                doc_id,
-                relation,
-                managing_relations,
+            .recorded(
+                fact,
+                self.provider.delete_relationship(
+                    requestor,
+                    target,
+                    policy_id,
+                    collection_id,
+                    doc_id,
+                    relation,
+                    managing_relations,
+                ),
             )
             .await?;
         self.object_changed(policy_id, collection_id, doc_id);
@@ -1106,8 +1195,11 @@ where
         resource_name: &str,
         doc_id: &str,
     ) -> Result<()> {
-        self.provider
-            .unregister_doc_object(policy_id, resource_name, doc_id)
-            .await
+        self.recorded(
+            RecoveryFact::unregistered(policy_id, resource_name, doc_id),
+            self.provider
+                .unregister_doc_object(policy_id, resource_name, doc_id),
+        )
+        .await
     }
 }
