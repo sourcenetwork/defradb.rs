@@ -1571,7 +1571,6 @@ fn timeout_millis(timeout: Duration) -> u64 {
     timeout.as_millis().try_into().unwrap_or(u64::MAX)
 }
 
-#[cfg(feature = "http")]
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
