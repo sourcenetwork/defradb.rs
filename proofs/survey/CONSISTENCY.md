@@ -179,8 +179,8 @@ No cross-cluster contradiction found.
 
 - **HARNESS WIRING — replication-convergence audit was INACCURATE.** That audit stated
   M1Convergence, Convergence, Replicator, and Claim are "intentionally NOT wired into
-  `run-all.sh`." **They ARE wired** (`run-all.sh` lines 10–25 cover M1Convergence/M1Naive/
-  S2/S3/S4/MC_Conv_*/MC_Claim_*; lines 36–37 cover MC_Replicator_*). The regression
+  `run-all.sh`." **They ARE wired** (the sweep covers M1Convergence/M1Naive/
+  S2/S3/S4/MC_Conv_*/MC_Claim_* and MC_Replicator_*). The regression
   sweep already includes them. This correction *improves* harness-readiness vs. the
   audit's pessimistic claim.
 
@@ -253,9 +253,11 @@ property to the real Rust binary.
   symbols (e.g. `merge.rs validate_authorization`, `txn/registry/cleanup.rs:59-62`,
   `batch_signing.rs:31-32`, `mod.rs:284-323` for Jwt, `block.rs` for Cid). Spot-checks
   this run matched within a line or two.
-- **Regression oracle is automated for TLA.** `run-all.sh` encodes the expected
-  red/green verdict per config and exits non-zero on any mismatch — a CI-ready gate that
-  already covers all 64 TLA configs including the replication-convergence family.
+- **Regression oracle is automated for TLA.** `run-all.sh` discovers every
+  top-level `*.cfg`, takes each one's expected red/green verdict from its
+  `\* run-all:` header or its name, and exits non-zero on any mismatch — a
+  CI-ready gate that covers every TLA config including the
+  replication-convergence family.
 - **Lean is `sorry`-free with audited axioms.** All five Lean libs build clean; axiom
   audits show only standard core axioms (`propext`, `Quot.sound`) plus the two NAMED
   crypto-boundary axioms in Cid and `native_decide`/`ofReduceBool` for negatives.

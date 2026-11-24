@@ -27,7 +27,12 @@ grounded facts for B3 live in [DESIGN.md](DESIGN.md); each later slice has its o
 - **Document materialization status** — delete/update status stays componentwise
   (`DocumentMaterialization.tla`).
 
-Run all configured models at once with `./run-all.sh` (red/green oracle, exits non-zero on mismatch).
+Run all configured models at once with `./run-all.sh` (red/green oracle, exits non-zero
+on mismatch). It discovers every top-level `*.cfg` here and takes each one's module and
+expected verdict from a `\* run-all: <Module>.tla <verdict>` header in the cfg or, when
+there is none, from the name: `MC_<Module>_<rest>.cfg` runs `<Module>.tla`, GREEN when
+`rest` has a `Green` word (underscore-separated) and no `Red` word, RED when it has
+`Red` and no `Green`.
 
 ---
 
