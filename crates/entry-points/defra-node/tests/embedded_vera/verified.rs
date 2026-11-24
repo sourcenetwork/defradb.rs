@@ -22,7 +22,6 @@ use vera::vera_rs::{
 };
 use vera::{PolicyAction, PolicyCommand, PolicySubject, SubjectRef};
 
-use super::rpc_port::on_free_rpc_port;
 use super::{chain_reads, now, users, ACCOUNT_KEY, POLICY, STRANGER};
 
 pub(super) const LIFETIME: Duration = Duration::from_secs(120);
@@ -112,12 +111,11 @@ impl Deployed {
                 });
             async move { builder.build().await.map(|node| (node, http)) }
         };
-        let ((node, http), rpc) = if serve_rpc {
-            let (started, rpc) = on_free_rpc_port(|rpc| start(Some(rpc))).await;
-            (started, Some(rpc))
-        } else {
-            (start(None).await.expect("node"), None)
-        };
+        let (node, http) = start(serve_rpc.then(|| ([127, 0, 0, 1], 0).into()))
+            .await
+            .expect("node");
+        let rpc = node.embedded_vera_rpc_addr();
+        assert_eq!(rpc.is_some(), serve_rpc);
         let vera = node.vera_acp().expect("vera.rs document ACP").clone();
         let admin = vera.self_did().expect("actor DID");
         let policy = vera.add_policy(&admin, POLICY, None).await.expect("policy");

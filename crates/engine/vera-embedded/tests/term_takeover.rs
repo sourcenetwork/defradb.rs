@@ -499,9 +499,13 @@ async fn a_provider_follows_a_confirmed_takeover_and_sends_again_what_it_voided(
     assert_eq!(after.position.term, 1);
     assert_ne!(after.position.block_hash, before.position.block_hash);
     release.send(()).unwrap();
+    let interrupted = in_flight.await;
     assert!(
-        in_flight.await.is_err(),
-        "a read overtaken by a term change must not be accepted"
+        matches!(
+            interrupted,
+            Err(vera::ProviderError::Unavailable(_) | vera::ProviderError::ProofsOvertaken(_))
+        ),
+        "a read overtaken by a term change must be retryable: {interrupted:?}"
     );
     assert!(unnamed.read_certified_assignments(query).await.is_err());
 

@@ -73,6 +73,7 @@ mod dac {
         mod update;
         mod update_by_non_creator_on_peer;
     }
+    mod parent_registration;
     mod query {
         mod with_cid_shared_field;
     }

@@ -50,16 +50,16 @@ edge = { path = "../../foundation/edge" }
 # The embedded node's in-process method table. The revision is the one
 # `tools/integration-test` pins for `vera-harness`; the native consumer check
 # refuses a difference.
-vera-jsonrpc = { git = "https://github.com/sourcenetwork/vera.rs", rev = "177783a896068e26d4223c0a0835199870f88d3c" }
+vera-jsonrpc = { git = "https://github.com/sourcenetwork/vera.rs", rev = "f69d1b3747b65e3b3ff601958e856c574ac127e4" }
 
 # The node a host starts with the `node` feature, at the same revision.
-vera-node = { git = "https://github.com/sourcenetwork/vera.rs", rev = "177783a896068e26d4223c0a0835199870f88d3c", optional = true }
+vera-node = { git = "https://github.com/sourcenetwork/vera.rs", rev = "f69d1b3747b65e3b3ff601958e856c574ac127e4", optional = true }
 # The encoding of the node's consensus key, and of the newest block a
 # header subscription starts with.
 commonware-codec = "=2026.10.0"
 hex.workspace = true
 # The block and header types of that newest block.
-vera-domain = "0.1.2"
+vera-domain = "0.2.0"
 
 futures.workspace = true
 # The atom a host closes its transports through.
@@ -69,14 +69,14 @@ thiserror.workspace = true
 
 [dev-dependencies]
 # The light client's freshness limit, at the revision `crates/engine/vera` builds on.
-acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "7993ba38d889d16503f7a6ec9c33ef91375e4c0e" }
+acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "571ddf742cb17b1f95c171054bf7209e5f57e017" }
 # The document ACP layer the stopped-node test asks through.
 acp = { path = "../../engine/acp" }
 identity = { path = "../../building-blocks/identity" }
 # The term certificate the takeover test approves as the deployment's operator.
-vera-client = "0.1.2"
+vera-client = "0.2.0"
 # The node the tests host in their own process.
-vera-node = { git = "https://github.com/sourcenetwork/vera.rs", rev = "177783a896068e26d4223c0a0835199870f88d3c" }
+vera-node = { git = "https://github.com/sourcenetwork/vera.rs", rev = "f69d1b3747b65e3b3ff601958e856c574ac127e4" }
 commonware-codec = "=2026.10.0"
 edge = { path = "../../foundation/edge", features = ["testing"] }
 events = { path = "../../foundation/events" }

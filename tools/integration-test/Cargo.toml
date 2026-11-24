@@ -21,7 +21,7 @@ path = "tests/verars/main.rs"
 [dependencies]
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 commonware-codec = "=2026.10.0"
-defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "7993ba38d889d16503f7a6ec9c33ef91375e4c0e" }
+defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "571ddf742cb17b1f95c171054bf7209e5f57e017" }
 crypto = { path = "../../crates/foundation/crypto" }
 document = { path = "../../crates/building-blocks/document" }
 blockstore = { path = "../../crates/engine/blockstore" }
@@ -71,12 +71,12 @@ required-features = ["generator"]
 
 [dev-dependencies]
 query = { path = "../../crates/engine/query", features = ["testing"] }
-vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "177783a896068e26d4223c0a0835199870f88d3c" }
+vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "f69d1b3747b65e3b3ff601958e856c574ac127e4" }
 mantra-macros = "0.9"
 keyring = { path = "../../crates/foundation/keyring" }
-vera-client = "0.1.2"
-vera-domain = "0.1.2"
-vera-modules = "0.1.2"
+vera-client = "0.2.0"
+vera-domain = "0.2.0"
+vera-modules = "0.2.0"
 alloy-sol-types.workspace = true
 acp = { path = "../../crates/engine/acp" }
 vera = { path = "../../crates/engine/vera" }
