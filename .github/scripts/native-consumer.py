@@ -103,6 +103,7 @@ UNIT_NAMES = (
     "provider::owed_request::tests::without_a_hash_the_bytes_name_the_request",
     "provider::reach::tests::a_transport_failure_is_told_from_an_answer",
     "provider::recovery_tests::a_journal_closed_for_good_is_not_recovered",
+    "provider::recovery_tests::a_pass_a_second_outbox_joined_leaves_the_term_unrecorded",
     "provider::recovery_tests::an_uncovered_journal_recovers_through_the_outbox_under_the_same_worker",
     "provider::registration_list::tests::a_list_beyond_what_vera_rs_applies_at_once_is_not_built",
     "provider::registration_list::tests::a_list_carries_each_registration_in_order_under_one_token",
