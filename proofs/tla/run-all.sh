@@ -1080,6 +1080,9 @@ RUNS=(
   "MC_CommitFence_Red_UndoNoWake.cfg CommitFence.tla RED" # caller's undo reaches zero without a wake: a reader sleeps forever (LIVE_ReaderProceeds)
   "MC_CommitFence_Red_SkipBegun.cfg CommitFence.tla RED" # owner abandons a commit that began at hand-off once its caller left (INV_BegunEndRuns)
   "MC_CommitFence_Red_RunAbandoned.cfg CommitFence.tla RED" # owner commits an end whose caller left before it began (INV_AbandonedEndDiscarded)
+  "MC_CommitResponseWait_Green.cfg CommitResponseWait.tla GREEN" # a live server answers a wedged commit by its own bound, and unknown does not cancel the ticket
+  "MC_CommitResponseWait_Red_NoBound.cfg CommitResponseWait.tla RED" # no server bound: a wedged commit leaves the client waiting (ClientSettles)
+  "MC_CommitResponseWait_Red_Cancel.cfg CommitResponseWait.tla RED" # bound answers by cancelling the commit (UnknownIsNotAbort)
   "MC_TxnAdmission_Green.cfg TxnAdmission.tla GREEN" # the embedder reaches its transactions as any identity; HTTP only its own
   "MC_TxnAdmission_Red_IdentityOnFfi.cfg TxnAdmission.tla RED" # embedded registry keys by identity, #2335 (INV_FfiReaches)
   "MC_TxnAdmission_Red_EmbedderOnHttp.cfg TxnAdmission.tla RED" # HTTP registry gives every request one key (INV_HttpOwnerOnly)
