@@ -55,6 +55,13 @@ One-to-one joins (single, two in parallel, two levels deep, and from the seconda
 
 With `@index` on `age`, filtering `age: {_eq: 30}` over three docs reports `scanNode{iterations: 3, docFetches: 2, fieldFetches: 4, indexFetches: 2}`; ordering by the indexed field, by an indexed relation field with `@exhaustive`, and a child ordered by an indexed related field report index fetches instead of a sort.
 
+# `defra.explain.index_name`: Index scans name their index in Rust plans
+
+- **Parents:** ["defra"]
+- **Scenarios:** ["explain.execute.index_name.a_rust_index_scan_names_its_index", "explain.execute.index_name.a_rust_direct_relation_lookup_names_its_index"]
+
+The Rust execution explain includes `indexName` on an index-backed `scanNode`. A direct foreign-key lookup names the index it uses; otherwise the child scan retains its index name. This is a deliberate Rust-only addition to the Go execute-explain shape.
+
 # `go.explain.execute.orphan`: Orphan node counters
 
 - **Parents:** ["go.explain.execute"]

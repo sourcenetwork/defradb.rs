@@ -154,7 +154,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         };
 
         doc.set_collection_version_id(&context.payload.collection_version_id);
-
+        if state.active_result {
+            doc.set_collection_version_id(collection.version_id());
+        }
         for (field_name, value) in &state.field_values {
             doc.set_unchecked(field_name.clone(), value.clone());
         }
@@ -186,13 +188,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         // BEFORE any field block is persisted, so a rejected block leaves no
         // partial write.
 
+        let priorities = (!state.active_result).then_some(&state.field_priorities);
         collection
-            .save_with_datastore_priorities(
-                datastore,
-                &doc,
-                context.doc_short_id,
-                Some(&state.field_priorities),
-            )
+            .save_with_datastore_priorities(datastore, &doc, context.doc_short_id, priorities)
             .await
             .map_err(MergeError::Database)?;
         state.reads.wrote_document();
@@ -400,7 +398,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         // The version the document is stored at, which `collection` (resolved
         // through the cache to the active collection) may not name.
         if !doc_is_tombstoned
-            && active_version != context.payload.collection_version_id
+            && active_version
+                != doc
+                    .collection_version_id()
+                    .unwrap_or(&context.payload.collection_version_id)
             && !state.reads.owes_reindex(collection.collection_id())
         {
             // Boxed so the rare path does not grow every merge's future.

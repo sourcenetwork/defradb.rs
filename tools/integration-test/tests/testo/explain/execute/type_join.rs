@@ -591,6 +591,7 @@ fn execute_explain_with_one_to_one_join_from_secondary_side_should_include_index
                                                                 "docFetches": 2,
                                                                 "fieldFetches": 6,
                                                                 "indexFetches": 2,
+                                                                "indexName": m::optional(json!("AuthorContact__addressID_ASC")),
                                                                 "iterations": 4,
                                                             },
                                                         },
