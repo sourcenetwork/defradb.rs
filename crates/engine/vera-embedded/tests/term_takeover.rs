@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 use defra_core::thread_bounds::MaybeBoxFuture;
 use events::Bus as _;
 use futures::future::BoxFuture;
-use regolith::sync::Atom;
+use regolith::sync::{ArrayQueue, Atom};
 use serde_json::Value;
 use vera::vera_rs::{
     AcpTransport, ClientError, GenesisSource, HeaderStream, NativeWorker, RpcTransport,
@@ -56,7 +56,7 @@ const READER: &str = "did:key:z6MkfXG2FkNy3u7Eg3jm8e2YQpGz7Z1JqWgHDAP1hLk9r2bR";
 /// The in-process channel to whichever device the test points it at.
 struct Following {
     current: Atom<EmbeddedTransport>,
-    proof_gate: std::sync::Mutex<Option<ProofGate>>,
+    proof_gate: ArrayQueue<ProofGate>,
 }
 
 struct ProofGate {
@@ -92,7 +92,7 @@ impl AcpTransport for Following {
     ) -> BoxFuture<'_, Result<Value, TransportError>> {
         let current = self.current.load_clone();
         let gate = if method == "vera_getCurrentPolicyPrefixProof" {
-            self.proof_gate.lock().unwrap().take()
+            self.proof_gate.pop()
         } else {
             None
         };
@@ -301,7 +301,7 @@ async fn a_provider_follows_a_confirmed_takeover_and_sends_again_what_it_voided(
             timeout(),
             &edge,
         )),
-        proof_gate: std::sync::Mutex::new(None),
+        proof_gate: ArrayQueue::new(1),
     });
     let bus = Arc::new(events::ChannelBus::default());
     let mut takeover_reports = bus.subscribe(&[events::EventName::AcpTakeoverReconciled]);
@@ -374,10 +374,13 @@ async fn a_provider_follows_a_confirmed_takeover_and_sends_again_what_it_voided(
     assert_eq!(before.position.term, 0);
     let (started, started_rx) = futures::channel::oneshot::channel();
     let (release, release_rx) = futures::channel::oneshot::channel();
-    *transport.proof_gate.lock().unwrap() = Some(ProofGate {
-        started,
-        release: release_rx,
-    });
+    assert!(transport
+        .proof_gate
+        .push(ProofGate {
+            started,
+            release: release_rx,
+        })
+        .is_ok());
     let in_flight = named.read_certified_assignments(query);
     futures::pin_mut!(in_flight);
     match futures::future::select(in_flight.as_mut(), started_rx).await {
@@ -499,9 +502,13 @@ async fn a_provider_follows_a_confirmed_takeover_and_sends_again_what_it_voided(
     assert_eq!(after.position.term, 1);
     assert_ne!(after.position.block_hash, before.position.block_hash);
     release.send(()).unwrap();
+    let interrupted = in_flight.await;
     assert!(
-        in_flight.await.is_err(),
-        "a read overtaken by a term change must not be accepted"
+        matches!(
+            interrupted,
+            Err(vera::ProviderError::Unavailable(_) | vera::ProviderError::ProofsOvertaken(_))
+        ),
+        "a read overtaken by a term change must be retryable: {interrupted:?}"
     );
     assert!(unnamed.read_certified_assignments(query).await.is_err());
 

@@ -770,7 +770,10 @@ impl<'a> SdlParser<'a> {
         // An ungoverned collection commits to no policy at all, and keeps the
         // version ID it has today.
         let policy = type_def.directives.policy.as_ref().map(|policy_config| {
-            schema::PolicyDescription::new(&policy_config.id, &policy_config.resource)
+            let mut policy =
+                schema::PolicyDescription::new(&policy_config.id, &policy_config.resource);
+            policy.parent_field.clone_from(&policy_config.parent_field);
+            policy
         });
         let policy_commitment = commitments
             .is_governed()

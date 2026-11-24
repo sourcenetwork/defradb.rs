@@ -520,10 +520,15 @@
   },
   {
     "id": "go.acp.nac.gates.signature",
-    "verdict": "missing",
-    "rust_tests": [],
-    "evidence": "",
-    "note": "No test calls block verify-signature with NAC on. Only crates/surfaces/http/tests/route_permissions.rs maps /api/v0/block/verify-signature to SignatureVerify, which checks the route table, not a deny/allow outcome."
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/testo/acp/nac/verify_signature.rs::nac_gates_verify_signature_authorized_identity_allow_access",
+      "tools/integration-test/tests/testo/acp/nac/verify_signature.rs::nac_gates_verify_signature_go_client_authorized_identity_allow_access",
+      "tools/integration-test/tests/testo/acp/nac/verify_signature.rs::nac_gates_verify_signature_no_identity_not_authorized_error",
+      "tools/integration-test/tests/testo/acp/nac/verify_signature.rs::nac_gates_verify_signature_wrong_identity_not_authorized_error"
+    ],
+    "evidence": "testo acp/nac/verify_signature.rs:83 the node signer verifies over HTTP and CLI, :164 the authorized client key verifies in-process, :203/:212 no identity is refused, :249/:262 a wrong identity is refused",
+    "note": "Moved to reqs/defra/acp.md. The authorized-identity tests run under Go's SupportedClientTypes: the default-signer one on rust-http, go-http and cli, the signed-document one in-process."
   },
   {
     "id": "go.acp.nac.gates.indexes",
@@ -695,10 +700,15 @@
     "id": "go.acp.nac.admin.documents",
     "verdict": "partial",
     "rust_tests": [
-      "tools/integration-test/tests/legacy/nac/relation_admin.rs::nac_relation_admin_test"
+      "tools/integration-test/tests/legacy/nac/relation_admin.rs::nac_relation_admin_test",
+      "tools/integration-test/tests/testo/acp/nac/relation_admin/add_document.rs::nac_admin_relation_can_add_document",
+      "tools/integration-test/tests/testo/acp/nac/relation_admin/delete_document.rs::nac_admin_relation_can_delete_document",
+      "tools/integration-test/tests/testo/acp/nac/relation_admin/update_document.rs::nac_admin_relation_can_update_document",
+      "tools/integration-test/tests/testo/acp/nac/relation_admin/verify_signature.rs::nac_admin_relation_can_verify_signature",
+      "tools/integration-test/tests/testo/acp/nac/relation_admin/verify_signature.rs::nac_admin_relation_go_client_can_verify_signature"
     ],
-    "evidence": "relation_admin.rs:42-53 outsider sees no data before the grant; :95 reads documents after the grant",
-    "note": "Add, update and delete by a granted admin, and verify-signature before/after the grant, are untested."
+    "evidence": "relation_admin.rs:42-53 outsider sees no data before the grant; :95 reads documents after the grant; the testo add_document, update_document and delete_document tests assert the 'not authorized' error before the admin grant and success after it; the testo verify_signature tests assert 'not authorized to perform operation. Permission: verify-signature' before the grant and a verified signature after it",
+    "note": "No testo read_document test is tagged with this requirement, so a granted admin's GraphQL read is checked only by the legacy relation_admin test."
   },
   {
     "id": "go.acp.nac.admin.indexes",

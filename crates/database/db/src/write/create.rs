@@ -315,6 +315,7 @@ where
         doc,
         computed.doc_short_id,
         block_result,
+        inputs,
     )
     .await?;
     // The source document keeps its ID unset through validation; series and

@@ -57,7 +57,7 @@ impl Op for AddDoc {
         let identity = self.check_arguments(state)?;
         let (node, context, options) = (
             state.node_on(self.common.node())?,
-            state.context_as(self.txn, identity),
+            state.context_on(self.common.node(), self.txn, identity, self.enable_signing),
             self.options(),
         );
         let failed = |e: defra_node::Error| Failure::operation(e.to_string());

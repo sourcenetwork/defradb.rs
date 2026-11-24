@@ -311,6 +311,10 @@ fn named(command: &crate::PolicyCommand<'_>) -> String {
     let object = command.object_id;
     match &command.action {
         PolicyAction::RegisterObject => format!("register {object}"),
+        PolicyAction::RegisterUnderParent {
+            resource,
+            object_id,
+        } => format!("register {object} under {resource}:{object_id}"),
         PolicyAction::SetRelationship {
             relation,
             subject: on,
