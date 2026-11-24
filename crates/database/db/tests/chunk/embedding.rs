@@ -4,7 +4,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use db::chunk::split::{split, ChunkConfig};
+use db::chunk::split::{split, ChunkConfig, SplitterVersion};
 use db::write::autocommit::batch::BatchMutator;
 use db::{AutoCommitMutator, DbCollectionProvider, DbTransactionRegistry, LensedAutoCommitFetcher};
 use document::{Document, NormalValue};
@@ -16,6 +16,7 @@ use crate::common::fixture::make_test_db_with_bus;
 use crate::common::http::HttpServer;
 
 const CONFIG: ChunkConfig = ChunkConfig {
+    version: SplitterVersion::CURRENT,
     max_chars: 64,
     overlap: 0,
 };
@@ -92,7 +93,7 @@ type Runner = QueryRunner<
 
 async fn setup(sdl: &str) -> (Arc<db::DB<storage::RegolithStore>>, Runner) {
     let (db, _bus) = make_test_db_with_bus().await;
-    db.create_collections_atomic(query::parse_sdl(sdl).unwrap())
+    db.add_collection(&defra_core::RequestContext::ambient(), sdl)
         .await
         .expect("schema");
     let runner = QueryRunner::with_arc_registry_and_provider(
