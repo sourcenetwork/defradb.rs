@@ -70,7 +70,7 @@ required-features = ["generator"]
 
 [dev-dependencies]
 query = { path = "../../crates/engine/query", features = ["testing"] }
-vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "f69d1b3747b65e3b3ff601958e856c574ac127e4" }
+vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "2393539068539f30c84eae86101ad7c345024a99" }
 mantra-macros = "0.9"
 keyring = { path = "../../crates/foundation/keyring" }
 vera-client = "0.2.0"

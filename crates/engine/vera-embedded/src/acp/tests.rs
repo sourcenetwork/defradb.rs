@@ -21,7 +21,6 @@ fn header_in(height: u64, term: u64) -> GossipHeader {
         "parent_hash": format!("0x{:064x}", height.saturating_sub(1)),
         "timestamp": 123,
         "term": term,
-        "state_root": format!("0x{hash}"),
         "module_state_root": format!("0x{hash}"),
         "tx_count": 0,
         "publisher_index": 0,

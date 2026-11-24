@@ -74,7 +74,7 @@ async fn native_worker_recovers_pending_and_rejected_submissions() {
             wire
         );
         let mut altered = proof.clone();
-        altered.receipts[0].receipt.status = false.into();
+        altered.receipts[0].success = false;
         assert!(worker.acknowledge(&altered, &trusted).is_err());
         assert_eq!(worker.pending().unwrap(), wire);
         let recovered = confirmed(&client, &wire, &trusted).await;

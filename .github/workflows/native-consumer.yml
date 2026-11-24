@@ -74,7 +74,7 @@ jobs:
     # Full normal-release compilation is retained on a cache miss.
     timeout-minutes: 90
     env:
-      VERA_RUNTIME_REVISION: ${{ inputs.vera_revision || '1367a56b2471bc379fd0e5522b8492d4b4b6e5d8' }}
+      VERA_RUNTIME_REVISION: ${{ inputs.vera_revision || '2393539068539f30c84eae86101ad7c345024a99' }}
     steps:
       # Routes actions/cache and rust-cache to RunsOn's S3 cache.
       - uses: runs-on/action@v2
