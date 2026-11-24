@@ -229,6 +229,13 @@ A migration from version 1 to 2 is applied to every document written at version 
 
 Migrations that set a scalar, mutate an inline array, remove a field (returned as `null`) or copy a field produce those values even when the source or destination field is not requested, and a later request for a different field set still sees unmutated fields.
 
+# `defra.collection_version.migrations.query.date_time_format`: Migrated DateTime values keep Go's format
+
+- **Parents:** ["go.collection_version.migrations.query"]
+- **Scenarios:** ["collection_version::migrations::query::with_date_time::collection_migration_query_renders_migrated_date_times_without_trailing_zeros"]
+
+A DateTime field of a document read through a migration returns as Go's `time.RFC3339Nano` writes it, the same as before the migration: no fractional seconds when they are zero and no trailing zeros otherwise. With `Users { required: DateTime! @index, optional: DateTime }` holding `{required: "2026-08-01T12:34:56Z", optional: "1999-12-31T23:59:59Z"}` and `{required: "2026-08-02T12:34:56.120Z", optional: "1999-12-31T23:59:59.000000001Z"}`, a patch whose `set-default` lens sets a new `migrated` field to `true` makes the query return `"2026-08-01T12:34:56Z"`, `"1999-12-31T23:59:59Z"`, `"2026-08-02T12:34:56.12Z"` and `"1999-12-31T23:59:59.000000001Z"`, never `"2026-08-01T12:34:56.000000000Z"`.
+
 # `go.collection_version.migrations.query.active_version`: Migrations follow the active version
 
 - **Parents:** ["go.collection_version.migrations.query"]
