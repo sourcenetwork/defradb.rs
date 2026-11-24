@@ -2985,6 +2985,24 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/database/db/tests/index/merged_crdt.rs",
     },
     Property {
+        family: "Index-maintenance consistency",
+        name: "INV_FreshAttempt / INV_OpenCompatible / INV_FailureKeepsStamp / INV_FutureRefusedUntouched / INV_LegacyIntact — rebuild older indexes before stamping; refuse future formats",
+        axis: Tla,
+        anchor: "crates/database/db/src/definition/migration/format.rs CURRENT_INDEX_FORMAT, DB::stored_index_format, DB::migrate_index_format; crates/database/db/src/database/mod.rs DB::finish_open; crates/database/db/src/index/deferred/drain.rs; crates/database/db/src/index/manager/deferred.rs",
+        model_ref: "MC_IndexFormatGuard_{Green,Red_SkipRebuild,Red_EarlyStamp,Red_DeleteLegacy,Red_UnguardedRecord,Red_StaleProgress,Red_Future}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/database/db/tests/definition/format.rs",
+    },
+    Property {
+        family: "Index-maintenance consistency",
+        name: "IndexKeyspace.short_id_bytes_prefix_eq / tag_not_prefix_of_legacy / key_not_in_document_family / key_not_in_version_family — for modeled one-byte IDs and the first two-byte boundary, tagged index keys do not enter the document or version families; IndexKey.bytes is an index prefix, not a complete entry",
+        axis: Lean,
+        anchor: "crates/engine/storage/src/keys/datastore/index_key.rs INDEX_KEYSPACE_PREFIX, IndexDataStoreKey::index_prefix, IndexDataStoreKey::try_bytes",
+        model_ref: "IndexKeyspace.short_id_bytes_prefix_eq / tag_not_prefix_of_legacy / key_not_in_document_family / key_not_in_version_family",
+        tiers: &[Contract],
+        bound_by: "crates/database/db/tests/definition/keyspace.rs index_keyspace_scans_stay_per_collection_across_short_ids; crates/engine/storage/src/keys/datastore/index_key.rs index_keyspace_is_tagged_across_the_byte_boundary, index_integer_encodings_are_prefix_free",
+    },
+    Property {
         // Every write that owes a deferred index asks for its drain; the
         // drain task keeps a failed index for the sweep, and the sweep runs
         // on a fixed deadline that requests cannot push back.
