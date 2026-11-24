@@ -1,17 +1,26 @@
 import Lean
 
 /-!
-The story: an embedded caller sends the node a request with a signing key of
- its own. The node lets that key sign the request's blocks only when the key is
+The story: an embedded caller calls the node, and may hand along a signing key
+ of its own. The node lets that key sign the call's blocks only when the key is
  a local Ed25519 or secp256k1 key, the key is usable, it belongs to the actor the
- request names, and the request does not bypass DAC. What must never happen: a
- key of another type (Secp256r1, BLS), a broken key, someone else's key, or a
- DAC-bypassing request gets to sign. The transaction registry still uses the
- node principal; authorization by the selected actor is a separate check.
+ call names, and the call does not bypass DAC. A call that brings no key is
+ signed with the node's own key, never with a key the process holds for the
+ call's DID. What must never happen: a key of another type (Secp256r1, BLS), a
+ broken key, someone else's key, or a DAC-bypassing call gets to sign. The
+ transaction registry still uses the node principal; authorization by the
+ selected actor is a separate check.
 Rust owner: `EmbeddedSigner::from_config` (key type, local key, key check) and
  `admitted_signer` (actor match, bypass) in
- `crates/entry-points/defra-node/src/embedded_signer.rs`, which
- `Node::execute_prepared_request` runs for every request carrying a caller's key.
+ `crates/entry-points/defra-node/src/embedded_signer.rs`. Two callers run it:
+ `RequestPath::execute` in `crates/entry-points/defra-node/src/request_path.rs`,
+ for requests (`execute_request`, `execute_request_in_txn`,
+ `execute_request_as`, a backup import's writes), and `Node::admit` in
+ `crates/entry-points/defra-node/src/ops/request.rs`, which every other `_as`
+ entry (`execute_as`, `import_backup_as`, and the rest through
+ `Node::admitted_caller`) runs before it writes. `outcome` is what both decide.
+ That every entry point calls one of them is the TLA+ model's
+ (`proofs/tla/EmbeddedSigner.tla`); this file proves what the check decides.
 -/
 -- Everything below lives in its own namespace.
 namespace EmbeddedSigner
@@ -105,6 +114,84 @@ theorem unsupported_refused (input : Input) (h : input.keyType = .other) :
     subst h
     -- Every combination of the remaining fields is then refused.
     cases bypass <;> cases actor <;> cases signer <;> simp [admitted, KeyType.supported]
+
+-- Whose key signs a call's blocks: the node's own, or a caller's, named by
+-- the DID the caller's key belongs to.
+inductive Signer where
+  -- The node signs with its own key.
+  | node
+  -- The key a caller handed over signs; `did` is whose key it is.
+  | caller (did : String)
+  -- Comparable, and printable for debugging.
+  deriving DecidableEq, Repr
+
+-- What the boundary decides for one call: `none` refuses it before anything
+-- is written, `some signer` lets it write signed by `signer`. Here
+-- `input.signer = none` means the caller handed over no key at all.
+def outcome (input : Input) : Option Signer :=
+  -- Look at whether the caller brought a key.
+  match input.signer with
+  -- No key: the node signs. No other key is looked up, so a key the process
+  -- holds for the call's DID never signs.
+  | none => some .node
+  -- A key: it signs only if admitted; otherwise the call is refused.
+  | some did => if admitted input then some (.caller did) else none
+
+-- Promise: a caller's key signs only for the actor the call names, and only
+-- when that key is supported and usable and the call does not bypass DAC.
+theorem caller_signs_only_as_actor (input : Input) (did : String)
+    (h : outcome input = some (.caller did)) :
+    input.actor = some did ∧ input.keyType.supported = true ∧
+      input.keyValid = true ∧ input.bypass = false := by
+  -- Look at whether the caller brought a key.
+  cases hs : input.signer with
+  | none =>
+    -- With no key the node signs, which is not `caller did`.
+    simp [outcome, hs] at h
+  | some s =>
+    -- With a key, the outcome is a caller signature only when admitted.
+    simp only [outcome, hs] at h
+    -- So the key was admitted, and the signer is the key's own DID.
+    by_cases ha : admitted input = true
+    · simp [ha] at h
+      -- The key's DID is the DID that signs.
+      subst h
+      -- What admission promises, with the key's DID for the actor.
+      obtain ⟨actor, hactor, hsigner, hk, hv, hb⟩ := admitted_binds input ha
+      -- The key's DID is the actor.
+      rw [hs] at hsigner
+      cases hsigner
+      -- So every part of the promise holds.
+      exact ⟨hactor, hk, hv, hb⟩
+    · -- A refused key gives no signer at all, contradicting `h`.
+      simp [ha] at h
+
+-- Promise: a call that brings no key is never refused and is signed by the
+-- node, whatever DID it names.
+theorem no_key_signs_with_node (input : Input) (h : input.signer = none) :
+    outcome input = some .node := by
+  -- Nothing but the missing key decides.
+  simp [outcome, h]
+
+-- Promise: a refused call is one that brought a key the check did not admit;
+-- it writes nothing, since a refusal has no signer.
+theorem refused_only_a_bad_key (input : Input) (h : outcome input = none) :
+    input.signer ≠ none ∧ admitted input = false := by
+  -- Look at whether the caller brought a key.
+  cases hs : input.signer with
+  | none =>
+    -- With no key the node signs, so the call is not refused.
+    simp [outcome, hs] at h
+  | some s =>
+    -- With a key, a refusal means the key was not admitted.
+    simp only [outcome, hs] at h
+    -- Split on the admission decision.
+    by_cases ha : admitted input = true
+    · -- An admitted key signs, contradicting the refusal.
+      simp [ha] at h
+    · -- Not admitted: both parts hold.
+      simp at ha
+      exact ⟨by simp, ha⟩
 
 -- Expected results come from this executable owner, for native conformance tests:
 -- each input is answered with whether it is admitted.

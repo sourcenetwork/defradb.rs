@@ -186,13 +186,13 @@ RUNS=(
   "MC_SourceScopedNac_Red_BorrowNode.cfg SourceScopedNac.tla RED"
   "MC_SourceScopedNac_Red_UntrustedReplay.cfg SourceScopedNac.tla RED"
   "MC_EmbeddedSigner_Green.cfg EmbeddedSigner.tla GREEN"
-  "MC_EmbeddedSigner_Red_Actor.cfg EmbeddedSigner.tla RED"
-  "MC_EmbeddedSigner_Red_Match.cfg EmbeddedSigner.tla RED"
-  "MC_EmbeddedSigner_Red_Key.cfg EmbeddedSigner.tla RED"
-  "MC_EmbeddedSigner_Red_KeyType.cfg EmbeddedSigner.tla RED"
-  "MC_EmbeddedSigner_Red_Owner.cfg EmbeddedSigner.tla RED"
-  "MC_EmbeddedSigner_Red_Acp.cfg EmbeddedSigner.tla RED"
-  "MC_EmbeddedSigner_Red_Bypass.cfg EmbeddedSigner.tla RED"
+  "MC_EmbeddedSigner_Red_Actor.cfg EmbeddedSigner.tla RED" # another actor's key signs (INV_NoForgery)
+  "MC_EmbeddedSigner_Red_Key.cfg EmbeddedSigner.tla RED" # a mismatched key signs (INV_Verifiable)
+  "MC_EmbeddedSigner_Red_KeyType.cfg EmbeddedSigner.tla RED" # an unsupported key type signs (INV_Verifiable)
+  "MC_EmbeddedSigner_Red_Bypass.cfg EmbeddedSigner.tla RED" # a bypassing caller signs (INV_UnderDac)
+  "MC_EmbeddedSigner_Red_Skip.cfg EmbeddedSigner.tla RED" # one entry point skips admission (INV_NoForgery)
+  "MC_EmbeddedSigner_Red_Registry.cfg EmbeddedSigner.tla RED" # a registry key for the request DID signs (INV_PresentedOnly)
+  "MC_EmbeddedSigner_Red_Vacuity.cfg EmbeddedSigner.tla RED" # admitted calls do write (NothingWritten)
   "MC_SigningCredential_Green.cfg SigningCredential.tla GREEN"
   "MC_SigningCredential_Red_Format.cfg SigningCredential.tla RED"
   "MC_SigningCredential_Red_Expiry.cfg SigningCredential.tla RED"
