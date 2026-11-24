@@ -12,6 +12,8 @@
 
 mod acp;
 mod query;
+mod version;
 
 pub use acp::{DocumentRelationship, PermissionProvenance, PermissionVia};
 pub use query::{DocumentsResult, SourcePermission};
+pub use version::{GoCompat, VersionInfo};

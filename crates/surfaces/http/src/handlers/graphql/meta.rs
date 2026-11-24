@@ -15,8 +15,10 @@ pub async fn health_check() -> impl IntoResponse {
 /// Version endpoint handler.
 ///
 /// Returns full version info including Go compatibility metadata.
-pub async fn version() -> Json<defra_version::VersionInfo> {
-    Json(defra_version::VersionInfo::new())
+pub async fn version() -> Json<crate::wire::VersionInfo> {
+    Json(crate::wire::VersionInfo::from(
+        defra_version::VersionInfo::new(),
+    ))
 }
 
 /// Schema endpoint handler.

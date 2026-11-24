@@ -32,7 +32,9 @@ use crate::handlers::utility::NodeIdentityResponse;
 use crate::handlers::views::ViewNamesRequest;
 use crate::route_permissions::RoutePermission;
 use crate::router::NodePermission;
-use crate::wire::{DocumentRelationship, DocumentsResult, PermissionProvenance, SourcePermission};
+use crate::wire::{
+    DocumentRelationship, DocumentsResult, PermissionProvenance, SourcePermission, VersionInfo,
+};
 use schema::CollectionVersion;
 
 use RoutePermission::{Dynamic, Exempt, IdentityOnly};
@@ -172,7 +174,7 @@ pub const ROUTES: &[Route] = &[
     row("/health-check", GET, Exempt, false),
     row("/openapi.json", GET, Exempt, false),
     row("/openapi.rs.json", GET, Exempt, false),
-    row("/api/v0/version", GET, Exempt, false),
+    row_body("/api/v0/version", GET, Exempt, false, None, Some(body::<VersionInfo>)),
     row("/api/v0/graphql/ws", ANY, Exempt, false),
     row_body("/api/v0/batch/verify", POST, Exempt, false, Some(body::<BatchVerifyRequest>), None),
     // GraphQL
