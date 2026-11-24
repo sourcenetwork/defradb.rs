@@ -1,13 +1,19 @@
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use db::{AutoCommitFetcher, AutoCommitMutator, TruncateError, DB};
+use db::{
+    AutoCommitFetcher, AutoCommitMutator, DbCollectionProvider, DbTransactionRegistry,
+    LensedAutoCommitFetcher, TruncateError, DB,
+};
 use defra_core::{RequestContext, TxnId};
 use document::{DocID, Document, NormalValue};
 use query::documents::Filter;
-use query::{DocFetcher, DocMutator};
+use query::{DocFetcher, DocMutator, QueryExecutor, QueryRequest};
 use schema::{CollectionVersion, FieldDescription, FieldKind, IndexDescription};
-use storage::corekv::Key;
-use storage::keys::DatastoreSE;
+use storage::corekv::{IterOptions, Key, RetryAttemptFuture};
+use storage::keys::{DatastoreSE, IndexDataStoreKey};
 use storage::RegolithStore;
 
 fn users_schema() -> CollectionVersion {
@@ -43,6 +49,213 @@ async fn create_user(mutator: &AutoCommitMutator<RegolithStore>, name: &str, age
         .unwrap();
     doc.set("age", NormalValue::Int(age)).unwrap();
     mutator.create("Users", doc).await.unwrap().doc_id
+}
+
+async fn set_age(db: &Arc<DB<RegolithStore>>, doc_id: &DocID, age: i64) {
+    let mut doc = Document::new(users_schema());
+    doc.set_id(doc_id.clone());
+    doc.set("age", NormalValue::Int(age)).unwrap();
+    AutoCommitMutator::new(Arc::clone(db))
+        .update("Users", doc, ["age".to_string()].into_iter().collect())
+        .await
+        .unwrap();
+}
+
+type RacingWriteFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
+type RacingWrite = Arc<dyn Fn() -> RacingWriteFuture + Send + Sync>;
+
+/// Commits `race` once, after the first attempt has read and before it
+/// commits.
+struct FilterMovingStore {
+    inner: Arc<RegolithStore>,
+    race: RacingWrite,
+    armed: Arc<AtomicBool>,
+    attempts: Arc<AtomicUsize>,
+}
+
+impl storage::corekv::private::Sealed for FilterMovingStore {}
+
+#[async_trait::async_trait]
+impl storage::corekv::Store for FilterMovingStore {
+    fn crdts(&self) -> &storage::Crdts {
+        self.inner.crdts()
+    }
+
+    async fn allocate(
+        &self,
+        key: &[u8],
+        count: u64,
+    ) -> storage::corekv::Result<std::ops::Range<u64>> {
+        self.inner.allocate(key, count).await
+    }
+
+    async fn new_txn(
+        &self,
+        readonly: bool,
+    ) -> storage::corekv::Result<Box<dyn storage::corekv::Txn>> {
+        self.inner.new_txn(readonly).await
+    }
+
+    async fn transact_retry(
+        &self,
+        options: storage::corekv::RetryOptions,
+        attempt: storage::corekv::RetryAttempt,
+    ) -> std::result::Result<storage::corekv::RetryAttemptValue, storage::corekv::RetryAttemptError>
+    {
+        let attempt = Box::new(FilterMovingAttempt {
+            inner: attempt,
+            race: Arc::clone(&self.race),
+            armed: Arc::clone(&self.armed),
+            attempts: Arc::clone(&self.attempts),
+        });
+        self.inner.transact_retry(options, attempt).await
+    }
+
+    async fn close(&self) -> storage::corekv::Result<()> {
+        self.inner.close().await
+    }
+}
+
+struct FilterMovingAttempt {
+    inner: storage::corekv::RetryAttempt,
+    race: RacingWrite,
+    armed: Arc<AtomicBool>,
+    attempts: Arc<AtomicUsize>,
+}
+
+impl storage::corekv::RetryAttemptFn for FilterMovingAttempt {
+    fn run<'a>(&'a mut self, txn: &'a mut dyn storage::corekv::RetryTxn) -> RetryAttemptFuture<'a> {
+        Box::pin(async move {
+            self.attempts.fetch_add(1, Ordering::SeqCst);
+            let output = self.inner.run(txn).await?;
+            if self.armed.swap(false, Ordering::SeqCst) {
+                (self.race)().await;
+            }
+            Ok(output)
+        })
+    }
+}
+
+#[test]
+fn a_conflicted_filtered_truncate_rereads_its_matches() {
+    workers::block_on(async {
+        let inner = Arc::new(RegolithStore::in_memory().unwrap());
+        let racer = Arc::new(DB::open((*inner).clone()).await.unwrap());
+        racer.create_collection(users_schema()).await.unwrap();
+        let alice = create_user(&AutoCommitMutator::new(Arc::clone(&racer)), "Alice", 30).await;
+        let armed = Arc::new(AtomicBool::new(true));
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let race: RacingWrite = {
+            let racer = Arc::clone(&racer);
+            Arc::new(move || {
+                let (racer, alice) = (Arc::clone(&racer), alice.clone());
+                Box::pin(async move { set_age(&racer, &alice, 31).await })
+            })
+        };
+        let store = FilterMovingStore {
+            inner: Arc::clone(&inner),
+            race,
+            armed: Arc::clone(&armed),
+            attempts: Arc::clone(&attempts),
+        };
+        let db = Arc::new(DB::open(store).await.unwrap());
+
+        db.truncate_collection_as(&RequestContext::ambient(), "Users", Some(&age_filter(30)))
+            .await
+            .unwrap();
+
+        assert!(
+            attempts.load(Ordering::SeqCst) >= 2,
+            "the first page conflicted and ran again"
+        );
+        let docs = AutoCommitFetcher::new(db).get_all("Users").await.unwrap();
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0].get("age"), Some(&NormalValue::Int(31)));
+    })
+    .unwrap()
+}
+
+async fn run(queries: &dyn QueryExecutor, request: &str) -> serde_json::Value {
+    let txn = queries.begin_txn(false).await.unwrap();
+    let response = queries
+        .execute_in_txn(QueryRequest::new(request), &txn)
+        .await;
+    assert!(!response.has_errors(), "{request}: {:?}", response.errors);
+    queries.commit_txn(&txn).await.unwrap();
+    response.data.unwrap()
+}
+
+#[test]
+fn a_filtered_truncate_rereads_after_a_related_document_leaves_the_filter() {
+    workers::block_on(async {
+        let inner = Arc::new(RegolithStore::in_memory().unwrap());
+        let racer = Arc::new(DB::open((*inner).clone()).await.unwrap());
+        let ctx = RequestContext::ambient();
+        racer
+            .add_collection(&ctx, "type Author { name: String }")
+            .await
+            .unwrap();
+        racer
+            .add_collection(&ctx, "type Book { title: String author: Author }")
+            .await
+            .unwrap();
+        let queries: Arc<dyn QueryExecutor> =
+            Arc::new(query::QueryRunner::with_arc_registry_and_provider(
+                LensedAutoCommitFetcher::new(Arc::clone(&racer)),
+                DbCollectionProvider::new_arc(Arc::clone(&racer)),
+                Arc::new(DbTransactionRegistry::new(Arc::clone(&racer))),
+            ));
+        let created = run(
+            queries.as_ref(),
+            r#"mutation { add_Author(input: {name: "Alice"}) { _docID } }"#,
+        )
+        .await;
+        let author = created["add_Author"][0]["_docID"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        run(
+            queries.as_ref(),
+            &format!(
+                r#"mutation {{ add_Book(input: {{title: "Kept", author: "{author}"}}) {{ _docID }} }}"#
+            ),
+        )
+        .await;
+
+        let rename = format!(
+            r#"mutation {{ update_Author(docID: "{author}", input: {{name: "Bob"}}) {{ _docID }} }}"#
+        );
+        let race: RacingWrite = {
+            let queries = Arc::clone(&queries);
+            Arc::new(move || {
+                let (queries, rename) = (Arc::clone(&queries), rename.clone());
+                Box::pin(async move {
+                    run(queries.as_ref(), &rename).await;
+                })
+            })
+        };
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let store = FilterMovingStore {
+            inner: Arc::clone(&inner),
+            race,
+            armed: Arc::new(AtomicBool::new(true)),
+            attempts: Arc::clone(&attempts),
+        };
+        let db = Arc::new(DB::open(store).await.unwrap());
+        let by_alice: Filter = serde_json::json!({"author": {"name": {"_eq": "Alice"}}}).into();
+
+        db.truncate_collection_as(&ctx, "Book", Some(&by_alice))
+            .await
+            .unwrap();
+
+        assert!(
+            attempts.load(Ordering::SeqCst) >= 2,
+            "the rename conflicted with the page's selection"
+        );
+        let books = run(queries.as_ref(), "query { Book { title } }").await;
+        assert_eq!(books["Book"], serde_json::json!([{"title": "Kept"}]));
+    })
+    .unwrap()
 }
 
 #[test]
@@ -330,6 +543,127 @@ fn truncating_a_missing_collection_names_it() {
             error,
             TruncateError::Db(db::Error::CollectionNotFound(name)) if name == "Users"
         ));
+    })
+    .unwrap()
+}
+
+fn named_schema(name: &str) -> CollectionVersion {
+    CollectionVersion::new(
+        name,
+        format!("{name}-v1"),
+        format!("{name}-collection"),
+        vec![
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+        ],
+    )
+    .with_index(IndexDescription::new(format!("{name}_name")).with_field("name", false))
+}
+
+async fn create_named(db: &Arc<DB<RegolithStore>>, collection: &str) {
+    let mut doc = Document::new(named_schema(collection));
+    doc.set("name", NormalValue::String(collection.to_owned()))
+        .unwrap();
+    AutoCommitMutator::new(db.clone())
+        .create(collection, doc)
+        .await
+        .unwrap();
+}
+
+async fn datastore_keys(db: &Arc<DB<RegolithStore>>, prefix: &[u8]) -> usize {
+    let txn = db.new_txn(true).await.unwrap();
+    let datastore = txn.datastore().unwrap();
+    let mut iter = datastore
+        .iterator(IterOptions::new().with_prefix(prefix.to_vec()))
+        .await
+        .unwrap();
+    let mut count = 0;
+    while iter.next().await.unwrap().is_some() {
+        count += 1;
+    }
+    iter.close().await.unwrap();
+    count
+}
+
+/// The entries of `collection`'s one index.
+async fn index_keys(db: &Arc<DB<RegolithStore>>, collection: &str) -> usize {
+    let collection = db.get_collection(collection).unwrap().unwrap();
+    let index = &collection.get_indexes()[0];
+    datastore_keys(
+        db,
+        &IndexDataStoreKey::index_prefix(collection.resolved_root_id(), index.id),
+    )
+    .await
+}
+
+/// A collection whose short ID is written as the byte of a family other
+/// collections keep their keys in (100 is `d`, the documents; 118 is `v`,
+/// their schema versions) is truncated without touching those keys, and its
+/// own index entries are gone.
+#[test]
+fn truncating_a_collection_whose_short_id_spells_a_family_keeps_other_collections() {
+    workers::block_on(async {
+        let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+        db.create_collection(named_schema("Kept")).await.unwrap();
+        create_named(&db, "Kept").await;
+        let mut spelled = Vec::new();
+        for n in 0..200 {
+            let name = format!("Filler{n}");
+            db.create_collection(named_schema(&name)).await.unwrap();
+            let short_id = db
+                .get_collection(&name)
+                .unwrap()
+                .unwrap()
+                .resolved_root_id();
+            if short_id == u32::from(b'd') || short_id == u32::from(b'v') {
+                create_named(&db, &name).await;
+                spelled.push(name);
+            }
+            if short_id > u32::from(b'v') {
+                break;
+            }
+        }
+        assert_eq!(spelled.len(), 2, "no collection got short ID 100 or 118");
+        let kept_documents = datastore_keys(&db, b"/d/Kept-collection/").await;
+        let kept_versions = datastore_keys(&db, b"/v/Kept-collection/").await;
+        let kept_entries = index_keys(&db, "Kept").await;
+        assert!(kept_documents > 0 && kept_versions > 0 && kept_entries > 0);
+
+        for name in &spelled {
+            assert!(index_keys(&db, name).await > 0);
+            db.truncate_collection_as(&RequestContext::ambient(), name, None)
+                .await
+                .unwrap();
+            assert_eq!(index_keys(&db, name).await, 0);
+            assert!(AutoCommitFetcher::new(db.clone())
+                .get_all(name)
+                .await
+                .unwrap()
+                .is_empty());
+        }
+
+        assert_eq!(
+            datastore_keys(&db, b"/d/Kept-collection/").await,
+            kept_documents
+        );
+        assert_eq!(
+            datastore_keys(&db, b"/v/Kept-collection/").await,
+            kept_versions
+        );
+        assert_eq!(index_keys(&db, "Kept").await, kept_entries);
+        assert_eq!(
+            AutoCommitFetcher::new(db)
+                .get_all("Kept")
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
     })
     .unwrap()
 }

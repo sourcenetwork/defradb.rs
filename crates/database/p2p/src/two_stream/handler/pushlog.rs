@@ -115,7 +115,7 @@ mod tests {
                 let sender_key = libp2p::identity::Keypair::generate_ed25519();
                 let receiver_key = libp2p::identity::Keypair::generate_ed25519();
                 let swarm = |key: libp2p::identity::Keypair| {
-                    let (transport, _) = crate::host::transport::build(&key, false).unwrap();
+                    let (transport, _) = crate::host::transport::build(&key, &crate::P2PHostConfig { enable_relay: false, ..Default::default() }).unwrap();
                     Swarm::new(transport, libp2p_stream::Behaviour::new(), key.public().to_peer_id(), libp2p::swarm::Config::with_executor(crate::host::transport::Executor::new(edge::testing::edge())))
                 };
                 let mut sender = swarm(sender_key.clone());

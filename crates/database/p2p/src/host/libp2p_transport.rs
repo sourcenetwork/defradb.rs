@@ -441,7 +441,7 @@ pub fn convert_host_event(event: crate::host::HostEvent) -> TransportEvent<Respo
         HostEvent::BitswapProgress {
             query_id,
             missing_count,
-        } => TransportEvent::BitswapProgress {
+        } => TransportEvent::BlockSyncProgress {
             query_id,
             missing_count,
         },
@@ -450,7 +450,7 @@ pub fn convert_host_event(event: crate::host::HostEvent) -> TransportEvent<Respo
             success,
             cause,
             error,
-        } => TransportEvent::BitswapComplete {
+        } => TransportEvent::BlockSyncComplete {
             query_id,
             success,
             cause,
@@ -461,7 +461,7 @@ pub fn convert_host_event(event: crate::host::HostEvent) -> TransportEvent<Respo
             query_id,
             cid,
             data,
-        } => TransportEvent::BitswapBlockReceived {
+        } => TransportEvent::BlockSyncBlockReceived {
             query_id,
             cid,
             data,

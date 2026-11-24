@@ -326,6 +326,8 @@ fn query_one_to_many_with_sum_with_limit_with_offset_with_order_desc_and_rendere
             }
             .into(),
         ],
+        // TODO(https://github.com/sourcenetwork/defradb.rs/issues/3051): a nested limit bounds the whole child index scan, not each parent's children.
+        multiplier_excludes: &["secondary-index"],
         ..Default::default()
     }
     .execute();

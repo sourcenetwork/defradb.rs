@@ -6,6 +6,7 @@ mod acp;
 mod add_collection;
 mod cache;
 mod delete;
+mod encrypted_index_concurrent;
 mod map;
 mod name;
 mod part_ids;

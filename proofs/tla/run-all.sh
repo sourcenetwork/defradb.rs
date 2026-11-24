@@ -11,6 +11,11 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 # event to the settled rest (depth = events + 1), and DEADLOCK:<l> stops with
 # event l next (past the end when l = events + 1).
 RUNS=(
+  "MC_DisplacedConnectionRestore_Green.cfg DisplacedConnectionRestore.tla GREEN"
+  "MC_DisplacedConnectionRestore_Red_NoEvict.cfg DisplacedConnectionRestore.tla RED"
+  "MC_DisplacedConnectionRestore_Red_Closed.cfg DisplacedConnectionRestore.tla RED"
+  "MC_DisplacedConnectionRestore_Red_EvictAny.cfg DisplacedConnectionRestore.tla RED" # a newer connection is evicted (FreshKept)
+  "MC_DisplacedConnectionRestore_Red_Overwrite.cfg DisplacedConnectionRestore.tla RED" # the restore overwrites a newer connection (FreshKept)
   "MC_DocumentUpdateJournal_Green.cfg DocumentUpdateJournal.tla GREEN"
   "MC_DocumentUpdateJournal_Green_Outside.cfg DocumentUpdateJournal.tla GREEN"
   "MC_DocumentUpdateJournal_Red_Detached.cfg DocumentUpdateJournal.tla RED"
@@ -68,6 +73,8 @@ RUNS=(
   "MC_HeldPubsubRequest_Red_LateWatch.cfg HeldPubsubRequest.tla RED" # the wake-up is armed after the publish (Delivered)
   "MC_HeldPubsubRequest_Red_NoDedupe.cfg HeldPubsubRequest.tla RED" # a resend's duplicate reply reaches the caller (OneReplyEach)
   "MC_HeldPubsubRequest_Red_ResendLate.cfg HeldPubsubRequest.tla RED" # a resend goes out after the deadline (NoResendAfterDeadline)
+  "MC_FloatEquality_Green.cfg FloatEquality.tla GREEN"
+  "MC_FloatEquality_Red_Epsilon.cfg FloatEquality.tla RED" # the old tolerance equates distinct values (INV_ExactOnly)
   "MC_VerifiedClientGraph_Green.cfg VerifiedClientGraph.tla GREEN"
   "MC_VerifiedClientGraph_Red_SingleMutation.cfg VerifiedClientGraph.tla RED" # a multi-mutation request is accepted (INV_SingleMutation)
   "MC_VerifiedClientGraph_Red_Unencrypted.cfg VerifiedClientGraph.tla RED" # the request adds encryption outside the approved graph (INV_Unencrypted)
@@ -208,6 +215,10 @@ RUNS=(
   "MC_ChunkMerge_Red_ListedDeleteOnly.cfg ChunkMerge.tla RED" # merge holds back only a listed chunk's delete (INV_ListedChunksStay)
   "MC_ChunkMerge_Red_RefuseDelete.cfg ChunkMerge.tla RED" # merge refuses an early chunk delete for good (INV_DeletesNotLost)
   "MC_ChunkMerge_Red_UnstoredDelete.cfg ChunkMerge.tla RED" # a chunk delete merges before its chunk's first block (INV_ListedChunksStay)
+  "MC_ChunkMerge_Red_NoRebuild.cfg ChunkMerge.tla RED" # a merge keeps another peer's text and builds none of its chunks (INV_TextChunksStored)
+  "MC_ChunkMerge_Red_SignedChunkIds.cfg ChunkMerge.tla RED" # signed chunk blocks give one chunk a document per peer (INV_EachChunkOnce)
+  "MC_ChunkMerge_Green_Encrypted.cfg ChunkMerge.tla GREEN" # an encrypted text's chunks come with its article, not from the rebuild
+  "MC_ChunkMerge_Red_EncryptedNotShipped.cfg ChunkMerge.tla RED" # encrypted text skipped and its chunks not shipped (INV_TextChunksStored)
   "MC_ChunkRead_Green.cfg ChunkRead.tla GREEN" # a chunk shows only while its parent is live, readable and uses it
   "MC_ChunkRead_Red_NoDeletedCheck.cfg ChunkRead.tla RED" # deleted parent still shows its chunks (INV_ShownIsLiveAndReadable)
   "MC_ChunkRead_Red_NoHashCheck.cfg ChunkRead.tla RED" # forged chunk claims a real hash (INV_ShownIsTheText)
@@ -218,6 +229,10 @@ RUNS=(
   "MC_ChunkRead_Red_NoResolveCheck.cfg ChunkRead.tla RED" # a chunk of an unknown collection is served as public (INV_ServedIsReadable)
   "MC_ChunkRead_Red_TrustList.cfg ChunkRead.tla RED" # a padded list shows chunks of old text (INV_ShownIsTheText)
   "MC_ChunkRead_Red_NoOwnAppCheck.cfg ChunkRead.tla RED" # chunk collection's own app check skipped (INV_ShownPassesOwnApp)
+  "MC_ChunkRead_Red_DelegationScope.cfg ChunkRead.tla RED" # a chunk delegation gets the article's own keys (INV_DelegatedKeyInScope)
+  "MC_SelectedUpdate_Green.cfg SelectedUpdate.tla GREEN" # an update of a selected document loses only to a change of a field it depends on
+  "MC_SelectedUpdate_Red_ExpectedOnly.cfg SelectedUpdate.tla RED" # a written field is not compared and a change to it is written over (INV_NoSilentOverwrite)
+  "MC_SelectedUpdate_Red_Whole.cfg SelectedUpdate.tla RED" # every field is compared and an unrelated change loses the race (INV_LosesOnlyToItsFields)
   "MC_EndpointBind_Green.cfg EndpointBind.tla GREEN"
   "MC_EndpointBind_Red_Retain.cfg EndpointBind.tla RED"
   "MC_EndpointBind_Red_Address.cfg EndpointBind.tla RED"
@@ -366,6 +381,22 @@ RUNS=(
   "MC_OwnerObservation_Red_RegistrationSnapshot.cfg OwnerObservation.tla RED"
   "MC_OwnerObservation_Red_Visibility.cfg OwnerObservation.tla RED"
   "MC_OwnerObservation_Red_VisibilitySnapshot.cfg OwnerObservation.tla RED"
+  "MC_ParentChunks_Green.cfg ParentChunks.tla GREEN" # #2241: list and missing chunks in the parent's transaction, cascade delete
+  "MC_ParentChunks_Red_SeparateTxn.cfg ParentChunks.tla RED" # chunks created in a follow-up transaction (INV_ListedChunksExist)
+  "MC_ParentChunks_Red_NoCascade.cfg ParentChunks.tla RED" # delete leaves chunks behind (INV_NoChunkOfDeletedParent)
+  "MC_ParentChunks_Red_NoValidation.cfg ParentChunks.tla RED" # stale update after a delete creates chunks (INV_NoChunkOfDeletedParent)
+  "MC_ParentChunks_Red_CreateWithoutList.cfg ParentChunks.tla RED" # signed create blocks without the list, first update ties (INV_ListMatchesText)
+  "MC_ParentChunks_Red_NoLookup.cfg ParentChunks.tla RED" # a write creates chunks that arrived first, a valid create fails (INV_ValidWritesSucceed)
+  "MC_ChunkFollow_Green.cfg ChunkFollow.tla GREEN" # #2310: a chunk's push and sync follow its parent
+  "MC_ChunkFollow_Red_OwnFilter.cfg ChunkFollow.tla RED" # filter run on the chunk drops every chunk (INV_ChunksFollowParent)
+  "MC_ChunkFollow_Red_AllChunks.cfg ChunkFollow.tla RED" # chunks pushed unfiltered leak (INV_NoForeignChunks)
+  "MC_ChunkFollow_Red_SyncParentOnly.cfg ChunkFollow.tla RED" # doc sync without the chunks (INV_ChunksFollowParent)
+  "MC_ChunkFollow_Red_SyncHistory.cfg ChunkFollow.tla RED" # doc sync sends the old texts' chunks too (INV_SyncSendsCurrentChunks)
+  "MC_TruncateChunks_Green.cfg TruncateChunks.tla GREEN" # truncate empties chunks before parents
+  "MC_TruncateChunks_Red_ParentsFirst.cfg TruncateChunks.tla RED" # parents first strands a racing create (INV_LiveParentHasChunks)
+  "MC_TruncateChunks_Red_PurgeLeavesChunks.cfg TruncateChunks.tla RED" # purge leaves the chunks of purged articles (INV_PurgedHaveNoChunks)
+  "MC_ChunkMarkerHandoff_Green.cfg ChunkMarkerHandoff.tla GREEN" # a committed head keeps its marker registration past the request deadline
+  "MC_ChunkMarkerHandoff_Red_RequestOwned.cfg ChunkMarkerHandoff.tla RED" # the deadline drops the chunks not registered yet (INV_CommittedHeadOwned)
   "MC_StrictAccessRead_Green.cfg StrictAccessRead.tla GREEN"
   "MC_StrictAccessRead_Red_Partial.cfg StrictAccessRead.tla RED"
   "MC_StrictAccessRead_Red_DenialErrors.cfg StrictAccessRead.tla RED"
@@ -419,6 +450,18 @@ RUNS=(
   "MC_ChunkSettingsSync_Red_NoMergeGuard.cfg ChunkSettingsSync.tla RED"
   "MC_ChunkSettingsSync_Red_NoActivateGuard.cfg ChunkSettingsSync.tla RED"
   "MC_ChunkSettingsSync_Red_NoNameCheck.cfg ChunkSettingsSync.tla RED"
+  "MC_ProllySync_Green.cfg ProllySync.tla GREEN"
+  "MC_ProllySync_Red_NoFilter.cfg ProllySync.tla RED"
+  "MC_ProllySync_Red_StaleRoot.cfg ProllySync.tla RED"
+  "MC_ProllySync_Red_MissingOnly.cfg ProllySync.tla RED"
+  "MC_ProllySync_Red_KeepClaim.cfg ProllySync.tla RED"
+  "MC_ProllyNodeCache_Green.cfg ProllyNodeCache.tla GREEN" # nodes put are readable, the cache stays under budget, roots name stored nodes
+  "MC_ProllyNodeCache_Red_SkipPending.cfg ProllyNodeCache.tla RED" # a read skips the pending nodes (GetFinds)
+  "MC_ProllyNodeCache_Red_NoEvict.cfg ProllyNodeCache.tla RED" # the cache never evicts (CacheBounded)
+  "MC_ProllyNodeCache_Red_CacheHuge.cfg ProllyNodeCache.tla RED" # a node over budget empties the cache (HugeEvictsNothing)
+  "MC_ProllyNodeCache_Red_DropOnFail.cfg ProllyNodeCache.tla RED" # a failed write drops its nodes (GetFinds)
+  "MC_ProllyNodeCache_Red_PublishBeforeFlush.cfg ProllyNodeCache.tla RED" # a root goes out before its node is stored (PublishedStored)
+  "MC_ProllyNodeCache_Red_FinishAfterFail.cfg ProllyNodeCache.tla RED" # a build finishes after a failed put (BuildWhole)
   "MC_RetryPreparedInputs_Green.cfg RetryPreparedInputs.tla GREEN" # exact-context external answer survives commit retry
   "MC_RetryPreparedInputs_Red_Recompute.cfg RetryPreparedInputs.tla RED" # clearing prepared memo repeats provider work
   "MC_RetryPreparedInputs_Red_InAttempt.cfg RetryPreparedInputs.tla RED" # provider work runs under active transaction
@@ -535,9 +578,15 @@ RUNS=(
   "MC_Truncate_Red_Shape.cfg Truncate.tla RED" # filter shape check left out: a non-filter removes everything (INV_BadFilterRemovesNothing)
   "MC_Truncate_Red_FirstExhaust.cfg Truncate.tla RED" # the first chunk can exhaust before progress
   "MC_Truncate_Red_PartialRetry.cfg Truncate.tla RED" # retry exhaustion loses committed partial progress (INV_RetryExhaustionKeepsProgress)
+  "MC_Truncate_Red_Reread.cfg Truncate.tla RED" # page reread left out: a stale first read purges a document moved out of the filter (INV_FilteredRemovesOnlyCurrentMatches)
   "MC_Truncate_Red_ViewCache.cfg Truncate.tla RED" # #2703: view cache clear left out: a truncated view still shows its rows (INV_UnfilteredEmptiesView)
   "MC_Truncate_Red_SearchRecords.cfg Truncate.tla RED" # #2728: /se/ prefix delete left out: an encrypted search still finds truncated documents (INV_UnfilteredClearsSearchRecords)
   "MC_Truncate_Red_SearchNamespace.cfg Truncate.tla RED" # #2728: received search records in the raw root store survive the prefix delete (INV_UnfilteredClearsSearchRecords)
+  "MC_TruncateIndexCleanup_Green.cfg TruncateIndexCleanup.tla GREEN" # #3172: the cleanup reads the definition after the chunks and cleans every declared index, one prefix each
+  "MC_TruncateIndexCleanup_Red_Captured.cfg TruncateIndexCleanup.tla RED" # indexes taken from the collection the truncate began with: an index created mid-truncate keeps entries (INV_NoEntryForTruncatedDoc)
+  "MC_TruncateIndexCleanup_Red_Writable.cfg TruncateIndexCleanup.tla RED" # only writable indexes cleaned: a failed build keeps entries (INV_NoEntryForTruncatedDoc)
+  "MC_TruncateIndexCleanup_Red_SnapshotBackfill.cfg TruncateIndexCleanup.tla RED" # backfill pages read documents unvalidated: an entry commits after the cleanup (INV_NoEntryForTruncatedDoc)
+  "MC_TruncateIndexCleanup_Red_CollectionPrefix.cfg TruncateIndexCleanup.tla RED" # the collection-wide prefix: short ID 100 sweeps every collection's documents (INV_OtherCollectionIntact)
   "MC_NacOrder_Green.cfg NacOrder.tla GREEN" # #2680/#2700: a document write checks get-collection then its own permission, in its transaction, and a call with no identity acts as no one
   "MC_NacOrder_Red_SkipGet.cfg NacOrder.tla RED" # get-collection left out: a caller without it writes (INV_NoEffectWithoutPermission)
   "MC_NacOrder_Red_OwnFirst.cfg NacOrder.tla RED" # the write's own permission checked first: the refusal names it, not get-collection (INV_RefusalNamesGoFirst)
@@ -806,6 +855,8 @@ RUNS=(
   "MC_AdministrativeRelationship_Green.cfg AdministrativeRelationship.tla GREEN"
   "MC_AdministrativeRelationship_Red_Actor.cfg AdministrativeRelationship.tla RED" # INV_Actor
   "MC_AdministrativeRelationship_Red_Active.cfg AdministrativeRelationship.tla RED" # INV_Active
+  "MC_ChildPagePerParent_Green.cfg ChildPagePerParent.tla GREEN" # a child page is filled per parent, so later parents keep their children
+  "MC_ChildPagePerParent_Red_GlobalBound.cfg ChildPagePerParent.tla RED" # one global child bound lets the first parent starve the second (page B stays empty)
   "MC_AdministrativeRelationship_Red_NacBound.cfg AdministrativeRelationship.tla RED" # INV_NacBound
   "MC_AdministrativeRelationship_Red_Bypass.cfg AdministrativeRelationship.tla RED" # INV_Bypass
   "MC_AdministrativeRelationship_Red_Operation.cfg AdministrativeRelationship.tla RED" # INV_Operation
@@ -1046,6 +1097,9 @@ RUNS=(
   "MC_PushBacklog_Green_SharedCap.cfg MC_PushBacklog_Common.tla GREEN" # F24 with 3 workers, cap 2: several probes per unreachable peer, a reply mid-probe -> the shared cap still leaves a worker
   "MC_PushBacklog_Red_TwoDead.cfg MC_PushBacklog_Common.tla RED" # F24, code before the fix: a timeout frees the worker and nothing else, two dead peers take the pool back (INV_UnreachableLeaveAWorker)
   "MC_PushBacklog_Red_DemoteEveryTimeout.cfg MC_PushBacklog_Common.tla RED" # F24 review: every timeout demotes the queue, a peer that answers its next send loses it (ACT_DemoteAfterFailedProbe)
+  "MC_PushBacklog_Red_OfflineQueue.cfg MC_PushBacklog_Common.tla RED" # review: an offline probe drops the peer's queue (ACT_OfflineParkKeepsQueue)
+  "MC_PushBacklog_Green_OfflineDenied.cfg MC_PushBacklog_Common.tla GREEN" # review: a denied offline admission fails without parking (ACT_OfflineDenialFails)
+  "MC_PushBacklog_Red_OfflineAdmission.cfg MC_PushBacklog_Common.tla RED" # review: a denied offline admission parks anyway (ACT_OfflineDenialFails)
   "MC_PushBacklog_Red_SpawnPerItem.cfg MC_PushBacklog_Common.tla RED" # old broadcast: task spawned per (write,peer) before the semaphore -> resident work unbounded (INV_QueueBounded)
   "MC_PushBacklog_Red_PermitLeak.cfg MC_PushBacklog_Common.tla RED" # completing job keeps its worker slot -> pool decays (INV_PermitConservation)
   "MC_PushBacklog_Red_RetainHandles.cfg MC_PushBacklog_Common.tla RED" # SyncShutdownHandle retains every completed JoinHandle (INV_HandlesBounded)
@@ -1368,6 +1422,8 @@ RUNS=(
   "MC_DocumentSave_Green.cfg DocumentSave.tla GREEN" # a save refuses a deleted document and never forks
   "MC_DocumentSave_Red_NoDeletedCheck.cfg DocumentSave.tla RED" # a deleted document is written over and forks (INV_NoFork)
   "MC_DocumentSave_Red_SplitTxn.cfg DocumentSave.tla RED" # a delete between lookup and write forks the save (INV_NoFork)
+  "MC_ChildLimitPaging_Green.cfg ChildLimitPaging.tla GREEN" # each ordered child page is collected per parent
+  "MC_ChildLimitPaging_Red_UnorderedStop.cfg ChildLimitPaging.tla RED" # an unordered early stop loses a later parent's page (INV_EveryParentHasPage)
 )
 
 parallelism="${TLA_JOBS:-4}"

@@ -1,5 +1,7 @@
 use super::*;
-use crate::mapper::{CursorParams, Field, Filter, OrderBy, OrderCondition, OrderDirection};
+use crate::mapper::{
+    CursorParams, Field, Filter, OrderBy, OrderCondition, OrderDirection, Similarity,
+};
 use crate::planner::index_selection::IndexScanType;
 use schema::{FieldDescription, FieldKind, IndexDescription, IndexedFieldDescription};
 
@@ -120,6 +122,46 @@ fn make_test_collection_with_filter_and_order_indexes() -> CollectionVersion {
         auto_generated: false,
         fields: vec![IndexedFieldDescription {
             name: "age".to_string(),
+            descending: false,
+        }],
+    })
+}
+
+fn make_vector_collection() -> CollectionVersion {
+    CollectionVersion::new(
+        "Users",
+        "v1",
+        "coll-vectors",
+        vec![
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "age", FieldKind::int(), schema::CType::LwwRegister),
+            FieldDescription::new(
+                "3",
+                "embedding",
+                FieldKind::float32_array(),
+                schema::CType::LwwRegister,
+            ),
+        ],
+    )
+    .with_index(IndexDescription {
+        id: 1,
+        name: "embedding_idx".to_string(),
+        unique: false,
+        kind: Some(schema::IndexKind::Vector(schema::VectorIndexDescription {
+            algorithm: schema::VectorAlgorithm::Hnsw,
+            metric: schema::DistanceMetric::Cosine,
+            dimensions: 3,
+            hnsw: Some(schema::HnswParams::default()),
+            ..Default::default()
+        })),
+        auto_generated: false,
+        fields: vec![IndexedFieldDescription {
+            name: "embedding".to_string(),
             descending: false,
         }],
     })
@@ -388,6 +430,89 @@ fn test_plan_no_index_for_non_indexed_field() {
 }
 
 #[test]
+fn a_filtered_similarity_query_warns_that_its_vector_index_is_unused() {
+    workers::block_on(async {
+        let planner = Planner::new(vec![make_vector_collection()])
+            .with_fetcher(std::sync::Arc::new(crate::test_utils::MockFetcher::new()));
+
+        let filter =
+            Filter::from_conditions(map([("age".to_string(), serde_json::json!({"_gt": 15}))]));
+        let select = Select::new("Users")
+            .with_similarity(Similarity::new("embedding", vec![1.0, 0.0, 0.0]).with_alias("sim"))
+            .with_filter(filter)
+            .with_limit(2)
+            .with_order(
+                OrderBy::new().with_condition(OrderCondition::new("sim", OrderDirection::Desc)),
+            );
+
+        let result = planner.plan_with_index_info(&select).unwrap();
+
+        assert_eq!(result.warnings.len(), 1);
+        let warning = &result.warnings[0];
+        assert_eq!(warning.code, "VECTOR_INDEX_UNUSED");
+        let detail = warning.detail.as_ref().unwrap();
+        assert_eq!(detail["field"], "embedding");
+        assert_eq!(detail["reason"], "filter");
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_review_and_wrapped_filter_warns_that_its_vector_index_is_unused() {
+    workers::block_on(async {
+        let planner = Planner::new(vec![make_vector_collection()])
+            .with_fetcher(std::sync::Arc::new(crate::test_utils::MockFetcher::new()));
+
+        let filter = Filter::from_conditions(map([(
+            "_and".to_string(),
+            serde_json::json!([{ "age": { "_gt": 15 } }]),
+        )]));
+        let select = Select::new("Users")
+            .with_similarity(Similarity::new("embedding", vec![1.0, 0.0, 0.0]).with_alias("sim"))
+            .with_filter(filter)
+            .with_limit(2)
+            .with_order(
+                OrderBy::new().with_condition(OrderCondition::new("sim", OrderDirection::Desc)),
+            );
+
+        let result = planner.plan_with_index_info(&select).unwrap();
+
+        assert_eq!(result.warnings.len(), 1);
+        let warning = &result.warnings[0];
+        assert_eq!(warning.code, "VECTOR_INDEX_UNUSED");
+        let detail = warning.detail.as_ref().unwrap();
+        assert_eq!(detail["field"], "embedding");
+        assert_eq!(detail["reason"], "filter");
+    })
+    .unwrap()
+}
+
+#[test]
+fn an_empty_filter_is_not_treated_as_a_scalar_filter() {
+    workers::block_on(async {
+        let planner = Planner::new(vec![make_vector_collection()])
+            .with_fetcher(std::sync::Arc::new(crate::test_utils::MockFetcher::new()));
+
+        let select = Select::new("Users")
+            .with_similarity(Similarity::new("embedding", vec![1.0, 0.0, 0.0]).with_alias("sim"))
+            .with_filter(Filter::from_conditions(map([])))
+            .with_limit(2)
+            .with_order(
+                OrderBy::new().with_condition(OrderCondition::new("sim", OrderDirection::Desc)),
+            );
+
+        let result = planner.plan_with_index_info(&select).unwrap();
+
+        assert_eq!(result.warnings.len(), 1);
+        assert_eq!(
+            result.warnings[0].detail.as_ref().unwrap()["reason"],
+            "unsupportedFetcher"
+        );
+    })
+    .unwrap()
+}
+
+#[test]
 fn test_plan_uses_index_for_ne_filter() {
     workers::block_on(async {
         let planner = Planner::new(vec![make_test_collection_with_index()]);
@@ -624,6 +749,81 @@ fn test_plan_relation_with_limit() {
     .unwrap()
 }
 
+// ========================================================================
+// Nested Relation Filter Tests
+// ========================================================================
+#[test]
+fn test_plan_one_to_many_child_limit_does_not_bound_index_scan() {
+    workers::block_on(async {
+        let planner = Planner::new(vec![make_users_collection(), make_posts_collection()]);
+
+        let posts_collection = planner.collection("posts").unwrap();
+        let posts_collection =
+            CollectionVersion::clone(posts_collection).with_index(IndexDescription {
+                id: 1,
+                name: "posts_title_ASC".to_string(),
+                unique: false,
+                kind: None,
+                auto_generated: false,
+                fields: vec![IndexedFieldDescription {
+                    name: "title".to_string(),
+                    descending: false,
+                }],
+            });
+        let planner = Planner::new(vec![make_users_collection(), posts_collection]);
+
+        let posts_select = Select::new("posts")
+            .with_field_name("posts")
+            .with_field(Field::new("title"))
+            .with_order(OrderBy {
+                conditions: vec![OrderCondition {
+                    fields: vec!["title".to_string()],
+                    direction: OrderDirection::Asc,
+                }],
+            })
+            .with_limit(1);
+        let select = Select::new("users")
+            .with_field(Field::new("name"))
+            .with_select(posts_select);
+
+        let result = planner.plan_with_index_info(&select).unwrap();
+        let join = result.plan.source().unwrap();
+        let explain = join.explain();
+        let index_scan = find_index_scan(&explain).expect("indexed child scan expected");
+        assert_eq!(index_scan["indexLimit"], serde_json::Value::Null);
+        assert_eq!(index_scan["indexOffset"], 0);
+    })
+    .unwrap()
+}
+
+#[test]
+fn ordered_index_scan_reserves_offset_for_limit_node() {
+    workers::block_on(async {
+        let planner = Planner::new(vec![make_test_collection_with_index()]);
+        let collection = planner.collection("Users").unwrap();
+        let order = OrderBy::new().with_condition(OrderCondition::new("age", OrderDirection::Asc));
+        let select = Select::new("Users")
+            .with_field(Field::new("name"))
+            .with_order(order)
+            .with_limit_offset(3, 2);
+
+        let (params, provides_ordering) = planner.try_select_index(&select, collection).unwrap();
+
+        assert!(provides_ordering);
+        assert_eq!(params.limit, Some(5));
+        assert_eq!(params.offset, 0);
+    })
+    .unwrap()
+}
+
+fn find_index_scan(value: &serde_json::Value) -> Option<&serde_json::Value> {
+    if value.get("indexName").is_some() {
+        return Some(value);
+    }
+    value
+        .as_object()
+        .and_then(|object| object.values().find_map(find_index_scan))
+}
 // ========================================================================
 // Nested Relation Filter Tests
 // ========================================================================

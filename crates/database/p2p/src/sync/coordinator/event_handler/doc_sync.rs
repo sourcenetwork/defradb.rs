@@ -11,6 +11,7 @@ use super::super::SyncCoordinator;
 use crate::error::{Error, Result};
 use crate::message::{DocSyncItem, DocSyncReply};
 use crate::signing::sign_with_transport;
+use crate::sync::doc_sync_ids::{check_doc_id_limit, with_followers};
 use crate::transport::{P2PTransport, PeerId};
 
 impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
@@ -130,18 +131,14 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         self.check_peer_is_replicator(&peer_id).await?;
 
         let max_doc_ids = self.runtime.max_doc_sync_request_doc_ids;
-        if request.doc_ids.len() > max_doc_ids {
+        if let Err(error) = check_doc_id_limit(request.doc_ids.len(), max_doc_ids) {
             tracing::warn!(
                 peer_id = %peer_id,
                 doc_ids_count = request.doc_ids.len(),
                 max = max_doc_ids,
                 "DocSyncRequest exceeds configured doc ID limit, rejecting"
             );
-            return Err(Error::InvalidConfig(format!(
-                "DocSyncRequest contains {} doc IDs, exceeding the limit of {}",
-                request.doc_ids.len(),
-                max_doc_ids,
-            )));
+            return Err(error);
         }
 
         tracing::debug!(
@@ -152,7 +149,10 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         );
 
         let mut results: Vec<DocSyncItem> = Vec::new();
-        for doc_id in &request.doc_ids {
+        for doc_id in
+            with_followers(self.subscriptions.head_provider.as_ref(), &request.doc_ids).await
+        {
+            let doc_id = &doc_id;
             tracing::trace!(doc_id = %doc_id, "Looking up heads for document");
             match self
                 .subscriptions
@@ -280,7 +280,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                             tracing::debug!(
                                 cid = %cid,
                                 doc_id = %item.doc_id,
-                                "Need to fetch block via Bitswap"
+                                "Need to fetch block via block sync"
                             );
                             cids_to_fetch.push((cid, item.doc_id.clone()));
                         }

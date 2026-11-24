@@ -13,9 +13,9 @@ use super::config::DagSyncConfig;
 use super::plan::SyncPlan;
 use super::state::DagSyncState;
 
-/// DAG synchronizer that coordinates Bitswap block fetching.
+/// DAG synchronizer that coordinates block fetching.
 ///
-/// This doesn't directly perform Bitswap operations (those happen in the
+/// This doesn't directly perform transport operations (those happen in the
 /// behaviour), but provides the logic for determining what blocks need
 /// to be fetched and tracking sync state.
 pub struct DagSync {
@@ -60,7 +60,7 @@ impl DagSync {
 
     /// Prepare a sync operation for a block and its links.
     ///
-    /// Returns the CIDs that need to be fetched via Bitswap.
+    /// Returns the CIDs that need to be fetched via block sync.
     /// Call this after receiving a block via PushLog.
     ///
     /// # Arguments
@@ -148,9 +148,9 @@ impl DagSync {
         providers.into_iter().collect()
     }
 
-    /// Handle completion of a Bitswap sync query.
+    /// Handle completion of a block-sync sync query.
     ///
-    /// Call this when Bitswap reports a query completed (success or failure).
+    /// Call this when block sync reports a query completed (success or failure).
     ///
     /// # Arguments
     ///
@@ -183,13 +183,13 @@ impl DagSync {
         }
     }
 
-    /// Handle a block being received via Bitswap.
+    /// Handle a block being received via block sync.
     ///
-    /// Call this when Bitswap stores a block. Returns the block's links
+    /// Call this when block sync stores a block. Returns the block's links
     /// so the caller can check if more blocks need fetching.
     pub async fn handle_block_received(&self, cid: Cid) {
         // Mark as synced
         self.state.complete_sync(cid).await;
-        debug!("Block received via Bitswap: {}", cid);
+        debug!("Block received via block sync: {}", cid);
     }
 }

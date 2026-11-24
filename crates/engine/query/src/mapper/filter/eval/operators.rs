@@ -17,7 +17,7 @@ pub fn values_equal(a: &JsonValue, b: &JsonValue) -> bool {
             if let (Some(a), Some(b)) = (a.as_i64(), b.as_i64()) {
                 a == b
             } else if let (Some(a), Some(b)) = (a.as_f64(), b.as_f64()) {
-                (a - b).abs() < f64::EPSILON
+                a == b
             } else {
                 false
             }
@@ -367,4 +367,23 @@ pub fn like_pattern_match(text: &str, pattern: &str) -> bool {
     }
 
     dp[p_len]
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::values_equal;
+
+    #[test]
+    fn float_equality_is_exact() {
+        assert!(values_equal(&json!(0.0), &json!(0.0)));
+        assert!(!values_equal(&json!(1e-300), &json!(0.0)));
+        assert!(!values_equal(&json!(2.7755575615628914e-17), &json!(0.0)));
+        assert!(!values_equal(
+            &json!(1e-300),
+            &json!(2.7755575615628914e-17)
+        ));
+        assert!(values_equal(&json!(1.0), &json!(1)));
+    }
 }

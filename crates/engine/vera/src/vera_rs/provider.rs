@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::provider::{
-    AcpLightClientStatus, ActorRelationshipQuery, ProviderError, ProviderPolicyInfo, SubjectRef,
-    VeraProvider,
+    AcpLightClientStatus, ActorRelationshipQuery, AssignmentQuery, CertifiedAssignments,
+    ProviderError, ProviderPolicyInfo, SubjectRef, VeraProvider,
 };
 use crate::tuning::AcpTuning;
 use acp_light_client::{
@@ -35,6 +35,7 @@ use super::signer::{admission, DelegationSigner, Secp256k1Signer};
 use super::transport::RpcTransport;
 use super::worker::NativeWorker;
 
+mod assignments;
 #[cfg(test)]
 mod audience_tests;
 mod create_policy;
@@ -901,6 +902,13 @@ impl VeraProvider for VeraRsProvider {
             Some(owner) => (true, did_spelling::defra(owner.0.as_str()).into_owned()),
             None => (false, String::new()),
         })
+    }
+
+    async fn read_certified_assignments(
+        &self,
+        query: AssignmentQuery<'_>,
+    ) -> Result<CertifiedAssignments, ProviderError> {
+        self.admitted_read(assignments::read(self, query)).await
     }
 
     async fn query_actor_relationship(

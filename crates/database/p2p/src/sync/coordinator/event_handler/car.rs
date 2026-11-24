@@ -506,7 +506,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             self.manager.diagnostics.record_car_empty_response();
             // Peer replied with a parseable but block-less CAR (provider
             // had nothing for this root). Debug: transport layer surfaces
-            // the final "no provider succeeded" outcome via BitswapComplete
+            // the final "no provider succeeded" outcome via BlockSyncComplete
             // (see issue #858).
             tracing::debug!(
                 root_cid = %root_cid,

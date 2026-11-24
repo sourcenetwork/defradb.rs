@@ -85,6 +85,8 @@ pub mod testutil;
 pub mod topics;
 pub mod tracked_task;
 pub mod transport;
+#[cfg(test)]
+mod transport_kind_tests;
 #[cfg(feature = "libp2p-transport")]
 pub mod two_stream;
 
@@ -112,7 +114,7 @@ pub use explicit_replay::{
 #[cfg(feature = "libp2p-transport")]
 pub use host::{
     convert_host_event, HostCommand, HostEvent, HostEventReceiver, Libp2pTransport, P2PHost,
-    P2PHostConfig, P2PHostHandle, ResourceLimits, ResponseChannel,
+    P2PHostConfig, P2PHostHandle, ResolverSource, ResourceLimits, ResponseChannel,
 };
 pub use message::{Message, MetaData, PushLogBroadcast, PushLogReply, PushLogRequest};
 #[cfg(feature = "libp2p-transport")]

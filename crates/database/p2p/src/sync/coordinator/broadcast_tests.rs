@@ -522,6 +522,7 @@ async fn fanout_registration_failure_is_peer_local() {
         })
     };
     for peer in ["fanout-a", "fanout-b", "fanout-c"] {
+        coordinator.peer_state().peer_connected(peer);
         transport
             .create_replicator(
                 &PeerId::new(peer.to_string()),
@@ -635,6 +636,7 @@ fn a_replicator_with_no_collections_gets_no_push_job() {
                 block: Bytes::from_static(b"block"),
                 doc_id: "doc1".to_string(),
                 collection_id: "collection1".to_string(),
+                decided_in: "collection1".to_string(),
                 creator: "creator".to_string(),
                 document: None,
             })

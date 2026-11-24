@@ -28,18 +28,12 @@ impl super::Planner {
             return None;
         }
 
-        let limit = select.limit.as_ref().and_then(|l| l.limit);
-        let offset = select.limit.as_ref().map(|l| l.offset).unwrap_or(0);
-
-        // A relation filter is joined after the parent scan. Do not stop that
-        // scan at the requested limit: the first ordered rows may not match
-        // the relation and would be rejected only after the limit node.
-        let has_relation_filter = select
-            .filter
-            .as_ref()
-            .is_some_and(Filter::has_relation_filters);
-        let scan_limit = if has_relation_filter { None } else { limit };
-        let scan_offset = if has_relation_filter { 0 } else { offset };
+        // Rows dropped or merged after the scan would end the page short.
+        let page_follows_scan = select.filter.is_none() && select.group_by.is_none();
+        let (limit, offset) = match &select.limit {
+            Some(page) if page_follows_scan => (page.limit, page.offset),
+            _ => (None, 0),
+        };
 
         // Try filter-based index selection.
         // Relation fields in the filter (e.g., `owner: {name: {_eq: "X"}}`) are
@@ -93,8 +87,8 @@ impl super::Planner {
                     best_index,
                     select.order_by.as_ref(),
                     &collection.fields,
-                    scan_limit,
-                    scan_offset,
+                    limit,
+                    offset,
                 ) {
                     let provides_ordering = select
                         .order_by
@@ -120,8 +114,7 @@ impl super::Planner {
             for index in &collection.indexes {
                 let (can_order, needs_reverse) = can_be_ordered_by_index(order_by, index);
                 if can_order {
-                    let params =
-                        order_index_scan_params(index, needs_reverse, scan_limit, scan_offset);
+                    let params = order_index_scan_params(index, needs_reverse, limit, offset);
                     return Some((params, true));
                 }
             }
@@ -165,7 +158,10 @@ impl super::Planner {
                     limit,
                     offset,
                 ) {
-                    return Some((params, true));
+                    let provides_ordering = order_by
+                        .map(|order| can_be_ordered_by_filtered_index(order, best_index, filter).0)
+                        .unwrap_or(false);
+                    return Some((params, provides_ordering));
                 }
             }
         }
@@ -191,15 +187,17 @@ fn order_index_scan_params(
     limit: Option<u64>,
     offset: u64,
 ) -> IndexScanParams {
+    let fetch_limit = limit.map(|limit| offset.saturating_add(limit));
     IndexScanParams {
         index_name: index.name.clone(),
         scan_type: IndexScanType::PrefixScan {
             prefix_values: vec![],
             reverse: needs_reverse,
         },
-        // Pass limit/offset for early termination when the index provides ordering.
-        limit,
-        offset,
+        // The offset belongs to the LimitNode above the scan. Give the scan a
+        // fetch budget that covers the rows that node will skip.
+        limit: fetch_limit,
+        offset: 0,
         value_filter: None,
         cursor_seek: None,
     }

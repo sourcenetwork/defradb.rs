@@ -13,3 +13,14 @@ testo collection_version::updates::add::simple::collection_version_updates_add_s
 # Defra.rs should return an error for a view source query with more than one top-level selection; Go silently keeps the first selection
 # and creates the view (undesirable).
 testo view::simple::with_multiple_sources::add_view_with_two_source_selections_fails_and_creates_no_view
+# With an index on the string, Go's `_like: "%"` drops every document; Rust returns the ones that have the field, as without the index.
+testo index::like_nil::like_skips_a_document_without_the_field
+# Go's JSON index never sees a top-level empty array, so `_all` misses it; Rust finds it, as without the index.
+testo index::json_array_filter::all_keeps_an_empty_array
+# With an index on the related field, Go returns ties in index order and ignores the second order condition; Rust applies it.
+testo index::query_with_relation_tie_order::a_page_of_ties_follows_the_second_condition_with_an_index
+testo index::query_with_relation_tie_order::ties_follow_the_second_condition_with_an_index
+# Rust re-runs an encrypted index change that loses a race, so concurrent changes on different fields all land; Go answers
+# the loser with "transaction conflict. Please retry".
+testo txn::new_encrypted_index_concurrent::a_concurrent_encrypted_index_delete_and_adds_all_land
+testo txn::new_encrypted_index_concurrent::concurrent_encrypted_index_adds_all_land

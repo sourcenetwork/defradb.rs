@@ -98,12 +98,20 @@ jobs:
               p2p: want('p2p'),
             }));
 
-            // A pull request runs testo through the in-process client only, so a
-            // green pull request has run the scenarios; the queue runs every client.
-            const testoClients = ['in-process', ...['rust-http', 'go-http', 'cli', 'legacy']
+            // A pull request runs testo through the in-process client, plain and
+            // with every field indexed (the secondary-index multiplier), so a green
+            // pull request has run the scenarios; the queue runs every client.
+            const testoClients = ['in-process', 'in-process-secondary-index', ...['rust-http', 'go-http', 'cli', 'legacy']
               .filter((client) => want(`testo-${client}`))];
             core.setOutput('testo_clients', testoClients.join(','));
-            core.setOutput('testo_matrix', JSON.stringify({ include: testoClients.map((client) => ({ client, shard: 1 })) }));
+            core.setOutput('testo_matrix', JSON.stringify({
+              include: testoClients.map((client) => ({
+                client,
+                defra_client: client === 'in-process-secondary-index' ? 'in-process' : client,
+                multipliers: client === 'in-process-secondary-index' ? 'secondary-index' : '',
+                shard: 1,
+              })),
+            }));
 
             const suites = [
               { suite: 'signed-docs', needs_go: false, multipliers: 'signed-docs' },
@@ -247,9 +255,29 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --workspace --no-deps --keep-going
 
+  # Mirrors `just check-c-api`: defra.h as this change generates it against the
+  # one its base generates.
+  c-api:
+    name: C API compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cbindgen,just
+      - name: Test the checker
+        run: python3 .github/scripts/test-check-c-api.py
+      - name: Check the C API against the base
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+        run: |
+          git fetch --depth=1 origin "$BASE"
+          bash .github/scripts/check-c-api.sh "$BASE"
+
   lint:
     name: Lint
-    needs: [ci-scope, lint-default, feature-checks, dependency-checks, docs]
+    needs: [ci-scope, lint-default, feature-checks, dependency-checks, docs, c-api]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -260,6 +288,7 @@ jobs:
           FEATURES: ${{ needs.feature-checks.result }}
           DEPENDENCIES: ${{ needs.dependency-checks.result }}
           DOCS: ${{ needs.docs.result }}
+          C_API: ${{ needs.c-api.result }}
         run: |
           test "$DEFAULT" = success
           # Skipped on a pull request without its ci: label; the merge queue runs them. Only then: a
@@ -267,6 +296,7 @@ jobs:
           test "$FEATURES" = success || { test "$FEATURES" = skipped && test "$RUN_FEATURES" = false; }
           test "$DEPENDENCIES" = success
           test "$DOCS" = success
+          test "$C_API" = success
 
   unit-tests:
     name: Unit tests
@@ -870,6 +900,7 @@ jobs:
     env:
       DEFRA_RUST_BINARY: ${{ github.workspace }}/target/ci/defradb
       DEFRA_IROH_BINARY: ${{ github.workspace }}/target/ci/defradb-iroh
+      DEFRA_MULTIPLIERS: ${{ matrix.multipliers || '' }}
       DEFRA_E2E_KEEP: '1'
       # A failing scenario shows its in-process nodes' P2P trace.
       DEFRA_TEST_TRACE: p2p=debug,defra_p2p_adapter=debug,warn
@@ -921,6 +952,7 @@ jobs:
       - name: Pick the tests
         env:
           CLIENT: ${{ matrix.client }}
+          DEFRA_CLIENT_NAME: ${{ matrix.defra_client || matrix.client }}
           PIN: ${{ needs.go-defradb.outputs.pin }}
         run: |
           chmod +x target/ci/defradb target/ci/defradb-iroh
@@ -932,7 +964,7 @@ jobs:
           if [ "$CLIENT" = legacy ]; then
             echo "FILTER=$LEGACY_FILTER" >> "$GITHUB_ENV"
           else
-            echo "DEFRA_CLIENT=$CLIENT" >> "$GITHUB_ENV"
+            echo "DEFRA_CLIENT=$DEFRA_CLIENT_NAME" >> "$GITHUB_ENV"
             if [ "$CLIENT" = go-http ]; then
               echo "FILTER=($TESTO_FILTER) $GO_HTTP_FILTER" >> "$GITHUB_ENV"
             else
@@ -1052,3 +1084,20 @@ jobs:
             } else {
               await github.rest.issues.createComment({ owner, repo, issue_number, body });
             }
+
+  # The one required check besides Validate title: fails when any job it needs
+  # failed or was cancelled. A job skipped by ci-scope passes; a job skipped
+  # because its dependency failed shows that dependency's failure here. Testo
+  # shards report through Testo summary, which judges their known failures.
+  merge-gate:
+    name: Merge gate
+    needs: [ci-scope, lint, build, wasm-check, lean-conformance, conformance, integration, p2p-linux, testo-summary]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every needed job to pass or be skipped by scope
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          failed=$(jq -r 'to_entries[] | select(.value.result == "failure" or .value.result == "cancelled") | "\(.key)=\(.value.result)"' <<<"$NEEDS")
+          if [ -n "$failed" ]; then echo "::error::Not green: $(echo $failed)"; exit 1; fi

@@ -107,7 +107,8 @@ crates/
     ├── workers/            # Thread-per-core worker pool
     ├── keyring/            # Key storage
     ├── cursor/             # Opaque cursor token codec for GraphQL pagination
-    └── defra-version/      # Version metadata and Go compat tracking
+    ├── defra-version/      # Version metadata and Go compat tracking
+    └── prolly/             # History-independent prolly tree: build, insert/remove, diff
 
 tools/
 ├── apple/                  # Apple embedding: .xcframework build + Swift import smoke test
@@ -385,6 +386,15 @@ that is correct but slower is not done.
 - Read-only queries decide ACP at the same snapshot as their rows. Remote ACP (Vera) stays at the network edge, with
   its staleness documented.
 
+### Requirements and tests
+
+- A change to what DefraDB does (a fix or a feature) starts in `reqs/`: the requirements it fulfils or adds say what
+  done means, error text included, before the code changes (`reqs/README.md`).
+- Every requirement a change adds or fulfils has a testo test under `tools/integration-test/tests/testo/` tagged with its
+  ID. Unit tests alone do not cover a behaviour change; a new integration test is always a testo test.
+- Exempt: refactors, speedups with identical results, CI, docs, proofs, and internal code no client can reach. A PR
+  that relies on the exemption says why.
+
 ### Proofs
 
 - No logic change without its models. A change to what the code does ships with its TLA+ model and its Lean proof
@@ -491,7 +501,7 @@ Legacy areas with submodules:
 | Encryption | `encryption::` | acp, block_verify, cross_runtime_p2p, index, key_management, se_cross_runtime |
 | Identity | `identity::` | keyring_dev_mode, keyring_lifecycle, lifecycle, negative, node_identity, types |
 | Backup | `backup::` | dev_mode, dump, purge, restore |
-| Vera | `vera::` | acp_tuning, compartments, encryption_acp, p2p_acp, policy_lifecycle, resilience, smoke |
+| Vera | `vera::` | acp_tuning, chunk_access, compartments, encryption_acp, p2p_acp, policy_lifecycle, resilience, smoke |
 
 Single-purpose legacy areas, one file each:
 

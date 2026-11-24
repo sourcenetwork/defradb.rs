@@ -128,12 +128,13 @@ impl ChunkGate {
         chunked: &ChunkedField,
         parent_id: &str,
     ) -> Result<ParentDecision> {
-        let Some(hashes) = get_projected(fetcher, parent, parent_id, &parent_fields(chunked))
+        let Some(doc) = get_projected(fetcher, parent, parent_id, &parent_fields(chunked))
             .await?
-            .and_then(|doc| parent_hashes(&doc, chunked))
+            .filter(|doc| !doc.is_deleted())
         else {
             return Ok(None);
         };
+        // The cut is the costly step, so a reader who may not see the parent never pays for it.
         if let Some(acp) = &self.parent_acp {
             if !acp.allows(parent_id).await? {
                 return Ok(None);
@@ -144,6 +145,6 @@ impl ChunkGate {
                 return Ok(None);
             }
         }
-        Ok(Some(Arc::new(hashes)))
+        Ok(parent_hashes(&doc, chunked).map(Arc::new))
     }
 }

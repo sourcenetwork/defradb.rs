@@ -29,6 +29,14 @@ pub fn classify_schema_fields(schema: &CollectionVersion) -> Vec<FieldInfo> {
         if field.name == "_docID" {
             continue;
         }
+        // Import rebuilds a `@chunk` list from its text.
+        if schema
+            .chunked_fields
+            .iter()
+            .any(|chunked| chunked.list_field() == field.name)
+        {
+            continue;
+        }
 
         match &field.kind {
             FieldKind::Scalar(_) | FieldKind::ScalarArray(_) if field.relation_name.is_none() => {

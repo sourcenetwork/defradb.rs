@@ -20,8 +20,9 @@
 // without an issue or whose issue is closed, on a test a shard reported as an
 // unexpected failure or as selected but left no result, on a listed test no
 // shard selected (renamed, removed or filtered out: "missing"), and on a
-// client with a shard that never reported. It warns on a listed test that
-// passed ("fixed"), compares each list's size with the base branch's copy,
+// client with a shard that never reported, and on a listed test that passed
+// ("fixed"), so the change that fixes a test removes its entry before it
+// merges (#3207). It compares each list's size with the base branch's copy
 // and warns on every entry the pull request adds.
 //
 // The deliberate divergences list names go-http tests that fail because
@@ -29,7 +30,7 @@
 // only. Each entry is `<binary> <test>`, with a `#` comment above it saying why, and
 // needs no issue. A listed failure counts as `divergent`; otherwise it is
 // checked like a known failure: a listed test that passes ("converged: remove
-// from the list") fails its shard and warns in `summary`, a listed test a shard
+// from the list") fails its shard and `summary`, a listed test a shard
 // selected but left no result for, or that no shard selected, fails, and every
 // entry the pull request adds is warned on. A test listed both here and in
 // go-http's known-failures list fails `summary`.
@@ -40,7 +41,7 @@ import { join } from "node:path";
 const UNSUPPORTED = /unsupported op: ([^\n\r]*)/;
 const ENTRY = /^(\S+)\s+(\S+)\s+#(\d+)\s*$/;
 const DIVERGENCE = /^(\S+)\s+(\S+)(?:\s+.*)?$/;
-const CLIENTS = ["in-process", "rust-http", "go-http", "cli", "legacy"];
+const CLIENTS = ["in-process", "in-process-secondary-index", "rust-http", "go-http", "cli", "legacy"];
 /// The one client the deliberate divergences list applies to.
 const DIVERGENT_CLIENT = "go-http";
 const COLUMNS = ["pass", "fail", "known", "divergent", "unsupported"];
@@ -492,12 +493,13 @@ function summary(directory: string, knownDir: string, divergencesPath?: string):
     for (const test of merged.unexpected) console.log(`::error::${client}: ${test} failed and is not in its known-failures list`);
     for (const test of merged.missing) console.log(`::error::${client}: ${test} was selected but left no result`);
     errors += merged.unexpected.length + merged.missing.length;
-    // A known failure that passed fails its shard, but not the summary: a
-    // flip must not block the queue. The warning keeps the list shrinking.
-    for (const test of merged.fixed) console.log(`::warning::${client}: ${test} passed. fixed: remove it from its known-failures list`);
+    // A listed test that passed fails the summary too: as a warning, #3137
+    // merged with two fixed go-http entries and left main's shard red (#3207).
+    for (const test of merged.fixed) console.log(`::error::${client}: ${test} passed. fixed: remove it from its known-failures list`);
     for (const test of merged.converged) {
-      console.log(`::warning::${client}: ${test} passed. converged: remove it from the deliberate divergences list`);
+      console.log(`::error::${client}: ${test} passed. converged: remove it from the deliberate divergences list`);
     }
+    errors += merged.fixed.length + merged.converged.length;
   }
   write(
     "`fail` is unexpected, `known` is listed in `.github/testo/known-failures/<client>.txt`, " +

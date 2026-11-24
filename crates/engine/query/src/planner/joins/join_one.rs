@@ -50,6 +50,12 @@ impl Planner {
         let parent_relation_filter_for_child = &child.parent_relation_filter_for_child;
 
         let mut join_provides_ordering: Option<bool> = None;
+        // The child scan orders by the first condition only, so later ones still need a sort.
+        let join_orders_parent = child.child_scan_orders_parent
+            && select
+                .order_by
+                .as_ref()
+                .is_some_and(|order| order.conditions.len() == 1);
 
         // Find the other side of the relation
         let target_relation_field = if let Some(rel_name) = &relation_field.relation_name {
@@ -114,13 +120,41 @@ impl Planner {
             child_relation_index,
         )?;
 
-        // Build RelationFilter from the already-extracted parent relation filter
-        let relation_filter = parent_relation_filter_for_child
-            .as_ref()
-            .map(|nested_filter| RelationFilter {
-                relation_field: relation_field_name.to_string(),
-                conditions: nested_filter.clone(),
-            });
+        // A secondary relation ID condition names the child's `_docID`, even when
+        // the relation object is also selected. A primary foreign-key condition
+        // remains a parent-scan filter. Attach only secondary conditions to this
+        // existing join instead of wrapping the joined plan in another one.
+        let secondary_id_filter = (!relation_field.is_primary).then_some(()).and_then(|()| {
+            select
+                .filter
+                .as_ref()
+                .and_then(|filter| {
+                    filter
+                        .conditions()
+                        .get(&schema::CollectionVersion::relation_id_field_name(
+                            relation_field_name,
+                        ))
+                })
+                .map(|condition| {
+                    Filter::from_conditions(serde_json::Map::from_iter([(
+                        "_docID".to_string(),
+                        condition.clone(),
+                    )]))
+                })
+        });
+        let relation_conditions = secondary_id_filter.into_iter().fold(
+            parent_relation_filter_for_child.clone(),
+            |conditions, secondary_id| {
+                Some(match conditions {
+                    Some(conditions) => conditions.and(secondary_id),
+                    None => secondary_id,
+                })
+            },
+        );
+        let relation_filter = relation_conditions.map(|conditions| RelationFilter {
+            relation_field: relation_field_name.to_string(),
+            conditions,
+        });
 
         // One-to-one: TypeJoinOne
         //
@@ -232,10 +266,10 @@ impl Planner {
                         .map(|c| c.direction)
                         .unwrap_or(OrderDirection::Asc);
                     let join = join.with_orphan_config(orphan, direction, shared_ids, child_has_fk);
-                    join_provides_ordering = Some(parent_order_for_child.is_some());
+                    join_provides_ordering = Some(join_orders_parent);
                     Box::new(join)
                 } else {
-                    join_provides_ordering = Some(parent_order_for_child.is_some());
+                    join_provides_ordering = Some(join_orders_parent);
                     Box::new(join)
                 }
             } else {
@@ -312,10 +346,10 @@ impl Planner {
                         let shared_ids = crate::plan::new_shared_yielded_ids();
                         let join =
                             join.with_orphan_config(orphan, direction, shared_ids, child_has_fk);
-                        join_provides_ordering = Some(parent_order_for_child.is_some());
+                        join_provides_ordering = Some(join_orders_parent);
                         Box::new(join)
                     } else {
-                        join_provides_ordering = Some(parent_order_for_child.is_some());
+                        join_provides_ordering = Some(join_orders_parent);
                         Box::new(join)
                     }
                 } else {

@@ -1113,6 +1113,15 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Peer connection observation",
+        name: "Refused connection is evicted, a closed displaced connection is not restored, and a newer connection keeps the slot",
+        axis: Tla,
+        anchor: "crates/database/p2p/src/iroh/endpoint_rpc.rs restore_displaced_connection, evict_connection",
+        model_ref: "MC_DisplacedConnectionRestore_{Green,Red_NoEvict,Red_Closed,Red_EvictAny,Red_Overwrite}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/database/p2p/src/iroh/endpoint_rpc.rs a_closed_displaced_handle_evicts_the_refused_connection, a_closed_displaced_restore_spares_a_concurrent_replacement",
+    },
+    Property {
+        family: "Peer connection observation",
         name: "SharedRpc replacement identity, legacy reuse, modern preference, revoked refusal, stable-id eviction and refused-publish restore",
         axis: Lean,
         anchor: "crates/database/p2p/src/iroh/endpoint_rpc.rs remember_connection, restore_displaced_connection, connect_with_cache and evict_connection; endpoint_streams.rs adopt_new_connection",
@@ -1631,7 +1640,7 @@ pub const PROPERTIES: &[Property] = &[
         name: "INV_QueueBounded / INV_PermitConservation / INV_PeerLeavesAWorker / INV_UnreachableLeaveAWorker / ACT_DemoteAfterFailedProbe / LIVE_HealthyProgress",
         axis: Tla,
         anchor: "crates/database/p2p/src/sync/push_backlog.rs BacklogOwner::enqueue, pop_eligible, park_peer, park_peer_unreachable, peer_answered, retire_idle_cooldowns, take_queued_for_peer; crates/database/p2p/src/sync/coordinator/push_worker.rs spawn_push_workers, run_push_job",
-        model_ref: "MC_PushBacklog_{Green,Green_TwoDead,Green_SharedCap,Red_TwoDead,Red_DemoteEveryTimeout,Red_NoPeerCap,Red_SpawnPerItem,Red_PermitLeak,Red_RetainHandles}.cfg",
+        model_ref: "MC_PushBacklog_{Green,Green_TwoDead,Green_SharedCap,Red_TwoDead,Red_DemoteEveryTimeout,Red_OfflineQueue,Red_NoPeerCap,Red_SpawnPerItem,Red_PermitLeak,Red_RetainHandles}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },
@@ -2796,6 +2805,15 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/engine/query/src/planner/joins/relation_filter_execution_tests.rs no_matching_child_reads_no_parent, no_matching_child_reads_no_parent_of_an_index_ordered_scan",
     },
     Property {
+        family: "Commits depth traversal",
+        name: "minus_one_is_unlimited / other_negative_refused / nonnegative_is_itself / minus_one_clears_cap / walk_eq_fresh / walk_mem / walk_nodup / walk_unlimited / go_scan_merged / push_time_differs — `_commits(depth: -1)` reads as u64::MAX and so walks with no limit, every other negative depth is refused, and a non-negative one is itself; the stack walk below a cid, deciding each commit at pop time against the most depth it was walked with, lists the last-head-first path walk at first occurrence, each commit once, the same set as the old forward walk, and for an unlimited walk in Go's DAG-scan order, which marking at push time breaks, and keeps a commit only a shorter path reaches, which a plain seen set loses; a commit walked with at least UNLIMITED_DEPTH (2^62) left is never walked again, which -1 clears, so an unlimited walk loads each block once; every block is assumed to load",
+        axis: Lean,
+        anchor: "crates/database/db/src/read/commits/mod.rs CommitsFetcher::fetch_commit_by_cid, CommitsFetcher::traverse_depth, CommitsFetcher::push_heads; crates/engine/query/src/query_parse/parser.rs parse_field_to_select",
+        model_ref: "CommitsDepthCast.minus_one_is_unlimited / other_negative_refused / nonnegative_is_itself / minus_one_clears_cap / run_proc / walk_eq_fresh / walk_mem / walk_nodup / walk_unlimited / go_scan_merged / walk_merged / go_scan_diamond / push_time_differs / walk_short_long / seen_only_loses_a_commit / ladder_loads_once / no_guard_loads_again",
+        tiers: &[Contract],
+        bound_by: "crates/database/db/tests/read/commits_depth_walk.rs commits_depth_walk_lists_each_commit_of_a_diamond_chain_once_last_head_first, commits_depth_walk_keeps_rows_a_shorter_path_reaches, commits_depth_walk_lists_a_long_history_at_unlimited_depth, commits_depth_walk_reads_each_block_once_at_unlimited_depth; crates/engine/query/tests/query_parse_tests.rs test_parse_commits_depth_minus_one_is_unlimited, test_parse_commits_depth_other_negative_returns_error",
+    },
+    Property {
         family: "PQ distance four sums",
         name: "four_eq_sum — four running sums over a code's lookups add up to the one running sum, in exact arithmetic",
         axis: Lean,
@@ -3539,10 +3557,37 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Collection truncate",
-        name: "INV_NoRemovalWithoutPermission / INV_NoRemovalFromChunks / INV_FilteredNeverOnBranchable / INV_FilteredRemovesOnlyCommittedMatches / INV_RetryExhaustionKeepsProgress / INV_BadFilterRemovesNothing / INV_UnfilteredRemovesAll / INV_UnfilteredEmptiesView / INV_UnfilteredClearsSearchRecords",
+        name: "INV_NoRemovalWithoutPermission / INV_NoRemovalFromChunks / INV_FilteredNeverOnBranchable / INV_FilteredRemovesOnlyCommittedMatches / INV_FilteredRemovesOnlyCurrentMatches / INV_RetryExhaustionKeepsProgress / INV_BadFilterRemovesNothing / INV_UnfilteredRemovesAll / INV_UnfilteredEmptiesView / INV_UnfilteredClearsSearchRecords",
         axis: Tla,
-        anchor: "crates/database/db/src/collection/ops/truncate/mod.rs DB::truncate_collection_as, DB::truncate_parsed_as, DB::truncate_target, conditions, DB::truncate; crates/database/db/src/collection/ops/truncate/all.rs DB::truncate_all, DB::truncate_metadata_in; crates/database/db/src/collection/ops/truncate/filtered.rs DB::truncate_matching; crates/database/db/src/chunk/user_writes.rs ensure_admin_changeable; crates/database/db/src/merge/se/serve.rs store_artifacts, build_reply",
+        anchor: "crates/database/db/src/collection/ops/truncate/mod.rs DB::truncate_collection_as, DB::truncate_parsed_as, DB::truncate_target, conditions, DB::truncate; crates/database/db/src/collection/ops/truncate/all.rs DB::truncate_all, DB::truncate_metadata_in; crates/database/db/src/collection/ops/truncate/filtered.rs DB::truncate_matching, matching_doc_ids_in_attempt; crates/database/db/src/chunk/user_writes.rs ensure_admin_changeable; crates/database/db/src/merge/se/serve.rs store_artifacts, build_reply",
         model_ref: "MC_Truncate_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // Truncating a collection while an index is created or its build
+        // fails: the cleanup reads the definition in its own transaction,
+        // after the chunks, and deletes every declared ordered index's own
+        // prefix, so no entry outlives the documents it named and no other
+        // collection's keys go with them.
+        family: "Collection truncate",
+        name: "INV_NoEntryForTruncatedDoc / INV_OtherCollectionIntact / LIVE_TruncateFinishes",
+        axis: Tla,
+        anchor: "crates/database/db/src/collection/ops/truncate/all.rs DB::truncate_all, DB::truncate_metadata_in; crates/database/db/src/definition/loader.rs get_collections_by_collection_id; crates/database/db/src/index/create.rs DB::stage_index_definition; crates/database/db/src/index/backfill.rs BackfillPage::index, DB::record_backfill_failure",
+        model_ref: "MC_TruncateIndexCleanup_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // The key prefix the truncate deletes per index covers exactly that
+        // index's entries: never another index's, and never a key of a
+        // `/tag/name/` family, whatever the short ID. The collection-wide
+        // prefix it replaced covered every document for short ID 100.
+        family: "Collection truncate",
+        name: "IndexPrefix.index_prefix_takes_its_entries / index_prefix_only_its_index / index_prefix_misses_family / old_prefix_of_100_covers_documents / old_prefix_of_118_covers_versions",
+        axis: Lean,
+        anchor: "crates/engine/storage/src/keys/utils/mod.rs encode_uvarint_ascending; crates/engine/storage/src/keys/datastore/index_key.rs IndexDataStoreKey::index_prefix; crates/engine/storage/src/keys/document.rs doc_key, deleted_doc_key; crates/database/db/src/collection/ops/truncate/all.rs DB::truncate_metadata_in",
+        model_ref: "IndexPrefix (lake build)",
         tiers: &[Boundary],
         bound_by: "",
     },
@@ -3738,6 +3783,73 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // Lean models chunking under any close rule that reads the item and
+        // its open chunk, the byte cap that bounds the open chunk
+        // (`open_bounded`), `build` over a sorted list, the one-pass
+        // `Builder`, the windowed edit level by level and walked up to the
+        // root with the single-child `collapse`, `diff`'s walk against a
+        // per-key comparison, the injective node encoding, and its decoder,
+        // which reads a node's bytes back and refuses bytes after them. SHA-256 is
+        // trusted collision-free; an edit's window is any run of chunks that
+        // holds the change, where Rust finds it by key.
+        family: "Prolly tree catch-up",
+        name: "chunks_append / closes_append / chunks_flatten / chunks_nonempty / chunks_shrink / open_bounded / build / sorted_insert / sorted_erase / eq_of_same_entries / build_same_entries / insert_comm / erase_insert_comm / insert_insert / canon_chunks / rewrite_level_refines / rewrite_level_up / walk_levels / edit_root / builder_root / diff_eq / mergeDiff_spec / encode_injective / decode_encode / decode_refuses_trailing",
+        axis: Lean,
+        anchor: "crates/foundation/prolly/src/chunk.rs Chunker::push, Chunker::finish, chunk; crates/foundation/prolly/src/hash.rs is_boundary; crates/foundation/prolly/src/tree.rs Tree::build, raise, collapse; crates/foundation/prolly/src/build.rs Builder::push, Builder::finish, Builder::feed, Builder::close; crates/foundation/prolly/src/edit.rs Tree::edit, rewrite_level, splice; crates/foundation/prolly/src/diff.rs diff, Walk::open, Walk::take; crates/foundation/prolly/src/node.rs Node::encode, Node::decode, Item::encoded_len, MAX_CHUNK_BYTES",
+        model_ref: "ProllyTree (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // The pull is not wired into p2p yet (#2977); the model is its contract.
+        // Each pull is one atomic step and read access never changes, so
+        // "caught up" means caught up with the responder as it was at that
+        // step, and a read revoked mid-pull is not checked. PulledHolds is
+        // about pulls whose walk completes: `ProllyTree.diff_eq` and
+        // `ProllyTree.mergeDiff_spec` show a completed walk reports exactly the
+        // differing keys, but not that the walk ends or that every node read
+        // succeeds. A walk that fails makes no "caught up" claim and changes
+        // nothing, a stutter step the model already allows.
+        family: "Prolly tree catch-up",
+        name: "NoLeak / PulledHolds: a pull never shows a peer a document it may not read, and a pull that ends caught up leaves the puller holding every version the responder could show it at that pull",
+        axis: Tla,
+        anchor: "crates/foundation/prolly/src/tree.rs Tree::build, Tree::root; crates/foundation/prolly/src/diff.rs diff",
+        model_ref: "MC_ProllySync_Green.cfg (GREEN) / MC_ProllySync_{Red_NoFilter,Red_StaleRoot,Red_MissingOnly,Red_KeepClaim}.cfg (RED)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // Node contents are not modelled: a node is named by its hash, so a
+        // cached or pending copy is never stale. One worker owns the store,
+        // so a flush and a read never overlap. The Rust cache's CLOCK victim
+        // choice is one of the model's "any part that fits".
+        family: "Prolly tree node store and cache",
+        name: "GetFinds / CacheBounded / HugeEvictsNothing / PublishedStored / BuildWhole: a node put is always readable, the cache stays under its byte budget, a node over budget evicts nothing, a published root names only stored nodes, and a build whose put failed never returns a tree",
+        axis: Tla,
+        anchor: "crates/foundation/prolly/src/cache.rs Cached::get, Cached::insert; crates/foundation/prolly/src/tree.rs collapse; crates/engine/storage/src/stores/prolly_nodes.rs ProllyNodes::get, ProllyNodes::put, ProllyNodes::flush; crates/foundation/prolly/src/build.rs Builder::push, Builder::finish",
+        model_ref: "MC_ProllyNodeCache_Green.cfg (GREEN) / MC_ProllyNodeCache_{Red_SkipPending,Red_NoEvict,Red_CacheHuge,Red_DropOnFail,Red_PublishBeforeFlush,Red_FinishAfterFail}.cfg (RED)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Text chunking",
+        name: "INV_ListMatchesText / INV_ListedChunksExist / INV_NoChunkOfDeletedParent / INV_ValidWritesSucceed",
+        axis: Tla,
+        anchor: "crates/database/db/src/chunk/sync/mod.rs set_lists, ChunkWrites::create_missing, ChunkWrites::delete_all; crates/database/db/src/chunk/sync/lookup.rs ChunkCollection::existing_of; crates/database/db/src/write/autocommit/one_op.rs AutoCommitMutator::in_batch; crates/database/db/src/write/autocommit/batch.rs BatchMutator::update_as, delete_as; crates/database/db/src/write/doc.rs DbDocMutator; crates/database/db/src/write/prepare.rs prepare_request_write",
+        model_ref: "MC_ParentChunks_Green.cfg / MC_ParentChunks_Red_SeparateTxn.cfg / MC_ParentChunks_Red_NoCascade.cfg / MC_ParentChunks_Red_NoValidation.cfg / MC_ParentChunks_Red_CreateWithoutList.cfg / MC_ParentChunks_Red_NoLookup.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Text chunking",
+        name: "INV_ChunksFollowParent / INV_NoForeignChunks / INV_DeletesFollowParent / INV_SyncSendsCurrentChunks",
+        axis: Tla,
+        anchor: "crates/database/p2p/src/sync/coordinator/broadcast.rs SyncCoordinator::push_jobs, SyncCoordinator::push_followed_document_to_replicators_with_creator; crates/database/db/src/merge/push_docs/follow.rs replica_takes; crates/database/db/src/chunk/sync/write.rs ChunkWrites::publish; crates/database/db/src/merge/broadcast_mutator/mod.rs BroadcastMutator::derived_heads; crates/database/p2p/src/sync/doc_sync_ids.rs with_followers, check_doc_id_limit; crates/database/p2p/src/sync/coordinator/event_handler/doc_sync.rs SyncCoordinator::handle_doc_sync_request; crates/database/p2p/src/sync/coordinator/pubsub_services.rs DocSyncHandler::handle; crates/database/db/src/merge/head_provider.rs DbHeadProvider::following_doc_ids; crates/database/db/src/chunk/follow.rs current_chunk_ids; crates/database/db/src/chunk/sync/lookup.rs ChunkCollection::chunks_with",
+        model_ref: "MC_ChunkFollow_Green.cfg / MC_ChunkFollow_Red_OwnFilter.cfg / MC_ChunkFollow_Red_AllChunks.cfg / MC_ChunkFollow_Red_SyncParentOnly.cfg / MC_ChunkFollow_Red_SyncHistory.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/chunk/replicate_filtered.rs a_filtered_replicator_ships_the_matching_parents_chunks; tools/integration-test/tests/testo/chunk/replicate_doc_sync.rs a_document_sync_brings_the_parents_chunks",
+    },
+    Property {
         family: "Text chunking",
         name: "covers / bounded / pickPre_capped / deterministic / units_edit / local_edit / heading_keeps_text / unit_break_reads_only_headings / long_unit_fences",
         axis: Lean,
@@ -3757,21 +3869,57 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Text chunking",
-        name: "INV_ReadsMatchText / INV_SettledPeersAgree / INV_NoForgedChunk / INV_ChunksNeverChange / INV_ListedChunksStay / INV_DeletesNotLost",
+        name: "INV_ReadsMatchText / INV_SettledPeersAgree / INV_NoForgedChunk / INV_ChunksNeverChange / INV_ListedChunksStay / INV_DeletesNotLost / INV_TextChunksStored / INV_OwedIsEncrypted / INV_SettledListsAgree / INV_EachChunkOnce",
         axis: Tla,
-        anchor: "crates/engine/query/src/plan/chunk_parent.rs parent_hashes; crates/building-blocks/chunk-split/src/list.rs chunk_list; crates/building-blocks/crdt/src/field/lww.rs merge; crates/database/db/src/chunk/guard.rs check_chunk_merge; crates/database/db/src/chunk/peer_delete.rs delete_must_wait; crates/database/db/src/merge/merge_handler/composite_persist.rs; crates/database/db/src/merge/merge_handler/doc_identity.rs resolve_composite_doc_id_in_txn; crates/database/db/src/merge/merge_handler/composite.rs process_composite_delta_locked",
-        model_ref: "MC_ChunkMerge_Green.cfg / MC_ChunkMerge_Green_Delete.cfg / MC_ChunkMerge_Red_TrustList.cfg / MC_ChunkMerge_Red_NoHashCheck.cfg / MC_ChunkMerge_Red_MutableChunk.cfg / MC_ChunkMerge_Red_NoDeleteGuard.cfg / MC_ChunkMerge_Red_ListedDeleteOnly.cfg / MC_ChunkMerge_Red_RefuseDelete.cfg / MC_ChunkMerge_Red_UnstoredDelete.cfg",
+        anchor: "crates/engine/query/src/plan/chunk_parent.rs parent_hashes; crates/building-blocks/chunk-split/src/list.rs chunk_list; crates/building-blocks/crdt/src/field/lww.rs merge; crates/database/db/src/chunk/guard.rs check_chunk_merge; crates/database/db/src/chunk/peer_delete.rs delete_must_wait; crates/database/db/src/merge/merge_handler/composite_persist.rs; crates/database/db/src/merge/merge_handler/doc_identity.rs resolve_composite_doc_id_in_txn; crates/database/db/src/merge/merge_handler/composite.rs process_composite_delta_locked; crates/database/db/src/chunk/rebuild.rs build_missing; crates/database/db/src/chunk/sync/write.rs ChunkWrites::create; crates/database/db/src/chunk/follow.rs current_chunk_ids",
+        model_ref: "MC_ChunkMerge_Green.cfg / MC_ChunkMerge_Green_Delete.cfg / MC_ChunkMerge_Green_Encrypted.cfg / MC_ChunkMerge_Red_TrustList.cfg / MC_ChunkMerge_Red_NoHashCheck.cfg / MC_ChunkMerge_Red_MutableChunk.cfg / MC_ChunkMerge_Red_NoDeleteGuard.cfg / MC_ChunkMerge_Red_ListedDeleteOnly.cfg / MC_ChunkMerge_Red_RefuseDelete.cfg / MC_ChunkMerge_Red_UnstoredDelete.cfg / MC_ChunkMerge_Red_NoRebuild.cfg / MC_ChunkMerge_Red_SignedChunkIds.cfg / MC_ChunkMerge_Red_EncryptedNotShipped.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },
     Property {
         family: "Text chunking",
-        name: "INV_ShownIsLiveAndReadable / INV_ShownIsTheText / INV_ShownPassesOwnApp / INV_ServedIsReadable",
+        name: "INV_ShownIsLiveAndReadable / INV_ShownIsTheText / INV_ShownPassesOwnApp / INV_ServedIsReadable / INV_DelegatedKeyInScope",
         axis: Tla,
-        anchor: "crates/engine/query/src/plan/chunk_parent.rs parent_hashes, verified_hash; crates/engine/query/src/plan/chunk_gate.rs ChunkGate::allows, ChunkGate::decide; crates/engine/query/src/plan/permission_filter.rs permission_check; crates/database/db/src/chunk/access.rs history_parents, read_owners, parent_collection; crates/engine/query/src/runner/chunk_access.rs chunk_readable, ChunkReads; crates/engine/query/src/planner/builder/mod.rs maybe_wrap_with_acp_filter; crates/surfaces/p2p-adapter/src/read_gate.rs DbBlockReadGate::may_read, DbBlockClassifier::classify; crates/database/db/src/block/verify.rs load_authorized_block_signature; crates/surfaces/http/src/handlers/events.rs can_observe_document_event",
-        model_ref: "MC_ChunkRead_Green.cfg / MC_ChunkRead_Red_NoDeletedCheck.cfg / MC_ChunkRead_Red_NoHashCheck.cfg / MC_ChunkRead_Red_SharedMemo.cfg / MC_ChunkRead_Red_NoMergedCheck.cfg / MC_ChunkRead_Red_NoGrantCheck.cfg / MC_ChunkRead_Red_NoListCheck.cfg / MC_ChunkRead_Red_NoResolveCheck.cfg / MC_ChunkRead_Red_TrustList.cfg / MC_ChunkRead_Red_NoOwnAppCheck.cfg",
+        anchor: "crates/engine/query/src/plan/chunk_parent.rs parent_hashes, verified_hash; crates/engine/query/src/plan/chunk_gate.rs ChunkGate::allows, ChunkGate::decide; crates/engine/query/src/plan/permission_filter.rs permission_check; crates/database/db/src/chunk/access.rs history_parents, read_owners, parent_collection; crates/engine/query/src/runner/chunk_access.rs chunk_readable, ChunkReads; crates/engine/query/src/planner/builder/mod.rs maybe_wrap_with_acp_filter; crates/surfaces/p2p-adapter/src/read_gate.rs DbBlockReadGate::may_read, DbBlockClassifier::classify; crates/database/db/src/block/verify.rs load_authorized_block_signature; crates/surfaces/http/src/handlers/events.rs can_observe_document_event; crates/database/kms/src/defra_kms.rs DefraKms::local_release_decision; crates/database/kms/src/nac_dac_policy.rs Delegation::covers",
+        model_ref: "MC_ChunkRead_Green.cfg / MC_ChunkRead_Red_NoDeletedCheck.cfg / MC_ChunkRead_Red_NoHashCheck.cfg / MC_ChunkRead_Red_SharedMemo.cfg / MC_ChunkRead_Red_NoMergedCheck.cfg / MC_ChunkRead_Red_NoGrantCheck.cfg / MC_ChunkRead_Red_NoListCheck.cfg / MC_ChunkRead_Red_NoResolveCheck.cfg / MC_ChunkRead_Red_TrustList.cfg / MC_ChunkRead_Red_NoOwnAppCheck.cfg / MC_ChunkRead_Red_DelegationScope.cfg",
         tiers: &[Boundary],
         bound_by: "",
+    },
+    Property {
+        family: "Text chunking",
+        name: "INV_NoSilentOverwrite / INV_LosesOnlyToItsFields",
+        axis: Tla,
+        anchor: "crates/database/db/src/write/autocommit/selected.rs dependencies, unchanged; crates/database/db/src/write/autocommit/update.rs run_update_attempt; crates/database/db/src/write/autocommit/one_op.rs UpdateWork::run",
+        model_ref: "MC_SelectedUpdate_Green.cfg / MC_SelectedUpdate_Red_ExpectedOnly.cfg / MC_SelectedUpdate_Red_Whole.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Text chunking",
+        name: "no_orphan_chunks / parent_is_gone / others_stay / delete_alone_leaves_an_orphan",
+        axis: Lean,
+        anchor: "crates/database/db/src/collection/ops/delete.rs delete_collection_with_txn; crates/database/db/src/collection/ops/chunk_versions.rs chunk_versions_to_add",
+        model_ref: "ChunkSplit (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Text chunking",
+        name: "INV_LiveParentHasChunks / INV_PurgedHaveNoChunks",
+        axis: Tla,
+        anchor: "crates/database/db/src/collection/ops/truncate/all.rs truncate_all; crates/database/db/src/collection/ops/purge.rs purge_documents",
+        model_ref: "MC_TruncateChunks_Green.cfg / MC_TruncateChunks_Red_ParentsFirst.cfg / MC_TruncateChunks_Red_PurgeLeavesChunks.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Text chunking",
+        name: "INV_CommittedHeadOwned / LIVE_AllDelivered",
+        axis: Tla,
+        anchor: "crates/database/db/src/merge/broadcast_mutator/heads.rs register_committed_heads; crates/database/db/src/merge/broadcast_mutator/mod.rs BroadcastMutator::register_write_heads, BroadcastMutator::derived_heads; crates/database/db/src/merge/broadcast_mutator/batch.rs BroadcastBatchMutator::register_pending",
+        model_ref: "MC_ChunkMarkerHandoff_Green.cfg / MC_ChunkMarkerHandoff_Red_RequestOwned.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/database/db/tests/merge/broadcast_marker_handoff.rs a_create_registers_every_chunk_after_its_caller_stops_waiting, a_batch_registers_every_chunk_after_its_caller_stops_waiting",
     },
     Property {
         // A peer's definition blocks arrive in any order and may be forged.
@@ -4015,6 +4163,26 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // One-to-many child paging (#3051): the scan stays unbounded and each
+        // parent stops only when the selected index guarantees the child order.
+        family: "Per-parent child paging",
+        name: "INV_EveryParentHasPage / INV_EarlyStopOnlyWhenOrdered",
+        axis: Tla,
+        anchor: "crates/engine/query/src/planner/joins/child_plan.rs build_relation_child_plan; crates/engine/query/src/plan/type_join/type_join_many/children.rs TypeJoinMany::next_per_parent",
+        model_ref: "MC_ChildLimitPaging_{Green,Red_UnorderedStop}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Per-parent child paging",
+        name: "stop_after_parent_page",
+        axis: Lean,
+        anchor: "crates/engine/query/src/plan/type_join/type_join_many/children.rs TypeJoinMany::next_per_parent",
+        model_ref: "ChildPage.lean",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         family: "Document save",
         name: "INV_NoFork / INV_DeletedStaysDeleted / INV_RefusedOnlyDeleted",
         axis: Tla,
@@ -4113,6 +4281,17 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // #2965: float equality is exact, both in query filters and in index
+        // matching; a tolerance can make `0` match `1e-300`.
+        family: "Float filter equality",
+        name: "exact_accepts_same / epsilon_accepts_distinct / tolerant_has_rejects",
+        axis: Lean,
+        anchor: "crates/engine/query/src/mapper/filter/eval/operators.rs values_equal; crates/engine/storage/src/index/matcher/mod.rs values_equal",
+        model_ref: "FloatEquality (lake build); MC_FloatEquality_{Green,Red_Epsilon}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/engine/query/src/mapper/filter/eval/operators.rs float_equality_is_exact; crates/engine/storage/src/index/matcher/tests.rs test_float_equality_is_exact; tools/integration-test/tests/testo/query/simple/with_filter/with_eq_float_zero.rs float_zero_equality_is_exact_on_indexed_and_unindexed_fields, float_zero_inequality_is_exact_on_indexed_and_unindexed_fields",
+    },
+    Property {
         // #2724: verify-signature's NAC, document ACP and block checks decide
         // at the caller's transaction view, or the read-only one the pool path
         // opens: NAC through check_node_access_in_txn, document ACP bound to
@@ -4124,5 +4303,27 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "MC_VerifySignature_{Green_*,Red_*}.cfg",
         tiers: &[Boundary],
         bound_by: "",
+    },
+    Property {
+        family: "One-to-many child paging",
+        name: "LIVE_EveryParentPage / INV_RedSecondParentKeepsPage: a child page is filled per parent, not by one global scan bound",
+        axis: Tla,
+        anchor: "crates/engine/query/src/plan/type_join/type_join_many/children.rs TypeJoinMany::next_per_parent; crates/engine/query/src/plan/type_join/type_join_many/node.rs TypeJoinMany::with_limit, with_offset",
+        model_ref: "MC_ChildPagePerParent_{Green,Red_GlobalBound}.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/query/one_to_many/with_limit.rs query_one_to_many_with_child_limit_keeps_a_two_parent_page",
+    },
+    Property {
+        // #2924: a host resolver configuration is read the way Go reads it
+        // (rejected lines and words skipped, the rest kept); one left with no
+        // nameservers, or that cannot be read, gets Go's local nameservers
+        // instead of failing the node's start.
+        family: "DNS resolver fallback",
+        name: "DnsResolverFallback.chosen_has_nameservers / usable_read_passes_through / accepted_lines_survive / kept_lines_accepted / rejected_nameserver_dropped / failed_read_falls_back",
+        axis: Lean,
+        anchor: "crates/database/p2p/src/host/transport/resolver.rs read_file, parse_lenient, usable_line, accepted, resolver_config, fallback_config, FALLBACK_NAMESERVERS",
+        model_ref: "DnsResolverFallback (lake build)",
+        tiers: &[Contract],
+        bound_by: "crates/database/p2p/src/host/transport/resolver_tests.rs a_failed_read_falls_back_to_the_localhost_nameservers, a_read_with_nameservers_passes_through_unchanged, a_systemd_resolved_stub_passes_through, an_unknown_option_keeps_the_hosts_nameserver, a_bad_nameserver_line_keeps_the_good_ones, a_bad_nameserver_line_never_uses_its_comment, an_unknown_directive_keeps_the_hosts_nameserver, a_bad_search_domain_keeps_the_others, a_file_without_nameservers_keeps_its_search_and_options, a_comment_that_is_not_utf8_keeps_the_hosts_nameserver, a_missing_file_falls_back_to_the_localhost_nameservers, the_fallback_matches_the_lean_model",
     },
 ];

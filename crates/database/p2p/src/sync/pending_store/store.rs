@@ -28,6 +28,7 @@ use super::{
 };
 use crate::error::{Error, Result};
 use crate::sync::head_scope::{HeadVersion, ScopeDecision};
+use workers::Budget;
 
 const SCOPE_PREFIX: &[u8] = b"/p2p/pending_dag_scope/";
 const SWEEP_KEY: &[u8] = b"/p2p/pending_dag_sweep";
@@ -415,10 +416,12 @@ async fn sweep(txn: &mut BasicTxn, view: Arc<PersistedView>) -> AttemptResult {
         .with_validation(true);
     let mut iter = systemstore.iterator(opts).await?;
     let mut records = Vec::new();
+    let mut budget = Budget::new(1024);
     while let Some(pair) = iter.next().await? {
         if let Some((root, stored)) = decode_pair(&pair.key, &pair.value) {
             records.push((root, stored.record));
         }
+        budget.spend(1).await;
     }
     iter.close().await?;
     let stamp = systemstore
