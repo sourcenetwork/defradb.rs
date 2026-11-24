@@ -65,12 +65,15 @@ mod ops;
 mod owed;
 #[cfg(feature = "vera")]
 mod owed_drainer;
+#[cfg(test)]
+mod storage_open_tests;
 pub use ops::{EncryptedIndexListing, IndexListing};
 #[cfg(any(feature = "p2p", feature = "libp2p"))]
 mod p2p_runtime;
 #[cfg(any(feature = "p2p", feature = "libp2p"))]
 mod peer_key;
 mod peer_keyring;
+mod request_path;
 mod signed_query;
 mod signer_credential;
 mod start_peer_key;
@@ -525,6 +528,7 @@ impl Node {
         let Ok(query::query_parse::ParsedOperation::Mutation {
             mutations,
             explain: None,
+            ..
         }) = query::query_parse::parse_request_with_limits(
             &request.query,
             variables.as_ref(),
@@ -608,75 +612,46 @@ impl Node {
         request: QueryRequest,
         txn_handle: Option<TransactionHandle>,
     ) -> QueryResponse {
-        // Read before the node's default fills in the actor: a caller's key
-        // signs only for an actor the caller named.
-        let caller_signer = match embedded_signer::admitted_signer(&request) {
-            Ok(signer) => signer,
-            Err(error) => return QueryResponse::error(error.to_string()),
-        };
-        let request = self.with_default_query_identity(request);
-        // A request is signed when the node signs with its identity, when the
-        // caller brings its own key, or when the write asks for signing with
-        // `enableSigning: true`, as Go's `EnableSigning` does on a node that
-        // does not sign. Otherwise an identity-only node runs it unsigned, as
-        // its caller, as Go's `NodeIdentity` without `EnableSigning` does.
-        // Either way it runs under the node's principal (`node_principal`),
-        // the owner of the transactions the node begins.
-        let signs = self.node_signs
-            || caller_signer.is_some()
-            || request.context.signing_override() == Some(true);
-        let signing_identity = self.node_identity_did.as_deref().filter(|_| signs);
-        let Some(node_identity_did) = signing_identity else {
-            if caller_signer.is_some() {
-                return QueryResponse::error(
-                    "explicit embedded signing requires a configured node identity",
-                );
-            }
-            let runner = Arc::clone(&self.runner);
-            return self
-                .as_request(async move {
-                    match txn_handle {
-                        Some(handle) => runner.execute_in_txn(request, &handle).await,
-                        None => execute_autocommit_request(runner.as_ref(), request).await,
-                    }
-                })
-                .await
-                .unwrap_or_else(signed_query::refused_response);
-        };
+        self.execute_admitted_request(request, txn_handle, Admit::Request)
+            .await
+    }
 
-        #[cfg(target_arch = "wasm32")]
-        return QueryResponse::error(format!(
-            "configured node signing identity {node_identity_did} cannot execute queries on wasm32"
-        ));
+    /// [`Self::execute_prepared_request`], admitted as `admit` says.
+    pub(crate) async fn execute_admitted_request(
+        &self,
+        request: QueryRequest,
+        txn_handle: Option<TransactionHandle>,
+        admit: Admit,
+    ) -> QueryResponse {
+        self.request_path()
+            .execute(request, txn_handle, admit)
+            .await
+    }
 
-        #[cfg(not(target_arch = "wasm32"))]
-        let signing_config = caller_signer.or_else(|| {
-            defra_core::signing::resolve_signing_config_with_flag(
-                None,
-                Some(node_identity_did),
-                true,
-            )
-        });
-        #[cfg(not(target_arch = "wasm32"))]
-        let Some(signing_config) = signing_config
-        else {
-            return unavailable_node_signer_response(node_identity_did);
-        };
-        #[cfg(not(target_arch = "wasm32"))]
-        let Some(network) = self.network.as_ref() else {
-            return unavailable_node_signer_response(node_identity_did);
-        };
+    /// This node's request path, borrowed.
+    fn request_path(&self) -> request_path::RequestPath<'_> {
+        request_path::RequestPath {
+            runner: &self.runner,
+            node_signs: self.node_signs,
+            node_identity_did: self.node_identity_did.as_deref(),
+            node_query_identity: self.node_query_identity.as_ref(),
+            requests: self.network.as_ref().map(NodeEdge::requests),
+        }
+    }
 
-        #[cfg(not(target_arch = "wasm32"))]
-        execute_with_signing_context(
-            network.requests(),
-            self.runner.clone(),
-            request,
-            txn_handle,
-            signing_config,
-            self.node_principal(),
-        )
-        .await
+    /// This node's request path, owned, for work that outlives a borrow of
+    /// the node, such as a backup import's driver.
+    pub(crate) fn owned_request_path(&self) -> request_path::OwnedRequestPath {
+        request_path::OwnedRequestPath {
+            runner: Arc::clone(&self.runner),
+            node_signs: self.node_signs,
+            node_identity_did: self.node_identity_did.clone(),
+            node_query_identity: self.node_query_identity.clone(),
+            requests: self
+                .network
+                .as_ref()
+                .map(|network| network.requests().clone()),
+        }
     }
 
     /// Runs in-process work that may write as a task of the node's request
@@ -690,17 +665,20 @@ impl Node {
         F: std::future::Future + defra_core::thread_bounds::MaybeSend + 'static,
         F::Output: defra_core::thread_bounds::MaybeSend + 'static,
     {
-        match self.network.as_ref() {
-            Some(network) => network.requests().spawn(work).within(Duration::MAX).await,
-            None => Ok(work.await),
-        }
+        self.admitted(Admit::Request, work).await
     }
 
-    fn with_default_query_identity(&self, mut request: QueryRequest) -> QueryRequest {
-        if request.identity.is_none() {
-            request.identity.clone_from(&self.node_query_identity);
-        }
-        request
+    /// [`Self::as_request`], admitted as `admit` says.
+    pub(crate) async fn admitted<F>(
+        &self,
+        admit: Admit,
+        work: F,
+    ) -> std::result::Result<F::Output, edge::EdgeError>
+    where
+        F: std::future::Future + defra_core::thread_bounds::MaybeSend + 'static,
+        F::Output: defra_core::thread_bounds::MaybeSend + 'static,
+    {
+        self.request_path().admitted(admit, work).await
     }
 
     /// Runs the data-path call `make` builds on the database's worker pool
@@ -1496,6 +1474,30 @@ fn refused_transaction(error: edge::EdgeError, step: &str) -> query::Transaction
         }
         error => format!("transaction task failed: {error}"),
     })
+}
+
+/// How a request's task is admitted to the node's request scope.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Admit {
+    /// A request of its own: refused once shutdown stops admitting.
+    Request,
+    /// Work of a request already admitted, such as a backup import's writes
+    /// ([`Node::import_backup_as`]): still
+    /// admitted while that request is in flight, so shutdown drains it.
+    Continuation,
+}
+
+impl Admit {
+    fn spawn<F>(self, edge: &edge::Edge, work: F) -> edge::Task<F::Output>
+    where
+        F: std::future::Future + defra_core::thread_bounds::MaybeSend + 'static,
+        F::Output: defra_core::thread_bounds::MaybeSend + 'static,
+    {
+        match self {
+            Self::Request => edge.spawn(work),
+            Self::Continuation => edge.spawn_continuation(work),
+        }
+    }
 }
 
 async fn execute_autocommit_request(

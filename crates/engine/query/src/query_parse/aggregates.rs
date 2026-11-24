@@ -13,11 +13,11 @@ use serde_json::Value as JsonValue;
 
 use crate::error::{QueryError, Result};
 use crate::mapper::{
-    Aggregate, AggregateTarget, AggregateType, Field as SelectField, Filter, GroupBy, Limit,
-    OrderBy, OrderCondition, OrderDirection, Requestable, Select,
+    Aggregate, AggregateTarget, AggregateType, EnclosingArgument, Field as SelectField, Filter,
+    FilterSource, GroupBy, Limit, OrderBy, OrderCondition, OrderDirection, Requestable, Select,
 };
 
-use super::filters::parse_filter_value;
+use super::filters::{parse_filter_value, print_object_value};
 use super::ordering::{parse_order_from_json, parse_order_value};
 use super::values::parse_int_value;
 
@@ -108,7 +108,12 @@ pub(super) fn parse_aggregate_target_obj(
                 target.field_name = Some(field_name);
             }
             "filter" => {
-                let filter = parse_filter_value(val, variables)?;
+                // Go reports a bad filter here against the whole selector.
+                let filter =
+                    parse_filter_value(val, variables)?.with_enclosing(EnclosingArgument {
+                        name: arg_name.to_string(),
+                        printed: print_object_value(obj),
+                    });
                 target.filter = Some(filter);
             }
             "limit" => {
@@ -147,11 +152,12 @@ pub(super) fn parse_aggregate_target_obj(
     Ok(target)
 }
 
-/// Parse an aggregate target from a resolved JSON variable value.
+/// Parse an aggregate target from the value of `variable`, which fills the
+/// whole selector, so its filter is recorded as that variable's.
 pub(super) fn parse_aggregate_target_from_json(
     arg_name: &str,
     json: &JsonValue,
-    _variables: Option<&RapidHashMap<String, JsonValue>>,
+    variable: &str,
 ) -> Result<AggregateTarget> {
     let mut target = AggregateTarget::new(arg_name.to_string());
     if let JsonValue::Object(obj) = json {
@@ -163,10 +169,21 @@ pub(super) fn parse_aggregate_target_from_json(
                     }
                 }
                 "filter" => {
-                    // Convert JSON filter to a Filter
-                    if let JsonValue::Object(filter_obj) = val {
-                        target.filter = Some(Filter::from_conditions(filter_obj.clone()));
-                    }
+                    let filter = match val {
+                        JsonValue::Object(filter_obj) => {
+                            Filter::from_conditions(filter_obj.clone())
+                        }
+                        JsonValue::Null => continue,
+                        other => Filter::not_object(other.clone()),
+                    };
+                    target.filter = Some(
+                        filter
+                            .with_source(FilterSource::SelectorVariable(variable.to_string()))
+                            .with_enclosing(EnclosingArgument {
+                                name: variable.to_string(),
+                                printed: super::filter_shape::go_json(json),
+                            }),
+                    );
                 }
                 "limit" => {
                     if let Some(n) = val.as_i64() {
@@ -259,8 +276,7 @@ pub(super) fn parse_aggregate_field(
                         let json_val = vars.get(name).ok_or_else(|| {
                             QueryError::parse(format!("Variable \"${}\" was not provided", name))
                         })?;
-                        let target =
-                            parse_aggregate_target_from_json(arg_name, json_val, variables)?;
+                        let target = parse_aggregate_target_from_json(arg_name, json_val, name)?;
                         relation_targets.push(target);
                     }
                     _ => {

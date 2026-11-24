@@ -344,6 +344,7 @@ impl VeraRsProvider {
             },
             worker: worker.clone(),
             follow,
+            bus: event_bus.clone(),
             sink: regolith::sync::OnceCell::new(),
             recovery: regolith::sync::OnceCell::new(),
             shared: std::sync::atomic::AtomicBool::new(false),

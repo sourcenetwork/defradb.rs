@@ -25,6 +25,7 @@ use serde::Deserialize;
 use crate::error::{http_error_from_backend_message, HttpError};
 use crate::identity_extractor::ExtractIdentity;
 use crate::nac_guard::require_permission;
+use crate::request_path::Server;
 use crate::request_scope::bound;
 use crate::router::{AppState, ImportResult, NodePermission};
 use crate::validation::validate_collection_name;
@@ -231,8 +232,10 @@ pub async fn import(
         ));
     }
 
+    // Each write goes through this server's request path, as the caller.
+    let host = Server::autocommit(state.clone(), identity);
     let _result = backup
-        .import(&body_str)
+        .import(&body_str, &host)
         .await
         .map_err(http_error_from_backend_message)?;
 
@@ -344,3 +347,7 @@ mod tests {
         assert_eq!(response.documents_skipped, 3);
     }
 }
+
+#[cfg(test)]
+#[path = "backup_import_tests.rs"]
+mod import_tests;

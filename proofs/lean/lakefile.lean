@@ -46,6 +46,9 @@ lean_lib VeraConfirmationJournal where
 lean_lib VeraRecoveryLedger where
 
 @[default_target]
+lean_lib VeraTakeoverReport where
+
+@[default_target]
 lean_lib DelegatedRelationship where
 
 @[default_target]
@@ -328,6 +331,9 @@ lean_lib NacToggle where
 lean_lib FfiOptions where
 
 @[default_target]
+lean_lib GoConfigLayout where
+
+@[default_target]
 lean_lib NacRelationship where
 
 @[default_target]
@@ -367,10 +373,16 @@ lean_lib CatalogPin where
 lean_lib IndexEqualKeyOrder where
 
 @[default_target]
+lean_lib IndexKeyspace where
+
+@[default_target]
 lean_lib KmsChunks where
 
 @[default_target]
 lean_lib SigningOverride where
+
+@[default_target]
+lean_lib BackupImportSigner where
 
 @[default_target]
 lean_lib FloatEquality where
@@ -397,4 +409,10 @@ lean_lib SeTruncatePrefix where
 lean_lib ReplicatorEmptyCollections where
 
 @[default_target]
+lean_lib MissingRelationFilter where
+
+@[default_target]
 lean_lib DnsResolverFallback where
+
+@[default_target]
+lean_lib FilterInputShape where

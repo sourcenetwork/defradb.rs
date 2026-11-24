@@ -33,7 +33,7 @@ pub(crate) mod effect;
 mod fixtures;
 pub(crate) mod journal;
 mod lost;
-mod owed;
+pub(crate) mod owed;
 
 pub(crate) use chain::ProviderChain;
 pub(crate) use journal::{Confirmation, Journal, JournalError, RecoveryNeed};
@@ -41,7 +41,11 @@ pub(crate) use owed::owed_again;
 
 use effect::effect_of;
 use journal::Floor;
-use lost::{lost_effects, tainted_by, Losses};
+use lost::{held_again, lost_effects, tainted_by, Losses};
+pub(crate) mod report;
+use report::Unrestorable;
+
+pub(crate) use report::TakeoverReport;
 
 /// The deployment, as the provider's reconcile needs to reach it.
 pub(crate) trait Chain {
@@ -58,6 +62,8 @@ pub(crate) trait Chain {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Replayed {
     pub executed: bool,
+    /// Refused because what it creates is already there.
+    pub exists: bool,
     pub height: u64,
 }
 
@@ -163,11 +169,23 @@ fn unchecked(certified: u64) -> ProviderError {
 /// What checking a term came to.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Reconciled {
-    /// The term is checked; `owed` (perhaps empty) is to be owed again.
-    Checked { owed: Vec<effect::Lost> },
+    /// The term is checked; the report says what each replay came to.
+    Checked { report: TakeoverReport },
     /// The node cannot tell what the term voided, for the reason given. It
-    /// is recorded: the node stays closed across restarts.
-    Closed(String),
+    /// is recorded: the node stays closed across restarts. Its partial
+    /// report says what the check had learnt when it stopped.
+    Closed {
+        reason: String,
+        report: TakeoverReport,
+    },
+}
+
+/// Whether a check of `certified` that finishes now is the one that checks
+/// it: the journal is open and has not handled the term. Only that check is
+/// reported to the embedder; a later one only delivers what the term left
+/// owed (`proofs/tla/TakeoverReport.tla`).
+pub(crate) fn first_check(journal: &Journal, certified: u64) -> bool {
+    journal.closed().is_none() && certified > journal.handled_term()
 }
 
 /// Checks term `certified` against `journal` through `chain`: sends again
@@ -186,11 +204,20 @@ where
     R: FnMut(B256, bool) -> Result<(), ProviderError>,
 {
     if let Some(reason) = journal.closed() {
-        return Ok(Reconciled::Closed(reason.to_owned()));
+        return Ok(Reconciled::Closed {
+            reason: reason.to_owned(),
+            report: TakeoverReport {
+                owed: journal.undelivered().to_vec(),
+                ..TakeoverReport::default()
+            },
+        });
     }
     if certified <= journal.handled_term() {
         return Ok(Reconciled::Checked {
-            owed: journal.undelivered().to_vec(),
+            report: TakeoverReport {
+                owed: journal.undelivered().to_vec(),
+                ..TakeoverReport::default()
+            },
         });
     }
     let unfinished = journal.replaying();
@@ -203,7 +230,10 @@ where
                 Ok(first) => first,
                 Err(reason) => {
                     journal.close_recoverable(reason.clone()).map_err(failure)?;
-                    return Ok(Reconciled::Closed(reason));
+                    return Ok(Reconciled::Closed {
+                        reason,
+                        report: TakeoverReport::default(),
+                    });
                 }
             };
             // An earlier term's replay was cut short: its entries are sent
@@ -234,22 +264,33 @@ where
             // Whatever else names this request learns what it came to on
             // the history the deployment has now.
             revise(entry.submission, replayed.executed)?;
-            lost_effects(
-                &mut losses,
-                &mut tainted,
-                effect_of(&entry.wire),
-                replayed.executed,
-            );
-            if let Some(object) = losses.archives.first() {
+            let effect = effect_of(&entry.wire);
+            let held = held_again(&effect, replayed);
+            lost_effects(&mut losses, &mut tainted, effect, held);
+            if let Some(Unrestorable::Archive {
+                policy_id,
+                resource,
+                object,
+                ..
+            }) = losses.unrestorable.last()
+            {
                 let reason = format!(
                     "the Vera deployment switched its active device and voided the archive of \
                      {}/{}/{} this node confirmed; it was refused when sent again, so access it \
                      removed may be back. Archive the object again, then restart the node with \
                      a new worker directory",
-                    object.0, object.1, object.2
+                    policy_id, resource, object
                 );
+                warn_refused(&losses);
                 journal.close(reason.clone()).map_err(failure)?;
-                return Ok(Reconciled::Closed(reason));
+                return Ok(Reconciled::Closed {
+                    reason,
+                    report: TakeoverReport {
+                        applied: losses.applied,
+                        owed: losses.owed,
+                        unrestorable: losses.unrestorable,
+                    },
+                });
             }
             journal
                 .record(&Confirmation {
@@ -259,17 +300,17 @@ where
                 .map_err(failure)?;
         }
     }
-    if losses.other > 0 {
-        tracing::warn!(
-            refused = losses.other,
-            "requests a Vera term voided were refused when sent again; a policy they created \
-             is gone and the documents under it cannot be read until it is created again"
-        );
-    }
+    warn_refused(&losses);
     journal
         .handled(certified, losses.owed.clone())
         .map_err(failure)?;
-    Ok(Reconciled::Checked { owed: losses.owed })
+    Ok(Reconciled::Checked {
+        report: TakeoverReport {
+            applied: losses.applied,
+            owed: losses.owed,
+            unrestorable: losses.unrestorable,
+        },
+    })
 }
 
 /// The first journaled sequence the deployment no longer holds, asking
@@ -327,6 +368,28 @@ where
 
 fn failure(error: JournalError) -> ProviderError {
     ProviderError::Unavailable(error.to_string())
+}
+
+/// Logs the replays that left documents unreadable, so a node with no bus
+/// to publish its takeover report to still says so.
+fn warn_refused(losses: &Losses) {
+    for lost in &losses.unrestorable {
+        if let Unrestorable::PolicyCreation { policy_id, .. } = lost {
+            tracing::warn!(
+                %policy_id,
+                "a policy a Vera term voided was refused when sent again; it is gone and the \
+                 documents under it cannot be read until it is created again"
+            );
+        }
+    }
+    if losses.other > 0 {
+        tracing::warn!(
+            refused = losses.other,
+            "requests a Vera term voided were refused when sent again and could not be read; \
+             if one created a policy, the documents under it cannot be read until it is \
+             created again"
+        );
+    }
 }
 
 #[cfg(test)]
