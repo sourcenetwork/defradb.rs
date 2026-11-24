@@ -3,6 +3,8 @@
 #![cfg(unix)]
 
 mod common;
+#[path = "embedded_vera/delegation.rs"]
+mod delegation;
 
 use std::path::Path;
 use std::process::Stdio;

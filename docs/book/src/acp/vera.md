@@ -170,6 +170,27 @@ Where a one-request delegation is taken, and where not:
 A command made as the write's signer is signed by the node's worker; the token is the
 signer's authority for it, and the chain records the signer, not the node, as owner.
 
+### A caller's delegation over HTTP
+
+An in-process node and a `defradb start` server with `--document-acp-type vera` or
+`vera-embedded` take the same form: `Authorization: Bearer <delegation>`, the compact JWS
+`caller_delegation` returns (header `typ` `vera-delegation-v1+jwt`), with the worker and
+deployment from `delegation` in `GET /api/v0/acp/status`. A bearer whose header names
+that type is verified by the node's provider as a delegation and never read as an
+identity token: its signature against its issuer, its size (at most 16 KiB), the plain
+`acp:policy` scope with no request or relay claim, the worker and deployment, and its
+validity interval at the provider's time. One that fails any check is refused with 403
+`Token verification failed: …` before the request runs. One that passes authenticates
+the request as its issuer, and the node submits that caller's registrations and
+relationship changes under it. A request carries one bearer, so the delegation cannot
+stand beside an identity token for another DID; the node also submits a delegation only
+for the actor that signed it.
+
+A caller that presents only a DefraDB identity token, on a node that holds no key for
+it, gets its document created but not registered: the registration is owed, and the
+node logs `no authority to submit ACP changes as <DID>: the node holds no key for it and
+the request carries no delegation`.
+
 ## Replicated documents
 
 A replicated change merges on a node only if its verified signer holds the permission
