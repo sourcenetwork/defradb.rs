@@ -50,8 +50,8 @@ total order it can check across collections. The models are
 ### The supported pattern
 
 Subscribe first, to document change notifications or to a GraphQL subscription of
-the collection with no `docID` or `docIDs` argument (one with either wakes only for
-the documents it names, so an update to another can wait unannounced). Then,
+the collection with no `docID`, `docIDs` or `filter` argument (one with any of them wakes
+only for the documents it names or matches, so an update to another can wait unannounced). Then,
 once the subscription request has returned its stream (never concurrently with it),
 read `_documentUpdates` from the saved cursor up to `head`, and save the cursor with
 what the read produced. Read again on every wake-up and every loss signal (a set
@@ -124,7 +124,7 @@ wakes nobody (`Red_CounterNoWake`).
 | Order across collections | None: each collection has its own cursors. | none |
 | Restart | The journal and a saved cursor survive a reopen. Retention across truncate, purge, backup restore and `drop_all`: TBD. | `crates/database/db/tests/read/arrival_transactions.rs` `cursor_survives_database_reopen` |
 | Resubscription | A read is a snapshot: the stored rows it covers are a dense prefix up to `head`. The rows a reader is handed skip those of documents it may not read (see Gap detection). | `CommitOrderedAppend.tla` (regolith) snapshot prefix |
-| Gap detection | The stored rows are dense; a row missing from storage in the read range is an error, never skipped. The cursors a reader is handed are not: a row of a document it may not read is passed silently and `next` moves past it (`execute_arrivals_query`). A cursor past `head` fails with `arrival cursor is beyond this node's collection head` (a test through a client is TBD). | `crates/database/db/src/event/arrivals.rs` |
+| Gap detection | The stored rows are dense; in a read without `docID`, a row missing from storage in the read range is an error, never skipped. A `docID` read takes each cursor from the document's once key and does not read the row, so it does not detect a missing row. The cursors a reader is handed are not: a row of a document it may not read is passed silently and `next` moves past it (`execute_arrivals_query`). A cursor past `head` fails with `arrival cursor is beyond this node's collection head` (a test through a client is TBD). | `crates/database/db/src/event/arrivals.rs` |
 | Combination | Read on wake-up, as the update journal. | `ChangeDelivery.tla` (as for the update journal) |
 
 ### Update journal (`_documentUpdates`)
