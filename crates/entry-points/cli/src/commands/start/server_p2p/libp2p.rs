@@ -155,6 +155,7 @@ impl Node {
         let merge_handler_for_loop = replication.merge_handler_on_pool();
         let merge_handler_inner_for_syncer = replication.merge_handler_inner.clone();
         let merge_handler_inner_for_kms = replication.merge_handler_inner.clone();
+        let coordinator_for_kms = Arc::downgrade(&coordinator);
         let broadcast_mutator = replication.broadcast_mutator.clone();
         let broadcast_mutator_for_acp = replication.broadcast_mutator.clone();
         let merge_handler_for_acp = replication.merge_handler.clone();
@@ -558,6 +559,9 @@ impl Node {
             txn_broadcaster: Some(txn_broadcaster),
             kms_transport: Some(kms_transport as Arc<dyn kms::KeyTransport>),
             wire_kms: Some(Box::new(move |kms| {
+                kms.set_key_arrival_listener(defra_p2p_adapter::key_arrival_promoter(
+                    coordinator_for_kms,
+                ));
                 merge_handler_inner_for_kms.set_kms(kms);
             })),
             local_peer_id,

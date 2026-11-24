@@ -603,6 +603,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                         fetch_failures: 0,
                         last_fetch_error: None,
                         next_retry_at: crate::rt::time::Instant::now(),
+                        key_arrival_pending: false,
                         dispatches: 0,
                         incomplete_attempts: 0,
                         merge_continuation: false,
