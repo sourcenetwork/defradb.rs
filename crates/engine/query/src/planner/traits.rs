@@ -133,11 +133,6 @@ pub trait PlanNode: MaybeSend {
         false
     }
 
-    /// Whether this node filters rows after its underlying index fetch.
-    fn has_residual_filter(&self) -> bool {
-        false
-    }
-
     /// Returns cursor page-info if this node is (or wraps) a `CursorNode`.
     ///
     /// Called after iteration is complete. `CursorNode` returns `Some(...)`;

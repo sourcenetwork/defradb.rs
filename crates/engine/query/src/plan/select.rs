@@ -288,10 +288,6 @@ impl PlanNode for SelectNode {
         Some(self.source.as_ref())
     }
 
-    fn has_residual_filter(&self) -> bool {
-        self.filter.is_some()
-    }
-
     fn document_map(&self) -> &DocumentMapping {
         &self.document_mapping
     }

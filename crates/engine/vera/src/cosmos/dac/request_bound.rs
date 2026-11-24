@@ -127,6 +127,20 @@ pub(super) fn with_policy_command<T>(
             object_id: object,
             action: PolicyAction::RegisterObject,
         })),
+        ProviderCommand::RegisterUnderParent {
+            policy_id,
+            resource,
+            object,
+            parent,
+        } => then(Some(&PolicyCommand {
+            policy_id,
+            resource,
+            object_id: object,
+            action: PolicyAction::RegisterUnderParent {
+                resource: &parent.resource,
+                object_id: &parent.object_id,
+            },
+        })),
         ProviderCommand::Relationship { tuple, op } => {
             let relation = tuple.relation.as_str();
             let action = |subject| match op {

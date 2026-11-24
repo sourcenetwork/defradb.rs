@@ -195,31 +195,15 @@ pub(crate) async fn shared(spec: &PeerSpec, rpc: SocketAddr, trust: &EmbeddedVer
 /// A peer on a deployment of its own that serves its JSON-RPC methods, and
 /// the loopback address it serves them on.
 pub(crate) async fn own_serving(spec: &PeerSpec, chain_id: u64) -> (Node, SocketAddr) {
-    on_free_rpc_port(|rpc| own(spec, chain_id, Some(rpc))).await
-}
-
-/// What `start` builds, its Vera node serving JSON-RPC on a loopback port.
-/// The port is found free and released before the Vera node binds it, so
-/// another process can take it in between: a start that loses its port is
-/// made again on a new one, and no other failure is.
-async fn on_free_rpc_port<T, F, Fut>(mut start: F) -> (T, SocketAddr)
-where
-    F: FnMut(SocketAddr) -> Fut,
-    Fut: std::future::Future<Output = defra_node::Result<T>>,
-{
-    let mut attempt = 1;
-    loop {
-        let rpc = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-            .and_then(|listener| listener.local_addr())
-            .expect("free loopback port");
-        match start(rpc).await {
-            Ok(started) => return (started, rpc),
-            Err(defra_node::Error::EmbeddedVera(host)) if attempt < 8 && host.is_rpc_bind() => {
-                attempt += 1
-            }
-            Err(error) => panic!("node: {error:?}"),
-        }
-    }
+    let node = own(
+        spec,
+        chain_id,
+        Some(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))),
+    )
+    .await
+    .expect("hosted node");
+    let rpc = node.embedded_vera_rpc_addr().expect("bound RPC listener");
+    (node, rpc)
 }
 
 fn now() -> u64 {

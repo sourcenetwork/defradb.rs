@@ -141,11 +141,11 @@ where
                     "Unexpected DagFetchStarted during recovery - block may have missing links"
                 );
             }
-            ReplicationResult::BitswapFetchStarted { root_cid, .. } => {
+            ReplicationResult::BlockSyncFetchStarted { root_cid, .. } => {
                 // Unexpected during recovery - blocks should already be in blockstore
                 tracing::warn!(
                     cid = %root_cid,
-                    "Unexpected BitswapFetchStarted during recovery - block may have missing links"
+                    "Unexpected BlockSyncFetchStarted during recovery - block may have missing links"
                 );
             }
             ReplicationResult::ChannelClosed => {

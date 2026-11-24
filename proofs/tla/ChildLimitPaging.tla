@@ -1,99 +1,88 @@
 ---- MODULE ChildLimitPaging ----
-\* The story: a parent asks for the first few of its children, and those
-\* children are streamed in an order the selected index guarantees. The scan
-\* may stop as soon as that parent has its page; it must not borrow another
-\* parent's page or spend another parent's scan bound.
+\* Each parent scans the same child stream and keeps only its own children.
+\* The scan may stop at offset + limit only when the selected index supplies
+\* the requested order. An unordered scan must be exhausted before sorting.
+\* Models TypeJoinMany::next_per_parent in
+\* crates/engine/query/src/plan/type_join/type_join_many/children.rs.
 EXTENDS Naturals, FiniteSets, Sequences
 
-CONSTANTS
-  Parents,   \* parents in the query result
-  Children,  \* all children visible to the scan
-  Guarded    \* whether the selected index is checked before stopping
+\* Children have a parent and a distinct requested-order rank per parent.
+CONSTANTS Parents, Children, OrderedScan, Offset, Limit, Guarded
 
-ASSUME Cardinality(Parents) >= 2
-ASSUME Cardinality(Children) >= 2
-ASSUME Guarded \in BOOLEAN
+\* Ranks and owners define three children per parent.
+Owner == [c \in Children |-> IF c <= 3 THEN "a" ELSE "b"]
+Rank == [c \in Children |-> IF c <= 3 THEN c ELSE c - 3]
+ScanOrder == IF OrderedScan THEN <<1, 2, 3, 4, 5, 6>> ELSE <<1, 3, 2, 4, 6, 5>>
 
-VARIABLES
-  parent,     \* the parent whose page is being collected
-  position,   \* the current position in the ordered scan
-  collected,  \* each parent's collected page, as a function to a sequence
-  matched,    \* children already matched to the current parent
-  done        \* all requested pages have been collected
+\* The offset and limit select ranks in the requested child order.
+ASSUME /\ Parents # {} /\ Children # {} /\ Offset \in Nat /\ Limit \in Nat
+       /\ Limit > 0 /\ Guarded \in BOOLEAN
+       /\ Owner \in [Children -> Parents] /\ Rank \in [Children -> Nat]
+       /\ ScanOrder \in Seq(Children) /\ Len(ScanOrder) = Cardinality(Children)
+       /\ {ScanOrder[i] : i \in 1..Len(ScanOrder)} = Children
+       /\ \A p \in Parents : \A a,b \in Children :
+            (Owner[a] = p /\ Owner[b] = p /\ a # b) => Rank[a] # Rank[b]
 
-vars == <<parent, position, collected, matched, done>>
+\* Each parent owns a cursor, matched children, and an independently closed page.
+VARIABLES position, matched, done, early
+vars == <<position, matched, done, early>>
 
+\* The requested scan order is checked for each parent's children.
+Ordered == \A i,j \in 1..Len(ScanOrder) :
+  (i < j /\ Owner[ScanOrder[i]] = Owner[ScanOrder[j]]) =>
+    Rank[ScanOrder[i]] < Rank[ScanOrder[j]]
+
+\* A page contains ranks after the offset and within the requested limit.
+Page(items) == {c \in items :
+  /\ Cardinality({other \in items : Rank[other] < Rank[c]}) >= Offset
+  /\ Cardinality({other \in items : Rank[other] < Rank[c]}) < Offset + Limit}
+
+\* Each parent's correct page comes from all of that parent's children.
+Wanted(p) == Page({c \in Children : Owner[c] = p})
+
+\* All parents start before the first scanned child, with no matches.
 Init ==
-  /\ parent \in Parents
-  /\ position = 1
-  /\ collected = [p \in Parents |-> <<>>]
-  /\ matched = {}
-  /\ done = FALSE
+  /\ position = [p \in Parents |-> 1]
+  /\ matched = [p \in Parents |-> {}]
+  /\ done = [p \in Parents |-> FALSE]
+  /\ early = [p \in Parents |-> FALSE]
 
-\* The selected scan is ordered only when the guard runs. A filter-only or
-\* different-order index must not license early stop.
-ProvidesOrder == Guarded
+\* One parent consumes one child; other parents' pages remain untouched.
+Scan(p) ==
+  /\ ~done[p] /\ position[p] <= Len(ScanOrder)
+  /\ LET child == ScanOrder[position[p]]
+         nextMatches == IF Owner[child] = p THEN matched[p] \cup {child} ELSE matched[p]
+         mayStop == (Ordered \/ ~Guarded) /\ Cardinality(nextMatches) >= Offset + Limit
+     IN /\ matched' = [matched EXCEPT ![p] = nextMatches]
+        /\ position' = [position EXCEPT ![p] = @ + 1]
+        /\ done' = [done EXCEPT ![p] = mayStop \/ position[p] = Len(ScanOrder)]
+        /\ early' = [early EXCEPT ![p] = mayStop /\ position[p] < Len(ScanOrder)]
 
-\* Every child belongs to every parent in this abstract model, so a match is
-\* simply a child not consumed for this parent yet.
-NextChild ==
-  Children \ matched
+\* A parent with an empty stream finishes without returning children.
+Finish(p) ==
+  /\ ~done[p] /\ position[p] > Len(ScanOrder)
+  /\ done' = [done EXCEPT ![p] = TRUE]
+  /\ UNCHANGED <<position, matched, early>>
 
-\* Advance the scan and collect the child if the current page still needs it.
-\* Early stop is allowed only when the scan actually provides the page order.
-Scan ==
-  /\ ~done
-  /\ collected[parent] = <<>>
-  /\ \E child \in NextChild:
-       /\ matched' = matched \cup {child}
-       /\ IF ProvidesOrder
-            THEN /\ collected' = [collected EXCEPT ![parent] = <<child>>]
-                 /\ parent' = CHOOSE p \in Parents: p # parent
-            ELSE /\ collected' = [collected EXCEPT ![parent] = <<child>>]
-                 /\ parent' = parent
-                 /\ done' = TRUE
-       /\ done' = IF ProvidesOrder THEN done ELSE TRUE
-       /\ UNCHANGED <<position>>
+\* Any unfinished parent may take its next scan step.
+Next == \E p \in Parents : Scan(p) \/ Finish(p)
+Spec == Init /\ [][Next]_vars
 
-\* Without the guard, the page keeps scanning until every child is consumed.
-\* This keeps the same page collection but never claims early ordering.
-Drain ==
-  /\ ~done
-  /\ ~ProvidesOrder
-  /\ collected[parent] = <<>>
-  /\ \E child \in NextChild:
-       /\ matched' = matched \cup {child}
-       /\ collected' = [collected EXCEPT ![parent] = <<child>>]
-       /\ parent' = CHOOSE p \in Parents: p # parent
-       /\ done' = done
-       /\ UNCHANGED <<position>>
+\* A parent that can continue scanning eventually gets another turn.
+FairSpec == Spec /\ \A p \in Parents : WF_vars(Scan(p) \/ Finish(p))
 
-\* Finish after every child has been offered.
-Finish ==
-  /\ ~done
-  /\ ProvidesOrder
-  /\ \A p \in Parents: collected[p] # <<>>
-  /\ done' = TRUE
-  /\ UNCHANGED <<parent, position, collected, matched>>
-
-Next == Scan \/ Drain \/ Finish
-Done == done /\ UNCHANGED vars
-Spec == Init /\ [][Next \/ Done]_vars
-
+\* Cursors, matches, and completion markers remain within their domains.
 TypeStays ==
-  /\ parent \in Parents
-  /\ position = 1
-  /\ \A p \in Parents: collected[p] \in Seq(Children)
-  /\ matched \in SUBSET Children
-  /\ done \in BOOLEAN
+  /\ position \in [Parents -> 1..(Len(ScanOrder) + 1)]
+  /\ matched \in [Parents -> SUBSET Children]
+  /\ done \in [Parents -> BOOLEAN] /\ early \in [Parents -> BOOLEAN]
 
-\* Each parent gets exactly one child in this small page model; no parent is
-\* left without a page just because another parent came first.
-INV_EveryParentHasPage ==
-  done => \A p \in Parents: collected[p] # <<>>
+\* A completed parent returns exactly its requested offset and limit page.
+INV_CompletedPage == \A p \in Parents : done[p] => Page(matched[p]) = Wanted(p)
 
-\* Early stop never creates a page from a scan that did not guarantee order.
-INV_EarlyStopOnlyWhenOrdered ==
-  \A p \in Parents:
-    collected[p] # <<>> => ProvidesOrder \/ position = Cardinality(Children) + 1
+\* Stopping before the end is safe only when the actual scan is ordered.
+INV_EarlyStopOnlyWhenOrdered == \A p \in Parents : early[p] => Ordered
+
+\* Every parent eventually finishes its page when scan steps are scheduled.
+LIVE_AllPagesComplete == <>(\A p \in Parents : done[p])
 ====

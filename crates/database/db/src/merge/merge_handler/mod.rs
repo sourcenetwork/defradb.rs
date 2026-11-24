@@ -31,6 +31,7 @@ mod parked;
 mod parked_acp;
 mod protected_update;
 mod recovery;
+mod registration_inputs;
 mod replica_plan;
 pub mod se_merge;
 mod signature;
@@ -39,6 +40,7 @@ pub(crate) use signature::verify_signature_data;
 
 pub use error::{HistoryRejection, MergeError};
 pub use field::FieldMergeResult;
+pub use registration_inputs::RegistrationLookup;
 
 use kovan_map::HopscotchMap;
 use kovan_queue::seg_queue::SegQueue;
@@ -139,6 +141,7 @@ pub struct DbMergeHandler<S: Store, B: blockstore::Blockstore> {
     /// Request-scoped DEKs prepared outside an engine-owned merge attempt.
     /// `None` means this handler is on the legacy non-retry path.
     retry_decryption_keys: Option<RetryDecryptionKeys>,
+    registration_inputs: registration_inputs::RegistrationInputs,
     retry_prefetch_requested: Option<Arc<AtomicBool>>,
     /// Keys fetched before this merge's own transaction (see
     /// `merge_keys`): consulted before any request to the KMS.
@@ -181,6 +184,7 @@ impl<S: Store, B: blockstore::Blockstore> Clone for DbMergeHandler<S, B> {
             se_repusher: Arc::clone(&self.se_repusher),
             kms: Arc::clone(&self.kms),
             retry_decryption_keys: self.retry_decryption_keys.clone(),
+            registration_inputs: self.registration_inputs.clone(),
             retry_prefetch_requested: self.retry_prefetch_requested.clone(),
             prepared_keys: self.prepared_keys.clone(),
             local_keys_only: self.local_keys_only,
@@ -311,6 +315,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             se_repusher: Arc::new(regolith::sync::OnceCell::new()),
             kms: Arc::new(regolith::sync::OnceCell::new()),
             retry_decryption_keys: None,
+            registration_inputs: Default::default(),
             retry_prefetch_requested: None,
             prepared_keys: None,
             local_keys_only: false,

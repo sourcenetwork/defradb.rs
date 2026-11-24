@@ -287,6 +287,8 @@ pub struct Node {
     embedded_vera: kovan_queue::seg_queue::SegQueue<vera_embedded::HostedNode>,
     #[cfg(feature = "embedded-vera")]
     embedded_vera_trust: Option<EmbeddedVeraTrust>,
+    #[cfg(feature = "embedded-vera")]
+    embedded_vera_rpc_addr: Option<std::net::SocketAddr>,
     /// Document ACP is a remote provider: its calls reach the network, so
     /// they stay where they are made.
     remote_acp: bool,
@@ -693,7 +695,7 @@ impl Node {
     {
         workers::run_on(self.pool.as_ref(), workers::Target::LeastLoaded, make)
             .await
-            .map_err(Error::WorkerPoolCall)?
+            .map_err(Error::worker_pool_call)?
     }
 
     /// Runs a document ACP call: on the pool when the ACP is the node's own
@@ -1145,6 +1147,12 @@ impl Node {
     #[cfg(feature = "embedded-vera")]
     pub fn embedded_vera_trust(&self) -> Option<&EmbeddedVeraTrust> {
         self.embedded_vera_trust.as_ref()
+    }
+
+    /// The address bound at startup when the hosted Vera deployment serves JSON-RPC.
+    #[cfg(feature = "embedded-vera")]
+    pub fn embedded_vera_rpc_addr(&self) -> Option<std::net::SocketAddr> {
+        self.embedded_vera_rpc_addr
     }
 
     /// The limits queries on this node run under.

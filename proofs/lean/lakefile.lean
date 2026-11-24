@@ -7,6 +7,18 @@ lean_lib ChildPage where
 package defraConvergence where
 
 @[default_target]
+lean_lib HeaderRetry where
+
+@[default_target]
+lean_lib SyncedMigrationTransform where
+
+@[default_target]
+lean_lib AssignmentPosition where
+
+@[default_target]
+lean_lib OrderedIndexPage where
+
+@[default_target]
 lean_lib LocalFetchPermit where
 
 @[default_target]
@@ -314,6 +326,9 @@ lean_lib AdministrativeRelationship where
 
 @[default_target]
 lean_lib ProjectionRelationship where
+
+@[default_target]
+lean_lib ParentRegistration where
 
 @[default_target]
 lean_lib ExactRelationshipObservation where
