@@ -1429,11 +1429,13 @@ parallelism="${TLA_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}"
 case "$parallelism" in
   ''|*[!0-9]*) echo "TLA_JOBS must be a positive integer" >&2; exit 2 ;;
 esac
+parallelism=$((10#$parallelism))
 if [ "$parallelism" -lt 1 ]; then
   echo "TLA_JOBS must be a positive integer" >&2
   exit 2
 fi
-# Half of the machine's memory, shared out between the lanes.
+# Half of the machine's memory, shared out between the lanes. When the
+# default lane count would leave a lane under 512 MB, fewer lanes run.
 if [ -z "${TLA_JAVA_HEAP:-}" ]; then
   if [ -r /proc/meminfo ]; then
     memory_mb=$(awk '/^MemTotal:/ {print int($2 / 1024)}' /proc/meminfo)
@@ -1441,9 +1443,12 @@ if [ -z "${TLA_JAVA_HEAP:-}" ]; then
     memory_mb=$(( $(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1048576 ))
   fi
   if [ "${memory_mb:-0}" -gt 0 ]; then
-    heap_mb=$(( memory_mb / 2 / parallelism ))
-    [ "$heap_mb" -lt 512 ] && heap_mb=512
-    export TLA_JAVA_HEAP="${heap_mb}m"
+    budget_mb=$(( memory_mb / 2 ))
+    if [ -z "${TLA_JOBS:-}" ] && [ $(( budget_mb / parallelism )) -lt 512 ]; then
+      parallelism=$(( budget_mb / 512 ))
+      [ "$parallelism" -lt 1 ] && parallelism=1
+    fi
+    export TLA_JAVA_HEAP="$(( budget_mb / parallelism ))m"
   fi
 fi
 if ! workdir=$(mktemp -d "${TMPDIR:-/tmp}/defra-tla.XXXXXX"); then
