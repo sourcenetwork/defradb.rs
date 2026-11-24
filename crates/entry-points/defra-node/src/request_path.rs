@@ -54,10 +54,12 @@ impl RequestPath<'_> {
     ) -> QueryResponse {
         // Read before the node's default fills in the actor: a caller's key
         // signs only for an actor the caller named.
-        let caller_signer = match embedded_signer::admitted_signer(&request) {
-            Ok(signer) => signer,
-            Err(error) => return QueryResponse::error(error.to_string()),
-        };
+        let actor = request.identity.as_ref().map(ToString::to_string);
+        let caller_signer =
+            match embedded_signer::admitted_signer(actor.as_deref(), &request.context) {
+                Ok(signer) => signer,
+                Err(error) => return QueryResponse::error(error.to_string()),
+            };
         let mut request = request;
         if request.identity.is_none() {
             request.identity = self.node_query_identity.cloned();

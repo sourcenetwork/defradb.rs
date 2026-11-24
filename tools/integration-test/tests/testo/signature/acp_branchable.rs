@@ -1,4 +1,4 @@
-//! Generated from the conformance scenarios of tests/integration/signature/acp_branchable_test.go at defradb 137dc624052b.
+//! Generated from the conformance scenarios of tests/integration/signature/acp_branchable_test.go at defradb 307364d9d828.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::shared::KeyType;
@@ -9,6 +9,7 @@ use integration_test::actions::{
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
+use integration_test::ClientType;
 use serde_json::json;
 
 #[test]
@@ -112,7 +113,7 @@ resources:
             WaitForSync {
                 doc_ids: Some(vec![Text::reference("doc"), Text::reference("collection")]),
                 common: Common {
-                    capture: captures([("head", "/cids/0")]),
+                    capture: captures([("collectionHead", "/cids/1"), ("head", "/cids/0")]),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -120,7 +121,7 @@ resources:
             .into(),
             VerifyBlockSignature {
                 signer_seed: Some(1),
-                cid: "bafyreia7dgbk4gjeo3hvdqcbizzl4f25onmy7oetwhvxe6sq3lup5n7xju".into(),
+                cid: Text::reference("collectionHead"),
                 common: Common {
                     identity_seed: Some(1),
                     ..Default::default()
@@ -129,6 +130,8 @@ resources:
             }
             .into(),
         ],
+        client_types: Some(&[ClientType::InProcess]),
+        // Deviates from Go: Go verifies the literal CID of its collection-level block, which Go's key signed under Go's policy ID, so no defradb.rs node can write it; the test verifies the collection-level block the sync reports instead.
         ..Default::default()
     }
     .execute();
@@ -235,7 +238,7 @@ resources:
             WaitForSync {
                 doc_ids: Some(vec![Text::reference("doc"), Text::reference("collection")]),
                 common: Common {
-                    capture: captures([("head", "/cids/0")]),
+                    capture: captures([("collectionHead", "/cids/1"), ("head", "/cids/0")]),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -243,7 +246,7 @@ resources:
             .into(),
             VerifyBlockSignature {
                 signer_seed: Some(1),
-                cid: "bafyreia7dgbk4gjeo3hvdqcbizzl4f25onmy7oetwhvxe6sq3lup5n7xju".into(),
+                cid: Text::reference("collectionHead"),
                 expected_error: Some("missing permission".into()),
                 common: Common {
                     identity_seed: Some(2),
@@ -253,6 +256,8 @@ resources:
             }
             .into(),
         ],
+        client_types: Some(&[ClientType::InProcess]),
+        // Deviates from Go: Go verifies the literal CID of its collection-level block, which Go's key signed under Go's policy ID, so no defradb.rs node can write it; the test verifies the collection-level block the sync reports instead.
         ..Default::default()
     }
     .execute();
