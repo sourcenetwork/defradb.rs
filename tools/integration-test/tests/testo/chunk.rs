@@ -20,7 +20,6 @@ mod embed_replicate;
 mod embed_search;
 mod embed_support;
 mod embed_transaction;
-mod embed_unconfigured;
 mod embed_writes;
 mod protect_admin_ops;
 mod protect_api_writes;

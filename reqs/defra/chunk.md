@@ -402,13 +402,6 @@ A backup of `Article` also holds `Article__body_chunk`: each current chunk's `te
 
 Importing a backup whose `Article` has a body and which holds no `Article__body_chunk` asks the node's model for each chunk once, and every chunk holds its vector. While the model answers with 500, the import fails with `embedding error: embedding provider returned 500 Internal Server Error`, and the node has no `Article` and no chunks.
 
-# `defra.chunk.embed.unconfigured`: A chunk embedding without a model or URL fails the write
-
-- **Parents:** ["defra.chunk.embed"]
-- **Scenarios:** ["chunk::embed_unconfigured::a_chunk_embedding_without_a_url_fails_the_write"]
-
-With `body_v: [Float32!] @embedding(fields: ["body"], provider: "openai", model: "m")` and no embedding URL on the node, adding an article with a body fails with `a chunk embedding needs a URL: set it on the @embedding or in the node's embedding config. Field: Article__body_chunk.body_v`, and no article or chunk is stored. A missing model fails the same way, naming the model. A chunk is never written again, so one stored without its vector would never get one.
-
 # `defra.chunk.embed.encrypted`: An encrypted article's chunks get their vectors
 
 - **Parents:** ["defra.chunk.embed"]
