@@ -19,14 +19,14 @@ use crate::request_scope::bound;
 use crate::router::{AppState, DocRelationshipChange, NodePermission};
 
 /// Response for adding a policy.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct AddPolicyResponse {
     #[serde(rename = "PolicyID")]
     pub policy_id: String,
 }
 
 /// A policy as the list and get routes answer it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PolicyInfo {
     pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -50,7 +50,7 @@ impl From<&acp::Policy> for PolicyInfo {
 
 /// The add-policy route's query: the caller's nonce, which a remote ACP
 /// (vera.rs) derives the policy ID from. Go sends none.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 pub struct AddPolicyQuery {
     /// 64 hexadecimal characters.
     #[serde(default)]
@@ -116,16 +116,16 @@ pub async fn get_policy(
 pub async fn get_status(
     State(state): State<AppState>,
     identity: ExtractIdentity,
-) -> Result<Json<acp::LightClientStatus>, HttpError> {
+) -> Result<Json<crate::wire::LightClientStatus>, HttpError> {
     let status = state
         .executor
         .acp_light_client_status_as(&identity.context())
         .await?;
-    Ok(Json(status))
+    Ok(Json(crate::wire::LightClientStatus::from(status)))
 }
 
 /// Request body for document ACP relationship operations (Go-compatible).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct DocRelationshipRequest {
     #[serde(alias = "collection")]
     pub collection: String,
@@ -138,7 +138,7 @@ pub struct DocRelationshipRequest {
 }
 
 /// Response for document ACP relationship operations (Go-compatible).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct DocRelationshipResponse {
     #[serde(rename = "ExistedAlready")]
     pub existed_already: bool,
@@ -152,7 +152,7 @@ pub struct DocRelationshipResponse {
 /// is sent to the remote provider after the commit, and grants or revokes
 /// nothing there until the provider holds it. A staged revocation denies its
 /// subject in the transaction at once, and on this node from the commit.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema)]
 pub struct StagedRelationship {
     /// The change's place in the node's queue of owed changes.
     #[serde(rename = "Seq")]
@@ -199,7 +199,7 @@ fn relationship_operations(
 }
 
 /// Known documents whose ownership the authenticated caller asks about.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OwnDocumentsRequest {
     pub collection: String,
@@ -207,7 +207,7 @@ pub struct OwnDocumentsRequest {
 }
 
 /// A visible document's ownership relative to the authenticated caller.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct OwnDocument {
     pub doc_id: String,
     pub visible: bool,
@@ -216,7 +216,7 @@ pub struct OwnDocument {
     pub owner_registered: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct OwnDocumentsResponse {
     pub documents: Vec<OwnDocument>,
 }
@@ -267,7 +267,7 @@ pub async fn own_documents(
 }
 
 /// Response for deleting a document ACP relationship (Go-compatible).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct DocRelationshipDeleteResponse {
     #[serde(rename = "RecordFound")]
     pub record_found: bool,
@@ -321,7 +321,7 @@ async fn apply_add_doc_relationship(
 }
 
 /// Request body for document ACP decision preview operations.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct DocDecisionRequest {
     pub actor: String,
     pub permission: String,
@@ -334,7 +334,7 @@ pub struct DocDecisionRequest {
 }
 
 /// Response for document ACP decision preview operations.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct DocDecisionResponse {
     pub allowed: bool,
 }
@@ -450,14 +450,14 @@ pub async fn add_doc_relationships(
 }
 
 /// Query for GET /api/v0/acp/document/relationships.
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct DocRelationshipsQuery {
     pub collection: String,
     #[serde(rename = "docID", alias = "doc_id")]
     pub doc_id: String,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct DocActorRelationshipQuery {
     pub collection: String,
     #[serde(rename = "docID")]
@@ -513,7 +513,7 @@ pub async fn list_doc_relationships(
     State(state): State<AppState>,
     identity: ExtractIdentity,
     axum::extract::Query(query): axum::extract::Query<DocRelationshipsQuery>,
-) -> Result<Json<Vec<acp::DocumentRelationship>>, HttpError> {
+) -> Result<Json<Vec<crate::wire::DocumentRelationship>>, HttpError> {
     let requestor = identity
         .did()
         .ok_or_else(|| HttpError::Unauthorized("identity required for document ACP".into()))?;
@@ -526,7 +526,14 @@ pub async fn list_doc_relationships(
     doc_acp
         .list_doc_relationships(requestor, &query.collection, &query.doc_id)
         .await
-        .map(Json)
+        .map(|relationships| {
+            Json(
+                relationships
+                    .into_iter()
+                    .map(crate::wire::DocumentRelationship::from)
+                    .collect(),
+            )
+        })
         .map_err(http_error_from_backend_message)
 }
 

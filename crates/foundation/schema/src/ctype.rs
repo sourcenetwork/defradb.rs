@@ -46,6 +46,26 @@ pub enum CType {
     Unknown(u8),
 }
 
+/// The wire view of a [`CType`], for its schema only.
+#[derive(schemars::JsonSchema)]
+#[serde(untagged)]
+#[allow(dead_code)] // only its schema is used
+enum CTypeWire {
+    Kind(u8),
+    Custom { custom: String },
+}
+
+/// `CType` writes a `u8`, or a one-entry object for a custom type.
+impl schemars::JsonSchema for CType {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "CType".into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        <CTypeWire as schemars::JsonSchema>::json_schema(generator)
+    }
+}
+
 impl Serialize for CType {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -392,5 +412,29 @@ mod tests {
             let parsed: CType = serde_json::from_str(&json).unwrap();
             assert_eq!(ct, parsed);
         }
+    }
+}
+
+#[cfg(test)]
+mod wire_schema_tests {
+    use super::*;
+
+    /// `CType` writes a `u8`, or a `{custom}` object, so the schema has to
+    /// admit both.
+    #[test]
+    fn ctype_schema_admits_a_number_and_a_custom_object() {
+        let schema = schemars::schema_for!(CType);
+        let schema = serde_json::to_value(&schema).expect("schema serializes");
+        let branches = schema["anyOf"].as_array().expect("anyOf");
+        assert!(
+            branches.iter().any(|branch| branch["type"] == "integer"),
+            "a numeric CType is accepted: {schema}"
+        );
+        assert!(
+            branches
+                .iter()
+                .any(|branch| branch["properties"]["custom"].is_object()),
+            "a custom CType is accepted: {schema}"
+        );
     }
 }

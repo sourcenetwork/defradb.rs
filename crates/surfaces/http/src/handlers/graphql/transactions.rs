@@ -20,7 +20,7 @@ use crate::request_scope::CallerContext;
 use crate::router::AppState;
 
 /// Query parameters for beginning a transaction (Go-compatible).
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default, schemars::JsonSchema)]
 pub struct TxBeginQuery {
     /// Whether to create a read-only transaction.
     #[serde(default)]
@@ -29,14 +29,14 @@ pub struct TxBeginQuery {
 
 /// Response from beginning a transaction (Go-compatible).
 /// Uses numeric `id` field to match Go DefraDB's `CreateTxResponse`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct TxBeginResponse {
     /// Transaction ID as numeric value (Go uses uint64).
     pub id: u64,
 }
 
 /// Path parameter for transaction operations.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct TxPathParam {
     pub id: String,
 }

@@ -10,7 +10,7 @@ use crate::error::{Result, SchemaError};
 /// Matches Go's PolicyDescription.
 ///
 /// Collections without a policy have no access control.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PolicyDescription {
     /// The policy ID.
     /// - For local ACP: local policy ID

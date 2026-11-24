@@ -37,7 +37,7 @@ where
 /// (`http/handler_store.go:391-402`), so `?name=` is a name set to the empty
 /// string rather than an absent selector. It then selects nothing, which is
 /// what an empty `Option` value reproduces here.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 pub struct CollectionSelectorQuery {
     pub name: Option<String>,
     pub version_id: Option<String>,

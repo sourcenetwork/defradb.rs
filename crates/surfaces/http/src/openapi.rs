@@ -7,15 +7,21 @@
 //! operation, which is what makes the served document true of this server
 //! instead of only of Go (#3263).
 //!
-//! Two things the generated operations do not have yet, because the table
-//! carries no request or response types: a request body, and a typed success
-//! response. Both say so in the document rather than staying silent. The error
-//! response is Go's `#/components/responses/error`, so the envelope is right
-//! even while the bodies are not.
+//! A row may name the JSON body it accepts and the one it returns
+//! (`Route::request`, `Route::response`). Those are rendered with one
+//! [`SchemaGenerator`], so a type two routes share is one component, and every
+//! operation references components by name rather than carrying an anonymous
+//! copy. A route that names neither says so in its description rather than
+//! staying silent, so what is still undescribed is visible in the document
+//! itself.
 //!
-//! The document declares [`OPENAPI_VERSION`]; Go's is 3.0.3 and its schemas are
-//! written in that dialect, so this one is too until the schemas are derived
-//! here as well.
+//! The error response is Go's `#/components/responses/error`, so the envelope
+//! is right even for the routes whose bodies are not derived yet.
+//!
+//! The document declares [`OPENAPI_VERSION`]: 3.0.3, Go's version, because the
+//! operations it carries are Go's and its schemas are written in that dialect.
+//! `schemars` derives JSON Schema 2020-12, so `to_openapi_30` rewrites what
+//! it emits into the declared dialect rather than mixing the two.
 //!
 //! Because Go's operations are carried verbatim, the `x-defra-permission`
 //! extension appears only on the operations generated here: adding it to Go's
@@ -23,9 +29,11 @@
 //! more than a uniform extension. The permission table is the authority for the
 //! rest.
 
+use schemars::SchemaGenerator;
 use serde_json::{json, Map, Value};
 
 use crate::route_permissions::{Route, RoutePermission, ROUTES};
+use crate::route_table::BodySchema;
 
 /// The version the document declares: the same as Go's, because the operations
 /// it carries are Go's own and its schemas are written in that dialect.
@@ -44,6 +52,7 @@ const PINNED_GO_DOCUMENT: &str = include_str!("handlers/openapi-go-307364d9d.jso
 pub fn document() -> Value {
     let mut doc: Value =
         serde_json::from_str(PINNED_GO_DOCUMENT).expect("the pinned Go document parses");
+    let mut generator = SchemaGenerator::default();
     let mut paths = doc["paths"].take();
     {
         let paths = paths
@@ -62,7 +71,9 @@ pub fn document() -> Value {
             if item.get(&method).is_some() {
                 continue;
             }
-            item[method.as_str()] = operation(row, &path, &method);
+            let request = body_schema(row.request, &mut generator);
+            let response = body_schema(row.response, &mut generator);
+            item[method.as_str()] = operation(row, &path, &method, request, response);
 
             // Only the root mount serves these, so the operation cannot inherit
             // the document's `/api/v0` servers.
@@ -73,6 +84,7 @@ pub fn document() -> Value {
     }
     doc["paths"] = paths;
     doc["openapi"] = json!(OPENAPI_VERSION);
+    publish_derived_schemas(&mut doc, &generator);
     add_missing_tags(&mut doc);
     doc
 }
@@ -96,7 +108,14 @@ fn documented_method(row: &Route) -> String {
     }
 }
 
-fn operation(row: &Route, path: &str, method: &str) -> Value {
+fn operation(
+    row: &Route,
+    path: &str,
+    method: &str,
+    request: Option<Value>,
+    response: Option<Value>,
+) -> Value {
+    let described_result = response.is_some();
     let mut operation = json!({
         "operationId": operation_id(method, path),
         "tags": [tag_name(path)],
@@ -104,18 +123,201 @@ fn operation(row: &Route, path: &str, method: &str) -> Value {
         "security": security(&row.permission),
         "responses": {
             "200": {
-                "description": "The operation's result. No response schema is derived yet (#3263)."
+                "description": if described_result {
+                    "The operation's result."
+                } else {
+                    "The operation's result. No response schema is derived yet (#3263)."
+                }
             },
             "default": { "$ref": "#/components/responses/error" }
         },
         "x-defra-permission": permission_name(&row.permission),
     });
 
+    if let Some(request) = request {
+        operation["requestBody"] = json!({
+            "required": row.request_required,
+            "content": { "application/json": { "schema": request } }
+        });
+    }
+    if let Some(response) = response {
+        operation["responses"]["200"]["content"] =
+            json!({ "application/json": { "schema": response } });
+    }
+
     let parameters = path_parameters(path);
     if !parameters.is_empty() {
         operation["parameters"] = Value::Array(parameters);
     }
     operation
+}
+
+/// One body, rendered into `components.schemas` so every operation references
+/// a named schema rather than carrying an anonymous copy of it.
+fn body_schema(render: Option<BodySchema>, generator: &mut SchemaGenerator) -> Option<Value> {
+    let render = render?;
+    let mut value = serde_json::to_value(render(generator)).expect("a schemars schema serializes");
+    to_openapi_30(&mut value);
+    let name = value
+        .get("title")
+        .and_then(Value::as_str)
+        .map(str::to_string)?;
+    if let Value::Object(map) = &mut value {
+        map.remove("title");
+        map.remove("$defs");
+    }
+    generator
+        .definitions_mut()
+        .entry(name.clone())
+        .or_insert(value);
+    Some(json!({ "$ref": format!("#/components/schemas/{name}") }))
+}
+
+/// Puts every schema the typed rows reached into `components.schemas`.
+///
+/// `schemars` collects them in one generator, so a type two routes share is one
+/// component. `$ref`s are pointed at the document's `components` by
+/// [`to_openapi_30`].
+fn publish_derived_schemas(doc: &mut Value, generator: &SchemaGenerator) {
+    if generator.definitions().is_empty() {
+        return;
+    }
+    let mut derived =
+        serde_json::to_value(generator.definitions()).expect("schemars definitions serialize");
+    to_openapi_30(&mut derived);
+    let schemas = doc["components"]["schemas"]
+        .as_object_mut()
+        .expect("Go's document has component schemas");
+    for (name, schema) in derived.as_object().into_iter().flatten() {
+        assert!(
+            !schemas.contains_key(name),
+            "the derived schema {name} shadows one of Go's"
+        );
+        schemas.insert(name.clone(), schema.clone());
+    }
+}
+
+/// Rewrites a JSON Schema 2020-12 (what `schemars` derives) into the OpenAPI
+/// 3.0 dialect this document declares, and points `$ref`s at its components.
+///
+/// 3.0 has no `null` type, no boolean schemas, no `const`, and treats
+/// `exclusiveMinimum` as a flag rather than a number. A reader that validates
+/// the document rejects a document that mixes the two.
+fn to_openapi_30(value: &mut Value) {
+    match value {
+        // Left alone: a boolean here is data (`nullable`, an `enum` value). The
+        // boolean *schemas* are normalised by the object arm, which knows the
+        // keys that hold one.
+        Value::Bool(_) => {}
+        Value::Array(items) => items.iter_mut().for_each(to_openapi_30),
+        Value::Object(map) => {
+            // Only these keys hold a schema (or a list of them); `enum` and
+            // `required` hold data, and `nullable` is a flag.
+            // `additionalProperties` is not here: a boolean is valid in 3.0's
+            // Draft-4 dialect, and `deny_unknown_fields` means `false`.
+            for key in ["items", "not", "additionalItems", "contains"] {
+                if matches!(map.get(key), Some(Value::Bool(_))) {
+                    map.insert(key.to_string(), Value::Object(Map::new()));
+                }
+            }
+            for key in ["properties", "$defs", "definitions"] {
+                if let Some(Value::Object(children)) = map.get_mut(key) {
+                    for child in children.values_mut() {
+                        if matches!(child, Value::Bool(_)) {
+                            *child = Value::Object(Map::new());
+                        }
+                    }
+                }
+            }
+            for key in ["anyOf", "oneOf", "allOf", "prefixItems"] {
+                if let Some(Value::Array(branches)) = map.get_mut(key) {
+                    for branch in branches.iter_mut() {
+                        if matches!(branch, Value::Bool(_)) {
+                            *branch = Value::Object(Map::new());
+                        }
+                    }
+                }
+            }
+
+            map.remove("$schema");
+
+            // `type: [T, "null"]` is `type: T, nullable: true` in 3.0.
+            if let Some(Value::Array(types)) = map.get("type").cloned() {
+                let nullable = types.iter().any(|kind| kind == "null");
+                let mut remaining: Vec<Value> =
+                    types.into_iter().filter(|kind| kind != "null").collect();
+                if nullable {
+                    map.insert("nullable".to_string(), Value::Bool(true));
+                }
+                match remaining.len() {
+                    0 => {
+                        map.remove("type");
+                    }
+                    1 => {
+                        map.insert("type".to_string(), remaining.remove(0));
+                    }
+                    _ => {
+                        map.insert("type".to_string(), Value::Array(remaining));
+                    }
+                }
+            }
+
+            // An `anyOf` with a null branch is the same thing spelled out.
+            if let Some(Value::Array(branches)) = map.get("anyOf").cloned() {
+                let (nulls, rest): (Vec<Value>, Vec<Value>) = branches
+                    .into_iter()
+                    .partition(|branch| branch["type"] == "null");
+                if !nulls.is_empty() {
+                    map.insert("nullable".to_string(), Value::Bool(true));
+                    match rest.len() {
+                        0 => {
+                            map.remove("anyOf");
+                        }
+                        1 => {
+                            map.remove("anyOf");
+                            if let Value::Object(only) = rest.into_iter().next().expect("one") {
+                                map.extend(only);
+                            }
+                        }
+                        _ => {
+                            map.insert("anyOf".to_string(), Value::Array(rest));
+                        }
+                    }
+                }
+            }
+
+            if let Some(constant) = map.remove("const") {
+                map.insert("enum".to_string(), Value::Array(vec![constant]));
+            }
+
+            for (exclusive, bound) in [
+                ("exclusiveMinimum", "minimum"),
+                ("exclusiveMaximum", "maximum"),
+            ] {
+                if matches!(map.get(exclusive), Some(Value::Number(_))) {
+                    let value = map.remove(exclusive).expect("a number");
+                    map.insert(bound.to_string(), value);
+                    map.insert(exclusive.to_string(), Value::Bool(true));
+                }
+            }
+
+            // After the merges above: a single branch lifted out of `anyOf` can
+            // be the `$ref` itself.
+            if let Some(Value::String(reference)) = map.get("$ref") {
+                if let Some(name) = reference.strip_prefix("#/$defs/") {
+                    map.insert(
+                        "$ref".to_string(),
+                        Value::String(format!("#/components/schemas/{name}")),
+                    );
+                }
+            }
+
+            for child in map.values_mut() {
+                to_openapi_30(child);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn description(path: &str) -> &'static str {
@@ -470,6 +672,238 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A typed row's bodies reach the document, both of them, as refs into the
+    /// components this document declares.
+    #[test]
+    fn typed_routes_carry_their_request_and_response() {
+        let document = document();
+        let is_owner = &document["paths"]["/acp/document/is-owner"]["post"];
+        assert_eq!(
+            is_owner["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+            "#/components/schemas/OwnDocumentsRequest"
+        );
+        assert_eq!(
+            is_owner["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+            "#/components/schemas/OwnDocumentsResponse"
+        );
+        assert!(document["components"]["schemas"]["OwnDocumentsRequest"].is_object());
+        assert!(document["components"]["schemas"]["OwnDocumentsResponse"].is_object());
+
+        let signed = &document["paths"]["/block/signed"]["get"];
+        assert_eq!(
+            signed["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+            "#/components/schemas/SignedBlockResponse"
+        );
+        assert!(signed["requestBody"].is_null());
+
+        // Bodies mirrored into `wire`, so the data-path crates carry no schema
+        // dependency: the document names the mirror.
+        assert_eq!(
+            document["paths"]["/acp/node/source-permission"]["post"]["requestBody"]["content"]
+                ["application/json"]["schema"]["$ref"],
+            "#/components/schemas/SourcePermission"
+        );
+        let relationships = &document["paths"]["/acp/document/relationships"]["get"]["responses"]
+            ["200"]["content"]["application/json"]["schema"]["$ref"];
+        assert!(
+            relationships
+                .as_str()
+                .is_some_and(|reference| reference.starts_with("#/components/schemas/Array_of_")),
+            "the relationship listing answers a mirrored array, got {relationships}"
+        );
+        // A route Go documents keeps Go's operation, so its body stays Go's
+        // rather than the mirror's.
+        assert_eq!(
+            document["paths"]["/collections/{name}"]["delete"]["responses"]["200"]["content"]
+                ["application/json"]["schema"]["$ref"],
+            "#/components/schemas/delete_result"
+        );
+
+        let gc = &document["paths"]["/views/gc"]["post"];
+        assert_eq!(
+            gc["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+            "#/components/schemas/ViewNamesRequest"
+        );
+    }
+
+    /// Every `$ref` in the document resolves. A derived schema that points at a
+    /// definition the generator did not emit is a broken client generator.
+    #[test]
+    fn every_reference_resolves() {
+        let document = document();
+        let mut refs = BTreeSet::new();
+        collect_refs(&document, &mut refs);
+        assert!(!refs.is_empty(), "the document has references");
+        for reference in refs {
+            let path = reference
+                .strip_prefix("#/")
+                .unwrap_or_else(|| panic!("{reference} is not a local reference"))
+                .split('/');
+            let mut target = &document;
+            for segment in path {
+                target = &target[segment];
+            }
+            assert!(!target.is_null(), "{reference} does not resolve");
+        }
+    }
+
+    fn collect_refs(value: &Value, into: &mut BTreeSet<String>) {
+        match value {
+            Value::Object(map) => {
+                if let Some(reference) = map.get("$ref").and_then(Value::as_str) {
+                    into.insert(reference.to_string());
+                }
+                for child in map.values() {
+                    collect_refs(child, into);
+                }
+            }
+            Value::Array(items) => items.iter().for_each(|item| collect_refs(item, into)),
+            _ => {}
+        }
+    }
+
+    /// The document declares 3.0.3, so no generated schema may carry a 3.1
+    /// construct: `schemars` derives JSON Schema 2020-12, which has `null` in
+    /// `type`, boolean schemas and `const`.
+    #[test]
+    fn derived_schemas_are_in_the_declared_dialect() {
+        let document = document();
+        let schemas = document["components"]["schemas"]
+            .as_object()
+            .expect("component schemas");
+        for (name, schema) in schemas {
+            let text = schema.to_string();
+            assert!(!text.contains("$schema"), "{name} carries $schema");
+            assert!(!text.contains(r#""const""#), "{name} carries const");
+            assert!(
+                !text.contains(r#""type":["#),
+                "{name} carries a 3.1 type array"
+            );
+            assert!(
+                !text.contains(r#""$defs""#),
+                "{name} carries $defs rather than components"
+            );
+            assert!(
+                !text.contains(r##""$ref":"#/$defs/"##),
+                "{name} references $defs instead of components"
+            );
+        }
+        // A derived `serde_json::Value` field is `true` in 2020-12, which is not
+        // a 3.0 schema object.
+        assert_eq!(
+            document["components"]["schemas"]["PolicyInfo"]["properties"]["resources"],
+            json!({}),
+        );
+    }
+
+    /// An optional request body is published as optional: `views/gc` reads an
+    /// absent body as "every view", so telling a client it must send one would
+    /// be wrong. The typed rows that refuse an absent body still say required.
+    #[test]
+    fn an_optional_body_is_published_as_optional() {
+        let document = document();
+        assert_eq!(
+            document["paths"]["/views/gc"]["post"]["requestBody"]["required"],
+            json!(false)
+        );
+        assert_eq!(
+            document["paths"]["/acp/document/is-owner"]["post"]["requestBody"]["required"],
+            json!(true)
+        );
+    }
+
+    /// `deny_unknown_fields` is `additionalProperties: false`, which 3.0 allows
+    /// as a boolean. Turning it into `{}` would tell a client the opposite of
+    /// what the handler does.
+    #[test]
+    fn a_rejecting_body_keeps_additional_properties_false() {
+        let document = document();
+        assert_eq!(
+            document["components"]["schemas"]["OwnDocumentsRequest"]["additionalProperties"],
+            json!(false),
+            "the handler refuses unknown fields"
+        );
+    }
+
+    /// A `$ref` lifted out of an `anyOf` by the rewrite still points at the
+    /// components. Reachable as soon as a field is `Option<SomeNamedStruct>`.
+    #[test]
+    fn a_reference_lifted_out_of_any_of_is_rewritten() {
+        let mut schema = json!({
+            "anyOf": [
+                { "$ref": "#/$defs/Named" },
+                { "type": "null" }
+            ]
+        });
+        to_openapi_30(&mut schema);
+        assert_eq!(
+            schema,
+            json!({ "$ref": "#/components/schemas/Named", "nullable": true })
+        );
+    }
+
+    /// Every route whose handler reads or writes JSON names that body: 77 of 77.
+    /// The floor stays at 77 so a new body-carrying route cannot land without
+    /// its schema, and a row cannot go back to naming none.
+    #[test]
+    fn rows_that_name_a_body_do_not_regress() {
+        let typed = ROUTES
+            .iter()
+            .filter(|row| row.request.is_some() || row.response.is_some())
+            .count();
+        assert!(
+            typed >= 77,
+            "only {typed} rows name a body; 77 did when this floor was written"
+        );
+    }
+
+    /// Every row that names a body renders a real schema: a `serde_json::Value`
+    /// field is `{}`, so a row whose body derived to nothing would still pass
+    /// the coverage tests while telling a client nothing.
+    #[test]
+    fn every_named_body_renders_a_schema() {
+        let document = document();
+        let mut named = 0;
+        for row in ROUTES {
+            if row.request.is_none() && row.response.is_none() {
+                continue;
+            }
+            let path = match row.path.strip_prefix("/api/v0") {
+                Some(rest) => rest.to_string(),
+                None => row.path.to_string(),
+            };
+            let method = documented_method(row);
+            let operation = &document["paths"][path][method];
+            // A route Go documents keeps Go's operation, body included, so this
+            // checks the operations generated here.
+            if operation["x-defra-permission"].is_null() {
+                continue;
+            }
+            if row.request.is_some() {
+                let schema = &operation["requestBody"]["content"]["application/json"]["schema"];
+                // A named type is a `$ref` into the components; a `Vec<String>`
+                // or a `Value` renders inline, and only has to say something.
+                assert!(
+                    schema["$ref"].is_string() || schema["type"].is_string(),
+                    "{} names a request and publishes {schema}",
+                    row.path
+                );
+                named += 1;
+            }
+            if row.response.is_some() {
+                let schema =
+                    &operation["responses"]["200"]["content"]["application/json"]["schema"];
+                assert!(
+                    !schema.is_null(),
+                    "{} names a response and publishes none",
+                    row.path
+                );
+                named += 1;
+            }
+        }
+        assert!(named > 0, "no generated operation published a body");
     }
 
     /// `operationId` is what a client generator names its methods after, so it

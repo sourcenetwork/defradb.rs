@@ -17,6 +17,10 @@ bench = false
 defra-core = { path = "../../foundation/defra-core" }
 thiserror.workspace = true
 serde.workspace = true
+# `JsonSchema` for the descriptions the HTTP API serves. A foundation crate, so
+# no runtime; the derive keeps ~18 mirrors out of `defra-http` that would
+# otherwise duplicate this tree.
+schemars = "1"
 serde_json.workspace = true
 serde_ipld_dagcbor.workspace = true
 cid.workspace = true

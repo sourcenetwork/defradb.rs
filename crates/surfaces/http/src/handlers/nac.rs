@@ -13,7 +13,7 @@ use crate::router::AppState;
 
 /// Request body for Go-compatible NAC relationship operations.
 /// Go DefraDB uses: `{"Relation": "admin", "TargetActor": "did:key:..."}`
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct GoNacRelationshipRequest {
     /// Relation type (e.g., "admin").
     #[serde(rename = "Relation")]
@@ -23,7 +23,7 @@ pub struct GoNacRelationshipRequest {
     pub target_actor: String,
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
 pub struct SourcePermissionResponse {
     pub changed: bool,
 }
@@ -33,7 +33,7 @@ pub async fn change_source_permission(
     State(state): State<AppState>,
     identity: ExtractIdentity,
     headers: HeaderMap,
-    Json(body): Json<query::txn::SourcePermission>,
+    Json(body): Json<crate::wire::SourcePermission>,
 ) -> Result<Json<SourcePermissionResponse>, HttpError> {
     let context = super::txn_header::txn_context(&identity, &headers)?
         .ok_or_else(|| HttpError::BadRequest("x-defradb-tx is required".into()))?
@@ -43,34 +43,34 @@ pub async fn change_source_permission(
     }
     let changed = state
         .executor
-        .change_nac_source_permission_as(&context, &body)
+        .change_nac_source_permission_as(&context, &body.into())
         .await?;
     Ok(Json(SourcePermissionResponse { changed }))
 }
 
 /// Go's `client.AddActorRelationshipResult`.
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
 pub struct AddActorRelationshipResult {
     #[serde(rename = "ExistedAlready")]
     pub existed_already: bool,
 }
 
 /// Go's `client.DeleteActorRelationshipResult`.
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
 pub struct DeleteActorRelationshipResult {
     #[serde(rename = "RecordFound")]
     pub record_found: bool,
 }
 
 /// Go's `client.NACStatusResult`.
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
 pub struct NacStatusResult {
     #[serde(rename = "Status")]
     pub status: String,
 }
 
 /// Request body for enabling NAC (Go-compatible format).
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct EnableNacRequest {
     /// The owner DID to initialize NAC with.
     #[serde(rename = "OwnerDID")]
@@ -129,7 +129,7 @@ pub async fn get_status(
 }
 
 /// Query for GET /api/v0/acp/node/explain.
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ExplainQuery {
     pub subject: String,
 }
@@ -141,12 +141,15 @@ pub async fn explain_subject(
     State(state): State<AppState>,
     identity: ExtractIdentity,
     axum::extract::Query(query): axum::extract::Query<ExplainQuery>,
-) -> Result<Json<Vec<acp::nac::PermissionProvenance>>, HttpError> {
+) -> Result<Json<Vec<crate::wire::PermissionProvenance>>, HttpError> {
     Ok(Json(
         state
             .executor
             .explain_nac_subject_as(&identity.context(), &query.subject)
-            .await?,
+            .await?
+            .into_iter()
+            .map(crate::wire::PermissionProvenance::from)
+            .collect(),
     ))
 }
 

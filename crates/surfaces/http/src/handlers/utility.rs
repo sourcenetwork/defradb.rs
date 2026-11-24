@@ -19,7 +19,7 @@ use crate::request_scope::bound;
 use crate::router::{AppState, NodePermission};
 
 /// Response for node identity endpoint (Go-compatible).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct NodeIdentityResponse {
     /// The node's peer ID (if P2P is enabled).
     #[serde(rename = "PeerID", skip_serializing_if = "Option::is_none")]

@@ -21,7 +21,7 @@ use crate::validation::validate_identifier;
 
 /// Go-compatible request to create an index.
 /// Collection is provided in the URL path, not the body.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct GoCreateIndexRequest {
     /// Index name (optional, auto-generated if not provided).
     #[serde(rename = "Name", default)]
@@ -38,7 +38,7 @@ pub struct GoCreateIndexRequest {
 }
 
 /// Go-compatible indexed field description.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct GoIndexedFieldDescription {
     /// Field name.
     #[serde(rename = "Name")]
@@ -49,7 +49,7 @@ pub struct GoIndexedFieldDescription {
 }
 
 /// Go-compatible index description response.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct GoIndexDescription {
     /// Index name.
     #[serde(rename = "Name")]
@@ -69,14 +69,14 @@ pub struct GoIndexDescription {
 }
 
 /// Go v1 index description paired with its lifecycle state.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct GoListIndexesResult {
     #[serde(rename = "Description")]
     pub description: GoIndexDescription,
     #[serde(rename = "CollectionName")]
     pub collection_name: String,
     #[serde(rename = "Execution")]
-    pub execution: ActionExecution,
+    pub execution: crate::wire::ActionExecution,
 }
 
 fn index_kind(kind: Option<schema::IndexKind>, unique: bool) -> schema::IndexKind {
@@ -115,7 +115,7 @@ fn txn_listing(
                 unique: index.unique,
             },
             collection_name: version.name.clone(),
-            execution,
+            execution: execution.into(),
         })
         .collect()
 }
@@ -144,7 +144,7 @@ fn listed_index(index: crate::router::IndexInfo) -> GoListIndexesResult {
     GoListIndexesResult {
         description,
         collection_name: index.collection,
-        execution,
+        execution: execution.into(),
     }
 }
 

@@ -3,8 +3,6 @@
 use axum::{extract::State, Json};
 use serde::Deserialize;
 
-use defra_p2p_adapter::peer::Replicator;
-
 use crate::error::{peer_refused, HttpError};
 use crate::identity_extractor::ExtractIdentity;
 use crate::nac_guard::require_permission;
@@ -31,7 +29,7 @@ pub struct ReplicatorRequest {
 
 /// Request body for replicator removal (Go-compatible).
 /// Go DefraDB uses body JSON with ID and Collections fields.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct ReplicatorDeleteRequest {
     #[serde(rename = "ID", default)]
     pub id: String,
@@ -51,11 +49,16 @@ pub struct ReplicatorDeleteRequest {
 pub async fn list_replicators(
     State(state): State<AppState>,
     identity: ExtractIdentity,
-) -> Result<Json<Vec<Replicator>>, HttpError> {
+) -> Result<Json<Vec<crate::wire::Replicator>>, HttpError> {
     require_permission(&state, &identity, NodePermission::P2pReplicatorList).await?;
     let p2p = bound(state.require_p2p()?, &identity.context());
     Ok(Json(
-        peer::list_replicators(&*p2p).await.map_err(peer_refused)?,
+        peer::list_replicators(&*p2p)
+            .await
+            .map_err(peer_refused)?
+            .into_iter()
+            .map(crate::wire::Replicator::from)
+            .collect(),
     ))
 }
 
@@ -96,6 +99,10 @@ pub async fn remove_replicator(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The handler answers the mirror; this file's tests still build the
+    /// adapter type it converts from.
+    use defra_p2p_adapter::peer::Replicator;
 
     #[test]
     fn test_replicator_request_deserialize() {

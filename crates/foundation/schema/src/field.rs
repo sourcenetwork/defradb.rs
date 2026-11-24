@@ -16,7 +16,7 @@ fn is_false(value: &bool) -> bool {
 ///
 /// This matches Go's CollectionFieldDescription struct.
 /// Field names use serde rename to match Go's JSON format (PascalCase).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FieldDescription {
     /// Immutable field ID (stable across schema versions).
     /// Only fields persisted in the DAG will have a value.

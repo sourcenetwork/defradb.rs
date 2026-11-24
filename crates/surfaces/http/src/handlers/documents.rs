@@ -14,7 +14,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     Json,
 };
-use query::documents::{self, AddOptions, DocumentsResult, Filter};
+use query::documents::{self, AddOptions, Filter};
 use query::executor::{QueryRequest, QueryResponse};
 use query::txn::TransactionHandle;
 use serde::Deserialize;
@@ -136,7 +136,7 @@ fn json_body(body: &Bytes) -> Result<JsonValue, HttpError> {
 }
 
 /// Go's `encrypt`, `encryptFields` and `enableSigning` query parameters.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 pub struct AddParams {
     #[serde(default)]
     encrypt: Option<String>,
@@ -147,7 +147,7 @@ pub struct AddParams {
 }
 
 /// Go's `enableSigning` query parameter: the write's own signing choice.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 pub struct SigningParams {
     #[serde(default, rename = "enableSigning")]
     enable_signing: Option<String>,
@@ -253,7 +253,7 @@ pub async fn delete_document(
 
 /// Go's `DeleteCollectionRequest` and `UpdateCollectionRequest`: the filter
 /// is an object or its GraphQL source, and the updater is JSON text.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct FilteredRequest {
     #[serde(default)]
     filter: JsonValue,
@@ -294,12 +294,12 @@ pub async fn delete_documents_with_filter(
     headers: HeaderMap,
     Path(collection): Path<String>,
     body: Bytes,
-) -> Result<Json<DocumentsResult>, HttpError> {
+) -> Result<Json<crate::wire::DocumentsResult>, HttpError> {
     let request = filtered_request(&body)?;
     let server = Server::new(state, identity, &headers)?;
     documents::delete_with_filter(|m| server.run(m), &collection, &request.filter())
         .await
-        .map(Json)
+        .map(|result| Json(crate::wire::DocumentsResult::from(result)))
         .map_err(refused)
 }
 
@@ -313,7 +313,7 @@ pub async fn update_documents_with_filter(
     headers: HeaderMap,
     Path(collection): Path<String>,
     body: Bytes,
-) -> Result<Json<DocumentsResult>, HttpError> {
+) -> Result<Json<crate::wire::DocumentsResult>, HttpError> {
     let request = filtered_request(&body)?;
     let server = Server::new(state, identity, &headers)?;
     documents::update_with_filter(
@@ -323,7 +323,7 @@ pub async fn update_documents_with_filter(
         &request.updater(),
     )
     .await
-    .map(Json)
+    .map(|result| Json(crate::wire::DocumentsResult::from(result)))
     .map_err(refused)
 }
 

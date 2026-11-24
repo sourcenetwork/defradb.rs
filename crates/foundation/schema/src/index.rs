@@ -7,7 +7,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Describes a field within an index.
 /// Matches Go's IndexedFieldDescription.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct IndexedFieldDescription {
     /// Name of the field being indexed.
     #[serde(rename = "Name", default)]
@@ -74,6 +74,36 @@ struct IndexDescriptionWire {
     kind_description: Option<serde_json::Value>,
     #[serde(rename = "Unique", default)]
     unique: bool,
+}
+
+/// The wire view of an [`IndexDescription`], for its schema only.
+#[derive(schemars::JsonSchema)]
+#[allow(dead_code)] // only its schema is used
+struct IndexDescriptionSchema {
+    #[serde(rename = "Name")]
+    name: String,
+    #[serde(rename = "ID")]
+    id: u32,
+    #[serde(rename = "Fields")]
+    fields: Vec<IndexedFieldDescription>,
+    #[serde(rename = "Kind")]
+    kind: u8,
+    #[serde(rename = "KindDescription")]
+    kind_description: IndexKindDescriptionWire,
+    #[serde(rename = "Unique")]
+    unique: bool,
+}
+
+/// `IndexDescription` serializes through `IndexDescriptionRef` rather than its
+/// own fields, so the schema describes that view.
+impl schemars::JsonSchema for IndexDescription {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "IndexDescription".into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        <IndexDescriptionSchema as schemars::JsonSchema>::json_schema(generator)
+    }
 }
 
 impl Serialize for IndexDescription {
@@ -217,7 +247,7 @@ impl IndexDescription {
 
 /// Type of encrypted index.
 /// Matches Go's EncryptedIndexType.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[non_exhaustive]
 pub enum EncryptedIndexType {
     /// Equality-based searchable encryption.
@@ -228,7 +258,7 @@ pub enum EncryptedIndexType {
 
 /// Describes an encrypted index for searchable encryption.
 /// Matches Go's EncryptedIndexDescription.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EncryptedIndexDescription {
     /// Name of the field being indexed.
     #[serde(rename = "FieldName")]
@@ -250,7 +280,7 @@ impl EncryptedIndexDescription {
 }
 
 /// Describes a BM25 full-text search index on a collection field.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FullTextIndexDescription {
     /// Name of the field being indexed.
     #[serde(rename = "FieldName")]
@@ -350,7 +380,7 @@ macro_rules! vector_algorithms {
         $(#[doc = $first_doc:literal])* $first:ident => $first_name:literal / $first_block:literal,
         $($(#[doc = $doc:literal])* $variant:ident => $name:literal / $block:literal),+ $(,)?
     ) => {
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema)]
         pub enum VectorAlgorithm {
             $(#[doc = $first_doc])*
             #[default]
@@ -470,7 +500,9 @@ impl VectorAlgorithm {
 ///
 /// The three Go defines, spelled its way, so a description carrying any of them
 /// crosses runtimes unchanged.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub enum DistanceMetric {
     /// Direction only: magnitude is normalized away before anything is
     /// compared.
@@ -533,7 +565,7 @@ impl DistanceMetric {
 /// `u32` rather than `usize` because these replicate inside a collection
 /// definition, and a width that differs between runtimes is a value that
 /// survives one and not the other.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HnswParams {
     /// Maximum connections per node above layer 0.
     #[serde(rename = "M", default = "default_hnsw_m")]
@@ -569,7 +601,9 @@ impl Default for HnswParams {
 }
 
 /// Configuration of a vector (approximate nearest neighbor) index.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct VectorIndexDescription {
     /// Go writes an unset algorithm or metric as `""`, meaning the default.
     #[serde(
@@ -610,7 +644,7 @@ pub struct VectorIndexDescription {
 ///
 /// `alpha_percent` is the pruning slack in hundredths, so 120 is the paper's
 /// `alpha = 1.2`: an integer so the stored definition holds it exactly.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DiskAnnParams {
     /// Maximum out-degree of a node.
     #[serde(rename = "R", default = "default_diskann_r")]
@@ -673,7 +707,7 @@ impl Default for DiskAnnParams {
 }
 
 /// SSG build and search parameters.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SsgParams {
     /// Maximum edges kept per node.
     #[serde(rename = "R", default = "default_ssg_r")]
@@ -712,7 +746,7 @@ impl Default for SsgParams {
 ///
 /// `0` means derive: `nlist` from the corpus size, `m` from the vector width,
 /// `nprobe` from `nlist`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct IvfPqParams {
     /// Coarse centroids, and therefore inverted lists.
     #[serde(rename = "NList", default)]
@@ -760,7 +794,7 @@ impl Default for IvfPqParams {
 /// `0` means derive `nlist` from the corpus, matching [`IvfPqParams`]. There
 /// is no `m`: a list holds the full vector rather than a quantized code, so
 /// there is nothing to quantize.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct IvfFlatParams {
     /// Coarse centroids, and therefore inverted lists.
     #[serde(rename = "NList", default)]
@@ -844,7 +878,9 @@ impl VectorIndexDescription {
 
 /// Configuration of an ordered index: one that stores field values in key
 /// order, which is every index kind that predates vectors.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct OrderedIndexDescription {
     #[serde(rename = "Unique", default)]
     pub unique: bool,
@@ -869,11 +905,32 @@ impl Default for IndexKind {
 const INDEX_KIND_ORDERED: u8 = 0;
 const INDEX_KIND_VECTOR: u8 = 1;
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 #[serde(untagged)]
 enum IndexKindDescriptionWire {
     Ordered(OrderedIndexDescription),
     Vector(VectorIndexDescription),
+}
+
+/// The wire view of an [`IndexKind`], for its schema only.
+#[derive(schemars::JsonSchema)]
+#[allow(dead_code)] // only its schema is used
+struct IndexKindSchema {
+    #[serde(rename = "Kind")]
+    kind: u8,
+    #[serde(rename = "KindDescription")]
+    kind_description: IndexKindDescriptionWire,
+}
+
+/// `IndexKind` serializes through `IndexKindRef`, so the schema describes that.
+impl schemars::JsonSchema for IndexKind {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "IndexKind".into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        <IndexKindSchema as schemars::JsonSchema>::json_schema(generator)
+    }
 }
 
 #[derive(Serialize)]
@@ -951,5 +1008,64 @@ impl<'de> Deserialize<'de> for IndexKind {
     {
         let wire = IndexKindWire::deserialize(deserializer)?;
         Self::from_wire(wire.kind, wire.kind_description, false)
+    }
+}
+
+#[cfg(test)]
+mod wire_schema_tests {
+    use super::*;
+
+    /// The schema of a hand-serialized type has to describe what `Serialize`
+    /// writes, not the struct's own fields. This compares the schema's property
+    /// names with the keys of a serialized value.
+    #[test]
+    fn index_description_schema_matches_its_wire_form() {
+        let index = IndexDescription {
+            name: "by_name".to_string(),
+            id: 3,
+            fields: Vec::new(),
+            kind: None,
+            unique: false,
+            auto_generated: false,
+        };
+        let wire = serde_json::to_value(&index).expect("serializes");
+        let schema = schemars::schema_for!(IndexDescription);
+        let schema = serde_json::to_value(&schema).expect("schema serializes");
+
+        let mut serialized: Vec<&String> = wire.as_object().expect("an object").keys().collect();
+        let mut described: Vec<&String> = schema["properties"]
+            .as_object()
+            .expect("properties")
+            .keys()
+            .collect();
+        serialized.sort();
+        described.sort();
+        assert_eq!(described, serialized, "the schema names different fields");
+    }
+
+    /// A vector index's algorithm is a string on the wire, so the schema says
+    /// string rather than the enum's variant names going undocumented.
+    #[test]
+    fn vector_algorithm_schema_names_every_wire_value() {
+        let schema = schemars::schema_for!(VectorAlgorithm);
+        let schema = serde_json::to_value(&schema).expect("schema serializes");
+        let branches = schema["oneOf"].as_array().expect("oneOf");
+        assert!(
+            branches.iter().all(|branch| branch["type"] == "string"),
+            "every algorithm is a string on the wire"
+        );
+        let named: Vec<&str> = branches
+            .iter()
+            .filter_map(|branch| branch["const"].as_str())
+            .collect();
+        assert_eq!(
+            named.len(),
+            VectorAlgorithm::ALL.len(),
+            "every algorithm is named"
+        );
+        assert!(
+            named.contains(&"HNSW"),
+            "the wire names are the schema's: {named:?}"
+        );
     }
 }

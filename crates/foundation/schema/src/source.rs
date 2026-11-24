@@ -11,7 +11,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 ///
 /// Collections form a set when they have circular relations at creation time.
 /// For example: Book has relation to Author, Author has relation to Book.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CollectionSetDescription {
     /// ID of the collection set.
     #[serde(rename = "CollectionSetID")]
@@ -37,7 +37,7 @@ impl CollectionSetDescription {
 /// Matches Go's CollectionSource.
 ///
 /// Used to link schema versions together via migrations.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CollectionSource {
     /// Local identifier of the source collection version.
     #[serde(rename = "SourceCollectionID")]
@@ -69,7 +69,7 @@ impl CollectionSource {
 /// Matches Go's QuerySource.
 ///
 /// Used for views that derive data from queries.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct QuerySource {
     /// The base query for this data source.
     /// Note: This is simplified - Go uses request.Select which is more complex.

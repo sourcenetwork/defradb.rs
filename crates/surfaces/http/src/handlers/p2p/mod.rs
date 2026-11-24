@@ -44,7 +44,7 @@ pub use collections::{
     add_collections, list_collections, remove_collections, sync_branchable, sync_versions,
 };
 pub use documents::{add_documents, list_documents, remove_documents, sync_documents};
-pub use manage::{manage, manage_query};
+pub use manage::{manage, manage_query, ManageQueryRequestBody, ManageRequestBody};
 pub use peers::{
     active_peers, connect, disconnect, get_info, get_shareable_address, peer_details, sync_status,
     P2pInfoResponse, ShareableAddressResponse,

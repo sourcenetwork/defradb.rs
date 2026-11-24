@@ -66,6 +66,9 @@ async-tungstenite = { version = "0.35.0", optional = true }
 
 # Serialization
 serde.workspace = true
+# No features: the schema generator needs none, and `preserve_order` here would
+# enable it for every `serde_json` map in the workspace.
+schemars = "1"
 serde_json.workspace = true
 
 # Hashing
