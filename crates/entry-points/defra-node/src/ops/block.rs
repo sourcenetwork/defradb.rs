@@ -18,7 +18,7 @@ impl Node {
         key_type: crypto::KeyType,
     ) -> Result<()> {
         self.ops()
-            .verify_block_signature(&self.caller(context), cid, public_key, key_type)
+            .verify_block_signature(&self.admitted_caller(context)?, cid, public_key, key_type)
             .await
     }
 }

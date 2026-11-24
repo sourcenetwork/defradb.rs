@@ -14,7 +14,6 @@ use serde_json::{json, Value};
 use vera::vera_rs::{DelegationSigner, Ed25519Signer};
 use vera::VeraProvider as _;
 
-use super::rpc_port::on_free_rpc_port;
 use super::{create_user, created, starting_with, users, EmbeddedVeraActor, Node, POLICY};
 
 /// A node whose Vera actor is `owner`, serving HTTP on `http`, with a
@@ -43,21 +42,18 @@ impl Home {
         let owner = key();
         let signer: Arc<dyn DelegationSigner> =
             Arc::new(Ed25519Signer::from_slice(&owner.private_key_bytes()).unwrap());
-        let ((node, http), rpc) = on_free_rpc_port(|rpc| {
-            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            let http = listener.local_addr().unwrap();
-            let started = starting_with(
-                directory.path(),
-                EmbeddedVeraActor::Signer(Arc::clone(&signer)),
-                Vec::new(),
-                Some(rpc),
-                |builder| {
-                    builder.with_http(defra_node::HttpConfig::with_listener(listener).unwrap())
-                },
-            );
-            async move { started.await.map(|node| (node, http)) }
-        })
-        .await;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let http = listener.local_addr().unwrap();
+        let node = starting_with(
+            directory.path(),
+            EmbeddedVeraActor::Signer(Arc::clone(&signer)),
+            Vec::new(),
+            Some(([127, 0, 0, 1], 0).into()),
+            |builder| builder.with_http(defra_node::HttpConfig::with_listener(listener).unwrap()),
+        )
+        .await
+        .expect("node");
+        let rpc = node.embedded_vera_rpc_addr().expect("bound RPC listener");
         let vera = node.vera_acp().expect("vera.rs document ACP").clone();
         assert_eq!(vera.self_did(), Some(did(&owner).to_string()));
         let policy = vera

@@ -37,11 +37,14 @@ impl Op for ImportBackup {
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.client_identity(Self::name())?;
         let content = self.through_file()?;
+        // The import signs with the acting client's own key, as Go's import
+        // with a `FullIdentity` does.
+        let context = state.context_on(self.common.node(), None, identity, None);
         state
             .block_on(
                 state
                     .node_on(self.common.node())?
-                    .import_backup_as(&state.context_as(None, identity), &content),
+                    .import_backup_as(&context, &content),
             )
             .map(|()| json!({}))
             .map_err(|e| Failure::operation(e.to_string()))

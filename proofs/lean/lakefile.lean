@@ -256,6 +256,9 @@ lean_lib JsonSubPathCut where
 lean_lib RelationFilterNoChild where
 
 @[default_target]
+lean_lib JoinFetchedParent where
+
+@[default_target]
 lean_lib CommitsDepthCast where
 
 @[default_target]
@@ -311,6 +314,9 @@ lean_lib AdministrativeRelationship where
 
 @[default_target]
 lean_lib ProjectionRelationship where
+
+@[default_target]
+lean_lib ParentRegistration where
 
 @[default_target]
 lean_lib ExactRelationshipObservation where

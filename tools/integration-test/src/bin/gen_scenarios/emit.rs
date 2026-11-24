@@ -443,7 +443,8 @@ pub fn test_fn(
     clients: Option<&[&str]>,
     used: &mut Used,
 ) -> String {
-    let mut steps = loaded.scenario.steps.clone();
+    let (mut steps, deviation) =
+        super::deviations::steps(&loaded.scenario.id, &loaded.scenario.steps);
     let without_db = lifecycle::strip_implicit(&mut steps);
     let steps = parallel::expand(steps);
     used.txns = steps
@@ -546,6 +547,9 @@ pub fn test_fn(
             "        not_applying: Some(NotApplying::{kind}({})),\n",
             literal::string(reason)
         ));
+    }
+    if let Some(reason) = deviation {
+        out.push_str(&format!("        // Deviates from Go: {reason}\n"));
     }
     out.push_str("        ..Default::default()\n    }\n    .execute();\n}\n");
     out

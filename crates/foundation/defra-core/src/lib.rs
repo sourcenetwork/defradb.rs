@@ -59,7 +59,7 @@ pub use lens_block::{
     build_lens_ipld_blocks, is_lens_block, CidBlock, LensConfigBlock, LensKeyValue,
     LensModuleBlock, LensModuleParts, LensWasmBlock,
 };
-pub use request_context::RequestContext;
+pub use request_context::{RequestContext, SharedTransportSentinel};
 pub use signing::SigningKeyType;
 pub use store_backend::{parse_store_backend, StoreBackend};
 pub use text_op::{TextEdits, TextOp};

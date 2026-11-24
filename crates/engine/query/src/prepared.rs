@@ -104,6 +104,7 @@ pub enum PreparedInputKind {
     Encryption,
     AcpDecision,
     ProjectionAcp,
+    RegistrationParent,
     WriteValidation,
     NodePermission,
     ReadValidation,
@@ -176,6 +177,30 @@ impl std::fmt::Debug for PreparedInputMemo {
 }
 
 impl PreparedInputMemo {
+    /// The certified parent permission for this actor and this exact create rule.
+    pub fn registration_parent(
+        &self,
+        actor: &identity::Did,
+        context: &defra_core::RequestContext,
+        policy: &str,
+        child: &str,
+        parent: &str,
+    ) -> Result<acp::RegistrationParent> {
+        let key = serde_json::to_vec(&(
+            actor.as_str(),
+            policy,
+            child,
+            parent,
+            context.bearer_token_for(actor.as_str()),
+        ))
+        .map_err(|error| QueryError::execution(error.to_string()))?;
+        let request = PreparedInputRequest::new(PreparedInputKind::RegistrationParent, key);
+        let bytes = self
+            .get_or_want(&request)
+            .ok_or(QueryError::NeedsInput(request))?;
+        serde_json::from_slice(&bytes).map_err(|error| QueryError::execution(error.to_string()))
+    }
+
     pub fn projection_authority(
         &self,
         request: &PreparedInputRequest,

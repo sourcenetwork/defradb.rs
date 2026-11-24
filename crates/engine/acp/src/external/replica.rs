@@ -23,7 +23,6 @@ use crate::identity::Identity;
 use crate::outbox::{OwedOp, OwedState, OwedSubject, OwedTuple, StageRelationship, StagedCount};
 use crate::pending::{PendingRegistration, PendingRegistrations};
 use crate::permission::DocumentPermission;
-use crate::provider_command::ProviderCommand;
 use crate::replica::{
     replica_key, MarkedGrant, ReplicaMarker, ReplicaMarkers, ReplicaOwed, ReplicaUnit,
 };
@@ -136,20 +135,15 @@ where
         }
         let registrant = self.provider.canonical_actor(unit.registrant);
         let creator = self.provider.canonical_actor(unit.creator);
-        let authority = self.provider.command_authority(
-            &registrant,
-            ProviderCommand::RegisterObject {
-                policy_id,
-                resource,
-                object: doc_id,
-            },
-        )?;
+        let mut registration =
+            PendingRegistration::new(registrant.clone(), policy_id, resource, doc_id)
+                .for_replica_of(creator.clone());
+        registration.parent = unit.parent.cloned();
+        let authority = self
+            .provider
+            .command_authority(&registrant, registration.command())?;
         pending
-            .record(
-                &PendingRegistration::new(registrant.clone(), policy_id, resource, doc_id)
-                    .with_authority(Ok(authority), false)
-                    .for_replica_of(creator.clone()),
-            )
+            .record(&registration.with_authority(Ok(authority), false))
             .await?;
         let Some(outbox) = self.transaction_outbox(view, StagedCount::new()) else {
             return Err(Error::Storage("the gate keeps no outbox".into()));

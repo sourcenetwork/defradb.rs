@@ -196,12 +196,13 @@ RUNS=(
   "MC_SourceScopedNac_Red_BorrowNode.cfg SourceScopedNac.tla RED"
   "MC_SourceScopedNac_Red_UntrustedReplay.cfg SourceScopedNac.tla RED"
   "MC_EmbeddedSigner_Green.cfg EmbeddedSigner.tla GREEN"
-  "MC_EmbeddedSigner_Red_Actor.cfg EmbeddedSigner.tla RED"
-  "MC_EmbeddedSigner_Red_Match.cfg EmbeddedSigner.tla RED"
-  "MC_EmbeddedSigner_Red_Key.cfg EmbeddedSigner.tla RED"
-  "MC_EmbeddedSigner_Red_Owner.cfg EmbeddedSigner.tla RED"
-  "MC_EmbeddedSigner_Red_Acp.cfg EmbeddedSigner.tla RED"
-  "MC_EmbeddedSigner_Red_Bypass.cfg EmbeddedSigner.tla RED"
+  "MC_EmbeddedSigner_Red_Actor.cfg EmbeddedSigner.tla RED" # another actor's key signs (INV_NoForgery)
+  "MC_EmbeddedSigner_Red_Key.cfg EmbeddedSigner.tla RED" # a mismatched key signs (INV_Verifiable)
+  "MC_EmbeddedSigner_Red_KeyType.cfg EmbeddedSigner.tla RED" # an unsupported key type signs (INV_Verifiable)
+  "MC_EmbeddedSigner_Red_Bypass.cfg EmbeddedSigner.tla RED" # a bypassing caller signs (INV_UnderDac)
+  "MC_EmbeddedSigner_Red_Skip.cfg EmbeddedSigner.tla RED" # one entry point skips admission (INV_NoForgery)
+  "MC_EmbeddedSigner_Red_Registry.cfg EmbeddedSigner.tla RED" # a registry key for the request DID signs (INV_PresentedOnly)
+  "MC_EmbeddedSigner_Red_Vacuity.cfg EmbeddedSigner.tla RED" # admitted calls do write (NothingWritten)
   "MC_SigningCredential_Green.cfg SigningCredential.tla GREEN"
   "MC_SigningCredential_Red_Format.cfg SigningCredential.tla RED"
   "MC_SigningCredential_Red_Expiry.cfg SigningCredential.tla RED"
@@ -917,6 +918,12 @@ RUNS=(
   "MC_AdministrativeRelationship_Red_Revocation.cfg AdministrativeRelationship.tla RED" # INV_Revocation
   "MC_AdministrativeRelationship_Red_Rollback.cfg AdministrativeRelationship.tla RED" # INV_Rollback
   "MC_AdministrativeRelationship_Red_Route.cfg AdministrativeRelationship.tla RED" # INV_EmbedderRoute
+  "MC_ParentRegistration_Green.cfg ParentRegistration.tla GREEN" # a document is registered and linked only under a parent its actor is permitted on, and keeps one
+  "MC_ParentRegistration_Red_UngatedCreate.cfg ParentRegistration.tla RED" # AuthorizedAtWrite
+  "MC_ParentRegistration_Red_UngatedReplica.cfg ParentRegistration.tla RED" # AuthorizedAtWrite
+  "MC_ParentRegistration_Red_UngatedLink.cfg ParentRegistration.tla RED" # AuthorizedAtWrite
+  "MC_ParentRegistration_Red_LastUnlink.cfg ParentRegistration.tla RED" # RegistrationHasParent
+  "MC_ParentRegistration_Red_MovedField.cfg ParentRegistration.tla RED" # FieldNamesAdmittedParent
   "MC_GenesisReadAccess_Green.cfg GenesisReadAccess.tla GREEN" # a signed genesis grants its opted-in reader once, at the first registration
   "MC_GenesisReadAccess_Red_Replay.cfg GenesisReadAccess.tla RED" # INV_RevocationStands
   "MC_GenesisReadAccess_Red_Address.cfg GenesisReadAccess.tla RED" # INV_OptedIn

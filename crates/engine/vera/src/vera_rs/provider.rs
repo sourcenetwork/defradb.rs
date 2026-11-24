@@ -302,7 +302,7 @@ impl VeraRsProvider {
                              the configured 0x{}",
                             hex::encode(served),
                             hex::encode(id)
-                        )))
+                        )));
                     }
                     Some(_) => {}
                     None => {
@@ -668,6 +668,29 @@ impl VeraProvider for VeraRsProvider {
         Ok(())
     }
 
+    async fn register_under_parent(
+        &self,
+        bearer_token: &str,
+        policy_id: &str,
+        resource: &str,
+        object_id: &str,
+        parent: &acp::RegistrationParent,
+    ) -> Result<(), ProviderError> {
+        self.send_command(
+            bearer_token,
+            &crate::PolicyCommand {
+                policy_id,
+                resource,
+                object_id,
+                action: crate::PolicyAction::RegisterUnderParent {
+                    resource: &parent.resource,
+                    object_id: &parent.object_id,
+                },
+            },
+        )
+        .await
+    }
+
     async fn register_objects(
         &self,
         bearer_token: &str,
@@ -931,6 +954,34 @@ impl VeraProvider for VeraRsProvider {
             })
         })
         .await
+    }
+
+    async fn verify_transport_sentinel(
+        &self,
+        query: &acp::TransportSentinelQuery,
+    ) -> Result<bool, ProviderError> {
+        self.admitted_read(async {
+            verified(self.light_client.header_chain(), || async {
+                exact_relationship::sentinel(&self.light_client, query)
+                    .await
+                    .map_err(|error| Box::new(error) as Box<dyn std::error::Error + Send + Sync>)
+            })
+            .await
+            .map_err(|error| match error.downcast::<ProviderError>() {
+                Ok(error) => *error,
+                Err(error) => ProviderError::Query(error.to_string()),
+            })
+        })
+        .await
+    }
+
+    async fn replica_group_member(
+        &self,
+        group: &acp::ReplicaGroup,
+        signer: &identity::Did,
+    ) -> Result<bool, ProviderError> {
+        self.admitted_read(assignments::group_member(self, group, signer))
+            .await
     }
 
     async fn verify_access(

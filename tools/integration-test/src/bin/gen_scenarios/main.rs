@@ -11,6 +11,7 @@
 
 mod check;
 mod corpus;
+mod deviations;
 mod emit;
 mod error;
 mod go_source;
@@ -172,7 +173,11 @@ fn generate(args: &Args) -> Result<()> {
                 name.push_str("_2");
             }
             let key = mantra::key(&item.scenario.source.path, &item.scenario.source.test);
-            let leaf = leaves.get(&key).or_else(|| leaves.get(&item.scenario.id));
+            let testo = format!("{}::{name}", path.join("::"));
+            let leaf = leaves
+                .get(&key)
+                .or_else(|| leaves.get(&item.scenario.id))
+                .or_else(|| leaves.get(&testo));
             if leaf.is_none() {
                 unmapped.push(format!("{} ({key})", item.scenario.id));
             }

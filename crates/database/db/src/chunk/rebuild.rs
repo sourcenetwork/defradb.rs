@@ -199,6 +199,7 @@ where
         &doc,
         identity.doc_short_id,
         &block,
+        None,
     )
     .await
     .map_err(failed)?;

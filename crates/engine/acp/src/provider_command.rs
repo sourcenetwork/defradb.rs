@@ -16,6 +16,12 @@ pub enum ProviderCommand<'a> {
         resource: &'a str,
         object: &'a str,
     },
+    RegisterUnderParent {
+        policy_id: &'a str,
+        resource: &'a str,
+        object: &'a str,
+        parent: &'a crate::RegistrationParent,
+    },
     /// Add or delete one relationship.
     Relationship { tuple: &'a OwedTuple, op: OwedOp },
 }
