@@ -41,7 +41,6 @@ section is the **diff**: what is proven vs. the accepted gap.
 | DAG convergence (partition / eviction / restart) | TLA+ | p2p, db-merge, blockstore |
 | CRDT merge laws | Lean | crdt, defra-core |
 | Secondary index equal-key order | Lean | db, storage |
-| Float filter equality | Lean | query, storage |
 | Replicator lifecycle (no-loss / resume) | TLA+ | p2p, db-merge, embedded |
 | Sync ownership transfer (head hint / receiver pull) | TLA+ / Lean | p2p, db-merge, storage, embedded, defra-node |
 | Pull sync (doc-sync / sync-branchable) | TLA+ | p2p |
