@@ -8,7 +8,7 @@ use rapidhash::{HashSetExt, RapidHashSet};
 
 use crate::{libp2p::VersionSyncer, P2PError, P2PErrorExt as _, P2PResult};
 
-/// Database-backed version syncer that fetches schema blocks via block sync.
+/// Database-backed version syncer that fetches schema blocks via Bitswap.
 ///
 /// A sync is storage work (block reads, merges, lens registrations): it runs
 /// on the database's worker pool, its requests to peers and its waits on the
@@ -29,7 +29,7 @@ impl<S: storage::corekv::Store, B: Blockstore> Clone for DbVersionSyncer<S, B> {
     }
 }
 
-/// Asks `peers` for `cid` over block sync, on the network edge.
+/// Asks `peers` for `cid` over Bitswap, on the network edge.
 async fn request_block(
     network: &p2p::network::Network,
     handle: &P2PHostHandle,
@@ -79,7 +79,7 @@ async fn fetch_block<B: Blockstore>(
 
     request_block(network, handle, target_cid, peers)
         .await
-        .map_err(|error| P2PError::transport(format!("block sync for {target_cid}: {error}")))?;
+        .map_err(|error| P2PError::transport(format!("Bitswap for {target_cid}: {error}")))?;
 
     let timeout = std::time::Duration::from_secs(timeout_secs);
     let start = web_time::Instant::now();
@@ -246,7 +246,7 @@ impl<S: storage::corekv::Store + 'static, B: Blockstore + 'static> DbVersionSync
 
             if let Err(error) = request_block(&network, handle, version_cid, &connected_peers).await
             {
-                tracing::warn!(cid = %version_cid, error = %error, "block sync failed");
+                tracing::warn!(cid = %version_cid, error = %error, "Bitswap failed");
                 continue;
             }
 
@@ -329,7 +329,7 @@ impl<S: storage::corekv::Store + 'static, B: Blockstore + 'static> DbVersionSync
                     if let Err(error) =
                         request_block(&network, handle, link_cid, &connected_peers).await
                     {
-                        tracing::warn!(cid = %link_cid, error = %error, "block sync failed for link");
+                        tracing::warn!(cid = %link_cid, error = %error, "Bitswap failed for link");
                         continue;
                     }
 

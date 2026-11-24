@@ -47,6 +47,16 @@ impl ReplicaGrant {
     }
 }
 
+/// A direct membership relation on a group whose owner is trusted by the receiver.
+#[derive(Clone, Debug)]
+pub struct ReplicaGroup {
+    pub policy: String,
+    pub resource: String,
+    pub object: String,
+    pub relation: String,
+    pub owner: Did,
+}
+
 /// The unit a receiving node owes for a replicated document it registers.
 #[derive(Clone, Debug)]
 pub struct ReplicaUnit<'a> {
@@ -58,6 +68,7 @@ pub struct ReplicaUnit<'a> {
     /// The DID the node registers the document as: its provider's own actor.
     pub registrant: &'a Did,
     pub grants: &'a [ReplicaGrant],
+    pub parent: Option<&'a crate::RegistrationParent>,
 }
 
 /// One grant of a unit, as its marker keeps it.

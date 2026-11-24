@@ -108,6 +108,8 @@ pub struct TypeJoinOne {
     /// Whether `init` opened the parent plan, so `start` and `close` act on it.
     /// A join no parent can pass ([`Self::no_child_can_pass`]) leaves it closed.
     parent_open: bool,
+    /// Whether [`PlanNode::join_fetched`] has built the child cache.
+    fetched_child_cache_built: bool,
     /// For InvertedIndex mode: queue of parent docs to yield
     docs_to_yield: VecDeque<Doc>,
     /// Optional orphan handling for exhaustive joins
@@ -246,6 +248,7 @@ impl TypeJoinOne {
             parent_collection: None,
             parent_scan_mapping: None,
             parent_open: false,
+            fetched_child_cache_built: false,
             docs_to_yield: VecDeque::new(),
             orphan_config: None,
             orphan_phase_active: false,
@@ -446,11 +449,7 @@ impl TypeJoinOne {
     /// Logs a warning if the FK field has an unexpected type or is missing.
     fn extract_fk(&self, parent_doc: &Doc) -> Option<String> {
         match &self.direction {
-            JoinDirection::InvertedIndex { .. } | JoinDirection::OrderedInvertedPrimary { .. } => {
-                // Not used in inverted index / ordered inverted modes (child drives the loop)
-                None
-            }
-            JoinDirection::Inverted => {
+            JoinDirection::Inverted | JoinDirection::OrderedInvertedPrimary { .. } => {
                 // Secondary side: use parent's _docID as the lookup key
                 let doc_id = parent_doc.doc_id();
                 if doc_id.is_none() {
@@ -462,7 +461,11 @@ impl TypeJoinOne {
                 }
                 doc_id.map(String::from)
             }
-            JoinDirection::Primary { parent_fk_index } => {
+            JoinDirection::Primary { parent_fk_index }
+            | JoinDirection::InvertedIndex {
+                parent_fk_field_index: parent_fk_index,
+                ..
+            } => {
                 // Primary side: extract from the FK field (e.g., author_id)
                 let value = match parent_doc.get(*parent_fk_index) {
                     Some(v) => v,
@@ -493,6 +496,40 @@ impl TypeJoinOne {
                 value.as_str().map(String::from)
             }
         }
+    }
+
+    /// Find the child of a parent read outside this join's parent plan.
+    ///
+    /// The lookup is the one the join does for a scanned parent: the child's
+    /// FK index where the join has one, the child cache otherwise, built from
+    /// the child plan on the first parent.
+    async fn child_of_fetched(
+        &mut self,
+        parent_doc: &Doc,
+        reads: &mut ExecInfo,
+    ) -> Result<Option<Doc>> {
+        let Some(fk) = self.extract_fk(parent_doc) else {
+            return Ok(None);
+        };
+
+        if matches!(self.direction, JoinDirection::Inverted)
+            && self.indexed_inverted_child_fetch.is_some()
+        {
+            let before = self.go_child_metrics.clone();
+            let child_doc = self.find_child_doc_by_fk_index(&fk).await?;
+            reads.iterations += self.go_child_metrics.iterations - before.iterations;
+            reads.docs_fetched += self.go_child_metrics.doc_fetches - before.doc_fetches;
+            reads.fields_fetched += self.go_child_metrics.field_fetches - before.field_fetches;
+            reads.indexes_fetched += self.go_child_metrics.index_fetches - before.index_fetches;
+            return Ok(child_doc);
+        }
+
+        if !self.fetched_child_cache_built {
+            self.build_child_cache().await?;
+            self.fetched_child_cache_built = true;
+            reads.merge(&self.child_exec_info);
+        }
+        Ok(self.find_child_doc(&fk))
     }
 
     /// Find child document by FK lookup using the pre-built cache.
@@ -567,7 +604,7 @@ impl TypeJoinOne {
             let child_doc = self.child_plan.value().deep_clone();
 
             let key = match &self.direction {
-                JoinDirection::Primary { .. } => {
+                JoinDirection::Primary { .. } | JoinDirection::InvertedIndex { .. } => {
                     // Index by child's _docID for FK → doc lookup
                     child_doc.doc_id().map(String::from)
                 }
@@ -576,11 +613,9 @@ impl TypeJoinOne {
                     let fk_value = child_fk_idx.and_then(|idx| child_doc.get(idx).cloned());
                     fk_value.and_then(|v| v.as_str().map(String::from))
                 }
-                JoinDirection::InvertedIndex { .. }
-                | JoinDirection::OrderedInvertedPrimary { .. } => {
-                    // build_child_cache is not called in inverted/ordered modes
-                    unreachable!()
-                }
+                JoinDirection::OrderedInvertedPrimary { child_fk_index } => child_doc
+                    .get(*child_fk_index)
+                    .and_then(|v| v.as_str().map(String::from)),
             };
 
             if let Some(k) = key {
@@ -707,20 +742,27 @@ impl TypeJoinOne {
             index_scan.close().await?;
 
             // Track parent FK index fetches
-            self.go_child_metrics.index_fetches += scan_info.indexes_fetched;
-            self.go_child_metrics.iterations += scan_info.iterations;
-            self.go_child_metrics.doc_fetches += scan_info.docs_fetched;
-            self.go_child_metrics.field_fetches += scan_info.fields_fetched;
+            self.go_child_metrics.add(&scan_info);
 
             if parent_docs.is_empty() {
                 continue;
             }
 
             // Merge child into each parent and queue for yielding
+            let joined = self.parent_side.relation_field().name.clone();
+            let mut wrapped_reads = ExecInfo::default();
             for mut parent_doc in parent_docs {
+                if !self
+                    .parent_plan
+                    .join_fetched(&mut parent_doc, &joined, &mut wrapped_reads)
+                    .await?
+                {
+                    continue;
+                }
                 self.merge_child(&mut parent_doc, Some(child_doc.deep_clone()));
                 self.docs_to_yield.push_back(parent_doc);
             }
+            self.go_child_metrics.add(&wrapped_reads);
 
             if let Some(doc) = self.docs_to_yield.pop_front() {
                 if let Some(pid) = doc.doc_id() {
@@ -835,6 +877,21 @@ impl TypeJoinOne {
             if let Some(pid) = parent_doc.doc_id() {
                 self.record_yielded_id(pid);
             }
+
+            let mut wrapped_reads = ExecInfo::default();
+            let kept = self
+                .parent_plan
+                .join_fetched(
+                    &mut parent_doc,
+                    &self.parent_side.relation_field().name,
+                    &mut wrapped_reads,
+                )
+                .await?;
+            self.go_child_metrics.add(&wrapped_reads);
+            if !kept {
+                continue;
+            }
+
             self.merge_child(&mut parent_doc, Some(child_doc));
             self.current_doc = parent_doc;
             return Ok(true);
@@ -1195,14 +1252,17 @@ impl PlanNode for TypeJoinOne {
             self.direction,
             JoinDirection::InvertedIndex { .. } | JoinDirection::OrderedInvertedPrimary { .. }
         ) {
-            // Inverted/ordered modes: child_plan is still open, parent_plan was never used
+            // Inverted/ordered modes: child_plan is still open; parent_plan never
+            // ran, but its joins hold the child caches `join_fetched` built.
             self.child_plan.close().await?;
+            self.parent_plan.close().await?;
         } else if self.parent_open {
             self.parent_plan.close().await?;
             self.parent_open = false;
             // child_plan was already closed in build_child_cache()
         }
         self.child_cache.clear();
+        self.fetched_child_cache_built = false;
         self.docs_to_yield.clear();
         if let Some(ref mut config) = self.orphan_config {
             config.orphan_node.close().await?;
@@ -1222,6 +1282,29 @@ impl PlanNode for TypeJoinOne {
     fn kind(&self) -> &'static str {
         // Go's explain uses "typeIndexJoin" as the wrapper node
         "typeIndexJoin"
+    }
+
+    async fn join_fetched(
+        &mut self,
+        doc: &mut Doc,
+        joined: &str,
+        reads: &mut ExecInfo,
+    ) -> Result<bool> {
+        if !self.parent_plan.join_fetched(doc, joined, reads).await? {
+            return Ok(false);
+        }
+        if self.parent_side.relation_field().name == joined {
+            return Ok(true);
+        }
+
+        let child_doc = self.child_of_fetched(doc, reads).await?;
+        if let Some(ref rel_filter) = self.relation_filter {
+            if !self.check_relation_filter(&child_doc, rel_filter)? {
+                return Ok(false);
+            }
+        }
+        self.merge_child(doc, child_doc);
+        Ok(true)
     }
 
     fn explain_inner(&self) -> JsonValue {

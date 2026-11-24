@@ -11,6 +11,7 @@
 
 mod check;
 mod corpus;
+mod deviations;
 mod emit;
 mod error;
 mod go_source;
@@ -36,6 +37,7 @@ use tree::Tree;
 /// not generated, but stay in the module tree.
 const HAND_PORTED: &[&str] = &[
     "tests/integration/collection_version/similarity_test.go",
+    // The peer-leave wait is maintained until the generator can emit it.
     "tests/integration/net/simple/peer/subscribe/document/with_add_remove_test.go",
 ];
 
@@ -172,7 +174,11 @@ fn generate(args: &Args) -> Result<()> {
                 name.push_str("_2");
             }
             let key = mantra::key(&item.scenario.source.path, &item.scenario.source.test);
-            let leaf = leaves.get(&key).or_else(|| leaves.get(&item.scenario.id));
+            let testo = format!("{}::{name}", path.join("::"));
+            let leaf = leaves
+                .get(&key)
+                .or_else(|| leaves.get(&item.scenario.id))
+                .or_else(|| leaves.get(&testo));
             if leaf.is_none() {
                 unmapped.push(format!("{} ({key})", item.scenario.id));
             }

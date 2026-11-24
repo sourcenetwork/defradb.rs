@@ -28,6 +28,9 @@ pub enum Error {
     #[error("document already registered: {0}")]
     DocumentAlreadyRegistered(String),
 
+    #[error("parent-authorized registration is unsupported by this provider")]
+    UnsupportedParentRegistration,
+
     /// Invalid relation name
     #[error("invalid relation: {0}")]
     InvalidRelation(String),
@@ -36,6 +39,9 @@ pub enum Error {
     /// or userset edge on the Local or Vera backend, which store bare DIDs).
     #[error("unsupported subject for this backend: {0}")]
     UnsupportedSubject(String),
+
+    #[error("certified replica group membership is unsupported by this backend")]
+    UnsupportedReplicaMembership,
 
     /// The backend cannot evaluate named document permissions.
     #[error("named document permission checks are unsupported by this backend")]

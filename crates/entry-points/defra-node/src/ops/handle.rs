@@ -33,7 +33,7 @@ impl NodeOps {
     {
         workers::run_on(self.pool.as_ref(), workers::Target::LeastLoaded, make)
             .await
-            .map_err(Error::WorkerPoolCall)?
+            .map_err(Error::worker_pool_call)?
     }
 
     /// Runs a document ACP call: on the pool when the ACP is the node's own

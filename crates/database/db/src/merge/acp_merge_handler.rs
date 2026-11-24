@@ -356,6 +356,17 @@ impl CompositeMergeHook for AcpCompositeMergeHook {
         if ownership.is_own_actor(&collection.name, &creator) {
             return Ok(ReplicaStep::Gate);
         }
+        match ownership
+            .allows_foreign_registration(collection, &creator, acp.as_ref())
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => return Ok(ReplicaStep::Gate),
+            Err(error) => {
+                tracing::warn!(%doc_id, %error, "Could not establish replica signer membership");
+                return Ok(ReplicaStep::Gate);
+            }
+        }
         let Some(registrant) = acp.own_actor() else {
             tracing::warn!(
                 %doc_id,
@@ -364,20 +375,24 @@ impl CompositeMergeHook for AcpCompositeMergeHook {
             return Ok(ReplicaStep::Gate);
         };
         if !registered {
-            if let Err(error) = acp.command_authority(
-                &registrant,
-                acp::ProviderCommand::RegisterObject {
-                    policy_id: &policy.id,
-                    resource: &policy.resource_name,
-                    object: doc_id,
-                },
-            ) {
-                tracing::warn!(
-                    %doc_id,
-                    %error,
-                    "The node cannot register a replicated document as its own actor; it waits for a registration"
-                );
-                return Ok(ReplicaStep::Gate);
+            // A gated command binds the parent from the signed body. Check its
+            // authority when staging that exact command in the merge transaction.
+            if policy.parent_field.is_none() {
+                if let Err(error) = acp.command_authority(
+                    &registrant,
+                    acp::ProviderCommand::RegisterObject {
+                        policy_id: &policy.id,
+                        resource: &policy.resource_name,
+                        object: doc_id,
+                    },
+                ) {
+                    tracing::warn!(
+                        %doc_id,
+                        %error,
+                        "The node cannot register a replicated document as its own actor; it waits for a registration"
+                    );
+                    return Ok(ReplicaStep::Gate);
+                }
             }
             let grants = ownership.creator_grants(&collection.name, &creator, doc_id);
             return Ok(ReplicaStep::Register {
@@ -538,6 +553,9 @@ impl CompositeMergeHook for AcpCompositeMergeHook {
                 resource_name: policy.resource_name.clone(),
                 doc_id: doc_id.to_string(),
             }));
+        }
+        if policy.parent_field.is_some() {
+            return None;
         }
         let creator = metadata
             .explicit_replay_authorizer_for(&collection.collection_id)

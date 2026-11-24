@@ -21,7 +21,7 @@ impl Node {
     ) -> Result<()> {
         let migration = migration.map(lens_config).transpose()?;
         self.runner()
-            .patch_collection_as(&self.caller(context), patch, migration)
+            .patch_collection_as(&self.admitted_caller(context)?, patch, migration)
             .await
             .map_err(transaction_error)
     }
@@ -34,7 +34,7 @@ impl Node {
         version_id: &str,
     ) -> Result<()> {
         self.runner()
-            .set_active_collection_version_as(&self.caller(context), version_id)
+            .set_active_collection_version_as(&self.admitted_caller(context)?, version_id)
             .await
             .map_err(transaction_error)
     }
@@ -49,7 +49,7 @@ impl Node {
         filter: Option<&Filter>,
     ) -> Result<()> {
         self.runner()
-            .truncate_collection_as(&self.caller(context), name, filter)
+            .truncate_collection_as(&self.admitted_caller(context)?, name, filter)
             .await
             .map_err(transaction_error)
     }
@@ -62,7 +62,7 @@ impl Node {
         config: &Value,
     ) -> Result<String> {
         self.runner()
-            .set_migration_as(&self.caller(context), &config.to_string())
+            .set_migration_as(&self.admitted_caller(context)?, &config.to_string())
             .await
             .map_err(transaction_error)
     }
@@ -71,7 +71,7 @@ impl Node {
     /// `AddLens`.
     pub async fn add_lens_as(&self, context: &RequestContext, lens: &Value) -> Result<String> {
         self.runner()
-            .add_lens_as(&self.caller(context), lens_config(lens)?)
+            .add_lens_as(&self.admitted_caller(context)?, lens_config(lens)?)
             .await
             .map_err(transaction_error)
     }
@@ -80,7 +80,7 @@ impl Node {
     pub async fn list_lenses_as(&self, context: &RequestContext) -> Result<Map<String, Value>> {
         let listed = self
             .runner()
-            .list_lenses_as(&self.caller(context))
+            .list_lenses_as(&self.admitted_caller(context)?)
             .await
             .map_err(transaction_error)?;
         serde_json::from_str(&listed).map_err(Error::LensJson)
@@ -94,7 +94,7 @@ impl Node {
         selector: &CollectionSelector,
     ) -> Result<Vec<CollectionVersion>> {
         self.runner()
-            .get_collections_as(&self.caller(context), selector)
+            .get_collections_as(&self.admitted_caller(context)?, selector)
             .await
             .map_err(transaction_error)
     }

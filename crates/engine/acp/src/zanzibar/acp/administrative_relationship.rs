@@ -92,12 +92,16 @@ where
         }
         let relationship = Relationship::new(resource, doc_id, relation, target);
         let changed = if delete {
+            scoped.check_parent_unlink(policy_id, &relationship).await?;
             authorization
                 .store
                 .delete_relationship(policy_id, &relationship)
                 .await?
         } else {
             relationship.validate(&policy)?;
+            scoped
+                .check_parent_link(actor, &policy, &relationship)
+                .await?;
             if authorization
                 .store
                 .has_relationship(policy_id, resource, doc_id, relation, &relationship.subject)

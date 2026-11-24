@@ -42,6 +42,20 @@ pub fn private_key_hex(seed: u64) -> String {
     hex::encode(private_key(seed))
 }
 
+/// The local secp256k1 signing key of client identity `seed`, as an
+/// in-process caller attaches it to a write: Go's `FullIdentity`.
+pub fn signing_config(seed: u64) -> defra_core::signing::SigningConfig {
+    let public = identity(seed).public_key_bytes();
+    defra_core::signing::SigningConfig {
+        key_type: defra_core::signing::SigningKeyType::Secp256k1,
+        private_key_bytes: private_key(seed).to_vec(),
+        public_key_hex: hex::encode(&public),
+        public_key_bytes: public,
+        remote_signer: None,
+        signing_authorization: None,
+    }
+}
+
 /// The keys Go's harness makes for its first identities (`generateIdentity`,
 /// `math/rand` seeded with how many it made before): the same 32 bytes are
 /// the secp256k1 key and the Ed25519 seed. Printed by Go at the parity pin.

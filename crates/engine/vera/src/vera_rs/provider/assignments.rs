@@ -3,6 +3,13 @@ use acp_light_client::{Actor, AssignmentReadError, AssignmentSelector};
 use super::{did_spelling, verified, VeraRsProvider};
 use crate::provider::{AssignmentPosition, AssignmentQuery, CertifiedAssignments, ProviderError};
 
+fn assignment_error(error: AssignmentReadError) -> Box<dyn std::error::Error + Send + Sync> {
+    match error {
+        AssignmentReadError::Overtaken => Box::new(ProviderError::ProofsOvertaken("assignment")),
+        other => Box::new(other),
+    }
+}
+
 pub(super) async fn read(
     provider: &VeraRsProvider,
     query: AssignmentQuery<'_>,
@@ -29,14 +36,7 @@ pub(super) async fn read(
             .light_client
             .read_certified_assignments(&policy, &selector)
             .await
-            .map_err(|error| -> Box<dyn std::error::Error + Send + Sync> {
-                match error {
-                    AssignmentReadError::Overtaken => {
-                        Box::new(ProviderError::ProofsOvertaken("assignment"))
-                    }
-                    other => Box::new(other),
-                }
-            })
+            .map_err(assignment_error)
     })
     .await
     .map_err(|error| {
@@ -68,6 +68,84 @@ pub(super) async fn read(
         evidence: serde_json::to_value(evidence)
             .map_err(|error| ProviderError::Query(error.to_string()))?,
     })
+}
+
+/// Prove receiver admission and signer membership from one relation-generation
+/// proof. The independent owner proof must describe the same finalized state.
+pub(super) async fn group_member(
+    provider: &VeraRsProvider,
+    group: &acp::ReplicaGroup,
+    signer: &identity::Did,
+) -> Result<bool, ProviderError> {
+    let actor = |did: &str| {
+        did_spelling::wire(did)
+            .parse()
+            .map(|did| Actor(vera_modules::actor::canonical(&did)))
+            .map_err(|error| ProviderError::Query(format!("membership DID: {error}")))
+    };
+    let issuer = actor(group.owner.as_str())?;
+    let receiver = actor(&provider.actor_did)?;
+    let signer = actor(signer.as_str())?;
+    let policy = hex::encode(VeraRsProvider::policy_id_to_bytes32(&group.policy)?);
+    let object = acp_light_client::Object {
+        resource: group.resource.clone(),
+        id: group.object.clone(),
+    };
+    let selector = AssignmentSelector {
+        resource: &group.resource,
+        relation: &group.relation,
+        subject: &receiver,
+        issuer: &issuer,
+    };
+    let client = &provider.light_client;
+    verified(client.header_chain(), || async {
+        let (revision, evidence) = client
+            .read_certified_assignments(&policy, &selector)
+            .await
+            .map_err(assignment_error)?;
+        let (at, owner) = client
+            .proof_client()
+            .read_current_object_owner(&policy, &object, revision.height)
+            .await
+            .map_err(|e| ProviderError::Query(e.to_string()))?;
+        if at.term != revision.term || at.module_state_root != revision.module_state_root {
+            return Err(ProviderError::ProofsOvertaken("group ownership").into());
+        }
+        if !owner.is_some_and(|owner| vera_modules::actor::canonical(&owner.0) == issuer.0) {
+            return Err(
+                ProviderError::Query("replica group has no matching active owner".into()).into(),
+            );
+        }
+        let holds = |subject| {
+            let selector = AssignmentSelector {
+                subject,
+                ..selector
+            };
+            Ok::<_, vera_permission::PermissionError>(
+                evidence
+                    .proof
+                    .verify_assignments(
+                        revision.module_state_root,
+                        &policy,
+                        &selector,
+                        vera_permission::RECORD_PROOF_BYTES,
+                    )?
+                    .iter()
+                    .any(|row| row.relationship.object_id == group.object),
+            )
+        };
+        if !holds(&receiver)? {
+            return Err(ProviderError::Query(
+                "receiver is not admitted to the replica group".into(),
+            )
+            .into());
+        }
+        Ok::<_, Box<dyn std::error::Error + Send + Sync>>(
+            signer == issuer || signer == receiver || holds(&signer)?,
+        )
+    })
+    .await
+    .map_err(|e| super::reach::read_error(client, "replica group membership", e))
 }
 
 fn check_position(

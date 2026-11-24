@@ -4,6 +4,7 @@
 //! edge stops accepting finishes the message in progress, an idle one
 //! closes at once.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -18,6 +19,10 @@ use pgwire::api::results::{Response, Tag};
 use pgwire::api::{ClientInfo, ClientPortalStore, PgWireServerHandlers};
 use pgwire::error::{PgWireError, PgWireResult};
 use pgwire::messages::PgWireBackendMessage;
+use query::{
+    QueryExecutor, QueryRequest, QueryResponse, StaticCollectionProvider, TransactionError,
+    TransactionHandle,
+};
 use regolith::sync::Event;
 
 const LIMIT: Duration = Duration::from_secs(10);
@@ -231,6 +236,139 @@ fn an_idle_connection_closes_at_once_when_the_edge_starts_closing() {
         assert!(rest.is_empty());
         let served = timeout(LIMIT, server).await;
         assert!(matches!(served, Ok(Ok(Ok(())))), "{served:?}");
+    })
+    .unwrap();
+}
+
+/// The real server's query executor holds a request until the test releases it.
+struct GatedExecutor {
+    started: Arc<Event>,
+    release: Arc<Event>,
+}
+
+#[async_trait]
+impl QueryExecutor for GatedExecutor {
+    async fn execute(&self, _request: QueryRequest) -> QueryResponse {
+        self.started.set();
+        self.release.wait().await;
+        QueryResponse::success(serde_json::json!({"Users": []}))
+    }
+
+    async fn execute_in_txn(
+        &self,
+        request: QueryRequest,
+        _handle: &TransactionHandle,
+    ) -> QueryResponse {
+        self.execute(request).await
+    }
+
+    async fn begin_txn(&self, _readonly: bool) -> Result<TransactionHandle, TransactionError> {
+        unreachable!("the test uses an implicit transaction")
+    }
+
+    async fn commit_txn(&self, _handle: &TransactionHandle) -> Result<(), TransactionError> {
+        unreachable!("the test uses an implicit transaction")
+    }
+
+    async fn discard_txn(&self, _handle: &TransactionHandle) -> Result<(), TransactionError> {
+        unreachable!("the test uses an implicit transaction")
+    }
+
+    fn abandon_txn(&self, _handle: &TransactionHandle) {}
+
+    async fn schema(&self) -> query::Result<String> {
+        Ok(String::new())
+    }
+}
+
+#[test]
+fn the_real_pg_server_drains_an_in_flight_query() {
+    let edge = edge::testing::edge();
+    edge.block_on(async {
+        // Reserve an ephemeral address for the server, whose listener is
+        // created inside PgServer::run rather than handed to the caller.
+        let reservation = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = reservation.local_addr().unwrap();
+        drop(reservation);
+
+        let scope = edge.scope();
+        let (started, release) = (Arc::new(Event::new()), Arc::new(Event::new()));
+        let executor = Arc::new(GatedExecutor {
+            started: started.clone(),
+            release: release.clone(),
+        });
+        let server = pg_compat::PgServer::new(
+            address,
+            executor,
+            Arc::new(StaticCollectionProvider::new(vec![
+                schema::CollectionVersion::new(
+                    "Users",
+                    "version",
+                    "collection",
+                    vec![schema::FieldDescription::new(
+                        "field",
+                        "name",
+                        schema::FieldKind::Scalar(schema::ScalarKind::String),
+                        schema::CType::LwwRegister,
+                    )],
+                ),
+            ])),
+            None,
+            scope.edge().clone(),
+        );
+        let finished = Arc::new(AtomicBool::new(false));
+        let finished_server = finished.clone();
+        let server_task = scope.edge().spawn(async move {
+            let result = server.run().await.map_err(|error| error.to_string());
+            finished_server.store(true, Ordering::SeqCst);
+            result
+        });
+
+        let mut client = timeout(LIMIT, async {
+            loop {
+                if let Ok(client) = TcpStream::connect(address).await {
+                    break client;
+                }
+                edge.sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the server starts listening");
+        // The real server treats a non-anonymous username as a DID and
+        // requests a JWT; use its anonymous startup path here.
+        let mut startup_body = 196_608u32.to_be_bytes().to_vec();
+        startup_body.extend_from_slice(b"user\0anonymous\0database\0test\0\0");
+        let mut startup = (startup_body.len() as u32 + 4).to_be_bytes().to_vec();
+        startup.extend_from_slice(&startup_body);
+        send(&mut client, &startup).await;
+        timeout(LIMIT, until_ready(&mut client))
+            .await
+            .expect("the server completes startup");
+        send(&mut client, &message(b'Q', b"SELECT name FROM Users\0")).await;
+        timeout(LIMIT, started.wait())
+            .await
+            .expect("the query reaches the executor");
+
+        scope.close();
+        edge.sleep(Duration::from_millis(50)).await;
+        assert!(
+            !finished.load(Ordering::SeqCst),
+            "the server returned while a query was in flight"
+        );
+        release.set();
+
+        assert_eq!(
+            timeout(LIMIT, until_ready(&mut client)).await.unwrap().0,
+            b"TCZ"
+        );
+        let mut rest = Vec::new();
+        timeout(LIMIT, client.read_to_end(&mut rest))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(rest.is_empty());
+        assert!(scope.drain(LIMIT).await.is_complete());
+        assert!(matches!(timeout(LIMIT, server_task).await, Ok(Ok(Ok(())))));
     })
     .unwrap();
 }

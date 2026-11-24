@@ -62,6 +62,23 @@ pub trait PlanNode: MaybeSend {
         false
     }
 
+    /// Run this plan's joins on a document read outside the plan.
+    ///
+    /// A join driven by its child's index reads each parent by key instead of
+    /// running the plan it wraps, so the joins that plan holds are applied to
+    /// the parent here. `joined` names the relation the caller attaches itself,
+    /// which a join on the same relation leaves to it. `reads` gains what the
+    /// lookups read. `Ok(false)` means a relation filter in the plan rejects
+    /// the document.
+    async fn join_fetched(
+        &mut self,
+        _doc: &mut Doc,
+        _joined: &str,
+        _reads: &mut ExecInfo,
+    ) -> Result<bool> {
+        Ok(true)
+    }
+
     /// Get the document mapping for this node.
     fn document_map(&self) -> &DocumentMapping;
 
@@ -113,11 +130,6 @@ pub trait PlanNode: MaybeSend {
     ///
     /// Default: no-op, returns `false`.
     fn set_cursor_fetch_limit(&mut self, _limit: u64) -> bool {
-        false
-    }
-
-    /// Whether this node filters rows after its underlying index fetch.
-    fn has_residual_filter(&self) -> bool {
         false
     }
 

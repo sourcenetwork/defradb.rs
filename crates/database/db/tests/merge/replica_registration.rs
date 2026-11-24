@@ -412,3 +412,151 @@ fn a_local_provider_registers_the_genesis_signer_as_before() {
     })
     .unwrap()
 }
+
+#[test]
+fn signed_genesis_registers_only_under_a_parent_that_admits_its_signer() {
+    workers::block_on(async {
+        use zanzibar::ZanzibarStore as _;
+
+        let mut collection = crate::replica_support::users();
+        collection.policy.as_mut().unwrap().parent_field = Some("name".into());
+        let receiver = Receiver::open_collection(collection, |store| {
+            Arc::new(acp::ZanzibarDocumentACP::new(Arc::new(
+                acp::PersistentZanzibarStore::from_store(store),
+            )))
+        }, None, false).await;
+        let store = acp::PersistentZanzibarStore::from_store(receiver.db.store().clone());
+        let yaml = "name: admissions\nresources:\n- name: nodes\n- name: users\n  relations: [{name: parent, types: [nodes]}]\n  create: {parent: parent, requires: owner}\n";
+        let mut policy = acp::policy_yaml::build_policy(&acp::policy_yaml::parse_policy_yaml(yaml).unwrap(), 1).unwrap();
+        policy.id = POLICY.into();
+        store.store_policy(&policy).await.unwrap();
+        let creator = key();
+        let provider = receiver.acp();
+        provider.register_doc_object(&creator.did, POLICY, "nodes", "allowed").await.unwrap();
+        provider.register_doc_object(&receiver.identity, POLICY, "nodes", "other").await.unwrap();
+
+        let source = Source::open().await;
+        let (rejected, block) = source.create(&creator, "other").await;
+        let error = receiver.try_receive(&source, &rejected, &block).await.unwrap_err();
+        assert!(error.to_string().contains("parent requires 'owner'"), "{error}");
+        assert!(!provider.is_doc_registered(POLICY, RESOURCE, &rejected).await.unwrap());
+
+        let (accepted, block) = source.create(&creator, "allowed").await;
+        assert_eq!(receiver.receive(&source, &accepted, &block).await, MergeOutcome::Merged);
+        assert_eq!(provider.get_doc_owner(POLICY, RESOURCE, &accepted).await.unwrap(), Some(creator.did));
+        assert!(store.has_relationship(POLICY, RESOURCE, &accepted, "parent", &zanzibar::Subject::entity_set("nodes", "allowed", "")).await.unwrap());
+    }).unwrap()
+}
+
+#[test]
+fn a_foreign_genesis_waits_for_parent_admission_before_its_creator_gets_write_access() {
+    workers::block_on(async {
+        let chain = Chain::new();
+        let registrant = key().did;
+        let creator = key();
+        let provider = chain.as_node(&registrant);
+        provider
+            .register_doc_object(&registrant, POLICY, "nodes", "allowed")
+            .await
+            .unwrap();
+        let mut collection = crate::replica_support::users();
+        collection.policy.as_mut().unwrap().parent_field = Some("name".into());
+        let receiver = Receiver::open_collection(
+            collection,
+            |_| provider,
+            Some(embedder(vec![], vec![])),
+            true,
+        )
+        .await;
+        let source = Source::open().await;
+        let (rejected, block) = source.create(&creator, "missing").await;
+        assert_eq!(
+            receiver.receive(&source, &rejected, &block).await,
+            MergeOutcome::Merged
+        );
+        assert!(receiver.settle(&rejected).await.is_err());
+        assert_eq!(chain.owner(&rejected), None);
+        assert!(!chain.holds(&rejected, "writer", &creator.did));
+        let (accepted, block) = source.create(&creator, "allowed").await;
+        assert_eq!(
+            receiver.receive_in_batch(&source, &accepted, &block).await,
+            MergeOutcome::Merged
+        );
+        receiver.settle(&accepted).await.unwrap();
+        assert_eq!(chain.owner(&accepted), Some(registrant));
+        assert!(chain.holds(&accepted, "writer", &creator.did));
+    })
+    .unwrap();
+}
+
+#[test]
+fn an_unavailable_membership_lookup_never_authorizes_replica_registration() {
+    struct Membership {
+        available: std::sync::atomic::AtomicBool,
+        local: identity::Did,
+    }
+
+    #[async_trait::async_trait]
+    impl db::merge::ReplicaOwnership for Membership {
+        fn is_own_actor(&self, _: &str, _: &identity::Did) -> bool {
+            false
+        }
+
+        async fn allows_foreign_registration(
+            &self,
+            _: &schema::CollectionVersion,
+            actor: &identity::Did,
+            _: &dyn acp::DocumentACP,
+        ) -> acp::Result<bool> {
+            if !self.available.load(Ordering::SeqCst) {
+                return Err(acp::Error::ProviderUnavailable(
+                    "membership is offline".into(),
+                ));
+            }
+            Ok(actor != &self.local)
+        }
+
+        fn creator_grants(
+            &self,
+            _: &str,
+            creator: &identity::Did,
+            _: &str,
+        ) -> Vec<acp::ReplicaGrant> {
+            vec![acp::ReplicaGrant::new(
+                "writer",
+                acp::Subject::Entity(creator.clone()),
+            )]
+        }
+    }
+
+    workers::block_on(async {
+        let chain = Chain::new();
+        let node = key().did;
+        let local = key();
+        let foreign = key();
+        let membership = Arc::new(Membership {
+            available: false.into(),
+            local: local.did.clone(),
+        });
+        let receiver = Receiver::open(&chain, &node, Some(membership.clone())).await;
+        let source = Source::open().await;
+        let (doc, genesis) = source.create(&foreign, "foreign").await;
+        assert!(is_retry(&receiver.receive(&source, &doc, &genesis).await));
+        assert_eq!(receiver.owed(&doc).await, acp::ReplicaOwed::default());
+        assert_eq!(chain.owner(&doc), None);
+        membership.available.store(true, Ordering::SeqCst);
+        let (own_doc, own_genesis) = source.create(&local, "local").await;
+        assert!(is_retry(
+            &receiver.receive(&source, &own_doc, &own_genesis).await
+        ));
+        assert_eq!(receiver.owed(&own_doc).await, acp::ReplicaOwed::default());
+        assert_eq!(
+            receiver.receive(&source, &doc, &genesis).await,
+            MergeOutcome::Merged
+        );
+        receiver.settle(&doc).await.unwrap();
+        assert_eq!(chain.owner(&doc), Some(node));
+        assert!(chain.holds(&doc, "writer", &foreign.did));
+    })
+    .unwrap()
+}

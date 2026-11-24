@@ -62,7 +62,7 @@ impl AcpTransport for EmbeddedTransport {
             let Some(head) = head::finalized(self).await else {
                 return Ok(streamed.boxed());
             };
-            let headers = headers_after(head, streamed.boxed());
+            let headers = prepend_head(head, streamed.boxed());
             Ok(headers)
         }
         .boxed()
@@ -71,22 +71,13 @@ impl AcpTransport for EmbeddedTransport {
 
 mod head;
 
-/// The fetched head, then the queued headers it does not make old. One at or
-/// below the head in a term not above the head's is older than the stream's
-/// start and dropped. One of a later term is passed on wherever it is: a
-/// switch of the deployment's active device voids blocks above its cut, and
-/// the light client reads such a header below its head to learn its head was
-/// voided (`proofs/tla/FirstHeader.tla`, `KeepLaterTerms`).
-fn headers_after(head: GossipHeader, queued: HeaderStream) -> HeaderStream {
-    let (height, term) = (head.height, head.term);
+/// Offer the fetched head first, then every queued notification. The fetched
+/// head is not authenticated yet: a transient verification failure must not
+/// discard the queued headers that could still bring the client up to date.
+/// The light client skips older headers after it has authenticated a head.
+fn prepend_head(head: GossipHeader, queued: HeaderStream) -> HeaderStream {
     futures::stream::once(async move { Ok(head) })
-        .chain(queued.filter(move |header| {
-            let old = matches!(
-                header,
-                Ok(header) if header.height <= height && header.term <= term
-            );
-            futures::future::ready(!old)
-        }))
+        .chain(queued)
         .boxed()
 }
 
