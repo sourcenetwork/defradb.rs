@@ -70,12 +70,12 @@ pub const PROPERTIES: &[Property] = &[
         // to the outbox before its cursor is written, the pass is complete
         // only at the ledger's end, a cursor of an older term is not resumed,
         // and the provider admits nothing until the source says the pass for
-        // the certified term is over.
+        // the certified term is over, nor after a second outbox asked.
         family: "ACP soundness + revocation + dual-path commits",
-        name: "INV_NothingLost / INV_RevocationDenies / LIVE_RecoveryEnds: an uncovered takeover recovers without a new worker, page by page through the outbox; no decision is served before everything the deployment lost is owed, a committed revocation denies throughout, and the pass ends",
+        name: "INV_NothingLost / INV_TheirsNotLost / INV_RevocationDenies / LIVE_RecoveryEnds: an uncovered takeover recovers without a new worker, page by page through the outbox; no decision is served before everything the deployment lost is owed, nor once a second node's outbox asked, a committed revocation denies throughout, and the pass ends",
         axis: Tla,
-        anchor: "crates/engine/vera/src/vera_rs/provider/terms.rs Follower::check_with, Follower::recover; crates/engine/vera/src/vera_rs/follow/journal.rs Journal::close_recoverable, Journal::recovery_needed, Journal::recovered; crates/engine/vera/src/vera_rs/follow/mod.rs Follow::admit, reconcile; crates/engine/acp/src/recovery.rs RecoveryLedger::page, RecoveryCursor, RecoverySource; crates/engine/acp/src/external/recovery.rs RecoverySource::next, RecoverySource::delivered; crates/engine/acp/src/external/voided.rs OweAgain::owe_again, OweAgain::settle_owed",
-        model_ref: "MC_FollowDeploymentRecovery_{Green,Green_OneRecordPages,Red_NoGate,Red_NoHandOver,Red_CursorFirst,Red_CompleteEveryPage,Red_NeverDone,Red_NoTermFence}.cfg",
+        anchor: "crates/engine/vera/src/vera_rs/provider/terms.rs Follower::check_with, Follower::recover; crates/engine/vera/src/vera_rs/provider.rs VeraRsProvider::owe_voided_to; crates/engine/vera/src/vera_rs/follow/journal.rs Journal::close_recoverable, Journal::recovery_needed, Journal::recovered; crates/engine/vera/src/vera_rs/follow/mod.rs Follow::admit, reconcile; crates/engine/acp/src/recovery.rs RecoveryLedger::page, RecoveryCursor, RecoverySource; crates/engine/acp/src/external/recovery.rs RecoverySource::next, RecoverySource::delivered; crates/engine/acp/src/external/voided.rs OweAgain::owe_again, OweAgain::settle_owed",
+        model_ref: "MC_FollowDeploymentRecovery_{Green,Green_OneRecordPages,Red_NoGate,Red_NoHandOver,Red_CursorFirst,Red_CompleteEveryPage,Red_NeverDone,Red_NoTermFence,Red_NoSharedFence}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },

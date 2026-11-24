@@ -706,6 +706,7 @@ RUNS=(
   "MC_FollowDeploymentRecovery_Red_CompleteEveryPage.cfg FollowDeploymentRecovery.tla RED" # a page that stopped at its limit marks the pass complete: later records are never checked (INV_NothingLost)
   "MC_FollowDeploymentRecovery_Red_NeverDone.cfg FollowDeploymentRecovery.tla RED" # the source never says the pass is over: the node never reopens (LIVE_RecoveryEnds)
   "MC_FollowDeploymentRecovery_Red_NoTermFence.cfg FollowDeploymentRecovery.tla RED" # a cursor of an older term is resumed: what a second takeover lost behind it is never checked (INV_NothingLost)
+  "MC_FollowDeploymentRecovery_Red_NoSharedFence.cfg FollowDeploymentRecovery.tla RED" # a pass that ends after a second outbox asked reopens: what the takeover voided of that node's is owed by nobody (INV_TheirsNotLost)
   "MC_PendingSubmission_Green.cfg PendingSubmission.tla GREEN" # a pending submission is resent until confirmed, takes effect once and stays journaled
   "MC_PendingSubmission_Green_Recalled.cfg PendingSubmission.tla GREEN" # a caller that keeps calling is confirmed though calls end early and the node drops the request
   "MC_PendingSubmission_Red_NoResend.cfg PendingSubmission.tla RED" # a lost send taken as sent waits for a receipt that cannot come

@@ -266,3 +266,68 @@ async fn a_journal_closed_for_good_is_not_recovered() {
         Some("several nodes share the provider")
     );
 }
+
+/// A source whose pass a second node's outbox joins before it says it is
+/// over.
+struct Joined {
+    follower: Arc<super::terms::Follower>,
+}
+
+#[async_trait]
+impl RecoverySource for Joined {
+    async fn next(&self, _: &dyn RecoveryVerifier) -> acp::Result<RecoveryStep> {
+        self.follower.shared.store(true, Ordering::Release);
+        Ok(RecoveryStep::Done { term: 0 })
+    }
+
+    async fn delivered(&self, _: RecoveryCursor) -> acp::Result<()> {
+        Ok(())
+    }
+}
+
+#[nuclei::test]
+async fn a_pass_a_second_outbox_joined_leaves_the_term_unrecorded() {
+    let signer = Recording::returning(Returns::Genuine);
+    let rpc = RpcRecorded::answering(Ok(serde_json::Value::Null));
+    let mut workers = Workers::new();
+    let provider = provider(signer, rpc, &mut workers).await;
+    let watched = Arc::new(Watched::default());
+    let outbox = Arc::downgrade(&watched);
+    let outbox: std::sync::Weak<dyn OweAgain> = outbox;
+    provider.follower.sink.set(outbox).expect("one outbox");
+    let joined = Arc::new(Joined {
+        follower: Arc::clone(&provider.follower),
+    });
+    let source = Arc::downgrade(&joined);
+    let source: std::sync::Weak<dyn RecoverySource> = source;
+    provider
+        .follower
+        .recovery
+        .set(source)
+        .expect("one recovery source");
+    {
+        let mut worker = provider.worker.clone().lock_owned().await;
+        worker
+            .confirmed()
+            .close_recoverable("the journal cannot vouch for the cut".into())
+            .expect("closed");
+        provider.follower.follow.update(worker.confirmed());
+    }
+
+    provider.follower.check_with(&Lost).await;
+
+    assert!(
+        provider.follower.admit().is_err(),
+        "the second node's voided changes are owed by nobody"
+    );
+    let mut worker = provider.worker.clone().lock_owned().await;
+    assert!(
+        worker.confirmed().recovery_needed().is_some(),
+        "the term is not recorded as recovered"
+    );
+    assert_eq!(
+        watched.asked.load(Ordering::SeqCst),
+        0,
+        "nothing was owed or settled"
+    );
+}
