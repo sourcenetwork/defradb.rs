@@ -204,13 +204,7 @@ impl TypeJoinMany {
                 .and_then(|o| o.get("selectNode"))
                 .cloned()
                 .unwrap_or(child_explain.clone());
-            // An index scan already shows the filter it serves, where Go shows it.
-            if let Some(content) = content.as_object_mut() {
-                let scan_filter = content.get("scanNode").and_then(|scan| scan.get("filter"));
-                if scan_filter.is_some() && scan_filter == content.get("filter") {
-                    content.insert("filter".to_string(), serde_json::Value::Null);
-                }
-            }
+            hide_filter_shown_by_scan(&mut content);
             content
         } else {
             let mut select_node_inner = serde_json::Map::new();
@@ -335,13 +329,7 @@ impl TypeJoinMany {
                 .and_then(|o| o.get("selectNode"))
                 .cloned()
                 .unwrap_or(child_explain.clone());
-            // An index scan already shows the filter it serves, where Go shows it.
-            if let Some(content) = content.as_object_mut() {
-                let scan_filter = content.get("scanNode").and_then(|scan| scan.get("filter"));
-                if scan_filter.is_some() && scan_filter == content.get("filter") {
-                    content.insert("filter".to_string(), serde_json::Value::Null);
-                }
-            }
+            hide_filter_shown_by_scan(&mut content);
             content
         } else {
             let mut select_node_inner = serde_json::Map::new();
@@ -716,5 +704,15 @@ impl TypeJoinMany {
         );
 
         serde_json::Value::Object(obj)
+    }
+}
+
+/// An index scan already shows the filter it serves, where Go shows it.
+fn hide_filter_shown_by_scan(select_node: &mut serde_json::Value) {
+    if let Some(content) = select_node.as_object_mut() {
+        let scan_filter = content.get("scanNode").and_then(|scan| scan.get("filter"));
+        if scan_filter.is_some() && scan_filter == content.get("filter") {
+            content.insert("filter".to_string(), serde_json::Value::Null);
+        }
     }
 }
