@@ -29,7 +29,7 @@ impl Node {
         field_name: &str,
     ) -> Result<EncryptedIndexListing> {
         self.ops()
-            .add_encrypted_index(&self.caller(context), collection, field_name)
+            .add_encrypted_index(&self.admitted_caller(context)?, collection, field_name)
             .await
     }
 
@@ -40,7 +40,7 @@ impl Node {
         collection: &str,
     ) -> Result<Vec<EncryptedIndexListing>> {
         self.ops()
-            .list_encrypted_indexes(&self.caller(context), collection)
+            .list_encrypted_indexes(&self.admitted_caller(context)?, collection)
             .await
     }
 
@@ -51,7 +51,7 @@ impl Node {
         context: &RequestContext,
     ) -> Result<Vec<(String, Vec<EncryptedIndexListing>)>> {
         self.ops()
-            .list_all_encrypted_indexes(&self.caller(context))
+            .list_all_encrypted_indexes(&self.admitted_caller(context)?)
             .await
     }
 
@@ -63,7 +63,7 @@ impl Node {
         field_name: &str,
     ) -> Result<()> {
         self.ops()
-            .delete_encrypted_index(&self.caller(context), collection, field_name)
+            .delete_encrypted_index(&self.admitted_caller(context)?, collection, field_name)
             .await
     }
 }

@@ -8,6 +8,9 @@ use identity::Did;
 use query::{QueryRequest, QueryResponse, TransactionError, TransactionHandle};
 use schema::CollectionVersion;
 
+use defra_core::signing::SigningConfig;
+
+use crate::embedded_signer::{self, EmbeddedSignerError};
 use crate::{refused_transaction, Error, Node, Result};
 
 impl Node {
@@ -59,18 +62,16 @@ impl Node {
         context: &RequestContext,
         sdl: &str,
     ) -> Result<Vec<CollectionVersion>> {
+        let caller = self.admitted_caller(context)?;
         if context.txn().is_some() {
             return self
                 .runner()
-                .add_collection_as(&self.caller(context), sdl)
+                .add_collection_as(&caller, sdl)
                 .await
                 .map_err(transaction_error);
         }
-        let (ops, context, sdl) = (
-            Arc::clone(&self.schema_ops),
-            context.clone(),
-            sdl.to_owned(),
-        );
+        let (ops, sdl) = (Arc::clone(&self.schema_ops), sdl.to_owned());
+        let context = caller;
         self.on_pool(move || async move { ops.add_collection(&context, &sdl).await })
             .await
     }
@@ -145,21 +146,34 @@ impl Node {
         context: &RequestContext,
         permission: acp::nac::NodePermission,
     ) -> Result<()> {
-        let (database, context) = (Arc::clone(self.database()), self.caller(context));
+        let (database, context) = (Arc::clone(self.database()), self.admitted_caller(context)?);
         self.on_pool(move || async move {
             Ok(database.check_node_access_as(&context, permission).await?)
         })
         .await
     }
 
-    /// The caller `context` names. Outside a transaction a call that names no
-    /// identity acts as no one, as Go's in-process client does; inside one it
-    /// acts as the transaction's owner, [`Self::txn_owner`].
-    pub(crate) fn caller(&self, context: &RequestContext) -> RequestContext {
-        match context.txn() {
+    /// The key `context` carries, once it may sign for the identity `context`
+    /// names: the one admission boundary of the `_as` entries. A refused key
+    /// fails the call before it writes anything
+    /// (`proofs/tla/EmbeddedSigner.tla`).
+    pub(crate) fn admit(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<Option<SigningConfig>, EmbeddedSignerError> {
+        embedded_signer::admitted_signer(context.identity(), context)
+    }
+
+    /// The caller `context` names, once [`Self::admit`] admits its key.
+    /// Outside a transaction a call that names no identity acts as no one,
+    /// as Go's in-process client does; inside one it acts as the
+    /// transaction's owner, [`Self::txn_owner`].
+    pub(crate) fn admitted_caller(&self, context: &RequestContext) -> Result<RequestContext> {
+        self.admit(context)?;
+        Ok(match context.txn() {
             Some(_) => self.txn_owner(context),
             None => context.clone(),
-        }
+        })
     }
 
     /// Who owns the transaction `context` begins or ends: the identity it
