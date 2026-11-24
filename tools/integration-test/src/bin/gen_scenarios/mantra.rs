@@ -5,8 +5,9 @@ use rapidhash::RapidHashMap;
 use super::error::{io, GenError, Result};
 
 /// Maps each Go test (`path::TestName`, path below `tests/integration/`) and
-/// each scenario ID to the mantra leaf that lists it: reqs/go leaves name
-/// their Go tests, reqs/defra leaves their scenarios.
+/// each scenario, by its ID or its testo test path (`area::module::test`), to
+/// the mantra leaf that lists it: reqs/go leaves name their Go tests,
+/// reqs/defra leaves their scenarios.
 pub fn load<P>(dirs: &[P]) -> Result<RapidHashMap<String, String>>
 where
     P: AsRef<Path>,

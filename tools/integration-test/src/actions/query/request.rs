@@ -59,10 +59,9 @@ impl Op for Request {
         let identity = self.check_arguments(state)?;
         state
             .block_on(
-                state.node_on(self.common.node())?.execute_request_as(
-                    &state.context_as(self.txn, identity),
-                    self.query_request(),
-                ),
+                state
+                    .node_on(self.common.node())?
+                    .execute_request_as(&self.context(state, identity), self.query_request()),
             )
             .map(|response| {
                 let extensions = response
@@ -108,6 +107,15 @@ impl Request {
             }
         }
         Ok(envelope)
+    }
+
+    /// The context the request runs in: a mutation carries the acting
+    /// identity's key where Go would sign with it ([`State::context_on`]).
+    fn context(&self, state: &State, identity: Option<u64>) -> defra_core::RequestContext {
+        match self.request.as_str().trim_start().starts_with("mutation") {
+            true => state.context_on(self.common.node(), self.txn, identity, None),
+            false => state.context_as(self.txn, identity),
+        }
     }
 
     fn query_request(&self) -> QueryRequest {
