@@ -135,6 +135,23 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // When a takeover's cut may lie below the journal's floor, the journal
+        // cannot vouch for what was voided. The provider closes it as
+        // recoverable and rebuilds from the node's own ledger of confirmed
+        // registrations and relationships, in bounded pages. A page is handed
+        // to the outbox before its cursor is written, the pass is complete
+        // only at the ledger's end, a cursor of an older term is not resumed,
+        // and the provider admits nothing until the source says the pass for
+        // the certified term is over, nor after a second outbox asked.
+        family: "ACP soundness + revocation + dual-path commits",
+        name: "INV_NothingLost / INV_TheirsNotLost / INV_RevocationDenies / LIVE_RecoveryEnds: an uncovered takeover recovers without a new worker, page by page through the outbox; no decision is served before everything the deployment lost is owed, nor once a second node's outbox asked, a committed revocation denies throughout, and the pass ends",
+        axis: Tla,
+        anchor: "crates/engine/vera/src/vera_rs/provider/terms.rs Follower::check_with, Follower::recover; crates/engine/vera/src/vera_rs/provider.rs VeraRsProvider::owe_voided_to; crates/engine/vera/src/vera_rs/follow/journal.rs Journal::close_recoverable, Journal::recovery_needed, Journal::recovered; crates/engine/vera/src/vera_rs/follow/mod.rs Follow::admit, reconcile; crates/engine/acp/src/recovery.rs RecoveryLedger::page, RecoveryCursor, RecoverySource; crates/engine/acp/src/external/recovery.rs RecoverySource::next, RecoverySource::delivered; crates/engine/acp/src/external/voided.rs OweAgain::owe_again, OweAgain::settle_owed",
+        model_ref: "MC_FollowDeploymentRecovery_{Green,Green_OneRecordPages,Red_NoGate,Red_NoHandOver,Red_CursorFirst,Red_CompleteEveryPage,Red_NeverDone,Red_NoTermFence,Red_NoSharedFence}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         family: "Transactional node source grants",
         name: "HostSourceNoop actual changes require authority and observations validate",
         axis: Tla,
@@ -324,7 +341,16 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "vera.rs deployment terms",
-        name: "foldl_push / applied_is_filter / owed_is_filter / unrestorable_is_filter / every_replay_in_one_place / existing_policy_is_applied / owed_is_a_change / unrestorable_is_archive_or_policy / event_keeps_every_entry / event_keeps_names_and_actors / closed_is_told: a takeover report puts every replay in one place and keeps its order, a policy that is there is not reported lost, and the event keeps every entry with its name and actor and says when the check failed closed",
+        name: "deny_wins / settled_reads_confirmed / confirmed_outranks_grant / settled_is_proven / unanswered_grant_is_unproven / refused_restores / applied_reads_fact / confirmed_reads_fact / last_iff_end / walk_covers: an unanswered denial wins a recovery slot, an unanswered grant neither outranks what was confirmed nor counts as confirmed, a refused change leaves the slot as it was, the newest answer replaces what was unanswered, and pages read one after the other hand over every slot once and end at the last",
+        axis: Lean,
+        anchor: "crates/engine/acp/src/recovery.rs resolve, RecoveryLedger::confirm, RecoveryLedger::prepare, RecoveryLedger::settle, RecoveryLedger::page; crates/engine/acp/src/external/recovery.rs RecoverySource::next",
+        model_ref: "VeraRecoveryLedger (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "vera.rs deployment terms",
+        name: "foldl_push / applied_is_filter / owed_is_filter / unrestorable_is_filter / every_replay_in_one_place / existing_policy_is_applied / owed_is_a_change / unrestorable_is_policy / event_keeps_every_entry / event_keeps_names_and_actors / closed_is_told: a takeover report puts every replay in one place and keeps its order, a policy that is there is not reported lost, and the event keeps every entry with its name and actor and says when the check failed closed",
         axis: Lean,
         anchor: "crates/engine/vera/src/vera_rs/follow/lost.rs held_again, lost_effects; crates/engine/vera/src/vera_rs/follow/report.rs TakeoverReport, Applied, Unrestorable; crates/engine/vera/src/vera_rs/provider/terms.rs takeover_report",
         model_ref: "VeraTakeoverReport (lake build)",
@@ -2248,6 +2274,24 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // A document deleted on a node whose provider archives on delete
+        // (vera.rs) owes the archive of its object in the delete's
+        // transaction. Only the owner may archive, so anyone else's delete is
+        // refused before commit; earlier unsent changes on the object go
+        // with the delete; an owed archive denies everyone on the object,
+        // leaving only its actor the document's commit history, and decides
+        // before a registration still owed to the creator or the
+        // unregistered rule; a change already in flight lands before the
+        // archive, and Vera refuses any change to an archived object.
+        family: "ACP soundness + revocation + dual-path commits",
+        name: "INV_DeletedGrantsNothing / INV_NoGrantAfterArchive / INV_DeletedByOwner / INV_HistoryOnlyToDeleter / LIVE_Retired: a deleted document grants nothing, no grant outlives its archive, only its owner deletes it, only its deleter reads its commit history, and its object ends archived",
+        axis: Tla,
+        anchor: "crates/engine/acp/src/outbox/staging.rs TransactionOutbox::stage_archive; crates/engine/acp/src/outbox/changes.rs OwedChanges::drop_unsent_on; crates/engine/acp/src/outbox/deny.rs owed_denial, archive_actor; crates/engine/acp/src/outbox/ops.rs account, live_on; crates/engine/acp/src/outbox/submission.rs relationship_call; crates/database/db/src/write/autocommit/helpers.rs unregister_deleted_doc; crates/engine/query/src/txn/context.rs decided_by_owed, spared_by_owed_archive, decided_by_owed_archive; crates/engine/query/src/txn/read_access.rs OverlayChecker::object_access; crates/engine/acp/src/external.rs ExternalDocumentAcp::check_doc_access",
+        model_ref: "MC_ArchiveOnDelete_{Green,Green_NoDrop,Red_GrantAfterArchive,Red_DeleteWithoutAuthority,Red_NoOverlay,Red_HistoryForAll,Red_OwedRegistrationFirst,Red_UnregisteredFirst}.cfg",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/database/db/tests/access/external_archive.rs an_owed_archive_leaves_its_actor_the_commit_history_and_nothing_else, an_owed_archive_denies_before_an_owed_registration_or_an_unregistered_object_could_grant",
+    },
+    Property {
         // An account's Vera deployment runs on every device, one active at a
         // time; a takeover without a handover voids the blocks above its cut,
         // and the light client's height goes down. The provider decides and
@@ -2264,7 +2308,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "ACP soundness + revocation + dual-path commits",
         name: "INV_NoVoidDecision / INV_RevocationDenies / INV_NothingLost / LIVE_ResubmittedSettles: no decision is served from a voided revision, a revocation confirmed on a void block still denies, nothing a term voided is taken as kept, and what is owed again settles",
         axis: Tla,
-        anchor: "crates/engine/vera/src/vera_rs/follow/mod.rs Follow::admit, Follow::still, Follow::epoch, reconcile, scan, uncovered; crates/engine/vera/src/vera_rs/follow/journal.rs Journal::record, Journal::begin_replay, Journal::handled, MAX_CONFIRMATIONS, MAX_CONFIRMATION_BYTES; crates/engine/vera/src/vera_rs/follow/lost.rs lost_effects, tainted_by; crates/engine/vera/src/vera_rs/follow/report.rs TakeoverReport, Applied, Unrestorable; crates/engine/vera/src/vera_rs/provider/terms.rs Follower::check, Follower::publish; crates/engine/vera/src/vera_rs/provider.rs decision_state, admitted_read; crates/engine/vera/src/vera_rs/provider/owed_request.rs locked_worker; crates/engine/acp/src/external/voided.rs OweAgain, VoidedEffect; backbone:acp-light-client HeaderChain::voided",
+        anchor: "crates/engine/vera/src/vera_rs/follow/mod.rs Follow::admit, Follow::still, Follow::epoch, reconcile, scan, uncovered; crates/engine/vera/src/vera_rs/follow/journal.rs Journal::record, Journal::begin_replay, Journal::handled, MAX_CONFIRMATIONS, MAX_CONFIRMATION_BYTES; crates/engine/vera/src/vera_rs/follow/lost.rs lost_effects, tainted_by; crates/engine/vera/src/vera_rs/follow/report.rs TakeoverReport, Applied, Unrestorable; crates/engine/vera/src/vera_rs/provider/terms.rs Follower::check_with, Follower::publish; crates/engine/vera/src/vera_rs/provider.rs decision_state, admitted_read; crates/engine/vera/src/vera_rs/provider/owed_request.rs locked_worker; crates/engine/acp/src/external/voided.rs OweAgain, VoidedEffect; backbone:acp-light-client HeaderChain::voided",
         model_ref: "MC_FollowDeployment_{Green,Green_Window,Red_KeepsCache,Red_ForgetsRevocation,Red_NoGate,Red_NoTaint,Red_AssumesWindow,Red_NoMark,Red_NoDeliveryGate,Red_CollapsesBatch}.cfg",
         tiers: &[Boundary],
         bound_by: "",
@@ -2278,7 +2322,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "ACP soundness + revocation + dual-path commits",
         name: "INV_Classified / INV_Published / INV_PublishedOnce / INV_Complete / INV_CutOfTerm / INV_ClosedNamed / LIVE_Reported: every replayed submission is classified as applied again, owed again or unrestorable, an unrestorable outcome carries its reason, a checked term is reported once, after every replay and with the owed ones, under the cut of its own term, and a check that failed closed says so",
         axis: Tla,
-        anchor: "crates/engine/vera/src/vera_rs/follow/report.rs TakeoverReport, Applied, Unrestorable; crates/engine/vera/src/vera_rs/follow/mod.rs reconcile, first_check; crates/engine/vera/src/vera_rs/follow/lost.rs lost_effects; crates/engine/vera/src/vera_rs/provider/terms.rs Follower::check, Follower::certificate, Follower::owed_effects, Follower::publish, takeover_report; crates/engine/vera/src/vera_rs/follow/journal.rs Journal::close; crates/foundation/events/src/event.rs AcpTakeoverReconciledData",
+        anchor: "crates/engine/vera/src/vera_rs/follow/report.rs TakeoverReport, Applied, Unrestorable; crates/engine/vera/src/vera_rs/follow/mod.rs reconcile, first_check; crates/engine/vera/src/vera_rs/follow/lost.rs lost_effects; crates/engine/vera/src/vera_rs/provider/terms.rs Follower::check_with, Follower::certificate, Follower::owed_effects, Follower::publish, takeover_report; crates/engine/vera/src/vera_rs/follow/journal.rs Journal::close; crates/foundation/events/src/event.rs AcpTakeoverReconciledData",
         model_ref: "MC_TakeoverReport_{Green,Red_NoPublish,Red_NoReason,Red_Early,Red_Duplicate,Red_DropsOwed,Red_NewestCut,Red_UnnamedClosed,Red_UnrecordedClose}.cfg",
         tiers: &[Boundary],
         bound_by: "",
@@ -2364,7 +2408,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "ACP outbox and owed registrations",
         name: "INV_NoWidening / INV_RevokedAtCommit / INV_RegistrationFirst / INV_AtMostOneEffect / INV_RollbackLeavesNothing / INV_OwedDocumentNarrow / INV_DenialsChecked / INV_RefusedChecked / INV_UncheckedYields / INV_PresentedAuthority / INV_FailureReported / INV_AbandonIsFinal / INV_RefusedOnItsOwn / INV_SettledTookEffect / INV_LandsUnderItsCredential / INV_ActsAsItsCredential / INV_SendableAuthority / LIVE_Drains: what a node owes a remote ACP provider never widens access before it is settled, a committed delete denies at once and until the provider holds it or its own actor abandons it, the registration settles before any change and only on its creator's word (its record, a delegation recorded with a change the creator owes, or the bearer a request carries for the creator), a registration whose submission failed says so and a change deleted without the provider holding it leaves a note until its actor was told, a change takes effect once across a crash while its receipt, journal entry or note can be read and never after it was abandoned, a change is parked as refused only for its own refusal, a rollback leaves nothing owed, no delete denies on an unchecked word, no unchecked change is parked as refused or holds a later change of its tuple, a client's change staged over HTTP acts as its credential's DID and carries an authority the node can send it with, and every committed change ends settled, parked or held behind a parked change of its tuple",
         axis: Tla,
-        anchor: "crates/engine/acp/src/pending.rs PendingRegistration, PendingRegistrations::record, PendingRegistrations::get, PendingRegistrations::clear; crates/engine/acp/src/external/registration.rs settle, settle_with, registrar, recorded_registrar, presenting, note_failure, rewrite, clear; crates/foundation/defra-core/src/request_context.rs RequestContext::bearer_token_for; crates/engine/acp/src/external.rs ExternalDocumentAcp::redrive_owed, ExternalDocumentAcp::check_doc_access, ExternalDocumentAcp::redrive_registration, ExternalDocumentAcp::revoked, ExternalDocumentAcp::transaction_outbox; crates/engine/acp/src/external/settle.rs settle_owed_changes_once, pass, pass_unchecked, settle_change, conclude, submittable, register_first, creators_delegation, settle_owed_before, refusal; crates/engine/acp/src/external/drain.rs recover_marked, send_request, batch, joins_request, settle_applied, MAX_CHANGES_PER_REQUEST; crates/engine/acp/src/outbox/journal.rs OwedJournal, PreparedRequest, RequestOutcome; crates/engine/acp/src/outbox/changes.rs OwedChanges::stage, VALIDATED_WITHIN_OF_NODE_LIMIT; crates/entry-points/defra-node/src/owed_drainer.rs drain, Backoff, PublishRefusals; crates/engine/vera/src/vera_rs/provider/owed_request.rs prepare_owed_request, journal_owed, owed_outcome; crates/engine/vera/src/vera_rs/provider/submission.rs resolve_pending, recover_pending, Note; crates/engine/vera/src/vera_rs/outcome_note.rs OutcomeNote, MAX_NOTED; crates/engine/vera/src/cosmos/dac/owed_journal.rs VeraOwedJournal; crates/engine/acp/src/outbox/staging.rs TransactionOutbox::stage, TransactionOutbox::advise, unchecked; crates/engine/acp/src/external/owed.rs entries, await_transaction, reauthorize, abandon_change; crates/engine/acp/src/outbox/ops.rs stage, settle, mark, mark_in_flight, clear_in_flight, unsettled_validated, reauthorize, discard, acknowledge; crates/engine/acp/src/outbox/record.rs run_epoch, InFlight; crates/engine/acp/src/outbox/deny.rs owed_denial, OwedDenials::on; crates/engine/acp/src/outbox/submission.rs Submission; crates/database/db/src/write/autocommit/helpers.rs register_created_doc, unregister_deleted_doc; crates/database/db/src/write/autocommit/create.rs run_create_attempt; crates/database/db/src/txn/mod.rs DbTxn::owe_acp_registration; crates/engine/acp/src/commit_registrations.rs CommitRegistrations::owe; crates/database/db/src/txn/mod.rs DbTxn::owed_staged, rollback_statement_savepoint; crates/engine/query/src/txn/context.rs AcpRegistrationProjection, denied_by_owed_delete; crates/entry-points/defra-node/src/acp_ops/transactional.rs relationship_in_txn, settle_owed_changes; crates/entry-points/defra-node/src/node_acp.rs gate_external_acp; crates/entry-points/defra-node/src/owed.rs Node::owed_acp_as, Node::await_owed_acp_as, Node::reauthorize_owed_acp_as, Node::abandon_owed_acp_change_as; crates/engine/vera/src/cosmos/dac/owed.rs submit; crates/surfaces/http/src/handlers/acp.rs relationship_operations, add_doc_relationship, remove_doc_relationship; crates/entry-points/defra-node/src/ops/http_ops.rs HttpNodeOps::change_doc_relationship, HttpNodeOps::supports_transactional_relationships; crates/engine/vera/src/cosmos/dac.rs authority",
+        anchor: "crates/engine/acp/src/pending.rs PendingRegistration, PendingRegistrations::record, PendingRegistrations::get, PendingRegistrations::clear; crates/engine/acp/src/external/registration.rs settle, settle_with, registrar, recorded_registrar, presenting, note_failure, rewrite, clear; crates/foundation/defra-core/src/request_context.rs RequestContext::bearer_token_for; crates/engine/acp/src/external.rs ExternalDocumentAcp::redrive_owed, ExternalDocumentAcp::check_doc_access, ExternalDocumentAcp::redrive_registration, ExternalDocumentAcp::revoked, ExternalDocumentAcp::transaction_outbox; crates/engine/acp/src/external/settle.rs settle_owed_changes_once, pass, pass_unchecked, settle_change, conclude, submittable, register_first, creators_delegation, settle_owed_before, refusal; crates/engine/acp/src/external/drain.rs recover_marked, send_request, batch, joins_request, settle_applied, MAX_CHANGES_PER_REQUEST; crates/engine/acp/src/outbox/journal.rs OwedJournal, PreparedRequest, RequestOutcome; crates/engine/acp/src/outbox/changes.rs OwedChanges::stage, VALIDATED_WITHIN_OF_NODE_LIMIT; crates/entry-points/defra-node/src/owed_drainer.rs drain, Backoff, PublishRefusals; crates/engine/vera/src/vera_rs/provider/owed_request.rs prepare_owed_request, journal_owed, owed_outcome; crates/engine/vera/src/vera_rs/provider/submission.rs resolve_pending, recover_pending, Note; crates/engine/vera/src/vera_rs/outcome_note.rs OutcomeNote, MAX_NOTED; crates/engine/vera/src/cosmos/dac/owed_journal.rs VeraOwedJournal; crates/engine/acp/src/outbox/staging.rs TransactionOutbox::stage, TransactionOutbox::advise, unchecked; crates/engine/acp/src/external/owed.rs entries, await_transaction, reauthorize, abandon_change; crates/engine/acp/src/outbox/ops.rs stage, settle, mark, mark_in_flight, clear_in_flight, unsettled_validated, reauthorize, discard, acknowledge; crates/engine/acp/src/outbox/record.rs run_epoch, InFlight; crates/engine/acp/src/outbox/deny.rs owed_denial, OwedDenials::on; crates/engine/acp/src/outbox/submission.rs Submission; crates/database/db/src/write/autocommit/helpers.rs register_created_doc, unregister_deleted_doc; crates/database/db/src/write/autocommit/create.rs run_create_attempt; crates/database/db/src/txn/mod.rs DbTxn::owe_acp_registration; crates/engine/acp/src/commit_registrations.rs CommitRegistrations::owe; crates/database/db/src/txn/mod.rs DbTxn::owed_staged, rollback_statement_savepoint; crates/engine/query/src/txn/context.rs AcpRegistrationProjection, decided_by_owed; crates/entry-points/defra-node/src/acp_ops/transactional.rs relationship_in_txn, settle_owed_changes; crates/entry-points/defra-node/src/node_acp.rs gate_external_acp; crates/entry-points/defra-node/src/owed.rs Node::owed_acp_as, Node::await_owed_acp_as, Node::reauthorize_owed_acp_as, Node::abandon_owed_acp_change_as; crates/engine/vera/src/cosmos/dac/owed.rs submit; crates/surfaces/http/src/handlers/acp.rs relationship_operations, add_doc_relationship, remove_doc_relationship; crates/entry-points/defra-node/src/ops/http_ops.rs HttpNodeOps::change_doc_relationship, HttpNodeOps::supports_transactional_relationships; crates/engine/vera/src/cosmos/dac.rs authority",
         model_ref: "MC_AcpOutbox_{Green,Green_Registered,Green_Three,Green_Three_Registered,Green_Live,Green_NoMarker,Green_OwnerChanges,Green_Live_OwnerChanges,Green_Journal,Green_Journal_Registered,Green_Journal_Live,Green_JournalSameBytes,Green_Remote,Green_Remote_HeldKey,Green_Remote_Live,Red_OwedOutsideTxn,Red_NoDenyOverlay,Red_LatestOpOverlay,Red_RefusedDeleteForgotten,Red_OwedAddGrants,Red_WildcardGrant,Red_ChangeBeforeRegistration,Red_OutOfOrder,Red_DrainPastAwaiting,Red_NoInFlightMarker,Red_ReceiptLost,Red_ContestedRegistration,Red_RefusedBlocksDrain,Red_UncheckedDelete,Red_UncheckedRefusedKept,Red_UncheckedHolds,Red_UncheckedPassedKept,Red_TransferWhileOwed,Red_AbandonByAnyone,Red_AbandonInFlight,Red_SilentFailure,Red_SilentDiscard,Red_AmbientRegistration,Red_AmbientRecorded,Red_ReauthorizeUnchecked,Red_JournalNoMarker,Red_JournalNoNote,Red_JournalReceiptLost,Red_BatchNotIsolated,Red_JournalNoFloor,Red_JournalRenewedCredential,Red_RemoteActorFromRequest,Red_RemoteUnchecked,Red_RemoteNoAuthority}.cfg",
         tiers: &[Boundary, Contract],
         bound_by: "crates/database/db/tests/access/external_owed.rs a_registration_that_fails_after_its_commit_is_reported_with_its_reason, a_registration_with_no_authority_waits_for_a_credential_and_is_not_sent, changes_behind_a_parked_registration_go_once_it_is_given_a_credential, a_wait_says_pending_while_the_provider_is_away_and_ends_when_a_record_changes, only_the_actor_that_staged_a_refused_delete_lifts_its_denial_by_abandoning_it, an_abandoned_change_lets_the_changes_behind_it_go_and_only_a_refused_one_is_abandoned, a_refused_change_is_submitted_again_under_a_fresh_credential, a_change_the_provider_never_took_is_reported_as_discarded_and_not_as_settled, a_wait_is_for_a_transaction_of_this_run_and_for_its_callers_entries; crates/entry-points/defra-node/tests/unit/owed_report.rs only_the_actor_that_staged_a_refused_revocation_abandons_it, a_retry_of_an_owed_registration_never_reads_the_token_the_process_holds, a_request_that_carries_no_bearer_registers_nothing_under_a_token_the_process_holds, a_pass_sends_a_registration_with_whichever_owed_delegation_the_report_found; crates/database/db/tests/access/external_drainer.rs a_change_committed_before_a_crash_is_sent_once_after_the_restart, a_change_marked_before_a_crash_is_decided_by_the_note_and_not_sent_again, a_change_marked_before_a_crash_is_decided_by_the_journal_and_not_sent_again, a_change_whose_receipt_was_kept_before_a_crash_is_settled_by_its_hash, an_unavailable_provider_leaves_the_change_marked_until_it_comes_back, a_refused_change_is_parked_and_told_of_and_holds_back_no_other_tuple, the_changes_one_transaction_staged_go_in_one_request, a_refused_request_is_sent_again_one_change_at_a_time, a_change_whose_request_nobody_knows_is_tried_again_without_a_commit, a_marked_change_is_sent_by_a_provider_without_a_journal, transactions_on_a_document_commit_while_the_drainer_settles_there; crates/engine/vera/src/vera_rs/outcome_note.rs an_outcome_of_an_earlier_request_with_the_same_bytes_is_not_the_callers, a_recorded_hash_reads_its_own_outcome_and_no_other; tools/integration-test/tests/verars/owed_note.rs a_command_that_resolves_a_journaled_request_with_its_bytes_notes_the_outcome; crates/database/db/tests/access/external_counts.rs near_the_node_bound_stagers_are_ordered_and_settles_abort_none; crates/entry-points/defra-node/tests/unit/http_staged_relationship.rs a_client_transaction_creates_and_grants_and_the_grant_lands_after_the_commit, a_change_without_authority_is_refused_before_the_commit_and_owes_nothing, a_discarded_or_abandoned_transaction_leaves_nothing_owed, the_acting_identity_comes_from_the_credential_alone, an_identity_token_for_a_did_whose_key_the_node_holds_stages_under_the_node_key; crates/entry-points/defra-node/tests/embedded_vera/http_staged.rs a_client_transaction_that_creates_and_grants_commits_and_the_grantee_reads, a_refused_or_discarded_grant_owes_nothing; crates/entry-points/defra-node/tests/embedded_vera.rs an_idle_node_settles_a_staged_grant_once_its_deployment_is_back, the_grants_one_transaction_stages_land_together, a_restart_settles_a_change_the_chain_could_not_take",
@@ -2655,6 +2699,26 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/database/p2p/src/host/p2p_host/swarm.rs refused_connection_does_not_emit_a_disconnect, peer_disconnect_only_on_last_connection_close",
     },
     Property {
+        // Removing a transform must not invert native documents.
+        family: "Schema-evolution operations in the core",
+        name: "INV_NativePreserved",
+        axis: Tla,
+        anchor: "crates/database/db/src/definition/migration/reindex/page.rs ReindexPage::walk",
+        model_ref: "MC_RemovedLensOrigin_{Green,Red_Inverse}.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/collection_version/updates/remove/removed_transform_reindex.rs removing_transform_preserves_old_and_new_documents",
+    },
+    Property {
+        // Native and materialized documents can have identical stored values.
+        family: "Schema-evolution operations in the core",
+        name: "RemovedLensOrigin.inverse_changes_native / preserving_keeps_native / same_stored_value_different_origins",
+        axis: Lean,
+        anchor: "crates/database/db/src/definition/migration/reindex/page.rs ReindexPage::walk",
+        model_ref: "RemovedLensOrigin (lake build)",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/collection_version/updates/remove/removed_transform_reindex.rs removing_transform_preserves_old_and_new_documents",
+    },
+    Property {
         // An explain names the direct lookup index, or the child scan index.
         family: "Schema-evolution operations in the core",
         name: "INV_NameMatches",
@@ -2690,6 +2754,42 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "MC_LensIndexAnswer_{Green,Red_*}.cfg",
         tiers: &[Boundary],
         bound_by: "crates/database/db/tests/merge/plan_scan_race.rs",
+    },
+    Property {
+        // #3052: the reindex a schema change owes fixes only the index and
+        // leaves each document stored as written, so a lens added or removed
+        // afterwards still applies to it as it stands (Red_WalkStamps).
+        family: "Schema-evolution operations in the core",
+        name: "INV_ReadsFollowWrites",
+        axis: Tla,
+        anchor: "crates/database/db/src/definition/migration/reindex/mod.rs DB::rebuild_settling; crates/database/db/src/definition/migration/reindex/page.rs ReindexPage::walk; crates/database/db/src/definition/patch/in_place.rs update_version_in_place",
+        model_ref: "MC_LensIndexAnswer_{Green,Red_WalkStamps}.cfg",
+        tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/testo/collection_version/migrations/identity_settlement.rs identity_settlement_before_transform_should_apply_later_migration",
+    },
+    Property {
+        // #3052: a materialization never resumes an owed reindex, a rebuild
+        // that writes values back resumes only a record that does too, and a
+        // resumed page walks the way its record says.
+        family: "Schema-evolution operations in the core",
+        name: "INV_RebuiltAll",
+        axis: Tla,
+        anchor: "crates/database/db/src/definition/migration/reindex/mod.rs DB::reindex_in_pages; crates/database/db/src/definition/migration/reindex/page.rs ReindexPage::step; crates/database/db/src/definition/migration/reindex/progress.rs read",
+        model_ref: "MC_MaterializeResume_{Green,Red_Resume,Red_ResumeAnyMode,Red_SettleIgnoresMode}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/database/db/tests/index/deferred.rs materializing_after_a_stopped_settlement_advances_every_document, reindexing_with_migrations_after_a_stopped_settlement_writes_back_every_document",
+    },
+    Property {
+        // A walk from the start saves every document; one resumed from a
+        // settlement's cursor misses those the settlement walked. The resume
+        // decision reuses a record only for a rebuild it already serves.
+        family: "Schema-evolution operations in the core",
+        name: "MaterializeResume.start_over_saves_all / resume_misses / reuses_serves",
+        axis: Lean,
+        anchor: "crates/database/db/src/definition/migration/reindex/mod.rs DB::reindex_in_pages",
+        model_ref: "MaterializeResume (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/database/db/tests/index/deferred.rs materializing_after_a_stopped_settlement_advances_every_document, reindexing_with_migrations_after_a_stopped_settlement_writes_back_every_document",
     },
     Property {
         // An explicit transaction's ID is `sequence * workers + worker`. The
@@ -4820,6 +4920,17 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/entry-points/defra-node/src/db_impls.rs DbSchemaOps::add_view; crates/database/db/src/collection/ops/create.rs DB::create_view_collections_as, DB::stage_new_collections, DB::require_view_transforms; crates/database/db/src/definition/migration/committed_lenses.rs DB::add_lens, DB::commit_synced_lens, write_lens_config; crates/surfaces/p2p-adapter/src/version_syncer.rs sync_lens; crates/surfaces/p2p-adapter/src/transport_version_syncer.rs sync_lens",
         model_ref: "MC_AddViewTransform_{Green,Green_NacBefore,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // #3052: a patch commits its version, registers any lens it staged,
+        // and only then settles a reindex owed by that patch.
+        family: "Patch lens settlement",
+        name: "INV_SettleAfterLens",
+        axis: Tla,
+        anchor: "crates/database/db/src/definition/patch/mod.rs DB::patch_collection; crates/database/db/src/definition/patch/in_place.rs DB::update_version_in_place; crates/database/db/src/definition/migration/reindex/page.rs ReindexPage::walk",
+        model_ref: "MC_LensSettlement_{Green,Red_Early}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },

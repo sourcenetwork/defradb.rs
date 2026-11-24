@@ -286,6 +286,8 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 &systemstore,
                 &collection,
                 &canonical_doc_id,
+                &attempt.context,
+                acp::StagedCount::new(),
             )
             .await?;
             let doc_id_string = canonical_doc_id.to_string();
@@ -528,6 +530,8 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                     &systemstore,
                     &collection,
                     &canonical_id,
+                    &attempt.context,
+                    acp::StagedCount::new(),
                 )
                 .await?;
                 let heads = attempt.heads.for_attempt(&headstore, doc_short_id).await?;
