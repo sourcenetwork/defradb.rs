@@ -746,6 +746,15 @@ RUNS=(
   "MC_FollowDeployment_Red_NoMark.cfg FollowDeployment.tla RED" # replay start not written down: a refused replay cut short is held and its revocation forgotten (INV_RevocationDenies)
   "MC_FollowDeployment_Red_NoDeliveryGate.cfg FollowDeployment.tla RED" # a checked term admits before its owed changes reach the outbox (INV_RevocationDenies)
   "MC_FollowDeployment_Red_CollapsesBatch.cfg FollowDeployment.tla RED" # only the first change of an object handed back together is owed: the revocation after it is lost (INV_RevocationDenies)
+  "MC_TakeoverReport_Green.cfg TakeoverReport.tla GREEN" # a checked term is reported once, complete, with its own cut, and a closed check says so
+  "MC_TakeoverReport_Red_NoPublish.cfg TakeoverReport.tla RED" # a checked term is not published (INV_Published)
+  "MC_TakeoverReport_Red_NoReason.cfg TakeoverReport.tla RED" # an unrestorable replay is unnamed (INV_Classified)
+  "MC_TakeoverReport_Red_Early.cfg TakeoverReport.tla RED" # published before every replay is classified (INV_Complete)
+  "MC_TakeoverReport_Red_Duplicate.cfg TakeoverReport.tla RED" # a delivery retry reports the term again (INV_PublishedOnce)
+  "MC_TakeoverReport_Red_DropsOwed.cfg TakeoverReport.tla RED" # owed replays taken out before publication (INV_Complete)
+  "MC_TakeoverReport_Red_NewestCut.cfg TakeoverReport.tla RED" # one term paired with a newer term's cut (INV_CutOfTerm)
+  "MC_TakeoverReport_Red_UnnamedClosed.cfg TakeoverReport.tla RED" # a check that failed closed reads as clean (INV_ClosedNamed)
+  "MC_TakeoverReport_Red_UnrecordedClose.cfg TakeoverReport.tla RED" # says closed before the close is written (INV_ClosedRecorded)
   "MC_PendingSubmission_Green.cfg PendingSubmission.tla GREEN" # a pending submission is resent until confirmed, takes effect once and stays journaled
   "MC_PendingSubmission_Green_Recalled.cfg PendingSubmission.tla GREEN" # a caller that keeps calling is confirmed though calls end early and the node drops the request
   "MC_PendingSubmission_Red_NoResend.cfg PendingSubmission.tla RED" # a lost send taken as sent waits for a receipt that cannot come

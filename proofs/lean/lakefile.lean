@@ -43,6 +43,9 @@ lean_lib VeraEmbeddedTransport where
 lean_lib VeraConfirmationJournal where
 
 @[default_target]
+lean_lib VeraTakeoverReport where
+
+@[default_target]
 lean_lib DelegatedRelationship where
 
 @[default_target]
