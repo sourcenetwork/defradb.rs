@@ -11,6 +11,9 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 # event to the settled rest (depth = events + 1), and DEADLOCK:<l> stops with
 # event l next (past the end when l = events + 1).
 RUNS=(
+  "MC_ExplainIndexName_Green.cfg ExplainIndexName.tla GREEN"
+  "MC_ExplainIndexName_Green_Fallback.cfg ExplainIndexName.tla GREEN"
+  "MC_ExplainIndexName_Red_Lookup.cfg ExplainIndexName.tla RED" # direct FK lookup must name its index
   "MC_MissingRelationFilter_Green.cfg MissingRelationFilter.tla GREEN"
   "MC_MissingRelationFilter_Red_NoId.cfg MissingRelationFilter.tla RED"
   "MC_MissingRelationFilter_Red_Sibling.cfg MissingRelationFilter.tla RED"
