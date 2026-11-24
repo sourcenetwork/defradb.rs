@@ -11,9 +11,11 @@
 //! nothing else compares them.
 
 mod acp;
+mod acp_status;
 mod query;
 mod version;
 
 pub use acp::{DocumentRelationship, PermissionProvenance, PermissionVia};
+pub use acp_status::{DelegationAudience, LightClientStatus};
 pub use query::{DocumentsResult, SourcePermission};
 pub use version::{GoCompat, VersionInfo};

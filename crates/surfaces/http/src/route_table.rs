@@ -24,7 +24,7 @@ use crate::handlers::index::{GoCreateIndexRequest, GoIndexDescription};
 use crate::handlers::lens::{AddLensRequest, SetMigrationResponse};
 use crate::handlers::nac::{
     AddActorRelationshipResult, DeleteActorRelationshipResult, EnableNacRequest,
-    GoNacRelationshipRequest,
+    GoNacRelationshipRequest, NacStatusResult,
 };
 use crate::handlers::p2p::ReplicatorDeleteRequest;
 use crate::handlers::p2p::ShareableAddressResponse;
@@ -33,7 +33,8 @@ use crate::handlers::views::ViewNamesRequest;
 use crate::route_permissions::RoutePermission;
 use crate::router::NodePermission;
 use crate::wire::{
-    DocumentRelationship, DocumentsResult, PermissionProvenance, SourcePermission, VersionInfo,
+    DocumentRelationship, DocumentsResult, LightClientStatus, PermissionProvenance,
+    SourcePermission, VersionInfo,
 };
 use schema::CollectionVersion;
 
@@ -267,7 +268,7 @@ pub const ROUTES: &[Route] = &[
     row_body("/api/v0/p2p/manage", POST, required(NodePermission::P2pPeerConnect), false, None, Some(body::<()>)),
     row("/api/v0/p2p/manage/query", POST, required(NodePermission::P2pPeerConnect), false),
     // ACP (Document Access Control)
-    row("/api/v0/acp/status", GET, required(NodePermission::DacStatus), false),
+    row_body("/api/v0/acp/status", GET, required(NodePermission::DacStatus), false, None, Some(body::<LightClientStatus>)),
     row_body("/api/v0/acp/document/policy", POST, required(NodePermission::DacPolicyAdd), false, None, Some(body::<AddPolicyResponse>)),
     row_body("/api/v0/acp/policy", GET, required(NodePermission::DacStatus), false, None, Some(body::<Vec<PolicyInfo>>)),
     row_body("/api/v0/acp/policy/{id}", GET, required(NodePermission::DacStatus), false, None, Some(body::<PolicyInfo>)),
@@ -288,7 +289,7 @@ pub const ROUTES: &[Route] = &[
     ),
     row_body("/api/v0/acp/document/relationships", POST, required(NodePermission::DacRelationAdd), false, Some(body::<Vec<DocRelationshipRequest>>), Some(body::<Vec<DocRelationshipResponse>>)),
     // ACP Node (NAC via Go-compatible /acp/node/* routes)
-    row("/api/v0/acp/node/status", GET, required(NodePermission::NacStatus), false),
+    row_body("/api/v0/acp/node/status", GET, required(NodePermission::NacStatus), false, None, Some(body::<NacStatusResult>)),
     // The subject itself, an admin or a `NacStatus` holder: decided in the core.
     row_body(
         "/api/v0/acp/node/explain",

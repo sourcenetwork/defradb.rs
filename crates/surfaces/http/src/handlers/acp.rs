@@ -116,12 +116,12 @@ pub async fn get_policy(
 pub async fn get_status(
     State(state): State<AppState>,
     identity: ExtractIdentity,
-) -> Result<Json<acp::LightClientStatus>, HttpError> {
+) -> Result<Json<crate::wire::LightClientStatus>, HttpError> {
     let status = state
         .executor
         .acp_light_client_status_as(&identity.context())
         .await?;
-    Ok(Json(status))
+    Ok(Json(crate::wire::LightClientStatus::from(status)))
 }
 
 /// Request body for document ACP relationship operations (Go-compatible).
