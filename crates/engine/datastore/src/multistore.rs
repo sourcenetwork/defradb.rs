@@ -208,6 +208,11 @@ impl SharedTxn {
         self.scans_validated.store(validated, Ordering::Relaxed);
     }
 
+    /// Whether scans opened from now validate their range at commit.
+    pub fn scans_validated(&self) -> bool {
+        self.scans_validated.load(Ordering::Relaxed)
+    }
+
     /// Get a value with namespace prefix.
     pub async fn get(&self, namespace: Namespace, key: &[u8]) -> Result<Option<Bytes>> {
         self.txn()?.get(&prefix_key(namespace, key)).await
@@ -470,6 +475,12 @@ impl NamespaceView {
     /// the transaction.
     pub fn set_scans_validated(&self, validated: bool) {
         self.txn.set_scans_validated(validated);
+    }
+
+    /// See [`SharedTxn::scans_validated`]; it applies to every view of
+    /// the transaction.
+    pub fn scans_validated(&self) -> bool {
+        self.txn.scans_validated()
     }
 
     /// View a different namespace of the same transaction.

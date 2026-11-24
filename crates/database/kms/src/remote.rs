@@ -41,6 +41,8 @@ pub(crate) struct RemoteKeys {
     pub(crate) node_identity: Did,
     /// Test-only deterministic ephemeral. `None` in prod: fresh per request.
     pub(crate) test_ephemeral: Arc<AtomOption<x25519_dalek::StaticSecret>>,
+    /// Edge listener for keys this request made usable.
+    pub(crate) arrivals: Arc<AtomOption<Arc<dyn crate::service::KeyArrivalListener>>>,
 }
 
 impl inputs::Source for RemoteKeys {
@@ -82,6 +84,23 @@ impl inputs::Source for RemoteKeys {
                     .as_ref()
                     .map_or(0, |capability| capability.len()),
         )
+    }
+}
+
+/// Notify once for the keys stored from a reply, even if the request future
+/// is cancelled while storing a later key in that reply.
+struct ArrivedKeys<'a> {
+    listener: &'a AtomOption<Arc<dyn crate::service::KeyArrivalListener>>,
+    cids: Vec<EncryptionCid>,
+}
+
+impl Drop for ArrivedKeys<'_> {
+    fn drop(&mut self) {
+        if !self.cids.is_empty() {
+            if let Some(listener) = self.listener.load() {
+                listener.keys_arrived(&self.cids);
+            }
+        }
     }
 }
 
@@ -189,6 +208,10 @@ impl RemoteKeys {
             // AAD binds OUR (requester) ephemeral pubkey and the RESPONDER's
             // peer id, matching the serve side.
             let aad = crate::ecies_envelope::make_associated_data(&our_eph_pub, &responder_peer_id);
+            let mut arrived = ArrivedKeys {
+                listener: &self.arrivals,
+                cids: Vec::new(),
+            };
             for (cid_bytes, block_env) in reply.links.iter().zip(reply.blocks.iter()) {
                 let Ok(cid) = cid::Cid::try_from(cid_bytes.as_slice()) else {
                     tracing::warn!("KMS reply contained malformed CID; skipping");
@@ -207,6 +230,7 @@ impl RemoteKeys {
                     .await
                 {
                     Ok(key) => {
+                        arrived.cids.push(cid);
                         answers[index] = Some(Ok(Arc::new(Zeroizing::new(key))));
                         remaining -= 1;
                     }

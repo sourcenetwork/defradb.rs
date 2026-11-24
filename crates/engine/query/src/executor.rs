@@ -108,6 +108,24 @@ pub struct QueryRequest {
     /// not read.
     #[serde(skip)]
     pub parsed: Option<std::sync::Arc<crate::query_parse::ParsedOperation>>,
+
+    /// Who wrote the request's filters. Never read from the wire, so a
+    /// client cannot turn filter input validation off.
+    #[serde(skip)]
+    pub filter_origin: FilterOrigin,
+}
+
+/// Who wrote a request's filters, which decides whether they are checked
+/// against the generated filter input types.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum FilterOrigin {
+    /// The client wrote the GraphQL: its filters are checked, as graphql-go
+    /// checks them.
+    #[default]
+    Request,
+    /// The collection API built the GraphQL from a filter value, which Go's
+    /// collection API takes unchecked.
+    CollectionApi,
 }
 
 impl QueryRequest {
@@ -120,7 +138,20 @@ impl QueryRequest {
             identity: None,
             context: RequestContext::default(),
             parsed: None,
+            filter_origin: FilterOrigin::Request,
         }
+    }
+
+    /// Set who wrote the request's filters.
+    pub fn with_filter_origin(mut self, origin: FilterOrigin) -> Self {
+        self.filter_origin = origin;
+        self
+    }
+
+    /// Whether the request's filters are checked against their input types:
+    /// GraphQL text a client wrote.
+    pub(crate) fn checks_filter_shapes(&self) -> bool {
+        self.parsed.is_none() && self.filter_origin == FilterOrigin::Request
     }
 
     /// A request for an operation already built as typed structs. It takes
@@ -321,6 +352,10 @@ pub struct QueryResponseError {
     /// Internal retry control. Never serialized to client responses.
     #[serde(skip)]
     pub(crate) retry_input: Option<crate::prepared::PreparedInputRequest>,
+
+    /// Whether the request itself is invalid. Never serialized.
+    #[serde(skip)]
+    pub(crate) invalid_request: bool,
 }
 
 impl QueryResponseError {
@@ -332,6 +367,7 @@ impl QueryResponseError {
             locations: None,
             extensions: None,
             retry_input: None,
+            invalid_request: false,
         }
     }
 
@@ -369,6 +405,19 @@ impl QueryResponseError {
         self.extensions
             .as_ref()
             .and_then(|extensions| extensions.provider_time)
+    }
+
+    /// Mark whether the request itself is invalid.
+    pub(crate) fn with_invalid_request(mut self, invalid_request: bool) -> Self {
+        self.invalid_request = invalid_request;
+        self
+    }
+
+    /// Whether the request itself is invalid, so running it again unchanged
+    /// can only fail the same way. An error made from a string, without its
+    /// [`QueryError`](crate::error::QueryError), is not known to be.
+    pub fn is_invalid_request(&self) -> bool {
+        self.invalid_request
     }
 
     /// Return the machine-readable error code, if present.
@@ -414,6 +463,7 @@ impl QueryResponseError {
             crate::error::QueryError::NeedsInput(request) => Some(request.clone()),
             _ => None,
         };
+        let invalid_request = error.is_invalid_request();
         let response_error = Self::new(error.to_string());
         let mut response_error = if is_transaction_conflict {
             response_error.with_code(TXN_CONFLICT_ERROR_CODE)
@@ -444,6 +494,7 @@ impl QueryResponseError {
             response_error
         };
         response_error.retry_input = retry_input;
+        response_error.invalid_request = invalid_request;
         response_error
     }
 
@@ -1241,6 +1292,24 @@ mod tests {
 
         let parsed: QueryRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.query, req.query);
+    }
+
+    #[test]
+    fn a_client_cannot_turn_filter_validation_off() {
+        for body in [
+            r#"{"query":"{ users { name } }","filter_origin":"CollectionApi"}"#,
+            r#"{"query":"{ users { name } }","filterOrigin":"CollectionApi"}"#,
+        ] {
+            let parsed: QueryRequest = serde_json::from_str(body).unwrap();
+            assert_eq!(parsed.filter_origin, FilterOrigin::Request);
+            assert!(parsed.checks_filter_shapes());
+        }
+        let api =
+            QueryRequest::new("{ users { name } }").with_filter_origin(FilterOrigin::CollectionApi);
+        assert!(!serde_json::to_string(&api)
+            .unwrap()
+            .contains("ollectionApi"));
+        assert!(!api.checks_filter_shapes());
     }
 
     #[test]

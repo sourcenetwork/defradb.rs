@@ -223,6 +223,7 @@ where
             op: None,
             parked: None,
             superseded: !applied && !repeated,
+            active_result: false,
         })
     }
 }

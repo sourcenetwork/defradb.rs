@@ -6,6 +6,7 @@ mod delete_doc;
 mod delete_encrypted_index;
 mod delete_index;
 mod get_collections;
+mod http_commit_bound;
 mod index_nac;
 mod list_all_encrypted_indexes;
 mod list_encrypted_indexes;

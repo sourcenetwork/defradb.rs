@@ -47,6 +47,9 @@ pub struct NodeSpec {
     pub resolv_conf: Option<String>,
     /// The node's network is iroh rather than libp2p.
     pub iroh_network: bool,
+    /// The node was configured from a Go-written `config.yaml` through the
+    /// Rust CLI's loader, so it is a Rust node under every client.
+    pub go_config: bool,
     /// The node's own identity, Go's `NodeIdentity(seed)`; the node signs as it.
     pub node_identity: Option<u64>,
     /// The node takes `node_identity` from the process's signing registry,
@@ -68,6 +71,11 @@ pub struct NodeSpec {
     /// The gate the node's index backfills pass before each batch; it lives
     /// across a restart, as Go's package-level hook does.
     pub index_gate: Option<Arc<crate::index_gate::TestIndexGate>>,
+    /// The gate explicit commits pass before they begin, for a real-node
+    /// scenario that holds a commit past its HTTP bound.
+    pub commit_gate: Option<Arc<crate::commit_gate::TestCommitGate>>,
+    /// The HTTP server's bound on answering a commit; `None` leaves it off.
+    pub commit_timeout: Option<Duration>,
     /// An in-process iroh node serving these stream protocols, in place of
     /// the libp2p one `network` starts.
     pub iroh: Option<crate::actions::stream::IrohSpec>,
@@ -115,12 +123,15 @@ impl TestNode {
             Some(address) => address.clone(),
             None => "/ip4/127.0.0.1/tcp/0".to_owned(),
         };
-        // Admission limits, iroh and a resolv.conf are a Rust node's options:
-        // under go-http the node is a Rust node reached over HTTP, as
-        // rust-http does.
+        // Admission limits, iroh, a resolv.conf and a loaded Go config are a
+        // Rust node's options: under go-http the node is a Rust node reached
+        // over HTTP, as rust-http does.
         let client_type = match client_type {
             ClientType::GoHttp
-                if spec.admission.is_some() || spec.iroh_network || spec.resolv_conf.is_some() =>
+                if spec.admission.is_some()
+                    || spec.iroh_network
+                    || spec.resolv_conf.is_some()
+                    || spec.go_config =>
             {
                 ClientType::RustHttp
             }
@@ -157,6 +168,9 @@ impl TestNode {
                     config = config
                         .with_transaction_idle_timeout(ttl)
                         .with_transaction_cleanup_interval(tick);
+                }
+                if let Some(bound) = spec.commit_timeout {
+                    config = config.with_commit_timeout(bound);
                 }
                 let node = Arc::new(build(&spec, &listen, Some(config))?);
                 Ok(Self::new(None, Some(url), spec, Some(node), Vec::new()))
@@ -378,6 +392,9 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
     }
     if let Some(gate) = &spec.index_gate {
         builder = builder.with_index_build_gate(gate.clone());
+    }
+    if let Some(gate) = &spec.commit_gate {
+        builder = builder.with_commit_gate(gate.clone());
     }
     if spec.registered_identity {
         builder = builder.with_node_identity_did(register_node_identity(spec)?);

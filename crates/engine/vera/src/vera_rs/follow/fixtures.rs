@@ -146,6 +146,7 @@ impl Chain for Deployment {
             }
             Ok(Replayed {
                 executed: self.refuses.get(&submission).is_none(),
+                exists: false,
                 height: 100 + tx.nonce,
             })
         })

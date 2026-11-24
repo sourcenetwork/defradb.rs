@@ -8,6 +8,13 @@ Requirements that start in defradb.rs rather than in a Go integration test.
 
 Index behaviour beyond what Go's integration suite checks.
 
+# `defra.index.keyspace_isolation`: Secondary index keyspace isolation
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["collection.truncate.isolation.truncate_preserves_other_collections"]
+
+Secondary index entries occupy a keyspace disjoint from document and schema-version keys. Querying and dropping an index or truncating its collection leaves other collections' documents and definitions intact, including for collection short IDs whose legacy index prefixes overlapped other key families.
+
 # `defra.index.unique_writer`: Unique-index errors name only the writer
 
 - **Parents:** ["defra.index"]
@@ -35,6 +42,13 @@ A counter field can be indexed. After local increments, or after two nodes incre
 - **Scenarios:** ["index::index_offset_limit::ordered_index_offset_limit_returns_the_requested_page"]
 
 An ordered query over an indexed field with `limit: 3, offset: 2` reads `limit + offset` index entries, returns exactly the page after skipping two, and leaves the query offset to the limit node so it is not applied twice. The same paging is correct when the ordered field is not indexed.
+
+# `defra.index.keyspace`: Collection short IDs cannot collide with another family
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["index::keyspace::a_tagged_index_keyspace_keeps_collections_separate"]
+
+Collections whose short IDs are `100` and `118`, the bytes `d` and `v` that name the document and version key families, each answer a query filtered on their indexed field with only their own row. Since truncate removes one index at a time (`defra.collection.truncate.other_collections`), no client operation reads or deletes by a whole collection's index prefix, so this scenario also passes on the untagged layout. The fixed `/index/` tag that keeps index keys out of the other families is checked in storage, by `index_keyspace_is_tagged_across_the_byte_boundary` and `index_keyspace_scans_stay_per_collection_across_short_ids`.
 
 # `defra.index.backfill_under_writes`: An index created under writes finishes its backfill
 
@@ -294,6 +308,17 @@ Over the index suite's ten users (ages 20, 23, 28, 30, 32, 33, 42, 44, 48, 55), 
 - **Parents:** ["defra"]
 
 Transaction behaviour beyond what Go's integration suite checks.
+
+# `defra.txn.http_commit_bound`: A live server bounds its answer on a commit
+
+- **Parents:** ["defra.txn"]
+- **Scenarios:** ["http::commit_bound::a_commit_past_its_bound_answers_unknown_and_keeps_running", "http::commit_bound::the_bound_is_only_for_transaction_commits", "http::commit_bound::a_begin_is_not_bounded_as_a_commit", "txn::http_commit_bound::an_http_commit_past_its_bound_answers_unknown_and_lands"]
+
+The HTTP server bounds only how long it waits to answer an explicit transaction commit. Past that bound, it answers `503` with JSON naming the bound and `outcome: "unknown"`. It does not cancel the commit: the worker-local commit keeps its ticket and lands or fails on its own, so the caller must not treat this as an abort. A transaction begin is not bounded this way, and a bound of `0` disables it.
+
+The bound is `commit_timeout_ms`, in milliseconds, on the HTTP server, and it is opt in: `0`, the default, disables it.
+
+The CLI's `client tx commit` sends a commit once and never retries it, so it reports the bound's answer, `commit outcome unknown after <bound> milliseconds`, rather than a later attempt's "not found".
 
 # `defra.txn.no_neighbour_conflict`: Updating one document does not conflict with its neighbour
 

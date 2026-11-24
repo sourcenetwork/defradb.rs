@@ -124,6 +124,19 @@ pub trait TransactionRegistry: MaybeSendSync + 'static {
         context.mirror(self.commit(handle)).await
     }
 
+    /// Commit a transaction whose caller's wait may be dropped: the commit
+    /// begins even if that wait ends first, while later transactions stay
+    /// fenced until it lands. An implementation without a detached owner may
+    /// fall back to [`Self::commit_as`], whose cancellation contract is then
+    /// its own.
+    async fn commit_detached_as(
+        &self,
+        context: &RequestContext,
+        handle: &TransactionHandle,
+    ) -> std::result::Result<(), TransactionError> {
+        self.commit_as(context, handle).await
+    }
+
     /// [`Self::commit_as`], in one step where the transaction lives, unless
     /// a provider that cannot join the transaction told it owners
     /// ([`ObservedOwners`](super::ObservedOwners)): then nothing is
@@ -648,6 +661,16 @@ impl TransactionRegistry for NoOpTransactionRegistry {
 
     async fn commit(
         &self,
+        _handle: &TransactionHandle,
+    ) -> std::result::Result<(), TransactionError> {
+        Err(TransactionError::not_supported(
+            "transactions are not supported in this configuration",
+        ))
+    }
+
+    async fn commit_detached_as(
+        &self,
+        _context: &RequestContext,
         _handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {
         Err(TransactionError::not_supported(

@@ -37,6 +37,9 @@ pub struct IndexScanNode {
     index_params: IndexScanParams,
     /// Residual filter for conditions not covered by index
     residual_filter: Option<Filter>,
+    /// Filter shown in explain output. This is the filter that selected the
+    /// index, even when the index itself evaluates part of it.
+    explain_filter: Option<Filter>,
     /// Whether to show deleted documents
     show_deleted: bool,
     /// Current document
@@ -70,6 +73,7 @@ impl IndexScanNode {
             document_mapping,
             index_params,
             residual_filter: None,
+            explain_filter: None,
             show_deleted: false,
             current_doc: Doc::default(),
             docs: Vec::new(),
@@ -93,6 +97,12 @@ impl IndexScanNode {
         self.index_params.limit = None;
         self.index_params.offset = 0;
         self.residual_filter = Some(filter);
+        self
+    }
+
+    /// Set the filter to show in explain output.
+    pub fn with_explain_filter(mut self, filter: Filter) -> Self {
+        self.explain_filter = Some(filter);
         self
     }
 
@@ -289,8 +299,7 @@ impl PlanNode for IndexScanNode {
     }
 
     fn kind(&self) -> &'static str {
-        // Use "scanNode" for explain compatibility with Go DefraDB asserter.
-        // The index-specific info (indexName) distinguishes this from a regular scan.
+        // Go treats an index-backed read as a normal scanNode in explain.
         "scanNode"
     }
 
@@ -304,10 +313,16 @@ impl PlanNode for IndexScanNode {
         );
         obj.insert(
             "collectionID".to_string(),
-            serde_json::Value::String(self.collection.collection_id.clone()),
+            serde_json::Value::String(self.collection.version_id.clone()),
         );
 
-        // Index-specific info - presence of indexName indicates this is an index scan
+        let filter = match (&self.explain_filter, &self.residual_filter) {
+            (Some(shown), Some(residual)) if shown.conditions() != residual.conditions() => {
+                Some(shown.and(residual.clone()))
+            }
+            (Some(shown), _) => Some(shown.clone()),
+            (None, residual) => residual.clone(),
+        };
         obj.insert(
             "indexName".to_string(),
             serde_json::Value::String(self.index_params.index_name.clone()),
@@ -320,16 +335,21 @@ impl PlanNode for IndexScanNode {
             "indexOffset".into(),
             serde_json::json!(self.index_params.offset),
         );
-
-        // Index fetch count (set during init, used by explain metrics)
         obj.insert(
             "indexFetches".to_string(),
             serde_json::json!(self.index_fetches),
         );
-
-        if let Some(ref filter) = self.residual_filter {
-            obj.insert("filter".to_string(), serde_json::json!(filter.conditions()));
-        }
+        obj.insert(
+            "filter".to_string(),
+            filter.map_or_else(
+                || serde_json::Value::Null,
+                |filter| filter.to_explain_json(),
+            ),
+        );
+        obj.insert(
+            "prefixes".to_string(),
+            serde_json::json!(vec![format!("/{}", self.collection.resolved_root_id())]),
+        );
 
         if self.show_deleted {
             obj.insert("showDeleted".to_string(), serde_json::Value::Bool(true));
@@ -406,6 +426,17 @@ impl PlanNode for IndexScanNode {
         info
     }
 
+    fn is_relation_id_index_scan(&self) -> bool {
+        let Some((_, field_and_direction)) = self.index_params.index_name.split_once("__") else {
+            return false;
+        };
+        let field_name = field_and_direction
+            .strip_suffix("_ASC")
+            .or_else(|| field_and_direction.strip_suffix("_DESC"))
+            .unwrap_or(field_and_direction);
+        field_name.ends_with("ID")
+    }
+
     fn explain_execute_inner(&self) -> serde_json::Value {
         let mut obj = serde_json::Map::new();
 
@@ -425,6 +456,10 @@ impl PlanNode for IndexScanNode {
             "indexFetches".to_string(),
             serde_json::json!(self.index_fetches),
         );
+        obj.insert(
+            "indexName".to_string(),
+            serde_json::Value::String(self.index_params.index_name.clone()),
+        );
 
         serde_json::Value::Object(obj)
     }
@@ -434,12 +469,24 @@ impl PlanNode for IndexScanNode {
 mod tests {
     use super::*;
     use crate::document::DocumentMapping;
+    use crate::mapper::Filter;
     use crate::planner::index_selection::{CursorSeek, IndexScanParams, IndexScanType};
     use schema::CollectionVersion;
 
     fn make_index_scan_node(scan_type: IndexScanType) -> IndexScanNode {
-        let collection = CollectionVersion::new("test", "v1", "coll_test_001", vec![]);
         let document_mapping = DocumentMapping::new();
+        make_index_scan_node_for(
+            CollectionVersion::new("test", "v1", "coll_test_001", vec![]),
+            document_mapping,
+            scan_type,
+        )
+    }
+
+    fn make_index_scan_node_for(
+        collection: CollectionVersion,
+        document_mapping: DocumentMapping,
+        scan_type: IndexScanType,
+    ) -> IndexScanNode {
         let params = IndexScanParams {
             index_name: "idx_test".to_string(),
             scan_type,
@@ -460,6 +507,95 @@ mod tests {
             expected_index_name: "idx_test".to_string(),
             fetch_limit: None,
         }
+    }
+
+    #[test]
+    fn explain_uses_go_scan_shape_with_filter_and_prefixes() {
+        let mut collection = CollectionVersion::new("Person", "v1", "coll-person", vec![]);
+        collection.root_id = 2;
+        let node = make_index_scan_node_for(
+            collection,
+            DocumentMapping::new(),
+            IndexScanType::ExactMatch { values: vec![] },
+        )
+        .with_explain_filter(Filter::from_conditions(serde_json::Map::from_iter([(
+            "name".to_string(),
+            serde_json::json!({"_like": "%vid%"}),
+        )])));
+
+        assert_eq!(
+            node.explain(),
+            serde_json::json!({
+                "scanNode": {
+                    "collectionName": "Person",
+                    "collectionID": "v1",
+                    "indexName": "idx_test",
+                    "indexLimit": serde_json::Value::Null,
+                    "indexOffset": 0,
+                    "indexFetches": 0,
+                    "filter": {"name": {"_like": "%vid%"}},
+                    "prefixes": ["/2"],
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn explain_keeps_docid_filter_conditions() {
+        let mut collection = CollectionVersion::new("Person", "v1", "coll-person", vec![]);
+        collection.root_id = 2;
+        let node = make_index_scan_node_for(
+            collection,
+            DocumentMapping::new(),
+            IndexScanType::ExactMatch { values: vec![] },
+        )
+        .with_explain_filter(Filter::from_conditions(serde_json::Map::from_iter([
+            ("_docID".to_string(), serde_json::json!({"_eq": "bae-1"})),
+            ("name".to_string(), serde_json::json!({"_like": "%vid%"})),
+        ])));
+
+        assert_eq!(
+            node.explain()["scanNode"]["filter"],
+            serde_json::json!({"_docID": {"_eq": "bae-1"}, "name": {"_like": "%vid%"}}),
+        );
+    }
+
+    #[test]
+    fn explain_keeps_both_distinct_scan_filters() {
+        let node = make_index_scan_node(IndexScanType::ExactMatch { values: vec![] })
+            .with_explain_filter(Filter::from_conditions(serde_json::Map::from_iter([(
+                "name".to_string(),
+                serde_json::json!({"_eq": "Ada"}),
+            )])))
+            .with_residual_filter(Filter::from_conditions(serde_json::Map::from_iter([(
+                "score".to_string(),
+                serde_json::json!({"_gt": 1}),
+            )])));
+        assert_eq!(
+            node.explain()["scanNode"]["filter"],
+            serde_json::json!({
+                "_and": [{"name": {"_eq": "Ada"}}, {"score": {"_gt": 1}}]
+            })
+        );
+    }
+
+    #[test]
+    fn explain_names_the_selected_index() {
+        let mut collection = CollectionVersion::new("Person", "v1", "coll-person", vec![]);
+        collection.root_id = 2;
+        let node = make_index_scan_node_for(
+            collection,
+            DocumentMapping::new(),
+            IndexScanType::ExactMatch { values: vec![] },
+        );
+
+        let explain = node.explain();
+        assert_eq!(explain["scanNode"]["filter"], serde_json::Value::Null);
+        assert_eq!(explain["scanNode"]["prefixes"], serde_json::json!(["/2"]));
+        assert_eq!(explain["scanNode"]["indexName"], "idx_test");
+        assert_eq!(explain["scanNode"]["indexLimit"], serde_json::Value::Null);
+        assert_eq!(explain["scanNode"]["indexOffset"], 0);
+        assert_eq!(explain["scanNode"]["indexFetches"], 0);
     }
 
     #[test]

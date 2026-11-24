@@ -1,14 +1,19 @@
-use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
+use rapidhash::{RapidHashMap, RapidHashSet};
 use std::sync::Arc;
 
-use document::{DocID, Document};
-use serde_json::Value as JsonValue;
+use acp::nac::NodePermission;
+use document::Document;
+use query::documents::{self, AddOptions};
+use query::QueryRequest;
+use serde_json::{Map, Value as JsonValue};
 
 use storage::corekv::Store;
 
+use super::alias::{self, Saved, ALIAS_TAKEN};
+use super::batch::{Batch, Gathered};
 use super::classify_schema_fields;
-use crate::{AutoCommitMutator, DB};
-use query::mutator::DocMutator;
+use super::host::{ImportHost, RunnerHost};
+use crate::DB;
 
 /// Statistics from a backup import operation.
 #[derive(Debug, Clone, Default)]
@@ -21,21 +26,41 @@ pub struct ImportStats {
 /// was imported (forward reference); applied after all imports.
 struct PendingRelation {
     collection_name: String,
-    doc_id: DocID,
+    doc_id: String,
     fk_name: String,
     imported_doc_id: String,
 }
 
-/// [`import_database_as`] in [`defra_core::RequestContext::ambient`].
-pub async fn import_database<S: Store + 'static>(
+/// What the import has saved so far.
+#[derive(Default)]
+struct Imported {
+    documents: u64,
+    collections: RapidHashSet<String>,
+    /// The file's IDs, each mapped to the new ID of the document it names.
+    doc_ids: RapidHashMap<String, String>,
+    relations: Vec<PendingRelation>,
+}
+
+/// The collection the documents being gathered belong to.
+struct Target {
+    name: String,
+    short_id: u32,
+}
+
+/// [`import_database_as`] in [`defra_core::RequestContext::ambient`], with
+/// every write sent to `runner`.
+pub async fn import_database<S>(
     database: &Arc<DB<S>>,
-    _runner: &Arc<dyn query::QueryExecutor>,
+    runner: &Arc<dyn query::QueryExecutor>,
     data: &str,
-) -> Result<ImportStats, String> {
+) -> Result<ImportStats, String>
+where
+    S: Store + 'static,
+{
     import_database_as(
         &defra_core::RequestContext::ambient(),
         database,
-        _runner,
+        &RunnerHost::new(Arc::clone(runner)),
         data,
     )
     .await
@@ -55,12 +80,23 @@ pub async fn import_database<S: Store + 'static>(
 /// `_docID`/`_docIDNew` values are registered as aliases of the new
 /// identity and relation fields are remapped through them, matching Go
 /// v1.0.0's import behavior.
-pub async fn import_database_as<S: Store + 'static>(
+///
+/// `context` is the caller, checked for `DocumentUpdate` node access. Every
+/// create and relation patch is a request sent through `host`, the request
+/// path of the edge the import came in by, so it is written exactly as a
+/// create through that edge would be. Consecutive documents of a collection
+/// are saved together, each save all or nothing; a refused save is redone
+/// one document at a time, so a failure stops the import with every
+/// document before the one refused kept.
+pub async fn import_database_as<S>(
     context: &defra_core::RequestContext,
     database: &Arc<DB<S>>,
-    _runner: &Arc<dyn query::QueryExecutor>,
+    host: &dyn ImportHost,
     data: &str,
-) -> Result<ImportStats, String> {
+) -> Result<ImportStats, String>
+where
+    S: Store + 'static,
+{
     let parsed: JsonValue =
         serde_json::from_str(data).map_err(|e| format!("failed to parse JSON: {}", e))?;
 
@@ -73,11 +109,19 @@ pub async fn import_database_as<S: Store + 'static>(
         }
     };
 
-    let mut documents_imported: u64 = 0;
-    let mut collections_affected: RapidHashSet<String> = RapidHashSet::new();
-    let mut imported_doc_ids: RapidHashMap<String, String> = RapidHashMap::new();
-    let mut pending_relations: Vec<PendingRelation> = Vec::new();
-    let mutator = AutoCommitMutator::new(database.clone());
+    let (checked, caller) = (Arc::clone(database), context.clone());
+    host.on_db(Box::new(move || {
+        Box::pin(async move {
+            checked
+                .check_node_access_as(&caller, NodePermission::DocumentUpdate)
+                .await
+                .map_err(|e| e.to_string())
+        })
+    }))
+    .await?;
+
+    let mut imported = Imported::default();
+    let mut batch = Batch::default();
 
     for (collection_name, docs_value) in root {
         let collection = database
@@ -89,6 +133,10 @@ pub async fn import_database_as<S: Store + 'static>(
                     collection_name
                 )
             })?;
+        let target = Target {
+            name: collection_name.clone(),
+            short_id: collection.resolved_root_id(),
+        };
 
         let schema = collection.schema();
         // `@chunk` collections are rebuilt from the parents' text, not imported.
@@ -96,12 +144,6 @@ pub async fn import_database_as<S: Store + 'static>(
             continue;
         }
         let fields = classify_schema_fields(schema);
-
-        let fk_names: Vec<String> = fields
-            .iter()
-            .filter(|f| f.is_relation && !f.is_array)
-            .map(|f| format!("_{}ID", f.name))
-            .collect();
 
         let relation_to_fk: Vec<(String, String)> = fields
             .iter()
@@ -165,206 +207,232 @@ pub async fn import_database_as<S: Store + 'static>(
                 }
             }
 
-            ensure_doc_id_aliases_available(database, &aliases).await?;
+            let targets: Vec<&str> = relation_to_fk
+                .iter()
+                .filter_map(|(_, fk_name)| doc_map.get(fk_name).and_then(JsonValue::as_str))
+                .collect();
+            if batch.must_save_before(&aliases, targets) {
+                save(host, database, &target, &mut batch, &mut imported).await?;
+            }
 
             // Resolve relation targets through already-imported identities;
             // unresolved targets are stripped and applied after the import
             // completes (forward references).
-            let mut deferred_relations: Vec<(String, String)> = Vec::new();
-            for fk_name in &fk_names {
-                let Some(value) = doc_map.get(fk_name) else {
+            let mut deferred: Vec<(String, String)> = Vec::new();
+            for (_, fk_name) in &relation_to_fk {
+                let Some(target_id) = doc_map
+                    .get(fk_name)
+                    .and_then(JsonValue::as_str)
+                    .map(str::to_string)
+                else {
                     continue;
                 };
-                let Some(target) = value.as_str().map(str::to_string) else {
-                    continue;
-                };
-                match imported_doc_ids.get(&target) {
+                match imported.doc_ids.get(&target_id) {
                     Some(new_id) => {
                         doc_map.insert(fk_name.clone(), JsonValue::String(new_id.clone()));
                     }
                     None => {
                         doc_map.remove(fk_name);
-                        deferred_relations.push((fk_name.clone(), target));
+                        deferred.push((fk_name.clone(), target_id));
                     }
                 }
             }
 
-            let doc = Document::from_map(doc_map.clone().into_iter().collect(), schema.clone())
-                .map_err(|e| {
-                    format!("failed to create document in '{}': {}", collection_name, e)
-                })?;
-
-            let create_result = mutator.create_as(context, collection_name, doc).await;
-            let created_doc = match create_result {
-                Ok(result) => result.document,
-                Err(e) => {
-                    let err_msg = e.to_string();
-                    if err_msg.contains("already exists") {
-                        return Err("a document with the given ID already exists".to_string());
-                    }
-                    return Err(format!(
-                        "failed to create document in '{}': {}",
-                        collection_name, err_msg
-                    ));
-                }
-            };
-
-            let new_doc_id = created_doc.id().cloned().ok_or_else(|| {
-                format!(
-                    "created document in '{}' is missing its derived DocID",
-                    collection_name
-                )
-            })?;
-            let new_doc_id_string = new_doc_id.to_string();
-
-            register_doc_id_aliases(
-                database,
-                collection.resolved_root_id(),
-                &new_doc_id_string,
-                &aliases,
-            )
-            .await?;
-            for alias in aliases {
-                imported_doc_ids.insert(alias, new_doc_id_string.clone());
+            // Checked here so a value the schema refuses fails with the
+            // import's own words. The documents gathered before it are saved
+            // first: the import keeps every document before the one refused.
+            if let Err(e) =
+                Document::from_map(doc_map.clone().into_iter().collect(), schema.clone())
+            {
+                save(host, database, &target, &mut batch, &mut imported).await?;
+                return Err(format!(
+                    "failed to create document in '{}': {}",
+                    collection_name, e
+                ));
             }
 
-            for (fk_name, imported_doc_id) in deferred_relations {
-                pending_relations.push(PendingRelation {
-                    collection_name: collection_name.clone(),
-                    doc_id: new_doc_id.clone(),
-                    fk_name,
-                    imported_doc_id,
-                });
+            batch.push(Gathered {
+                fields: doc_map,
+                aliases,
+                deferred,
+            });
+            if batch.is_full() {
+                save(host, database, &target, &mut batch, &mut imported).await?;
             }
-
-            documents_imported += 1;
-            collections_affected.insert(collection_name.clone());
         }
+        save(host, database, &target, &mut batch, &mut imported).await?;
     }
 
-    for pending in pending_relations {
-        let target = imported_doc_ids
+    for pending in std::mem::take(&mut imported.relations) {
+        let target = imported
+            .doc_ids
             .get(&pending.imported_doc_id)
             .cloned()
             .unwrap_or(pending.imported_doc_id);
-
-        let mut doc = mutator
-            .get_for_update(&pending.collection_name, &pending.doc_id)
-            .await
-            .map_err(|e| {
-                format!(
-                    "failed to reload relation document in '{}': {}",
-                    pending.collection_name, e
-                )
-            })?
-            .ok_or_else(|| {
-                format!(
-                    "imported document '{}' no longer exists in '{}'",
-                    pending.doc_id, pending.collection_name
-                )
-            })?;
-        doc.set(pending.fk_name.clone(), target)
-            .map_err(|e| e.to_string())?;
-        let mut modified_fields = RapidHashSet::new();
-        modified_fields.insert(pending.fk_name.clone());
-
-        mutator
-            .update_as(context, &pending.collection_name, doc, modified_fields)
-            .await
-            .map_err(|e| {
-                format!(
-                    "failed to update relation fields in '{}': {}",
-                    pending.collection_name, e
-                )
-            })?;
+        let mut patch = Map::new();
+        patch.insert(pending.fk_name, JsonValue::String(target));
+        documents::update(
+            |mutation| host.run(QueryRequest::new(mutation)),
+            &pending.collection_name,
+            &pending.doc_id,
+            &JsonValue::Object(patch),
+        )
+        .await
+        .map_err(|e| {
+            format!(
+                "failed to update relation fields in '{}': {}",
+                pending.collection_name, e
+            )
+        })?;
     }
 
     Ok(ImportStats {
-        documents_imported,
-        collections_affected: collections_affected.into_iter().collect(),
+        documents_imported: imported.documents,
+        collections_affected: imported.collections.into_iter().collect(),
     })
 }
 
-async fn ensure_doc_id_aliases_available<S: Store + 'static>(
+/// Saves the gathered documents of `target` in one request through `host`,
+/// then registers their aliases in one transaction.
+///
+/// A batch that is refused saved nothing, so its documents are then saved
+/// one at a time, in file order, up to the one refused: the import keeps
+/// every document before the first it cannot import, as one create per
+/// document would.
+async fn save<S>(
+    host: &dyn ImportHost,
     database: &Arc<DB<S>>,
-    aliases: &[String],
-) -> Result<(), String> {
-    if aliases.is_empty() {
+    target: &Target,
+    batch: &mut Batch,
+    imported: &mut Imported,
+) -> Result<(), String>
+where
+    S: Store + 'static,
+{
+    if batch.is_empty() {
         return Ok(());
     }
-
-    let txn = database
-        .new_txn(true)
-        .await
-        .map_err(|e| format!("failed to create alias lookup transaction: {e}"))?;
-    let result = {
-        let systemstore = txn
-            .systemstore()
-            .map_err(|e| format!("failed to get systemstore: {e}"))?;
-        let mut collision = false;
-        for alias in aliases {
-            if crate::docid::map::get_doc_ref(&systemstore, alias)
-                .await
-                .map_err(|e| format!("doc-ID alias lookup failed: {e}"))?
-                .is_some()
-            {
-                collision = true;
-                break;
+    let mut gathered = batch.take();
+    let docs: Vec<JsonValue> = gathered
+        .iter_mut()
+        .map(|doc| JsonValue::Object(std::mem::take(&mut doc.fields)))
+        .collect();
+    match create(host, database, target, &gathered, &docs).await {
+        Ok(ids) => record(host, database, target, gathered, ids, imported).await,
+        Err(error) if gathered.len() == 1 => Err(error),
+        Err(_) => {
+            for (doc, fields) in gathered.into_iter().zip(&docs) {
+                let one = vec![doc];
+                let ids =
+                    create(host, database, target, &one, std::slice::from_ref(fields)).await?;
+                record(host, database, target, one, ids, imported).await?;
             }
+            Ok(())
         }
-        collision
-    };
-    txn.discard()
-        .map_err(|e| format!("failed to discard alias lookup transaction: {e}"))?;
-
-    if result {
-        Err("a document with the given ID already exists".to_string())
-    } else {
-        Ok(())
     }
 }
 
-/// Register the file's original DocIDs as aliases of the imported
-/// document's new identity, so existing references stay addressable.
-async fn register_doc_id_aliases<S: Store + 'static>(
+/// Checks that no file ID of `gathered` names a stored document, then
+/// creates them, whose fields are `docs`, in one request: all or none.
+/// Their new IDs, in order.
+async fn create<S>(
+    host: &dyn ImportHost,
     database: &Arc<DB<S>>,
-    collection_short_id: u32,
-    new_doc_id: &str,
-    aliases: &[String],
-) -> Result<(), String> {
-    if aliases.iter().all(|alias| alias == new_doc_id) {
-        return Ok(());
+    target: &Target,
+    gathered: &[Gathered],
+    docs: &[JsonValue],
+) -> Result<Vec<String>, String>
+where
+    S: Store + 'static,
+{
+    // The batch never holds one ID twice (`Batch::must_save_before`).
+    let aliases: Vec<String> = gathered
+        .iter()
+        .flat_map(|doc| doc.aliases.iter().cloned())
+        .collect();
+    if !aliases.is_empty() {
+        host.on_db(alias::check_free(database, aliases)).await?;
     }
+    documents::save_many(
+        |request| host.run(request),
+        &target.name,
+        docs,
+        &AddOptions::default(),
+    )
+    .await
+    .map_err(|e| create_error(&target.name, e.to_string()))
+}
 
-    let txn = database
-        .new_txn(false)
-        .await
-        .map_err(|e| format!("failed to create alias transaction: {}", e))?;
-    {
-        let systemstore = txn
-            .systemstore()
-            .map_err(|e| format!("failed to get systemstore: {}", e))?;
-        let doc_ref = crate::docid::map::get_doc_ref(&systemstore, new_doc_id)
-            .await
-            .map_err(|e| format!("doc-ID mapping lookup failed: {}", e))?
-            .ok_or_else(|| format!("imported document '{}' has no identity mapping", new_doc_id))?;
-
-        for alias in aliases {
-            if alias == new_doc_id {
-                continue;
+/// Registers the aliases of the created documents `gathered`, whose new IDs
+/// are `ids`, in one transaction, and notes them as imported.
+///
+/// An alias another writer took since the check refuses the whole
+/// registration, and the documents stay saved. Each document's aliases are
+/// then registered on their own, so every other one still answers to its
+/// file ID, and the import fails with the first refusal.
+async fn record<S>(
+    host: &dyn ImportHost,
+    database: &Arc<DB<S>>,
+    target: &Target,
+    gathered: Vec<Gathered>,
+    ids: Vec<String>,
+    imported: &mut Imported,
+) -> Result<(), String>
+where
+    S: Store + 'static,
+{
+    let saved: Vec<Saved> = ids
+        .iter()
+        .zip(&gathered)
+        .map(|(doc_id, doc)| Saved {
+            doc_id: doc_id.clone(),
+            aliases: doc.aliases.clone(),
+        })
+        .collect();
+    let together = host
+        .on_db(alias::register(database, target.short_id, saved.clone()))
+        .await;
+    if let Err(error) = together {
+        if saved.len() == 1 {
+            return Err(error);
+        }
+        let mut refused = None;
+        for doc in saved {
+            let alone = host
+                .on_db(alias::register(database, target.short_id, vec![doc]))
+                .await;
+            if let Err(error) = alone {
+                refused.get_or_insert(error);
             }
-            crate::docid::map::set_doc_id_alias(
-                &systemstore,
-                collection_short_id,
-                doc_ref.doc_short_id,
-                alias,
-            )
-            .await
-            .map_err(|e| format!("failed to register doc-ID alias: {}", e))?;
+        }
+        if let Some(error) = refused {
+            return Err(error);
         }
     }
-    txn.commit()
-        .await
-        .map_err(|e| format!("failed to commit alias transaction: {}", e))?;
+
+    for (doc_id, doc) in ids.into_iter().zip(gathered) {
+        for alias in doc.aliases {
+            imported.doc_ids.insert(alias, doc_id.clone());
+        }
+        for (fk_name, imported_doc_id) in doc.deferred {
+            imported.relations.push(PendingRelation {
+                collection_name: target.name.clone(),
+                doc_id: doc_id.clone(),
+                fk_name,
+                imported_doc_id,
+            });
+        }
+        imported.documents += 1;
+    }
+    imported.collections.insert(target.name.clone());
     Ok(())
+}
+
+/// A refused create in the import's words: an ID that names a stored
+/// document is Go's alias error.
+fn create_error(collection: &str, message: String) -> String {
+    match message.contains("already exists") {
+        true => ALIAS_TAKEN.to_string(),
+        false => format!("failed to create document in '{collection}': {message}"),
+    }
 }

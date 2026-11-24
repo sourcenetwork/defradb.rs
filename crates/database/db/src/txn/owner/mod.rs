@@ -575,6 +575,45 @@ where
         ended
     }
 
+    /// [`finish`](Self::finish) for a terminal commit whose outcome must not
+    /// depend on the caller's wait: the commit begins even when its caller
+    /// leaves first, while later transactions stay fenced until it lands.
+    pub(crate) async fn finish_detached<R, L>(
+        &self,
+        id: TxnId,
+        key: &K,
+        last: L,
+    ) -> Result<R, Unavailable>
+    where
+        R: MaybeSend + 'static,
+        L: FnOnce(T) -> LocalBoxFuture<'static, R> + MaybeSend + 'static,
+    {
+        let table = self.table(id);
+        if !table.admits(id, key) {
+            return Err(Unavailable::NotFound);
+        }
+        let entry = table.take(id).ok_or(Unavailable::NotFound)?;
+        let fence = Fence::new(&self.fences);
+        let fence_on_drop = FenceOnDrop(Some(Arc::clone(&fence)));
+        let (reply, answer) = unbounded();
+        let queued = entry.mailbox.try_send(Message::Finish {
+            last: Box::new(move |txn| {
+                Box::pin(async move {
+                    let _ = reply.try_send(last(txn).await);
+                })
+            }),
+            fence: Landing::new(fence),
+            begun: true,
+        });
+        drop(entry);
+        let ended = match queued {
+            Ok(()) => answer.recv_async().await.ok_or(Unavailable::NotFound),
+            Err(_) => Err(Unavailable::NotFound),
+        };
+        fence_on_drop.disarm();
+        ended
+    }
+
     /// [`finish`](Self::finish), where `last` may decide on the transaction
     /// not to end it yet ([`Ending::Kept`]): it is put back on its owner for
     /// the same caller, under the same ID, for another end only. The end has

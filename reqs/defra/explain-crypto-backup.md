@@ -55,6 +55,13 @@ One-to-one joins (single, two in parallel, two levels deep, and from the seconda
 
 With `@index` on `age`, filtering `age: {_eq: 30}` over three docs reports `scanNode{iterations: 3, docFetches: 2, fieldFetches: 4, indexFetches: 2}`; ordering by the indexed field, by an indexed relation field with `@exhaustive`, and a child ordered by an indexed related field report index fetches instead of a sort.
 
+# `defra.explain.index_name`: Index scans name their index in Rust plans
+
+- **Parents:** ["defra"]
+- **Scenarios:** ["explain.execute.index_name.a_rust_index_scan_names_its_index", "explain.execute.index_name.a_rust_direct_relation_lookup_names_its_index"]
+
+The Rust execution explain includes `indexName` on an index-backed `scanNode`. A direct foreign-key lookup names the index it uses; otherwise the child scan retains its index name. This is a deliberate Rust-only addition to the Go execute-explain shape.
+
 # `go.explain.execute.orphan`: Orphan node counters
 
 - **Parents:** ["go.explain.execute"]
@@ -115,9 +122,9 @@ A collection `filter` (string or integer `_eq`, `_gt`, `_and`, `_or`, `_in`, a J
 # `go.explain.default.index`: Indexed filter and order plans
 
 - **Parents:** ["go.explain.default"]
-- **Scenarios:** ["explain.default.default-explain-with-index-on-filter", "explain.default.default-explain-with-index-on-order", "explain.default.default-explain-with-index-on-subquery-nested-relation-order", "explain.simple.simple-explain-with-index-on-filter", "explain.simple.simple-explain-with-index-on-order", "explain.simple.simple-explain-with-index-on-subquery-nested-relation-order"]
+- **Scenarios:** ["explain.default.default-explain-with-index-on-filter", "explain.default.default-explain-with-index-on-order", "explain.default.default-explain-with-index-on-subquery-nested-relation-order", "explain.simple.simple-explain-with-index-on-filter", "explain.simple.simple-explain-with-index-on-order", "explain.simple.simple-explain-with-index-on-subquery-nested-relation-order", "explain::default::with_index_shape::indexed_scan_explains_the_selected_index", "explain::default::with_index_shape::go_indexed_scan_explains_the_selected_index", "explain::default::with_index_shape::explain_relation_filter_uses_the_indexed_child_scan"]
 
-On a collection with `@index` on `age`, filtering on or ordering by `age` explains as `selectTopNode > selectNode > scanNode` with no `orderNode`; ordering a child by an indexed field of a related collection with `limit: 2` puts a `limitNode` but no `orderNode` in the child plan. Holds for default and `simple` types.
+On a collection with `@index` on `age`, filtering on or ordering by `age` explains as `selectTopNode > selectNode > scanNode` with no `orderNode`. The plan scan names the collection and shows the selecting filter and root prefix. Rust also includes the selected index and index fields; Go omits those fields. Ordering a child by an indexed field of a related collection with `limit: 2` puts a `limitNode` but no `orderNode` in the child plan. Holds for default and `simple` types.
 
 # `go.explain.default.group.selection`: Group node attributes for filters and docIDs
 
@@ -363,3 +370,38 @@ Over iroh, the key-holding node's KMS releases a document's key to the node iden
 - **Scenarios:** ["encryption::peer_iroh_acp_branchable::an_ungranted_iroh_peer_receives_the_blocks_but_not_the_key"]
 
 The same two iroh nodes and collection with no `reader` grant to the peer: the encrypted document's blocks still replicate to the subscribed peer, but the key holder's KMS withholds the key, so the owner querying `Users { name }` on the peer gets `[]`, and still gets `[]` after the peer has had time to fetch the key.
+
+# `defra.encryption.peer.pending_key_arrival`: A pending merge appears when its key arrives
+
+- **Parents:** ["go.encryption.peer"]
+- **Scenarios:** ["encryption::peer_pending_key::an_encrypted_doc_appears_after_its_key_arrives", "p2p_tests::remote_key_arrival_wakes_a_parked_encrypted_merge"]
+
+After a subscribed peer receives an encrypted document's blocks but not yet its key, the document can wait as a pending merge. When the KMS delivers the key, that pending merge wakes, the document becomes queryable, and its plaintext fields are returned.
+
+# `defra.backup.import.signed_and_replicated`: An imported document is signed and replicated as a created one is
+
+- **Parents:** ["go.backup.import"]
+- **Scenarios:** ["backup::signed_import::an_import_on_a_signing_node_signs_every_block", "backup::signed_import::an_import_reaches_a_replicator_set_before_it"]
+
+An import writes each document exactly as a create of that document on the same node and client would: on a node that signs, every field block and the `_C` block of an imported document carry the signature a create would carry (`_commits { signature { type identity } }` names the node's key), and a replicator configured before the import receives the imported document, so the target node reads it once it has synced.
+
+# `defra.backup.import.creator`: An import creates its documents as a create on the same edge does
+
+- **Parents:** ["go.backup.import"]
+- **Scenarios:** ["backup::import_creator::an_anonymous_import_is_owned_as_an_anonymous_create"]
+
+An import that names no identity creates its documents as a create that names no identity does through the same client: under document ACP, another identity sees an anonymously imported document exactly when it sees an anonymously created one. On a node that signs with its identity an anonymous create acts as the node, so the node owns both. An import that names an identity creates its documents as that identity.
+
+# `defra.backup.import.duplicate_alias`: Two documents of one file that share an ID
+
+- **Parents:** ["go.backup.import"]
+- **Scenarios:** ["backup::duplicate_alias::a_repeated_doc_id_fails_and_keeps_the_first_document"]
+
+A backup file in which two documents carry the same `_docID` (or `_docIDNew`) fails with `a document with the given ID already exists` when it reaches the second one; the first is imported and the second is not created.
+
+# `defra.backup.import.keeps_earlier_documents`: A failed import keeps the documents before the failure
+
+- **Parents:** ["go.backup.import"]
+- **Scenarios:** ["backup::failed_import::a_failed_import_keeps_every_document_before_the_one_refused", "backup::failed_import::an_import_refusing_a_value_keeps_every_document_before_it"]
+
+An import that cannot create one of its documents fails with that document's error and stops there. Every document of the file before it is imported, and none after it is: a file of `{"name":"Alice"}`, `{"name":"John"}`, `{"name":"John"}`, `{"name":"Zed"}`, whose second John has the first one's content and so its ID, fails with `a document with the given ID already exists` and leaves Alice and the first John. A value the schema refuses stops it the same way: a file of `{"name":"Alice","points":1}`, `{"name":"Bob","points":"many"}` into a `pcounter` field `points` fails with `failed to create document in 'User': …` and leaves Alice.

@@ -59,6 +59,13 @@ pub struct NewNode {
     pub client_type: Option<NodeClient>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub index_gate: Option<IndexGate>,
+    /// A Rust node whose explicit commits pass the test's commit gate.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub commit_gate: bool,
+    /// A Rust node whose HTTP server bounds its answer on a commit to this
+    /// many milliseconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit_timeout_ms: Option<u64>,
     /// Kept so corpus scenarios that set it still parse. It changes nothing:
     /// every node gets Go's `NodeIdentity(i)` and runs identity-only unless
     /// it signs.
@@ -86,6 +93,11 @@ pub struct NewNode {
     /// authenticates as a node.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub without_node_identity: bool,
+    /// A Rust node started from this Go-written `config.yaml` body, loaded
+    /// through the CLI's config loader: its `net` section decides whether the
+    /// node runs P2P and where it listens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub go_config: Option<String>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -120,6 +132,7 @@ impl Op for NewNode {
         probe.iroh = false;
         probe.registered_identity = false;
         probe.without_node_identity = false;
+        probe.go_config = None;
         probe.node_identity_seed = None;
         probe.enable_signing = false;
         probe.key_type = None;
@@ -131,6 +144,8 @@ impl Op for NewNode {
         probe.kms = false;
         (probe.ttl_millis, probe.tick_millis, probe.buckets) = (None, None, None);
         probe.index_gate = None;
+        probe.commit_gate = false;
+        probe.commit_timeout_ms = None;
         probe.max_txn_retries = None;
         if probe != Self::default() {
             let options = serde_json::to_string(&probe).unwrap_or_default();
@@ -149,6 +164,16 @@ impl Op for NewNode {
             .then(|| self.key_type.unwrap_or_default());
         let txn_ttl = self.txn_ttl(state.client_type())?;
         let index_gate = self.index_gate(state.client_type())?;
+        if (self.commit_gate || self.commit_timeout_ms.is_some())
+            && !matches!(state.client_type(), ClientType::RustHttp | ClientType::Cli)
+        {
+            return Err(Failure::unsupported(format!(
+                "{} arguments commitGate and commitTimeoutMs under {:?}: they need a Rust \
+                 node's HTTP server in this process",
+                Self::name(),
+                state.client_type()
+            )));
+        }
         let max_txn_retries = self.max_txn_retries(state.client_type())?;
         let registered_identity = self.registered_identity(state.client_type())?;
         let dir = match self.database_dir {
@@ -157,10 +182,15 @@ impl Op for NewNode {
             })?)),
             None => None,
         };
+        let (network, listen) = match &self.go_config {
+            Some(body) => go_config_network(body)?,
+            None => (self.network, Vec::new()),
+        };
         let spec = NodeSpec {
-            network: self.network,
+            network,
             dir,
-            listen: Vec::new(),
+            listen,
+            go_config: self.go_config.is_some(),
             admission: self.admission.clone(),
             resolv_conf: self.resolv_conf(state.client_type())?,
             iroh_network: self.iroh,
@@ -171,12 +201,35 @@ impl Op for NewNode {
             txn_ttl,
             se_key: self.searchable_encryption_key()?,
             index_gate,
+            commit_gate: self
+                .commit_gate
+                .then(crate::commit_gate::TestCommitGate::default)
+                .map(Arc::new),
+            commit_timeout: self.commit_timeout_ms.map(Duration::from_millis),
             max_txn_retries,
             ..Default::default()
         };
         state.start_node(self.common.node(), spec);
         Ok(json!({}))
     }
+}
+
+/// Loads a Go-written `config.yaml` through the CLI's loader, as `defradb
+/// --rootdir <dir>` does, and answers whether the node runs P2P and the
+/// addresses it listens on.
+fn go_config_network(body: &str) -> Result<(bool, Vec<String>), Failure> {
+    use clap::Parser;
+    let root = tempfile::tempdir()
+        .map_err(|e| Failure::operation(format!("could not make the node's rootdir: {e}")))?;
+    std::fs::write(root.path().join("config.yaml"), body)
+        .map_err(|e| Failure::operation(format!("could not write config.yaml: {e}")))?;
+    let rootdir = root.path().to_string_lossy().into_owned();
+    let args = ["defradb", "--rootdir", rootdir.as_str(), "version"];
+    let args = cli::cli::Cli::try_parse_from(args)
+        .map_err(|e| Failure::operation(format!("could not parse the CLI arguments: {e}")))?;
+    let config = cli::config::Config::load(&args)
+        .map_err(|e| Failure::operation(format!("could not load config.yaml: {e}")))?;
+    Ok((!config.net.p2p_disabled, config.net.p2p_addresses))
 }
 
 impl NewNode {

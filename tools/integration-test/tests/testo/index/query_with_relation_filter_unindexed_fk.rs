@@ -180,7 +180,8 @@ fn relation_filter_skips_a_book_without_an_author() {
     .execute();
 }
 
-/// Another relation selected on the Book is still rendered.
+/// Another relation selected on the Book is still rendered. The bare shape
+/// reproduces the upstream Go duplicate row reported in #3153.
 #[test]
 fn relation_filter_keeps_another_selected_relation() {
     TestCase {
@@ -199,6 +200,38 @@ fn relation_filter_keeps_another_selected_relation() {
             request(
                 r#"query {
                     Book(filter: {author: {name: {_eq: "Ann"}}}) {
+                        title
+                        publisher { name }
+                    }
+                }"#,
+                json!({ "Book": [{ "title": "a", "publisher": { "name": "Penguin" } }] }),
+            ),
+        ],
+        ..Default::default()
+    }
+    .execute();
+}
+
+/// The `_and` equivalent of the bare relation filter is also rendered once,
+/// including on the pinned Go planner.
+#[test]
+fn relation_filter_keeps_another_selected_relation_with_and() {
+    TestCase {
+        id: integration_test::scenario_id!(),
+        actions: vec![
+            schema(),
+            doc("Person", "ann", json!({ "name": "Ann" })),
+            doc("Person", "bob", json!({ "name": "Bob" })),
+            doc("Publisher", "penguin", json!({ "name": "Penguin" })),
+            doc(
+                "Book",
+                "a",
+                json!({ "title": "a", "author": m::r("ann"), "publisher": m::r("penguin") }),
+            ),
+            doc("Book", "b", json!({ "title": "b", "author": m::r("bob") })),
+            request(
+                r#"query {
+                    Book(filter: {_and: [{author: {name: {_eq: "Ann"}}}]}) {
                         title
                         publisher { name }
                     }

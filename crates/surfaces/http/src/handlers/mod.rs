@@ -28,7 +28,7 @@ pub mod nac;
 pub mod openapi;
 pub mod p2p;
 pub mod schema;
-mod txn_header;
+pub(crate) mod txn_header;
 pub mod utility;
 pub mod views;
 

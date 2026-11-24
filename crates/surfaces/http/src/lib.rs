@@ -125,6 +125,8 @@ pub mod pool_layer;
 #[cfg(feature = "server")]
 pub mod query_context;
 #[cfg(feature = "server")]
+mod request_path;
+#[cfg(feature = "server")]
 pub mod request_scope;
 #[cfg(feature = "server")]
 pub mod route_permissions;
@@ -152,7 +154,9 @@ pub use router::{
     IndexOperations, NacStatus, NodeAcpOperations, NodePermission, PermissionCheck, ViewOperations,
 };
 #[cfg(feature = "server")]
-pub use server::{RouterTransform, Server, ServerConfig, DEFAULT_MAX_BACKUP_SIZE};
+pub use server::{
+    RouterTransform, Server, ServerConfig, DEFAULT_COMMIT_TIMEOUT_MS, DEFAULT_MAX_BACKUP_SIZE,
+};
 #[cfg(feature = "server")]
 pub use tls::TlsConfig;
 

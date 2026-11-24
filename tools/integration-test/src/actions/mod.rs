@@ -179,6 +179,8 @@ client_actions! {
         GetNodeIdentity,
         ListAllEncryptedIndexes,
         NewNode,
+        HoldCommit,
+        ReleaseCommit,
         SaveDocs,
         Restart,
         Start,
