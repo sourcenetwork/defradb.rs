@@ -844,6 +844,69 @@ mod tests {
         );
     }
 
+    /// A ratchet on the schema work: rows that name a body must not go back to
+    /// naming none, and the floor rises as the remaining routes are wired. The
+    /// number is the count today, not a target — `ROUTES` is the authority for
+    /// which routes have one.
+    #[test]
+    fn rows_that_name_a_body_do_not_regress() {
+        let typed = ROUTES
+            .iter()
+            .filter(|row| row.request.is_some() || row.response.is_some())
+            .count();
+        assert!(
+            typed >= 56,
+            "only {typed} rows name a body; 56 did when this floor was written"
+        );
+    }
+
+    /// Every row that names a body renders a real schema: a `serde_json::Value`
+    /// field is `{}`, so a row whose body derived to nothing would still pass
+    /// the coverage tests while telling a client nothing.
+    #[test]
+    fn every_named_body_renders_a_schema() {
+        let document = document();
+        let mut named = 0;
+        for row in ROUTES {
+            if row.request.is_none() && row.response.is_none() {
+                continue;
+            }
+            let path = match row.path.strip_prefix("/api/v0") {
+                Some(rest) => rest.to_string(),
+                None => row.path.to_string(),
+            };
+            let method = documented_method(row);
+            let operation = &document["paths"][path][method];
+            // A route Go documents keeps Go's operation, body included, so this
+            // checks the operations generated here.
+            if operation["x-defra-permission"].is_null() {
+                continue;
+            }
+            if row.request.is_some() {
+                let schema = &operation["requestBody"]["content"]["application/json"]["schema"];
+                // A named type is a `$ref` into the components; a `Vec<String>`
+                // or a `Value` renders inline, and only has to say something.
+                assert!(
+                    schema["$ref"].is_string() || schema["type"].is_string(),
+                    "{} names a request and publishes {schema}",
+                    row.path
+                );
+                named += 1;
+            }
+            if row.response.is_some() {
+                let schema =
+                    &operation["responses"]["200"]["content"]["application/json"]["schema"];
+                assert!(
+                    !schema.is_null(),
+                    "{} names a response and publishes none",
+                    row.path
+                );
+                named += 1;
+            }
+        }
+        assert!(named > 0, "no generated operation published a body");
+    }
+
     /// `operationId` is what a client generator names its methods after, so it
     /// must be unique across the document.
     #[test]
