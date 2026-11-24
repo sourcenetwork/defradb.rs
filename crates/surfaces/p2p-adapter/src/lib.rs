@@ -1,6 +1,11 @@
 //! The P2P operation surface (`P2POperations` and the `peer` core every edge
 //! calls) and the adapters that implement it over libp2p and iroh.
 
+#[cfg(feature = "kms")]
+mod key_arrival;
+#[cfg(feature = "kms")]
+pub use key_arrival::key_arrival_promoter;
+
 use std::sync::Arc;
 
 use kovan::Atom;

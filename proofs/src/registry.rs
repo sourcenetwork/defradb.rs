@@ -1032,6 +1032,42 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "INV_KeyArrivalPromotes / LIVE_PromotedBackoffDrains: a verified key arrival empties every retry backoff into the due queue, and the promoted roots remain available to the clock",
+        axis: Tla,
+        anchor: "crates/database/p2p/src/sync/manager/process/pending_dag.rs promote_pending_retries; crates/database/kms/src/service.rs set_key_arrival_listener",
+        model_ref: "MC_PendingKeyArrival_{Green,Red_NoPromotion,Red_LostPromotion}.cfg",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/database/p2p/src/sync/manager/process/pending_dag_tests.rs key_arrival_promotes_pending_retries, key_arrival_during_attempt_survives_rearm",
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "INV_StoredKeysNotified — a finished or cancelled reply notifies every stored key",
+        axis: Tla,
+        anchor: "crates/database/kms/src/remote.rs RemoteKeys::fetch_batch, ArrivedKeys::drop",
+        model_ref: "MC_KeyBatchNotification_{Green,Red_Cancel}.cfg",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/database/kms/src/remote_tests.rs cancelling_a_reply_notifies_keys_stored_before_a_later_put_blocks",
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "stored_key_is_notified — flushing includes each stored key",
+        axis: Lean,
+        anchor: "crates/database/kms/src/remote.rs ArrivedKeys::drop",
+        model_ref: "PendingKeyArrival (lake build)",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/database/kms/src/remote_tests.rs cancelling_a_reply_notifies_keys_stored_before_a_later_put_blocks",
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "arrival_survives_finish — an in-flight key arrival keeps the retry due",
+        axis: Lean,
+        anchor: "crates/database/p2p/src/sync/manager/process/pending_dag.rs promote_pending_retries, PendingDagLease::finish_attempt",
+        model_ref: "PendingKeyArrival (lake build)",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/database/p2p/src/sync/manager/process/pending_dag_tests.rs key_arrival_during_attempt_survives_rearm",
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
         name: "INV_Capacity / INV_OwnedSlot / INV_NoIdleCapacity / INV_RollbackNeedsCause — only an owner's own generation releases its pending-DAG slot, the release wakes the retry clock, and a full-lane rollback does not",
         axis: Tla,
         anchor: "crates/database/p2p/src/sync/coordinator/mod.rs PendingDagWorkOwner, claim_pending_dag_merge, spawn_pending_dag_fetch, dispatch_due_pending_dag_fetches and run_pending_dag_retry_clock; crates/database/p2p/tests/unit/pending_capacity_wake.rs",
@@ -2882,13 +2918,14 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
-        // `sort_in_key_order` is private to the planner, so no contract test
+        // `order_in_values` is private to the planner, so no contract test
         // reaches it; crates/entry-points/defra-node/tests/in_filter_order.rs runs the
-        // queries it orders over an ASC, a DESC and no index. Boundary.
+        // queries it orders over an ASC, a DESC and no index, and the testo
+        // scenarios in index/composite_in_order.rs the unordered ones. Boundary.
         family: "Order-preserving key encoding",
-        name: "lookups_strictly_increasing / reversed_lookups_strictly_decreasing — `_in` point lookups run in key order, each once",
+        name: "lookups_strictly_increasing / reversed_lookups_strictly_decreasing / written_sublist — `_in` point lookups run in key order under an order, as written without one, each once",
         axis: Lean,
-        anchor: "crates/engine/query/src/planner/index_selection/filter_to_scan.rs filter_to_index_scan, sort_in_key_order",
+        anchor: "crates/engine/query/src/planner/index_selection/filter_to_scan.rs filter_to_index_scan, order_in_values",
         model_ref: "OrderEncoding.InLookup (lake build)",
         tiers: &[Boundary],
         bound_by: "",
@@ -3716,9 +3753,9 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Collection truncate",
-        name: "INV_NoRemovalWithoutPermission / INV_NoRemovalFromChunks / INV_FilteredNeverOnBranchable / INV_FilteredRemovesOnlyCommittedMatches / INV_BadFilterRemovesNothing / INV_UnfilteredRemovesAll / INV_UnfilteredEmptiesView / INV_UnfilteredClearsSearchRecords",
+        name: "INV_NoRemovalWithoutPermission / INV_NoRemovalFromChunks / INV_FilteredNeverOnBranchable / INV_FilteredRemovesOnlyCommittedMatches / INV_FilteredRemovesOnlyCurrentMatches / INV_RetryExhaustionKeepsProgress / INV_MetadataExhaustionRefused / INV_BadFilterRemovesNothing / INV_UnfilteredRemovesAll / INV_UnfilteredEmptiesView / INV_UnfilteredClearsSearchRecords",
         axis: Tla,
-        anchor: "crates/database/db/src/collection/ops/truncate/mod.rs DB::truncate_collection_as, DB::truncate_parsed_as, DB::truncate_target, conditions, DB::truncate; crates/database/db/src/collection/ops/truncate/all.rs DB::truncate_all, DB::truncate_metadata_in; crates/database/db/src/collection/ops/truncate/filtered.rs DB::truncate_matching; crates/database/db/src/chunk/user_writes.rs ensure_admin_changeable; crates/database/db/src/merge/se/serve.rs store_artifacts, build_reply",
+        anchor: "crates/database/db/src/collection/ops/truncate/mod.rs DB::truncate_collection_as, DB::truncate_parsed_as, DB::truncate_target, conditions, DB::truncate; crates/database/db/src/collection/ops/truncate/all.rs DB::truncate_all, DB::truncate_documents, DB::truncate_collection_metadata, DB::truncate_metadata_in; crates/database/db/src/collection/ops/truncate/deferred.rs DB::truncate_deferred_indexes; crates/database/db/src/collection/ops/truncate/filtered.rs DB::truncate_matching, matching_doc_ids_in_attempt; crates/database/db/src/chunk/user_writes.rs ensure_admin_changeable; crates/database/db/src/merge/se/serve.rs store_artifacts, build_reply",
         model_ref: "MC_Truncate_{Green,Red_*}.cfg",
         tiers: &[Boundary],
         bound_by: "",
