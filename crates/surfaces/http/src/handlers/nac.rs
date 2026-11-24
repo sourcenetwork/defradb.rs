@@ -33,7 +33,7 @@ pub async fn change_source_permission(
     State(state): State<AppState>,
     identity: ExtractIdentity,
     headers: HeaderMap,
-    Json(body): Json<query::txn::SourcePermission>,
+    Json(body): Json<crate::wire::SourcePermission>,
 ) -> Result<Json<SourcePermissionResponse>, HttpError> {
     let context = super::txn_header::txn_context(&identity, &headers)?
         .ok_or_else(|| HttpError::BadRequest("x-defradb-tx is required".into()))?
@@ -43,7 +43,7 @@ pub async fn change_source_permission(
     }
     let changed = state
         .executor
-        .change_nac_source_permission_as(&context, &body)
+        .change_nac_source_permission_as(&context, &body.into())
         .await?;
     Ok(Json(SourcePermissionResponse { changed }))
 }
@@ -141,12 +141,15 @@ pub async fn explain_subject(
     State(state): State<AppState>,
     identity: ExtractIdentity,
     axum::extract::Query(query): axum::extract::Query<ExplainQuery>,
-) -> Result<Json<Vec<acp::nac::PermissionProvenance>>, HttpError> {
+) -> Result<Json<Vec<crate::wire::PermissionProvenance>>, HttpError> {
     Ok(Json(
         state
             .executor
             .explain_nac_subject_as(&identity.context(), &query.subject)
-            .await?,
+            .await?
+            .into_iter()
+            .map(crate::wire::PermissionProvenance::from)
+            .collect(),
     ))
 }
 

@@ -698,6 +698,29 @@ mod tests {
         );
         assert!(signed["requestBody"].is_null());
 
+        // Bodies mirrored into `wire`, so the data-path crates carry no schema
+        // dependency: the document names the mirror.
+        assert_eq!(
+            document["paths"]["/acp/node/source-permission"]["post"]["requestBody"]["content"]
+                ["application/json"]["schema"]["$ref"],
+            "#/components/schemas/SourcePermission"
+        );
+        let relationships = &document["paths"]["/acp/document/relationships"]["get"]["responses"]
+            ["200"]["content"]["application/json"]["schema"]["$ref"];
+        assert!(
+            relationships
+                .as_str()
+                .is_some_and(|reference| reference.starts_with("#/components/schemas/Array_of_")),
+            "the relationship listing answers a mirrored array, got {relationships}"
+        );
+        // A route Go documents keeps Go's operation, so its body stays Go's
+        // rather than the mirror's.
+        assert_eq!(
+            document["paths"]["/collections/{name}"]["delete"]["responses"]["200"]["content"]
+                ["application/json"]["schema"]["$ref"],
+            "#/components/schemas/delete_result"
+        );
+
         let gc = &document["paths"]["/views/gc"]["post"];
         assert_eq!(
             gc["requestBody"]["content"]["application/json"]["schema"]["$ref"],

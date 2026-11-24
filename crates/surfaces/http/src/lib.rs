@@ -138,6 +138,8 @@ pub mod server;
 mod tls;
 #[cfg(feature = "server")]
 pub mod validation;
+#[cfg(feature = "server")]
+pub mod wire;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod mock;

@@ -14,7 +14,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     Json,
 };
-use query::documents::{self, AddOptions, DocumentsResult, Filter};
+use query::documents::{self, AddOptions, Filter};
 use query::executor::{QueryRequest, QueryResponse};
 use query::txn::TransactionHandle;
 use serde::Deserialize;
@@ -294,12 +294,12 @@ pub async fn delete_documents_with_filter(
     headers: HeaderMap,
     Path(collection): Path<String>,
     body: Bytes,
-) -> Result<Json<DocumentsResult>, HttpError> {
+) -> Result<Json<crate::wire::DocumentsResult>, HttpError> {
     let request = filtered_request(&body)?;
     let server = Server::new(state, identity, &headers)?;
     documents::delete_with_filter(|m| server.run(m), &collection, &request.filter())
         .await
-        .map(Json)
+        .map(|result| Json(crate::wire::DocumentsResult::from(result)))
         .map_err(refused)
 }
 
@@ -313,7 +313,7 @@ pub async fn update_documents_with_filter(
     headers: HeaderMap,
     Path(collection): Path<String>,
     body: Bytes,
-) -> Result<Json<DocumentsResult>, HttpError> {
+) -> Result<Json<crate::wire::DocumentsResult>, HttpError> {
     let request = filtered_request(&body)?;
     let server = Server::new(state, identity, &headers)?;
     documents::update_with_filter(
@@ -323,7 +323,7 @@ pub async fn update_documents_with_filter(
         &request.updater(),
     )
     .await
-    .map(Json)
+    .map(|result| Json(crate::wire::DocumentsResult::from(result)))
     .map_err(refused)
 }
 

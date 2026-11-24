@@ -513,7 +513,7 @@ pub async fn list_doc_relationships(
     State(state): State<AppState>,
     identity: ExtractIdentity,
     axum::extract::Query(query): axum::extract::Query<DocRelationshipsQuery>,
-) -> Result<Json<Vec<acp::DocumentRelationship>>, HttpError> {
+) -> Result<Json<Vec<crate::wire::DocumentRelationship>>, HttpError> {
     let requestor = identity
         .did()
         .ok_or_else(|| HttpError::Unauthorized("identity required for document ACP".into()))?;
@@ -526,7 +526,14 @@ pub async fn list_doc_relationships(
     doc_acp
         .list_doc_relationships(requestor, &query.collection, &query.doc_id)
         .await
-        .map(Json)
+        .map(|relationships| {
+            Json(
+                relationships
+                    .into_iter()
+                    .map(crate::wire::DocumentRelationship::from)
+                    .collect(),
+            )
+        })
         .map_err(http_error_from_backend_message)
 }
 

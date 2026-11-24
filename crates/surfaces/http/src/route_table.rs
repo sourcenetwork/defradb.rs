@@ -14,6 +14,7 @@ use crate::handlers::block::SignedBlockResponse;
 use crate::handlers::views::ViewNamesRequest;
 use crate::route_permissions::RoutePermission;
 use crate::router::NodePermission;
+use crate::wire::{DocumentRelationship, DocumentsResult, PermissionProvenance, SourcePermission};
 
 use RoutePermission::{Dynamic, Exempt, IdentityOnly};
 
@@ -187,8 +188,22 @@ pub const ROUTES: &[Route] = &[
     // collection ones, so they are document permissions. Dropping a collection
     // is `DELETE /collections?name=...`, which keeps `CollectionPatch`.
     row("/api/v0/collections/{name}", POST, required(NodePermission::DocumentUpdate), true),
-    row("/api/v0/collections/{name}", PATCH, required(NodePermission::DocumentUpdate), true),
-    row("/api/v0/collections/{name}", DELETE, required(NodePermission::DocumentDelete), true),
+    row_body(
+        "/api/v0/collections/{name}",
+        PATCH,
+        required(NodePermission::DocumentUpdate),
+        true,
+        None,
+        Some(body::<DocumentsResult>),
+    ),
+    row_body(
+        "/api/v0/collections/{name}",
+        DELETE,
+        required(NodePermission::DocumentDelete),
+        true,
+        None,
+        Some(body::<DocumentsResult>),
+    ),
     row("/api/v0/collections/{name}/describe", GET, required(NodePermission::CollectionGet), false),
     row("/api/v0/collections/{name}/exists", GET, required(NodePermission::CollectionGet), false),
     row("/api/v0/collections/{name}/truncate", DELETE, required(NodePermission::CollectionTruncate), true),
@@ -242,18 +257,39 @@ pub const ROUTES: &[Route] = &[
     row("/api/v0/acp/document/relationship", POST, required(NodePermission::DacRelationAdd), false),
     row("/api/v0/acp/document/relationship", DELETE, required(NodePermission::DacRelationDelete), false),
     // Listing is gated by the document's owner or managers in the core.
-    row("/api/v0/acp/document/relationships", GET, Dynamic, false),
+    row_body(
+        "/api/v0/acp/document/relationships",
+        GET,
+        Dynamic,
+        false,
+        None,
+        Some(body::<Vec<DocumentRelationship>>),
+    ),
     row("/api/v0/acp/document/relationships", POST, required(NodePermission::DacRelationAdd), false),
     // ACP Node (NAC via Go-compatible /acp/node/* routes)
     row("/api/v0/acp/node/status", GET, required(NodePermission::NacStatus), false),
     // The subject itself, an admin or a `NacStatus` holder: decided in the core.
-    row("/api/v0/acp/node/explain", GET, Dynamic, false),
+    row_body(
+        "/api/v0/acp/node/explain",
+        GET,
+        Dynamic,
+        false,
+        None,
+        Some(body::<Vec<PermissionProvenance>>),
+    ),
     row("/api/v0/acp/node/enable", POST, Dynamic, false),
     row("/api/v0/acp/node/relationship", POST, required(NodePermission::NacRelationAdd), false),
     row("/api/v0/acp/node/relationship", DELETE, required(NodePermission::NacRelationDelete), false),
     row("/api/v0/acp/node/relationships", POST, required(NodePermission::NacRelationAdd), false),
     // The transaction's source-grant job checks the caller per edge.
-    row("/api/v0/acp/node/source-permission", POST, Dynamic, false),
+    row_body(
+        "/api/v0/acp/node/source-permission",
+        POST,
+        Dynamic,
+        false,
+        Some(body::<SourcePermission>),
+        None,
+    ),
     row("/api/v0/acp/node/disable", POST, Dynamic, false),
     row("/api/v0/acp/node/re-enable", POST, Dynamic, false),
     // Backup
